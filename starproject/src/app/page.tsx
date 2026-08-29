@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { BlockedBadge } from "@/components/BlockedBadge";
+import { TaskLink } from "@/components/TaskLink";
 import { prisma } from "@/lib/db";
 import { STATUS_BADGE, STATUS_LABEL, isBlocked } from "@/lib/tasks";
 import { getCurrentDbUser } from "@/lib/user";
@@ -40,13 +41,8 @@ export default async function Home() {
   const dot = "inline-block h-3 w-3 shrink-0 rounded-full";
 
   return (
-    <div className="mx-auto max-w-7xl px-6 py-8">
-      <h1 className="text-2xl font-semibold">
-        Home
-        <span className="ml-2 text-base font-normal text-neutral-500 dark:text-neutral-400">
-          {user.name ?? user.email}
-        </span>
-      </h1>
+    <div className="mx-auto max-w-[88rem] px-6 py-8">
+      <h1 className="text-2xl font-semibold">Home</h1>
 
       <div className="mt-6 grid items-start gap-4 md:grid-cols-4">
         {/* Projects — 1/4 */}
@@ -111,7 +107,7 @@ export default async function Home() {
         <section className={`${tile} md:col-span-2`}>
           <div className="flex items-center justify-between">
             <h2 className="font-medium">My tasks</h2>
-            <Link href="/tasks" className={seeAll}>
+            <Link href="/tasks?mine=1" className={seeAll}>
               All →
             </Link>
           </div>
@@ -126,10 +122,11 @@ export default async function Home() {
               const overdue =
                 due != null && t.status !== "done" && due.getTime() < Date.now();
               return (
-                <Link
+                <TaskLink
                   key={t.id}
-                  href={`/projects/${t.projectId}/tasks/${t.id}`}
-                  className="block rounded-lg px-2 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                  projectId={t.projectId}
+                  taskId={t.id}
+                  className="block w-full rounded-lg px-2 py-2 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-sm font-medium">
@@ -152,7 +149,7 @@ export default async function Home() {
                     )}
                     {isBlocked(t.blockedBy) && <BlockedBadge />}
                   </div>
-                </Link>
+                </TaskLink>
               );
             })}
           </div>

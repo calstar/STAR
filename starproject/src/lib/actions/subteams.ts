@@ -20,6 +20,25 @@ export async function createSubteam(formData: FormData) {
   revalidatePath("/tasks");
 }
 
+export async function updateSubteam(formData: FormData) {
+  const user = await getCurrentDbUser();
+  if (!isAdmin(user.email))
+    throw new Error("Only admins can edit subteams.");
+  const id = String(formData.get("id"));
+  const data = subteamCreateSchema.parse({
+    name: formData.get("name"),
+    color: formData.get("color"),
+  });
+  await prisma.subteam.update({
+    where: { id },
+    data: { name: data.name, color: data.color },
+  });
+  revalidatePath("/workspace");
+  revalidatePath("/subteams");
+  revalidatePath(`/subteams/${id}`);
+  revalidatePath("/tasks");
+}
+
 export async function deleteSubteam(formData: FormData) {
   const user = await getCurrentDbUser();
   if (!isAdmin(user.email))

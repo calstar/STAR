@@ -3,6 +3,7 @@
 import type { User } from "@prisma/client";
 
 import { updateField } from "@/lib/fieldUpdate";
+import { shortName } from "@/lib/names";
 
 export function AssigneeSelect({
   taskId,
@@ -23,7 +24,7 @@ export function AssigneeSelect({
       <option value="">Unassigned</option>
       {users.map((u) => (
         <option key={u.id} value={u.id}>
-          {u.name ?? u.email}
+          {shortName(u.name, u.email)}
         </option>
       ))}
     </select>

@@ -3,7 +3,15 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
-export function UserMenu({ name, email }: { name: string; email: string }) {
+export function UserMenu({
+  name,
+  email,
+  isAdmin = false,
+}: {
+  name: string;
+  email: string;
+  isAdmin?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -51,6 +59,15 @@ export function UserMenu({ name, email }: { name: string; email: string }) {
           >
             Settings
           </Link>
+          {isAdmin && (
+            <Link
+              href="/workspace"
+              onClick={() => setOpen(false)}
+              className="block rounded px-3 py-2 text-sm text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+            >
+              Workspace setup
+            </Link>
+          )}
         </div>
       )}
     </div>

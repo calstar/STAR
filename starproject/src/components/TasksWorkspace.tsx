@@ -1,21 +1,15 @@
 "use client";
 
-import type { TaskStatus } from "@prisma/client";
+import type { TaskStatus, User } from "@prisma/client";
 import { useMemo, useState } from "react";
 
 import { Board } from "@/components/Board";
 import { GanttChart } from "@/components/GanttChart";
-import { TaskTable, type TaskRowData } from "@/components/TaskTable";
-import type { BoardTask } from "@/lib/board";
-import { STATUS_LABEL, isBlocked } from "@/lib/tasks";
+import { TaskTable } from "@/components/TaskTable";
+import { type WorkspaceTask, toRowData } from "@/lib/board";
+import { STATUS_LABEL } from "@/lib/tasks";
 
-// A task enriched with the display names needed for filtering/search and the
-// table. Superset of BoardTask, so it can be handed straight to Board/Gantt.
-export type WorkspaceTask = BoardTask & {
-  projectName: string;
-  subteamName: string;
-  assigneeName: string;
-};
+export type { WorkspaceTask } from "@/lib/board";
 
 type View = "table" | "board" | "gantt";
 
@@ -23,19 +17,25 @@ export function TasksWorkspace({
   tasks,
   projects,
   subteams,
+  users,
+  admin,
   currentUserId,
   initialSubteam,
+  initialMine = false,
 }: {
   tasks: WorkspaceTask[];
   projects: { id: string; label: string }[];
   subteams: { id: string; name: string }[];
+  users: User[];
+  admin: boolean;
   currentUserId: string;
   initialSubteam?: string;
+  initialMine?: boolean;
 }) {
   const [view, setView] = useState<View>("table");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
-  const [myOnly, setMyOnly] = useState(false);
+  const [myOnly, setMyOnly] = useState(initialMine);
   const [projSel, setProjSel] = useState<Set<string>>(new Set());
   const [subSel, setSubSel] = useState<Set<string>>(
     initialSubteam ? new Set([initialSubteam]) : new Set(),
@@ -59,28 +59,7 @@ export function TasksWorkspace({
     [tasks, status, myOnly, currentUserId, projSel, subSel, search],
   );
 
-  const rows: TaskRowData[] = useMemo(
-    () =>
-      filtered.map((t) => ({
-        id: t.id,
-        title: t.title,
-        projectId: t.projectId,
-        projectName: t.projectName,
-        status: t.status,
-        priority: t.priority ?? "",
-        assigneeId: t.assigneeId ?? "",
-        assigneeName: t.assigneeName,
-        subteamId: t.subteamId ?? "",
-        subteamName: t.subteamName,
-        due: t.dueDate ? new Date(t.dueDate).toISOString().slice(0, 10) : "",
-        overdue:
-          !!t.dueDate &&
-          t.status !== "done" &&
-          new Date(t.dueDate).getTime() < Date.now(),
-        blocked: isBlocked(t.blockedBy),
-      })),
-    [filtered],
-  );
+  const rows = useMemo(() => filtered.map(toRowData), [filtered]);
 
   function toggle(set: Set<string>, id: string) {
     const next = new Set(set);
@@ -111,7 +90,7 @@ export function TasksWorkspace({
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1">
             <button onClick={() => setView("table")} className={tabBtn("table")}>
-              Table
+              List
             </button>
             <button onClick={() => setView("board")} className={tabBtn("board")}>
               Board
@@ -202,7 +181,15 @@ export function TasksWorkspace({
       </p>
 
       <div className="mt-2">
-        {view === "table" && <TaskTable rows={rows} hideFilters />}
+        {view === "table" && (
+          <TaskTable
+            rows={rows}
+            users={users}
+            admin={admin}
+            showProject
+            showSubteam
+          />
+        )}
         {view === "board" && <Board tasks={filtered} />}
         {view === "gantt" && <GanttChart tasks={filtered} />}
       </div>

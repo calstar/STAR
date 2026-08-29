@@ -1,20 +1,29 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect, useRef } from "react";
 
 import { addBlockerAction, type BlockerFormState } from "@/lib/actions/blockers";
 
 export function BlockerEditor({
   taskId,
   candidates,
+  onChanged,
 }: {
   taskId: string;
   candidates: { id: string; title: string }[];
+  onChanged?: () => void;
 }) {
   const [state, formAction, pending] = useActionState<BlockerFormState, FormData>(
     addBlockerAction,
     {},
   );
+
+  // Fire onChanged when a submit finishes successfully (so the modal can refresh).
+  const wasPending = useRef(false);
+  useEffect(() => {
+    if (wasPending.current && !pending && !state.error) onChanged?.();
+    wasPending.current = pending;
+  }, [pending, state, onChanged]);
 
   return (
     <div>

@@ -2,29 +2,69 @@
 
 import "frappe-gantt/dist/frappe-gantt.css";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useTaskModal } from "@/components/TaskModalProvider";
+import { setTaskDates } from "@/lib/actions/tasks";
 import type { BoardTask } from "@/lib/board";
 import { toGanttTasks } from "@/lib/gantt";
 
+function ymd(d: Date): string {
+  // Use local date parts so a bar dropped on a day keeps that day (avoids the
+  // UTC shift that toISOString() can introduce near midnight).
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 const VIEW_MODES = ["Day", "Week", "Month"] as const;
 type ViewMode = (typeof VIEW_MODES)[number];
+
+// Matches the status bar fills in globals.css.
+const LEGEND: [string, string][] = [
+  ["Backlog", "#94a3b8"],
+  ["To do", "#3b82f6"],
+  ["In progress", "#f59e0b"],
+  ["Done", "#22c55e"],
+];
+
+// frappe-gantt only draws a today marker in Day view; add one for every view so
+// the current date is always visible.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function addTodayMarker(container: HTMLElement, gantt: any) {
+  const bg = container.querySelector(".grid-background");
+  const gridLayer = bg?.parentNode;
+  const start = gantt?.gantt_start;
+  const step = gantt?.options?.step;
+  const cw = gantt?.options?.column_width;
+  if (!bg || !gridLayer || !start || !step || !cw) return;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const hours = (today.getTime() - new Date(start).getTime()) / 3_600_000;
+  const x = (hours / step) * cw;
+  // A column spans `step` hours; highlight just today (one day wide), not the
+  // whole week/month column. Keep a minimum so it stays visible in Month view.
+  const dayWidth = Math.max(2, (24 / step) * cw);
+  const ns = "http://www.w3.org/2000/svg";
+  const rect = document.createElementNS(ns, "rect");
+  rect.setAttribute("x", String(x));
+  rect.setAttribute("y", "0");
+  rect.setAttribute("width", String(dayWidth));
+  rect.setAttribute("height", bg.getAttribute("height") ?? "0");
+  rect.setAttribute("class", "today-highlight");
+  gridLayer.appendChild(rect);
+}
 
 export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
   const { scheduled, unscheduled } = useMemo(() => toGanttTasks(tasks), [tasks]);
   const [viewMode, setViewMode] = useState<ViewMode>("Week");
   const ref = useRef<HTMLDivElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  function scrollTimeline(dir: number) {
-    const el = scrollRef.current;
-    if (!el) return;
-    // Scroll by ~80% of the visible width (a "page"), with a sane minimum.
-    el.scrollBy({
-      left: dir * Math.max(240, el.clientWidth * 0.8),
-      behavior: "smooth",
-    });
-  }
+  const router = useRouter();
+  const { openTask } = useTaskModal();
+  const projById = useMemo(
+    () => new Map(tasks.map((t) => [t.id, t.projectId])),
+    [tasks],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -32,24 +72,70 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
     if (!el || scheduled.length === 0) return;
     el.innerHTML = ""; // clear a previous render (view-mode change / re-run)
 
+    // Open our standard task modal on a genuine click of a bar (frappe-gantt's
+    // own popup is suppressed via CSS). A drag to reschedule moves the pointer,
+    // so we only treat near-stationary press/release on the same bar as a click.
+    let downPos: { x: number; y: number } | null = null;
+    let downId: string | null = null;
+    const barId = (target: EventTarget | null) =>
+      (target as Element | null)
+        ?.closest?.(".bar-wrapper")
+        ?.getAttribute("data-id") ?? null;
+    const onDown = (e: PointerEvent) => {
+      downId = barId(e.target);
+      downPos = { x: e.clientX, y: e.clientY };
+    };
+    const onUp = (e: PointerEvent) => {
+      const id = downId;
+      const pos = downPos;
+      downId = null;
+      downPos = null;
+      if (!id || !pos) return;
+      if (Math.hypot(e.clientX - pos.x, e.clientY - pos.y) >= 6) return;
+      if (barId(e.target) !== id) return;
+      const pid = projById.get(id);
+      if (pid) openTask(pid, id);
+    };
+    el.addEventListener("pointerdown", onDown);
+    el.addEventListener("pointerup", onUp);
+
     // frappe-gantt touches `document`, so it's imported only in the browser.
-    // The dist builds are bare global scripts (no module exports); the real
-    // entry is the package's ESM source (compiled via sass).
     import("frappe-gantt").then((mod) => {
       if (cancelled || !ref.current) return;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const Gantt: any = (mod as any).default ?? mod;
-      new Gantt(ref.current, scheduled, {
+      const gantt = new Gantt(ref.current, scheduled, {
         view_mode: viewMode,
         date_format: "YYYY-MM-DD",
-        readonly: true, // forward-compatible hint; 0.6.1 ignores it (no handlers = display-only)
+        // Drag or resize a bar to reschedule; persist the new start/due dates.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        on_date_change: (task: any, start: Date, end: Date) => {
+          setTaskDates(task.id, ymd(start), ymd(end)).then(() =>
+            router.refresh(),
+          );
+        },
       });
+      // frappe-gantt animates each bar's width from 0 via an injected <animate>
+      // element on every (re)render; that replays on data refresh (e.g. after a
+      // drag). Bars already carry their final width, so removing the animations
+      // leaves them correct and static.
+      ref.current.querySelectorAll("animate").forEach((el) => el.remove());
+      // frappe-gantt pads the SVG height with an extra `padding + 100` below the
+      // grid, leaving dead space. Trim the SVG to the grid's real height.
+      const svg = ref.current.querySelector("svg");
+      const bgH = ref.current
+        .querySelector(".grid-background")
+        ?.getAttribute("height");
+      if (svg && bgH) svg.setAttribute("height", bgH);
+      if (viewMode !== "Day") addTodayMarker(ref.current, gantt);
     });
 
     return () => {
       cancelled = true;
+      el.removeEventListener("pointerdown", onDown);
+      el.removeEventListener("pointerup", onUp);
     };
-  }, [scheduled, viewMode]);
+  }, [scheduled, viewMode, router, projById, openTask]);
 
   if (scheduled.length === 0) {
     return (
@@ -62,7 +148,7 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
 
   return (
     <div>
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1">
           {VIEW_MODES.map((m) => (
             <button
@@ -78,53 +164,19 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
             </button>
           ))}
         </div>
-        <div className="ml-auto flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => scrollTimeline(-1)}
-            aria-label="Scroll earlier"
-            title="Earlier"
-            className="rounded-md border border-neutral-300 p-1.5 text-neutral-600 hover:bg-neutral-100 dark:hover:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            onClick={() => scrollTimeline(1)}
-            aria-label="Scroll later"
-            title="Later"
-            className="rounded-md border border-neutral-300 p-1.5 text-neutral-600 hover:bg-neutral-100 dark:hover:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M9 18l6-6-6-6" />
-            </svg>
-          </button>
+        <div className="ml-auto flex flex-wrap items-center gap-3 text-xs text-neutral-500 dark:text-neutral-400">
+          {LEGEND.map(([label, color]) => (
+            <span key={label} className="flex items-center gap-1">
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-sm"
+                style={{ background: color }}
+              />
+              {label}
+            </span>
+          ))}
         </div>
       </div>
-      <div
-        ref={scrollRef}
-        className="overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-2"
-      >
+      <div className="overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-2">
         <div ref={ref} />
       </div>
       {unscheduled > 0 && (

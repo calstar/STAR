@@ -1,9 +1,64 @@
 import type { Task, TaskStatus } from "@prisma/client";
 
+import { isBlocked } from "@/lib/tasks";
+
 export type BoardTask = Task & {
   assignee: { id: string; name: string | null; email: string } | null;
   blockedBy?: { blockedByTask: { id: string; title: string; status: TaskStatus } }[];
+  // Set when a task shown in a parent project actually belongs to a subproject,
+  // so the card/row can indicate which one.
+  subproject?: { name: string; color: string | null } | null;
 };
+
+// A task enriched with the display names the list table and filters need. A
+// superset of BoardTask, so it's accepted anywhere BoardTask is (Board, Gantt).
+export type WorkspaceTask = BoardTask & {
+  projectName: string;
+  subteamName: string;
+  assigneeName: string;
+};
+
+// The flat row shape the shared list table renders. Carries the raw values the
+// inline editors need (status/priority/assigneeId/due) plus display names.
+export type TaskRowData = {
+  id: string;
+  title: string;
+  projectId: string;
+  projectName: string;
+  status: TaskStatus;
+  priority: string;
+  assigneeId: string;
+  assigneeName: string;
+  subteamId: string;
+  subteamName: string;
+  due: string;
+  overdue: boolean;
+  blocked: boolean;
+  subproject?: { name: string; color: string | null } | null;
+};
+
+/** Flatten a task to the shared list-table row shape. */
+export function toRowData(t: WorkspaceTask): TaskRowData {
+  return {
+    id: t.id,
+    title: t.title,
+    projectId: t.projectId,
+    projectName: t.projectName,
+    status: t.status,
+    priority: t.priority ?? "",
+    assigneeId: t.assigneeId ?? "",
+    assigneeName: t.assigneeName,
+    subteamId: t.subteamId ?? "",
+    subteamName: t.subteamName,
+    due: t.dueDate ? new Date(t.dueDate).toISOString().slice(0, 10) : "",
+    overdue:
+      !!t.dueDate &&
+      t.status !== "done" &&
+      new Date(t.dueDate).getTime() < Date.now(),
+    blocked: isBlocked(t.blockedBy),
+    subproject: t.subproject ?? null,
+  };
+}
 
 export type Columns = Record<TaskStatus, BoardTask[]>;
 

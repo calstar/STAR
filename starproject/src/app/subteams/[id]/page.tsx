@@ -1,17 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { Board } from "@/components/Board";
-import { GanttChart } from "@/components/GanttChart";
-import { TaskRow } from "@/components/TaskRow";
+import { DetailView, type DetailViewMode } from "@/components/DetailView";
+import { NewTaskForm } from "@/components/NewTaskForm";
 import { isAdmin } from "@/lib/admins";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getTeamUsers } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
-
-type View = "board" | "list" | "gantt";
 
 export default async function SubteamPage({
   params,
@@ -22,10 +19,10 @@ export default async function SubteamPage({
 }) {
   const { id } = await params;
   const { view: rawView } = await searchParams;
-  const view: View =
-    rawView === "list" ? "list" : rawView === "gantt" ? "gantt" : "board";
+  const view: DetailViewMode =
+    rawView === "board" ? "board" : rawView === "gantt" ? "gantt" : "list";
 
-  const [subteam, users] = await Promise.all([
+  const [subteam, users, projects] = await Promise.all([
     prisma.subteam.findUnique({
       where: { id },
       include: {
@@ -37,95 +34,69 @@ export default async function SubteamPage({
                 blockedByTask: { select: { id: true, title: true, status: true } },
               },
             },
+            project: { select: { name: true, color: true } },
           },
           orderBy: [{ boardOrder: "asc" }, { createdAt: "asc" }],
         },
       },
     }),
     getTeamUsers(),
+    prisma.project.findMany({
+      where: { archived: false },
+      select: { id: true, name: true, parent: { select: { name: true } } },
+      orderBy: { name: "asc" },
+    }),
   ]);
 
   if (!subteam) notFound();
   const admin = isAdmin((await getCurrentUser()).email);
 
-  const th = "px-2 py-2 font-medium";
-  const tab = (active: boolean) =>
-    `rounded px-3 py-1 text-sm ${
-      active
-        ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
-        : "text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 dark:hover:bg-neutral-800"
-    }`;
+  // A subteam's tasks span projects; tag each with its project so the list/board
+  // shows where it lives (reusing the same chip subprojects use in a parent).
+  const tasks = subteam.tasks.map((t) => ({
+    ...t,
+    projectName: t.project.name,
+    subteamName: subteam.name,
+    assigneeName: t.assignee?.name ?? t.assignee?.email ?? "",
+    subproject: { name: t.project.name, color: t.project.color },
+  }));
+
+  const projectOptions = projects.map((p) => ({
+    id: p.id,
+    label: p.parent ? `${p.parent.name} › ${p.name}` : p.name,
+  }));
+
+  const header = (
+    <div className="flex items-start justify-between gap-4">
+      <div className="flex items-center gap-3">
+        <span
+          className="inline-block h-4 w-4 rounded-full"
+          style={{ background: subteam.color ?? "#a3a3a3" }}
+        />
+        <h1 className="text-2xl font-semibold">{subteam.name}</h1>
+      </div>
+      <Link
+        href="/subteams"
+        className="text-sm text-neutral-500 dark:text-neutral-400 hover:underline"
+      >
+        ← All subteams
+      </Link>
+    </div>
+  );
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <span
-            className="inline-block h-4 w-4 rounded-full"
-            style={{ background: subteam.color ?? "#a3a3a3" }}
-          />
-          <h1 className="text-2xl font-semibold">{subteam.name}</h1>
-        </div>
-        <Link
-          href="/subteams"
-          className="text-sm text-neutral-500 dark:text-neutral-400 hover:underline"
-        >
-          ← All subteams
-        </Link>
-      </div>
-
-      <div className="mt-6 flex items-center gap-1">
-        <Link href={`/subteams/${subteam.id}`} className={tab(view === "board")}>
-          Board
-        </Link>
-        <Link
-          href={`/subteams/${subteam.id}?view=list`}
-          className={tab(view === "list")}
-        >
-          List
-        </Link>
-        <Link
-          href={`/subteams/${subteam.id}?view=gantt`}
-          className={tab(view === "gantt")}
-        >
-          Timeline
-        </Link>
-      </div>
-
-      {subteam.tasks.length === 0 ? (
-        <p className="mt-6 text-neutral-500 dark:text-neutral-400">
-          No tasks are tagged with this subteam yet. Set a task&apos;s subteam to
-          “{subteam.name}” to see it here.
-        </p>
-      ) : view === "list" ? (
-        <div className="mt-6 overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
-          <table className="w-full border-collapse text-left">
-            <thead>
-              <tr className="border-b border-neutral-200 dark:border-neutral-800 text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-                <th className={th}>Task</th>
-                <th className={th}>Status</th>
-                <th className={th}>Priority</th>
-                <th className={th}>Assignee</th>
-                <th className={th}>Due</th>
-                <th className={th} />
-              </tr>
-            </thead>
-            <tbody>
-              {subteam.tasks.map((t) => (
-                <TaskRow key={t.id} task={t} users={users} isAdmin={admin} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : view === "gantt" ? (
-        <div className="mt-6">
-          <GanttChart tasks={subteam.tasks} />
-        </div>
-      ) : (
-        <div className="mt-6">
-          <Board tasks={subteam.tasks} />
-        </div>
-      )}
-    </div>
+    <DetailView
+      basePath={`/subteams/${subteam.id}`}
+      view={view}
+      tasks={tasks}
+      users={users}
+      admin={admin}
+      header={header}
+      showProject
+      newTaskForm={
+        <NewTaskForm subteamId={subteam.id} projects={projectOptions} users={users} />
+      }
+      emptyText={`No tasks are tagged with “${subteam.name}” yet. Add one above or set a task's subteam to this one.`}
+    />
   );
 }

@@ -81,6 +81,16 @@ export async function createTask(formData: FormData) {
  * clobbering the others. An empty value clears the (nullable) field. Every
  * changed field is logged to the Activity feed with its before/after value.
  */
+/** Persist a start/due change from dragging or resizing a Gantt bar. Dates are
+ * YYYY-MM-DD strings. Reuses updateTask so the change is logged like any edit. */
+export async function setTaskDates(taskId: string, start: string, end: string) {
+  const fd = new FormData();
+  fd.set("id", taskId);
+  fd.set("startDate", start);
+  fd.set("dueDate", end);
+  await updateTask(fd);
+}
+
 export async function updateTask(formData: FormData) {
   const user = await getCurrentDbUser();
   const id = String(formData.get("id"));

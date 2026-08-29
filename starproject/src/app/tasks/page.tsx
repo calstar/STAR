@@ -1,8 +1,9 @@
-import { NewTaskFormGlobal } from "@/components/NewTaskFormGlobal";
+import { NewTaskForm } from "@/components/NewTaskForm";
 import {
   TasksWorkspace,
   type WorkspaceTask,
 } from "@/components/TasksWorkspace";
+import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
 import { getSubteams } from "@/lib/subteams";
 import { getCurrentDbUser, getTeamUsers } from "@/lib/user";
@@ -12,9 +13,9 @@ export const dynamic = "force-dynamic";
 export default async function TasksPage({
   searchParams,
 }: {
-  searchParams: Promise<{ subteam?: string }>;
+  searchParams: Promise<{ subteam?: string; mine?: string }>;
 }) {
-  const { subteam } = await searchParams;
+  const { subteam, mine } = await searchParams;
 
   const [raw, projects, subteams, me, users] = await Promise.all([
     prisma.task.findMany({
@@ -60,10 +61,10 @@ export default async function TasksPage({
   }));
 
   return (
-    <div className="mx-auto max-w-7xl px-6 py-8">
+    <div className="mx-auto max-w-[88rem] px-6 py-8">
       <h1 className="text-2xl font-semibold">Tasks</h1>
       <div className="mt-6">
-        <NewTaskFormGlobal
+        <NewTaskForm
           projects={projectOptions}
           users={users}
           subteams={subteams}
@@ -74,8 +75,11 @@ export default async function TasksPage({
           tasks={tasks}
           projects={projectOptions}
           subteams={subteams}
+          users={users}
+          admin={isAdmin(me.email)}
           currentUserId={me.id}
           initialSubteam={subteam}
+          initialMine={mine === "1"}
         />
       </div>
     </div>

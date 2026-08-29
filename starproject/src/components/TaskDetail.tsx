@@ -1,8 +1,12 @@
+"use client";
+
 import type { TaskStatus } from "@prisma/client";
 import Link from "next/link";
 
 import { BlockedBadge } from "@/components/BlockedBadge";
 import { BlockerEditor } from "@/components/BlockerEditor";
+import { CopyLinkButton } from "@/components/CopyLinkButton";
+import { useTaskModal } from "@/components/TaskModalProvider";
 import { AssigneeSelect } from "@/components/fields/AssigneeSelect";
 import { DescriptionInput } from "@/components/fields/DescriptionInput";
 import { DueDateInput } from "@/components/fields/DueDateInput";
@@ -19,6 +23,7 @@ function pill(status: TaskStatus): string {
 }
 
 export function TaskDetail({ data }: { data: TaskDetailData }) {
+  const { openTask, refresh } = useTaskModal();
   const { task, users, candidates, subteams } = data;
   const due = task.dueDate
     ? new Date(task.dueDate).toISOString().slice(0, 10)
@@ -29,7 +34,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
 
   return (
     <div>
-      <div className="flex items-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
+      <div className="flex items-center gap-2 pr-8 text-sm text-neutral-500 dark:text-neutral-400">
         <Link href="/projects" className="hover:underline">
           Projects
         </Link>
@@ -48,6 +53,9 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
         <Link href={`/projects/${task.project.id}`} className="hover:underline">
           {task.project.name}
         </Link>
+        <span className="ml-auto">
+          <CopyLinkButton taskId={task.id} />
+        </span>
       </div>
 
       <div className="mt-3 flex items-center gap-3 pr-8">
@@ -115,16 +123,23 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
             )}
             {task.blockedBy.map((b) => (
               <li key={b.id} className="flex items-center gap-2 text-sm">
-                <Link
-                  href={`/projects/${task.projectId}/tasks/${b.blockedByTask.id}`}
-                  className="hover:underline"
+                <button
+                  type="button"
+                  onClick={() => openTask(task.projectId, b.blockedByTask.id)}
+                  className="text-left hover:underline"
                 >
                   {b.blockedByTask.title}
-                </Link>
+                </button>
                 <span className={pill(b.blockedByTask.status)}>
                   {STATUS_LABEL[b.blockedByTask.status]}
                 </span>
-                <form action={removeBlocker} className="ml-auto">
+                <form
+                  action={async (fd) => {
+                    await removeBlocker(fd);
+                    refresh();
+                  }}
+                  className="ml-auto"
+                >
                   <input type="hidden" name="taskId" value={task.id} />
                   <input type="hidden" name="blockedById" value={b.blockedById} />
                   <button className="text-xs text-red-600 hover:underline">
@@ -135,7 +150,11 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
             ))}
           </ul>
           <div className="mt-3">
-            <BlockerEditor taskId={task.id} candidates={candidates} />
+            <BlockerEditor
+              taskId={task.id}
+              candidates={candidates}
+              onChanged={refresh}
+            />
           </div>
 
           <p className={`${label} mt-5`}>Blocking</p>
@@ -147,12 +166,13 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
             )}
             {task.blocking.map((b) => (
               <li key={b.id} className="flex items-center gap-2 text-sm">
-                <Link
-                  href={`/projects/${task.projectId}/tasks/${b.task.id}`}
-                  className="hover:underline"
+                <button
+                  type="button"
+                  onClick={() => openTask(task.projectId, b.task.id)}
+                  className="text-left hover:underline"
                 >
                   {b.task.title}
-                </Link>
+                </button>
                 <span className={pill(b.task.status)}>
                   {STATUS_LABEL[b.task.status]}
                 </span>

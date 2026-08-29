@@ -47,12 +47,34 @@ export async function archiveProject(formData: FormData) {
   revalidatePath("/");
 }
 
+export async function updateProject(formData: FormData) {
+  const user = await getCurrentDbUser();
+  if (!isAdmin(user.email))
+    throw new Error("Only admins can edit projects.");
+  const id = String(formData.get("id"));
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) throw new Error("Project name is required.");
+  const descriptionRaw = String(formData.get("description") ?? "").trim();
+  const color = String(formData.get("color") ?? "").trim() || null;
+  await prisma.project.update({
+    where: { id },
+    data: {
+      name,
+      description: descriptionRaw === "" ? null : descriptionRaw,
+      color,
+    },
+  });
+  revalidatePath("/workspace");
+  revalidatePath("/projects");
+  revalidatePath(`/projects/${id}`);
+}
+
 export async function deleteProject(formData: FormData) {
   const user = await getCurrentDbUser();
   if (!isAdmin(user.email))
     throw new Error("Only admins can delete projects.");
   const id = String(formData.get("id"));
   await prisma.project.delete({ where: { id } }); // cascades to its tasks
+  revalidatePath("/workspace");
   revalidatePath("/projects");
-  redirect("/projects");
 }

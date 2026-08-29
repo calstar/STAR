@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 
 import { AppHeader } from "@/components/AppHeader";
+import { TaskModalProvider } from "@/components/TaskModalProvider";
 import { getCurrentSettings } from "@/lib/settings";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "STARProject",
+  title: "STAR Project",
   description: "STAR team task tracker",
   icons: { icon: "/star-icon.svg" },
 };
@@ -20,7 +21,7 @@ export default async function RootLayout({
     <html lang="en" className={settings.theme === "dark" ? "dark" : ""}>
       <body className="min-h-screen bg-neutral-50 text-neutral-900 dark:text-neutral-100 antialiased dark:bg-neutral-950">
         <AppHeader />
-        {children}
+        <TaskModalProvider>{children}</TaskModalProvider>
       </body>
     </html>
   );

@@ -1,8 +1,4 @@
-import Link from "next/link";
-
-import { createSubteam, deleteSubteam } from "@/lib/actions/subteams";
-import { isAdmin } from "@/lib/admins";
-import { getCurrentUser } from "@/lib/auth";
+import { EntityRow, LIST_CARD } from "@/components/EntityRow";
 import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -12,73 +8,26 @@ export default async function SubteamsPage() {
     orderBy: { name: "asc" },
     include: { _count: { select: { tasks: true } } },
   });
-  const admin = isAdmin((await getCurrentUser()).email);
 
   return (
-    <div className="mx-auto max-w-7xl px-6 py-8">
+    <div className="mx-auto max-w-[88rem] px-6 py-8">
       <h1 className="text-2xl font-semibold">Subteams</h1>
 
-      {admin && (
-        <form
-          action={createSubteam}
-          className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3"
-        >
-          <input
-            name="name"
-            required
-            placeholder="New subteam name"
-            className="min-w-48 flex-1 rounded border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm"
-          />
-          <input
-            type="color"
-            name="color"
-            defaultValue="#0ea5e9"
-            aria-label="Subteam color"
-            className="h-9 w-10 rounded border border-neutral-300 dark:border-neutral-700"
-          />
-          <button className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300">
-            Create
-          </button>
-        </form>
-      )}
-
-      <ul className="mt-6 divide-y divide-neutral-200 dark:divide-neutral-800 overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
+      <ul className={LIST_CARD}>
         {subteams.length === 0 && (
           <li className="p-4 text-neutral-500 dark:text-neutral-400">
-            No subteams yet. Create one above.
+            No subteams yet. An admin can create one in Workspace setup.
           </li>
         )}
         {subteams.map((s) => (
-          <li
+          <EntityRow
             key={s.id}
-            className="relative flex items-center justify-between p-4 hover:bg-neutral-50 dark:hover:bg-neutral-800"
-          >
-            {/* Stretched link makes the whole row clickable; positioned children
-                below (the Delete form) stay above it and remain interactive. */}
-            <Link
-              href={`/subteams/${s.id}`}
-              aria-label={s.name}
-              className="absolute inset-0"
-            />
-            <span className="relative flex items-center gap-3">
-              <span
-                className="inline-block h-3 w-3 rounded-full"
-                style={{ background: s.color ?? "#a3a3a3" }}
-              />
-              <span className="font-medium">{s.name}</span>
-              <span className="text-sm text-neutral-500 dark:text-neutral-400">
-                {s._count.tasks} task{s._count.tasks === 1 ? "" : "s"}
-              </span>
-            </span>
-            {admin && (
-              <form action={deleteSubteam} className="relative">
-                <input type="hidden" name="id" value={s.id} />
-                <button className="text-sm text-red-600 hover:underline">
-                  Delete
-                </button>
-              </form>
-            )}
-          </li>
+            href={`/subteams/${s.id}`}
+            color={s.color}
+            name={s.name}
+            taskCount={s._count.tasks}
+            id={s.id}
+          />
         ))}
       </ul>
     </div>
