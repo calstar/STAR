@@ -1,6 +1,6 @@
 "use client";
 
-import { updateTask } from "@/lib/actions/tasks";
+import { updateField } from "@/lib/fieldUpdate";
 
 export function DescriptionInput({
   taskId,
@@ -10,16 +10,13 @@ export function DescriptionInput({
   value: string;
 }) {
   return (
-    <form action={updateTask}>
-      <input type="hidden" name="id" value={taskId} />
-      <textarea
-        name="description"
-        defaultValue={value}
-        onBlur={(e) => e.currentTarget.form?.requestSubmit()}
-        rows={3}
-        placeholder="Add a description…"
-        className="w-full rounded border border-neutral-300 dark:border-neutral-700 px-2 py-1 text-sm"
-      />
-    </form>
+    <textarea
+      name="description"
+      defaultValue={value}
+      onBlur={(e) => updateField(taskId, "description", e.target.value)}
+      rows={3}
+      placeholder="Add a description…"
+      className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"
+    />
   );
 }

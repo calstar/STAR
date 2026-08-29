@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { updateTask } from "@/lib/actions/tasks";
+import { updateField } from "@/lib/fieldUpdate";
 
 // Shows the title as text with an Edit button; clicking reveals an input that
 // saves on blur/Enter. Used in the task detail popup.
@@ -17,22 +17,24 @@ export function EditableTitle({
 
   if (editing) {
     return (
-      <form action={updateTask} className="flex-1">
-        <input type="hidden" name="id" value={taskId} />
-        <input
-          name="title"
-          defaultValue={value}
-          autoFocus
-          onBlur={(e) => {
-            e.currentTarget.form?.requestSubmit();
+      <input
+        name="title"
+        defaultValue={value}
+        autoFocus
+        onBlur={(e) => {
+          updateField(taskId, "title", e.target.value);
+          setEditing(false);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            updateField(taskId, "title", (e.target as HTMLInputElement).value);
             setEditing(false);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === "Escape") setEditing(false);
-          }}
-          className="w-full rounded border border-neutral-300 dark:border-neutral-700 px-2 py-1 text-2xl font-semibold focus:outline-none"
-        />
-      </form>
+          } else if (e.key === "Escape") {
+            setEditing(false);
+          }
+        }}
+        className="w-full rounded border border-neutral-300 dark:border-neutral-700 px-2 py-1 text-2xl font-semibold focus:outline-none"
+      />
     );
   }
 
@@ -42,7 +44,7 @@ export function EditableTitle({
       <button
         onClick={() => setEditing(true)}
         title="Rename"
-        className="rounded px-1.5 py-0.5 text-xs text-neutral-500 dark:text-neutral-400 hover:bg-neutral-200 hover:text-neutral-700 dark:text-neutral-200"
+        className="rounded px-1.5 py-0.5 text-xs text-neutral-500 dark:text-neutral-400 hover:bg-neutral-200 hover:text-neutral-700"
       >
         ✎ Edit
       </button>

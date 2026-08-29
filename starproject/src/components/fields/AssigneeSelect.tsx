@@ -2,7 +2,7 @@
 
 import type { User } from "@prisma/client";
 
-import { updateTask } from "@/lib/actions/tasks";
+import { updateField } from "@/lib/fieldUpdate";
 
 export function AssigneeSelect({
   taskId,
@@ -14,21 +14,18 @@ export function AssigneeSelect({
   users: User[];
 }) {
   return (
-    <form action={updateTask}>
-      <input type="hidden" name="id" value={taskId} />
-      <select
-        name="assigneeId"
-        defaultValue={value}
-        onChange={(e) => e.currentTarget.form?.requestSubmit()}
-        className="rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"
-      >
-        <option value="">Unassigned</option>
-        {users.map((u) => (
-          <option key={u.id} value={u.id}>
-            {u.name ?? u.email}
-          </option>
-        ))}
-      </select>
-    </form>
+    <select
+      name="assigneeId"
+      defaultValue={value}
+      onChange={(e) => updateField(taskId, "assigneeId", e.target.value)}
+      className="rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"
+    >
+      <option value="">Unassigned</option>
+      {users.map((u) => (
+        <option key={u.id} value={u.id}>
+          {u.name ?? u.email}
+        </option>
+      ))}
+    </select>
   );
 }

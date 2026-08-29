@@ -1,6 +1,6 @@
 "use client";
 
-import { updateTask } from "@/lib/actions/tasks";
+import { updateField } from "@/lib/fieldUpdate";
 
 export function DueDateInput({
   taskId,
@@ -10,15 +10,12 @@ export function DueDateInput({
   value: string;
 }) {
   return (
-    <form action={updateTask}>
-      <input type="hidden" name="id" value={taskId} />
-      <input
-        type="date"
-        name="dueDate"
-        defaultValue={value}
-        onChange={(e) => e.currentTarget.form?.requestSubmit()}
-        className="rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"
-      />
-    </form>
+    <input
+      type="date"
+      name="dueDate"
+      defaultValue={value}
+      onChange={(e) => updateField(taskId, "dueDate", e.target.value)}
+      className="rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"
+    />
   );
 }

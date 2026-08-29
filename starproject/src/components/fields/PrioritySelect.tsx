@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { updateTask } from "@/lib/actions/tasks";
+import { updateField } from "@/lib/fieldUpdate";
 import { PRIORITY_BADGE } from "@/lib/tasks";
 
 const OPTS: [string, string][] = [
@@ -21,25 +21,22 @@ export function PrioritySelect({
 }) {
   const [v, setV] = useState(value);
   return (
-    <form action={updateTask}>
-      <input type="hidden" name="id" value={taskId} />
-      <select
-        name="priority"
-        value={v}
-        onChange={(e) => {
-          setV(e.target.value);
-          e.currentTarget.form?.requestSubmit();
-        }}
-        className={`rounded border border-neutral-300 dark:border-neutral-700 px-2 py-1 text-sm font-medium ${
-          PRIORITY_BADGE[v] ?? ""
-        }`}
-      >
-        {OPTS.map(([val, l]) => (
-          <option key={val} value={val}>
-            {l}
-          </option>
-        ))}
-      </select>
-    </form>
+    <select
+      name="priority"
+      value={v}
+      onChange={(e) => {
+        setV(e.target.value);
+        updateField(taskId, "priority", e.target.value);
+      }}
+      className={`rounded border border-neutral-300 dark:border-neutral-700 px-2 py-1 text-sm font-medium ${
+        PRIORITY_BADGE[v] ?? ""
+      }`}
+    >
+      {OPTS.map(([val, l]) => (
+        <option key={val} value={val}>
+          {l}
+        </option>
+      ))}
+    </select>
   );
 }

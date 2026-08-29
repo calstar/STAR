@@ -1,6 +1,6 @@
 "use client";
 
-import { updateTask } from "@/lib/actions/tasks";
+import { updateField } from "@/lib/fieldUpdate";
 
 export function SubteamSelect({
   taskId,
@@ -12,21 +12,18 @@ export function SubteamSelect({
   subteams: { id: string; name: string }[];
 }) {
   return (
-    <form action={updateTask}>
-      <input type="hidden" name="id" value={taskId} />
-      <select
-        name="subteamId"
-        defaultValue={value}
-        onChange={(e) => e.currentTarget.form?.requestSubmit()}
-        className="rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"
-      >
-        <option value="">No subteam</option>
-        {subteams.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.name}
-          </option>
-        ))}
-      </select>
-    </form>
+    <select
+      name="subteamId"
+      defaultValue={value}
+      onChange={(e) => updateField(taskId, "subteamId", e.target.value)}
+      className="rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"
+    >
+      <option value="">No subteam</option>
+      {subteams.map((s) => (
+        <option key={s.id} value={s.id}>
+          {s.name}
+        </option>
+      ))}
+    </select>
   );
 }

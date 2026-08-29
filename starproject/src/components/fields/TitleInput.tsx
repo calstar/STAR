@@ -1,6 +1,6 @@
 "use client";
 
-import { updateTask } from "@/lib/actions/tasks";
+import { updateField } from "@/lib/fieldUpdate";
 
 export function TitleInput({
   taskId,
@@ -12,17 +12,14 @@ export function TitleInput({
   className?: string;
 }) {
   return (
-    <form action={updateTask}>
-      <input type="hidden" name="id" value={taskId} />
-      <input
-        name="title"
-        defaultValue={value}
-        onBlur={(e) => e.currentTarget.form?.requestSubmit()}
-        className={
-          className ??
-          "w-full rounded border border-transparent px-2 py-1 hover:border-neutral-300 dark:border-neutral-700 focus:border-neutral-400 focus:outline-none"
-        }
-      />
-    </form>
+    <input
+      name="title"
+      defaultValue={value}
+      onBlur={(e) => updateField(taskId, "title", e.target.value)}
+      className={
+        className ??
+        "w-full rounded border border-transparent px-2 py-1 hover:border-neutral-300 dark:hover:border-neutral-700 focus:border-neutral-400 focus:outline-none"
+      }
+    />
   );
 }
