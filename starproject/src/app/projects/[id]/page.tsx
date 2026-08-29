@@ -114,7 +114,7 @@ export default async function ProjectPage({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-4">
-          <Link href="/" className="text-sm text-neutral-500 dark:text-neutral-400 hover:underline">
+          <Link href="/projects" className="text-sm text-neutral-500 dark:text-neutral-400 hover:underline">
             ← All projects
           </Link>
           {admin && (

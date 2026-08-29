@@ -11,7 +11,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { PRIORITY_BADGE, STATUS_BADGE, STATUS_LABEL } from "@/lib/tasks";
@@ -41,12 +41,7 @@ const columns = [
     header: "Task",
     cell: (info) => (
       <div className="flex items-center gap-2">
-        <Link
-          href={`/projects/${info.row.original.projectId}/tasks/${info.row.original.id}`}
-          className="font-medium hover:underline"
-        >
-          {info.getValue()}
-        </Link>
+        <span className="font-medium">{info.getValue()}</span>
         {info.row.original.blocked && <BlockedBadge />}
       </div>
     ),
@@ -123,6 +118,7 @@ export function TaskTable({
   initialSubteam?: string;
   hideFilters?: boolean;
 }) {
+  const router = useRouter();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(
     initialSubteam ? [{ id: "subteam", value: initialSubteam }] : [],
@@ -283,7 +279,15 @@ export function TaskTable({
               </tr>
             )}
             {table.getRowModel().rows.map((row) => (
-              <tr key={row.id} className="border-b border-neutral-100 dark:border-neutral-800">
+              <tr
+                key={row.id}
+                onClick={() =>
+                  router.push(
+                    `/projects/${row.original.projectId}/tasks/${row.original.id}`,
+                  )
+                }
+                className="cursor-pointer border-b border-neutral-100 hover:bg-neutral-50 dark:border-neutral-800 dark:hover:bg-neutral-800/40"
+              >
                 {row.getVisibleCells().map((cell) => (
                   <td key={cell.id} className="px-3 py-2">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}

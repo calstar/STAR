@@ -1,7 +1,7 @@
 "use client";
 
 import type { User } from "@prisma/client";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { deleteTask } from "@/lib/actions/tasks";
 import type { BoardTask } from "@/lib/board";
@@ -22,37 +22,38 @@ export function TaskRow({
   users: User[];
   isAdmin?: boolean;
 }) {
+  const router = useRouter();
   const due = task.dueDate
     ? new Date(task.dueDate).toISOString().slice(0, 10)
     : "";
   const cell = "px-2 py-1.5 align-middle";
 
   return (
-    <tr className="border-b border-neutral-100 dark:border-neutral-800">
+    <tr
+      onClick={() => router.push(`/projects/${task.projectId}/tasks/${task.id}`)}
+      className="cursor-pointer border-b border-neutral-100 hover:bg-neutral-50 dark:border-neutral-800 dark:hover:bg-neutral-800/40"
+    >
       <td className={`${cell} w-full`}>
         <div className="flex items-center gap-2">
-          <Link
-            href={`/projects/${task.projectId}/tasks/${task.id}`}
-            className="min-w-0 flex-1 truncate rounded px-2 py-1 text-sm font-medium hover:bg-neutral-100 hover:underline"
-          >
+          <span className="min-w-0 flex-1 truncate px-2 py-1 text-sm font-medium">
             {task.title}
-          </Link>
+          </span>
           {isBlocked(task.blockedBy) && <BlockedBadge />}
         </div>
       </td>
-      <td className={cell}>
+      <td className={cell} onClick={(e) => e.stopPropagation()}>
         <StatusSelect taskId={task.id} value={task.status} />
       </td>
-      <td className={cell}>
+      <td className={cell} onClick={(e) => e.stopPropagation()}>
         <PrioritySelect taskId={task.id} value={task.priority ?? ""} />
       </td>
-      <td className={cell}>
+      <td className={cell} onClick={(e) => e.stopPropagation()}>
         <AssigneeSelect taskId={task.id} value={task.assigneeId ?? ""} users={users} />
       </td>
-      <td className={cell}>
+      <td className={cell} onClick={(e) => e.stopPropagation()}>
         <DueDateInput taskId={task.id} value={due} />
       </td>
-      <td className={cell}>
+      <td className={cell} onClick={(e) => e.stopPropagation()}>
         {isAdmin && (
           <form action={deleteTask}>
             <input type="hidden" name="id" value={task.id} />

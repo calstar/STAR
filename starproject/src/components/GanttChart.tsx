@@ -17,7 +17,13 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   function scrollTimeline(dir: number) {
-    scrollRef.current?.scrollBy({ left: dir * 600, behavior: "smooth" });
+    const el = scrollRef.current;
+    if (!el) return;
+    // Scroll by ~80% of the visible width (a "page"), with a sane minimum.
+    el.scrollBy({
+      left: dir * Math.max(240, el.clientWidth * 0.8),
+      behavior: "smooth",
+    });
   }
 
   useEffect(() => {
@@ -74,18 +80,44 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
         </div>
         <div className="ml-auto flex items-center gap-1">
           <button
+            type="button"
             onClick={() => scrollTimeline(-1)}
             aria-label="Scroll earlier"
-            className="rounded border border-neutral-300 dark:border-neutral-700 px-2 py-1 text-sm hover:bg-neutral-100"
+            title="Earlier"
+            className="rounded-md border border-neutral-300 p-1.5 text-neutral-600 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
           >
-            ◀
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
           </button>
           <button
+            type="button"
             onClick={() => scrollTimeline(1)}
             aria-label="Scroll later"
-            className="rounded border border-neutral-300 dark:border-neutral-700 px-2 py-1 text-sm hover:bg-neutral-100"
+            title="Later"
+            className="rounded-md border border-neutral-300 p-1.5 text-neutral-600 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
           >
-            ▶
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M9 18l6-6-6-6" />
+            </svg>
           </button>
         </div>
       </div>

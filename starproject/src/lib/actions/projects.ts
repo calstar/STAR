@@ -35,7 +35,7 @@ export async function createProject(formData: FormData) {
       createdById: user.id,
     },
   });
-  revalidatePath("/");
+  revalidatePath("/projects");
   redirect(`/projects/${project.id}`);
 }
 
@@ -53,6 +53,6 @@ export async function deleteProject(formData: FormData) {
     throw new Error("Only admins can delete projects.");
   const id = String(formData.get("id"));
   await prisma.project.delete({ where: { id } }); // cascades to its tasks
-  revalidatePath("/");
-  redirect("/");
+  revalidatePath("/projects");
+  redirect("/projects");
 }

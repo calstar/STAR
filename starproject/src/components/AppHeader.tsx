@@ -16,7 +16,7 @@ export async function AppHeader() {
             STARProject
           </Link>
           <nav className="flex items-center gap-4 text-sm">
-            <Link href="/" className="text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:text-neutral-100">
+            <Link href="/projects" className="text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:text-neutral-100">
               Projects
             </Link>
             <Link href="/tasks" className="text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:text-neutral-100">

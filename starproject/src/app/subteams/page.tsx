@@ -60,7 +60,7 @@ export default async function SubteamsPage() {
                 style={{ background: s.color ?? "#a3a3a3" }}
               />
               <Link
-                href={`/tasks?subteam=${s.id}`}
+                href={`/subteams/${s.id}`}
                 className="font-medium hover:underline"
               >
                 {s.name}
@@ -71,10 +71,10 @@ export default async function SubteamsPage() {
             </span>
             <div className="flex items-center gap-4">
               <Link
-                href={`/tasks?subteam=${s.id}`}
+                href={`/subteams/${s.id}`}
                 className="text-sm text-neutral-500 dark:text-neutral-400 hover:underline"
               >
-                View in Tasks →
+                Open →
               </Link>
               {admin && (
                 <form action={deleteSubteam}>

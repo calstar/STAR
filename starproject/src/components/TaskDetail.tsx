@@ -30,7 +30,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
   return (
     <div>
       <div className="flex items-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
-        <Link href="/" className="hover:underline">
+        <Link href="/projects" className="hover:underline">
           Projects
         </Link>
         <span>/</span>
