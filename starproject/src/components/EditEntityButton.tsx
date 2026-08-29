@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 // An "Edit" button that opens a small dialog to change an entity's name, color,
 // and (for projects) description. Submits to a server action. Used in Workspace

@@ -179,7 +179,7 @@ export function TaskTable({
                 colSpan={table.getAllColumns().length}
                 className="px-3 py-4 text-neutral-500 dark:text-neutral-400"
               >
-                No tasks match.
+                {emptyText}
               </td>
             </tr>
           )}
