@@ -286,7 +286,7 @@ export function TaskTable({
                     `/projects/${row.original.projectId}/tasks/${row.original.id}`,
                   )
                 }
-                className="cursor-pointer border-b border-neutral-100 hover:bg-neutral-50 dark:hover:bg-neutral-900 dark:border-neutral-800 dark:hover:bg-neutral-800/40"
+                className="cursor-pointer border-b border-neutral-100 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800"
               >
                 {row.getVisibleCells().map((cell) => (
                   <td key={cell.id} className="px-3 py-2">

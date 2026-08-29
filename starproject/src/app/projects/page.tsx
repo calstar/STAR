@@ -39,7 +39,7 @@ export default async function Home() {
           <li key={p.id}>
             <Link
               href={`/projects/${p.id}`}
-              className="flex items-center justify-between p-4 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+              className="flex items-center justify-between p-4 hover:bg-neutral-50 dark:hover:bg-neutral-800"
             >
               <span className="flex items-center gap-3">
                 <span

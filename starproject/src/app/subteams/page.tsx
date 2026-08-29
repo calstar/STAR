@@ -17,10 +17,6 @@ export default async function SubteamsPage() {
   return (
     <div className="mx-auto max-w-7xl px-6 py-8">
       <h1 className="text-2xl font-semibold">Subteams</h1>
-      <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-        A subteam is a task tag, a peer to projects. Filter the Tasks view by one
-        to see everything it owns across every project.
-      </p>
 
       {admin && (
         <form
@@ -53,38 +49,35 @@ export default async function SubteamsPage() {
           </li>
         )}
         {subteams.map((s) => (
-          <li key={s.id} className="flex items-center justify-between p-4">
-            <span className="flex items-center gap-3">
+          <li
+            key={s.id}
+            className="relative flex items-center justify-between p-4 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+          >
+            {/* Stretched link makes the whole row clickable; positioned children
+                below (the Delete form) stay above it and remain interactive. */}
+            <Link
+              href={`/subteams/${s.id}`}
+              aria-label={s.name}
+              className="absolute inset-0"
+            />
+            <span className="relative flex items-center gap-3">
               <span
                 className="inline-block h-3 w-3 rounded-full"
                 style={{ background: s.color ?? "#a3a3a3" }}
               />
-              <Link
-                href={`/subteams/${s.id}`}
-                className="font-medium hover:underline"
-              >
-                {s.name}
-              </Link>
+              <span className="font-medium">{s.name}</span>
               <span className="text-sm text-neutral-500 dark:text-neutral-400">
                 {s._count.tasks} task{s._count.tasks === 1 ? "" : "s"}
               </span>
             </span>
-            <div className="flex items-center gap-4">
-              <Link
-                href={`/subteams/${s.id}`}
-                className="text-sm text-neutral-500 dark:text-neutral-400 hover:underline"
-              >
-                Open →
-              </Link>
-              {admin && (
-                <form action={deleteSubteam}>
-                  <input type="hidden" name="id" value={s.id} />
-                  <button className="text-sm text-red-600 hover:underline">
-                    Delete
-                  </button>
-                </form>
-              )}
-            </div>
+            {admin && (
+              <form action={deleteSubteam} className="relative">
+                <input type="hidden" name="id" value={s.id} />
+                <button className="text-sm text-red-600 hover:underline">
+                  Delete
+                </button>
+              </form>
+            )}
           </li>
         ))}
       </ul>

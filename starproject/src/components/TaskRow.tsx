@@ -31,7 +31,7 @@ export function TaskRow({
   return (
     <tr
       onClick={() => router.push(`/projects/${task.projectId}/tasks/${task.id}`)}
-      className="cursor-pointer border-b border-neutral-100 hover:bg-neutral-50 dark:hover:bg-neutral-900 dark:border-neutral-800 dark:hover:bg-neutral-800/40"
+      className="cursor-pointer border-b border-neutral-100 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800"
     >
       <td className={`${cell} w-full`}>
         <div className="flex items-center gap-2">
