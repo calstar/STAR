@@ -14,9 +14,9 @@ export async function AppHeader() {
 
   return (
     <header className="border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
+      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-2">
         <div className="flex items-center gap-6">
-          <Link href="/" className="flex items-center gap-1.5">
+          <Link href="/" className="flex items-center gap-2 leading-none">
             {/* Blue wordmark in light mode, white wordmark in dark mode. */}
             <Image
               src="/star-blue.png"
@@ -25,7 +25,7 @@ export async function AppHeader() {
               height={1772}
               priority
               unoptimized
-              className="h-7 w-auto dark:hidden"
+              className="h-10 w-auto dark:hidden"
             />
             <Image
               src="/star-wordmark.png"
@@ -34,10 +34,10 @@ export async function AppHeader() {
               height={1772}
               priority
               unoptimized
-              className="hidden h-7 w-auto dark:block"
+              className="hidden h-10 w-auto dark:block"
             />
-            <span className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-100">
-              project
+            <span className="text-2xl font-semibold leading-none tracking-tight text-neutral-900 dark:text-neutral-100">
+              Project
             </span>
           </Link>
           <nav className="flex items-center gap-4 text-sm">

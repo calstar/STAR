@@ -1,10 +1,11 @@
+import { NewTaskFormGlobal } from "@/components/NewTaskFormGlobal";
 import {
   TasksWorkspace,
   type WorkspaceTask,
 } from "@/components/TasksWorkspace";
 import { prisma } from "@/lib/db";
 import { getSubteams } from "@/lib/subteams";
-import { getCurrentDbUser } from "@/lib/user";
+import { getCurrentDbUser, getTeamUsers } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,7 @@ export default async function TasksPage({
 }) {
   const { subteam } = await searchParams;
 
-  const [raw, projects, subteams, me] = await Promise.all([
+  const [raw, projects, subteams, me, users] = await Promise.all([
     prisma.task.findMany({
       include: {
         project: {
@@ -38,6 +39,7 @@ export default async function TasksPage({
     }),
     getSubteams(),
     getCurrentDbUser(),
+    getTeamUsers(),
   ]);
 
   const tasks: WorkspaceTask[] = raw.map((t) => {
@@ -64,6 +66,13 @@ export default async function TasksPage({
         All tasks across every project.
       </p>
       <div className="mt-6">
+        <NewTaskFormGlobal
+          projects={projectOptions}
+          users={users}
+          subteams={subteams}
+        />
+      </div>
+      <div className="mt-4">
         <TasksWorkspace
           tasks={tasks}
           projects={projectOptions}

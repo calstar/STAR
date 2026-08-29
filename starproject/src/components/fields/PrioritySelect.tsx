@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { updateField } from "@/lib/fieldUpdate";
-import { PRIORITY_BADGE } from "@/lib/tasks";
+import { PRIORITY_BADGE, PRIORITY_OPTION_STYLE } from "@/lib/tasks";
 
 const OPTS: [string, string][] = [
   ["", "—"],
@@ -33,7 +33,7 @@ export function PrioritySelect({
       }`}
     >
       {OPTS.map(([val, l]) => (
-        <option key={val} value={val}>
+        <option key={val} value={val} style={PRIORITY_OPTION_STYLE[val]}>
           {l}
         </option>
       ))}

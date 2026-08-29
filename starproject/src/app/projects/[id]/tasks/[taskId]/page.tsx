@@ -1,11 +1,16 @@
 import { notFound } from "next/navigation";
 
+import { ProjectView } from "@/components/ProjectView";
 import { TaskDetail } from "@/components/TaskDetail";
+import { TaskModal } from "@/components/TaskModal";
 import { getTaskDetailData } from "@/lib/task-detail";
 
 export const dynamic = "force-dynamic";
 
-export default async function TaskDetailPage({
+// A task URL renders the project board with the task open as a modal on top, so
+// clicking a task and reloading a task URL both show the same thing. Closing the
+// modal returns to the board.
+export default async function TaskPage({
   params,
 }: {
   params: Promise<{ id: string; taskId: string }>;
@@ -15,8 +20,11 @@ export default async function TaskDetailPage({
   if (!data) notFound();
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
-      <TaskDetail data={data} />
-    </div>
+    <>
+      <ProjectView id={id} view="board" />
+      <TaskModal closeTo={`/projects/${id}`}>
+        <TaskDetail data={data} />
+      </TaskModal>
+    </>
   );
 }

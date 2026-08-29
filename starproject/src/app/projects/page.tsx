@@ -59,7 +59,7 @@ export default async function Home() {
             </Link>
 
             {p.children.length > 0 && (
-              <ul className="border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50/60">
+              <ul className="border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50/60 dark:bg-white/5">
                 {p.children.map((c) => (
                   <li key={c.id}>
                     <Link

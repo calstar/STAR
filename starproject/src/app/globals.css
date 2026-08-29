@@ -13,6 +13,10 @@
 .dark .gantt .grid-background {
   fill: transparent;
 }
+.dark .gantt .grid-header {
+  fill: #1f1f1f;
+  stroke: #262626;
+}
 .dark .gantt .grid-row {
   fill: #171717;
 }

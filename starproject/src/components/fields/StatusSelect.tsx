@@ -4,7 +4,7 @@ import type { TaskStatus } from "@prisma/client";
 import { useState } from "react";
 
 import { updateField } from "@/lib/fieldUpdate";
-import { STATUS_BADGE } from "@/lib/tasks";
+import { STATUS_BADGE, STATUS_OPTION_STYLE } from "@/lib/tasks";
 
 const OPTS: [string, string][] = [
   ["backlog", "Backlog"],
@@ -34,7 +34,7 @@ export function StatusSelect({
       }`}
     >
       {OPTS.map(([val, l]) => (
-        <option key={val} value={val}>
+        <option key={val} value={val} style={STATUS_OPTION_STYLE[val]}>
           {l}
         </option>
       ))}
