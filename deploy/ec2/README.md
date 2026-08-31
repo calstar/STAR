@@ -1,8 +1,81 @@
-# STAR EC2 box — OpenProject + auth, one tunnel
+# STAR EC2 box — STARProject + auth, one tunnel
 
-Unified stack: OpenProject, auth, and cloudflared on one network. Reaches both
-apps by service name through the tunnel — no host ports, no A-records. This
-replaced the old auth-only stack (formerly `deploy/auth-ec2/`, now removed).
+This box now runs **STARProject** (the team task tracker) plus the central
+**auth** login service and cloudflared, on one network — reached by service name
+through the tunnel, no host ports. A **Caddy** gate fronts STARProject and applies
+the shared `forward_auth` (calls `auth:5000/verify`), so it's behind the same SSO
+as every other app. **OpenProject is retired** to the `legacy` compose profile
+(kept for rollback; its data stays on the external volumes + S3 backups).
+
+```
+Cloudflare edge (TLS) ─▶ cloudflared ─▶ auth:5000                         (login)
+                                      └▶ caddy:80 ─ forward_auth → auth:5000/verify
+                                                  └ reverse_proxy → starproject:3000 → starproject-db
+```
+
+## Switch to STARProject (retire OpenProject)
+
+Run on the box. **Never `docker compose down -v`** (it deletes volumes).
+
+```bash
+cd ~/STAR && git pull && cd deploy/ec2
+
+# 1. Add STARProject settings to .env (keep the existing auth/tunnel values):
+#      SCHEME=http
+#      BASE_DOMAIN=starberkeley.org
+#      STARPROJECT_DB_PASSWORD=<strong password>
+#      STARPROJECT_CRON_SECRET=<random string>
+#      STARPROJECT_APP_BASE_URL=https://project.starberkeley.org
+#      AWS_REGION=us-east-2            # (SES; instance role supplies creds)
+#      # STARPROJECT_SES_FROM=...      # optional, to enable outbound email
+nano .env
+
+# 2. Bring up the new stack (OpenProject no longer starts — it's legacy-profiled).
+#    Postgres + the app start; the app runs `prisma migrate deploy` on boot.
+docker compose pull
+docker compose up -d
+docker compose ps                      # caddy, starproject, starproject-db, auth, cloudflared
+docker compose logs -f starproject     # watch "migrate deploy" apply, then Ready
+```
+
+**Tunnel routes** (Cloudflare → this tunnel → Public Hostnames):
+- **Add** `project.starberkeley.org` → `http://caddy:80`
+- **Remove** `openproject.starberkeley.org` (retired)
+- `auth.starberkeley.org` → `http://auth:5000` (unchanged)
+
+**Verify:** open `https://project.starberkeley.org` → it bounces to
+`auth.starberkeley.org`, sign in with an `@berkeley.edu` account → STARProject
+loads. `curl -sI https://project.starberkeley.org/` returns `302 → auth…/login`
+when signed out. Create a task and reload — it persists (Postgres).
+
+**Rollback to OpenProject:** re-add the `openproject.*` tunnel route, set the
+OpenProject vars in `.env` (`OPENPROJECT_SECRET_KEY_BASE`, SES creds), then
+`docker compose --profile legacy up -d openproject`. Its data is intact on the
+external `openproject_pgdata` / `openproject_assets` volumes (+ S3 backups).
+
+## STARProject backups (S3)
+
+`starproject-backup.sh` `pg_dump`s the `starproject-db` Postgres to
+`s3://star-starproject-backups/db/<stamp>.dump` (DB-only — the app has no uploads
+volume). Auth is the instance IAM role. One-time AWS setup mirrors the OpenProject
+bucket (see "S3 backups" below): create a versioned private bucket
+`star-starproject-backups`, grant the instance role List/Get/Put (not Delete) on
+it, and add a lifecycle rule. Then install the timer:
+
+```bash
+sudo cp deploy/ec2/systemd/starproject-backup.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now starproject-backup.timer
+deploy/ec2/starproject-backup.sh backup     # test one now
+deploy/ec2/starproject-backup.sh list
+```
+
+---
+
+## Legacy: OpenProject cutover (historical)
+
+The sections below document the original OpenProject deployment and its backups.
+OpenProject is retired (see above); kept here for rollback + reference.
 
 ## Cutover (safe — no data loss)
 

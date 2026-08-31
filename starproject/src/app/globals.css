@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+/* Class-based dark mode: `dark:` variants apply when <html class="dark">. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Always reserve room for the vertical scrollbar so navigating between a page
+   that scrolls and one that doesn't (e.g. Activity) doesn't shift the header. */
+html {
+  scrollbar-gutter: stable;
+}
+
+/* Color Gantt bars by task status (matching the status badges) as one solid
+   color per bar. frappe-gantt's own rules (grey bar, purple progress, grey
+   hover) share our specificity, so !important is needed to win regardless of
+   stylesheet load order. The progress overlay is hidden so bars aren't two-tone. */
+.gantt .bar-wrapper.status-backlog .bar,
+.gantt .bar-wrapper.status-backlog:hover .bar {
+  fill: #94a3b8 !important;
+}
+.gantt .bar-wrapper.status-todo .bar,
+.gantt .bar-wrapper.status-todo:hover .bar {
+  fill: #3b82f6 !important;
+}
+.gantt .bar-wrapper.status-in_progress .bar,
+.gantt .bar-wrapper.status-in_progress:hover .bar {
+  fill: #f59e0b !important;
+}
+.gantt .bar-wrapper.status-done .bar,
+.gantt .bar-wrapper.status-done:hover .bar {
+  fill: #22c55e !important;
+}
+.gantt .bar-progress,
+.gantt .bar-wrapper:hover .bar-progress {
+  fill: transparent !important;
+}
+.gantt .bar-wrapper:hover .bar {
+  filter: brightness(0.94);
+}
+
+/* We open our own task modal on bar click, so hide frappe-gantt's popup. */
+.gantt-container .popup-wrapper,
+.popup-wrapper {
+  display: none !important;
+}
+
+/* Light-mode today marker (frappe's default is a pale fill); make it readable
+   and used across all views via our own marker. */
+.gantt .today-highlight {
+  fill: #fde68a;
+  opacity: 0.4;
+}
+
+/* frappe-gantt ships a light-only stylesheet; make it legible in dark mode. */
+.dark .gantt .grid-background {
+  fill: transparent;
+}
+.dark .gantt .grid-header {
+  fill: #1f1f1f;
+  stroke: #262626;
+}
+.dark .gantt .grid-row {
+  fill: #171717;
+}
+.dark .gantt .grid-row:nth-child(even) {
+  fill: #1f1f1f;
+}
+.dark .gantt .row-line {
+  stroke: #262626;
+}
+.dark .gantt .tick {
+  stroke: #3f3f46;
+}
+.dark .gantt .tick.thick {
+  stroke: #52525b;
+}
+.dark .gantt .today-highlight {
+  fill: #3f3f46;
+  opacity: 0.35;
+}
+.dark .gantt .lower-text,
+.dark .gantt .upper-text {
+  fill: #a3a3a3;
+}
+.dark .gantt .bar-label {
+  fill: #fff;
+}
+.dark .gantt .bar-label.big {
+  fill: #d4d4d4;
+}

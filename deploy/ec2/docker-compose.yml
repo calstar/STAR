@@ -1,30 +1,123 @@
-# STAR EC2 box — full stack: OpenProject + auth, behind one Cloudflare Tunnel.
+# STAR EC2 box — STARProject (the team task tracker) + the central auth login
+# service, behind one Cloudflare Tunnel. This REPLACES OpenProject, which is now
+# retired to the `legacy` compose profile (kept for rollback; see README.md).
 #
-# Replaced the old auth-only stack (formerly deploy/auth-ec2/, now removed).
-# Everything shares this compose's default network, so cloudflared reaches both
-# services by name — no published host ports, no direct A-record, OpenProject
-# and auth both tunnel-only.
+# Everything shares this compose's default network, so cloudflared and Caddy
+# reach services by name — no published host ports (tunnel-only).
 #
-#   browser ─▶ Cloudflare edge (TLS) ─▶ cloudflared ─▶ auth:5000
-#                                                    └▶ openproject:80
+#   browser ─▶ Cloudflare edge (TLS) ─▶ cloudflared ─▶ auth:5000          (login, unchanged)
+#                                                    └▶ caddy:80 ─ forward_auth → auth:5000/verify
+#                                                                 └ reverse_proxy → starproject:3000 → starproject-db
 #
-# Data: reuses OpenProject's EXISTING volumes (openproject_pgdata /
-# openproject_assets) as external, so the DB and uploads carry over. See
-# README.md for the safe cutover (back up → down old → up this → repoint tunnel).
+# OpenProject (legacy): reachable again only via `docker compose --profile legacy
+# up -d openproject`. Its data stays on the EXTERNAL volumes openproject_pgdata /
+# openproject_assets (untouched) plus the S3 backups. Never `down -v`.
 
 name: star-ec2
 
 services:
+  # ── Reverse proxy + auth gate (fronts STARProject) ───────────────────────
+  # Applies the shared forward_auth gate (calls the local auth:5000/verify) so a
+  # signed-in .starberkeley.org cookie is required. Tunnel-only: no host ports;
+  # cloudflared routes project.* → caddy:80. SCHEME=http (Cloudflare terminates
+  # TLS). auth.* stays tunnel-direct to auth:5000 (not fronted here).
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    # Mount the dir (not the single file) so a `git pull` that rewrites the
+    # Caddyfile to a new inode is still picked up by --watch. Same reasoning as
+    # the apps-machine caddy.
+    command: caddy run --config /etc/caddy/Caddyfile --adapter caddyfile --watch
+    environment:
+      SCHEME: ${SCHEME:-http}
+      BASE_DOMAIN: ${BASE_DOMAIN:-starberkeley.org}
+      AUTH_UPSTREAM: auth:5000
+    volumes:
+      - ./caddy:/etc/caddy:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - auth
+      - starproject
+
+  # ── STARProject (task tracker) ───────────────────────────────────────────
+  # Next.js standalone server + its own Postgres. Auth is Caddy's job
+  # (X-Auth-Email injected upstream), so no JWT here. The image runs
+  # `prisma migrate deploy` on startup (starproject/docker-entrypoint.sh), so
+  # there's no manual migration step. Pulled from GHCR — image-only, the box has
+  # no app source.
+  starproject:
+    image: ghcr.io/calstar/star-starproject:latest
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      DATABASE_URL: postgresql://${STARPROJECT_DB_USER:-starproject}:${STARPROJECT_DB_PASSWORD:-starproject}@starproject-db:5432/${STARPROJECT_DB_NAME:-starproject}?schema=public
+      APP_BASE_URL: ${STARPROJECT_APP_BASE_URL:-https://project.starberkeley.org}
+      # Email via SES: sends only when SES_FROM is set (else the app just logs).
+      # On EC2 the AWS SDK uses the instance IAM role, so no access keys here.
+      SES_FROM: ${STARPROJECT_SES_FROM:-}
+      CRON_SECRET: ${STARPROJECT_CRON_SECRET:-}
+      AWS_REGION: ${AWS_REGION:-us-east-2}
+    depends_on:
+      starproject-db:
+        condition: service_healthy
+
+  starproject-db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${STARPROJECT_DB_USER:-starproject}
+      POSTGRES_PASSWORD: ${STARPROJECT_DB_PASSWORD:-starproject}
+      POSTGRES_DB: ${STARPROJECT_DB_NAME:-starproject}
+    volumes:
+      - starproject_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${STARPROJECT_DB_USER:-starproject} -d ${STARPROJECT_DB_NAME:-starproject}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Nightly notification triggers: POST the app's internal cron routes (bypassing
+  # Caddy) with the shared secret. Optional — a host crontab is an equivalent.
+  starproject-cron:
+    image: alpine:3
+    restart: unless-stopped
+    depends_on:
+      - starproject
+    environment:
+      CRON_SECRET: ${STARPROJECT_CRON_SECRET:-}
+    command:
+      - /bin/sh
+      - -c
+      - |
+        apk add --no-cache curl >/dev/null
+        {
+          echo "0 8 * * * curl -fsS -X POST -H \"X-Cron-Secret: $$CRON_SECRET\" http://starproject:3000/api/cron/deadlines >/proc/1/fd/1 2>&1"
+          echo "0 7 * * * curl -fsS -X POST -H \"X-Cron-Secret: $$CRON_SECRET\" http://starproject:3000/api/cron/digest >/proc/1/fd/1 2>&1"
+          echo "*/15 * * * * curl -fsS -X POST -H \"X-Cron-Secret: $$CRON_SECRET\" http://starproject:3000/api/cron/email-batch >/proc/1/fd/1 2>&1"
+        } > /etc/crontabs/root
+        crond -f -l 8
+
+  # ── OpenProject (LEGACY — retired) ───────────────────────────────────────
+  # Replaced by STARProject. Kept only for rollback: the `legacy` profile means
+  # it does NOT start with a plain `docker compose up`. Bring it back with
+  # `docker compose --profile legacy up -d openproject` (and re-add its tunnel
+  # route). Data persists on the external volumes below + the S3 backups.
   openproject:
     image: openproject/openproject:15
+    profiles: ["legacy"]
     restart: always
     # No `ports:` — reached only through the tunnel. Add "80:80" back only if you
     # need host access during the cutover, then remove it.
     environment:
       OPENPROJECT_HOST__NAME: ${OPENPROJECT_HOST__NAME:-openproject.starberkeley.org}
       OPENPROJECT_HTTPS: "true"
-      # Reuse the EXISTING value from ~/openproject — do not regenerate.
-      OPENPROJECT_SECRET_KEY_BASE: ${OPENPROJECT_SECRET_KEY_BASE:?set in .env}
+      # Reuse the EXISTING value from ~/openproject — do not regenerate. Empty
+      # default so the default (STARProject) stack interpolates without it; set
+      # it in .env before reviving OpenProject via `--profile legacy`.
+      OPENPROJECT_SECRET_KEY_BASE: ${OPENPROJECT_SECRET_KEY_BASE:-}
 
       # ── Outbound email via Amazon SES (SMTP submission, port 587) ──────────
       # OpenProject just relays through SES; it is not a mail server itself.
@@ -35,8 +128,8 @@ services:
       OPENPROJECT_SMTP__PORT: "587"
       OPENPROJECT_SMTP__DOMAIN: ${OPENPROJECT_HOST__NAME:-openproject.starberkeley.org}
       OPENPROJECT_SMTP__AUTHENTICATION: login
-      OPENPROJECT_SMTP__USER__NAME: ${SES_SMTP_USERNAME:?set in .env}
-      OPENPROJECT_SMTP__PASSWORD: ${SES_SMTP_PASSWORD:?set in .env}
+      OPENPROJECT_SMTP__USER__NAME: ${SES_SMTP_USERNAME:-}
+      OPENPROJECT_SMTP__PASSWORD: ${SES_SMTP_PASSWORD:-}
       OPENPROJECT_SMTP__ENABLE__STARTTLS__AUTO: "true"
       OPENPROJECT_MAIL__FROM: ${OPENPROJECT_MAIL__FROM:-openproject@starberkeley.org}
     volumes:
@@ -71,11 +164,16 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       - auth
-      - openproject
+      - caddy
 
-# External so Compose attaches the data already on the box rather than creating
-# empty volumes under this project's name. These must already exist.
 volumes:
+  # STARProject's Postgres data — the live task-tracker DB. Back this up (see
+  # starproject-backup.sh + the systemd timer).
+  starproject_pg:
+  caddy_data:
+  caddy_config:
+  # LEGACY (OpenProject): external so Compose attaches the data already on the
+  # box rather than creating empty volumes. Kept for rollback — never delete.
   pgdata:
     external: true
     name: openproject_pgdata

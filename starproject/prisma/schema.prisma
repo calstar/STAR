@@ -1,0 +1,191 @@
+// STARProject schema — the flat task-tracker model. No per-project permissions:
+// any authenticated user sees and edits everything (filtering, not access
+// control, gives "my tasks" later). Blockers are display-only edges.
+
+generator client {
+  provider = "prisma-client-js"
+  // native = local dev; debian-openssl-3.0.x = the node:22-bookworm-slim runtime
+  // image. Prisma needs the matching query engine for wherever the client runs.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TaskStatus {
+  backlog
+  todo
+  in_progress
+  done
+}
+
+enum TaskPriority {
+  low
+  medium
+  high
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+
+  createdProjects Project[] @relation("ProjectCreatedBy")
+  createdTasks    Task[]    @relation("TaskCreatedBy")
+  assignedTasks   Task[]    @relation("TaskAssignee")
+  activities      Activity[] @relation("ActivityActor")
+  settings        UserSettings?
+  digestSubscriptions DigestSubscription[]
+  emailQueue      EmailQueueItem[]
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  color       String?
+  archived    Boolean  @default(false)
+  createdById String
+  createdBy   User     @relation("ProjectCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Optional parent for a subproject. Enforced to a single level (a subproject
+  // can't itself be a parent) in createProject.
+  parentId String?
+  parent   Project?  @relation("ProjectHierarchy", fields: [parentId], references: [id])
+  children Project[] @relation("ProjectHierarchy")
+
+  tasks      Task[]
+  digestSubs DigestSubscription[]
+}
+
+// A discipline/organizational group, a peer lens to Project. Purely a task tag
+// (no membership/roster) — filtering, not access control.
+model Subteam {
+  id        String   @id @default(cuid())
+  name      String
+  color     String?
+  createdAt DateTime @default(now())
+
+  tasks      Task[]
+  digestSubs DigestSubscription[]
+}
+
+// Per-user preferences (1:1 with User).
+model UserSettings {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id])
+  theme            String   @default("light") // light | dark
+  emailAssignments Boolean  @default(true)
+  emailDueSoon     Boolean  @default(true)
+  emailOverdue     Boolean  @default(true)
+  digestKinds      String[] @default([]) // activity kinds included in the nightly digest
+}
+
+// Queued transactional emails (currently task assignments), flushed as ONE email
+// per recipient every 15 minutes to conserve SES sends.
+model EmailQueueItem {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  kind      String // "assigned"
+  taskId    String?
+  taskTitle String
+  projectId String?
+  actorName String?
+  createdAt DateTime  @default(now())
+  sentAt    DateTime?
+
+  @@index([sentAt])
+}
+
+// A project/subteam a user follows for their nightly digest.
+model DigestSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  subteamId String?
+  subteam   Subteam? @relation(fields: [subteamId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Task {
+  id          String        @id @default(cuid())
+  projectId   String
+  project     Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  subteamId   String?
+  subteam     Subteam?      @relation(fields: [subteamId], references: [id])
+  title       String
+  description String?
+  status      TaskStatus    @default(backlog)
+  priority    TaskPriority?
+  assigneeId  String?
+  assignee    User?         @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  startDate   DateTime?
+  dueDate     DateTime?
+  boardOrder  Float         @default(0) // ordering within a kanban column (Phase 2)
+  createdById String
+  createdBy   User          @relation("TaskCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  blockedBy TaskBlocker[] @relation("BlockedTask") // tasks blocking THIS one
+  blocking  TaskBlocker[] @relation("BlockerTask") // tasks THIS one blocks
+  activities Activity[]
+
+  @@index([projectId, status])
+}
+
+// Display-only dependency edges: "task is blocked by blockedByTask". No cascade
+// scheduling — used to render a "blocked" badge (Phase 3) and Gantt arrows
+// (Phase 4).
+model TaskBlocker {
+  id            String   @id @default(cuid())
+  taskId        String
+  task          Task     @relation("BlockedTask", fields: [taskId], references: [id], onDelete: Cascade)
+  blockedById   String
+  blockedByTask Task     @relation("BlockerTask", fields: [blockedById], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+
+  @@unique([taskId, blockedById])
+}
+
+// Idempotency ledger for Phase 5 emails (assignment / due-soon / overdue), so
+// the deadline cron never double-sends.
+model NotifLog {
+  id     String   @id @default(cuid())
+  taskId String
+  userId String
+  kind   String
+  sentAt DateTime @default(now())
+
+  @@index([taskId, userId, kind])
+}
+
+// Append-only audit log rendered as the Activity feed. Values are stored as the
+// human-readable strings at the time of the change (immutable history).
+model Activity {
+  id        String   @id @default(cuid())
+  kind      String // created | deleted | updated | blocker_added | blocker_removed
+  field     String? // for kind=updated: assignee | status | priority | due | title | subteam
+  fromValue String?
+  toValue   String?
+  taskTitle String
+  taskId    String?
+  task      Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  projectId String?
+  actorId   String
+  actor     User     @relation("ActivityActor", fields: [actorId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

@@ -123,6 +123,10 @@
 	reverse_proxy daq-viewer:8420
 }
 
+# STARProject (the team task tracker) moved to the EC2 box — see
+# deploy/ec2/Caddyfile and deploy/ec2/docker-compose.yml. It is served at
+# project.starberkeley.org from there, not this apps machine.
+
 # ── DAQ Server ─────────────────────────────────────────────────────────────
 # Not containerised. The C++ bridge, elodin-db and the Node backend run
 # natively on the test-stand machine (daq-server/deploy/systemd), because they
