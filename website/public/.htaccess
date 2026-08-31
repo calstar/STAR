@@ -1,0 +1,24 @@
+# STAR website — Apache config for OCF (and any Apache static host).
+#
+# This is a single-page app: only index.html + assets exist on disk. Client-side
+# routes like /projects or /leads have no matching file, so we route every
+# request that isn't a real file/dir back to index.html and let React Router
+# render the right page. Without this, deep links and refreshes 404.
+
+Options -MultiViews
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # Served at the domain root. If this site lives under a subpath
+  # (e.g. /~star/), change this to "RewriteBase /~star/" and rebuild with a
+  # matching Vite `base` + Router `basename`.
+  RewriteBase /
+
+  # Real files and directories are served as-is (assets, images, etc.).
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+# Fallback if mod_rewrite is unavailable: unknown paths still boot the app.
+ErrorDocument 404 /index.html
