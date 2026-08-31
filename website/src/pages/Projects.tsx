@@ -1,13 +1,6 @@
 import PageHeader from '../components/PageHeader';
 import Reveal from '../components/Reveal';
 import { PROJECTS } from '../data/projects';
-import type { Project } from '../data/projects';
-
-const KIND_LABEL: Record<Project['kind'], string> = {
-  vehicle: 'Vehicle',
-  engine: 'Engine',
-  demonstrator: 'Demonstrator',
-};
 
 export default function Projects() {
   const current = PROJECTS.filter((p) => p.current);
@@ -18,7 +11,7 @@ export default function Projects() {
       <PageHeader
         eyebrow="Launch History"
         title={<>Ten years, <span className="ink-gradient">eighteen vehicles.</span></>}
-        lead="From our first high-powered flight in 2016 to a regeneratively cooled liquid engine today — every vehicle student-designed, built, and flown."
+        lead="From our first high-powered flight in 2016 to our liquid-fuel engines today, every vehicle student-designed, built, and flown."
       />
 
       {/* ── Currently building ───────────────────────────────────────────── */}
@@ -80,11 +73,8 @@ export default function Projects() {
 
                 <div className="timeline-cards">
                   <article className="card" style={{ padding: 'clamp(22px, 3vw, 30px)' }}>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                      <span className={`chip chip-${p.kind}`}>{KIND_LABEL[p.kind]}</span>
-                      <span className="mono" style={{ color: 'var(--text-faint)', fontSize: 12.5 }}>{p.era}</span>
-                    </div>
-                    <h3 style={{ fontSize: 'clamp(22px, 3vw, 28px)', marginTop: 16 }}>{p.name}</h3>
+                    <span className="mono" style={{ color: 'var(--text-faint)', fontSize: 12.5 }}>{p.era}</span>
+                    <h3 style={{ fontSize: 'clamp(22px, 3vw, 28px)', marginTop: 12 }}>{p.name}</h3>
                     <div style={{ color: 'var(--gold-soft)', fontFamily: 'var(--font-display)', fontSize: 14.5, marginTop: 4 }}>{p.tagline}</div>
                     <p style={{ color: 'var(--text-dim)', marginTop: 14, fontSize: 14.5, lineHeight: 1.6 }}>{p.description}</p>
                     {p.stat && (

@@ -26,7 +26,7 @@ export default function Footer() {
           <div>
             <h2 style={{ fontSize: 'clamp(24px, 3.5vw, 34px)' }}>Build rockets with us.</h2>
             <p style={{ color: 'var(--text-dim)', margin: '10px 0 0', maxWidth: '46ch' }}>
-              No experience required — we teach you everything. Recruitment opens every semester.
+              No experience required, we teach you everything. Recruitment opens every semester.
             </p>
           </div>
           <Link to="/join" className="btn btn-primary" style={{ fontSize: 16 }}>

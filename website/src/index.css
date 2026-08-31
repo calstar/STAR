@@ -141,8 +141,6 @@ a { color: inherit; text-decoration: none; }
   transition: transform 0.18s ease, box-shadow 0.25s ease, background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
   white-space: nowrap;
 }
-.btn:hover { transform: translateY(-2px); }
-.btn:active { transform: translateY(0); }
 
 .btn-primary {
   color: #1a1205;
@@ -169,9 +167,7 @@ a { color: inherit; text-decoration: none; }
   transition: transform 0.28s cubic-bezier(0.2,0.7,0.2,1), border-color 0.28s ease, box-shadow 0.28s ease;
 }
 .card:hover {
-  transform: translateY(-5px);
   border-color: var(--border-strong);
-  box-shadow: 0 24px 60px rgba(0,0,0,0.5);
 }
 
 .chip {
@@ -197,8 +193,8 @@ a { color: inherit; text-decoration: none; }
 /* ── Scroll reveal ────────────────────────────────────────────────────── */
 .reveal {
   opacity: 0;
-  transform: translateY(28px);
-  transition: opacity 0.7s cubic-bezier(0.2,0.7,0.2,1), transform 0.7s cubic-bezier(0.2,0.7,0.2,1);
+  transform: translateY(8px);
+  transition: opacity 0.5s ease, transform 0.5s ease;
   will-change: opacity, transform;
 }
 .reveal.is-visible { opacity: 1; transform: none; }
@@ -252,7 +248,7 @@ a { color: inherit; text-decoration: none; }
   border: 1px solid var(--border); color: var(--text-dim);
   transition: color .2s ease, border-color .2s ease, transform .2s ease, background .2s ease;
 }
-.social-btn:hover { color: var(--gold); border-color: var(--gold); transform: translateY(-2px); background: rgba(255,182,72,0.06); }
+.social-btn:hover { color: var(--gold); border-color: var(--gold); background: rgba(255,182,72,0.06); }
 
 /* ── Hero intro fade ──────────────────────────────────────────────────── */
 @keyframes fade-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
@@ -260,8 +256,6 @@ a { color: inherit; text-decoration: none; }
 
 /* ── Subteam card image zoom ──────────────────────────────────────────── */
 .subteam-card { color: inherit; }
-.subteam-img { transition: transform .5s cubic-bezier(0.2,0.7,0.2,1); }
-.subteam-card:hover .subteam-img { transform: scale(1.06); }
 
 /* ── Lead avatar ──────────────────────────────────────────────────────── */
 .avatar {
@@ -285,18 +279,14 @@ a { color: inherit; text-decoration: none; }
 .sponsor-logo {
   display: block; width: auto; max-width: 100%; max-height: 66px;
   background: #fff; border-radius: 6px;
-  transition: transform .25s ease;
 }
-.sponsor-tile:hover .sponsor-logo { transform: scale(1.05); }
 .sponsor-tile .sponsor-name {
   font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.05em;
   color: var(--text-faint); opacity: 0; transition: opacity .2s ease; text-align: center;
 }
 .sponsor-tile:hover {
-  transform: translateY(-4px);
   border-color: var(--border-strong);
   background: #1c1d22;
-  box-shadow: 0 18px 40px rgba(0,0,0,0.45);
 }
 .sponsor-tile:hover .sponsor-name { opacity: 0.85; }
 
@@ -329,9 +319,7 @@ a { color: inherit; text-decoration: none; }
   box-shadow: 0 0 0 5px var(--bg);
   transition: border-color .3s ease, box-shadow .3s ease;
 }
-.timeline-row.is-visible .timeline-dot[data-kind="vehicle"]      { border-color: var(--accent);   box-shadow: 0 0 0 5px var(--bg), 0 0 14px rgba(91,140,255,0.7); }
-.timeline-row.is-visible .timeline-dot[data-kind="engine"]       { border-color: var(--flame);    box-shadow: 0 0 0 5px var(--bg), 0 0 14px rgba(255,122,60,0.7); }
-.timeline-row.is-visible .timeline-dot[data-kind="demonstrator"] { border-color: var(--accent-2); box-shadow: 0 0 0 5px var(--bg), 0 0 14px rgba(143,123,255,0.7); }
+.timeline-row.is-visible .timeline-dot { border-color: var(--gold); box-shadow: 0 0 0 5px var(--bg); }
 /* year pill masks the line behind it */
 .timeline-year {
   margin-top: 10px;

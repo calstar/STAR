@@ -13,7 +13,7 @@ const STEPS = [
   },
   {
     n: '02',
-    title: 'Apply — no experience needed',
+    title: 'Apply, no experience needed',
     body: "What makes STAR special is that we're education-focused. New members need zero prior experience; we teach you everything you need to know.",
   },
   {
@@ -24,7 +24,7 @@ const STEPS = [
   {
     n: '04',
     title: 'Pick your subteam & fly',
-    body: 'Join one (or more) of our subteams and start contributing to real rockets — from injectors to avionics to recovery.',
+    body: 'Join one (or more) of our subteams and start contributing to real rockets, from injectors to avionics to recovery.',
   },
 ];
 
@@ -34,7 +34,7 @@ export default function Join() {
       <PageHeader
         eyebrow="Join STAR"
         title={<>Build rockets. <span className="ink-gradient">Learn everything.</span></>}
-        lead="All majors, all backgrounds, no experience required. We welcome anyone passionate about aerospace — and we'll teach you the rest."
+        lead="All majors, all backgrounds, no experience required. We welcome anyone passionate about aerospace, and we'll teach you the rest."
       >
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 30 }}>
           <a href={SITE.applyUrl} className="btn btn-primary" style={{ fontSize: 16 }}>
