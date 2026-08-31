@@ -22,7 +22,6 @@ from __future__ import annotations
 import json
 import os
 import secrets
-import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -130,9 +129,6 @@ class LocalBackend:
             return None
         return _read_json(self._sub(user, diagram_id, "releases") / f"{safe}.json")
 
-    def delete_diagram(self, user: str, diagram_id: str) -> None:
-        shutil.rmtree(self._diagram_dir(user, diagram_id), ignore_errors=True)
-
 
 # ── S3 backend ───────────────────────────────────────────────────────────────
 
@@ -216,17 +212,6 @@ class S3Backend:
 
     def get_release(self, user: str, diagram_id: str, label: str) -> Diagram | None:
         return self._get(f"{self._releases_prefix(user, diagram_id)}{label}.json")
-
-    def delete_diagram(self, user: str, diagram_id: str) -> None:
-        # Best-effort: remove every version of every object under the diagram.
-        prefix = f"{self.prefix}/{user}/{diagram_id}/"
-        resp = self._s3.list_object_versions(Bucket=self.bucket, Prefix=prefix)
-        objects = [
-            {"Key": v["Key"], "VersionId": v["VersionId"]}
-            for v in resp.get("Versions", []) + resp.get("DeleteMarkers", [])
-        ]
-        for i in range(0, len(objects), 1000):
-            self._s3.delete_objects(Bucket=self.bucket, Delete={"Objects": objects[i:i + 1000]})
 
 
 # ── selection ────────────────────────────────────────────────────────────────

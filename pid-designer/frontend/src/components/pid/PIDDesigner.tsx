@@ -442,20 +442,6 @@ export function PIDDesigner() {
     setDiagrams(ds => ds.map(d => d.id === id ? meta : d));
   }, []);
 
-  const deleteDiagram = useCallback(async (id: string) => {
-    const res = await fetch(`/api/pid/diagrams/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    if (!res.ok) return;
-    setDiagrams(ds => {
-      const next = ds.filter(d => d.id !== id);
-      if (activeId === id) {
-        const fallback = next[0]?.id ?? null;
-        setActiveId(fallback);
-        if (fallback) localStorage.setItem(ACTIVE_KEY, fallback); else localStorage.removeItem(ACTIVE_KEY);
-      }
-      return next;
-    });
-  }, [activeId]);
-
   return (
     <div className="flex flex-col h-[calc(100vh-56px)] min-h-[600px] rounded-xl overflow-hidden border border-[#1e293b]">
       <DiagramBar
@@ -464,7 +450,6 @@ export function PIDDesigner() {
         onSelect={selectDiagram}
         onCreate={createDiagram}
         onRename={renameDiagram}
-        onDelete={deleteDiagram}
       />
       <PIDToolbar
         rfInstance={rfInstance}

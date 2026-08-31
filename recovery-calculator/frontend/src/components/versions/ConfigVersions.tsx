@@ -222,24 +222,6 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
     })
   }
 
-  const remove = () => {
-    if (!active) return
-    setDialog({
-      kind: 'confirm',
-      title: `Delete "${active.name}"?`,
-      message: 'This removes the design, its microversions, and its releases. This cannot be undone.',
-      confirmLabel: 'Delete',
-      danger: true,
-      onConfirm: async () => {
-        await api.deleteDocument(active.id)
-        const rest = documents.filter(d => d.id !== active.id)
-        setDocuments(rest)
-        if (rest.length > 0) select(rest[0].id)
-        else { setActiveId(null); loadedId.current = null; localStorage.removeItem(ACTIVE_KEY) }
-      },
-    })
-  }
-
   // ── File save / load ──────────────────────────────────────────────────────
   // The server (S3 in prod, local disk in dev) is the home for a design; these
   // are the escape hatch: hand a design to someone as a file, or bring one in.
@@ -351,7 +333,6 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
         </select>
         <button onClick={create} className={btn} title="New design">+ New</button>
         <button onClick={rename} disabled={!active} className={btn} title="Rename">Rename</button>
-        <button onClick={remove} disabled={!active} className={btn} title="Delete design">Delete</button>
 
         <div className="mx-1 h-4 w-px bg-[var(--color-border)]" />
 

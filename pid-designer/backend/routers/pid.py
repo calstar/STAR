@@ -14,6 +14,11 @@ diagrams. Three tiers of durability:
 Version history lives in :mod:`backend.storage` (S3 in prod, filesystem in dev).
 This module owns the working copy and the per-user diagram index only. Auth is
 Caddy's job; a missing header just means the ``local`` user (never a rejection).
+
+There is deliberately no delete endpoint: a diagram is editable by more than
+one person, so a delete button is one misclick away from destroying a group
+project with only a server-admin restore behind it. Cleanup is an admin
+operation on the volume.
 """
 
 from __future__ import annotations
@@ -192,18 +197,6 @@ async def rename_diagram(request: Request, diagram_id: str, payload: NamePayload
             _save_index(user, index)
             return d
     raise HTTPException(status_code=404, detail="Unknown diagram")
-
-
-@router.delete("/diagrams/{diagram_id}")
-async def delete_diagram(request: Request, diagram_id: str):
-    """Remove a diagram: index entry, working copy, and its version history."""
-    user = userdata.current_user(request)
-    diagram_id = _require_id(diagram_id)
-    index = [d for d in _load_index(user) if d["id"] != diagram_id]
-    _save_index(user, index)
-    storage.backend.delete_diagram(user, diagram_id)
-    _last_micro.pop((user, diagram_id), None)
-    return {"ok": True}
 
 
 # ── working copy: load + autosave ────────────────────────────────────────────

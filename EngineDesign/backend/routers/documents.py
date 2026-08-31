@@ -15,6 +15,11 @@ Ported from pid-designer/backend/routers/pid.py. A pid *diagram* is an engine
 Version history lives in :mod:`backend.storage`. This module owns the working
 copy and the per-user document index only. Auth is Caddy's job; a missing header
 just means the ``local`` user (never a rejection). See backend/userdata.py.
+
+There is deliberately no delete endpoint: a design is editable by more than
+one person, so a delete button is one misclick away from destroying a group
+project with only a server-admin restore behind it. Cleanup is an admin
+operation on the volume.
 """
 
 from __future__ import annotations
@@ -196,18 +201,6 @@ async def rename_document(request: Request, doc_id: str, payload: NamePayload):
             _save_index(user, index)
             return d
     raise HTTPException(status_code=404, detail="Unknown document")
-
-
-@router.delete("/{doc_id}")
-async def delete_document(request: Request, doc_id: str):
-    """Remove a design: index entry, working copy, and its version history."""
-    user = userdata.current_user(request)
-    doc_id = _require_id(doc_id)
-    index = [d for d in _load_index(user) if d["id"] != doc_id]
-    _save_index(user, index)
-    storage.backend.delete_doc(user, doc_id)
-    _last_micro.pop((user, doc_id), None)
-    return {"ok": True}
 
 
 # ── working copy: load + autosave ────────────────────────────────────────────

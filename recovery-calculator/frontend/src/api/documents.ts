@@ -57,9 +57,6 @@ export const renameDocument = (id: string, name: string) =>
     body: JSON.stringify({ name }),
   }).then(r => json<DocMeta>(r))
 
-export const deleteDocument = (id: string) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(r => json(r))
-
 export const loadDocument = (id: string) =>
   fetch(`${BASE}/${encodeURIComponent(id)}/load`).then(r => json<{ config: UiConfig | Record<string, never> }>(r))
 

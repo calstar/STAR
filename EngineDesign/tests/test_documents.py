@@ -61,12 +61,20 @@ def test_create_lists_and_isolates_per_user():
     assert a_id not in [x["id"] for x in b_list]
 
 
-def test_rename_and_delete():
+def test_rename():
     doc_id = _create(A)
     renamed = _run(d.rename_document(_request(A), doc_id, d.NamePayload(name="Renamed")))
     assert renamed["name"] == "Renamed"
-    assert _run(d.delete_document(_request(A), doc_id)) == {"ok": True}
-    assert _run(d.list_documents(_request(A))) == []
+    assert [x["name"] for x in _run(d.list_documents(_request(A)))] == ["Renamed"]
+
+
+def test_delete_is_gone():
+    """Designs are never deleted -- shared designs made it too easy to destroy
+    someone else's work. Cleanup is an admin operation on the volume."""
+    assert not hasattr(d, "delete_document")
+    assert not any(
+        "DELETE" in getattr(r, "methods", set()) for r in d.router.routes
+    )
 
 
 # ── working copy + microversions ─────────────────────────────────────────────

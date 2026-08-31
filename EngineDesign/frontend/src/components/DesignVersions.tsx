@@ -12,7 +12,7 @@
  * apply through POST /api/config/load so the session (and thus every tab) sees
  * the restored design.
  *
- * Every dialog here (new/rename/delete, restore confirmations, the file-load
+ * Every dialog here (new/rename, restore confirmations, the file-load
  * error, and history) is an in-app centred modal styled like the rest of the
  * app -- never a browser prompt/confirm/alert, which cannot be themed.
  */
@@ -309,28 +309,6 @@ export function DesignVersions({ onRestore, inline = false }: Props) {
     });
   };
 
-  const remove = () => {
-    if (!active) return;
-    setDialog({
-      kind: 'confirm',
-      title: `Delete "${active.name}"?`,
-      message: 'This removes the design, its microversions, and its releases. This cannot be undone.',
-      confirmLabel: 'Delete',
-      danger: true,
-      onConfirm: async () => {
-        await api.deleteDocument(active.id);
-        const rest = documents.filter((d) => d.id !== active.id);
-        setDocuments(rest);
-        if (rest.length > 0) select(rest[0].id);
-        else {
-          setActiveId(null);
-          loadedId.current = null;
-          localStorage.removeItem(ACTIVE_KEY);
-        }
-      },
-    });
-  };
-
   // ── File save / load ──────────────────────────────────────────────────────
   // The server is the home for a design; these are the escape hatch: hand a
   // design to someone as a file, or bring one in. A file holds the config, the
@@ -478,7 +456,6 @@ export function DesignVersions({ onRestore, inline = false }: Props) {
         </select>
         <button onClick={create} className={btn} title="New design">+ New</button>
         <button onClick={rename} disabled={!active} className={btn} title="Rename">Rename</button>
-        <button onClick={remove} disabled={!active} className={btn} title="Delete design">Delete</button>
 
         <div className="mx-1 h-4 w-px bg-[var(--color-border)]" />
 
