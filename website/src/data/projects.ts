@@ -52,9 +52,11 @@ export const PROJECTS: Project[] = [
     year: 2026,
     era: 'May 2026',
     kind: 'vehicle',
+    stat: '20,000 ft',
+    statLabel: '~Mach 1.6',
     image: '/img/projects/gojira.jpeg',
     description:
-      'Gojira is STAR’s most recent flight vehicle, launched in May 2026. (Full write-up coming soon.)',
+      'Our high-performance solid rocket, Gojira, was designed to reach 20,000 feet and speeds of approximately Mach 1.6. The vehicle served as an important testbed for STAR’s recovery systems, flying our first-ever reusable aluminum high-altitude black powder recovery charges. Gojira allowed us to validate this new deployment hardware under demanding flight conditions while advancing our experience with high-altitude, supersonic vehicle design and recovery.',
   },
   {
     id: 'le3',
