@@ -62,3 +62,47 @@ def test_invalid_name_rejected():
 
 def test_traversal_slug_reads_nothing():
     assert userdata.read_config("u@x.edu", "../../../etc/passwd") is None
+
+
+# ── cross-user helpers (added for design sharing) ────────────────────────────
+
+
+def test_slug_user_matches_current_user_exactly():
+    """An ?owner= param and the injected header must normalize identically, or
+    an ownership check hinges on two slightly different transforms."""
+    for raw in ["Alice@Berkeley.EDU", "alice@berkeley.edu", "  Alice@Berkeley.EDU  "]:
+        assert userdata.slug_user(raw) == userdata.current_user(_Req({"X-Auth-Email": raw}))
+
+
+def test_slug_user_cannot_escape_the_root():
+    for raw in ["../..", "a/b", ".", "..", ""]:
+        slug = userdata.slug_user(raw)
+        assert "/" not in slug and slug not in ("", ".", "..")
+
+
+def test_user_dir_create_false_does_not_conjure_a_tree(tmp_path):
+    """The cross-user browse inspects every sibling folder; if inspection
+    created them, one listing would invent a directory per user it looked at."""
+    userdata.user_dir("ghost@x.edu", create=False)
+    assert list(tmp_path.iterdir()) == []
+
+    userdata.user_dir("real@x.edu")
+    assert (tmp_path / "real@x.edu" / userdata.APP).is_dir()
+
+
+def test_all_users_lists_only_people_with_data_for_this_app(tmp_path):
+    assert userdata.all_users() == []
+
+    userdata.user_dir("alice@x.edu")
+    userdata.user_dir("bob@x.edu")
+    userdata.user_dir("carol@x.edu", app="someotherapp")
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / "stray-file").write_text("")
+
+    assert userdata.all_users() == ["alice@x.edu", "bob@x.edu"]
+    assert userdata.all_users(app="someotherapp") == ["carol@x.edu"]
+
+
+def test_all_users_survives_a_missing_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("USERDATA_DIR", str(tmp_path / "not-created-yet"))
+    assert userdata.all_users() == []

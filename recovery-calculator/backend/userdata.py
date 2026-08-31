@@ -11,8 +11,10 @@ Layout, under ``USERDATA_DIR`` (prod: a mounted volume; dev: ``<subproject>/.use
     <user>/<app>/units.json          -- app-specific state (recovery unit prefs)
     <user>/<app>/configs/<slug>.json -- named config blobs {name, savedAt, config}
 
-so a future "browse another user's configs read-only, then copy" is just listing
-sibling ``<user>/`` folders.
+Designs are shared across users (see ``routers/documents.py``): every design
+tool mounts one volume, so "list another user's designs, then copy one" is just
+reading sibling ``<user>/`` folders -- which is what this layout was chosen for.
+Nothing here gates access; that decision lives in the router.
 """
 
 from __future__ import annotations
@@ -60,11 +62,46 @@ def current_user(request: Request) -> str:
     return _sanitize(request.headers.get("X-Auth-Email", ""), fallback=_DEV_USER)
 
 
-def user_dir(user: str, app: str = APP) -> Path:
-    """``<root>/<user>/<app>``, created on demand. Root is not assumed to exist."""
+def user_dir(user: str, app: str = APP, *, create: bool = True) -> Path:
+    """``<root>/<user>/<app>``, created on demand. Root is not assumed to exist.
+
+    Pass ``create=False`` when merely *inspecting* another user's tree (the
+    cross-user browse walks every sibling folder, and must not conjure an empty
+    directory for each one it looks at).
+    """
     d = _root() / _sanitize(user, fallback=_DEV_USER) / _sanitize(app, fallback=app)
-    d.mkdir(parents=True, exist_ok=True)
+    if create:
+        d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def slug_user(email: str) -> str:
+    """Normalize an email into the directory segment that identifies its owner.
+
+    Exactly the transform :func:`current_user` applies to the header, so an
+    ``?owner=`` query param and the injected identity compare without any
+    special-casing -- which is what keeps an ownership check from hinging on two
+    slightly different normalizations.
+    """
+    return _sanitize(email, fallback=_DEV_USER)
+
+
+def all_users(app: str = APP) -> list[str]:
+    """Every user slug that has data for ``app``, sorted. Never creates anything.
+
+    All the design tools mount one shared volume, so the root holds the whole
+    team; requiring a ``<user>/<app>`` subdirectory narrows it to people who have
+    actually used *this* app.
+    """
+    root = _root()
+    if not root.is_dir():
+        return []
+    seg = _sanitize(app, fallback=app)
+    return sorted(
+        p.name
+        for p in root.iterdir()
+        if p.is_dir() and not p.name.startswith(".") and (p / seg).is_dir()
+    )
 
 
 def slugify(name: str) -> str:
