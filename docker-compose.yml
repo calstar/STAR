@@ -152,8 +152,10 @@ services:
   engine-design-frontend:
     image: ghcr.io/calstar/star-engine-design-frontend:latest
     build:
-      context: ./EngineDesign/frontend
-      dockerfile: Dockerfile
+      # Repo root, not the subproject: the app compiles lib/stardesign-ui,
+      # the design-tool UI shared by all three frontends.
+      context: .
+      dockerfile: EngineDesign/frontend/Dockerfile
     restart: unless-stopped
 
   # ── P&ID Designer ────────────────────────────────────────────────────────
@@ -194,8 +196,10 @@ services:
   pid-designer-frontend:
     image: ghcr.io/calstar/star-pid-designer-frontend:latest
     build:
-      context: ./pid-designer/frontend
-      dockerfile: Dockerfile
+      # Repo root, not the subproject: the app compiles lib/stardesign-ui,
+      # the design-tool UI shared by all three frontends.
+      context: .
+      dockerfile: pid-designer/frontend/Dockerfile
     restart: unless-stopped
 
   # ── Recovery Calculator ──────────────────────────────────────────────────
@@ -235,8 +239,10 @@ services:
   recovery-calculator-frontend:
     image: ghcr.io/calstar/star-recovery-calculator-frontend:latest
     build:
-      context: ./recovery-calculator/frontend
-      dockerfile: Dockerfile
+      # Repo root, not the subproject: the app compiles lib/stardesign-ui,
+      # the design-tool UI shared by all three frontends.
+      context: .
+      dockerfile: recovery-calculator/frontend/Dockerfile
     restart: unless-stopped
 
   # ── Onshape CM Viewer ────────────────────────────────────────────────────

@@ -27,9 +27,9 @@ import type { ReactNode } from 'react';
 import { getConfig, loadConfigJson, type EngineConfig } from '../api/client';
 import * as api from '../api/documents';
 import type { DocMeta, DocRef, MicroVersion, ReleaseVersion } from '../api/documents';
-import { keyOf, refOf } from '../api/documents';
+import { designApi, keyOf, refOf } from '../api/documents';
 import { btn, dangerBtn, ghostBtn, primaryBtn, relativeTime } from '../lib/ui';
-import { DesignChangeModal } from './DesignChangeModal';
+import { ChangeModal } from '@stardesign-ui';
 import { Modal } from './ui';
 
 // v2 because the remembered design is now (owner, id): a shared design is not
@@ -432,7 +432,7 @@ export function DesignVersions({ onRestore, inline = false }: Props) {
       onConfirm: async () => {
         setRestoring(v.versionId);
         try {
-          const { config } = await api.getVersion(activeRef, v.versionId);
+          const config = await api.getVersion(activeRef, v.versionId);
           await apply(config);
           setShowHistory(false);
         } finally {
@@ -452,7 +452,7 @@ export function DesignVersions({ onRestore, inline = false }: Props) {
       onConfirm: async () => {
         setRestoring(`rel:${r.label}`);
         try {
-          const { config } = await api.getRelease(activeRef, r.label);
+          const config = await api.getRelease(activeRef, r.label);
           await apply(config);
           setShowHistory(false);
         } finally {
@@ -528,8 +528,10 @@ export function DesignVersions({ onRestore, inline = false }: Props) {
       </div>
 
       {showChange && (
-        <DesignChangeModal
+        <ChangeModal
           open={showChange}
+          api={designApi}
+          noun="design"
           onClose={() => setShowChange(false)}
           documents={documents}
           activeKey={activeKey}

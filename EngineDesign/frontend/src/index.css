@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Tailwind v4 only scans files it can reach from this project's root, and the
+   shared design-tool components live outside it. Without this they compile and
+   type-check but render unstyled -- silently, with no build error. */
+@source "../../../lib/stardesign-ui/src";
+
 /* Custom CSS variables for the dark engineering theme */
 :root {
   --color-bg-primary: #0a0a0f;

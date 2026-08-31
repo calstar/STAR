@@ -15,10 +15,12 @@ landing
 docs
 scripts/setup-test
 
-# lib/ is excluded wholesale EXCEPT the shared design core, which every
-# design-tool API image installs. The negation must come after the exclusion.
+# lib/ is excluded wholesale EXCEPT the two shared cores every design-tool
+# image builds on -- the Python one the APIs install, and the TypeScript one the
+# frontends compile. The negations must come after the exclusion.
 lib
 !lib/stardesign
+!lib/stardesign-ui
 
 # recovery-calculator and pid-designer now build from the repo root too, so
 # their sources have to reach the context -- but only their own image copies

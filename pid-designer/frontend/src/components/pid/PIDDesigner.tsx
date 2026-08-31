@@ -21,11 +21,11 @@ import '@xyflow/react/dist/style.css';
 import { ComponentPalette } from './ComponentPalette';
 import { PIDToolbar } from './PIDToolbar';
 import { DiagramBar } from './DiagramBar';
-import { DiagramChangeModal } from './DiagramChangeModal';
+import { ChangeModal } from '@stardesign-ui';
 import { Modal } from '../ui';
 import { primaryBtn } from '../../lib/ui';
 import * as api from '../../api/diagrams';
-import { keyOf, refOf } from '../../api/diagrams';
+import { designApi, keyOf, refOf } from '../../api/diagrams';
 import type { DiagramMeta, DocRef, MicroVersion, ReleaseVersion, Snapshot } from '../../api/diagrams';
 import { nodeTypes } from './nodes';
 import { BranchableEdge } from './BranchableEdge';
@@ -501,8 +501,10 @@ export function PIDDesigner() {
       />
 
       {showChange && (
-        <DiagramChangeModal
+        <ChangeModal
           open={showChange}
+          api={designApi}
+          noun="diagram"
           onClose={() => setShowChange(false)}
           documents={diagrams}
           activeKey={activeKey}
