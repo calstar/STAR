@@ -162,8 +162,10 @@ services:
   pid-designer-api:
     image: ghcr.io/calstar/star-pid-designer-api:latest
     build:
-      context: ./pid-designer
-      dockerfile: Dockerfile.api
+      # Repo root, not the subproject: the backend is built on lib/stardesign,
+      # the design core shared by all three design tools.
+      context: .
+      dockerfile: pid-designer/Dockerfile.api
     restart: unless-stopped
     environment:
       # Per-user working copies (autosave target) live on this volume, keyed by
@@ -202,8 +204,10 @@ services:
   recovery-calculator-api:
     image: ghcr.io/calstar/star-recovery-calculator-api:latest
     build:
-      context: ./recovery-calculator
-      dockerfile: Dockerfile.api
+      # Repo root, not the subproject: the backend is built on lib/stardesign,
+      # the design core shared by all three design tools.
+      context: .
+      dockerfile: recovery-calculator/Dockerfile.api
     restart: unless-stopped
     environment:
       # Per-user units + saved configs + working copies live here (a mounted

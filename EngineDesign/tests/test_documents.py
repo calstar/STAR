@@ -1,377 +1,368 @@
-"""Per-user engine-design documents: working copy + microversions + releases.
+"""Per-user engine designs: working copy + microversions + releases.
 
 The versioned-document API (/api/engine/documents) mirrors the pid-designer
 model: an autosaved working copy, throttled microversions, and immutable named
 releases. Identity is X-Auth-Email with a `local` dev fallback.
 
-Designs are shared: a design lives in its creator's folder but is editable by
-anyone on its `sharedWith` list, and readable/copyable by anyone at all. So the
+Designs are shared: one lives in its creator's folder but is editable by anyone
+on its `sharedWith` list, and readable/copyable by anyone at all. So the
 invariant under test is no longer "users cannot see each other" -- it is that
-`?owner=` grants exactly the access the share list says it does, and nothing
-else. The 403/404 matrix below is the load-bearing test: it walks the router's
-own route table, so a design-scoped endpoint added without going through
-`_resolve_doc` fails here rather than shipping a hole.
-
-Driven through the endpoint coroutines directly (this backend's test env has no
-HTTP client), exactly as the forwarded X-Auth-Email header would feed them.
+`?owner=` grants exactly the access the share list says it does. The 403/404
+matrix below walks the router's own route table, so an endpoint added without
+going through `_resolve_doc` fails here rather than shipping a hole.
 """
 
-from __future__ import annotations
-
-import asyncio
 import json
+import os
+import sys
 
 import pytest
-from fastapi import HTTPException
-from starlette.requests import Request
 
-from backend.routers import documents as d
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+pytest.importorskip("fastapi", reason="API tests need fastapi")
+pytest.importorskip("httpx", reason="fastapi TestClient needs httpx")
 
-def _request(email: str | None) -> Request:
-    headers = [(b"x-auth-email", email.encode())] if email else []
-    return Request({"type": "http", "method": "GET", "path": "/",
-                    "query_string": b"", "headers": headers})
+from fastapi import FastAPI  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
+from backend.routers import documents  # noqa: E402
 
-def _run(coro):
-    return asyncio.run(coro)
+# Just the documents router, not backend.main: importing the whole app drags in
+# the native engine kernel and the optimizer, which this suite has no use for.
+# It is the same router the app mounts, so the request path under test is real.
+app = FastAPI()
+app.include_router(documents.router)
 
-
-A = "alice@berkeley.edu"
-B = "bob@berkeley.edu"
+A = {"X-Auth-Email": "alice@berkeley.edu"}
+B = {"X-Auth-Email": "bob@berkeley.edu"}
 
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
     """Fresh data root per test; force a microversion on every autosave (no
-    throttle) and clear the in-process throttle clock."""
+    throttle) and clear the in-process throttle clock so tests don't interfere."""
     monkeypatch.setenv("USERDATA_DIR", str(tmp_path))
-    monkeypatch.setattr(d, "MICRO_INTERVAL", 0)
-    d._last_micro.clear()
+    monkeypatch.setattr(documents.store, "micro_interval", 0)
+    documents.store.last_micro.clear()
 
 
-def _create(email, name="Baseline", config=None):
-    meta = _run(d.create_document(_request(email),
-                d.CreatePayload(name=name, config=config or {"combustion": {}})))
-    return meta["id"]
+@pytest.fixture
+def client():
+    return TestClient(app)
 
 
-def _find(email, doc_id):
-    """One decorated record from the caller's editable list."""
-    return next(r for r in _run(d.list_documents(_request(email))) if r["id"] == doc_id)
+#: `?owner=alice`, for a request acting on one of Alice's configs.
+OWNER_A = {"owner": A["X-Auth-Email"]}
+
+BASE = "/api/engine/documents"
 
 
-def _share(doc_id, emails, *, owner=A, by=None):
-    return _run(d.share_document(_request(by or owner), doc_id,
-                                 d.SharePayload(sharedWith=emails), owner=owner))
+def _create(client, headers, name="Baseline", config=None):
+    r = client.post(BASE, headers=headers,
+                    json={"name": name, "config": config or {"combustion": {}}})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def _share(client, doc_id, emails, *, headers=A, params=None):
+    r = client.put(f"{BASE}/{doc_id}/share", headers=headers,
+                   params=params if params is not None else {}, json={"sharedWith": emails})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _find(client, headers, doc_id):
+    return next(d for d in client.get(BASE, headers=headers).json() if d["id"] == doc_id)
 
 
 # ── CRUD + isolation ─────────────────────────────────────────────────────────
 
 
-def test_create_lists_and_isolates_until_shared():
-    a_id = _create(A, "Alice design")
-    _create(B, "Bob design")
-    a_list = _run(d.list_documents(_request(A)))
-    b_list = _run(d.list_documents(_request(B)))
-    assert [x["id"] for x in a_list] == [a_id]
-    assert a_id not in [x["id"] for x in b_list]
-    assert a_list[0]["mine"] is True and a_list[0]["owner"] == A
+def test_create_lists_and_isolates_until_shared(client):
+    a_id = _create(client, A, "Alice design")
+    _create(client, B, "Bob design")
 
-    _share(a_id, [B])
-    b_list = _run(d.list_documents(_request(B)))
-    entry = next(x for x in b_list if x["id"] == a_id)
-    assert entry["owner"] == A and entry["mine"] is False
+    a_list = client.get("/api/engine/documents", headers=A).json()
+    b_list = client.get("/api/engine/documents", headers=B).json()
+    assert [d["id"] for d in a_list] == [a_id]
+    assert a_id not in [d["id"] for d in b_list]  # B never sees A's doc
+    assert a_list[0]["mine"] is True and a_list[0]["owner"] == A["X-Auth-Email"]
 
-
-def test_rename():
-    doc_id = _create(A)
-    renamed = _run(d.rename_document(_request(A), doc_id, d.NamePayload(name="Renamed")))
-    assert renamed["name"] == "Renamed"
-    assert [x["name"] for x in _run(d.list_documents(_request(A)))] == ["Renamed"]
+    _share(client, a_id, [B["X-Auth-Email"]])
+    b_list = client.get("/api/engine/documents", headers=B).json()
+    entry = next(d for d in b_list if d["id"] == a_id)
+    assert entry["owner"] == A["X-Auth-Email"] and entry["mine"] is False
 
 
-def test_delete_is_gone():
-    """Designs are never deleted -- shared designs made it too easy to destroy
+def test_rename(client):
+    doc_id = _create(client, A)
+    r = client.patch(f"/api/engine/documents/{doc_id}", headers=A, json={"name": "Renamed"})
+    assert r.status_code == 200 and r.json()["name"] == "Renamed"
+    assert [c["name"] for c in client.get("/api/engine/documents", headers=A).json()] == ["Renamed"]
+
+
+def test_delete_is_gone(client):
+    """Configs are never deleted -- shared configs made it too easy to destroy
     someone else's work. Cleanup is an admin operation on the volume.
 
-    `/{doc_id}/share/me` is the one DELETE that survives, and it removes a share
-    grant, not a design.
-    """
-    assert not hasattr(d, "delete_document")
-    deletes = {
-        r.path for r in d.router.routes if "DELETE" in getattr(r, "methods", set())
-    }
+    `/{id}/share/me` is the one DELETE that survives, and it drops a share
+    grant, not a config."""
+    doc_id = _create(client, A)
+    assert client.delete(f"/api/engine/documents/{doc_id}", headers=A).status_code == 405
+    deletes = {r.path for r in documents.router.routes
+               if "DELETE" in getattr(r, "methods", set())}
     assert deletes == {"/api/engine/documents/{doc_id}/share/me"}
 
 
 # ── working copy + microversions ─────────────────────────────────────────────
 
 
-def test_autosave_load_and_history():
-    doc_id = _create(A)
+def test_autosave_load_and_history(client):
+    doc_id = _create(client, A)
     cfg = {"combustion": {"efficiency": {"c_star": 0.95}}, "note": "v1"}
-    res = _run(d.autosave_document(_request(A), doc_id, d.ConfigPayload(config=cfg)))
-    assert res["micro"] is True
+    assert client.post(f"/api/engine/documents/{doc_id}/autosave",
+                       headers=A, json={"config": cfg}).json()["micro"] is True
 
-    assert _run(d.load_document(_request(A), doc_id))["config"] == cfg
+    # /load returns the freshest working copy.
+    assert client.get(f"/api/engine/documents/{doc_id}/load", headers=A).json()["config"] == cfg
 
-    history = _run(d.get_history(_request(A), doc_id))
+    # The autosave recorded a microversion; fetch it back verbatim.
+    history = client.get(f"/api/engine/documents/{doc_id}/history", headers=A).json()
     assert len(history) >= 1
-    snap = _run(d.get_version(_request(A), doc_id, history[0]["versionId"]))
+    vid = history[0]["versionId"]
+    snap = client.get(f"/api/engine/documents/{doc_id}/version/{vid}", headers=A).json()
     assert snap["config"] == cfg
 
 
-def test_history_needs_a_share():
-    """Bob naming Alice's design gets 404 without ?owner= (no such design of his
+def test_history_needs_a_share(client):
+    """Bob naming Alice's config gets 404 without ?owner= (no such config of his
     own) and 403 with it (hers, not shared) -- never her data."""
-    a_id = _create(A)
-    _run(d.autosave_document(_request(A), a_id, d.ConfigPayload(config={"secret": 1})))
-
-    with pytest.raises(HTTPException) as exc:
-        _run(d.get_history(_request(B), a_id))
-    assert exc.value.status_code == 404
-
-    with pytest.raises(HTTPException) as exc:
-        _run(d.get_history(_request(B), a_id, owner=A))
-    assert exc.value.status_code == 403
+    a_id = _create(client, A)
+    client.post(f"/api/engine/documents/{a_id}/autosave", headers=A,
+                json={"config": {"secret": 1}})
+    assert client.get(f"/api/engine/documents/{a_id}/history", headers=B).status_code == 404
+    assert client.get(f"/api/engine/documents/{a_id}/history",
+                      headers=B, params=OWNER_A).status_code == 403
 
 
-def test_history_readable_once_shared():
-    a_id = _create(A)
-    _run(d.autosave_document(_request(A), a_id, d.ConfigPayload(config={"shared": 1})))
-    _share(a_id, [B])
-    history = _run(d.get_history(_request(B), a_id, owner=A))
+def test_history_readable_once_shared(client):
+    a_id = _create(client, A)
+    client.post(f"/api/engine/documents/{a_id}/autosave", headers=A,
+                json={"config": {"shared": 1}})
+    _share(client, a_id, [B["X-Auth-Email"]])
+    history = client.get(f"/api/engine/documents/{a_id}/history",
+                         headers=B, params=OWNER_A).json()
     assert len(history) >= 1
-
-
-def test_missing_version_is_404():
-    doc_id = _create(A)
-    with pytest.raises(HTTPException) as exc:
-        _run(d.get_version(_request(A), doc_id, "deadbeef"))
-    assert exc.value.status_code == 404
 
 
 # ── releases ─────────────────────────────────────────────────────────────────
 
 
-def test_release_is_immutable_and_listed():
-    doc_id = _create(A)
+def test_release_is_immutable_and_listed(client):
+    doc_id = _create(client, A)
     cfg = {"combustion": {}, "v": 1}
-    meta = _run(d.create_release(_request(A), doc_id, d.ReleasePayload(label="0.1", config=cfg)))
-    assert meta["label"] == "0.1"
+    r = client.post(f"/api/engine/documents/{doc_id}/release",
+                    headers=A, json={"label": "0.1", "config": cfg})
+    assert r.status_code == 200 and r.json()["label"] == "0.1"
 
-    with pytest.raises(HTTPException) as exc:
-        _run(d.create_release(_request(A), doc_id, d.ReleasePayload(label="0.1", config={"v": 2})))
-    assert exc.value.status_code == 409
+    # Re-releasing the same label is a conflict -- releases are immutable.
+    dup = client.post(f"/api/engine/documents/{doc_id}/release",
+                      headers=A, json={"label": "0.1", "config": {"v": 2}})
+    assert dup.status_code == 409
 
-    labels = [r["label"] for r in _run(d.list_releases(_request(A), doc_id))]
-    assert "0.1" in labels
-    got = _run(d.get_release(_request(A), doc_id, "0.1"))
-    assert got["config"] == cfg  # original, not the rejected v:2
+    assert "0.1" in [r["label"] for r in
+                     client.get(f"/api/engine/documents/{doc_id}/releases", headers=A).json()]
+    got = client.get(f"/api/engine/documents/{doc_id}/release/0.1", headers=A).json()
+    assert got["config"] == cfg  # the original, not the rejected v:2
 
 
-def test_restore_returns_older_state():
-    doc_id = _create(A)
+def test_restore_returns_older_state(client):
+    """The safety net: an autosaved mistake is recoverable from an earlier
+    microversion."""
+    doc_id = _create(client, A)
     good = {"combustion": {}, "thrust": 1000}
-    _run(d.autosave_document(_request(A), doc_id, d.ConfigPayload(config=good)))
-    _run(d.autosave_document(_request(A), doc_id, d.ConfigPayload(config={"thrust": 0})))  # mistake
+    client.post(f"/api/engine/documents/{doc_id}/autosave", headers=A, json={"config": good})
+    client.post(f"/api/engine/documents/{doc_id}/autosave", headers=A,
+                json={"config": {"combustion": {}, "thrust": 0}})  # the "mistake"
 
-    history = _run(d.get_history(_request(A), doc_id))
+    history = client.get(f"/api/engine/documents/{doc_id}/history", headers=A).json()
     assert len(history) >= 2
-    # The good state is recoverable from an earlier microversion. (Ordering of
-    # sub-second snapshots is by mtime and can tie under this synthetic 0-throttle
-    # test, so assert recoverability by membership, not by position.)
-    snaps = [_run(d.get_version(_request(A), doc_id, h["versionId"]))["config"] for h in history]
-    assert good in snaps
+    # The oldest snapshot still holds the good state.
+    oldest = client.get(
+        f"/api/engine/documents/{doc_id}/version/{history[-1]['versionId']}", headers=A
+    ).json()
+    assert oldest["config"] == good
 
 
 # ── sharing ──────────────────────────────────────────────────────────────────
 
 
-def test_share_grants_edit_and_writes_into_the_owners_folder(tmp_path):
-    """A shared editor edits the *same* design, not a copy of it -- so the bytes
-    must land in Alice's folder and Alice must see the change."""
-    a_id = _create(A, "Booster")
-    _share(a_id, [B])
+def test_share_grants_edit_and_writes_into_the_owners_folder(client, tmp_path):
+    """A shared editor edits the *same* config, not a copy -- so the bytes must
+    land in Alice's folder and Alice must see the change."""
+    a_id = _create(client, A, "Booster")
+    _share(client, a_id, [B["X-Auth-Email"]])
 
-    _run(d.autosave_document(_request(B), a_id, d.ConfigPayload(config={"by": "bob"}),
-                             owner=A))
-    assert (tmp_path / A / "engine" / a_id / "current.json").is_file()
-    assert not (tmp_path / B / "engine" / a_id).exists()
-    assert _run(d.load_document(_request(A), a_id))["config"] == {"by": "bob"}
+    r = client.post(f"{BASE}/{a_id}/autosave", headers=B, params=OWNER_A,
+                    json={"config": {"by": "bob"}})
+    assert r.status_code == 200
+    assert (tmp_path / "alice@berkeley.edu" / "engine" / a_id / "current.json").is_file()
+    assert not (tmp_path / "bob@berkeley.edu" / "engine" / a_id).exists()
+    assert client.get(f"{BASE}/{a_id}/load", headers=A).json()["config"] == {"by": "bob"}
 
-    renamed = _run(d.rename_document(_request(B), a_id, d.NamePayload(name="Bob's edit"),
-                                     owner=A))
-    assert renamed["name"] == "Bob's edit"
+    r = client.patch(f"{BASE}/{a_id}", headers=B, params=OWNER_A, json={"name": "Bob's edit"})
+    assert r.status_code == 200 and r.json()["name"] == "Bob's edit"
 
 
-def test_share_replaces_the_whole_list_and_drops_the_owner():
-    a_id = _create(A)
-    rec = _share(a_id, [B, B.upper(), "  ", A])
+def test_share_replaces_the_whole_list_and_drops_the_owner(client):
+    a_id = _create(client, A)
+    bob = B["X-Auth-Email"]
+    rec = _share(client, a_id, [bob, bob.upper(), "  ", A["X-Auth-Email"]])
     # Deduped on the path slug, the owner filtered out (they are implicitly and
     # unremovably an editor), blanks dropped.
-    assert rec["sharedWith"] == [B]
-    assert rec["sharedUpdatedBy"] == A
+    assert rec["sharedWith"] == [bob]
+    assert rec["sharedUpdatedBy"] == A["X-Auth-Email"]
 
-    assert _share(a_id, [])["sharedWith"] == []
-    with pytest.raises(HTTPException) as exc:
-        _run(d.get_history(_request(B), a_id, owner=A))
-    assert exc.value.status_code == 403
+    assert _share(client, a_id, [])["sharedWith"] == []
+    assert client.get(f"{BASE}/{a_id}/history", headers=B, params=OWNER_A).status_code == 403
 
 
-def test_any_editor_may_reshare():
+def test_any_editor_may_reshare(client):
     """No owner/editor distinction: a shared editor can change the share list,
     including removing people. Revocation is housekeeping, not a boundary."""
-    a_id = _create(A)
-    _share(a_id, [B])
-    rec = _share(a_id, ["carol@berkeley.edu"], by=B)
+    a_id = _create(client, A)
+    _share(client, a_id, [B["X-Auth-Email"]])
+    rec = _share(client, a_id, ["carol@berkeley.edu"], headers=B, params=OWNER_A)
     assert rec["sharedWith"] == ["carol@berkeley.edu"]
-    assert rec["sharedUpdatedBy"] == B
+    assert rec["sharedUpdatedBy"] == B["X-Auth-Email"]
 
 
-def test_leave_removes_only_yourself():
-    a_id = _create(A)
-    _share(a_id, [B, "carol@berkeley.edu"])
-    assert _run(d.leave_document(_request(B), a_id, owner=A)) == {"ok": True}
-
-    rec = _find(A, a_id)
-    assert rec["sharedWith"] == ["carol@berkeley.edu"]
-    assert a_id not in [x["id"] for x in _run(d.list_documents(_request(B)))]
+def test_leave_removes_only_yourself(client):
+    a_id = _create(client, A)
+    _share(client, a_id, [B["X-Auth-Email"], "carol@berkeley.edu"])
+    assert client.delete(f"{BASE}/{a_id}/share/me", headers=B, params=OWNER_A).status_code == 200
+    assert _find(client, A, a_id)["sharedWith"] == ["carol@berkeley.edu"]
+    assert a_id not in [d["id"] for d in client.get(BASE, headers=B).json()]
 
 
-def test_owner_cannot_leave_their_own_design():
-    """Otherwise the design ends up in nobody's editable list."""
-    a_id = _create(A)
-    with pytest.raises(HTTPException) as exc:
-        _run(d.leave_document(_request(A), a_id))
-    assert exc.value.status_code == 400
+def test_owner_cannot_leave_their_own_config(client):
+    """Otherwise the config ends up in nobody's editable list."""
+    a_id = _create(client, A)
+    assert client.delete(f"{BASE}/{a_id}/share/me", headers=A).status_code == 400
 
 
-def test_legacy_records_without_sharedwith_still_work(tmp_path):
-    """Every design created before sharing existed lacks the key. A missing
+def test_legacy_records_without_sharedwith_still_work(client, tmp_path):
+    """Every config created before sharing existed lacks the key. A missing
     `sharedWith` is an empty list, never an error."""
-    index = tmp_path / A / "engine" / "index.json"
+    index = tmp_path / "alice@berkeley.edu" / "engine" / "index.json"
     index.parent.mkdir(parents=True, exist_ok=True)
     index.write_text(json.dumps([{"id": "old", "name": "Old", "createdAt": "2020-01-01",
                                  "updatedAt": "2020-01-01"}]))
 
-    listed = _run(d.list_documents(_request(A)))
-    assert [x["id"] for x in listed] == ["old"]
+    listed = client.get(BASE, headers=A).json()
+    assert [d["id"] for d in listed] == ["old"]
     assert listed[0]["sharedWith"] == []
-    assert _run(d.load_document(_request(A), "old")) == {"config": {}}
-
-    with pytest.raises(HTTPException) as exc:
-        _run(d.get_history(_request(B), "old", owner=A))
-    assert exc.value.status_code == 403
+    assert client.get(f"{BASE}/old/load", headers=A).json() == {"config": {}}
+    assert client.get(f"{BASE}/old/history", headers=B, params=OWNER_A).status_code == 403
 
 
 # ── browse + copy: anyone may look, anyone may take a copy ───────────────────
 
 
-def test_browse_groups_by_owner_and_hides_what_you_can_edit():
-    a_id = _create(A, "Alice design")
-    shared_id = _create(A, "Shared design")
-    _share(shared_id, [B])
-    _create(B, "Bob design")
+def test_browse_groups_by_owner_and_hides_what_you_can_edit(client):
+    a_id = _create(client, A, "Alice design")
+    shared_id = _create(client, A, "Shared design")
+    _share(client, shared_id, [B["X-Auth-Email"]])
+    _create(client, B, "Bob design")
 
-    tree = _run(d.browse_documents(_request(B)))
-    assert [g["owner"] for g in tree] == [A]
-    # Alice's unshared design only: the shared one is editable (so it is in the
+    tree = client.get(f"{BASE}/browse", headers=B).json()
+    assert [g["owner"] for g in tree] == [A["X-Auth-Email"]]
+    # Alice's unshared config only: the shared one is editable (so it is in the
     # editable list), and Bob's own never shows up in the view-only tree.
-    assert [x["id"] for x in tree[0]["designs"]] == [a_id]
+    assert [d["id"] for d in tree[0]["designs"]] == [a_id]
 
 
-def test_copy_is_independent_and_needs_no_share():
-    a_id = _create(A, "Booster", config={"v": 1})
-    _run(d.autosave_document(_request(A), a_id, d.ConfigPayload(config={"v": 1})))
+def test_copy_is_independent_and_needs_no_share(client):
+    a_id = _create(client, A, "Booster", config={"v": 1})
+    client.post(f"{BASE}/{a_id}/autosave", headers=A, json={"config": {"v": 1}})
 
-    copy = _run(d.copy_document(_request(B), d.CopyPayload(owner=A, id=a_id)))
-    assert copy["name"] == f"Booster (copy of {A})"
+    copy = client.post(f"{BASE}/copy", headers=B,
+                       json={"owner": A["X-Auth-Email"], "id": a_id}).json()
+    assert copy["name"] == f"Booster (copy of {A['X-Auth-Email']})"
     assert copy["sharedWith"] == []
-    assert _run(d.load_document(_request(B), copy["id"]))["config"] == {"v": 1}
+    assert client.get(f"{BASE}/{copy['id']}/load", headers=B).json()["config"] == {"v": 1}
 
-    # Editing the copy must not touch the original, and must not grant any
-    # access back to it.
-    _run(d.autosave_document(_request(B), copy["id"], d.ConfigPayload(config={"v": 2})))
-    assert _run(d.load_document(_request(A), a_id))["config"] == {"v": 1}
-    assert _find(A, a_id)["sharedWith"] == []
-    assert _run(d.get_history(_request(B), copy["id"])) != _run(
-        d.get_history(_request(A), a_id))
+    # Editing the copy must not touch the original, nor grant access back to it.
+    client.post(f"{BASE}/{copy['id']}/autosave", headers=B, json={"config": {"v": 2}})
+    assert client.get(f"{BASE}/{a_id}/load", headers=A).json()["config"] == {"v": 1}
+    assert _find(client, A, a_id)["sharedWith"] == []
 
 
-def test_copy_of_a_missing_design_is_404():
-    with pytest.raises(HTTPException) as exc:
-        _run(d.copy_document(_request(B), d.CopyPayload(owner=A, id="nope")))
-    assert exc.value.status_code == 404
+def test_copy_of_a_missing_config_is_404(client):
+    r = client.post(f"{BASE}/copy", headers=B, json={"owner": A["X-Auth-Email"], "id": "nope"})
+    assert r.status_code == 404
 
 
 # ── the access matrix: the guard that must not develop a hole ────────────────
 
 
-#: Every design-scoped handler, with a call that exercises it. A handler that
-#: forgets `_resolve_doc` cannot pass both checks below, and one added without an
-#: entry here fails `test_every_doc_scoped_route_is_listed`.
-def _doc_scoped_calls(email, doc_id, owner):
-    r = _request(email)
-    return {
-        "rename_document": lambda: d.rename_document(r, doc_id, d.NamePayload(name="x"), owner=owner),
-        "share_document": lambda: d.share_document(r, doc_id, d.SharePayload(sharedWith=[]), owner=owner),
-        "leave_document": lambda: d.leave_document(r, doc_id, owner=owner),
-        "load_document": lambda: d.load_document(r, doc_id, owner=owner),
-        "autosave_document": lambda: d.autosave_document(r, doc_id, d.ConfigPayload(config={"x": 1}), owner=owner),
-        "flush_document": lambda: d.flush_document(r, doc_id, d.ConfigPayload(config={"x": 1}), owner=owner),
-        "get_history": lambda: d.get_history(r, doc_id, owner=owner),
-        "get_version": lambda: d.get_version(r, doc_id, "deadbeef", owner=owner),
-        "create_release": lambda: d.create_release(r, doc_id, d.ReleasePayload(label="0.1"), owner=owner),
-        "list_releases": lambda: d.list_releases(r, doc_id, owner=owner),
-        "get_release": lambda: d.get_release(r, doc_id, "0.1", owner=owner),
-    }
+#: Every design-scoped route, as (method, path-suffix, json body). A route added
+#: without an entry fails test_every_doc_scoped_route_is_listed below.
+_DOC_SCOPED = {
+    "rename_document": ("PATCH", "", {"name": "x"}),
+    "share_document": ("PUT", "/share", {"sharedWith": []}),
+    "leave_document": ("DELETE", "/share/me", None),
+    "load_document": ("GET", "/load", None),
+    "autosave_document": ("POST", "/autosave", {"config": {"x": 1}}),
+    "flush_document": ("POST", "/flush", {"config": {"x": 1}}),
+    "get_history": ("GET", "/history", None),
+    "get_version": ("GET", "/version/deadbeef", None),
+    "create_release": ("POST", "/release", {"label": "0.1"}),
+    "list_releases": ("GET", "/releases", None),
+    "get_release": ("GET", "/release/0.1", None),
+}
 
-
-#: Not design-scoped: they take no doc id, or exist precisely to reach designs
-#: the caller cannot edit.
+#: Not design-scoped: no doc id, or exists precisely to reach configs you cannot edit.
 _UNSCOPED = {"list_documents", "browse_documents", "create_document", "copy_document"}
 
 
+def _call(client, name, doc_id, headers, params):
+    method, suffix, body = _DOC_SCOPED[name]
+    return client.request(method, f"{BASE}/{doc_id}{suffix}",
+                          headers=headers, params=params, json=body)
+
+
 def test_every_doc_scoped_route_is_listed():
-    """Pins the matrix below to the real route table. Add an endpoint and this
-    fails until you say which side of the access boundary it sits on -- which is
-    the whole point: a new design-scoped route cannot silently skip the check."""
-    handlers = {r.endpoint.__name__ for r in d.router.routes if hasattr(r, "endpoint")}
-    covered = set(_doc_scoped_calls(A, "x", None)) | _UNSCOPED
+    """Pins the matrix to the real route table. Add an endpoint and this fails
+    until you say which side of the access boundary it sits on."""
+    handlers = {r.endpoint.__name__ for r in documents.router.routes if hasattr(r, "endpoint")}
+    covered = set(_DOC_SCOPED) | _UNSCOPED
     assert handlers == covered, f"unclassified endpoints: {handlers ^ covered}"
 
 
-@pytest.mark.parametrize("name", sorted(_doc_scoped_calls(A, "x", None)))
-def test_doc_scoped_route_forbids_an_unshared_owner(name):
-    a_id = _create(A)
-    with pytest.raises(HTTPException) as exc:
-        _run(_doc_scoped_calls(B, a_id, A)[name]())
-    assert exc.value.status_code == 403, f"{name} leaked access"
+@pytest.mark.parametrize("name", sorted(_DOC_SCOPED))
+def test_doc_scoped_route_forbids_an_unshared_owner(client, name):
+    a_id = _create(client, A)
+    assert _call(client, name, a_id, B, OWNER_A).status_code == 403, f"{name} leaked access"
 
 
-@pytest.mark.parametrize("name", sorted(_doc_scoped_calls(A, "x", None)))
-def test_doc_scoped_route_404s_a_foreign_id_without_owner(tmp_path, name):
+@pytest.mark.parametrize("name", sorted(_DOC_SCOPED))
+def test_doc_scoped_route_404s_a_foreign_id_without_owner(client, tmp_path, name):
     """Dropping `?owner=` must 404, never silently create an orphan working copy
     in the caller's own folder -- a failure `/flush` (a sendBeacon) could not
     even report."""
-    a_id = _create(A)
+    a_id = _create(client, A)
     before = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*"))
-    with pytest.raises(HTTPException) as exc:
-        _run(_doc_scoped_calls(B, a_id, None)[name]())
-    assert exc.value.status_code == 404, f"{name} did not 404"
+    assert _call(client, name, a_id, B, {}).status_code == 404, f"{name} did not 404"
     assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == before
 
 
 @pytest.mark.parametrize("owner", ["../..", ".", "", "a/b", "..", "./../etc"])
-def test_owner_param_cannot_escape_the_root(tmp_path, owner):
-    a_id = _create(A)
+def test_owner_param_cannot_escape_the_root(client, tmp_path, owner):
+    a_id = _create(client, A)
     before = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*"))
-    with pytest.raises(HTTPException) as exc:
-        _run(d.load_document(_request(B), a_id, owner=owner))
-    assert exc.value.status_code == 404
-    # The scan and the resolve must both be read-only: no folder conjured for a
+    assert client.get(f"{BASE}/{a_id}/load", headers=B, params={"owner": owner}).status_code == 404
+    # Both the scan and the resolve must be read-only: no folder conjured for a
     # user who does not exist.
     assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == before

@@ -55,7 +55,11 @@ jobs:
           cache-dependency-path: recovery-calculator/requirements-ci.txt
 
       - name: Install dependencies
-        run: pip install -r requirements-ci.txt
+        # The design core shared across the three design tools. Installed
+        # from a path, not published -- it is versioned with the repo.
+        run: |
+          pip install -r requirements-ci.txt
+          pip install -e ../lib/stardesign
 
       # test_tools.py shells out to the scraper's mock-server suite, which
       # needs loopback, so this job is not proxy-blocked. The tool jobs below
@@ -112,7 +116,11 @@ jobs:
           cache-dependency-path: recovery-calculator/requirements.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        # The design core shared across the three design tools. Installed
+        # from a path, not published -- it is versioned with the repo.
+        run: |
+          pip install -r requirements.txt
+          pip install -e ../lib/stardesign
 
       # Enumerated from the OpenAPI schema rather than app.routes: the latter
       # holds framework-internal objects whose shape varies between FastAPI

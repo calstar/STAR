@@ -67,18 +67,17 @@ export function DesignChangeModal({
     setNewName(''); setShareFilter(''); setError('');
   }, []);
 
-  // Both lists are only worth fetching while the dialog is open, and they go
-  // stale as soon as it closes (someone else may have shared something).
+  // Mounted only while open (the parent unmounts it on close), so this runs
+  // once per opening -- which is what we want: both lists go stale as soon as
+  // the dialog closes, since someone else may have shared something meanwhile.
   useEffect(() => {
-    if (!open) return;
-    reset();
     let cancelled = false;
     void api.browseDocuments().then((t) => !cancelled && setTree(t)).catch(() => !cancelled && setTree([]));
     // A missing roster is survivable -- you can still rename, create and copy;
     // only the share picker has nothing to offer.
     void api.listUsers().then((u) => !cancelled && setUsers(u)).catch(() => !cancelled && setUsers([]));
     return () => { cancelled = true; };
-  }, [open, reset]);
+  }, []);
 
   const run = async (key: string, fn: () => Promise<void>) => {
     setBusy(key);

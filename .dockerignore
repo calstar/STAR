@@ -1,7 +1,8 @@
-# Applies to builds that use the repo root as their context -- currently the two
-# FastAPI images, which need auth/shared_auth.py alongside their own sources.
-# Without this the context would include every sibling project and their
-# node_modules, which is slow and bloats the layer cache.
+# Applies to builds that use the repo root as their context -- now all three
+# design-tool API images, which are built on lib/stardesign (the shared design
+# core) alongside their own sources. Without this the context would include
+# every sibling project and their node_modules, which is slow and bloats the
+# layer cache.
 
 .git
 .github
@@ -10,11 +11,18 @@
 # Other projects: not part of any root-context image.
 daq-server
 firmware
-recovery-calculator
 landing
-lib
 docs
 scripts/setup-test
+
+# lib/ is excluded wholesale EXCEPT the shared design core, which every
+# design-tool API image installs. The negation must come after the exclusion.
+lib
+!lib/stardesign
+
+# recovery-calculator and pid-designer now build from the repo root too, so
+# their sources have to reach the context -- but only their own image copies
+# them, and each Dockerfile copies just the subtrees it needs.
 
 # Dependencies and build output
 **/node_modules

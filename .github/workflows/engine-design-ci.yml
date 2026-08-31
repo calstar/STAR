@@ -46,7 +46,11 @@ jobs:
           EngineDesign/requirements-base.txt
 
     - name: Install dependencies (CI subset — no rocketcea/gfortran)
-      run: pip install -r requirements-ci.txt
+      # The design core shared across the three design tools. Installed
+      # from a path, not published -- it is versioned with the repo.
+      run: |
+        pip install -r requirements-ci.txt
+        pip install -e ../lib/stardesign
 
     # The committed CEA cache must be present so PintleEngineRunner loads
     # (np.load) instead of building a cache via rocketcea. Fail loudly if it
@@ -87,7 +91,11 @@ jobs:
           EngineDesign/requirements-base.txt
 
     - name: Install dependencies
-      run: pip install -r requirements-ci.txt
+      # The design core shared across the three design tools. Installed
+      # from a path, not published -- it is versioned with the repo.
+      run: |
+        pip install -r requirements-ci.txt
+        pip install -e ../lib/stardesign
 
     - name: Import backend app
       run: python -c "import backend.main; print('backend.main imports OK')"
@@ -177,7 +185,11 @@ jobs:
           EngineDesign/requirements-base.txt
 
     - name: Install dependencies (CI subset — no rocketcea/gfortran)
-      run: pip install -r requirements-ci.txt
+      # The design core shared across the three design tools. Installed
+      # from a path, not published -- it is versioned with the repo.
+      run: |
+        pip install -r requirements-ci.txt
+        pip install -e ../lib/stardesign
 
     - name: Verify committed CEA cache is present
       run: test -f output/cache/cea_cache_LOX_CH4_3D.npz

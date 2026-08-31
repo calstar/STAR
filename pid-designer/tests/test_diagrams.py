@@ -41,8 +41,8 @@ def _isolate(tmp_path, monkeypatch):
     """Fresh data root per test; force a microversion on every autosave (no
     throttle) and clear the in-process throttle clock so tests don't interfere."""
     monkeypatch.setenv("USERDATA_DIR", str(tmp_path))
-    monkeypatch.setattr(documents, "MICRO_INTERVAL", 0)
-    documents._last_micro.clear()
+    monkeypatch.setattr(documents.store, "micro_interval", 0)
+    documents.store.last_micro.clear()
 
 
 @pytest.fixture
