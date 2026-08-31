@@ -1,0 +1,12 @@
+README.md
+pyproject.toml
+stardesign/__init__.py
+stardesign/directory.py
+stardesign/documents.py
+stardesign/storage.py
+stardesign/userdata.py
+stardesign.egg-info/PKG-INFO
+stardesign.egg-info/SOURCES.txt
+stardesign.egg-info/dependency_links.txt
+stardesign.egg-info/requires.txt
+stardesign.egg-info/top_level.txt

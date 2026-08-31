@@ -1,9 +1,9 @@
 # Recovery Calculator — API image.
 #
-# Unlike pid-designer/EngineDesign, this build context is the SUBPROJECT dir,
-# not the repo root: the backend implements no auth (Caddy is the gate, see
-# deploy/Caddyfile), so it never needs auth/shared_auth.py and there is no
-# reason to ship the whole repo as build context.
+# Build context is the REPO ROOT: the backend is built on lib/stardesign, the
+# design core shared with EngineDesign and pid-designer. (It still implements no
+# auth -- Caddy is the gate, see deploy/Caddyfile.) The .dockerignore keeps the
+# context from ballooning.
 FROM python:3.12-slim
 WORKDIR /app
 
@@ -16,14 +16,19 @@ ENV PIP_RETRIES=10 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_INPUT=1
 
-COPY requirements.txt .
+COPY recovery-calculator/requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
+
+# The shared design core: per-user storage, sharing, and version history. Copied
+# before the app so a change to the app alone reuses this layer.
+COPY lib/stardesign/ /stardesign/
+RUN --mount=type=cache,target=/root/.cache/pip pip install /stardesign
 
 # The web app is one consumer of the `physics` package; backend/main.py puts the
 # subproject root (/app) on sys.path so `import physics` resolves. physics/ also
 # carries data/parachutes.csv, loaded once at startup.
-COPY physics/ ./physics/
-COPY backend/ ./backend/
+COPY recovery-calculator/physics/ ./physics/
+COPY recovery-calculator/backend/ ./backend/
 
 ENV PYTHONPATH=/app
 EXPOSE 8100

@@ -97,6 +97,8 @@ fi
 source .venv/bin/activate
 pip install --quiet --upgrade pip
 pip install --quiet -r "$REQ_FILE"
+# The design core shared with EngineDesign and pid-designer.
+pip install --quiet -e ../lib/stardesign
 ok "Requirements installed ($REQ_FILE)"
 deactivate
 

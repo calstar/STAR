@@ -1,6 +1,7 @@
-# Build context is the subproject dir: the app implements no auth (Caddy is the
-# gate), so nothing from the repo root is needed. See the pid-designer-api
-# service in docker-compose.yml.
+# Build context is the REPO ROOT, not pid-designer/: the backend is built on
+# lib/stardesign, the design core shared with EngineDesign and
+# recovery-calculator. See the pid-designer-api service in docker-compose.yml
+# and the .dockerignore that keeps the context from ballooning.
 FROM python:3.12-slim
 WORKDIR /app
 
@@ -13,10 +14,15 @@ ENV PIP_RETRIES=10 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_INPUT=1
 
-COPY requirements.txt .
+COPY pid-designer/requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 
-COPY backend/ ./backend/
+# The shared design core: per-user storage, sharing, and version history. Copied
+# before the app so a change to the app alone reuses this layer.
+COPY lib/stardesign/ /stardesign/
+RUN --mount=type=cache,target=/root/.cache/pip pip install /stardesign
+
+COPY pid-designer/backend/ ./backend/
 
 # Per-user working copies live under USERDATA_DIR (a mounted volume, /data in
 # compose); version history lives in S3. Nothing diagram-related is baked in.

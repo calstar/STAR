@@ -527,18 +527,20 @@ export function DesignVersions({ onRestore, inline = false }: Props) {
         </button>
       </div>
 
-      <DesignChangeModal
-        open={showChange}
-        onClose={() => setShowChange(false)}
-        documents={documents}
-        activeKey={activeKey}
-        onSelect={select}
-        onCreate={create}
-        onRename={rename}
-        onShare={share}
-        onLeave={leave}
-        onCopy={copy}
-      />
+      {showChange && (
+        <DesignChangeModal
+          open={showChange}
+          onClose={() => setShowChange(false)}
+          documents={documents}
+          activeKey={activeKey}
+          onSelect={select}
+          onCreate={create}
+          onRename={rename}
+          onShare={share}
+          onLeave={leave}
+          onCopy={copy}
+        />
+      )}
 
       {/* Someone removed your access while you had the design open. Said plainly
           rather than left as a silently failing autosave. */}

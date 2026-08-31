@@ -21,6 +21,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 pytest.importorskip("fastapi", reason="directory imports fastapi.Request")
 
+from stardesign import directory as shared_directory  # noqa: E402
+
 from backend import directory, userdata  # noqa: E402
 
 
@@ -34,7 +36,7 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("USERDATA_DIR", str(tmp_path))
     monkeypatch.delenv("AUTH_USERS_URL", raising=False)
     # The roster cache is process-wide; a stale entry would leak between tests.
-    monkeypatch.setattr(directory, "_cache", (0.0, []))
+    monkeypatch.setattr(shared_directory, "_cache", (0.0, []))
 
 
 def _fake_auth(monkeypatch, rows, *, calls=None):
@@ -55,7 +57,7 @@ def _fake_auth(monkeypatch, rows, *, calls=None):
         return _Resp()
 
     monkeypatch.setenv("AUTH_USERS_URL", "https://auth.example.org")
-    monkeypatch.setattr(directory.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(shared_directory.urllib.request, "urlopen", fake)
 
 
 def test_volume_users_alone_when_auth_is_unset():
@@ -114,7 +116,7 @@ def test_auth_failure_degrades_to_the_volume(monkeypatch, boom):
     def explode(req, timeout=None):
         raise boom
 
-    monkeypatch.setattr(directory.urllib.request, "urlopen", explode)
+    monkeypatch.setattr(shared_directory.urllib.request, "urlopen", explode)
     assert [u["email"] for u in directory.roster(_Req())] == ["alice@berkeley.edu"]
 
 

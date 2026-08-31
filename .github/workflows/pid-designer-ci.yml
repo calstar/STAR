@@ -50,7 +50,11 @@ jobs:
 
     - name: Install dependencies
       working-directory: pid-designer
-      run: pip install -r requirements.txt
+      # The design core shared across the three design tools. Installed
+      # from a path, not published -- it is versioned with the repo.
+      run: |
+        pip install -r requirements.txt
+        pip install -e ../lib/stardesign
 
     - name: Verify imports
       working-directory: pid-designer
