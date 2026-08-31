@@ -12,6 +12,12 @@
   --color-danger: #ef4444;
   --color-text-primary: #f8fafc;
   --color-text-secondary: #94a3b8;
+  /* Used 39 times across DesignVersions, SavedConfigs, ControllerMode and
+     FlightSimulation, but never defined here -- so every "muted" label was
+     inheriting full-brightness --color-text-primary and reading as loud as the
+     content it annotates. Value matched to recovery-calculator, which sets it
+     for contrast (7.8:1 on the dark ground). */
+  --color-text-muted: #9fb0c4;
   --color-border: #2d2d3a;
 }
 
