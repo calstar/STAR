@@ -3,8 +3,11 @@
  * so the two tabs cannot drift into two different-looking applications.
  */
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
+
+// The dialog shell is shared with the other design tools.
+export { Modal } from '@stardesign-ui'
 import type { Kind } from '../lib/quantities'
 import { useUnits } from '../lib/unitsContext'
 
@@ -411,43 +414,6 @@ export function Button({ onClick, children, variant = 'secondary', disabled, tit
  * -- prompts, confirmations, the design history -- so the app never falls back
  * to a browser `alert`/`confirm`/`prompt`, which cannot be themed and land in
  * the wrong place. Click the backdrop or press Escape to dismiss.
- */
-export function Modal({ open, onClose, title, children, footer, width = 'w-[440px]' }: {
-  open: boolean
-  onClose: () => void
-  title: ReactNode
-  children?: ReactNode
-  footer?: ReactNode
-  width?: string
-}) {
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
-  if (!open) return null
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className={`${width} max-w-[90vw] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 shadow-2xl`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{title}</h3>
-        {children && <div className="mt-4">{children}</div>}
-        {footer && <div className="mt-5 flex justify-end gap-2">{footer}</div>}
-      </div>
-    </div>
-  )
-}
-
-/**
- * A hoverable ⓘ. The rationale behind a control -- which failure it prevents,
- * which plan section demanded it -- is worth keeping, but not worth a
- * paragraph of body text next to every field. It lives in here instead.
  */
 export function Info({ children }: { children: string }) {
   return (

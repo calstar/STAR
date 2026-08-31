@@ -18,9 +18,9 @@ import { reviveUiConfig } from '../../lib/persist'
 import { toStoredConfig } from '../../lib/serialise'
 import { Button, Modal } from '../ui'
 import * as api from '../../api/documents'
-import { keyOf, refOf } from '../../api/documents'
+import { designApi, keyOf, refOf } from '../../api/documents'
 import type { DocMeta, DocRef, MicroVersion, ReleaseVersion } from '../../api/documents'
-import { ConfigChangeModal } from './ConfigChangeModal'
+import { ChangeModal } from '@stardesign-ui'
 
 // v2 because the remembered config is now (owner, id): a shared config is not
 // identified by its id alone. A v1 value is a bare id, which was always one of
@@ -369,7 +369,7 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
       onConfirm: async () => {
         setRestoring(v.versionId)
         try {
-          const { config: c } = await api.getVersion(activeRef, v.versionId)
+          const c = await api.getVersion(activeRef, v.versionId)
           onRestore(normalise(c)); setShowHistory(false)
         } finally { setRestoring(null) }
       },
@@ -386,7 +386,7 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
       onConfirm: async () => {
         setRestoring(`rel:${r.label}`)
         try {
-          const { config: c } = await api.getRelease(activeRef, r.label)
+          const c = await api.getRelease(activeRef, r.label)
           onRestore(normalise(c)); setShowHistory(false)
         } finally { setRestoring(null) }
       },
@@ -457,8 +457,10 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
 
 
       {showChange && (
-        <ConfigChangeModal
+        <ChangeModal
           open={showChange}
+          api={designApi}
+          noun="config"
           onClose={() => setShowChange(false)}
           documents={documents}
           activeKey={activeKey}
