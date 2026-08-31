@@ -40,6 +40,13 @@ jobs:
       working-directory: pid-designer/frontend
       run: npm run build
 
+    # Guards what actually reaches the server when a diagram is saved: ReactFlow
+    # decorates nodes with view state (selected/dragging/measured), and storing
+    # it meant a plain click rewrote the diagram.
+    - name: Unit tests
+      working-directory: pid-designer/frontend
+      run: npm test
+
   backend:
     name: Backend (imports + tests)
     runs-on: ubuntu-latest

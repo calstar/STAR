@@ -8,7 +8,7 @@
  * stays UI-side by default. That is the safe direction to fail.
  */
 
-import type { Config, Device, UiConfig, UiDevice, UiSite } from '../types/schema'
+import type { Config, Device, UiConfig, UiDevice, UiSite, UiStudyAxis } from '../types/schema'
 import { REFERENCE_CONFIG } from '../api/fixture'
 import { airframeBand } from './units'
 
@@ -150,6 +150,36 @@ const round5 = (x: number) => Number(x.toFixed(5))
  */
 export function physicsKey(ui: UiConfig): string {
   return JSON.stringify({ ...toWireConfig(ui), sweep: null, study: null })
+}
+
+/**
+ * The config as it should be *stored* on the server.
+ *
+ * A third representation, distinct from the two above and needed because they
+ * answer different questions:
+ *
+ * - `toWireConfig` is what the physics backend accepts. It deliberately drops
+ *   real design data the solver has no use for -- sweep bounds, study axes,
+ *   labels -- so it is far too lossy to store.
+ * - The raw `UiConfig` is what localStorage holds, and should stay that way:
+ *   which cards you left collapsed is exactly what makes reopening feel like
+ *   picking up where you left off (see persist.ts).
+ *
+ * What the *server document* wants is the middle: everything authored, none of
+ * the view state. Collapsing a device card must not count as editing the
+ * design -- otherwise merely tidying the panel marks it dirty, and once
+ * checkouts land, a save is what holds a checkout open.
+ *
+ * `uid` goes too, for a different reason: `reviveUiConfig` regenerates uids on
+ * every load, so storing them meant opening a design produced a payload that
+ * differed from the stored one with no user edit at all.
+ */
+export function toStoredConfig(ui: UiConfig): UiConfig {
+  return {
+    ...ui,
+    devices: ui.devices.map(({ collapsed: _c, uid: _u, ...device }) => device as UiDevice),
+    study: ui.study.map(({ uid: _u, ...axis }) => axis as UiStudyAxis),
+  }
 }
 
 /** What the Corners tab's result depends on: the vehicle and the corner

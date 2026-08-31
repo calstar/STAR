@@ -162,16 +162,39 @@ export const leaveDiagram = (ref: DocRef) =>
 
 export const loadDiagram = (ref: DocRef) => fetch(url(ref, '/load')).then((r) => json<Snapshot>(r));
 
+/**
+ * The diagram as it should be stored: authored content only.
+ *
+ * ReactFlow decorates every node with view state that has nothing to do with
+ * the diagram -- `selected` flips on a plain click, `dragging` is a transient
+ * flag, and `measured` is a post-layout measurement it recomputes on load.
+ * Saved verbatim (which is what used to happen), those meant that *looking* at
+ * a diagram rewrote it: a click produced a new payload, which the autosave
+ * debounce dutifully persisted, and version history filled with snapshots whose
+ * only difference was which node someone had highlighted. One committed
+ * microversion in this repo is exactly that.
+ *
+ * Stripping here rather than at each call site means every write path -- the
+ * autosave, the on-close beacon and a release -- gets it, and none of them can
+ * drift apart later.
+ */
+export function toStored(data: Snapshot): Snapshot {
+  return {
+    nodes: data.nodes.map(({ selected: _s, dragging: _d, measured: _m, ...node }) => node) as Node[],
+    edges: data.edges.map(({ selected: _s, ...edge }) => edge) as Edge[],
+  };
+}
+
 export const autosaveDiagram = (ref: DocRef, data: Snapshot) =>
   fetch(url(ref, '/autosave'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
+    body: JSON.stringify(toStored(data)),
   }).then((r) => json<{ ok: boolean; micro: boolean }>(r));
 
 /** Best-effort final snapshot on tab close. sendBeacon survives page unload. */
 export const flushDiagram = (ref: DocRef, data: Snapshot): void => {
-  const body = JSON.stringify(data);
+  const body = JSON.stringify(toStored(data));
   navigator.sendBeacon(url(ref, '/flush'), new Blob([body], { type: 'application/json' }));
 };
 
@@ -185,7 +208,7 @@ export const createRelease = (ref: DocRef, label: string, data: Snapshot) =>
   fetch(url(ref, '/release'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ label, ...data }),
+    body: JSON.stringify({ label, ...toStored(data) }),
   }).then((r) => json<ReleaseVersion>(r));
 
 export const listReleases = (ref: DocRef) =>

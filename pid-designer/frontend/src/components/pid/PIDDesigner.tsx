@@ -96,7 +96,10 @@ function useHistory(
     if (restoring.current) { restoring.current = false; return; }
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
-      const snap: Snapshot = { nodes: structuredClone(nodes), edges: structuredClone(edges) };
+      // Compare the *authored* diagram, not the raw ReactFlow state: `selected`
+      // and friends change on a plain click, so a bare selection used to push an
+      // undo entry and cost the user a press of Ctrl+Z to get past.
+      const snap: Snapshot = api.toStored({ nodes: structuredClone(nodes), edges: structuredClone(edges) });
       const prev = history.current[index.current];
       if (JSON.stringify(prev) === JSON.stringify(snap)) return;
       history.current = history.current.slice(0, index.current + 1);
@@ -166,6 +169,11 @@ function PIDCanvas({
   snapshot.current = { nodes, edges };
 
   const diagramKey = keyOf(diagramRef);
+  // JSON of the last payload actually sent, so a change that survives neither
+  // `toStored` nor a content comparison never reaches the server. Without it the
+  // debounce fires on every ReactFlow state identity change -- including pure
+  // selection -- and once checkouts land, a save is what keeps a checkout alive.
+  const lastSaved = useRef<string>('');
 
   // Load the selected diagram's working copy whenever the selection changes.
   useEffect(() => {
@@ -174,8 +182,12 @@ function PIDCanvas({
     api.loadDiagram(diagramRef)
       .then(data => {
         if (cancelled) return;
-        setNodes(data?.nodes ?? []);
-        setEdges(data?.edges ?? []);
+        const loaded = { nodes: data?.nodes ?? [], edges: data?.edges ?? [] };
+        setNodes(loaded.nodes);
+        setEdges(loaded.edges);
+        // Seed the guard with what we just loaded, so opening a diagram does not
+        // immediately save it straight back.
+        lastSaved.current = JSON.stringify(api.toStored(loaded));
         loadedId.current = diagramKey;
       })
       .catch(() => { if (!cancelled) loadedId.current = diagramKey; });
@@ -186,8 +198,12 @@ function PIDCanvas({
   // actually loaded, so switching never clobbers a diagram with another's data.
   useEffect(() => {
     if (loadedId.current !== diagramKey) return;
+    const serialized = JSON.stringify(api.toStored({ nodes, edges }));
+    if (serialized === lastSaved.current) return;
     const t = setTimeout(() => {
+      lastSaved.current = serialized;
       api.autosaveDiagram(diagramRef, { nodes, edges }).catch((e: unknown) => {
+        lastSaved.current = ''; // failed -- let the next change retry
         // 403 means this diagram was unshared from you while you had it open.
         // Retrying is silent and pointless -- tell the parent so it can stop
         // and fall back to one of your own.

@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { UiConfig } from '../../types/schema'
 import { reviveUiConfig } from '../../lib/persist'
+import { toStoredConfig } from '../../lib/serialise'
 import { Button, Modal } from '../ui'
 import * as api from '../../api/documents'
 import { keyOf, refOf } from '../../api/documents'
@@ -112,6 +113,9 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
   // switch cannot autosave one config's state over another's.
   const loadedKey = useRef<string | null>(null)
   const configRef = useRef(config)
+  // JSON of the last payload actually sent, so a change that survives
+  // `toStoredConfig` unchanged never reaches the server.
+  const lastSaved = useRef<string>('')
   configRef.current = config
 
   const [showChange, setShowChange] = useState(false)
@@ -146,7 +150,14 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
     loadedKey.current = null
     try {
       const { config: loaded } = await api.loadDocument(ref)
-      if (loaded && Object.keys(loaded).length > 0) onRestore(normalise(loaded as UiConfig))
+      if (loaded && Object.keys(loaded).length > 0) {
+        const revived = normalise(loaded as UiConfig)
+        // Seed the guard with what we just loaded, so opening a config does not
+        // immediately save it straight back -- `reviveUiConfig` regenerates
+        // uids, so the round trip is never byte-identical without this.
+        lastSaved.current = JSON.stringify(toStoredConfig(revived))
+        onRestore(revived)
+      }
     } finally {
       loadedKey.current = keyOf(ref)
     }
@@ -219,8 +230,17 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
   // Debounced autosave of the working copy, only once the active doc has loaded.
   useEffect(() => {
     if (!activeRef || loadedKey.current !== keyOf(activeRef)) return
+    const stored = toStoredConfig(config)
+    const serialized = JSON.stringify(stored)
+    // `config` gets a new identity on any UI change, including ones that carry
+    // no design change at all -- collapsing a device card is the obvious one.
+    // Comparing the *stored* form means those never reach the server, which
+    // matters more once a save is what holds a checkout open.
+    if (serialized === lastSaved.current) return
     const t = setTimeout(() => {
-      void api.autosaveDocument(activeRef, config).catch((e: unknown) => {
+      lastSaved.current = serialized
+      void api.autosaveDocument(activeRef, stored).catch((e: unknown) => {
+        lastSaved.current = '' // failed -- let the next change retry
         // 403 means this config was unshared from you while you had it open.
         // Retrying is silent and pointless, and every further edit would be
         // lost -- stop, say so, and fall back to one of your own.
@@ -236,7 +256,7 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
   // Best-effort flush on tab close, between the throttled microversions.
   useEffect(() => {
     const flush = () => {
-      if (activeRef && loadedKey.current === keyOf(activeRef)) api.flushDocument(activeRef, configRef.current)
+      if (activeRef && loadedKey.current === keyOf(activeRef)) api.flushDocument(activeRef, toStoredConfig(configRef.current))
     }
     const onVis = () => { if (document.visibilityState === 'hidden') flush() }
     window.addEventListener('pagehide', flush)
@@ -329,7 +349,7 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
     if (!activeRef || !relLabel.trim()) return
     setRelStatus('saving'); setRelError('')
     try {
-      await api.createRelease(activeRef, relLabel.trim(), configRef.current)
+      await api.createRelease(activeRef, relLabel.trim(), toStoredConfig(configRef.current))
       setRelStatus('ok')
       if (showHistory) void refreshHistory()
       setTimeout(() => { setShowRelease(false); setRelLabel(''); setRelStatus('idle') }, 1000)
