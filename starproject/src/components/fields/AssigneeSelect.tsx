@@ -1,7 +1,9 @@
 "use client";
 
 import type { User } from "@prisma/client";
+import { useState } from "react";
 
+import { FieldSelect } from "@/components/fields/FieldSelect";
 import { updateField } from "@/lib/fieldUpdate";
 import { shortName } from "@/lib/names";
 
@@ -11,22 +13,23 @@ export function AssigneeSelect({
   users,
 }: {
   taskId: string;
-  value: string;
+  value: string | null;
   users: User[];
 }) {
+  const [v, setV] = useState(value ?? "");
+  const options = [
+    { value: "", label: "Unassigned" },
+    ...users.map((u) => ({ value: u.id, label: shortName(u.name, u.email) })),
+  ];
   return (
-    <select
-      name="assigneeId"
-      defaultValue={value}
-      onChange={(e) => updateField(taskId, "assigneeId", e.target.value)}
-      className="rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"
-    >
-      <option value="">Unassigned</option>
-      {users.map((u) => (
-        <option key={u.id} value={u.id}>
-          {shortName(u.name, u.email)}
-        </option>
-      ))}
-    </select>
+    <FieldSelect
+      ariaLabel="Assignee"
+      value={v}
+      options={options}
+      onChange={(next) => {
+        setV(next);
+        updateField(taskId, "assigneeId", next);
+      }}
+    />
   );
 }

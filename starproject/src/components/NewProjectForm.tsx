@@ -1,5 +1,8 @@
 "use client";
 
+import { useState } from "react";
+
+import { FieldSelect } from "@/components/fields/FieldSelect";
 import { createProject } from "@/lib/actions/projects";
 
 // createProject redirects to the new project page, so the form doesn't need to
@@ -9,6 +12,7 @@ export function NewProjectForm({
 }: {
   parents: { id: string; name: string }[];
 }) {
+  const [parentId, setParentId] = useState("");
   return (
     <form
       action={createProject}
@@ -25,19 +29,16 @@ export function NewProjectForm({
         placeholder="Description (optional)"
         className="min-w-48 flex-1 rounded border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm"
       />
-      <select
+      <FieldSelect
         name="parentId"
-        defaultValue=""
-        aria-label="Parent project"
-        className="rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1.5 text-sm"
-      >
-        <option value="">Top-level project</option>
-        {parents.map((p) => (
-          <option key={p.id} value={p.id}>
-            Subproject of {p.name}
-          </option>
-        ))}
-      </select>
+        ariaLabel="Parent project"
+        value={parentId}
+        onChange={setParentId}
+        options={[
+          { value: "", label: "Top-level project" },
+          ...parents.map((p) => ({ value: p.id, label: `Subproject of ${p.name}` })),
+        ]}
+      />
       <input
         type="color"
         name="color"

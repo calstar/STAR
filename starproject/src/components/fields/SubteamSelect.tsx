@@ -1,5 +1,8 @@
 "use client";
 
+import { useState } from "react";
+
+import { FieldSelect } from "@/components/fields/FieldSelect";
 import { updateField } from "@/lib/fieldUpdate";
 
 export function SubteamSelect({
@@ -8,22 +11,23 @@ export function SubteamSelect({
   subteams,
 }: {
   taskId: string;
-  value: string;
+  value: string | null;
   subteams: { id: string; name: string }[];
 }) {
+  const [v, setV] = useState(value ?? "");
+  const options = [
+    { value: "", label: "No subteam" },
+    ...subteams.map((s) => ({ value: s.id, label: s.name })),
+  ];
   return (
-    <select
-      name="subteamId"
-      defaultValue={value}
-      onChange={(e) => updateField(taskId, "subteamId", e.target.value)}
-      className="rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"
-    >
-      <option value="">No subteam</option>
-      {subteams.map((s) => (
-        <option key={s.id} value={s.id}>
-          {s.name}
-        </option>
-      ))}
-    </select>
+    <FieldSelect
+      ariaLabel="Subteam"
+      value={v}
+      options={options}
+      onChange={(next) => {
+        setV(next);
+        updateField(taskId, "subteamId", next);
+      }}
+    />
   );
 }
