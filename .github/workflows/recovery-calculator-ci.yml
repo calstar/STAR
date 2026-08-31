@@ -6,10 +6,16 @@ name: Recovery Calculator CI
   push:
     paths:
       - 'recovery-calculator/**'
+      # The shared design core: its permission check is what stops one user
+      # editing another's designs, so a change to it has to run these tests.
+      - 'lib/stardesign/**'
       - '.github/workflows/recovery-calculator-ci.yml'
   pull_request:
     paths:
       - 'recovery-calculator/**'
+      # The shared design core: its permission check is what stops one user
+      # editing another's designs, so a change to it has to run these tests.
+      - 'lib/stardesign/**'
       - '.github/workflows/recovery-calculator-ci.yml'
   workflow_dispatch:
 

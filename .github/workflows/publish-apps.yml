@@ -13,6 +13,8 @@ name: Publish app images
       - main
     paths:
       - 'EngineDesign/**'
+      # The design core the three design-tool API images are built on.
+      - 'lib/stardesign/**'
       - 'pid-designer/**'
       - 'recovery-calculator/**'
       - 'onshape-viewer/**'
@@ -44,9 +46,12 @@ jobs:
           # EngineDesign/ subtrees) -- see EngineDesign/Dockerfile.api.
           - { name: engine-design-api,            context: .,                           dockerfile: ./EngineDesign/Dockerfile.api }
           - { name: engine-design-frontend,       context: ./EngineDesign/frontend,     dockerfile: ./EngineDesign/frontend/Dockerfile }
-          - { name: pid-designer-api,             context: ./pid-designer,              dockerfile: ./pid-designer/Dockerfile.api }
+          # context is the repo root, not the subproject: this image installs
+          # lib/stardesign, which a subproject context cannot see.
+          - { name: pid-designer-api,             context: .,                           dockerfile: ./pid-designer/Dockerfile.api }
           - { name: pid-designer-frontend,        context: ./pid-designer/frontend,     dockerfile: ./pid-designer/frontend/Dockerfile }
-          - { name: recovery-calculator-api,      context: ./recovery-calculator,       dockerfile: ./recovery-calculator/Dockerfile.api }
+          # Repo root for the same reason as pid-designer-api above.
+          - { name: recovery-calculator-api,      context: .,                           dockerfile: ./recovery-calculator/Dockerfile.api }
           - { name: recovery-calculator-frontend, context: ./recovery-calculator/frontend, dockerfile: ./recovery-calculator/frontend/Dockerfile }
           - { name: onshape-viewer-api,           context: ./onshape-viewer,            dockerfile: ./onshape-viewer/Dockerfile.api }
           - { name: onshape-viewer-frontend,      context: ./onshape-viewer/frontend,   dockerfile: ./onshape-viewer/frontend/Dockerfile }
