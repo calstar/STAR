@@ -142,6 +142,15 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # The login roster: every successful login is recorded here and served at
+      # /users, which is how the design tools populate their "share with"
+      # picker. This box is the only login node, so it is the only place the
+      # roster exists -- hence the volume. Losing it is recoverable (everyone
+      # reappears as they next sign in) but the picker is empty until they do.
+      AUTH_USERS_FILE: /data/users.json
+    volumes:
+      - auth_data:/data
     expose:
       - "5000"
 
@@ -167,6 +176,10 @@ services:
       - caddy
 
 volumes:
+  # The auth login roster (users.json). Small, and rebuilt naturally as people
+  # sign in, but back it up with the rest -- an empty share picker on the day
+  # after a restore is a confusing way to find out it was missed.
+  auth_data:
   # STARProject's Postgres data — the live task-tracker DB. Back this up (see
   # starproject-backup.sh + the systemd timer).
   starproject_pg:
