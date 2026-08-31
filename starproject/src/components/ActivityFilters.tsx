@@ -2,6 +2,8 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { FieldSelect } from "@/components/fields/FieldSelect";
+
 const KINDS: [string, string][] = [
   ["created", "Created"],
   ["updated", "Updated"],
@@ -36,35 +38,35 @@ export function ActivityFilters({
     router.push(qs ? `${pathname}?${qs}` : pathname);
   };
 
-  const control =
-    "rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1.5 text-sm";
-
   return (
     <div className="mt-4 flex flex-wrap items-center gap-2">
-      <select value={kind} onChange={(e) => set("kind", e.target.value)} className={control}>
-        <option value="">All types</option>
-        {KINDS.map(([v, l]) => (
-          <option key={v} value={v}>
-            {l}
-          </option>
-        ))}
-      </select>
-      <select value={actor} onChange={(e) => set("actor", e.target.value)} className={control}>
-        <option value="">All people</option>
-        {users.map((u) => (
-          <option key={u.id} value={u.id}>
-            {u.name ?? u.email}
-          </option>
-        ))}
-      </select>
-      <select value={project} onChange={(e) => set("project", e.target.value)} className={control}>
-        <option value="">All projects</option>
-        {projects.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.label}
-          </option>
-        ))}
-      </select>
+      <FieldSelect
+        ariaLabel="Filter by type"
+        value={kind}
+        onChange={(v) => set("kind", v)}
+        options={[
+          { value: "", label: "All types" },
+          ...KINDS.map(([v, l]) => ({ value: v, label: l })),
+        ]}
+      />
+      <FieldSelect
+        ariaLabel="Filter by person"
+        value={actor}
+        onChange={(v) => set("actor", v)}
+        options={[
+          { value: "", label: "All people" },
+          ...users.map((u) => ({ value: u.id, label: u.name ?? u.email })),
+        ]}
+      />
+      <FieldSelect
+        ariaLabel="Filter by project"
+        value={project}
+        onChange={(v) => set("project", v)}
+        options={[
+          { value: "", label: "All projects" },
+          ...projects.map((p) => ({ value: p.id, label: p.label })),
+        ]}
+      />
       {(kind || actor || project) && (
         <button
           onClick={() => router.push(pathname)}

@@ -1,16 +1,16 @@
 "use client";
 
-import type { TaskStatus } from "@prisma/client";
 import { useState } from "react";
 
+import { FieldSelect } from "@/components/fields/FieldSelect";
 import { updateField } from "@/lib/fieldUpdate";
-import { STATUS_BADGE, STATUS_OPTION_STYLE } from "@/lib/tasks";
+import { STATUS_BADGE } from "@/lib/tasks";
 
-const OPTS: [string, string][] = [
-  ["backlog", "Backlog"],
-  ["todo", "To do"],
-  ["in_progress", "In progress"],
-  ["done", "Done"],
+const OPTS: { value: string; label: string; badge: string }[] = [
+  { value: "backlog", label: "Backlog", badge: STATUS_BADGE.backlog },
+  { value: "todo", label: "To do", badge: STATUS_BADGE.todo },
+  { value: "in_progress", label: "In progress", badge: STATUS_BADGE.in_progress },
+  { value: "done", label: "Done", badge: STATUS_BADGE.done },
 ];
 
 export function StatusSelect({
@@ -22,22 +22,14 @@ export function StatusSelect({
 }) {
   const [v, setV] = useState(value);
   return (
-    <select
-      name="status"
+    <FieldSelect
+      ariaLabel="Status"
       value={v}
-      onChange={(e) => {
-        setV(e.target.value);
-        updateField(taskId, "status", e.target.value);
+      options={OPTS}
+      onChange={(next) => {
+        setV(next);
+        updateField(taskId, "status", next);
       }}
-      className={`rounded border border-neutral-300 dark:border-neutral-700 px-2 py-1 text-sm font-medium ${
-        STATUS_BADGE[v as TaskStatus] ?? ""
-      }`}
-    >
-      {OPTS.map(([val, l]) => (
-        <option key={val} value={val} style={STATUS_OPTION_STYLE[val]}>
-          {l}
-        </option>
-      ))}
-    </select>
+    />
   );
 }

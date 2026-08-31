@@ -2,14 +2,15 @@
 
 import { useState } from "react";
 
+import { FieldSelect } from "@/components/fields/FieldSelect";
 import { updateField } from "@/lib/fieldUpdate";
-import { PRIORITY_BADGE, PRIORITY_OPTION_STYLE } from "@/lib/tasks";
+import { PRIORITY_BADGE } from "@/lib/tasks";
 
-const OPTS: [string, string][] = [
-  ["", "—"],
-  ["low", "Low"],
-  ["medium", "Medium"],
-  ["high", "High"],
+const OPTS: { value: string; label: string; badge?: string }[] = [
+  { value: "", label: "—" },
+  { value: "low", label: "Low", badge: PRIORITY_BADGE.low },
+  { value: "medium", label: "Medium", badge: PRIORITY_BADGE.medium },
+  { value: "high", label: "High", badge: PRIORITY_BADGE.high },
 ];
 
 export function PrioritySelect({
@@ -21,22 +22,14 @@ export function PrioritySelect({
 }) {
   const [v, setV] = useState(value);
   return (
-    <select
-      name="priority"
+    <FieldSelect
+      ariaLabel="Priority"
       value={v}
-      onChange={(e) => {
-        setV(e.target.value);
-        updateField(taskId, "priority", e.target.value);
+      options={OPTS}
+      onChange={(next) => {
+        setV(next);
+        updateField(taskId, "priority", next);
       }}
-      className={`rounded border border-neutral-300 dark:border-neutral-700 px-2 py-1 text-sm font-medium ${
-        PRIORITY_BADGE[v] ?? ""
-      }`}
-    >
-      {OPTS.map(([val, l]) => (
-        <option key={val} value={val} style={PRIORITY_OPTION_STYLE[val]}>
-          {l}
-        </option>
-      ))}
-    </select>
+    />
   );
 }

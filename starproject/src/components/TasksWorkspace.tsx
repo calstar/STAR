@@ -4,6 +4,7 @@ import type { TaskStatus, User } from "@prisma/client";
 import { useMemo, useState } from "react";
 
 import { Board } from "@/components/Board";
+import { FieldSelect } from "@/components/fields/FieldSelect";
 import { GanttChart } from "@/components/GanttChart";
 import { TaskTable } from "@/components/TaskTable";
 import { type WorkspaceTask, toRowData } from "@/lib/board";
@@ -115,18 +116,18 @@ export function TasksWorkspace({
           >
             My tasks
           </button>
-          <select
+          <FieldSelect
+            ariaLabel="Filter by status"
             value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1.5 text-sm"
-          >
-            <option value="">All statuses</option>
-            {(Object.keys(STATUS_LABEL) as TaskStatus[]).map((s) => (
-              <option key={s} value={s}>
-                {STATUS_LABEL[s]}
-              </option>
-            ))}
-          </select>
+            onChange={setStatus}
+            options={[
+              { value: "", label: "All statuses" },
+              ...(Object.keys(STATUS_LABEL) as TaskStatus[]).map((s) => ({
+                value: s,
+                label: STATUS_LABEL[s],
+              })),
+            ]}
+          />
           {anyFilter && (
             <button
               onClick={() => {
