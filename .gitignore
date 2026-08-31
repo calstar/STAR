@@ -34,3 +34,7 @@ dist/
 
 # Internal review notes (not shared with the team)
 daq-server/BACKEND_REVIEW.md
+
+# macOS
+.DS_Store
+**/.DS_Store
