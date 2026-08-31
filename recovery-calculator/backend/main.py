@@ -26,7 +26,7 @@ if project_root not in sys.path:
 
 from backend.routers import (  # noqa: E402
     atmosphere, climatology, configs_store, crosscheck, devices, documents,
-    settings, simulate, study,
+    settings, simulate, study, users,
 )
 from backend.serialise import SCHEMA_VERSION, git_sha  # noqa: E402
 
@@ -80,6 +80,7 @@ app.include_router(climatology.router)
 app.include_router(settings.router)
 app.include_router(configs_store.router)
 app.include_router(documents.router)
+app.include_router(users.router)
 
 
 @app.get("/api/health")
