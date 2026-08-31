@@ -483,7 +483,7 @@ export function DesignVersions({ onRestore, inline = false }: Props) {
           {documents.length === 0 && <option value="">No designs</option>}
           {documents.map((d) => (
             <option key={keyOf(refOf(d))} value={keyOf(refOf(d))}>
-              {d.mine ? d.name : `${d.name} — ${d.ownerName || d.owner}`}
+              {d.mine ? d.name : `${d.name} - ${d.ownerName || d.owner}`}
             </option>
           ))}
         </select>
@@ -552,7 +552,7 @@ export function DesignVersions({ onRestore, inline = false }: Props) {
       >
         <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
           "{unshared}" was unshared from you, so it has stopped saving and you have been
-          moved to one of your own designs. Nothing was deleted — you can still take a copy
+          moved to one of your own designs. Nothing was deleted - you can still take a copy
           of it from <b>Change → View only</b>.
         </p>
       </Modal>
@@ -564,7 +564,7 @@ export function DesignVersions({ onRestore, inline = false }: Props) {
           {histStatus === 'idle' && (
             <>
               <p className="mb-2 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Releases</p>
-              {releases.length === 0 && <p className="pb-2 text-xs text-[var(--color-text-muted)]">No releases yet — Release publishes {nextLabel(releases)}.</p>}
+              {releases.length === 0 && <p className="pb-2 text-xs text-[var(--color-text-muted)]">No releases yet - Release publishes {nextLabel(releases)}.</p>}
               {releases.map((r) => (
                 <button key={r.label} onClick={() => restoreRelease(r)} disabled={restoring === `rel:${r.label}`}
                   className="mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50">

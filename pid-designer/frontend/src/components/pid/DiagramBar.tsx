@@ -30,7 +30,7 @@ export function DiagramBar({ diagrams, activeKey, onSelect, onOpenChange }: Diag
         {diagrams.length === 0 && <option value="">No diagrams</option>}
         {diagrams.map((d) => (
           <option key={keyOf(refOf(d))} value={keyOf(refOf(d))}>
-            {d.mine ? d.name : `${d.name} — ${d.ownerName || d.owner}`}
+            {d.mine ? d.name : `${d.name} - ${d.ownerName || d.owner}`}
           </option>
         ))}
       </select>
