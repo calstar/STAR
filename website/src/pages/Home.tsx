@@ -39,7 +39,7 @@ export default function Home() {
               Berkeley's Space Technologies and Rocketry team.
             </p>
             <p style={{ fontSize: 18, color: 'var(--text-dim)', margin: '18px 0 0', maxWidth: '52ch' }}>
-              Student-designed rockets, in-house avionics, and liquid-fuel engines —
+              Student-designed rockets, in-house avionics, and liquid-fuel engines, 
               the longest and most successful launch history on campus.
             </p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 34 }}>
@@ -83,13 +83,13 @@ export default function Home() {
             <span className="eyebrow">Who we are</span>
             <h2 className="section-title">A decade of student-built flight.</h2>
             <p className="section-lead">
-              STAR boasts the longest and most successful launch history on campus — eighteen complete
+              STAR boasts the longest and most successful launch history on campus, eighteen complete
               vehicles engineered over our decade lifetime, and three liquid engines. Every vehicle is
               completely student-designed and tested, from our in-house avionics to our liquid-fuel
               propulsion.
             </p>
             <p className="section-lead">
-              Our payloads have ranged from microbial power cells to muon detectors — and even
+              Our payloads have ranged from microbial power cells to muon detectors, and even
               rocket-deployed aircraft. We've flown as NASA Student Launch and now compete at the ESRA
               Spaceport America Cup and FAR.
             </p>
@@ -134,7 +134,7 @@ export default function Home() {
             <h2 className="section-title">Many ways to build a rocket.</h2>
             <p className="section-lead">
               We welcome all majors and backgrounds. Find the corner of the vehicle that fascinates
-              you — or try a few.
+              you, or try a few.
             </p>
           </Reveal>
           <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 18, marginTop: 44 }}>

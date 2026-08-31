@@ -2,7 +2,7 @@
  * Project / launch history.
  *
  * This is the single source of truth for the Projects timeline. Edit here to
- * add a launch, fix a stat, or swap a photo — the timeline renders straight
+ * add a launch, fix a stat, or swap a photo, the timeline renders straight
  * from this array. Ordering is handled by the page (newest first), so you can
  * keep entries in any order; sort key is `year`.
  */
@@ -14,7 +14,7 @@ export interface Project {
   name: string;
   /** Short descriptor shown under the name, e.g. "1st Liquid Vehicle". */
   tagline: string;
-  /** Numeric sort key — the (start) year of the project. */
+  /** Numeric sort key, the (start) year of the project. */
   year: number;
   /** Human-readable date/era shown on the node, e.g. "IREC 2024" or "2021–". */
   era: string;
@@ -25,7 +25,7 @@ export interface Project {
   statLabel?: string;
   image: string;
   description: string;
-  /** True for the team's active builds — pinned to the top of the page. */
+  /** True for the team's active builds, pinned to the top of the page. */
   current?: boolean;
 }
 
@@ -41,7 +41,7 @@ export const PROJECTS: Project[] = [
     image: '/img/projects/le4.webp',
     current: true,
     description:
-      "LE4 is the next chapter in STAR's liquids program — our fourth liquid engine and most ambitious propulsion project yet. The team is designing the engine, its feed system, tanks, and airframe in-house.",
+      "LE4 is the next chapter in STAR's liquids program, our fourth liquid engine and most ambitious propulsion project yet. The team is designing the engine, its feed system, tanks, and airframe in-house.",
   },
 
   // ── Flight vehicles & engines, newest → oldest ──────────────────────────
@@ -69,7 +69,7 @@ export const PROJECTS: Project[] = [
     statLabel: 'live monitor & control',
     image: '/img/projects/le3engine.webp',
     description:
-      "LE3 (Diablo) was STAR’s third liquid engine — a multi-year development project running from 2024 to 2026. A major part of LE3 was our custom data-acquisition and control system (DAQ), which monitors and commands the engine live throughout every hotfire.",
+      "LE3 (Diablo) was STAR’s third liquid engine, a multi-year development project running from 2024 to 2026. A major part of LE3 was our custom data-acquisition and control system (DAQ), which monitors and commands the engine live throughout every hotfire.",
   },
   {
     id: 'flight-computer',
@@ -108,7 +108,7 @@ export const PROJECTS: Project[] = [
     statLabel: 'supersonic',
     image: '/img/projects/glamouous_glennisr.webp',
     description:
-      'A solid demonstrator for Diablo (LE3), built to test a new parachute deployment system. Sponsored by Mach 1 Hot Sauce, it flew supersonic at Mach 1 — with a bottle of hot sauce aboard.',
+      'A solid demonstrator for Diablo (LE3), built to test a new parachute deployment system. Sponsored by Mach 1 Hot Sauce, it flew supersonic at Mach 1, with a bottle of hot sauce aboard.',
   },
   {
     id: 'caldera',
@@ -121,7 +121,7 @@ export const PROJECTS: Project[] = [
     statLabel: 'UC Berkeley apogee record',
     image: '/img/projects/caldera.webp',
     description:
-      'Our two-stage vehicle, Caldera, reached an impressive apogee of 27,326 feet — shattering the UC Berkeley apogee record. It marked a significant milestone for the team and set a new standard for future projects.',
+      'Our two-stage vehicle, Caldera, reached an impressive apogee of 27,326 feet, shattering the UC Berkeley apogee record. It marked a significant milestone for the team and set a new standard for future projects.',
   },
   {
     id: 'calvisitor',
@@ -134,7 +134,7 @@ export const PROJECTS: Project[] = [
     statLabel: '4th overall at IREC',
     image: '/img/projects/calvisitor.webp',
     description:
-      'Our 2023 entry into the Intercollegiate Rocketry Engineering Competition. Spanning two years of work and featuring an axial avionics bay and an air brakes system to reach as close to 10,000 ft as possible. It flew two payloads — a vibrational art system and a muon detector — reaching an apogee of 10,023 ft and placing 4th overall.',
+      'Our 2023 entry into the Intercollegiate Rocketry Engineering Competition. Spanning two years of work and featuring an axial avionics bay and an air brakes system to reach as close to 10,000 ft as possible. It flew two payloads, a vibrational art system and a muon detector, reaching an apogee of 10,023 ft and placing 4th overall.',
   },
   {
     id: 'ellie',
@@ -147,7 +147,7 @@ export const PROJECTS: Project[] = [
     statLabel: 'successful test fire',
     image: '/img/projects/ellie.webp',
     description:
-      "The Experimental Liquid Low-Impulse Engine (ELLIE) is the first time STAR attempted a bi-propellant rocket engine — laying the groundwork for a flyable liquid. Across Fall 2021 and Spring 2022, the propulsion and avionics teams carried a long-standing design of the gaseous-oxygen / liquid-ethanol engine to completion, ending with a successful 6-second test fire.",
+      "The Experimental Liquid Low-Impulse Engine (ELLIE) is the first time STAR attempted a bi-propellant rocket engine, laying the groundwork for a flyable liquid. Across Fall 2021 and Spring 2022, the propulsion and avionics teams carried a long-standing design of the gaseous-oxygen / liquid-ethanol engine to completion, ending with a successful 6-second test fire.",
   },
   {
     id: 'pinkbeary',
@@ -160,7 +160,7 @@ export const PROJECTS: Project[] = [
     statLabel: 'stage separation',
     image: '/img/projects/pinkbeary.webp',
     description:
-      "Launched September 2022, Pinkbeary (SSEP) is a proof-of-concept testing a two-stage airframe design and a spring-actuated separation mechanism released by explosive 'pyro' bolts. It involved several new recovery methods and airframe architectures. Stage separation makes rockets more efficient by shedding dead weight — a key step toward STAR's eventual spaceshot goal. Its apogee was around 2,377 ft.",
+      "Launched September 2022, Pinkbeary (SSEP) is a proof-of-concept testing a two-stage airframe design and a spring-actuated separation mechanism released by explosive 'pyro' bolts. It involved several new recovery methods and airframe architectures. Stage separation makes rockets more efficient by shedding dead weight, a key step toward STAR's eventual spaceshot goal. Its apogee was around 2,377 ft.",
   },
   {
     id: 'bearforce1',
@@ -186,7 +186,7 @@ export const PROJECTS: Project[] = [
     statLabel: "Berkeley's first recovered liquid",
     image: '/img/projects/alula.webp',
     description:
-      "Our first liquid rocket, ALULA, achieved an apogee of 6,126 feet — making history as the first liquid rocket from UC Berkeley to be successfully recovered. ALULA also won the Dollar-Per-Foot Competition at Friends of Amateur Rocketry, paving the way for more ambitious liquid projects ahead.",
+      "Our first liquid rocket, ALULA, achieved an apogee of 6,126 feet, making history as the first liquid rocket from UC Berkeley to be successfully recovered. ALULA also won the Dollar-Per-Foot Competition at Friends of Amateur Rocketry, paving the way for more ambitious liquid projects ahead.",
   },
   {
     id: 'mindi',
@@ -199,7 +199,7 @@ export const PROJECTS: Project[] = [
     statLabel: 'projected apogee',
     image: '/img/projects/mindi.webp',
     description:
-      "MINDI stands for minimum-diameter — a rocket whose motor slides directly into the body tube rather than a smaller motor-mount tube. That design poses challenges for mounting the fins and retaining the motor. We investigated fin glassing and composites techniques, plus a 3D-printed motor retainer, and set out to shatter Berkeley's altitude record at an astonishing 14,000 feet.",
+      "MINDI stands for minimum-diameter, a rocket whose motor slides directly into the body tube rather than a smaller motor-mount tube. That design poses challenges for mounting the fins and retaining the motor. We investigated fin glassing and composites techniques, plus a 3D-printed motor retainer, and set out to shatter Berkeley's altitude record at an astonishing 14,000 feet.",
   },
   {
     id: 'airbears',
@@ -212,7 +212,7 @@ export const PROJECTS: Project[] = [
     statLabel: 'within 1 ft of prediction',
     image: '/img/projects/airbears.webp',
     description:
-      'AirBears flew nominally to 4,509 ft in November 2019 — incredibly close to its projected 4,500 ft. The two recovery altimeters recorded 4,508 and 4,509 ft. Drogue deployed at apogee and the main at 800 ft; with very little wind, the vehicle drifted to within ~100 meters of the launch site.',
+      'AirBears flew nominally to 4,509 ft in November 2019, incredibly close to its projected 4,500 ft. The two recovery altimeters recorded 4,508 and 4,509 ft. Drogue deployed at apogee and the main at 800 ft; with very little wind, the vehicle drifted to within ~100 meters of the launch site.',
   },
   {
     id: 'arktos',
@@ -262,6 +262,6 @@ export const PROJECTS: Project[] = [
     statLabel: 'first HPR flight',
     image: '/img/projects/ursaminor.webp',
     description:
-      'On December 4, 2016, CalSTAR launched its first high-powered rocket — a 2/3 sub-scale version of our final vehicle featuring a nose-mounted camera, clear nose cone, and first-person flight video. Its launch altitude was 4,633 meters.',
+      'On December 4, 2016, CalSTAR launched its first high-powered rocket, a 2/3 sub-scale version of our final vehicle featuring a nose-mounted camera, clear nose cone, and first-person flight video. Its launch altitude was 4,633 meters.',
   },
 ];
