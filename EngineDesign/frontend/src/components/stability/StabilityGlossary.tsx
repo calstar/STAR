@@ -77,7 +77,7 @@ const GROUPS: { title: string; entries: Entry[] }[] = [
       {
         sym: 'τ_sens',
         name: 'sensitive lag [ms]',
-        meaning: 'χ·τ_vap — the lag that sets the Rayleigh phase ωτ.',
+        meaning: 'χ·τ_vap - the lag that sets the Rayleigh phase ωτ.',
       },
       {
         sym: 'τ / θ_c',
@@ -114,7 +114,7 @@ export function StabilityGlossary() {
       >
         <span>
           New to these charts? <span className="text-[var(--color-text-primary)]">What α, η_inj, τ… mean</span>{' '}
-          — symbol glossary
+          - symbol glossary
         </span>
         <span className="font-mono text-sm">{open ? '−' : '+'}</span>
       </button>
@@ -131,7 +131,7 @@ export function StabilityGlossary() {
                   <div key={e.sym}>
                     <dt className="text-xs">
                       <span className="font-mono text-[var(--color-text-primary)]">{e.sym}</span>{' '}
-                      <span className="text-[var(--color-text-secondary)]">— {e.name}</span>
+                      <span className="text-[var(--color-text-secondary)]">- {e.name}</span>
                     </dt>
                     <dd className="text-[11px] text-[var(--color-text-secondary)] leading-snug mt-0.5 opacity-90">
                       {e.meaning}

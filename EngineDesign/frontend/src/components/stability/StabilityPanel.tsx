@@ -82,7 +82,7 @@ export function StabilityPanel({
         <div>
           <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">Combustion stability</h3>
           <p className="text-sm text-[var(--color-text-secondary)]">
-            Rich analysis —{' '}
+            Rich analysis -{' '}
             <span style={{ color: marginColor(data.summary.min_margin, data.summary.gate_margin_threshold) }}>
               {data.summary.state}
             </span>
@@ -122,7 +122,7 @@ export function StabilityPanel({
       </div>
 
       <p className="text-xs text-[var(--color-text-secondary)]">
-        Tank pressure vs time isn&apos;t shown here — it depends on the feed configuration
+        Tank pressure vs time isn&apos;t shown here - it depends on the feed configuration
         (blowdown vs dome-regulated) and needs a real solve. Run the{' '}
         <span className="text-[var(--color-text-primary)] font-medium">Time-Series</span> tab for
         the actual pressure history. Water hammer (a valve transient, not a combustion mode) is

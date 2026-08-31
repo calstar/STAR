@@ -87,7 +87,7 @@ export function AcousticDampingBars({ data }: { data: StabilityRichPayload }) {
         <span style={{ color: STABLE }}>α&lt;0 decays (stable)</span>,{' '}
         <span style={{ color: UNSTABLE }}>α&gt;0 grows (driven)</span>. In each bar, the part right
         of zero is combustion driving the mode; the stacked colors left of zero are the damping
-        mechanisms — driving minus damping is α.
+        mechanisms - driving minus damping is α.
       </p>
     </VizCard>
   );

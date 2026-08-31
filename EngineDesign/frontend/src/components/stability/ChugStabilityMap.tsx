@@ -195,7 +195,7 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
 
       <p className="text-[10px] text-[var(--color-text-secondary)] mt-2 leading-snug">
         Each dot is a propellant stream at its injector stiffness (x) and combustion lag (y). Dots
-        below/right of the red marginal boundary are stable — the farther from the curve, the more
+        below/right of the red marginal boundary are stable - the farther from the curve, the more
         chug margin. To push a stream safer: <span className="text-[var(--color-text-primary)]">raise injector ΔP</span>{' '}
         (η_inj → moves right) or <span className="text-[var(--color-text-primary)]">atomize finer</span>{' '}
         (smaller SMD shortens the lag → moves down).

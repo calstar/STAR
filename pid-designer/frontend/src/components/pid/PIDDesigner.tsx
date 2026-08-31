@@ -402,7 +402,7 @@ export function PIDDesigner() {
       let list: DiagramMeta[] = [];
       try {
         list = await api.listDiagrams();
-      } catch { /* offline — fall through to create */ }
+      } catch { /* offline - fall through to create */ }
       if (list.length === 0) {
         try {
           list = [await api.createDiagram('Untitled')];
@@ -509,7 +509,7 @@ export function PIDDesigner() {
       >
         <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
           "{unshared}" was unshared from you, so it has stopped saving and you have been
-          moved to one of your own diagrams. Nothing was deleted — you can still take a
+          moved to one of your own diagrams. Nothing was deleted - you can still take a
           copy of it from <b>Change → View only</b>.
         </p>
       </Modal>

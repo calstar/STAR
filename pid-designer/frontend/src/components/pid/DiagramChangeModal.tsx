@@ -226,7 +226,7 @@ export function DiagramChangeModal({
                       {!d.mine && (
                         <button
                           className={ghostBtn} disabled={busy === key}
-                          title="Remove yourself from this diagram. It is not deleted — you can copy it from View only whenever you like."
+                          title="Remove yourself from this diagram. It is not deleted - you can copy it from View only whenever you like."
                           onClick={() => void run(key, () => onLeave(ref))}
                         >
                           Leave
@@ -247,7 +247,7 @@ export function DiagramChangeModal({
                       {shareCandidates.length === 0 && (
                         <p className="px-1 py-2 text-[10px] text-[var(--color-text-muted)]">
                           {users.length === 0
-                            ? 'No teammates found yet — people appear here once they have signed in.'
+                            ? 'No teammates found yet - people appear here once they have signed in.'
                             : 'Nobody matches that.'}
                         </p>
                       )}
@@ -268,7 +268,7 @@ export function DiagramChangeModal({
                     </div>
                     {removed(d).length > 0 && (
                       <p className="mt-2 text-[10px] text-amber-500">
-                        Removing: {removed(d).join(', ')} — they lose edit access, but can still copy this diagram.
+                        Removing: {removed(d).join(', ')} - they lose edit access, but can still copy this diagram.
                       </p>
                     )}
                     <div className="mt-2 flex justify-end gap-2">
@@ -289,7 +289,7 @@ export function DiagramChangeModal({
       ) : (
         <div className="max-h-[55vh] overflow-y-auto">
           <p className="mb-2 text-[10px] text-[var(--color-text-muted)]">
-            Everyone else's diagrams. Opening one takes your own copy of it — the original is untouched.
+            Everyone else's diagrams. Opening one takes your own copy of it; the original is untouched.
           </p>
           {tree === null && <p className="py-3 text-xs text-[var(--color-text-muted)]">Loading…</p>}
           {tree?.length === 0 && (

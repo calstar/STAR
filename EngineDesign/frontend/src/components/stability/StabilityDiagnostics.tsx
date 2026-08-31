@@ -81,7 +81,7 @@ export function StabilityDiagnostics({ data }: { data: StabilityRichPayload }) {
           </h4>
           {d.actions.length === 0 ? (
             <p className="text-xs text-[var(--color-text-secondary)]">
-              No design changes needed — keep monitoring during hot fire.
+              No design changes needed - keep monitoring during hot fire.
             </p>
           ) : (
             <ul className="space-y-2.5">

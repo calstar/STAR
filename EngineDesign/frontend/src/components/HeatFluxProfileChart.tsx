@@ -462,7 +462,7 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
                 stroke="var(--color-text-secondary)"
                 tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
                 label={{ 
-                  value: 'Axial Position (mm) — 0 = Throat, negative = Injector', 
+                  value: 'Axial Position (mm) - 0 = Throat, negative = Injector', 
                   position: 'insideBottom', 
                   offset: -15, 
                   fill: 'var(--color-text-secondary)',
