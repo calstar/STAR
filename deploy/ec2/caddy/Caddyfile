@@ -1,0 +1,33 @@
+# STAR EC2 box — Caddyfile (STARProject gate only).
+#
+# The EC2 box runs the central `auth` login service (the cookie minter) and now
+# STARProject. This Caddy sits in front of STARProject and applies the same
+# forward_auth gate the apps machine uses, calling the local auth's /verify so a
+# signed-in .starberkeley.org cookie is required. auth.starberkeley.org itself
+# stays tunnel-direct to auth:5000 (not fronted here) — gating it would deadlock.
+#
+# TLS: Cloudflare terminates it at the edge and cloudflared speaks plain HTTP to
+# Caddy, so set SCHEME=http (Caddy binds :80, issues no certificates). The tunnel
+# routes project.starberkeley.org → http://caddy:80.
+
+# Gate a site on a valid session. Import first in each protected site block.
+(protected) {
+	forward_auth {$AUTH_UPSTREAM:auth:5000} {
+		uri /verify
+		# Identity for the upstream app, taken from the /verify response.
+		copy_headers X-Auth-Email X-Auth-User
+		# Strip hop-by-hop upgrade headers from the /verify subrequest only (the
+		# auth service 400s on them); the real WebSocket upgrade still proxies
+		# through untouched.
+		header_up -Connection
+		header_up -Upgrade
+	}
+}
+
+# ── STARProject ──────────────────────────────────────────────────────────────
+# Single container: Next.js serves both its pages and /api routes, so one
+# reverse_proxy (no /api split). Postgres is the starproject-db service.
+{$SCHEME:http}://project.{$BASE_DOMAIN:starberkeley.org} {
+	import protected
+	reverse_proxy starproject:3000
+}

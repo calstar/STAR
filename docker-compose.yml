@@ -64,7 +64,6 @@ services:
       - onshape-viewer-frontend
       - daq-viewer
       - landing
-      - starproject
 
   # ── Cloudflare Tunnel (optional ingress) ─────────────────────────────────
   # Opt in with `--profile tunnel`. Cloudflare terminates TLS at the edge, so
@@ -286,74 +285,6 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
 
-  # ── STARProject (task tracker) ───────────────────────────────────────────
-  # The first DB-backed app in the stack: a Next.js standalone server plus its
-  # own Postgres (starproject-db). Auth is Caddy's job (X-Auth-Email injected
-  # upstream), so no JWT_SECRET here. The image runs `prisma migrate deploy` on
-  # startup (starproject/docker-entrypoint.sh), so a pull-only apps box needs no
-  # migration step of its own.
-  starproject:
-    image: ghcr.io/calstar/star-starproject:latest
-    build:
-      context: ./starproject
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    environment:
-      PORT: 3000
-      HOSTNAME: 0.0.0.0
-      DATABASE_URL: postgresql://${STARPROJECT_DB_USER:-starproject}:${STARPROJECT_DB_PASSWORD:-starproject}@starproject-db:5432/${STARPROJECT_DB_NAME:-starproject}?schema=public
-      # Notifications (Phase 5). Emails send only when SES_FROM is set; otherwise
-      # the app logs instead. SES reuses the stack's shared AWS_* creds; the app
-      # reads AWS_REGION or falls back to AWS_DEFAULT_REGION.
-      APP_BASE_URL: ${STARPROJECT_APP_BASE_URL:-https://project.starberkeley.org}
-      SES_FROM: ${STARPROJECT_SES_FROM:-}
-      CRON_SECRET: ${STARPROJECT_CRON_SECRET:-}
-      AWS_REGION: ${AWS_REGION:-}
-      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-    depends_on:
-      starproject-db:
-        condition: service_healthy
-
-  starproject-db:
-    image: postgres:16
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${STARPROJECT_DB_USER:-starproject}
-      POSTGRES_PASSWORD: ${STARPROJECT_DB_PASSWORD:-starproject}
-      POSTGRES_DB: ${STARPROJECT_DB_NAME:-starproject}
-    volumes:
-      - starproject_pg:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${STARPROJECT_DB_USER:-starproject} -d ${STARPROJECT_DB_NAME:-starproject}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  # Nightly deadline-notification trigger. POSTs the app's INTERNAL route
-  # (bypasses Caddy) with the shared secret; the route runs the due-soon/overdue
-  # scan (idempotent via NotifLog). Optional — a host crontab or AWS EventBridge
-  # POSTing the same route is an equivalent drop-in.
-  starproject-cron:
-    image: alpine:3
-    restart: unless-stopped
-    depends_on:
-      - starproject
-    environment:
-      CRON_SECRET: ${STARPROJECT_CRON_SECRET:-}
-    command:
-      - /bin/sh
-      - -c
-      - |
-        apk add --no-cache curl >/dev/null
-        {
-          echo "0 8 * * * curl -fsS -X POST -H \"X-Cron-Secret: $$CRON_SECRET\" http://starproject:3000/api/cron/deadlines >/proc/1/fd/1 2>&1"
-          echo "0 7 * * * curl -fsS -X POST -H \"X-Cron-Secret: $$CRON_SECRET\" http://starproject:3000/api/cron/digest >/proc/1/fd/1 2>&1"
-          echo "*/15 * * * * curl -fsS -X POST -H \"X-Cron-Secret: $$CRON_SECRET\" http://starproject:3000/api/cron/email-batch >/proc/1/fd/1 2>&1"
-        } > /etc/crontabs/root
-        crond -f -l 8
-
 volumes:
   caddy_data:
   caddy_config:
@@ -366,6 +297,3 @@ volumes:
   # a future cross-user "browse + copy" is a single tree. Keyed by X-Auth-Email
   # inside. See */backend/userdata.py.
   userdata:
-  # STARProject's Postgres data. The first database in the stack — back this up
-  # separately from the S3-backed userdata volume above.
-  starproject_pg:

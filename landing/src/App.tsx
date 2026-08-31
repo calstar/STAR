@@ -224,12 +224,12 @@ const APPS: AppCard[] = [
       'Only authorized users can use this; Onshape API credits are limited. Contact Aidan for access.',
   },
   {
-    id: 'openproject',
-    href: 'https://openproject.starberkeley.org',
-    label: 'OpenProject',
-    subdomain: 'openproject.starberkeley.org',
+    id: 'starproject',
+    href: 'https://project.starberkeley.org',
+    label: 'STAR Project',
+    subdomain: 'project.starberkeley.org',
     description:
-      'Our project management platform, where tasks and project planning is handled. Please request an account from Aidan.',
+      'Our in-house task tracker — projects, subteams, boards, and timelines for the whole team. Sign in with your @berkeley.edu account.',
     icon: <IconBoard />,
     colorClass: 'card-indigo',
     iconBg: 'linear-gradient(135deg, #4338ca 0%, #6366f1 100%)',
