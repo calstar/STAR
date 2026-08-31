@@ -6,10 +6,16 @@ name: Engine Design CI
   push:
     paths:
       - 'EngineDesign/**'
+      # The shared design core: its permission check is what stops one user
+      # editing another's designs, so a change to it has to run these tests.
+      - 'lib/stardesign/**'
       - '.github/workflows/engine-design-ci.yml'
   pull_request:
     paths:
       - 'EngineDesign/**'
+      # The shared design core: its permission check is what stops one user
+      # editing another's designs, so a change to it has to run these tests.
+      - 'lib/stardesign/**'
       - '.github/workflows/engine-design-ci.yml'
   workflow_dispatch:
 

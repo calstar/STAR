@@ -4,10 +4,16 @@ name: P&ID Designer CI
   push:
     paths:
       - 'pid-designer/**'
+      # The shared design core: its permission check is what stops one user
+      # editing another's designs, so a change to it has to run these tests.
+      - 'lib/stardesign/**'
       - '.github/workflows/pid-designer-ci.yml'
   pull_request:
     paths:
       - 'pid-designer/**'
+      # The shared design core: its permission check is what stops one user
+      # editing another's designs, so a change to it has to run these tests.
+      - 'lib/stardesign/**'
       - '.github/workflows/pid-designer-ci.yml'
   workflow_dispatch:
 
