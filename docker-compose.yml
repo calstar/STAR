@@ -129,6 +129,15 @@ services:
       # Per-user saved configs + working copies live here (a mounted volume).
       # See userdata.py.
       USERDATA_DIR: /data
+      # Who a design can be shared with. The tool asks auth for the roster of
+      # everyone who has signed in. Only the EC2 login node keeps one (the auth
+      # container on this machine is verify-only and never sees a /callback),
+      # so this deliberately points across at the public URL, not at auth:5000.
+      # The backend forwards the caller's own session cookie and nothing else,
+      # to this URL and never one from the request -- see
+      # EngineDesign/backend/directory.py. Unset is fine: the roster then
+      # falls back to whoever already has data on the shared volume.
+      AUTH_USERS_URL: ${AUTH_USERS_URL:-${AUTH_PUBLIC_URL:-https://auth.starberkeley.org}}
       # Design version history (microversions + releases) in S3. Empty bucket ->
       # history falls back to the local volume (dev/no-AWS). IAM access keys, not
       # an instance role (the apps machine is not on EC2).
@@ -160,6 +169,15 @@ services:
       # Per-user working copies (autosave target) live on this volume, keyed by
       # X-Auth-Email. See pid-designer/backend/userdata.py.
       USERDATA_DIR: /data
+      # Who a design can be shared with. The tool asks auth for the roster of
+      # everyone who has signed in. Only the EC2 login node keeps one (the auth
+      # container on this machine is verify-only and never sees a /callback),
+      # so this deliberately points across at the public URL, not at auth:5000.
+      # The backend forwards the caller's own session cookie and nothing else,
+      # to this URL and never one from the request -- see
+      # pid-designer/backend/directory.py. Unset is fine: the roster then
+      # falls back to whoever already has data on the shared volume.
+      AUTH_USERS_URL: ${AUTH_USERS_URL:-${AUTH_PUBLIC_URL:-https://auth.starberkeley.org}}
       # Diagram version history (microversions + releases) in S3. Empty bucket ->
       # history falls back to the local volume (dev/no-AWS). The apps machine is
       # not on EC2, so these are IAM access keys, not an instance role.
@@ -191,6 +209,15 @@ services:
       # Per-user units + saved configs + working copies live here (a mounted
       # volume). See userdata.py.
       USERDATA_DIR: /data
+      # Who a design can be shared with. The tool asks auth for the roster of
+      # everyone who has signed in. Only the EC2 login node keeps one (the auth
+      # container on this machine is verify-only and never sees a /callback),
+      # so this deliberately points across at the public URL, not at auth:5000.
+      # The backend forwards the caller's own session cookie and nothing else,
+      # to this URL and never one from the request -- see
+      # recovery-calculator/backend/directory.py. Unset is fine: the roster then
+      # falls back to whoever already has data on the shared volume.
+      AUTH_USERS_URL: ${AUTH_USERS_URL:-${AUTH_PUBLIC_URL:-https://auth.starberkeley.org}}
       # Config version history (microversions + releases) in S3. Empty bucket ->
       # history falls back to the local volume (dev/no-AWS).
       RECOVERY_S3_BUCKET: ${RECOVERY_S3_BUCKET:-}
@@ -293,7 +320,9 @@ volumes:
   # a pure cache -- safe to wipe; it just re-exports on next view.
   daq_viewer_cache:
   # Per-user data (engine-design + recovery-calculator + pid-designer): named
-  # configs, recovery unit prefs, and P&ID working copies. One shared volume so
-  # a future cross-user "browse + copy" is a single tree. Keyed by X-Auth-Email
-  # inside. See */backend/userdata.py.
+  # configs, recovery unit prefs, and P&ID working copies. One shared volume,
+  # which is what makes cross-user "browse + copy" and sharing a directory walk
+  # rather than a database -- each app lists its siblings under <user>/<app>/.
+  # Keyed by X-Auth-Email inside. See */backend/userdata.py and the sharing
+  # section of */backend/routers/documents.py.
   userdata:
