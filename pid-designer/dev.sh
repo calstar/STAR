@@ -21,6 +21,8 @@ dev_preflight() {
     echo "  installing backend dependencies..."
     "$HERE/.venv/bin/python3" -m pip install --upgrade pip >/dev/null
     "$HERE/.venv/bin/python3" -m pip install -r "$HERE/requirements.txt"
+    # The design core shared with EngineDesign and recovery-calculator.
+    "$HERE/.venv/bin/python3" -m pip install -e "$HERE/../lib/stardesign"
   fi
   if [ ! -d "$HERE/frontend/node_modules" ]; then
     echo "  installing frontend dependencies..."
