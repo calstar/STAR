@@ -92,7 +92,20 @@ Deploy + AWS setup (bucket, versioning, lifecycle, IAM keys) is in
 ## API
 
 All routes are under `/api/pid` (plus `/api/health`). Identity is the
-`X-Auth-Email` header (or `local` in dev); every diagram is scoped to its owner.
+`X-Auth-Email` header (or `local` in dev). A diagram lives in its creator's
+folder, but that is only *where it lives*, not a privilege level: everyone on its
+`sharedWith` list is an equal editor, and any diagram can be viewed and copied by
+anyone. A diagram someone else owns is addressed with `?owner=<email>`, which the
+server reads as a claim to be an editor and refuses (403) if you are not one.
+
+| Method & path | Purpose |
+|---|---|
+| `GET  /diagrams/browse` | everyone else's diagrams, grouped by owner (the view-only tree) |
+| `POST /diagrams/copy` | `{owner, id}` -> your own copy, with fresh history and no share list |
+| `PUT  /diagrams/{id}/share` | replace the editor list `{sharedWith: [email]}` (whole list, not a delta) |
+| `DELETE /diagrams/{id}/share/me` | remove yourself from a diagram shared with you |
+| `GET  /users` | who a diagram can be shared with (see backend/directory.py) |
+
 
 | Method & path | Purpose |
 |---|---|
