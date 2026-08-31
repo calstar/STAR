@@ -38,7 +38,7 @@ export const PROJECTS: Project[] = [
     year: 2026,
     era: '2026–',
     kind: 'engine',
-    image: '/img/projects/le4.jpg',
+    image: '/img/projects/le4.webp',
     current: true,
     description:
       "LE4 is the next chapter in STAR's liquids program — our fourth liquid engine and most ambitious propulsion project yet. The team is designing the engine, its feed system, tanks, and airframe in-house.",
@@ -54,7 +54,7 @@ export const PROJECTS: Project[] = [
     kind: 'vehicle',
     stat: '20,000 ft',
     statLabel: '~Mach 1.6',
-    image: '/img/projects/gojira.jpeg',
+    image: '/img/projects/gojira.webp',
     description:
       'Our high-performance solid rocket, Gojira, was designed to reach 20,000 feet and speeds of approximately Mach 1.6. The vehicle served as an important testbed for STAR’s recovery systems, flying our first-ever reusable aluminum high-altitude black powder recovery charges. Gojira allowed us to validate this new deployment hardware under demanding flight conditions while advancing our experience with high-altitude, supersonic vehicle design and recovery.',
   },
@@ -67,7 +67,7 @@ export const PROJECTS: Project[] = [
     kind: 'engine',
     stat: 'Custom DAQ',
     statLabel: 'live monitor & control',
-    image: '/img/projects/le3engine.jpg',
+    image: '/img/projects/le3engine.webp',
     description:
       "LE3 (Diablo) was STAR’s third liquid engine — a multi-year development project running from 2024 to 2026. A major part of LE3 was our custom data-acquisition and control system (DAQ), which monitors and commands the engine live throughout every hotfire.",
   },
@@ -80,7 +80,7 @@ export const PROJECTS: Project[] = [
     kind: 'engine',
     stat: '13 sensors',
     statLabel: 'GNSS · baro · IMU',
-    image: '/img/projects/flight_computer.png',
+    image: '/img/projects/flight_computer.webp',
     description:
       'A revolutionary amateur rocketry flight computer offering superior performance at a lower price than the TeleMega or Blue Raven. It features full datalogging and live telemetry with 13 sensors (1× GNSS, 3× barometer, 6× accelerometer, 3× gyroscope) with advanced sensor fusion and extended Kalman filtering.',
   },
@@ -93,7 +93,7 @@ export const PROJECTS: Project[] = [
     kind: 'vehicle',
     stat: '10,000 ft',
     statLabel: 'target apogee',
-    image: '/img/projects/excalibur.jpg',
+    image: '/img/projects/excalibur.webp',
     description:
       'Our IREC 2025 rocket. Excalibur is a solid rocket flying to 10,000 ft, aiming to showcase the highest quality of design and manufacturing we can achieve.',
   },
@@ -106,7 +106,7 @@ export const PROJECTS: Project[] = [
     kind: 'demonstrator',
     stat: 'Mach 1',
     statLabel: 'supersonic',
-    image: '/img/projects/glamouous_glennisr.png',
+    image: '/img/projects/glamouous_glennisr.webp',
     description:
       'A solid demonstrator for Diablo (LE3), built to test a new parachute deployment system. Sponsored by Mach 1 Hot Sauce, it flew supersonic at Mach 1 — with a bottle of hot sauce aboard.',
   },
@@ -119,7 +119,7 @@ export const PROJECTS: Project[] = [
     kind: 'vehicle',
     stat: '27,326 ft',
     statLabel: 'UC Berkeley apogee record',
-    image: '/img/projects/caldera.jpg',
+    image: '/img/projects/caldera.webp',
     description:
       'Our two-stage vehicle, Caldera, reached an impressive apogee of 27,326 feet — shattering the UC Berkeley apogee record. It marked a significant milestone for the team and set a new standard for future projects.',
   },
@@ -132,7 +132,7 @@ export const PROJECTS: Project[] = [
     kind: 'vehicle',
     stat: '10,023 ft',
     statLabel: '4th overall at IREC',
-    image: '/img/projects/calvisitor.jpg',
+    image: '/img/projects/calvisitor.webp',
     description:
       'Our 2023 entry into the Intercollegiate Rocketry Engineering Competition. Spanning two years of work and featuring an axial avionics bay and an air brakes system to reach as close to 10,000 ft as possible. It flew two payloads — a vibrational art system and a muon detector — reaching an apogee of 10,023 ft and placing 4th overall.',
   },
@@ -145,7 +145,7 @@ export const PROJECTS: Project[] = [
     kind: 'engine',
     stat: '6 s',
     statLabel: 'successful test fire',
-    image: '/img/projects/ellie.jpg',
+    image: '/img/projects/ellie.webp',
     description:
       "The Experimental Liquid Low-Impulse Engine (ELLIE) is the first time STAR attempted a bi-propellant rocket engine — laying the groundwork for a flyable liquid. Across Fall 2021 and Spring 2022, the propulsion and avionics teams carried a long-standing design of the gaseous-oxygen / liquid-ethanol engine to completion, ending with a successful 6-second test fire.",
   },
@@ -158,7 +158,7 @@ export const PROJECTS: Project[] = [
     kind: 'vehicle',
     stat: '2,377 ft',
     statLabel: 'stage separation',
-    image: '/img/projects/pinkbeary.jpg',
+    image: '/img/projects/pinkbeary.webp',
     description:
       "Launched September 2022, Pinkbeary (SSEP) is a proof-of-concept testing a two-stage airframe design and a spring-actuated separation mechanism released by explosive 'pyro' bolts. It involved several new recovery methods and airframe architectures. Stage separation makes rockets more efficient by shedding dead weight — a key step toward STAR's eventual spaceshot goal. Its apogee was around 2,377 ft.",
   },
@@ -171,7 +171,7 @@ export const PROJECTS: Project[] = [
     kind: 'vehicle',
     stat: '10,000+ ft',
     statLabel: 'Mojave Desert',
-    image: '/img/projects/bearforce1.jpg',
+    image: '/img/projects/bearforce1.webp',
     description:
       'Launched over 10,000 ft above the Mojave Desert for IREC in summer 2021. At over 10 feet tall, BFO is our largest rocket to date. It features a 6-inch fiberglass airframe and a CubeSat-form payload carrying our custom muon detector and microbial fuel cell to 10,000 feet.',
   },
@@ -184,7 +184,7 @@ export const PROJECTS: Project[] = [
     kind: 'vehicle',
     stat: '6,126 ft',
     statLabel: "Berkeley's first recovered liquid",
-    image: '/img/projects/alula.jpg',
+    image: '/img/projects/alula.webp',
     description:
       "Our first liquid rocket, ALULA, achieved an apogee of 6,126 feet — making history as the first liquid rocket from UC Berkeley to be successfully recovered. ALULA also won the Dollar-Per-Foot Competition at Friends of Amateur Rocketry, paving the way for more ambitious liquid projects ahead.",
   },
@@ -197,7 +197,7 @@ export const PROJECTS: Project[] = [
     kind: 'vehicle',
     stat: '14,000 ft',
     statLabel: 'projected apogee',
-    image: '/img/projects/mindi.jpg',
+    image: '/img/projects/mindi.webp',
     description:
       "MINDI stands for minimum-diameter — a rocket whose motor slides directly into the body tube rather than a smaller motor-mount tube. That design poses challenges for mounting the fins and retaining the motor. We investigated fin glassing and composites techniques, plus a 3D-printed motor retainer, and set out to shatter Berkeley's altitude record at an astonishing 14,000 feet.",
   },
@@ -210,7 +210,7 @@ export const PROJECTS: Project[] = [
     kind: 'vehicle',
     stat: '4,509 ft',
     statLabel: 'within 1 ft of prediction',
-    image: '/img/projects/airbears.jpg',
+    image: '/img/projects/airbears.webp',
     description:
       'AirBears flew nominally to 4,509 ft in November 2019 — incredibly close to its projected 4,500 ft. The two recovery altimeters recorded 4,508 and 4,509 ft. Drogue deployed at apogee and the main at 800 ft; with very little wind, the vehicle drifted to within ~100 meters of the launch site.',
   },
@@ -223,7 +223,7 @@ export const PROJECTS: Project[] = [
     kind: 'vehicle',
     stat: '5,323 ft',
     statLabel: 'simulated apogee',
-    image: '/img/projects/arktos.jpg',
+    image: '/img/projects/arktos.webp',
     description:
       'Launched several times between February and March 2018. Constructed of Blue Tube tubing and couplers with a fiberglass nose cone, a 3D-printed boattail, and a fiberglass-reinforced 6-to-4-inch transition. At 111 inches long, 27.9 lb wet / 22.9 lb dry, it used a Cesaroni L730 motor for a simulated apogee of 5,323 ft.',
   },
@@ -234,7 +234,7 @@ export const PROJECTS: Project[] = [
     year: 2017,
     era: 'Nov 2017',
     kind: 'vehicle',
-    image: '/img/projects/subarktos.jpg',
+    image: '/img/projects/subarktos.webp',
     description:
       'Launched November 2017 as a prototype of Arktos for the NASA Student Launch. Like the later Arktos, it featured a 3D-printed, fiberglass-reinforced transition piece and flew on a Cesaroni L730.',
   },
@@ -247,7 +247,7 @@ export const PROJECTS: Project[] = [
     kind: 'vehicle',
     stat: 'Huntsville, AL',
     statLabel: 'target-detection payload',
-    image: '/img/projects/ursamajor.jpg',
+    image: '/img/projects/ursamajor.webp',
     description:
       'Successfully launched three times between January and April, the last being our competition launch in Huntsville, AL. At 97" long and 6" in diameter on an Aerotech L1150, it used a dual-deployment parachute system. During descent, a nose-cone camera and Raspberry Pi ran a target-detection algorithm before deploying landing legs and ejecting the payload to land upright.',
   },
@@ -260,7 +260,7 @@ export const PROJECTS: Project[] = [
     kind: 'vehicle',
     stat: '4,633 m',
     statLabel: 'first HPR flight',
-    image: '/img/projects/ursaminor.jpg',
+    image: '/img/projects/ursaminor.webp',
     description:
       'On December 4, 2016, CalSTAR launched its first high-powered rocket — a 2/3 sub-scale version of our final vehicle featuring a nose-mounted camera, clear nose cone, and first-person flight video. Its launch altitude was 4,633 meters.',
   },

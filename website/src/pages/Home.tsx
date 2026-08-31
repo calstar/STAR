@@ -18,7 +18,7 @@ export default function Home() {
         <div
           style={{
             position: 'absolute', inset: 0, zIndex: 0,
-            backgroundImage: 'url(/img/cover.jpg)',
+            backgroundImage: 'url(/img/cover.webp)',
             backgroundSize: 'cover', backgroundPosition: 'center',
           }}
         />
@@ -99,7 +99,7 @@ export default function Home() {
           </Reveal>
           <Reveal delay={120}>
             <div style={{ borderRadius: 20, overflow: 'hidden', border: '1px solid var(--border)', aspectRatio: '4 / 3', boxShadow: '0 30px 80px rgba(0,0,0,0.5)' }}>
-              <img src="/img/team-photo-new.jpg" alt="The STAR team" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <img src="/img/team-photo-new.webp" alt="The STAR team" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             </div>
           </Reveal>
         </div>
