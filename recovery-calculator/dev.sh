@@ -33,6 +33,10 @@ if [ ! -x .venv/bin/uvicorn ]; then
   [ -d .venv ] || python3 -m venv .venv
   .venv/bin/pip install --quiet --upgrade pip
   .venv/bin/pip install --quiet -r requirements.txt
+  # The design core shared with EngineDesign and pid-designer. Not in
+  # requirements.txt: the path that reaches it differs between a checkout
+  # and a Docker build context (see Dockerfile.api).
+  .venv/bin/pip install --quiet -e ../lib/stardesign
 fi
 PYTHON_CMD="$SCRIPT_DIR/.venv/bin/python3"
 
