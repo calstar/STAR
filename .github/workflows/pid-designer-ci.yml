@@ -35,7 +35,7 @@ jobs:
       run: npm run build
 
   backend:
-    name: Backend (import check)
+    name: Backend (imports + tests)
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -55,3 +55,15 @@ jobs:
     - name: Verify imports
       working-directory: pid-designer
       run: python3 -c "import backend.main; print('backend imports OK')"
+
+    # An import check was enough while a diagram could only be reached from its
+    # owner's own folder. Now that ?owner= can reach someone else's, the access
+    # matrix in tests/test_diagrams.py is what stops a route shipping without
+    # its permission check.
+    - name: Install test dependencies
+      working-directory: pid-designer
+      run: pip install pytest httpx
+
+    - name: Run tests
+      working-directory: pid-designer
+      run: python -m pytest tests -q
