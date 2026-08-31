@@ -39,7 +39,7 @@ from backend.routers import control
 
 # Import other routers optionally (may fail if dependencies missing)
 _optional_routers = {}
-for router_name in ['config', 'configs_store', 'documents', 'evaluate', 'timeseries', 'flight', 'geometry', 'optimizer']:
+for router_name in ['config', 'configs_store', 'documents', 'users', 'evaluate', 'timeseries', 'flight', 'geometry', 'optimizer']:
     try:
         router_module = __import__(f'backend.routers.{router_name}', fromlist=[router_name])
         _optional_routers[router_name] = router_module
