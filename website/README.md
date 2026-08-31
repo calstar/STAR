@@ -24,7 +24,33 @@ npm run preview     # preview the production build locally
 ```
 
 `dist/` is a fully static bundle. Because the site uses client-side routing,
-the host must fall back to `index.html` for unknown paths (SPA rewrite).
+the host must fall back to `index.html` for unknown paths (SPA rewrite). That
+fallback ships as `public/.htaccess` (Apache) — Vite copies it into `dist/`.
+
+## Deploy (OCF)
+
+The public site is hosted on OCF and served from the account's web root, which
+`~/public_html` symlinks to (e.g. `~/public_html -> /services/http/users/s/space`).
+**Apache serves the symlink target** — don't replace the symlink with a real
+folder, or your build lands somewhere Apache never reads.
+
+One-time setup on the OCF account (sparse-checkout of just `website/`):
+
+```bash
+git clone --filter=blob:none --sparse https://github.com/calstar/STAR.git ~/star
+cd ~/star && git sparse-checkout set website
+git checkout public-website   # or `main` once merged
+```
+
+Then deploy (and redeploy) with one command — it pulls, builds, and rsyncs
+`dist/` into `~/public_html` (following the symlink into the served dir):
+
+```bash
+~/star/website/deploy-ocf.sh
+```
+
+If the `public_html` symlink is ever missing, recreate it (match your account's
+target): `ln -sfn /services/http/users/s/space ~/public_html`.
 
 ## Editing content
 
