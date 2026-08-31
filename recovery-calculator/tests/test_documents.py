@@ -59,13 +59,18 @@ def test_create_lists_and_isolates_per_user(client):
     assert a_id not in [d["id"] for d in b_list]  # B never sees A's doc
 
 
-def test_rename_and_delete(client):
+def test_rename(client):
     doc_id = _create(client, A)
     r = client.patch(f"/api/recovery/documents/{doc_id}", headers=A, json={"name": "Renamed"})
     assert r.status_code == 200 and r.json()["name"] == "Renamed"
+    assert [c["name"] for c in client.get("/api/recovery/documents", headers=A).json()] == ["Renamed"]
 
-    assert client.delete(f"/api/recovery/documents/{doc_id}", headers=A).status_code == 200
-    assert client.get("/api/recovery/documents", headers=A).json() == []
+
+def test_delete_is_gone(client):
+    """Designs are never deleted -- shared designs made it too easy to destroy
+    someone else's work. Cleanup is an admin operation on the volume."""
+    doc_id = _create(client, A)
+    assert client.delete(f"/api/recovery/documents/{doc_id}", headers=A).status_code == 405
 
 
 # ── working copy + microversions ─────────────────────────────────────────────

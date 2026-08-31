@@ -99,7 +99,6 @@ All routes are under `/api/pid` (plus `/api/health`). Identity is the
 | `GET  /diagrams` | list the caller's diagrams |
 | `POST /diagrams` | create a diagram `{name}` |
 | `PATCH /diagrams/{id}` | rename `{name}` (id/keys stay fixed) |
-| `DELETE /diagrams/{id}` | delete diagram + its version history |
 | `GET  /diagrams/{id}/load` | working copy (freshest); falls back to latest microversion if the volume is empty |
 | `POST /diagrams/{id}/autosave` | write working copy; snapshot to S3 once per `PID_MICRO_INTERVAL` |
 | `POST /diagrams/{id}/flush` | force an immediate microversion (on-close beacon) |
@@ -108,6 +107,11 @@ All routes are under `/api/pid` (plus `/api/health`). Identity is the
 | `POST /diagrams/{id}/release` | publish an immutable release `{label}` (409 if it exists) |
 | `GET  /diagrams/{id}/releases` | list releases |
 | `GET  /diagrams/{id}/release/{label}` | fetch one release |
+
+There is deliberately **no delete**. Diagrams are shared and editable by more
+than one person, so a delete button is one misclick away from destroying a group
+project with only a server-admin restore behind it. Cleanup is an admin
+operation on the `userdata` volume.
 
 ## CI
 
