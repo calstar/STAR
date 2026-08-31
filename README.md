@@ -21,6 +21,7 @@ top-level directory with its own README. Start with the one you're working on.
 | [`daq-server/`](daq-server/README.md) | Ground support **DAQ server / flight software** — receives sensor data over the network, logs it, drives the state machine and actuators, and serves the live web GUI used during hotfires. | C++, TypeScript/Node, Next.js, Elodin DB |
 | [`firmware/`](firmware/README.md) | **Board firmware** for every avionics board (PT, TC, RTD, LC, Encoder, Actuator). Reads sensors, talks to the DAQ server over Ethernet, runs the on-board abort logic. Subtree of [`calstar/DiabloAvionics`](https://github.com/calstar/DiabloAvionics). | Arduino / PlatformIO, ESP32-S3, C++ |
 | [`lib/DAQv2-Comms/`](lib/DAQv2-Comms/README.md) | The **wire protocol** shared by the firmware and the DAQ server — packet definitions, enums, and (de)serialization. The single source of truth for what goes over the wire. | C++ (Arduino library) |
+| [`lib/stardesign/`](lib/stardesign/README.md) | The **design core** shared by the three design tools — per-user storage, cross-user sharing (who may edit whose design), and version history. Extracted once all three needed the same permission check. | Python |
 | [`EngineDesign/`](EngineDesign/README.md) | **Engine design & optimization pipeline** — physics simulation of liquid bipropellant engines (propellants and injector type are configurable) plus a multi-layer optimizer, a control system, and a web UI. Solves chamber pressure, thrust, and Isp from tank pressures. | Python, FastAPI, React |
 | [`pid-designer/`](pid-designer/README.md) | Interactive **P&ID (Piping & Instrumentation Diagram) editor** for the propulsion feed system, with git-backed versioning. | FastAPI, React + React Flow |
 | [`onshape-viewer/`](onshape-viewer/README.md) | **Onshape CM viewer** — renders an assembly from CAD and computes its centre of mass, recomputing live as parts are toggled or re-materialled. | FastAPI, React + three.js |
@@ -41,8 +42,14 @@ top-level directory with its own README. Start with the one you're working on.
 
 `firmware/` and `daq-server/` are the two ends of the same conversation, and
 they speak the protocol defined in `lib/DAQv2-Comms/` (the firmware reaches it
-through a symlink at `firmware/libraries/DAQv2-Comms`). `EngineDesign/`,
-`pid-designer/`, and `onshape-viewer/` are standalone design tools.
+through a symlink at `firmware/libraries/DAQv2-Comms`).
+
+`EngineDesign/`, `pid-designer/` and `recovery-calculator/` are the design
+tools. They are separate apps with separate UIs, but they store, share and
+version designs identically, and all three build on `lib/stardesign/` and mount
+one shared `userdata` volume — which is what lets you browse a teammate's
+designs and take a copy, or share one and edit it together.
+`onshape-viewer/` is standalone.
 
 ---
 
