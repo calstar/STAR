@@ -366,3 +366,35 @@ def test_owner_param_cannot_escape_the_root(client, tmp_path, owner):
     # Both the scan and the resolve must be read-only: no folder conjured for a
     # user who does not exist.
     assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == before
+
+
+def test_microversion_history_is_in_write_order(client, tmp_path):
+    """History order has to survive coarse filesystem timestamps.
+
+    Microversions are the only recovery path now that delete is gone, so
+    "restore the previous version" handing back the wrong snapshot is data loss.
+    Two snapshots written back-to-back can share an mtime tick, and ordering
+    must not degrade to arbitrary when they do.
+
+    Rather than race the filesystem and hope, this forces the condition: every
+    version file is stamped with the *same* mtime, so the order can only come
+    from the ids themselves. With random ids this fails every run; it is the
+    nanosecond prefix in `snapshot_micro` that makes it pass.
+    """
+    doc_id = _create(client, A)
+    for i in range(10):
+        assert client.post(f"{BASE}/{doc_id}/autosave", headers=A,
+                           json={"config": {"i": i}}).status_code == 200
+
+    versions = tmp_path / "alice@berkeley.edu" / "engine" / doc_id / "versions"
+    stamped = [p for p in versions.glob("*.json") if not p.name.startswith(".")]
+    assert len(stamped) >= 10
+    for p in stamped:
+        os.utime(p, (1_700_000_000, 1_700_000_000))  # one shared mtime tick
+
+    history = client.get(f"{BASE}/{doc_id}/history", headers=A).json()
+    seen = [
+        client.get(f"{BASE}/{doc_id}/version/{v['versionId']}", headers=A).json()["config"]["i"]
+        for v in history[:10]
+    ]
+    assert seen == list(range(9, -1, -1)), f"history out of order: {seen}"

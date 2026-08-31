@@ -30,6 +30,7 @@ import json
 import os
 import secrets
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -83,20 +84,28 @@ class LocalBackend:
         return d
 
     def snapshot_micro(self, user: str, doc_id: str, data: Snapshot) -> dict:
-        # Opaque, lowercase-hex id so it survives userdata.slugify on read-back.
-        vid = secrets.token_hex(8)
+        # Opaque, lowercase-hex id so it survives userdata.slugify on read-back,
+        # but time-ordered: a nanosecond timestamp prefix, then randomness to
+        # keep it unique. The prefix is what makes history order correct --
+        # filesystem mtime granularity is coarse enough that two snapshots
+        # written back-to-back can share an mtime, and with a purely random id
+        # the tie-break was arbitrary, so "restore the previous version" could
+        # hand back the wrong one. With delete gone this history is the only
+        # recovery path, so that order has to be right.
+        vid = f"{time.time_ns():016x}{secrets.token_hex(4)}"
         _atomic_write(self._sub(user, doc_id, "versions") / f"{vid}.json", data)
         return {"versionId": vid, "savedAt": _now_iso()}
 
     def list_micro(self, user: str, doc_id: str, limit: int = 50) -> list[dict]:
         """Snapshots newest first.
 
-        Sorted on ``st_mtime_ns`` with the id as a tie-break, not on the
-        formatted ``savedAt``: two snapshots written in the same filesystem
-        timestamp tick otherwise come back in whatever order ``glob`` happened
-        to yield, so "restore the previous version" could restore the wrong one.
-        Rare in production (snapshots are minutes apart) but not never, and it
-        is a total order for free.
+        Sorted on ``st_mtime_ns`` then the id, not on the formatted ``savedAt``:
+        two snapshots written in the same filesystem timestamp tick otherwise
+        come back in whatever order ``glob`` happened to yield. The id carries a
+        nanosecond prefix (see :meth:`snapshot_micro`), so it breaks that tie in
+        real write order rather than arbitrarily. Ids written before that prefix
+        existed are fully random, but they are older files whose mtimes already
+        separate them from anything new.
         """
         rows: list[tuple[int, str, dict]] = []
         for p in self._sub(user, doc_id, "versions").glob("*.json"):
