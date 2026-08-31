@@ -215,18 +215,18 @@ export function ConfigChangeModal({
                       </button>
                       {!d.mine && (
                         <span
-                          className="shrink-0 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]"
+                          className="shrink-0 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-2xs text-[var(--color-text-muted)]"
                           title={`Shared with you by ${d.ownerName || d.owner}`}
                         >
                           {d.ownerName || d.owner}
                         </span>
                       )}
                       {(d.sharedWith?.length ?? 0) > 0 && d.mine && (
-                        <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">
+                        <span className="shrink-0 text-2xs text-[var(--color-text-muted)]">
                           shared ×{d.sharedWith?.length}
                         </span>
                       )}
-                      <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]" title={d.updatedAt}>
+                      <span className="shrink-0 text-2xs text-[var(--color-text-muted)]" title={d.updatedAt}>
                         {relativeTime(d.updatedAt)}
                       </span>
                       <Button
@@ -239,7 +239,7 @@ export function ConfigChangeModal({
                       {!d.mine && (
                         <Button
                           variant="ghost" disabled={busy === key}
-                          title="Remove yourself from this config. It is not deleted — you can copy it from View only whenever you like."
+                          title="Remove yourself from this config. It is not deleted - you can copy it from View only whenever you like."
                           onClick={() => void run(key, () => onLeave(ref))}
                         >
                           Leave
@@ -258,9 +258,9 @@ export function ConfigChangeModal({
                     />
                     <div className="max-h-40 overflow-y-auto">
                       {shareCandidates.length === 0 && (
-                        <p className="px-1 py-2 text-[10px] text-[var(--color-text-muted)]">
+                        <p className="px-1 py-2 text-2xs text-[var(--color-text-muted)]">
                           {users.length === 0
-                            ? 'No teammates found yet — people appear here once they have signed in.'
+                            ? 'No teammates found yet - people appear here once they have signed in.'
                             : 'Nobody matches that.'}
                         </p>
                       )}
@@ -273,15 +273,15 @@ export function ConfigChangeModal({
                               {u.name || u.email}
                             </span>
                             {u.name && (
-                              <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{u.email}</span>
+                              <span className="shrink-0 text-2xs text-[var(--color-text-muted)]">{u.email}</span>
                             )}
                           </label>
                         )
                       })}
                     </div>
                     {removed(d).length > 0 && (
-                      <p className="mt-2 text-[10px] text-amber-500">
-                        Removing: {removed(d).join(', ')} — they lose edit access, but can still copy this config.
+                      <p className="mt-2 text-2xs text-amber-500">
+                        Removing: {removed(d).join(', ')} - they lose edit access, but can still copy this config.
                       </p>
                     )}
                     <div className="mt-2 flex justify-end gap-2">
@@ -301,8 +301,8 @@ export function ConfigChangeModal({
         </div>
       ) : (
         <div className="max-h-[55vh] overflow-y-auto">
-          <p className="mb-2 text-[10px] text-[var(--color-text-muted)]">
-            Everyone else's configs. Opening one takes your own copy of it — the original is untouched.
+          <p className="mb-2 text-2xs text-[var(--color-text-muted)]">
+            Everyone else's configs. Opening one takes your own copy of it; the original is untouched.
           </p>
           {tree === null && <p className="py-3 text-xs text-[var(--color-text-muted)]">Loading…</p>}
           {tree?.length === 0 && (
@@ -314,13 +314,13 @@ export function ConfigChangeModal({
                 className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-[var(--color-bg-tertiary)]"
                 onClick={() => setExpanded(expanded === g.owner ? null : g.owner)}
               >
-                <span className="w-3 shrink-0 text-[10px] text-[var(--color-text-muted)]">
+                <span className="w-3 shrink-0 text-2xs text-[var(--color-text-muted)]">
                   {expanded === g.owner ? '▾' : '▸'}
                 </span>
                 <span className="flex-1 truncate text-xs text-[var(--color-text-primary)]">
                   {g.ownerName || g.owner}
                 </span>
-                <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{g.designs.length}</span>
+                <span className="shrink-0 text-2xs text-[var(--color-text-muted)]">{g.designs.length}</span>
               </button>
               {expanded === g.owner &&
                 g.designs.map((x) => {
@@ -334,7 +334,7 @@ export function ConfigChangeModal({
                       onClick={() => void run(key, async () => { await onCopy(ref); onClose(); })}
                     >
                       <span className="flex-1 truncate text-xs text-[var(--color-text-primary)]">{x.name}</span>
-                      <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">
+                      <span className="shrink-0 text-2xs text-[var(--color-text-muted)]">
                         {busy === key ? 'Copying…' : relativeTime(x.updatedAt)}
                       </span>
                     </button>
