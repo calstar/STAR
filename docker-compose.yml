@@ -27,6 +27,8 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    mem_limit: 512m
+    memswap_limit: 512m   # == mem_limit -> no swap; OOM this container alone
     # --watch reloads the config in place when deploy/caddy/Caddyfile changes, so
     # a `git pull` on the box takes effect with no manual reload. The config dir
     # (not the single file) is mounted below: a single-file bind mount pins to the
@@ -71,6 +73,8 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
+    mem_limit: 256m
+    memswap_limit: 256m   # == mem_limit -> no swap; OOM this container alone
     profiles: ["tunnel"]
     command: tunnel --no-autoupdate run
     environment:
@@ -98,6 +102,8 @@ services:
     build:
       context: ./auth
     restart: unless-stopped
+    mem_limit: 512m
+    memswap_limit: 512m   # == mem_limit -> no swap; OOM this container alone
     env_file:
       # Optional so the stack can also be driven from the real environment
       # (systemd EnvironmentFile, a secret manager) instead of a file in the
@@ -125,7 +131,16 @@ services:
       context: .
       dockerfile: EngineDesign/Dockerfile.api
     restart: unless-stopped
+    mem_limit: 2g
+    memswap_limit: 2g   # == mem_limit -> no swap; OOM this container alone
     environment:
+      # Never build a CEA cache in-process on the server: a cold build is ~39k
+      # rocketcea calls (hours) whose growing in-process cache took the host to
+      # >12 GB. The committed output/cache/*.npz tables are what we load; a
+      # missing/stale one must fail fast here, not trigger a build. Local dev
+      # leaves this unset and can still build on demand. Regenerate offline via
+      # .github/workflows/regenerate-cea-cache.yml.
+      ED_ALLOW_CEA_BUILD: "0"
       # Per-user saved configs + working copies live here (a mounted volume).
       # See userdata.py.
       USERDATA_DIR: /data
@@ -157,6 +172,8 @@ services:
       context: .
       dockerfile: EngineDesign/frontend/Dockerfile
     restart: unless-stopped
+    mem_limit: 512m
+    memswap_limit: 512m   # == mem_limit -> no swap; OOM this container alone
 
   # ── P&ID Designer ────────────────────────────────────────────────────────
   # Auth is Caddy's job; the image is self-contained, so it builds from the
@@ -169,6 +186,8 @@ services:
       context: .
       dockerfile: pid-designer/Dockerfile.api
     restart: unless-stopped
+    mem_limit: 2g
+    memswap_limit: 2g   # == mem_limit -> no swap; OOM this container alone
     environment:
       # Per-user working copies (autosave target) live on this volume, keyed by
       # X-Auth-Email. See pid-designer/backend/userdata.py.
@@ -201,6 +220,8 @@ services:
       context: .
       dockerfile: pid-designer/frontend/Dockerfile
     restart: unless-stopped
+    mem_limit: 512m
+    memswap_limit: 512m   # == mem_limit -> no swap; OOM this container alone
 
   # ── Recovery Calculator ──────────────────────────────────────────────────
   # No in-app auth (Caddy is the gate) and no dependency on auth/shared_auth.py,
@@ -213,6 +234,8 @@ services:
       context: .
       dockerfile: recovery-calculator/Dockerfile.api
     restart: unless-stopped
+    mem_limit: 2g
+    memswap_limit: 2g   # == mem_limit -> no swap; OOM this container alone
     environment:
       # Per-user units + saved configs + working copies live here (a mounted
       # volume). See userdata.py.
@@ -244,6 +267,8 @@ services:
       context: .
       dockerfile: recovery-calculator/frontend/Dockerfile
     restart: unless-stopped
+    mem_limit: 512m
+    memswap_limit: 512m   # == mem_limit -> no swap; OOM this container alone
 
   # ── Onshape CM Viewer ────────────────────────────────────────────────────
   onshape-viewer-api:
@@ -252,6 +277,8 @@ services:
       context: ./onshape-viewer
       dockerfile: Dockerfile.api
     restart: unless-stopped
+    mem_limit: 1g
+    memswap_limit: 1g   # == mem_limit -> no swap; OOM this container alone
     environment:
       # Onshape API key pair. Lives in the shared root .env like every other
       # service's secrets (JWT_SECRET, AWS_*) -- one env file for the whole
@@ -273,6 +300,8 @@ services:
       context: ./onshape-viewer/frontend
       dockerfile: Dockerfile
     restart: unless-stopped
+    mem_limit: 512m
+    memswap_limit: 512m   # == mem_limit -> no swap; OOM this container alone
 
   # ── DAQ Run Viewer ───────────────────────────────────────────────────────
   # Read-only web viewer for PAST Elodin runs (browse, plot, export CSV). One
@@ -286,6 +315,8 @@ services:
       context: ./daq-server/tools/postprocessing/webviewer
       dockerfile: Dockerfile
     restart: unless-stopped
+    mem_limit: 1g
+    memswap_limit: 1g   # == mem_limit -> no swap; OOM this container alone
     # elodin-db is built on io_uring (stellarator), and Docker's default seccomp
     # profile blocks the io_uring_* syscalls -- without this the binary panics at
     # startup (io_uring_setup -> EPERM), so every export would fail. This is the
@@ -321,6 +352,8 @@ services:
       context: ./landing
       dockerfile: Dockerfile
     restart: unless-stopped
+    mem_limit: 256m
+    memswap_limit: 256m   # == mem_limit -> no swap; OOM this container alone
 
 volumes:
   caddy_data:
