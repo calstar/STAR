@@ -187,7 +187,7 @@ export default function ConfigPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-  const [activeTab, setActiveTab] = useState('network');
+  const [activeTab, setActiveTab] = useState('boards');
   // Config profiles v2: the editor edits the ACTIVE PROFILE; config.toml is the deployed/running file.
   // When idle, a save/switch deploys to config.toml; during a session config.toml is frozen (draft).
   const [profiles, setProfiles] = useState<{ name: string; active: boolean }[]>([]);
@@ -563,21 +563,20 @@ export default function ConfigPage() {
     );
   }
 
+  // Ordered by usefulness, left to right, and grouped so related config lives on
+  // one page instead of behind a round trip between tabs:
+  //   Boards      + ADC refs        (a board's voltage_reference indexes them)
+  //   Roles       = sensors + actuators (the same channel -> name map, twice)
+  //   Top Bar     + Pressure Limits (a gauge's `limits` key names a limits entry)
+  //   System      = every read-only page — startup-only binds the C++ services
+  //                 read once, plus config managed outside this editor. Last,
+  //                 because you open it to read a port, never to edit one.
   const tabs = [
-    { id: 'network', label: 'Network' },
-    { id: 'adc', label: 'ADC' },
-    { id: 'server_heartbeat', label: 'Server Heartbeat' },
-    { id: 'services', label: 'Services' },
-    { id: 'database', label: 'Database' },
     { id: 'boards', label: 'Boards' },
-    { id: 'sensor_roles', label: 'Sensor Roles' },
-    { id: 'actuator_roles', label: 'Actuator Roles' },
+    { id: 'roles', label: 'Roles' },
+    { id: 'gui', label: 'Top Bar & Limits' },
     { id: 'controller', label: 'Controller' },
-    { id: 'controller_service', label: 'Controller Service' },
-    { id: 'actuator_service', label: 'Actuator Service' },
-    { id: 'pressure_limits', label: 'Pressure Limits' },
-    { id: 'gui', label: 'Top Bar & Tabs' },
-    { id: 'state_machine', label: 'State Machine' },
+    { id: 'system', label: 'System' },
   ];
 
   return (
@@ -731,245 +730,6 @@ export default function ConfigPage() {
         {/* Tab Content — a disabled fieldset greys out and blocks every control
             inside for non-operators (mirrors the server-side operator gate). */}
         <fieldset disabled={!canEdit} className={`space-y-6 border-0 m-0 p-0 min-w-0${!canEdit ? ' opacity-60' : ''}`}>
-          {activeTab === 'network' && (
-            <div className="bg-card rounded-lg p-6 space-y-6">
-              <div>
-                <h2 className="text-xl font-bold mb-1">Network</h2>
-                <p className="text-sm text-amber-300/90 mb-4">
-                  Read-only — these are startup-only binds for the pipeline services and must match the
-                  board firmware. Changing them requires a deploy/restart, not a live edit.
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {renderField(
-                    'Bind IP',
-                    config.network?.bind_ip,
-                    (val) => updateField('network', 'bind_ip', val),
-                    'text', undefined, 'DAQ bridge sensor-socket interface', true
-                  )}
-                  {renderField(
-                    'Sensor Port',
-                    config.network?.sensor_port,
-                    (val) => updateField('network', 'sensor_port', val),
-                    'number', undefined, 'UDP port boards send sensor data to', true
-                  )}
-                  {renderField(
-                    'Actuator Command Port',
-                    config.network?.actuator_cmd_port,
-                    (val) => updateField('network', 'actuator_cmd_port', val),
-                    'number', undefined, 'Port boards listen on for actuator commands', true
-                  )}
-                </div>
-              </div>
-
-              <div className="border-t border-gray-700 pt-6">
-                <h3 className="text-lg font-semibold mb-1">Board Discovery</h3>
-                <p className="text-sm text-amber-300/90 mb-4">
-                  Read-only — the discovery service scans this subnet/interface at startup. Editing it
-                  live has no effect until the pipeline restarts.
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {renderField(
-                    'Enabled', config.discovery?.enabled,
-                    (val) => updateField('discovery', 'enabled', val),
-                    'boolean', undefined, undefined, true
-                  )}
-                  {renderField(
-                    'Network Interface', config.discovery?.network_interface,
-                    (val) => updateField('discovery', 'network_interface', val),
-                    'text', undefined, '"auto" = interface with a 192.168.2.x IP', true
-                  )}
-                  {renderField(
-                    'Mode', config.discovery?.mode,
-                    (val) => updateField('discovery', 'mode', val),
-                    'select', ['passive', 'active', 'hybrid'], undefined, true
-                  )}
-                  {renderField(
-                    'Subnet', config.discovery?.subnet,
-                    (val) => updateField('discovery', 'subnet', val),
-                    'text', undefined, undefined, true
-                  )}
-                  {renderField(
-                    'IP Range Start', config.discovery?.ip_range_start,
-                    (val) => updateField('discovery', 'ip_range_start', val),
-                    'number', undefined, undefined, true
-                  )}
-                  {renderField(
-                    'IP Range End', config.discovery?.ip_range_end,
-                    (val) => updateField('discovery', 'ip_range_end', val),
-                    'number', undefined, undefined, true
-                  )}
-                  {renderField(
-                    'Discovery Timeout (seconds)', config.discovery?.discovery_timeout_seconds,
-                    (val) => updateField('discovery', 'discovery_timeout_seconds', val),
-                    'number', undefined, undefined, true
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'adc' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">ADC Voltage References</h2>
-              <p className="text-sm text-text-muted mb-4">
-                Used when voltage_reference = 0 (internal) or 2 (5V absolute). Ref 1 = VDD ratiometric.
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField(
-                  'Internal (V)',
-                  config.adc?.internal_v,
-                  (val) => updateField('adc', 'internal_v', val),
-                  'number',
-                  undefined,
-                  'Boards with voltage_reference = 0'
-                )}
-                {renderField(
-                  'VDD Nominal (V)',
-                  config.adc?.vdd_nominal_v,
-                  (val) => updateField('adc', 'vdd_nominal_v', val),
-                  'number',
-                  undefined,
-                  'Display only; ratiometric boards'
-                )}
-                {renderField(
-                  'Absolute 5V (V)',
-                  config.adc?.absolute_5v_v,
-                  (val) => updateField('adc', 'absolute_5v_v', val),
-                  'number',
-                  undefined,
-                  'Boards with voltage_reference = 2'
-                )}
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'server_heartbeat' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-1">Server Heartbeat</h2>
-              <p className="text-sm text-amber-300/90 mb-4">
-                Read-only — the heartbeat broadcast is set up by the C++ services at startup. Editing it
-                live has no effect until the pipeline restarts.
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField(
-                  'Interval (ms)',
-                  config.server_heartbeat?.interval_ms,
-                  (val) => updateField('server_heartbeat', 'interval_ms', val),
-                  'number', undefined, undefined, true
-                )}
-                {renderField(
-                  'Broadcast Port',
-                  config.server_heartbeat?.broadcast_port,
-                  (val) => updateField('server_heartbeat', 'broadcast_port', val),
-                  'number', undefined, undefined, true
-                )}
-                {renderField(
-                  'Broadcast IP',
-                  config.server_heartbeat?.broadcast_ip,
-                  (val) => updateField('server_heartbeat', 'broadcast_ip', val),
-                  'text', undefined, undefined, true
-                )}
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'services' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-1">Services</h2>
-              <p className="text-sm text-amber-300/90 mb-4">
-                Read-only — these are always-on support services (heartbeat, config-broadcast, data-logger).
-                They read their config once at their own startup and are <em>not</em> restarted by a session,
-                so edits here wouldn&apos;t take effect on a Start. Change them via a deploy/restart.
-              </p>
-              <div className="space-y-8">
-                <div className="border border-gray-700 rounded-lg p-4">
-                  <h3 className="text-lg font-semibold mb-3">Heartbeat Service</h3>
-                  <p className="text-sm text-text-muted mb-3">
-                    Polls backend /api/engine_state, broadcasts SERVER_HEARTBEAT to boards.
-                  </p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {renderField('Enabled', config.heartbeat_service?.enabled, (val) => updateField('heartbeat_service', 'enabled', val), 'boolean', undefined, undefined, true)}
-                    {renderField('Backend URL', config.heartbeat_service?.backend_url, (val) => updateField('heartbeat_service', 'backend_url', val), 'text', undefined, undefined, true)}
-                    {renderField('Interval (ms)', config.heartbeat_service?.interval_ms, (val) => updateField('heartbeat_service', 'interval_ms', val), 'number', undefined, undefined, true)}
-                    {renderField('Broadcast IP', config.heartbeat_service?.broadcast_ip, (val) => updateField('heartbeat_service', 'broadcast_ip', val), 'text', undefined, undefined, true)}
-                    {renderField('Broadcast Port', config.heartbeat_service?.broadcast_port, (val) => updateField('heartbeat_service', 'broadcast_port', val), 'number', undefined, undefined, true)}
-                  </div>
-                </div>
-                <div className="border border-gray-700 rounded-lg p-4">
-                  <h3 className="text-lg font-semibold mb-3">Config Broadcast Service</h3>
-                  <p className="text-sm text-text-muted mb-3">
-                    Sends ACTUATOR_CONFIG / SENSOR_CONFIG to boards. (It re-reads board config live each
-                    cycle; only these service-level settings need a restart.)
-                  </p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {renderField('Enabled', config.config_broadcast_service?.enabled, (val) => updateField('config_broadcast_service', 'enabled', val), 'boolean', undefined, undefined, true)}
-                    {renderField('Backend URL', config.config_broadcast_service?.backend_url, (val) => updateField('config_broadcast_service', 'backend_url', val), 'text', undefined, undefined, true)}
-                    {renderField('Interval (ms)', config.config_broadcast_service?.interval_ms, (val) => updateField('config_broadcast_service', 'interval_ms', val), 'number', undefined, undefined, true)}
-                  </div>
-                </div>
-                <div className="border border-gray-700 rounded-lg p-4">
-                  <h3 className="text-lg font-semibold mb-3">Data Logger Service</h3>
-                  <p className="text-sm text-text-muted mb-3">
-                    Records .sensorlog files; connects to backend WebSocket.
-                  </p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {renderField('Enabled', config.data_logger_service?.enabled, (val) => updateField('data_logger_service', 'enabled', val), 'boolean', undefined, undefined, true)}
-                    {renderField('WebSocket URL', config.data_logger_service?.ws_url, (val) => updateField('data_logger_service', 'ws_url', val), 'text', undefined, undefined, true)}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'database' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-1">Database</h2>
-              <p className="text-sm text-amber-300/90 mb-4">
-                Read-only — the Elodin DB connection is established at startup. Changing host/port live
-                would drop the live data link; edit via a deploy/restart, not here.
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField(
-                  'Host',
-                  config.database?.host,
-                  (val) => updateField('database', 'host', val),
-                  'text', undefined, undefined, true
-                )}
-                {renderField(
-                  'Port',
-                  config.database?.port,
-                  (val) => updateField('database', 'port', val),
-                  'number', undefined, undefined, true
-                )}
-                {renderField(
-                  'Auto Flush Interval (ms)',
-                  config.database?.auto_flush_interval_ms,
-                  (val) => updateField('database', 'auto_flush_interval_ms', val),
-                  'number', undefined, undefined, true
-                )}
-                {renderField(
-                  'Max Buffer Size',
-                  config.database?.max_buffer_size,
-                  (val) => updateField('database', 'max_buffer_size', val),
-                  'number', undefined, undefined, true
-                )}
-                {renderField(
-                  'Connection Retry Attempts',
-                  config.database?.connection_retry_attempts,
-                  (val) => updateField('database', 'connection_retry_attempts', val),
-                  'number', undefined, undefined, true
-                )}
-                {renderField(
-                  'Connection Retry Delay (ms)',
-                  config.database?.connection_retry_delay_ms,
-                  (val) => updateField('database', 'connection_retry_delay_ms', val),
-                  'number', undefined, undefined, true
-                )}
-              </div>
-            </div>
-          )}
-
-
           {activeTab === 'boards' && (
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-1">Boards</h2>
@@ -1129,7 +889,42 @@ export default function ConfigPage() {
             </div>
           )}
 
-          {activeTab === 'sensor_roles' && (
+          {activeTab === 'boards' && (
+            <div className="bg-card rounded-lg p-6">
+              <h2 className="text-xl font-bold mb-4">ADC Voltage References</h2>
+              <p className="text-sm text-text-muted mb-4">
+                Used when voltage_reference = 0 (internal) or 2 (5V absolute). Ref 1 = VDD ratiometric.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {renderField(
+                  'Internal (V)',
+                  config.adc?.internal_v,
+                  (val) => updateField('adc', 'internal_v', val),
+                  'number',
+                  undefined,
+                  'Boards with voltage_reference = 0'
+                )}
+                {renderField(
+                  'VDD Nominal (V)',
+                  config.adc?.vdd_nominal_v,
+                  (val) => updateField('adc', 'vdd_nominal_v', val),
+                  'number',
+                  undefined,
+                  'Display only; ratiometric boards'
+                )}
+                {renderField(
+                  'Absolute 5V (V)',
+                  config.adc?.absolute_5v_v,
+                  (val) => updateField('adc', 'absolute_5v_v', val),
+                  'number',
+                  undefined,
+                  'Boards with voltage_reference = 2'
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'roles' && (
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">Sensor Roles</h2>
               <div className="space-y-8">
@@ -1229,7 +1024,7 @@ export default function ConfigPage() {
             </div>
           )}
 
-          {activeTab === 'actuator_roles' && (
+          {activeTab === 'roles' && (
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">Actuator Roles</h2>
               <div className="space-y-4">
@@ -1327,31 +1122,136 @@ export default function ConfigPage() {
             </div>
           )}
 
-          {activeTab === 'controller_service' && (
+          {activeTab === 'gui' && (
             <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-1">Controller Service (C++)</h2>
-              <p className="text-sm text-amber-300/90 mb-4">
-                Read-only for now — TCP port for FIRE_START / FIRE_STOP, read by the C++ controller
-                service at startup. Editing it live has no effect until the pipeline restarts.
+              <h2 className="text-xl font-bold mb-1">Pressure Limits</h2>
+              <p className="text-sm text-text-muted mb-4">
+                NOP/MEOP/POP per system. These are the single source of truth for gauge thresholds —
+                each top-bar gauge below points at one of these keys via its <code>limits</code> field, and the plots read them too.
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField('Port', config.controller_service?.port, (val) => updateField('controller_service', 'port', val), 'number', undefined, undefined, true)}
-                {renderField('Fire Duration (ms)', config.controller_service?.fire_duration_ms, (val) => updateField('controller_service', 'fire_duration_ms', val), 'number', undefined, undefined, true)}
-                {renderField('Fire Extended (ms)', config.controller_service?.fire_extended_ms, (val) => updateField('controller_service', 'fire_extended_ms', val), 'number', undefined, undefined, true)}
+              <div className="space-y-4">
+                {Object.keys(config.pressure_limits || {}).map((system) => (
+                  <div key={system} className="border border-gray-700 rounded-lg p-4">
+                    <h3 className="text-lg font-semibold mb-3 font-mono">{system}</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {renderField('NOP', (config.pressure_limits as any)?.[system]?.NOP, (val) => updateField('pressure_limits', 'NOP', val, system), 'number')}
+                      {renderField('MEOP', (config.pressure_limits as any)?.[system]?.MEOP, (val) => updateField('pressure_limits', 'MEOP', val, system), 'number')}
+                      {renderField('POP', (config.pressure_limits as any)?.[system]?.POP, (val) => updateField('pressure_limits', 'POP', val, system), 'number')}
+                    </div>
+                  </div>
+                ))}
+                {Object.keys(config.pressure_limits || {}).length === 0 && (
+                  <p className="text-sm text-text-muted">No pressure limits defined in config.</p>
+                )}
               </div>
             </div>
           )}
 
-          {activeTab === 'actuator_service' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-1">Actuator Service (C++)</h2>
-              <p className="text-sm text-amber-300/90 mb-4">
-                Read-only for now — the port/bind are read at C++ service startup (and the port is
-                overridden by an env var the startup script sets). Editing it live has no effect.
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField('Port', config.actuator_service?.port, (val) => updateField('actuator_service', 'port', val), 'number', undefined, undefined, true)}
-                {renderField('Bind Address', config.actuator_service?.bind_address, (val) => updateField('actuator_service', 'bind_address', val), 'text', undefined, undefined, true)}
+          {activeTab === 'gui' && (
+            <div className="space-y-6">
+              {/* ── Tab bar ──────────────────────────────────────────────── */}
+              <div className="bg-card rounded-lg p-6">
+                <h2 className="text-xl font-bold mb-1">Tab Bar</h2>
+                <p className="text-sm text-text-muted mb-4">
+                  Which views are pinned to the header, in order. Others stay reachable via “All Views”.
+                </p>
+                <div className="space-y-2">
+                  {guiTabs.map((id, i) => (
+                    <div key={`${id}:${i}`} className="flex items-center gap-2">
+                      <span className="w-8 text-text-muted text-sm text-right">{i + 1}.</span>
+                      <span className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded">
+                        {navItemById(id)?.name ?? id}
+                        <span className="text-text-muted text-xs ml-2">({id})</span>
+                      </span>
+                      <button onClick={() => setGuiTabs(moveInArray(guiTabs, i, -1))} className="px-2 py-2 bg-gray-700 rounded hover:bg-gray-600" title="Move up">↑</button>
+                      <button onClick={() => setGuiTabs(moveInArray(guiTabs, i, 1))} className="px-2 py-2 bg-gray-700 rounded hover:bg-gray-600" title="Move down">↓</button>
+                      <button onClick={() => setGuiTabs(guiTabs.filter((_, k) => k !== i))} className="px-3 py-2 bg-red-600 rounded hover:bg-red-700">Remove</button>
+                    </div>
+                  ))}
+                  {guiTabs.length === 0 && (
+                    <p className="text-sm text-text-muted">No tabs configured — the tab bar falls back to built-in defaults.</p>
+                  )}
+                </div>
+                <div className="mt-4 flex items-center gap-2">
+                  <select
+                    value=""
+                    onChange={(e) => { if (e.target.value) setGuiTabs([...guiTabs, e.target.value]); }}
+                    className="px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50"
+                  >
+                    <option value="">+ Add tab…</option>
+                    {NAV_ITEMS.filter((v) => !v.deprecated && !guiTabs.includes(v.id)).map((v) => (
+                      <option key={v.id} value={v.id}>{v.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* ── Top-bar pressure gauges ──────────────────────────────── */}
+              <div className="bg-card rounded-lg p-6">
+                <h2 className="text-xl font-bold mb-1">Top-Bar Pressure Gauges</h2>
+                <p className="text-sm text-text-muted mb-4">
+                  Ordered gauges in the header. NOP/MEOP come from Pressure Limits above (via the <code>limits</code> key).
+                </p>
+                {/* Column header so each field is labeled (md+ only; on mobile the fields stack). */}
+                <div className="hidden md:grid md:grid-cols-12 gap-2 px-2 mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                  <div className="md:col-span-3">Sensor (PT role)</div>
+                  <div className="md:col-span-3">Label on gauge</div>
+                  <div className="md:col-span-2">Limits (NOP/MEOP)</div>
+                  <div className="md:col-span-2">Color</div>
+                  <div className="md:col-span-2 text-right">Order · remove</div>
+                </div>
+                <div className="space-y-3">
+                  {guiBars.map((bar: any, i: number) => {
+                    const setBar = (patch: any) => setGuiBars(guiBars.map((b: any, k: number) => (k === i ? { ...b, ...patch } : b)));
+                    return (
+                      <div key={i} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center border border-gray-800 rounded p-2">
+                        {/* Pick the pressure sensor in ONE dropdown; its limits come with it (matched by
+                            the space→underscore [pressure_limits] key convention), and the label auto-fills
+                            with the sensor name (still editable — shorten it as you like). */}
+                        <select
+                          value={bar.role ?? ''}
+                          onChange={(e) => {
+                            const newRole = e.target.value || undefined;
+                            const patch: any = { role: newRole };
+                            // Auto-fill the label from the sensor name unless the user typed a custom one.
+                            // "Uncustomized" = empty, the 'NEW' add-default, or equal to the previous role.
+                            if (!bar.label || bar.label === 'NEW' || bar.label === bar.role) patch.label = newRole ?? '';
+                            if (newRole) {
+                              const conv = newRole.replace(/\s+/g, '_');
+                              if (pressureLimitKeys.includes(conv)) patch.limits = conv;
+                            }
+                            setBar(patch);
+                          }}
+                          className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white"
+                        >
+                          <option value="">— pressure sensor —</option>
+                          {pressureRoles.map((r) => <option key={r} value={r}>{r}</option>)}
+                          {bar.role && !pressureRoles.includes(bar.role) && <option value={bar.role}>{bar.role} (not a PT role)</option>}
+                        </select>
+                        <input value={bar.label ?? ''} onChange={(e) => setBar({ label: e.target.value })} placeholder="Label (shown on gauge)" className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
+                        <div className="md:col-span-2 text-xs text-text-muted truncate self-center" title="Pressure limits (NOP/MEOP) for this gauge — from Pressure Limits above, matched to the sensor by name. 'default' = no matching limits, so generic thresholds are used.">
+                          {bar.limits ? bar.limits : 'default'}
+                        </div>
+                        <div className="md:col-span-2 flex items-center gap-1">
+                          <input type="color" value={bar.color ?? '#888888'} onChange={(e) => setBar({ color: e.target.value })} className="h-8 w-10 bg-background border border-gray-700 rounded" />
+                          <input value={bar.color ?? ''} onChange={(e) => setBar({ color: e.target.value })} placeholder="#RRGGBB" className="flex-1 min-w-0 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
+                        </div>
+                        <div className="md:col-span-2 flex items-center justify-end gap-1">
+                          <button onClick={() => setGuiBars(moveInArray(guiBars, i, -1))} className="px-2 py-1.5 bg-gray-700 rounded hover:bg-gray-600" title="Move up">↑</button>
+                          <button onClick={() => setGuiBars(moveInArray(guiBars, i, 1))} className="px-2 py-1.5 bg-gray-700 rounded hover:bg-gray-600" title="Move down">↓</button>
+                          <button onClick={() => setGuiBars(guiBars.filter((_: any, k: number) => k !== i))} className="px-2 py-1.5 bg-red-600 rounded hover:bg-red-700" title="Remove">✕</button>
+                        </div>
+                        <input value={(bar.avg_roles ?? []).join(', ')} onChange={(e) => { const parts = e.target.value.split(',').map((s) => s.trim()).filter(Boolean); setBar({ avg_roles: parts.length ? parts : undefined }); }} placeholder="Optional — average multiple redundant sensors into this one gauge (comma-separated role names, e.g. two chamber PTs). Leave blank for a single sensor." className="md:col-span-12 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  onClick={() => setGuiBars([...guiBars, { label: '', role: '', limits: '', color: '#888888' }])}
+                  className="mt-4 px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
+                >
+                  + Add Gauge
+                </button>
               </div>
             </div>
           )}
@@ -1419,141 +1319,239 @@ export default function ConfigPage() {
             </div>
           )}
 
-          {activeTab === 'pressure_limits' && (
+          {activeTab === 'system' && (
+            <div className="bg-card rounded-lg p-6 space-y-6">
+              <div>
+                <h2 className="text-xl font-bold mb-1">Network</h2>
+                <p className="text-sm text-amber-300/90 mb-4">
+                  Read-only — these are startup-only binds for the pipeline services and must match the
+                  board firmware. Changing them requires a deploy/restart, not a live edit.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {renderField(
+                    'Bind IP',
+                    config.network?.bind_ip,
+                    (val) => updateField('network', 'bind_ip', val),
+                    'text', undefined, 'DAQ bridge sensor-socket interface', true
+                  )}
+                  {renderField(
+                    'Sensor Port',
+                    config.network?.sensor_port,
+                    (val) => updateField('network', 'sensor_port', val),
+                    'number', undefined, 'UDP port boards send sensor data to', true
+                  )}
+                  {renderField(
+                    'Actuator Command Port',
+                    config.network?.actuator_cmd_port,
+                    (val) => updateField('network', 'actuator_cmd_port', val),
+                    'number', undefined, 'Port boards listen on for actuator commands', true
+                  )}
+                </div>
+              </div>
+
+              <div className="border-t border-gray-700 pt-6">
+                <h3 className="text-lg font-semibold mb-1">Board Discovery</h3>
+                <p className="text-sm text-amber-300/90 mb-4">
+                  Read-only — the discovery service scans this subnet/interface at startup. Editing it
+                  live has no effect until the pipeline restarts.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {renderField(
+                    'Enabled', config.discovery?.enabled,
+                    (val) => updateField('discovery', 'enabled', val),
+                    'boolean', undefined, undefined, true
+                  )}
+                  {renderField(
+                    'Network Interface', config.discovery?.network_interface,
+                    (val) => updateField('discovery', 'network_interface', val),
+                    'text', undefined, '"auto" = interface with a 192.168.2.x IP', true
+                  )}
+                  {renderField(
+                    'Mode', config.discovery?.mode,
+                    (val) => updateField('discovery', 'mode', val),
+                    'select', ['passive', 'active', 'hybrid'], undefined, true
+                  )}
+                  {renderField(
+                    'Subnet', config.discovery?.subnet,
+                    (val) => updateField('discovery', 'subnet', val),
+                    'text', undefined, undefined, true
+                  )}
+                  {renderField(
+                    'IP Range Start', config.discovery?.ip_range_start,
+                    (val) => updateField('discovery', 'ip_range_start', val),
+                    'number', undefined, undefined, true
+                  )}
+                  {renderField(
+                    'IP Range End', config.discovery?.ip_range_end,
+                    (val) => updateField('discovery', 'ip_range_end', val),
+                    'number', undefined, undefined, true
+                  )}
+                  {renderField(
+                    'Discovery Timeout (seconds)', config.discovery?.discovery_timeout_seconds,
+                    (val) => updateField('discovery', 'discovery_timeout_seconds', val),
+                    'number', undefined, undefined, true
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'system' && (
             <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-1">Pressure Limits</h2>
-              <p className="text-sm text-text-muted mb-4">
-                NOP/MEOP/POP per system. These are the single source of truth for gauge thresholds —
-                each top-bar gauge points at one of these keys via its <code>limits</code> field (Top Bar &amp; Tabs), and the plots read them too.
+              <h2 className="text-xl font-bold mb-1">Services</h2>
+              <p className="text-sm text-amber-300/90 mb-4">
+                Read-only — these are always-on support services (heartbeat, config-broadcast, data-logger).
+                They read their config once at their own startup and are <em>not</em> restarted by a session,
+                so edits here wouldn&apos;t take effect on a Start. Change them via a deploy/restart.
               </p>
-              <div className="space-y-4">
-                {Object.keys(config.pressure_limits || {}).map((system) => (
-                  <div key={system} className="border border-gray-700 rounded-lg p-4">
-                    <h3 className="text-lg font-semibold mb-3 font-mono">{system}</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      {renderField('NOP', (config.pressure_limits as any)?.[system]?.NOP, (val) => updateField('pressure_limits', 'NOP', val, system), 'number')}
-                      {renderField('MEOP', (config.pressure_limits as any)?.[system]?.MEOP, (val) => updateField('pressure_limits', 'MEOP', val, system), 'number')}
-                      {renderField('POP', (config.pressure_limits as any)?.[system]?.POP, (val) => updateField('pressure_limits', 'POP', val, system), 'number')}
-                    </div>
+              <div className="space-y-8">
+                <div className="border border-gray-700 rounded-lg p-4">
+                  <h3 className="text-lg font-semibold mb-3">Heartbeat Service</h3>
+                  <p className="text-sm text-text-muted mb-3">
+                    Polls backend /api/engine_state, broadcasts SERVER_HEARTBEAT to boards.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {renderField('Enabled', config.heartbeat_service?.enabled, (val) => updateField('heartbeat_service', 'enabled', val), 'boolean', undefined, undefined, true)}
+                    {renderField('Backend URL', config.heartbeat_service?.backend_url, (val) => updateField('heartbeat_service', 'backend_url', val), 'text', undefined, undefined, true)}
+                    {renderField('Interval (ms)', config.heartbeat_service?.interval_ms, (val) => updateField('heartbeat_service', 'interval_ms', val), 'number', undefined, undefined, true)}
+                    {renderField('Broadcast IP', config.heartbeat_service?.broadcast_ip, (val) => updateField('heartbeat_service', 'broadcast_ip', val), 'text', undefined, undefined, true)}
+                    {renderField('Broadcast Port', config.heartbeat_service?.broadcast_port, (val) => updateField('heartbeat_service', 'broadcast_port', val), 'number', undefined, undefined, true)}
                   </div>
-                ))}
-                {Object.keys(config.pressure_limits || {}).length === 0 && (
-                  <p className="text-sm text-text-muted">No pressure limits defined in config.</p>
+                </div>
+                <div className="border border-gray-700 rounded-lg p-4">
+                  <h3 className="text-lg font-semibold mb-3">Config Broadcast Service</h3>
+                  <p className="text-sm text-text-muted mb-3">
+                    Sends ACTUATOR_CONFIG / SENSOR_CONFIG to boards. (It re-reads board config live each
+                    cycle; only these service-level settings need a restart.)
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {renderField('Enabled', config.config_broadcast_service?.enabled, (val) => updateField('config_broadcast_service', 'enabled', val), 'boolean', undefined, undefined, true)}
+                    {renderField('Backend URL', config.config_broadcast_service?.backend_url, (val) => updateField('config_broadcast_service', 'backend_url', val), 'text', undefined, undefined, true)}
+                    {renderField('Interval (ms)', config.config_broadcast_service?.interval_ms, (val) => updateField('config_broadcast_service', 'interval_ms', val), 'number', undefined, undefined, true)}
+                  </div>
+                </div>
+                <div className="border border-gray-700 rounded-lg p-4">
+                  <h3 className="text-lg font-semibold mb-3">Data Logger Service</h3>
+                  <p className="text-sm text-text-muted mb-3">
+                    Records .sensorlog files; connects to backend WebSocket.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {renderField('Enabled', config.data_logger_service?.enabled, (val) => updateField('data_logger_service', 'enabled', val), 'boolean', undefined, undefined, true)}
+                    {renderField('WebSocket URL', config.data_logger_service?.ws_url, (val) => updateField('data_logger_service', 'ws_url', val), 'text', undefined, undefined, true)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'system' && (
+            <div className="bg-card rounded-lg p-6">
+              <h2 className="text-xl font-bold mb-1">Database</h2>
+              <p className="text-sm text-amber-300/90 mb-4">
+                Read-only — the Elodin DB connection is established at startup. Changing host/port live
+                would drop the live data link; edit via a deploy/restart, not here.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {renderField(
+                  'Host',
+                  config.database?.host,
+                  (val) => updateField('database', 'host', val),
+                  'text', undefined, undefined, true
+                )}
+                {renderField(
+                  'Port',
+                  config.database?.port,
+                  (val) => updateField('database', 'port', val),
+                  'number', undefined, undefined, true
+                )}
+                {renderField(
+                  'Auto Flush Interval (ms)',
+                  config.database?.auto_flush_interval_ms,
+                  (val) => updateField('database', 'auto_flush_interval_ms', val),
+                  'number', undefined, undefined, true
+                )}
+                {renderField(
+                  'Max Buffer Size',
+                  config.database?.max_buffer_size,
+                  (val) => updateField('database', 'max_buffer_size', val),
+                  'number', undefined, undefined, true
+                )}
+                {renderField(
+                  'Connection Retry Attempts',
+                  config.database?.connection_retry_attempts,
+                  (val) => updateField('database', 'connection_retry_attempts', val),
+                  'number', undefined, undefined, true
+                )}
+                {renderField(
+                  'Connection Retry Delay (ms)',
+                  config.database?.connection_retry_delay_ms,
+                  (val) => updateField('database', 'connection_retry_delay_ms', val),
+                  'number', undefined, undefined, true
                 )}
               </div>
             </div>
           )}
 
-          {activeTab === 'gui' && (
-            <div className="space-y-6">
-              {/* ── Tab bar ──────────────────────────────────────────────── */}
-              <div className="bg-card rounded-lg p-6">
-                <h2 className="text-xl font-bold mb-1">Tab Bar</h2>
-                <p className="text-sm text-text-muted mb-4">
-                  Which views are pinned to the header, in order. Others stay reachable via “All Views”.
-                </p>
-                <div className="space-y-2">
-                  {guiTabs.map((id, i) => (
-                    <div key={`${id}:${i}`} className="flex items-center gap-2">
-                      <span className="w-8 text-text-muted text-sm text-right">{i + 1}.</span>
-                      <span className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded">
-                        {navItemById(id)?.name ?? id}
-                        <span className="text-text-muted text-xs ml-2">({id})</span>
-                      </span>
-                      <button onClick={() => setGuiTabs(moveInArray(guiTabs, i, -1))} className="px-2 py-2 bg-gray-700 rounded hover:bg-gray-600" title="Move up">↑</button>
-                      <button onClick={() => setGuiTabs(moveInArray(guiTabs, i, 1))} className="px-2 py-2 bg-gray-700 rounded hover:bg-gray-600" title="Move down">↓</button>
-                      <button onClick={() => setGuiTabs(guiTabs.filter((_, k) => k !== i))} className="px-3 py-2 bg-red-600 rounded hover:bg-red-700">Remove</button>
-                    </div>
-                  ))}
-                  {guiTabs.length === 0 && (
-                    <p className="text-sm text-text-muted">No tabs configured — the tab bar falls back to built-in defaults.</p>
-                  )}
-                </div>
-                <div className="mt-4 flex items-center gap-2">
-                  <select
-                    value=""
-                    onChange={(e) => { if (e.target.value) setGuiTabs([...guiTabs, e.target.value]); }}
-                    className="px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50"
-                  >
-                    <option value="">+ Add tab…</option>
-                    {NAV_ITEMS.filter((v) => !v.deprecated && !guiTabs.includes(v.id)).map((v) => (
-                      <option key={v.id} value={v.id}>{v.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* ── Top-bar pressure gauges ──────────────────────────────── */}
-              <div className="bg-card rounded-lg p-6">
-                <h2 className="text-xl font-bold mb-1">Top-Bar Pressure Gauges</h2>
-                <p className="text-sm text-text-muted mb-4">
-                  Ordered gauges in the header. NOP/MEOP come from the Pressure Limits tab (via the <code>limits</code> key).
-                </p>
-                {/* Column header so each field is labeled (md+ only; on mobile the fields stack). */}
-                <div className="hidden md:grid md:grid-cols-12 gap-2 px-2 mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
-                  <div className="md:col-span-3">Sensor (PT role)</div>
-                  <div className="md:col-span-3">Label on gauge</div>
-                  <div className="md:col-span-2">Limits (NOP/MEOP)</div>
-                  <div className="md:col-span-2">Color</div>
-                  <div className="md:col-span-2 text-right">Order · remove</div>
-                </div>
-                <div className="space-y-3">
-                  {guiBars.map((bar: any, i: number) => {
-                    const setBar = (patch: any) => setGuiBars(guiBars.map((b: any, k: number) => (k === i ? { ...b, ...patch } : b)));
-                    return (
-                      <div key={i} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center border border-gray-800 rounded p-2">
-                        {/* Pick the pressure sensor in ONE dropdown; its limits come with it (matched by
-                            the space→underscore [pressure_limits] key convention), and the label auto-fills
-                            with the sensor name (still editable — shorten it as you like). */}
-                        <select
-                          value={bar.role ?? ''}
-                          onChange={(e) => {
-                            const newRole = e.target.value || undefined;
-                            const patch: any = { role: newRole };
-                            // Auto-fill the label from the sensor name unless the user typed a custom one.
-                            // "Uncustomized" = empty, the 'NEW' add-default, or equal to the previous role.
-                            if (!bar.label || bar.label === 'NEW' || bar.label === bar.role) patch.label = newRole ?? '';
-                            if (newRole) {
-                              const conv = newRole.replace(/\s+/g, '_');
-                              if (pressureLimitKeys.includes(conv)) patch.limits = conv;
-                            }
-                            setBar(patch);
-                          }}
-                          className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white"
-                        >
-                          <option value="">— pressure sensor —</option>
-                          {pressureRoles.map((r) => <option key={r} value={r}>{r}</option>)}
-                          {bar.role && !pressureRoles.includes(bar.role) && <option value={bar.role}>{bar.role} (not a PT role)</option>}
-                        </select>
-                        <input value={bar.label ?? ''} onChange={(e) => setBar({ label: e.target.value })} placeholder="Label (shown on gauge)" className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
-                        <div className="md:col-span-2 text-xs text-text-muted truncate self-center" title="Pressure limits (NOP/MEOP) for this gauge — from the Pressure Limits tab, matched to the sensor by name. 'default' = no matching limits, so generic thresholds are used.">
-                          {bar.limits ? bar.limits : 'default'}
-                        </div>
-                        <div className="md:col-span-2 flex items-center gap-1">
-                          <input type="color" value={bar.color ?? '#888888'} onChange={(e) => setBar({ color: e.target.value })} className="h-8 w-10 bg-background border border-gray-700 rounded" />
-                          <input value={bar.color ?? ''} onChange={(e) => setBar({ color: e.target.value })} placeholder="#RRGGBB" className="flex-1 min-w-0 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
-                        </div>
-                        <div className="md:col-span-2 flex items-center justify-end gap-1">
-                          <button onClick={() => setGuiBars(moveInArray(guiBars, i, -1))} className="px-2 py-1.5 bg-gray-700 rounded hover:bg-gray-600" title="Move up">↑</button>
-                          <button onClick={() => setGuiBars(moveInArray(guiBars, i, 1))} className="px-2 py-1.5 bg-gray-700 rounded hover:bg-gray-600" title="Move down">↓</button>
-                          <button onClick={() => setGuiBars(guiBars.filter((_: any, k: number) => k !== i))} className="px-2 py-1.5 bg-red-600 rounded hover:bg-red-700" title="Remove">✕</button>
-                        </div>
-                        <input value={(bar.avg_roles ?? []).join(', ')} onChange={(e) => { const parts = e.target.value.split(',').map((s) => s.trim()).filter(Boolean); setBar({ avg_roles: parts.length ? parts : undefined }); }} placeholder="Optional — average multiple redundant sensors into this one gauge (comma-separated role names, e.g. two chamber PTs). Leave blank for a single sensor." className="md:col-span-12 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
-                      </div>
-                    );
-                  })}
-                </div>
-                <button
-                  onClick={() => setGuiBars([...guiBars, { label: '', role: '', limits: '', color: '#888888' }])}
-                  className="mt-4 px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
-                >
-                  + Add Gauge
-                </button>
+          {activeTab === 'system' && (
+            <div className="bg-card rounded-lg p-6">
+              <h2 className="text-xl font-bold mb-1">Server Heartbeat</h2>
+              <p className="text-sm text-amber-300/90 mb-4">
+                Read-only — the heartbeat broadcast is set up by the C++ services at startup. Editing it
+                live has no effect until the pipeline restarts.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {renderField(
+                  'Interval (ms)',
+                  config.server_heartbeat?.interval_ms,
+                  (val) => updateField('server_heartbeat', 'interval_ms', val),
+                  'number', undefined, undefined, true
+                )}
+                {renderField(
+                  'Broadcast Port',
+                  config.server_heartbeat?.broadcast_port,
+                  (val) => updateField('server_heartbeat', 'broadcast_port', val),
+                  'number', undefined, undefined, true
+                )}
+                {renderField(
+                  'Broadcast IP',
+                  config.server_heartbeat?.broadcast_ip,
+                  (val) => updateField('server_heartbeat', 'broadcast_ip', val),
+                  'text', undefined, undefined, true
+                )}
               </div>
             </div>
           )}
 
-          {activeTab === 'state_machine' && (
+          {activeTab === 'system' && (
+            <div className="bg-card rounded-lg p-6">
+              <h2 className="text-xl font-bold mb-1">Controller Service (C++)</h2>
+              <p className="text-sm text-amber-300/90 mb-4">
+                Read-only for now — TCP port for FIRE_START / FIRE_STOP, read by the C++ controller
+                service at startup. Editing it live has no effect until the pipeline restarts.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {renderField('Port', config.controller_service?.port, (val) => updateField('controller_service', 'port', val), 'number', undefined, undefined, true)}
+                {renderField('Fire Duration (ms)', config.controller_service?.fire_duration_ms, (val) => updateField('controller_service', 'fire_duration_ms', val), 'number', undefined, undefined, true)}
+                {renderField('Fire Extended (ms)', config.controller_service?.fire_extended_ms, (val) => updateField('controller_service', 'fire_extended_ms', val), 'number', undefined, undefined, true)}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'system' && (
+            <div className="bg-card rounded-lg p-6">
+              <h2 className="text-xl font-bold mb-1">Actuator Service (C++)</h2>
+              <p className="text-sm text-amber-300/90 mb-4">
+                Read-only for now — the port/bind are read at C++ service startup (and the port is
+                overridden by an env var the startup script sets). Editing it live has no effect.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {renderField('Port', config.actuator_service?.port, (val) => updateField('actuator_service', 'port', val), 'number', undefined, undefined, true)}
+                {renderField('Bind Address', config.actuator_service?.bind_address, (val) => updateField('actuator_service', 'bind_address', val), 'text', undefined, undefined, true)}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'system' && (
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-1">State Machine</h2>
               <p className="text-sm text-amber-300/90 mb-4">
@@ -1578,11 +1576,6 @@ export default function ConfigPage() {
           )}
 
         </fieldset>
-
-        <div className="mt-6 text-sm text-text-muted">
-          <p className="mb-2">⚠️ <strong>Warning:</strong> Editing configuration can affect system behavior.</p>
-          <p>Changes will be applied after saving. Some changes may require system restart.</p>
-        </div>
       </div>
     </main>
   );
