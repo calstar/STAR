@@ -3,9 +3,10 @@ import { redirect } from "next/navigation";
 import { EditEntityButton } from "@/components/EditEntityButton";
 import { EntityRow, LIST_CARD } from "@/components/EntityRow";
 import { NewProjectForm } from "@/components/NewProjectForm";
+import { AdminConfig } from "@/components/settings/AdminConfig";
 import { createSubteam, deleteSubteam, updateSubteam } from "@/lib/actions/subteams";
 import { deleteProject, updateProject } from "@/lib/actions/projects";
-import { isAdmin } from "@/lib/admins";
+import { isAdmin, listAdmins } from "@/lib/admins";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
@@ -17,7 +18,7 @@ export default async function WorkspacePage() {
   const admin = await isAdmin((await getCurrentUser()).email);
   if (!admin) redirect("/settings");
 
-  const [projects, subteams] = await Promise.all([
+  const [projects, subteams, admins] = await Promise.all([
     prisma.project.findMany({
       where: { archived: false },
       orderBy: [{ createdAt: "desc" }],
@@ -30,6 +31,7 @@ export default async function WorkspacePage() {
       orderBy: { name: "asc" },
       include: { _count: { select: { tasks: true } } },
     }),
+    listAdmins(),
   ]);
 
   const parents = projects
@@ -147,6 +149,16 @@ export default async function WorkspacePage() {
           />
         ))}
       </ul>
+
+      {/* Admins */}
+      <h2 className={`${heading} mt-8`}>Admins</h2>
+      <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+        Admins can delete projects, subteams, and tasks. Add someone by their
+        @berkeley.edu email.
+      </p>
+      <div className="mt-2">
+        <AdminConfig admins={admins} />
+      </div>
     </div>
   );
 }

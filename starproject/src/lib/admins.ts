@@ -7,7 +7,7 @@ import { prisma } from "@/lib/db";
 // everything; this only gates dangerous, hard-to-undo actions.
 //
 // The built-in seed list below is always admin and can't be removed from the UI.
-// Additional admins are added at runtime (Settings → Admins) and live in the
+// Additional admins are added at runtime (Workspace setup → Admins) and live in the
 // AdminEmail table. Emails match the identity in X-Auth-Email (@berkeley.edu) /
 // DEV_AUTH_EMAIL, compared case-insensitively.
 export const SEED_ADMIN_EMAILS = [
@@ -36,7 +36,7 @@ export async function isAdmin(email: string | null | undefined): Promise<boolean
   return (await getAdminEmails()).has(email.toLowerCase());
 }
 
-// For the Settings UI: every admin email with whether it can be removed (seed
+// For the Workspace setup UI: every admin email with whether it can be removed (seed
 // admins are fixed in code, so only runtime-added ones are removable).
 export async function listAdmins(): Promise<{ email: string; removable: boolean }[]> {
   const rows = await prisma.adminEmail.findMany({
