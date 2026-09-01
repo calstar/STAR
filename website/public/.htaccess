@@ -22,3 +22,26 @@ Options -MultiViews
 
 # Fallback if mod_rewrite is unavailable: unknown paths still boot the app.
 ErrorDocument 404 /index.html
+
+# ── Compression ─────────────────────────────────────────────────────────────
+# OCF doesn't gzip by default; the JS bundle ships ~3x smaller compressed.
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css text/plain \
+    text/javascript application/javascript application/json image/svg+xml
+</IfModule>
+
+# ── Caching ─────────────────────────────────────────────────────────────────
+# Vite fingerprints /assets/*.js|css with a content hash, so they can be cached
+# forever. Images (fixed names) get a week. HTML is always revalidated so new
+# deploys are picked up immediately.
+<IfModule mod_headers.c>
+  <FilesMatch "\.(js|css|woff2?)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  <FilesMatch "\.(webp|png|jpe?g|gif|svg|ico)$">
+    Header set Cache-Control "public, max-age=604800"
+  </FilesMatch>
+  <FilesMatch "\.html$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+</IfModule>
