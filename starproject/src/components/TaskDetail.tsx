@@ -80,11 +80,11 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
               </div>
             </div>
             <div>
-              <p className={label}>Assignee</p>
+              <p className={label}>Assignees</p>
               <div className="mt-1">
                 <AssigneeSelect
                   taskId={task.id}
-                  value={task.assigneeId ?? ""}
+                  value={task.assignees.map((a) => a.id)}
                   users={users}
                 />
               </div>
@@ -134,6 +134,14 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
                 <span className={pill(b.blockedByTask.status)}>
                   {STATUS_LABEL[b.blockedByTask.status]}
                 </span>
+                {b.note && (
+                  <span
+                    className="min-w-0 flex-1 truncate italic text-neutral-500 dark:text-neutral-400"
+                    title={b.note}
+                  >
+                    {b.note}
+                  </span>
+                )}
                 <form
                   action={async (fd) => {
                     await removeBlocker(fd);

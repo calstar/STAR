@@ -17,7 +17,7 @@ function task(over: Partial<BoardTask>): BoardTask {
     createdAt: new Date("2026-01-01T00:00:00Z"),
     startDate: null,
     dueDate: null,
-    assignee: null,
+    assignees: [],
     blockedBy: [],
     ...over,
   } as unknown as BoardTask;
@@ -116,5 +116,19 @@ describe("toRowData", () => {
 
   it("defaults subproject to null", () => {
     expect(toRowData(base({})).subproject).toBeNull();
+  });
+
+  it("carries every assignee id and the joined name", () => {
+    const row = toRowData(
+      base({
+        assignees: [
+          { id: "u1", name: "Ada Lovelace", email: "a@x", displayName: null },
+          { id: "u2", name: "Grace Hopper", email: "g@x", displayName: null },
+        ],
+        assigneeName: "Ada L., Grace H.",
+      }),
+    );
+    expect(row.assigneeIds).toEqual(["u1", "u2"]);
+    expect(row.assigneeName).toBe("Ada L., Grace H.");
   });
 });

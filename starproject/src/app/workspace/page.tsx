@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 // Admin-only workspace setup: the rare, data-losing actions (create/remove
 // projects and subteams) live here, off the everyday browse pages.
 export default async function WorkspacePage() {
-  const admin = isAdmin((await getCurrentUser()).email);
+  const admin = await isAdmin((await getCurrentUser()).email);
   if (!admin) redirect("/settings");
 
   const [projects, subteams] = await Promise.all([
@@ -35,6 +35,18 @@ export default async function WorkspacePage() {
   const parents = projects
     .filter((p) => !p.parentId)
     .map((p) => ({ id: p.id, name: p.name }));
+
+  // Tasks contributed by each parent's subprojects, so a parent's badge sums all
+  // tasks under it. (The delete message stays on the project's own count, since
+  // deleting a parent re-parents its subprojects rather than deleting them.)
+  const subprojectTasks = new Map<string, number>();
+  for (const p of projects) {
+    if (p.parentId)
+      subprojectTasks.set(
+        p.parentId,
+        (subprojectTasks.get(p.parentId) ?? 0) + p._count.tasks,
+      );
+  }
 
   const heading = "text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400";
 
@@ -63,7 +75,7 @@ export default async function WorkspacePage() {
             href={`/projects/${p.id}`}
             color={p.color}
             name={p.parent ? `${p.parent.name} › ${p.name}` : p.name}
-            taskCount={p._count.tasks}
+            taskCount={p._count.tasks + (subprojectTasks.get(p.id) ?? 0)}
             id={p.id}
             deleteAction={deleteProject}
             deleteMessage={`This permanently deletes the project and its ${p._count.tasks} task${
