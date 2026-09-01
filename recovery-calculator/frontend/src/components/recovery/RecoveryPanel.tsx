@@ -91,7 +91,7 @@ export function RecoveryPanel({ ui, onChange: setUi }: {
 
       <Card>
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={() => void run(ui)} variant="primary" disabled={running}>
+          <Button onClick={() => void run(ui)} variant="primary" disabled={running} action>
             {running ? 'Running…' : 'Run'}
           </Button>
           <label className="flex cursor-pointer items-center gap-2 text-xs text-[var(--color-text-secondary)]">
@@ -108,14 +108,14 @@ export function RecoveryPanel({ ui, onChange: setUi }: {
           <Button
             onClick={() => download('recovery-setup.json', { config: toWireConfig(ui), result })}
             title="Download your inputs and, if you have run, the results together in one file."
-          >
+           action>
             Download setup
           </Button>
           <Button
             onClick={() => result && download('result.json', result)}
             disabled={!result}
             title="The full export bundle - figures, report, git SHA - is written server-side. This is just the result object."
-          >
+           action>
             Export result.json
           </Button>
 

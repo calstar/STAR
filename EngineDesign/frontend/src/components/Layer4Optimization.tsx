@@ -656,7 +656,7 @@ export function Layer4Optimization({
                 </p>
                 {loxOverfilled && (
                   <p className="text-yellow-400 mt-1">
-                    ⚠️ Overfilled by {(loxMass - loxTankCapacity.maxMass).toFixed(1)} kg — will be auto-capped
+                    ⚠️ Overfilled by {(loxMass - loxTankCapacity.maxMass).toFixed(1)} kg - will be auto-capped
                   </p>
                 )}
               </div>
@@ -679,7 +679,7 @@ export function Layer4Optimization({
                 </p>
                 {fuelOverfilled && (
                   <p className="text-yellow-400 mt-1">
-                    ⚠️ Overfilled by {(fuelMass - fuelTankCapacity.maxMass).toFixed(1)} kg — will be auto-capped
+                    ⚠️ Overfilled by {(fuelMass - fuelTankCapacity.maxMass).toFixed(1)} kg - will be auto-capped
                   </p>
                 )}
               </div>
@@ -839,7 +839,7 @@ export function Layer4Optimization({
       <div className="flex flex-wrap justify-center items-center gap-3">
         {isDirty && (
           <span className="text-xs px-3 py-1 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-300">
-            Unsaved DR — auto-save on Run
+            Unsaved DR - auto-save on Run
           </span>
         )}
         <button

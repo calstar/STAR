@@ -8,7 +8,7 @@ Run with:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.routers import pid
+from backend.routers import pid, users
 
 app = FastAPI(title="P&ID Designer API", version="1.0.0")
 
@@ -31,6 +31,7 @@ app.add_middleware(
 # port, so it is only reachable through Caddy. The app implements no auth itself.
 
 app.include_router(pid.router)
+app.include_router(users.router)
 
 
 @app.get("/api/health")

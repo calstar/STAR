@@ -32,6 +32,14 @@
 
 # Gate a site on a valid session. Import this first in each site block.
 (protected) {
+	# Strip any X-Auth-* the *client* sent before the app can see it. forward_auth
+	# overwrites these from the /verify response on the happy path, so this is
+	# belt-and-braces -- but the stakes changed when designs became shareable:
+	# X-Auth-Email now decides which user's designs you may edit, not merely which
+	# folder your own data lands in. Never let a client propose one.
+	request_header -X-Auth-Email
+	request_header -X-Auth-User
+
 	forward_auth {$AUTH_UPSTREAM:auth:5000} {
 		uri /verify
 		# Identity for the upstream app, taken from the /verify response.

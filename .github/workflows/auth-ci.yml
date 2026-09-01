@@ -1,0 +1,51 @@
+name: Auth CI
+
+# auth/ carries real logic now -- the login roster that the design tools share
+# against (auth/users.py) -- so its test suite needs to actually run somewhere.
+# publish-auth.yml only builds and pushes the image; it asserts nothing.
+
+'on':
+  push:
+    paths:
+      - 'auth/**'
+      - '.github/workflows/auth-ci.yml'
+  pull_request:
+    paths:
+      - 'auth/**'
+      - '.github/workflows/auth-ci.yml'
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: auth-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        cache-dependency-path: auth/requirements-dev.txt
+
+    - name: Install dependencies
+      working-directory: auth
+      run: pip install -r requirements-dev.txt
+
+    - name: Run tests
+      working-directory: auth
+      # The module reads these at import time; the values are irrelevant to the
+      # tests, which sign their own tokens with main.JWT_SECRET.
+      env:
+        FLASK_SECRET_KEY: ci-flask-secret-0123456789abcdef
+        JWT_SECRET: ci-jwt-secret-0123456789abcdefghij
+        GOOGLE_CLIENT_ID: ci-client-id
+        GOOGLE_CLIENT_SECRET: ci-client-secret
+      run: python -m pytest test_main.py -q

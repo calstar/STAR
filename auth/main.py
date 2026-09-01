@@ -7,6 +7,11 @@ Apps do not implement auth themselves. Caddy calls /verify ahead of every
 request to a protected site (forward_auth); this service decides whether to let
 it through, and where to send the browser if not. See deploy/Caddyfile.
 
+It also keeps the one list of people that exists anywhere in the stack: every
+successful login is recorded (users.py), and /users serves the result to the
+design tools, whose sharing needs somebody to share *with*. Only the login node
+has a roster -- a verify-only node never sees a /callback.
+
 Run locally:
     cd auth
     flask --app main run --port 5000
@@ -16,6 +21,10 @@ Required env vars (see .env.example):
     GOOGLE_CLIENT_SECRET
     JWT_SECRET          -- shared with all apps that verify the cookie
     FLASK_SECRET_KEY    -- used by Flask for session state during OAuth flow
+
+Optional:
+    AUTH_USERS_FILE     -- where the login roster lives (a mounted volume in
+                           prod, so it survives a redeploy)
 """
 
 import datetime
@@ -30,6 +39,7 @@ from flask import Flask, make_response, redirect, request, session
 from markupsafe import escape
 
 import allowlist
+import users as user_directory
 from shared_auth import verify_session
 
 load_dotenv()
@@ -221,6 +231,12 @@ def callback():
             403,
         )
 
+    # This is the only moment the service learns anyone exists, or what they are
+    # called -- everywhere else it just verifies a cookie. The design tools need
+    # a list of people to share with, so remember it. Best-effort by design: a
+    # roster that cannot be written must never fail a login (see users.py).
+    user_directory.record_login(email, token["userinfo"].get("name", ""))
+
     now = datetime.datetime.now(datetime.timezone.utc)
     payload = {
         "email": email,
@@ -316,6 +332,29 @@ def _original_url() -> str:
     host = _forwarded_host()
     uri = request.headers.get("X-Forwarded-Uri", "/")
     return f"{proto}://{host}{uri}"
+
+
+@app.route("/users")
+def users():
+    """Everyone who has signed in -- the roster the design tools share against.
+
+    Same gate as /verify: a valid session, nothing more. It exposes team email
+    addresses to anyone already inside the tools, which is what a share picker
+    needs; it is not public.
+
+    A verify-only node answers 503 rather than an empty list. Only the login
+    node ever sees a /callback, so only it has a roster -- and if something is
+    ever pointed at the wrong auth, a loud misconfiguration beats a silent
+    "nobody to share with".
+    """
+    if not verify_session(request.cookies.get("session") or ""):
+        return {"error": "Not signed in"}, 401
+    if VERIFY_ONLY:
+        return {
+            "error": "This is a verify-only auth node; it records no logins. "
+                     f"Point AUTH_USERS_URL at the login node ({AUTH_PUBLIC_URL})."
+        }, 503
+    return user_directory.list_users()
 
 
 @app.route("/healthz")

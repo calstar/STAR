@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: stardesign
+Version: 0.1.0
+Summary: Shared per-user design storage, sharing and version history for the STAR design tools
+Requires-Python: >=3.11
+Requires-Dist: fastapi>=0.115
+Requires-Dist: pydantic>=2

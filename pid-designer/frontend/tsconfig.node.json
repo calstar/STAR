@@ -4,6 +4,9 @@
     "target": "ES2023",
     "lib": ["ES2023"],
     "module": "ESNext",
+    /* vite.config.ts resolves the shared-UI alias with node:url, matching the
+       other two design tools. */
+    "types": ["node"],
 
     "skipLibCheck": true,
 

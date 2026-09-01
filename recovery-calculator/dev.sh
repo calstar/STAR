@@ -33,6 +33,10 @@ if [ ! -x .venv/bin/uvicorn ]; then
   [ -d .venv ] || python3 -m venv .venv
   .venv/bin/pip install --quiet --upgrade pip
   .venv/bin/pip install --quiet -r requirements.txt
+  # The design core shared with EngineDesign and pid-designer. Not in
+  # requirements.txt: the path that reaches it differs between a checkout
+  # and a Docker build context (see Dockerfile.api).
+  .venv/bin/pip install --quiet -e ../lib/stardesign
 fi
 PYTHON_CMD="$SCRIPT_DIR/.venv/bin/python3"
 
@@ -48,7 +52,12 @@ done
 
 # ─── backend ─────────────────────────────────────────────────────────────────
 echo -e "${GREEN}Backend  → http://localhost:$BACKEND_PORT  (docs at /docs)${NC}"
-"$PYTHON_CMD" -m uvicorn backend.main:app --reload --port "$BACKEND_PORT" &
+# --reload-dir for the shared design core too: it is pip-installed from
+# ../lib/stardesign, so uvicorn does not watch it by default and edits there
+# would silently not take effect until a manual restart.
+"$PYTHON_CMD" -m uvicorn backend.main:app --reload \
+  --reload-dir . --reload-dir ../lib/stardesign \
+  --port "$BACKEND_PORT" &
 BACKEND_PID=$!
 
 # uvicorn exits silently on an import error, and the frontend would then sit

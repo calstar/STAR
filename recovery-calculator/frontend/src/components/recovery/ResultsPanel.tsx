@@ -118,7 +118,7 @@ export function ResultsPanel({ result, running, error }: {
                 key={c.key}
                 onClick={() => setChannel(c.key)}
                 variant={channel === c.key ? 'primary' : 'ghost'}
-              >
+               action>
                 {c.label}
               </Button>
             ))}

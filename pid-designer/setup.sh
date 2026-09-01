@@ -74,6 +74,8 @@ fi
 source .venv/bin/activate
 pip install --quiet --upgrade pip
 pip install --quiet -r requirements.txt
+# The design core shared with EngineDesign and recovery-calculator.
+pip install --quiet -e ../lib/stardesign
 ok "Backend requirements installed"
 deactivate
 

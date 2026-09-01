@@ -407,7 +407,7 @@ export function Layer3Optimization({
                                 </label>
                                 {isDirty && (
                                     <span className="text-xs px-2 py-1 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-300 self-center">
-                                        Unsaved DR — auto-save on Run
+                                        Unsaved DR - auto-save on Run
                                     </span>
                                 )}
                                 <button

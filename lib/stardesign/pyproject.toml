@@ -1,0 +1,26 @@
+# The design tools' shared server-side core.
+#
+# EngineDesign, pid-designer and recovery-calculator each used to carry their own
+# copy of userdata.py, storage.py, directory.py and the documents router -- some
+# of them byte-identical. That was tolerable while the code only decided which
+# folder your own data lived in. Design sharing made it load-bearing: the
+# permission check that decides whether you may edit someone else's design now
+# lives in it, and three copies of a permission check is three chances to fix a
+# bug in only two places.
+#
+# Installed from a path (see each app's requirements.txt and Dockerfile.api), not
+# published: it is repo-internal, versioned with the repo.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stardesign"
+version = "0.1.0"
+description = "Shared per-user design storage, sharing and version history for the STAR design tools"
+requires-python = ">=3.11"
+dependencies = ["fastapi>=0.115", "pydantic>=2"]
+
+[tool.setuptools.packages.find]
+include = ["stardesign*"]

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { useReadOnly } from '@stardesign-ui';
 import { type NodeProps, useReactFlow } from '@xyflow/react';
 
 interface TextNodeData {
@@ -9,6 +10,9 @@ interface TextNodeData {
 
 export function TextNode({ id, data, selected }: NodeProps) {
   const { setNodes } = useReactFlow();
+  // Edits through useReactFlow rather than the canvas's handlers, so
+  // ReactFlow's interaction props do not reach it -- it checks itself.
+  const readOnly = useReadOnly();
   const nodeData = data as unknown as TextNodeData;
 
   const [editing, setEditing] = useState(false);
@@ -26,6 +30,7 @@ export function TextNode({ id, data, selected }: NodeProps) {
   }, [id, setNodes]);
 
   const onDoubleClick = (e: React.MouseEvent) => {
+    if (readOnly) return;
     e.stopPropagation();
     setEditing(true);
     setTimeout(() => taRef.current?.select(), 0);

@@ -116,7 +116,7 @@ export function StudyPanel({ ui, onChange }: {
             disabled={running || over || empty}
             title={over ? `Over the ${MAX_RUNS}-design limit`
               : empty ? 'Add a sweep first' : undefined}
-          >
+           action>
             {running ? 'Running…' : 'Run sweep'}
           </Button>
 
@@ -169,7 +169,7 @@ export function StudyPanel({ ui, onChange }: {
                     key={c.key}
                     onClick={() => setChannel(c.key)}
                     variant={channel === c.key ? 'primary' : 'ghost'}
-                  >
+                   action>
                     {c.label}
                   </Button>
                 ))}

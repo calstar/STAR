@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useReadOnly } from '@stardesign-ui';
 import { useReactFlow } from '@xyflow/react';
 
 interface DraggableLabelProps {
@@ -10,6 +11,10 @@ interface DraggableLabelProps {
 
 export function DraggableLabel({ nodeId, label, offset, defaultOffset }: DraggableLabelProps) {
   const { setNodes, getViewport } = useReactFlow();
+  // This edits through useReactFlow rather than the canvas's own handlers,
+  // so ReactFlow's interaction props do not reach it. It has to check the
+  // checkout itself.
+  const readOnly = useReadOnly();
   const [editing, setEditing]   = useState(false);
   const [editVal, setEditVal]   = useState(label);
   const [dragging, setDragging] = useState(false);
@@ -116,7 +121,7 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset }: Draggab
         />
       ) : (
         <span
-          onDoubleClick={e => { e.stopPropagation(); setEditing(true); }}
+          onDoubleClick={e => { if (readOnly) return; e.stopPropagation(); setEditing(true); }}
           className="text-xs px-1 rounded leading-tight"
           style={{
             cursor: 'default',

@@ -92,14 +92,29 @@ Deploy + AWS setup (bucket, versioning, lifecycle, IAM keys) is in
 ## API
 
 All routes are under `/api/pid` (plus `/api/health`). Identity is the
-`X-Auth-Email` header (or `local` in dev); every diagram is scoped to its owner.
+`X-Auth-Email` header (or `local` in dev). A diagram lives in its creator's
+folder, but that is only *where it lives*, not a privilege level: everyone on its
+`sharedWith` list is an equal editor, and any diagram can be viewed and copied by
+anyone. A diagram someone else owns is addressed with `?owner=<email>`, which the
+server reads as a claim to be an editor and refuses (403) if you are not one.
+
+| Method & path | Purpose |
+|---|---|
+| `GET  /diagrams/browse` | everyone else's diagrams, grouped by owner (the view-only tree) |
+| `POST /diagrams/copy` | `{owner, id}` -> your own copy, with fresh history and no share list |
+| `PUT  /diagrams/{id}/share` | replace the editor list `{sharedWith: [email]}` (whole list, not a delta) |
+| `DELETE /diagrams/{id}/share/me` | remove yourself from a diagram shared with you |
+| `GET  /users` | who a diagram can be shared with (see backend/directory.py) |
+| `POST /diagrams/{id}/checkout` | take the write token (423 if someone else has it) |
+| `DELETE /diagrams/{id}/checkout` | give it back |
+| `GET  /diagrams/{id}/checkout` | who holds it right now |
+
 
 | Method & path | Purpose |
 |---|---|
 | `GET  /diagrams` | list the caller's diagrams |
 | `POST /diagrams` | create a diagram `{name}` |
 | `PATCH /diagrams/{id}` | rename `{name}` (id/keys stay fixed) |
-| `DELETE /diagrams/{id}` | delete diagram + its version history |
 | `GET  /diagrams/{id}/load` | working copy (freshest); falls back to latest microversion if the volume is empty |
 | `POST /diagrams/{id}/autosave` | write working copy; snapshot to S3 once per `PID_MICRO_INTERVAL` |
 | `POST /diagrams/{id}/flush` | force an immediate microversion (on-close beacon) |
@@ -108,6 +123,17 @@ All routes are under `/api/pid` (plus `/api/health`). Identity is the
 | `POST /diagrams/{id}/release` | publish an immutable release `{label}` (409 if it exists) |
 | `GET  /diagrams/{id}/releases` | list releases |
 | `GET  /diagrams/{id}/release/{label}` | fetch one release |
+
+A diagram is editable only by whoever holds its **checkout**. Opening one never
+takes it -- viewing must not block a colleague -- so the canvas is read only
+until you press Take in the diagram bar. The checkout returns on its own after a
+few minutes without a save, and on tab close. See
+[`lib/stardesign`](../lib/stardesign/README.md#checkouts).
+
+There is deliberately **no delete**. Diagrams are shared and editable by more
+than one person, so a delete button is one misclick away from destroying a group
+project with only a server-admin restore behind it. Cleanup is an admin
+operation on the `userdata` volume.
 
 ## CI
 

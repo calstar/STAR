@@ -13,6 +13,7 @@ import { getHealth } from './api/client'
 import type { UiConfig } from './types/schema'
 import { loadUiConfig, saveUiConfig } from './lib/persist'
 import { ConfigVersions } from './components/versions/ConfigVersions'
+import { ReadOnlyProvider } from '@stardesign-ui'
 import { RecoveryPanel } from './components/recovery/RecoveryPanel'
 import { CornersPanel } from './components/corners/CornersPanel'
 import { StudyPanel } from './components/study/StudyPanel'
@@ -60,6 +61,10 @@ export default function App() {
    * every render.
    */
   const [ui, setUi] = useState<UiConfig>(loadUiConfig)
+  // A config is editable only while it is checked out to you. Everything under
+  // <main> reads this through ReadOnlyProvider, so a new input cannot
+  // accidentally stay live when someone else holds the config.
+  const [editable, setEditable] = useState(false)
 
   useEffect(() => {
     getHealth().then((res) => {
@@ -117,6 +122,7 @@ export default function App() {
             <ConfigVersions
               config={ui}
               onRestore={handleRestore}
+              onEditableChange={setEditable}
               inline
             />
           </div>
@@ -141,15 +147,23 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-[1800px] px-4 py-6 sm:px-6 lg:px-8">
-        <div className={tab === 'recovery' ? '' : 'hidden'}>
-          <RecoveryPanel ui={ui} onChange={setUi} />
-        </div>
-        <div className={tab === 'corners' ? '' : 'hidden'}>
-          <CornersPanel ui={ui} onChange={setUi} />
-        </div>
-        <div className={tab === 'study' ? '' : 'hidden'}>
-          <StudyPanel ui={ui} onChange={setUi} />
-        </div>
+
+        {/* Only the three tabs that edit the design go read-only without the
+            checkout. Cross-check only reads it, and Atmospheric Data and Units
+            do not touch it at all -- Units is a per-user display preference,
+            stored per user on the server, so a design checkout has no business
+            gating it. */}
+        <ReadOnlyProvider readOnly={!editable}>
+          <div className={tab === 'recovery' ? '' : 'hidden'}>
+            <RecoveryPanel ui={ui} onChange={setUi} />
+          </div>
+          <div className={tab === 'corners' ? '' : 'hidden'}>
+            <CornersPanel ui={ui} onChange={setUi} />
+          </div>
+          <div className={tab === 'study' ? '' : 'hidden'}>
+            <StudyPanel ui={ui} onChange={setUi} />
+          </div>
+        </ReadOnlyProvider>
         <div className={tab === 'crosscheck' ? '' : 'hidden'}>
           <CrosscheckPanel ui={ui} />
         </div>

@@ -94,7 +94,7 @@ export function VaporizationProfile({ data }: { data: StabilityRichPayload }) {
 
       {unburned && (
         <p className="text-[11px] mt-2" style={{ color: UNSTABLE }}>
-          L_vap &gt; L_ch — droplets exit unburned, dropping c* efficiency and lengthening the
+          L_vap &gt; L_ch - droplets exit unburned, dropping c* efficiency and lengthening the
           combustion lag.
         </p>
       )}
@@ -102,7 +102,7 @@ export function VaporizationProfile({ data }: { data: StabilityRichPayload }) {
       <p className="text-[10px] text-[var(--color-text-secondary)] mt-2 leading-snug">
         Atomization is the lever: a smaller SMD shortens <span className="font-mono">L_vap</span> and
         the lag <span className="font-mono">τ_conv</span>. That τ is what feeds the chug loop and sets
-        the phase-clock angle (ωτ = 2π·f·χ·τ_vap) — so finer droplets improve performance{' '}
+        the phase-clock angle (ωτ = 2π·f·χ·τ_vap) - so finer droplets improve performance{' '}
         <em>and</em> stability at once.
       </p>
     </VizCard>

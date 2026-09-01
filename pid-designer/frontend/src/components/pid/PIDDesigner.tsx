@@ -21,6 +21,12 @@ import '@xyflow/react/dist/style.css';
 import { ComponentPalette } from './ComponentPalette';
 import { PIDToolbar } from './PIDToolbar';
 import { DiagramBar } from './DiagramBar';
+import { ChangeModal, ReadOnlyProvider, useCheckout, useReadOnly } from '@stardesign-ui';
+import { Modal } from '../ui';
+import { primaryBtn } from '../../lib/ui';
+import * as api from '../../api/diagrams';
+import { designApi, keyOf, refOf } from '../../api/diagrams';
+import type { DiagramMeta, DocRef, MicroVersion, ReleaseVersion, Snapshot } from '../../api/diagrams';
 import { nodeTypes } from './nodes';
 import { BranchableEdge } from './BranchableEdge';
 import { FLUID_COLORS, COMPONENT_DEFS } from './types';
@@ -28,31 +34,42 @@ import type { PIDNodeData, ComponentType, FluidType } from './types';
 
 export type InteractionMode = 'pan' | 'select';
 
-export type Snapshot = { nodes: Node[]; edges: Edge[] };
+// The diagram/version types and every server call now live in api/diagrams.ts:
+// a diagram is addressed as (owner, id) since diagrams are shared, and an
+// `?owner=` query parameter cannot be baked into a URL prefix the way the old
+// inline `base` string was. Re-exported so existing importers keep working.
+export type { DiagramMeta, MicroVersion, ReleaseVersion } from '../../api/diagrams';
+export type { Snapshot } from '../../api/diagrams';
 
-/** One of the user's diagrams (metadata; the geometry lives in current.json). */
-export interface DiagramMeta {
-  id: string;
-  name: string;
-  createdAt: string;
-  updatedAt: string;
+// v2 because the remembered diagram is now (owner, id): a shared diagram is not
+// identified by its id alone. A v1 value is a bare id, which was always one of
+// your own, so it migrates to {owner: null}.
+const ACTIVE_KEY = 'pid.activeDiagram.v2';
+const LEGACY_ACTIVE_KEY = 'pid.activeDiagramId';
+
+function readActive(): DocRef | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as DocRef;
+      if (parsed && typeof parsed.id === 'string') return parsed;
+    }
+    const legacy = localStorage.getItem(LEGACY_ACTIVE_KEY);
+    return legacy ? { id: legacy, owner: null } : null;
+  } catch {
+    return null;
+  }
 }
 
-/** An automatic point-in-time snapshot in S3 (bucket-versioned). */
-export interface MicroVersion {
-  versionId: string;
-  savedAt: string;
-  size: number;
+function writeActive(ref: DocRef | null): void {
+  try {
+    if (ref) localStorage.setItem(ACTIVE_KEY, JSON.stringify({ id: ref.id, owner: ref.owner ?? null }));
+    else localStorage.removeItem(ACTIVE_KEY);
+    localStorage.removeItem(LEGACY_ACTIVE_KEY);
+  } catch {
+    /* private mode / storage disabled -- the bar still works, it just forgets */
+  }
 }
-
-/** An explicit, immutable, user-named milestone. */
-export interface ReleaseVersion {
-  label: string;
-  savedAt: string;
-  size: number;
-}
-
-const ACTIVE_KEY = 'pid.activeDiagramId';
 
 let _idCounter = 1;
 const genId = () => `node_${_idCounter++}`;
@@ -79,7 +96,10 @@ function useHistory(
     if (restoring.current) { restoring.current = false; return; }
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
-      const snap: Snapshot = { nodes: structuredClone(nodes), edges: structuredClone(edges) };
+      // Compare the *authored* diagram, not the raw ReactFlow state: `selected`
+      // and friends change on a plain click, so a bare selection used to push an
+      // undo entry and cost the user a press of Ctrl+Z to get past.
+      const snap: Snapshot = api.toStored({ nodes: structuredClone(nodes), edges: structuredClone(edges) });
       const prev = history.current[index.current];
       if (JSON.stringify(prev) === JSON.stringify(snap)) return;
       history.current = history.current.slice(0, index.current + 1);
@@ -113,7 +133,7 @@ function useHistory(
 
 // ── Inner canvas ─────────────────────────────────────────────────────────────
 interface CanvasProps {
-  diagramId:          string;
+  diagramRef:         DocRef;
   onInstance:         (inst: ReactFlowInstance) => void;
   getRef:             React.MutableRefObject<() => Snapshot>;
   loadRef:            React.MutableRefObject<(d: Snapshot) => void>;
@@ -126,11 +146,15 @@ interface CanvasProps {
   restoreMicroRef:    React.MutableRefObject<(versionId: string) => Promise<void>>;
   restoreReleaseRef:  React.MutableRefObject<(label: string) => Promise<void>>;
   mode:               InteractionMode;
+  /** Autosave hit a 403: this diagram was unshared while it was open. */
+  onForbidden:        () => void;
+  /** Autosave hit a 423: the checkout lapsed or was taken. */
+  onLockLost:         () => void;
 }
 
 function PIDCanvas({
-  diagramId, onInstance, getRef, loadRef, clearRef, undoRef, redoRef,
-  releaseRef, getHistoryRef, getReleasesRef, restoreMicroRef, restoreReleaseRef,
+  diagramRef, onInstance, getRef, loadRef, clearRef, undoRef, redoRef,
+  releaseRef, getHistoryRef, getReleasesRef, restoreMicroRef, restoreReleaseRef, onForbidden, onLockLost,
   mode,
 }: CanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -146,45 +170,68 @@ function PIDCanvas({
   const snapshot  = useRef<Snapshot>({ nodes: [], edges: [] });
   snapshot.current = { nodes, edges };
 
-  const base = `/api/pid/diagrams/${encodeURIComponent(diagramId)}`;
+  const diagramKey = keyOf(diagramRef);
+  // Without the checkout the canvas is inert. Every one of these defaults to
+  // true, so they have to be turned off explicitly -- and the node renderers
+  // read the same flag through context, because TextNode and DraggableLabel
+  // edit via useReactFlow().setNodes and never touch these props.
+  const readOnly = useReadOnly();
+  // JSON of the last payload actually sent, so a change that survives neither
+  // `toStored` nor a content comparison never reaches the server. Without it the
+  // debounce fires on every ReactFlow state identity change -- including pure
+  // selection -- and once checkouts land, a save is what keeps a checkout alive.
+  const lastSaved = useRef<string>('');
 
   // Load the selected diagram's working copy whenever the selection changes.
   useEffect(() => {
     loadedId.current = null;
     let cancelled = false;
-    fetch(`${base}/load`)
-      .then(r => r.ok ? r.json() : null)
+    api.loadDiagram(diagramRef)
       .then(data => {
         if (cancelled) return;
-        setNodes(data?.nodes ?? []);
-        setEdges(data?.edges ?? []);
-        loadedId.current = diagramId;
+        const loaded = { nodes: data?.nodes ?? [], edges: data?.edges ?? [] };
+        setNodes(loaded.nodes);
+        setEdges(loaded.edges);
+        // Seed the guard with what we just loaded, so opening a diagram does not
+        // immediately save it straight back.
+        lastSaved.current = JSON.stringify(api.toStored(loaded));
+        loadedId.current = diagramKey;
       })
-      .catch(() => { if (!cancelled) loadedId.current = diagramId; });
+      .catch(() => { if (!cancelled) loadedId.current = diagramKey; });
     return () => { cancelled = true; };
-  }, [diagramId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [diagramKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced autosave of the working copy — only once the active diagram has
   // actually loaded, so switching never clobbers a diagram with another's data.
   useEffect(() => {
-    if (loadedId.current !== diagramId) return;
+    // No checkout, no autosave. The canvas is inert in that state anyway;
+    // this is the belt to that pair of braces.
+    if (loadedId.current !== diagramKey || readOnly) return;
+    const serialized = JSON.stringify(api.toStored({ nodes, edges }));
+    if (serialized === lastSaved.current) return;
     const t = setTimeout(() => {
-      fetch(`${base}/autosave`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nodes, edges }),
-      }).catch(() => {});
+      lastSaved.current = serialized;
+      api.autosaveDiagram(diagramRef, { nodes, edges }).catch((e: unknown) => {
+        lastSaved.current = ''; // failed -- let the next change retry
+        // 403 means this diagram was unshared from you while you had it open.
+        // Retrying is silent and pointless -- tell the parent so it can stop
+        // and fall back to one of your own.
+        if (e instanceof api.ApiError && e.status === 403) onForbidden();
+        // 423: the checkout lapsed and someone else took it. Drop to read-only
+        // rather than retry into a void.
+        else if (e instanceof api.ApiError && e.status === 423) onLockLost();
+      });
     }, 1000);
     return () => clearTimeout(t);
-  }, [nodes, edges, diagramId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [nodes, edges, diagramKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Best-effort flush to S3 on tab close / hide, so the last few edits land even
   // between the periodic (server-throttled) microversions.
   useEffect(() => {
     const flush = () => {
-      if (loadedId.current !== diagramId) return;
-      const body = JSON.stringify(snapshot.current);
-      navigator.sendBeacon(`${base}/flush`, new Blob([body], { type: 'application/json' }));
+      // A beacon cannot read a rejection, so gate it here instead.
+      if (loadedId.current !== diagramKey || readOnly) return;
+      api.flushDiagram(diagramRef, snapshot.current);
     };
     const onVisibility = () => { if (document.visibilityState === 'hidden') flush(); };
     window.addEventListener('pagehide', flush);
@@ -193,10 +240,11 @@ function PIDCanvas({
       window.removeEventListener('pagehide', flush);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [diagramId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [diagramKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (readOnly) return;
       if (e.key.toLowerCase() === 'r' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
         setNodes(nds => nds.map(n =>
           n.selected
@@ -215,46 +263,32 @@ function PIDCanvas({
   undoRef.current  = undo;
   redoRef.current  = redo;
 
-  releaseRef.current = useCallback(async (label: string) => {
-    const res = await fetch(`${base}/release`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label, nodes, edges }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error((err as { detail?: string }).detail || 'Release failed');
-    }
-    return res.json() as Promise<{ label: string; savedAt: string }>;
-  }, [nodes, edges, base]);
+  releaseRef.current = useCallback(
+    (label: string) => api.createRelease(diagramRef, label, { nodes, edges }),
+    [nodes, edges, diagramKey], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
-  getHistoryRef.current = useCallback(async () => {
-    const res = await fetch(`${base}/history`);
-    if (!res.ok) throw new Error('Failed to load history');
-    return res.json() as Promise<MicroVersion[]>;
-  }, [base]);
+  getHistoryRef.current = useCallback(
+    () => api.getHistory(diagramRef),
+    [diagramKey], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
-  getReleasesRef.current = useCallback(async () => {
-    const res = await fetch(`${base}/releases`);
-    if (!res.ok) throw new Error('Failed to load releases');
-    return res.json() as Promise<ReleaseVersion[]>;
-  }, [base]);
+  getReleasesRef.current = useCallback(
+    () => api.listReleases(diagramRef),
+    [diagramKey], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   restoreMicroRef.current = useCallback(async (versionId: string) => {
-    const res = await fetch(`${base}/version/${encodeURIComponent(versionId)}`);
-    if (!res.ok) throw new Error('Version not found');
-    const data = await res.json() as Snapshot;
+    const data = await api.getVersion(diagramRef, versionId);
     setNodes(data.nodes);
     setEdges(data.edges);
-  }, [base, setNodes, setEdges]);
+  }, [diagramKey, setNodes, setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
 
   restoreReleaseRef.current = useCallback(async (label: string) => {
-    const res = await fetch(`${base}/release/${encodeURIComponent(label)}`);
-    if (!res.ok) throw new Error('Release not found');
-    const data = await res.json() as Snapshot;
+    const data = await api.getRelease(diagramRef, label);
     setNodes(data.nodes);
     setEdges(data.edges);
-  }, [base, setNodes, setEdges]);
+  }, [diagramKey, setNodes, setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onInit = useCallback((inst: ReactFlowInstance) => {
     setRfInst(inst);
@@ -264,6 +298,7 @@ function PIDCanvas({
   const edgeTypes = useMemo(() => ({ smoothstep: BranchableEdge, default: BranchableEdge }), []);
 
   const onConnect = useCallback((params: Connection) => {
+    if (readOnly) return;
     setEdges(eds => addEdge({
       ...params,
       type: 'smoothstep',
@@ -278,6 +313,7 @@ function PIDCanvas({
   };
 
   const onDrop = useCallback((e: React.DragEvent) => {
+    if (readOnly) return;
     e.preventDefault();
     const type = e.dataTransfer.getData('application/pid-type') as ComponentType;
     if (!type || !rfInst) return;
@@ -298,6 +334,7 @@ function PIDCanvas({
   }, [rfInst, setNodes]);
 
   const onEdgeContextMenu = useCallback((e: React.MouseEvent, edge: Edge) => {
+    if (readOnly) return;
     e.preventDefault();
     e.stopPropagation();
     setEdgeMenu({ id: edge.id, x: e.clientX, y: e.clientY });
@@ -325,12 +362,16 @@ function PIDCanvas({
         onEdgeContextMenu={onEdgeContextMenu}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        selectionOnDrag={mode === 'select'}
-        panOnDrag={mode !== 'select'}
+        nodesDraggable={!readOnly}
+        nodesConnectable={!readOnly}
+        elementsSelectable={!readOnly}
+        edgesReconnectable={!readOnly}
+        deleteKeyCode={readOnly ? null : 'Delete'}
+        selectionOnDrag={!readOnly && mode === 'select'}
+        panOnDrag={readOnly || mode !== 'select'}
         selectionMode={SelectionMode.Partial}
         connectionMode={ConnectionMode.Loose}
         multiSelectionKeyCode="Meta"
-        deleteKeyCode="Delete"
         snapToGrid
         snapGrid={[20, 20]}
         fitView
@@ -372,8 +413,12 @@ export function PIDDesigner() {
   const [mode, setMode] = useState<InteractionMode>('pan');
 
   const [diagrams, setDiagrams] = useState<DiagramMeta[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeRef, setActiveRef] = useState<DocRef | null>(null);
+  const activeKey = activeRef ? keyOf(activeRef) : null;
   const [ready, setReady] = useState(false);
+  const [showChange, setShowChange] = useState(false);
+  // Name of a diagram that was unshared out from under us, or null.
+  const [unshared, setUnshared] = useState<string | null>(null);
 
   const getRef            = useRef<() => Snapshot>(() => ({ nodes: [], edges: [] }));
   const loadRef           = useRef<(d: Snapshot) => void>(() => {});
@@ -393,79 +438,132 @@ export function PIDDesigner() {
     (async () => {
       let list: DiagramMeta[] = [];
       try {
-        const res = await fetch('/api/pid/diagrams');
-        if (res.ok) list = await res.json();
-      } catch { /* offline — fall through to create */ }
+        list = await api.listDiagrams();
+      } catch { /* offline - fall through to create */ }
       if (list.length === 0) {
         try {
-          const res = await fetch('/api/pid/diagrams', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: 'Untitled' }),
-          });
-          if (res.ok) list = [await res.json()];
+          list = [await api.createDiagram('Untitled')];
         } catch { /* ignore */ }
       }
-      const stored = localStorage.getItem(ACTIVE_KEY);
-      const initial = list.find(d => d.id === stored)?.id ?? list[0]?.id ?? null;
+      const remembered = readActive();
+      // Prefer your own diagrams in the fallback: `list` now includes diagrams
+      // shared with you, so list[0] could open someone else's on a machine with
+      // no remembered choice.
+      const match = remembered
+        ? list.find(d => keyOf(refOf(d)) === keyOf(remembered))
+        : undefined;
+      const pick = match ?? list.find(d => d.mine) ?? list[0];
       setDiagrams(list);
-      setActiveId(initial);
+      setActiveRef(pick ? refOf(pick) : null);
+      if (pick) writeActive(refOf(pick));
       setReady(true);
     })();
   }, []);
 
-  const selectDiagram = useCallback((id: string) => {
-    setActiveId(id);
-    localStorage.setItem(ACTIVE_KEY, id);
+  const selectDiagram = useCallback((ref: DocRef) => {
+    setActiveRef(ref);
+    writeActive(ref);
   }, []);
 
-  const createDiagram = useCallback(async (name: string) => {
-    const res = await fetch('/api/pid/diagrams', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
-    });
-    if (!res.ok) return;
-    const meta = await res.json() as DiagramMeta;
+  /** Adopt a freshly created/copied diagram: it becomes the active one. */
+  const adopt = useCallback((meta: DiagramMeta) => {
     setDiagrams(ds => [meta, ...ds]);
-    selectDiagram(meta.id);
+    selectDiagram(refOf(meta));
   }, [selectDiagram]);
 
-  const renameDiagram = useCallback(async (id: string, name: string) => {
-    const res = await fetch(`/api/pid/diagrams/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
-    });
-    if (!res.ok) return;
-    const meta = await res.json() as DiagramMeta;
-    setDiagrams(ds => ds.map(d => d.id === id ? meta : d));
+  const createDiagram = useCallback(async (name: string) => {
+    adopt(await api.createDiagram(name));
+  }, [adopt]);
+
+  const renameDiagram = useCallback(async (ref: DocRef, name: string) => {
+    const meta = await api.renameDiagram(ref, name);
+    setDiagrams(ds => ds.map(d => (keyOf(refOf(d)) === keyOf(ref) ? { ...d, ...meta } : d)));
   }, []);
 
-  const deleteDiagram = useCallback(async (id: string) => {
-    const res = await fetch(`/api/pid/diagrams/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    if (!res.ok) return;
-    setDiagrams(ds => {
-      const next = ds.filter(d => d.id !== id);
-      if (activeId === id) {
-        const fallback = next[0]?.id ?? null;
-        setActiveId(fallback);
-        if (fallback) localStorage.setItem(ACTIVE_KEY, fallback); else localStorage.removeItem(ACTIVE_KEY);
-      }
-      return next;
-    });
-  }, [activeId]);
+  const shareDiagram = useCallback(async (ref: DocRef, emails: string[]) => {
+    const meta = await api.shareDiagram(ref, emails);
+    setDiagrams(ds => ds.map(d => (keyOf(refOf(d)) === keyOf(ref) ? { ...d, ...meta } : d)));
+  }, []);
+
+  /** Re-list and land on one of your own diagrams. Used after leaving one, and
+   *  after being unshared from the one you had open. */
+  const reloadAndFallBack = useCallback(async () => {
+    const list = await api.listDiagrams();
+    setDiagrams(list);
+    const next = list.find(d => d.mine) ?? list[0];
+    setActiveRef(next ? refOf(next) : null);
+    writeActive(next ? refOf(next) : null);
+  }, []);
+
+  const leaveDiagram = useCallback(async (ref: DocRef) => {
+    await api.leaveDiagram(ref);
+    if (activeKey === keyOf(ref)) await reloadAndFallBack();
+    else setDiagrams(ds => ds.filter(d => keyOf(refOf(d)) !== keyOf(ref)));
+  }, [activeKey, reloadAndFallBack]);
+
+  /** Take a copy of someone else's diagram and open it. The copy is yours, with
+   *  no history and no share list -- see the backend. */
+  const copyDiagram = useCallback(async (ref: DocRef) => {
+    adopt(await api.copyDiagram(ref));
+  }, [adopt]);
+
+  // Taking the checkout re-loads the diagram first: sitting in read-only while
+  // the holder saved leaves a stale view, and editing from there would
+  // overwrite their work on the first autosave. The canvas remounts on
+  // `reloadKey`, which is the simplest way to make it re-fetch.
+  const [reloadKey, setReloadKey] = useState(0);
+  const checkout = useCheckout({
+    api: designApi,
+    ref: activeRef,
+    reload: useCallback(async () => { setReloadKey((n) => n + 1); }, []),
+  });
+
+  const onForbidden = useCallback(() => {
+    setUnshared(diagrams.find(d => keyOf(refOf(d)) === activeKey)?.name ?? 'This diagram');
+    void reloadAndFallBack();
+  }, [diagrams, activeKey, reloadAndFallBack]);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-56px)] min-h-[600px] rounded-xl overflow-hidden border border-[#1e293b]">
+    <div className="flex flex-col h-[calc(100vh-56px)] min-h-[600px] rounded-xl overflow-hidden border border-[var(--color-border)]">
       <DiagramBar
         diagrams={diagrams}
-        activeId={activeId}
+        activeKey={activeKey}
         onSelect={selectDiagram}
-        onCreate={createDiagram}
-        onRename={renameDiagram}
-        onDelete={deleteDiagram}
+        onOpenChange={() => setShowChange(true)}
+        checkout={checkout}
       />
+
+      {showChange && (
+        <ChangeModal
+          open={showChange}
+          api={designApi}
+          noun="diagram"
+          onClose={() => setShowChange(false)}
+          documents={diagrams}
+          activeKey={activeKey}
+          onSelect={selectDiagram}
+          onCreate={createDiagram}
+          onRename={renameDiagram}
+          onShare={shareDiagram}
+          onLeave={leaveDiagram}
+          onCopy={copyDiagram}
+        />
+      )}
+
+      {/* Someone removed your access while you had the diagram open. Said
+          plainly rather than left as a silently failing autosave. */}
+      <Modal
+        open={unshared !== null}
+        onClose={() => setUnshared(null)}
+        title="You no longer have access"
+        footer={<button onClick={() => setUnshared(null)} className={primaryBtn}>OK</button>}
+      >
+        <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
+          "{unshared}" was unshared from you, so it has stopped saving and you have been
+          moved to one of your own diagrams. Nothing was deleted - you can still take a
+          copy of it from <b>Change → View only</b>.
+        </p>
+      </Modal>
       <PIDToolbar
         rfInstance={rfInstance}
         getSnapshot={() => getRef.current()}
@@ -478,17 +576,21 @@ export function PIDDesigner() {
         onGetReleases={() => getReleasesRef.current()}
         onRestoreMicro={versionId => restoreMicroRef.current(versionId)}
         onRestoreRelease={label => restoreReleaseRef.current(label)}
-        canVersion={!!activeId}
+        canVersion={!!activeRef}
         mode={mode}
         onModeChange={setMode}
       />
       <div className="flex flex-1 overflow-hidden">
         <ComponentPalette />
         <ReactFlowProvider>
-          {ready && activeId ? (
+          {ready && activeRef ? (
+            <ReadOnlyProvider readOnly={!checkout.held}>
             <PIDCanvas
-              key={activeId}
-              diagramId={activeId}
+              // Remount on a diagram switch. Keyed on (owner, id), not id alone:
+              // two people can own diagrams with the same id, so switching
+              // between them would otherwise reuse one canvas's state.
+              key={`${activeKey}:${reloadKey}`}
+              diagramRef={activeRef}
               onInstance={handleInstance}
               getRef={getRef}
               loadRef={loadRef}
@@ -501,7 +603,10 @@ export function PIDDesigner() {
               restoreMicroRef={restoreMicroRef}
               restoreReleaseRef={restoreReleaseRef}
               mode={mode}
+              onForbidden={onForbidden}
+              onLockLost={checkout.lost}
             />
+            </ReadOnlyProvider>
           ) : (
             <div className="flex-1 flex items-center justify-center text-sm text-slate-600">
               {ready ? 'Create a diagram to begin.' : 'Loading…'}

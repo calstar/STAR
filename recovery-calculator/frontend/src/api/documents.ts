@@ -1,102 +1,63 @@
 /**
- * Versioned-document API (/api/recovery/documents): the durable, server-side
- * timeline behind the localStorage working cache. Mirrors the pid-designer
- * model -- an autosaved working copy, throttled microversions, and immutable
- * named releases. See backend/routers/documents.py.
+ * The versioned-config API, bound to this app.
  *
- * Plain fetch (same-origin, the session cookie rides along). Unlike client.ts
- * there is no fixture fallback: version history has no meaningful stand-in when
- * the backend is absent, so callers treat a throw as "history unavailable".
+ * The transport, the sharing model and the `(owner, id)` addressing all live in
+ * `@stardesign-ui` — shared with EngineDesign and pid-designer, mirroring the
+ * shared server router. What is app-specific is only what is below: the route
+ * prefix and the payload shape.
+ *
+ * The client-side localStorage autosave (`lib/persist.ts`) stays as the instant
+ * working cache; this store is the durable, versioned timeline.
  */
 
+import { createDesignApi } from '@stardesign-ui'
+import type { DesignMeta, DocRef } from '@stardesign-ui'
 import type { UiConfig } from '../types/schema'
+import { toStoredConfig } from '../lib/serialise'
 
-const BASE = '/api/recovery/documents'
+export { keyOf, refOf, ApiError } from '@stardesign-ui'
+export type {
+  BrowseGroup,
+  DocRef,
+  MicroVersion,
+  ReleaseVersion,
+  TeamUser,
+} from '@stardesign-ui'
 
-export interface DocMeta {
-  id: string
-  name: string
-  createdAt: string
-  updatedAt: string
-}
+/** Named `DocMeta` throughout this app; the shape is the shared one. */
+export type DocMeta = DesignMeta
 
-export interface MicroVersion {
-  versionId: string
-  savedAt: string
-  size?: number
-}
+const api = createDesignApi<UiConfig>({
+  base: '/api/recovery/documents',
+  usersPath: '/api/recovery/users',
+  codec: {
+    // `toStoredConfig` is what keeps view state out of the saved design --
+    // collapsing a device card must not count as an edit. See lib/serialise.ts.
+    toBody: (config) => ({ config: toStoredConfig(config) }),
+    fromBody: (body) => (body as { config: UiConfig }).config,
+    empty: () => ({}) as UiConfig,
+  },
+})
 
-export interface ReleaseVersion {
-  label: string
-  savedAt: string
-  size?: number
-}
+/** The whole API object, for shared components that take it as a prop. */
+export const designApi = api
 
-async function json<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { detail?: string }
-    throw new Error(body.detail || `HTTP ${res.status}`)
-  }
-  return res.json() as Promise<T>
-}
+// Named exports, so the call sites read the same as before the extraction.
+export const listDocuments = api.list
+export const browseDocuments = api.browse
+export const listUsers = api.listUsers
+export const createDocument = (name: string, config?: UiConfig) => api.create(name, config)
+export const copyDocument = (ref: DocRef, name?: string) => api.copy(ref, name)
+export const renameDocument = api.rename
+export const shareDocument = api.share
+export const leaveDocument = api.leave
+export const autosaveDocument = api.autosave
+export const flushDocument = api.flush
+export const getHistory = api.getHistory
+export const getVersion = api.getVersion
+export const createRelease = api.createRelease
+export const listReleases = api.listReleases
+export const getRelease = api.getRelease
 
-export const listDocuments = () =>
-  fetch(BASE).then(r => json<DocMeta[]>(r))
-
-export const createDocument = (name: string, config?: UiConfig) =>
-  fetch(BASE, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, config }),
-  }).then(r => json<DocMeta>(r))
-
-export const renameDocument = (id: string, name: string) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  }).then(r => json<DocMeta>(r))
-
-export const deleteDocument = (id: string) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(r => json(r))
-
-export const loadDocument = (id: string) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}/load`).then(r => json<{ config: UiConfig | Record<string, never> }>(r))
-
-export const autosaveDocument = (id: string, config: UiConfig) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}/autosave`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ config }),
-  }).then(r => json<{ ok: boolean; micro: boolean }>(r))
-
-/** Best-effort final snapshot on tab close. Uses sendBeacon so it survives the
- *  page unload the way a normal fetch would not. */
-export const flushDocument = (id: string, config: UiConfig): void => {
-  const body = JSON.stringify({ config })
-  navigator.sendBeacon(
-    `${BASE}/${encodeURIComponent(id)}/flush`,
-    new Blob([body], { type: 'application/json' }),
-  )
-}
-
-export const getHistory = (id: string) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}/history`).then(r => json<MicroVersion[]>(r))
-
-export const getVersion = (id: string, versionId: string) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}/version/${encodeURIComponent(versionId)}`)
-    .then(r => json<{ config: UiConfig }>(r))
-
-export const createRelease = (id: string, label: string, config?: UiConfig) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}/release`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ label, config }),
-  }).then(r => json<ReleaseVersion>(r))
-
-export const listReleases = (id: string) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}/releases`).then(r => json<ReleaseVersion[]>(r))
-
-export const getRelease = (id: string, label: string) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}/release/${encodeURIComponent(label)}`)
-    .then(r => json<{ config: UiConfig }>(r))
+/** `/load` returns the config directly now; callers destructured `{ config }`. */
+export const loadDocument = (ref: DocRef) => api.load(ref).then((config) => ({ config }))
