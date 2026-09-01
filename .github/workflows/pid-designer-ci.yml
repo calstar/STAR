@@ -79,8 +79,11 @@ jobs:
     # its permission check.
     - name: Install test dependencies
       working-directory: pid-designer
-      run: pip install pytest httpx
+      # pytest-timeout because the checkout tests fork real processes to prove
+      # two people cannot hold one diagram; a regression there should fail the
+      # job, not hang it.
+      run: pip install pytest pytest-timeout httpx
 
     - name: Run tests
       working-directory: pid-designer
-      run: python -m pytest tests -q
+      run: python -m pytest tests -q --timeout=120 --timeout-method=thread

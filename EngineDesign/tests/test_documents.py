@@ -72,6 +72,15 @@ def _share(client, doc_id, emails, *, headers=A, params=None):
     return r.json()
 
 
+def _take(client, doc_id, headers=A, params=None):
+    """Content writes need the checkout now. Explicit in every test that saves,
+    rather than hidden in a fixture -- taking it is part of the API contract."""
+    r = client.post(f"{BASE}/{doc_id}/checkout", headers=headers,
+                    params=params if params is not None else {})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
 def _find(client, headers, doc_id):
     return next(d for d in client.get(BASE, headers=headers).json() if d["id"] == doc_id)
 
@@ -112,7 +121,12 @@ def test_delete_is_gone(client):
     assert client.delete(f"/api/engine/documents/{doc_id}", headers=A).status_code == 405
     deletes = {r.path for r in documents.router.routes
                if "DELETE" in getattr(r, "methods", set())}
-    assert deletes == {"/api/engine/documents/{doc_id}/share/me"}
+    assert deletes == {
+        "/api/engine/documents/{doc_id}/share/me",
+        # Releasing a checkout is the other DELETE, and it drops a write token,
+        # not a design.
+        "/api/engine/documents/{doc_id}/checkout",
+    }
 
 
 # ── working copy + microversions ─────────────────────────────────────────────
@@ -120,6 +134,7 @@ def test_delete_is_gone(client):
 
 def test_autosave_load_and_history(client):
     doc_id = _create(client, A)
+    _take(client, doc_id)
     cfg = {"combustion": {"efficiency": {"c_star": 0.95}}, "note": "v1"}
     assert client.post(f"/api/engine/documents/{doc_id}/autosave",
                        headers=A, json={"config": cfg}).json()["micro"] is True
@@ -148,6 +163,7 @@ def test_history_needs_a_share(client):
 
 def test_history_readable_once_shared(client):
     a_id = _create(client, A)
+    _take(client, a_id)
     client.post(f"/api/engine/documents/{a_id}/autosave", headers=A,
                 json={"config": {"shared": 1}})
     _share(client, a_id, [B["X-Auth-Email"]])
@@ -161,6 +177,7 @@ def test_history_readable_once_shared(client):
 
 def test_release_is_immutable_and_listed(client):
     doc_id = _create(client, A)
+    _take(client, doc_id)
     cfg = {"combustion": {}, "v": 1}
     r = client.post(f"/api/engine/documents/{doc_id}/release",
                     headers=A, json={"label": "0.1", "config": cfg})
@@ -181,6 +198,7 @@ def test_restore_returns_older_state(client):
     """The safety net: an autosaved mistake is recoverable from an earlier
     microversion."""
     doc_id = _create(client, A)
+    _take(client, doc_id)
     good = {"combustion": {}, "thrust": 1000}
     client.post(f"/api/engine/documents/{doc_id}/autosave", headers=A, json={"config": good})
     client.post(f"/api/engine/documents/{doc_id}/autosave", headers=A,
@@ -203,6 +221,7 @@ def test_share_grants_edit_and_writes_into_the_owners_folder(client, tmp_path):
     land in Alice's folder and Alice must see the change."""
     a_id = _create(client, A, "Booster")
     _share(client, a_id, [B["X-Auth-Email"]])
+    _take(client, a_id, headers=B, params=OWNER_A)  # B is the one editing here
 
     r = client.post(f"{BASE}/{a_id}/autosave", headers=B, params=OWNER_A,
                     json={"config": {"by": "bob"}})
@@ -285,6 +304,7 @@ def test_browse_groups_by_owner_and_hides_what_you_can_edit(client):
 
 def test_copy_is_independent_and_needs_no_share(client):
     a_id = _create(client, A, "Booster", config={"v": 1})
+    _take(client, a_id)
     client.post(f"{BASE}/{a_id}/autosave", headers=A, json={"config": {"v": 1}})
 
     copy = client.post(f"{BASE}/copy", headers=B,
@@ -294,6 +314,7 @@ def test_copy_is_independent_and_needs_no_share(client):
     assert client.get(f"{BASE}/{copy['id']}/load", headers=B).json()["config"] == {"v": 1}
 
     # Editing the copy must not touch the original, nor grant access back to it.
+    _take(client, copy["id"], headers=B)
     client.post(f"{BASE}/{copy['id']}/autosave", headers=B, json={"config": {"v": 2}})
     assert client.get(f"{BASE}/{a_id}/load", headers=A).json()["config"] == {"v": 1}
     assert _find(client, A, a_id)["sharedWith"] == []
@@ -313,6 +334,9 @@ _DOC_SCOPED = {
     "rename_document": ("PATCH", "", {"name": "x"}),
     "share_document": ("PUT", "/share", {"sharedWith": []}),
     "leave_document": ("DELETE", "/share/me", None),
+    "take_checkout": ("POST", "/checkout", None),
+    "release_checkout": ("DELETE", "/checkout", None),
+    "get_checkout": ("GET", "/checkout", None),
     "load_document": ("GET", "/load", None),
     "autosave_document": ("POST", "/autosave", {"config": {"x": 1}}),
     "flush_document": ("POST", "/flush", {"config": {"x": 1}}),
@@ -382,6 +406,7 @@ def test_microversion_history_is_in_write_order(client, tmp_path):
     nanosecond prefix in `snapshot_micro` that makes it pass.
     """
     doc_id = _create(client, A)
+    _take(client, doc_id)
     for i in range(10):
         assert client.post(f"{BASE}/{doc_id}/autosave", headers=A,
                            json={"config": {"i": i}}).status_code == 200

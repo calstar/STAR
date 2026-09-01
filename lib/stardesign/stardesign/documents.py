@@ -38,9 +38,21 @@ entry behind it, and the edit would vanish on reload. ``/flush`` rides a
 silent on the most loss-prone path. A ``DocRef`` only exists if an index record
 was found, so that cannot happen.
 
-Concurrent editing is deliberately last-write-wins for now: design *checkouts*
-are the next piece of work and will prevent it properly, so a revision-token
-guard built here would only be thrown away.
+Checkouts
+---------
+Concurrent editing is not resolved, it is prevented. At most one person holds a
+design's write token at a time, and only the holder may save. Taking it is
+explicit (opening a design never takes it, so viewing never blocks a colleague);
+it lapses on its own after ``lock_ttl`` without a save, and on tab close.
+
+The compare-and-set runs inside ``_index_lock``, the same ``flock`` that already
+serialises index writes, so two simultaneous takes cannot both succeed. That
+holds across the several workers each API runs.
+
+**A constraint worth knowing:** ``flock`` is per-machine. All three design tools
+run on the one apps machine sharing the ``userdata`` volume, so this is sound
+today. Running a design tool on a second machine against the same volume would
+break the guarantee silently, and needs a different primitive.
 
 There is deliberately no delete endpoint: a design is editable by more than one
 person, so a delete button is one misclick away from destroying a group project
@@ -99,6 +111,10 @@ class DesignStore:
     noun: str = "design"                  #: user-facing singular, e.g. "diagram"
     default_slug: str = "design"          #: id stem when a name slugifies to nothing
     micro_interval: int = 300             #: seconds between throttled snapshots
+    #: How long a checkout survives without a save. Expiry is evaluated lazily,
+    #: when someone tries to take the design -- no reaper, and exactly as correct
+    #: for the only question that matters ("can two people hold it at once?").
+    lock_ttl: int = 300
     #: An empty document body, used when creating and as a fallback on /load.
     empty_payload: Callable[[], dict] = lambda: {"config": {}}
     #: (owner, doc_id) -> monotonic time of the last microversion. In-process
@@ -334,6 +350,113 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         return DocRef(owner=owner_slug, doc_id=doc_id, record=record, viewer=viewer)
 
 
+    # ── checkouts: who may save, right now ───────────────────────────────────
+
+    def _lock_holder(record: dict) -> str | None:
+        """Whoever currently holds the design, or None if it is free.
+
+        A checkout with no save inside ``lock_ttl`` is treated as free. Expiry is
+        decided here, on read, rather than by a background sweep -- which means
+        there is no window where a record says "held" and the answer to "may I
+        take it?" disagrees.
+        """
+        holder = record.get("lockedBy")
+        if not holder:
+            return None
+        beat = record.get("lockHeartbeat") or record.get("lockedAt")
+        if not beat:
+            return None
+        try:
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(beat)).total_seconds()
+        except (TypeError, ValueError):
+            return None  # unparseable timestamp: treat as free rather than wedge the design
+        return str(holder) if age < store.lock_ttl else None
+
+    def _lock_state(record: dict, viewer: str, names: dict[str, str]) -> dict:
+        """The checkout, as the design bar wants to render it."""
+        holder = _lock_holder(record)
+        return {
+            "lockedBy": holder,
+            "lockedByName": (names.get(holder) or holder) if holder else None,
+            "lockedByMe": holder == viewer,
+            "lockExpiresAt": record.get("lockHeartbeat") if holder else None,
+        }
+
+    def _take_lock(owner: str, doc_id: str, viewer: str) -> dict:
+        """Claim the design, or 423 if someone else has it.
+
+        The compare-and-set that makes concurrent editing impossible. Re-reads
+        the record *inside* the lock rather than trusting one fetched earlier,
+        so two racing takes serialise and exactly one sees a free design.
+        """
+        now = _now_iso()
+        with _index_lock(owner):
+            index = _load_index(owner)
+            for record in index:
+                if record["id"] != doc_id:
+                    continue
+                holder = _lock_holder(record)
+                if holder and holder != viewer:
+                    raise HTTPException(
+                        status_code=423,
+                        detail=f"{record.get('name', doc_id)} is checked out by {holder}",
+                    )
+                record["lockedBy"] = viewer
+                record.setdefault("lockedAt", now)
+                if holder != viewer:
+                    record["lockedAt"] = now
+                record["lockHeartbeat"] = now
+                _save_index(owner, index)
+                return record
+        raise HTTPException(status_code=404, detail=f"Unknown {store.noun}")
+
+    def _release_lock(owner: str, doc_id: str, viewer: str) -> None:
+        """Give the design back. Only the holder can, and it is idempotent --
+        a lock that already lapsed, or was never held, is simply already free."""
+        with _index_lock(owner):
+            index = _load_index(owner)
+            for record in index:
+                if record["id"] != doc_id:
+                    continue
+                if _lock_holder(record) not in (None, viewer):
+                    return  # someone else's now; not ours to drop
+                record.pop("lockedBy", None)
+                record.pop("lockedAt", None)
+                record.pop("lockHeartbeat", None)
+                _save_index(owner, index)
+                return
+
+    def _require_lock(ref: "DocRef") -> None:
+        """Refuse a content write unless the caller holds the checkout.
+
+        Applied to the endpoints that mutate the design itself. Renaming,
+        sharing and copying are deliberately exempt: they are not concurrent
+        editing of content, and blocking them would mean a checkout could stop
+        someone tidying up a design they can see.
+        """
+        holder = _lock_holder(ref.record)
+        if holder != ref.viewer:
+            name = ref.record.get("name", ref.doc_id)
+            detail = (
+                f"{name} is checked out by {holder}" if holder
+                else f"Take {name} before saving -- your checkout has lapsed"
+            )
+            raise HTTPException(status_code=423, detail=detail)
+
+    def _beat_lock(owner: str, doc_id: str, viewer: str) -> None:
+        """Refresh the holder's checkout after a successful save.
+
+        This is what makes "inactivity" mean *not editing* rather than *tab
+        closed*, and it costs no extra request.
+        """
+        with _index_lock(owner):
+            index = _load_index(owner)
+            for record in index:
+                if record["id"] == doc_id and record.get("lockedBy") == viewer:
+                    record["lockHeartbeat"] = _now_iso()
+                    _save_index(owner, index)
+                    return
+
     def _scan_all() -> Iterator[tuple[str, dict]]:
         """``(owner, record)`` for every design on the shared volume.
 
@@ -355,6 +478,9 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
             "owner": owner,
             "ownerName": names.get(owner) or owner,
             "mine": owner == viewer,
+            # Folded in here so the design bar knows the checkout state from the
+            # list it already fetches, with no extra round trip on open.
+            **_lock_state(record, viewer, names),
         }
 
 
@@ -537,6 +663,39 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         return {"ok": True}
 
 
+    # ── checkouts ────────────────────────────────────────────────────────────
+
+    @router.post(f"{sub}/{{doc_id}}/checkout")
+    async def take_checkout(request: Request, doc_id: str, owner: str | None = None):
+        """Take the design's write token, or 423 if someone else has it.
+
+        423 rather than 409 on purpose: ``create_release`` already returns 409
+        for "that label exists", and the two are surfaced differently in the UI.
+
+        Note this is *not* called on open -- viewing a design must never block a
+        colleague. The client calls it when the user presses Take.
+        """
+        ref = _resolve_doc(request, owner, doc_id)
+        record = _take_lock(ref.owner, ref.doc_id, ref.viewer)
+        names = directory.display_names(request, store.ud)
+        return _lock_state(record, ref.viewer, names)
+
+    @router.delete(f"{sub}/{{doc_id}}/checkout")
+    async def release_checkout(request: Request, doc_id: str, owner: str | None = None):
+        """Give the token back. Idempotent, and the target of the on-close beacon
+        -- which is best-effort, so ``lock_ttl`` remains the real backstop."""
+        ref = _resolve_doc(request, owner, doc_id)
+        _release_lock(ref.owner, ref.doc_id, ref.viewer)
+        return {"ok": True}
+
+    @router.get(f"{sub}/{{doc_id}}/checkout")
+    async def get_checkout(request: Request, doc_id: str, owner: str | None = None):
+        """Who holds it right now. Polled by the bar while you do not, so that
+        Take lights up on its own when the holder finishes."""
+        ref = _resolve_doc(request, owner, doc_id)
+        names = directory.display_names(request, store.ud)
+        return _lock_state(ref.record, ref.viewer, names)
+
     # ── working copy: load + autosave ────────────────────────────────────────────
 
     @router.get(f"{sub}/{{doc_id}}/load")
@@ -567,8 +726,10 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         it has just been unshared from gets a 403, which is its cue to stop.
         """
         ref = _resolve_doc(request, owner, doc_id)
+        _require_lock(ref)
         data = store.to_data(payload)
         _write_working(ref.owner, ref.doc_id, data)
+        _beat_lock(ref.owner, ref.doc_id, ref.viewer)
 
         micro = False
         key = (ref.owner, ref.doc_id)
@@ -592,6 +753,7 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
     ):
         """Force an immediate microversion. Target of the on-close sendBeacon."""
         ref = _resolve_doc(request, owner, doc_id)
+        _require_lock(ref)
         data = store.to_data(payload)
         _write_working(ref.owner, ref.doc_id, data)
         try:
@@ -632,6 +794,7 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
     ):
         """Publish the current state as an immutable named release (e.g. "0.1")."""
         ref = _resolve_doc(request, owner, doc_id)
+        _require_lock(ref)
         label = slugify(payload.label)
         if not label:
             raise HTTPException(status_code=400, detail="A version label is required")
