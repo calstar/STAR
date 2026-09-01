@@ -1,7 +1,9 @@
+import { AdminConfig } from "@/components/settings/AdminConfig";
 import { DigestSettings } from "@/components/settings/DigestSettings";
 import { DisplayNameInput } from "@/components/settings/DisplayNameInput";
 import { EmailPrefToggle } from "@/components/settings/EmailPrefToggle";
 import { ThemeToggle } from "@/components/settings/ThemeToggle";
+import { isAdmin, listAdmins } from "@/lib/admins";
 import { prisma } from "@/lib/db";
 import { DIGEST_KINDS } from "@/lib/digest";
 import { shortName } from "@/lib/names";
@@ -38,6 +40,9 @@ export default async function SettingsPage() {
   const followedSubteams = subs
     .map((s) => s.subteamId)
     .filter((x): x is string => !!x);
+
+  const admin = await isAdmin(user.email);
+  const admins = admin ? await listAdmins() : [];
 
   const card = "rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 shadow-sm";
 
@@ -104,6 +109,19 @@ export default async function SettingsPage() {
           />
         </div>
       </section>
+
+      {admin && (
+        <section className={`mt-4 ${card}`}>
+          <h2 className="font-medium">Admins</h2>
+          <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+            Admins can delete projects, subteams, and tasks. Add someone by their
+            @berkeley.edu email.
+          </p>
+          <div className="mt-3">
+            <AdminConfig admins={admins} />
+          </div>
+        </section>
+      )}
     </div>
   );
 }

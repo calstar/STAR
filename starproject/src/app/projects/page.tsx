@@ -2,6 +2,7 @@ import { Fragment } from "react";
 
 import { EntityRow, LIST_CARD } from "@/components/EntityRow";
 import { prisma } from "@/lib/db";
+import { projectTaskTotal } from "@/lib/projects";
 
 // Reads the DB per request.
 export const dynamic = "force-dynamic";
@@ -37,7 +38,7 @@ export default async function ProjectsPage() {
               color={p.color}
               name={p.name}
               description={p.description}
-              taskCount={p._count.tasks}
+              taskCount={projectTaskTotal(p)}
               id={p.id}
             />
             {p.children.map((c) => (

@@ -3,9 +3,9 @@
 import type { User } from "@prisma/client";
 import { useRef, useState } from "react";
 
+import { AssigneeSelect } from "@/components/fields/AssigneeSelect";
 import { FieldSelect } from "@/components/fields/FieldSelect";
 import { createTask } from "@/lib/actions/tasks";
-import { displayNameOf } from "@/lib/names";
 import { PRIORITY_BADGE } from "@/lib/tasks";
 
 // One task-create form for every context: a project detail page pins the
@@ -30,7 +30,7 @@ export function NewTaskForm({
   // create (form.reset() only clears native fields, not React state).
   const [proj, setProj] = useState("");
   const [priority, setPriority] = useState("");
-  const [assignee, setAssignee] = useState("");
+  const [assignees, setAssignees] = useState<string[]>([]);
   const [subteam, setSubteam] = useState("");
   // Project is required; the custom dropdown has no native `required`, so guard here.
   const [err, setErr] = useState<string | null>(null);
@@ -51,7 +51,7 @@ export function NewTaskForm({
         formRef.current?.reset();
         setProj("");
         setPriority("");
-        setAssignee("");
+        setAssignees([]);
         setSubteam("");
       }}
       className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3"
@@ -89,16 +89,11 @@ export function NewTaskForm({
         ]}
       />
 
-      <FieldSelect
-        name="assigneeId"
-        ariaLabel="Assignee"
-        searchable
-        value={assignee}
-        onChange={setAssignee}
-        options={[
-          { value: "", label: "Unassigned" },
-          ...users.map((u) => ({ value: u.id, label: displayNameOf(u) })),
-        ]}
+      <AssigneeSelect
+        name="assigneeIds"
+        users={users}
+        value={assignees}
+        onChange={setAssignees}
       />
 
       {subteamId ? (

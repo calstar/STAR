@@ -3,6 +3,7 @@ import Link from "next/link";
 import { BlockedBadge } from "@/components/BlockedBadge";
 import { TaskLink } from "@/components/TaskLink";
 import { prisma } from "@/lib/db";
+import { projectTaskTotal } from "@/lib/projects";
 import { STATUS_BADGE, STATUS_LABEL, isBlocked } from "@/lib/tasks";
 import { getCurrentDbUser } from "@/lib/user";
 
@@ -14,7 +15,14 @@ export default async function Home() {
   const [projects, subteams, myTasks] = await Promise.all([
     prisma.project.findMany({
       where: { archived: false, parentId: null },
-      include: { _count: { select: { tasks: true } } },
+      include: {
+        _count: { select: { tasks: true } },
+        // Subproject counts, so a parent's badge sums all tasks under it.
+        children: {
+          where: { archived: false },
+          select: { _count: { select: { tasks: true } } },
+        },
+      },
       orderBy: { createdAt: "desc" },
     }),
     prisma.subteam.findMany({
@@ -22,7 +30,7 @@ export default async function Home() {
       orderBy: { name: "asc" },
     }),
     prisma.task.findMany({
-      where: { assigneeId: user.id },
+      where: { assignees: { some: { id: user.id } } },
       include: {
         project: { select: { id: true, name: true } },
         blockedBy: { include: { blockedByTask: { select: { status: true } } } },
@@ -68,7 +76,7 @@ export default async function Home() {
                   />
                   <span className="truncate text-sm font-medium">{p.name}</span>
                 </span>
-                <span className={count}>{p._count.tasks}</span>
+                <span className={count}>{projectTaskTotal(p)}</span>
               </Link>
             ))}
           </div>
