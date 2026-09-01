@@ -8,6 +8,7 @@
  * exact, performance tiles (apogee, max-Q) are flagged approximate.
  */
 
+import { useDisabled } from '@stardesign-ui'
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -202,6 +203,9 @@ function TimeLine({
 }
 
 export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFins, railLength, overrides, flight, onFlightChange, recovery, result, onResult }: Props) {
+  // Rail angle, heading and the CP model are design fields. Running the sim and
+  // the compare-series toggles only change what you are looking at.
+  const readOnly = useDisabled()
   const { inclination, heading, cpModel } = flight
   const { val, lab, dec, q } = useUnits()
 
@@ -296,7 +300,7 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
         <Field label="Heading (° from N)" value={heading} set={(v) => onFlightChange({ heading: v })} min={0} max={360} />
         <label className="flex flex-col text-xs text-slate-300">
           CP model
-          <select value={cpModel} onChange={(e) => onFlightChange({ cpModel: e.target.value as FlightParams['cpModel'] })} className="mt-1 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-slate-100">
+          <select value={cpModel} disabled={readOnly} onChange={(e) => onFlightChange({ cpModel: e.target.value as FlightParams['cpModel'] })} className="mt-1 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-slate-100 disabled:cursor-not-allowed disabled:border-slate-800 disabled:text-slate-500">
             <option value="both">Both (compare)</option>
             <option value="ours">Ours (CAD Barrowman)</option>
             <option value="rocketpy">RocketPy native</option>
@@ -438,6 +442,8 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
 }
 
 function Field({ label, value, set, min, max, step = 1 }: { label: string; value: number; set: (n: number) => void; min: number; max: number; step?: number }) {
+  // Every use of this writes a flight parameter, which is part of the design.
+  const disabled = useDisabled()
   return (
     <label className="flex flex-col text-xs text-slate-300">
       {label}
@@ -447,8 +453,9 @@ function Field({ label, value, set, min, max, step = 1 }: { label: string; value
         min={min}
         max={max}
         step={step}
+        disabled={disabled}
         onChange={(e) => set(Number(e.target.value))}
-        className="mt-1 w-24 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-slate-100"
+        className="mt-1 w-24 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-slate-100 disabled:cursor-not-allowed disabled:border-slate-800 disabled:text-slate-500"
       />
     </label>
   )

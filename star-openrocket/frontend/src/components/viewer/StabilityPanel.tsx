@@ -8,6 +8,7 @@
  * static margin, placed along the detected axis.
  */
 
+import { useDisabled } from '@stardesign-ui'
 import { useState } from 'react'
 
 import type { FaceRef, MotorSelection, MotorSummary, StabilityResult } from '../../types'
@@ -29,6 +30,9 @@ function UnitField({ value, onChange, kind, min }: {
   min?: number
 }) {
   const { val, si, forInput, u } = useUnits()
+  // Every use of this writes a design field (motor aft offset, rail length), so
+  // it goes read-only with the design rather than each call site remembering.
+  const disabled = useDisabled()
   const [editing, setEditing] = useState(false)
   const shown = editing ? val(value, kind) : forInput(value, kind)
   return (
@@ -36,6 +40,7 @@ function UnitField({ value, onChange, kind, min }: {
       type="number"
       step={u(kind).step}
       min={min}
+      disabled={disabled}
       value={shown}
       onFocus={() => setEditing(true)}
       onBlur={() => setEditing(false)}
@@ -43,7 +48,7 @@ function UnitField({ value, onChange, kind, min }: {
         const t = e.target.value.trim()
         onChange(t === '' ? 0 : si(Number(t), kind))
       }}
-      className="w-20 rounded border border-slate-700 bg-slate-800 px-1 py-0.5 text-right text-slate-100 focus:border-cyan-500 focus:outline-none"
+      className="w-20 rounded border border-slate-700 bg-slate-800 px-1 py-0.5 text-right text-slate-100 focus:border-cyan-500 focus:outline-none disabled:cursor-not-allowed disabled:border-slate-800 disabled:text-slate-500"
     />
   )
 }
@@ -133,6 +138,10 @@ export function StabilityPanel({
   onViewMotorCurves,
 }: StabilityPanelProps) {
   const { q, lab, num } = useUnits()
+  // Face sets, the motor and its placement, and the rail length are all part of
+  // the design, so they need the checkout. Computing stability, isolating a
+  // surface and opening the flight/curve popups only look at it, and stay live.
+  const readOnly = useDisabled()
   const [pickerOpen, setPickerOpen] = useState(false)
   return (
     <div className="text-sm">
@@ -158,7 +167,8 @@ export function StabilityPanel({
         <button
           type="button"
           onClick={() => onToggleEditMode('body')}
-          className={`rounded px-2 py-1 text-xs font-medium ${
+          disabled={readOnly}
+          className={`rounded px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
             faceEditMode && editTarget === 'body'
               ? 'bg-violet-500 text-white'
               : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
@@ -169,7 +179,8 @@ export function StabilityPanel({
         <button
           type="button"
           onClick={() => onToggleEditMode('fin')}
-          className={`rounded px-2 py-1 text-xs font-medium ${
+          disabled={readOnly}
+          className={`rounded px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
             faceEditMode && editTarget === 'fin'
               ? 'bg-orange-500 text-white'
               : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
@@ -180,7 +191,7 @@ export function StabilityPanel({
         <button
           type="button"
           onClick={onAutoDetect}
-          disabled={autoBusy}
+          disabled={autoBusy || readOnly}
           className="ml-auto rounded bg-slate-700 px-2 py-1 text-xs font-medium text-slate-200 hover:bg-slate-600 disabled:opacity-50"
         >
           {autoBusy ? 'Detecting…' : 'Auto-detect'}
@@ -268,7 +279,8 @@ export function StabilityPanel({
               <button
                 type="button"
                 onClick={() => setPickerOpen((v) => !v)}
-                className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-600"
+                disabled={readOnly}
+                className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Change
               </button>
@@ -278,7 +290,8 @@ export function StabilityPanel({
                   onClearMotor()
                   setPickerOpen(false)
                 }}
-                className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-600"
+                disabled={readOnly}
+                className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Remove
               </button>
@@ -287,7 +300,8 @@ export function StabilityPanel({
             <button
               type="button"
               onClick={() => setPickerOpen((v) => !v)}
-              className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-600"
+              disabled={readOnly}
+              className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {pickerOpen ? 'Cancel' : 'Add motor'}
             </button>
@@ -324,6 +338,7 @@ export function StabilityPanel({
                   key={s}
                   type="button"
                   onClick={() => onSetMotorState(s)}
+                  disabled={readOnly}
                   className={`flex-1 px-2 py-1 ${
                     motorSel.state === s
                       ? 'bg-cyan-600 text-white'
@@ -348,7 +363,8 @@ export function StabilityPanel({
                     <button
                       type="button"
                       onClick={() => onSetMotorRefFace(null)}
-                      className="rounded bg-slate-700 px-1.5 py-0.5 text-2xs text-slate-200 hover:bg-slate-600"
+                      disabled={readOnly}
+                      className="rounded bg-slate-700 px-1.5 py-0.5 text-2xs text-slate-200 hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       Clear
                     </button>
@@ -359,7 +375,8 @@ export function StabilityPanel({
                 <button
                   type="button"
                   onClick={onToggleMotorFaceEdit}
-                  className={`rounded px-1.5 py-0.5 text-2xs font-medium ${
+                  disabled={readOnly}
+                  className={`rounded px-1.5 py-0.5 text-2xs font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
                     motorFaceEdit
                       ? 'bg-fuchsia-600 text-white'
                       : 'bg-slate-700 text-slate-200 hover:bg-slate-600'

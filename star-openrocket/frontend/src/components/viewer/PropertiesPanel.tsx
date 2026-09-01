@@ -16,6 +16,7 @@
  * density regardless of what that density is.
  */
 
+import { useDisabled } from '@stardesign-ui'
 import { useEffect, useState } from 'react'
 
 import type { Part, PartOverride } from '../../types'
@@ -78,6 +79,9 @@ function PartProperties({
   onOverrideChange: (key: string, override: PartOverride | null) => void
 }) {
   const { q, lab, si, forInput } = useUnits()
+  // Mass and material overrides are part of the design, so they need the
+  // checkout. Nothing else in this panel is editable.
+  const readOnly = useDisabled()
   const overridden = override?.massOverridden ?? false
   // The material the user picked from the catalog, if any. It sets the mass
   // (via density x volume, in App) but leaves Onshape's own material in place --
@@ -191,7 +195,7 @@ function PartProperties({
             // apply their density to the part's volume. Overriding the mass by
             // hand makes the material irrelevant, so it greys out rather than
             // sitting there implying it still applies.
-            disabled={overridden}
+            disabled={overridden || readOnly}
             value={materialKey}
             onChange={(event) => selectMaterial(event.target.value)}
             className="w-full rounded border border-slate-600 bg-slate-900 px-2 py-1 text-slate-100 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-600"
@@ -211,8 +215,9 @@ function PartProperties({
           <input
             type="checkbox"
             checked={overridden}
+            disabled={readOnly}
             onChange={(event) => toggleOverride(event.target.checked)}
-            className="accent-cyan-400"
+            className="accent-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
           />
           Override mass
         </label>
@@ -228,7 +233,7 @@ function PartProperties({
             min={0}
             step="any"
             inputMode="decimal"
-            disabled={!overridden}
+            disabled={!overridden || readOnly}
             value={draft}
             placeholder={overridden ? 'enter a mass' : '—'}
             onChange={(event) => commit(event.target.value)}

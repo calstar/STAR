@@ -642,11 +642,16 @@ export default function App() {
           ))}
         </nav>
 
+        {/* Which model the design points at is a design field, so the header
+            picker follows the checkout. The copy on the no-model error screen
+            above deliberately does not: it is the only way to build a first
+            model on a fresh install, where there is no design to hold yet. */}
         <ModelPicker
           models={models}
           modelId={modelId}
           onSelectModel={setModelId}
           onBuilt={handleBuilt}
+          disabled={!editable}
         />
 
         <label className="ml-auto flex items-center gap-2 text-sm text-slate-300">

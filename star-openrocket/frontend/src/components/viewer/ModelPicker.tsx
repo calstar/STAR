@@ -36,6 +36,14 @@ interface Props {
   onSelectModel: (id: string) => void
   /** Called with the new model id once a build finishes. */
   onBuilt: (modelId: string) => void
+  /**
+   * Read-only: which model the design points at is part of the design, so
+   * picking or building one needs the checkout. Passed rather than read from
+   * the shared context because this sits in the header, above the provider --
+   * and because the copy shown on the no-model error screen deliberately stays
+   * live, being the only way to build a first model on a fresh install.
+   */
+  disabled?: boolean
 }
 
 const POLL_INTERVAL_MS = 700
@@ -58,7 +66,7 @@ function whenCached(stamp: string | null): string {
   })
 }
 
-export function ModelPicker({ models, modelId, onSelectModel, onBuilt }: Props) {
+export function ModelPicker({ models, modelId, onSelectModel, onBuilt, disabled = false }: Props) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [documents, setDocuments] = useState<OnshapeDocument[]>([])
@@ -216,7 +224,9 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt }: Props) 
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex items-center gap-2 rounded border border-slate-600 bg-slate-900 px-2 py-1 text-sm text-slate-200 hover:bg-slate-800"
+        disabled={disabled}
+        title={disabled ? 'Take the design to change its model' : undefined}
+        className="flex items-center gap-2 rounded border border-slate-600 bg-slate-900 px-2 py-1 text-sm text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <span className="max-w-56 truncate">{label}</span>
         {current?.assemblyName && (
@@ -249,7 +259,7 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt }: Props) 
               </p>
               <button
                 type="button"
-                disabled={busy}
+                disabled={busy || disabled}
                 onClick={() => launch({ url: query.trim() })}
                 className="rounded bg-cyan-600 px-3 py-1.5 text-white hover:bg-cyan-500 disabled:opacity-50"
               >
@@ -299,7 +309,7 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt }: Props) 
                     <li key={assembly.elementId}>
                       <button
                         type="button"
-                        disabled={busy}
+                        disabled={busy || disabled}
                         onClick={() =>
                           launch({
                             documentId: chosen.documentId,
@@ -332,7 +342,8 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt }: Props) 
                             onSelectModel(model.id)
                             setOpen(false)
                           }}
-                          className={`block w-full truncate rounded px-2 py-1.5 text-left hover:bg-slate-700 ${
+                          disabled={disabled}
+                          className={`block w-full truncate rounded px-2 py-1.5 text-left hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50 ${
                             model.id === modelId ? 'text-cyan-300' : 'text-slate-200'
                           }`}
                         >
