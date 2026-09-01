@@ -1,7 +1,10 @@
-import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { displayNameOf } from "@/lib/names";
+import { getCurrentDbUser } from "@/lib/user";
 
-// Ops sanity check: identity from the auth header + a live DB round-trip.
+// Ops sanity check: identity (with the user's display name) + a live DB
+// round-trip. The root layout already loads the DB user, so this page is
+// DB-dependent regardless.
 export const dynamic = "force-dynamic";
 
 type Health = { ok: boolean; detail: string };
@@ -27,7 +30,7 @@ async function checkDb(): Promise<Health> {
 }
 
 export default async function Health() {
-  const user = await getCurrentUser();
+  const user = await getCurrentDbUser();
   const db = await checkDb();
 
   return (
@@ -36,7 +39,7 @@ export default async function Health() {
 
       <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 shadow-sm">
         <h2 className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Signed in as</h2>
-        <p className="mt-1 text-lg font-medium">{user.name}</p>
+        <p className="mt-1 text-lg font-medium">{displayNameOf(user)}</p>
         <p className="text-neutral-600 dark:text-neutral-300">{user.email}</p>
       </section>
 

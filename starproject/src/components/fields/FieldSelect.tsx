@@ -17,6 +17,9 @@ export type FieldOption = {
  * priority colors never showed when the menu was open. Rendering the list
  * ourselves (in a portal, so table `overflow` can't clip it) keeps the colors
  * identical on every platform, and keeps it keyboard- and screen-reader-usable.
+ *
+ * `searchable` adds a filter box at the top of the open list — handy for long
+ * lists like the assignee picker.
  */
 export function FieldSelect({
   value,
@@ -26,6 +29,7 @@ export function FieldSelect({
   name,
   placeholder,
   disabled = false,
+  searchable = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -36,9 +40,12 @@ export function FieldSelect({
   /** Trigger text shown when `value` matches no option (nothing selected yet). */
   placeholder?: string;
   disabled?: boolean;
+  /** Show a filter box at the top of the list to type-ahead search options. */
+  searchable?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
+  const [query, setQuery] = useState("");
   const [coords, setCoords] = useState<{
     top: number;
     left: number;
@@ -46,9 +53,15 @@ export function FieldSelect({
   } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const listId = useId();
 
   const selected = options.find((o) => o.value === value);
+  const q = query.trim().toLowerCase();
+  const visible =
+    searchable && q
+      ? options.filter((o) => o.label.toLowerCase().includes(q))
+      : options;
 
   // Position the portal popup against the trigger, flipping above it when
   // there isn't room below (viewport coords → `position: fixed`).
@@ -56,22 +69,27 @@ export function FieldSelect({
     const el = triggerRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    const estH = Math.min(options.length * 36 + 8, 264);
+    const estH = Math.min(options.length * 36 + (searchable ? 44 : 0) + 8, 300);
     const fitsBelow = window.innerHeight - r.bottom > estH + 8;
     setCoords({
       top: fitsBelow ? r.bottom + 4 : Math.max(8, r.top - 4 - estH),
       left: r.left,
       width: r.width,
     });
-  }, [options.length]);
+  }, [options.length, searchable]);
+
+  const close = useCallback(() => {
+    setOpen(false);
+    setQuery("");
+  }, []);
 
   const openMenu = () => {
     if (disabled) return;
     place();
+    setQuery("");
     setActive(Math.max(0, options.findIndex((o) => o.value === value)));
     setOpen(true);
   };
-  const close = useCallback(() => setOpen(false), []);
 
   const choose = (v: string) => {
     onChange(v);
@@ -79,10 +97,18 @@ export function FieldSelect({
     triggerRef.current?.focus();
   };
 
-  // Keep the popup pinned to the trigger while open; close on outside click.
+  // Focus the search box when a searchable menu opens.
   useEffect(() => {
-    if (open) place();
-  }, [open, place]);
+    if (open && searchable) searchRef.current?.focus();
+  }, [open, searchable]);
+
+  // Keep the active option scrolled into view as it changes.
+  useEffect(() => {
+    if (open)
+      document
+        .getElementById(`${listId}-opt-${active}`)
+        ?.scrollIntoView({ block: "nearest" });
+  }, [open, active, listId]);
 
   useEffect(() => {
     if (!open) return;
@@ -104,22 +130,17 @@ export function FieldSelect({
     };
   }, [open, close, place]);
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (!open) {
-      if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        openMenu();
-      }
-      return;
-    }
+  // Shared arrow/Enter/Escape handling over the currently-visible options.
+  const handleNav = (e: React.KeyboardEvent) => {
     switch (e.key) {
       case "Escape":
         e.preventDefault();
         close();
+        triggerRef.current?.focus();
         break;
       case "ArrowDown":
         e.preventDefault();
-        setActive((i) => Math.min(options.length - 1, i + 1));
+        setActive((i) => Math.min(visible.length - 1, i + 1));
         break;
       case "ArrowUp":
         e.preventDefault();
@@ -131,17 +152,33 @@ export function FieldSelect({
         break;
       case "End":
         e.preventDefault();
-        setActive(options.length - 1);
+        setActive(visible.length - 1);
         break;
       case "Enter":
-      case " ":
         e.preventDefault();
-        choose(options[active].value);
+        if (visible[active]) choose(visible[active].value);
         break;
       case "Tab":
         close();
         break;
     }
+  };
+
+  const onTriggerKeyDown = (e: React.KeyboardEvent) => {
+    if (!open) {
+      if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openMenu();
+      }
+      return;
+    }
+    if (searchable) return; // focus lives in the search box while open
+    if (e.key === " ") {
+      e.preventDefault();
+      if (visible[active]) choose(visible[active].value);
+      return;
+    }
+    handleNav(e);
   };
 
   const activeId = open ? `${listId}-opt-${active}` : undefined;
@@ -156,11 +193,11 @@ export function FieldSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
-        aria-activedescendant={activeId}
+        aria-activedescendant={searchable ? undefined : activeId}
         aria-label={ariaLabel}
         disabled={disabled}
         onClick={() => (open ? close() : openMenu())}
-        onKeyDown={onKeyDown}
+        onKeyDown={onTriggerKeyDown}
         className={`inline-flex max-w-full items-center gap-1 rounded border border-neutral-300 dark:border-neutral-700 py-1 pl-2 pr-1.5 text-sm ${
           disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
         } ${
@@ -191,9 +228,6 @@ export function FieldSelect({
         createPortal(
           <div
             ref={popupRef}
-            id={listId}
-            role="listbox"
-            aria-label={ariaLabel}
             style={{
               position: "fixed",
               top: coords.top,
@@ -201,38 +235,71 @@ export function FieldSelect({
               minWidth: coords.width,
               zIndex: 9999,
             }}
-            className="max-h-64 overflow-auto rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 py-1 shadow-lg"
+            className="flex max-h-80 flex-col rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 shadow-lg"
           >
-            {options.map((o, i) => {
-              const isSelected = o.value === value;
-              const isActive = i === active;
-              return (
-                <div
-                  key={o.value}
-                  id={`${listId}-opt-${i}`}
-                  role="option"
-                  aria-selected={isSelected}
-                  onMouseEnter={() => setActive(i)}
-                  onClick={() => choose(o.value)}
-                  className={`flex cursor-pointer items-center justify-between gap-2 px-2 py-1.5 text-sm ${
-                    o.badge
-                      ? `font-medium ${o.badge} ${
-                          isActive ? "ring-2 ring-inset ring-black/10 dark:ring-white/25" : ""
-                        }`
-                      : `text-neutral-700 dark:text-neutral-200 ${
-                          isActive ? "bg-neutral-100 dark:bg-neutral-800" : ""
-                        }`
-                  }`}
-                >
-                  <span className="truncate">{o.label}</span>
-                  {isSelected && (
-                    <span aria-hidden="true" className="text-xs opacity-70">
-                      ✓
-                    </span>
-                  )}
+            {searchable && (
+              <input
+                ref={searchRef}
+                type="text"
+                role="combobox"
+                aria-expanded
+                aria-controls={listId}
+                aria-activedescendant={activeId}
+                aria-autocomplete="list"
+                aria-label={`Search ${ariaLabel}`}
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setActive(0);
+                }}
+                onKeyDown={handleNav}
+                placeholder="Search…"
+                className="m-1 shrink-0 rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"
+              />
+            )}
+            <div
+              id={listId}
+              role="listbox"
+              aria-label={ariaLabel}
+              className="max-h-64 overflow-auto py-1"
+            >
+              {visible.length === 0 ? (
+                <div className="px-2 py-1.5 text-sm text-neutral-500 dark:text-neutral-400">
+                  No matches
                 </div>
-              );
-            })}
+              ) : (
+                visible.map((o, i) => {
+                  const isSelected = o.value === value;
+                  const isActive = i === active;
+                  return (
+                    <div
+                      key={o.value}
+                      id={`${listId}-opt-${i}`}
+                      role="option"
+                      aria-selected={isSelected}
+                      onMouseEnter={() => setActive(i)}
+                      onClick={() => choose(o.value)}
+                      className={`flex cursor-pointer items-center justify-between gap-2 px-2 py-1.5 text-sm ${
+                        o.badge
+                          ? `font-medium ${o.badge} ${
+                              isActive ? "ring-2 ring-inset ring-black/10 dark:ring-white/25" : ""
+                            }`
+                          : `text-neutral-700 dark:text-neutral-200 ${
+                              isActive ? "bg-neutral-100 dark:bg-neutral-800" : ""
+                            }`
+                      }`}
+                    >
+                      <span className="truncate">{o.label}</span>
+                      {isSelected && (
+                        <span aria-hidden="true" className="text-xs opacity-70">
+                          ✓
+                        </span>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>,
           document.body,
         )}

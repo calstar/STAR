@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { shortName } from "@/lib/names";
+import { displayNameOf, shortName } from "@/lib/names";
 
 describe("shortName", () => {
   it("returns first name + last initial", () => {
@@ -24,5 +24,24 @@ describe("shortName", () => {
   it("returns an empty string when nothing is provided", () => {
     expect(shortName(null)).toBe("");
     expect(shortName(undefined)).toBe("");
+  });
+});
+
+describe("displayNameOf", () => {
+  it("prefers a custom displayName verbatim", () => {
+    expect(
+      displayNameOf({ displayName: "Johnny", name: "John Doe", email: "j@b.com" }),
+    ).toBe("Johnny");
+  });
+
+  it("falls back to the short form when displayName is blank/whitespace", () => {
+    expect(displayNameOf({ displayName: "", name: "John Doe" })).toBe("John D.");
+    expect(displayNameOf({ displayName: "   ", name: "John Doe" })).toBe("John D.");
+    expect(displayNameOf({ displayName: null, name: "John Doe" })).toBe("John D.");
+  });
+
+  it("falls back to the short form when there is no displayName", () => {
+    expect(displayNameOf({ name: "Ada Lovelace" })).toBe("Ada L.");
+    expect(displayNameOf({ name: null, email: "a@b.com" })).toBe("a@b.com");
   });
 });

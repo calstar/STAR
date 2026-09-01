@@ -4,6 +4,7 @@ import Link from "next/link";
 import { HeaderNav } from "@/components/HeaderNav";
 import { UserMenu } from "@/components/UserMenu";
 import { isAdmin } from "@/lib/admins";
+import { displayNameOf } from "@/lib/names";
 import { getCurrentDbUser } from "@/lib/user";
 
 // Rendered in the root layout. Calling getCurrentDbUser here also guarantees the
@@ -42,7 +43,7 @@ export async function AppHeader() {
           <HeaderNav />
         </div>
         <UserMenu
-          name={user.name ?? user.email}
+          name={displayNameOf(user)}
           email={user.email}
           isAdmin={isAdmin(user.email)}
         />

@@ -59,7 +59,10 @@ export function EditEntityButton({
           }}
         >
           <form
-            action={action}
+            action={async (fd) => {
+              await action(fd);
+              setOpen(false);
+            }}
             onClick={(e) => e.stopPropagation()}
             className="w-full max-w-sm rounded-xl bg-white dark:bg-neutral-900 p-5 shadow-xl"
           >
@@ -105,7 +108,6 @@ export function EditEntityButton({
               </button>
               <button
                 type="submit"
-                onClick={() => setOpen(false)}
                 className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
               >
                 Save

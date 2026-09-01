@@ -17,6 +17,17 @@ export async function setTheme(theme: "light" | "dark") {
   revalidatePath("/", "layout");
 }
 
+// The chosen name is stored on User.displayName (not User.name, which the auth
+// header clobbers every request). Empty clears the override → back to "First L.".
+export async function setDisplayName(name: string) {
+  const user = await getCurrentDbUser();
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { displayName: name.trim().slice(0, 60) || null },
+  });
+  revalidatePath("/", "layout"); // reflect the new name everywhere it's shown
+}
+
 export type EmailPref = "emailAssignments" | "emailDueSoon" | "emailOverdue";
 
 export async function setEmailPref(field: EmailPref, value: boolean) {

@@ -5,7 +5,7 @@ import { useState } from "react";
 
 import { FieldSelect } from "@/components/fields/FieldSelect";
 import { updateField } from "@/lib/fieldUpdate";
-import { shortName } from "@/lib/names";
+import { displayNameOf } from "@/lib/names";
 
 export function AssigneeSelect({
   taskId,
@@ -19,11 +19,12 @@ export function AssigneeSelect({
   const [v, setV] = useState(value ?? "");
   const options = [
     { value: "", label: "Unassigned" },
-    ...users.map((u) => ({ value: u.id, label: shortName(u.name, u.email) })),
+    ...users.map((u) => ({ value: u.id, label: displayNameOf(u) })),
   ];
   return (
     <FieldSelect
       ariaLabel="Assignee"
+      searchable
       value={v}
       options={options}
       onChange={(next) => {
