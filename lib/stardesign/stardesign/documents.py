@@ -470,6 +470,17 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
                     yield owner, record
 
 
+    def _decorated_for(request: Request, ref: "DocRef", record: dict) -> dict:
+        """One record, shaped exactly like the ones `list` returns.
+
+        Every endpoint that hands a record back has to go through this. Returning
+        the bare stored record instead drops `owner`/`ownerName`/`mine`, and the
+        design bar reads a missing `mine` as "someone else's" -- which showed up
+        as a design of your own captioned "Config 1 - undefined".
+        """
+        names = directory.display_names(request, store.ud)
+        return _decorate(record, ref.owner, ref.viewer, names)
+
     def _decorate(record: dict, owner: str, viewer: str, names: dict[str, str]) -> dict:
         """An index record as the UI wants it: who owns it, and is that me."""
         return {
@@ -568,7 +579,9 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
     async def create_document(request: Request, payload: store.create_model):
         """Create a new design owned by the caller, seeded with an optional config."""
         user = store.ud.current_user(request)
-        return _create(user, payload.name.strip() or "Untitled", store.to_data(payload))
+        meta = _create(user, payload.name.strip() or "Untitled", store.to_data(payload))
+        names = directory.display_names(request, store.ud)
+        return _decorate(meta, user, user, names)
 
 
     @router.post(f"{sub}/copy")
@@ -590,7 +603,7 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         who = names.get(ref.owner) or ref.owner
         source = ref.record.get("name", ref.doc_id)
         name = (payload.name or "").strip() or f"{source} (copy of {who})"
-        return _create(viewer, name, data)
+        return _decorate(_create(viewer, name, data), viewer, viewer, names)
 
 
     @router.patch(f"{sub}/{{doc_id}}")
@@ -602,7 +615,9 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         name = payload.name.strip()
         if not name:
             raise HTTPException(status_code=400, detail="Name is required")
-        return _mutate_record(ref.owner, ref.doc_id, name=name, updatedAt=_now_iso())
+        return _decorated_for(
+            request, ref, _mutate_record(ref.owner, ref.doc_id, name=name, updatedAt=_now_iso())
+        )
 
 
     # ── sharing ──────────────────────────────────────────────────────────────────
@@ -635,12 +650,16 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
                 continue
             seen.add(slug)
             emails.append(email)
-        return _mutate_record(
-            ref.owner,
-            ref.doc_id,
-            sharedWith=emails,
-            sharedUpdatedBy=ref.viewer,
-            sharedUpdatedAt=_now_iso(),
+        return _decorated_for(
+            request,
+            ref,
+            _mutate_record(
+                ref.owner,
+                ref.doc_id,
+                sharedWith=emails,
+                sharedUpdatedBy=ref.viewer,
+                sharedUpdatedAt=_now_iso(),
+            ),
         )
 
 

@@ -379,3 +379,46 @@ def test_creating_does_not_touch_anyone_elses_checkout(client):
     _share(client, a_id, [B["X-Auth-Email"]])
     _create(client, B, "Bob's own")
     assert client.get(f"{BASE}/{a_id}/checkout", headers=A).json()["lockedByMe"] is True
+
+
+# ── the shape every returned record must have ────────────────────────────────
+
+
+#: Fields the design bar reads off a record. A response missing `mine` is not a
+#: cosmetic problem: the bar reads its absence as "someone else's design" and
+#: captions your own design "<name> - undefined".
+DECORATED = {"owner", "ownerName", "mine", "sharedWith", "lockedByMe"}
+
+
+def test_every_endpoint_that_returns_a_record_returns_a_decorated_one(client):
+    doc_id = _create(client)
+
+    listed = client.get(BASE, headers=A).json()[0]
+    assert DECORATED <= set(listed), f"list: missing {DECORATED - set(listed)}"
+
+    created = client.post(BASE, headers=A, json={"name": "Shaped", "config": {}}).json()
+    assert DECORATED <= set(created), f"create: missing {DECORATED - set(created)}"
+
+    renamed = client.patch(f"{BASE}/{doc_id}", headers=A, json={"name": "Renamed"}).json()
+    assert DECORATED <= set(renamed), f"rename: missing {DECORATED - set(renamed)}"
+
+    shared = client.put(f"{BASE}/{doc_id}/share", headers=A,
+                        json={"sharedWith": [B["X-Auth-Email"]]}).json()
+    assert DECORATED <= set(shared), f"share: missing {DECORATED - set(shared)}"
+
+    copied = client.post(f"{BASE}/copy", headers=B,
+                         json={"owner": A["X-Auth-Email"], "id": doc_id}).json()
+    assert DECORATED <= set(copied), f"copy: missing {DECORATED - set(copied)}"
+
+
+def test_a_returned_record_says_the_design_is_yours(client):
+    """The specific failure: `mine` absent reads as false, and the bar then shows
+    your own design as belonging to an undefined owner."""
+    doc_id = _create(client)
+    for label, resp in [
+        ("create", client.post(BASE, headers=A, json={"name": "Shaped", "config": {}})),
+        ("rename", client.patch(f"{BASE}/{doc_id}", headers=A, json={"name": "Still mine"})),
+    ]:
+        body = resp.json()
+        assert body["mine"] is True, f"{label} did not report the design as yours"
+        assert body["ownerName"], f"{label} returned an empty ownerName"
