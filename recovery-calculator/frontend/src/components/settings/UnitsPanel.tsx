@@ -2,6 +2,13 @@
  * The Units tab: one row per physical quantity, showing the unit it renders
  * in everywhere.
  *
+ * These are *yours*, not the design's. They live per user on the server
+ * (`<userdata>/<user>/recovery/units.json`, see backend/routers/settings.py) and
+ * are structurally unreachable from `UiConfig`, so a config written by someone
+ * working in feet loads identically for someone working in metres. That also
+ * means a design checkout has no business gating this tab -- it is not design
+ * data, and it is not even shared.
+ *
  * Rows are labelled by the unit SYMBOL, not by "metric"/"imperial" -- the
  * question a user is actually answering is "do I want pounds or kilograms",
  * and naming the system makes them translate twice. It also puts the current
@@ -59,7 +66,7 @@ export function UnitsPanel() {
     <div className="mx-auto max-w-3xl space-y-4">
       <Card
         title="Units"
-        subtitle="Applies throughout app immediately, affects display not physics"
+        subtitle="Your display preference, not part of any design. Display only - the physics is unchanged."
         right={
           <div className="flex shrink-0 gap-1">
             <Button onClick={() => setAll('metric')}>All metric</Button>
@@ -68,6 +75,11 @@ export function UnitsPanel() {
         }
       >
         <div className="space-y-5">
+          <p className="text-xs text-[var(--color-text-secondary)]">
+            Yours, not the design&rsquo;s - they follow you across designs, and sharing a
+            design doesn&rsquo;t share them.
+          </p>
+
           <PrecisionGroup />
 
           {GROUPS.map((group) => (

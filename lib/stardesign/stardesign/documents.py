@@ -532,7 +532,13 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
 
 
     def _create(user: str, name: str, data: dict) -> dict:
-        """Add a design to ``user``'s index and seed its working copy."""
+        """Add a design to ``user``'s index and seed its working copy.
+
+        The creator gets the checkout. Nobody else can hold a design that did not
+        exist a moment ago, and the alternative is worse than it sounds: you make
+        a design, start typing, and every edit is refused until you notice a
+        button you had no reason to look at.
+        """
         now = _now_iso()
         with _index_lock(user):
             doc_id = _unique_id(user, name)
@@ -542,6 +548,9 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
                 "createdAt": now,
                 "updatedAt": now,
                 "sharedWith": [],
+                "lockedBy": user,
+                "lockedAt": now,
+                "lockHeartbeat": now,
                 # Reserved: with delete gone, nothing shrinks a list, and every
                 # design is visible to the whole team through the view-only tree.
                 # Archiving is the destroy-nothing replacement, and writing the

@@ -218,6 +218,9 @@ def test_share_grants_edit_and_writes_into_the_owners_folder(client, tmp_path):
     land in Alice's folder and Alice must see the change."""
     a_id = _create(client, A, "Booster")
     _share(client, a_id, [B["X-Auth-Email"]])
+    # Creating a diagram checks it out to its creator, so Alice hands it over
+    # before Bob can take it -- which is the real handover this test is about.
+    client.delete(f"{BASE}/{a_id}/checkout", headers=A)
     _take(client, a_id, headers=B, params=OWNER_A)  # B is the one editing here
 
     r = client.post(f"{BASE}/{a_id}/autosave", headers=B, params=OWNER_A,

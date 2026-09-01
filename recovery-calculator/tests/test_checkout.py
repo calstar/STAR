@@ -56,6 +56,17 @@ def _create(client, headers=A, name="Feed system"):
     return r.json()["id"]
 
 
+def _free(client, doc_id, headers=A, params=None):
+    """Release a freshly created design, since creating one now checks it out.
+
+    Several tests below need a design nobody holds; this is what makes that
+    explicit rather than an assumption about what `_create` leaves behind.
+    """
+    r = client.delete(f"{BASE}/{doc_id}/checkout", headers=headers,
+                      params=params if params is not None else {})
+    assert r.status_code == 200, r.text
+
+
 def _share(client, doc_id, emails):
     assert client.put(f"{BASE}/{doc_id}/share", headers=A,
                       json={"sharedWith": emails}).status_code == 200
@@ -108,6 +119,7 @@ def test_only_one_of_many_simultaneous_takes_wins(client, tmp_path, attempt):
     doc_id = _create(client)
     contenders = [f"user{i}@berkeley.edu" for i in range(8)]
     _share(client, doc_id, contenders)
+    _free(client, doc_id)  # creating it checked it out to Alice
 
     ctx = multiprocessing.get_context("fork")  # inherit the imported app
     barrier = ctx.Barrier(len(contenders))
@@ -148,9 +160,14 @@ def test_holder_may_save_and_others_may_not(client):
 
 
 def test_saving_without_taking_it_is_refused(client):
-    """Opening a design does not take it, so a save before Take must fail rather
-    than quietly claiming the design."""
+    """Opening a design does not take it, so a save without the checkout must
+    fail rather than quietly claiming the design.
+
+    Creating one *does* check it out, so this releases first to get at the state
+    a second person opening the design would be in.
+    """
     doc_id = _create(client)
+    _free(client, doc_id)
     r = _save(client, doc_id, A)
     assert r.status_code == 423
     assert "Take" in r.json()["detail"]
@@ -307,6 +324,7 @@ def test_take_cannot_proceed_while_the_index_lock_is_held(client, tmp_path):
     # the same flock -- doing it inside would deadlock this process against
     # itself, and flock gives no warning when it does.
     _share(client, doc_id, ["bob@berkeley.edu"])
+    _free(client, doc_id)  # creating it checked it out to Alice
 
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
@@ -323,3 +341,36 @@ def test_take_cannot_proceed_while_the_index_lock_is_held(client, tmp_path):
     proc.join(timeout=30)
     assert not proc.is_alive(), "the take never completed after the lock was released"
     assert results.get(timeout=5) == 200
+
+
+def test_creating_a_design_checks_it_out_to_you(client):
+    """You made it a moment ago; nobody else can possibly hold it.
+
+    Without this you create a design, start editing, and every save is refused
+    until you notice a button you had no reason to look at -- which reads as
+    "the thing I just made keeps losing my work".
+    """
+    doc_id = _create(client)
+    state = client.get(f"{BASE}/{doc_id}/checkout", headers=A).json()
+    assert state["lockedByMe"] is True
+    # ...and that is not cosmetic: an edit right after creating must persist.
+    assert _save(client, doc_id, A).status_code == 200
+
+
+def test_copying_a_design_checks_the_copy_out_to_you(client):
+    """Same reasoning: you take a copy in order to work on it."""
+    a_id = _create(client)
+    copy = client.post(f"{BASE}/copy", headers=B,
+                       json={"owner": A["X-Auth-Email"], "id": a_id}).json()
+    state = client.get(f"{BASE}/{copy['id']}/checkout", headers=B).json()
+    assert state["lockedByMe"] is True
+    assert _save(client, copy["id"], B).status_code == 200
+
+
+def test_creating_does_not_touch_anyone_elses_checkout(client):
+    """A new design carries its own checkout; it must not disturb a design
+    someone else is holding."""
+    a_id = _create(client)
+    _share(client, a_id, [B["X-Auth-Email"]])
+    _create(client, B, "Bob's own")
+    assert client.get(f"{BASE}/{a_id}/checkout", headers=A).json()["lockedByMe"] is True

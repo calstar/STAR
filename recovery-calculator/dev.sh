@@ -52,7 +52,12 @@ done
 
 # ─── backend ─────────────────────────────────────────────────────────────────
 echo -e "${GREEN}Backend  → http://localhost:$BACKEND_PORT  (docs at /docs)${NC}"
-"$PYTHON_CMD" -m uvicorn backend.main:app --reload --port "$BACKEND_PORT" &
+# --reload-dir for the shared design core too: it is pip-installed from
+# ../lib/stardesign, so uvicorn does not watch it by default and edits there
+# would silently not take effect until a manual restart.
+"$PYTHON_CMD" -m uvicorn backend.main:app --reload \
+  --reload-dir . --reload-dir ../lib/stardesign \
+  --port "$BACKEND_PORT" &
 BACKEND_PID=$!
 
 # uvicorn exits silently on an import error, and the frontend would then sit
