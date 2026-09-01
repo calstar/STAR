@@ -25,7 +25,7 @@ import {
 
 // What updateTask / moveTask re-read so activities can render human values.
 const withNames = {
-  assignee: { select: { name: true, email: true } },
+  assignee: { select: { name: true, email: true, displayName: true } },
   subteam: { select: { name: true } },
 } as const;
 

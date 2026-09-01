@@ -3,6 +3,7 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { FieldSelect } from "@/components/fields/FieldSelect";
+import { displayNameOf } from "@/lib/names";
 
 const KINDS: [string, string][] = [
   ["created", "Created"],
@@ -19,7 +20,12 @@ export function ActivityFilters({
   actor,
   project,
 }: {
-  users: { id: string; name: string | null; email: string }[];
+  users: {
+    id: string;
+    name: string | null;
+    email: string;
+    displayName: string | null;
+  }[];
   projects: { id: string; label: string }[];
   kind: string;
   actor: string;
@@ -55,7 +61,7 @@ export function ActivityFilters({
         onChange={(v) => set("actor", v)}
         options={[
           { value: "", label: "All people" },
-          ...users.map((u) => ({ value: u.id, label: u.name ?? u.email })),
+          ...users.map((u) => ({ value: u.id, label: displayNameOf(u) })),
         ]}
       />
       <FieldSelect

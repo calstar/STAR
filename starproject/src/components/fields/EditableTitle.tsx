@@ -14,21 +14,29 @@ export function EditableTitle({
   value: string;
 }) {
   const [editing, setEditing] = useState(false);
+  // Local copy so the saved name shows immediately, instead of snapping back to
+  // the stale `value` prop (the modal doesn't re-fetch after a title edit).
+  const [title, setTitle] = useState(value);
+
+  const save = (next: string) => {
+    setEditing(false);
+    const trimmed = next.trim();
+    if (trimmed && trimmed !== title) {
+      setTitle(trimmed);
+      updateField(taskId, "title", trimmed);
+    }
+  };
 
   if (editing) {
     return (
       <input
         name="title"
-        defaultValue={value}
+        defaultValue={title}
         autoFocus
-        onBlur={(e) => {
-          updateField(taskId, "title", e.target.value);
-          setEditing(false);
-        }}
+        onBlur={(e) => save(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
-            updateField(taskId, "title", (e.target as HTMLInputElement).value);
-            setEditing(false);
+            save((e.target as HTMLInputElement).value);
           } else if (e.key === "Escape") {
             setEditing(false);
           }
@@ -40,7 +48,7 @@ export function EditableTitle({
 
   return (
     <div className="flex flex-1 items-center gap-2">
-      <h2 className="text-2xl font-semibold">{value}</h2>
+      <h2 className="text-2xl font-semibold">{title}</h2>
       <button
         onClick={() => setEditing(true)}
         title="Rename"

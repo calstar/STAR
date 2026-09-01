@@ -4,6 +4,7 @@ import { ActivityFilters } from "@/components/ActivityFilters";
 import { TaskLink } from "@/components/TaskLink";
 import { FIELD_LABEL } from "@/lib/activity";
 import { prisma } from "@/lib/db";
+import { displayNameOf } from "@/lib/names";
 import { getTeamUsers } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +21,7 @@ type Item = {
   taskId: string | null;
   projectId: string | null;
   createdAt: Date;
-  actor: { name: string | null; email: string };
+  actor: { name: string | null; email: string; displayName: string | null };
 };
 
 function timeAgo(d: Date): string {
@@ -54,7 +55,7 @@ function bold(s: string | null) {
 }
 
 function renderActivity(a: Item) {
-  const who = <span className="font-medium">{a.actor.name ?? a.actor.email}</span>;
+  const who = <span className="font-medium">{displayNameOf(a.actor)}</span>;
   switch (a.kind) {
     case "created":
       return (
@@ -124,7 +125,7 @@ export default async function ActivityPage({
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
-      include: { actor: { select: { name: true, email: true } } },
+      include: { actor: { select: { name: true, email: true, displayName: true } } },
     }),
     prisma.activity.count({ where }),
     getTeamUsers(),

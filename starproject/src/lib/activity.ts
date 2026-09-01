@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { displayNameOf } from "@/lib/names";
 
 export type ActivityKind =
   | "created"
@@ -36,9 +37,9 @@ export async function recordActivity(a: ActivityInput): Promise<void> {
 
 // Human-readable snapshot renderers (stored at write time).
 export function userLabel(
-  u: { name: string | null; email: string } | null,
+  u: { name: string | null; email: string; displayName: string | null } | null,
 ): string {
-  return u ? (u.name ?? u.email) : "Unassigned";
+  return u ? displayNameOf(u) : "Unassigned";
 }
 export function dateLabel(d: Date | null): string {
   return d ? new Date(d).toISOString().slice(0, 10) : "no date";

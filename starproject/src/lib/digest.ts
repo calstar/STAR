@@ -1,6 +1,7 @@
 import { FIELD_LABEL } from "@/lib/activity";
 import { prisma } from "@/lib/db";
 import { sendEmail } from "@/lib/mail";
+import { displayNameOf } from "@/lib/names";
 
 type Act = {
   kind: string;
@@ -10,7 +11,7 @@ type Act = {
   taskTitle: string;
   projectId: string | null;
   task: { subteamId: string | null } | null;
-  actor: { name: string | null; email: string };
+  actor: { name: string | null; email: string; displayName: string | null };
 };
 
 // Digest "activity kinds" the user can subscribe to (UserSettings.digestKinds).
@@ -34,7 +35,7 @@ function matches(a: Act, kinds: string[]): boolean {
 }
 
 function line(a: Act): string {
-  const who = a.actor.name ?? a.actor.email;
+  const who = displayNameOf(a.actor);
   switch (a.kind) {
     case "created":
       return `${who} created “${a.taskTitle}”`;
@@ -66,7 +67,7 @@ export async function runDigest(): Promise<{ emails: number }> {
       where: { createdAt: { gte: since } },
       include: {
         task: { select: { subteamId: true } },
-        actor: { select: { name: true, email: true } },
+        actor: { select: { name: true, email: true, displayName: true } },
       },
       orderBy: { createdAt: "asc" },
     }),

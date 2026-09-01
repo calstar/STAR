@@ -6,7 +6,7 @@ import { useRef } from "react";
 
 import { useTaskModal } from "@/components/TaskModalProvider";
 import type { BoardTask } from "@/lib/board";
-import { shortName } from "@/lib/names";
+import { displayNameOf } from "@/lib/names";
 import { PRIORITY_BADGE, isBlocked } from "@/lib/tasks";
 
 import { BlockedBadge } from "./BlockedBadge";
@@ -66,7 +66,7 @@ export function TaskCard({ task }: { task: BoardTask }) {
         )}
         {task.assignee && (
           <span className="text-neutral-500 dark:text-neutral-400">
-            {shortName(task.assignee.name, task.assignee.email)}
+            {displayNameOf(task.assignee)}
           </span>
         )}
         {due && (

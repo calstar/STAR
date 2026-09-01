@@ -1,8 +1,10 @@
 import { DigestSettings } from "@/components/settings/DigestSettings";
+import { DisplayNameInput } from "@/components/settings/DisplayNameInput";
 import { EmailPrefToggle } from "@/components/settings/EmailPrefToggle";
 import { ThemeToggle } from "@/components/settings/ThemeToggle";
 import { prisma } from "@/lib/db";
 import { DIGEST_KINDS } from "@/lib/digest";
+import { shortName } from "@/lib/names";
 import { getCurrentSettings } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
@@ -44,6 +46,20 @@ export default async function SettingsPage() {
       <h1 className="text-2xl font-semibold">Settings</h1>
 
       <section className={`mt-6 ${card}`}>
+        <h2 className="font-medium">Profile</h2>
+        <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+          Display name — shown wherever your name appears. Defaults to your first
+          name + last initial.
+        </p>
+        <div className="mt-3">
+          <DisplayNameInput
+            value={user.displayName ?? ""}
+            placeholder={shortName(user.name, user.email)}
+          />
+        </div>
+      </section>
+
+      <section className={`mt-4 ${card}`}>
         <h2 className="font-medium">Appearance</h2>
         <div className="mt-3">
           <ThemeToggle theme={settings.theme} />

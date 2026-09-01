@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { sendEmail } from "@/lib/mail";
+import { displayNameOf } from "@/lib/names";
 import { getSettings } from "@/lib/settings";
 
 function escapeHtml(s: string): string {
@@ -43,7 +44,7 @@ export async function notifyAssignment({
 
   const actor = await prisma.user.findUnique({
     where: { id: actorId },
-    select: { name: true, email: true },
+    select: { name: true, email: true, displayName: true },
   });
 
   await prisma.emailQueueItem.create({
@@ -53,7 +54,7 @@ export async function notifyAssignment({
       taskId: task.id,
       taskTitle: task.title,
       projectId: task.projectId,
-      actorName: actor?.name ?? actor?.email ?? null,
+      actorName: actor ? displayNameOf(actor) : null,
     },
   });
 }

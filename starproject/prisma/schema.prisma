@@ -30,7 +30,8 @@ enum TaskPriority {
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
-  name      String?
+  name      String?  // from the auth header; overwritten on every request
+  displayName String? // user-chosen override; if set, shown instead of `name`
   createdAt DateTime @default(now())
 
   createdProjects Project[] @relation("ProjectCreatedBy")

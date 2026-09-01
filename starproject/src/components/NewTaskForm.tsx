@@ -5,7 +5,7 @@ import { useRef, useState } from "react";
 
 import { FieldSelect } from "@/components/fields/FieldSelect";
 import { createTask } from "@/lib/actions/tasks";
-import { shortName } from "@/lib/names";
+import { displayNameOf } from "@/lib/names";
 import { PRIORITY_BADGE } from "@/lib/tasks";
 
 // One task-create form for every context: a project detail page pins the
@@ -92,11 +92,12 @@ export function NewTaskForm({
       <FieldSelect
         name="assigneeId"
         ariaLabel="Assignee"
+        searchable
         value={assignee}
         onChange={setAssignee}
         options={[
           { value: "", label: "Unassigned" },
-          ...users.map((u) => ({ value: u.id, label: shortName(u.name, u.email) })),
+          ...users.map((u) => ({ value: u.id, label: displayNameOf(u) })),
         ]}
       />
 

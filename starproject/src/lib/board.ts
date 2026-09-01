@@ -3,7 +3,12 @@ import type { Task, TaskStatus } from "@prisma/client";
 import { isBlocked } from "@/lib/tasks";
 
 export type BoardTask = Task & {
-  assignee: { id: string; name: string | null; email: string } | null;
+  assignee: {
+    id: string;
+    name: string | null;
+    email: string;
+    displayName: string | null;
+  } | null;
   blockedBy?: { blockedByTask: { id: string; title: string; status: TaskStatus } }[];
   // Set when a task shown in a parent project actually belongs to a subproject,
   // so the card/row can indicate which one.
