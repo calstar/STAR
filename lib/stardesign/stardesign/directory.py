@@ -45,7 +45,13 @@ TTL_SECONDS = float(os.environ.get("AUTH_USERS_TTL", "60"))
 TIMEOUT_SECONDS = 3.0
 
 _lock = threading.Lock()
-_cache: tuple[float, list[dict]] = (0.0, [])
+# None means "never fetched", which is NOT the same as "fetched a long time ago".
+# A sentinel timestamp of 0.0 looked stale on a long-running machine and *fresh*
+# on a freshly booted one -- `time.monotonic()` counts from boot, so on a new
+# host `now - 0.0` is a handful of seconds, inside the TTL. The result was an
+# empty roster served for the first TTL after every restart, without auth ever
+# being asked. Local machines never saw it; a fresh CI container did.
+_cache: tuple[float, list[dict]] | None = None
 
 
 def _fetch_auth(cookie: str) -> list[dict]:
@@ -80,9 +86,9 @@ def _auth_roster(request: Request) -> list[dict]:
     """
     now = time.monotonic()
     with _lock:
-        stamp, cached = _cache
-        if now - stamp < TTL_SECONDS:
-            return cached
+        cached = _cache
+        if cached is not None and now - cached[0] < TTL_SECONDS:
+            return cached[1]
     fetched = _fetch_auth(request.headers.get("cookie", ""))
     with _lock:
         globals()["_cache"] = (time.monotonic(), fetched)

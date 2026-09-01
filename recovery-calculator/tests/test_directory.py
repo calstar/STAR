@@ -36,7 +36,7 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("USERDATA_DIR", str(tmp_path))
     monkeypatch.delenv("AUTH_USERS_URL", raising=False)
     # The roster cache is process-wide; a stale entry would leak between tests.
-    monkeypatch.setattr(shared_directory, "_cache", (0.0, []))
+    monkeypatch.setattr(shared_directory, "_cache", None)
 
 
 def _fake_auth(monkeypatch, rows, *, calls=None):
@@ -138,3 +138,21 @@ def test_roster_is_cached(monkeypatch):
 def test_display_names_maps_slugs(monkeypatch):
     _fake_auth(monkeypatch, [{"email": "Alice@Berkeley.edu", "name": "Alice Adams"}])
     assert directory.display_names(_Req())["alice@berkeley.edu"] == "Alice Adams"
+
+
+def test_a_fresh_process_asks_auth_even_on_a_just_booted_machine(monkeypatch):
+    """The cache must not mistake "never fetched" for "fetched just now".
+
+    `time.monotonic()` counts from boot, so a sentinel timestamp of 0.0 reads as
+    stale on a machine that has been up for hours and as *fresh* on one that has
+    not. That shipped: for the first TTL after every restart the roster came back
+    empty, from a cache that had never been filled, without auth being asked.
+    Local runs never caught it -- a fresh CI container did.
+    """
+    calls = []
+    _fake_auth(monkeypatch, [{"email": "dana@berkeley.edu", "name": "Dana"}], calls=calls)
+    monkeypatch.setattr(shared_directory, "_cache", None)   # a process that just started
+    monkeypatch.setattr(shared_directory.time, "monotonic", lambda: 3.0)  # ...on a fresh host
+
+    assert [u["email"] for u in directory.roster(_Req())] == ["dana@berkeley.edu"]
+    assert len(calls) == 1, "a cold cache must hit auth, whatever the clock reads"
