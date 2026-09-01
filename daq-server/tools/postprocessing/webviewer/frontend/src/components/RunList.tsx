@@ -27,7 +27,10 @@ export default function RunList({ runs, selected, onSelect, loading }: Props) {
             onClick={() => onSelect(r.id)}
           >
             <span className="run-date">{fmtStarted(r.started)}</span>
-            <span className="run-id">{r.id}</span>
+            <span className="run-idline">
+              <span className="run-id">{r.id}</span>
+              {r.simulated && <span className="sim-badge" title="Simulated data — not from the test stand">SIM</span>}
+            </span>
             {r.cached && <span className="run-cached" title="Exported & cached">●</span>}
           </button>
         ))}
