@@ -40,10 +40,16 @@ export default defineConfig({
       stderr: 'pipe',
     },
     {
-      command: `npm run dev -- --port ${UI_PORT}`,
+      // Bind IPv4 explicitly: vite defaults to "localhost", which on CI runners
+      // can resolve to IPv6 ::1 while Playwright polls 127.0.0.1 -> the server
+      // never looks ready and the run times out. stdout/stderr piped so vite's
+      // output is visible (a silent webServer is undiagnosable on timeout).
+      command: `npm run dev -- --host 127.0.0.1 --port ${UI_PORT}`,
       url: `http://127.0.0.1:${UI_PORT}`,
-      timeout: 120_000,
+      timeout: 180_000,
       reuseExistingServer: !process.env.CI,
+      stdout: 'pipe',
+      stderr: 'pipe',
     },
   ],
 });
