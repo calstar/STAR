@@ -31,8 +31,7 @@ async function wouldCycle(taskId: string, blockedById: string): Promise<boolean>
   return false;
 }
 
-function revalidateFor(projectId: string, taskId: string) {
-  revalidatePath(`/projects/${projectId}/tasks/${taskId}`);
+function revalidateFor(projectId: string) {
   revalidatePath(`/projects/${projectId}`);
   revalidatePath("/tasks");
   revalidatePath("/activity");
@@ -80,7 +79,7 @@ export async function addBlockerAction(
     kind: "blocker_added",
     to: blocker.title,
   });
-  revalidateFor(task.projectId, taskId);
+  revalidateFor(task.projectId);
   return { ok: true };
 }
 
@@ -109,5 +108,5 @@ export async function removeBlocker(formData: FormData) {
     kind: "blocker_removed",
     to: edge.blockedByTask.title,
   });
-  revalidateFor(edge.task.projectId, taskId);
+  revalidateFor(edge.task.projectId);
 }

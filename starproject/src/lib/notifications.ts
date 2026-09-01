@@ -13,7 +13,9 @@ function escapeHtml(s: string): string {
 
 function taskLink(projectId: string, taskId: string): string {
   const base = (process.env.APP_BASE_URL || "").replace(/\/$/, "");
-  const path = `/projects/${projectId}/tasks/${taskId}`;
+  // There is no per-task page — a task opens as a modal over its project page,
+  // keyed by `?task=<id>` (same shape as the in-app "Copy link" button).
+  const path = `/projects/${projectId}?task=${taskId}`;
   return base ? base + path : path;
 }
 
