@@ -28,7 +28,7 @@ export function MaterialWarning({ parts }: Props) {
 
   return (
     <div
-      className={`border-b px-4 py-2 text-sm font-semibold ${
+      className={`border-b px-4 py-2 text-xs font-medium ${
         settled
           ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
           : 'border-red-500/40 bg-red-500/10 text-red-300'

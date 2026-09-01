@@ -48,7 +48,7 @@ function UnitField({ value, onChange, kind, min }: {
         const t = e.target.value.trim()
         onChange(t === '' ? 0 : si(Number(t), kind))
       }}
-      className="w-20 rounded border border-slate-700 bg-slate-800 px-1 py-0.5 text-right text-slate-100 focus:border-cyan-500 focus:outline-none disabled:cursor-not-allowed disabled:border-slate-800 disabled:text-slate-500"
+      className="w-20 rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-1 py-0.5 text-right text-[var(--color-text-primary)] focus:border-[var(--color-accent)] focus:outline-none disabled:cursor-not-allowed disabled:border-[var(--color-border)] disabled:text-[var(--color-text-muted)]"
     />
   )
 }
@@ -100,7 +100,7 @@ function formatMargin(margin: number | null): string {
 }
 
 function marginTone(margin: number | null): string {
-  if (margin === null) return 'text-slate-100'
+  if (margin === null) return 'text-[var(--color-text-primary)]'
   if (margin >= 1) return 'text-emerald-300'
   if (margin > 0) return 'text-amber-300'
   return 'text-rose-400'
@@ -146,16 +146,16 @@ export function StabilityPanel({
   return (
     <div className="text-sm">
       {/* ── Surface detection: approve the airframe + fin faces, then compute ── */}
-      <section className="border-b border-slate-800 p-3">
+      <section className="border-b border-[var(--color-border)] p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-200">
+        <h2 className="text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
           Surface Detection
         </h2>
         <button
           type="button"
           onClick={onCompute}
           disabled={busy}
-          className="rounded bg-cyan-600 px-2 py-1 text-xs font-medium text-white hover:bg-cyan-500 disabled:opacity-50"
+          className="rounded bg-[var(--color-accent)] px-2 py-1 text-xs font-medium text-white hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
         >
           {busy ? 'Computing…' : result ? 'Recompute' : 'Compute'}
         </button>
@@ -171,7 +171,7 @@ export function StabilityPanel({
           className={`rounded px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
             faceEditMode && editTarget === 'body'
               ? 'bg-violet-500 text-white'
-              : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+              : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]'
           }`}
         >
           Body ({outerFaceCount})
@@ -183,7 +183,7 @@ export function StabilityPanel({
           className={`rounded px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
             faceEditMode && editTarget === 'fin'
               ? 'bg-orange-500 text-white'
-              : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+              : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]'
           }`}
         >
           Fins ({finCount})
@@ -192,13 +192,13 @@ export function StabilityPanel({
           type="button"
           onClick={onAutoDetect}
           disabled={autoBusy || readOnly}
-          className="ml-auto rounded bg-slate-700 px-2 py-1 text-xs font-medium text-slate-200 hover:bg-slate-600 disabled:opacity-50"
+          className="ml-auto rounded bg-[var(--color-bg-secondary)] px-2 py-1 text-xs font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
         >
           {autoBusy ? 'Detecting…' : 'Auto-detect'}
         </button>
       </div>
 
-      <p className="mb-2 text-xs text-slate-400">
+      <p className="mb-2 text-xs text-[var(--color-text-muted)]">
         {finCount > 0
           ? `${finCount} fin${finCount === 1 ? '' : 's'} detected · ${finFaceCount} potential fin face${finFaceCount === 1 ? '' : 's'}`
           : 'No fins detected yet — Auto-detect or select them.'}
@@ -217,19 +217,19 @@ export function StabilityPanel({
           onClick={onToggleIsolate}
           disabled={outerFaceCount === 0}
           className={`rounded px-2 py-1 text-xs font-medium disabled:opacity-40 ${
-            isolate ? 'bg-cyan-500 text-white' : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+            isolate ? 'bg-[var(--color-accent)] text-white' : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]'
           }`}
         >
           {isolate ? 'Show all surfaces' : 'Isolate used surfaces'}
         </button>
-        <span className="text-xs text-slate-400">
+        <span className="text-xs text-[var(--color-text-muted)]">
           {isolate ? 'showing only the CP surfaces' : ''}
         </span>
       </div>
 
       {/* Airframe dimensions from the detected surface, shown once computed. */}
       {result && (
-        <div className="mt-2 border-t border-slate-700 pt-2">
+        <div className="mt-2 border-t border-[var(--color-border)] pt-2">
           <Row label="Body length" value={q(result.bodyLength, 'length')} small />
           <Row label="Ref diameter" value={q(result.refDiameter, 'length')} small />
         </div>
@@ -237,12 +237,12 @@ export function StabilityPanel({
 
       {/* Fins geometry (feeds the CP), shown once computed. */}
       {result && (
-        <div className="mt-2 border-t border-slate-700 pt-2">
+        <div className="mt-2 border-t border-[var(--color-border)] pt-2">
           <div className="mb-1 flex items-center justify-between">
-            <span className="text-sm font-semibold uppercase tracking-wide text-slate-200">
+            <span className="text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
               Fins
             </span>
-            <span className="text-xs text-slate-300">
+            <span className="text-xs text-[var(--color-text-secondary)]">
               {result.fins.count > 0 ? `${result.fins.count} detected` : 'none detected'}
             </span>
           </div>
@@ -261,9 +261,9 @@ export function StabilityPanel({
       </section>
 
       {/* ── Motor: folds into the CG / static margin as a placed mass ── */}
-      <section className="border-b border-slate-800 p-3">
+      <section className="border-b border-[var(--color-border)] p-3">
         <div className="mb-1 flex items-center justify-between">
-          <span className="text-sm font-semibold uppercase tracking-wide text-slate-200">
+          <span className="text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
             Motor
           </span>
           {motorSel ? (
@@ -271,7 +271,7 @@ export function StabilityPanel({
               <button
                 type="button"
                 onClick={onViewMotorCurves}
-                className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-600"
+                className="rounded bg-[var(--color-bg-secondary)] px-2 py-0.5 text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]"
                 title="Thrust, weight and CG over time"
               >
                 Curves
@@ -280,7 +280,7 @@ export function StabilityPanel({
                 type="button"
                 onClick={() => setPickerOpen((v) => !v)}
                 disabled={readOnly}
-                className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+                className="rounded bg-[var(--color-bg-secondary)] px-2 py-0.5 text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Change
               </button>
@@ -291,7 +291,7 @@ export function StabilityPanel({
                   setPickerOpen(false)
                 }}
                 disabled={readOnly}
-                className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+                className="rounded bg-[var(--color-bg-secondary)] px-2 py-0.5 text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Remove
               </button>
@@ -301,7 +301,7 @@ export function StabilityPanel({
               type="button"
               onClick={() => setPickerOpen((v) => !v)}
               disabled={readOnly}
-              className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded bg-[var(--color-bg-secondary)] px-2 py-0.5 text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:cursor-not-allowed disabled:opacity-40"
             >
               {pickerOpen ? 'Cancel' : 'Add motor'}
             </button>
@@ -323,7 +323,7 @@ export function StabilityPanel({
         {motorSel && (
           <>
             <div className="mb-1 flex items-center gap-2">
-              <span className="truncate text-sm text-slate-100">
+              <span className="truncate text-sm text-[var(--color-text-primary)]">
                 {result?.motor?.name ??
                   (motorSummary
                     ? `${motorSummary.manufacturerAbbrev} ${motorSummary.designation}`
@@ -332,7 +332,7 @@ export function StabilityPanel({
             </div>
 
             {/* Wet vs dry: which end of the mass table to place. */}
-            <div className="mb-2 flex overflow-hidden rounded border border-slate-700 text-xs">
+            <div className="mb-2 flex overflow-hidden rounded border border-[var(--color-border)] text-xs">
               {(['launch', 'burnout'] as const).map((s) => (
                 <button
                   key={s}
@@ -341,8 +341,8 @@ export function StabilityPanel({
                   disabled={readOnly}
                   className={`flex-1 px-2 py-1 ${
                     motorSel.state === s
-                      ? 'bg-cyan-600 text-white'
-                      : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      ? 'bg-[var(--color-accent)] text-white'
+                      : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]'
                   }`}
                 >
                   {s === 'launch' ? 'Wet (launch)' : 'Dry (burnout)'}
@@ -352,7 +352,7 @@ export function StabilityPanel({
 
             {/* Placement datum: the airframe aft end by default, or a picked face
                 (enforced normal to the axis by the backend). */}
-            <div className="mb-1 flex items-center justify-between gap-2 text-xs text-slate-400">
+            <div className="mb-1 flex items-center justify-between gap-2 text-xs text-[var(--color-text-muted)]">
               <span>Placement datum</span>
               <span className="flex items-center gap-1">
                 {motorSel.refFace ? (
@@ -364,13 +364,13 @@ export function StabilityPanel({
                       type="button"
                       onClick={() => onSetMotorRefFace(null)}
                       disabled={readOnly}
-                      className="rounded bg-slate-700 px-1.5 py-0.5 text-2xs text-slate-200 hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+                      className="rounded bg-[var(--color-bg-secondary)] px-1.5 py-0.5 text-2xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       Clear
                     </button>
                   </>
                 ) : (
-                  <span className="text-slate-500">airframe base (aft)</span>
+                  <span className="text-[var(--color-text-muted)]">airframe base (aft)</span>
                 )}
                 <button
                   type="button"
@@ -379,7 +379,7 @@ export function StabilityPanel({
                   className={`rounded px-1.5 py-0.5 text-2xs font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
                     motorFaceEdit
                       ? 'bg-fuchsia-600 text-white'
-                      : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+                      : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]'
                   }`}
                 >
                   {motorFaceEdit ? 'Picking…' : 'Pick face'}
@@ -393,11 +393,11 @@ export function StabilityPanel({
               </p>
             )}
 
-            <label className="mb-1 flex items-center justify-between gap-2 text-xs text-slate-400">
+            <label className="mb-1 flex items-center justify-between gap-2 text-xs text-[var(--color-text-muted)]">
               {motorSel.refFace ? 'Aft offset from face' : 'Aft offset from base'}
               <span className="flex items-center gap-1">
                 <UnitField value={motorSel.aftOffset ?? 0} onChange={onSetMotorOffset} kind="length" />
-                <span className="text-slate-500">{lab('length')}</span>
+                <span className="text-[var(--color-text-muted)]">{lab('length')}</span>
               </span>
             </label>
 
@@ -420,9 +420,9 @@ export function StabilityPanel({
       </section>
 
       {/* ── Stability results ── */}
-      <section className="border-b border-slate-800 p-3">
+      <section className="border-b border-[var(--color-border)] p-3">
         <div className="mb-2 flex items-center">
-          <span className="text-sm font-semibold uppercase tracking-wide text-slate-200">
+          <span className="text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
             Stability
           </span>
         </div>
@@ -430,7 +430,7 @@ export function StabilityPanel({
         {error && <p className="mb-2 text-xs text-rose-400">{error}</p>}
 
         {!result && !error && (
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-[var(--color-text-muted)]">
             Auto-detects the outer airframe and computes CP, CG and static margin from the
             CAD, matching OpenRocket, including fins. Add a motor to fold its wet/dry mass into
             the CG and margin.
@@ -446,7 +446,7 @@ export function StabilityPanel({
               return (
                 <>
                   <div className="mb-2 flex items-baseline justify-between">
-                    <span className="text-slate-400">Static margin</span>
+                    <span className="text-[var(--color-text-muted)]">Static margin</span>
                     <span className={`text-lg font-semibold tabular-nums ${marginTone(margin)}`}>
                       {formatMargin(margin)}
                     </span>
@@ -458,7 +458,7 @@ export function StabilityPanel({
             })()}
             <Row label="CNₐ (total)" value={result.cna.toFixed(3)} small />
             {result.fins.count > 0 && !result.fins.symmetric && (
-              <p className="mt-2 border-t border-slate-700 pt-2 text-xs text-amber-300">
+              <p className="mt-2 border-t border-[var(--color-border)] pt-2 text-xs text-amber-300">
                 ⚠ Fins are not azimuthally symmetric — the true CP sits off the axis and this
                 axial model under-states the instability. Expected {result.fins.count === 1 ? 'a single fin' : `${result.fins.count} uneven fins`}; check the fin selection.
               </p>
@@ -491,11 +491,11 @@ export function StabilityPanel({
       {result && (
         <section className="p-3">
           <div className="mb-2 flex items-center">
-            <span className="text-sm font-semibold uppercase tracking-wide text-slate-200">
+            <span className="text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
               Flight Profile
             </span>
           </div>
-          <label className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-400">
+          <label className="mb-2 flex items-center justify-between gap-2 text-xs text-[var(--color-text-muted)]">
             Guided rail length
             <span className="flex items-center gap-1">
               <UnitField
@@ -504,19 +504,19 @@ export function StabilityPanel({
                 kind="length"
                 min={0}
               />
-              <span className="text-slate-500">{lab('length')}</span>
+              <span className="text-[var(--color-text-muted)]">{lab('length')}</span>
             </span>
           </label>
           <button
             type="button"
             onClick={onViewFlight}
             disabled={!result.motor}
-            className="w-full rounded bg-cyan-600 px-2 py-1.5 text-xs font-medium text-white hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+            className="w-full rounded bg-[var(--color-accent)] px-2 py-1.5 text-xs font-medium text-white hover:bg-[var(--color-accent-hover)] disabled:cursor-not-allowed disabled:bg-[var(--color-bg-secondary)] disabled:text-[var(--color-text-muted)]"
           >
             View flight profile
           </button>
           {!result.motor && (
-            <p className="mt-1 text-2xs text-slate-500">Add a motor to simulate the ascent.</p>
+            <p className="mt-1 text-2xs text-[var(--color-text-muted)]">Add a motor to simulate the ascent.</p>
           )}
         </section>
       )}

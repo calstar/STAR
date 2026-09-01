@@ -226,12 +226,12 @@ export function PartList({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-slate-700 px-3 py-2">
-        <span className="text-base font-semibold text-slate-200">Parts ({parts.length})</span>
+      <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2">
+        <span className="text-base font-semibold text-[var(--color-text-primary)]">Parts ({parts.length})</span>
         {hiddenCount > 0 && (
           <button
             type="button"
-            className="rounded border border-slate-600 px-2 py-0.5 text-xs text-amber-300 hover:bg-slate-700"
+            className="rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-amber-300 hover:bg-[var(--color-bg-tertiary)]"
             onClick={() => onToggle(parts.map((part) => part.key), true)}
           >
             Show {hiddenCount} hidden
@@ -240,11 +240,11 @@ export function PartList({
       </div>
 
       {selectedKeys.size > 0 && (
-        <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/80 px-3 py-1 text-xs text-cyan-300">
+        <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]/80 px-3 py-1 text-xs text-[var(--color-accent)]">
           <span>{selectedKeys.size} selected</span>
           <button
             type="button"
-            className="rounded px-1.5 py-0.5 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+            className="rounded px-1.5 py-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]"
             onClick={() => {
               onSelect([])
               setAnchorId(null)
@@ -278,7 +278,7 @@ export function PartList({
           const isPartial = isRowPartlySelected(row)
 
           return (
-            <li key={group.name} className="border-b border-slate-800">
+            <li key={group.name} className="border-b border-[var(--color-border)]">
               <div
                 role="button"
                 tabIndex={0}
@@ -298,14 +298,14 @@ export function PartList({
                 onContextMenu={(event) => openMenu(event, row)}
                 onMouseEnter={() => onHover(keys)}
                 onMouseLeave={() => onHover([])}
-                className={`flex cursor-pointer items-center gap-2 px-2 py-2 hover:bg-slate-800/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-cyan-400/50 ${
-                  isSelected ? 'bg-cyan-500/15' : isPartial ? 'bg-cyan-500/5' : ''
+                className={`flex cursor-pointer items-center gap-2 px-2 py-2 hover:bg-[var(--color-bg-tertiary)]/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--color-accent)]/50 ${
+                  isSelected ? 'bg-[var(--color-accent)]/15' : isPartial ? 'bg-[var(--color-accent)]/5' : ''
                 }`}
                 title="Left click to expand · Shift or Ctrl click to select several · Right click for options"
               >
                 <span
                   className={`w-5 shrink-0 text-center text-lg leading-none transition-transform ${
-                    hasChildren ? 'text-slate-300' : 'text-transparent'
+                    hasChildren ? 'text-[var(--color-text-secondary)]' : 'text-transparent'
                   } ${isOpen ? 'rotate-90' : ''}`}
                 >
                   {hasChildren ? '›' : ''}
@@ -313,21 +313,21 @@ export function PartList({
                 <span
                   className={`flex-1 truncate ${
                     isHidden
-                      ? 'text-slate-600 line-through'
-                      : STATUS_TEXT[status] || 'text-slate-200'
+                      ? 'text-[var(--color-text-muted)] line-through'
+                      : STATUS_TEXT[status] || 'text-[var(--color-text-primary)]'
                   }`}
                 >
                   {group.name}
                   {hasChildren && (
-                    <span className="ml-1 text-xs text-slate-500">×{group.parts.length}</span>
+                    <span className="ml-1 text-xs text-[var(--color-text-muted)]">×{group.parts.length}</span>
                   )}
                 </span>
                 {shown > 0 && shown < keys.length && (
-                  <span className="shrink-0 text-2xs text-slate-500">{shown}/{keys.length}</span>
+                  <span className="shrink-0 text-2xs text-[var(--color-text-muted)]">{shown}/{keys.length}</span>
                 )}
                 <span
                   className={`shrink-0 tabular-nums text-sm ${
-                    isHidden ? 'text-slate-600' : 'text-slate-400'
+                    isHidden ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text-muted)]'
                   }`}
                 >
                   {q(groupMass, 'mass')}
@@ -335,7 +335,7 @@ export function PartList({
               </div>
 
               {hasChildren && isOpen && (
-                <ul className="bg-slate-900/40">
+                <ul className="bg-[var(--color-bg-secondary)]/40">
                   {group.parts.map((part) => {
                     const partHidden = !visibleKeys.has(part.key)
                     const partStatus = massStatus(part, overriddenKeys.has(part.key))
@@ -355,29 +355,29 @@ export function PartList({
                           onContextMenu={(event) => openMenu(event, childRow)}
                           onMouseEnter={() => onHover([part.key])}
                           onMouseLeave={() => onHover([])}
-                          className={`flex cursor-pointer items-center gap-2 py-1.5 pl-9 pr-2 text-sm hover:bg-slate-800/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-cyan-400/50 ${
-                            selectedKeys.has(part.key) ? 'bg-cyan-500/15' : ''
+                          className={`flex cursor-pointer items-center gap-2 py-1.5 pl-9 pr-2 text-sm hover:bg-[var(--color-bg-tertiary)]/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--color-accent)]/50 ${
+                            selectedKeys.has(part.key) ? 'bg-[var(--color-accent)]/15' : ''
                           }`}
                         >
                           <span
                             className={`flex-1 truncate ${
                               partHidden
-                                ? 'text-slate-600 line-through'
-                                : STATUS_TEXT[partStatus] || 'text-slate-300'
+                                ? 'text-[var(--color-text-muted)] line-through'
+                                : STATUS_TEXT[partStatus] || 'text-[var(--color-text-secondary)]'
                             }`}
                           >
                             {displayName(part).name}
                             {/* Copies are otherwise indistinguishable once the
                                 instance counter is stripped off the name. */}
                             {displayName(part).instance !== null && (
-                              <span className="ml-1.5 text-xs text-slate-500">
+                              <span className="ml-1.5 text-xs text-[var(--color-text-muted)]">
                                 {displayName(part).instance}
                               </span>
                             )}
                           </span>
                           <span
                             className={`tabular-nums ${
-                              partHidden ? 'text-slate-600' : 'text-slate-500'
+                              partHidden ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text-muted)]'
                             }`}
                           >
                             {q(part.mass, 'mass')}

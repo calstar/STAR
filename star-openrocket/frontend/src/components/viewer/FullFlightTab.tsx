@@ -43,7 +43,7 @@ const tip = { contentStyle: TOOLTIP_STYLE, labelStyle: TOOLTIP_LABEL_STYLE }
 // with -- the drogue is sky, the main pink.
 const EV = {
   burnout: '#eab308', // yellow-500
-  apogee: REFERENCE, // slate-300
+  apogee: REFERENCE, // --color-text-secondary
   drogue: '#38bdf8', // sky-400
   main: '#f472b6', // pink-400
 }
@@ -232,8 +232,8 @@ export function FullFlightTab({ result, recovery, design, flight, onFlightChange
 
   if (!result) {
     return (
-      <div className="flex flex-1 items-center justify-center p-8 text-center text-slate-400">
-        Run a flight in the <span className="mx-1 font-semibold text-slate-200">Flight Dynamics</span>
+      <div className="flex flex-1 items-center justify-center p-8 text-center text-[var(--color-text-muted)]">
+        Run a flight in the <span className="mx-1 font-medium text-[var(--color-text-primary)]">Flight Dynamics</span>
         tab first — the full flight glues that ascent onto the recovery descent.
       </div>
     )
@@ -244,10 +244,11 @@ export function FullFlightTab({ result, recovery, design, flight, onFlightChange
   const yTitle = (d: FSeries) => `${d.name} (${lab(d.kind)})`
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-slate-950 p-4">
+    <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-primary)]">
+      <div className="mx-auto flex max-w-[1800px] flex-col px-4 py-4 sm:px-6 lg:px-8">
       <div className="mb-2">
-        <h3 className="text-base font-semibold text-slate-100">Full flight — launch to landing</h3>
-        <p className="text-2xs text-slate-400">
+        <h3 className="text-base font-semibold text-[var(--color-text-primary)]">Full flight — launch to landing</h3>
+        <p className="text-2xs text-[var(--color-text-muted)]">
           Ascent from Flight Dynamics glued to a recovery descent seeded by it (apogee,
           CAD mass, lateral velocity at apogee). Parachutes, wind and site come from the
           Recovery tab.{running ? ' · updating…' : ''}{error ? ` · ${error}` : ''}
@@ -267,15 +268,15 @@ export function FullFlightTab({ result, recovery, design, flight, onFlightChange
 
       {/* Compare series on one shared time axis */}
       <div className="mb-2">
-        <h3 className="text-base font-semibold text-slate-100">Compare series</h3>
-        <p className="text-2xs text-slate-400">
+        <h3 className="text-base font-semibold text-[var(--color-text-primary)]">Compare series</h3>
+        <p className="text-2xs text-[var(--color-text-muted)]">
           Overlay altitude, velocity and acceleration across the whole flight on one time
           axis — each gets its own colored Y axis. Dashed guides mark burnout, apogee and
           each parachute deployment.
         </p>
       </div>
       <div className="mb-5">
-        <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-2">
+        <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40 px-3 py-2">
           {FULL_SERIES.map((d) => (
             <label key={d.key} className="flex cursor-pointer items-center gap-1.5 text-xs">
               <input type="checkbox" checked={compare.has(d.key)} onChange={() => toggle(d.key)} style={{ accentColor: d.color }} />
@@ -286,7 +287,7 @@ export function FullFlightTab({ result, recovery, design, flight, onFlightChange
         <Panel heightClass="h-[460px]"
                hint="Whole flight vs time. Ascent then descent; the vertical guides are burnout, apogee and parachute deployments.">
           {selected.length === 0 ? (
-            <div className="flex h-full min-h-[240px] items-center justify-center text-xs text-slate-400">Select one or more series to plot.</div>
+            <div className="flex h-full min-h-[240px] items-center justify-center text-xs text-[var(--color-text-muted)]">Select one or more series to plot.</div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={glued.rows} margin={{ top: 24, right: 16, bottom: 24, left: 16 }}>
@@ -321,7 +322,7 @@ export function FullFlightTab({ result, recovery, design, flight, onFlightChange
 
       {/* Ground track */}
       <div className="mb-2">
-        <h3 className="text-base font-semibold text-slate-100">Ground track — launch to landing</h3>
+        <h3 className="text-base font-semibold text-[var(--color-text-primary)]">Ground track — launch to landing</h3>
       </div>
       <div className="grid items-start gap-3 lg:grid-cols-2">
         {/* Square so equal East/North scales read as true distances. */}
@@ -331,6 +332,7 @@ export function FullFlightTab({ result, recovery, design, flight, onFlightChange
             <FullGroundTrack track={track} lab={lab} dec={dec} />
           </Panel>
         </div>
+      </div>
       </div>
     </div>
   )
@@ -350,7 +352,7 @@ function FullGroundTrack({ track, lab, dec }: {
   dec: (v: number, d: number) => string
 }) {
   if (track.pts.length < 2) {
-    return <div className="flex h-full items-center justify-center text-xs text-slate-400">No trajectory yet.</div>
+    return <div className="flex h-full items-center justify-center text-xs text-[var(--color-text-muted)]">No trajectory yet.</div>
   }
   // Symmetric ticks about the pad (…-d, -d/2, 0, d/2, d), like Flight Dynamics.
   const dmax = track.domainX[1]

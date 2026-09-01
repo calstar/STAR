@@ -82,7 +82,7 @@ export function ResizableSidebar({
 
   return (
     <aside
-      className={`relative shrink-0 ${border} border-slate-700 bg-slate-900/60 ${className}`}
+      className={`relative shrink-0 ${border} border-[var(--color-border)] bg-[var(--color-bg-secondary)]/60 ${className}`}
       style={{ width }}
     >
       {children}
@@ -103,7 +103,7 @@ export function ResizableSidebar({
       >
         <div
           className={`mx-auto h-full w-px transition-colors ${
-            dragging ? 'bg-cyan-400' : 'bg-transparent group-hover:bg-cyan-500/60'
+            dragging ? 'bg-[var(--color-accent)]' : 'bg-transparent group-hover:bg-[var(--color-accent)]/60'
           }`}
         />
       </div>

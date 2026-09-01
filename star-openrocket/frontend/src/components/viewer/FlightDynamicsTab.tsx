@@ -57,10 +57,10 @@ const G = 9.80665
 
 export function Tile({ label, value, sub, warn }: { label: string; value: string; sub?: string; warn?: boolean }) {
   return (
-    <div className={`rounded-lg border px-3 py-2 ${warn ? 'border-rose-500/40 bg-rose-500/10' : 'border-slate-700 bg-slate-900/60'}`}>
-      <div className="text-2xs uppercase tracking-wide text-slate-300">{label}</div>
-      <div className={`text-lg font-semibold ${warn ? 'text-rose-300' : 'text-slate-100'}`}>{value}</div>
-      {sub && <div className="text-2xs text-slate-400">{sub}</div>}
+    <div className={`rounded-lg border px-3 py-2 ${warn ? 'border-rose-500/40 bg-rose-500/10' : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]/60'}`}>
+      <div className="text-2xs uppercase tracking-wide text-[var(--color-text-secondary)]">{label}</div>
+      <div className={`text-lg font-semibold ${warn ? 'text-rose-300' : 'text-[var(--color-text-primary)]'}`}>{value}</div>
+      {sub && <div className="text-2xs text-[var(--color-text-muted)]">{sub}</div>}
     </div>
   )
 }
@@ -85,19 +85,19 @@ export function Panel({ title, hint, children, heightClass = 'min-h-[360px]' }: 
   }, [expanded])
 
   return (
-    <div className={`relative flex flex-col rounded-lg border border-slate-700 bg-slate-900/40 p-3 ${heightClass}`}>
+    <div className={`relative flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40 p-3 ${heightClass}`}>
       <button
         type="button"
         onClick={() => setExpanded(true)}
         title="Expand"
-        className="absolute right-2 top-2 z-10 rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+        className="absolute right-2 top-2 z-10 rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]"
       >
         <ExpandIcon />
       </button>
       {(title || hint) && (
         <div className="mb-1 pr-8">
-          {title && <div className="text-sm font-semibold text-slate-200">{title}</div>}
-          {hint && <div className="text-2xs leading-tight text-slate-400">{hint}</div>}
+          {title && <div className="text-xs font-medium text-[var(--color-text-primary)]">{title}</div>}
+          {hint && <div className="text-2xs leading-tight text-[var(--color-text-muted)]">{hint}</div>}
         </div>
       )}
       <div className="min-h-0 flex-1">{children}</div>
@@ -109,18 +109,18 @@ export function Panel({ title, hint, children, heightClass = 'min-h-[360px]' }: 
             onClick={() => setExpanded(false)}
           >
             <div
-              className="flex h-[min(940px,96vh)] w-[min(1500px,97vw)] flex-col rounded-lg border border-slate-700 bg-slate-900 p-4 shadow-2xl"
+              className="flex h-[min(940px,96vh)] w-[min(1500px,97vw)] flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="mb-2 flex items-start justify-between gap-4">
                 <div>
-                  {title && <div className="text-base font-semibold text-slate-100">{title}</div>}
-                  {hint && <div className="text-xs text-slate-400">{hint}</div>}
+                  {title && <div className="text-base font-semibold text-[var(--color-text-primary)]">{title}</div>}
+                  {hint && <div className="text-xs text-[var(--color-text-muted)]">{hint}</div>}
                 </div>
                 <button
                   type="button"
                   onClick={() => setExpanded(false)}
-                  className="rounded bg-slate-700 px-3 py-1 text-sm text-slate-200 hover:bg-slate-600"
+                  className="rounded bg-[var(--color-bg-secondary)] px-3 py-1 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]"
                 >
                   Close
                 </button>
@@ -293,14 +293,15 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
   ].filter((x): x is { m: number; label: string; t: number } => x.t != null)
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-slate-950 p-4">
+    <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-primary)]">
+      <div className="mx-auto flex max-w-[1800px] flex-col px-4 py-4 sm:px-6 lg:px-8">
       {/* Controls */}
-      <div className="mb-3 flex flex-wrap items-end gap-3 rounded-lg border border-slate-700 bg-slate-900/60 p-3">
+      <div className="mb-3 flex flex-wrap items-end gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/60 p-3">
         <Field label="Rail angle (° from horiz, 90=up)" value={inclination} set={(v) => onFlightChange({ inclination: v })} min={0} max={90} />
         <Field label="Heading (° from N)" value={heading} set={(v) => onFlightChange({ heading: v })} min={0} max={360} />
-        <label className="flex flex-col text-xs text-slate-300">
+        <label className="flex flex-col text-xs text-[var(--color-text-secondary)]">
           CP model
-          <select value={cpModel} disabled={readOnly} onChange={(e) => onFlightChange({ cpModel: e.target.value as FlightParams['cpModel'] })} className="mt-1 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-slate-100 disabled:cursor-not-allowed disabled:border-slate-800 disabled:text-slate-500">
+          <select value={cpModel} disabled={readOnly} onChange={(e) => onFlightChange({ cpModel: e.target.value as FlightParams['cpModel'] })} className="mt-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-2 py-1 text-sm text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:border-[var(--color-border)] disabled:text-[var(--color-text-muted)]">
             <option value="both">Both (compare)</option>
             <option value="ours">Ours (CAD Barrowman)</option>
             <option value="rocketpy">RocketPy native</option>
@@ -309,19 +310,19 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
         <button
           onClick={run}
           disabled={busy || !modelId || !motorSel}
-          className="ml-auto rounded bg-cyan-600 px-4 py-2 text-sm font-semibold text-white enabled:hover:bg-cyan-500 disabled:opacity-40"
+          className="ml-auto rounded bg-[var(--color-accent)] px-4 py-2 text-xs font-medium text-white enabled:hover:bg-[var(--color-accent-hover)] disabled:opacity-40"
         >
           {busy ? 'Simulating…' : 'Run flight'}
         </button>
       </div>
-      <p className="mb-3 text-2xs text-slate-400">
+      <p className="mb-3 text-2xs text-[var(--color-text-muted)]">
         Launch site: Friends of Amateur Rocketry (FAR), 630 m — fixed. Wind and the pad
-        atmosphere come from the <span className="font-semibold text-slate-200">Environment</span> tab,
+        atmosphere come from the <span className="font-medium text-[var(--color-text-primary)]">Environment</span> tab,
         so this ascent and the recovery descent fly through the same air.
       </p>
 
-      {!motorSel && <p className="text-sm text-amber-300">Select a motor in the CAD tab first — a flight needs one.</p>}
-      {error && <p className="text-sm text-rose-400">{error}</p>}
+      {!motorSel && <p className="text-xs text-amber-300">Select a motor in the CAD tab first — a flight needs one.</p>}
+      {error && <p className="text-xs text-rose-400">{error}</p>}
 
       {result && (
         <>
@@ -345,11 +346,11 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
 
           {/* Full-width overlay: compare any time series on a shared time axis. */}
           <div className="mb-2">
-            <h3 className="text-base font-semibold text-slate-100">Compare series</h3>
-            <p className="text-2xs text-slate-400">Overlay any time series on the same time axis — each gets its own colored Y axis. Dashed guides mark the transonic and supersonic crossings.</p>
+            <h3 className="text-base font-semibold text-[var(--color-text-primary)]">Compare series</h3>
+            <p className="text-2xs text-[var(--color-text-muted)]">Overlay any time series on the same time axis — each gets its own colored Y axis. Dashed guides mark the transonic and supersonic crossings.</p>
           </div>
           <div className="mb-5">
-            <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-2">
+            <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40 px-3 py-2">
               {COMPARE_SERIES.map((d) => (
                 <label key={d.key} className="flex cursor-pointer items-center gap-1.5 text-xs">
                   <input type="checkbox" checked={compare.has(d.key)} onChange={() => toggleCompare(d.key)} style={{ accentColor: d.color }} />
@@ -359,7 +360,7 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
             </div>
             <Panel heightClass="h-[460px]">
               {compareSeries.length === 0 ? (
-                <div className="flex h-full min-h-[240px] items-center justify-center text-xs text-slate-400">Select one or more series to plot.</div>
+                <div className="flex h-full min-h-[240px] items-center justify-center text-xs text-[var(--color-text-muted)]">Select one or more series to plot.</div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={compareData} margin={{ top: 24, right: 16, bottom: 24, left: 16 }}>
@@ -384,7 +385,7 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
 
           {/* Other plots */}
           <div className="mb-2">
-            <h3 className="text-base font-semibold text-slate-100">Other plots</h3>
+            <h3 className="text-base font-semibold text-[var(--color-text-primary)]">Other plots</h3>
           </div>
           <div className="grid items-start gap-3 lg:grid-cols-2">
             {/* Square so equal East/North scales read as true distances. */}
@@ -431,12 +432,13 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
             </div>
           </div>
 
-          <div className="mt-3 rounded border border-slate-800 bg-slate-900/40 px-3 py-2 text-2xs text-slate-400">
+          <div className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40 px-3 py-2 text-2xs text-[var(--color-text-muted)]">
             Approximations in this run: {result.approximations.join(' · ')}. Stability outputs are exact;
             apogee / max-Q depend on the drag model. See FUTURE_IMPROVEMENTS.md.
           </div>
         </>
       )}
+      </div>
     </div>
   )
 }
@@ -445,7 +447,7 @@ function Field({ label, value, set, min, max, step = 1 }: { label: string; value
   // Every use of this writes a flight parameter, which is part of the design.
   const disabled = useDisabled()
   return (
-    <label className="flex flex-col text-xs text-slate-300">
+    <label className="flex flex-col text-xs text-[var(--color-text-secondary)]">
       {label}
       <input
         type="number"
@@ -455,7 +457,7 @@ function Field({ label, value, set, min, max, step = 1 }: { label: string; value
         step={step}
         disabled={disabled}
         onChange={(e) => set(Number(e.target.value))}
-        className="mt-1 w-24 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-slate-100 disabled:cursor-not-allowed disabled:border-slate-800 disabled:text-slate-500"
+        className="mt-1 w-24 rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-2 py-1 text-sm text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:border-[var(--color-border)] disabled:text-[var(--color-text-muted)]"
       />
     </label>
   )

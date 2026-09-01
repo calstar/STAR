@@ -44,7 +44,7 @@ export function ResultsPanel({ result, running, error }: {
       <Card title="Results">
         {error ? (
           <div className="rounded border border-red-500/50 bg-red-500/10 px-3 py-2">
-            <p className="font-prose text-xs leading-relaxed text-red-200">{error}</p>
+            <p className="text-xs leading-relaxed text-red-200">{error}</p>
           </div>
         ) : (
           <Empty>{running ? 'Running…' : 'Press Run to simulate.'}</Empty>
@@ -452,7 +452,7 @@ function PadStateCard({ result }: { result: Result }) {
         <Stat label="Lapse rate (L)" value={num(p.lapse, 'lapse', 3)} kind="lapse" />
       </div>
       {result.body_drag_band && (
-        <p className="font-prose mt-3 text-xs leading-relaxed text-[var(--color-text-secondary)]">
+        <p className="mt-3 text-xs leading-relaxed text-[var(--color-text-secondary)]">
           Airframe drag run both ways: axial{' '}
           <span className="text-[var(--color-text-primary)]">
             {q(result.body_drag_band.axial, 'area', 5)}

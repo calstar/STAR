@@ -121,7 +121,7 @@ export function CrosscheckChart({ models, channel, refLines }: {
         className={HEIGHT}
       />
       {hasMarkers && (
-        <p className="font-prose text-xs leading-relaxed text-[var(--color-text-secondary)]">
+        <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
           <span className="text-[var(--color-text-primary)]">
             Dots are the mastersheet's own numbers
           </span>{' '}
@@ -141,7 +141,7 @@ export function CrosscheckChart({ models, channel, refLines }: {
         </p>
       )}
       {silent.length > 0 && (
-        <p className="font-prose text-xs leading-relaxed text-amber-300/90">
+        <p className="text-xs leading-relaxed text-amber-300/90">
           <span className="text-amber-300">
             Not on this chart:{' '}
             {silent.map((id) => models[id].label).join(', ')}.

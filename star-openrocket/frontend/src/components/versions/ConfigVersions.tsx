@@ -24,7 +24,7 @@ import { Button, Modal } from '../ui'
 import * as api from '../../api/documents'
 import { designApi, keyOf, refOf } from '../../api/documents'
 import type { DocMeta, DocRef, MicroVersion, ReleaseVersion } from '../../api/documents'
-import { ChangeModal, CheckoutControl, useCheckout } from '@stardesign-ui'
+import { btn, ChangeModal, CheckoutControl, useCheckout } from '@stardesign-ui'
 
 // v2 because the remembered design is now (owner, id): a shared design is not
 // identified by its id alone. A v1 value is a bare id, which was always one of
@@ -431,8 +431,6 @@ export function ConfigVersions({ config, onRestore, onEditableChange, inline = f
     })
   }
 
-  const btn = 'inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2.5 py-1 text-xs font-medium text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-40'
-
   return (
     <div className={inline ? 'relative' : 'relative bg-[var(--color-bg-secondary)]'}>
       <div className={inline
@@ -480,7 +478,7 @@ export function ConfigVersions({ config, onRestore, onEditableChange, inline = f
         <button
           onClick={() => { setShowRelease(true); setRelLabel(nextLabel(releases)); setRelStatus('idle'); setRelError('') }}
           disabled={!active}
-          className="inline-flex items-center gap-1 rounded border border-emerald-600/40 bg-emerald-600/10 px-2.5 py-1 text-xs font-medium text-emerald-600 transition-colors hover:bg-emerald-600/20 disabled:opacity-40 dark:text-emerald-400"
+          className="inline-flex items-center gap-1 rounded border border-emerald-600/40 bg-emerald-600/10 px-2.5 py-1 text-xs font-medium text-emerald-400 transition-colors hover:bg-emerald-600/20 disabled:opacity-40"
           title="Publish an immutable, named version (e.g. 0.1)"
         >
           Release
@@ -538,7 +536,7 @@ export function ConfigVersions({ config, onRestore, onEditableChange, inline = f
               {releases.map(r => (
                 <button key={r.label} onClick={() => restoreRelease(r)} disabled={restoring === `rel:${r.label}`}
                   className="mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50">
-                  <span className="shrink-0 rounded border border-emerald-600/40 bg-emerald-600/10 px-1.5 py-0.5 text-2xs font-semibold text-emerald-600 dark:text-emerald-400">{r.label}</span>
+                  <span className="shrink-0 rounded border border-emerald-600/40 bg-emerald-600/10 px-1.5 py-0.5 text-2xs font-semibold text-emerald-400">{r.label}</span>
                   <span className="flex-1 text-2xs text-[var(--color-text-muted)]">{restoring === `rel:${r.label}` ? 'Restoring…' : relativeTime(r.savedAt)}</span>
                 </button>
               ))}

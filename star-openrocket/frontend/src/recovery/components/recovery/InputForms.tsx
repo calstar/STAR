@@ -151,7 +151,7 @@ export function VehicleForm({ value, onChange, design, sources, onSourcesChange 
           {/* Which of the two the reader is actually looking at, stated where
               the two numbers are. Both appear, so without this the loads below
               could plausibly belong to either -- and they differ by 2.1x. */}
-          <p className="font-prose mt-1.5 text-xs leading-snug text-[var(--color-text-muted)]">
+          <p className="mt-1.5 text-xs leading-snug text-[var(--color-text-muted)]">
             From diameter and length. The{' '}
             <span className="text-[var(--color-text-secondary)]">axial</span>{' '}
             bound is the default; the corner sweep runs both.

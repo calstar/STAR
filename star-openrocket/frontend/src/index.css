@@ -77,14 +77,15 @@ body,
 
 body {
   @apply bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] antialiased;
-  /* Proportional sans for all chrome, labels, prose and headings. Numbers opt
-     back into tabular figures via `.font-num` / data tables so columns line up. */
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto,
+  /* The system UI face, for all chrome, labels, prose and headings. This used to
+     name 'Inter' first, but nothing ever shipped the file -- no @font-face, no
+     stylesheet link, no package -- so every element fell through to the stack
+     below anyway. Naming a font we do not serve made the two halves of this app
+     look like they disagreed about typography when they never did; what differed
+     was weight and size, which the type scale above now settles. Add an
+     @font-face here if we ever want a face that renders the same on every OS. */
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto,
     'Helvetica Neue', Arial, sans-serif;
-}
-
-.font-prose {
-  font-family: 'Inter', system-ui, sans-serif;
 }
 
 /* Numbers use the same sans face; `tabular-nums` only makes digits share one

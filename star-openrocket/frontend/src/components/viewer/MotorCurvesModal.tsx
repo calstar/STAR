@@ -61,27 +61,27 @@ export function MotorCurvesModal({ detail, simfileId, busy, error, onClose }: Pr
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onClick={onClose}
     >
       <div
-        className="flex h-[min(760px,92vh)] w-[min(1200px,96vw)] flex-col rounded-lg border border-slate-700 bg-slate-900 shadow-2xl"
+        className="flex h-[min(760px,92vh)] w-[min(1200px,96vw)] flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-slate-700 px-4 py-2.5">
-          <h2 className="text-sm font-semibold text-slate-100">Motor curves — {title}</h2>
+        <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-2.5">
+          <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">Motor curves — {title}</h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded bg-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-600"
+            className="rounded bg-[var(--color-bg-secondary)] px-2 py-1 text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]"
           >
             Close
           </button>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-          {busy && <p className="text-sm text-slate-400">Loading motor data…</p>}
-          {error && <p className="text-sm text-rose-400">{error}</p>}
+          {busy && <p className="text-xs text-[var(--color-text-muted)]">Loading motor data…</p>}
+          {error && <p className="text-xs text-rose-400">{error}</p>}
 
           {sim && !busy && !error && (
             <>
@@ -133,9 +133,9 @@ export function MotorCurvesModal({ detail, simfileId, busy, error, onClose }: Pr
 
 function Tile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded border border-slate-700 bg-slate-800/60 px-3 py-2">
-      <div className="text-2xs uppercase tracking-wide text-slate-400">{label}</div>
-      <div className="text-base font-semibold tabular-nums text-slate-100">{value}</div>
+    <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)]/60 px-3 py-2">
+      <div className="text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">{label}</div>
+      <div className="text-base font-semibold tabular-nums text-[var(--color-text-primary)]">{value}</div>
     </div>
   )
 }
