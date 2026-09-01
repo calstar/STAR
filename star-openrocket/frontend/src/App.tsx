@@ -654,28 +654,6 @@ export default function App() {
           disabled={!editable}
         />
 
-        <label className="ml-auto flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
-          Opacity
-          <input
-            type="range"
-            min={0.15}
-            max={1}
-            step={0.05}
-            value={opacity}
-            onChange={(event) => setOpacity(Number(event.target.value))}
-            className="accent-[var(--color-accent)]"
-          />
-        </label>
-
-        <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-          <input
-            type="checkbox"
-            checked={showAssemblyCentroid}
-            onChange={(event) => setShowAssemblyCentroid(event.target.checked)}
-            className="accent-emerald-400"
-          />
-          Onshape CM
-        </label>
         </div>
 
         {/* Versioned designs, as a full-width strip at the bottom of the header. */}
@@ -814,6 +792,10 @@ export default function App() {
             onViewFlight={handleViewFlight}
             railLength={railLength}
             onSetRailLength={setRailLength}
+            opacity={opacity}
+            onOpacityChange={setOpacity}
+            showAssemblyCentroid={showAssemblyCentroid}
+            onShowAssemblyCentroidChange={setShowAssemblyCentroid}
             onViewMotorCurves={handleViewMotorCurves}
           />
         </ResizableSidebar>

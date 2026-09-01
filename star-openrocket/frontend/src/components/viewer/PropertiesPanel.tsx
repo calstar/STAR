@@ -33,19 +33,65 @@ interface Props {
   visibleKeys: Set<string>
   overrides: Map<string, PartOverride>
   onOverrideChange: (key: string, override: PartOverride | null) => void
+  /** Part opacity in the 3D view, 0.15-1. A display setting, not part of the design. */
+  opacity: number
+  onOpacityChange: (value: number) => void
+  /** Whether the marker for Onshape's own assembly centroid is drawn. */
+  showAssemblyCentroid: boolean
+  onShowAssemblyCentroidChange: (value: boolean) => void
 }
 
 /**
  * The Properties tab body. No header or scroll container of its own -- the
  * InspectorPanel that hosts it owns the tab strip and the one scroll region.
  */
-export function PropertiesPanel({ selected, visibleKeys, overrides, onOverrideChange }: Props) {
+export function PropertiesPanel({
+  selected,
+  visibleKeys,
+  overrides,
+  onOverrideChange,
+  opacity,
+  onOpacityChange,
+  showAssemblyCentroid,
+  onShowAssemblyCentroidChange,
+}: Props) {
+  // Nothing selected is the panel's resting state, not an error, so it carries
+  // the two view settings rather than sitting empty. They used to live in the
+  // header, which is shared with every other tab -- but they only do anything
+  // on this one, and the header is the wrong place for a control that is inert
+  // five tabs out of six. Neither is part of the design, so neither is gated on
+  // the checkout.
   if (selected.length === 0) {
     return (
-      <p className="px-3 py-4 text-[var(--color-text-muted)]">
-        Nothing selected. Click a part in the list or in the model; shift or ctrl click to
-        select several.
-      </p>
+      <div>
+        <Section title="View">
+          <label className="flex items-center justify-between gap-3 py-1 text-xs text-[var(--color-text-secondary)]">
+            Part opacity
+            <input
+              type="range"
+              min={0.15}
+              max={1}
+              step={0.05}
+              value={opacity}
+              onChange={(event) => onOpacityChange(Number(event.target.value))}
+              className="w-32 accent-[var(--color-accent)]"
+            />
+          </label>
+          <label className="flex items-center justify-between gap-3 py-1 text-xs text-[var(--color-text-secondary)]">
+            Onshape CM marker
+            <input
+              type="checkbox"
+              checked={showAssemblyCentroid}
+              onChange={(event) => onShowAssemblyCentroidChange(event.target.checked)}
+              className="accent-[var(--color-accent)]"
+            />
+          </label>
+        </Section>
+        <p className="px-3 py-4 text-xs text-[var(--color-text-muted)]">
+          Nothing selected. Click a part in the list or in the model; shift or ctrl click to
+          select several.
+        </p>
+      </div>
     )
   }
 
