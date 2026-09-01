@@ -29,7 +29,7 @@ import * as api from '../api/documents';
 import type { DocMeta, DocRef, MicroVersion, ReleaseVersion } from '../api/documents';
 import { designApi, keyOf, refOf } from '../api/documents';
 import { btn, dangerBtn, ghostBtn, primaryBtn, relativeTime } from '../lib/ui';
-import { ChangeModal } from '@stardesign-ui';
+import { ChangeModal, CheckoutControl, useCheckout } from '@stardesign-ui';
 import { Modal } from './ui';
 
 // v2 because the remembered design is now (owner, id): a shared design is not
@@ -101,12 +101,15 @@ interface Props {
   /** Apply a config to the app's own state (the backend session is synced
    *  separately, before this is called). */
   onRestore: (config: EngineConfig) => void;
+  /** Told whether the design is currently checked out to this user. The app
+   *  puts its inputs behind this -- without the checkout it is read only. */
+  onEditableChange?: (editable: boolean) => void;
   /** Render just the bar row, no background or width container -- for dropping
    *  inside a parent (the header) that already provides both. */
   inline?: boolean;
 }
 
-export function DesignVersions({ onRestore, inline = false }: Props) {
+export function DesignVersions({ onRestore, onEditableChange, inline = false }: Props) {
   const [documents, setDocuments] = useState<DocMeta[]>([]);
   const [activeRef, setActiveRef] = useState<DocRef | null>(null);
   const activeKey = activeRef ? keyOf(activeRef) : null;
@@ -168,6 +171,19 @@ export function DesignVersions({ onRestore, inline = false }: Props) {
     },
     [apply],
   );
+
+  // Taking the checkout re-loads the design first: sitting in read-only while
+  // the holder saved leaves a stale view, and editing from there would
+  // overwrite their work on the first autosave.
+  const checkout = useCheckout({
+    api: designApi,
+    ref: activeRef,
+    reload: useCallback(async () => {
+      if (activeRef) await openDoc(activeRef);
+    }, [activeRef, openDoc]),
+  });
+
+  useEffect(() => { onEditableChange?.(checkout.held); }, [checkout.held, onEditableChange]);
 
   const select = useCallback(
     (ref: DocRef) => {
@@ -243,7 +259,9 @@ export function DesignVersions({ onRestore, inline = false }: Props) {
     const key = keyOf(activeRef);
     let stopped = false;
     const tick = async () => {
-      if (stopped || loadedKey.current !== key) return;
+      // No checkout, no autosave. The inputs are read-only in that state
+      // anyway; this is the belt to that pair of braces.
+      if (stopped || loadedKey.current !== key || !checkout.held) return;
       const config = await fetchConfig();
       if (!config) return;
       const serialized = JSON.stringify(config);
@@ -263,6 +281,13 @@ export function DesignVersions({ onRestore, inline = false }: Props) {
           void reloadAndFallBack();
           return;
         }
+        if (e instanceof api.ApiError && e.status === 423) {
+          // The checkout lapsed and somebody else took it. Drop to read-only
+          // rather than retry into a void -- we still have access, we are just
+          // not the editor any more.
+          checkout.lost();
+          return;
+        }
         /* otherwise keep the old lastSaved; retry next tick */
       }
     };
@@ -271,12 +296,13 @@ export function DesignVersions({ onRestore, inline = false }: Props) {
       stopped = true;
       clearInterval(id);
     };
-  }, [activeRef, active, reloadAndFallBack]);
+  }, [activeRef, active, reloadAndFallBack, checkout]);
 
   // Best-effort flush on tab close, between the throttled microversions.
   useEffect(() => {
     const flush = () => {
-      if (activeRef && loadedKey.current === keyOf(activeRef) && lastConfig.current) {
+      // A beacon cannot read a rejection, so gate it here instead.
+      if (activeRef && loadedKey.current === keyOf(activeRef) && lastConfig.current && checkout.held) {
         api.flushDocument(activeRef, lastConfig.current);
       }
     };
@@ -289,7 +315,7 @@ export function DesignVersions({ onRestore, inline = false }: Props) {
       window.removeEventListener('pagehide', flush);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [activeRef]);
+  }, [activeRef, checkout.held]);
 
   /** Adopt a freshly created/copied design: it becomes the active one, and the
    *  session already holds its config, so there is nothing to re-load. */
@@ -494,6 +520,8 @@ export function DesignVersions({ onRestore, inline = false }: Props) {
         >
           Change
         </button>
+
+        <CheckoutControl checkout={checkout} noun="design" disabled={!activeRef} />
 
         <div className="mx-1 h-4 w-px bg-[var(--color-border)]" />
 

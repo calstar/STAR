@@ -1,12 +1,15 @@
 import type { DiagramMeta, DocRef } from '../../api/diagrams';
 import { keyOf, refOf } from '../../api/diagrams';
 import { btn } from '../../lib/ui';
+import { CheckoutControl } from '@stardesign-ui';
+import type { Checkout } from '@stardesign-ui';
 
 interface DiagramBarProps {
   diagrams: DiagramMeta[];
   activeKey: string | null;
   onSelect: (ref: DocRef) => void;
   onOpenChange: () => void;
+  checkout: Checkout;
 }
 
 /** A thin strip above the toolbar: pick a diagram, or open the Change dialog to
@@ -15,7 +18,7 @@ interface DiagramBarProps {
  *  The list is the caller's own diagrams plus any shared with them; the Change
  *  dialog's second tab is everyone else's. Diagrams are never deleted -- see
  *  backend/routers/pid.py. */
-export function DiagramBar({ diagrams, activeKey, onSelect, onOpenChange }: DiagramBarProps) {
+export function DiagramBar({ diagrams, activeKey, onSelect, onOpenChange, checkout }: DiagramBarProps) {
   return (
     <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-primary)] px-4 py-1.5">
       <span className="shrink-0 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Diagram</span>
@@ -44,6 +47,8 @@ export function DiagramBar({ diagrams, activeKey, onSelect, onOpenChange }: Diag
         </svg>
         Change
       </button>
+
+      <CheckoutControl checkout={checkout} noun="diagram" disabled={!activeKey} />
     </div>
   );
 }

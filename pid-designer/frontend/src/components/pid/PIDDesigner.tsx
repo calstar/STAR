@@ -21,7 +21,7 @@ import '@xyflow/react/dist/style.css';
 import { ComponentPalette } from './ComponentPalette';
 import { PIDToolbar } from './PIDToolbar';
 import { DiagramBar } from './DiagramBar';
-import { ChangeModal } from '@stardesign-ui';
+import { ChangeModal, ReadOnlyProvider, useCheckout, useReadOnly } from '@stardesign-ui';
 import { Modal } from '../ui';
 import { primaryBtn } from '../../lib/ui';
 import * as api from '../../api/diagrams';
@@ -148,11 +148,13 @@ interface CanvasProps {
   mode:               InteractionMode;
   /** Autosave hit a 403: this diagram was unshared while it was open. */
   onForbidden:        () => void;
+  /** Autosave hit a 423: the checkout lapsed or was taken. */
+  onLockLost:         () => void;
 }
 
 function PIDCanvas({
   diagramRef, onInstance, getRef, loadRef, clearRef, undoRef, redoRef,
-  releaseRef, getHistoryRef, getReleasesRef, restoreMicroRef, restoreReleaseRef, onForbidden,
+  releaseRef, getHistoryRef, getReleasesRef, restoreMicroRef, restoreReleaseRef, onForbidden, onLockLost,
   mode,
 }: CanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -169,6 +171,11 @@ function PIDCanvas({
   snapshot.current = { nodes, edges };
 
   const diagramKey = keyOf(diagramRef);
+  // Without the checkout the canvas is inert. Every one of these defaults to
+  // true, so they have to be turned off explicitly -- and the node renderers
+  // read the same flag through context, because TextNode and DraggableLabel
+  // edit via useReactFlow().setNodes and never touch these props.
+  const readOnly = useReadOnly();
   // JSON of the last payload actually sent, so a change that survives neither
   // `toStored` nor a content comparison never reaches the server. Without it the
   // debounce fires on every ReactFlow state identity change -- including pure
@@ -197,7 +204,9 @@ function PIDCanvas({
   // Debounced autosave of the working copy — only once the active diagram has
   // actually loaded, so switching never clobbers a diagram with another's data.
   useEffect(() => {
-    if (loadedId.current !== diagramKey) return;
+    // No checkout, no autosave. The canvas is inert in that state anyway;
+    // this is the belt to that pair of braces.
+    if (loadedId.current !== diagramKey || readOnly) return;
     const serialized = JSON.stringify(api.toStored({ nodes, edges }));
     if (serialized === lastSaved.current) return;
     const t = setTimeout(() => {
@@ -208,6 +217,9 @@ function PIDCanvas({
         // Retrying is silent and pointless -- tell the parent so it can stop
         // and fall back to one of your own.
         if (e instanceof api.ApiError && e.status === 403) onForbidden();
+        // 423: the checkout lapsed and someone else took it. Drop to read-only
+        // rather than retry into a void.
+        else if (e instanceof api.ApiError && e.status === 423) onLockLost();
       });
     }, 1000);
     return () => clearTimeout(t);
@@ -217,7 +229,8 @@ function PIDCanvas({
   // between the periodic (server-throttled) microversions.
   useEffect(() => {
     const flush = () => {
-      if (loadedId.current !== diagramKey) return;
+      // A beacon cannot read a rejection, so gate it here instead.
+      if (loadedId.current !== diagramKey || readOnly) return;
       api.flushDiagram(diagramRef, snapshot.current);
     };
     const onVisibility = () => { if (document.visibilityState === 'hidden') flush(); };
@@ -231,6 +244,7 @@ function PIDCanvas({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (readOnly) return;
       if (e.key.toLowerCase() === 'r' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
         setNodes(nds => nds.map(n =>
           n.selected
@@ -284,6 +298,7 @@ function PIDCanvas({
   const edgeTypes = useMemo(() => ({ smoothstep: BranchableEdge, default: BranchableEdge }), []);
 
   const onConnect = useCallback((params: Connection) => {
+    if (readOnly) return;
     setEdges(eds => addEdge({
       ...params,
       type: 'smoothstep',
@@ -298,6 +313,7 @@ function PIDCanvas({
   };
 
   const onDrop = useCallback((e: React.DragEvent) => {
+    if (readOnly) return;
     e.preventDefault();
     const type = e.dataTransfer.getData('application/pid-type') as ComponentType;
     if (!type || !rfInst) return;
@@ -318,6 +334,7 @@ function PIDCanvas({
   }, [rfInst, setNodes]);
 
   const onEdgeContextMenu = useCallback((e: React.MouseEvent, edge: Edge) => {
+    if (readOnly) return;
     e.preventDefault();
     e.stopPropagation();
     setEdgeMenu({ id: edge.id, x: e.clientX, y: e.clientY });
@@ -345,12 +362,16 @@ function PIDCanvas({
         onEdgeContextMenu={onEdgeContextMenu}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        selectionOnDrag={mode === 'select'}
-        panOnDrag={mode !== 'select'}
+        nodesDraggable={!readOnly}
+        nodesConnectable={!readOnly}
+        elementsSelectable={!readOnly}
+        edgesReconnectable={!readOnly}
+        deleteKeyCode={readOnly ? null : 'Delete'}
+        selectionOnDrag={!readOnly && mode === 'select'}
+        panOnDrag={readOnly || mode !== 'select'}
         selectionMode={SelectionMode.Partial}
         connectionMode={ConnectionMode.Loose}
         multiSelectionKeyCode="Meta"
-        deleteKeyCode="Delete"
         snapToGrid
         snapGrid={[20, 20]}
         fitView
@@ -486,6 +507,17 @@ export function PIDDesigner() {
     adopt(await api.copyDiagram(ref));
   }, [adopt]);
 
+  // Taking the checkout re-loads the diagram first: sitting in read-only while
+  // the holder saved leaves a stale view, and editing from there would
+  // overwrite their work on the first autosave. The canvas remounts on
+  // `reloadKey`, which is the simplest way to make it re-fetch.
+  const [reloadKey, setReloadKey] = useState(0);
+  const checkout = useCheckout({
+    api: designApi,
+    ref: activeRef,
+    reload: useCallback(async () => { setReloadKey((n) => n + 1); }, []),
+  });
+
   const onForbidden = useCallback(() => {
     setUnshared(diagrams.find(d => keyOf(refOf(d)) === activeKey)?.name ?? 'This diagram');
     void reloadAndFallBack();
@@ -498,6 +530,7 @@ export function PIDDesigner() {
         activeKey={activeKey}
         onSelect={selectDiagram}
         onOpenChange={() => setShowChange(true)}
+        checkout={checkout}
       />
 
       {showChange && (
@@ -551,11 +584,12 @@ export function PIDDesigner() {
         <ComponentPalette />
         <ReactFlowProvider>
           {ready && activeRef ? (
+            <ReadOnlyProvider readOnly={!checkout.held}>
             <PIDCanvas
               // Remount on a diagram switch. Keyed on (owner, id), not id alone:
               // two people can own diagrams with the same id, so switching
               // between them would otherwise reuse one canvas's state.
-              key={activeKey}
+              key={`${activeKey}:${reloadKey}`}
               diagramRef={activeRef}
               onInstance={handleInstance}
               getRef={getRef}
@@ -570,7 +604,9 @@ export function PIDDesigner() {
               restoreReleaseRef={restoreReleaseRef}
               mode={mode}
               onForbidden={onForbidden}
+              onLockLost={checkout.lost}
             />
+            </ReadOnlyProvider>
           ) : (
             <div className="flex-1 flex items-center justify-center text-sm text-slate-600">
               {ready ? 'Create a diagram to begin.' : 'Loading…'}
