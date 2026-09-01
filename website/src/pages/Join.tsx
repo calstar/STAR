@@ -50,7 +50,6 @@ export default function Join() {
       <section className="section" style={{ paddingTop: 64 }}>
         <div className="container">
           <Reveal>
-            <span className="eyebrow">How it works</span>
             <h2 className="section-title">From zero to launch crew.</h2>
           </Reveal>
           <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', marginTop: 44 }}>
@@ -71,7 +70,6 @@ export default function Join() {
       <section className="section" style={{ paddingTop: 0 }}>
         <div className="container">
           <Reveal>
-            <span className="eyebrow">Find your subteam</span>
             <h2 className="section-title">Where do you want to build?</h2>
             <p className="section-lead">Every subteam, one vehicle. Pick the discipline that excites you most.</p>
           </Reveal>
@@ -97,7 +95,7 @@ export default function Join() {
       <section className="section" style={{ paddingTop: 0 }}>
         <div className="container">
           <Reveal>
-            <div style={{ textAlign: 'center', border: '1px solid var(--border-strong)', borderRadius: 24, padding: 'clamp(40px, 7vw, 80px)', background: 'radial-gradient(120% 140% at 50% 0%, rgba(255,182,72,0.12), transparent 60%)' }}>
+            <div style={{ textAlign: 'center', border: '1px solid var(--border-strong)', borderRadius: 6, padding: 'clamp(40px, 7vw, 80px)', background: 'radial-gradient(120% 140% at 50% 0%, rgba(255,182,72,0.12), transparent 60%)' }}>
               <h2 style={{ fontSize: 'clamp(28px, 5vw, 48px)' }}>Ready to reach space?</h2>
               <p style={{ color: 'var(--text-dim)', fontSize: 18, margin: '16px auto 0', maxWidth: '46ch' }}>
                 Applications open every semester. Come build the next record-breaking vehicle with us.

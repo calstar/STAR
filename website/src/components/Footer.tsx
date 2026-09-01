@@ -18,7 +18,7 @@ export default function Footer() {
           style={{
             display: 'flex', flexWrap: 'wrap', gap: 28, alignItems: 'center',
             justifyContent: 'space-between',
-            border: '1px solid var(--border-strong)', borderRadius: 22,
+            border: '1px solid var(--border-strong)', borderRadius: 6,
             padding: '40px clamp(24px, 5vw, 52px)',
             background: 'linear-gradient(120deg, rgba(255,182,72,0.10), rgba(91,140,255,0.08))',
           }}

@@ -11,7 +11,7 @@ export default function Projects() {
       <PageHeader
         eyebrow="Launch History"
         title={<>Ten years, <span className="ink-gradient">eighteen vehicles.</span></>}
-        lead="From our first high-powered flight in 2016 to our liquid-fuel engines today, every vehicle student-designed, built, and flown."
+        lead="From our first high-powered flight in 2016 to our liquid-fuel engines today. Every vehicle student-designed, built, and flown."
       />
 
       {/* ── Currently building ───────────────────────────────────────────── */}
@@ -58,7 +58,6 @@ export default function Projects() {
       <section className="section" style={{ paddingTop: 0 }}>
         <div className="container">
           <Reveal>
-            <span className="eyebrow">The archive</span>
             <h2 className="section-title">Every project, chronologically.</h2>
           </Reveal>
 
