@@ -1,0 +1,136 @@
+name: STARProject CI
+
+'on':
+  push:
+    paths:
+      - 'starproject/**'
+      - '.github/workflows/starproject-ci.yml'
+  pull_request:
+    paths:
+      - 'starproject/**'
+      - '.github/workflows/starproject-ci.yml'
+  workflow_dispatch:
+
+# Newer pushes to the same ref supersede in-progress runs.
+concurrency:
+  group: starproject-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (ESLint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: starproject/package-lock.json
+      - name: Install dependencies
+        working-directory: starproject
+        run: npm ci
+      - name: Prisma generate
+        working-directory: starproject
+        run: npx prisma generate
+      - name: Lint
+        working-directory: starproject
+        run: npm run lint
+
+  typecheck:
+    name: Typecheck (tsc)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: starproject/package-lock.json
+      - name: Install dependencies
+        working-directory: starproject
+        run: npm ci
+      - name: Prisma generate
+        working-directory: starproject
+        run: npx prisma generate
+      - name: Typecheck
+        working-directory: starproject
+        run: npm run typecheck
+
+  test:
+    name: Unit tests (Vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: starproject/package-lock.json
+      - name: Install dependencies
+        working-directory: starproject
+        run: npm ci
+      - name: Test
+        working-directory: starproject
+        run: npm test
+
+  build:
+    name: Build (Next.js + Prisma)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: starproject/package-lock.json
+      - name: Install dependencies
+        working-directory: starproject
+        run: npm ci
+      # `next build` is force-dynamic on every page, so no database is needed.
+      - name: Build
+        working-directory: starproject
+        run: npm run build
+
+  migrations:
+    name: Migrations apply (Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: starproject
+          POSTGRES_PASSWORD: starproject
+          POSTGRES_DB: starproject
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U starproject"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://starproject:starproject@localhost:5432/starproject?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: starproject/package-lock.json
+      - name: Install dependencies
+        working-directory: starproject
+        run: npm ci
+      # Schema is valid and every committed migration applies cleanly to an
+      # empty database.
+      - name: Validate schema
+        working-directory: starproject
+        run: npx prisma validate
+      - name: Apply migrations
+        working-directory: starproject
+        run: npx prisma migrate deploy

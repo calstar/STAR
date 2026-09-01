@@ -94,7 +94,7 @@ export function StabilityRadar({ data }: { data: StabilityRichPayload }) {
             <span style={{ color: weakest.value >= THRESHOLD ? STABLE : '#f59e0b' }}>
               {weakInfo.label} ({weakest.value.toFixed(2)})
             </span>
-            <span className="text-[var(--color-text-secondary)]"> — open the “{weakInfo.card}” card to improve it.</span>
+            <span className="text-[var(--color-text-secondary)]"> - open the “{weakInfo.card}” card to improve it.</span>
           </p>
         )}
         <p className="text-[10px] opacity-80 leading-snug text-[var(--color-text-secondary)]">

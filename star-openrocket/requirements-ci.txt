@@ -3,3 +3,5 @@
 -r requirements.txt
 pytest>=7.0
 pytest-timeout>=2.0
+
+# lib/stardesign is installed by the workflow, for the reason above.

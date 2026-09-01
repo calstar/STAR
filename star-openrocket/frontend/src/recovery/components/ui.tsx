@@ -3,8 +3,12 @@
  * so the two tabs cannot drift into two different-looking applications.
  */
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
+
+// The dialog shell is shared with the other design tools.
+export { Modal } from '@stardesign-ui'
+import { useDisabled, useReadOnly } from '@stardesign-ui'
 import type { Kind } from '../../lib/units/quantities'
 import { useUnits } from '../../lib/units/unitsContext'
 
@@ -97,7 +101,14 @@ export function Field({ label, hint, unit, kind, children, wide = false }: {
 const inputClass =
   'w-full rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] '
   + 'px-2 py-1.5 text-sm text-[var(--color-text-primary)] outline-none '
-  + 'focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)]'
+  + 'focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)] '
+  // Read-only styling lives here rather than at each call site, so a text box
+  // and a dropdown look the same when disabled. A <select> gets almost no
+  // disabled styling from the browser, which made a read-only dropdown
+  // indistinguishable from an editable one.
+  + 'disabled:cursor-not-allowed disabled:border-[var(--color-border)] '
+  + 'disabled:bg-[var(--color-bg-secondary)] disabled:text-[var(--color-text-muted)] '
+  + 'disabled:opacity-60'
 
 /**
  * `display` is the bounded, readable form of `value` -- see `UnitInput`. It is
@@ -114,7 +125,7 @@ const inputClass =
  * it wrote back, `physicsKey(ui)` would move and the simulation would re-run
  * for a number that did not change.
  */
-export function NumberInput({ value, display, onChange, step = 'any', min, max, placeholder, disabled }: {
+export function NumberInput({ value, display, onChange, step = 'any', min, max, placeholder, disabled: ownDisabled }: {
   value: number | null
   display?: string
   onChange: (v: number | null) => void
@@ -124,12 +135,13 @@ export function NumberInput({ value, display, onChange, step = 'any', min, max, 
   placeholder?: string
   disabled?: boolean
 }) {
+  const disabled = useDisabled(ownDisabled)
   const [editing, setEditing] = useState(false)
   const shown = display !== undefined && !editing ? display : (value ?? '')
   return (
     <input
       type="number"
-      className={`${inputClass} font-num ${disabled ? 'opacity-50' : ''}`}
+      className={`${inputClass} font-num`}
       value={shown}
       step={step}
       min={min}
@@ -169,7 +181,7 @@ export function NumberInput({ value, display, onChange, step = 'any', min, max, 
  * DISPLAY units: `step={0.25}` for inches would silently become a quarter of a
  * metre the moment someone picked metric.
  */
-export function UnitInput({ value, onChange, kind, step, min, disabled, placeholder }: {
+export function UnitInput({ value, onChange, kind, step, min, disabled: ownDisabled, placeholder }: {
   value: number | null
   onChange: (v: number | null) => void
   kind: Kind
@@ -179,6 +191,7 @@ export function UnitInput({ value, onChange, kind, step, min, disabled, placehol
   disabled?: boolean
   placeholder?: string
 }) {
+  const disabled = useDisabled(ownDisabled)
   const { u, val, si, forInput } = useUnits()
   return (
     <NumberInput
@@ -197,31 +210,37 @@ export function UnitInput({ value, onChange, kind, step, min, disabled, placehol
   )
 }
 
-export function TextInput({ value, onChange, placeholder }: {
+export function TextInput({ value, onChange, placeholder, disabled: ownDisabled }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
+  disabled?: boolean
 }) {
+  const disabled = useDisabled(ownDisabled)
   return (
     <input
       type="text"
       className={inputClass}
       value={value}
       placeholder={placeholder}
+      disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
     />
   )
 }
 
-export function Select<T extends string>({ value, onChange, options }: {
+export function Select<T extends string>({ value, onChange, options, disabled: ownDisabled }: {
   value: T
   onChange: (v: T) => void
   options: { value: T; label: string }[]
+  disabled?: boolean
 }) {
+  const disabled = useDisabled(ownDisabled)
   return (
     <select
       className={inputClass}
       value={value}
+      disabled={disabled}
       onChange={(e) => onChange(e.target.value as T)}
     >
       {options.map((o) => (
@@ -233,7 +252,7 @@ export function Select<T extends string>({ value, onChange, options }: {
 
 /** A toggle chip. Used for the per-station series pickers, where the colour
  *  swatch has to match the line it controls or the legend is a lie. */
-export function Chip({ active, onClick, colour, children, title, disabled }: {
+export function Chip({ active, onClick, colour, children, title, disabled: ownDisabled }: {
   active: boolean
   onClick: () => void
   colour?: string
@@ -241,6 +260,7 @@ export function Chip({ active, onClick, colour, children, title, disabled }: {
   title?: string
   disabled?: boolean
 }) {
+  const disabled = useDisabled(ownDisabled)
   return (
     <button
       type="button"
@@ -264,16 +284,19 @@ export function Chip({ active, onClick, colour, children, title, disabled }: {
   )
 }
 
-export function Toggle({ checked, onChange, label }: {
+export function Toggle({ checked, onChange, label, disabled: ownDisabled }: {
   checked: boolean
   onChange: (v: boolean) => void
   label: ReactNode
+  disabled?: boolean
 }) {
+  const disabled = useDisabled(ownDisabled)
   return (
-    <label className="flex cursor-pointer items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+    <label className={`flex items-center gap-2 text-xs text-[var(--color-text-secondary)] ${disabled ? 'cursor-default opacity-50' : 'cursor-pointer'}`}>
       <input
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
         className="h-3.5 w-3.5 accent-[var(--color-accent)]"
       />
@@ -384,13 +407,23 @@ export function Band({ low, high, value, unit = '' }: {
   )
 }
 
-export function Button({ onClick, children, variant = 'secondary', disabled, title }: {
+export function Button({ onClick, children, variant = 'secondary', disabled: ownDisabled, title, action = false }: {
   onClick: () => void
   children: ReactNode
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger'
   disabled?: boolean
   title?: string
+  /**
+   * True for a button that does not change the design -- Run, Export, a view
+   * toggle. Those stay live when the design is read-only.
+   *
+   * The default is the safe one: a button mutates until it says otherwise, so a
+   * new one added later cannot quietly stay clickable without a checkout.
+   */
+  action?: boolean
 }) {
+  const readOnly = useReadOnly()
+  const disabled = ownDisabled || (!action && readOnly)
   const styles = {
     primary: 'bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] border-transparent',
     secondary: 'border-[var(--color-border)] text-[var(--color-text-primary)] hover:border-[var(--color-text-muted)]',
@@ -415,43 +448,6 @@ export function Button({ onClick, children, variant = 'secondary', disabled, tit
  * -- prompts, confirmations, the design history -- so the app never falls back
  * to a browser `alert`/`confirm`/`prompt`, which cannot be themed and land in
  * the wrong place. Click the backdrop or press Escape to dismiss.
- */
-export function Modal({ open, onClose, title, children, footer, width = 'w-[440px]' }: {
-  open: boolean
-  onClose: () => void
-  title: ReactNode
-  children?: ReactNode
-  footer?: ReactNode
-  width?: string
-}) {
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
-  if (!open) return null
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className={`${width} max-w-[90vw] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 shadow-2xl`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{title}</h3>
-        {children && <div className="mt-4">{children}</div>}
-        {footer && <div className="mt-5 flex justify-end gap-2">{footer}</div>}
-      </div>
-    </div>
-  )
-}
-
-/**
- * A hoverable ⓘ. The rationale behind a control -- which failure it prevents,
- * which plan section demanded it -- is worth keeping, but not worth a
- * paragraph of body text next to every field. It lives in here instead.
  */
 export function Info({ children }: { children: string }) {
   return (

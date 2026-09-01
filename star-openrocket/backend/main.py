@@ -106,9 +106,11 @@ app.add_middleware(
 
 # Versioned designs: per-user documents with autosaved working copy, microversion
 # history and immutable releases (local files in dev; S3 when the bucket env is set).
-from .routers import documents  # noqa: E402
+from .routers import documents, users  # noqa: E402
 
 app.include_router(documents.router)
+# Who a design can be shared with (GET /api/users): the share picker's options.
+app.include_router(users.router)
 
 # Recovery calculator routers, merged in from the standalone recovery-calculator
 # app: descent/loads (simulate), design sweep (study), cross-check, device

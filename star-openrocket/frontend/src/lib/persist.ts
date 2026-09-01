@@ -60,7 +60,7 @@ export function reviveViewerConfig(raw: string | null): ViewerConfig | null {
 import type { OrkConfig } from '../types/config'
 import { defaultOrkConfig } from '../types/config'
 import { reviveUiConfig } from '../recovery/lib/persist'
-import { defaultUiConfig } from '../recovery/lib/serialise'
+import { defaultUiConfig, toStoredConfig } from '../recovery/lib/serialise'
 
 export function reviveOrkConfig(raw: string | null): OrkConfig | null {
   if (!raw) return null
@@ -74,6 +74,18 @@ export function reviveOrkConfig(raw: string | null): OrkConfig | null {
   const cad = reviveViewerConfig(saved.cad ? JSON.stringify(saved.cad) : null) ?? defaultViewerConfig()
   const recovery = reviveUiConfig(saved.recovery ? JSON.stringify(saved.recovery) : null) ?? defaultUiConfig()
   return { version: 1, cad, recovery }
+}
+
+/**
+ * The design as it is *stored*: view state stripped out of the recovery slice.
+ *
+ * `config` gets a new identity on any UI change, including ones that carry no
+ * design change at all -- collapsing a device card is the obvious one. The
+ * server store compares against this form, so those never reach it, which
+ * matters more now that a save is what holds a checkout open.
+ */
+export function toStoredOrkConfig(config: OrkConfig): OrkConfig {
+  return { ...config, recovery: toStoredConfig(config.recovery) }
 }
 
 /** The stored unified design, or the default. Never throws. */

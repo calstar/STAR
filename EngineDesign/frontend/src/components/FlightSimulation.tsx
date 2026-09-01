@@ -815,7 +815,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
                 )}
                 {timeSeriesTimestamp != null && (
                   <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                    Updated {new Date(timeSeriesTimestamp).toLocaleTimeString()} — re-run time-series after changing burn profile
+                    Updated {new Date(timeSeriesTimestamp).toLocaleTimeString()} - re-run time-series after changing burn profile
                   </p>
                 )}
               </div>
@@ -880,7 +880,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
               unit="m"
               min={100}
               step={10}
-              help={`${(parseFloat(targetApogeeM || '0') * 3.28084).toFixed(0)} ft — from design requirements by default`}
+              help={`${(parseFloat(targetApogeeM || '0') * 3.28084).toFixed(0)} ft - from design requirements by default`}
             />
             <InputField
               label="Apogee tolerance"
@@ -922,7 +922,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
             disabled={flightMode === 'optimize'}
             help={
               flightMode === 'optimize'
-                ? 'Minimized by optimizer — shortest burn that hits target apogee'
+                ? 'Minimized by optimizer - shortest burn that hits target apogee'
                 : timeSeriesSummary?.fuel_propellant_kg != null
                   ? `Full burn needs ~${timeSeriesSummary.fuel_propellant_kg.toFixed(2)} kg (∫mdot dt)`
                   : 'Propellant only (not tank structure)'
@@ -1021,7 +1021,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
                 onChange={(e) => setAtmosphereModel(e.target.value as 'standard_atmosphere' | 'forecast')}
                 className="w-full px-2 py-2 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] text-sm"
               >
-                <option value="standard_atmosphere">Standard atmosphere (ISA — offline, deterministic)</option>
+                <option value="standard_atmosphere">Standard atmosphere (ISA - offline, deterministic)</option>
                 <option value="forecast">Live GFS forecast (needs internet & a near date)</option>
               </select>
               {atmosphereModel === 'forecast' && (
@@ -1453,7 +1453,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
               {results.propellant.target_apogee_m != null && (
                 <p className="text-xs text-[var(--color-text-muted)]">
                   Design target apogee: {results.propellant.target_apogee_m.toFixed(0)} m (
-                  {(results.propellant.target_apogee_m * 3.28084).toFixed(0)} ft) — actual{' '}
+                  {(results.propellant.target_apogee_m * 3.28084).toFixed(0)} ft) - actual{' '}
                   {results.apogee_m.toFixed(0)} m ({results.apogee_ft.toFixed(0)} ft)
                 </p>
               )}
@@ -1464,7 +1464,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
               )}
               {results.propellant.regime === 'excess_propellant' && (
                 <p className="text-xs text-orange-400">
-                  Loaded propellant exceeds burn requirement — trim toward required values to reduce dead weight.
+                  Loaded propellant exceeds burn requirement - trim toward required values to reduce dead weight.
                 </p>
               )}
               {results.propellant.warnings.length > 0 && (

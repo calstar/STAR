@@ -12,6 +12,7 @@ import { OptimizerDemo } from './components/OptimizerDemo';
 import ConfigurationSelector from './components/ConfigurationSelector';
 import { emitConfigChanged } from './lib/configBus';
 import { DesignVersions } from './components/DesignVersions';
+import { ReadOnlyProvider } from '@stardesign-ui';
 import { getConfig, getHealth } from './api/client';
 import type { EngineConfig } from './api/client';
 
@@ -28,6 +29,10 @@ type Tab =
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('forward');
   const [config, setConfig] = useState<EngineConfig | null>(null);
+  // A design is editable only while it is checked out to you. The editor reads
+  // this through ReadOnlyProvider, so a new input cannot accidentally stay live
+  // when someone else holds the design.
+  const [editable, setEditable] = useState(false);
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
 
   // Keep all tab panels mounted; hide inactive ones to preserve state
@@ -98,6 +103,7 @@ function App() {
           <div className="border-t border-[var(--color-border)]">
             <DesignVersions
               onRestore={(c) => { setConfig(c); emitConfigChanged(c); }}
+              onEditableChange={setEditable}
               inline
             />
           </div>
@@ -191,6 +197,9 @@ function App() {
 
       {/* Main content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {/* Inputs go grey without the checkout. Running an optimisation or a
+            simulation stays live -- those read the config, they do not change it. */}
+        <ReadOnlyProvider readOnly={!editable}>
         {!isConnected && isConnected !== null && (
           <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400">
             <div className="flex items-center gap-3">
@@ -320,13 +329,14 @@ function App() {
             </div>
           </div>
         </div>
+        </ReadOnlyProvider>
       </main>
 
       {/* Footer */}
       <footer className="border-t border-[var(--color-border)] mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <p className="text-sm text-[var(--color-text-secondary)] text-center">
-            Pintle Engine Design Pipeline — FastAPI + React
+            Pintle Engine Design Pipeline - FastAPI + React
           </p>
         </div>
       </footer>

@@ -56,6 +56,18 @@ if [ ! -x "$SCRIPT_DIR/.venv/bin/uvicorn" ]; then
   echo "Installing backend dependencies..."
   "$PYTHON_CMD" -m pip install --upgrade pip >/dev/null
   "$PYTHON_CMD" -m pip install -r requirements.txt
+  # The design core shared with the other design tools. Not in requirements.txt:
+  # the path that reaches it differs between a checkout and a Docker build
+  # context (see Dockerfile.api).
+  "$PYTHON_CMD" -m pip install -e ../lib/stardesign
+fi
+
+# Installed above, but an existing venv from before the shared package landed
+# would not have it. Cheap to check, and the failure otherwise is an import
+# error at startup that uvicorn swallows.
+if ! "$PYTHON_CMD" -c 'import stardesign' 2>/dev/null; then
+  echo "Installing the shared design core (lib/stardesign)..."
+  "$PYTHON_CMD" -m pip install -e ../lib/stardesign
 fi
 
 if [ ! -d "frontend/node_modules" ]; then
@@ -80,7 +92,12 @@ if command -v lsof >/dev/null 2>&1; then
 fi
 
 echo "Starting backend on http://localhost:8002"
-"$PYTHON_CMD" -m uvicorn backend.main:app --reload --port 8002 &
+# --reload-dir for the shared design core too: it is pip-installed from
+# ../lib/stardesign, so uvicorn does not watch it by default and edits there
+# would silently not take effect until a manual restart.
+"$PYTHON_CMD" -m uvicorn backend.main:app --reload \
+  --reload-dir . --reload-dir ../lib/stardesign \
+  --port 8002 &
 BACKEND_PID=$!
 
 echo "Starting frontend on http://localhost:5175"

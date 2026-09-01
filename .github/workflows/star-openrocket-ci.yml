@@ -6,10 +6,17 @@ name: STAR OpenRocket CI
   push:
     paths:
       - 'star-openrocket/**'
+      # The shared design core and its UI: the core's permission check is what
+      # stops one user editing another's designs, so a change to either has to
+      # run these tests.
+      - 'lib/stardesign/**'
+      - 'lib/stardesign-ui/**'
       - '.github/workflows/star-openrocket-ci.yml'
   pull_request:
     paths:
       - 'star-openrocket/**'
+      - 'lib/stardesign/**'
+      - 'lib/stardesign-ui/**'
       - '.github/workflows/star-openrocket-ci.yml'
   workflow_dispatch:
 
@@ -58,7 +65,11 @@ jobs:
         cache-dependency-path: star-openrocket/requirements-ci.txt
 
     - name: Install dependencies (CI subset)
-      run: pip install -r requirements-ci.txt
+      run: |
+        pip install -r requirements-ci.txt
+        # The design core shared across the design tools. Installed from a
+        # path, not published -- it is versioned with the repo.
+        pip install -e ../lib/stardesign
 
     # --timeout guards against a test that somehow gets past the socket block
     # and then hangs on a real connection. thread method so a stuck C-level
@@ -88,7 +99,11 @@ jobs:
         cache-dependency-path: star-openrocket/requirements-ci.txt
 
     - name: Install dependencies (CI subset)
-      run: pip install -r requirements-ci.txt
+      run: |
+        pip install -r requirements-ci.txt
+        # The design core shared across the design tools. Installed from a
+        # path, not published -- it is versioned with the repo.
+        pip install -e ../lib/stardesign
 
     # A request with no credentials must fail loudly. If this ever passes, the
     # keys have acquired a default somewhere and CI could start billing us.
@@ -144,7 +159,11 @@ jobs:
         cache-dependency-path: star-openrocket/requirements-ci.txt
 
     - name: Install dependencies
-      run: pip install -r requirements-ci.txt
+      run: |
+        pip install -r requirements-ci.txt
+        # The design core shared across the design tools. Installed from a
+        # path, not published -- it is versioned with the repo.
+        pip install -e ../lib/stardesign
 
     - name: Import backend app
       run: python -c "from backend.main import app; print('backend.main imports OK')"

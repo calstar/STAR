@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   cornersKey, defaultUiConfig, physicsKey, studyKey, toWireConfig,
+  toStoredConfig,
 } from './serialise'
 import type { UiConfig } from '../types/schema'
 
@@ -102,5 +103,46 @@ describe('what each tab re-runs on', () => {
       expect(parsed).toHaveProperty('sweep')
       expect(parsed).toHaveProperty('study')
     }
+  })
+})
+
+describe('toStoredConfig', () => {
+  it('drops view state, so collapsing a card is not an edit', () => {
+    // The same property the physics keys have, now for the *saved document*:
+    // tidying the panel must not mark the design dirty. Once checkouts land, a
+    // save is what holds a checkout open, so this decides whether idly reading
+    // a config keeps it locked.
+    const before = base()
+    const after = {
+      ...before,
+      devices: before.devices.map((d) => ({ ...d, collapsed: !d.collapsed })),
+    }
+    expect(JSON.stringify(toStoredConfig(after))).toBe(JSON.stringify(toStoredConfig(before)))
+  })
+
+  it('drops uids, which are regenerated on every load', () => {
+    // reviveUiConfig renumbers devices on load, so keeping uids meant simply
+    // opening a design produced a payload that differed from the stored one.
+    const before = base()
+    const after = {
+      ...before,
+      devices: before.devices.map((d, i) => ({ ...d, uid: `renumbered-${i}` })),
+    }
+    expect(JSON.stringify(toStoredConfig(after))).toBe(JSON.stringify(toStoredConfig(before)))
+  })
+
+  it('still notices a real edit', () => {
+    const before = base()
+    const after = { ...before, vehicle: { ...before.vehicle, m: 6.0 } }
+    expect(JSON.stringify(toStoredConfig(after))).not.toBe(JSON.stringify(toStoredConfig(before)))
+  })
+
+  it('keeps design data that toWireConfig drops', () => {
+    // The reason this is a third representation and not just toWireConfig:
+    // sweep bounds and study axes are real design data the solver has no use
+    // for, so storing the wire form would quietly lose them.
+    const stored = toStoredConfig(base())
+    expect(stored.sweep).toEqual(base().sweep)
+    expect(stored.study).toEqual(base().study)
   })
 })

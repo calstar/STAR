@@ -1,11 +1,24 @@
 @import "tailwindcss";
 
+/* Tailwind v4 only scans files it can reach from this project's root, and the
+   shared design-tool components live outside it. Without this they compile and
+   type-check but render unstyled -- silently, with no build error. */
+@source "../../../lib/stardesign-ui/src";
+
 :root {
   --color-bg-primary: #0a0f1a;
   --color-bg-secondary: #0f172a;
+  /* Hover lift for controls. Added with the shared button/modal styles: the
+     diagram bar used to hardcode #1e293b / #334155, which meant pid-designer
+     silently drifted from the palette the other design tools share. */
+  --color-bg-tertiary: #1e293b;
+  --color-accent: #3b82f6;
+  --color-accent-hover: #2563eb;
   --color-border: #1e293b;
   --color-text-primary: #f1f5f9;
   --color-text-secondary: #94a3b8;
+  /* Matched to recovery-calculator, which picked it for contrast (7.8:1). */
+  --color-text-muted: #9fb0c4;
 }
 
 * {

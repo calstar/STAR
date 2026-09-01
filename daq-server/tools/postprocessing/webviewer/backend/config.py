@@ -20,9 +20,12 @@ CACHE_DIR = Path(
     )
 ).expanduser()
 
-# Only timestamped runs are considered (daq_YYYYMMDD_HHMMSS). Older ad-hoc DBs
-# (daq_live, calibration, hand-named dirs) are intentionally ignored.
-RUN_RE = re.compile(r"^daq_(\d{8})_(\d{6})$")
+# Only timestamped runs are considered: daq_YYYYMMDD_HHMMSS, and the simulated
+# variant daq_sim_YYYYMMDD_HHMMSS that session-manager writes for a sim session.
+# Older ad-hoc DBs (daq_live, calibration, hand-named dirs) stay ignored — the
+# `sim_` group is what tells the UI to label a run as synthetic, so widening the
+# pattern does not blur the real/simulated distinction the prefix exists for.
+RUN_RE = re.compile(r"^daq_(?P<sim>sim_)?(?P<date>\d{8})_(?P<time>\d{6})$")
 
 # Cap the throughput of CSV downloads (bytes/sec) so a big whole-run export can't
 # saturate the host's uplink and starve other services on the box. A long run's

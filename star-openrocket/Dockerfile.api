@@ -1,7 +1,9 @@
 # STAR OpenRocket — API image.
 #
-# Build context is the subproject dir: the backend implements no auth (Caddy is
-# the gate, see deploy/Caddyfile), so it needs nothing from the repo root.
+# Build context is the REPO ROOT: the backend is built on lib/stardesign, the
+# design core shared with EngineDesign, pid-designer and the recovery
+# calculator. (It still implements no auth -- Caddy is the gate, see
+# deploy/Caddyfile.) The .dockerignore keeps the context from ballooning.
 #
 # Security posture (see backend/main.py): this process brokers Onshape API calls
 # with a key pair from the environment. Anyone who can reach it can spend that
@@ -17,16 +19,21 @@ ENV PIP_RETRIES=10 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_INPUT=1
 
-COPY requirements.txt .
+COPY star-openrocket/requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 
-COPY backend/ ./backend/
+# The shared design core: per-user storage, sharing, and version history. Copied
+# before the app so a change to the app alone reuses this layer.
+COPY lib/stardesign/ /stardesign/
+RUN --mount=type=cache,target=/root/.cache/pip pip install /stardesign
+
+COPY star-openrocket/backend/ ./backend/
 
 # physics/ is the recovery calculator's pure library (imported as a top-level
 # package by backend/recovery/*). site-climatology/ is an optional data source
 # for the /api/climatology route (it falls back to the bundled frontend copy).
-COPY physics/ ./physics/
-COPY site-climatology/ ./site-climatology/
+COPY star-openrocket/physics/ ./physics/
+COPY star-openrocket/site-climatology/ ./site-climatology/
 
 # Built-model cache (browse.json + per-model manifest/glb). Mounted as a named
 # volume in compose so expensive Onshape builds survive a rebuild. CACHE_ROOT in

@@ -84,7 +84,7 @@ export function PhaseClock({ data }: { data: StabilityRichPayload }) {
       {/* one-line verdict that reconciles phase with the actual growth rate */}
       <p className="text-xs mt-1" style={{ color: drivenCount > 0 ? UNSTABLE : STABLE }}>
         {drivingCount === 0
-          ? 'All modes sit in the damping half — none timed to feed energy.'
+          ? 'All modes sit in the damping half - none timed to feed energy.'
           : `${drivingCount} mode${drivingCount > 1 ? 's' : ''} in the driving half, but ${
               drivenCount === 0 ? 'damping wins everywhere (every α < 0)' : `${drivenCount} actually grow${drivenCount > 1 ? '' : 's'} (α > 0)`
             }.`}
@@ -144,7 +144,7 @@ export function PhaseClock({ data }: { data: StabilityRichPayload }) {
             <span className="font-mono">
               {Math.min(nLo, nHi).toFixed(0)}…{Math.max(nLo, nHi).toFixed(0)}
             </span>{' '}
-            1/s as n sweeps 0.3→0.6 — lower χ (finer atomization) and lower n rotate needles toward
+            1/s as n sweeps 0.3→0.6 - lower χ (finer atomization) and lower n rotate needles toward
             the damping half.
           </p>
         )}
@@ -152,7 +152,7 @@ export function PhaseClock({ data }: { data: StabilityRichPayload }) {
           Rayleigh criterion: when heat release q′ lands in phase with the pressure wave p′
           (sin ωτ &gt; 0, bottom half) it pumps the mode; worst at ωτ ≈ π/2. This is the same
           n·sin(ωτ) term the damping budget uses, so the “phase” column here matches the sign of its
-          red driving bar. A mode can sit in the driving half yet still show α &lt; 0 — that just
+          red driving bar. A mode can sit in the driving half yet still show α &lt; 0 - that just
           means nozzle/viscous/two-phase damping outweighs the driving, not a disagreement.
         </p>
       </div>

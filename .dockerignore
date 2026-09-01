@@ -1,7 +1,9 @@
-# Applies to builds that use the repo root as their context -- currently the two
-# FastAPI images, which need auth/shared_auth.py alongside their own sources.
-# Without this the context would include every sibling project and their
-# node_modules, which is slow and bloats the layer cache.
+# Applies to builds that use the repo root as their context -- now every
+# design-tool API and frontend image, which are built on lib/stardesign and
+# lib/stardesign-ui (the shared design core and its UI) alongside their own
+# sources. Without this the context would include
+# every sibling project and their node_modules, which is slow and bloats the
+# layer cache.
 
 .git
 .github
@@ -11,9 +13,24 @@
 daq-server
 firmware
 landing
-lib
 docs
 scripts/setup-test
+
+# lib/ is excluded wholesale EXCEPT the two shared cores every design-tool
+# image builds on -- the Python one the APIs install, and the TypeScript one the
+# frontends compile. The negations must come after the exclusion.
+lib
+!lib/stardesign
+!lib/stardesign-ui
+
+# star-openrocket and pid-designer now build from the repo root too, so their
+# sources have to reach the context -- but only their own image copies them, and
+# each Dockerfile copies just the subtrees it needs.
+
+# star-openrocket's built-model cache: gitignored, and up to hundreds of MB on a
+# machine that has run a build. The image mounts it as a volume instead.
+star-openrocket/cache
+**/.userdata
 
 # Dependencies and build output
 **/node_modules

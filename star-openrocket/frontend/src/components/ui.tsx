@@ -1,27 +1,43 @@
 /**
- * Small shared UI primitives (Button, Modal), slate-palette to match the viewer.
+ * Small shared UI primitives, slate-palette to match the viewer.
  *
- * Mirrors the recovery calculator's ui.tsx API so shared components (the design
- * bar) drop in unchanged; only the styling differs (Tailwind slate + cyan accent
- * here, CSS custom properties there).
+ * The modal shell is the design tools' shared one (`@stardesign-ui`) rather
+ * than a fourth copy of the same dialog; it is themed by the same
+ * `--color-*` custom properties index.css already defines. `Button` stays
+ * local because its palette is this app's, but it consults the same read-only
+ * context as the other tools' buttons do.
  */
 
-import { useEffect } from 'react'
 import type { ReactNode } from 'react'
+
+// The dialog shell is shared with the other design tools.
+export { Modal } from '@stardesign-ui'
+import { useReadOnly } from '@stardesign-ui'
 
 export function Button({
   onClick,
   children,
   variant = 'secondary',
-  disabled,
+  disabled: ownDisabled,
   title,
+  action = false,
 }: {
   onClick: () => void
   children: ReactNode
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger'
   disabled?: boolean
   title?: string
+  /**
+   * True for a button that does not change the design -- Run, Export, a view
+   * toggle. Those stay live when the design is read-only.
+   *
+   * The default is the safe one: a button mutates until it says otherwise, so a
+   * new one added later cannot quietly stay clickable without a checkout.
+   */
+  action?: boolean
 }) {
+  const readOnly = useReadOnly()
+  const disabled = ownDisabled || (!action && readOnly)
   const styles = {
     primary: 'bg-cyan-600 text-white hover:bg-cyan-500 border-transparent',
     secondary: 'border-slate-600 text-slate-100 hover:border-slate-400',
@@ -38,47 +54,5 @@ export function Button({
     >
       {children}
     </button>
-  )
-}
-
-/** A centred, app-styled modal. Click the backdrop or press Escape to dismiss. */
-export function Modal({
-  open,
-  onClose,
-  title,
-  children,
-  footer,
-  width = 'w-[440px]',
-}: {
-  open: boolean
-  onClose: () => void
-  title: ReactNode
-  children?: ReactNode
-  footer?: ReactNode
-  width?: string
-}) {
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
-  if (!open) return null
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className={`${width} max-w-[90vw] rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-sm font-semibold text-slate-100">{title}</h3>
-        {children && <div className="mt-4 text-slate-200">{children}</div>}
-        {footer && <div className="mt-5 flex justify-end gap-2">{footer}</div>}
-      </div>
-    </div>
   )
 }

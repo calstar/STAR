@@ -83,6 +83,11 @@ else
   pip install --quiet -r requirements.txt
   ok "Backend requirements installed"
 fi
+# The design core shared with EngineDesign, pid-designer and the recovery
+# calculator. Not in requirements.txt: the path that reaches it differs between
+# a checkout and a Docker build context (see Dockerfile.api).
+pip install --quiet -e ../lib/stardesign
+ok "Shared design core installed (lib/stardesign)"
 deactivate
 
 # ─── 3. Frontend ─────────────────────────────────────────────────────────────

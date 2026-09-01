@@ -1,0 +1,17 @@
+[Unit]
+Description=STARProject → S3 backup (pg_dump → dated S3 key)
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Adjust the path if the repo lives elsewhere than /home/ec2-user/STAR.
+WorkingDirectory=/home/ec2-user/STAR/deploy/ec2
+ExecStart=/home/ec2-user/STAR/deploy/ec2/starproject-backup.sh backup
+# Override the default bucket here if it differs:
+# Environment=BACKUP_BUCKET=s3://star-starproject-backups
+# AWS creds come from the instance IAM role via metadata — nothing to set.
+
+[Install]
+WantedBy=multi-user.target

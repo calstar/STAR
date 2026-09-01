@@ -4,10 +4,16 @@ name: P&ID Designer CI
   push:
     paths:
       - 'pid-designer/**'
+      # The shared design core: its permission check is what stops one user
+      # editing another's designs, so a change to it has to run these tests.
+      - 'lib/stardesign/**'
       - '.github/workflows/pid-designer-ci.yml'
   pull_request:
     paths:
       - 'pid-designer/**'
+      # The shared design core: its permission check is what stops one user
+      # editing another's designs, so a change to it has to run these tests.
+      - 'lib/stardesign/**'
       - '.github/workflows/pid-designer-ci.yml'
   workflow_dispatch:
 
@@ -34,8 +40,15 @@ jobs:
       working-directory: pid-designer/frontend
       run: npm run build
 
+    # Guards what actually reaches the server when a diagram is saved: ReactFlow
+    # decorates nodes with view state (selected/dragging/measured), and storing
+    # it meant a plain click rewrote the diagram.
+    - name: Unit tests
+      working-directory: pid-designer/frontend
+      run: npm test
+
   backend:
-    name: Backend (import check)
+    name: Backend (imports + tests)
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -50,8 +63,27 @@ jobs:
 
     - name: Install dependencies
       working-directory: pid-designer
-      run: pip install -r requirements.txt
+      # The design core shared across the three design tools. Installed
+      # from a path, not published -- it is versioned with the repo.
+      run: |
+        pip install -r requirements.txt
+        pip install -e ../lib/stardesign
 
     - name: Verify imports
       working-directory: pid-designer
       run: python3 -c "import backend.main; print('backend imports OK')"
+
+    # An import check was enough while a diagram could only be reached from its
+    # owner's own folder. Now that ?owner= can reach someone else's, the access
+    # matrix in tests/test_diagrams.py is what stops a route shipping without
+    # its permission check.
+    - name: Install test dependencies
+      working-directory: pid-designer
+      # pytest-timeout because the checkout tests fork real processes to prove
+      # two people cannot hold one diagram; a regression there should fail the
+      # job, not hang it.
+      run: pip install pytest pytest-timeout httpx
+
+    - name: Run tests
+      working-directory: pid-designer
+      run: python -m pytest tests -q --timeout=120 --timeout-method=thread

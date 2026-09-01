@@ -1,104 +1,60 @@
 /**
- * Versioned-document API (/api/engine/documents): the durable, server-side
- * timeline for a design. Mirrors the pid-designer model -- an autosaved working
- * copy, throttled microversions, and immutable named releases. See
- * backend/routers/documents.py.
+ * The versioned-design API, bound to this app.
  *
- * Plain fetch (same-origin, the session cookie rides along). The live editing
- * config lives in the backend session; this store adds the durable history on
- * top of it.
+ * The transport, the sharing model and the `(owner, id)` addressing all live in
+ * `@stardesign-ui` -- shared with recovery-calculator and pid-designer,
+ * mirroring the shared server router. What is app-specific is only what is
+ * below: the route prefix and the payload shape.
+ *
+ * The live editing config lives in the backend session; this store adds the
+ * durable history on top of it.
  */
 
+import { createDesignApi } from '@stardesign-ui';
+import type { DesignMeta, DocRef } from '@stardesign-ui';
 import type { EngineConfig } from './client';
 
-const BASE = '/api/engine/documents';
+export { keyOf, refOf, ApiError } from '@stardesign-ui';
+export type {
+  BrowseGroup,
+  DocRef,
+  MicroVersion,
+  ReleaseVersion,
+  TeamUser,
+} from '@stardesign-ui';
 
-export interface DocMeta {
-  id: string;
-  name: string;
-  createdAt: string;
-  updatedAt: string;
-}
+/** Named `DocMeta` throughout this app; the shape is the shared one. */
+export type DocMeta = DesignMeta;
 
-export interface MicroVersion {
-  versionId: string;
-  savedAt: string;
-  size?: number;
-}
+const api = createDesignApi<EngineConfig>({
+  base: '/api/engine/documents',
+  usersPath: '/api/engine/users',
+  codec: {
+    toBody: (config) => ({ config }),
+    fromBody: (body) => (body as { config: EngineConfig }).config,
+    empty: () => ({}) as EngineConfig,
+  },
+});
 
-export interface ReleaseVersion {
-  label: string;
-  savedAt: string;
-  size?: number;
-}
+/** The whole API object, for shared components that take it as a prop. */
+export const designApi = api;
 
-async function json<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(body.detail || `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<T>;
-}
+// Named exports, so the call sites read the same as before the extraction.
+export const listDocuments = api.list;
+export const browseDocuments = api.browse;
+export const listUsers = api.listUsers;
+export const createDocument = (name: string, config?: EngineConfig) => api.create(name, config);
+export const copyDocument = (ref: DocRef, name?: string) => api.copy(ref, name);
+export const renameDocument = api.rename;
+export const shareDocument = api.share;
+export const leaveDocument = api.leave;
+export const autosaveDocument = api.autosave;
+export const flushDocument = api.flush;
+export const getHistory = api.getHistory;
+export const getVersion = api.getVersion;
+export const createRelease = api.createRelease;
+export const listReleases = api.listReleases;
+export const getRelease = api.getRelease;
 
-export const listDocuments = () => fetch(BASE).then((r) => json<DocMeta[]>(r));
-
-export const createDocument = (name: string, config?: EngineConfig) =>
-  fetch(BASE, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, config }),
-  }).then((r) => json<DocMeta>(r));
-
-export const renameDocument = (id: string, name: string) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  }).then((r) => json<DocMeta>(r));
-
-export const deleteDocument = (id: string) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}`, { method: 'DELETE' }).then((r) => json(r));
-
-export const loadDocument = (id: string) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}/load`).then((r) =>
-    json<{ config: EngineConfig | Record<string, never> }>(r),
-  );
-
-export const autosaveDocument = (id: string, config: EngineConfig) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}/autosave`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ config }),
-  }).then((r) => json<{ ok: boolean; micro: boolean }>(r));
-
-/** Best-effort final snapshot on tab close. sendBeacon survives page unload. */
-export const flushDocument = (id: string, config: EngineConfig): void => {
-  const body = JSON.stringify({ config });
-  navigator.sendBeacon(
-    `${BASE}/${encodeURIComponent(id)}/flush`,
-    new Blob([body], { type: 'application/json' }),
-  );
-};
-
-export const getHistory = (id: string) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}/history`).then((r) => json<MicroVersion[]>(r));
-
-export const getVersion = (id: string, versionId: string) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}/version/${encodeURIComponent(versionId)}`).then((r) =>
-    json<{ config: EngineConfig }>(r),
-  );
-
-export const createRelease = (id: string, label: string, config?: EngineConfig) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}/release`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ label, config }),
-  }).then((r) => json<ReleaseVersion>(r));
-
-export const listReleases = (id: string) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}/releases`).then((r) => json<ReleaseVersion[]>(r));
-
-export const getRelease = (id: string, label: string) =>
-  fetch(`${BASE}/${encodeURIComponent(id)}/release/${encodeURIComponent(label)}`).then((r) =>
-    json<{ config: EngineConfig }>(r),
-  );
+/** `/load` returns the config directly now; callers destructured `{ config }`. */
+export const loadDocument = (ref: DocRef) => api.load(ref).then((config) => ({ config }));

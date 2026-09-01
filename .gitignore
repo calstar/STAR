@@ -15,6 +15,9 @@ scripts/postprocessing/output/
 .env
 *.env
 auth/.env
+# Dev login roster (auth/users.py). In prod this lives on a mounted volume.
+auth/.users.json
+auth/.users.json.lock
 
 # Python / Virtualenvs
 .venv/
@@ -34,3 +37,7 @@ dist/
 
 # Internal review notes (not shared with the team)
 daq-server/BACKEND_REVIEW.md
+
+# macOS
+.DS_Store
+**/.DS_Store

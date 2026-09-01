@@ -506,25 +506,25 @@ export function ChamberGeometry({ config }: ChamberGeometryProps) {
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 rounded" style={{ backgroundColor: '#ff6b35', opacity: 0.6 }} />
               <span className="text-[var(--color-text-secondary)]">
-                <span className="text-orange-400 font-medium">Gas Boundary</span> — Hot combustion gas
+                <span className="text-orange-400 font-medium">Gas Boundary</span> - Hot combustion gas
               </span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 rounded" style={{ backgroundColor: '#8b4513', opacity: 0.6 }} />
               <span className="text-[var(--color-text-secondary)]">
-                <span className="text-amber-600 font-medium">Ablative</span> — Chamber liner
+                <span className="text-amber-600 font-medium">Ablative</span> - Chamber liner
               </span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 rounded" style={{ backgroundColor: '#1a1a1a', opacity: 0.7 }} />
               <span className="text-[var(--color-text-secondary)]">
-                <span className="text-gray-400 font-medium">Graphite</span> — Throat insert
+                <span className="text-gray-400 font-medium">Graphite</span> - Throat insert
               </span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 rounded" style={{ backgroundColor: '#6b7280', opacity: 0.5 }} />
               <span className="text-[var(--color-text-secondary)]">
-                <span className="text-gray-500 font-medium">Stainless</span> — Outer case
+                <span className="text-gray-500 font-medium">Stainless</span> - Outer case
               </span>
             </div>
           </div>

@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import { useReadOnly } from '@stardesign-ui'
 import type { CatalogDevice, VendorCount } from '../../api/client'
 import { getStationPad, listVendors, searchDevices } from '../../api/client'
 import type {
@@ -121,6 +122,8 @@ function AxisRow({ axis, ui, clim, onPatch, onRemove }: {
   onPatch: (p: Partial<UiStudyAxis>) => void
   onRemove: () => void
 }) {
+  // Gated on the design's checkout: no token, no editing.
+  const readOnly = useReadOnly()
   const meta = studyVar(axis.key)
   const kind = axisKind(axis, ui.devices)
   const values = axisValues(axis)
@@ -156,6 +159,7 @@ function AxisRow({ axis, ui, clim, onPatch, onRemove }: {
         <input
           type="checkbox"
           checked={axis.enabled}
+          disabled={readOnly}
           onChange={(e) => onPatch({ enabled: e.target.checked })}
           title="Off leaves this variable at its configured value"
           className="h-3.5 w-3.5 accent-[var(--color-accent)]"
@@ -192,6 +196,7 @@ function AxisRow({ axis, ui, clim, onPatch, onRemove }: {
               <button
                 key={m}
                 type="button"
+                disabled={readOnly}
                 onClick={() => onPatch({
                   mode: m,
                   start: m === 'linear' ? (axis.start ?? currentValue(ui, axis.key, axis.device)) : null,
@@ -292,6 +297,8 @@ function PadTiles({ chosen, onChange }: {
   chosen: WirePad[]
   onChange: (v: WirePad[]) => void
 }) {
+  // Gated on the design's checkout: no token, no editing.
+  const readOnly = useReadOnly()
   const { num, lab } = useUnits()
   if (!chosen.length) return null
 
@@ -311,6 +318,7 @@ function PadTiles({ chosen, onChange }: {
           </span>
           <button
             type="button"
+            disabled={readOnly}
             onClick={() => onChange(chosen.filter((_, j) => j !== i))}
             aria-label={`Remove ${p.label}`}
             className="text-[var(--color-text-muted)] hover:text-red-300"
@@ -475,6 +483,8 @@ function PadMonthPicker({ chosen, site, clim, onChange }: {
   clim: PadClimatology
   onChange: (v: WirePad[]) => void
 }) {
+  // Gated on the design's checkout: no token, no editing.
+  const readOnly = useReadOnly()
   const label = (m: number) => `${site.station} ${monthName(m)}`
   const mine = new Set(MONTHS.map(label))
 
@@ -521,7 +531,7 @@ function PadMonthPicker({ chosen, site, clim, onChange }: {
               key={m}
               type="button"
               onClick={() => toggle(m)}
-              disabled={!row}
+              disabled={!row || readOnly}
               title={row
                 ? `${row.n.toLocaleString('en-US')} observations`
                 : `no ${site.station} record for that month`}
@@ -606,6 +616,8 @@ function ValueTiles({ values, kind, integer, onChange }: {
   integer: boolean
   onChange: (v: number[]) => void
 }) {
+  // Gated on the design's checkout: no token, no editing.
+  const readOnly = useReadOnly()
   const { val, si, num, lab, dec } = useUnits()
   const [draft, setDraft] = useState('')
 
@@ -629,6 +641,7 @@ function ValueTiles({ values, kind, integer, onChange }: {
           {kind ? num(v, kind) : dec(v, 4)}
           <button
             type="button"
+            disabled={readOnly}
             onClick={() => onChange(values.filter((_, j) => j !== i))}
             aria-label={`Remove ${kind ? val(v, kind) : v}`}
             className="text-[var(--color-text-muted)] hover:text-red-300"
@@ -642,6 +655,7 @@ function ValueTiles({ values, kind, integer, onChange }: {
           type="text"
           inputMode="decimal"
           value={draft}
+          disabled={readOnly}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') { e.preventDefault(); commit() }
@@ -670,6 +684,8 @@ function CanopyPicker({ chosen, onChange }: {
   chosen: WireCanopy[]
   onChange: (v: WireCanopy[]) => void
 }) {
+  // Gated on the design's checkout: no token, no editing.
+  const readOnly = useReadOnly()
   const { num, lab } = useUnits()
   const [q, setQ] = useState('')
   const [vendor, setVendor] = useState('')
@@ -713,6 +729,7 @@ function CanopyPicker({ chosen, onChange }: {
                 {num(c.CdS, 'area')} {lab('area')} · {num(c.m_c, 'mass')} {lab('mass')}
               </span>
               <button
+                disabled={readOnly}
                 type="button"
                 onClick={() => onChange(chosen.filter((_, j) => j !== i))}
                 aria-label={`Remove ${c.label}`}

@@ -19,6 +19,7 @@ import { defaultOrkConfig } from './types/config'
 import { RecoveryTab } from './recovery/RecoveryTab'
 import type { DesignSource, UiConfig } from './recovery/types/schema'
 import { ConfigVersions } from './components/versions/ConfigVersions'
+import { ReadOnlyProvider } from '@stardesign-ui'
 import { FlightDynamicsTab } from './components/viewer/FlightDynamicsTab'
 import { FullFlightTab } from './components/viewer/FullFlightTab'
 import { EnvironmentTab } from './components/environment/EnvironmentTab'
@@ -308,6 +309,11 @@ export default function App() {
     }),
     [flightDynResult, manifest, parts, stability],
   )
+
+  // A design is editable only while it is checked out to you. Everything below
+  // the header reads this through ReadOnlyProvider, so a new input cannot
+  // accidentally stay live when someone else holds the design.
+  const [editable, setEditable] = useState(false)
 
   // -- Versioning: gather the user inputs into one ViewerConfig, persist it, and
   // apply a restored one. localStorage is the reload cache; ConfigVersions drives
@@ -669,7 +675,8 @@ export default function App() {
 
         {/* Versioned designs, as a full-width strip at the bottom of the header. */}
         <div className="border-t border-slate-800 px-4 py-1.5">
-          <ConfigVersions config={config} onRestore={handleRestore} inline />
+          <ConfigVersions config={config} onRestore={handleRestore}
+            onEditableChange={setEditable} inline />
         </div>
       </header>
 
@@ -677,7 +684,9 @@ export default function App() {
         <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-primary)] px-4 py-6 sm:px-6 lg:px-8">
           <UnitsPanel />
         </div>
-      ) : activeTab === 'environment' ? (
+      ) : (
+        <ReadOnlyProvider readOnly={!editable}>
+        {activeTab === 'environment' ? (
         <EnvironmentTab recovery={recovery} onChange={setRecovery} />
       ) : activeTab === 'fullflight' ? (
         <FullFlightTab result={flightDynResult} recovery={recovery} design={designSource}
@@ -803,6 +812,8 @@ export default function App() {
         </ResizableSidebar>
       </div>
         </>
+      )}
+        </ReadOnlyProvider>
       )}
 
       {flightOpen && (

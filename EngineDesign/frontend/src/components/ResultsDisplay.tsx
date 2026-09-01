@@ -574,9 +574,9 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure }: Resul
                 </div>
                 <p className="text-[11px] text-[var(--color-text-secondary)] mt-2 leading-snug">
                   Water hammer is a <span className="font-medium">valve transient</span> (Joukowsky
-                  spike ρ·a·v for an instantaneous stop — worst case), not a combustion-stability
+                  spike ρ·a·v for an instantaneous stop - worst case), not a combustion-stability
                   mode: it does not enter the stability score. Margin = available feed ΔP ÷ spike;
-                  values &lt; 1 mean an instant valve slam could exceed the feed pressure budget —
+                  values &lt; 1 mean an instant valve slam could exceed the feed pressure budget -
                   mitigate with slower valve closure, accumulators, or larger lines.
                 </p>
               </div>

@@ -20,3 +20,7 @@
 # Test runner
 pytest
 pytest-timeout
+# tests/test_documents.py drives the design API through a real TestClient rather
+# than calling handler coroutines, so it exercises FastAPI's query-parameter
+# binding -- which is what `?owner=` (the cross-user access check) rides on.
+httpx

@@ -21,6 +21,8 @@ dev_preflight() {
     echo "  installing backend dependencies..."
     "$HERE/.venv/bin/python3" -m pip install --upgrade pip >/dev/null
     "$HERE/.venv/bin/python3" -m pip install -r "$HERE/requirements.txt"
+    # The design core shared with EngineDesign and recovery-calculator.
+    "$HERE/.venv/bin/python3" -m pip install -e "$HERE/../lib/stardesign"
   fi
   if [ ! -d "$HERE/frontend/node_modules" ]; then
     echo "  installing frontend dependencies..."
@@ -28,7 +30,9 @@ dev_preflight() {
   fi
 }
 
-dev_pane backend  ".venv/bin/python3 -m uvicorn backend.main:app --reload --port $API_PORT"
+# --reload-dir for the shared design core too: it is pip-installed from
+# ../lib/stardesign, so uvicorn does not watch it by default.
+dev_pane backend  ".venv/bin/python3 -m uvicorn backend.main:app --reload --reload-dir . --reload-dir ../lib/stardesign --port $API_PORT"
 dev_pane frontend "cd frontend && npm run dev -- --port $UI_PORT"
 
 dev_service Frontend "$UI_PORT"  "http://localhost:$UI_PORT"

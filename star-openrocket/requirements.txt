@@ -20,3 +20,8 @@ numpy>=1.26
 # Recovery calculator (merged in): descent solver uses scipy; boto3 is lazy (S3 only).
 scipy>=1.11
 boto3>=1.34
+
+# The shared design core (per-user storage, sharing, version history) lives at
+# lib/stardesign and is installed separately -- not from here, because the path
+# that reaches it differs between a checkout and a Docker build context. See
+# setup.sh, the CI workflow, and Dockerfile.api.

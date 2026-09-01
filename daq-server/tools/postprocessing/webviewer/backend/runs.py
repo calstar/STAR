@@ -1,4 +1,4 @@
-"""Discover past Elodin runs (timestamped daq_YYYYMMDD_HHMMSS dirs only)."""
+"""Discover past Elodin runs (timestamped daq_[sim_]YYYYMMDD_HHMMSS dirs only)."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def list_runs() -> list[dict]:
         if not m:
             continue
         try:
-            started = datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S")
+            started = datetime.strptime(m.group("date") + m.group("time"), "%Y%m%d%H%M%S")
         except ValueError:
             continue
         runs.append(
@@ -30,6 +30,10 @@ def list_runs() -> list[dict]:
                 "name": entry.name,
                 "started": started.isoformat(),
                 "cached": export_cache.is_cached(entry.name),
+                # Synthetic data from a sim session. Surfaced so the UI can badge
+                # it — weeks later the directory prefix is the only thing that
+                # distinguishes it from real test-stand data.
+                "simulated": m.group("sim") is not None,
             }
         )
     runs.sort(key=lambda r: r["started"], reverse=True)

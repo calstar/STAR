@@ -1,0 +1,18 @@
+/node_modules
+/.next
+/out
+/build
+
+# next generates this on build
+next-env.d.ts
+
+# typescript incremental build cache
+*.tsbuildinfo
+
+# local env
+.env
+.env.local
+.env*.local
+
+# prisma local
+/prisma/*.db

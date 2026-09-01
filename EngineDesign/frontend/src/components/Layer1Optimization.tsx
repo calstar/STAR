@@ -1187,7 +1187,7 @@ export function Layer1Optimization({
       <div className="flex flex-wrap justify-center items-center gap-4">
         {isDirty && (
           <span className="text-xs px-3 py-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-300">
-            Unsaved Design Requirements — will auto-save on Run
+            Unsaved Design Requirements - will auto-save on Run
           </span>
         )}
         <button
@@ -1626,7 +1626,7 @@ export function Layer1Optimization({
                   <div className="mb-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-3">
                     <p className="mb-2 text-xs text-[var(--color-text-secondary)] leading-relaxed">
                       Primary relative convergence (dimensionless): thrust, O/F, and exit-pressure fractional error.
-                      This is the meaningful “how tight is the match?” metric — not the weighted optimizer scalar above.
+                      This is the meaningful “how tight is the match?” metric - not the weighted optimizer scalar above.
                     </p>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
                       <div className="flex justify-between gap-2">

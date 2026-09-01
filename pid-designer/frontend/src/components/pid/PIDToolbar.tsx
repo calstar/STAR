@@ -245,12 +245,12 @@ export function PIDToolbar({
       {showHistory && (
         <div className="border-b border-[#1e293b] bg-[#0a1628] px-4 py-3 max-h-[320px] overflow-y-auto">
           {historyStatus === 'loading' && <p className="text-xs text-slate-500 py-2">Loading…</p>}
-          {historyStatus === 'err' && <p className="text-xs text-red-400 py-2">Failed to load history — is the backend running?</p>}
+          {historyStatus === 'err' && <p className="text-xs text-red-400 py-2">Failed to load history - is the backend running?</p>}
 
           {historyStatus === 'idle' && (
             <>
               <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Releases</p>
-              {releases.length === 0 && <p className="text-xs text-slate-600 pb-2">No releases yet — click Release to publish 0.1.</p>}
+              {releases.length === 0 && <p className="text-xs text-slate-600 pb-2">No releases yet - click Release to publish 0.1.</p>}
               {releases.length > 0 && (
                 <div className="flex flex-col gap-1 mb-3">
                   {releases.map(r => (

@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
+import { useReadOnly } from '@stardesign-ui';
 import { updateConfig } from '../api/client';
 import type { EngineConfig } from '../api/client';
 
@@ -165,6 +166,8 @@ interface InputFieldProps {
 }
 
 function InputField({ label, value, onChange }: InputFieldProps) {
+  // No checkout, no editing. See lib/stardesign-ui/readOnly.tsx.
+  const readOnly = useReadOnly();
   const [localValue, setLocalValue] = useState<string>(
     value === null ? '' : String(value)
   );
@@ -207,7 +210,8 @@ function InputField({ label, value, onChange }: InputFieldProps) {
         <label className="text-sm text-[var(--color-text-secondary)]">{label}</label>
         <button
           onClick={() => onChange(!value)}
-          className={`relative w-12 h-6 rounded-full transition-colors ${value ? 'bg-blue-500' : 'bg-gray-600'
+          disabled={readOnly}
+          className={`relative w-12 h-6 rounded-full transition-colors disabled:opacity-40 ${value ? 'bg-blue-500' : 'bg-gray-600'
             }`}
         >
           <span
@@ -227,6 +231,7 @@ function InputField({ label, value, onChange }: InputFieldProps) {
         <input
           type="text"
           value={localValue}
+          disabled={readOnly}
           onChange={(e) => setLocalValue(e.target.value)}
           onBlur={handleBlur}
           className="w-32 px-3 py-1.5 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] text-sm text-right font-mono focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50 transition-colors"
@@ -242,6 +247,7 @@ function InputField({ label, value, onChange }: InputFieldProps) {
       <input
         type="text"
         value={localValue}
+        disabled={readOnly}
         onChange={(e) => setLocalValue(e.target.value)}
         onBlur={handleBlur}
         placeholder={value === null ? 'null' : ''}
@@ -259,6 +265,7 @@ interface ArrayFieldProps {
 }
 
 function ArrayField({ label, value, onChange }: ArrayFieldProps) {
+  const readOnly = useReadOnly();
   const [localValues, setLocalValues] = useState<string[]>(
     value.map(v => String(v))
   );
@@ -286,6 +293,7 @@ function ArrayField({ label, value, onChange }: ArrayFieldProps) {
             key={index}
             type="text"
             value={item}
+            disabled={readOnly}
             onChange={(e) => handleItemChange(index, e.target.value)}
             onBlur={handleBlur}
             className="w-20 px-2 py-1 rounded bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] text-sm text-center font-mono focus:border-blue-500 focus:outline-none transition-colors"
@@ -475,6 +483,7 @@ function SectionCard({ sectionKey, data, onEdit }: SectionCardProps) {
 }
 
 export function ConfigEditor({ config, onConfigUpdated }: ConfigEditorProps) {
+  const readOnly = useReadOnly();
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingChanges, setPendingChanges] = useState<Record<string, unknown>>({});
@@ -591,7 +600,7 @@ export function ConfigEditor({ config, onConfigUpdated }: ConfigEditorProps) {
               </button>
               <button
                 onClick={handleSave}
-                disabled={isSaving}
+                disabled={isSaving || readOnly}
                 className="px-4 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 font-medium"
               >
                 {isSaving ? 'Saving...' : 'Save Changes'}

@@ -105,7 +105,7 @@ star-openrocket/
 │       └── components/viewer/   # Scene, PartList, ModelPicker, ...
 ├── tests/                       # offline; fixtures are captured live responses
 ├── cache/                       # gitignored build artifacts
-├── setup.sh                     # per-project install
+├── setup.sh                     # per-project install (also installs lib/stardesign)
 └── dev.sh                       # run both halves
 ```
 
@@ -141,6 +141,60 @@ To build from the CLI instead:
 Credentials come from `ONSHAPE_ACCESS_KEY` / `ONSHAPE_SECRET_KEY` in the
 environment with no defaults — a build with neither set fails immediately
 rather than silently producing nothing. They never reach the browser.
+
+## Designs, sharing and checkouts
+
+A **design** is the whole unified config -- the CAD/stability/ascent slice and
+the recovery slice together -- saved server-side under your identity, with an
+autosaved working copy, throttled microversions, and immutable named releases.
+The design bar at the bottom of the header drives all of it.
+
+None of that machinery is this app's own. The server half is
+[`lib/stardesign`](../lib/stardesign/README.md) and the client half is
+[`lib/stardesign-ui`](../lib/stardesign-ui/README.md), both shared with
+EngineDesign, pid-designer and the recovery calculator; what lives here is only
+the payload shape (`{"config": <OrkConfig>}`), the route prefix, and where the
+live design state sits in React.
+
+| Method & path | Purpose |
+|---|---|
+| `GET  /api/documents` | list your designs, plus those shared with you |
+| `POST /api/documents` | create one `{name, config}` |
+| `PATCH /api/documents/{id}` | rename `{name}` (id and storage keys stay fixed) |
+| `GET  /api/documents/browse` | everyone else's designs, grouped by owner (the view-only tree) |
+| `POST /api/documents/copy` | `{owner, id}` -> your own copy, fresh history, no share list |
+| `PUT  /api/documents/{id}/share` | replace the editor list `{sharedWith: [email]}` (whole list, not a delta) |
+| `DELETE /api/documents/{id}/share/me` | remove yourself from a design shared with you |
+| `GET  /api/users` | who a design can be shared with (see backend/directory.py) |
+| `POST /api/documents/{id}/checkout` | take the write token (423 if someone else holds it) |
+| `DELETE /api/documents/{id}/checkout` | give it back |
+| `GET  /api/documents/{id}/checkout` | who holds it right now |
+| `POST /api/documents/{id}/checkout/release` | give it back from the on-close beacon (a beacon cannot send DELETE) |
+| `GET  /api/documents/{id}/load` | working copy (freshest); falls back to the latest microversion |
+| `POST /api/documents/{id}/autosave` | write the working copy; snapshot once per `OPENROCKET_MICRO_INTERVAL` |
+| `POST /api/documents/{id}/flush` | force an immediate microversion (the on-close beacon) |
+| `GET  /api/documents/{id}/history` | list microversions |
+| `GET  /api/documents/{id}/version/{versionId}` | fetch one microversion |
+| `POST /api/documents/{id}/release` | publish an immutable release `{label}` (409 if it exists) |
+| `GET  /api/documents/{id}/releases` | list releases |
+| `GET  /api/documents/{id}/release/{label}` | fetch one release |
+
+A design is editable only by whoever holds its **checkout**. Opening one never
+takes it -- viewing must not block a colleague -- so every tab below the header
+is read only until you press Take in the design bar. The checkout returns on its
+own after a few minutes without a save, and on tab close. See
+[`lib/stardesign`](../lib/stardesign/README.md#checkouts).
+
+The Units tab is deliberately outside that gate: unit preferences are a per-user
+display setting stored per user on the server, not part of any design.
+
+There is deliberately **no delete**. Designs are shared and editable by more than
+one person, so a delete button is one misclick away from destroying someone
+else's work with only a server-admin restore behind it. Cleanup is an admin
+operation on the `userdata` volume.
+
+Version history goes to S3 when `OPENROCKET_S3_BUCKET` is set, and to files on
+the `USERDATA_DIR` volume otherwise (dev, and prod with no bucket).
 
 ## Tests
 

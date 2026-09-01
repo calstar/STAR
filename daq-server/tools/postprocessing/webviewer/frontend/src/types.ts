@@ -3,6 +3,8 @@ export interface Run {
   name: string;
   started: string;
   cached: boolean;
+  /** Written by a sim session (daq_sim_… prefix), not the real test stand. */
+  simulated: boolean;
 }
 
 export interface Component {

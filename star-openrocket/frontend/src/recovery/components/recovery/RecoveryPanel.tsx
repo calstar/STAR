@@ -97,7 +97,7 @@ export function RecoveryPanel({ ui, onChange: setUi, design }: {
 
       <Card>
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={() => void run(ui)} variant="primary" disabled={running}>
+          <Button onClick={() => void run(ui)} variant="primary" disabled={running} action>
             {running ? 'Running…' : 'Run'}
           </Button>
           <label className="flex cursor-pointer items-center gap-2 text-xs text-[var(--color-text-secondary)]">
@@ -115,7 +115,7 @@ export function RecoveryPanel({ ui, onChange: setUi, design }: {
             onClick={() => result && download('result.json', result)}
             disabled={!result}
             title="The full export bundle - figures, report, git SHA - is written server-side. This is just the result object."
-          >
+           action>
             Export result.json
           </Button>
         </div>

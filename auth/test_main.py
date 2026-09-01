@@ -9,7 +9,9 @@ Run with:
 """
 
 import datetime
+import json
 import os
+import threading
 
 import jwt
 import pytest
@@ -20,6 +22,7 @@ os.environ.setdefault("GOOGLE_CLIENT_ID", "test-client-id")
 os.environ.setdefault("GOOGLE_CLIENT_SECRET", "test-client-secret")
 
 import main  # noqa: E402
+import users as user_directory  # noqa: E402
 
 
 @pytest.fixture
@@ -389,3 +392,101 @@ def test_verify_only_boots_without_google_credentials():
     )
     assert result.returncode == 0, result.stderr
     assert "VERIFY_ONLY_OK" in result.stdout
+
+
+# ── the login roster (/users) ──────────────────────────────────────────────
+#
+# Sharing designs needs a list of people, and this service is the only thing
+# that ever meets one. The properties that matter are not "it returns rows" but
+# that it cannot break a login and cannot lose one.
+
+
+@pytest.fixture
+def roster(tmp_path, monkeypatch):
+    """Point the roster at a scratch file for the duration of one test."""
+    path = tmp_path / "users.json"
+    monkeypatch.setattr(user_directory, "USERS_FILE", str(path))
+    return path
+
+
+def test_users_requires_a_session(client, roster):
+    assert client.get("/users").status_code == 401
+
+
+def test_users_rejects_a_forged_token(client, roster):
+    client.set_cookie("session", "not-a-jwt", domain="localhost")
+    assert client.get("/users").status_code == 401
+
+
+def test_login_is_recorded_and_served(client, roster):
+    user_directory.record_login("Alice@berkeley.edu", "Alice Adams")
+    user_directory.record_login("bob@berkeley.edu", "Bob Brown")
+
+    client.set_cookie("session", _token(), domain="localhost")
+    assert client.get("/users").get_json() == [
+        {"email": "Alice@berkeley.edu", "name": "Alice Adams"},
+        {"email": "bob@berkeley.edu", "name": "Bob Brown"},
+    ]
+
+
+def test_repeat_login_updates_rather_than_duplicates(client, roster):
+    user_directory.record_login("alice@berkeley.edu", "A. Adams")
+    user_directory.record_login("ALICE@berkeley.edu", "Alice Adams")
+
+    rows = user_directory.list_users()
+    assert len(rows) == 1
+    assert rows[0]["name"] == "Alice Adams"
+
+
+def test_last_login_is_recorded_but_not_served(roster):
+    user_directory.record_login("alice@berkeley.edu", "Alice")
+    assert "lastLogin" in json.loads(roster.read_text())[0]
+    assert set(user_directory.list_users()[0]) == {"email", "name"}
+
+
+def test_an_unwritable_roster_never_breaks_a_login(tmp_path, monkeypatch):
+    """A full disk, a read-only mount or a bad permission costs a missing name
+    in a share picker. It must never stop anyone signing in."""
+    unwritable = tmp_path / "ro"
+    unwritable.mkdir()
+    unwritable.chmod(0o500)
+    monkeypatch.setattr(user_directory, "USERS_FILE", str(unwritable / "users.json"))
+    try:
+        user_directory.record_login("alice@berkeley.edu", "Alice")  # must not raise
+        assert user_directory.list_users() == []
+    finally:
+        unwritable.chmod(0o700)
+
+
+def test_a_corrupt_roster_reads_as_empty(roster):
+    roster.write_text("{ not json")
+    assert user_directory.list_users() == []
+    # ...and the next login repairs it rather than compounding the damage.
+    user_directory.record_login("alice@berkeley.edu", "Alice")
+    assert [r["email"] for r in user_directory.list_users()] == ["alice@berkeley.edu"]
+
+
+def test_concurrent_logins_do_not_lose_records(roster):
+    """gunicorn runs two workers and Flask is threaded, so read-modify-write
+    without a lock silently drops one of two simultaneous logins."""
+    emails = [f"user{i}@berkeley.edu" for i in range(24)]
+    threads = [
+        threading.Thread(target=user_directory.record_login, args=(e, f"User {i}"))
+        for i, e in enumerate(emails)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert sorted(r["email"] for r in user_directory.list_users()) == sorted(emails)
+
+
+def test_verify_only_node_says_so_instead_of_lying(client, roster, monkeypatch):
+    """An empty list would look like "nobody to share with". A 503 says the
+    AUTH_USERS_URL is pointed at the wrong node."""
+    monkeypatch.setattr(main, "VERIFY_ONLY", True)
+    client.set_cookie("session", _token(), domain="localhost")
+    resp = client.get("/users")
+    assert resp.status_code == 503
+    assert main.AUTH_PUBLIC_URL in resp.get_json()["error"]

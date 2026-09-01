@@ -1,7 +1,11 @@
 /**
  * Versioned designs: a document bar + release/history controls.
  *
- * Mirrors the pid-designer model. Each named design is a server-side document
+ * The dialogs, the checkout chip and the API client are the shared design-tool
+ * ones (`@stardesign-ui`); what stays here is this app's own: where the live
+ * design state lives, and how a restore is applied to it.
+ *
+ * Each named design is a server-side document
  * with a working copy (autosaved here), throttled microversions, and immutable
  * named releases. This is the durable timeline; `lib/persist.ts` localStorage
  * stays as the instant working cache. An auto-saved mistake is recoverable by
@@ -11,23 +15,53 @@
  * the live `config` and applies restores via `onRestore`.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { OrkConfig as UiConfig } from '../../types/config'
-import { reviveOrkConfig as reviveUiConfig } from '../../lib/persist'
 import { defaultOrkConfig as defaultUiConfig } from '../../types/config'
+import { reviveOrkConfig as reviveUiConfig, toStoredOrkConfig as toStoredConfig } from '../../lib/persist'
 import { Button, Modal } from '../ui'
 import * as api from '../../api/documents'
-import type { DocMeta, MicroVersion, ReleaseVersion } from '../../api/documents'
+import { designApi, keyOf, refOf } from '../../api/documents'
+import type { DocMeta, DocRef, MicroVersion, ReleaseVersion } from '../../api/documents'
+import { ChangeModal, CheckoutControl, useCheckout } from '@stardesign-ui'
 
-const ACTIVE_KEY = 'star-openrocket.activeDoc.v1'
+// v2 because the remembered design is now (owner, id): a shared design is not
+// identified by its id alone. A v1 value is a bare id, which was always one of
+// your own, so it migrates to {owner: null}.
+const ACTIVE_KEY = 'star-openrocket.activeDoc.v2'
+const LEGACY_ACTIVE_KEY = 'star-openrocket.activeDoc.v1'
 const AUTOSAVE_MS = 1500
 
-/** The one at-a-time dialog the bar drives: a text prompt, a confirmation
- *  (optionally destructive), or a plain message. Replaces window.prompt /
- *  confirm / alert so every dialog is centred and styled like the app. */
+function readActive(): DocRef | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as DocRef
+      if (parsed && typeof parsed.id === 'string') return parsed
+    }
+    const legacy = localStorage.getItem(LEGACY_ACTIVE_KEY)
+    return legacy ? { id: legacy, owner: null } : null
+  } catch {
+    return null
+  }
+}
+
+function writeActive(ref: DocRef | null): void {
+  try {
+    if (ref) localStorage.setItem(ACTIVE_KEY, JSON.stringify({ id: ref.id, owner: ref.owner ?? null }))
+    else localStorage.removeItem(ACTIVE_KEY)
+    localStorage.removeItem(LEGACY_ACTIVE_KEY)
+  } catch {
+    /* private mode / storage disabled -- the bar still works, it just forgets */
+  }
+}
+
+/** The one at-a-time dialog the bar drives: a confirmation (optionally
+ *  destructive) or a plain message. Replaces window.confirm / alert so every
+ *  dialog is centred and styled like the app. Naming a design is an inline
+ *  field in the Change dialog now, so there is no prompt kind here. */
 type Dialog =
-  | { kind: 'prompt'; title: string; label?: string; placeholder?: string; confirmLabel: string; onConfirm: (value: string) => void | Promise<void> }
   | { kind: 'confirm'; title: string; message: ReactNode; confirmLabel: string; danger?: boolean; onConfirm: () => void | Promise<void> }
   | { kind: 'alert'; title: string; message: ReactNode }
 
@@ -73,18 +107,30 @@ function relativeTime(iso: string): string {
 interface Props {
   config: UiConfig
   onRestore: (config: UiConfig) => void
+  /** Told whether the design is currently checked out to this user. The app puts
+   *  its inputs behind this -- without the checkout it is read only. */
+  onEditableChange?: (editable: boolean) => void
   /** Render just the bar row, no background or width container -- for dropping
    *  inside a parent (the header) that already provides both. */
   inline?: boolean
 }
 
-export function ConfigVersions({ config, onRestore, inline = false }: Props) {
+export function ConfigVersions({ config, onRestore, onEditableChange, inline = false }: Props) {
   const [documents, setDocuments] = useState<DocMeta[]>([])
-  const [activeId, setActiveId] = useState<string | null>(null)
-  const loadedId = useRef<string | null>(null)
+  const [activeRef, setActiveRef] = useState<DocRef | null>(null)
+  const activeKey = activeRef ? keyOf(activeRef) : null
+  // Which config's state is actually loaded, so a debounce started before a
+  // switch cannot autosave one config's state over another's.
+  const loadedKey = useRef<string | null>(null)
   const configRef = useRef(config)
+  // JSON of the last payload actually sent, so a change that survives
+  // `toStoredConfig` unchanged never reaches the server.
+  const lastSaved = useRef<string>('')
   configRef.current = config
 
+  const [showChange, setShowChange] = useState(false)
+  // Name of a config that was unshared out from under us, or null.
+  const [unshared, setUnshared] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const [micro, setMicro] = useState<MicroVersion[]>([])
   const [releases, setReleases] = useState<ReleaseVersion[]>([])
@@ -96,97 +142,159 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
   const [relStatus, setRelStatus] = useState<'idle' | 'saving' | 'ok' | 'err'>('idle')
   const [relError, setRelError] = useState('')
 
-  // New-design dialog: a name plus a seed -- 'default' values or a copy of an
-  // existing design (by id).
-  const [showNew, setShowNew] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [newSource, setNewSource] = useState<'current' | string>('current')
-  const [newStatus, setNewStatus] = useState<'idle' | 'saving' | 'err'>('idle')
-  const [newError, setNewError] = useState('')
-
-  // One at-a-time dialog (prompt / confirm / alert) and, for prompts, its input.
+  // One at-a-time dialog (confirm / alert).
   const [dialog, setDialog] = useState<Dialog | null>(null)
-  const [dialogValue, setDialogValue] = useState('')
-  const askPrompt = (opts: Extract<Dialog, { kind: 'prompt' }> & { value?: string }) => {
-    setDialogValue(opts.value ?? '')
-    setDialog(opts)
-  }
   const runDialog = async () => {
     const d = dialog
-    if (!d) return
-    if (d.kind === 'prompt') {
-      const v = dialogValue.trim()
-      if (!v) return
-      setDialog(null)
-      await d.onConfirm(v)
-    } else if (d.kind === 'confirm') {
-      setDialog(null)
-      await d.onConfirm()
-    } else {
-      setDialog(null)
-    }
+    setDialog(null)
+    if (d?.kind === 'confirm') await d.onConfirm()
   }
 
-  const active = documents.find(d => d.id === activeId) ?? null
+  const active = useMemo(
+    () => documents.find(d => keyOf(refOf(d)) === activeKey) ?? null,
+    [documents, activeKey],
+  )
 
   // Load a document's working copy and apply it to the live config.
-  const openDoc = useCallback(async (id: string) => {
-    loadedId.current = null
+  const openDoc = useCallback(async (ref: DocRef) => {
+    loadedKey.current = null
     try {
-      const { config: loaded } = await api.loadDocument(id)
-      if (loaded && Object.keys(loaded).length > 0) onRestore(normalise(loaded as UiConfig))
+      const { config: loaded } = await api.loadDocument(ref)
+      if (loaded && Object.keys(loaded).length > 0) {
+        const revived = normalise(loaded as UiConfig)
+        // Seed the guard with what we just loaded, so opening a config does not
+        // immediately save it straight back -- `reviveUiConfig` regenerates
+        // uids, so the round trip is never byte-identical without this.
+        lastSaved.current = JSON.stringify(toStoredConfig(revived))
+        onRestore(revived)
+      }
     } finally {
-      loadedId.current = id
+      loadedKey.current = keyOf(ref)
     }
   }, [onRestore])
+
+  // Taking the checkout re-loads the config first: sitting in read-only while
+  // the holder saved leaves a stale view, and editing from there would
+  // overwrite their work on the first autosave.
+  const checkout = useCheckout({
+    api: designApi,
+    ref: activeRef,
+    reload: useCallback(async () => {
+      if (!activeRef) return
+      const { config: fresh } = await api.loadDocument(activeRef)
+      if (fresh && Object.keys(fresh).length > 0) {
+        const revived = normalise(fresh as UiConfig)
+        lastSaved.current = JSON.stringify(toStoredConfig(revived))
+        onRestore(revived)
+      }
+    }, [activeRef, onRestore]),
+  })
+
+  useEffect(() => { onEditableChange?.(checkout.held) }, [checkout.held, onEditableChange])
+
+  const select = useCallback((ref: DocRef) => {
+    setActiveRef(ref)
+    writeActive(ref)
+    void openDoc(ref)
+    setShowHistory(false)
+  }, [openDoc])
+
+  /** Re-list and land on one of your own designs. Used after leaving one,
+   *  and after being unshared from the one you had open. */
+  const reloadAndFallBack = useCallback(async () => {
+    const docs = await api.listDocuments()
+    setDocuments(docs)
+    const next = docs.find(x => x.mine) ?? docs[0]
+    if (next) select(refOf(next))
+    else {
+      setActiveRef(null)
+      loadedKey.current = null
+      writeActive(null)
+    }
+  }, [select])
 
   // Mount: list documents; seed one from the current config if there are none.
   // Guarded to run its bootstrap exactly once: even if a parent passes an
   // unstable onRestore (which recreates openDoc and re-fires this effect), we
   // must not re-list + re-open, or restore would loop into setUi every render.
-  // Guarded by a ref (not a cleanup-set `cancelled` flag) so it runs exactly once
-  // and survives React StrictMode's dev double-mount: a cleanup-based cancel fires
-  // before listDocuments resolves and would bail the bootstrap, leaving the bar
-  // empty and nothing restored on reload. ConfigVersions never unmounts, so there
-  // is no real teardown to guard against.
   const bootstrapped = useRef(false)
   useEffect(() => {
     if (bootstrapped.current) return
     bootstrapped.current = true
+    let cancelled = false
     ;(async () => {
       try {
         const docs = await api.listDocuments()
+        if (cancelled) return
         if (docs.length === 0) {
           const meta = await api.createDocument('Design 1', configRef.current)
+          if (cancelled) return
           setDocuments([meta])
-          setActiveId(meta.id)
-          loadedId.current = meta.id // seeded from current config; nothing to re-apply
-          localStorage.setItem(ACTIVE_KEY, meta.id)
+          const ref = refOf(meta)
+          setActiveRef(ref)
+          loadedKey.current = keyOf(ref) // seeded from current config; nothing to re-apply
+          writeActive(ref)
           return
         }
         setDocuments(docs)
-        const remembered = localStorage.getItem(ACTIVE_KEY)
-        const pick = docs.find(d => d.id === remembered)?.id ?? docs[0].id
-        setActiveId(pick)
+        const remembered = readActive()
+        // Prefer your own designs in the fallback. `docs` now includes designs
+        // shared with you, so docs[0] could drop someone else's straight into
+        // the editor on a machine with no remembered choice.
+        const match = remembered
+          ? docs.find(d => keyOf(refOf(d)) === keyOf(remembered))
+          : undefined
+        const pick = refOf(match ?? docs.find(d => d.mine) ?? docs[0])
+        setActiveRef(pick)
+        writeActive(pick)
         void openDoc(pick)
       } catch {
         // Backend/history unavailable -- the app still runs on localStorage.
-        loadedId.current = null
+        loadedKey.current = null
       }
     })()
+    return () => { cancelled = true }
   }, [openDoc])
 
   // Debounced autosave of the working copy, only once the active doc has loaded.
   useEffect(() => {
-    if (!activeId || loadedId.current !== activeId) return
-    const t = setTimeout(() => { void api.autosaveDocument(activeId, config).catch(() => {}) }, AUTOSAVE_MS)
+    // No checkout, no autosave. The inputs are read-only in that state anyway;
+    // this is the belt to that pair of braces.
+    if (!activeRef || loadedKey.current !== keyOf(activeRef) || !checkout.held) return
+    const stored = toStoredConfig(config)
+    const serialized = JSON.stringify(stored)
+    // `config` gets a new identity on any UI change, including ones that carry
+    // no design change at all -- collapsing a device card is the obvious one.
+    // Comparing the *stored* form means those never reach the server, which
+    // matters more once a save is what holds a checkout open.
+    if (serialized === lastSaved.current) return
+    const t = setTimeout(() => {
+      lastSaved.current = serialized
+      void api.autosaveDocument(activeRef, stored).catch((e: unknown) => {
+        lastSaved.current = '' // failed -- let the next change retry
+        // 403 means this design was unshared from you while you had it open.
+        // Retrying is silent and pointless, and every further edit would be
+        // lost -- stop, say so, and fall back to one of your own.
+        if (e instanceof api.ApiError && e.status === 403) {
+          setUnshared(active?.name ?? 'This design')
+          void reloadAndFallBack()
+        } else if (e instanceof api.ApiError && e.status === 423) {
+          // The checkout lapsed and somebody else took it. Drop to read-only
+          // rather than retry into a void -- we still have access, we are just
+          // not the editor any more.
+          checkout.lost()
+        }
+      })
+    }, AUTOSAVE_MS)
     return () => clearTimeout(t)
-  }, [config, activeId])
+  }, [config, activeRef, active, reloadAndFallBack, checkout])
 
   // Best-effort flush on tab close, between the throttled microversions.
   useEffect(() => {
     const flush = () => {
-      if (activeId && loadedId.current === activeId) api.flushDocument(activeId, configRef.current)
+      // A beacon cannot read a rejection, so gate it here instead.
+      if (activeRef && loadedKey.current === keyOf(activeRef) && checkout.held)
+        api.flushDocument(activeRef, toStoredConfig(configRef.current))
     }
     const onVis = () => { if (document.visibilityState === 'hidden') flush() }
     window.addEventListener('pagehide', flush)
@@ -195,83 +303,44 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
       window.removeEventListener('pagehide', flush)
       document.removeEventListener('visibilitychange', onVis)
     }
-  }, [activeId])
+  }, [activeRef, checkout.held])
 
-  const select = (id: string) => {
-    setActiveId(id)
-    localStorage.setItem(ACTIVE_KEY, id)
-    void openDoc(id)
-    setShowHistory(false)
-  }
+  /** Adopt a freshly created/copied config: it becomes the active one. */
+  const adopt = useCallback((meta: DocMeta) => {
+    setDocuments(d => [meta, ...d])
+    const ref = refOf(meta)
+    setActiveRef(ref)
+    loadedKey.current = keyOf(ref)
+    writeActive(ref)
+  }, [])
 
-  const openNew = () => {
-    setNewName(`Design ${documents.length + 1}`)
-    setNewSource('current')
-    setNewStatus('idle')
-    setNewError('')
-    setShowNew(true)
-  }
+  const create = useCallback(async (name: string) => {
+    adopt(await api.createDocument(name, configRef.current))
+  }, [adopt])
 
-  const submitNew = async () => {
-    const name = newName.trim()
-    if (!name) return
-    setNewStatus('saving')
-    setNewError('')
-    try {
-      // 'default' seeds from the built-in config; anything else is the id of a
-      // design to copy -- load its working copy from the server and normalise
-      // it (fresh uids etc.) as if it came off disk.
-      // 'current' snapshots what the user is looking at now, so a new design is
-      // never blank (an empty ViewerConfig has no model to show); otherwise copy a
-      // chosen design's working copy.
-      const seed = newSource === 'current'
-        ? configRef.current
-        : normalise(((await api.loadDocument(newSource)).config ?? defaultUiConfig()) as UiConfig)
-      const meta = await api.createDocument(name, seed)
-      setDocuments(d => [meta, ...d])
-      setActiveId(meta.id)
-      loadedId.current = meta.id
-      localStorage.setItem(ACTIVE_KEY, meta.id)
-      onRestore(seed)
-      setShowNew(false)
-    } catch (e) {
-      setNewStatus('err')
-      setNewError(e instanceof Error ? e.message : 'Could not create design')
-    }
-  }
+  const rename = useCallback(async (ref: DocRef, name: string) => {
+    const meta = await api.renameDocument(ref, name)
+    setDocuments(d => d.map(x => (keyOf(refOf(x)) === keyOf(ref) ? { ...x, ...meta } : x)))
+  }, [])
 
-  const rename = () => {
-    if (!active) return
-    askPrompt({
-      kind: 'prompt',
-      title: 'Rename design',
-      label: 'Design name',
-      value: active.name,
-      confirmLabel: 'Rename',
-      onConfirm: async (name) => {
-        const meta = await api.renameDocument(active.id, name)
-        setDocuments(d => d.map(x => (x.id === meta.id ? meta : x)))
-      },
-    })
-  }
+  const share = useCallback(async (ref: DocRef, emails: string[]) => {
+    const meta = await api.shareDocument(ref, emails)
+    setDocuments(d => d.map(x => (keyOf(refOf(x)) === keyOf(ref) ? { ...x, ...meta } : x)))
+  }, [])
 
-  const remove = () => {
-    if (!active) return
-    setDialog({
-      kind: 'confirm',
-      title: `Delete "${active.name}"?`,
-      message: 'This removes the design, its microversions, and its releases. This cannot be undone.',
-      confirmLabel: 'Delete',
-      danger: true,
-      onConfirm: async () => {
-        await api.deleteDocument(active.id)
-        const rest = documents.filter(d => d.id !== active.id)
-        setDocuments(rest)
-        if (rest.length > 0) select(rest[0].id)
-        else { setActiveId(null); loadedId.current = null; localStorage.removeItem(ACTIVE_KEY) }
-      },
-    })
-  }
+  const leave = useCallback(async (ref: DocRef) => {
+    await api.leaveDocument(ref)
+    if (activeKey === keyOf(ref)) await reloadAndFallBack()
+    else setDocuments(d => d.filter(x => keyOf(refOf(x)) !== keyOf(ref)))
+  }, [activeKey, reloadAndFallBack])
+
+  /** Take a copy of someone else's design and open it. The copy is yours, with
+   *  no history and no share list -- see the backend. */
+  const copy = useCallback(async (ref: DocRef) => {
+    const meta = await api.copyDocument(ref)
+    adopt(meta)
+    await openDoc(refOf(meta))
+  }, [adopt, openDoc])
 
   // ── File save / load ──────────────────────────────────────────────────────
   // The server (S3 in prod, local disk in dev) is the home for a design; these
@@ -292,11 +361,7 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
     }
     const name = file.name.replace(/\.ork\.json$/i, '').replace(/\.json$/i, '') || 'Imported design'
     try {
-      const meta = await api.createDocument(name, cfg)
-      setDocuments(d => [meta, ...d])
-      setActiveId(meta.id)
-      loadedId.current = meta.id
-      localStorage.setItem(ACTIVE_KEY, meta.id)
+      adopt(await api.createDocument(name, cfg))
     } catch {
       // No backend: at least load it into the live (localStorage-backed) config.
     }
@@ -304,13 +369,13 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
   }
 
   const refreshHistory = useCallback(async () => {
-    if (!activeId) return
+    if (!activeRef) return
     setHistStatus('loading')
     try {
-      const [m, r] = await Promise.all([api.getHistory(activeId), api.listReleases(activeId)])
+      const [m, r] = await Promise.all([api.getHistory(activeRef), api.listReleases(activeRef)])
       setMicro(m); setReleases(r); setHistStatus('idle')
     } catch { setHistStatus('err') }
-  }, [activeId])
+  }, [activeRef])
 
   const toggleHistory = () => {
     const next = !showHistory
@@ -319,10 +384,10 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
   }
 
   const submitRelease = async () => {
-    if (!activeId || !relLabel.trim()) return
+    if (!activeRef || !relLabel.trim()) return
     setRelStatus('saving'); setRelError('')
     try {
-      await api.createRelease(activeId, relLabel.trim(), configRef.current)
+      await api.createRelease(activeRef, relLabel.trim(), toStoredConfig(configRef.current))
       setRelStatus('ok')
       if (showHistory) void refreshHistory()
       setTimeout(() => { setShowRelease(false); setRelLabel(''); setRelStatus('idle') }, 1000)
@@ -333,7 +398,7 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
   }
 
   const restoreMicro = (v: MicroVersion) => {
-    if (!activeId) return
+    if (!activeRef) return
     setDialog({
       kind: 'confirm',
       title: 'Restore this auto-save?',
@@ -342,7 +407,7 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
       onConfirm: async () => {
         setRestoring(v.versionId)
         try {
-          const { config: c } = await api.getVersion(activeId, v.versionId)
+          const c = await api.getVersion(activeRef, v.versionId)
           onRestore(normalise(c)); setShowHistory(false)
         } finally { setRestoring(null) }
       },
@@ -350,7 +415,7 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
   }
 
   const restoreRelease = (r: ReleaseVersion) => {
-    if (!activeId) return
+    if (!activeRef) return
     setDialog({
       kind: 'confirm',
       title: `Restore release "${r.label}"?`,
@@ -359,7 +424,7 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
       onConfirm: async () => {
         setRestoring(`rel:${r.label}`)
         try {
-          const { config: c } = await api.getRelease(activeId, r.label)
+          const c = await api.getRelease(activeRef, r.label)
           onRestore(normalise(c)); setShowHistory(false)
         } finally { setRestoring(null) }
       },
@@ -375,16 +440,29 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
         : 'mx-auto flex max-w-[1800px] flex-wrap items-center gap-2 px-4 py-1.5 sm:px-6 lg:px-8'}>
         <span className="text-2xs uppercase tracking-wider text-[var(--color-text-muted)] shrink-0">Design</span>
         <select
-          value={activeId ?? ''}
-          onChange={e => select(e.target.value)}
+          value={activeKey ?? ''}
+          onChange={e => {
+            const picked = documents.find(d => keyOf(refOf(d)) === e.target.value)
+            if (picked) select(refOf(picked))
+          }}
           className="rounded border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none min-w-[160px] max-w-[280px]"
         >
           {documents.length === 0 && <option value="">No designs</option>}
-          {documents.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+          {documents.map(d => (
+            <option key={keyOf(refOf(d))} value={keyOf(refOf(d))}>
+              {d.mine ? d.name : `${d.name} - ${d.ownerName || d.owner}`}
+            </option>
+          ))}
         </select>
-        <button onClick={openNew} className={btn} title="New design">+ New</button>
-        <button onClick={rename} disabled={!active} className={btn} title="Rename">Rename</button>
-        <button onClick={remove} disabled={!active} className={btn} title="Delete design">Delete</button>
+        <button
+          onClick={() => setShowChange(true)}
+          className={btn}
+          title="Create, rename, share, or take a copy of someone else's design"
+        >
+          Change
+        </button>
+
+        <CheckoutControl checkout={checkout} noun="design" disabled={!activeRef} />
 
         <div className="mx-1 h-4 w-px bg-[var(--color-border)]" />
 
@@ -417,6 +495,38 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
         </button>
       </div>
 
+
+      {showChange && (
+        <ChangeModal
+          open={showChange}
+          api={designApi}
+          noun="design"
+          onClose={() => setShowChange(false)}
+          documents={documents}
+          activeKey={activeKey}
+          onSelect={select}
+          onCreate={create}
+          onRename={rename}
+          onShare={share}
+          onLeave={leave}
+          onCopy={copy}
+        />
+      )}
+
+      {/* Someone removed your access while you had the config open. Said plainly
+          rather than left as a silently failing autosave. */}
+      <Modal
+        open={unshared !== null}
+        onClose={() => setUnshared(null)}
+        title="You no longer have access"
+        footer={<Button variant="primary" onClick={() => setUnshared(null)}>OK</Button>}
+      >
+        <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
+          "{unshared}" was unshared from you, so it has stopped saving and you have been
+          moved to one of your own designs. Nothing was deleted - you can still take a copy
+          of it from <b>Change → View only</b>.
+        </p>
+      </Modal>
       <Modal open={showHistory && !!active} onClose={() => setShowHistory(false)} title="History" width="w-[440px]">
         <div className="max-h-[60vh] overflow-y-auto">
           {histStatus === 'loading' && <p className="py-2 text-xs text-[var(--color-text-muted)]">Loading…</p>}
@@ -424,7 +534,7 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
           {histStatus === 'idle' && (
             <>
               <p className="mb-2 text-2xs uppercase tracking-wider text-[var(--color-text-muted)]">Releases</p>
-              {releases.length === 0 && <p className="pb-2 text-xs text-[var(--color-text-muted)]">No releases yet — Release publishes {nextLabel(releases)}.</p>}
+              {releases.length === 0 && <p className="pb-2 text-xs text-[var(--color-text-muted)]">No releases yet - Release publishes {nextLabel(releases)}.</p>}
               {releases.map(r => (
                 <button key={r.label} onClick={() => restoreRelease(r)} disabled={restoring === `rel:${r.label}`}
                   className="mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50">
@@ -446,42 +556,6 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
             </>
           )}
         </div>
-      </Modal>
-
-      <Modal
-        open={showNew}
-        onClose={() => { if (newStatus !== 'saving') setShowNew(false) }}
-        title="New design"
-        width="w-[420px]"
-        footer={
-          <>
-            <Button onClick={() => setShowNew(false)} disabled={newStatus === 'saving'} variant="ghost">Cancel</Button>
-            <Button onClick={() => void submitNew()} disabled={!newName.trim() || newStatus === 'saving'} variant="primary">
-              {newStatus === 'saving' ? 'Creating…' : 'Create'}
-            </Button>
-          </>
-        }
-      >
-        <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Design name <span className="text-red-500">*</span></label>
-        <input
-          autoFocus value={newName} onChange={e => setNewName(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') void submitNew() }}
-          placeholder="Design name" disabled={newStatus === 'saving'}
-          className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none disabled:opacity-50"
-        />
-        <label className="mb-1 mt-4 block text-xs text-[var(--color-text-muted)]">Start from</label>
-        <select
-          value={newSource} onChange={e => setNewSource(e.target.value)} disabled={newStatus === 'saving'}
-          className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none disabled:opacity-50"
-        >
-          <option value="current">Current setup</option>
-          {documents.length > 0 && (
-            <optgroup label="Copy from design">
-              {documents.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </optgroup>
-          )}
-        </select>
-        {newStatus === 'err' && <p className="mt-3 text-xs text-red-500">{newError}</p>}
       </Modal>
 
       <Modal
@@ -510,7 +584,7 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
         {relStatus === 'ok' && <p className="mt-3 text-xs text-emerald-500">Release published.</p>}
       </Modal>
 
-      {/* The one prompt / confirm / alert, styled like the app instead of the browser. */}
+      {/* The one confirm / alert, styled like the app instead of the browser. */}
       <Modal
         open={dialog !== null}
         onClose={() => setDialog(null)}
@@ -524,27 +598,16 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
               <Button
                 onClick={() => void runDialog()}
                 variant={dialog?.kind === 'confirm' && dialog.danger ? 'danger' : 'primary'}
-                disabled={dialog?.kind === 'prompt' && !dialogValue.trim()}
               >
-                {dialog ? dialog.confirmLabel : ''}
+                {dialog?.kind === 'confirm' ? dialog.confirmLabel : ''}
               </Button>
             </>
           )
         }
       >
-        {dialog?.kind === 'prompt' ? (
-          <>
-            {dialog.label && <label className="mb-1 block text-xs text-[var(--color-text-muted)]">{dialog.label}</label>}
-            <input
-              autoFocus value={dialogValue} onChange={e => setDialogValue(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') void runDialog() }}
-              placeholder={dialog.placeholder}
-              className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none"
-            />
-          </>
-        ) : dialog ? (
+        {dialog && (
           <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">{dialog.message}</p>
-        ) : null}
+        )}
       </Modal>
     </div>
   )

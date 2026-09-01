@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import { useReadOnly } from '@stardesign-ui'
 import type { StationPad } from '../../api/client'
 import { getStationPad } from '../../api/client'
 import type { DesignSource, InputSources, TempProfile, UiConfig, UiSite, Vehicle } from '../../types/schema'
@@ -449,6 +450,8 @@ export function SweepForm({ value, onChange, vehicle }: {
   onChange: (v: SweepParam[]) => void
   vehicle: Vehicle
 }) {
+  // Gated on the design's checkout: no token, no editing.
+  const readOnly = useReadOnly()
   const { num, dec, lab } = useUnits()
   const update = (i: number, patch: Partial<SweepParam>) =>
     onChange(value.map((p, j) => (j === i ? { ...p, ...patch } : p)))
@@ -482,6 +485,7 @@ export function SweepForm({ value, onChange, vehicle }: {
               <span className="w-6 shrink-0">
                 <input
                   type="checkbox"
+                  disabled={readOnly}
                   checked={p.enabled}
                   title={derived
                     ? 'Off runs the axial bound only. Both attitudes matter - the band is 2.1x on the design load.'

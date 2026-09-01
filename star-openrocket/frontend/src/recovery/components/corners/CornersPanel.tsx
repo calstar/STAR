@@ -97,7 +97,7 @@ export function CornersPanel({ ui, onChange }: {
 
       <Card>
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={() => void run()} variant="primary" disabled={running}>
+          <Button onClick={() => void run()} variant="primary" disabled={running} action>
             {running ? 'Sweeping…' : 'Run sweep'}
           </Button>
 
@@ -167,7 +167,7 @@ export function CornersPanel({ ui, onChange }: {
                     key={c.key}
                     onClick={() => setChannel(c.key)}
                     variant={channel === c.key ? 'primary' : 'ghost'}
-                  >
+                   action>
                     {c.label}
                   </Button>
                 ))}

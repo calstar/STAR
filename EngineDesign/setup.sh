@@ -112,6 +112,8 @@ if is_macos && [ "$USE_CI" = "0" ]; then
 fi
 
 pip install --quiet -r "$REQ_FILE"
+# The design core shared with pid-designer and recovery-calculator.
+pip install --quiet -e ../lib/stardesign
 ok "Python requirements installed ($REQ_FILE)"
 deactivate
 

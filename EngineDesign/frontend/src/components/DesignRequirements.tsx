@@ -151,7 +151,7 @@ export function DesignRequirements({
               step="25"
             />
             <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-              Operating chamber pressure you want. When set, Layer 1 sizes the <b>throat</b> to hit the thrust target and drives tank pressure to this Pc — instead of pushing Pc higher for thrust. Leave blank to let the optimizer choose Pc freely.
+              Operating chamber pressure you want. When set, Layer 1 sizes the <b>throat</b> to hit the thrust target and drives tank pressure to this Pc - instead of pushing Pc higher for thrust. Leave blank to let the optimizer choose Pc freely.
             </p>
           </div>
 
