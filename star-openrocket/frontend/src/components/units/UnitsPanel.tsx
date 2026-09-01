@@ -145,7 +145,7 @@ function PrecisionGroup() {
               className="h-3.5 w-0.5 shrink-0 rounded-full bg-[var(--color-accent)]" />
         Precision
       </h3>
-      <p className="font-prose mb-3 text-xs text-[var(--color-text-muted)]">
+      <p className="mb-3 text-xs text-[var(--color-text-muted)]">
         Bounds, not targets - a number that is naturally coarser stays coarser,
         and the minimum wins where the two disagree.
       </p>

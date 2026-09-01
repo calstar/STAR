@@ -25,7 +25,7 @@ export function CrosscheckAssumptions({ shared, differs, models, warnings }: {
           {shared.map((line, i) => (
             <li
               key={i}
-              className="font-prose text-xs leading-relaxed text-[var(--color-text-secondary)]"
+              className="text-xs leading-relaxed text-[var(--color-text-secondary)]"
             >
               <span className="text-[var(--color-text-muted)]">•</span> {line}
             </li>
@@ -68,7 +68,7 @@ export function CrosscheckAssumptions({ shared, differs, models, warnings }: {
                   {MODEL_ORDER.map((id) => (
                     <td
                       key={id}
-                      className="px-3 py-2 font-prose text-xs leading-relaxed text-[var(--color-text-secondary)]"
+                      className="px-3 py-2 text-xs leading-relaxed text-[var(--color-text-secondary)]"
                     >
                       {row[id]}
                     </td>

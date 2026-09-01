@@ -106,7 +106,7 @@ export function CrosscheckPanel({ ui }: { ui: UiConfig }) {
       {error && (
         <Card title="Cross-check failed">
           <div className="rounded border border-red-500/50 bg-red-500/10 px-3 py-2">
-            <p className="font-prose text-xs leading-relaxed text-red-200">{error}</p>
+            <p className="text-xs leading-relaxed text-red-200">{error}</p>
           </div>
         </Card>
       )}
@@ -157,7 +157,7 @@ export function CrosscheckPanel({ ui }: { ui: UiConfig }) {
                   min={0}
                 />
               </div>
-              <p className="font-prose text-xs leading-relaxed text-[var(--color-text-secondary)]">
+              <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
                 {lab('speed')}.
               </p>
             </div>

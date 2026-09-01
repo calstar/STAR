@@ -84,7 +84,7 @@ export function AxisEditor({ ui, onChange }: {
       }
     >
       {axes.length === 0 ? (
-        <p className="font-prose text-xs leading-relaxed text-[var(--color-text-muted)]">
+        <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
           No sweeps yet. Add one to compare designs.
         </p>
       ) : (
@@ -451,7 +451,7 @@ function PadSourcePicker({ chosen, site, clim, onChange }: {
       </div>
 
       {error && (
-        <p className="font-prose text-2xs leading-relaxed text-amber-300">{error}</p>
+        <p className="text-2xs leading-relaxed text-amber-300">{error}</p>
       )}
 
       <p className="text-2xs text-[var(--color-text-muted)]">

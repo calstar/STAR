@@ -226,18 +226,18 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt, disabled 
         onClick={() => setOpen((value) => !value)}
         disabled={disabled}
         title={disabled ? 'Take the design to change its model' : undefined}
-        className="flex items-center gap-2 rounded border border-slate-600 bg-slate-900 px-2 py-1 text-sm text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex items-center gap-2 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:cursor-not-allowed disabled:opacity-50"
       >
         <span className="max-w-56 truncate">{label}</span>
         {current?.assemblyName && (
-          <span className="max-w-40 truncate text-xs text-slate-400">{current.assemblyName}</span>
+          <span className="max-w-40 truncate text-xs text-[var(--color-text-muted)]">{current.assemblyName}</span>
         )}
-        {busy && <span className="text-xs text-cyan-300">building…</span>}
-        <span className="text-slate-500">▾</span>
+        {busy && <span className="text-xs text-[var(--color-accent)]">building…</span>}
+        <span className="text-[var(--color-text-muted)]">▾</span>
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-40 mt-1 w-[26rem] rounded border border-slate-600 bg-slate-800 p-3 text-sm shadow-xl">
+        <div className="absolute left-0 top-full z-40 mt-1 w-[26rem] rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] p-3 text-sm shadow-xl">
           <input
             autoFocus
             value={query}
@@ -248,12 +248,12 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt, disabled 
               if (event.key === 'Enter' && !looksLikeUrl(query)) refreshDocuments()
             }}
             placeholder="Filter cached documents, or paste an Onshape URL"
-            className="w-full rounded border border-slate-600 bg-slate-900 px-2 py-1.5 text-slate-100 placeholder:text-slate-500"
+            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1.5 text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]"
           />
 
           {looksLikeUrl(query) ? (
             <div className="mt-3">
-              <p className="mb-2 text-xs text-slate-400">
+              <p className="mb-2 text-xs text-[var(--color-text-muted)]">
                 Builds this URL directly. Use this for documents you do not own, or to pin a
                 specific version.
               </p>
@@ -261,7 +261,7 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt, disabled 
                 type="button"
                 disabled={busy || disabled}
                 onClick={() => launch({ url: query.trim() })}
-                className="rounded bg-cyan-600 px-3 py-1.5 text-white hover:bg-cyan-500 disabled:opacity-50"
+                className="rounded bg-[var(--color-accent)] px-3 py-1.5 text-white hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
               >
                 Build from URL
               </button>
@@ -274,31 +274,31 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt, disabled 
                   setChosen(null)
                   setAssemblies(null)
                 }}
-                className="mb-2 text-xs text-slate-400 hover:text-slate-200"
+                className="mb-2 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
               >
                 ‹ back to results
               </button>
               <div className="mb-1 flex items-baseline gap-2">
-                <p className="min-w-0 flex-1 truncate font-semibold text-slate-200">
+                <p className="min-w-0 flex-1 truncate font-medium text-[var(--color-text-primary)]">
                   {chosen.name}
                 </p>
                 <button
                   type="button"
                   onClick={() => loadAssemblies(chosen, true)}
                   title="Re-read this document's tabs from Onshape (1 API call)"
-                  className="shrink-0 text-xs text-slate-400 hover:text-slate-200"
+                  className="shrink-0 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
                 >
                   ↻ refresh
                 </button>
               </div>
               {assembliesCachedAt && (
-                <p className="mb-1 text-2xs text-slate-500">
+                <p className="mb-1 text-2xs text-[var(--color-text-muted)]">
                   cached {whenCached(assembliesCachedAt)}
                 </p>
               )}
 
               {assemblies === null ? (
-                <p className="text-xs text-slate-400">Loading assemblies…</p>
+                <p className="text-xs text-[var(--color-text-muted)]">Loading assemblies…</p>
               ) : assemblies.length === 0 ? (
                 <p className="text-xs text-amber-300">
                   This document has no assembly tabs. Only assemblies can be built.
@@ -317,7 +317,7 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt, disabled 
                             elementId: assembly.elementId,
                           })
                         }
-                        className="block w-full truncate rounded px-2 py-1.5 text-left text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+                        className="block w-full truncate rounded px-2 py-1.5 text-left text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
                       >
                         {assembly.name}
                       </button>
@@ -330,7 +330,7 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt, disabled 
             <div className="mt-3">
               {models.length > 0 && (
                 <>
-                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <p className="mb-1 text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
                     Already built
                   </p>
                   <ul className="mb-3">
@@ -343,12 +343,12 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt, disabled 
                             setOpen(false)
                           }}
                           disabled={disabled}
-                          className={`block w-full truncate rounded px-2 py-1.5 text-left hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50 ${
-                            model.id === modelId ? 'text-cyan-300' : 'text-slate-200'
+                          className={`block w-full truncate rounded px-2 py-1.5 text-left hover:bg-[var(--color-bg-tertiary)] disabled:cursor-not-allowed disabled:opacity-50 ${
+                            model.id === modelId ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-primary)]'
                           }`}
                         >
                           {model.documentName ?? model.id}
-                          <span className="ml-2 text-xs text-slate-500">{model.assemblyName}</span>
+                          <span className="ml-2 text-xs text-[var(--color-text-muted)]">{model.assemblyName}</span>
                         </button>
                       </li>
                     ))}
@@ -357,7 +357,7 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt, disabled 
               )}
 
               <div className="mb-1 flex items-baseline gap-2">
-                <p className="flex-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <p className="flex-1 text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
                   Documents
                 </p>
                 <button
@@ -365,7 +365,7 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt, disabled 
                   disabled={searching}
                   onClick={refreshDocuments}
                   title="Ask Onshape for documents matching this text (1 API call)"
-                  className="shrink-0 rounded border border-slate-600 px-1.5 py-0.5 text-xs text-slate-300 hover:bg-slate-700 disabled:opacity-50"
+                  className="shrink-0 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
                 >
                   {searching ? 'searching…' : '↻ search Onshape'}
                 </button>
@@ -373,13 +373,13 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt, disabled 
               {/* Naming the cost is the point: without it, "search Onshape"
                   looks like a slower version of typing rather than the only
                   thing here that spends quota. */}
-              <p className="mb-1 text-2xs text-slate-500">
+              <p className="mb-1 text-2xs text-[var(--color-text-muted)]">
                 Filtering {documents.length} cached {documents.length === 1 ? 'document' : 'documents'}
                 {' · last fetched '}
                 {whenCached(documentsCachedAt)}
               </p>
               {!searching && documents.length === 0 && (
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-[var(--color-text-muted)]">
                   {documentsCachedAt
                     ? 'Nothing cached matches. Search Onshape to look it up.'
                     : 'No documents cached yet. Search Onshape to fetch some.'}
@@ -391,11 +391,11 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt, disabled 
                     <button
                       type="button"
                       onClick={() => chooseDocument(document)}
-                      className="block w-full truncate rounded px-2 py-1.5 text-left text-slate-200 hover:bg-slate-700"
+                      className="block w-full truncate rounded px-2 py-1.5 text-left text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]"
                     >
                       {document.name}
                       {document.owner && (
-                        <span className="ml-2 text-xs text-slate-500">{document.owner}</span>
+                        <span className="ml-2 text-xs text-[var(--color-text-muted)]">{document.owner}</span>
                       )}
                     </button>
                   </li>
@@ -407,10 +407,10 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt, disabled 
           {searchError && <p className="mt-2 text-xs text-amber-300">{searchError}</p>}
 
           {job && (
-            <div className="mt-3 border-t border-slate-700 pt-2">
-              <p className="text-xs text-cyan-300">{job.message}</p>
+            <div className="mt-3 border-t border-[var(--color-border)] pt-2">
+              <p className="text-xs text-[var(--color-accent)]">{job.message}</p>
               {job.log.length > 0 && (
-                <p className="mt-1 truncate text-2xs text-slate-500">
+                <p className="mt-1 truncate text-2xs text-[var(--color-text-muted)]">
                   {job.log[job.log.length - 1]}
                 </p>
               )}

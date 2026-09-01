@@ -582,9 +582,9 @@ export default function App() {
 
   if (error && !manifest) {
     return (
-      <div className="flex h-screen items-center justify-center bg-slate-950 p-8 text-slate-300">
-        <div className="max-w-xl rounded border border-slate-700 bg-slate-900 p-6">
-          <h1 className="mb-2 text-lg font-semibold text-slate-100">Nothing to show</h1>
+      <div className="flex h-screen items-center justify-center bg-[var(--color-bg-primary)] p-8 text-[var(--color-text-secondary)]">
+        <div className="max-w-xl rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6">
+          <h1 className="mb-2 text-lg font-semibold text-[var(--color-text-primary)]">Nothing to show</h1>
           <p className="text-sm whitespace-pre-wrap">{error}</p>
           {/* The picker lives in the header, which does not exist yet on a
               fresh install -- so it is repeated here, otherwise there would be
@@ -607,30 +607,30 @@ export default function App() {
   // the user can pick a model or switch designs -- the body shows a prompt instead.
   if (modelId && !manifest) {
     return (
-      <div className="flex h-screen items-center justify-center bg-slate-950 text-slate-400">
+      <div className="flex h-screen items-center justify-center bg-[var(--color-bg-primary)] text-[var(--color-text-muted)]">
         Loading…
       </div>
     )
   }
 
   return (
-    <div className="flex h-screen flex-col bg-slate-950 text-slate-100">
-      <header className="flex flex-col border-b border-slate-700">
-        <div className="flex flex-wrap items-center gap-3 px-4 py-4">
+    <div className="flex h-screen flex-col bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
+      <header className="flex flex-col border-b border-[var(--color-border)]">
+        <div className="flex flex-wrap items-center gap-3 px-4 py-4 sm:px-6 lg:px-8">
         {/* STAR wordmark, then a divider, then the app title -- mirrors the
             recovery calculator's header. */}
         <img src={starWordmark} alt="STAR" className="h-14 w-auto" />
-        <div className="h-9 w-px bg-slate-700" />
+        <div className="h-9 w-px bg-[var(--color-bg-secondary)]" />
         {/* Fixed title. What is loaded is the picker's job to say, and it
             already does -- naming it twice just made the header noisy. */}
         <h1 className="text-xl font-bold">STAR OpenRocket</h1>
 
-        <nav className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900/60 p-1 text-sm">
+        <nav className="flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/60 p-1 text-sm">
           {(['cad', 'environment', 'flight', 'recovery', 'fullflight', 'units'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`rounded px-3 py-1 font-medium ${activeTab === tab ? 'bg-cyan-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}
+              className={`rounded px-3 py-1 font-medium ${activeTab === tab ? 'bg-[var(--color-accent)] text-white' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]'}`}
             >
               {tab === 'cad' ? 'CAD & Stability'
                 : tab === 'environment' ? 'Environment'
@@ -654,7 +654,7 @@ export default function App() {
           disabled={!editable}
         />
 
-        <label className="ml-auto flex items-center gap-2 text-sm text-slate-300">
+        <label className="ml-auto flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
           Opacity
           <input
             type="range"
@@ -663,11 +663,11 @@ export default function App() {
             step={0.05}
             value={opacity}
             onChange={(event) => setOpacity(Number(event.target.value))}
-            className="accent-cyan-400"
+            className="accent-[var(--color-accent)]"
           />
         </label>
 
-        <label className="flex items-center gap-2 text-sm text-slate-300">
+        <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
           <input
             type="checkbox"
             checked={showAssemblyCentroid}
@@ -679,15 +679,17 @@ export default function App() {
         </div>
 
         {/* Versioned designs, as a full-width strip at the bottom of the header. */}
-        <div className="border-t border-slate-800 px-4 py-1.5">
+        <div className="border-t border-[var(--color-border)] px-4 py-1.5 sm:px-6 lg:px-8">
           <ConfigVersions config={config} onRestore={handleRestore}
             onEditableChange={setEditable} inline />
         </div>
       </header>
 
       {activeTab === 'units' ? (
-        <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-primary)] px-4 py-6 sm:px-6 lg:px-8">
-          <UnitsPanel />
+        <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-primary)]">
+          <div className="mx-auto max-w-[1800px] px-4 py-6 sm:px-6 lg:px-8">
+            <UnitsPanel />
+          </div>
         </div>
       ) : (
         <ReadOnlyProvider readOnly={!editable}>
@@ -714,7 +716,7 @@ export default function App() {
           onResult={setFlightDynResult}
         />
       ) : !manifest || !modelId ? (
-        <div className="flex flex-1 items-center justify-center p-8 text-center text-slate-400">
+        <div className="flex flex-1 items-center justify-center p-8 text-center text-[var(--color-text-muted)]">
           Select or build a model in the header to begin — this design has no model yet.
         </div>
       ) : (
@@ -759,7 +761,7 @@ export default function App() {
             motorRefFace={motorSel?.refFace ?? null}
           />
 
-          <div className="pointer-events-none absolute bottom-3 right-4 text-right text-xs text-slate-500">
+          <div className="pointer-events-none absolute bottom-3 right-4 text-right text-xs text-[var(--color-text-muted)]">
             <div>
               Onshape total {q(manifest.totals.assemblyMass, 'mass')} · CM z{' '}
               {q(manifest.totals.assemblyCentroid[2], 'length')}

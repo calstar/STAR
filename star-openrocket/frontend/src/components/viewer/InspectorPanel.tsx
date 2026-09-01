@@ -61,7 +61,7 @@ export function InspectorPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center justify-between border-b border-slate-700 pr-2">
+      <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] pr-2">
         <div className="flex">
           <TabButton active={activeTab === 'properties'} onClick={() => setActiveTab('properties')}>
             Properties
@@ -107,10 +107,10 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`border-b-2 px-3 py-2 text-sm font-semibold ${
+      className={`border-b-2 px-3 py-2 text-xs font-medium ${
         active
-          ? 'border-cyan-400 text-cyan-300'
-          : 'border-transparent text-slate-400 hover:text-slate-200'
+          ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
+          : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
       }`}
     >
       {children}
@@ -131,7 +131,7 @@ function PinButton({ pinned, onToggle }: { pinned: boolean; onToggle: () => void
       title={pinned ? 'Panel locked — selecting a part won’t switch tabs' : 'Lock this panel'}
       aria-label={pinned ? 'Unlock panel' : 'Lock panel'}
       className={`rounded p-1 ${
-        pinned ? 'text-cyan-300 hover:text-cyan-200' : 'text-slate-500 hover:text-slate-300'
+        pinned ? 'text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]'
       }`}
     >
       <svg
@@ -162,8 +162,8 @@ function MassSummary({
 }) {
   const { q } = useUnits()
   return (
-    <section className="border-b border-slate-800 p-3 text-sm">
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-200">
+    <section className="border-b border-[var(--color-border)] p-3 text-sm">
+      <h2 className="mb-2 text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
         Center of mass — {cm.partCount - cm.masslessCount} of {partCount} parts
       </h2>
       <Row label="Total mass" value={q(cm.mass, 'mass')} />
@@ -175,7 +175,7 @@ function MassSummary({
       )}
 
       {cmAnalysis?.offAxis && (
-        <p className="mt-2 border-t border-slate-700 pt-2 text-xs text-amber-300">
+        <p className="mt-2 border-t border-[var(--color-border)] pt-2 text-xs text-amber-300">
           ⚠ Mass is off-axis by {q(cmAnalysis.radial, 'length')} — the rocket is
           laterally unbalanced. CG should sit on the centreline; check for an asymmetric or
           material-less part.
@@ -183,7 +183,7 @@ function MassSummary({
       )}
 
       {cm.masslessCount > 0 && (
-        <p className="mt-2 border-t border-slate-700 pt-2 text-xs text-amber-300">
+        <p className="mt-2 border-t border-[var(--color-border)] pt-2 text-xs text-amber-300">
           {cm.masslessCount} visible {cm.masslessCount === 1 ? 'part has' : 'parts have'} no mass
           and {cm.masslessCount === 1 ? 'is' : 'are'} not in this figure.
         </p>

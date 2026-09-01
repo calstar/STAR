@@ -41,7 +41,7 @@ export function DeviceList({ devices, onChange }: {
       right={<Button onClick={add} variant="secondary">+ Add device</Button>}
     >
       {devices.length === 0 && (
-        <p className="font-prose text-xs text-[var(--color-text-muted)]">
+        <p className="text-xs text-[var(--color-text-muted)]">
           At least one device is required.
         </p>
       )}

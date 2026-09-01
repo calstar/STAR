@@ -28,7 +28,7 @@ export function PageHeader({ title, children }: {
         {title}
       </h1>
       {children && (
-        <p className="font-prose text-sm text-[var(--color-text-secondary)]">
+        <p className="text-sm text-[var(--color-text-secondary)]">
           {children}
         </p>
       )}
@@ -54,7 +54,7 @@ export function Card({ title, subtitle, right, children, className = '' }: {
               </h2>
             )}
             {subtitle && (
-              <p className="font-prose mt-0.5 text-xs leading-relaxed text-[var(--color-text-secondary)]">
+              <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-secondary)]">
                 {subtitle}
               </p>
             )}
@@ -90,7 +90,7 @@ export function Field({ label, hint, unit, kind, children, wide = false }: {
       </span>
       {children}
       {hint && (
-        <span className="font-prose text-xs leading-snug text-[var(--color-text-muted)]">
+        <span className="text-xs leading-snug text-[var(--color-text-muted)]">
           {hint}
         </span>
       )}
@@ -488,7 +488,7 @@ export function StubBanner({ children }: { children: ReactNode }) {
   return (
     <div className="flex items-start gap-2 rounded border border-amber-500/50 bg-amber-500/10 px-3 py-2">
       <span className="mt-0.5 text-amber-400">▲</span>
-      <p className="font-prose text-xs leading-relaxed text-amber-200">{children}</p>
+      <p className="text-xs leading-relaxed text-amber-200">{children}</p>
     </div>
   )
 }
@@ -517,7 +517,7 @@ export function WarningsCard({ warnings }: { warnings: string[] }) {
 
 export function Empty({ children }: { children: ReactNode }) {
   return (
-    <div className="font-prose flex h-full min-h-40 items-center justify-center rounded border border-dashed border-[var(--color-border)] px-6 text-center text-xs text-[var(--color-text-muted)]">
+    <div className="flex h-full min-h-40 items-center justify-center rounded border border-dashed border-[var(--color-border)] px-6 text-center text-xs text-[var(--color-text-muted)]">
       {children}
     </div>
   )

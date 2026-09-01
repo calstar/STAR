@@ -70,7 +70,7 @@ export function MotorPicker({ onSelect, onClose }: Props) {
   }, [query, impulseClass])
 
   return (
-    <div className="rounded border border-slate-700 bg-slate-900 p-2">
+    <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-2">
       <div className="mb-2 flex items-center gap-2">
         <input
           ref={inputRef}
@@ -78,12 +78,12 @@ export function MotorPicker({ onSelect, onClose }: Props) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search motors (e.g. Estes C6, AeroTech H128)…"
-          className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100 placeholder:text-slate-500 focus:border-cyan-500 focus:outline-none"
+          className="w-full rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-2 py-1 text-xs text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)] focus:outline-none"
         />
         <button
           type="button"
           onClick={onClose}
-          className="rounded bg-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-600"
+          className="rounded bg-[var(--color-bg-secondary)] px-2 py-1 text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]"
         >
           Close
         </button>
@@ -96,7 +96,7 @@ export function MotorPicker({ onSelect, onClose }: Props) {
           type="button"
           onClick={() => setImpulseClass('')}
           className={`rounded px-1.5 py-0.5 text-2xs font-medium ${
-            impulseClass === '' ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            impulseClass === '' ? 'bg-[var(--color-accent)] text-white' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]'
           }`}
         >
           All
@@ -107,7 +107,7 @@ export function MotorPicker({ onSelect, onClose }: Props) {
             type="button"
             onClick={() => setImpulseClass((cur) => (cur === c ? '' : c))}
             className={`w-6 rounded px-1 py-0.5 text-2xs font-medium ${
-              impulseClass === c ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              impulseClass === c ? 'bg-[var(--color-accent)] text-white' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]'
             }`}
           >
             {c}
@@ -118,12 +118,12 @@ export function MotorPicker({ onSelect, onClose }: Props) {
       {!available && (
         <p className="px-1 py-2 text-xs text-amber-300">
           Motor catalog not fetched yet. Run{' '}
-          <code className="rounded bg-slate-800 px-1">python -m backend.motors.fetch</code>.
+          <code className="rounded bg-[var(--color-bg-tertiary)] px-1">python -m backend.motors.fetch</code>.
         </p>
       )}
       {error && <p className="px-1 py-2 text-xs text-rose-400">{error}</p>}
       {available && !error && (
-        <p className="px-1 pb-1 text-2xs text-slate-500">
+        <p className="px-1 pb-1 text-2xs text-[var(--color-text-muted)]">
           {busy
             ? 'Searching…'
             : total > items.length
@@ -136,7 +136,7 @@ export function MotorPicker({ onSelect, onClose }: Props) {
           the columns stay aligned; the header is sticky so it stays visible while scrolling. */}
       <div className="max-h-64 overflow-y-auto">
         <div
-          className={`${ROW_GRID} sticky top-0 z-10 border-b border-slate-700 bg-slate-900 px-2 pb-1 pt-0.5 text-2xs font-semibold uppercase tracking-wide text-slate-500`}
+          className={`${ROW_GRID} sticky top-0 z-10 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 pb-1 pt-0.5 text-2xs uppercase tracking-wide text-[var(--color-text-muted)]`}
         >
           <span>Motor</span>
           <span>Mfr</span>
@@ -152,15 +152,15 @@ export function MotorPicker({ onSelect, onClose }: Props) {
                 type="button"
                 disabled={!def}
                 onClick={() => def && onSelect(motor, def.simfileId)}
-                className={`${ROW_GRID} w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-800 disabled:opacity-40`}
+                className={`${ROW_GRID} w-full rounded px-2 py-1.5 text-left text-xs hover:bg-[var(--color-bg-tertiary)] disabled:opacity-40`}
               >
-                <span className="truncate font-mono text-cyan-300" title={motor.designation}>
+                <span className="truncate font-mono text-[var(--color-accent)]" title={motor.designation}>
                   {motor.designation}
                 </span>
-                <span className="truncate text-slate-400" title={motor.manufacturerAbbrev}>
+                <span className="truncate text-[var(--color-text-muted)]" title={motor.manufacturerAbbrev}>
                   {motor.manufacturerAbbrev}
                 </span>
-                <span className="whitespace-nowrap text-slate-500">
+                <span className="whitespace-nowrap text-[var(--color-text-muted)]">
                   {motor.diameter}×{motor.length}mm
                 </span>
               </button>
@@ -168,7 +168,7 @@ export function MotorPicker({ onSelect, onClose }: Props) {
           )
         })}
         {!busy && items.length === 0 && available && !error && (
-          <li className="px-2 py-2 text-xs text-slate-500">No motors match.</li>
+          <li className="px-2 py-2 text-xs text-[var(--color-text-muted)]">No motors match.</li>
         )}
         </ul>
       </div>

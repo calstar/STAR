@@ -65,7 +65,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
       ref={ref}
       role="menu"
       style={{ left: position.left, top: position.top }}
-      className="fixed z-50 min-w-44 rounded border border-slate-600 bg-slate-800 py-1 text-sm shadow-xl"
+      className="fixed z-50 min-w-44 rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] py-1 text-sm shadow-xl"
       onContextMenu={(event) => event.preventDefault()}
     >
       {items.map((item, index) => (
@@ -80,10 +80,10 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
           }}
           className={`block w-full px-3 py-1.5 text-left ${
             item.disabled
-              ? 'cursor-default text-slate-500'
+              ? 'cursor-default text-[var(--color-text-muted)]'
               : item.danger
-                ? 'text-amber-300 hover:bg-slate-700'
-                : 'text-slate-200 hover:bg-slate-700'
+                ? 'text-amber-300 hover:bg-[var(--color-bg-tertiary)]'
+                : 'text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]'
           }`}
         >
           {item.label}

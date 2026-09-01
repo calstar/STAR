@@ -12,10 +12,10 @@ export function Row({
 }) {
   return (
     <div className={`flex justify-between gap-3 ${small ? 'text-xs' : ''}`}>
-      <span className="shrink-0 text-slate-400">{label}</span>
+      <span className="shrink-0 text-[var(--color-text-muted)]">{label}</span>
       <span
         className={`truncate text-right tabular-nums ${
-          highlight ? 'font-semibold text-cyan-300' : 'text-slate-100'
+          highlight ? 'font-medium text-[var(--color-accent)]' : 'text-[var(--color-text-primary)]'
         }`}
         title={value}
       >

@@ -139,7 +139,7 @@ export function EnvironmentTab({ recovery: ui, onChange }: {
                               options={tags.map((t) => ({ value: t.id, label: t.label }))} />
                     </Field>
                     {siteShowsMonth ? (
-                      <p className="font-prose text-xs leading-relaxed text-[var(--color-text-secondary)]">
+                      <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
                         Month: {monthName(month)} — from the Site card above.
                       </p>
                     ) : (
