@@ -127,6 +127,7 @@ model Task {
   subteam     Subteam?      @relation(fields: [subteamId], references: [id])
   title       String
   description String?
+  blockedNote String?       // free-text "why is this blocked" comment (auto-saved, like description)
   status      TaskStatus    @default(backlog)
   priority    TaskPriority?
   assigneeId  String?

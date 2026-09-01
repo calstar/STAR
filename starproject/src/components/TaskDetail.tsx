@@ -8,6 +8,7 @@ import { BlockerEditor } from "@/components/BlockerEditor";
 import { CopyLinkButton } from "@/components/CopyLinkButton";
 import { useTaskModal } from "@/components/TaskModalProvider";
 import { AssigneeSelect } from "@/components/fields/AssigneeSelect";
+import { BlockedNoteInput } from "@/components/fields/BlockedNoteInput";
 import { DescriptionInput } from "@/components/fields/DescriptionInput";
 import { DueDateInput } from "@/components/fields/DueDateInput";
 import { PrioritySelect } from "@/components/fields/PrioritySelect";
@@ -179,6 +180,16 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
               </li>
             ))}
           </ul>
+
+          <div className="mt-5">
+            <p className={label}>Blocked comment</p>
+            <div className="mt-1">
+              <BlockedNoteInput
+                taskId={task.id}
+                value={task.blockedNote ?? ""}
+              />
+            </div>
+          </div>
         </div>
       </div>
     </div>

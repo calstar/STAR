@@ -17,18 +17,25 @@
 	# belt-and-braces -- but on the apps machine X-Auth-Email now decides which
 	# user's designs you may edit, so a client must never get to propose one.
 	# Kept identical here so the two Caddyfiles do not drift.
-	request_header -X-Auth-Email
-	request_header -X-Auth-User
+	#
+	# route {} is required, not cosmetic: the Caddyfile adapter otherwise re-sorts
+	# by built-in directive order, placing request_header AFTER forward_auth — which
+	# would delete the X-Auth-* headers forward_auth just set, handing the app a
+	# request with no identity. Wrapping keeps the strip ahead of the gate.
+	route {
+		request_header -X-Auth-Email
+		request_header -X-Auth-User
 
-	forward_auth {$AUTH_UPSTREAM:auth:5000} {
-		uri /verify
-		# Identity for the upstream app, taken from the /verify response.
-		copy_headers X-Auth-Email X-Auth-User
-		# Strip hop-by-hop upgrade headers from the /verify subrequest only (the
-		# auth service 400s on them); the real WebSocket upgrade still proxies
-		# through untouched.
-		header_up -Connection
-		header_up -Upgrade
+		forward_auth {$AUTH_UPSTREAM:auth:5000} {
+			uri /verify
+			# Identity for the upstream app, taken from the /verify response.
+			copy_headers X-Auth-Email X-Auth-User
+			# Strip hop-by-hop upgrade headers from the /verify subrequest only (the
+			# auth service 400s on them); the real WebSocket upgrade still proxies
+			# through untouched.
+			header_up -Connection
+			header_up -Upgrade
+		}
 	}
 }
 
