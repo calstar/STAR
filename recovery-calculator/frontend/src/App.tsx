@@ -147,18 +147,23 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-[1800px] px-4 py-6 sm:px-6 lg:px-8">
-        {/* Inputs go grey without the checkout. Running a simulation stays
-            live -- it reads the config, it does not change it. */}
+
+        {/* Only the three tabs that edit the design go read-only without the
+            checkout. Cross-check only reads it, and Atmospheric Data and Units
+            do not touch it at all -- Units is a per-user display preference,
+            stored per user on the server, so a design checkout has no business
+            gating it. */}
         <ReadOnlyProvider readOnly={!editable}>
-        <div className={tab === 'recovery' ? '' : 'hidden'}>
-          <RecoveryPanel ui={ui} onChange={setUi} />
-        </div>
-        <div className={tab === 'corners' ? '' : 'hidden'}>
-          <CornersPanel ui={ui} onChange={setUi} />
-        </div>
-        <div className={tab === 'study' ? '' : 'hidden'}>
-          <StudyPanel ui={ui} onChange={setUi} />
-        </div>
+          <div className={tab === 'recovery' ? '' : 'hidden'}>
+            <RecoveryPanel ui={ui} onChange={setUi} />
+          </div>
+          <div className={tab === 'corners' ? '' : 'hidden'}>
+            <CornersPanel ui={ui} onChange={setUi} />
+          </div>
+          <div className={tab === 'study' ? '' : 'hidden'}>
+            <StudyPanel ui={ui} onChange={setUi} />
+          </div>
+        </ReadOnlyProvider>
         <div className={tab === 'crosscheck' ? '' : 'hidden'}>
           <CrosscheckPanel ui={ui} />
         </div>
@@ -168,7 +173,6 @@ export default function App() {
         <div className={tab === 'units' ? '' : 'hidden'}>
           <UnitsPanel />
         </div>
-      </ReadOnlyProvider>
       </main>
     </div>
   )

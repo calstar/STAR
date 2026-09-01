@@ -8,7 +8,7 @@ import type { ReactNode } from 'react'
 
 // The dialog shell is shared with the other design tools.
 export { Modal } from '@stardesign-ui'
-import { useDisabled } from '@stardesign-ui'
+import { useDisabled, useReadOnly } from '@stardesign-ui'
 import type { Kind } from '../lib/quantities'
 import { useUnits } from '../lib/unitsContext'
 
@@ -101,7 +101,14 @@ export function Field({ label, hint, unit, kind, children, wide = false }: {
 const inputClass =
   'w-full rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] '
   + 'px-2 py-1.5 text-sm text-[var(--color-text-primary)] outline-none '
-  + 'focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)]'
+  + 'focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)] '
+  // Read-only styling lives here rather than at each call site, so a text box
+  // and a dropdown look the same when disabled. A <select> gets almost no
+  // disabled styling from the browser, which made a read-only dropdown
+  // indistinguishable from an editable one.
+  + 'disabled:cursor-not-allowed disabled:border-[var(--color-border)] '
+  + 'disabled:bg-[var(--color-bg-secondary)] disabled:text-[var(--color-text-muted)] '
+  + 'disabled:opacity-60'
 
 /**
  * `display` is the bounded, readable form of `value` -- see `UnitInput`. It is
@@ -134,7 +141,7 @@ export function NumberInput({ value, display, onChange, step = 'any', min, max, 
   return (
     <input
       type="number"
-      className={`${inputClass} font-num ${disabled ? 'opacity-50' : ''}`}
+      className={`${inputClass} font-num`}
       value={shown}
       step={step}
       min={min}
@@ -396,13 +403,23 @@ export function Band({ low, high, value, unit = '' }: {
   )
 }
 
-export function Button({ onClick, children, variant = 'secondary', disabled, title }: {
+export function Button({ onClick, children, variant = 'secondary', disabled: ownDisabled, title, action = false }: {
   onClick: () => void
   children: ReactNode
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger'
   disabled?: boolean
   title?: string
+  /**
+   * True for a button that does not change the design -- Run, Export, a view
+   * toggle. Those stay live when the design is read-only.
+   *
+   * The default is the safe one: a button mutates until it says otherwise, so a
+   * new one added later cannot quietly stay clickable without a checkout.
+   */
+  action?: boolean
 }) {
+  const readOnly = useReadOnly()
+  const disabled = ownDisabled || (!action && readOnly)
   const styles = {
     primary: 'bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] border-transparent',
     secondary: 'border-[var(--color-border)] text-[var(--color-text-primary)] hover:border-[var(--color-text-muted)]',

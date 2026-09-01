@@ -7,6 +7,7 @@
  */
 
 import type { SweepCorner, SweepResult } from '../../api/client'
+import { useReadOnly } from '@stardesign-ui'
 import { Badge, Card, Toggle } from '../ui'
 import { candidateLabel, cornerValue, keyMeta, orderedKeys } from '../../lib/corners'
 import { useUnits } from '../../lib/unitsContext'
@@ -27,6 +28,8 @@ export function CornerTable({ result, selectedIds, onToggle, showContext, onShow
   showContext: boolean
   onShowContext: (v: boolean) => void
 }) {
+  // Gated on the design's checkout: no token, no editing.
+  const readOnly = useReadOnly()
   const { num, q, dec, lab } = useUnits()
   const rows = [...result.corners].sort(
     (a, b) => (b.F_peak ?? 0) - (a.F_peak ?? 0))
@@ -91,7 +94,7 @@ export function CornerTable({ result, selectedIds, onToggle, showContext, onShow
                       <input
                         type="checkbox"
                         checked={on}
-                        disabled={blocked}
+                        disabled={blocked || readOnly}
                         onChange={() => onToggle(row.id)}
                         title={blocked
                           ? `${MAX_SELECTED} corners already plotted - untick one first.`
