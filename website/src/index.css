@@ -257,13 +257,20 @@ a { color: inherit; text-decoration: none; }
 /* ── Subteam card image zoom ──────────────────────────────────────────── */
 .subteam-card { color: inherit; }
 
-/* ── Lead avatar ──────────────────────────────────────────────────────── */
-.avatar {
-  width: 60px; height: 60px; border-radius: 14px; flex-shrink: 0; overflow: hidden;
+/* ── Lead portrait ────────────────────────────────────────────────────── */
+.lead-photo {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
   display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(135deg, rgba(91,140,255,0.25), rgba(143,123,255,0.2));
-  border: 1px solid var(--border-strong);
-  font-family: var(--font-display); font-weight: 700; font-size: 20px; color: var(--gold-soft);
+  background: linear-gradient(135deg, rgba(91,140,255,0.22), rgba(143,123,255,0.18));
+  border-bottom: 1px solid var(--border);
+}
+.lead-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lead-initials {
+  font-family: var(--font-display); font-weight: 700; font-size: 52px;
+  color: var(--gold-soft); letter-spacing: 0.02em;
 }
 
 /* ── Sponsor tile — dark card, full-color logo on its own light plate ───── */
