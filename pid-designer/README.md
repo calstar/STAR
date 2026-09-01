@@ -105,6 +105,9 @@ server reads as a claim to be an editor and refuses (403) if you are not one.
 | `PUT  /diagrams/{id}/share` | replace the editor list `{sharedWith: [email]}` (whole list, not a delta) |
 | `DELETE /diagrams/{id}/share/me` | remove yourself from a diagram shared with you |
 | `GET  /users` | who a diagram can be shared with (see backend/directory.py) |
+| `POST /diagrams/{id}/checkout` | take the write token (423 if someone else has it) |
+| `DELETE /diagrams/{id}/checkout` | give it back |
+| `GET  /diagrams/{id}/checkout` | who holds it right now |
 
 
 | Method & path | Purpose |
@@ -120,6 +123,12 @@ server reads as a claim to be an editor and refuses (403) if you are not one.
 | `POST /diagrams/{id}/release` | publish an immutable release `{label}` (409 if it exists) |
 | `GET  /diagrams/{id}/releases` | list releases |
 | `GET  /diagrams/{id}/release/{label}` | fetch one release |
+
+A diagram is editable only by whoever holds its **checkout**. Opening one never
+takes it -- viewing must not block a colleague -- so the canvas is read only
+until you press Take in the diagram bar. The checkout returns on its own after a
+few minutes without a save, and on tab close. See
+[`lib/stardesign`](../lib/stardesign/README.md#checkouts).
 
 There is deliberately **no delete**. Diagrams are shared and editable by more
 than one person, so a delete button is one misclick away from destroying a group

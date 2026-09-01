@@ -15,12 +15,15 @@ type name**. This is that code, once.
 | `api.ts` | The design API client. `createDesignApi<T>` is the mirror of `DesignStore` on the backend: the apps differ only in route prefix and payload shape, so those are its parameters. Also `keyOf`/`refOf` — a design is addressed by `(owner, id)`, never `id` alone. |
 | `ChangeModal.tsx` | The Change dialog: editable list, the view-only tree, the share picker, rename, leave, copy. |
 | `Modal.tsx` | The dialog shell everything that would otherwise be a `window.confirm` is built on. |
+| `useCheckout.ts` | The client half of checkouts: current holder, Take/Release, the poll that runs only while you *don't* hold it, and the release-on-tab-close beacon. |
+| `CheckoutControl.tsx` | The status chip (*Editing* / *Alice is editing* / *Read only*) and its one button, plus `ReadOnlyNotice`. |
+| `readOnly.tsx` | `ReadOnlyProvider` / `useDisabled`, so a leaf input knows the design is not checked out without a prop threaded through every panel. |
 | `theme.ts` | Button classes and `relativeTime`. Separate from the components because react-refresh requires a component file to export nothing else. |
 
 ## What deliberately is not here
 
-**The design bar itself.** The one real difference between the apps is where
-live design state lives, and it is not reconcilable:
+**The design bar itself, and read-only enforcement.** The one real difference
+between the apps is where live design state lives, and it is not reconcilable:
 
 | app | state lives in | an edit is noticed by |
 |---|---|---|
@@ -69,3 +72,18 @@ the builder stage mirrors the repo layout (`/build/app/frontend`, with the
 shared source at `/build/lib`) so `../../lib/stardesign-ui` resolves the same
 inside an image as in a checkout. See any `frontend/Dockerfile` and the
 `.dockerignore`.
+
+### Two things in `useCheckout` that exist to prevent data loss
+
+1. **`take()` reloads before going editable.** Sitting in read-only while the
+   holder saved leaves a stale view; editing from there would overwrite their
+   work on the very first autosave.
+2. **`lost()`** — a save can come back 423 because the checkout lapsed and
+   someone else took it. The app must drop to read-only rather than retry into
+   a void.
+
+Read-only is enforced per app, because the editable surfaces have nothing in
+common: recovery-calculator disables its shared input primitives,
+pid-designer turns off ReactFlow's interaction props **and** checks the flag
+inside `TextNode`/`DraggableLabel`, which edit via `useReactFlow().setNodes` and
+so never see those props.

@@ -18,7 +18,7 @@ in only two places.
 | `userdata` | The on-disk layout: `<root>/<user>/<app>/…`, identity from `X-Auth-Email`, and the path sanitising that keeps `?owner=` from escaping the root. |
 | `storage` | Version history — microversions and immutable releases — on the local volume or in a versioned S3 bucket. |
 | `directory` | The team roster the share picker offers: the auth service's login records unioned with whoever already has data on the volume. |
-| `documents` | The design CRUD + sharing router, as a factory. This is where `_resolve_doc` lives — the single place cross-user access is granted. |
+| `documents` | The design CRUD, sharing and checkout router, as a factory. This is where `_resolve_doc` lives — the single place cross-user access is granted — and the checkout compare-and-set. |
 
 ## Using it
 
@@ -53,3 +53,37 @@ Path-installed, not published — it is versioned with the repo:
 
 Its consumers' images build from the **repo root** so this directory is inside
 the build context; see each `Dockerfile.api` and the `.dockerignore`.
+
+## Checkouts
+
+Concurrent editing is not resolved, it is **prevented**: at most one person
+holds a design's write token, and only the holder may save.
+
+- Opening a design never takes it — viewing must not block a colleague.
+- `POST /{id}/checkout` takes it, `DELETE` gives it back, `GET` reports it.
+  `POST /{id}/checkout/release` exists only because `sendBeacon` cannot issue a
+  DELETE on tab close.
+- **423**, not 409 — `create_release` already uses 409 for "that label exists".
+- Content writes (`autosave`, `flush`, `release`) require it. Rename, share,
+  leave and copy deliberately do not: they are not concurrent editing, and
+  blocking them would let a stale checkout freeze a design nobody can tidy.
+- A successful save refreshes the heartbeat, so "inactivity" means *not
+  editing*. After `lock_ttl` (default 5 min) the checkout lapses; expiry is
+  evaluated lazily, at take time, so there is no reaper and no window where the
+  record and the answer disagree.
+
+The compare-and-set runs inside `_index_lock` — the same `flock` that already
+serialises index writes — so two simultaneous takes cannot both win.
+
+> **`flock` is per-machine.** All three design tools run on the one apps machine
+> sharing the `userdata` volume, so this holds today. Running a design tool on a
+> second machine against the same volume would break the guarantee *silently*.
+
+### Testing it
+
+The obvious race test — N processes taking at once, assert one wins — **passes
+with the locking deleted**. The critical section is sub-millisecond, so
+contenders mostly serialise on their own; neither a barrier nor 48 contenders
+fixed it. `test_take_cannot_proceed_while_the_index_lock_is_held` is the real
+guard: it holds the same `flock` and asserts a take *blocks*. That fails every
+run, in every app, the moment the lock goes.
