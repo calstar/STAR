@@ -52,12 +52,6 @@ export default function Home() {
             </div>
           </div>
         </div>
-
-        {/* scroll cue */}
-        <div style={{ position: 'absolute', bottom: 26, left: '50%', transform: 'translateX(-50%)', zIndex: 2, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontSize: 11, letterSpacing: '0.2em', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-          SCROLL
-          <span style={{ width: 1, height: 34, background: 'linear-gradient(var(--text-faint), transparent)' }} />
-        </div>
       </section>
 
       {/* ── Stats bar ────────────────────────────────────────────────────── */}
@@ -80,7 +74,6 @@ export default function Home() {
       <section className="section">
         <div className="container" style={{ display: 'grid', gap: 'clamp(32px, 6vw, 72px)', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', alignItems: 'center' }}>
           <Reveal>
-            <span className="eyebrow">Who we are</span>
             <h2 className="section-title">A decade of student-built flight.</h2>
             <p className="section-lead">
               STAR boasts the longest and most successful launch history on campus, eighteen complete
@@ -98,7 +91,7 @@ export default function Home() {
             </Link>
           </Reveal>
           <Reveal delay={120}>
-            <div style={{ borderRadius: 20, overflow: 'hidden', border: '1px solid var(--border)', aspectRatio: '4 / 3', boxShadow: '0 30px 80px rgba(0,0,0,0.5)' }}>
+            <div style={{ borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)', aspectRatio: '4 / 3', boxShadow: '0 30px 80px rgba(0,0,0,0.5)' }}>
               <img src="/img/team-photo-new.webp" alt="The STAR team" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             </div>
           </Reveal>
@@ -109,15 +102,14 @@ export default function Home() {
       <section className="section" style={{ paddingTop: 0 }}>
         <div className="container">
           <Reveal style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <span className="eyebrow">Our ambitions</span>
             <h2 className="section-title" style={{ maxWidth: '18ch' }}>What we're reaching for.</h2>
           </Reveal>
-          <div style={{ display: 'grid', gap: 22, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', marginTop: 48 }}>
+          <div style={{ display: 'grid', gap: 'clamp(28px, 5vw, 56px)', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', marginTop: 48 }}>
             {AMBITIONS.map((a, i) => (
               <Reveal key={a.title} delay={i * 100}>
-                <div className="card" style={{ padding: 32, height: '100%' }}>
-                  <div className="mono" style={{ fontSize: 13, color: 'var(--gold)' }}>0{i + 1}</div>
-                  <h3 style={{ fontSize: 24, marginTop: 14 }}>{a.title}</h3>
+                <div style={{ height: '100%' }}>
+                  <span style={{ display: 'block', width: 32, height: 2, background: 'var(--gold)', marginBottom: 18 }} />
+                  <h3 style={{ fontSize: 24 }}>{a.title}</h3>
                   <p style={{ color: 'var(--text-dim)', marginTop: 12 }}>{a.body}</p>
                 </div>
               </Reveal>
@@ -130,8 +122,7 @@ export default function Home() {
       <section className="section" style={{ paddingTop: 0 }}>
         <div className="container">
           <Reveal>
-            <span className="eyebrow">Subteams</span>
-            <h2 className="section-title">Many ways to build a rocket.</h2>
+            <h2 className="section-title">One team, many disciplines.</h2>
             <p className="section-lead">
               We welcome all majors and backgrounds. Find the corner of the vehicle that fascinates
               you, or try a few.

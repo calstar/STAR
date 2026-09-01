@@ -103,7 +103,7 @@ const navLinkStyle: React.CSSProperties = {
   fontWeight: 500,
   color: 'var(--text-dim)',
   padding: '8px 14px',
-  borderRadius: 9,
+  borderRadius: 4,
   transition: 'color .2s ease',
 };
 

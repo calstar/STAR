@@ -31,6 +31,12 @@
 
   --maxw: 1180px;
   --nav-h: 76px;
+
+  /* Corner scale — deliberately tight/technical, not maximal-rounded.
+     --r  : surfaces (cards, panels, images, CTA bands)
+     --r-sm: small interactive (buttons, chips, nav links). Former pills square off. */
+  --r:    6px;
+  --r-sm: 4px;
   --font-display: 'Space Grotesk', system-ui, sans-serif;
   --font-body: 'Inter', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
@@ -135,7 +141,7 @@ a { color: inherit; text-decoration: none; }
   font-size: 15px;
   letter-spacing: 0.01em;
   padding: 13px 22px;
-  border-radius: 12px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   border: 1px solid transparent;
   transition: transform 0.18s ease, box-shadow 0.25s ease, background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
@@ -162,7 +168,7 @@ a { color: inherit; text-decoration: none; }
   position: relative;
   background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.015));
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: var(--r);
   overflow: hidden;
   transition: transform 0.28s cubic-bezier(0.2,0.7,0.2,1), border-color 0.28s ease, box-shadow 0.28s ease;
 }
@@ -180,7 +186,7 @@ a { color: inherit; text-decoration: none; }
   letter-spacing: 0.08em;
   text-transform: uppercase;
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border-strong);
   color: var(--text-dim);
   background: rgba(0,0,0,0.25);
@@ -244,7 +250,7 @@ a { color: inherit; text-decoration: none; }
 
 .social-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 40px; height: 40px; border-radius: 10px;
+  width: 40px; height: 40px; border-radius: var(--r-sm);
   border: 1px solid var(--border); color: var(--text-dim);
   transition: color .2s ease, border-color .2s ease, transform .2s ease, background .2s ease;
 }
@@ -276,7 +282,7 @@ a { color: inherit; text-decoration: none; }
 /* ── Sponsor tile — dark card, full-color logo on its own light plate ───── */
 .sponsor-tile {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
-  aspect-ratio: 1 / 1; padding: 14px; border-radius: 14px;
+  aspect-ratio: 1 / 1; padding: 14px; border-radius: var(--r);
   background: #141519;
   border: 1px solid var(--border);
   transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease, background .25s ease;
@@ -285,7 +291,7 @@ a { color: inherit; text-decoration: none; }
    backing so they stay legible on the dark card (no oversized plate). */
 .sponsor-logo {
   display: block; width: auto; max-width: 100%; max-height: 66px;
-  background: #fff; border-radius: 6px;
+  background: #fff; border-radius: var(--r-sm);
 }
 .sponsor-tile .sponsor-name {
   font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.05em;
@@ -334,7 +340,7 @@ a { color: inherit; text-decoration: none; }
   white-space: nowrap;
   background: var(--bg);
   padding: 3px 10px;
-  border-radius: 999px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
 }
 /* description (left) + photo (right). Equal columns so the gap straddles the

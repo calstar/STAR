@@ -1,6 +1,6 @@
 import PageHeader from '../components/PageHeader';
 import Reveal from '../components/Reveal';
-import { ArrowRight, Mail } from '../components/icons';
+import { ArrowRight } from '../components/icons';
 import { SPONSORS } from '../data/sponsors';
 import { SITE } from '../data/site';
 
@@ -55,14 +55,13 @@ export default function Sponsors() {
           <Reveal>
             <div
               style={{
-                border: '1px solid var(--border-strong)', borderRadius: 22,
+                border: '1px solid var(--border-strong)', borderRadius: 6,
                 padding: 'clamp(32px, 6vw, 60px)',
                 background: 'linear-gradient(120deg, rgba(91,140,255,0.10), rgba(143,123,255,0.08))',
-                display: 'grid', gap: 28, gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', alignItems: 'center',
+                display: 'flex', flexWrap: 'wrap', gap: 32, alignItems: 'center', justifyContent: 'space-between',
               }}
             >
-              <div>
-                <span className="eyebrow">Partner with us</span>
+              <div style={{ flex: '1 1 360px' }}>
                 <h2 className="section-title" style={{ fontSize: 'clamp(26px, 4vw, 38px)' }}>Become a STAR sponsor.</h2>
                 <p className="section-lead">
                   Sponsoring STAR puts your brand in front of some of Berkeley's most driven engineers
@@ -70,9 +69,9 @@ export default function Sponsors() {
                   sponsorship packet.
                 </p>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'flex-start', flex: '0 0 auto' }}>
                 <a href={`mailto:${SITE.contactEmail}?subject=STAR%20Sponsorship`} className="btn btn-primary" style={{ fontSize: 16 }}>
-                  <Mail /> Get in touch <ArrowRight />
+                  Get in touch <ArrowRight />
                 </a>
                 <a href={`mailto:${SITE.contactEmail}`} className="footer-link mono" style={{ fontSize: 14 }}>
                   {SITE.contactEmail}
