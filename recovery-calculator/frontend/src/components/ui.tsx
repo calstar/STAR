@@ -8,6 +8,7 @@ import type { ReactNode } from 'react'
 
 // The dialog shell is shared with the other design tools.
 export { Modal } from '@stardesign-ui'
+import { useDisabled } from '@stardesign-ui'
 import type { Kind } from '../lib/quantities'
 import { useUnits } from '../lib/unitsContext'
 
@@ -117,7 +118,7 @@ const inputClass =
  * it wrote back, `physicsKey(ui)` would move and the simulation would re-run
  * for a number that did not change.
  */
-export function NumberInput({ value, display, onChange, step = 'any', min, max, placeholder, disabled }: {
+export function NumberInput({ value, display, onChange, step = 'any', min, max, placeholder, disabled: ownDisabled }: {
   value: number | null
   display?: string
   onChange: (v: number | null) => void
@@ -127,6 +128,7 @@ export function NumberInput({ value, display, onChange, step = 'any', min, max, 
   placeholder?: string
   disabled?: boolean
 }) {
+  const disabled = useDisabled(ownDisabled)
   const [editing, setEditing] = useState(false)
   const shown = display !== undefined && !editing ? display : (value ?? '')
   return (
@@ -168,7 +170,7 @@ export function NumberInput({ value, display, onChange, step = 'any', min, max, 
  * DISPLAY units: `step={0.25}` for inches would silently become a quarter of a
  * metre the moment someone picked metric.
  */
-export function UnitInput({ value, onChange, kind, step, min, disabled, placeholder }: {
+export function UnitInput({ value, onChange, kind, step, min, disabled: ownDisabled, placeholder }: {
   value: number | null
   onChange: (v: number | null) => void
   kind: Kind
@@ -178,6 +180,7 @@ export function UnitInput({ value, onChange, kind, step, min, disabled, placehol
   disabled?: boolean
   placeholder?: string
 }) {
+  const disabled = useDisabled(ownDisabled)
   const { u, val, si, forInput } = useUnits()
   return (
     <NumberInput
@@ -196,31 +199,37 @@ export function UnitInput({ value, onChange, kind, step, min, disabled, placehol
   )
 }
 
-export function TextInput({ value, onChange, placeholder }: {
+export function TextInput({ value, onChange, placeholder, disabled: ownDisabled }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
+  disabled?: boolean
 }) {
+  const disabled = useDisabled(ownDisabled)
   return (
     <input
       type="text"
       className={inputClass}
       value={value}
       placeholder={placeholder}
+      disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
     />
   )
 }
 
-export function Select<T extends string>({ value, onChange, options }: {
+export function Select<T extends string>({ value, onChange, options, disabled: ownDisabled }: {
   value: T
   onChange: (v: T) => void
   options: { value: T; label: string }[]
+  disabled?: boolean
 }) {
+  const disabled = useDisabled(ownDisabled)
   return (
     <select
       className={inputClass}
       value={value}
+      disabled={disabled}
       onChange={(e) => onChange(e.target.value as T)}
     >
       {options.map((o) => (
@@ -232,7 +241,7 @@ export function Select<T extends string>({ value, onChange, options }: {
 
 /** A toggle chip. Used for the per-station series pickers, where the colour
  *  swatch has to match the line it controls or the legend is a lie. */
-export function Chip({ active, onClick, colour, children, title, disabled }: {
+export function Chip({ active, onClick, colour, children, title, disabled: ownDisabled }: {
   active: boolean
   onClick: () => void
   colour?: string
@@ -240,6 +249,7 @@ export function Chip({ active, onClick, colour, children, title, disabled }: {
   title?: string
   disabled?: boolean
 }) {
+  const disabled = useDisabled(ownDisabled)
   return (
     <button
       type="button"
@@ -263,16 +273,19 @@ export function Chip({ active, onClick, colour, children, title, disabled }: {
   )
 }
 
-export function Toggle({ checked, onChange, label }: {
+export function Toggle({ checked, onChange, label, disabled: ownDisabled }: {
   checked: boolean
   onChange: (v: boolean) => void
   label: ReactNode
+  disabled?: boolean
 }) {
+  const disabled = useDisabled(ownDisabled)
   return (
-    <label className="flex cursor-pointer items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+    <label className={`flex items-center gap-2 text-xs text-[var(--color-text-secondary)] ${disabled ? 'cursor-default opacity-50' : 'cursor-pointer'}`}>
       <input
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
         className="h-3.5 w-3.5 accent-[var(--color-accent)]"
       />

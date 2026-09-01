@@ -13,6 +13,7 @@ import { getHealth } from './api/client'
 import type { UiConfig } from './types/schema'
 import { loadUiConfig, saveUiConfig } from './lib/persist'
 import { ConfigVersions } from './components/versions/ConfigVersions'
+import { ReadOnlyProvider } from '@stardesign-ui'
 import { RecoveryPanel } from './components/recovery/RecoveryPanel'
 import { CornersPanel } from './components/corners/CornersPanel'
 import { StudyPanel } from './components/study/StudyPanel'
@@ -60,6 +61,10 @@ export default function App() {
    * every render.
    */
   const [ui, setUi] = useState<UiConfig>(loadUiConfig)
+  // A config is editable only while it is checked out to you. Everything under
+  // <main> reads this through ReadOnlyProvider, so a new input cannot
+  // accidentally stay live when someone else holds the config.
+  const [editable, setEditable] = useState(false)
 
   useEffect(() => {
     getHealth().then((res) => {
@@ -117,6 +122,7 @@ export default function App() {
             <ConfigVersions
               config={ui}
               onRestore={handleRestore}
+              onEditableChange={setEditable}
               inline
             />
           </div>
@@ -141,6 +147,9 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-[1800px] px-4 py-6 sm:px-6 lg:px-8">
+        {/* Inputs go grey without the checkout. Running a simulation stays
+            live -- it reads the config, it does not change it. */}
+        <ReadOnlyProvider readOnly={!editable}>
         <div className={tab === 'recovery' ? '' : 'hidden'}>
           <RecoveryPanel ui={ui} onChange={setUi} />
         </div>
@@ -159,6 +168,7 @@ export default function App() {
         <div className={tab === 'units' ? '' : 'hidden'}>
           <UnitsPanel />
         </div>
+      </ReadOnlyProvider>
       </main>
     </div>
   )

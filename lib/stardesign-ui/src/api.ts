@@ -44,6 +44,15 @@ export interface TeamUser {
   name: string;
 }
 
+/** Who holds a design's write token, as the server reports it. */
+export interface CheckoutState {
+  /** Email of the holder, or null when the design is free. */
+  lockedBy: string | null;
+  lockedByName: string | null;
+  lockedByMe: boolean;
+  lockExpiresAt: string | null;
+}
+
 export interface MicroVersion {
   versionId: string;
   savedAt: string;
@@ -181,6 +190,34 @@ export function createDesignApi<T>({ base, usersPath, codec }: DesignApiConfig<T
     /** Drop yourself from a design shared with you. Destroys nothing. */
     leave: (ref: DocRef) =>
       fetch(url(ref, '/share/me'), { method: 'DELETE' }).then((r) => json<{ ok: boolean }>(r)),
+
+    /**
+     * Take the design's write token. 423 if someone else holds it.
+     *
+     * Deliberately never called on open -- viewing must not block a colleague.
+     * The caller should reload the design straight after: sitting in read-only
+     * while the holder saved leaves a stale view, and editing from there would
+     * overwrite their work on the first autosave.
+     */
+    takeCheckout: (ref: DocRef) =>
+      fetch(url(ref, '/checkout'), post({})).then((r) => json<CheckoutState>(r)),
+
+    /** Give it back. Idempotent, and holder-only on the server. */
+    releaseCheckout: (ref: DocRef) =>
+      fetch(url(ref, '/checkout'), { method: 'DELETE' }).then((r) => json<CheckoutState>(r)),
+
+    /**
+     * Release on tab close. A beacon because a normal fetch does not survive
+     * unload -- and because nothing can read its response, the server-side
+     * inactivity timeout remains the real backstop.
+     */
+    releaseCheckoutOnUnload: (ref: DocRef): void => {
+      navigator.sendBeacon(url(ref, '/checkout/release'), new Blob([], { type: 'text/plain' }));
+    },
+
+    /** Who holds it now. Polled while you do not, so Take lights up on its own. */
+    getCheckout: (ref: DocRef) =>
+      fetch(url(ref, '/checkout')).then((r) => json<CheckoutState>(r)),
 
     load: (ref: DocRef) =>
       fetch(url(ref, '/load'))

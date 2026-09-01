@@ -20,7 +20,7 @@ import { Button, Modal } from '../ui'
 import * as api from '../../api/documents'
 import { designApi, keyOf, refOf } from '../../api/documents'
 import type { DocMeta, DocRef, MicroVersion, ReleaseVersion } from '../../api/documents'
-import { ChangeModal } from '@stardesign-ui'
+import { ChangeModal, CheckoutControl, useCheckout } from '@stardesign-ui'
 
 // v2 because the remembered config is now (owner, id): a shared config is not
 // identified by its id alone. A v1 value is a bare id, which was always one of
@@ -100,12 +100,15 @@ function relativeTime(iso: string): string {
 interface Props {
   config: UiConfig
   onRestore: (config: UiConfig) => void
+  /** Told whether the config is currently checked out to this user. The app puts
+   *  its inputs behind this -- without the checkout it is read only. */
+  onEditableChange?: (editable: boolean) => void
   /** Render just the bar row, no background or width container -- for dropping
    *  inside a parent (the header) that already provides both. */
   inline?: boolean
 }
 
-export function ConfigVersions({ config, onRestore, inline = false }: Props) {
+export function ConfigVersions({ config, onRestore, onEditableChange, inline = false }: Props) {
   const [documents, setDocuments] = useState<DocMeta[]>([])
   const [activeRef, setActiveRef] = useState<DocRef | null>(null)
   const activeKey = activeRef ? keyOf(activeRef) : null
@@ -162,6 +165,25 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
       loadedKey.current = keyOf(ref)
     }
   }, [onRestore])
+
+  // Taking the checkout re-loads the config first: sitting in read-only while
+  // the holder saved leaves a stale view, and editing from there would
+  // overwrite their work on the first autosave.
+  const checkout = useCheckout({
+    api: designApi,
+    ref: activeRef,
+    reload: useCallback(async () => {
+      if (!activeRef) return
+      const { config: fresh } = await api.loadDocument(activeRef)
+      if (fresh && Object.keys(fresh).length > 0) {
+        const revived = normalise(fresh as UiConfig)
+        lastSaved.current = JSON.stringify(toStoredConfig(revived))
+        onRestore(revived)
+      }
+    }, [activeRef, onRestore]),
+  })
+
+  useEffect(() => { onEditableChange?.(checkout.held) }, [checkout.held, onEditableChange])
 
   const select = useCallback((ref: DocRef) => {
     setActiveRef(ref)
@@ -229,7 +251,9 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
 
   // Debounced autosave of the working copy, only once the active doc has loaded.
   useEffect(() => {
-    if (!activeRef || loadedKey.current !== keyOf(activeRef)) return
+    // No checkout, no autosave. The inputs are read-only in that state anyway;
+    // this is the belt to that pair of braces.
+    if (!activeRef || loadedKey.current !== keyOf(activeRef) || !checkout.held) return
     const stored = toStoredConfig(config)
     const serialized = JSON.stringify(stored)
     // `config` gets a new identity on any UI change, including ones that carry
@@ -247,16 +271,23 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
         if (e instanceof api.ApiError && e.status === 403) {
           setUnshared(active?.name ?? 'This config')
           void reloadAndFallBack()
+        } else if (e instanceof api.ApiError && e.status === 423) {
+          // The checkout lapsed and somebody else took it. Drop to read-only
+          // rather than retry into a void -- we still have access, we are just
+          // not the editor any more.
+          checkout.lost()
         }
       })
     }, AUTOSAVE_MS)
     return () => clearTimeout(t)
-  }, [config, activeRef, active, reloadAndFallBack])
+  }, [config, activeRef, active, reloadAndFallBack, checkout])
 
   // Best-effort flush on tab close, between the throttled microversions.
   useEffect(() => {
     const flush = () => {
-      if (activeRef && loadedKey.current === keyOf(activeRef)) api.flushDocument(activeRef, toStoredConfig(configRef.current))
+      // A beacon cannot read a rejection, so gate it here instead.
+      if (activeRef && loadedKey.current === keyOf(activeRef) && checkout.held)
+        api.flushDocument(activeRef, toStoredConfig(configRef.current))
     }
     const onVis = () => { if (document.visibilityState === 'hidden') flush() }
     window.addEventListener('pagehide', flush)
@@ -265,7 +296,7 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
       window.removeEventListener('pagehide', flush)
       document.removeEventListener('visibilitychange', onVis)
     }
-  }, [activeRef])
+  }, [activeRef, checkout.held])
 
   /** Adopt a freshly created/copied config: it becomes the active one. */
   const adopt = useCallback((meta: DocMeta) => {
@@ -423,6 +454,8 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
         >
           Change
         </button>
+
+        <CheckoutControl checkout={checkout} noun="config" disabled={!activeRef} />
 
         <div className="mx-1 h-4 w-px bg-[var(--color-border)]" />
 

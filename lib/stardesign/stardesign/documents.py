@@ -688,6 +688,21 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         _release_lock(ref.owner, ref.doc_id, ref.viewer)
         return {"ok": True}
 
+    @router.post(f"{sub}/{{doc_id}}/checkout/release")
+    async def release_checkout_beacon(
+        request: Request, doc_id: str, owner: str | None = None
+    ):
+        """Release, reachable by ``navigator.sendBeacon`` on tab close.
+
+        A separate route only because a beacon can only ever POST -- it cannot
+        issue the DELETE above. Same effect, and equally idempotent. Nothing can
+        read a beacon's response, so this is best-effort: the inactivity timeout
+        is what actually guarantees an abandoned checkout is freed.
+        """
+        ref = _resolve_doc(request, owner, doc_id)
+        _release_lock(ref.owner, ref.doc_id, ref.viewer)
+        return {"ok": True}
+
     @router.get(f"{sub}/{{doc_id}}/checkout")
     async def get_checkout(request: Request, doc_id: str, owner: str | None = None):
         """Who holds it right now. Polled by the bar while you do not, so that
