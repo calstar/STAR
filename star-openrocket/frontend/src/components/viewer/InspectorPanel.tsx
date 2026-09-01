@@ -24,6 +24,12 @@ interface Props extends StabilityPanelProps {
   visibleKeys: Set<string>
   overrides: Map<string, PartOverride>
   onOverrideChange: (key: string, override: PartOverride | null) => void
+  /** 3D view settings. They live on the Properties tab's empty state, since
+   *  they only apply to this tab and the header is shared with five others. */
+  opacity: number
+  onOpacityChange: (value: number) => void
+  showAssemblyCentroid: boolean
+  onShowAssemblyCentroidChange: (value: boolean) => void
   /** Analysis tab: the live centre of mass and how many parts feed it. */
   cm: CMResult
   partCount: number
@@ -41,6 +47,10 @@ export function InspectorPanel({
   visibleKeys,
   overrides,
   onOverrideChange,
+  opacity,
+  onOpacityChange,
+  showAssemblyCentroid,
+  onShowAssemblyCentroidChange,
   cm,
   partCount,
   cmAnalysis,
@@ -82,6 +92,10 @@ export function InspectorPanel({
             visibleKeys={visibleKeys}
             overrides={overrides}
             onOverrideChange={onOverrideChange}
+            opacity={opacity}
+            onOpacityChange={onOpacityChange}
+            showAssemblyCentroid={showAssemblyCentroid}
+            onShowAssemblyCentroidChange={onShowAssemblyCentroidChange}
           />
         ) : (
           <>

@@ -25,6 +25,8 @@ import { describe, expect, it } from 'vitest'
  * `OrkConfig` (see types/config.ts), so hiding a part is a view action.
  */
 const VIEW_ONLY: Record<string, string> = {
+  'PropertiesPanel.tsx:onOpacityChange': 'part opacity in the 3D view; not saved in OrkConfig',
+  'PropertiesPanel.tsx:onShowAssemblyCentroidChange': 'draws the Onshape CM marker; a view toggle',
   'PartList.tsx:onToggle(parts.map': 'show-all-hidden; visibility is not saved in the design',
   'PartList.tsx:onSelect([])': 'clears the selection, which is not saved either',
   'PartList.tsx:onContextMenu': 'opens the menu; its own items are hide/isolate/select',
