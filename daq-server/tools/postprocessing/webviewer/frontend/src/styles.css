@@ -21,6 +21,9 @@
   --color-accent: #3b82f6;
   --color-accent-hover: #2563eb;
   --color-danger: #ef4444;
+  /* Simulated-run badge. Amber reads as "caution, not real data" and clears
+     7:1 on bg-tertiary like the text tiers do. */
+  --color-sim: #fbbf24;
 
   /* Type scale, rem against a 16px root. Smallest step is 13px on purpose. */
   --text-2xs: 0.8125rem;
@@ -70,7 +73,13 @@ body {
 .run-item:hover { background: var(--color-bg-tertiary); }
 .run-item.active { background: var(--color-bg-tertiary); border-left-color: var(--color-accent); }
 .run-date { font-size: var(--text-sm); font-weight: 550; }
-.run-id { font-size: var(--text-xs); color: var(--color-text-muted); }
+.run-idline { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.run-id { font-size: var(--text-xs); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; }
+.sim-badge {
+  flex: none; font-size: var(--text-2xs); font-weight: 650; line-height: 1;
+  letter-spacing: .06em; padding: 2px 5px; border-radius: 3px;
+  color: var(--color-sim); border: 1px solid var(--color-sim);
+}
 .run-cached { position: absolute; right: 14px; top: 13px; color: var(--color-accent); font-size: var(--text-2xs); }
 
 /* Run header */

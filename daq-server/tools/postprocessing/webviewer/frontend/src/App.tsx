@@ -146,6 +146,9 @@ export default function App() {
             <>
               <div className="run-header">
                 <div className="run-title">{runId}</div>
+                {runs.find((r) => r.id === runId)?.simulated && (
+                  <span className="sim-badge" title="Simulated data — not from the test stand">SIM</span>
+                )}
                 {indexBusy && <span className="busy">exporting &amp; indexing… (first open of a run)</span>}
                 {indexErr && <span className="error">Error: {indexErr}</span>}
                 {index && (
