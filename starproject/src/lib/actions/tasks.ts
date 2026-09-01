@@ -111,6 +111,10 @@ export async function updateTask(formData: FormData) {
     const v = String(formData.get("description") ?? "").trim();
     data.description = v === "" ? null : v;
   }
+  if (formData.has("blockedNote")) {
+    const v = String(formData.get("blockedNote") ?? "").trim();
+    data.blockedNote = v === "" ? null : v;
+  }
   if (formData.has("status")) {
     data.status = TaskStatusEnum.parse(formData.get("status"));
   }
