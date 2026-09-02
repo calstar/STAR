@@ -444,7 +444,7 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
         return;
     }
 
-    const bool is_fire = (state == State::FIRE);
+    const bool is_fire = (state == fire_state_);
 
     // Collected first, then split into delay stages below — a command needs its role name to look
     // up its delay, which the by-board packing throws away.

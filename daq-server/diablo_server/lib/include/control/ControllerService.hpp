@@ -81,6 +81,16 @@ public:
     void setFireActive(bool active);
 
     /**
+     * Sequencer state id that means "firing", for the parity fallback that sniffs the sequencer
+     * state packet when the TCP FIRE_START/FIRE_STOP path misses an edge. Was the literal 16, so
+     * renumbering states silently moved the PWM ignition gate onto whatever state took id 16.
+     * Defaults to 16 so an un-migrated config behaves exactly as before.
+     */
+    void setFireStateId(uint8_t id) {
+        fire_state_id_ = id;
+    }
+
+    /**
      * @brief Override controller output with fixed duty cycles for open-loop validation.
      * When both values are 0 (default), the RobustDDP controller runs normally.
      * Set non-zero to bypass the controller and send these fixed duties on every FIRE tick.
@@ -92,6 +102,7 @@ public:
     RobustDDPController::Diagnostics getLastDiagnostics() const;
 
 private:
+    uint8_t fire_state_id_{16};
     // ── PWM packet sending ─────────────────────────────────────────────
     /**
      * Send a PWM actuator command over UDP.

@@ -1202,21 +1202,11 @@ elodin.on('packet', (header: any, payload: Buffer) => {
       broadcastStateUpdate();
       broadcastCommandedActuatorsForState(currentState);
       scheduleActuatorMismatchCheck(currentState);
-      if (currentState === SystemState.FIRE && prevState !== SystemState.FIRE) {
-        sendToControllerService('FIRE_START\n').then(({ ok, reply }) => {
-          if (!ok) {
-            console.error(`[ThinServer] FIRE_START not acknowledged by controller_service: ${reply}`);
-            broadcastNotification({ key: 'fire_start_failed', category: 'error', message: `FIRE_START not acknowledged by controller: ${reply}`, timestampMs: Date.now(), ongoing: false });
-          }
-        });
-      } else if (prevState === SystemState.FIRE && currentState !== SystemState.FIRE) {
-        sendToControllerService('FIRE_STOP\n').then(({ ok, reply }) => {
-          if (!ok) {
-            console.error(`[ThinServer] FIRE_STOP not acknowledged by controller_service: ${reply}`);
-            broadcastNotification({ key: 'fire_stop_failed', category: 'error', message: `FIRE_STOP not acknowledged by controller: ${reply}`, timestampMs: Date.now(), ongoing: false });
-          }
-        });
-      }
+      // FIRE_START / FIRE_STOP are NOT sent from here. The sequencer owns the burn gate and
+      // notifies controller_service itself (SequencerService::notifyControllerFire). This branch
+      // used to send them too, so a safety-critical gate had two writers in two processes racing
+      // on the same TCP endpoint — and this one keyed off SystemState.FIRE, a hardcoded enum,
+      // rather than the configured fire state.
       return;
     }
 
