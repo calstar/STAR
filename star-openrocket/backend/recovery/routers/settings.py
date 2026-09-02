@@ -52,6 +52,13 @@ class UnitPrefs(BaseModel):
     length: System = None
     distance: System = None
     area: System = None
+    # `volume` and `torque` are in the TS `Kind` union but were never declared
+    # here. Because extra="forbid", and because the Units tab writes *every*
+    # kind at once (setAll spreads the whole prefs object), that made EVERY
+    # settings save a 422 -- unit preferences only ever survived in the
+    # localStorage mirror, so they never followed anyone to another machine.
+    volume: System = None
+    torque: System = None
     mass: System = None
     speed: System = None
     accel: System = None
