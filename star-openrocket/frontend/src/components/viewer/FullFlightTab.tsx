@@ -67,7 +67,7 @@ interface Props {
 }
 
 export function FullFlightTab({ result, recovery, design, flight, onFlightChange }: Props) {
-  const { val, lab, dec, num, dur } = useUnits()
+  const { val, lab, dec, q, dur } = useUnits()
   const [descent, setDescent] = useState<DriftResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
@@ -239,7 +239,11 @@ export function FullFlightTab({ result, recovery, design, flight, onFlightChange
     )
   }
 
-  const showN = (si: number, kind: Kind, digits = 0) => `${num(si, kind, digits)}`
+  // `q` rather than `num`: these are headline tiles, and `num` renders the
+  // figure alone -- so Apogee read as a bare "3048" with nothing saying whether
+  // that was feet or metres. The Flight Dynamics tab's identical tiles have
+  // always used `q`; this one did not, and the two disagreed on screen.
+  const showN = (si: number, kind: Kind, digits = 0) => q(si, kind, digits)
   const selected = FULL_SERIES.filter((d) => compare.has(d.key))
   const yTitle = (d: FSeries) => `${d.name} (${lab(d.kind)})`
 
