@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <map>
+#include <set>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -50,13 +51,23 @@ public:
      * Groups commands by board IP, sends one UDP packet per board.
      * PWM actuators are skipped in FIRE state.
      */
-    void applyForState(State state);
+    /**
+     * Command every actuator for `state`.
+     *
+     * `is_transition` selects between the two things this does. On an actual state change it runs
+     * the CSV's per-actuator delays as a staged schedule; on the 1 Hz republish it sends the
+     * settled (final) positions with no delay. Without that split the republish would re-arm every
+     * pending delay once a second and the schedule would never finish.
+     */
+    void applyForState(State state, bool is_transition = false);
 
     /**
      * Start the 1 Hz continuous re-send loop for the given state.
      * Stops any previously running loop first.
      */
-    void startContinuousLoop(State state);
+    /** `allow_delays` false makes the entry apply immediately — used for abort states, which must
+     *  not sit behind a delay. */
+    void startContinuousLoop(State state, bool allow_delays = true);
 
     /** Stop the continuous re-send loop (blocks until the thread exits). */
     void stopContinuousLoop();
@@ -85,6 +96,17 @@ public:
 
 private:
     std::map<std::string, ActuatorRole> roles_;
+    /** state -> actuator -> delay in seconds, from state_machine_actuator_delays.csv. */
+    std::map<std::string, std::map<std::string, double>> state_actuator_delays_;
+    /** Bumped on every transition so an in-flight delayed stage from the previous state aborts
+     *  instead of landing after we have already moved on. */
+    std::atomic<uint64_t> schedule_gen_{0};
+    /** Roles whose delayed stage has not fired yet. The 1 Hz republish skips these: the board holds
+     *  its last commanded position, which is exactly the pre-transition value we want it to keep
+     *  until the delay elapses. Without this the republish would send the settled position first
+     *  and any delay longer than the republish period could never be observed. */
+    std::set<std::string> pending_roles_;
+    std::mutex pending_roles_mutex_;
     // CSV: state_name → { actuator_name → logical_pos (0 or 1) }
     std::map<std::string, std::map<std::string, int>> state_actuators_;
 
@@ -105,6 +127,8 @@ private:
         const std::string& state_name) const;
 
     // Build and send one UDP actuator command packet to a board.
+    /** Send to every board with the retransmits interleaved, so boards stay in step. */
+    bool sendBatch(const std::map<std::string, std::vector<std::pair<uint8_t, uint8_t>>>& by_board);
     bool sendUDP(const std::string& board_ip,
                  const std::vector<std::pair<uint8_t, uint8_t>>& id_state_pairs);
 
