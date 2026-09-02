@@ -23,12 +23,12 @@ import {
   ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import type { Kind } from '../../lib/units/quantities'
+import { useStoredSet } from '../../lib/uiPrefs'
 import { runDrift } from '../../recovery/api/client'
 import { toWireConfig } from '../../recovery/lib/serialise'
 import { useUnits } from '../../lib/units/unitsContext'
 import type { DesignSource, DriftResult, UiConfig } from '../../recovery/types/schema'
 import type { FlightDynamicsResult } from '../../types'
-import type { FlightParams } from '../../types/config'
 import {
   AXIS, FD, GRID, REFERENCE, SERIES, TICK_FONT, TOOLTIP_LABEL_STYLE,
   TOOLTIP_STYLE, axisLabelX, axisLabelY,
@@ -48,6 +48,10 @@ const EV = {
   main: '#f472b6', // pink-400
 }
 
+/** Where this browser remembers the ticked series, separate from the Flight
+ *  Dynamics plot because the two have different series sets. */
+const FULL_COMPARE_KEY = 'star-openrocket:fullflight-compare'
+
 /** The whole-flight series that share the compare plot. */
 interface FSeries { key: 'altitude' | 'speed' | 'accel' | 'wind'; name: string; kind: Kind; color: string }
 const FULL_SERIES: FSeries[] = [
@@ -62,24 +66,17 @@ interface Props {
   recovery: UiConfig
   design: DesignSource
   /** Launch params, owned by App — carries the persisted compare-plot selection. */
-  flight: FlightParams
-  onFlightChange: (patch: Partial<FlightParams>) => void
 }
 
-export function FullFlightTab({ result, recovery, design, flight, onFlightChange }: Props) {
+export function FullFlightTab({ result, recovery, design }: Props) {
   const { val, lab, dec, q, dur } = useUnits()
   const [descent, setDescent] = useState<DriftResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const seq = useRef(0)
-  // Which whole-flight series to overlay on the shared time axis. Persisted on the config
-  // (flight.fullCompareSeries) so the selection survives reloads and rides in the save file.
-  const compare = useMemo(() => new Set(flight.fullCompareSeries), [flight.fullCompareSeries])
-  const toggle = (key: string) => {
-    const next = new Set(flight.fullCompareSeries)
-    next.has(key) ? next.delete(key) : next.add(key)
-    onFlightChange({ fullCompareSeries: [...next] })
-  }
+  // Which whole-flight series to overlay: a viewing choice, kept per browser
+  // rather than on the design. See lib/uiPrefs.ts.
+  const [compare, toggle] = useStoredSet(FULL_COMPARE_KEY, ['altitude', 'speed'])
 
   // Descent config: the recovery inputs (parachutes/wind/site) but the vehicle
   // seeded by the ASCENT so the two halves join at apogee.

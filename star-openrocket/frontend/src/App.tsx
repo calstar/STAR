@@ -674,8 +674,7 @@ export default function App() {
         {activeTab === 'environment' ? (
         <EnvironmentTab recovery={recovery} onChange={setRecovery} />
       ) : activeTab === 'fullflight' ? (
-        <FullFlightTab result={flightDynResult} recovery={recovery} design={designSource}
-          flight={flight} onFlightChange={setFlight} />
+        <FullFlightTab result={flightDynResult} recovery={recovery} design={designSource} />
       ) : activeTab === 'recovery' ? (
         <RecoveryTab ui={recovery} onChange={setRecovery} design={designSource} />
       ) : activeTab === 'flight' ? (

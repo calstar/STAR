@@ -11,7 +11,7 @@
  * prefs like opacity that have no bearing on the analysis.
  */
 
-import type { ViewerConfig } from '../types/config'
+import type { FlightParams, ViewerConfig } from '../types/config'
 import { defaultFlightParams, defaultViewerConfig } from '../types/config'
 
 /** Versioned key, so a future shape change is ignored rather than crashed on. */
@@ -46,7 +46,11 @@ export function reviveViewerConfig(raw: string | null): ViewerConfig | null {
     finCount: typeof saved.finCount === 'number' ? saved.finCount : base.finCount,
     motor: saved.motor ?? base.motor,
     railLength: typeof saved.railLength === 'number' ? saved.railLength : base.railLength,
-    flight: { ...defaultFlightParams(), ...(saved.flight ?? {}) },
+    // Named fields, not a spread: designs saved before the compare-plot
+    // selection moved to localStorage still carry `compareSeries` /
+    // `fullCompareSeries` here, and a spread would lift them back into the live
+    // config and write them straight out again on the next autosave.
+    flight: revivedFlight(saved.flight),
   }
 }
 
@@ -61,6 +65,19 @@ import type { OrkConfig } from '../types/config'
 import { defaultOrkConfig } from '../types/config'
 import { reviveUiConfig } from '../recovery/lib/persist'
 import { defaultUiConfig, toStoredConfig } from '../recovery/lib/serialise'
+
+/** The launch params, keeping only fields the current shape declares. */
+function revivedFlight(saved: unknown): FlightParams {
+  const base = defaultFlightParams()
+  const f = (saved && typeof saved === 'object' ? saved : {}) as Partial<FlightParams>
+  return {
+    inclination: typeof f.inclination === 'number' ? f.inclination : base.inclination,
+    heading: typeof f.heading === 'number' ? f.heading : base.heading,
+    cpModel: f.cpModel === 'ours' || f.cpModel === 'rocketpy' || f.cpModel === 'both'
+      ? f.cpModel
+      : base.cpModel,
+  }
+}
 
 export function reviveOrkConfig(raw: string | null): OrkConfig | null {
   if (!raw) return null

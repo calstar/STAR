@@ -9,7 +9,9 @@
  */
 
 import { btn, useDisabled } from '@stardesign-ui'
-import { useEffect, useMemo, useState } from 'react'
+
+import { useStoredSet } from '../../lib/uiPrefs'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   CartesianGrid,
@@ -136,6 +138,10 @@ export function Panel({ title, hint, children, heightClass = 'min-h-[360px]' }: 
 
 const tip = { contentStyle: TOOLTIP_STYLE, labelStyle: TOOLTIP_LABEL_STYLE }
 
+/** Where this browser remembers the ticked series. Namespaced like the
+ *  sidebar widths (star-openrocket:left-width). */
+const COMPARE_KEY = 'star-openrocket:flight-compare'
+
 /** Selectable time series for the compare overlay: each is one colored Y axis.
  *  `get` returns SI; `kind` (when present) routes the value + label through the
  *  units selection. `unit` is the literal label for the non-convertible ones —
@@ -222,14 +228,9 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Which series to overlay on the shared-time compare plot. Persisted on the config
-  // (flight.compareSeries) so the selection survives reloads and rides in the save file.
-  const compare = useMemo(() => new Set(flight.compareSeries), [flight.compareSeries])
-  const toggleCompare = (key: string) => {
-    const next = new Set(flight.compareSeries)
-    next.has(key) ? next.delete(key) : next.add(key)
-    onFlightChange({ compareSeries: [...next] })
-  }
+  // Which series to overlay on the shared-time compare plot: a viewing choice,
+  // kept per browser rather than on the design. See lib/uiPrefs.ts.
+  const [compare, toggleCompare] = useStoredSet(COMPARE_KEY, ['altitude', 'speed'])
 
   async function run() {
     if (!modelId || !motorSel) return
