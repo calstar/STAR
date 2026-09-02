@@ -180,7 +180,7 @@ export function StabilityPanel({
               : `${btn} disabled:cursor-not-allowed`
           }
         >
-          Body ({outerFaceCount})
+          Edit body ({outerFaceCount})
         </button>
         <button
           type="button"
@@ -192,7 +192,7 @@ export function StabilityPanel({
               : `${btn} disabled:cursor-not-allowed`
           }
         >
-          Fins ({finCount})
+          Edit fins ({finCount})
         </button>
         <button
           type="button"

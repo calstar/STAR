@@ -744,10 +744,6 @@ export default function App() {
               Onshape total {q(manifest.totals.assemblyMass, 'mass')} · CM z{' '}
               {q(manifest.totals.assemblyCentroid[2], 'length')}
             </div>
-            <div>
-              {manifest.totals.reconciled ? 'reconciled' : 'NOT reconciled'} · built{' '}
-              {manifest.source.builtAt} · {manifest.source.resolvedFrom}
-            </div>
           </div>
         </main>
 
