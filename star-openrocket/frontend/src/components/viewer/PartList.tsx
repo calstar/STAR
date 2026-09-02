@@ -22,6 +22,8 @@ import type { Part } from '../../types'
 import { useUnits } from '../../lib/units/unitsContext'
 import { displayName } from '../../lib/names'
 import { STATUS_TEXT, massStatus, worstStatus } from '../../lib/status'
+import { useDisabled } from '@stardesign-ui'
+
 import { ContextMenu, type MenuItem } from './ContextMenu'
 
 interface Props {
@@ -71,6 +73,9 @@ export function PartList({
   onHover,
 }: Props) {
   const { q } = useUnits()
+  // Hiding a part drops it from the centre of mass, so visibility is part of
+  // the design and needs the checkout. Selecting and expanding are not.
+  const readOnly = useDisabled()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [menu, setMenu] = useState<MenuState | null>(null)
   // Where a shift-range starts. Held here rather than derived from the
@@ -199,10 +204,12 @@ export function PartList({
       {
         label: shown > 0 ? `Hide ${noun}` : `Show ${noun}`,
         danger: shown > 0,
+        disabled: readOnly,
         onSelect: () => onToggle(unique, shown === 0),
       },
       {
         label: `Isolate ${noun}`,
+        disabled: readOnly,
         onSelect: () => {
           onToggle(parts.map((part) => part.key), false)
           onToggle(unique, true)
@@ -213,6 +220,7 @@ export function PartList({
     if (shown > 0 && shown < unique.length) {
       items.splice(1, 0, {
         label: `Show the other ${unique.length - shown}`,
+        disabled: readOnly,
         onSelect: () => onToggle(unique, true),
       })
     }
@@ -233,6 +241,8 @@ export function PartList({
             type="button"
             className="rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-amber-300 hover:bg-[var(--color-bg-tertiary)]"
             onClick={() => onToggle(parts.map((part) => part.key), true)}
+            disabled={readOnly}
+            title={readOnly ? 'Take the design in the header to show hidden parts' : undefined}
           >
             Show {hiddenCount} hidden
           </button>
