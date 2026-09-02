@@ -1,9 +1,16 @@
 /**
- * Named config profiles v2 — profiles are the editable source of truth; config.toml is the
- * *deployed* file the pipeline reads.
+ * Named config profiles v3 — a profile is a DIRECTORY, and it owns its state-machine CSVs.
  *
- *   - The Config editor reads/writes the ACTIVE PROFILE (config/profiles/<name>.toml).
- *   - "Deploying" copies the active profile into config.toml.
+ *   config/profiles/<name>/config.toml                  <- tracked source of truth
+ *   config/profiles/<name>/state_machine_actuators.csv
+ *   config/profiles/<name>/state_transitions.csv
+ *
+ * Deploying copies the whole directory out to config/, so switching profiles switches the CSVs
+ * too. The C++ services keep reading config/state_machine_actuators.csv with their existing
+ * hardcoded fallback paths — they never learn that profiles exist.
+ *
+ *   - The Config editor reads/writes the ACTIVE PROFILE (config/profiles/<name>/config.toml).
+ *   - "Deploying" copies the active profile's config.toml + every .csv into config/.
  *   - Deploy happens on an idle save/switch and at (live) session start.
  *   - During a session config.toml is FROZEN: the editor writes profile drafts only, applied at
  *     the next session start. This is what makes editing during a run safe — a mid-run edit can no
@@ -12,7 +19,7 @@
  * config.toml stays git-tracked in this phase (a later phase makes it a pure generated artifact).
  * The active-profile pointer (config/.active_profile) is machine-specific runtime state.
  */
-import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from 'fs';
+import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 import { getConfigPath, readConfig, writeConfig } from './config.js';
 
@@ -37,9 +44,24 @@ function getActivePointerPath(): string {
   return join(getConfigDir(), '.active_profile');
 }
 
-export function profilePath(name: string): string {
+/** Directory holding one profile: its config.toml and its CSVs. */
+export function profileDir(name: string): string {
   assertValidName(name);
-  return join(getProfilesDir(), `${name}.toml`);
+  return join(getProfilesDir(), name);
+}
+
+/** The config file inside a profile directory (the editor's target). */
+export function profilePath(name: string): string {
+  return join(profileDir(name), 'config.toml');
+}
+
+/** Profile-owned files that deploy alongside config.toml. */
+function profileAssets(name: string): string[] {
+  try {
+    return readdirSync(profileDir(name)).filter((f) => f.endsWith('.csv')).sort();
+  } catch {
+    return [];
+  }
 }
 
 export function getActiveProfileName(): string {
@@ -62,10 +84,63 @@ export function setActiveProfileName(name: string): void {
 export function ensureSeeded(): void {
   const dir = getProfilesDir();
   mkdirSync(dir, { recursive: true });
-  const hasAny = readdirSync(dir).some((f) => f.endsWith('.toml'));
-  if (!hasAny && existsSync(getConfigPath())) {
-    copyFileSync(getConfigPath(), join(dir, `${DEFAULT_PROFILE}.toml`));
+
+  // v2 → v3: a profile used to be a flat <name>.toml. Fold each one into <name>/config.toml so it
+  // can own its CSVs. Idempotent; runs once per box.
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith('.toml')) continue;
+    const name = f.slice(0, -'.toml'.length);
+    if (!NAME_RE.test(name)) continue;
+    const flat = join(dir, f);
+    if (!statSync(flat).isFile()) continue;
+    mkdirSync(join(dir, name), { recursive: true });
+    renameSync(flat, join(dir, name, 'config.toml'));
+    console.log(`🌱 Migrated profile "${name}" to a directory`);
+  }
+
+  const names = listProfileNames();
+  if (names.length === 0 && existsSync(getConfigPath())) {
+    mkdirSync(profileDir(DEFAULT_PROFILE), { recursive: true });
+    copyFileSync(getConfigPath(), profilePath(DEFAULT_PROFILE));
     setActiveProfileName(DEFAULT_PROFILE);
+  }
+
+  // Adopt any CSVs still sitting loose in config/ into profiles that have none. Covers both the
+  // v2→v3 upgrade and a fresh seed, and is a no-op once each profile owns its own copies.
+  const configDir = getConfigDir();
+  const loose = readdirSync(configDir).filter((f) => f.endsWith('.csv'));
+  if (loose.length) {
+    for (const name of listProfileNames()) {
+      if (profileAssets(name).length) continue;
+      for (const f of loose) copyFileSync(join(configDir, f), join(profileDir(name), f));
+      console.log(`🌱 Adopted ${loose.length} CSV(s) into profile "${name}"`);
+    }
+  }
+
+  // The deployed CSVs are generated artifacts (gitignored, like config.toml). The C++ services read
+  // them from config/ by hardcoded path and have no idea profiles exist, so a fresh checkout must
+  // materialize them before any pipeline start — deployActiveProfile() only runs on save/switch and
+  // at LIVE session start, and a simulated run never deploys at all.
+  const activeName = getActiveProfileName();
+  for (const f of profileAssets(activeName)) {
+    const target = join(configDir, f);
+    if (existsSync(target)) continue;
+    try {
+      copyFileSync(join(profileDir(activeName), f), target);
+      console.log(`🌱 Materialized ${f} from profile "${activeName}"`);
+    } catch { /* best-effort */ }
+  }
+}
+
+/** Profile directory names, unsorted. Does NOT call ensureSeeded (used from inside it). */
+function listProfileNames(): string[] {
+  try {
+    return readdirSync(getProfilesDir(), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && NAME_RE.test(e.name))
+      .filter((e) => existsSync(join(getProfilesDir(), e.name, 'config.toml')))
+      .map((e) => e.name);
+  } catch {
+    return [];
   }
 }
 
@@ -80,10 +155,7 @@ export interface ProfileInfo { name: string; active: boolean }
 export function listProfiles(): ProfileInfo[] {
   ensureSeeded();
   const active = getActiveProfileName();
-  return readdirSync(getProfilesDir())
-    .filter((f) => f.endsWith('.toml'))
-    .map((f) => f.slice(0, -'.toml'.length))
-    .filter((n) => NAME_RE.test(n))
+  return listProfileNames()
     .sort((a, b) => a.localeCompare(b))
     .map((name) => ({ name, active: name === active }));
 }
@@ -108,15 +180,34 @@ export function writeActiveProfile(config: any): void {
  * running config (no session active, or at a controlled session start).
  */
 export function deployActiveProfile(): void {
+  const name = getActiveProfileName();
   const src = getActiveProfilePath();
-  if (!readFileSync(src, 'utf-8').trim()) throw new Error(`Active profile "${getActiveProfileName()}" is empty`);
+  if (!readFileSync(src, 'utf-8').trim()) throw new Error(`Active profile "${name}" is empty`);
   const configPath = getConfigPath();
-  const previous = existsSync(configPath) ? readFileSync(configPath, 'utf-8') : null;
-  copyFileSync(src, configPath);
+  const configDir = getConfigDir();
+
+  // All-or-nothing: the CSVs and config.toml describe one machine together, so a half-applied
+  // deploy (new roles, old state table) is worse than no deploy. Snapshot every target first and
+  // put them all back if the config does not parse.
+  const targets: { path: string; previous: string | null }[] = [];
+  const snapshot = (path: string) =>
+    targets.push({ path, previous: existsSync(path) ? readFileSync(path, 'utf-8') : null });
+
+  snapshot(configPath);
+  const assets = profileAssets(name);
+  for (const f of assets) snapshot(join(configDir, f));
+
   try {
+    copyFileSync(src, configPath);
+    for (const f of assets) copyFileSync(join(profileDir(name), f), join(configDir, f));
     readConfig(); // parse the freshly-deployed config.toml
   } catch (e) {
-    if (previous !== null) writeFileSync(configPath, previous, 'utf-8');
+    for (const t of targets) {
+      try {
+        if (t.previous !== null) writeFileSync(t.path, t.previous, 'utf-8');
+        else rmSync(t.path, { force: true });
+      } catch { /* best-effort rollback */ }
+    }
     throw new Error(`Active profile is not valid config: ${(e as Error)?.message ?? e}`);
   }
 }
@@ -125,8 +216,17 @@ export function deployActiveProfile(): void {
 export function switchProfile(name: string): void {
   ensureSeeded();
   if (!existsSync(profilePath(name))) throw new Error(`Profile "${name}" does not exist`);
+  // The pointer moves first because deployActiveProfile() reads it — but if the deploy fails the
+  // pointer has to come back, or the editor shows the new profile while the pipeline still runs
+  // the old one's config and CSVs, with nothing on screen saying so.
+  const previous = getActiveProfileName();
   setActiveProfileName(name);
-  deployActiveProfile();
+  try {
+    deployActiveProfile();
+  } catch (e) {
+    setActiveProfileName(previous);
+    throw e;
+  }
 }
 
 // ── Create / rename / delete ─────────────────────────────────────────────────
@@ -135,19 +235,25 @@ export function switchProfile(name: string): void {
 export function createProfile(name: string, fromName?: string): void {
   ensureSeeded();
   assertValidName(name);
-  const dest = profilePath(name);
-  if (existsSync(dest)) throw new Error(`Profile "${name}" already exists`);
-  const src = fromName ? profilePath(fromName) : getActiveProfilePath();
-  if (!existsSync(src)) throw new Error(`Source ${fromName ? `profile "${fromName}"` : 'active profile'} not found`);
-  copyFileSync(src, dest);
+  const destDir = profileDir(name);
+  if (existsSync(destDir)) throw new Error(`Profile "${name}" already exists`);
+  const srcName = fromName ?? getActiveProfileName();
+  const srcCfg = profilePath(srcName);
+  if (!existsSync(srcCfg)) throw new Error(`Source ${fromName ? `profile "${fromName}"` : 'active profile'} not found`);
+  // Copy the whole profile — a new profile inherits the source's CSVs, not the previous
+  // deployment's, or it would start with a state table that does not match its own roles.
+  mkdirSync(destDir, { recursive: true });
+  copyFileSync(srcCfg, profilePath(name));
+  for (const f of profileAssets(srcName)) copyFileSync(join(profileDir(srcName), f), join(destDir, f));
 }
 
 /** Rename a profile file; if it was active, move the pointer with it. Does not redeploy. */
 export function renameProfile(name: string, newName: string): void {
   ensureSeeded();
-  const src = profilePath(name);
-  const dest = profilePath(newName);
-  if (!existsSync(src)) throw new Error(`Profile "${name}" does not exist`);
+  assertValidName(newName);
+  const src = profileDir(name);
+  const dest = profileDir(newName);
+  if (!existsSync(profilePath(name))) throw new Error(`Profile "${name}" does not exist`);
   if (existsSync(dest)) throw new Error(`Profile "${newName}" already exists`);
   renameSync(src, dest);
   if (getActiveProfileName() === name) setActiveProfileName(newName);
@@ -157,7 +263,6 @@ export function renameProfile(name: string, newName: string): void {
 export function deleteProfile(name: string): void {
   ensureSeeded();
   if (getActiveProfileName() === name) throw new Error(`Cannot delete the active profile "${name}"`);
-  const p = profilePath(name);
-  if (!existsSync(p)) throw new Error(`Profile "${name}" does not exist`);
-  unlinkSync(p);
+  if (!existsSync(profilePath(name))) throw new Error(`Profile "${name}" does not exist`);
+  rmSync(profileDir(name), { recursive: true, force: true });
 }

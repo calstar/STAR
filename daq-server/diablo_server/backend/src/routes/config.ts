@@ -3,7 +3,7 @@
  * Handles reading and writing config.toml
  */
 
-import { readFileSync, writeFileSync, copyFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, copyFileSync, existsSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { parse as parseToml, stringify as stringifyToml } from '@iarna/toml';
@@ -47,12 +47,32 @@ export function getConfigPath(): string {
       const a = readFileSync(join(dir, '.active_profile'), 'utf-8').trim();
       if (/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(a)) activeName = a;
     } catch { /* no pointer → default */ }
-    for (const src of [join(dir, 'profiles', `${activeName}.toml`), join(dir, 'profiles', 'default.toml')]) {
+    // Profiles are directories (config-profiles v3): profiles/<name>/config.toml, with the
+    // profile's CSVs beside it. Legacy flat profiles/<name>.toml is still accepted so a
+    // half-migrated box can still bootstrap.
+    const candidates = [
+      join(dir, 'profiles', activeName, 'config.toml'),
+      join(dir, 'profiles', 'default', 'config.toml'),
+      join(dir, 'profiles', `${activeName}.toml`),
+      join(dir, 'profiles', 'default.toml'),
+    ];
+    for (const src of candidates) {
       if (existsSync(src)) {
         try {
           copyFileSync(src, path);
           readFileSync(path, 'utf-8');
           console.log(`🌱 Generated config.toml from ${src}`);
+          // The state-machine CSVs deploy alongside config.toml; materialize any that are missing
+          // so the C++ services (which read config/*.csv by hardcoded path) work on a fresh box.
+          try {
+            const srcDir = dirname(src);
+            if (srcDir !== join(dir, 'profiles')) {
+              for (const f of readdirSync(srcDir).filter((n) => n.endsWith('.csv'))) {
+                const target = join(dir, f);
+                if (!existsSync(target)) copyFileSync(join(srcDir, f), target);
+              }
+            }
+          } catch { /* CSVs are best-effort — config.toml is what this function promises */ }
           return path;
         } catch { /* try next */ }
       }
