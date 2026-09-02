@@ -9,7 +9,7 @@
  */
 
 import type { Checkout } from './useCheckout';
-import { ghostBtn, primaryBtn } from './theme';
+import { btn, primaryBtn } from './theme';
 
 export function CheckoutControl({
   checkout,
@@ -40,7 +40,7 @@ export function CheckoutControl({
             <span className={`${dot} bg-emerald-500`} />
             Editing
           </span>
-          <button onClick={() => void release()} disabled={busy} className={ghostBtn}>
+          <button onClick={() => void release()} disabled={busy} className={btn}>
             {busy ? 'Releasing…' : 'Release'}
           </button>
         </>
