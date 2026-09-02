@@ -37,9 +37,6 @@ static uint64_t now_ns() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 SequencerService::~SequencerService() {
-    state_snapshot_stop_ = true;
-    if (state_snapshot_thread_.joinable())
-        state_snapshot_thread_.join();
     stopElodinRetry();
     actuator_commander_.stopContinuousLoop();
     fire_manager_.stop();
@@ -329,7 +326,9 @@ bool SequencerService::transitionTo(const std::string& state_name) {
     actuator_commander_.applyForState(to);
 
     // Start continuous re-send loop for new state
-    actuator_commander_.startContinuousLoop(to);
+    // Abort states apply immediately: their CSV delays are ignored, because an abort must not sit
+    // behind a timer. (The physical UDP abort broadcast below is separate and always immediate.)
+    actuator_commander_.startContinuousLoop(to, !isAbortState(to));
 
     // Update current state
     current_state_ = to;
@@ -471,19 +470,5 @@ void SequencerService::stopElodinRetry() {
         elodin_retry_thread_.join();
 }
 
-void SequencerService::startStateSnapshotPublisher() {
-    if (state_snapshot_thread_.joinable())
-        return;
-    state_snapshot_stop_ = false;
-    state_snapshot_thread_ = std::thread([this]() {
-        while (!state_snapshot_stop_) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-            if (!elodin_.is_connected())
-                continue;
-            const State s = current_state_.load();
-            publishStateTransition(s, s);
-        }
-    });
-}
 
 }  // namespace sequencer
