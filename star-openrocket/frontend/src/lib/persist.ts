@@ -51,6 +51,9 @@ export function reviveViewerConfig(raw: string | null): ViewerConfig | null {
     // `fullCompareSeries` here, and a spread would lift them back into the live
     // config and write them straight out again on the next autosave.
     flight: revivedFlight(saved.flight),
+    hiddenKeys: Array.isArray(saved.hiddenKeys)
+      ? saved.hiddenKeys.filter((k): k is string => typeof k === 'string')
+      : base.hiddenKeys,
   }
 }
 

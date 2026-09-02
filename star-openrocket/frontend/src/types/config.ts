@@ -39,6 +39,16 @@ export interface ViewerConfig {
   motor: MotorSelection | null
   railLength: number
   flight: FlightParams
+  /**
+   * Occurrence keys the user has hidden. Hidden parts are excluded from the
+   * centre of mass, so this is design state, not a viewing preference: two
+   * people opening the same design have to read the same CM.
+   *
+   * Hidden rather than visible, so the default (nothing hidden) is the empty
+   * list, a part added to the model later shows up rather than vanishing, and
+   * a key belonging to some other model is inert instead of hiding everything.
+   */
+  hiddenKeys: string[]
 }
 
 export function defaultFlightParams(): FlightParams {
@@ -57,6 +67,7 @@ export function defaultViewerConfig(): ViewerConfig {
     finCount: 0,
     motor: null,
     railLength: 1.0,
+    hiddenKeys: [],
     flight: defaultFlightParams(),
   }
 }

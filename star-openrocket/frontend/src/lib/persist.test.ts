@@ -16,6 +16,33 @@ function isFullyShaped(c: unknown) {
     && !!o.recovery && typeof o.recovery === 'object'
 }
 
+describe('hidden parts are part of the design', () => {
+  it('round-trips hiddenKeys', () => {
+    // Hidden parts are excluded from the centre of mass, so two people opening
+    // the same design have to see the same set hidden -- it cannot be a local
+    // preference the way the compare-plot selection is.
+    const saved = JSON.stringify({
+      cad: { version: 1, hiddenKeys: ['occ-1', 'occ-2'] },
+      recovery: {},
+    })
+    expect(reviveOrkConfig(saved)!.cad.hiddenKeys).toEqual(['occ-1', 'occ-2'])
+  })
+
+  it('defaults to nothing hidden, and ignores a non-list', () => {
+    expect(defaultOrkConfig().cad.hiddenKeys).toEqual([])
+    const junk = JSON.stringify({ cad: { version: 1, hiddenKeys: 'all' }, recovery: {} })
+    expect(reviveOrkConfig(junk)!.cad.hiddenKeys).toEqual([])
+  })
+
+  it('drops non-string members rather than carrying them into a Set', () => {
+    const mixed = JSON.stringify({
+      cad: { version: 1, hiddenKeys: ['occ-1', 3, null, 'occ-2'] },
+      recovery: {},
+    })
+    expect(reviveOrkConfig(mixed)!.cad.hiddenKeys).toEqual(['occ-1', 'occ-2'])
+  })
+})
+
 describe('the design carries no viewing preferences', () => {
   it('drops compare-plot selections saved by an older build', () => {
     // These lived on `flight` until they moved to localStorage. A design saved

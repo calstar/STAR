@@ -65,7 +65,12 @@ export default function App() {
   const [manifest, setManifest] = useState<Manifest | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const [visibleKeys, setVisibleKeys] = useState<Set<string>>(new Set())
+  // What the user has hidden, which is design state: hidden parts drop out of
+  // the centre of mass. `visibleKeys` below is derived, so a part the model
+  // gains later is visible without anything having to add it.
+  const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(
+    () => new Set(initialOrk.cad.hiddenKeys),
+  )
   // Ordered, so the last entry can stand in as the primary selection wherever
   // only one part makes sense -- the 3D highlight, the detail panel.
   const [selectedKeys, setSelectedKeys] = useState<string[]>([])
@@ -165,7 +170,6 @@ export default function App() {
       .then((loaded) => {
         setManifest(loaded)
         setOverrides(new Map())
-        setVisibleKeys(new Set(loaded.parts.map((part) => part.key)))
         setSelectedKeys([])
         setStability(null)
         setStabilityError(null)
@@ -222,6 +226,11 @@ export default function App() {
           .map(([key]) => key),
       ),
     [overrides],
+  )
+
+  const visibleKeys = useMemo(
+    () => new Set(parts.filter((part) => !hiddenKeys.has(part.key)).map((part) => part.key)),
+    [parts, hiddenKeys],
   )
 
   const activeParts = useMemo(
@@ -331,10 +340,12 @@ export default function App() {
         motor: motorSel,
         railLength,
         flight,
+        hiddenKeys: [...hiddenKeys],
       },
       recovery,
     }),
-    [modelId, overrides, outerFaces, finFaces, finCount, motorSel, railLength, flight, recovery],
+    [modelId, overrides, outerFaces, finFaces, finCount, motorSel, railLength, flight, recovery,
+     hiddenKeys],
   )
 
   // Debounced: `config` changes on every keystroke and this serialises it all.
@@ -360,6 +371,7 @@ export default function App() {
     setMotorSel(cad.motor)
     setRailLength(cad.railLength)
     setFlightState(cad.flight)
+    setHiddenKeys(new Set(cad.hiddenKeys))
     setRecovery(recovery)
     saveOrkConfig({ version: 1, cad, recovery })
   }, [])
@@ -557,11 +569,11 @@ export default function App() {
   }, [])
 
   const handleToggle = useCallback((keys: string[], visible: boolean) => {
-    setVisibleKeys((current) => {
+    setHiddenKeys((current) => {
       const next = new Set(current)
       for (const key of keys) {
-        if (visible) next.add(key)
-        else next.delete(key)
+        if (visible) next.delete(key)
+        else next.add(key)
       }
       return next
     })

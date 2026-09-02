@@ -27,10 +27,8 @@ import { describe, expect, it } from 'vitest'
 const VIEW_ONLY: Record<string, string> = {
   'PropertiesPanel.tsx:onOpacityChange': 'part opacity in the 3D view; not saved in OrkConfig',
   'PropertiesPanel.tsx:onShowAssemblyCentroidChange': 'draws the Onshape CM marker; a view toggle',
-  'PartList.tsx:onToggle(parts.map': 'show-all-hidden; visibility is not saved in the design',
-  'PartList.tsx:onSelect([])': 'clears the selection, which is not saved either',
-  'PartList.tsx:onContextMenu': 'opens the menu; its own items are hide/isolate/select',
-  'ContextMenu.tsx:item.onSelect()': 'generic menu shell -- PartList only ever passes view actions',
+  'PartList.tsx:onSelect([])': 'clears the selection, which is not saved',
+  'PartList.tsx:onContextMenu': 'opens the menu; the menu items carry their own disabled',
   'InspectorPanel.tsx:onClick={onClick}': 'panel tab switch',
   'InspectorPanel.tsx:onToggle': 'pin toggle, local panel state',
   'StabilityPanel.tsx:onToggleIsolate': 'isolates the outer surface in the 3D view',
