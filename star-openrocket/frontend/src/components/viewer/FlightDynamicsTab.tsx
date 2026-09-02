@@ -8,7 +8,7 @@
  * exact, performance tiles (apogee, max-Q) are flagged approximate.
  */
 
-import { useDisabled } from '@stardesign-ui'
+import { btn, useDisabled } from '@stardesign-ui'
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -120,7 +120,7 @@ export function Panel({ title, hint, children, heightClass = 'min-h-[360px]' }: 
                 <button
                   type="button"
                   onClick={() => setExpanded(false)}
-                  className="rounded bg-[var(--color-bg-secondary)] px-3 py-1 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]"
+                  className={`${btn} px-3`}
                 >
                   Close
                 </button>

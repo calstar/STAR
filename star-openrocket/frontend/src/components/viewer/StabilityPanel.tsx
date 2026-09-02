@@ -8,7 +8,7 @@
  * static margin, placed along the detected axis.
  */
 
-import { useDisabled } from '@stardesign-ui'
+import { btn, useDisabled } from '@stardesign-ui'
 import { useState } from 'react'
 
 import type { FaceRef, MotorSelection, MotorSummary, StabilityResult } from '../../types'
@@ -23,6 +23,12 @@ import { Row } from './Row'
  * form when blurred) so typing a fractional value never fights the formatter,
  * but keeps the viewer's slate styling. Commits SI on every change.
  */
+/** `btn`'s geometry without its colours, so a toggle's active state can swap
+ *  the fill without the control changing size by a border width. */
+const TOGGLE_ON =
+  'inline-flex items-center gap-1 rounded border px-2.5 py-1 text-xs font-medium '
+  + 'transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
+
 function UnitField({ value, onChange, kind, min }: {
   value: number
   onChange: (si: number) => void
@@ -168,11 +174,11 @@ export function StabilityPanel({
           type="button"
           onClick={() => onToggleEditMode('body')}
           disabled={readOnly}
-          className={`rounded px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
+          className={
             faceEditMode && editTarget === 'body'
-              ? 'bg-violet-500 text-white'
-              : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]'
-          }`}
+              ? `${TOGGLE_ON} border-violet-500 bg-violet-500 text-white`
+              : `${btn} disabled:cursor-not-allowed`
+          }
         >
           Body ({outerFaceCount})
         </button>
@@ -180,11 +186,11 @@ export function StabilityPanel({
           type="button"
           onClick={() => onToggleEditMode('fin')}
           disabled={readOnly}
-          className={`rounded px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
+          className={
             faceEditMode && editTarget === 'fin'
-              ? 'bg-orange-500 text-white'
-              : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]'
-          }`}
+              ? `${TOGGLE_ON} border-orange-500 bg-orange-500 text-white`
+              : `${btn} disabled:cursor-not-allowed`
+          }
         >
           Fins ({finCount})
         </button>
@@ -192,7 +198,7 @@ export function StabilityPanel({
           type="button"
           onClick={onAutoDetect}
           disabled={autoBusy || readOnly}
-          className="ml-auto rounded bg-[var(--color-bg-secondary)] px-2 py-1 text-xs font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
+          className={`${btn} ml-auto disabled:cursor-not-allowed`}
         >
           {autoBusy ? 'Detecting…' : 'Auto-detect'}
         </button>
@@ -216,9 +222,11 @@ export function StabilityPanel({
           type="button"
           onClick={onToggleIsolate}
           disabled={outerFaceCount === 0}
-          className={`rounded px-2 py-1 text-xs font-medium disabled:opacity-40 ${
-            isolate ? 'bg-[var(--color-accent)] text-white' : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]'
-          }`}
+          className={
+            isolate
+              ? `${TOGGLE_ON} border-[var(--color-accent)] bg-[var(--color-accent)] text-white`
+              : btn
+          }
         >
           {isolate ? 'Show all surfaces' : 'Isolate used surfaces'}
         </button>
@@ -271,7 +279,7 @@ export function StabilityPanel({
               <button
                 type="button"
                 onClick={onViewMotorCurves}
-                className="rounded bg-[var(--color-bg-secondary)] px-2 py-0.5 text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]"
+                className={`${btn} px-2 py-0.5`}
                 title="Thrust, weight and CG over time"
               >
                 Curves
@@ -280,7 +288,7 @@ export function StabilityPanel({
                 type="button"
                 onClick={() => setPickerOpen((v) => !v)}
                 disabled={readOnly}
-                className="rounded bg-[var(--color-bg-secondary)] px-2 py-0.5 text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:cursor-not-allowed disabled:opacity-40"
+                className={`${btn} px-2 py-0.5 disabled:cursor-not-allowed`}
               >
                 Change
               </button>
@@ -291,7 +299,7 @@ export function StabilityPanel({
                   setPickerOpen(false)
                 }}
                 disabled={readOnly}
-                className="rounded bg-[var(--color-bg-secondary)] px-2 py-0.5 text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:cursor-not-allowed disabled:opacity-40"
+                className={`${btn} px-2 py-0.5 disabled:cursor-not-allowed`}
               >
                 Remove
               </button>
@@ -301,7 +309,7 @@ export function StabilityPanel({
               type="button"
               onClick={() => setPickerOpen((v) => !v)}
               disabled={readOnly}
-              className="rounded bg-[var(--color-bg-secondary)] px-2 py-0.5 text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:cursor-not-allowed disabled:opacity-40"
+              className={`${btn} px-2 py-0.5 disabled:cursor-not-allowed`}
             >
               {pickerOpen ? 'Cancel' : 'Add motor'}
             </button>
@@ -364,7 +372,7 @@ export function StabilityPanel({
                       type="button"
                       onClick={() => onSetMotorRefFace(null)}
                       disabled={readOnly}
-                      className="rounded bg-[var(--color-bg-secondary)] px-1.5 py-0.5 text-2xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:cursor-not-allowed disabled:opacity-40"
+                      className={`${btn} px-1.5 py-0.5 text-2xs disabled:cursor-not-allowed`}
                     >
                       Clear
                     </button>

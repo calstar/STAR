@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useMemo } from 'react'
+import { btn } from '@stardesign-ui'
 import { createPortal } from 'react-dom'
 import {
   CartesianGrid,
@@ -73,7 +74,7 @@ export function MotorCurvesModal({ detail, simfileId, busy, error, onClose }: Pr
           <button
             type="button"
             onClick={onClose}
-            className="rounded bg-[var(--color-bg-secondary)] px-2 py-1 text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]"
+            className={`${btn}`}
           >
             Close
           </button>
