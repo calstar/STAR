@@ -191,9 +191,15 @@ bool SequencerService::init(const std::string& config_path) {
         return def;
     };
 
-    const uint32_t fire_duration_ms = getInt("state_machine", "fire_duration_ms", 6000);
-    const uint32_t fire_extended_ms = getInt("state_machine", "fire_extended_ms", 10000);
+    // Read from [controller_service], where these keys actually live (config_base.toml:385-386)
+    // and where the config editor writes them. This read used to name [state_machine], which holds
+    // only the three CSV paths — so the lookup always missed and FireManager silently ran on its
+    // constructor defaults. Every burn was 6000 ms no matter what the GUI showed.
+    const uint32_t fire_duration_ms = getInt("controller_service", "fire_duration_ms", 6000);
+    const uint32_t fire_extended_ms = getInt("controller_service", "fire_extended_ms", 10000);
     fire_manager_.configure(fire_duration_ms, fire_extended_ms);
+    std::cout << "[SequencerService] Fire window: " << fire_duration_ms << " ms (extended "
+              << fire_extended_ms << " ms)" << std::endl;
 
     // Controller service endpoint for FIRE_START / FIRE_STOP
     // Read from config; defaults to 127.0.0.1:8000
