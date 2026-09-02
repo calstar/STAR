@@ -380,6 +380,16 @@ FF = "Fuel Fill"
 port = 9998
 bind_address = "0.0.0.0"
 
+[fire]
+# Which state is the burn, and where its timer lands when it expires. Names, not enum positions —
+# ControllerService used to gate PWM ignition on the literal `state_val == 16` and the sequencer
+# stringified State::ARMED to find its landing state, so a rename or renumber broke ignition
+# silently. expiry_target must be reachable from state in state_transitions.csv.
+state = "Fire"
+expiry_target = "Armed"
+duration_ms = 6000
+extended_ms = 10000
+
 [controller_service]
 port = 9999
 fire_duration_ms = 6000

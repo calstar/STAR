@@ -163,9 +163,17 @@ enum MessageType {
   BOARD_LOG = 'board_log',
 }
 
+// A local copy of the state ids, kept in step with diablo_server/shared/types.ts. It used to hold
+// only the handful this file referenced by name, which silently broke the [fire] lookup below:
+// resolving "Fire" produced undefined and the whole fire phase skipped itself. Complete now.
+// (This is one of several duplicates of the state list across the tree — the config-owned state
+// list is what should eventually replace them all.)
 enum SystemState {
   DEBUG = 0, IDLE = 1, ARMED = 2, FUEL_FILL = 3, OX_FILL = 4,
-  ENGINE_ABORT = 17, GSE_ABORT = 18, EMERGENCY_ABORT = 19,
+  GN2_LOW_PRESS = 5, GN2_VENT = 6, FUEL_PRESS = 7, FUEL_VENT = 8,
+  OX_PRESS = 9, OX_VENT = 10, GN2_HIGH_PRESS = 11, GN2_HIGH_VENT = 12,
+  VENT = 13, CALIBRATE = 14, READY = 15, FIRE = 16,
+  ENGINE_ABORT = 17, GSE_ABORT = 18, EMERGENCY_ABORT = 19, PRESS_STANDBY = 20,
 }
 
 enum ActuatorState {
@@ -405,6 +413,63 @@ function collectMessages(
 
 function formatLatency(ms: number): string {
   return ms < 1 ? `${(ms * 1000).toFixed(0)}µs` : `${ms.toFixed(1)}ms`;
+}
+
+/**
+ * Read [fire] from the config the stack under test is actually running, so the assertions compare
+ * against configuration rather than a number baked into this file.
+ */
+function readFireConfig(): { durationMs: number; expiryState: number; fireState: number } | null {
+  const candidates = [
+    process.env.INTEGRATION_CONFIG,
+    process.env.DAQ_CONFIG,
+    'config/config.toml',
+    '../config/config.toml',
+    '../../config/config.toml',
+  ].filter(Boolean) as string[];
+  for (const path of candidates) {
+    let raw = '';
+    try { raw = fs.readFileSync(path, 'utf-8'); } catch { continue; }
+    const section = raw.split(/^\[fire\]$/m)[1];
+    if (!section) continue;
+    const body = section.split(/^\[/m)[0];
+    const pick = (k: string) => {
+      const m = body.match(new RegExp(`^\\s*${k}\\s*=\\s*(.+)$`, 'm'));
+      return m ? m[1].trim().replace(/^["']|["'].*$/g, '') : '';
+    };
+    const durationMs = parseInt(pick('duration_ms'), 10);
+    const stateName = pick('state');
+    const expiryName = pick('expiry_target');
+    const toId = (n: string): number => {
+      const key = n.toUpperCase().replace(/\s+/g, '_');
+      const v = (SystemState as any)[key];
+      return typeof v === 'number' ? v : NaN;
+    };
+    const fireState = toId(stateName);
+    const expiryState = toId(expiryName);
+    if (!Number.isFinite(durationMs) || !Number.isFinite(fireState) || !Number.isFinite(expiryState))
+      continue;
+    return { durationMs, expiryState, fireState };
+  }
+  return null;
+}
+
+/**
+ * Passive latest-state tracker. There is no get_state command, so mid-burn sampling watches the
+ * STATE_UPDATE broadcasts rather than asking — which is also closer to what the GUI does.
+ */
+function trackState(ws: WebSocket, seed: number): { get: () => number; stop: () => void } {
+  let latest = seed;
+  const onMsg = (data: WebSocket.RawData) => {
+    try {
+      const m = JSON.parse(data.toString());
+      if (m?.type === MessageType.STATE_UPDATE && typeof m.payload?.currentState === 'number') {
+        latest = m.payload.currentState;
+      }
+    } catch { /* not JSON — ignore */ }
+  };
+  ws.on('message', onMsg);
+  return { get: () => latest, stop: () => ws.removeListener('message', onMsg) };
 }
 
 function printLatencyStats(label: string, latencies: number[]): void {
@@ -1282,6 +1347,78 @@ async function testStateTransitionDebugMode(ws: WebSocket): Promise<void> {
   }
 
   printLatencyStats('[Debug] State Transition Command Latency', commandLatencies);
+
+  // ── FIRE lifecycle, against the running stack ───────────────────────────────────────────────
+  // Nothing here used to touch fire, which is how fire_duration_ms went unread for so long: the
+  // keys live in [controller_service] but the sequencer read [state_machine], so every burn ran
+  // FireManager's 6000 ms default and no test ever compared a burn against its configured length.
+  // This drives the real sequencer_service over the real WS/TCP path and checks the whole cycle:
+  // enter fire, STAY in fire for the configured window, then auto-transition to [fire]
+  // expiry_target without anyone asking.
+  {
+    const fireCfg = readFireConfig();
+    if (!fireCfg) {
+      console.log('  ⚠️  [fire] section not found in the test config — skipping fire lifecycle');
+    } else {
+      const { durationMs, expiryState, fireState } = fireCfg;
+      console.log(`  [Fire] configured: ${durationMs} ms → ${SystemState[expiryState] ?? expiryState}`);
+
+      const enteredFire = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
+        (payload) => payload.currentState === fireState);
+      const firedAt = Date.now();
+      send(ws, {
+        type: MessageType.SEND_COMMAND,
+        timestamp: Date.now(),
+        payload: { commandType: 'state_transition', data: { state: fireState } },
+      });
+
+      let inFire = false;
+      let enteredAt = firedAt;
+      const tracker = trackState(ws, fireState);
+      try {
+        const { receivedAt } = await enteredFire;
+        // Measure the burn from when fire was ENTERED, not from when the command was sent —
+        // otherwise the command's round trip is charged to the burn length and the assertion has
+        // to be loose enough to be nearly meaningless.
+        enteredAt = receivedAt;
+        inFire = true;
+        assert(true, `[Fire] entered the fire state (+${receivedAt - firedAt} ms after the command)`);
+      } catch (err: any) {
+        assert(false, `[Fire] could not enter the fire state: ${err.message}`);
+      }
+
+      if (inFire) {
+        // It must NOT leave early. Sample well inside the window; the auto-transition landing
+        // here would mean the timer is running short (or running at all when it should not).
+        const midMs = Math.max(200, Math.floor(durationMs * 0.4));
+        await new Promise((r) => setTimeout(r, midMs));
+        const midState = tracker.get();
+        assert(midState === fireState, `[Fire] still in fire ${midMs} ms in (got ${midState})`);
+
+        // Then it must leave on its own, at roughly the configured duration.
+        try {
+          const { receivedAt } = await waitForMessage(ws, MessageType.STATE_UPDATE,
+            durationMs + 4000, (payload) => payload.currentState === expiryState);
+          const elapsed = receivedAt - enteredAt;
+          assert(true, `[Fire] auto-transitioned to ${SystemState[expiryState] ?? expiryState} after ${elapsed} ms`);
+          // Generous window: this crosses two processes, a TCP hop and the WS broadcast. The point
+          // is that it tracks the CONFIGURED duration rather than the 6000 ms default.
+          // The trailing edge carries the sequencer -> Elodin -> backend -> WS hop, measured at
+          // roughly a second on this box (the entry edge above reports the same order). So the
+          // window is deliberately generous on the upper side; what it has to exclude is
+          // FireManager's 6000 ms default masquerading as a configured burn, which would land
+          // around 7 s and is nowhere near this range.
+          const upper = durationMs + 2500;
+          assert(elapsed >= durationMs - 400 && elapsed <= upper,
+            `[Fire] burn length tracked the configured ${durationMs} ms (measured ${elapsed} ms, window ${durationMs - 400}-${upper})`);
+        } catch (err: any) {
+          assert(false, `[Fire] no auto-transition out of fire: ${err.message}`);
+        }
+      }
+      tracker.stop();
+    }
+  }
+
 
   // Disable debug mode
   send(ws, {

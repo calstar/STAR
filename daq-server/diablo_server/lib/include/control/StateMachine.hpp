@@ -72,6 +72,12 @@ public:
 
     /** Human-readable name for a State (e.g. State::FIRE → "Fire"). */
     static std::string name(State s);
+    /** Numeric id for a state name, or 255 if unknown. Lets a service that only needs the id
+     *  (e.g. the controller's PWM gate) avoid carrying its own copy of the enum. */
+    static uint8_t stateId(const std::string& name) {
+        State s = fromName(name);
+        return static_cast<uint8_t>(s);
+    }
 
     bool isLoaded() const {
         return loaded_;

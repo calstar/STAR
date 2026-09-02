@@ -44,6 +44,9 @@ public:
      * @return true if transition was accepted and executed.
      */
     bool transitionTo(const std::string& state_name);
+    /** Resolve-free overload. Internal callers use this so a state never round-trips through its
+     *  own name, which is what let a rename refuse the fire timer's expiry transition. */
+    bool transitionTo(State to);
 
     /**
      * Enable or disable debug mode.
@@ -113,6 +116,19 @@ private:
     void stopElodinRetry();
 
     bool loadConfig(const std::string& path);
+
+    /** Send FIRE_START / FIRE_STOP to controller_service. The single place anything tells the
+     *  controller the burn gate changed. */
+    void notifyControllerFire(bool active);
+
+    // ── Fire semantics, from config ───────────────────────────────────────────
+    // Which state fires, and where the timer lands when it expires, are config rather than
+    // enumerators. `state_val == 16` in ControllerService and a stringified State::ARMED here were
+    // the two places a rename or renumber silently broke ignition.
+    State fire_state_{State::FIRE};
+    State fire_expiry_state_{State::ARMED};
+    std::string controller_host_{"127.0.0.1"};
+    uint16_t controller_port_{8000};
 };
 
 }  // namespace sequencer

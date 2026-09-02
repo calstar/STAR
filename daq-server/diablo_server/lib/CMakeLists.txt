@@ -64,6 +64,20 @@ target_link_libraries(test_board_clock_sync
     fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME board_clock_sync COMMAND test_board_clock_sync)
 
+add_executable(test_fire_lifecycle
+    test/test_fire_lifecycle.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/FireManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+)
+target_include_directories(test_fire_lifecycle PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_fire_lifecycle
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME fire_lifecycle COMMAND test_fire_lifecycle)
+
 add_executable(test_actuator_delays
     test/test_actuator_delays.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp

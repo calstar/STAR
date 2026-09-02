@@ -1,12 +1,7 @@
 #include "control/FireManager.hpp"
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include <chrono>
-#include <cstring>
 #include <iostream>
 
 namespace sequencer {
@@ -21,9 +16,9 @@ FireManager::~FireManager() {
     stop();
 }
 
-void FireManager::setControllerEndpoint(const std::string& host, uint16_t port) {
-    controller_host_ = host;
-    controller_port_ = port;
+void FireManager::notify(bool active) {
+    if (notifier_)
+        notifier_(active);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,7 +30,7 @@ void FireManager::start(std::function<void()> on_expire) {
     current_duration_ms_ = fire_duration_ms_;
     active_ = true;
 
-    notifyController("FIRE_START\n");
+    notify(true);
     std::cout << "[FireManager] FIRE started (" << fire_duration_ms_ << " ms)" << std::endl;
 
     timer_thread_ = std::thread([this]() {
@@ -64,7 +59,7 @@ void FireManager::stop() {
     }
 
     if (was_active) {
-        notifyController("FIRE_STOP\n");
+        notify(false);
         std::cout << "[FireManager] FIRE stopped" << std::endl;
     }
 }
@@ -103,7 +98,7 @@ void FireManager::runTimer() {
         // Timer expired naturally
         std::cout << "[FireManager] Fire timer expired — transitioning to ARMED" << std::endl;
         active_ = false;
-        notifyController("FIRE_STOP\n");
+        notify(false);
         if (on_expire_)
             on_expire_();
         return;
@@ -111,29 +106,5 @@ void FireManager::runTimer() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-void FireManager::notifyController(const std::string& msg) {
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0)
-        return;
-
-    struct timeval tv{.tv_sec = 1, .tv_usec = 0};
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
-    struct sockaddr_in dest{};
-    dest.sin_family = AF_INET;
-    dest.sin_port = htons(controller_port_);
-    if (inet_pton(AF_INET, controller_host_.c_str(), &dest.sin_addr) != 1) {
-        close(sock);
-        return;
-    }
-
-    if (connect(sock, reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest)) == 0)
-        send(sock, msg.c_str(), msg.size(), 0);
-    else
-        std::cerr << "[FireManager] Cannot connect to controller_service at " << controller_host_
-                  << ":" << controller_port_ << std::endl;
-
-    close(sock);
-}
 
 }  // namespace sequencer

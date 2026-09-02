@@ -9,15 +9,22 @@
 namespace sequencer {
 
 /**
- * Manages the FIRE state lifecycle:
- *   - Countdown timer that auto-transitions to ARMED when it expires.
- *   - EXTEND_FIRE command that resets the timer to fire_extended_ms.
- *   - Notifies controller_service via TCP (FIRE_START / FIRE_STOP).
+ * The FIRE countdown, and nothing else.
+ *
+ *   - Counts down fire_duration_ms and reports expiry.
+ *   - EXTEND_FIRE resets the timer to fire_extended_ms.
+ *
+ * Deliberately owns no I/O and knows nothing about states. It used to open its own TCP socket to
+ * controller_service on every FIRE_START/FIRE_STOP even though SequencerService already held that
+ * endpoint and passed it in — and because it could not name a state, `start()` took an opaque
+ * callback that the caller had to fill with a stringified state, which a rename could break. Both
+ * problems came from the same misplaced responsibility. Now it raises callbacks and its owner
+ * decides what they mean.
  *
  * Usage:
  *   FireManager fm(6000, 10000);
- *   fm.setControllerEndpoint("127.0.0.1", 8000);
- *   fm.start([&]() { sequencer.transitionTo(State::ARMED); });
+ *   fm.setNotifier([&](bool active) { sequencer.notifyControllerFire(active); });
+ *   fm.start([&]() { sequencer.transitionTo(fire_expiry_target_state); });
  *   // ... later if extend pressed:
  *   fm.extend();
  *   // ... on FIRE exit (any path):
@@ -33,10 +40,13 @@ public:
     ~FireManager();
 
     /**
-     * Set the TCP endpoint of controller_service for FIRE_START / FIRE_STOP messages.
-     * Call before start(). Defaults to 127.0.0.1:8000.
+     * Called with true when the burn starts and false when it stops, on whatever thread caused it.
+     * The owner turns this into whatever notification is appropriate — keeping every message to
+     * controller_service in one place instead of two processes writing the same gate.
      */
-    void setControllerEndpoint(const std::string& host, uint16_t port);
+    void setNotifier(std::function<void(bool)> notifier) {
+        notifier_ = std::move(notifier);
+    }
 
     /** Update fire durations (call before start()). */
     void configure(uint32_t fire_duration_ms, uint32_t fire_extended_ms) {
@@ -78,11 +88,10 @@ private:
     std::thread timer_thread_;
     std::function<void()> on_expire_;
 
-    std::string controller_host_{"127.0.0.1"};
-    uint16_t controller_port_{8000};
+    std::function<void(bool)> notifier_;
 
     void runTimer();
-    void notifyController(const std::string& msg);
+    void notify(bool active);
 };
 
 }  // namespace sequencer

@@ -765,9 +765,10 @@ void ControllerService::elodinSubscriberLoop() {
         // if TCP FIRE_START/FIRE_STOP control path misses an edge.
         if (type_hi == 0x50 && pid_lo == 0x00 && payload_len >= 17) {
             uint8_t state_val = rx_buffer[8 + 8];
-            // State enum order: FIRE is value 16 in current state machine.
-            // Keep this as hard parity fallback with sequencer source of truth.
-            setFireActive(state_val == 16);
+            // Parity fallback for a missed TCP FIRE_START/FIRE_STOP edge. The id comes from
+            // config ([fire] state) via setFireStateId rather than a literal, so renumbering
+            // states cannot move the PWM ignition gate onto a different one.
+            setFireActive(state_val == fire_state_id_);
             continue;
         }
 

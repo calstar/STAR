@@ -384,6 +384,11 @@ sedi "s/^downsample_mode = .*/downsample_mode = \"$INTEGRATION_GUI_MODE\"/" "$TE
 sedi 's/^points_per_second = .*/points_per_second = 4/' "$TEST_CONFIG"
 # Point heartbeat broadcast to localhost to avoid sending to the real subnet
 sedi 's/^broadcast_ip = .*/broadcast_ip = "127.0.0.1"/' "$TEST_CONFIG"
+# Short burn: the fire lifecycle check asserts the configured duration is honoured, so the value
+# just has to be distinguishable from FireManager's 6000 ms default — no need to sit through a
+# realistic burn on every CI run.
+sedi 's/^duration_ms = .*/duration_ms = 1500/' "$TEST_CONFIG"
+sedi 's/^extended_ms = .*/extended_ms = 3000/' "$TEST_CONFIG"
 # Align SERVER_HEARTBEAT UDP with the same port as udp_listener (actuator/control path in CI)
 sedi "s/^broadcast_port = 5005/broadcast_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 # NOTE: Do NOT replace board IPs — the DAQ bridge routes by source IP.
@@ -688,6 +693,8 @@ export INTEGRATION_SIM_STATS="$SIM_STATS_FILE"
 # (envelope mode only; throttle ignores points_per_second)
 if [ "$INTEGRATION_GUI_MODE" = "envelope" ]; then
   export INTEGRATION_GUI_PPS=4
+  # The WS test reads [fire] from the config the stack is actually running, not a baked-in number.
+  export INTEGRATION_CONFIG="$TEST_CONFIG"
 fi
 export INTEGRATION_SKIP_STARTUP_E2E
 # Test 9 (SELF_TEST E2E): log every SELF_TEST.* SENSOR_UPDATE on the WS client

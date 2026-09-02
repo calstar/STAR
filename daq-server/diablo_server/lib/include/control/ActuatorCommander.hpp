@@ -82,6 +82,15 @@ public:
     void clearAllManualOverrides();
 
     /** Set the Elodin client for publishing commanded state [0x32, ch] to the DB. */
+    /**
+     * Which state hands PWM actuators to controller_service. During it this commander stops
+     * commanding PWM roles entirely, so exactly one thing drives them during a burn. Was the
+     * State::FIRE enumerator; now follows [fire] state like every other fire decision.
+     */
+    void setFireState(State s) {
+        fire_state_ = s;
+    }
+
     void setElodinClient(fsw::elodin::ElodinClient* client) {
         elodin_ = client;
     }
@@ -100,6 +109,7 @@ private:
     std::map<std::string, std::map<std::string, double>> state_actuator_delays_;
     /** Bumped on every transition so an in-flight delayed stage from the previous state aborts
      *  instead of landing after we have already moved on. */
+    State fire_state_{State::FIRE};
     std::atomic<uint64_t> schedule_gen_{0};
     /** Roles whose delayed stage has not fired yet. The 1 Hz republish skips these: the board holds
      *  its last commanded position, which is exactly the pre-transition value we want it to keep

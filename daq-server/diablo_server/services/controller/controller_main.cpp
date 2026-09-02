@@ -31,6 +31,7 @@
 #include <thread>
 
 #include "control/ControllerService.hpp"
+#include "control/StateMachine.hpp"
 #include "control/RobustDDPController.hpp"
 
 // ── Simple TOML value parser (no library dependency) ───────────────────
@@ -463,6 +464,23 @@ int main(int argc, char* argv[]) {
 
     // ── Initialize ─────────────────────────────────────────────────────
     fsw::control::ControllerService service;
+
+    // Which sequencer state id means "firing", for the parity fallback that watches the sequencer
+    // state packet. Config, not a literal — see ControllerService::setFireStateId.
+    {
+        const std::string fire_state = getTomlValue(config_content, "fire", "state", "");
+        if (!fire_state.empty()) {
+            const uint8_t id = sequencer::StateMachine::stateId(fire_state);
+            if (id != 255) {
+                service.setFireStateId(id);
+                std::cout << "  Fire state:     " << fire_state << " (id " << static_cast<int>(id)
+                          << ")" << std::endl;
+            } else {
+                std::cerr << "  ⚠️  [fire] state \"" << fire_state
+                          << "\" is not a known state — PWM gate falls back to id 16" << std::endl;
+            }
+        }
+    }
 
     std::string lut_path_raw = !lut_path_cli.empty()
                                    ? lut_path_cli

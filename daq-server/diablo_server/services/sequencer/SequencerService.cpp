@@ -1,4 +1,8 @@
 #include "control/SequencerService.hpp"
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include <array>
 #include <chrono>
@@ -156,6 +160,41 @@ bool SequencerService::init(const std::string& config_path) {
     }
 
     // FireManager: load durations from config
+    auto getStr = [&](const std::string& sec, const std::string& key,
+                      const std::string& def) -> std::string {
+        const std::string& cc = config_content_;
+        const std::string header = "[" + sec + "]";
+        auto pos = cc.find(header);
+        if (pos == std::string::npos)
+            return def;
+        auto start = pos + header.size();
+        auto next = cc.find("\n[", start);
+        const std::string section =
+            (next == std::string::npos) ? cc.substr(start) : cc.substr(start, next - start);
+        std::istringstream iss(section);
+        std::string line;
+        while (std::getline(iss, line)) {
+            auto hash = line.find('#');
+            if (hash != std::string::npos)
+                line = line.substr(0, hash);
+            auto eq = line.find('=');
+            if (eq == std::string::npos)
+                continue;
+            std::string k = line.substr(0, eq);
+            k.erase(0, k.find_first_not_of(" \t"));
+            k.erase(k.find_last_not_of(" \t\r\n") + 1);
+            if (k != key)
+                continue;
+            std::string v = line.substr(eq + 1);
+            v.erase(0, v.find_first_not_of(" \t\"'"));
+            auto endq = v.find_last_not_of(" \t\r\n\"'");
+            if (endq != std::string::npos)
+                v.erase(endq + 1);
+            return v;
+        }
+        return def;
+    };
+
     auto getInt = [&](const std::string& sec, const std::string& key, uint32_t def) -> uint32_t {
         const std::string& cc = config_content_;
         const std::string header = "[" + sec + "]";
@@ -188,12 +227,47 @@ bool SequencerService::init(const std::string& config_path) {
         return def;
     };
 
-    // Read from [controller_service], where these keys actually live (config_base.toml:385-386)
-    // and where the config editor writes them. This read used to name [state_machine], which holds
-    // only the three CSV paths — so the lookup always missed and FireManager silently ran on its
-    // constructor defaults. Every burn was 6000 ms no matter what the GUI showed.
-    const uint32_t fire_duration_ms = getInt("controller_service", "fire_duration_ms", 6000);
-    const uint32_t fire_extended_ms = getInt("controller_service", "fire_extended_ms", 10000);
+    // [fire] is the new home; [controller_service] is still read as a fallback so an un-migrated
+    // config keeps working. (That read used to name [state_machine], which holds only the CSV
+    // paths, so the lookup always missed and every burn silently ran the 6000 ms default.)
+    const uint32_t fire_duration_ms =
+        getInt("fire", "duration_ms", getInt("controller_service", "fire_duration_ms", 6000));
+    const uint32_t fire_extended_ms =
+        getInt("fire", "extended_ms", getInt("controller_service", "fire_extended_ms", 10000));
+
+    // Which state is the burn, and where its timer lands. Names, not enumerators.
+    {
+        const std::string fs = getStr("fire", "state", "");
+        if (!fs.empty()) {
+            State s = StateMachine::fromName(fs);
+            if (s == State::UNKNOWN)
+                std::cerr << "[SequencerService] [fire] state \"" << fs
+                          << "\" is not a known state — falling back to Fire" << std::endl;
+            else
+                fire_state_ = s;
+        }
+        const std::string ft = getStr("fire", "expiry_target", "");
+        if (!ft.empty()) {
+            State s = StateMachine::fromName(ft);
+            if (s == State::UNKNOWN)
+                std::cerr << "[SequencerService] [fire] expiry_target \"" << ft
+                          << "\" is not a known state — falling back to Armed" << std::endl;
+            else
+                fire_expiry_state_ = s;
+        }
+        actuator_commander_.setFireState(fire_state_);
+        std::cout << "[SequencerService] Fire state: " << StateMachine::name(fire_state_)
+                  << " → expires to " << StateMachine::name(fire_expiry_state_) << std::endl;
+        // The expiry transition goes through the same isAllowed() gate as any other, so a target
+        // the fire state cannot reach leaves the system sitting in FIRE with a dead timer. Say so
+        // at startup rather than at T-0.
+        if (!state_machine_.isAllowed(fire_state_, fire_expiry_state_))
+            std::cerr << "[SequencerService] WARNING: " << StateMachine::name(fire_state_) << " → "
+                      << StateMachine::name(fire_expiry_state_)
+                      << " is not an allowed transition — the fire timer will expire into a "
+                         "refused transition and the system will stay in fire."
+                      << std::endl;
+    }
     fire_manager_.configure(fire_duration_ms, fire_extended_ms);
     std::cout << "[SequencerService] Fire window: " << fire_duration_ms << " ms (extended "
               << fire_extended_ms << " ms)" << std::endl;
@@ -232,7 +306,9 @@ bool SequencerService::init(const std::string& config_path) {
             }
         }
     }
-    fire_manager_.setControllerEndpoint(ctrl_host, ctrl_port);
+    controller_host_ = ctrl_host;
+    controller_port_ = ctrl_port;
+    fire_manager_.setNotifier([this](bool active) { notifyControllerFire(active); });
 
     // Elodin — connection is best-effort; service runs without it
     const std::string elodin_host = "127.0.0.1";
@@ -300,7 +376,10 @@ bool SequencerService::transitionTo(const std::string& state_name) {
         std::cerr << "[SequencerService] Unknown state: " << state_name << std::endl;
         return false;
     }
+    return transitionTo(to);
+}
 
+bool SequencerService::transitionTo(State to) {
     State from = current_state_.load();
 
     if (!debug_mode_) {
@@ -318,7 +397,7 @@ bool SequencerService::transitionTo(const std::string& state_name) {
     actuator_commander_.stopContinuousLoop();
 
     // If leaving FIRE state, stop the fire manager
-    if (from == State::FIRE && to != State::FIRE) {
+    if (from == fire_state_ && to != fire_state_) {
         fire_manager_.stop();
     }
 
@@ -338,11 +417,14 @@ bool SequencerService::transitionTo(const std::string& state_name) {
         abort_broadcaster_.triggerAbort();
     }
 
-    // FIRE lifecycle
-    if (to == State::FIRE) {
+    // FIRE lifecycle — which state this is comes from [fire] state, not the enumerator.
+    if (to == fire_state_) {
         fire_manager_.start([this]() {
-            // Called from FireManager's timer thread when FIRE expires
-            transitionTo(StateMachine::name(State::ARMED));
+            // Timer thread. Resolve to a State rather than a name: the old code round-tripped
+            // through StateMachine::name(State::ARMED) → fromName(), so renaming the state made
+            // fromName() return UNKNOWN and the transition was refused — stranding the system in
+            // fire with the timer already stopped.
+            transitionTo(fire_expiry_state_);
         });
     }
 
@@ -377,7 +459,7 @@ bool SequencerService::manualActuator(const std::string& name, int pos) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 bool SequencerService::extendFire() {
-    if (current_state_ != State::FIRE) {
+    if (current_state_ != fire_state_) {
         std::cerr << "[SequencerService] EXTEND_FIRE ignored: not in FIRE state" << std::endl;
         return false;
     }
@@ -410,6 +492,40 @@ bool SequencerService::reloadConfig() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Elodin publishing
 // ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Tell controller_service the burn gate changed. One TCP connection per message, 1 s send timeout.
+ *
+ * This lives here rather than in FireManager so exactly one component talks to the controller —
+ * previously FireManager opened its own socket AND the backend independently detected the FIRE
+ * edge and sent the same messages, so a safety-critical gate had two writers in two processes.
+ */
+void SequencerService::notifyControllerFire(bool active) {
+    const std::string msg = active ? "FIRE_START\n" : "FIRE_STOP\n";
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0)
+        return;
+    struct timeval tv{.tv_sec = 1, .tv_usec = 0};
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    struct sockaddr_in dest{};
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(controller_port_);
+    if (inet_pton(AF_INET, controller_host_.c_str(), &dest.sin_addr) != 1) {
+        close(sock);
+        return;
+    }
+    if (connect(sock, reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest)) == 0) {
+        ssize_t n = send(sock, msg.c_str(), msg.size(), 0);
+        (void)n;
+        std::cout << "[SequencerService] → controller: " << (active ? "FIRE_START" : "FIRE_STOP")
+                  << std::endl;
+    } else {
+        std::cerr << "[SequencerService] could not reach controller_service at " << controller_host_
+                  << ":" << controller_port_ << " for "
+                  << (active ? "FIRE_START" : "FIRE_STOP") << std::endl;
+    }
+    close(sock);
+}
+
 void SequencerService::publishState() {
     if (!elodin_.is_connected())
         return;

@@ -27,7 +27,12 @@ target_link_libraries(sequencer_service
 
 # ── Controller Service ────────────────────────────────────────────────────────
 # Thrust/altitude control (LUT-based or robust DDP)
-add_executable(controller_service controller/controller_main.cpp)
+# StateMachine.cpp: the controller resolves the [fire] state name to its id rather than carrying a
+# second copy of the enum.
+add_executable(controller_service
+    controller/controller_main.cpp
+    sequencer/StateMachine.cpp
+)
 target_include_directories(controller_service PRIVATE ${COMMON_INCLUDES})
 target_link_libraries(controller_service
     fsw_daq_lib daq_comms_lib Eigen3::Eigen Threads::Threads pthread ${RT_LIBRARY}
