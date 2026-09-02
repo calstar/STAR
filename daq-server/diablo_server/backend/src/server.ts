@@ -581,9 +581,16 @@ const apiHandler = createAPIHandler({
     } catch (e) {
       console.warn('\u26a0\ufe0f Failed to rebuild STATE_ACTUATOR_MAP:', e);
     }
+    // Best-effort: only the tmux stack keeps the sequencer up between runs. Under systemd the
+    // pipeline is session-gated, so while idle there is nothing listening — which is fine, because
+    // the CSV is already deployed to config/ and the sequencer reads it when the session starts.
     sendToActuatorService('RELOAD_CONFIG\n')
-      .then(({ ok, reply }) => console.log(`[ThinServer] sequencer RELOAD_CONFIG \u2192 ${ok ? 'OK' : reply || 'failed'}`))
-      .catch(() => { /* sequencer may be down between runs — the CSV still applies at next start */ });
+      .then(({ ok, reply }) => console.log(
+        ok
+          ? '[ThinServer] sequencer reloaded the state CSVs'
+          : `[ThinServer] sequencer not running (${reply || 'no reply'}) — CSVs apply at next session start`,
+      ))
+      .catch(() => console.log('[ThinServer] sequencer not running — CSVs apply at next session start'));
     broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
   },
   onConfigUpdated: () => {

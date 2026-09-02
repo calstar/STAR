@@ -181,6 +181,51 @@ function CommitOnBlurName({
   );
 }
 
+// ── State-machine CSV grids ──────────────────────────────────────────────────
+// All three CSVs share one shape: the first row is state names (leading cell blank) and the first
+// column is the row key. Actuators and delays have identical rows AND columns, so they are edited
+// as ONE grid with two values per cell rather than two spreadsheets kept in sync by hand.
+
+type CsvGrid = { states: string[]; rows: { key: string; cells: string[] }[] };
+
+const parseCsvGrid = (text: string): CsvGrid => {
+  const lines = text.split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l.trim() !== '');
+  if (lines.length === 0) return { states: [], rows: [] };
+  const states = lines[0].split(',').slice(1).map((s) => s.trim());
+  const rows = lines
+    .slice(1)
+    .map((line) => {
+      const cells = line.split(',').map((c) => c.trim());
+      // Pad short rows rather than dropping them — several shipped CSVs are ragged, and silently
+      // losing the row would silently drop an actuator from every state.
+      return { key: cells[0], cells: states.map((_, i) => cells[i + 1] ?? '') };
+    })
+    .filter((r) => r.key !== '');
+  return { states, rows };
+};
+
+const serializeCsvGrid = (g: CsvGrid): string =>
+  [
+    ',' + g.states.join(','),
+    ...g.rows.map((r) => [r.key, ...g.states.map((_, i) => r.cells[i] ?? '')].join(',')),
+  ].join('\n') + '\n';
+
+/** Rows/columns present in `have` but not `want`, and vice versa — the orphan/missing warnings. */
+const diffKeys = (have: string[], want: string[]) => ({
+  orphan: have.filter((k) => !want.includes(k)),
+  missing: want.filter((k) => !have.includes(k)),
+});
+
+/** Rebuild a grid so its rows are exactly `keys`, preserving existing cells and defaulting new
+ *  ones. Used to follow actuator add/remove without hand-editing the CSV. */
+const reconcileRows = (g: CsvGrid, keys: string[], fill: string): CsvGrid => ({
+  states: g.states,
+  rows: keys.map((k) => {
+    const existing = g.rows.find((r) => r.key === k);
+    return { key: k, cells: g.states.map((_, i) => existing?.cells[i] ?? fill) };
+  }),
+});
+
 export default function ConfigPage() {
   const [config, setConfig] = useState<ConfigData>(DEFAULT_CONFIG);
   const [loading, setLoading] = useState(true);
@@ -464,6 +509,131 @@ export default function ConfigPage() {
   const setGuiBars = (bars: any[]) =>
     setConfig((prev) => ({ ...prev, gui: { ...(prev.gui || {}), pressure_bars: bars } }));
 
+  // ── State Management tab ───────────────────────────────────────────────────
+  const [csvActuators, setCsvActuators] = useState<CsvGrid | null>(null);
+  const [csvDelays, setCsvDelays] = useState<CsvGrid | null>(null);
+  const [csvTransitions, setCsvTransitions] = useState<CsvGrid | null>(null);
+  const [csvLoading, setCsvLoading] = useState(false);
+  const [showDelays, setShowDelays] = useState(false);
+
+  const loadStateCsvs = async () => {
+    setCsvLoading(true);
+    try {
+      const get = async (name: string) => {
+        const r = await fetch(`${getApiBaseUrl()}/api/state-csv?name=${name}`);
+        if (!r.ok) throw new Error(`Failed to load ${name}`);
+        return parseCsvGrid(await r.text());
+      };
+      const [a, d, t] = await Promise.all([get('actuators'), get('delays'), get('transitions')]);
+      setCsvActuators(a);
+      setCsvDelays(d);
+      setCsvTransitions(t);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load state CSVs');
+      setTimeout(() => setError(null), 4000);
+    } finally {
+      setCsvLoading(false);
+    }
+  };
+
+  // Load the tables the first time the tab is opened, not on every config page mount — three
+  // extra fetches on a page most visits never open that tab.
+  useEffect(() => {
+    if (activeTab === 'state' && !csvActuators && !csvLoading) void loadStateCsvs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  const saveStateCsv = async (name: string, grid: CsvGrid) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const r = await fetch(`${getApiBaseUrl()}/api/state-csv?name=${name}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/csv' },
+        body: serializeCsvGrid(grid),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `Save failed (${r.status})`);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to save CSV');
+      setTimeout(() => setError(null), 5000);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Role names are the source of truth for which rows should exist; the CSV is what currently does.
+  const roleNames = Object.keys((config.actuator_roles || {}) as Record<string, unknown>);
+  const actuatorDiff = csvActuators
+    ? diffKeys(csvActuators.rows.map((r) => r.key), roleNames)
+    : { orphan: [], missing: [] };
+  // The two grids must agree on their state columns or a state exists in one table and not the other.
+  const stateColDiff = csvActuators && csvTransitions
+    ? diffKeys(csvActuators.states, csvTransitions.states)
+    : { orphan: [], missing: [] };
+  const delayShapeMismatch = !!(csvActuators && csvDelays &&
+    (csvDelays.states.length !== csvActuators.states.length ||
+      csvDelays.rows.length !== csvActuators.rows.length));
+
+  const setActuatorCell = (rowIdx: number, colIdx: number, value: string) =>
+    setCsvActuators((g) => g && ({
+      ...g,
+      rows: g.rows.map((r, i) => (i === rowIdx ? { ...r, cells: r.cells.map((c, j) => (j === colIdx ? value : c)) } : r)),
+    }));
+
+  const setDelayCell = (rowKey: string, colIdx: number, value: string) =>
+    setCsvDelays((g) => g && ({
+      ...g,
+      rows: g.rows.map((r) => (r.key === rowKey ? { ...r, cells: r.cells.map((c, j) => (j === colIdx ? value : c)) } : r)),
+    }));
+
+  const setTransitionCell = (rowIdx: number, colIdx: number, on: boolean) =>
+    setCsvTransitions((g) => g && ({
+      ...g,
+      rows: g.rows.map((r, i) => (i === rowIdx ? { ...r, cells: r.cells.map((c, j) => (j === colIdx ? (on ? '1' : '0') : c)) } : r)),
+    }));
+
+  /** Rebuild both actuator grids from [actuator_roles], keeping any cell that already existed. */
+  const syncActuatorRows = () => {
+    if (csvActuators) setCsvActuators(reconcileRows(csvActuators, roleNames, 'CLOSE'));
+    if (csvDelays) setCsvDelays(reconcileRows(csvDelays, roleNames, '0'));
+  };
+
+  /** A blank table: every configured actuator, every state, everything closed. */
+  const generateEmptyActuators = () => {
+    if (!csvActuators) return;
+    setCsvActuators({ states: csvActuators.states, rows: roleNames.map((k) => ({ key: k, cells: csvActuators.states.map(() => 'CLOSE') })) });
+    setCsvDelays({ states: csvActuators.states, rows: roleNames.map((k) => ({ key: k, cells: csvActuators.states.map(() => '0') })) });
+  };
+
+  const downloadStateCsv = (name: string) => {
+    const a = document.createElement('a');
+    a.href = `${getApiBaseUrl()}/api/state-csv?name=${name}`;
+    a.download = `${name}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  const uploadStateCsv = async (name: string, file: File) => {
+    try {
+      const text = await file.text();
+      const r = await fetch(`${getApiBaseUrl()}/api/state-csv?name=${name}`, {
+        method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: text,
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `Upload failed (${r.status})`);
+      await loadStateCsvs();
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (e: any) {
+      setError(e?.message || 'Upload failed');
+      setTimeout(() => setError(null), 5000);
+    }
+  };
+
   const moveInArray = <T,>(arr: T[], i: number, dir: -1 | 1): T[] => {
     const j = i + dir;
     if (j < 0 || j >= arr.length) return arr;
@@ -579,6 +749,7 @@ export default function ConfigPage() {
     { id: 'roles', label: 'Roles' },
     { id: 'gui', label: 'Top Bar & Limits' },
     { id: 'controller', label: 'Controller' },
+    { id: 'state', label: 'State Machine' },
     { id: 'system', label: 'System' },
   ];
 
@@ -1404,6 +1575,183 @@ export default function ConfigPage() {
                   'number'
                 )}
               </div>
+            </div>
+          )}
+
+          {activeTab === 'state' && (
+            <div className="bg-card rounded-lg p-6 space-y-6">
+              <div>
+                <h2 className="text-xl font-bold mb-1">State Machine</h2>
+                <p className="text-sm text-text-muted">
+                  Editable. These tables belong to the active config profile and deploy with it, so
+                  each profile has its own. The sequencer reads them at pipeline start — change them
+                  with the session stopped and the next run picks them up.
+                </p>
+              </div>
+
+              {csvLoading && <p className="text-sm text-text-muted">Loading…</p>}
+              {!csvLoading && !csvActuators && (
+                <button onClick={loadStateCsvs} className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600">
+                  Load state tables
+                </button>
+              )}
+
+              {csvActuators && (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-lg font-semibold mr-auto">Actuator positions per state</h3>
+                    <label className="flex items-center gap-2 text-sm text-text-muted mr-2">
+                      <input type="checkbox" checked={showDelays} onChange={(e) => setShowDelays(e.target.checked)} className="w-4 h-4" />
+                      Show delays
+                    </label>
+                    <button onClick={loadStateCsvs} className="px-3 py-1.5 bg-gray-700 rounded hover:bg-gray-600 text-sm">Reload</button>
+                    <button onClick={() => downloadStateCsv('actuators')} className="px-3 py-1.5 bg-gray-700 rounded hover:bg-gray-600 text-sm">Download</button>
+                    <label className="px-3 py-1.5 bg-gray-700 rounded hover:bg-gray-600 text-sm cursor-pointer">
+                      Upload
+                      <input
+                        type="file" accept=".csv,text/csv" className="hidden"
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadStateCsv('actuators', f); e.target.value = ''; }}
+                      />
+                    </label>
+                    <button onClick={generateEmptyActuators} className="px-3 py-1.5 bg-gray-700 rounded hover:bg-gray-600 text-sm" title="Every configured actuator, every state, all CLOSE">
+                      Generate empty
+                    </button>
+                    <button
+                      onClick={() => { saveStateCsv('actuators', csvActuators); if (csvDelays) saveStateCsv('delays', csvDelays); }}
+                      disabled={saving}
+                      className="px-3 py-1.5 bg-blue-600 rounded hover:bg-blue-700 text-sm disabled:opacity-50"
+                    >
+                      {saving ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+
+                  {(actuatorDiff.orphan.length > 0 || actuatorDiff.missing.length > 0 || delayShapeMismatch) && (
+                    <div className="p-3 bg-yellow-900/40 border border-yellow-600 rounded-lg text-yellow-200 text-sm space-y-1">
+                      {actuatorDiff.orphan.length > 0 && (
+                        <p>In this table but not in <code>[actuator_roles]</code>: <strong>{actuatorDiff.orphan.join(', ')}</strong> — these rows command nothing.</p>
+                      )}
+                      {actuatorDiff.missing.length > 0 && (
+                        <p>Configured but missing a row: <strong>{actuatorDiff.missing.join(', ')}</strong> — the sequencer will never command these in any state.</p>
+                      )}
+                      {delayShapeMismatch && <p>The delays table has a different shape — use Sync rows to rebuild both.</p>}
+                      <button onClick={syncActuatorRows} className="mt-1 px-3 py-1.5 bg-gray-700 rounded hover:bg-gray-600 text-yellow-100">
+                        Sync rows to [actuator_roles]
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="overflow-x-auto border border-gray-800 rounded">
+                    <table className="text-sm min-w-max">
+                      <thead>
+                        <tr className="bg-background/60">
+                          <th className="sticky left-0 bg-background/95 px-3 py-2 text-left font-semibold">Actuator</th>
+                          {csvActuators.states.map((st) => (
+                            <th key={st} className="px-2 py-2 text-left font-semibold whitespace-nowrap">{st}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {csvActuators.rows.map((row, ri) => (
+                          <tr key={`act:${ri}`} className="border-t border-gray-800">
+                            <td className="sticky left-0 bg-card px-3 py-1.5 font-mono whitespace-nowrap">{row.key}</td>
+                            {csvActuators.states.map((st, ci) => (
+                              <td key={`${ri}:${ci}`} className="px-2 py-1.5">
+                                <div className="flex items-center gap-1">
+                                  <select
+                                    value={(row.cells[ci] || 'CLOSE').toUpperCase()}
+                                    onChange={(e) => setActuatorCell(ri, ci, e.target.value)}
+                                    disabled={!canEdit}
+                                    className="px-2 py-1 bg-background border border-gray-700 rounded text-white disabled:opacity-50"
+                                  >
+                                    <option value="CLOSE">CLOSE</option>
+                                    <option value="OPEN">OPEN</option>
+                                  </select>
+                                  {showDelays && (
+                                    <input
+                                      type="text" inputMode="decimal"
+                                      value={csvDelays?.rows.find((r) => r.key === row.key)?.cells[ci] ?? '0'}
+                                      onChange={(e) => setDelayCell(row.key, ci, e.target.value)}
+                                      disabled={!canEdit}
+                                      title="Delay in seconds after the transition before this actuator moves"
+                                      className="w-14 px-1 py-1 bg-background border border-gray-700 rounded text-white text-xs disabled:opacity-50"
+                                    />
+                                  )}
+                                </div>
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {showDelays && (
+                    <p className="text-sm text-amber-300/90">
+                      Delays are seconds after the transition before that actuator moves. Not yet
+                      honoured by the sequencer — <code>applyForState</code> sends every command at once.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {csvTransitions && (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-lg font-semibold mr-auto">Allowed transitions</h3>
+                    <button onClick={() => downloadStateCsv('transitions')} className="px-3 py-1.5 bg-gray-700 rounded hover:bg-gray-600 text-sm">Download</button>
+                    <label className="px-3 py-1.5 bg-gray-700 rounded hover:bg-gray-600 text-sm cursor-pointer">
+                      Upload
+                      <input
+                        type="file" accept=".csv,text/csv" className="hidden"
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadStateCsv('transitions', f); e.target.value = ''; }}
+                      />
+                    </label>
+                    <button onClick={() => saveStateCsv('transitions', csvTransitions)} disabled={saving} className="px-3 py-1.5 bg-blue-600 rounded hover:bg-blue-700 text-sm disabled:opacity-50">
+                      {saving ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+
+                  {(stateColDiff.orphan.length > 0 || stateColDiff.missing.length > 0) && (
+                    <div className="p-3 bg-yellow-900/40 border border-yellow-600 rounded-lg text-yellow-200 text-sm">
+                      The two tables disagree on states
+                      {stateColDiff.orphan.length > 0 && <> — only in actuators: <strong>{stateColDiff.orphan.join(', ')}</strong></>}
+                      {stateColDiff.missing.length > 0 && <> — only in transitions: <strong>{stateColDiff.missing.join(', ')}</strong></>}.
+                      A state missing from the actuator table commands nothing when entered.
+                    </div>
+                  )}
+
+                  <p className="text-sm text-text-muted">Row = state you are in, column = state you may go to.</p>
+                  <div className="overflow-x-auto border border-gray-800 rounded">
+                    <table className="text-sm min-w-max">
+                      <thead>
+                        <tr className="bg-background/60">
+                          <th className="sticky left-0 bg-background/95 px-3 py-2 text-left font-semibold">From \ To</th>
+                          {csvTransitions.states.map((st) => (
+                            <th key={st} className="px-2 py-2 text-left font-semibold whitespace-nowrap">{st}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {csvTransitions.rows.map((row, ri) => (
+                          <tr key={`tr:${ri}`} className="border-t border-gray-800">
+                            <td className="sticky left-0 bg-card px-3 py-1.5 font-mono whitespace-nowrap">{row.key}</td>
+                            {csvTransitions.states.map((st, ci) => (
+                              <td key={`${ri}:${ci}`} className="px-2 py-1.5 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={(row.cells[ci] || '0').trim() === '1'}
+                                  onChange={(e) => setTransitionCell(ri, ci, e.target.checked)}
+                                  disabled={!canEdit}
+                                  className="w-4 h-4 disabled:opacity-50"
+                                />
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
