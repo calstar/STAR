@@ -21,12 +21,10 @@ export interface FlightParams {
   heading: number
   /** Which CP model the stability overlay shows. */
   cpModel: 'ours' | 'rocketpy' | 'both'
-  /** Which series are ticked on the Flight Dynamics compare plot. Persisted (a view
-   *  preference, not physics) so the chosen overlay survives reloads and travels in the
-   *  save file like everything else. */
-  compareSeries: string[]
-  /** Same, for the Full Flight compare plot (its own series set: altitude/speed/accel). */
-  fullCompareSeries: string[]
+  // Which series are ticked on the compare plots used to live here. They are a
+  // viewing preference, not physics, so they now sit in localStorage per
+  // browser -- see lib/uiPrefs.ts. On the design they travelled in the save
+  // file to whoever you shared with, and ticking a box marked the design dirty.
 }
 
 export interface ViewerConfig {
@@ -46,8 +44,6 @@ export interface ViewerConfig {
 export function defaultFlightParams(): FlightParams {
   return {
     inclination: 85, heading: 0, cpModel: 'both',
-    compareSeries: ['altitude', 'speed'],
-    fullCompareSeries: ['altitude', 'speed'],
   }
 }
 
