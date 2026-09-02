@@ -64,6 +64,19 @@ target_link_libraries(test_board_clock_sync
     fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME board_clock_sync COMMAND test_board_clock_sync)
 
+add_executable(test_actuator_delays
+    test/test_actuator_delays.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
+)
+target_include_directories(test_actuator_delays PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_actuator_delays
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME actuator_delays COMMAND test_actuator_delays)
+
 add_executable(test_sequencer_elodin
     test/test_sequencer_elodin.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
