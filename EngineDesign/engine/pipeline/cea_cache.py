@@ -13,6 +13,28 @@ from functools import partial
 import time
 from .config_schemas import CEAConfig
 
+# ── In-process CEA-build gate ────────────────────────────────────────────────
+# A cold cache build is ~n_points^3 (≈39k) rocketcea calls: hours of CPU and a
+# steadily growing in-process cache that has taken the host to >12 GB when it
+# runs inside a request handler. Building is an OFFLINE job (see
+# .github/workflows/regenerate-cea-cache.yml); the committed output/cache/*.npz
+# tables are what everyone loads.
+#
+# The gate is ENVIRONMENT-based, not code-path based: running the app locally
+# over localhost is the same backend.main as production, just a different
+# environment, so we can't distinguish them by which code is executing. Instead
+# building defaults to ALLOWED, and the *production* environment opts out by
+# setting ED_ALLOW_CEA_BUILD=0 (see docker-compose.yml). That way local dev, the
+# regenerate workflow, tests, and direct runner/script use all keep building on
+# demand, while the deployed server fails fast on a missing/stale cache instead
+# of wedging the box. Set ED_ALLOW_CEA_BUILD=1 to force a build anywhere.
+def _cea_build_allowed() -> bool:
+    env = os.environ.get("ED_ALLOW_CEA_BUILD")
+    if env is None:
+        return True  # default: local/CLI/CI/tests may build on demand
+    return env.strip().lower() in ("1", "true", "yes", "on")
+
+
 # Version of the SEMANTICS of the cached tables (not the .npz container format).
 # Bump whenever a table's meaning changes or a table is added, so stale caches on
 # disk — including locally generated ones git never touches — get rebuilt instead
@@ -477,6 +499,19 @@ class CEACache:
     
     def _build_cache(self):
         """Build CEA lookup tables with parallel processing support"""
+        # Fail fast where in-process builds are disabled (the web server). Every
+        # build path -- missing file, metadata mismatch, schema bump -- funnels
+        # through here, so this one check covers them all. A build in a request
+        # handler is a multi-hour, memory-runaway hazard (host hit >12 GB); the
+        # cure is a committed cache, not an on-demand build.
+        if not _cea_build_allowed():
+            raise RuntimeError(
+                f"CEA cache missing or stale for {self.config.ox_name}/{self.config.fuel_name} "
+                f"at {self.cache_file}, and in-process builds are disabled here. A cold build is "
+                f"~{self.n_points}^3 rocketcea calls (hours) and can exhaust memory. Regenerate it "
+                f"offline (.github/workflows/regenerate-cea-cache.yml) and commit the .npz, or set "
+                f"ED_ALLOW_CEA_BUILD=1 to force a build in this process."
+            )
         print(f"[BUILDING] Building CEA cache (this will take a while)...")
         print(f"   Grid: Pc in [{self.Pc_min/1e6:.1f}, {self.Pc_max/1e6:.1f}] MPa ({self.n_points} points)")
         print(f"         MR in [{self.MR_min:.2f}, {self.MR_max:.2f}] ({self.n_points} points)")

@@ -1,6 +1,7 @@
 """Config management endpoints."""
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from starlette.concurrency import run_in_threadpool
 import os
 from pathlib import Path
 from pydantic import ValidationError
@@ -42,7 +43,11 @@ async def upload_config(
 
         data = yaml.safe_load(content.decode("utf-8"))
         config = PintleEngineConfig(**data)
-        session.app_state.set_config(config, str(save_path))
+        # set_config builds/loads the CEA cache (PintleEngineRunner). A cold
+        # cache is a multi-minute synchronous build, so run it off the event
+        # loop -- inline it would block every other request (health included),
+        # which is exactly the "stuck on Connecting…" hang.
+        await run_in_threadpool(session.app_state.set_config, config, str(save_path))
         return {
             "status": "success",
             "message": f"Config loaded from {file.filename}",
@@ -77,7 +82,9 @@ async def load_config_json(body: dict, session: UserSession = Depends(get_sessio
         config = PintleEngineConfig(**body)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=f"Config validation error: {e}")
-    session.app_state.set_config(config, session.app_state.config_path)
+    # Off the event loop: a cold CEA cache build here would block every other
+    # request. See the note in upload_config.
+    await run_in_threadpool(session.app_state.set_config, config, session.app_state.config_path)
     return {"status": "success", "config": config_to_dict(config)}
 
 
@@ -155,7 +162,9 @@ async def switch_config_endpoint(body: dict, session: UserSession = Depends(get_
         raise HTTPException(status_code=422, detail=f"Switch failed: {e}")
 
     # Update in-memory state only; preserve the original config_path WITHOUT writing to it.
-    session.app_state.set_config(new_config, session.app_state.config_path)
+    # Off the event loop: switching to a propellant whose CEA cache is not yet
+    # built triggers a multi-minute synchronous build. See upload_config.
+    await run_in_threadpool(session.app_state.set_config, new_config, session.app_state.config_path)
 
     from engine.core.dispatch import validate_config_bindings
     return {
@@ -198,7 +207,8 @@ async def update_config(updates: dict, session: UserSession = Depends(get_sessio
         # that path is the shared, git-tracked configs/default.yaml -- one user's
         # edit would clobber it for everyone. Durable saves go through the
         # per-user library (POST /api/configs); this working copy stays in memory.
-        session.app_state.set_config(new_config, session.app_state.config_path)
+        # Off the event loop: see upload_config (cold CEA build would block).
+        await run_in_threadpool(session.app_state.set_config, new_config, session.app_state.config_path)
 
         return {
             "status": "success",
