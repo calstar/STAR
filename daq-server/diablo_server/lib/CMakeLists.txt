@@ -24,7 +24,6 @@ set(FSW_SOURCES
     src/control/ControllerLUT.cpp
     src/control/RobustDDPController.cpp
     src/control/ControllerService.cpp
-    src/DataLoggerService.cpp
     # src/calibration/IMUCalibration.cpp  (disabled)
 )
 
