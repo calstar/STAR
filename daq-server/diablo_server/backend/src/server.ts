@@ -259,7 +259,11 @@ loadBoardsFromConfig();
 
 // ── State actuator map (expected positions per state from CSV) ────────────────
 
-const STATE_ACTUATOR_MAP: StateActuatorMap = getStateActuatorMap();
+// `let`, not `const`: this is parsed from state_machine_actuators.csv at import time, and the
+// State Management tab can now change that file at runtime. It used to be a const that nothing
+// ever rebuilt, so expected-position / mismatch detection kept using the CSV as it was when the
+// backend booted.
+let STATE_ACTUATOR_MAP: StateActuatorMap = getStateActuatorMap();
 
 /**
  * Build entity→expected map for a given state.
@@ -568,6 +572,20 @@ const apiHandler = createAPIHandler({
     useRelay: false,
     boardScanRateHz: getBoardScanRateHz(),
   }),
+  onStateCsvUpdated: () => {
+    // The CSV on disk changed and was deployed. Rebuild what we derive from it, then tell the
+    // sequencer to re-read — it already exposes RELOAD_CONFIG (sequencer_main.cpp), which re-loads
+    // the actuator table and the transition table without restarting the pipeline.
+    try {
+      STATE_ACTUATOR_MAP = getStateActuatorMap();
+    } catch (e) {
+      console.warn('\u26a0\ufe0f Failed to rebuild STATE_ACTUATOR_MAP:', e);
+    }
+    sendToActuatorService('RELOAD_CONFIG\n')
+      .then(({ ok, reply }) => console.log(`[ThinServer] sequencer RELOAD_CONFIG \u2192 ${ok ? 'OK' : reply || 'failed'}`))
+      .catch(() => { /* sequencer may be down between runs — the CSV still applies at next start */ });
+    broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
+  },
   onConfigUpdated: () => {
     reloadGuiStreamConfig();
     // Rebuild sensor-role-derived caches so a Sensor Roles / board_id edit reflects

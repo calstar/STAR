@@ -229,6 +229,50 @@ export function switchProfile(name: string): void {
   }
 }
 
+// ── State-machine CSVs: read/write inside the ACTIVE PROFILE ─────────────────
+
+/** The CSVs the State Management tab edits, keyed by the short name the API takes. */
+export const STATE_CSVS = {
+  actuators: 'state_machine_actuators.csv',
+  delays: 'state_machine_actuator_delays.csv',
+  transitions: 'state_transitions.csv',
+} as const;
+export type StateCsvName = keyof typeof STATE_CSVS;
+
+export function isStateCsvName(v: string): v is StateCsvName {
+  return Object.prototype.hasOwnProperty.call(STATE_CSVS, v);
+}
+
+/** Read one state CSV from the active profile. Falls back to the deployed copy on a box whose
+ *  profile predates the CSVs (ensureSeeded normally adopts them, but never assume). */
+export function readStateCsv(which: StateCsvName): string {
+  ensureSeeded();
+  const file = STATE_CSVS[which];
+  const inProfile = join(profileDir(getActiveProfileName()), file);
+  if (existsSync(inProfile)) return readFileSync(inProfile, 'utf-8');
+  const deployed = join(getConfigDir(), file);
+  if (existsSync(deployed)) return readFileSync(deployed, 'utf-8');
+  return '';
+}
+
+/**
+ * Write one state CSV into the active profile, and deploy it when idle.
+ *
+ * Mirrors the config save rule: during a session the profile takes the edit as a draft and
+ * config/ is left frozen, so a mid-run edit cannot reach the running pipeline.
+ * Returns whether the write reached config/.
+ */
+export function writeStateCsv(which: StateCsvName, content: string, deploy: boolean): boolean {
+  ensureSeeded();
+  const file = STATE_CSVS[which];
+  const name = getActiveProfileName();
+  mkdirSync(profileDir(name), { recursive: true });
+  writeFileSync(join(profileDir(name), file), content, 'utf-8');
+  if (!deploy) return false;
+  copyFileSync(join(profileDir(name), file), join(getConfigDir(), file));
+  return true;
+}
+
 // ── Create / rename / delete ─────────────────────────────────────────────────
 
 /** Create a new profile from the active profile (or another named profile). Does NOT switch. */
