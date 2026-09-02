@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { btn } from '@stardesign-ui'
 
 import { searchMotors } from '../../api/client'
 import type { MotorSimfileRef, MotorSummary } from '../../types'
@@ -83,7 +84,7 @@ export function MotorPicker({ onSelect, onClose }: Props) {
         <button
           type="button"
           onClick={onClose}
-          className="rounded bg-[var(--color-bg-secondary)] px-2 py-1 text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]"
+          className={`${btn}`}
         >
           Close
         </button>
