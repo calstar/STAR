@@ -87,8 +87,6 @@ private:
     std::string config_path_;
     std::string config_content_;
 
-    std::thread state_snapshot_thread_;
-    std::atomic<bool> state_snapshot_stop_{false};
 
     // Elodin connection retry. sensor-actuator.service is started alongside sensor-elodin, so the
     // first connect can lose the race by milliseconds; without this the service runs forever with
@@ -106,9 +104,6 @@ private:
     void publishState();
     // Publish raw state transition to Elodin [0x43, 0x00] (legacy VTable)
     void publishStateTransition(State from, State to);
-    /** 1 Hz CONTROLLER.state rows (from=to=current) so exports/GUI have a dense system-state
-     * stream. */
-    void startStateSnapshotPublisher();
 
     /** Connect to Elodin and do everything that depends on the connection: register the ACT_CMD
      *  VTables, hand the client to the commander, publish initial state. Safe to call repeatedly —
