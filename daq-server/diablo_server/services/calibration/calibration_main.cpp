@@ -577,6 +577,15 @@ int main(int argc, char* argv[]) {
             std::string line, section, board_section;
             std::string hp_pt_source_section;     // [boards.*] that defined hp_pt_connectors
             uint8_t pending_slot_in_section = 0;  // board_id % 10 in current [boards.*]
+            // Collected per [boards.*] section and resolved to the HP board AFTER the parse.
+            // Previously these were assigned straight into the hp_pt_* variables, which meant a
+            // key of the same name in any other section overwrote the HP board's value (adc_ref_
+            // voltage is also set by [calibration.tc]/[calibration.rtd]), and the excitation keys
+            // were read only from a section literally named "pt_board_2" — so an HP board with any
+            // other key silently lost supply normalization, the cause of the PT2 spiking class of
+            // bug. Config, not the section name, decides which board is HP.
+            std::map<std::string, double> sec_adc_ref, sec_full_scale, sec_sense_ohms, sec_exc_atten;
+            std::map<std::string, int> sec_exc_conn;
             while (std::getline(cfg2, line)) {
                 size_t c = line.find('#');
                 if (c != std::string::npos)
@@ -593,6 +602,8 @@ int main(int argc, char* argv[]) {
                     if (section.find("boards.") == 0) {
                         board_section = section;
                         pending_slot_in_section = 0;
+                    } else {
+                        board_section.clear();  // leaving [boards.*]; keys below are not board keys
                     }
                     continue;
                 }
@@ -646,32 +657,46 @@ int main(int argc, char* argv[]) {
                     }
                 } else if (key == "hp_pt_full_scale_psi") {
                     try {
-                        hp_pt_full_scale_psi = std::stod(val);
+                        sec_full_scale[board_section] = std::stod(val);
                     } catch (...) {
                     }
                 } else if (key == "hp_pt_sense_resistor_ohms") {
                     try {
-                        hp_pt_sense_resistor_ohms = std::stod(val);
+                        sec_sense_ohms[board_section] = std::stod(val);
                     } catch (...) {
                     }
                 } else if (key == "adc_ref_voltage") {
                     try {
-                        hp_pt_adc_ref_voltage = std::stod(val);
+                        sec_adc_ref[board_section] = std::stod(val);
                     } catch (...) {
                     }
-                } else if (key == "excitation_connector_id" &&
-                           board_section.find("pt_board_2") != std::string::npos) {
+                } else if (key == "excitation_connector_id") {
                     try {
-                        hp_pt_excitation_connector_id = std::stoi(val);
+                        sec_exc_conn[board_section] = std::stoi(val);
                     } catch (...) {
                     }
-                } else if (key == "excitation_divider_attenuation" &&
-                           board_section.find("pt_board_2") != std::string::npos) {
+                } else if (key == "excitation_divider_attenuation") {
                     try {
-                        hp_pt_exc_div_atten = std::stod(val);
+                        sec_exc_atten[board_section] = std::stod(val);
                     } catch (...) {
                     }
                 }
+            }
+            // Take the HP tuning from the board that declared hp_pt_connectors; anything else in
+            // the file (other boards, [calibration.*]) leaves the built-in defaults in place.
+            if (!hp_pt_source_section.empty()) {
+                auto pick = [&](const std::map<std::string, double>& m, double& dst) {
+                    auto it = m.find(hp_pt_source_section);
+                    if (it != m.end())
+                        dst = it->second;
+                };
+                pick(sec_full_scale, hp_pt_full_scale_psi);
+                pick(sec_sense_ohms, hp_pt_sense_resistor_ohms);
+                pick(sec_adc_ref, hp_pt_adc_ref_voltage);
+                pick(sec_exc_atten, hp_pt_exc_div_atten);
+                auto ec = sec_exc_conn.find(hp_pt_source_section);
+                if (ec != sec_exc_conn.end())
+                    hp_pt_excitation_connector_id = ec->second;
             }
         }
         if (!hp_pt_channels.empty()) {
