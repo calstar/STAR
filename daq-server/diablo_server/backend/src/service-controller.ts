@@ -10,7 +10,7 @@
  * Only the always-on server's sensor-backend.service sets SESSION_SERVICE_MODE=systemd.
  */
 import { spawn, type ChildProcess } from 'child_process';
-import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs';
+import { writeFileSync, mkdirSync, readFileSync, existsSync, copyFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
@@ -21,6 +21,30 @@ const SIM_SCRIPT = join(PROJECT_ROOT, 'sim', 'board_simulator.py');
 const SIM_CONFIG = join(PROJECT_ROOT, 'config', 'sim_config.toml');
 // The frozen canonical config the sim overlay derives from (committed; tests use it too).
 const CONFIG_BASE = join(PROJECT_ROOT, 'config', 'config_base.toml');
+const LIVE_CONFIG = join(PROJECT_ROOT, 'config', 'config.toml');
+
+/**
+ * Snapshot the config this run will actually read to `<dbDir>.toml`, beside the Elodin DB dir.
+ *
+ * Elodin stores only numeric entities (ACT2.CH3, PT1.CH1, ACT_CMD.B2.CH3) — role names live in
+ * config.toml and are applied by the GUI at render time. So a run DB is unreadable without the
+ * config that produced it, and nothing otherwise pins the two together.
+ *
+ * Which file matters: a live run reads config.toml (deployed from the active profile just before
+ * start), a simulated run reads sim_config.toml (regenerated from the frozen config_base and
+ * deliberately bypassing the profile). Snapshotting the wrong one would record a config the run
+ * never used.
+ */
+function snapshotRunConfig(dbDir: string, simulated: boolean): void {
+  const src = simulated ? SIM_CONFIG : LIVE_CONFIG;
+  try {
+    mkdirSync(dirname(dbDir), { recursive: true });
+    copyFileSync(src, `${dbDir}.toml`);
+  } catch (e) {
+    // Never block a run on this — a missing snapshot costs readability, not data.
+    console.warn(`⚠️ Could not snapshot run config from ${src}:`, e);
+  }
+}
 
 /**
  * Generate the loopback sim overlay (config/sim_config.toml) from config_base.toml — the same
@@ -131,6 +155,7 @@ export class ServiceController {
       // A simulated run reads config/sim_config.toml (loopback overlay). Generate it here so sim
       // works on ANY box — a hardware server never runs start_systemd_sim.sh, so it'd be missing.
       if (simulated) ensureSimConfig();
+      snapshotRunConfig(dbDir, simulated);
       mkdirSync(dirname(SESSION_ENV_PATH), { recursive: true });
       writeFileSync(SESSION_ENV_PATH, `ELODIN_DB_DIR=${dbDir}\n`);
       // Per-run data-source overlay consumed by the pipeline units.

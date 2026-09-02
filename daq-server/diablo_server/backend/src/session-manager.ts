@@ -248,6 +248,10 @@ class SessionManager {
       try {
         rmSync(stoppedDir, { recursive: true, force: true });
         rmSync(`${stoppedDir}_metadata`, { recursive: true, force: true });
+        // The run-config snapshot written beside the DB at start (service-controller
+        // snapshotRunConfig) follows the DB's retention — otherwise the elodin dir fills with
+        // orphaned .toml files describing runs that no longer exist.
+        rmSync(`${stoppedDir}.toml`, { force: true });
       } catch (err) {
         console.warn('⚠️ Failed to remove discarded DB dir:', err);
       }
