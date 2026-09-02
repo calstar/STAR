@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { btn } from '@stardesign-ui'
+import { btn, useDisabled } from '@stardesign-ui'
 
 import { searchMotors } from '../../api/client'
 import type { MotorSimfileRef, MotorSummary } from '../../types'
@@ -33,6 +33,10 @@ const RESULT_LIMIT = 80
 const ROW_GRID = 'grid grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_5rem] items-center gap-2'
 
 export function MotorPicker({ onSelect, onClose }: Props) {
+  // Picking a motor writes cad.motor. The buttons that open this picker are
+  // already gated, but reachability is not gating -- if the checkout lapses
+  // while the list is open, the rows have to go dead too.
+  const readOnly = useDisabled()
   const [query, setQuery] = useState('')
   const [impulseClass, setImpulseClass] = useState('')
   const [items, setItems] = useState<MotorSummary[]>([])
@@ -151,7 +155,7 @@ export function MotorPicker({ onSelect, onClose }: Props) {
             <li key={motor.motorId}>
               <button
                 type="button"
-                disabled={!def}
+                disabled={!def || readOnly}
                 onClick={() => def && onSelect(motor, def.simfileId)}
                 className={`${ROW_GRID} w-full rounded px-2 py-1.5 text-left text-xs hover:bg-[var(--color-bg-tertiary)] disabled:opacity-40`}
               >

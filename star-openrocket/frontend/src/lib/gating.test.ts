@@ -33,7 +33,6 @@ const VIEW_ONLY: Record<string, string> = {
   'ContextMenu.tsx:item.onSelect()': 'generic menu shell -- PartList only ever passes view actions',
   'InspectorPanel.tsx:onClick={onClick}': 'panel tab switch',
   'InspectorPanel.tsx:onToggle': 'pin toggle, local panel state',
-  'StabilityPanel.tsx:onCompute': 'runs the stability analysis; reads the design, never writes it',
   'StabilityPanel.tsx:onToggleIsolate': 'isolates the outer surface in the 3D view',
   'StabilityPanel.tsx:onViewMotorCurves': 'opens the thrust-curve popup',
   'StabilityPanel.tsx:onViewFlight': 'opens the flight-profile popup',
@@ -101,7 +100,20 @@ describe('checkout gating (viewer)', () => {
       const name = path.split('/').pop() as string
       for (const tag of ['button', 'input', 'select', 'textarea']) {
         for (const open of openingTags(src, tag)) {
-          if (/\bdisabled\s*=/.test(open) || /readOnly/.test(open)) continue
+          // A bare `disabled={busy}` is NOT enough. Recompute carried exactly
+          // that and still wrote three design fields, so the audit passed while
+          // the control was ungated. The attribute has to actually consult the
+          // read-only state -- either inline, or via a `disabled` prop the
+          // parent wires to it (ModelPicker), or via `useDisabled()` inside the
+          // component, which surfaces as `disabled={disabled}`.
+          // Inspect the `disabled` EXPRESSION, not the whole tag. Matching
+          // anywhere in the tag is worthless: a `title={readOnly ? ... }`
+          // explaining why a control is dead satisfied it while the control
+          // itself stayed live. The expression must consult read-only state --
+          // inline, or through a `disabled` prop / `useDisabled()`, both of
+          // which read as the identifier `disabled` in the expression.
+          const expr = /disabled=\{([^}]*)\}/.exec(open)?.[1]
+          if (expr && /readOnly|\bdisabled\b/.test(expr)) continue
           const excused = Object.keys(VIEW_ONLY).find((k) => {
             const [file, marker] = k.split(':')
             return name === file && open.includes(marker)
