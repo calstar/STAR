@@ -25,6 +25,11 @@ import { Row } from './Row'
  */
 /** `btn`'s geometry without its colours, so a toggle's active state can swap
  *  the fill without the control changing size by a border width. */
+/** Why a control is dead. The design bar's Take button is at the top of the
+ *  window, a long way from these, so a disabled control here needs to say what
+ *  is missing rather than just looking broken. */
+const TAKE_FIRST = 'Take the design in the header to edit it'
+
 const TOGGLE_ON =
   'inline-flex items-center gap-1 rounded border px-2.5 py-1 text-xs font-medium '
   + 'transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
@@ -160,8 +165,9 @@ export function StabilityPanel({
         <button
           type="button"
           onClick={onCompute}
-          disabled={busy}
-          className="rounded bg-[var(--color-accent)] px-2 py-1 text-xs font-medium text-white hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
+          disabled={busy || readOnly}
+          title={readOnly ? TAKE_FIRST : undefined}
+          className="rounded bg-[var(--color-accent)] px-2 py-1 text-xs font-medium text-white hover:bg-[var(--color-accent-hover)] disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy ? 'Computing…' : result ? 'Recompute' : 'Compute'}
         </button>
@@ -174,6 +180,7 @@ export function StabilityPanel({
           type="button"
           onClick={() => onToggleEditMode('body')}
           disabled={readOnly}
+          title={readOnly ? TAKE_FIRST : undefined}
           className={
             faceEditMode && editTarget === 'body'
               ? `${TOGGLE_ON} border-violet-500 bg-violet-500 text-white`
@@ -186,6 +193,7 @@ export function StabilityPanel({
           type="button"
           onClick={() => onToggleEditMode('fin')}
           disabled={readOnly}
+          title={readOnly ? TAKE_FIRST : undefined}
           className={
             faceEditMode && editTarget === 'fin'
               ? `${TOGGLE_ON} border-orange-500 bg-orange-500 text-white`
@@ -198,6 +206,7 @@ export function StabilityPanel({
           type="button"
           onClick={onAutoDetect}
           disabled={autoBusy || readOnly}
+          title={readOnly ? TAKE_FIRST : undefined}
           className={`${btn} ml-auto disabled:cursor-not-allowed`}
         >
           {autoBusy ? 'Detecting…' : 'Auto-detect'}
