@@ -136,3 +136,46 @@ describe('checkout gating (viewer)', () => {
     expect(unused).toEqual([])
   })
 })
+
+/**
+ * The design bar's bootstrap must not combine a once-only ref guard with a
+ * cleanup-set `cancelled` flag.
+ *
+ * Either alone is fine. Together they lose the design list on every load in
+ * dev: StrictMode runs the effect, fires the cleanup (setting `cancelled`),
+ * then runs it again -- and the second run returns early on the ref, so the
+ * only in-flight request is the first one, whose `cancelled` is now true. It
+ * resolves, bails before setDocuments, and the bar renders empty with
+ * "No designs yet" in Change while the designs sit safely on the server.
+ *
+ * This shipped once, was fixed, and came back when the bar was rebuilt on the
+ * shared components. A rendering test would be better but this codebase has no
+ * React test harness, and the failure is visible in the source.
+ */
+describe('design bar bootstrap', () => {
+  const bar = Object.entries(
+    import.meta.glob('../components/versions/*.tsx', {
+      eager: true, query: '?raw', import: 'default',
+    }) as Record<string, string>,
+  )
+
+  it('finds the bar', () => {
+    expect(bar.length).toBe(1)
+  })
+
+  it('does not guard the bootstrap with both a ref and a cancelled flag', () => {
+    for (const [path, src] of bar) {
+      // The effect body, from the ref guard to the end of the file's first
+      // `}, [openDoc])`. Comments mentioning `cancelled` are fine; code is not.
+      const start = src.indexOf('const bootstrapped = useRef(false)')
+      expect(start, `${path} has no once-only bootstrap guard`).toBeGreaterThan(-1)
+      const body = src.slice(start, src.indexOf('}, [openDoc])', start))
+      const code = body
+        .split('\n')
+        .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
+        .join('\n')
+      expect(/\bcancelled\b/.test(code), `${path} combines a ref guard with a cancelled flag`)
+        .toBe(false)
+    }
+  })
+})

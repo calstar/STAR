@@ -214,21 +214,28 @@ export function ConfigVersions({ config, onRestore, onEditableChange, inline = f
   }, [select])
 
   // Mount: list documents; seed one from the current config if there are none.
+  //
   // Guarded to run its bootstrap exactly once: even if a parent passes an
   // unstable onRestore (which recreates openDoc and re-fires this effect), we
   // must not re-list + re-open, or restore would loop into setUi every render.
+  //
+  // Guarded by a ref and NOT by a cleanup-set `cancelled` flag. The two
+  // together are actively wrong: StrictMode's dev double-mount runs the effect,
+  // fires the cleanup, then runs the effect again -- and the second run returns
+  // early on the ref, so the only in-flight request is the first one, whose
+  // `cancelled` the cleanup has already set. It resolves, bails, and never
+  // calls setDocuments: an empty design bar and "No designs yet" in Change,
+  // with the designs sitting safely on the server the whole time. This bar
+  // never unmounts, so there is no real teardown to guard against.
   const bootstrapped = useRef(false)
   useEffect(() => {
     if (bootstrapped.current) return
     bootstrapped.current = true
-    let cancelled = false
     ;(async () => {
       try {
         const docs = await api.listDocuments()
-        if (cancelled) return
         if (docs.length === 0) {
           const meta = await api.createDocument('Design 1', configRef.current)
-          if (cancelled) return
           setDocuments([meta])
           const ref = refOf(meta)
           setActiveRef(ref)
@@ -253,7 +260,6 @@ export function ConfigVersions({ config, onRestore, onEditableChange, inline = f
         loadedKey.current = null
       }
     })()
-    return () => { cancelled = true }
   }, [openDoc])
 
   // Debounced autosave of the working copy, only once the active doc has loaded.
