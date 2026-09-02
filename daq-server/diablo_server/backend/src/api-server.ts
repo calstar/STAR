@@ -11,7 +11,7 @@ import { readConfig, writeConfig, getConfigPath, patchBoardField } from './route
 import {
   listProfiles, switchProfile, createProfile, renameProfile, deleteProfile,
   getActiveProfileName, ensureSeeded, readActiveProfile, writeActiveProfile, deployActiveProfile,
-  getActiveProfilePath,
+  getActiveProfilePath, readStateCsv, writeStateCsv, isStateCsvName, STATE_CSVS,
 } from './routes/config-profiles.js';
 import { sessionManager } from './session-manager.js';
 import { isOperator } from './operators.js';
@@ -262,6 +262,9 @@ export interface APIHandlerOptions {
   getQueryClient?: () => ElodinQueryClient | null;
   getDebugInfo?: () => DebugInfo | null;
   onConfigUpdated?: () => void;
+  /** A state-machine CSV was saved and deployed: rebuild derived maps and tell the sequencer to
+   *  re-read (it exposes RELOAD_CONFIG, which re-loads both CSVs without a restart). */
+  onStateCsvUpdated?: () => void;
   getEngineState?: () => number;
   getCalibrationStatus?: () => Promise<any>;
 }
@@ -296,7 +299,7 @@ function readJsonBody(req: IncomingMessage): Promise<any> {
  * Returns true if the request was handled, false if not (so the caller can fall through).
  */
 export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
-  const { getQueryClient, getDebugInfo, onConfigUpdated, getEngineState, getCalibrationStatus } = opts;
+  const { getQueryClient, getDebugInfo, onConfigUpdated, onStateCsvUpdated, getEngineState, getCalibrationStatus } = opts;
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const urlPath = (req.url ?? '').split('?')[0] ?? '';
@@ -407,6 +410,58 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
             console.error('❌ Config import error:', error);
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: error.message || 'Invalid config file' }));
+          }
+        });
+      } else if (url.pathname === '/api/state-csv' && req.method === 'GET') {
+        // Raw state-machine CSV from the ACTIVE PROFILE. Read-only — no operator gate, matching
+        // /api/config/export.
+        try {
+          const which = String(url.searchParams.get('name') || '');
+          if (!isStateCsvName(which)) throw new Error(`Unknown CSV "${which}"`);
+          res.writeHead(200, {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Content-Disposition': `attachment; filename="${STATE_CSVS[which]}"`,
+          });
+          res.end(readStateCsv(which));
+        } catch (error: any) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message || 'Failed to read CSV' }));
+        }
+      } else if (url.pathname === '/api/state-csv' && req.method === 'POST') {
+        // Write a state CSV into the active profile; deploy when idle (same freeze rule as a
+        // config save — during a session it stays a draft applied at the next start).
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        let body = '';
+        req.on('data', (chunk) => { body += chunk.toString(); });
+        req.on('end', () => {
+          try {
+            const which = String(url.searchParams.get('name') || '');
+            if (!isStateCsvName(which)) throw new Error(`Unknown CSV "${which}"`);
+            if (!body.trim()) throw new Error('CSV is empty');
+            // A header row plus at least one data row; anything less is a truncated upload, and a
+            // CSV that parses to nothing silently disables every actuator for every state.
+            const rows = body.split('\n').map((l) => l.trim()).filter(Boolean);
+            if (rows.length < 2) throw new Error('CSV needs a header row and at least one data row');
+            const sessionActive = sessionManager.getStatus().active;
+            const deployed = writeStateCsv(which, body, !sessionActive);
+            if (deployed && onStateCsvUpdated) {
+              setImmediate(() => {
+                try { onStateCsvUpdated(); } catch (e) { console.warn('⚠️ onStateCsvUpdated handler threw:', e); }
+              });
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: true,
+              deployed,
+              message: deployed ? 'Saved and applied' : 'Saved as draft (applies at next session start)',
+            }));
+          } catch (error: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message || 'Invalid CSV' }));
           }
         });
       } else if (url.pathname === '/api/config/profiles' && req.method === 'GET') {
