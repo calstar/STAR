@@ -10,6 +10,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { btn, useDisabled } from '@stardesign-ui'
 
+import { useUnits } from '../../lib/units/unitsContext'
+
 import { searchMotors } from '../../api/client'
 import type { MotorSimfileRef, MotorSummary } from '../../types'
 
@@ -37,6 +39,10 @@ export function MotorPicker({ onSelect, onClose }: Props) {
   // already gated, but reachability is not gating -- if the checkout lapses
   // while the list is open, the rows have to go dead too.
   const readOnly = useDisabled()
+  // Motor sizes arrive from thrustcurve in millimetres, not SI. They were
+  // printed with a hardcoded 'mm', so this was the one place in the app that
+  // ignored the Units tab -- someone working in inches still read mm here.
+  const { num, q } = useUnits()
   const [query, setQuery] = useState('')
   const [impulseClass, setImpulseClass] = useState('')
   const [items, setItems] = useState<MotorSummary[]>([])
@@ -166,7 +172,7 @@ export function MotorPicker({ onSelect, onClose }: Props) {
                   {motor.manufacturerAbbrev}
                 </span>
                 <span className="whitespace-nowrap text-[var(--color-text-muted)]">
-                  {motor.diameter}×{motor.length}mm
+                  {num(motor.diameter / 1000, 'length')}×{q(motor.length / 1000, 'length')}
                 </span>
               </button>
             </li>
