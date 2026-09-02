@@ -194,6 +194,9 @@ export default function ConfigPage() {
   const [activeProfile, setActiveProfile] = useState('');
   const [sessionActive, setSessionActive] = useState(false);
   const [runningToml, setRunningToml] = useState<string | null>(null); // read-only view of config.toml
+  // Boards start collapsed to a one-line summary — a stand has ~6 of them and
+  // each expands to ~18 fields, which is a lot of scrolling to reach the last one.
+  const [openBoards, setOpenBoards] = useState<Record<string, boolean>>({});
   const [showRunning, setShowRunning] = useState(false);
 
   const ws = getWebSocketClient();
@@ -740,17 +743,93 @@ export default function ConfigPage() {
                 pipeline (daq_bridge/calibration/controller) picks up routing/identity changes on the
                 next session start.
               </p>
-              <div className="space-y-6">
-                {Object.entries(config.boards || {}).map(([boardKey, board]) => (
-                  <div key={boardKey} className="border border-gray-700 rounded-lg p-4">
-                    <h3 className="text-lg font-semibold mb-3">{boardKey}</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="space-y-3">
+                {Object.entries(config.boards || {}).map(([boardKey, board]) => {
+                  const b = board as any;
+                  const open = !!openBoards[boardKey];
+                  const toggle = () => setOpenBoards((prev) => ({ ...prev, [boardKey]: !prev[boardKey] }));
+                  const channels = b.type === 'ACTUATOR'
+                    ? (b.num_actuators !== undefined ? `${b.num_actuators} act` : null)
+                    : (b.num_sensors !== undefined ? `${b.num_sensors} ch` : null);
+                  // A PT board is high-pressure iff it DECLARES hp config — the same predicate as
+                  // hpBoardNumbers() in backend/src/sensor-config.ts and the C++ calibration
+                  // service's parse. There is deliberately no type = "HP_PT": one source of truth.
+                  const isHp = (Array.isArray(b.hp_pt_connectors) && b.hp_pt_connectors.length > 0)
+                    || typeof b.hp_pt_full_scale_psi === 'number';
+                  // Flipping the mode writes/clears those same keys, so the selector is a view of
+                  // the config rather than a second flag that could disagree with it. Seeds match
+                  // the C++ defaults, and hp_pt_connectors starts empty — declared but inert until
+                  // channels are picked, which is what the service treats as "no HP channels".
+                  const setPtMode = (hp: boolean) => {
+                    if (hp) {
+                      updateBoard(boardKey, 'hp_pt_connectors', []);
+                      updateBoard(boardKey, 'hp_pt_full_scale_psi', 5000);
+                      updateBoard(boardKey, 'hp_pt_sense_resistor_ohms', 120);
+                      updateBoard(boardKey, 'excitation_divider_attenuation', 1.0);
+                    } else {
+                      for (const k of ['hp_pt_connectors', 'hp_pt_full_scale_psi', 'hp_pt_sense_resistor_ohms',
+                                       'excitation_connector_id', 'excitation_divider_attenuation']) {
+                        updateBoard(boardKey, k, undefined);
+                      }
+                    }
+                  };
+                  return (
+                  <div key={boardKey} className="border border-gray-700 rounded-lg">
+                    {/* Header is a div, not a button: the whole tab sits in a
+                        <fieldset disabled> for non-operators, which would disable a
+                        real <button> and leave them unable to expand anything. */}
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={open}
+                      onClick={toggle}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}
+                      className={`flex flex-wrap items-center gap-x-3 gap-y-1 p-4 cursor-pointer select-none hover:bg-white/5 rounded-lg${open ? ' rounded-b-none' : ''}`}
+                    >
+                      <span className="text-text-muted w-3 shrink-0">{open ? '▾' : '▸'}</span>
+                      <span
+                        className={`w-2 h-2 rounded-full shrink-0 ${b.enabled ? 'bg-green-500' : 'bg-gray-600'}`}
+                        title={b.enabled ? 'Enabled' : 'Disabled'}
+                      />
+                      <h3 className="text-lg font-semibold font-mono">{boardKey}</h3>
+                      <span className="px-2 py-0.5 text-xs rounded bg-gray-700 text-text-muted">{b.type ?? '—'}</span>
+                      {isHp && (
+                        <span className="px-2 py-0.5 text-xs rounded bg-sky-900/60 text-sky-300" title="High-pressure 4-20 mA current-loop PT board">HP</span>
+                      )}
+                      {!open && (
+                        <span className="text-sm text-text-muted font-mono ml-auto flex flex-wrap gap-x-3 justify-end">
+                          {b.board_id !== undefined && <span title="Board ID">ID {b.board_id}</span>}
+                          {b.ip && <span title="IP : send port">{b.ip}{b.send_port !== undefined ? `:${b.send_port}` : ''}</span>}
+                          {channels && <span title="Channel count">{channels}</span>}
+                          {!b.enabled && <span className="text-amber-300/90">disabled</span>}
+                        </span>
+                      )}
+                    </div>
+                    {open && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4 pt-0">
                       {renderField(
                         'Type',
                         (board as any).type,
                         (val) => updateBoard(boardKey, 'type', val),
                         'select',
                         ['PT', 'ACTUATOR', 'LC', 'TC', 'RTD']
+                      )}
+                      {b.type === 'PT' && (
+                        <div className="space-y-1">
+                          <label className="block text-sm font-semibold">
+                            PT mode
+                            <span className="text-xs text-text-muted ml-2">(sets the hp_pt_* fields below)</span>
+                          </label>
+                          <select
+                            value={isHp ? 'hp' : 'lp'}
+                            onChange={(e) => setPtMode(e.target.value === 'hp')}
+                            disabled={!canEdit}
+                            className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <option value="lp">Low pressure (voltage)</option>
+                            <option value="hp">High pressure (4-20 mA loop)</option>
+                          </select>
+                        </div>
                       )}
                       {renderField(
                         'IP',
@@ -839,40 +918,47 @@ export default function ConfigPage() {
                         'array'
                       )}
 
-                      {/* HP PT extras */}
-                      {(board as any).hp_pt_connectors !== undefined && renderField(
+                      {/* HP PT extras — shown whenever the board is in HP mode, not only when the
+                          keys already exist, so an LP board can actually be converted to HP here. */}
+                      {isHp && renderField(
                         'HP PT Connectors',
-                        (board as any).hp_pt_connectors,
+                        b.hp_pt_connectors,
                         (val) => updateBoard(boardKey, 'hp_pt_connectors', val),
-                        'array'
+                        'array',
+                        undefined,
+                        'connectors on the 4-20 mA loop; the rest stay voltage PTs'
                       )}
-                      {(board as any).excitation_connector_id !== undefined && renderField(
+                      {isHp && renderField(
                         'Excitation Connector ID',
-                        (board as any).excitation_connector_id,
+                        b.excitation_connector_id,
                         (val) => updateBoard(boardKey, 'excitation_connector_id', val),
-                        'number'
+                        'number',
+                        undefined,
+                        'connector sensing the loop supply; blank = no normalization'
                       )}
-                      {(board as any).hp_pt_full_scale_psi !== undefined && renderField(
+                      {isHp && renderField(
                         'HP PT Full Scale (PSI)',
-                        (board as any).hp_pt_full_scale_psi,
+                        b.hp_pt_full_scale_psi,
                         (val) => updateBoard(boardKey, 'hp_pt_full_scale_psi', val),
                         'number'
                       )}
-                      {(board as any).hp_pt_sense_resistor_ohms !== undefined && renderField(
+                      {isHp && renderField(
                         'HP PT Sense Resistor (Ω)',
-                        (board as any).hp_pt_sense_resistor_ohms,
+                        b.hp_pt_sense_resistor_ohms,
                         (val) => updateBoard(boardKey, 'hp_pt_sense_resistor_ohms', val),
                         'number'
                       )}
-                      {(board as any).excitation_divider_attenuation !== undefined && renderField(
+                      {isHp && renderField(
                         'Excitation Divider Attenuation',
-                        (board as any).excitation_divider_attenuation,
+                        b.excitation_divider_attenuation,
                         (val) => updateBoard(boardKey, 'excitation_divider_attenuation', val),
                         'number'
                       )}
                     </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
                 <button
                   onClick={() => {
                     const newKey = `board_${Object.keys(config.boards || {}).length + 1}`;
@@ -880,6 +966,8 @@ export default function ConfigPage() {
                     updateBoard(newKey, 'enabled', false);
                     updateBoard(newKey, 'enable_serial_printing', 0);
                     updateBoard(newKey, 'voltage_reference', 0);
+                    // A board you just created is empty — open it so it can be filled in.
+                    setOpenBoards((prev) => ({ ...prev, [newKey]: true }));
                   }}
                   className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
                 >
