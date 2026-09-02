@@ -109,22 +109,22 @@ export function useCheckout<T>({
     };
   }, [api, key, state.lockedByMe, pollMs]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Give it back when the tab goes away, so a colleague is not left waiting out
-  // the inactivity timeout for a design nobody has open.
+  // Give it back when the tab actually goes away, so a colleague is not left
+  // waiting out the inactivity timeout for a design nobody has open.
+  //
+  // `pagehide` only -- deliberately NOT `visibilitychange`. That fires whenever
+  // the tab merely stops being visible: switching to another tab, minimising
+  // the window, or closing a laptop lid. Releasing on those meant glancing at
+  // something else for a few seconds silently cost you the checkout, and taking
+  // it back reloads the design. The inactivity timeout covers the case this was
+  // reaching for.
   useEffect(() => {
     const drop = () => {
       const r = refRef.current;
       if (r && heldRef.current) api.releaseCheckoutOnUnload(r);
     };
-    const onHide = () => {
-      if (document.visibilityState === 'hidden') drop();
-    };
     window.addEventListener('pagehide', drop);
-    document.addEventListener('visibilitychange', onHide);
-    return () => {
-      window.removeEventListener('pagehide', drop);
-      document.removeEventListener('visibilitychange', onHide);
-    };
+    return () => window.removeEventListener('pagehide', drop);
   }, [api]);
 
   const take = useCallback(async () => {

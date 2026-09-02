@@ -229,7 +229,7 @@ def test_the_previous_holder_is_refused_rather_than_silently_overwriting(client,
     client.post(f"{BASE}/{doc_id}/checkout", headers=A)
     monkeypatch.setattr(documents.store, "lock_ttl", 0)
     client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A)
-    monkeypatch.setattr(documents.store, "lock_ttl", 300)
+    monkeypatch.setattr(documents.store, "lock_ttl", 900)
 
     assert _save(client, doc_id, A, config={"v": "stale"}).status_code == 423
     assert _save(client, doc_id, B, params=OWNER_A, config={"v": "fresh"}).status_code == 200

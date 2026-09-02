@@ -68,9 +68,13 @@ holds a design's write token, and only the holder may save.
   leave and copy deliberately do not: they are not concurrent editing, and
   blocking them would let a stale checkout freeze a design nobody can tidy.
 - A successful save refreshes the heartbeat, so "inactivity" means *not
-  editing*. After `lock_ttl` (default 5 min) the checkout lapses; expiry is
+  editing*. After `lock_ttl` (default 15 min) the checkout lapses; expiry is
   evaluated lazily, at take time, so there is no reaper and no window where the
   record and the answer disagree.
+- The client gives it back on `pagehide` — a real tab close or navigation — and
+  deliberately **not** on `visibilitychange`. That fires when the tab merely
+  stops being visible (another tab, a minimised window, a closed laptop lid),
+  and releasing on it meant a glance elsewhere cost you the checkout.
 
 The compare-and-set runs inside `_index_lock` — the same `flock` that already
 serialises index writes — so two simultaneous takes cannot both win.

@@ -44,6 +44,8 @@ Concurrent editing is not resolved, it is prevented. At most one person holds a
 design's write token at a time, and only the holder may save. Taking it is
 explicit (opening a design never takes it, so viewing never blocks a colleague);
 it lapses on its own after ``lock_ttl`` without a save, and on tab close.
+Hiding the tab -- switching away, minimising, closing a lid -- does not release
+it; only a real close does.
 
 The compare-and-set runs inside ``_index_lock``, the same ``flock`` that already
 serialises index writes, so two simultaneous takes cannot both succeed. That
@@ -114,7 +116,13 @@ class DesignStore:
     #: How long a checkout survives without a save. Expiry is evaluated lazily,
     #: when someone tries to take the design -- no reaper, and exactly as correct
     #: for the only question that matters ("can two people hold it at once?").
-    lock_ttl: int = 300
+    #:
+    #: 15 minutes, not 5: a save is what refreshes this, and reading a result or
+    #: thinking about one is not saving. At 5 minutes an ordinary pause cost you
+    #: the design. It stays finite because release is holder-only and the
+    #: on-close beacon is best-effort, so this is the only thing that frees a
+    #: checkout after a crash or a power cut.
+    lock_ttl: int = 900
     #: An empty document body, used when creating and as a fallback on /load.
     empty_payload: Callable[[], dict] = lambda: {"config": {}}
     #: (owner, doc_id) -> monotonic time of the last microversion. In-process

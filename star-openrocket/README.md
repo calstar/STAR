@@ -182,7 +182,8 @@ live design state sits in React.
 A design is editable only by whoever holds its **checkout**. Opening one never
 takes it -- viewing must not block a colleague -- so every tab below the header
 is read only until you press Take in the design bar. The checkout returns on its
-own after a few minutes without a save, and on tab close. See
+own after 15 minutes without a save, and on tab close -- but not merely because
+you switched tabs or shut the lid. See
 [`lib/stardesign`](../lib/stardesign/README.md#checkouts).
 
 The Units tab is deliberately outside that gate: unit preferences are a per-user
