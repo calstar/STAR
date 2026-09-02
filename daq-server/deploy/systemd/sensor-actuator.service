@@ -1,6 +1,6 @@
 [Unit]
 Description=Sensor System Actuator Service (C++ — state→UDP commands)
-After=network.target
+After=network.target sensor-elodin.service
 
 [Service]
 Type=simple

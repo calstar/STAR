@@ -701,14 +701,20 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            // Try reconnect every 5 seconds if disconnected
-            if (elodin_connected && !elodin_client.is_connected()) {
+            // Try reconnect every 5 seconds if disconnected. NOT gated on elodin_connected:
+            // that flag is only set by a successful FIRST connect, so gating on it meant a bridge
+            // that lost the startup race to elodin-db never retried and published nothing for the
+            // life of the process.
+            if (!elodin_client.is_connected()) {
                 auto since = std::chrono::steady_clock::now() - last_reconnect_time;
                 if (std::chrono::duration_cast<std::chrono::seconds>(since).count() >= 5) {
                     last_reconnect_time = std::chrono::steady_clock::now();
                     if (elodin_client.reconnect()) {
                         std::cout << "✅ Reconnected to Elodin — re-registering VTables"
                                   << std::endl;
+                        // Publishing is gated on this flag everywhere below; without setting it
+                        // here a bridge that only connected on a RETRY would stay silent.
+                        elodin_connected = true;
                         fsw::elodin::DatabaseConfig::register_tables(
                             elodin_client, pt_boards, act_boards, tc_boards, rtd_boards, lc_boards,
                             enc_boards);

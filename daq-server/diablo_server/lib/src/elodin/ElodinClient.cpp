@@ -15,10 +15,21 @@ ElodinClient::~ElodinClient() {
 }
 
 bool ElodinClient::connect(const std::string& host, uint16_t port) {
-    disconnect();
+    std::lock_guard<std::mutex> lock(publish_mutex_);
+    return connect_locked(host, port);
+}
+
+bool ElodinClient::connect_locked(const std::string& host, uint16_t port) {
+    disconnect_locked();
 
     std::cout << "[ElodinClient] Connecting to Elodin database at " << host << ":" << port << "..."
               << std::endl;
+
+    // Remember the target BEFORE attempting, not after succeeding. reconnect() keys off these, so
+    // recording them only on success meant a service whose FIRST connect failed could never retry
+    // ("No previous connection to reconnect to") and stayed dead for the life of the process.
+    last_host_ = host;
+    last_port_ = port;
 
     if (!socket_->connect(host, port)) {
         last_error_ = socket_->last_error();
@@ -26,24 +37,28 @@ bool ElodinClient::connect(const std::string& host, uint16_t port) {
         return false;
     }
 
-    last_host_ = host;
-    last_port_ = port;
     std::cout << "[ElodinClient] ✅ Connected to Elodin database at " << host << ":" << port
               << std::endl;
     return true;
 }
 
 bool ElodinClient::reconnect() {
+    std::lock_guard<std::mutex> lock(publish_mutex_);
     if (last_host_.empty() || last_port_ == 0) {
         last_error_ = "No previous connection to reconnect to";
         return false;
     }
     std::cout << "[ElodinClient] Attempting reconnect to " << last_host_ << ":" << last_port_
               << "..." << std::endl;
-    return connect(last_host_, last_port_);
+    return connect_locked(last_host_, last_port_);
 }
 
 void ElodinClient::disconnect() {
+    std::lock_guard<std::mutex> lock(publish_mutex_);
+    disconnect_locked();
+}
+
+void ElodinClient::disconnect_locked() {
     if (socket_ && socket_->is_connected()) {
         std::cout << "[ElodinClient] Disconnecting from Elodin database..." << std::endl;
         socket_->flush();

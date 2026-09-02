@@ -40,6 +40,7 @@ SequencerService::~SequencerService() {
     state_snapshot_stop_ = true;
     if (state_snapshot_thread_.joinable())
         state_snapshot_thread_.join();
+    stopElodinRetry();
     actuator_commander_.stopContinuousLoop();
     fire_manager_.stop();
 }
@@ -261,21 +262,17 @@ bool SequencerService::init(const std::string& config_path) {
             }
         }
     }
-    if (elodin_.connect(elodin_host, elodin_port)) {
-        std::cout << "[SequencerService] Connected to Elodin at " << elodin_host << ":"
-                  << elodin_port << std::endl;
-        const auto boards_map = fsw::config::load_active_boards(config_path_);
-        const auto it_act = boards_map.find(fsw::config::ActiveBoardKind::ACTUATOR);
-        const std::vector<fsw::elodin::BoardChannels> act_boards =
-            (it_act != boards_map.end()) ? it_act->second
-                                         : std::vector<fsw::elodin::BoardChannels>{};
-        fsw::elodin::DatabaseConfig::register_non_sensor_tables(elodin_, act_boards);
-        actuator_commander_.setElodinClient(&elodin_);
-        actuator_commander_.publishInitialState();
-    } else {
-        std::cerr << "[SequencerService] Cannot connect to Elodin (state will not be published)"
-                  << std::endl;
+    elodin_host_ = elodin_host;
+    elodin_port_ = elodin_port;
+    if (!tryConnectElodin()) {
+        std::cerr << "[SequencerService] Cannot connect to Elodin yet — retrying every "
+                  << kElodinRetrySeconds << "s in the background" << std::endl;
     }
+    // The connect above used to be one-shot. Losing the startup race with elodin-db (systemd
+    // starts the units together) meant the ACT_CMD VTables were never registered and
+    // publishCommandedState() early-returned forever, so every valve read "undefined" in the GUI
+    // while UDP commands still went out — data flowing, dots grey. Retry until it takes.
+    startElodinRetry();
 
     current_state_ = State::IDLE;
     // Publish initial state so any already-connected backend/GUI knows we started at IDLE.
@@ -428,6 +425,44 @@ void SequencerService::publishStateTransition(State from, State to) {
 
     StateTransitionMsg msg(now_ns(), static_cast<uint8_t>(from), static_cast<uint8_t>(to), 0);
     elodin_.publish(VTABLE_STATE_TRANSITION, msg);
+}
+
+bool SequencerService::tryConnectElodin() {
+    if (!elodin_.connect(elodin_host_, elodin_port_))
+        return false;
+    std::cout << "[SequencerService] Connected to Elodin at " << elodin_host_ << ":" << elodin_port_
+              << std::endl;
+    // Every one of these must run on a RECONNECT too, not just the first connect — the VTables
+    // live in the db process, so a db restart loses them.
+    const auto boards_map = fsw::config::load_active_boards(config_path_);
+    const auto it_act = boards_map.find(fsw::config::ActiveBoardKind::ACTUATOR);
+    const std::vector<fsw::elodin::BoardChannels> act_boards =
+        (it_act != boards_map.end()) ? it_act->second : std::vector<fsw::elodin::BoardChannels>{};
+    fsw::elodin::DatabaseConfig::register_non_sensor_tables(elodin_, act_boards);
+    actuator_commander_.setElodinClient(&elodin_);
+    actuator_commander_.publishInitialState();
+    return true;
+}
+
+void SequencerService::startElodinRetry() {
+    if (elodin_retry_thread_.joinable())
+        return;
+    elodin_retry_stop_ = false;
+    elodin_retry_thread_ = std::thread([this]() {
+        while (!elodin_retry_stop_) {
+            for (int i = 0; i < kElodinRetrySeconds * 10 && !elodin_retry_stop_; ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (elodin_retry_stop_ || elodin_.is_connected())
+                continue;
+            tryConnectElodin();
+        }
+    });
+}
+
+void SequencerService::stopElodinRetry() {
+    elodin_retry_stop_ = true;
+    if (elodin_retry_thread_.joinable())
+        elodin_retry_thread_.join();
 }
 
 void SequencerService::startStateSnapshotPublisher() {

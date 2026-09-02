@@ -170,6 +170,14 @@ public:
     std::vector<uint8_t> serialize_msg(uint16_t message_id, const MessageType& msg);
 
 private:
+    // connect/reconnect/disconnect tear down and replace the socket that publish() writes to, so
+    // they take publish_mutex_ like every publish does. The _locked helpers exist because
+    // connect() must call disconnect() while already holding it (std::mutex is not recursive).
+    // Without this a service that publishes from one thread while retrying the connection from
+    // another — sequencer_service does exactly that — races on the socket.
+    bool connect_locked(const std::string& host, uint16_t port);
+    void disconnect_locked();
+
     std::unique_ptr<daq_comms::transport::TCPClient> socket_;
     std::mutex publish_mutex_;
     std::unordered_map<uint16_t, std::string> table_names_;

@@ -90,6 +90,15 @@ private:
     std::thread state_snapshot_thread_;
     std::atomic<bool> state_snapshot_stop_{false};
 
+    // Elodin connection retry. sensor-actuator.service is started alongside sensor-elodin, so the
+    // first connect can lose the race by milliseconds; without this the service runs forever with
+    // no db and every valve reads "undefined".
+    static constexpr int kElodinRetrySeconds = 5;
+    std::string elodin_host_ = "127.0.0.1";
+    uint16_t elodin_port_ = 2240;
+    std::thread elodin_retry_thread_;
+    std::atomic<bool> elodin_retry_stop_{false};
+
     // Abort states where AbortBroadcaster should fire
     static bool isAbortState(State s);
 
@@ -100,6 +109,13 @@ private:
     /** 1 Hz CONTROLLER.state rows (from=to=current) so exports/GUI have a dense system-state
      * stream. */
     void startStateSnapshotPublisher();
+
+    /** Connect to Elodin and do everything that depends on the connection: register the ACT_CMD
+     *  VTables, hand the client to the commander, publish initial state. Safe to call repeatedly —
+     *  a reconnect must re-register, since the VTables live in the db process. */
+    bool tryConnectElodin();
+    void startElodinRetry();
+    void stopElodinRetry();
 
     bool loadConfig(const std::string& path);
 };
