@@ -5,7 +5,8 @@ import { useSensorStore, useGetSensorValue, useSensorDataVersion, useActuatorCom
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { BoardStatus, engineStateCodeToLabel, ActuatorState } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
-import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
+import { PRESSURE_SENSORS, getEntityColor } from '@/lib/sensor-colors';
+import { useSensorConfig } from '@/lib/sensor-config';
 import { stateNameUpper } from '@/lib/states';
 
 /** Display follows commanded state only (state machine / user command); no ADC. */
@@ -23,10 +24,6 @@ function ActuatorStatusRow({ label, entity }: { label: string; entity: string })
   );
 }
 
-const HP_PT_SENSORS = PRESSURE_SENSORS.filter((s) =>
-  ['PT_Cal.GSE_Mid', 'PT_Cal.GSE_High', 'PT_Cal.GN2_High'].includes(s.entity)
-).map(({ label, entity, color }) => ({ label, entity, color }));
-
 function fmtValue(v: number | null): string {
   if (v === null || !isFinite(v)) return '---';
   const abs = Math.abs(v);
@@ -43,6 +40,16 @@ export default function StatusPage() {
   const ACTUATORS = actuators.map((a) => ({ label: a.name, entity: a.entity, channel: a.channel }));
   useSensorDataVersion(); // re-render on sensor flush so getSensorValue() shows fresh data
   const getSensorValue = useGetSensorValue();
+
+  // Which sensors are on a 4-20 mA board comes from config (pt_type), so every such board's
+  // channels appear — this used to be three hardcoded role names that matched nothing.
+  const sensorConfig = useSensorConfig();
+  const hpPtSensors = useMemo(
+    () => sensorConfig
+      .filter((s) => s.isHpPt)
+      .map((s) => ({ label: s.role, entity: s.calEntity, color: getEntityColor(s.calEntity) })),
+    [sensorConfig],
+  );
 
   const boards = useMemo(() => {
     return Object.values(boardsMap).sort((a, b) => {
@@ -192,24 +199,23 @@ export default function StatusPage() {
       </div>
 
       {/* High Pressure PT Sensors Section */}
+      {hpPtSensors.length > 0 && (
       <div className="mt-4">
         <h2 className="text-xl font-bold text-text-muted uppercase tracking-wider mb-4">High Pressure PT Sensors</h2>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {HP_PT_SENSORS.map((sensor) => {
+          {/* Only pressure_psi and raw_adc_counts are published for PT channels. The old panel
+              also showed V_exc / V_sense / current_ma, which nothing has ever emitted. */}
+          {hpPtSensors.map((sensor) => {
             const pressure = getSensorValue(sensor.entity, 'pressure_psi');
             const adc = getSensorValue(sensor.entity, 'raw_adc_counts');
-            const vExc = getSensorValue(sensor.entity, 'excitation_voltage');
-            const vSense = getSensorValue(sensor.entity, 'sense_voltage');
-            const current = getSensorValue(sensor.entity, 'current_ma');
 
             return (
-              <div key={sensor.label} className="bg-card rounded-lg p-4 border border-gray-800">
+              <div key={sensor.entity} className="bg-card rounded-lg p-4 border border-gray-800">
                 <h3 className="text-lg font-bold text-text mb-3 flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full" style={{ backgroundColor: sensor.color }} />
                   {sensor.label}
                 </h3>
 
-                {/* Current Values */}
                 <div className="grid grid-cols-2 gap-3 mb-4">
                   <div className="bg-gray-900/50 rounded p-2">
                     <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Pressure</div>
@@ -218,24 +224,6 @@ export default function StatusPage() {
                     </div>
                   </div>
                   <div className="bg-gray-900/50 rounded p-2">
-                    <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Current</div>
-                    <div className="text-xl font-bold font-mono tabular-nums text-blue-400">
-                      {current !== null ? `${current.toFixed(2)} mA` : '---'}
-                    </div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded p-2">
-                    <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">V_exc</div>
-                    <div className="text-lg font-bold font-mono tabular-nums text-green-400">
-                      {vExc !== null ? `${vExc.toFixed(3)} V` : '---'}
-                    </div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded p-2">
-                    <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">V_sense</div>
-                    <div className="text-lg font-bold font-mono tabular-nums text-yellow-400">
-                      {vSense !== null ? `${vSense.toFixed(3)} V` : '---'}
-                    </div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded p-2 col-span-2">
                     <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">ADC Code</div>
                     <div className="text-lg font-bold font-mono tabular-nums text-purple-400">
                       {adc !== null ? adc.toLocaleString() : '---'}
@@ -243,30 +231,16 @@ export default function StatusPage() {
                   </div>
                 </div>
 
-                {/* Time Series Plots */}
                 <div className="space-y-3">
                   <div className="h-32">
                     <TimeSeriesPlot
-                      title="Voltage"
+                      title="Pressure"
                       entities={[sensor.entity]}
-                      component="excitation_voltage"
-                      components={['excitation_voltage', 'sense_voltage']}
-                      labels={['V_exc', 'V_sense']}
-                      colors={['#27AE60', '#F39C12']}
-                      yLabel="Voltage (V)"
-                      height={128}
-                      windowSeconds={60}
-                    />
-                  </div>
-                  <div className="h-32">
-                    <TimeSeriesPlot
-                      title="Current"
-                      entities={[sensor.entity]}
-                      component="current_ma"
-                      components={['current_ma']}
-                      labels={['Current']}
+                      component="pressure_psi"
+                      components={['pressure_psi']}
+                      labels={['Pressure']}
                       colors={[sensor.color]}
-                      yLabel="Current (mA)"
+                      yLabel="Pressure (PSI)"
                       height={128}
                       windowSeconds={60}
                     />
@@ -290,6 +264,7 @@ export default function StatusPage() {
           })}
         </div>
       </div>
+      )}
     </main>
   );
 }

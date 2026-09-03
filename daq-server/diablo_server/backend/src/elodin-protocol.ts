@@ -126,7 +126,7 @@ export function parseElodinPacket(
   payload: Buffer,
   /** Board-numbers (board_id % 10) that are high-pressure 4-20 mA PT boards, from config
    *  (see sensor-config.hpBoardNumbers). Selects unsigned-vs-signed raw-ADC interpretation
-   *  per PT board instead of the old positional "slot 2 is HP" assumption. */
+   *  per PT board. Omitted or empty means no board uses the current-loop path. */
   hpBoardNumbers?: Set<number>
 ): ParsedSensorData[] {
   const [high, low] = packetId;
@@ -153,8 +153,7 @@ export function parseElodinPacket(
   if (high === 0x20 && low >= 0x01) {
     const { boardNumber, channel, isRaw } = decodeLow(low);
     if (channel >= 1 && channel <= 10) {
-      // config-driven; fall back to the legacy slot-2 assumption only if no set was threaded through.
-      const hpPtSlot = hpBoardNumbers ? hpBoardNumbers.has(boardNumber) : boardNumber === 2;
+      const hpPtSlot = hpBoardNumbers?.has(boardNumber) ?? false;
       if (isRaw) {
         const r = parseRawSensorPayload(
           payload,

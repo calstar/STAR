@@ -137,9 +137,16 @@ class SimulatedBoard:
         }
         self.board_type = type_map.get(self.board_type_str, BOARD_TYPE_PT)
 
-        # HP PT specific settings
-        self.hp_pt_connectors = set(board_config.get("hp_pt_connectors", []))
-        self.excitation_id = board_config.get("excitation_connector_id", -1)
+        # Sensor interface, declared per board. The ADC reference is set once per board, so every
+        # connector on a 4-20 mA board is a loop channel — there is no per-connector list.
+        # Falls back to the legacy hp_pt_* key presence for a config written before pt_type.
+        pt_type = board_config.get("pt_type")
+        if pt_type is not None:
+            self.is_current_loop = pt_type == "4-20 mA absolute"
+        else:
+            self.is_current_loop = bool(board_config.get("hp_pt_connectors")) or (
+                "hp_pt_full_scale_psi" in board_config
+            )
         self.hp_pt_full_scale_psi = board_config.get("hp_pt_full_scale_psi", 5000.0)
         self.hp_pt_sense_resistor_ohms = board_config.get(
             "hp_pt_sense_resistor_ohms", 120
@@ -451,15 +458,11 @@ class SimulatedBoard:
         t = time.time()
         ADC_MAX = 2147483648  # 2^31 as per backend logic
 
-        if sensor_id == self.excitation_id:
-            # Excitation feed: ~1.8V on 2.5V ref (must be > 0 for backend to accept HP PT)
-            return int(ADC_MAX * 1.8 / 2.5)
-
         if self.board_type == BOARD_TYPE_PT:
             # Local connector id (1–10) — matches Elodin packet channel / daq_bridge
             target_psi = self.sim_pt_targets.get(sensor_id)
 
-            if sensor_id in self.hp_pt_connectors:
+            if self.is_current_loop:
                 # HP PT (4-20 mA): psi = (i-4)/16 * full_scale. adc ∝ i.
                 # i_ma = 4 + 16*psi/full_scale; v = i*R/1000; adc = v/2.5 * ADC_MAX
                 psi = target_psi or 4000.0

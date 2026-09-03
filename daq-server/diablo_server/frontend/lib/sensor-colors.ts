@@ -28,9 +28,6 @@ export const ENTITY_COLORS: Record<string, string> = {
   'PT_Cal.PT_CH8': '#8E44AD',
   'PT_Cal.PT_CH9': '#1ABC9C',
   'PT_Cal.PT_CH10': '#16A085',
-  'PT_Cal.HP_PT_1': '#9B59B6',
-  'PT_Cal.HP_PT_3': '#8E44AD',
-  'PT_Cal.HP_PT_4': '#1ABC9C',
   // Raw PT channels (same color as calibrated role for consistency)
   'PT.PT_CH1': '#E67E22', 'PT.PT_CH2': '#D7BDE2', 'PT.PT_CH3': '#9B59B6', 'PT.PT_CH4': '#C0392B',
   'PT.PT_CH5': '#5DADE2', 'PT.PT_CH6': '#3CB371', 'PT.PT_CH7': '#2471A3', 'PT.PT_CH8': '#8E44AD',

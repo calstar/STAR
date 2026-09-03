@@ -32,7 +32,6 @@ from scripts.calibration.config_loader import (  # noqa: E402
     load_config,
     build_channel_to_orchestrator_key,
     get_hp_pt_packet_channels,
-    get_excitation_packet_channels,
     decode_board_namespaced_low,
     packet_ch_for_board_connector,
 )
@@ -176,7 +175,6 @@ def _parse_int32_at_12(payload: bytes) -> Optional[int]:
 _last_elodin_write: dict = {}
 _first_calibrated_write_logged: set = set()
 _hp_pt_channels_cache: dict = {}       # {packet_ch: hp_pt_cfg}  — populated lazily
-_excitation_channels_cache: dict = {}  # {packet_ch: exc_cfg}    — populated lazily
 
 # ── EMA (exponential moving average) noise filter ────────────────────────────
 # Applied to LP PT channels before writing calibrated value to Elodin.
@@ -230,14 +228,12 @@ def _apply_direct_offset_correction(
 
 
 def _parse_pt_raw_for_packet_ch(payload: bytes, packet_ch: int) -> Optional[int]:
-    """HP PT / excitation: unsigned ADC; LP PT: signed ADS1262 counts (matches FSW)."""
+    """4-20 mA PT: unsigned ADC; LP PT: signed ADS1262 counts (matches FSW)."""
     if len(payload) < 21:
         return None
     if not _hp_pt_channels_cache:
         _hp_pt_channels_cache.update(get_hp_pt_packet_channels())
-    if not _excitation_channels_cache:
-        _excitation_channels_cache.update(get_excitation_packet_channels())
-    if packet_ch in _hp_pt_channels_cache or packet_ch in _excitation_channels_cache:
+    if packet_ch in _hp_pt_channels_cache:
         return struct.unpack_from("<I", payload, 12)[0]
     return struct.unpack_from("<i", payload, 12)[0]
 
@@ -294,28 +290,16 @@ def _process_raw_and_write_calibrated(
     # Ensure caches are populated (done once per process lifetime)
     if not _hp_pt_channels_cache:
         _hp_pt_channels_cache.update(get_hp_pt_packet_channels())
-    if not _excitation_channels_cache:
-        _excitation_channels_cache.update(get_excitation_packet_channels())
 
     pred = None
     is_hp_pt = stype == "PT" and packet_ch in _hp_pt_channels_cache
-    is_excitation = stype == "PT" and packet_ch in _excitation_channels_cache
     key = channel_to_key.get((stype, packet_ch))
-
-    # Path 0E: Excitation voltage — ADC → actual loop supply volts (bypass all pressure paths).
-    if is_excitation:
-        exc_cfg = _excitation_channels_cache[packet_ch]
-        adc_ref = exc_cfg["adc_ref_voltage"]
-        attenuation = exc_cfg["divider_attenuation"]
-        if attenuation > 0:
-            v_adc = (float(raw_val) / 2_147_483_648.0) * adc_ref
-            pred = v_adc / attenuation
 
     # Path 0H: HP PT (4-20 mA) — bypass RCF entirely; the orchestrator's polynomial
     # is calibrated for LP PT voltage-mode inputs and produces garbage for HP PT.
-    # board_simulator.py generates valid 4-20 mA ADC codes for HP PT connectors, so
+    # board_simulator.py generates valid 4-20 mA ADC codes for current-loop connectors, so
     # hp_pt_adc_to_psi is correct in both sim and real-hardware modes.
-    elif is_hp_pt:
+    if is_hp_pt:
         hp_cfg = _hp_pt_channels_cache[packet_ch]
         pred = hp_pt_adc_to_psi(
             raw_val,
@@ -534,13 +518,12 @@ async def relay_subscriber_task():
                         continue
 
                     key = channel_to_key.get((stype, packet_ch))
-                    # HP PT and excitation channels use direct conversions, not the RCF
-                    # polynomial. Feeding their raw codes into _online_update would corrupt
-                    # the Bayesian model (the polynomial is calibrated for LP PT voltage-mode).
+                    # HP PT channels use a direct conversion, not the RCF polynomial.
+                    # Feeding their raw codes into _online_update would corrupt the Bayesian
+                    # model (the polynomial is calibrated for LP PT voltage-mode).
                     # Also skip HP PT online update in sim mode (FSW handles those channels).
                     _is_hp = stype == "PT" and packet_ch in _hp_pt_channels_cache
-                    _is_exc = stype == "PT" and packet_ch in _excitation_channels_cache
-                    if key and key in state.orchestrator.robust and not _is_hp and not _is_exc:
+                    if key and key in state.orchestrator.robust and not _is_hp:
                         state.orchestrator._online_update(key, float(raw_val))
 
                     _process_raw_and_write_calibrated(
@@ -807,12 +790,10 @@ class CalibrationHTTPRequestHandler(BaseHTTPRequestHandler):
                 target = float(ch_data.get("target_psi", 0.0))
                 if packet_ch is None or adc is None:
                     continue
-                # Skip HP PT and excitation channels — those have hardware-level conversions
-                if not _excitation_channels_cache:
-                    _excitation_channels_cache.update(get_excitation_packet_channels())
+                # Skip HP PT channels — those have hardware-level conversions
                 if not _hp_pt_channels_cache:
                     _hp_pt_channels_cache.update(get_hp_pt_packet_channels())
-                if packet_ch in _hp_pt_channels_cache or packet_ch in _excitation_channels_cache:
+                if packet_ch in _hp_pt_channels_cache:
                     continue
                 key = channel_to_key.get(("PT", packet_ch), ("PT", packet_ch))
                 if _apply_direct_offset_correction(key, float(adc), target):

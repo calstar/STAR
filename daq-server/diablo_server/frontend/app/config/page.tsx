@@ -254,6 +254,53 @@ const boardDisplayName = (boards: Record<string, any>, boardKey: string): string
   return sameType.length > 1 ? `${label} Board #${ordinal}` : `${label} Board`;
 };
 
+/**
+ * A PT board's sensor interface, and therefore its ADC reference. The hardware is identical
+ * across PT boards; only the interface differs, so this is a per-board field rather than a
+ * board `type` value. Must match backend/src/sensor-config.ts and the C++ load_pt_boards().
+ */
+const PT_TYPE_RATIOMETRIC = '0-5V ratiometric';
+const PT_TYPE_CURRENT_LOOP = '4-20 mA absolute';
+
+/**
+ * Reads a PT board's declared interface, falling back to the legacy key-presence inference for a
+ * config written before pt_type existed — the same fallback the backend and C++ apply.
+ */
+const ptTypeOf = (board: any): string => {
+  if (typeof board?.pt_type === 'string' && board.pt_type) return board.pt_type;
+  const legacy = (Array.isArray(board?.hp_pt_connectors) && board.hp_pt_connectors.length > 0)
+    || typeof board?.hp_pt_full_scale_psi === 'number';
+  return legacy ? PT_TYPE_CURRENT_LOOP : PT_TYPE_RATIOMETRIC;
+};
+
+/**
+ * Every layer maps a board to an Elodin slot as board_id % 10 (0 → 10), and the packet id low
+ * byte is (slot-1) * 0x20 + 0x10 + channel — so only 8 slots fit in a byte, and two enabled
+ * boards of the same type on one slot merge into a single entity with no error anywhere.
+ *
+ * Same-type only: the packet id's high byte already separates the types, so a PT and an actuator
+ * board sharing a slot is fine. Mirrors check_board_slots() in
+ * lib/src/config/LoadActiveBoards.cpp.
+ */
+const boardSlotIssue = (boards: Record<string, any>, boardKey: string): string | null => {
+  const board = boards?.[boardKey];
+  if (!board || board.enabled === false || typeof board.board_id !== 'number') return null;
+  const slotOf = (id: number) => (id % 10 === 0 ? 10 : id % 10);
+  const slot = slotOf(board.board_id);
+  if (slot > 8) {
+    return `Board ID ${board.board_id} maps to slot ${slot}, but packet IDs only encode slots 1-8.`;
+  }
+  const clash = Object.keys(boards).find((k) => k !== boardKey
+    && boards[k]?.enabled !== false
+    && boards[k]?.type === board.type
+    && typeof boards[k]?.board_id === 'number'
+    && slotOf(boards[k].board_id) === slot);
+  if (clash) {
+    return `Slot ${slot} is also claimed by ${boardDisplayName(boards, clash)} (ID ${boards[clash].board_id}) — their channels will merge.`;
+  }
+  return null;
+};
+
 export default function ConfigPage() {
   const [config, setConfig] = useState<ConfigData>(DEFAULT_CONFIG);
   const [loading, setLoading] = useState(true);
@@ -1023,26 +1070,34 @@ export default function ConfigPage() {
                   const channels = b.type === 'ACTUATOR'
                     ? (b.num_actuators !== undefined ? `${b.num_actuators} act` : null)
                     : (b.num_sensors !== undefined ? `${b.num_sensors} ch` : null);
-                  // A PT board is high-pressure iff it DECLARES hp config — the same predicate as
-                  // hpBoardNumbers() in backend/src/sensor-config.ts and the C++ calibration
-                  // service's parse. There is deliberately no type = "HP_PT": one source of truth.
-                  const isHp = (Array.isArray(b.hp_pt_connectors) && b.hp_pt_connectors.length > 0)
-                    || typeof b.hp_pt_full_scale_psi === 'number';
-                  // Flipping the mode writes/clears those same keys, so the selector is a view of
-                  // the config rather than a second flag that could disagree with it. Seeds match
-                  // the C++ defaults, and hp_pt_connectors starts empty — declared but inert until
-                  // channels are picked, which is what the service treats as "no HP channels".
-                  const setPtMode = (hp: boolean) => {
-                    if (hp) {
-                      updateBoard(boardKey, 'hp_pt_connectors', []);
-                      updateBoard(boardKey, 'hp_pt_full_scale_psi', 5000);
-                      updateBoard(boardKey, 'hp_pt_sense_resistor_ohms', 120);
-                      updateBoard(boardKey, 'excitation_divider_attenuation', 1.0);
+                  // The board DECLARES its sensor interface via pt_type — the same key the backend
+                  // (isCurrentLoopBoard) and the C++ calibration service read, so there is one
+                  // source of truth. There is deliberately no type = "HP_PT": the hardware is
+                  // identical, only the sensor interface differs.
+                  const ptType = ptTypeOf(b);
+                  const isHp = ptType === PT_TYPE_CURRENT_LOOP;
+                  const slotIssue = boardSlotIssue((config.boards || {}) as Record<string, any>, boardKey);
+                  // pt_type drives voltage_reference rather than sitting beside it, so the two
+                  // cannot disagree. The 4-20 mA path needs the internal 2.5 V reference; 0-5V
+                  // ratiometric needs VDD, where the excitation IS the reference.
+                  const setPtType = (next: string) => {
+                    updateBoard(boardKey, 'pt_type', next);
+                    if (next === PT_TYPE_CURRENT_LOOP) {
+                      updateBoard(boardKey, 'voltage_reference', 0);
+                      updateBoard(boardKey, 'adc_ref_voltage', b.adc_ref_voltage ?? 2.5);
+                      updateBoard(boardKey, 'hp_pt_full_scale_psi', b.hp_pt_full_scale_psi ?? 5000);
+                      updateBoard(boardKey, 'hp_pt_sense_resistor_ohms', b.hp_pt_sense_resistor_ohms ?? 120);
                     } else {
-                      for (const k of ['hp_pt_connectors', 'hp_pt_full_scale_psi', 'hp_pt_sense_resistor_ohms',
-                                       'excitation_connector_id', 'excitation_divider_attenuation']) {
+                      updateBoard(boardKey, 'voltage_reference', 1);
+                      for (const k of ['hp_pt_full_scale_psi', 'hp_pt_sense_resistor_ohms']) {
                         updateBoard(boardKey, k, undefined);
                       }
+                    }
+                    // Legacy keys the excitation-monitor mechanism used; clearing them on any
+                    // pt_type edit stops a stale key outliving the declaration it predates.
+                    for (const k of ['hp_pt_connectors', 'excitation_connector_id',
+                                     'excitation_divider_attenuation']) {
+                      if (b[k] !== undefined) updateBoard(boardKey, k, undefined);
                     }
                   };
                   return (
@@ -1097,23 +1152,28 @@ export default function ConfigPage() {
                         (board as any).type,
                         (val) => updateBoard(boardKey, 'type', val),
                         'select',
-                        ['PT', 'ACTUATOR', 'LC', 'TC', 'RTD']
+                        ['PT', 'ACTUATOR', 'LC', 'TC', 'RTD', 'ENCODER']
                       )}
                       {b.type === 'PT' && (
                         <div className="space-y-1">
                           <label className="block text-sm font-semibold">
-                            PT mode
-                            <span className="text-xs text-text-muted ml-2">(sets the hp_pt_* fields below)</span>
+                            Sensor type
+                            <span className="text-xs text-text-muted ml-2">(sets the ADC reference)</span>
                           </label>
                           <select
-                            value={isHp ? 'hp' : 'lp'}
-                            onChange={(e) => setPtMode(e.target.value === 'hp')}
+                            value={ptType}
+                            onChange={(e) => setPtType(e.target.value)}
                             disabled={!canEdit}
                             className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            <option value="lp">Low pressure (voltage)</option>
-                            <option value="hp">High pressure (4-20 mA loop)</option>
+                            <option value={PT_TYPE_RATIOMETRIC}>0-5V ratiometric</option>
+                            <option value={PT_TYPE_CURRENT_LOOP}>4-20 mA absolute</option>
                           </select>
+                          <p className="text-xs text-text-muted">
+                            {isHp
+                              ? 'Current loop across a shunt resistor, measured against the internal 2.5 V reference. Supply-independent, so no excitation monitor is needed.'
+                              : 'Excitation is the ADC reference (VDD), so the ratio cancels in hardware.'}
+                          </p>
                         </div>
                       )}
                       {renderField(
@@ -1133,12 +1193,17 @@ export default function ConfigPage() {
                         (val) => updateBoard(boardKey, 'listen_port', val),
                         'number'
                       )}
-                      {renderField(
-                        'Board ID',
-                        (board as any).board_id,
-                        (val) => updateBoard(boardKey, 'board_id', val),
-                        'number'
-                      )}
+                      <div className="space-y-1">
+                        {renderField(
+                          'Board ID',
+                          (board as any).board_id,
+                          (val) => updateBoard(boardKey, 'board_id', val),
+                          'number'
+                        )}
+                        {slotIssue && (
+                          <p className="text-xs text-red-400">{slotIssue}</p>
+                        )}
+                      </div>
                       {renderField(
                         'Enabled',
                         (board as any).enabled,
@@ -1166,11 +1231,18 @@ export default function ConfigPage() {
                         'boolean'
                       )}
                       <div className="space-y-1">
-                        <label className="block text-sm font-semibold">Voltage reference</label>
+                        <label className="block text-sm font-semibold">
+                          Voltage reference
+                          {b.type === 'PT' && (
+                            <span className="text-xs text-text-muted ml-2">(set by Sensor type)</span>
+                          )}
+                        </label>
                         <select
                           value={String((board as any).voltage_reference ?? 0)}
                           onChange={(e) => updateBoard(boardKey, 'voltage_reference', parseInt(e.target.value, 10))}
-                          disabled={!canEdit}
+                          // On a PT board the reference follows from the sensor interface, so it is
+                          // shown rather than edited — the two cannot be made to disagree.
+                          disabled={!canEdit || b.type === 'PT'}
                           className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <option value="0">Internal (2.5V)</option>
@@ -1203,41 +1275,25 @@ export default function ConfigPage() {
                         'array'
                       )}
 
-                      {/* HP PT extras — shown whenever the board is in HP mode, not only when the
-                          keys already exist, so an LP board can actually be converted to HP here. */}
+                      {/* 4-20 mA conversion parameters — shown whenever the board declares that
+                          interface, not only when the keys already exist, so a board can actually
+                          be converted here. There is no per-connector list: the ADC reference is
+                          set once per board, so every active connector uses the same path. */}
                       {isHp && renderField(
-                        'HP PT Connectors',
-                        b.hp_pt_connectors,
-                        (val) => updateBoard(boardKey, 'hp_pt_connectors', val),
-                        'array',
-                        undefined,
-                        'connectors on the 4-20 mA loop; the rest stay voltage PTs'
-                      )}
-                      {isHp && renderField(
-                        'Excitation Connector ID',
-                        b.excitation_connector_id,
-                        (val) => updateBoard(boardKey, 'excitation_connector_id', val),
-                        'number',
-                        undefined,
-                        'connector sensing the loop supply; blank = no normalization'
-                      )}
-                      {isHp && renderField(
-                        'HP PT Full Scale (PSI)',
+                        'Full Scale (PSI)',
                         b.hp_pt_full_scale_psi,
                         (val) => updateBoard(boardKey, 'hp_pt_full_scale_psi', val),
-                        'number'
+                        'number',
+                        undefined,
+                        'pressure at 20 mA; 4 mA is 0 PSI'
                       )}
                       {isHp && renderField(
-                        'HP PT Sense Resistor (Ω)',
+                        'Sense Resistor (Ω)',
                         b.hp_pt_sense_resistor_ohms,
                         (val) => updateBoard(boardKey, 'hp_pt_sense_resistor_ohms', val),
-                        'number'
-                      )}
-                      {isHp && renderField(
-                        'Excitation Divider Attenuation',
-                        b.excitation_divider_attenuation,
-                        (val) => updateBoard(boardKey, 'excitation_divider_attenuation', val),
-                        'number'
+                        'number',
+                        undefined,
+                        'shunt the loop current is measured across'
                       )}
                     </div>
                     )}
@@ -1248,9 +1304,11 @@ export default function ConfigPage() {
                   onClick={() => {
                     const newKey = `board_${Object.keys(config.boards || {}).length + 1}`;
                     updateBoard(newKey, 'type', 'PT');
+                    updateBoard(newKey, 'pt_type', PT_TYPE_RATIOMETRIC);
                     updateBoard(newKey, 'enabled', false);
                     updateBoard(newKey, 'enable_serial_printing', 0);
-                    updateBoard(newKey, 'voltage_reference', 0);
+                    // Matches PT_TYPE_RATIOMETRIC above; the Sensor type selector owns this from here.
+                    updateBoard(newKey, 'voltage_reference', 1);
                     // A board you just created is empty — open it so it can be filled in.
                     setOpenBoards((prev) => ({ ...prev, [newKey]: true }));
                   }}

@@ -266,46 +266,44 @@ def build_channel_to_orchestrator_key() -> Dict[tuple, tuple]:
     return mapping
 
 
+def is_current_loop_board(board: dict) -> bool:
+    """
+    True when a PT board's sensors are 4-20 mA current-loop transmitters.
+
+    `pt_type` is authoritative and matches what the C++ calibration service and the backend read.
+    A board written before pt_type existed is still recognised from its legacy hp_pt_* keys.
+    """
+    pt_type = board.get("pt_type")
+    if pt_type is not None:
+        return pt_type == "4-20 mA absolute"
+    return bool(board.get("hp_pt_connectors")) or "hp_pt_full_scale_psi" in board
+
+
 def get_hp_pt_packet_channels() -> Dict[int, dict]:
     """
-    Return {packet_ch: {full_scale_psi, sense_resistor_ohms, adc_ref_voltage}} for HP PT channels.
-    Used when robust stack excludes HP PTs — calibration_server applies 4-20 mA linear conversion.
+    Return {connector: {full_scale_psi, sense_resistor_ohms, adc_ref_voltage}} for 4-20 mA PT
+    channels. Used when the robust stack excludes HP PTs — calibration_server applies the
+    4-20 mA linear conversion.
+
+    The ADC reference is set once per board, so every active connector on a current-loop board
+    is a loop channel. Keys are local connector ids, so two current-loop boards would collide
+    here; board-namespacing this layer is tracked separately.
     """
     result: Dict[int, dict] = {}
     for board in get_boards_by_type("PT"):
-        if not board.get("enabled", True) or not board.get("hp_pt_connectors"):
+        if not board.get("enabled", True) or not is_current_loop_board(board):
             continue
-        hp_conns = board.get("hp_pt_connectors", [])
-        if not isinstance(hp_conns, (list, tuple)):
-            continue
+        conns = board.get("active_connectors")
+        if not isinstance(conns, (list, tuple)):
+            num = board.get("num_sensors", 10)
+            conns = list(range(1, int(num) + 1)) if isinstance(num, int) else []
         cfg = {
             "full_scale_psi": float(board.get("hp_pt_full_scale_psi", 5000.0)),
             "sense_resistor_ohms": float(board.get("hp_pt_sense_resistor_ohms", 120.0)),
             "adc_ref_voltage": float(board.get("adc_ref_voltage", 2.5)),
         }
-        for conn in hp_conns:
+        for conn in conns:
             result[conn] = cfg
-    return result
-
-
-def get_excitation_packet_channels() -> Dict[int, dict]:
-    """
-    Return {packet_ch: {adc_ref_voltage, divider_attenuation}} for boards with a
-    dedicated excitation voltage monitor connector (excitation_connector_id >= 1).
-    The calibration server uses this to publish the loop excitation voltage (V)
-    instead of trying to apply pressure calibration to the channel.
-    """
-    result: Dict[int, dict] = {}
-    for board in get_boards_by_type("PT"):
-        if not board.get("enabled", True):
-            continue
-        exc_conn = board.get("excitation_connector_id", -1)
-        if not isinstance(exc_conn, int) or exc_conn < 1:
-            continue
-        result[exc_conn] = {
-            "adc_ref_voltage": float(board.get("adc_ref_voltage", 2.5)),
-            "divider_attenuation": float(board.get("excitation_divider_attenuation", 1.0)),
-        }
     return result
 
 
