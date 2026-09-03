@@ -4,9 +4,11 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <regex>
 #include <sstream>
 
@@ -27,33 +29,47 @@ bool SensorCalibrationManager::load_from_json(const std::string& json_path) {
     std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     file.close();
 
-    // Match: "channel_id": [C0, C1, C2, C3]   (at least 2 coefficients)
-    std::regex poly_regex("\"(\\d+)\":\\s*\\[([\\d\\.\\-\\+eE]+(?:,\\s*[\\d\\.\\-\\+eE]+)+)\\]");
-    std::sregex_iterator iter(content.begin(), content.end(), poly_regex);
-    std::sregex_iterator end;
+    nlohmann::json root;
+    try {
+        root = nlohmann::json::parse(content);
+    } catch (const std::exception& e) {
+        std::cerr << "[" << sensor_type_ << " Cal] JSON parse error in " << json_path << ": "
+                  << e.what() << std::endl;
+        return false;
+    }
+    // Coefficients live under "calibration_polynomials" when present, else at the top level
+    // ({"1": [c0, c1, ...], ...}).
+    const nlohmann::json& poly =
+        (root.contains("calibration_polynomials") && root["calibration_polynomials"].is_object())
+            ? root["calibration_polynomials"]
+            : root;
+    if (!poly.is_object())
+        return false;
+
+    auto is_numeric = [](const std::string& s) {
+        return !s.empty() && std::all_of(s.begin(), s.end(), [](unsigned char c) {
+            return std::isdigit(c) != 0;
+        });
+    };
 
     size_t loaded = 0;
-    for (; iter != end; ++iter) {
-        std::smatch match = *iter;
-        uint8_t channel_id = static_cast<uint8_t>(std::stoi(match[1].str()));
-        std::string coeffs_str = match[2].str();
-
-        // Parse coefficient list
+    for (const auto& [ch_str, arr] : poly.items()) {
+        if (!is_numeric(ch_str) || !arr.is_array() || arr.empty())
+            continue;
         std::vector<double> coeffs;
-        std::istringstream ss(coeffs_str);
-        std::string token;
-        while (std::getline(ss, token, ',')) {
-            // trim whitespace
-            token.erase(0, token.find_first_not_of(" \t"));
-            token.erase(token.find_last_not_of(" \t") + 1);
-            if (!token.empty())
-                coeffs.push_back(std::stod(token));
+        bool ok = true;
+        for (const auto& e : arr) {
+            if (!e.is_number()) {
+                ok = false;
+                break;
+            }
+            coeffs.push_back(e.get<double>());
         }
-
-        if (!coeffs.empty()) {
-            calibrations_[channel_id] = PolynomialCalibration(coeffs, default_unit_);
-            loaded++;
-        }
+        if (!ok || coeffs.empty())
+            continue;
+        const uint8_t channel_id = static_cast<uint8_t>(std::stoi(ch_str));
+        calibrations_[channel_id] = PolynomialCalibration(coeffs, default_unit_);
+        loaded++;
     }
 
     if (loaded > 0) {

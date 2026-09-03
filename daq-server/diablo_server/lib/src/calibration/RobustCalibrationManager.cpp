@@ -10,6 +10,8 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <nlohmann/json.hpp>
+#include <optional>
 #include <sstream>
 #include <vector>
 
@@ -24,120 +26,57 @@ double monotonic_sec_now() {
     return std::chrono::duration<double>(clock::now() - t0).count();
 }
 
-// Find matching close bracket/brace for a given open index.
-// Returns std::string::npos on mismatch.
-size_t find_matching(const std::string& s, size_t open_idx, char open_ch, char close_ch) {
-    int depth = 0;
-    for (size_t i = open_idx; i < s.size(); ++i) {
-        if (s[i] == open_ch)
-            depth++;
-        else if (s[i] == close_ch) {
-            depth--;
-            if (depth == 0)
-                return i;
-        }
+// Read a fixed-length numeric vector from a JSON value (an array of at least n numbers).
+std::optional<Eigen::VectorXd> json_vec(const nlohmann::json& j, int n) {
+    if (!j.is_array() || static_cast<int>(j.size()) < n)
+        return std::nullopt;
+    Eigen::VectorXd v(n);
+    for (int i = 0; i < n; ++i) {
+        if (!j[static_cast<size_t>(i)].is_number())
+            return std::nullopt;
+        v(i) = j[static_cast<size_t>(i)].get<double>();
     }
-    return std::string::npos;
-}
-
-void trim_in_place(std::string& str) {
-    size_t b = 0;
-    while (b < str.size() && std::isspace(static_cast<unsigned char>(str[b])))
-        ++b;
-    size_t e = str.size();
-    while (e > b && std::isspace(static_cast<unsigned char>(str[e - 1])))
-        --e;
-    str = str.substr(b, e - b);
-}
-
-// Extract all doubles from a JSON-ish substring (assumes only numbers/whitespace/brackets inside).
-std::vector<double> extract_all_doubles(const std::string& s) {
-    std::vector<double> out;
-    out.reserve(128);
-    size_t i = 0;
-    while (i < s.size()) {
-        // Skip until we see something that can start a number.
-        while (i < s.size() && !(std::isdigit(static_cast<unsigned char>(s[i])) || s[i] == '-' ||
-                                 s[i] == '+' || s[i] == '.')) {
-            ++i;
-        }
-        if (i >= s.size())
-            break;
-
-        size_t start = i;
-        // Scan until the number terminates.
-        while (i < s.size()) {
-            char c = s[i];
-            if (std::isdigit(static_cast<unsigned char>(c)) || c == '-' || c == '+' || c == '.' ||
-                c == 'e' || c == 'E') {
-                ++i;
-            } else {
-                break;
-            }
-        }
-        std::string tok = s.substr(start, i - start);
-        trim_in_place(tok);
-        if (!tok.empty()) {
-            try {
-                out.push_back(std::stod(tok));
-            } catch (...) {
-                // Ignore parse failures from malformed substrings.
-            }
-        }
-    }
-    return out;
-}
-
-std::optional<Eigen::VectorXd> parse_fixed_vector(const std::string& block, const std::string& key,
-                                                  int expected_n) {
-    const std::string k = "\"" + key + "\"";
-    const size_t kp = block.find(k);
-    if (kp == std::string::npos)
-        return std::nullopt;
-    const size_t lb = block.find('[', kp);
-    if (lb == std::string::npos)
-        return std::nullopt;
-    const size_t rb = find_matching(block, lb, '[', ']');
-    if (rb == std::string::npos)
-        return std::nullopt;
-
-    const std::string inner = block.substr(lb + 1, rb - lb - 1);
-    const auto nums = extract_all_doubles(inner);
-    if (static_cast<int>(nums.size()) < expected_n)
-        return std::nullopt;
-
-    Eigen::VectorXd v(expected_n);
-    for (int i = 0; i < expected_n; ++i)
-        v(i) = nums[static_cast<size_t>(i)];
     return v;
 }
 
-std::optional<Eigen::MatrixXd> parse_fixed_matrix(const std::string& block, const std::string& key,
-                                                  int expected_n) {
-    const std::string k = "\"" + key + "\"";
-    const size_t kp = block.find(k);
-    if (kp == std::string::npos)
+// Read an n×n matrix from a JSON value: nested ([[...],...]) or a flat array of n*n numbers.
+std::optional<Eigen::MatrixXd> json_mat(const nlohmann::json& j, int n) {
+    if (!j.is_array())
         return std::nullopt;
-    const size_t lb = block.find('[', kp);
-    if (lb == std::string::npos)
-        return std::nullopt;
-    const size_t rb = find_matching(block, lb, '[', ']');
-    if (rb == std::string::npos)
-        return std::nullopt;
-
-    const std::string inner = block.substr(lb, rb - lb + 1);
-    const auto nums = extract_all_doubles(inner);
-    const int expected = expected_n * expected_n;
-    if (static_cast<int>(nums.size()) < expected)
-        return std::nullopt;
-
-    Eigen::MatrixXd m(expected_n, expected_n);
-    for (int r = 0; r < expected_n; ++r) {
-        for (int c = 0; c < expected_n; ++c) {
-            m(r, c) = nums[static_cast<size_t>(r * expected_n + c)];
+    if (static_cast<int>(j.size()) == n && j[0].is_array()) {
+        Eigen::MatrixXd m(n, n);
+        for (int r = 0; r < n; ++r) {
+            if (!j[static_cast<size_t>(r)].is_array() ||
+                static_cast<int>(j[static_cast<size_t>(r)].size()) < n)
+                return std::nullopt;
+            for (int c = 0; c < n; ++c) {
+                const auto& e = j[static_cast<size_t>(r)][static_cast<size_t>(c)];
+                if (!e.is_number())
+                    return std::nullopt;
+                m(r, c) = e.get<double>();
+            }
         }
+        return m;
     }
-    return m;
+    if (static_cast<int>(j.size()) >= n * n) {  // flat fallback
+        Eigen::MatrixXd m(n, n);
+        for (int r = 0; r < n; ++r)
+            for (int c = 0; c < n; ++c) {
+                const auto& e = j[static_cast<size_t>(r * n + c)];
+                if (!e.is_number())
+                    return std::nullopt;
+                m(r, c) = e.get<double>();
+            }
+        return m;
+    }
+    return std::nullopt;
+}
+
+// True when a JSON object key is a non-empty run of digits (a numeric sensor id).
+bool is_numeric_key(const std::string& s) {
+    return !s.empty() && std::all_of(s.begin(), s.end(), [](unsigned char c) {
+        return std::isdigit(c) != 0;
+    });
 }
 
 /** Saved θ that drifts far from the factory cubic is usually bad priors — drop them. */
@@ -269,45 +208,32 @@ void RobustCalibrationManager::reset_adjustment(uint16_t sensor_id) {
 
 bool RobustCalibrationManager::save_adjustments(const std::string& path) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::ofstream file(path);
-    if (!file.is_open())
-        return false;
-    file << "{\n  \"framework_v2\": {\n";
-    bool first = true;
+    constexpr int N = RobustCalibrationFramework::N;
+    nlohmann::json fw2 = nlohmann::json::object();
     for (const auto& [id, state] : states_) {
         if (!state.framework)
             continue;
         Eigen::VectorXd t = state.framework->theta_mean();
         Eigen::MatrixXd cov = state.framework->theta_cov();
-        if (!first)
-            file << ",\n";
-        first = false;
-        file << "    \"" << static_cast<int>(id) << "\": {\n";
-        file << "      \"theta_mean\": [";
-        file << std::scientific << std::setprecision(16);
-        for (int i = 0; i < RobustCalibrationFramework::N; ++i) {
-            if (i)
-                file << ", ";
-            file << t(i);
+        nlohmann::json mean = nlohmann::json::array();
+        for (int i = 0; i < N; ++i)
+            mean.push_back(t(i));
+        nlohmann::json cvec = nlohmann::json::array();
+        for (int r = 0; r < N; ++r) {
+            nlohmann::json row = nlohmann::json::array();
+            for (int c = 0; c < N; ++c)
+                row.push_back(cov(r, c));
+            cvec.push_back(row);
         }
-        file << "],\n";
-        file << "      \"theta_cov\": [\n";
-        for (int r = 0; r < RobustCalibrationFramework::N; ++r) {
-            file << "        [";
-            for (int c = 0; c < RobustCalibrationFramework::N; ++c) {
-                if (c)
-                    file << ", ";
-                file << cov(r, c);
-            }
-            file << "]";
-            if (r + 1 < RobustCalibrationFramework::N)
-                file << ",\n";
-        }
-        file << "\n      ]\n";
-        file << "    }";
+        fw2[std::to_string(static_cast<int>(id))] = {{"theta_mean", mean}, {"theta_cov", cvec}};
     }
-    file << "\n  }\n}\n";
-    return true;
+    const nlohmann::json root = {{"framework_v2", fw2}};
+
+    std::ofstream file(path);
+    if (!file.is_open())
+        return false;
+    file << root.dump(2) << "\n";
+    return file.good();
 }
 
 bool RobustCalibrationManager::load_adjustments(const std::string& path) {
@@ -323,180 +249,18 @@ bool RobustCalibrationManager::load_adjustments(const std::string& path) {
     restored_theta_mean_.clear();
     restored_theta_cov_.clear();
 
-    // Format 1: our runtime save format (framework_v2: theta_mean + theta_cov).
-    const size_t fv2 = content.find("\"framework_v2\"");
-    if (fv2 != std::string::npos) {
-        // Find the object body: { ... } after "framework_v2"
-        const size_t obj_open = content.find('{', fv2);
-        if (obj_open != std::string::npos) {
-            const size_t obj_close = find_matching(content, obj_open, '{', '}');
-            if (obj_close != std::string::npos) {
-                const std::string obj = content.substr(obj_open, obj_close - obj_open + 1);
-
-                size_t pos = 1;  // skip leading '{'
-                while (pos < obj.size()) {
-                    size_t q1 = obj.find('"', pos);
-                    if (q1 == std::string::npos)
-                        break;
-                    size_t q2 = obj.find('"', q1 + 1);
-                    if (q2 == std::string::npos)
-                        break;
-                    std::string id_str = obj.substr(q1 + 1, q2 - q1 - 1);
-                    bool digits_only = !id_str.empty();
-                    for (char ch : id_str)
-                        digits_only &= std::isdigit(static_cast<unsigned char>(ch));
-                    if (!digits_only) {
-                        pos = q2 + 1;
-                        continue;
-                    }
-                    uint16_t id = static_cast<uint16_t>(std::stoi(id_str));
-                    size_t colon = obj.find(':', q2 + 1);
-                    if (colon == std::string::npos)
-                        break;
-                    size_t sub_open = obj.find('{', colon + 1);
-                    if (sub_open == std::string::npos)
-                        break;
-                    size_t sub_close = find_matching(obj, sub_open, '{', '}');
-                    if (sub_close == std::string::npos)
-                        break;
-                    std::string sub = obj.substr(sub_open, sub_close - sub_open + 1);
-
-                    auto mean_opt =
-                        parse_fixed_vector(sub, "theta_mean", RobustCalibrationFramework::N);
-                    auto cov_opt =
-                        parse_fixed_matrix(sub, "theta_cov", RobustCalibrationFramework::N);
-                    if (mean_opt && cov_opt) {
-                        restored_theta_mean_[id] = *mean_opt;
-                        restored_theta_cov_[id] = *cov_opt;
-                    }
-                    pos = sub_close + 1;
-                }
-            }
-        }
-
-        // Apply per-sensor priors to existing frameworks.
-        for (auto& [id, state] : states_) {
-            if (!state.framework)
-                continue;
-            if (restored_theta_mean_.count(id) && restored_theta_cov_.count(id)) {
-                state.framework->set_theta_mean_for_restore(restored_theta_mean_[id]);
-                state.framework->set_theta_cov_for_restore(restored_theta_cov_[id]);
-                state.framework->set_rls_P_for_restore(restored_theta_cov_[id]);
-            }
-        }
-        reconcile_frameworks_with_factory_baseline(states_);
-        return true;
+    nlohmann::json root;
+    try {
+        root = nlohmann::json::parse(content);
+    } catch (...) {
+        return true;  // unparseable — treat as unknown format, leave state as-is
     }
-
-    // Format 2: older runtime save format (framework_v1: theta_mean only).
-    const size_t fv1 = content.find("\"framework_v1\"");
-    if (fv1 != std::string::npos) {
-        size_t i = fv1;
-        while (i < content.size()) {
-            size_t q0 = content.find('"', i);
-            if (q0 == std::string::npos)
-                break;
-            size_t j = q0 + 1;
-            while (j < content.size() && content[j] >= '0' && content[j] <= '9')
-                ++j;
-            if (j == q0 + 1) {
-                i = q0 + 1;
-                continue;
-            }
-            uint16_t id = static_cast<uint16_t>(std::stoi(content.substr(q0 + 1, j - q0 - 1)));
-            size_t br = content.find('[', j);
-            if (br == std::string::npos)
-                break;
-            size_t en = find_matching(content, br, '[', ']');
-            if (en == std::string::npos)
-                break;
-            std::string inner = content.substr(br, en - br + 1);
-            auto nums = extract_all_doubles(inner);
-            if (static_cast<int>(nums.size()) >= RobustCalibrationFramework::N) {
-                Eigen::VectorXd t(RobustCalibrationFramework::N);
-                for (int k = 0; k < RobustCalibrationFramework::N; ++k)
-                    t(k) = nums[static_cast<size_t>(k)];
-                restored_theta_mean_[id] = t;
-                auto it = states_.find(id);
-                if (it != states_.end() && it->second.framework) {
-                    it->second.framework->set_theta_mean_for_restore(t);
-                }
-            }
-            i = en + 1;
-        }
-        reconcile_frameworks_with_factory_baseline(states_);
+    if (!root.is_object())
         return true;
-    }
 
-    // Format 3: Python calibration backup (population_prior + pt_states).
-    const size_t pp = content.find("\"population_prior\"");
-    const size_t pt = content.find("\"pt_states\"");
-    if (pp != std::string::npos && pt != std::string::npos) {
-        // Parse population_prior object.
-        const size_t pp_open = content.find('{', pp);
-        if (pp_open != std::string::npos) {
-            const size_t pp_close = find_matching(content, pp_open, '{', '}');
-            if (pp_close != std::string::npos) {
-                const std::string pp_obj = content.substr(pp_open, pp_close - pp_open + 1);
-                auto pm =
-                    parse_fixed_vector(pp_obj, "population_mean", RobustCalibrationFramework::N);
-                auto pc = parse_fixed_matrix(pp_obj, "population_covariance",
-                                             RobustCalibrationFramework::N);
-                if (pm && pc) {
-                    population_theta_mean_ = *pm;
-                    population_theta_cov_ = *pc;
-                }
-            }
-        }
+    constexpr int N = RobustCalibrationFramework::N;
 
-        // Parse per-PT states.
-        const size_t pt_open = content.find('{', pt);
-        if (pt_open != std::string::npos) {
-            const size_t pt_close = find_matching(content, pt_open, '{', '}');
-            if (pt_close != std::string::npos) {
-                const std::string pt_obj = content.substr(pt_open, pt_close - pt_open + 1);
-                size_t pos = 1;  // skip '{'
-                while (pos < pt_obj.size()) {
-                    size_t q1 = pt_obj.find('"', pos);
-                    if (q1 == std::string::npos)
-                        break;
-                    size_t q2 = pt_obj.find('"', q1 + 1);
-                    if (q2 == std::string::npos)
-                        break;
-                    std::string id_str = pt_obj.substr(q1 + 1, q2 - q1 - 1);
-                    bool digits_only = !id_str.empty();
-                    for (char ch : id_str)
-                        digits_only &= std::isdigit(static_cast<unsigned char>(ch));
-                    if (!digits_only) {
-                        pos = q2 + 1;
-                        continue;
-                    }
-                    uint16_t id = static_cast<uint16_t>(std::stoi(id_str));
-                    size_t colon = pt_obj.find(':', q2 + 1);
-                    if (colon == std::string::npos)
-                        break;
-                    size_t sub_open = pt_obj.find('{', colon + 1);
-                    if (sub_open == std::string::npos)
-                        break;
-                    size_t sub_close = find_matching(pt_obj, sub_open, '{', '}');
-                    if (sub_close == std::string::npos)
-                        break;
-                    std::string sub = pt_obj.substr(sub_open, sub_close - sub_open + 1);
-
-                    auto mean_opt =
-                        parse_fixed_vector(sub, "theta_mean", RobustCalibrationFramework::N);
-                    auto cov_opt =
-                        parse_fixed_matrix(sub, "theta_cov", RobustCalibrationFramework::N);
-                    if (mean_opt && cov_opt) {
-                        restored_theta_mean_[id] = *mean_opt;
-                        restored_theta_cov_[id] = *cov_opt;
-                    }
-                    pos = sub_close + 1;
-                }
-            }
-        }
-
-        // Apply both per-sensor and population priors to existing frameworks.
+    auto apply_restored = [&]() {
         for (auto& [id, state] : states_) {
             if (!state.framework)
                 continue;
@@ -510,6 +274,77 @@ bool RobustCalibrationManager::load_adjustments(const std::string& path) {
                 state.framework->set_rls_P_for_restore(*population_theta_cov_);
             }
         }
+    };
+
+    // Format 1: runtime save format (framework_v2: theta_mean + theta_cov per numeric id).
+    if (root.contains("framework_v2") && root["framework_v2"].is_object()) {
+        for (auto& [id_str, sub] : root["framework_v2"].items()) {
+            if (!is_numeric_key(id_str) || !sub.is_object())
+                continue;
+            const uint16_t id = static_cast<uint16_t>(std::stoi(id_str));
+            auto mean = sub.contains("theta_mean") ? json_vec(sub["theta_mean"], N) : std::nullopt;
+            auto cov = sub.contains("theta_cov") ? json_mat(sub["theta_cov"], N) : std::nullopt;
+            if (mean && cov) {
+                restored_theta_mean_[id] = *mean;
+                restored_theta_cov_[id] = *cov;
+            }
+        }
+        apply_restored();
+        reconcile_frameworks_with_factory_baseline(states_);
+        return true;
+    }
+
+    // Format 2: older runtime save format (framework_v1: theta_mean only).
+    if (root.contains("framework_v1") && root["framework_v1"].is_object()) {
+        for (auto& [id_str, val] : root["framework_v1"].items()) {
+            if (!is_numeric_key(id_str))
+                continue;
+            const uint16_t id = static_cast<uint16_t>(std::stoi(id_str));
+            const nlohmann::json& arr =
+                val.is_array() ? val
+                               : (val.is_object() && val.contains("theta_mean") ? val["theta_mean"]
+                                                                                : nlohmann::json());
+            auto mean = json_vec(arr, N);
+            if (mean) {
+                restored_theta_mean_[id] = *mean;
+                auto it = states_.find(id);
+                if (it != states_.end() && it->second.framework)
+                    it->second.framework->set_theta_mean_for_restore(*mean);
+            }
+        }
+        reconcile_frameworks_with_factory_baseline(states_);
+        return true;
+    }
+
+    // Format 3: Python calibration backup (population_prior + pt_states).
+    if (root.contains("population_prior") && root.contains("pt_states")) {
+        if (root["population_prior"].is_object()) {
+            const auto& pp = root["population_prior"];
+            auto pm =
+                pp.contains("population_mean") ? json_vec(pp["population_mean"], N) : std::nullopt;
+            auto pc = pp.contains("population_covariance")
+                          ? json_mat(pp["population_covariance"], N)
+                          : std::nullopt;
+            if (pm && pc) {
+                population_theta_mean_ = *pm;
+                population_theta_cov_ = *pc;
+            }
+        }
+        if (root["pt_states"].is_object()) {
+            for (auto& [id_str, sub] : root["pt_states"].items()) {
+                if (!is_numeric_key(id_str) || !sub.is_object())
+                    continue;
+                const uint16_t id = static_cast<uint16_t>(std::stoi(id_str));
+                auto mean =
+                    sub.contains("theta_mean") ? json_vec(sub["theta_mean"], N) : std::nullopt;
+                auto cov = sub.contains("theta_cov") ? json_mat(sub["theta_cov"], N) : std::nullopt;
+                if (mean && cov) {
+                    restored_theta_mean_[id] = *mean;
+                    restored_theta_cov_[id] = *cov;
+                }
+            }
+        }
+        apply_restored();
         reconcile_frameworks_with_factory_baseline(states_);
         return true;
     }
