@@ -123,10 +123,14 @@ Config from_table(const toml::table& t) {
     c.heartbeat_service.enabled = b_or(t["heartbeat_service"]["enabled"], false);
     c.heartbeat_service.interval_ms =
         static_cast<uint32_t>(i_or(t["heartbeat_service"]["interval_ms"], 1000));
+    // broadcast_ip/port fall back to [server_heartbeat] when absent (matches the old heartbeat
+    // main).
     c.heartbeat_service.broadcast_ip =
-        s_or(t["heartbeat_service"]["broadcast_ip"], c.heartbeat_service.broadcast_ip);
+        s_or(t["heartbeat_service"]["broadcast_ip"],
+             s_or(t["server_heartbeat"]["broadcast_ip"], c.heartbeat_service.broadcast_ip));
     c.heartbeat_service.broadcast_port =
-        static_cast<uint16_t>(i_or(t["heartbeat_service"]["broadcast_port"], 5005));
+        static_cast<uint16_t>(i_or(t["heartbeat_service"]["broadcast_port"],
+                                   i_or(t["server_heartbeat"]["broadcast_port"], 5005)));
     c.heartbeat_service.elodin_host =
         s_or(t["heartbeat_service"]["elodin_host"], c.heartbeat_service.elodin_host);
     c.heartbeat_service.elodin_port =

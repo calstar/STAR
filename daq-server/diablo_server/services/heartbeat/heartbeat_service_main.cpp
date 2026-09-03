@@ -22,11 +22,13 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include "config/Config.hpp"
 #include "elodin/ElodinClient.hpp"
 
 namespace {
@@ -121,42 +123,6 @@ void elodinThread(std::string host, uint16_t port) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-std::string trim(const std::string& s) {
-    size_t a = s.find_first_not_of(" \t\r\n\"");
-    size_t b = s.find_last_not_of(" \t\r\n\"");
-    return (a == std::string::npos) ? "" : s.substr(a, b - a + 1);
-}
-
-std::string getTomlValue(const std::string& content, const std::string& section,
-                         const std::string& key, const std::string& fallback = "") {
-    std::string sec_header = "[" + section + "]";
-    auto sec_pos = content.find(sec_header);
-    if (sec_pos == std::string::npos)
-        return fallback;
-
-    auto search_start = sec_pos + sec_header.size();
-    auto next_sec = content.find("\n[", search_start);
-    std::string sec_content = (next_sec == std::string::npos)
-                                  ? content.substr(search_start)
-                                  : content.substr(search_start, next_sec - search_start);
-
-    std::istringstream iss(sec_content);
-    std::string line;
-    while (std::getline(iss, line)) {
-        auto c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        auto eq = line.find('=');
-        if (eq == std::string::npos)
-            continue;
-        std::string k = trim(line.substr(0, eq));
-        std::string v = trim(line.substr(eq + 1));
-        if (k == key)
-            return v;
-    }
-    return fallback;
-}
-
 std::vector<uint8_t> buildHeartbeatPacket(uint8_t engine_state) {
     auto now = std::chrono::system_clock::now();
     auto ms =
@@ -177,26 +143,23 @@ std::vector<uint8_t> buildHeartbeatPacket(uint8_t engine_state) {
 
 int main(int argc, char* argv[]) {
     std::string config_path = "config/config.toml";
-    std::string elodin_host = "127.0.0.1";
-    uint16_t elodin_port = 2240;
-    int interval_ms = 1000;
-    std::string broadcast_ip = "192.168.2.255";
-    uint16_t broadcast_port = 5005;
+    std::optional<std::string> cli_elodin_host, cli_broadcast_ip;
+    std::optional<int> cli_elodin_port, cli_interval_ms, cli_broadcast_port;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--config" && i + 1 < argc) {
             config_path = argv[++i];
         } else if (arg == "--elodin-host" && i + 1 < argc) {
-            elodin_host = argv[++i];
+            cli_elodin_host = argv[++i];
         } else if (arg == "--elodin-port" && i + 1 < argc) {
-            elodin_port = static_cast<uint16_t>(std::atoi(argv[++i]));
+            cli_elodin_port = std::atoi(argv[++i]);
         } else if (arg == "--interval-ms" && i + 1 < argc) {
-            interval_ms = std::max(100, std::atoi(argv[++i]));
+            cli_interval_ms = std::atoi(argv[++i]);
         } else if (arg == "--broadcast-ip" && i + 1 < argc) {
-            broadcast_ip = argv[++i];
+            cli_broadcast_ip = argv[++i];
         } else if (arg == "--broadcast-port" && i + 1 < argc) {
-            broadcast_port = static_cast<uint16_t>(std::atoi(argv[++i]));
+            cli_broadcast_port = std::atoi(argv[++i]);
         } else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: " << argv[0]
                       << " [--config PATH] [--elodin-host HOST] [--elodin-port PORT]\n"
@@ -205,57 +168,32 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Load config
-    std::string config_content;
+    // Resolve the config path against the usual fallback locations, then parse once.
     {
         std::ifstream f(config_path);
         if (!f.is_open()) {
             for (const auto& fp : {"config/config.toml", "../config/config.toml"}) {
-                f.open(fp);
-                if (f.is_open()) {
+                std::ifstream t(fp);
+                if (t.is_open()) {
                     config_path = fp;
                     break;
                 }
             }
         }
-        if (f.is_open()) {
-            std::ostringstream ss;
-            ss << f.rdbuf();
-            config_content = ss.str();
-        }
     }
 
-    if (!config_content.empty()) {
-        auto val = getTomlValue(config_content, "heartbeat_service", "interval_ms", "");
-        if (!val.empty()) {
-            try {
-                interval_ms = std::max(100, std::stoi(val));
-            } catch (...) {
-            }
-        }
-        val = getTomlValue(config_content, "heartbeat_service", "broadcast_ip",
-                           getTomlValue(config_content, "server_heartbeat", "broadcast_ip", ""));
-        if (!val.empty())
-            broadcast_ip = val;
-        val = getTomlValue(config_content, "heartbeat_service", "broadcast_port",
-                           getTomlValue(config_content, "server_heartbeat", "broadcast_port", ""));
-        if (!val.empty()) {
-            try {
-                broadcast_port = static_cast<uint16_t>(std::stoi(val));
-            } catch (...) {
-            }
-        }
-        val = getTomlValue(config_content, "heartbeat_service", "elodin_host", "");
-        if (!val.empty())
-            elodin_host = val;
-        val = getTomlValue(config_content, "heartbeat_service", "elodin_port", "");
-        if (!val.empty()) {
-            try {
-                elodin_port = static_cast<uint16_t>(std::stoi(val));
-            } catch (...) {
-            }
-        }
-    }
+    // Precedence: defaults < config file < CLI flags. (broadcast_ip/port fall back to
+    // [server_heartbeat] inside the parser.)
+    const fsw::config::Config cfg = fsw::config::load(config_path);
+    std::string elodin_host = cli_elodin_host.value_or(cfg.heartbeat_service.elodin_host);
+    uint16_t elodin_port = cli_elodin_port ? static_cast<uint16_t>(*cli_elodin_port)
+                                           : cfg.heartbeat_service.elodin_port;
+    int interval_ms =
+        std::max(100, cli_interval_ms ? *cli_interval_ms
+                                      : static_cast<int>(cfg.heartbeat_service.interval_ms));
+    std::string broadcast_ip = cli_broadcast_ip.value_or(cfg.heartbeat_service.broadcast_ip);
+    uint16_t broadcast_port = cli_broadcast_port ? static_cast<uint16_t>(*cli_broadcast_port)
+                                                 : cfg.heartbeat_service.broadcast_port;
 
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
