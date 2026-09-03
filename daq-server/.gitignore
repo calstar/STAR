@@ -220,3 +220,8 @@ config/config.toml
 config/state_machine_actuators.csv
 config/state_machine_actuator_delays.csv
 config/state_transitions.csv
+
+# RLS state the calibration service auto-saves next to whatever calibration dir it is
+# reading. tools/calibration/calibrations/adjustments.json is the checked-in seed; the copy
+# the C++ services write under scripts/ is per-machine learned state and churns constantly.
+scripts/calibration/calibrations/adjustments.json
