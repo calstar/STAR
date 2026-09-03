@@ -533,9 +533,6 @@ thrust_curve_path = "output/lut/thrust_curve.csv"
 #                          the top bar instead).
 # (which state fires, and where its timer lands, live in [fire] above)
 
-[[states]]
-id = 0
-name = "Debug"
 
 [[states]]
 id = 1
