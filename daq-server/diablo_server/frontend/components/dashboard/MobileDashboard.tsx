@@ -14,16 +14,10 @@ import { useSensorConfig } from '@/lib/sensor-config';
 import { useGuiConfig } from '@/lib/gui-config';
 import { usePressureLimits } from '@/lib/pressure-limits';
 import { buildPressureBarDefsFromSensorConfig, buildPressurePlotSeriesFromSensorList } from '@/lib/pressure-bar-defs';
+import { stateNameUpper } from '@/lib/states';
 
 // ── Constants shared with TopBar/UnifiedDashboard ────────────────────────────
 
-const STATE_NAMES: Record<number, string> = {
-  0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
-  5: 'GN2 LOW PRESS', 6: 'GN2 VENT', 7: 'FUEL PRESS', 8: 'FUEL VENT',
-  9: 'OX PRESS', 10: 'OX VENT', 11: 'GN2 HIGH PRESS', 12: 'HIGH VENT',
-  13: 'VENT', 14: 'CALIBRATE', 15: 'READY', 16: 'FIRE', 17: 'ABORT',
-  20: 'PRESS STANDBY',
-};
 
 const STATE_COLORS: Record<number, string> = {
   16: 'text-red-400', 17: 'text-red-500', 13: 'text-yellow-400',
@@ -104,7 +98,7 @@ export default function MobileDashboard() {
 
   // ── Derived state ─────────────────────────────────────────────────────────
   const effectiveState = currentState ?? SystemState.IDLE;
-  const currentStateName = STATE_NAMES[effectiveState] ?? `STATE ${effectiveState}`;
+  const currentStateName = stateNameUpper(effectiveState) ?? `STATE ${effectiveState}`;
   const stateColor = STATE_COLORS[effectiveState] ?? 'text-text';
   const isFullyConnected = connected && elodinConnected;
 
@@ -112,7 +106,7 @@ export default function MobileDashboard() {
     if (!controlEnabled) return;
     updateState({
       currentState: state,
-      stateName: STATE_NAMES[state] ?? `STATE ${state}`,
+      stateName: stateNameUpper(state) ?? `STATE ${state}`,
       timestamp: Date.now(),
     });
     const cmd: CommandPayload = { commandType: 'state_transition', data: { state } };
