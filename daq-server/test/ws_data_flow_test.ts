@@ -454,6 +454,17 @@ function readFireConfig(): { durationMs: number; expiryState: number; fireState:
   return null;
 }
 
+/** The UDP actuator packets captured so far by udp_listener.ts (it rewrites the file per packet). */
+function readUdpCommands(): any[] {
+  if (!UDP_COMMANDS_FILE) return [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(UDP_COMMANDS_FILE, 'utf-8'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Passive latest-state tracker. There is no get_state command, so mid-burn sampling watches the
  * STATE_UPDATE broadcasts rather than asking — which is also closer to what the GUI does.
@@ -1374,6 +1385,7 @@ async function testStateTransitionDebugMode(ws: WebSocket): Promise<void> {
 
       let inFire = false;
       let enteredAt = firedAt;
+      let leftFireAt = Number.MAX_SAFE_INTEGER;
       const tracker = trackState(ws, fireState);
       try {
         const { receivedAt } = await enteredFire;
@@ -1400,6 +1412,7 @@ async function testStateTransitionDebugMode(ws: WebSocket): Promise<void> {
           const { receivedAt } = await waitForMessage(ws, MessageType.STATE_UPDATE,
             durationMs + 4000, (payload) => payload.currentState === expiryState);
           const elapsed = receivedAt - enteredAt;
+          leftFireAt = receivedAt;
           assert(true, `[Fire] auto-transitioned to ${SystemState[expiryState] ?? expiryState} after ${elapsed} ms`);
           // Generous window: this crosses two processes, a TCP hop and the WS broadcast. The point
           // is that it tracks the CONFIGURED duration rather than the 6000 ms default.
@@ -1414,6 +1427,14 @@ async function testStateTransitionDebugMode(ws: WebSocket): Promise<void> {
         } catch (err: any) {
           assert(false, `[Fire] no auto-transition out of fire: ${err.message}`);
         }
+
+        // The PWM handoff (sequencer stops commanding PWM roles during a burn so
+        // controller_service is the only writer) is NOT assertable here. Actuator commands go to
+        // each board's own address, which in this harness is the simulator — so a 0.0.0.0 UDP
+        // listener never sees them, and remapping the boards onto a shared address to make it
+        // visible breaks daq_bridge's routing by source address. That behaviour is covered instead
+        // by test_fire_lifecycle (ctest), which drives ActuatorCommander directly and asserts the
+        // PWM channel is withheld in fire and commanded outside it.
       }
       tracker.stop();
     }
