@@ -1,4 +1,5 @@
 #include "control/SequencerService.hpp"
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -312,7 +313,9 @@ bool SequencerService::init(const std::string& config_path) {
     }
     controller_host_ = ctrl_host;
     controller_port_ = ctrl_port;
-    fire_manager_.setNotifier([this](bool active) { notifyControllerFire(active); });
+    fire_manager_.setNotifier([this](bool active) {
+        notifyControllerFire(active);
+    });
 
     // Elodin — connection is best-effort; service runs without it
     const std::string elodin_host = "127.0.0.1";
@@ -527,8 +530,8 @@ void SequencerService::notifyControllerFire(bool active) {
                   << std::endl;
     } else {
         std::cerr << "[SequencerService] could not reach controller_service at " << controller_host_
-                  << ":" << controller_port_ << " for "
-                  << (active ? "FIRE_START" : "FIRE_STOP") << std::endl;
+                  << ":" << controller_port_ << " for " << (active ? "FIRE_START" : "FIRE_STOP")
+                  << std::endl;
     }
     close(sock);
 }
@@ -592,6 +595,5 @@ void SequencerService::stopElodinRetry() {
     if (elodin_retry_thread_.joinable())
         elodin_retry_thread_.join();
 }
-
 
 }  // namespace sequencer

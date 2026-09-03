@@ -84,7 +84,8 @@ public:
      */
     static void loadStatesFromConfig(const std::string& config_content);
 
-    /** True if the state carries the abort semantics (config `is_abort`, else the built-in trio). */
+    /** True if the state carries the abort semantics (config `is_abort`, else the built-in trio).
+     */
     static bool isAbort(State s);
 
     /** The state to boot into (config `is_boot`, else Idle). */

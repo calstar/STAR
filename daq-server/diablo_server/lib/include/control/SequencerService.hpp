@@ -90,7 +90,6 @@ private:
     std::string config_path_;
     std::string config_content_;
 
-
     // Elodin connection retry. sensor-actuator.service is started alongside sensor-elodin, so the
     // first connect can lose the race by milliseconds; without this the service runs forever with
     // no db and every valve reads "undefined".

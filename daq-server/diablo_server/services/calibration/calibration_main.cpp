@@ -584,7 +584,8 @@ int main(int argc, char* argv[]) {
             // were read only from a section literally named "pt_board_2" — so an HP board with any
             // other key silently lost supply normalization, the cause of the PT2 spiking class of
             // bug. Config, not the section name, decides which board is HP.
-            std::map<std::string, double> sec_adc_ref, sec_full_scale, sec_sense_ohms, sec_exc_atten;
+            std::map<std::string, double> sec_adc_ref, sec_full_scale, sec_sense_ohms,
+                sec_exc_atten;
             std::map<std::string, int> sec_exc_conn;
             while (std::getline(cfg2, line)) {
                 size_t c = line.find('#');

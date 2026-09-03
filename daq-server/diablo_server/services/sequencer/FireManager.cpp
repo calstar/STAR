@@ -1,6 +1,5 @@
 #include "control/FireManager.hpp"
 
-
 #include <chrono>
 #include <iostream>
 

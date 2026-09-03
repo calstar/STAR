@@ -31,8 +31,8 @@
 #include <thread>
 
 #include "control/ControllerService.hpp"
-#include "control/StateMachine.hpp"
 #include "control/RobustDDPController.hpp"
+#include "control/StateMachine.hpp"
 
 // ── Simple TOML value parser (no library dependency) ───────────────────
 static std::string trim(const std::string& s) {

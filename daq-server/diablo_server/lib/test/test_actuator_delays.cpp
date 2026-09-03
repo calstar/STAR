@@ -59,7 +59,8 @@ struct Burst {
 /** Collects UDP actuator packets, folding the 3x retransmit of one batch into a single burst. */
 class BoardListener {
 public:
-    explicit BoardListener(uint16_t port) : port_(port) {}
+    explicit BoardListener(uint16_t port) : port_(port) {
+    }
 
     bool start() {
         sock_ = socket(AF_INET, SOCK_DGRAM, 0);
@@ -80,7 +81,9 @@ public:
         setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         running_ = true;
         t0_ = Clock::now();
-        thread_ = std::thread([this]() { run(); });
+        thread_ = std::thread([this]() {
+            run();
+        });
         return true;
     }
 
