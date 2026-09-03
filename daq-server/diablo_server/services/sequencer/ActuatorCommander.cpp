@@ -200,10 +200,10 @@ bool ActuatorCommander::load(const std::string& config_content, const std::strin
               << std::endl;
 
     // -- State→actuator CSV -- canonical source: daq-server/config/.
-        // The deployed config/*.csv are generated artifacts (gitignored), written when a profile
-        // is deployed. On a fresh checkout — CI, or a clone that has never started the backend —
-        // they do not exist yet, so fall back to the profile that owns them. Mirrors what
-        // readConfig() does for config.toml on the TypeScript side.
+    // The deployed config/*.csv are generated artifacts (gitignored), written when a profile
+    // is deployed. On a fresh checkout — CI, or a clone that has never started the backend —
+    // they do not exist yet, so fall back to the profile that owns them. Mirrors what
+    // readConfig() does for config.toml on the TypeScript side.
     const char* fallbacks[] = {
         "config/state_machine_actuators.csv",
         "../config/state_machine_actuators.csv",
