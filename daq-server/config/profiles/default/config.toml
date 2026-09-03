@@ -527,6 +527,10 @@ thrust_curve_path = "output/lut/thrust_curve.csv"
 # Flags carry the semantics that used to be enum comparisons in C++:
 #   is_boot   the state the sequencer starts in
 #   is_abort  triggers the physical UDP abort broadcast, and skips actuator delays
+#   panel_row / panel_col  position on the State Machine control panel. Operators arrange these
+#                          by dragging on the panel itself while no session is running; a state
+#                          with no coordinates simply is not shown there (17, 18 and 20 live in
+#                          the top bar instead).
 # (which state fires, and where its timer lands, live in [fire] above)
 
 [[states]]
@@ -536,67 +540,99 @@ name = "Debug"
 [[states]]
 id = 1
 name = "Idle"
+panel_row = 0
+panel_col = 0
 is_boot = true
 
 [[states]]
 id = 2
 name = "Armed"
+panel_row = 1
+panel_col = 0
 
 [[states]]
 id = 3
 name = "Fuel Fill"
+panel_row = 1
+panel_col = 1
 
 [[states]]
 id = 4
 name = "Ox Fill"
+panel_row = 1
+panel_col = 2
 
 [[states]]
 id = 5
 name = "GN2 Low Press"
+panel_row = 2
+panel_col = 1
 
 [[states]]
 id = 6
 name = "GN2 Low Vent"
+panel_row = 3
+panel_col = 1
 
 [[states]]
 id = 7
 name = "Fuel Press"
+panel_row = 2
+panel_col = 2
 
 [[states]]
 id = 8
 name = "Fuel Vent"
+panel_row = 3
+panel_col = 2
 
 [[states]]
 id = 9
 name = "Ox Press"
+panel_row = 2
+panel_col = 3
 
 [[states]]
 id = 10
 name = "Ox Vent"
+panel_row = 3
+panel_col = 3
 
 [[states]]
 id = 11
 name = "GN2 High Press"
+panel_row = 2
+panel_col = 4
 
 [[states]]
 id = 12
 name = "GN2 High Vent"
+panel_row = 3
+panel_col = 4
 
 [[states]]
 id = 13
 name = "Vent"
+panel_row = 3
+panel_col = 0
 
 [[states]]
 id = 14
 name = "Calibrate"
+panel_row = 4
+panel_col = 0
 
 [[states]]
 id = 15
 name = "Ready"
+panel_row = 4
+panel_col = 1
 
 [[states]]
 id = 16
 name = "Fire"
+panel_row = 5
+panel_col = 0
 
 [[states]]
 id = 17
@@ -616,3 +652,5 @@ is_abort = true
 [[states]]
 id = 20
 name = "Press Standby"
+panel_row = 2
+panel_col = 0

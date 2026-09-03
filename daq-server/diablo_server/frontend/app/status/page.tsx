@@ -6,6 +6,7 @@ import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { BoardStatus, engineStateCodeToLabel, ActuatorState } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
+import { stateNameUpper } from '@/lib/states';
 
 /** Display follows commanded state only (state machine / user command); no ADC. */
 function ActuatorStatusRow({ label, entity }: { label: string; entity: string }) {
@@ -53,19 +54,13 @@ export default function StatusPage() {
     });
   }, [boardsMap]);
 
-  const stateNames: Record<number, string> = {
-    0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
-    5: 'GN2 PRESS', 6: 'GN2 VENT', 7: 'FUEL PRESS', 8: 'FUEL VENT',
-    9: 'OX PRESS', 10: 'OX VENT', 11: 'HIGH PRESS', 12: 'HIGH VENT',
-    13: 'VENT', 14: 'CALIBRATE', 15: 'READY', 16: 'FIRE', 17: 'ABORT',
-  };
-
+  
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-auto p-4">
       <div className="mb-4">
         <h1 className="text-2xl font-bold text-text mb-1">System Status</h1>
         <div className="text-lg font-mono">
-          State: <span className="font-bold">{currentState != null ? stateNames[currentState] ?? 'UNKNOWN' : '---'}</span>
+          State: <span className="font-bold">{currentState != null ? stateNameUpper(currentState) ?? 'UNKNOWN' : '---'}</span>
         </div>
       </div>
 

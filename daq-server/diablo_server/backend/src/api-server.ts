@@ -412,6 +412,88 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
             res.end(JSON.stringify({ error: error.message || 'Invalid config file' }));
           }
         });
+      } else if (url.pathname === '/api/states' && req.method === 'GET') {
+        // The state list from the active profile's [[states]]. One source for the labels the GUI
+        // used to keep in six separate maps, several of which had drifted — the top bar rendered
+        // ids 18 and 19 as "STATE 18"/"STATE 19" because they were simply missing from its copy.
+        try {
+          const cfg = readActiveProfile();
+          const raw = Array.isArray((cfg as any)?.states) ? (cfg as any).states : [];
+          const states = raw
+            .filter((e: any) => typeof e?.id === 'number' && typeof e?.name === 'string')
+            .map((e: any) => ({
+              id: e.id,
+              name: e.name,
+              isAbort: e.is_abort === true,
+              isBoot: e.is_boot === true,
+              // Absent coordinates mean "not on the control panel" — no separate hidden flag.
+              panelRow: typeof e.panel_row === 'number' ? e.panel_row : null,
+              panelCol: typeof e.panel_col === 'number' ? e.panel_col : null,
+            }));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ states }));
+        } catch (error: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message || 'Failed to read states' }));
+        }
+      } else if (url.pathname === '/api/states/layout' && req.method === 'POST') {
+        // Save the control panel arrangement the operator dragged out. Writes only the panel
+        // coordinates back into [[states]] — never names, ids or semantics, so a layout change
+        // cannot alter what a state MEANS.
+        //
+        // Refused while a session is active: the panel is the thing an operator reaches for during
+        // a run, and it must not move under them mid-run. Same freeze rule as every other config
+        // write, just with a much more literal consequence.
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        let body = '';
+        req.on('data', (chunk) => { body += chunk.toString(); });
+        req.on('end', () => {
+          try {
+            if (sessionManager.getStatus().active) {
+              throw new Error('The panel layout is locked while a session is running');
+            }
+            const parsed = JSON.parse(body || '{}');
+            const layout = Array.isArray(parsed?.layout) ? parsed.layout : null;
+            if (!layout) throw new Error('Expected { layout: [{ id, panelRow, panelCol }] }');
+
+            const cfg = readActiveProfile();
+            const states = Array.isArray((cfg as any)?.states) ? (cfg as any).states : [];
+            if (states.length === 0) throw new Error('Active profile declares no [[states]]');
+
+            const byId = new Map<number, any>();
+            for (const e of layout) {
+              if (typeof e?.id !== 'number') continue;
+              byId.set(e.id, e);
+            }
+            for (const st of states) {
+              const e = byId.get(st.id);
+              if (!e) continue;
+              if (typeof e.panelRow === 'number' && typeof e.panelCol === 'number') {
+                st.panel_row = e.panelRow;
+                st.panel_col = e.panelCol;
+              } else {
+                delete st.panel_row;
+                delete st.panel_col;
+              }
+            }
+            writeActiveProfile(cfg);
+            deployActiveProfile();
+            if (onConfigUpdated) {
+              setImmediate(() => {
+                try { onConfigUpdated(); } catch (e) { console.warn('⚠️ onConfigUpdated handler threw:', e); }
+              });
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true }));
+          } catch (error: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message || 'Failed to save layout' }));
+          }
+        });
       } else if (url.pathname === '/api/state-csv' && req.method === 'GET') {
         // Raw state-machine CSV from the ACTIVE PROFILE. Read-only — no operator gate, matching
         // /api/config/export.
