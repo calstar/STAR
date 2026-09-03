@@ -1,4 +1,7 @@
 #include "control/StateMachine.hpp"
+#include <string>
+#include <map>
+#include <set>
 
 #include <algorithm>
 #include <fstream>
@@ -44,9 +47,136 @@ const std::map<std::string, State>& StateMachine::csvStateMap() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Config-declared states ([[states]]) — an override layer over the built-in table
+// ─────────────────────────────────────────────────────────────────────────────
+namespace {
+
+struct ConfigStates {
+    std::map<State, std::string> names;       // id → display name
+    std::map<std::string, State> by_name;     // display name → id
+    std::set<State> aborts;
+    State boot = State::IDLE;
+    bool boot_set = false;
+    bool loaded = false;
+};
+
+ConfigStates& configStates() {
+    static ConfigStates cs;
+    return cs;
+}
+
+std::string trimQuoted(std::string v) {
+    auto hash = v.find('#');
+    if (hash != std::string::npos)
+        v = v.substr(0, hash);
+    v.erase(0, v.find_first_not_of(" \t\"'"));
+    auto e = v.find_last_not_of(" \t\r\n\"'");
+    if (e != std::string::npos)
+        v.erase(e + 1);
+    return v;
+}
+
+}  // namespace
+
+void StateMachine::loadStatesFromConfig(const std::string& config_content) {
+    ConfigStates fresh;
+    std::istringstream iss(config_content);
+    std::string line;
+    bool in_entry = false;
+    int id = -1;
+    std::string nm;
+    bool is_abort = false, is_boot = false;
+
+    auto flush = [&]() {
+        if (!in_entry)
+            return;
+        // An entry needs both an id and a name to mean anything. Skip incomplete ones rather than
+        // half-registering a state.
+        if (id >= 0 && id <= 255 && !nm.empty()) {
+            const State st = static_cast<State>(static_cast<uint8_t>(id));
+            fresh.names[st] = nm;
+            fresh.by_name[nm] = st;
+            if (is_abort)
+                fresh.aborts.insert(st);
+            if (is_boot && !fresh.boot_set) {
+                fresh.boot = st;
+                fresh.boot_set = true;
+            }
+        }
+        id = -1;
+        nm.clear();
+        is_abort = is_boot = false;
+    };
+
+    while (std::getline(iss, line)) {
+        std::string t = line;
+        t.erase(0, t.find_first_not_of(" \t"));
+        if (t.rfind("[[states]]", 0) == 0) {
+            flush();
+            in_entry = true;
+            continue;
+        }
+        // Any other section header ends the array.
+        if (!t.empty() && t[0] == '[') {
+            flush();
+            in_entry = false;
+            continue;
+        }
+        if (!in_entry)
+            continue;
+        auto eq = t.find('=');
+        if (eq == std::string::npos)
+            continue;
+        std::string k = t.substr(0, eq);
+        k.erase(k.find_last_not_of(" \t") + 1);
+        const std::string v = trimQuoted(t.substr(eq + 1));
+        if (k == "id") {
+            try {
+                id = std::stoi(v);
+            } catch (...) {
+            }
+        } else if (k == "name") {
+            nm = v;
+        } else if (k == "is_abort") {
+            is_abort = (v == "true" || v == "1");
+        } else if (k == "is_boot") {
+            is_boot = (v == "true" || v == "1");
+        }
+    }
+    flush();
+
+    fresh.loaded = !fresh.names.empty();
+    configStates() = fresh;
+    if (fresh.loaded)
+        std::cout << "[StateMachine] Loaded " << fresh.names.size() << " state(s) from config"
+                  << (fresh.aborts.empty() ? "" : " (" + std::to_string(fresh.aborts.size()) +
+                                                      " abort)")
+                  << std::endl;
+}
+
+bool StateMachine::isAbort(State s) {
+    const auto& cs = configStates();
+    if (cs.loaded && !cs.aborts.empty())
+        return cs.aborts.count(s) > 0;
+    // Built-in fallback: the three abort states the enum has always had.
+    return s == State::ENGINE_ABORT || s == State::GSE_ABORT || s == State::EMERGENCY_ABORT;
+}
+
+State StateMachine::bootState() {
+    const auto& cs = configStates();
+    return (cs.loaded && cs.boot_set) ? cs.boot : State::IDLE;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // State → display name (for logging)
 // ─────────────────────────────────────────────────────────────────────────────
 std::string StateMachine::name(State s) {
+    {
+        const auto& cs = configStates();
+        auto it = cs.names.find(s);
+        if (it != cs.names.end())
+            return it->second;
+    }
     switch (s) {
         case State::DEBUG:
             return "Debug";
@@ -97,6 +227,12 @@ std::string StateMachine::name(State s) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 State StateMachine::fromName(const std::string& name) {
+    {
+        const auto& cs = configStates();
+        auto it = cs.by_name.find(name);
+        if (it != cs.by_name.end())
+            return it->second;
+    }
     const auto& map = csvStateMap();
     auto it = map.find(name);
     if (it != map.end())

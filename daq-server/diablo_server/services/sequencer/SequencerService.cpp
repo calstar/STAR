@@ -159,6 +159,10 @@ bool SequencerService::init(const std::string& config_path) {
         return false;
     }
 
+    // Adopt [[states]] before anything resolves a state name — the fire config below looks up
+    // its state and expiry target by name, and the CSVs are parsed by name too.
+    StateMachine::loadStatesFromConfig(config_content_);
+
     // FireManager: load durations from config
     auto getStr = [&](const std::string& sec, const std::string& key,
                       const std::string& def) -> std::string {
@@ -353,20 +357,23 @@ bool SequencerService::init(const std::string& config_path) {
     // while UDP commands still went out — data flowing, dots grey. Retry until it takes.
     startElodinRetry();
 
-    current_state_ = State::IDLE;
+    current_state_ = StateMachine::bootState();
     // Publish initial state so any already-connected backend/GUI knows we started at IDLE.
     publishState();
     // Command IDLE actuators and keep resending so manual debug clicks cannot stick vs CSV.
-    actuator_commander_.applyForState(State::IDLE);
-    actuator_commander_.startContinuousLoop(State::IDLE);
+    actuator_commander_.applyForState(current_state_.load());
+    actuator_commander_.startContinuousLoop(current_state_.load());
     std::cout << "[SequencerService] Initialized. Current state: "
-              << StateMachine::name(State::IDLE) << std::endl;
+              << StateMachine::name(current_state_.load()) << std::endl;
     return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 bool SequencerService::isAbortState(State s) {
-    return s == State::ENGINE_ABORT || s == State::GSE_ABORT || s == State::EMERGENCY_ABORT;
+    // Config-declared (`is_abort`), falling back to the built-in trio when a config omits them.
+    // This used to be a hardcoded three-way enum comparison, which meant a stand that renamed or
+    // added an abort state got no physical abort broadcast for it.
+    return StateMachine::isAbort(s);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

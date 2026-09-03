@@ -511,3 +511,108 @@ thrust_curve_path = "output/lut/thrust_curve.csv"
 "GN2 Vent" = ["NC", 6, 14]
 "LOX Fill" = ["NC", 7, 14]
 "LOX Dump" = ["NC", 8, 14]
+
+# ── System states ────────────────────────────────────────────────────────────
+# The state list, in one place. These ids and names were duplicated across the C++ enum, the
+# shared TS types, the backend and six frontend label maps — several already out of step (the top
+# bar rendered ids 18 and 19 as "STATE 18"/"STATE 19" because they were missing from its map).
+#
+# `id` is a STABLE KEY, not an ordering. It is written into Elodin run history as a raw u8 with no
+# name table beside it, so an id has to keep meaning the same state or old runs misdecode. Rename,
+# reorder and add freely; never reuse an id for a different state.
+#
+# Anything omitted here keeps its built-in name and behaviour — this is an override layer, so a
+# partial list cannot erase the state machine's knowledge of its own states.
+#
+# Flags carry the semantics that used to be enum comparisons in C++:
+#   is_boot   the state the sequencer starts in
+#   is_abort  triggers the physical UDP abort broadcast, and skips actuator delays
+# (which state fires, and where its timer lands, live in [fire] above)
+
+[[states]]
+id = 0
+name = "Debug"
+
+[[states]]
+id = 1
+name = "Idle"
+is_boot = true
+
+[[states]]
+id = 2
+name = "Armed"
+
+[[states]]
+id = 3
+name = "Fuel Fill"
+
+[[states]]
+id = 4
+name = "Ox Fill"
+
+[[states]]
+id = 5
+name = "GN2 Low Press"
+
+[[states]]
+id = 6
+name = "GN2 Low Vent"
+
+[[states]]
+id = 7
+name = "Fuel Press"
+
+[[states]]
+id = 8
+name = "Fuel Vent"
+
+[[states]]
+id = 9
+name = "Ox Press"
+
+[[states]]
+id = 10
+name = "Ox Vent"
+
+[[states]]
+id = 11
+name = "GN2 High Press"
+
+[[states]]
+id = 12
+name = "GN2 High Vent"
+
+[[states]]
+id = 13
+name = "Vent"
+
+[[states]]
+id = 14
+name = "Calibrate"
+
+[[states]]
+id = 15
+name = "Ready"
+
+[[states]]
+id = 16
+name = "Fire"
+
+[[states]]
+id = 17
+name = "Engine Abort"
+is_abort = true
+
+[[states]]
+id = 18
+name = "GSE Abort"
+is_abort = true
+
+[[states]]
+id = 19
+name = "Emergency Abort"
+is_abort = true
+
+[[states]]
+id = 20
+name = "Press Standby"
