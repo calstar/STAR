@@ -31,6 +31,7 @@
 #include <cmath>
 #include <csignal>
 #include <cstdlib>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -43,6 +44,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "calibration/CubicCalibrationStore.hpp"
 #include "calibration/PTCalibration.hpp"
 #include "calibration/RobustCalibrationManager.hpp"
 #include "calibration/SensorCalibration.hpp"
@@ -563,6 +565,40 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // ---- Operator-built cubic PT calibration (see CubicCalibrationStore) ----
+    // The store owns per-connector captured (adc, psi) points and the fitted cubic. Its file is
+    // excluded from the factory-cubic overlay loader, so factory_pt_snapshot is pure factory and
+    // the store is the sole applier of operator cubics (via pt_calibration.set_calibration).
+    fsw::calibration::CubicCalibrationStore cubic_store(
+        "scripts/calibration/calibrations/cubic_calibration.json");
+    std::map<uint8_t, fsw::calibration::PTCalibrationCoeffs> factory_pt_snapshot;
+    std::unordered_map<uint16_t, std::deque<int32_t>> pt_adc_ring;  // recent raw ADC per uid
+    constexpr size_t kPtAdcRingMax = 128;                           // ~0.5 s of samples at ~250 Hz
+    for (const auto& bc : pt_boards) {
+        for (uint8_t local_ch : bc.channels) {
+            const uint16_t uid = static_cast<uint16_t>(bc.board_id) * 100u + local_ch;
+            const uint8_t log_ch =
+                fsw::calibration::pt_logical_calibration_channel(bc.board_number, local_ch);
+            cubic_store.register_channel(uid, bc.board_id, local_ch, log_ch, /*role=*/"");
+            if (pt_calibration.is_calibrated(log_ch))
+                factory_pt_snapshot[log_ch] = *pt_calibration.get_calibration(log_ch);
+        }
+    }
+    // Resume previously captured points and re-apply their fitted cubics to the live stream.
+    const size_t cubic_loaded = cubic_store.load();
+    if (cubic_loaded > 0) {
+        for (uint16_t uid : cubic_store.uids()) {
+            const fsw::calibration::CubicFit* fit = cubic_store.fit_for(uid);
+            const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+            if (fit != nullptr && cch != nullptr)
+                pt_calibration.set_calibration(
+                    cch->logical_ch,
+                    fsw::calibration::PTCalibrationCoeffs(fit->A, fit->B, fit->C, fit->D));
+        }
+        std::cout << "[Calibration] Cubic: resumed " << cubic_loaded
+                  << " channel(s) from cubic_calibration.json" << std::endl;
+    }
+
     std::cout << "[Calibration] Robust adjustments path: " << adjustments_path << std::endl;
     std::cout << "[Calibration]   (override with --adjustments, CAL_BACKUP_PATH, or "
                  "calibration_backups/calibration_backup_*.json mtime)"
@@ -747,6 +783,47 @@ int main(int argc, char* argv[]) {
                 } else if (cmd_type == 2) {  // Save
                     robust_manager.save_adjustments(adjustments_path);
                     std::cout << "[Cal] Adjustments saved to " << adjustments_path << std::endl;
+                } else if (cmd_type == 3) {  // Capture cubic point (operator-built factory cubic)
+                    bool have_adc = false;
+                    double adc_avg = 0.0;
+                    auto rit = pt_adc_ring.find(sensor_id);
+                    if (rit != pt_adc_ring.end() && !rit->second.empty()) {
+                        double sum = 0.0;
+                        for (int32_t a : rit->second)
+                            sum += static_cast<double>(a);
+                        adc_avg = sum / static_cast<double>(rit->second.size());
+                        have_adc = true;
+                    } else if (last_adc_map.count(sensor_id)) {
+                        adc_avg = static_cast<double>(last_adc_map[sensor_id]);
+                        have_adc = true;
+                    }
+                    if (have_adc) {
+                        const fsw::calibration::CubicFit fit =
+                            cubic_store.add_point(sensor_id, adc_avg, ref_val);
+                        const fsw::calibration::CubicChannel* cch = cubic_store.channel(sensor_id);
+                        if (fit.valid && cch != nullptr)
+                            pt_calibration.set_calibration(
+                                cch->logical_ch,
+                                fsw::calibration::PTCalibrationCoeffs(fit.A, fit.B, fit.C, fit.D));
+                        cubic_store.save();
+                        std::cout << "[Cal] Cubic capture uid=" << static_cast<int>(sensor_id)
+                                  << " adc=" << adc_avg << " psi=" << ref_val
+                                  << (fit.valid ? " (fit ok)" : " (pending/err)") << std::endl;
+                    } else {
+                        std::cout << "[Cal] Cubic capture: no ADC seen yet for uid "
+                                  << static_cast<int>(sensor_id) << std::endl;
+                    }
+                } else if (cmd_type == 4) {  // Clear cubic channel (revert to factory)
+                    cubic_store.clear_channel(sensor_id);
+                    const fsw::calibration::CubicChannel* cch = cubic_store.channel(sensor_id);
+                    if (cch != nullptr) {
+                        auto fac = factory_pt_snapshot.find(cch->logical_ch);
+                        if (fac != factory_pt_snapshot.end())
+                            pt_calibration.set_calibration(cch->logical_ch, fac->second);
+                    }
+                    cubic_store.save();
+                    std::cout << "[Cal] Cubic cleared uid=" << static_cast<int>(sensor_id)
+                              << std::endl;
                 }
             }
             continue;
@@ -830,6 +907,13 @@ int main(int argc, char* argv[]) {
                               << " adc_hp=" << hp_wire_adc << " psi=" << psi << std::endl;
             } else {
                 last_adc_map[uid] = adc_i32;
+                // Feed the cubic-calibration ADC ring so a capture averages a short window.
+                {
+                    auto& ring = pt_adc_ring[uid];
+                    ring.push_back(adc_i32);
+                    if (ring.size() > kPtAdcRingMax)
+                        ring.pop_front();
+                }
                 const uint8_t pt_log_ch =
                     fsw::calibration::pt_logical_calibration_channel(board_number, ch_eff);
                 const bool fac_ok = pt_calibration.is_calibrated(pt_log_ch);

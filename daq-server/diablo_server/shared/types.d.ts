@@ -196,12 +196,51 @@ export interface CalibrationStatusPayload {
     calibrationFilePath?: string | null;
 }
 /** Commands the frontend sends to drive the calibration engine */
-export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'save_coefficients' | 'clear_calibration';
+export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'save_coefficients' | 'clear_calibration' | 'capture_cubic_point' | 'clear_cubic_channel';
 export interface CalibrationCommand {
     commandType: CalibrationCommandType;
     sensorId?: number;
     boardId?: number;
     referencePressure?: number;
+}
+/** One operator-captured calibration point for a channel's cubic fit. */
+export interface CubicCalibrationPoint {
+    adc: number;
+    psi: number;
+    t: number;
+}
+/**
+ * Per-sensor cubic calibration record produced by the calibration service. The frontend renders the
+ * captured `points` as a scatter and overlays the curve by evaluating `polyCoeffs` over
+ * `((adc - adcNormMin)/adcNormScale)^i` — no fitting in the browser.
+ */
+export interface CubicCalibrationChannel {
+    boardId: number;
+    connector: number;
+    logicalCh: number;
+    role: string;
+    active_model: 'cubic';
+    numPoints: number;
+    status: 'PENDING' | 'OK' | 'ERROR';
+    last_error: string;
+    rmse: number;
+    degree: number;
+    updatedAt: number;
+    coeffs: {
+        A: number;
+        B: number;
+        C: number;
+        D: number;
+    };
+    polyCoeffs: number[];
+    adcNormMin: number;
+    adcNormScale: number;
+    points: CubicCalibrationPoint[];
+}
+/** Body of GET /api/cubic_calibration: the service's cubic_calibration.json, keyed by uid. */
+export interface CubicCalibrationPayload {
+    cubic_state?: Record<string, CubicCalibrationChannel>;
+    [key: string]: unknown;
 }
 /** Aggregated status for a single hardware board (PT, ACTUATOR, RTD, LC, TC, etc.). */
 export interface BoardStatus {

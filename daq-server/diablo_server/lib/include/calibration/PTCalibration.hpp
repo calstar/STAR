@@ -124,6 +124,16 @@ public:
     }
 
     /**
+     * @brief Set/replace the cubic coefficients for a logical channel at runtime.
+     *
+     * Used by the calibration service when an operator builds a cubic live from captured reference
+     * points — the new fit takes effect immediately on the streaming path (which evaluates these
+     * coefficients per packet). @param channel_id is the logical calibration channel
+     * (pt_logical_calibration_channel), not a board-local connector.
+     */
+    void set_calibration(uint8_t channel_id, const PTCalibrationCoeffs& coeffs);
+
+    /**
      * @brief Set default calibration file paths
      */
     static void set_default_paths(const std::string& json_dir, const std::string& csv_path);

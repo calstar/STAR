@@ -301,6 +301,10 @@ bool PTCalibrationManager::is_calibrated(uint8_t channel_id) const {
     return calibrations_.find(channel_id) != calibrations_.end();
 }
 
+void PTCalibrationManager::set_calibration(uint8_t channel_id, const PTCalibrationCoeffs& coeffs) {
+    calibrations_[channel_id] = coeffs;
+}
+
 double PTCalibrationManager::calculate_pressure(uint8_t channel_id, int32_t adc_code) const {
     const auto* coeffs = get_calibration(channel_id);
     if (coeffs) {
@@ -357,6 +361,11 @@ static bool skip_json_for_pt_polynomial_load(const std::string& filename) {
     if (filename == "adjustments.json")
         return true;
     if (filename.find("learned_prior") != std::string::npos)
+        return true;
+    // Operator-built cubics are owned by CubicCalibrationStore, which applies them via
+    // set_calibration() after load. Excluding the file here keeps the factory overlay pure so the
+    // service can snapshot true factory coefficients (for revert-on-clear).
+    if (filename == "cubic_calibration.json")
         return true;
     return false;
 }

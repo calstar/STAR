@@ -17,6 +17,7 @@ set(FSW_SOURCES
     src/fsw/FSWConfigManager.cpp
     src/control/PressureStateMachine.cpp
     src/calibration/PTCalibration.cpp
+    src/calibration/CubicCalibrationStore.cpp
     src/calibration/SensorCalibration.cpp
     src/calibration/AllanVariance.cpp
     src/calibration/RobustCalibrationFramework.cpp

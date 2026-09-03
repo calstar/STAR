@@ -10,6 +10,7 @@ import { lazy } from 'react';
 
 export const BoardsPage         = lazy(() => import('@/app/boards/page'));
 export const CalibrationPage    = lazy(() => import('@/app/calibration/page'));
+export const CubicCalPage       = lazy(() => import('@/app/calibration-cubic/page'));
 export const ConfigPage         = lazy(() => import('@/app/config/page'));
 export const ControllerPage     = lazy(() => import('@/app/controller/page'));
 export const ControlsPage       = lazy(() => import('@/app/controls/page'));
