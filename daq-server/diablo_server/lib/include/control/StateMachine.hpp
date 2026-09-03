@@ -67,6 +67,29 @@ public:
      */
     uint32_t allowedBitmask(State state) const;
 
+    /**
+     * Adopt the [[states]] entries from a config as the source of truth for state names and
+     * semantics.
+     *
+     * This is an OVERRIDE LAYER, deliberately: anything the config does not mention keeps its
+     * built-in name and behaviour. The state list was duplicated in eight places across C++, the
+     * shared TS types, the backend and six frontend label maps, several already disagreeing (the
+     * top bar rendered GSE Abort and Emergency Abort as "STATE 18"/"STATE 19"). Config becomes the
+     * one place to edit, without a partial or missing [[states]] being able to erase the machine's
+     * knowledge of its own states.
+     *
+     * `id` is a stable key, not an ordering: it is written into Elodin run history as a raw u8
+     * with no name table beside it, so an id must keep meaning the same state. Reordering,
+     * renaming, adding and removing are all fine; reusing an id for a different state is not.
+     */
+    static void loadStatesFromConfig(const std::string& config_content);
+
+    /** True if the state carries the abort semantics (config `is_abort`, else the built-in trio). */
+    static bool isAbort(State s);
+
+    /** The state to boot into (config `is_boot`, else Idle). */
+    static State bootState();
+
     /** Translate a CSV name (e.g. "Emergency Abort") to a State. */
     static State fromName(const std::string& name);
 
