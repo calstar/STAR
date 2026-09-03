@@ -91,16 +91,17 @@ std::string FSWConfigManager::process_board_heartbeat(const daq::PacketHeader& /
         }
     }
 
-    // Send configuration to board if not already configured, OR if the board
-    // is still in Setup state (e.g. after a reboot or missed config).
-    bool board_in_setup = body.board_state == daq::BoardState::SETUP;
-    if (!boards_configured_[board_id] || board_in_setup) {
-        if (board_in_setup && boards_configured_[board_id]) {
-            std::cout << "[FSWConfig] Board " << (int)board_id
-                      << " still in SETUP — re-sending SENSOR_CONFIG" << std::endl;
-        }
-        send_config_to_board(board_id);
-    }
+    // Deliberately does NOT send SENSOR_CONFIG. config_broadcast_service owns board
+    // configuration: it is the only writer that reads the rig's real config.toml
+    // ([boards.*] active_connectors, voltage_reference, necessary_for_abort). This manager
+    // builds its packet from assignment_manager_'s auto-assign table, which is keyed on a
+    // board-type enum that matches no board on the stand — so it produced an EMPTY config
+    // (num_sensors=0) and shipped it to every sensor board within a millisecond of boot.
+    // The firmware applies every SENSOR_CONFIG it receives in any state, so that empty
+    // config latched: collect_chunk() early-returns on active_count==0, and the board
+    // heartbeats as ACTIVE forever while sampling nothing. Two writers, and the one with
+    // no knowledge of the rig won the race on every board boot.
+    (void)body;
 
     return assigned_ip;
 }
