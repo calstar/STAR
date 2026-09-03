@@ -3,9 +3,10 @@ import { redirect } from "next/navigation";
 import { EditEntityButton } from "@/components/EditEntityButton";
 import { EntityRow, LIST_CARD } from "@/components/EntityRow";
 import { NewProjectForm } from "@/components/NewProjectForm";
+import { AdminConfig } from "@/components/settings/AdminConfig";
 import { createSubteam, deleteSubteam, updateSubteam } from "@/lib/actions/subteams";
 import { deleteProject, updateProject } from "@/lib/actions/projects";
-import { isAdmin } from "@/lib/admins";
+import { isAdmin, listAdmins } from "@/lib/admins";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
@@ -14,10 +15,10 @@ export const dynamic = "force-dynamic";
 // Admin-only workspace setup: the rare, data-losing actions (create/remove
 // projects and subteams) live here, off the everyday browse pages.
 export default async function WorkspacePage() {
-  const admin = isAdmin((await getCurrentUser()).email);
+  const admin = await isAdmin((await getCurrentUser()).email);
   if (!admin) redirect("/settings");
 
-  const [projects, subteams] = await Promise.all([
+  const [projects, subteams, admins] = await Promise.all([
     prisma.project.findMany({
       where: { archived: false },
       orderBy: [{ createdAt: "desc" }],
@@ -30,11 +31,24 @@ export default async function WorkspacePage() {
       orderBy: { name: "asc" },
       include: { _count: { select: { tasks: true } } },
     }),
+    listAdmins(),
   ]);
 
   const parents = projects
     .filter((p) => !p.parentId)
     .map((p) => ({ id: p.id, name: p.name }));
+
+  // Tasks contributed by each parent's subprojects, so a parent's badge sums all
+  // tasks under it. (The delete message stays on the project's own count, since
+  // deleting a parent re-parents its subprojects rather than deleting them.)
+  const subprojectTasks = new Map<string, number>();
+  for (const p of projects) {
+    if (p.parentId)
+      subprojectTasks.set(
+        p.parentId,
+        (subprojectTasks.get(p.parentId) ?? 0) + p._count.tasks,
+      );
+  }
 
   const heading = "text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400";
 
@@ -63,7 +77,7 @@ export default async function WorkspacePage() {
             href={`/projects/${p.id}`}
             color={p.color}
             name={p.parent ? `${p.parent.name} › ${p.name}` : p.name}
-            taskCount={p._count.tasks}
+            taskCount={p._count.tasks + (subprojectTasks.get(p.id) ?? 0)}
             id={p.id}
             deleteAction={deleteProject}
             deleteMessage={`This permanently deletes the project and its ${p._count.tasks} task${
@@ -135,6 +149,16 @@ export default async function WorkspacePage() {
           />
         ))}
       </ul>
+
+      {/* Admins */}
+      <h2 className={`${heading} mt-8`}>Admins</h2>
+      <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+        Admins can delete projects, subteams, and tasks. Add someone by their
+        @berkeley.edu email.
+      </p>
+      <div className="mt-2">
+        <AdminConfig admins={admins} />
+      </div>
     </div>
   );
 }

@@ -22,7 +22,10 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        // IPv4-explicit: "localhost" can resolve to IPv6 ::1 on CI runners while
+        // the backend (uvicorn) listens on 127.0.0.1, so the dev proxy would
+        // fail to reach it. Only affects `vite dev` (prod serves a static build).
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
     },

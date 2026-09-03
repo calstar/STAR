@@ -8,6 +8,7 @@ import { BlockerEditor } from "@/components/BlockerEditor";
 import { CopyLinkButton } from "@/components/CopyLinkButton";
 import { useTaskModal } from "@/components/TaskModalProvider";
 import { AssigneeSelect } from "@/components/fields/AssigneeSelect";
+import { BlockedNoteInput } from "@/components/fields/BlockedNoteInput";
 import { DescriptionInput } from "@/components/fields/DescriptionInput";
 import { DueDateInput } from "@/components/fields/DueDateInput";
 import { PrioritySelect } from "@/components/fields/PrioritySelect";
@@ -79,11 +80,11 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
               </div>
             </div>
             <div>
-              <p className={label}>Assignee</p>
+              <p className={label}>Assignees</p>
               <div className="mt-1">
                 <AssigneeSelect
                   taskId={task.id}
-                  value={task.assigneeId ?? ""}
+                  value={task.assignees.map((a) => a.id)}
                   users={users}
                 />
               </div>
@@ -133,6 +134,14 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
                 <span className={pill(b.blockedByTask.status)}>
                   {STATUS_LABEL[b.blockedByTask.status]}
                 </span>
+                {b.note && (
+                  <span
+                    className="min-w-0 flex-1 truncate italic text-neutral-500 dark:text-neutral-400"
+                    title={b.note}
+                  >
+                    {b.note}
+                  </span>
+                )}
                 <form
                   action={async (fd) => {
                     await removeBlocker(fd);
@@ -179,6 +188,16 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
               </li>
             ))}
           </ul>
+
+          <div className="mt-5">
+            <p className={label}>Blocked comment</p>
+            <div className="mt-1">
+              <BlockedNoteInput
+                taskId={task.id}
+                value={task.blockedNote ?? ""}
+              />
+            </div>
+          </div>
         </div>
       </div>
     </div>

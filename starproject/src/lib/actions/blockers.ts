@@ -44,6 +44,7 @@ export async function addBlockerAction(
   const user = await getCurrentDbUser();
   const taskId = String(formData.get("taskId") ?? "");
   const blockedById = String(formData.get("blockedById") ?? "");
+  const note = String(formData.get("note") ?? "").trim().slice(0, 300) || null;
 
   if (!taskId || !blockedById) return { error: "Pick a task to add." };
   if (taskId === blockedById) return { error: "A task can't block itself." };
@@ -70,7 +71,7 @@ export async function addBlockerAction(
   if (await wouldCycle(taskId, blockedById))
     return { error: "That would create a circular dependency." };
 
-  await prisma.taskBlocker.create({ data: { taskId, blockedById } });
+  await prisma.taskBlocker.create({ data: { taskId, blockedById, note } });
   await recordActivity({
     actorId: user.id,
     taskId,

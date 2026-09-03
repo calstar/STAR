@@ -49,7 +49,7 @@ export async function archiveProject(formData: FormData) {
 
 export async function updateProject(formData: FormData) {
   const user = await getCurrentDbUser();
-  if (!isAdmin(user.email))
+  if (!(await isAdmin(user.email)))
     throw new Error("Only admins can edit projects.");
   const id = String(formData.get("id"));
   const name = String(formData.get("name") ?? "").trim();
@@ -71,7 +71,7 @@ export async function updateProject(formData: FormData) {
 
 export async function deleteProject(formData: FormData) {
   const user = await getCurrentDbUser();
-  if (!isAdmin(user.email))
+  if (!(await isAdmin(user.email)))
     throw new Error("Only admins can delete projects.");
   const id = String(formData.get("id"));
   await prisma.project.delete({ where: { id } }); // cascades to its tasks

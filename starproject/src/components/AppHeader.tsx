@@ -45,7 +45,7 @@ export async function AppHeader() {
         <UserMenu
           name={displayNameOf(user)}
           email={user.email}
-          isAdmin={isAdmin(user.email)}
+          isAdmin={await isAdmin(user.email)}
         />
       </div>
     </header>

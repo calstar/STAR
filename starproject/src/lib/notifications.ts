@@ -37,9 +37,14 @@ export async function notifyAssignment({
 
   const task = await prisma.task.findUnique({
     where: { id: taskId },
-    select: { id: true, title: true, projectId: true, assigneeId: true },
+    select: {
+      id: true,
+      title: true,
+      projectId: true,
+      assignees: { select: { id: true } },
+    },
   });
-  if (!task || task.assigneeId !== assigneeId) return;
+  if (!task || !task.assignees.some((a) => a.id === assigneeId)) return;
 
   const settings = await getSettings(assigneeId);
   if (!settings.emailAssignments) return;
@@ -151,12 +156,12 @@ export async function runDeadlineScan(): Promise<{
   const tasks = await prisma.task.findMany({
     where: {
       status: { not: "done" },
-      assigneeId: { not: null },
+      assignees: { some: {} }, // has at least one assignee
       dueDate: { lt: endWindow }, // overdue or due-soon; far-future excluded
     },
     include: {
       project: { select: { id: true, name: true } },
-      assignee: { select: { id: true, email: true, name: true } },
+      assignees: { select: { id: true, email: true, name: true } },
     },
   });
 
@@ -164,36 +169,39 @@ export async function runDeadlineScan(): Promise<{
   let overdue = 0;
 
   for (const t of tasks) {
-    if (!t.assignee || !t.dueDate) continue;
+    if (!t.dueDate) continue;
     const kind = t.dueDate < startOfToday ? "overdue" : "due_soon";
 
-    const settings = await getSettings(t.assignee.id);
-    if (kind === "due_soon" && !settings.emailDueSoon) continue;
-    if (kind === "overdue" && !settings.emailOverdue) continue;
+    // One email per assignee, deduped per (task, user, kind) via NotifLog.
+    for (const assignee of t.assignees) {
+      const settings = await getSettings(assignee.id);
+      if (kind === "due_soon" && !settings.emailDueSoon) continue;
+      if (kind === "overdue" && !settings.emailOverdue) continue;
 
-    const already = await prisma.notifLog.findFirst({
-      where: { taskId: t.id, userId: t.assignee.id, kind },
-    });
-    if (already) continue;
+      const already = await prisma.notifLog.findFirst({
+        where: { taskId: t.id, userId: assignee.id, kind },
+      });
+      if (already) continue;
 
-    const link = taskLink(t.projectId, t.id);
-    const dueStr = t.dueDate.toISOString().slice(0, 10);
-    const word = kind === "overdue" ? "overdue" : "due soon";
-    const ok = await sendEmail({
-      to: t.assignee.email,
-      subject: `${kind === "overdue" ? "Overdue" : "Due soon"}: ${t.title}`,
-      html: `<p><strong>${escapeHtml(t.title)}</strong> in ${escapeHtml(
-        t.project.name,
-      )} is ${word} (due ${dueStr}).</p><p><a href="${link}">Open the task</a></p>`,
-      text: `"${t.title}" in ${t.project.name} is ${word} (due ${dueStr}).\n${link}`,
-    });
-    if (!ok) continue;
+      const link = taskLink(t.projectId, t.id);
+      const dueStr = t.dueDate.toISOString().slice(0, 10);
+      const word = kind === "overdue" ? "overdue" : "due soon";
+      const ok = await sendEmail({
+        to: assignee.email,
+        subject: `${kind === "overdue" ? "Overdue" : "Due soon"}: ${t.title}`,
+        html: `<p><strong>${escapeHtml(t.title)}</strong> in ${escapeHtml(
+          t.project.name,
+        )} is ${word} (due ${dueStr}).</p><p><a href="${link}">Open the task</a></p>`,
+        text: `"${t.title}" in ${t.project.name} is ${word} (due ${dueStr}).\n${link}`,
+      });
+      if (!ok) continue;
 
-    await prisma.notifLog.create({
-      data: { taskId: t.id, userId: t.assignee.id, kind },
-    });
-    if (kind === "overdue") overdue++;
-    else dueSoon++;
+      await prisma.notifLog.create({
+        data: { taskId: t.id, userId: assignee.id, kind },
+      });
+      if (kind === "overdue") overdue++;
+      else dueSoon++;
+    }
   }
 
   return { dueSoon, overdue };

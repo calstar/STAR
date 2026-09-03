@@ -55,6 +55,24 @@ export default function ConfigurationSelector({ onConfigChange }: Props) {
     }
     setWarnings(res.data.binding_warnings ?? []);
     setDesignWarning(res.data.design_warning ?? null);
+    // Optimistically move the dropdowns to the switch we just made. The <select>s
+    // are driven by opts.current, which otherwise only updates when the trailing
+    // loadOptions() round-trip lands -- so without this the controlled value snaps
+    // back to the PREVIOUS selection for the duration of the request, reading as a
+    // spooky flicker to a "default". The switch response already carries the new
+    // config; loadOptions() below still runs to reconcile against the backend.
+    const cfg = res.data.config;
+    setOpts((prev) =>
+      prev
+        ? {
+            ...prev,
+            current: {
+              injector: (cfg.injector?.type as string | undefined) ?? prev.current.injector,
+              propellant: (cfg.propellant_preset as string | undefined) ?? prev.current.propellant,
+            },
+          }
+        : prev,
+    );
     onConfigChange(res.data.config);
     emitConfigChanged(res.data.config); // tell injector-dependent UI (frozen params, etc.) to re-fetch
     await loadOptions(); // refresh "current"

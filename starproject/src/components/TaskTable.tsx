@@ -35,6 +35,7 @@ export function TaskTable({
   users = [],
   admin = false,
   showProject = false,
+  showSubproject = false,
   showSubteam = false,
   emptyText = "No tasks match.",
 }: {
@@ -42,6 +43,7 @@ export function TaskTable({
   users?: User[];
   admin?: boolean;
   showProject?: boolean;
+  showSubproject?: boolean;
   showSubteam?: boolean;
   emptyText?: string;
 }) {
@@ -56,16 +58,26 @@ export function TaskTable({
         cell: (info) => (
           <div className="flex items-center gap-2">
             <span className="font-medium">{info.getValue()}</span>
-            {!showProject && info.row.original.subproject && (
-              <SubprojectBadge
-                name={info.row.original.subproject.name}
-                color={info.row.original.subproject.color}
-              />
-            )}
             {info.row.original.blocked && <BlockedBadge />}
           </div>
         ),
       }),
+      ...(showSubproject
+        ? [
+            col.accessor((r) => r.subproject?.name ?? "", {
+              id: "subproject",
+              header: "Subproject",
+              cell: (info) => {
+                const sp = info.row.original.subproject;
+                return sp ? (
+                  <SubprojectBadge name={sp.name} color={sp.color} />
+                ) : (
+                  "—"
+                );
+              },
+            }),
+          ]
+        : []),
       ...(showProject
         ? [
             col.accessor("projectName", {
@@ -99,12 +111,12 @@ export function TaskTable({
         ),
       }),
       col.accessor("assigneeName", {
-        header: "Assignee",
+        header: "Assignees",
         cell: (info) => (
           <div onClick={stop}>
             <AssigneeSelect
               taskId={info.row.original.id}
-              value={info.row.original.assigneeId}
+              value={info.row.original.assigneeIds}
               users={users}
             />
           </div>
@@ -138,7 +150,7 @@ export function TaskTable({
           ]
         : []),
     ],
-    [showProject, showSubteam, users, admin],
+    [showProject, showSubproject, showSubteam, users, admin],
   );
 
   const table = useReactTable({

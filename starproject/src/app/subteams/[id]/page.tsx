@@ -6,6 +6,7 @@ import { NewTaskForm } from "@/components/NewTaskForm";
 import { isAdmin } from "@/lib/admins";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { displayNameOf } from "@/lib/names";
 import { getTeamUsers } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +29,9 @@ export default async function SubteamPage({
       include: {
         tasks: {
           include: {
-            assignee: true,
+            assignees: {
+              select: { id: true, name: true, email: true, displayName: true },
+            },
             blockedBy: {
               include: {
                 blockedByTask: { select: { id: true, title: true, status: true } },
@@ -49,7 +52,7 @@ export default async function SubteamPage({
   ]);
 
   if (!subteam) notFound();
-  const admin = isAdmin((await getCurrentUser()).email);
+  const admin = await isAdmin((await getCurrentUser()).email);
 
   // A subteam's tasks span projects; tag each with its project so the list/board
   // shows where it lives (reusing the same chip subprojects use in a parent).
@@ -57,7 +60,7 @@ export default async function SubteamPage({
     ...t,
     projectName: t.project.name,
     subteamName: subteam.name,
-    assigneeName: t.assignee?.name ?? t.assignee?.email ?? "",
+    assigneeName: t.assignees.map((a) => displayNameOf(a)).join(", "),
     subproject: { name: t.project.name, color: t.project.color },
   }));
 

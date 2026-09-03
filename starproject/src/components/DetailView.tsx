@@ -21,6 +21,7 @@ export function DetailView({
   newTaskForm,
   emptyText,
   showProject = false,
+  showSubproject = false,
   showSubteam = false,
 }: {
   basePath: string;
@@ -32,6 +33,7 @@ export function DetailView({
   newTaskForm?: React.ReactNode;
   emptyText?: string;
   showProject?: boolean;
+  showSubproject?: boolean;
   showSubteam?: boolean;
 }) {
   const tab = (active: boolean) =>
@@ -74,6 +76,7 @@ export function DetailView({
             users={users}
             admin={admin}
             showProject={showProject}
+            showSubproject={showSubproject}
             showSubteam={showSubteam}
             emptyText={emptyText ?? "No tasks yet. Add one above."}
           />

@@ -6,6 +6,7 @@ import { NewTaskForm } from "@/components/NewTaskForm";
 import { isAdmin } from "@/lib/admins";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { displayNameOf } from "@/lib/names";
 import { getSubteams } from "@/lib/subteams";
 import { getTeamUsers } from "@/lib/user";
 
@@ -46,7 +47,9 @@ export async function ProjectView({
   const rawTasks = await prisma.task.findMany({
     where: { projectId: { in: projectIds } },
     include: {
-      assignee: true,
+      assignees: {
+        select: { id: true, name: true, email: true, displayName: true },
+      },
       blockedBy: {
         include: {
           blockedByTask: { select: { id: true, title: true, status: true } },
@@ -61,14 +64,14 @@ export async function ProjectView({
     ...t,
     projectName: t.project.name,
     subteamName: t.subteam?.name ?? "",
-    assigneeName: t.assignee?.name ?? t.assignee?.email ?? "",
+    assigneeName: t.assignees.map((a) => displayNameOf(a)).join(", "),
     subproject:
       t.projectId === project.id
         ? null
         : { name: t.project.name, color: t.project.color },
   }));
 
-  const admin = isAdmin((await getCurrentUser()).email);
+  const admin = await isAdmin((await getCurrentUser()).email);
 
   const header = (
     <div className="flex items-start justify-between gap-4">
@@ -135,6 +138,7 @@ export async function ProjectView({
       users={users}
       admin={admin}
       header={header}
+      showSubproject={project.children.length > 0}
       showSubteam
       newTaskForm={
         <NewTaskForm projectId={project.id} users={users} subteams={subteams} />

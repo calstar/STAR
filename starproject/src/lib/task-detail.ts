@@ -17,7 +17,9 @@ export async function getTaskDetailData(projectId: string, taskId: string) {
             parent: { select: { id: true, name: true } },
           },
         },
-        assignee: true,
+        assignees: {
+          select: { id: true, name: true, email: true, displayName: true },
+        },
         blockedBy: {
           include: {
             blockedByTask: { select: { id: true, title: true, status: true } },

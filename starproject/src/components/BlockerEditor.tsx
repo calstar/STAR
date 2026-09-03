@@ -19,13 +19,15 @@ export function BlockerEditor({
     {},
   );
   const [blockedById, setBlockedById] = useState("");
+  const [note, setNote] = useState("");
 
   // Fire onChanged when a submit finishes successfully (so the modal can refresh).
   const wasPending = useRef(false);
   useEffect(() => {
     if (wasPending.current && !pending && !state.error) {
       onChanged?.();
-      setBlockedById(""); // clear the picker after a successful add
+      setBlockedById(""); // clear the picker + note after a successful add
+      setNote("");
     }
     wasPending.current = pending;
   }, [pending, state, onChanged]);
@@ -42,6 +44,16 @@ export function BlockerEditor({
           value={blockedById}
           onChange={setBlockedById}
           options={candidates.map((c) => ({ value: c.id, label: c.title }))}
+        />
+        <input
+          name="note"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Note (optional)"
+          maxLength={300}
+          disabled={candidates.length === 0}
+          aria-label="Blocker note"
+          className="min-w-40 flex-1 rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm disabled:opacity-50"
         />
         <button
           disabled={pending || candidates.length === 0}

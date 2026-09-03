@@ -37,21 +37,28 @@
 	# belt-and-braces -- but the stakes changed when designs became shareable:
 	# X-Auth-Email now decides which user's designs you may edit, not merely which
 	# folder your own data lands in. Never let a client propose one.
-	request_header -X-Auth-Email
-	request_header -X-Auth-User
+	#
+	# route {} is required, not cosmetic: the Caddyfile adapter otherwise re-sorts
+	# by built-in directive order, placing request_header AFTER forward_auth — which
+	# would delete the X-Auth-* headers forward_auth just set, handing the app a
+	# request with no identity. Wrapping keeps the strip ahead of the gate.
+	route {
+		request_header -X-Auth-Email 
+		request_header -X-Auth-User
 
-	forward_auth {$AUTH_UPSTREAM:auth:5000} {
-		uri /verify
-		# Identity for the upstream app, taken from the /verify response.
-		copy_headers X-Auth-Email X-Auth-User
-		# A WebSocket handshake carries Connection: Upgrade + Upgrade: websocket.
-		# gunicorn (the auth service) 400s on the /verify subrequest when both are
-		# present, so Caddy denies the upgrade before it reaches the app — which is
-		# why any protected app's WebSocket (e.g. daq-server) never connects. Strip
-		# them from the auth subrequest ONLY; Caddy still proxies the real upgrade
-		# to the app untouched.
-		header_up -Connection
-		header_up -Upgrade
+		forward_auth {$AUTH_UPSTREAM:auth:5000} {
+			uri /verify
+			# Identity for the upstream app, taken from the /verify response.
+			copy_headers X-Auth-Email X-Auth-User
+			# A WebSocket handshake carries Connection: Upgrade + Upgrade: websocket.
+			# gunicorn (the auth service) 400s on the /verify subrequest when both are
+			# present, so Caddy denies the upgrade before it reaches the app — which is
+			# why any protected app's WebSocket (e.g. daq-server) never connects. Strip
+			# them from the auth subrequest ONLY; Caddy still proxies the real upgrade
+			# to the app untouched.
+			header_up -Connection
+			header_up -Upgrade
+		}
 	}
 }
 

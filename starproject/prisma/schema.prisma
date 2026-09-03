@@ -127,10 +127,10 @@ model Task {
   subteam     Subteam?      @relation(fields: [subteamId], references: [id])
   title       String
   description String?
+  blockedNote String?       // free-text "why is this blocked" comment (auto-saved, like description)
   status      TaskStatus    @default(backlog)
   priority    TaskPriority?
-  assigneeId  String?
-  assignee    User?         @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  assignees   User[]        @relation("TaskAssignee")
   startDate   DateTime?
   dueDate     DateTime?
   boardOrder  Float         @default(0) // ordering within a kanban column (Phase 2)
@@ -155,6 +155,7 @@ model TaskBlocker {
   task          Task     @relation("BlockedTask", fields: [taskId], references: [id], onDelete: Cascade)
   blockedById   String
   blockedByTask Task     @relation("BlockerTask", fields: [blockedById], references: [id], onDelete: Cascade)
+  note          String? // optional reason for the block, shown in the Blocked-by list
   createdAt     DateTime @default(now())
 
   @@unique([taskId, blockedById])
@@ -189,4 +190,12 @@ model Activity {
   createdAt DateTime @default(now())
 
   @@index([createdAt])
+}
+
+// Runtime-added admins, on top of the built-in seed list in src/lib/admins.ts.
+// Email matches the X-Auth-Email identity, stored lowercase.
+model AdminEmail {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
 }

@@ -46,7 +46,8 @@ export function TasksWorkspace({
     () =>
       tasks.filter((t) => {
         if (status && t.status !== status) return false;
-        if (myOnly && t.assigneeId !== currentUserId) return false;
+        if (myOnly && !t.assignees.some((a) => a.id === currentUserId))
+          return false;
         if (projSel.size && !projSel.has(t.projectId)) return false;
         if (subSel.size && (!t.subteamId || !subSel.has(t.subteamId)))
           return false;

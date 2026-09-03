@@ -41,6 +41,12 @@ export function userLabel(
 ): string {
   return u ? displayNameOf(u) : "Unassigned";
 }
+/** The assignee set, as a comma-joined list of display names (or "Unassigned"). */
+export function usersLabel(
+  us: { name: string | null; email: string; displayName: string | null }[],
+): string {
+  return us.length ? us.map((u) => displayNameOf(u)).join(", ") : "Unassigned";
+}
 export function dateLabel(d: Date | null): string {
   return d ? new Date(d).toISOString().slice(0, 10) : "no date";
 }

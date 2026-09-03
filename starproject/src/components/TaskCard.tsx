@@ -64,11 +64,11 @@ export function TaskCard({ task }: { task: BoardTask }) {
             {task.priority}
           </span>
         )}
-        {task.assignee && (
-          <span className="text-neutral-500 dark:text-neutral-400">
-            {displayNameOf(task.assignee)}
+        {task.assignees.map((a) => (
+          <span key={a.id} className="text-neutral-500 dark:text-neutral-400">
+            {displayNameOf(a)}
           </span>
-        )}
+        ))}
         {due && (
           <span className={overdue ? "font-medium text-red-600" : "text-neutral-500 dark:text-neutral-400"}>
             {due.toISOString().slice(0, 10)}

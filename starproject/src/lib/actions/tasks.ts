@@ -10,7 +10,7 @@ import {
   priorityLabel,
   recordActivity,
   subteamLabel,
-  userLabel,
+  usersLabel,
 } from "@/lib/activity";
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
@@ -20,12 +20,13 @@ import { getCurrentDbUser } from "@/lib/user";
 import {
   TaskPriorityEnum,
   TaskStatusEnum,
+  csvToIds,
   taskCreateSchema,
 } from "@/lib/validation";
 
 // What updateTask / moveTask re-read so activities can render human values.
 const withNames = {
-  assignee: { select: { name: true, email: true, displayName: true } },
+  assignees: { select: { id: true, name: true, email: true, displayName: true } },
   subteam: { select: { name: true } },
 } as const;
 
@@ -36,7 +37,7 @@ export async function createTask(formData: FormData) {
     title: formData.get("title"),
     description: formData.get("description"),
     priority: formData.get("priority"),
-    assigneeId: formData.get("assigneeId"),
+    assigneeIds: formData.get("assigneeIds"),
     subteamId: formData.get("subteamId"),
     startDate: formData.get("startDate"),
     dueDate: formData.get("dueDate"),
@@ -47,7 +48,9 @@ export async function createTask(formData: FormData) {
       title: data.title,
       description: data.description,
       priority: data.priority,
-      assigneeId: data.assigneeId,
+      assignees: data.assigneeIds.length
+        ? { connect: data.assigneeIds.map((id) => ({ id })) }
+        : undefined,
       subteamId: data.subteamId,
       startDate: data.startDate,
       dueDate: data.dueDate,
@@ -67,8 +70,7 @@ export async function createTask(formData: FormData) {
   revalidatePath("/tasks");
   revalidatePath("/activity");
 
-  if (data.assigneeId) {
-    const assigneeId = data.assigneeId;
+  for (const assigneeId of data.assigneeIds) {
     after(() =>
       notifyAssignment({ taskId: created.id, assigneeId, actorId: user.id }),
     );
@@ -111,6 +113,10 @@ export async function updateTask(formData: FormData) {
     const v = String(formData.get("description") ?? "").trim();
     data.description = v === "" ? null : v;
   }
+  if (formData.has("blockedNote")) {
+    const v = String(formData.get("blockedNote") ?? "").trim();
+    data.blockedNote = v === "" ? null : v;
+  }
   if (formData.has("status")) {
     data.status = TaskStatusEnum.parse(formData.get("status"));
   }
@@ -118,9 +124,9 @@ export async function updateTask(formData: FormData) {
     const v = formData.get("priority");
     data.priority = v === "" || v == null ? null : TaskPriorityEnum.parse(v);
   }
-  if (formData.has("assigneeId")) {
-    const v = formData.get("assigneeId");
-    data.assignee = v ? { connect: { id: String(v) } } : { disconnect: true };
+  if (formData.has("assigneeIds")) {
+    const ids = csvToIds(formData.get("assigneeIds"));
+    data.assignees = { set: ids.map((id) => ({ id })) };
   }
   if (formData.has("subteamId")) {
     const v = formData.get("subteamId");
@@ -167,8 +173,13 @@ export async function updateTask(formData: FormData) {
     old.dueDate?.getTime() !== task.dueDate?.getTime()
   )
     await log("due", dateLabel(old.dueDate), dateLabel(task.dueDate));
-  if (formData.has("assigneeId") && old.assigneeId !== task.assigneeId)
-    await log("assignee", userLabel(old.assignee), userLabel(task.assignee));
+  const oldAssigneeIds = old.assignees.map((a) => a.id);
+  const newAssigneeIds = task.assignees.map((a) => a.id);
+  const assigneesChanged =
+    oldAssigneeIds.length !== newAssigneeIds.length ||
+    oldAssigneeIds.some((id) => !newAssigneeIds.includes(id));
+  if (formData.has("assigneeIds") && assigneesChanged)
+    await log("assignee", usersLabel(old.assignees), usersLabel(task.assignees));
   if (formData.has("subteamId") && old.subteamId !== task.subteamId)
     await log(
       "subteam",
@@ -178,21 +189,20 @@ export async function updateTask(formData: FormData) {
 
   revalidatePath("/activity");
 
-  if (task.assigneeId && task.assigneeId !== old.assigneeId) {
-    const newAssigneeId = task.assigneeId;
+  // Notify only the newly-added assignees (not those who were already on it).
+  const addedAssigneeIds = newAssigneeIds.filter(
+    (id) => !oldAssigneeIds.includes(id),
+  );
+  for (const assigneeId of addedAssigneeIds) {
     after(() =>
-      notifyAssignment({
-        taskId: task.id,
-        assigneeId: newAssigneeId,
-        actorId: user.id,
-      }),
+      notifyAssignment({ taskId: task.id, assigneeId, actorId: user.id }),
     );
   }
 }
 
 export async function deleteTask(formData: FormData) {
   const user = await getCurrentDbUser();
-  if (!isAdmin(user.email))
+  if (!(await isAdmin(user.email)))
     throw new Error("Only admins can delete tasks.");
   const id = String(formData.get("id"));
   const task = await prisma.task.delete({ where: { id } });

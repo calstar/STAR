@@ -9,7 +9,7 @@ import { subteamCreateSchema } from "@/lib/validation";
 
 export async function createSubteam(formData: FormData) {
   const user = await getCurrentDbUser();
-  if (!isAdmin(user.email))
+  if (!(await isAdmin(user.email)))
     throw new Error("Only admins can create subteams.");
   const data = subteamCreateSchema.parse({
     name: formData.get("name"),
@@ -22,7 +22,7 @@ export async function createSubteam(formData: FormData) {
 
 export async function updateSubteam(formData: FormData) {
   const user = await getCurrentDbUser();
-  if (!isAdmin(user.email))
+  if (!(await isAdmin(user.email)))
     throw new Error("Only admins can edit subteams.");
   const id = String(formData.get("id"));
   const data = subteamCreateSchema.parse({
@@ -41,7 +41,7 @@ export async function updateSubteam(formData: FormData) {
 
 export async function deleteSubteam(formData: FormData) {
   const user = await getCurrentDbUser();
-  if (!isAdmin(user.email))
+  if (!(await isAdmin(user.email)))
     throw new Error("Only admins can delete subteams.");
   const id = String(formData.get("id"));
   // Optional relation → tasks' subteamId is set null (they aren't deleted).

@@ -5,6 +5,7 @@ import {
 } from "@/components/TasksWorkspace";
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
+import { displayNameOf } from "@/lib/names";
 import { getSubteams } from "@/lib/subteams";
 import { getCurrentDbUser, getTeamUsers } from "@/lib/user";
 
@@ -24,7 +25,9 @@ export default async function TasksPage({
           select: { id: true, name: true, parent: { select: { name: true } } },
         },
         subteam: { select: { id: true, name: true } },
-        assignee: true,
+        assignees: {
+          select: { id: true, name: true, email: true, displayName: true },
+        },
         blockedBy: {
           include: {
             blockedByTask: { select: { id: true, title: true, status: true } },
@@ -51,7 +54,7 @@ export default async function TasksPage({
         ? `${project.parent.name} › ${project.name}`
         : project.name,
       subteamName: sub?.name ?? "",
-      assigneeName: t.assignee?.name ?? t.assignee?.email ?? "",
+      assigneeName: t.assignees.map((a) => displayNameOf(a)).join(", "),
     };
   });
 
@@ -76,7 +79,7 @@ export default async function TasksPage({
           projects={projectOptions}
           subteams={subteams}
           users={users}
-          admin={isAdmin(me.email)}
+          admin={await isAdmin(me.email)}
           currentUserId={me.id}
           initialSubteam={subteam}
           initialMine={mine === "1"}
