@@ -43,29 +43,50 @@ points_per_second = 20
 tabs = [ "unified", "boards", "config", "session" ]
 
   [[gui.pressure_bars]]
-  label = "asdf"
+  label = "FF Vent"
   role = "Fuel Fill Vent"
   limits = ""
-  color = "#888888"
+  color = "#ff0000"
 
   [[gui.pressure_bars]]
-  label = "NEW"
+  label = "Fuel Up"
   role = "Fuel Upstream"
   limits = "Fuel_Upstream"
-  color = "#888888"
+  color = "#00ff2a"
 
   [[gui.pressure_bars]]
-  label = "NEW"
-  role = ""
+  label = "Dome CTRL"
+  role = "Dome CTRL"
   limits = ""
-  color = "#888888"
+  color = "#fff700"
 
-# Explicit sensor→page membership (replaces role-name substring parsing in the plot pages).
-# Group name → ordered list of sensor role names; array order = display order on that page.
-# Roles must match the [sensor_roles_*] names. Sensors only for now.
-[gui.groups]
-LOX = [ "LOX Upper", "LOX Mid", "LOX Lower", "COPV RTD" ]
-Fuel = [ "Fuel Upstream" ]
+  [[gui.pressure_bars]]
+  label = "Dome Mid"
+  role = "Dome Mid"
+  limits = ""
+  color = "#4c00ff"
+
+  [[gui.pressure_bars]]
+  label = "GN2 High"
+  role = "GN2 High"
+  limits = "GN2_High"
+  color = "#fb00ff"
+
+  [[gui.pressure_bars]]
+  label = "High Press"
+  role = "High Press"
+  limits = ""
+  color = "#00ffd5"
+
+  [[gui.pressure_bars]]
+  label = "Low Press"
+  role = "Low Press"
+  limits = ""
+  color = "#ff0088"
+
+  [gui.groups]
+  LOX = [ "LOX Upper", "LOX Mid", "LOX Lower", "COPV RTD" ]
+  Fuel = [ "Fuel Upstream" ]
 
 [time_sync]
 mode = "board-clock"
@@ -284,6 +305,7 @@ active_connectors = [ 1, 2 ]
 "Fuel Fill Vent" = 1
 "Fuel Upstream" = 2
 "Dome CTRL" = 3
+"Low Press" = 4
 
 [abort_pts]
 "Fuel Upstream" = 400
@@ -560,39 +582,12 @@ absolute_drift_threshold_psi = 2
 consensus_threshold_psi = 1
 consensus_update_rate = 0.1
 
-[actuator_roles]
-"Dome CTRL" = ["NC", 1, 12]
-"Fuel Fill Press" = ["NC", 2, 12]
-"High Press Vent" = ["NC", 3, 12]
-"Fuel Upstream" = ["NC", 1, 14]
-"High Press CTRL" = ["NC", 2, 14]
-"Dome CTRL Vent" = ["NC", 3, 14]
-"Fuel Main" = ["NC", 4, 14]
-
 [logs]
 backend_udp_port = 8092
 
 [fire]
-# Which state is the burn, and where its timer lands when it expires. Names, not enum positions —
-# ControllerService used to gate PWM ignition on the literal `state_val == 16` and the sequencer
-# stringified State::ARMED to find its landing state, so a rename or renumber broke ignition
-# silently. expiry_target must be reachable from state in state_transitions.csv.
 state = "Fire"
 expiry_target = "Armed"
-# duration_ms / extended_ms deliberately omitted: the sequencer prefers them over
-# [controller_service].fire_duration_ms / fire_extended_ms, which is where the GUI edits them.
-
-# partial list cannot erase the state machine's knowledge of its own states.
-#
-# Flags carry the semantics that used to be enum comparisons in C++:
-#   is_boot   the state the sequencer starts in
-#   is_abort  triggers the physical UDP abort broadcast, and skips actuator delays
-#   panel_row / panel_col  position on the State Machine control panel. Operators arrange these
-#                          by dragging on the panel itself while no session is running; a state
-#                          with no coordinates simply is not shown there (17, 18 and 20 live in
-#                          the top bar instead).
-# (which state fires, and where its timer lands, live in [fire] above)
-
 
 [[states]]
 id = 1
@@ -711,3 +706,12 @@ id = 20
 name = "Press Standby"
 panel_row = 2
 panel_col = 0
+
+[actuator_roles]
+"Dome CTRL" = ["NO", 1, 14]
+"Fuel Fill Press" = ["NC", 2, 14]
+"High Press Vent" = ["NC", 3, 14]
+"Fuel Upstream" = ["NC", 1, 12]
+"High Press CTRL" = ["NC", 2, 12]
+"Dome CTRL Vent" = ["NC", 3, 12]
+"Fuel Main" = ["NC", 5, 12]
