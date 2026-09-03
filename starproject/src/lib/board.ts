@@ -2,13 +2,16 @@ import type { Task, TaskStatus } from "@prisma/client";
 
 import { isBlocked } from "@/lib/tasks";
 
+// The minimal user shape the cards/pickers need to render a person's name.
+export type AssigneeLite = {
+  id: string;
+  name: string | null;
+  email: string;
+  displayName: string | null;
+};
+
 export type BoardTask = Task & {
-  assignee: {
-    id: string;
-    name: string | null;
-    email: string;
-    displayName: string | null;
-  } | null;
+  assignees: AssigneeLite[];
   blockedBy?: { blockedByTask: { id: string; title: string; status: TaskStatus } }[];
   // Set when a task shown in a parent project actually belongs to a subproject,
   // so the card/row can indicate which one.
@@ -17,6 +20,7 @@ export type BoardTask = Task & {
 
 // A task enriched with the display names the list table and filters need. A
 // superset of BoardTask, so it's accepted anywhere BoardTask is (Board, Gantt).
+// `assigneeName` is the joined display names of every assignee (for search/sort).
 export type WorkspaceTask = BoardTask & {
   projectName: string;
   subteamName: string;
@@ -24,7 +28,7 @@ export type WorkspaceTask = BoardTask & {
 };
 
 // The flat row shape the shared list table renders. Carries the raw values the
-// inline editors need (status/priority/assigneeId/due) plus display names.
+// inline editors need (status/priority/assigneeIds/due) plus display names.
 export type TaskRowData = {
   id: string;
   title: string;
@@ -32,7 +36,7 @@ export type TaskRowData = {
   projectName: string;
   status: TaskStatus;
   priority: string;
-  assigneeId: string;
+  assigneeIds: string[];
   assigneeName: string;
   subteamId: string;
   subteamName: string;
@@ -51,7 +55,7 @@ export function toRowData(t: WorkspaceTask): TaskRowData {
     projectName: t.projectName,
     status: t.status,
     priority: t.priority ?? "",
-    assigneeId: t.assigneeId ?? "",
+    assigneeIds: t.assignees.map((a) => a.id),
     assigneeName: t.assigneeName,
     subteamId: t.subteamId ?? "",
     subteamName: t.subteamName,

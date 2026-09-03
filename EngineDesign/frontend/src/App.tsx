@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ConfigUpload } from './components/ConfigUpload';
 import { ConfigEditor } from './components/ConfigEditor';
 import { ForwardMode } from './components/ForwardMode';
@@ -64,6 +64,16 @@ function App() {
     emitConfigChanged(newConfig); // uploading a different-injector config also refreshes dependent UI
   };
 
+  // Stable identity is load-bearing: DesignVersions.apply -> openDoc -> its
+  // bootstrap effect all depend on this via useCallback, and the effect calls
+  // setConfig. An inline arrow here mints a new identity every render, so the
+  // effect re-runs on its own setConfig and the app fetches in a tight loop
+  // forever (the "stuck on Connecting…" hang). useCallback([]) breaks the cycle.
+  const handleRestore = useCallback((c: EngineConfig) => {
+    setConfig(c);
+    emitConfigChanged(c);
+  }, []);
+
   return (
     <div className="min-h-screen bg-[var(--color-bg-primary)]">
       {/* Header */}
@@ -102,7 +112,7 @@ function App() {
               design you are on sits with the rest of the app chrome. */}
           <div className="border-t border-[var(--color-border)]">
             <DesignVersions
-              onRestore={(c) => { setConfig(c); emitConfigChanged(c); }}
+              onRestore={handleRestore}
               onEditableChange={setEditable}
               inline
             />
