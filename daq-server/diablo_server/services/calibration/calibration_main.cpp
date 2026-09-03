@@ -50,6 +50,7 @@
 #include "calibration/SensorCalibration.hpp"
 #include "comms/messages/sensor/CalibratedPTMessage.hpp"
 #include "comms/messages/sensor/CalibratedSensorMessages.hpp"
+#include "config/Config.hpp"
 #include "config/LoadActiveBoards.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
@@ -472,70 +473,15 @@ int main(int argc, char* argv[]) {
                   << board.sense_resistor_ohms << " ohm shunt)" << std::endl;
     }
 
-    // Parse [calibration.tc], [calibration.rtd], [calibration.lc] for default formula params
-    double tc_adc_ref_voltage = 2.5;
-    double rtd_adc_ref_voltage = 2.5;
-    double rtd_excitation_ua = 1000.0;
-    double rtd_r0_ohm = 1000.0;  // Pt1000
-    double lc_sensitivity_mv_per_v = 2.0;
-    double lc_pga_gain = 32.0;
-    double lc_full_scale_value = 300.0;  // kg
-    {
-        std::ifstream cfg3(config_path);
-        if (cfg3.is_open()) {
-            std::string line, section;
-            while (std::getline(cfg3, line)) {
-                size_t c = line.find('#');
-                if (c != std::string::npos)
-                    line = line.substr(0, c);
-                while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
-                    line.pop_back();
-                size_t start = line.find_first_not_of(" \t");
-                if (start != std::string::npos)
-                    line = line.substr(start);
-                if (line.empty())
-                    continue;
-                if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
-                    section = line.substr(1, line.size() - 2);
-                    continue;
-                }
-                size_t eq = line.find('=');
-                if (eq == std::string::npos)
-                    continue;
-                std::string key = line.substr(0, eq);
-                while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
-                    key.pop_back();
-                std::string val = line.substr(eq + 1);
-                while (!val.empty() && (val[0] == ' ' || val[0] == '\t'))
-                    val.erase(0, 1);
-                // Remove trailing quotes if present
-                if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
-                    val = val.substr(1, val.size() - 2);
-
-                try {
-                    if (section == "calibration.tc") {
-                        if (key == "adc_ref_voltage")
-                            tc_adc_ref_voltage = std::stod(val);
-                    } else if (section == "calibration.rtd") {
-                        if (key == "adc_ref_voltage")
-                            rtd_adc_ref_voltage = std::stod(val);
-                        else if (key == "excitation_ua")
-                            rtd_excitation_ua = std::stod(val);
-                        else if (key == "r0_ohm")
-                            rtd_r0_ohm = std::stod(val);
-                    } else if (section == "calibration.lc") {
-                        if (key == "sensitivity_mv_per_v")
-                            lc_sensitivity_mv_per_v = std::stod(val);
-                        else if (key == "pga_gain")
-                            lc_pga_gain = std::stod(val);
-                        else if (key == "full_scale_value")
-                            lc_full_scale_value = std::stod(val);
-                    }
-                } catch (...) {
-                }
-            }
-        }
-    }
+    // [calibration.tc/.rtd/.lc] default formula params, via fsw::config (toml++).
+    const fsw::config::Config cal_cfg = fsw::config::load(config_path);
+    const double tc_adc_ref_voltage = cal_cfg.calibration.tc_adc_ref_voltage;
+    const double rtd_adc_ref_voltage = cal_cfg.calibration.rtd_adc_ref_voltage;
+    const double rtd_excitation_ua = cal_cfg.calibration.rtd_excitation_ua;
+    const double rtd_r0_ohm = cal_cfg.calibration.rtd_r0_ohm;  // Pt1000
+    const double lc_sensitivity_mv_per_v = cal_cfg.calibration.lc_sensitivity_mv_per_v;
+    const double lc_pga_gain = cal_cfg.calibration.lc_pga_gain;
+    const double lc_full_scale_value = cal_cfg.calibration.lc_full_scale_value;  // kg
     std::cout << "[Calibration] TC default:  ITS-90 K-type, Vref=" << tc_adc_ref_voltage << "V"
               << std::endl;
     std::cout << "[Calibration] RTD default: CVD Pt" << (int)rtd_r0_ohm
