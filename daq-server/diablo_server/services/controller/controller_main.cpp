@@ -30,6 +30,7 @@
 #include <string>
 #include <thread>
 
+#include "config/Config.hpp"
 #include "control/ControllerService.hpp"
 #include "control/RobustDDPController.hpp"
 #include "control/StateMachine.hpp"
@@ -307,57 +308,41 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    const fsw::config::Config cfg = fsw::config::load(config_path);
+
     // ── Extract settings from config ───────────────────────────────────
     fsw::control::ControllerService::PWMConfig pwm;
 
-    // Build board_id → IP map from [boards.xxx] sections (uses discovery if available)
-    auto board_ip_map = buildBoardIpMap(config_content, config_path);
-
-    // Read actuator_cmd_port from [network] (boards listen on this for commands)
-    {
-        std::string v = getTomlValue(config_content, "network", "actuator_cmd_port", "5005");
-        pwm.actuator_port = static_cast<uint16_t>(std::atoi(v.c_str()));
+    // board_id → IP from [boards.*] (non-empty ip, first wins); last-resort subnet defaults.
+    std::map<int, std::string> board_ip_map;
+    for (const auto& b : cfg.boards)
+        if (!b.ip.empty() && b.board_id > 0 && !board_ip_map.count(b.board_id))
+            board_ip_map[b.board_id] = b.ip;
+    if (board_ip_map.empty()) {
+        board_ip_map[11] = "192.168.2.11";
+        board_ip_map[12] = "192.168.2.12";
+        board_ip_map[13] = "192.168.2.13";
+        board_ip_map[14] = "192.168.2.14";
     }
+
+    pwm.actuator_port = cfg.network.actuator_cmd_port;
 
     // Parse [actuator_roles] to find Fuel Press and LOX Press channels/boards
     {
         int fuel_channel = 3, fuel_board_id = 12;
         int lox_channel = 8, lox_board_id = 12;
-        bool found_fuel = false, found_lox = false;
 
-        std::string current_section;
-        std::istringstream cfg(config_content);
-        std::string line;
-        while (std::getline(cfg, line)) {
-            auto c = line.find('#');
-            if (c != std::string::npos)
-                line = line.substr(0, c);
-            if (line.size() >= 2 && line[0] == '[') {
-                size_t end = line.find(']');
-                current_section = (end != std::string::npos) ? line.substr(1, end - 1) : "";
-                continue;
-            }
-            if (current_section != "actuator_roles")
-                continue;
-            auto eq = line.find('=');
-            if (eq == std::string::npos)
-                continue;
-            std::string key = trim(line.substr(0, eq));
-            std::string val = trim(line.substr(eq + 1));
-            int ch = 0, bid = 0;
-            bool is_no = false;
-            parseActuatorRole(val, ch, bid, is_no);
-            if (ch < 1)
-                continue;
-            if (key == "Fuel Press") {
-                fuel_channel = ch;
-                fuel_board_id = bid;
-                found_fuel = true;
-            } else if (key == "LOX Press") {
-                lox_channel = ch;
-                lox_board_id = bid;
-                found_lox = true;
-            }
+        auto fit = cfg.actuator_roles.find("Fuel Press");
+        auto lit = cfg.actuator_roles.find("LOX Press");
+        const bool found_fuel = fit != cfg.actuator_roles.end() && fit->second.channel >= 1;
+        const bool found_lox = lit != cfg.actuator_roles.end() && lit->second.channel >= 1;
+        if (found_fuel) {
+            fuel_channel = fit->second.channel;
+            fuel_board_id = fit->second.board_id;
+        }
+        if (found_lox) {
+            lox_channel = lit->second.channel;
+            lox_board_id = lit->second.board_id;
         }
 
         if (!found_fuel)
@@ -388,50 +373,31 @@ int main(int argc, char* argv[]) {
         pwm.actuator_board_ip = fuel_ip;
     }
 
-    // Controller loop / PWM settings from [controller] section
-    double loop_hz = 10.0;
-    {
-        std::string v;
-        v = getTomlValue(config_content, "controller", "pwm_frequency_hz", "10.0");
-        pwm.frequency_hz = static_cast<float>(std::atof(v.c_str()));
+    // Controller loop / PWM settings from [controller].
+    pwm.frequency_hz = static_cast<float>(cfg.controller.pwm_frequency_hz);
+    pwm.duration_ms = cfg.controller.pwm_duration_ms;
+    double loop_hz = cfg.controller.controller_loop_hz;
 
-        v = getTomlValue(config_content, "controller", "pwm_duration_ms", "10000");
-        pwm.duration_ms = static_cast<uint32_t>(std::atoi(v.c_str()));
-
-        v = getTomlValue(config_content, "controller", "controller_loop_hz", "10.0");
-        loop_hz = std::atof(v.c_str());
-    }
-
-    if (!elodin_host_from_cli) {
-        std::string db_host = getTomlValue(config_content, "database", "host", "127.0.0.1");
-        if (!db_host.empty())
-            elodin_host = db_host;
-    }
-    if (!elodin_port_from_cli) {
-        std::string db_port_str = getTomlValue(config_content, "database", "port", "2240");
-        if (!db_port_str.empty())
-            elodin_port = static_cast<uint16_t>(std::atoi(db_port_str.c_str()));
-    }
+    // Precedence: defaults < config < CLI (--elodin-host/--elodin-port).
+    if (!elodin_host_from_cli)
+        elodin_host = cfg.database.host;
+    if (!elodin_port_from_cli)
+        elodin_port = cfg.database.port;
     if (elodin_host.empty())
         elodin_host = "127.0.0.1";
     if (elodin_port == 0)
         elodin_port = 2240;
 
-    // Read control port from [controller_service].port (FIRE_START / FIRE_STOP TCP gate)
-    if (control_port == 0) {
-        std::string cp = getTomlValue(config_content, "controller_service", "port", "9999");
-        if (!cp.empty())
-            control_port = static_cast<uint16_t>(std::atoi(cp.c_str()));
-        if (control_port == 0)
-            control_port = 9999;
-    }
+    // Control port from [controller_service].port (FIRE_START / FIRE_STOP TCP gate); --control-port
+    // wins.
+    if (control_port == 0)
+        control_port = cfg.controller_service.port;
 
     // Controller algorithm config (using defaults from RobustDDPController.hpp)
     fsw::control::RobustDDPController::Config ctrl_cfg;
     // Override safety constraint from config (0 = disabled, useful for simulation)
     {
-        std::string v = getTomlValue(config_content, "controller", "P_copv_min_pa", "0");
-        double pmin = std::atof(v.c_str());
+        double pmin = cfg.controller.P_copv_min_pa;
         ctrl_cfg.P_copv_min = pmin;  // 0 disables the check; real hotfire sets >0
         if (pmin == 0.0)
             std::cout << "  P_copv_min:     disabled (0)" << std::endl;
@@ -468,7 +434,7 @@ int main(int argc, char* argv[]) {
     // Which sequencer state id means "firing", for the parity fallback that watches the sequencer
     // state packet. Config, not a literal — see ControllerService::setFireStateId.
     {
-        const std::string fire_state = getTomlValue(config_content, "fire", "state", "");
+        const std::string fire_state = cfg.fire.state;
         if (!fire_state.empty()) {
             const uint8_t id = sequencer::StateMachine::stateId(fire_state);
             if (id != 255) {
@@ -482,11 +448,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    std::string lut_path_raw = !lut_path_cli.empty()
-                                   ? lut_path_cli
-                                   : getTomlValue(config_content, "controller", "lut_path", "");
-    std::string thrust_curve_path_raw =
-        getTomlValue(config_content, "controller", "thrust_curve_path", "");
+    std::string lut_path_raw = !lut_path_cli.empty() ? lut_path_cli : cfg.controller.lut_path;
+    std::string thrust_curve_path_raw = cfg.controller.thrust_curve_path;
     std::string lut_path = resolveConfigPath(config_path, lut_path_raw);
     std::string thrust_curve_path = resolveConfigPath(config_path, thrust_curve_path_raw);
     if (!lut_path.empty())
@@ -515,12 +478,8 @@ int main(int argc, char* argv[]) {
     // ── Optional open-loop test duty (fallback_fuel/ox_duty_cycle from config) ──
     // When non-zero this bypasses the DDP controller so you can validate UDP PWM delivery.
     {
-        float td_f = 0.0f, td_o = 0.0f;
-        std::string v;
-        v = getTomlValue(config_content, "controller", "fallback_fuel_duty_cycle", "0");
-        td_f = static_cast<float>(std::atof(v.c_str()));
-        v = getTomlValue(config_content, "controller", "fallback_ox_duty_cycle", "0");
-        td_o = static_cast<float>(std::atof(v.c_str()));
+        float td_f = static_cast<float>(cfg.controller.fallback_fuel_duty_cycle);
+        float td_o = static_cast<float>(cfg.controller.fallback_ox_duty_cycle);
         if (td_f > 0.0f || td_o > 0.0f)
             service.setTestDuty(td_f, td_o);
     }
