@@ -1,0 +1,713 @@
+[system]
+mode = "GROUND"
+state = "GSE"
+
+[network]
+bind_ip = "0.0.0.0"
+sensor_port = 5006
+actuator_cmd_port = 5005
+buffer_size = 1024
+
+[server_heartbeat]
+interval_ms = 200
+broadcast_port = 5005
+broadcast_ip = "192.168.2.255"
+
+[heartbeat_service]
+enabled = true
+backend_url = "http://127.0.0.1:8082"
+interval_ms = 200
+broadcast_ip = "192.168.2.255"
+broadcast_port = 5005
+
+[config_broadcast_service]
+enabled = true
+backend_url = "http://127.0.0.1:8082"
+interval_ms = 1000
+
+[data_logger_service]
+enabled = true
+ws_url = "ws://127.0.0.1:8081"
+
+[database]
+host = "127.0.0.1"
+port = 2240
+auto_flush_interval_ms = 100
+max_buffer_size = 4096
+connection_retry_attempts = 3
+connection_retry_delay_ms = 1000
+
+[gui]
+downsample_mode = "envelope"
+points_per_second = 20
+tabs = [ "unified", "boards", "config", "session" ]
+
+  [[gui.pressure_bars]]
+  label = "asdf"
+  role = "Fuel Fill Vent"
+  limits = ""
+  color = "#888888"
+
+  [[gui.pressure_bars]]
+  label = "NEW"
+  role = "Fuel Upstream"
+  limits = "Fuel_Upstream"
+  color = "#888888"
+
+  [[gui.pressure_bars]]
+  label = "NEW"
+  role = ""
+  limits = ""
+  color = "#888888"
+
+# Explicit sensor→page membership (replaces role-name substring parsing in the plot pages).
+# Group name → ordered list of sensor role names; array order = display order on that page.
+# Roles must match the [sensor_roles_*] names. Sensors only for now.
+[gui.groups]
+LOX = [ "LOX Upper", "LOX Mid", "LOX Lower", "COPV RTD" ]
+Fuel = [ "Fuel Upstream" ]
+
+[time_sync]
+mode = "board-clock"
+window_seconds = 10
+max_plausible_gap_s = 60
+max_batch_age_s = 5
+resync_threshold_ms = 1000
+log_interval_s = 10
+
+[adc]
+internal_v = 2.5
+vdd_nominal_v = 5
+absolute_5v_v = 5
+
+[discovery]
+enabled = true
+network_interface = "auto"
+mode = "hybrid"
+subnet = "192.168.2.0/24"
+ip_range_start = 100
+ip_range_end = 150
+discovery_timeout_seconds = 30
+
+[boards.pt_board]
+type = "PT"
+ip = "192.168.2.21"
+send_port = 5005
+num_sensors = 10
+board_id = 21
+enabled = true
+enable_serial_printing = false
+voltage_reference = 1
+necessary_for_abort = true
+designated_survivor = false
+active_connectors = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
+
+[boards.pt_board_2]
+type = "PT"
+ip = "192.168.2.22"
+send_port = 5005
+num_sensors = 10
+board_id = 22
+enabled = true
+enable_serial_printing = true
+voltage_reference = 0
+adc_ref_voltage = 2.5
+active_connectors = [ 1, 2, 3, 4 ]
+hp_pt_connectors = [ 1, 3, 4 ]
+excitation_connector_id = 2
+hp_pt_full_scale_psi = 5000
+hp_pt_sense_resistor_ohms = 120
+excitation_divider_attenuation = 0.0762
+
+[boards.actuator_board]
+type = "ACTUATOR"
+ip = "192.168.2.11"
+send_port = 5005
+listen_port = 5005
+num_actuators = 10
+num_sensors = 10
+board_id = 11
+enabled = false
+enable_serial_printing = true
+necessary_for_abort = false
+voltage_reference = 0
+
+[boards.actuator_board_2]
+type = "ACTUATOR"
+ip = "192.168.2.12"
+send_port = 5005
+listen_port = 5005
+num_actuators = 10
+num_sensors = 10
+board_id = 12
+enabled = true
+enable_serial_printing = true
+designated_survivor = true
+necessary_for_abort = false
+voltage_reference = 0
+
+[boards.actuator_board_3]
+type = "ACTUATOR"
+ip = "192.168.2.13"
+send_port = 5005
+listen_port = 5005
+num_actuators = 10
+num_sensors = 10
+board_id = 13
+enabled = false
+enable_serial_printing = true
+necessary_for_abort = false
+voltage_reference = 0
+
+[boards.actuator_board_4]
+type = "ACTUATOR"
+ip = "192.168.2.14"
+send_port = 5005
+listen_port = 5005
+num_actuators = 10
+num_sensors = 10
+board_id = 14
+enabled = true
+enable_serial_printing = true
+necessary_for_abort = false
+voltage_reference = 0
+
+[boards.lc_board]
+type = "LC"
+ip = "192.168.2.41"
+send_port = 5005
+num_sensors = 4
+board_id = 41
+enabled = false
+enable_serial_printing = true
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 1
+active_connectors = [ 1, 2, 3 ]
+
+[boards.lc_board_2]
+type = "LC"
+ip = "192.168.2.42"
+send_port = 5005
+num_sensors = 4
+board_id = 42
+enabled = true
+enable_serial_printing = true
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 0
+active_connectors = [ 1, 2, 6 ]
+
+[boards.tc_board]
+type = "TC"
+ip = "192.168.2.51"
+send_port = 5005
+num_sensors = 10
+board_id = 51
+enabled = true
+enable_serial_printing = true
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 0
+active_connectors = [ 2, 3, 4, 5 ]
+
+[boards.tc_board_2]
+type = "TC"
+ip = "192.168.2.52"
+send_port = 5005
+num_sensors = 10
+board_id = 52
+enabled = false
+enable_serial_printing = true
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 0
+active_connectors = [ ]
+
+[boards.rtd_board]
+type = "RTD"
+ip = "192.168.2.31"
+send_port = 5005
+num_sensors = 4
+board_id = 31
+enabled = true
+enable_serial_printing = true
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 0
+active_connectors = [ 1, 2, 3, 4 ]
+
+[boards.rtd_board_2]
+type = "RTD"
+ip = "192.168.2.32"
+send_port = 5005
+num_sensors = 4
+board_id = 32
+enabled = false
+enable_serial_printing = true
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 0
+active_connectors = [ ]
+
+[boards.encoder_board]
+type = "ENCODER"
+ip = "192.168.2.61"
+send_port = 5005
+listen_port = 5005
+num_sensors = 2
+board_id = 61
+enabled = true
+enable_serial_printing = false
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 1
+active_connectors = [ 1, 2 ]
+
+[sim_pt_targets]
+1 = 500
+2 = 450
+3 = 480
+4 = 400
+5 = 500
+6 = 4000
+7 = 480
+8 = 400
+9 = 380
+10 = 380
+11 = 3500
+12 = 24
+13 = 1000
+14 = 4000
+
+[sensor_roles_pt_board]
+"Fuel Fill Vent" = 1
+"Fuel Upstream" = 2
+"Dome CTRL" = 3
+
+[abort_pts]
+"Fuel Upstream" = 400
+"Ox Upstream" = 400
+
+[sensor_roles_rtd_board]
+"COPV RTD" = 1
+"LOX Upper" = 2
+"LOX Mid" = 3
+"LOX Lower" = 4
+
+[sensor_roles_tc_board]
+"Chamber Mid TC 1" = 2
+"Chamber Mid TC 2" = 3
+"Chamber Throat TC 1" = 4
+"Chamber Throat TC 2" = 5
+
+[sensor_roles_pt_board_2]
+"GN2 High" = 1
+"Excitation V" = 2
+"Dome Mid" = 3
+"High Press" = 4
+
+[sensor_roles_encoder_board]
+"Encoder 1" = 1
+"Encoder 2" = 2
+
+[actuator_abbrev]
+FV = "Fuel Vent"
+OV = "LOX Vent"
+FP = "Fuel Press"
+OP = "LOX Press"
+FM = "Fuel Main"
+OM = "LOX Main"
+FF = "Fuel Fill"
+
+[actuator_service]
+port = 9998
+bind_address = "0.0.0.0"
+
+[controller_service]
+port = 9999
+fire_duration_ms = 6000
+fire_extended_ms = 10000
+
+[routing.pt_raw]
+packet_id = [ 32, 0 ]
+channels = 14
+description = "Raw PT ADC counts — 0x01..0x0E (board1: 1-7, board2+offset10: 11-14)"
+
+[routing.pt_calibrated]
+packet_id = [ 32, 16 ]
+channels = 30
+description = "Calibrated PT pressure (PSI) — 0x11..0x1E (board1: 0x11-0x17, board2: 0x1B-0x1E)"
+
+[routing.tc_raw]
+packet_id = [ 33, 0 ]
+channels = 20
+description = "Raw TC ADC counts"
+
+[routing.rtd_raw]
+packet_id = [ 34, 0 ]
+channels = 20
+description = "Raw RTD resistance counts"
+
+[routing.lc_raw]
+packet_id = [ 35, 0 ]
+channels = 20
+description = "Raw LC ADC counts"
+
+[routing.lc_calibrated]
+packet_id = [ 35, 16 ]
+channels = 20
+description = "Calibrated LC force"
+
+[routing.actuator_status]
+packet_id = [ 48, 0 ]
+channels = 20
+description = "Actuator current sense readings"
+
+[routing.actuator_cal]
+packet_id = [ 49, 0 ]
+channels = 20
+description = "Calibrated actuator current (amps) from calibration_service"
+
+[routing.encoder_raw]
+packet_id = [ 36, 0 ]
+channels = 2
+description = "Raw encoder angle (0-4095) — AS5600 12-bit"
+
+[daq_bridge]
+publish = [
+  "pt_raw",
+  "tc_raw",
+  "rtd_raw",
+  "lc_raw",
+  "actuator_status",
+  "actuator_cal",
+  "encoder_raw"
+]
+
+[calibration]
+enabled = true
+use_robust_stack = true
+exclude_hp_pt = true
+prior_from_polynomial = true
+
+  [calibration.orchestrator]
+  consensus_enabled = true
+  self_cal_alpha_threshold = 0.6
+  agreement_threshold = 0.6
+  min_points = 5
+  target_points = 15
+  max_points = 30
+  min_r_squared = 0.95
+  target_r_squared = 0.99
+  rls_forgetting_factor = 0.995
+  drift_glr_threshold = 3
+  auto_save_interval_sec = 300
+  status_interval_sec = 30
+
+  [calibration.pt]
+  json_dir = "scripts/calibration/calibrations"
+  csv_paths = [
+  "../firmware/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv"
+]
+
+  [calibration.tc]
+  json_dir = "scripts/calibration/calibrations/tc"
+  csv_paths = [ ]
+  adc_ref_voltage = 2.5
+
+  [calibration.rtd]
+  json_dir = "scripts/calibration/calibrations/rtd"
+  csv_paths = [ ]
+  r0_ohm = 1000
+  adc_ref_voltage = 2.5
+  excitation_ua = 1000
+
+  [calibration.lc]
+  json_dir = "scripts/calibration/calibrations/lc"
+  csv_paths = [ ]
+  sensitivity_mv_per_v = 2
+  pga_gain = 32
+  full_scale_value = 300
+
+  [calibration.sidecar]
+  enabled = true
+  host = "127.0.0.1"
+  port = 8100
+  relay_host = "127.0.0.1"
+  relay_port = 9090
+  reconnect_interval_ms = 5000
+  adc_forward_interval_ms = 200
+  write_interval_sec = 0.01
+  write_to_elodin = false
+
+  [calibration.environmental]
+  temperature = 25
+  humidity = 50
+  vibration = 0
+  aging_factor = 1
+  mounting_torque = 1
+  min_consensus_sensors = 2
+
+[pressure_limits.GN2_High]
+NOP = 4000
+MEOP = 5000
+POP = 1000
+
+[pressure_limits.GN2_Regulated]
+NOP = 900
+MEOP = 1250
+POP = 9000
+
+[pressure_limits.Fuel_Upstream]
+NOP = 540
+MEOP = 650
+POP = 750
+
+[pressure_limits.Fuel_Downstream]
+NOP = 540
+MEOP = 650
+POP = 750
+
+[pressure_limits.Ox_Upstream]
+NOP = 505
+MEOP = 650
+POP = 750
+
+[pressure_limits.Ox_Downstream]
+NOP = 505
+MEOP = 650
+POP = 750
+
+[pressure_limits.GSE_Low]
+NOP = 130
+MEOP = 155
+POP = 800
+
+[pressure_limits.GSE_Mid]
+NOP = 1500
+MEOP = 2000
+POP = 5000
+
+[pressure_limits.GSE_High]
+NOP = 4000
+MEOP = 5000
+POP = 800
+
+[pressure_limits.Chamber]
+NOP = 500
+MEOP = 650
+POP = 800
+
+[pressure_mappings]
+GN2 = 6
+ETH = 1
+LOX = 5
+
+[display]
+adc_bits = 32
+window_seconds = 26
+y_axis_min = 0
+y_axis_max = 700
+y_axis_autoscale = true
+only_show_actuators_with_roles = true
+only_show_pt_with_roles = true
+graph_ma_samples = 1
+display_ma_samples = 1
+
+[state_machine]
+actuator_csv = "config/state_machine_actuators.csv"
+actuator_delay_csv = "config/state_machine_actuator_delays.csv"
+transitions_csv = "config/state_transitions.csv"
+
+[controller]
+pwm_frequency_hz = 6
+pwm_duration_ms = 2000
+fallback_fuel_duty_cycle = 0
+fallback_ox_duty_cycle = 0
+controller_loop_hz = 100
+controller_service_url = "http://localhost:8000"
+controller_config_path = ""
+P_copv_min_pa = 0
+command_type = "THRUST_DESIRED"
+thrust_desired = 1000
+altitude_goal = 0
+pressure_fuel_target = 0
+pressure_ox_target = 0
+duty_sweep_enabled = false
+duty_sweep_step_duration_sec = 2
+duty_sweep_steps = [
+  [ 0.1, 0.1 ],
+  [ 0.3, 0.2 ],
+  [ 0.5, 0.4 ],
+  [ 0.3, 0.3 ],
+  [ 0.1, 0.1 ]
+]
+use_cpp_controller = true
+lut_path = "output/lut/controller_policy_fsw.bin"
+thrust_curve_path = "output/lut/thrust_curve.csv"
+engine_lut_path = "output/lut/engine_performance.npz"
+
+[phase2]
+enabled = false
+drift_threshold = 2
+process_noise = 0.000001
+ema_smoothing_alpha = 0.02
+forgetting_factor = 0.995
+save_interval_seconds = 300
+min_residuals_for_drift_check = 10
+absolute_drift_threshold_psi = 2
+consensus_threshold_psi = 1
+consensus_update_rate = 0.1
+
+[actuator_roles]
+"Dome CTRL" = ["NC", 1, 12]
+"Fuel Fill Press" = ["NC", 2, 12]
+"High Press Vent" = ["NC", 3, 12]
+"Fuel Upstream" = ["NC", 1, 14]
+"High Press CTRL" = ["NC", 2, 14]
+"Dome CTRL Vent" = ["NC", 3, 14]
+"Fuel Main" = ["NC", 4, 14]
+
+[logs]
+backend_udp_port = 8092
+
+[fire]
+# Which state is the burn, and where its timer lands when it expires. Names, not enum positions —
+# ControllerService used to gate PWM ignition on the literal `state_val == 16` and the sequencer
+# stringified State::ARMED to find its landing state, so a rename or renumber broke ignition
+# silently. expiry_target must be reachable from state in state_transitions.csv.
+state = "Fire"
+expiry_target = "Armed"
+# duration_ms / extended_ms deliberately omitted: the sequencer prefers them over
+# [controller_service].fire_duration_ms / fire_extended_ms, which is where the GUI edits them.
+
+# partial list cannot erase the state machine's knowledge of its own states.
+#
+# Flags carry the semantics that used to be enum comparisons in C++:
+#   is_boot   the state the sequencer starts in
+#   is_abort  triggers the physical UDP abort broadcast, and skips actuator delays
+#   panel_row / panel_col  position on the State Machine control panel. Operators arrange these
+#                          by dragging on the panel itself while no session is running; a state
+#                          with no coordinates simply is not shown there (17, 18 and 20 live in
+#                          the top bar instead).
+# (which state fires, and where its timer lands, live in [fire] above)
+
+
+[[states]]
+id = 1
+name = "Idle"
+panel_row = 0
+panel_col = 0
+is_boot = true
+
+[[states]]
+id = 2
+name = "Armed"
+panel_row = 1
+panel_col = 0
+
+[[states]]
+id = 3
+name = "Fuel Fill"
+panel_row = 1
+panel_col = 1
+
+[[states]]
+id = 4
+name = "Ox Fill"
+panel_row = 1
+panel_col = 2
+
+[[states]]
+id = 5
+name = "GN2 Low Press"
+panel_row = 2
+panel_col = 1
+
+[[states]]
+id = 6
+name = "GN2 Low Vent"
+panel_row = 3
+panel_col = 1
+
+[[states]]
+id = 7
+name = "Fuel Press"
+panel_row = 2
+panel_col = 2
+
+[[states]]
+id = 8
+name = "Fuel Vent"
+panel_row = 3
+panel_col = 2
+
+[[states]]
+id = 9
+name = "Ox Press"
+panel_row = 2
+panel_col = 3
+
+[[states]]
+id = 10
+name = "Ox Vent"
+panel_row = 3
+panel_col = 3
+
+[[states]]
+id = 11
+name = "GN2 High Press"
+panel_row = 2
+panel_col = 4
+
+[[states]]
+id = 12
+name = "GN2 High Vent"
+panel_row = 3
+panel_col = 4
+
+[[states]]
+id = 13
+name = "Vent"
+panel_row = 3
+panel_col = 0
+
+[[states]]
+id = 14
+name = "Calibrate"
+panel_row = 4
+panel_col = 0
+
+[[states]]
+id = 15
+name = "Ready"
+panel_row = 4
+panel_col = 1
+
+[[states]]
+id = 16
+name = "Fire"
+panel_row = 5
+panel_col = 0
+
+[[states]]
+id = 17
+name = "Engine Abort"
+is_abort = true
+
+[[states]]
+id = 18
+name = "GSE Abort"
+is_abort = true
+
+[[states]]
+id = 19
+name = "Emergency Abort"
+is_abort = true
+
+[[states]]
+id = 20
+name = "Press Standby"
+panel_row = 2
+panel_col = 0
