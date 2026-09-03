@@ -25,9 +25,16 @@ export interface StateDef {
   panelCol: number | null;
 }
 
-/** Complete built-in list, matching the C++ enum and config defaults. */
+/**
+ * Complete built-in list, matching the config defaults.
+ *
+ * Id 0 (Debug) is deliberately absent. It was a state in name only: no column in either CSV, so it
+ * had no actuator positions and no transitions, and nothing ever transitioned to it — the GUI's
+ * debug control maps to Idle (server.ts STATE_TO_CSV_NAME). The real mechanism is the sequencer's
+ * `debug_mode_` flag, which bypasses transition validation and enables manual actuator commands.
+ * The C++ enumerator still exists so historic run data decodes, but it is not offered as a state.
+ */
 const BUILT_IN: StateDef[] = [
-  { id: 0, name: 'Debug', isAbort: false, isBoot: false , panelRow: null, panelCol: null },
   { id: 1, name: 'Idle', isAbort: false, isBoot: true , panelRow: 0, panelCol: 0 },
   { id: 2, name: 'Armed', isAbort: false, isBoot: false , panelRow: 1, panelCol: 0 },
   { id: 3, name: 'Fuel Fill', isAbort: false, isBoot: false , panelRow: 1, panelCol: 1 },
