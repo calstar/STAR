@@ -48,17 +48,18 @@
 #include "calibration/SensorCalibration.hpp"
 #include "comms/messages/sensor/CalibratedPTMessage.hpp"
 #include "comms/messages/sensor/CalibratedSensorMessages.hpp"
+#include "config/LoadActiveBoards.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
 
 namespace {
 
-/** Last raw u32 per local CH1..10 on the HP PT board slot (for excitation normalization). */
-std::array<uint32_t, 11> g_hp_board_last_u32{};
-/** Hysteresis: 0 = treat as below loop, 1 = in 4–20 mA band (stops 3.99↔4.01 PSI chatter). */
-std::array<uint8_t, 11> g_hp_ma_live{};
-/** Low-pass of measured excitation voltage (V) for slow supply tracking. */
-double g_hp_v_exc_ema = -1.0;
+/**
+ * Hysteresis: 0 = treat as below loop, 1 = in 4–20 mA band (stops 3.99↔4.01 PSI chatter).
+ * Keyed by board slot so one board's channel going live cannot unlatch another board's
+ * same-numbered channel.
+ */
+std::map<uint8_t, std::array<uint8_t, 11>> g_hp_ma_live;
 
 /** Per-sensor zero offsets (PSI) applied after LP PT path (factory or robust) and Zero All. */
 std::unordered_map<uint16_t, double> g_zero_offsets;
@@ -101,11 +102,11 @@ static bool lp_pt_use_robust_blend() {
 
 /**
  * 4-20 mA HP PT → PSI. Wire raw is u32 full-scale to 2^31.
- * Optional: normalize shunt voltage by a slow-tracked excitation ADC (config
- * excitation_connector_id
- * + excitation_divider_attenuation) so supply ripple on PT2 does not move all three HP channels
- * together. Optional: per-channel mA hysteresis kills threshold flicker at ~4 mA open-circuit
- * noise.
+ *
+ * A 4-20 mA transmitter regulates its loop current independently of its supply, so the reading is
+ * absolute and needs no excitation reference — the shunt voltage against the internal 2.5 V ref is
+ * the whole measurement. Optional per-channel mA hysteresis kills threshold flicker at ~4 mA
+ * open-circuit noise.
  */
 /**
  * HP PT shunt codes are defined as unsigned in [0, 2^31) vs 2.5 V ref (see board_simulator).
@@ -119,10 +120,13 @@ static uint32_t coerce_hp_pt_adc_counts(int32_t /* as_signed */, uint32_t as_uns
     return as_unsigned > kMaxCode ? kMaxCode : as_unsigned;
 }
 
-static double convert_hp_pt_to_pressure(uint8_t local_ch, uint32_t adc_raw, double full_scale_psi,
-                                        double sense_resistor_ohms, double adc_ref_voltage,
-                                        uint32_t adc_exc_raw, bool use_excitation_norm,
-                                        double exc_divider_attenuation) {
+static double convert_hp_pt_to_pressure(uint8_t local_ch, uint32_t adc_raw,
+                                        const fsw::config::PtBoardConfig& board,
+                                        std::array<uint8_t, 11>& live_state) {
+    const double full_scale_psi = board.full_scale_psi;
+    const double sense_resistor_ohms = board.sense_resistor_ohms;
+    const double adc_ref_voltage = board.adc_ref_voltage;
+
     constexpr double ADC_MAX = 2147483648.0;
     constexpr double I_MIN_MA = 4.0;
     constexpr double I_SPAN_MA = 16.0;
@@ -142,26 +146,11 @@ static double convert_hp_pt_to_pressure(uint8_t local_ch, uint32_t adc_raw, doub
 
     double v_sense = (static_cast<double>(adc) / ADC_MAX) * adc_ref_voltage;
 
-    if (use_excitation_norm && adc_exc_raw > 128u && adc_exc_raw < static_cast<uint32_t>(ADC_MAX) &&
-        exc_divider_attenuation > 1e-9) {
-        double v_e = (static_cast<double>(adc_exc_raw) / ADC_MAX) * adc_ref_voltage /
-                     exc_divider_attenuation;
-        if (std::isfinite(v_e) && v_e > 1e-5) {
-            if (g_hp_v_exc_ema < 0.0)
-                g_hp_v_exc_ema = v_e;
-            else
-                g_hp_v_exc_ema = 0.97 * g_hp_v_exc_ema + 0.03 * v_e;
-            double ratio = g_hp_v_exc_ema / std::max(v_e, 1e-9);
-            ratio = std::clamp(ratio, 0.88, 1.12);
-            v_sense *= ratio;
-        }
-    }
-
     double i_ma = (v_sense / sense_resistor_ohms) * 1000.0;
     if (!std::isfinite(v_sense) || !std::isfinite(i_ma))
         return 0.0;
 
-    uint8_t& live = g_hp_ma_live[local_ch];
+    uint8_t& live = live_state[local_ch];
     if (hyst > 0.0) {
         if (!live) {
             if (i_ma < i_on)
@@ -440,285 +429,45 @@ int main(int argc, char* argv[]) {
               << std::endl;
 
     // Collect active boards with local channels for VTable registration (board-namespaced).
+    // Shared with daq_bridge and sequencer_service so all three agree on which boards are live
+    // and which Elodin slot each one owns.
     using BoardChannels = fsw::elodin::BoardChannels;
-    std::vector<BoardChannels> pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards, act_boards;
-    {
-        std::ifstream cfg(config_path);
-        if (cfg.is_open()) {
-            std::string line, section;
-            std::string board_type;
-            int board_id = 0;
-            bool board_enabled = true;
-            std::vector<int> active_conn;
-            int num_sensors = 0;
+    auto active_boards = fsw::config::load_active_boards(config_path);
+    auto boards_of = [&](fsw::config::ActiveBoardKind kind) {
+        auto it = active_boards.find(kind);
+        return it == active_boards.end() ? std::vector<BoardChannels>{} : it->second;
+    };
+    std::vector<BoardChannels> pt_boards = boards_of(fsw::config::ActiveBoardKind::PT);
+    std::vector<BoardChannels> tc_boards = boards_of(fsw::config::ActiveBoardKind::TC);
+    std::vector<BoardChannels> rtd_boards = boards_of(fsw::config::ActiveBoardKind::RTD);
+    std::vector<BoardChannels> lc_boards = boards_of(fsw::config::ActiveBoardKind::LC);
+    std::vector<BoardChannels> enc_boards = boards_of(fsw::config::ActiveBoardKind::ENCODER);
+    std::vector<BoardChannels> act_boards = boards_of(fsw::config::ActiveBoardKind::ACTUATOR);
 
-            auto flush_board = [&]() {
-                if (board_type.empty() || !board_enabled || board_id == 0)
-                    return;
-                std::vector<uint8_t> channels;
-                if (!active_conn.empty()) {
-                    for (int c : active_conn)
-                        channels.push_back(static_cast<uint8_t>(c));
-                } else if (num_sensors > 0) {
-                    for (int i = 1; i <= num_sensors; i++)
-                        channels.push_back(static_cast<uint8_t>(i));
-                }
-                if (channels.empty())
-                    return;
-                int slot_mod = board_id % 10;
-                uint8_t board_number = static_cast<uint8_t>(slot_mod == 0 ? 10 : slot_mod);
-                BoardChannels bc{static_cast<uint8_t>(board_id), board_number, channels};
-                if (board_type == "PT")
-                    pt_boards.push_back(bc);
-                else if (board_type == "TC")
-                    tc_boards.push_back(bc);
-                else if (board_type == "RTD")
-                    rtd_boards.push_back(bc);
-                else if (board_type == "LC")
-                    lc_boards.push_back(bc);
-                else if (board_type == "ENCODER")
-                    enc_boards.push_back(bc);
-                else if (board_type == "ACTUATOR")
-                    act_boards.push_back(bc);
-            };
+    // Per-PT-board sensor interface and 4-20 mA conversion parameters, keyed by Elodin slot.
+    // board_simulator.py back-calculates i_ma from the target PSI and sends valid 4-20 mA ADC
+    // codes for current-loop boards, so the 4-20 mA path is correct in sim and on hardware.
+    const auto pt_board_configs = fsw::config::load_pt_boards(config_path);
 
-            while (std::getline(cfg, line)) {
-                size_t c = line.find('#');
-                if (c != std::string::npos)
-                    line = line.substr(0, c);
-                while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
-                    line.pop_back();
-                size_t start = line.find_first_not_of(" \t");
-                if (start != std::string::npos)
-                    line = line.substr(start);
-                if (line.empty())
-                    continue;
+    /** The board's 4-20 mA config, or nullptr when this slot is not a current-loop PT board. */
+    auto current_loop_board = [&](uint8_t board_number) -> const fsw::config::PtBoardConfig* {
+        auto it = pt_board_configs.find(board_number);
+        if (it == pt_board_configs.end() || !fsw::config::is_current_loop(it->second))
+            return nullptr;
+        return &it->second;
+    };
 
-                if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
-                    flush_board();
-                    section = line.substr(1, line.size() - 2);
-                    if (section.rfind("boards.", 0) == 0) {
-                        board_type.clear();
-                        board_id = 0;
-                        board_enabled = true;
-                        active_conn.clear();
-                        num_sensors = 0;
-                    } else {
-                        board_type.clear();
-                    }
-                    continue;
-                }
-                if (section.rfind("boards.", 0) != 0)
-                    continue;
-                size_t eq = line.find('=');
-                if (eq == std::string::npos)
-                    continue;
-                std::string key = line.substr(0, eq);
-                std::string val = line.substr(eq + 1);
-                while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
-                    key.pop_back();
-                while (!val.empty() && val[0] == ' ')
-                    val.erase(0, 1);
-
-                if (key == "type") {
-                    if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
-                        val = val.substr(1, val.size() - 2);
-                    board_type = val;
-                } else if (key == "enabled" && val == "false") {
-                    board_enabled = false;
-                } else if (key == "board_id") {
-                    try {
-                        board_id = std::stoi(val);
-                    } catch (...) {
-                    }
-                } else if (key == "num_sensors") {
-                    try {
-                        num_sensors = std::stoi(val);
-                    } catch (...) {
-                    }
-                } else if (key == "active_connectors") {
-                    size_t b = val.find('['), e = val.find(']');
-                    if (b != std::string::npos && e != std::string::npos) {
-                        std::istringstream iss(val.substr(b + 1, e - b - 1));
-                        std::string tok;
-                        while (std::getline(iss, tok, ','))
-                            try {
-                                active_conn.push_back(std::stoi(tok));
-                            } catch (...) {
-                            }
-                    }
-                }
-            }
-            flush_board();
-        }
-    }
-
-    // Parse HP PT config (4-20 mA) — local connector IDs
-    // board_simulator.py back-calculates i_ma from the target PSI and sends valid
-    // 4-20 mA ADC codes for HP PT connectors, so the 4-20 mA path is correct in
-    // both sim and real-hardware modes.
-    const bool use_sim_mode = []() {
-        const char* v = std::getenv("USE_SIM");
-        return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T');
-    }();
-    std::set<uint8_t> hp_pt_channels;
-    double hp_pt_full_scale_psi = 5000.0;
-    double hp_pt_sense_resistor_ohms = 120.0;
-    double hp_pt_adc_ref_voltage = 2.5;
-    int hp_pt_excitation_connector_id = -1;
-    double hp_pt_exc_div_atten = 1.0;
-    // Elodin slot (board_id % 10, 0→10) of the board that defines hp_pt_connectors — only that
-    // board's packets use the 4–20 mA path. Do NOT take board_id from unrelated [boards.*]
-    // sections (e.g. encoder 61 → slot 1) or LP PT CH1/3/4 get misclassified as HP and read 0 PSI.
-    uint8_t hp_pt_board_number = 255;  // no HP PT until we parse a non-empty hp_pt_connectors
-    {
-        std::ifstream cfg2(config_path);
-        if (cfg2.is_open()) {
-            std::string line, section, board_section;
-            std::string hp_pt_source_section;     // [boards.*] that defined hp_pt_connectors
-            uint8_t pending_slot_in_section = 0;  // board_id % 10 in current [boards.*]
-            // Collected per [boards.*] section and resolved to the HP board AFTER the parse.
-            // Previously these were assigned straight into the hp_pt_* variables, which meant a
-            // key of the same name in any other section overwrote the HP board's value (adc_ref_
-            // voltage is also set by [calibration.tc]/[calibration.rtd]), and the excitation keys
-            // were read only from a section literally named "pt_board_2" — so an HP board with any
-            // other key silently lost supply normalization, the cause of the PT2 spiking class of
-            // bug. Config, not the section name, decides which board is HP.
-            std::map<std::string, double> sec_adc_ref, sec_full_scale, sec_sense_ohms,
-                sec_exc_atten;
-            std::map<std::string, int> sec_exc_conn;
-            while (std::getline(cfg2, line)) {
-                size_t c = line.find('#');
-                if (c != std::string::npos)
-                    line = line.substr(0, c);
-                while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
-                    line.pop_back();
-                size_t start = line.find_first_not_of(" \t");
-                if (start != std::string::npos)
-                    line = line.substr(start);
-                if (line.empty())
-                    continue;
-                if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
-                    section = line.substr(1, line.size() - 2);
-                    if (section.find("boards.") == 0) {
-                        board_section = section;
-                        pending_slot_in_section = 0;
-                    } else {
-                        board_section.clear();  // leaving [boards.*]; keys below are not board keys
-                    }
-                    continue;
-                }
-                if (board_section.empty())
-                    continue;
-                size_t eq = line.find('=');
-                if (eq == std::string::npos)
-                    continue;
-                std::string key = line.substr(0, eq);
-                while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
-                    key.pop_back();
-                std::string val = line.substr(eq + 1);
-                while (!val.empty() && (val[0] == ' ' || val[0] == '\t'))
-                    val.erase(0, 1);
-                if (key == "hp_pt_connectors") {
-                    hp_pt_channels.clear();
-                    size_t pos = val.find('[');
-                    if (pos == std::string::npos)
-                        pos = 0;
-                    else
-                        pos++;
-                    while (pos < val.size()) {
-                        while (pos < val.size() && (val[pos] == ' ' || val[pos] == ','))
-                            pos++;
-                        if (pos >= val.size())
-                            break;
-                        size_t end = val.find_first_of(",]", pos);
-                        if (end == std::string::npos)
-                            end = val.size();
-                        std::string num = val.substr(pos, end - pos);
-                        try {
-                            int conn = std::stoi(num);
-                            if (conn >= 1 && conn <= 10)
-                                hp_pt_channels.insert(static_cast<uint8_t>(conn));
-                        } catch (...) {
-                        }
-                        pos = end + 1;
-                    }
-                    if (!hp_pt_channels.empty()) {
-                        hp_pt_source_section = board_section;
-                        if (pending_slot_in_section > 0)
-                            hp_pt_board_number = pending_slot_in_section;
-                    }
-                } else if (key == "board_id") {
-                    try {
-                        int mod = std::stoi(val) % 10;
-                        pending_slot_in_section = static_cast<uint8_t>(mod == 0 ? 10 : mod);
-                        if (!hp_pt_channels.empty() && board_section == hp_pt_source_section)
-                            hp_pt_board_number = pending_slot_in_section;
-                    } catch (...) {
-                    }
-                } else if (key == "hp_pt_full_scale_psi") {
-                    try {
-                        sec_full_scale[board_section] = std::stod(val);
-                    } catch (...) {
-                    }
-                } else if (key == "hp_pt_sense_resistor_ohms") {
-                    try {
-                        sec_sense_ohms[board_section] = std::stod(val);
-                    } catch (...) {
-                    }
-                } else if (key == "adc_ref_voltage") {
-                    try {
-                        sec_adc_ref[board_section] = std::stod(val);
-                    } catch (...) {
-                    }
-                } else if (key == "excitation_connector_id") {
-                    try {
-                        sec_exc_conn[board_section] = std::stoi(val);
-                    } catch (...) {
-                    }
-                } else if (key == "excitation_divider_attenuation") {
-                    try {
-                        sec_exc_atten[board_section] = std::stod(val);
-                    } catch (...) {
-                    }
-                }
-            }
-            // Take the HP tuning from the board that declared hp_pt_connectors; anything else in
-            // the file (other boards, [calibration.*]) leaves the built-in defaults in place.
-            if (!hp_pt_source_section.empty()) {
-                auto pick = [&](const std::map<std::string, double>& m, double& dst) {
-                    auto it = m.find(hp_pt_source_section);
-                    if (it != m.end())
-                        dst = it->second;
-                };
-                pick(sec_full_scale, hp_pt_full_scale_psi);
-                pick(sec_sense_ohms, hp_pt_sense_resistor_ohms);
-                pick(sec_adc_ref, hp_pt_adc_ref_voltage);
-                pick(sec_exc_atten, hp_pt_exc_div_atten);
-                auto ec = sec_exc_conn.find(hp_pt_source_section);
-                if (ec != sec_exc_conn.end())
-                    hp_pt_excitation_connector_id = ec->second;
-            }
-        }
-        if (!hp_pt_channels.empty()) {
-            std::cout << "[Calibration] HP PT: " << hp_pt_channels.size() << " channels (4-20 mA, "
-                      << hp_pt_full_scale_psi << " PSI full scale)" << std::endl;
-            if (hp_pt_excitation_connector_id >= 1 && hp_pt_excitation_connector_id <= 10)
-                std::cout << "[Calibration] HP PT supply normalization: excitation connector "
-                          << hp_pt_excitation_connector_id
-                          << ", divider_attenuation=" << hp_pt_exc_div_atten << std::endl;
-            // If board_id appears after hp_pt_connectors in the same [boards.*] section, we still
-            // set hp_pt_board_number on the board_id line — but a malformed or hand-merged TOML can
-            // leave 255. Robust PT math on 4–20 mA ADC codes then produces wild PSI (looks like
-            // “HP PTs going crazy”). Fleet default: HP stack uses board_id 22 → Elodin slot 2.
-            if (hp_pt_board_number == 255) {
-                hp_pt_board_number = 2;
-                std::cout
-                    << "[Calibration] WARN: hp_pt_board_number unset after parse; defaulting "
-                       "to slot 2. Ensure board_id is present in the HP PT [boards.*] section."
-                    << std::endl;
-            }
-        }
+    for (const auto& [slot, board] : pt_board_configs) {
+        if (!fsw::config::is_current_loop(board))
+            continue;
+        size_t channel_count = 0;
+        for (const auto& bc : pt_boards)
+            if (bc.board_number == slot)
+                channel_count = bc.channels.size();
+        std::cout << "[Calibration] HP PT slot " << static_cast<int>(slot) << " (board_id "
+                  << static_cast<int>(board.board_id) << "): " << channel_count
+                  << " channels (4-20 mA, " << board.full_scale_psi << " PSI full scale, "
+                  << board.sense_resistor_ohms << " ohm shunt)" << std::endl;
     }
 
     // Parse [calibration.tc], [calibration.rtd], [calibration.lc] for default formula params
@@ -956,9 +705,7 @@ int main(int argc, char* argv[]) {
                             const uint8_t bid = static_cast<uint8_t>(id / 100);
                             const uint8_t lch = static_cast<uint8_t>(id % 100);
                             const uint8_t bn = (bid % 10) == 0 ? 10u : (bid % 10);
-                            const bool is_hp = (hp_pt_board_number != 255) &&
-                                               (bn == hp_pt_board_number) &&
-                                               hp_pt_channels.count(lch);
+                            const bool is_hp = current_loop_board(bn) != nullptr;
                             robust_manager.zero_sensor(id, val);
                             if (is_hp) {
                                 g_zero_offsets.erase(id);
@@ -978,9 +725,7 @@ int main(int argc, char* argv[]) {
                             const uint8_t bid = static_cast<uint8_t>(sensor_id / 100);
                             const uint8_t lch = static_cast<uint8_t>(sensor_id % 100);
                             const uint8_t bn = (bid % 10) == 0 ? 10u : (bid % 10);
-                            const bool is_hp = (hp_pt_board_number != 255) &&
-                                               (bn == hp_pt_board_number) &&
-                                               hp_pt_channels.count(lch);
+                            const bool is_hp = current_loop_board(bn) != nullptr;
                             robust_manager.zero_sensor(sensor_id, last_adc_map[sensor_id]);
                             if (!is_hp) {
                                 const double psi_base = lp_pt_psi_before_offset(
@@ -1063,43 +808,26 @@ int main(int argc, char* argv[]) {
         elodin_client.begin_batch();
 
         if (type_hi == 0x20) {  // PT raw
-            uint32_t hp_wire_adc = 0u;
-            if (board_number == hp_pt_board_number) {
-                hp_wire_adc = coerce_hp_pt_adc_counts(adc_i32, adc_u32);
-                if (ch_eff >= 1 && ch_eff <= 10)
-                    g_hp_board_last_u32[static_cast<size_t>(ch_eff)] = hp_wire_adc;
-            }
+            const fsw::config::PtBoardConfig* loop_board = current_loop_board(board_number);
 
             uint16_t uid = resolve_pt_sensor_uid(type_lo, ch_eff, pt_boards);
             double psi;
             uint8_t cal_status;
-            const bool is_hp_ch =
-                board_number == hp_pt_board_number && hp_pt_channels.count(ch_eff);
-            // board_simulator.py generates valid 4-20 mA ADC codes for HP PT connectors
+            // board_simulator.py generates valid 4-20 mA ADC codes for current-loop connectors
             // (back-calculates i_ma from target PSI), so apply the 4-20 mA path in both
             // sim and real-hardware modes — no use_sim_mode guard needed here.
-            if (is_hp_ch) {
-                const bool exc_ok =
-                    hp_pt_excitation_connector_id >= 1 && hp_pt_excitation_connector_id <= 10;
-                const uint32_t adc_exc =
-                    exc_ok ? g_hp_board_last_u32[static_cast<size_t>(hp_pt_excitation_connector_id)]
-                           : 0u;
-                const bool use_norm = exc_ok && adc_exc >= 128u;
-                psi = convert_hp_pt_to_pressure(ch_eff, hp_wire_adc, hp_pt_full_scale_psi,
-                                                hp_pt_sense_resistor_ohms, hp_pt_adc_ref_voltage,
-                                                adc_exc, use_norm, hp_pt_exc_div_atten);
+            if (loop_board != nullptr) {
+                // The ADC reference is set once per board, so every active connector on a
+                // current-loop board is a loop channel.
+                const uint32_t hp_wire_adc = coerce_hp_pt_adc_counts(adc_i32, adc_u32);
+                psi = convert_hp_pt_to_pressure(ch_eff, hp_wire_adc, *loop_board,
+                                                g_hp_ma_live[board_number]);
                 cal_status = 1;
                 last_adc_map[uid] = static_cast<int32_t>(hp_wire_adc);
                 if (verbose() && packet_count % 100 == 0)
                     std::cout << "[Cal] HP PT B" << static_cast<int>(board_number) << " ch"
                               << static_cast<int>(ch_eff) << " adc_s=" << adc_i32
                               << " adc_hp=" << hp_wire_adc << " psi=" << psi << std::endl;
-            } else if (board_number == hp_pt_board_number && !hp_pt_channels.empty() &&
-                       !hp_pt_channels.count(ch_eff)) {
-                // Non-HP connector on the HP PT board (e.g., excitation monitor): output 0 PSI.
-                psi = 0.0;
-                cal_status = 0;
-                last_adc_map[uid] = adc_i32;
             } else {
                 last_adc_map[uid] = adc_i32;
                 const uint8_t pt_log_ch =
@@ -1143,11 +871,11 @@ int main(int argc, char* argv[]) {
                               << static_cast<int>(ch_eff) << " adc=" << adc_i32 << " psi=" << psi
                               << std::endl;
             }
-            if (is_hp_ch) {
+            if (loop_board != nullptr) {
                 if (!std::isfinite(psi))
                     psi = 0.0;
                 else
-                    psi = std::clamp(psi, 0.0, hp_pt_full_scale_psi * 1.2);
+                    psi = std::clamp(psi, 0.0, loop_board->full_scale_psi * 1.2);
             } else {
                 if (!std::isfinite(psi))
                     psi = 0.0;
@@ -1156,7 +884,7 @@ int main(int argc, char* argv[]) {
             }
             comms::messages::sensor::CalibratedPTMessage cal_msg(
                 ts_ns, ch_eff, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(psi),
-                is_hp_ch ? adc_u32 : static_cast<uint32_t>(adc_i32), cal_status);
+                loop_board != nullptr ? adc_u32 : static_cast<uint32_t>(adc_i32), cal_status);
             elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
 
         } else if (type_hi == 0x21) {  // TC raw

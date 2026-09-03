@@ -1,18 +1,36 @@
 /**
  * Sensor configuration loading and HP PT conversion logic.
- * Extracted from server.ts — loadSensorRoleMap, loadHpPtConfig, convertHpPtToPressure.
+ * Extracted from server.ts — loadSensorRoleMap and the per-board sensor role maps.
  */
 
 import { readConfig } from './routes/config.js';
-import type { HpPtBoardConfig } from './server-types.js';
+
+let warnedLegacyPtType = false;
+
+/**
+ * True when a PT board's sensors are 4-20 mA current-loop transmitters.
+ *
+ * `pt_type` is authoritative and matches what the C++ calibration service reads, so there is
+ * one source of truth and no positional "slot 2 is HP" assumption. A board that predates
+ * `pt_type` is still recognised from its legacy hp_pt_* keys so a deployed config or a saved
+ * profile keeps working.
+ */
+export function isCurrentLoopBoard(board: any): boolean {
+    if (typeof board?.pt_type === 'string') return board.pt_type === '4-20 mA absolute';
+    const legacy = (Array.isArray(board?.hp_pt_connectors) && board.hp_pt_connectors.length > 0)
+        || typeof board?.hp_pt_full_scale_psi === 'number';
+    if (legacy && !warnedLegacyPtType) {
+        warnedLegacyPtType = true;
+        console.warn('⚠️  Board has no pt_type; inferring "4-20 mA absolute" from its hp_pt_* keys. Add pt_type to the board.');
+    }
+    return legacy;
+}
 
 /**
  * Board-numbers (board_id % 10, with 0→10) of the PT boards that are high-pressure
- * 4-20 mA current-loop boards. A board is HP iff it declares HP config (hp_pt_connectors
- * or hp_pt_full_scale_psi) — the same signal the C++ calibration service keys off, so
- * there is one source of truth and no positional "slot 2 is HP" assumption. Used by the
- * Elodin decoder to pick unsigned-vs-signed raw-ADC interpretation and by the GUI to label
- * HP boards. `config` is optional so callers on the hot path can pass a cached config.
+ * 4-20 mA current-loop boards. Used by the Elodin decoder to pick unsigned-vs-signed raw-ADC
+ * interpretation and by the GUI to label HP boards. `config` is optional so callers on the hot
+ * path can pass a cached config.
  */
 export function hpBoardNumbers(config?: any): Set<number> {
     const out = new Set<number>();
@@ -20,9 +38,7 @@ export function hpBoardNumbers(config?: any): Set<number> {
         const cfg = config ?? readConfig();
         const boards = (cfg.boards || {}) as Record<string, any>;
         for (const board of Object.values(boards)) {
-            const isHp = (Array.isArray(board?.hp_pt_connectors) && board.hp_pt_connectors.length > 0)
-                || typeof board?.hp_pt_full_scale_psi === 'number';
-            if (!isHp || typeof board?.board_id !== 'number') continue;
+            if (!isCurrentLoopBoard(board) || typeof board?.board_id !== 'number') continue;
             const mod = board.board_id % 10;
             out.add(mod === 0 ? 10 : mod);
         }
@@ -99,8 +115,6 @@ export function loadSensorRoleMap(): {
             const supportedTypes = ['PT', 'LC', 'RTD', 'TC'];
             if (supportedTypes.includes(board.type) && board.enabled !== false && board.ip) {
                 const boardIp = board.ip as string;
-                const isHpBoard = Array.isArray(board.hp_pt_connectors) && board.hp_pt_connectors.length > 0;
-                const excitationId = typeof board.excitation_connector_id === 'number' ? board.excitation_connector_id : -1;
 
                 // Every board reads its own [sensor_roles_<boardKey>] section — HP boards included
                 // (no special sensor_roles_pt2 section anymore).
@@ -109,8 +123,6 @@ export function loadSensorRoleMap(): {
                 const boardMap: Record<string, string> = {};
                 for (const [roleName, channelId] of Object.entries(boardSensorRoles)) {
                     if (typeof channelId !== 'number' || channelId < 1 || channelId > 10) continue;
-                    if (isHpBoard && channelId === excitationId) continue;
-                    if (isHpBoard && !(board.hp_pt_connectors as number[]).includes(channelId)) continue;
                     const entityName = roleName.replace(/\s+/g, '_');
                     const prefix = board.type === 'PT' ? 'PT_Cal' : board.type;
                     const entity = `${prefix}.${entityName}`;
@@ -143,109 +155,6 @@ export function loadSensorRoleMap(): {
     return { channelToEntityMap, boardChannelToEntityMaps };
 }
 
-/**
- * Load HP PT board configs from config.toml.
- * Finds every board that declares hp_pt_connectors and builds an HpPtBoardConfig
- * keyed by the board's IP address.
- */
-export function loadHpPtConfig(): Map<string, HpPtBoardConfig> {
-    const hpPtBoards = new Map<string, HpPtBoardConfig>();
-
-    try {
-        console.log('📋 Loading HP PT board configuration...');
-        const config = readConfig();
-        const boards = config.boards || {};
-        console.log(`   Found ${Object.keys(boards).length} board(s) in config`);
-
-        const sensorRolesPt2: Record<string, number> = (config.sensor_roles_pt_board_2 as Record<string, number>) || {};
-        console.log(`   Found ${Object.keys(sensorRolesPt2).length} sensor role(s) for pt2`);
-
-        // Build reverse map for pt2: connector_id → entity name
-        const pt2ReverseMap: Record<number, string> = {};
-        for (const [roleName, connectorId] of Object.entries(sensorRolesPt2)) {
-            if (typeof connectorId === 'number') {
-                const entityName = `PT_Cal.${roleName.replace(/\s+/g, '_')}`;
-                pt2ReverseMap[connectorId] = entityName;
-                console.log(`   Mapping: Connector ${connectorId} (${roleName}) → ${entityName}`);
-            }
-        }
-
-        for (const [boardKey, boardRaw] of Object.entries(boards)) {
-            const board = boardRaw as Record<string, any>;
-
-            if (board.enabled === false) {
-                console.log(`   ⏭️  Skipping ${boardKey} (${board.ip}): board is disabled`);
-                continue;
-            }
-
-            if (!board.hp_pt_connectors) {
-                continue;
-            }
-
-            const ip: string = board.ip;
-            console.log(`   🔍 Processing HP PT board: ${boardKey} (${ip})`);
-            const hpPtConnectorIds: number[] = Array.isArray(board.hp_pt_connectors)
-                ? board.hp_pt_connectors
-                : [];
-            const excitationConnectorId: number = board.excitation_connector_id ?? -1;
-            const fullScalePsi: number = board.hp_pt_full_scale_psi ?? 5000.0;
-            const senseResistorOhms: number = board.hp_pt_sense_resistor_ohms ?? 240;
-            const excitationDividerRatio: number =
-                board.excitation_divider_attenuation != null
-                    ? 1 / board.excitation_divider_attenuation
-                    : (board.excitation_divider_ratio ?? 1.0);
-            const adcRefVoltage: number = board.adc_ref_voltage ?? 2.5;
-
-            const channelToEntity: Record<number, string> = {};
-            for (const connId of hpPtConnectorIds) {
-                const entity = pt2ReverseMap[connId] ?? `PT_Cal.HP_PT_${connId}`;
-                channelToEntity[connId] = entity;
-                console.log(`   HP PT Connector ${connId} → Entity: ${entity}`);
-            }
-
-            const hpCfg: HpPtBoardConfig = {
-                boardIp: ip,
-                adcRefVoltage,
-                hpPtConnectors: new Set(hpPtConnectorIds),
-                excitationConnectorId,
-                fullScalePsi,
-                senseResistorOhms,
-                excitationDividerRatio,
-                channelToEntity,
-            };
-
-            hpPtBoards.set(ip, hpCfg);
-            console.log(`📋 Loaded HP PT board config for ${boardKey} (${ip}):`, {
-                hpPtConnectors: hpPtConnectorIds,
-                excitationConnectorId,
-                fullScalePsi,
-                senseResistorOhms,
-                excitationDividerRatio,
-                adcRefVoltage,
-                channelToEntity,
-            });
-            console.log(`   Entity mappings:`, Object.entries(channelToEntity).map(([conn, ent]) => `Connector ${conn} → ${ent}`).join(', '));
-        }
-
-        if (hpPtBoards.size === 0) {
-            console.log('📋 No HP PT boards configured (no boards with hp_pt_connectors found)');
-            console.log('   Checking all boards in config...');
-            for (const [boardKey, boardRaw] of Object.entries(boards)) {
-                const board = boardRaw as Record<string, any>;
-                console.log(`   - ${boardKey}: ip=${board.ip}, enabled=${board.enabled}, has_hp_pt_connectors=${!!board.hp_pt_connectors}`);
-            }
-        } else {
-            console.log(`✅ Loaded ${hpPtBoards.size} HP PT board(s): ${Array.from(hpPtBoards.keys()).join(', ')}`);
-        }
-    } catch (error) {
-        console.error('❌ Failed to load HP PT board config from config.toml:', error);
-        if (error instanceof Error) {
-            console.error('   Error stack:', error.stack);
-        }
-    }
-
-    return hpPtBoards;
-}
 
 /**
  * Load TC board configs from config.toml.
@@ -380,38 +289,4 @@ export function rawRtdToTemperatureC(rawValue: number, scaleToOhms: number = 0.0
     return pt1000ResistanceToTempC(rOhm);
 }
 
-/**
- * Convert HP PT ADC codes to PSI using the 4-20 mA formula.
- *
- * Both the sensor channel and the excitation channel use the board's fixed
- * adcRefVoltage (2.5 V) as their ADC reference.  The excitation channel
- * reading is used only to verify that excitation is present.
- */
-export function convertHpPtToPressure(
-    adcSensor: number,
-    adcExc: number,
-    cfg: HpPtBoardConfig,
-): number {
-    const ADC_MAX = 2147483648; // 2^31
-    const I_MIN_MA = 4.0;
-    const I_SPAN_MA = 16.0; // 20 - 4
 
-    if (adcSensor >= ADC_MAX || adcSensor < 0) return NaN;
-    // adcExc === ADC_MAX is the sentinel for "no excitation connector" (excitation_connector_id = -1).
-    // In that case we skip ratiometric compensation and use adcRefVoltage directly.
-    if (adcExc === 0 || adcExc === undefined) return NaN;
-
-    const vExc = (adcExc / ADC_MAX) * cfg.adcRefVoltage * cfg.excitationDividerRatio;
-    void vExc; // available for future ratiometric compensation / logging
-
-    const vSense = (adcSensor / ADC_MAX) * cfg.adcRefVoltage;
-    const iMa = (vSense / cfg.senseResistorOhms) * 1000;
-
-    // Treat below-live-zero current as 0 PSI instead of invalid so GUI shows
-    // a deterministic pressure value ("0") rather than "---".
-    if (iMa < I_MIN_MA) return 0.0;
-    if (iMa > 20.0) return cfg.fullScalePsi;
-
-    const fraction = (iMa - I_MIN_MA) / I_SPAN_MA;
-    return fraction * cfg.fullScalePsi;
-}

@@ -13,6 +13,7 @@ import {
   getActiveProfileName, ensureSeeded, readActiveProfile, writeActiveProfile, deployActiveProfile,
   getActiveProfilePath, readStateCsv, writeStateCsv, isStateCsvName, STATE_CSVS,
 } from './routes/config-profiles.js';
+import { isCurrentLoopBoard } from './sensor-config.js';
 import { sessionManager } from './session-manager.js';
 import { isOperator } from './operators.js';
 import { discoverProjects, getEnabledBoardsForFlash, getOtaWorkspaceRoot, BOARD_TYPE_TO_PROJECT } from './ota-build.js';
@@ -66,11 +67,9 @@ function buildSensorConfig(): SensorConfigEntry[] {
 
     const boardIp: string = board.ip || '';
     const boardId = asBoardId(board.board_id, 1);
-    const isHpBoard = Array.isArray(board.hp_pt_connectors) && board.hp_pt_connectors.length > 0;
-    const excitationConnectorId: number = board.excitation_connector_id ?? -1;
-    const hpPtConnectors: Set<number> = new Set(
-      isHpBoard ? (board.hp_pt_connectors as number[]) : []
-    );
+    // The ADC reference is set once per board, so the interface is a property of the whole
+    // board — every one of its sensor channels converts through the same path.
+    const isHpBoard = isCurrentLoopBoard(board);
 
     // Determine which sensor_roles section to use for this board
     const boardRolesKey = `sensor_roles_${boardKey}`;
@@ -82,18 +81,12 @@ function buildSensorConfig(): SensorConfigEntry[] {
     }
 
     // Every PT board uses its own [sensor_roles_<boardKey>] section — HP boards included
-    // (no separate sensor_roles_pt2 section). The excitation channel is dropped below.
+    // (no separate sensor_roles_pt2 section).
     for (const [roleName, channelIdRaw] of Object.entries(rolesSection)) {
       const channelId = typeof channelIdRaw === 'number' ? channelIdRaw : Number(channelIdRaw);
       if (!isFinite(channelId)) continue;
 
-      // Skip excitation connector — it is never a sensor
-      if (isHpBoard && channelId === excitationConnectorId) continue;
-
-      // Skip channels not in hp_pt_connectors for HP boards
-      if (isHpBoard && !hpPtConnectors.has(channelId)) continue;
-
-      const isHpPt = isHpBoard && hpPtConnectors.has(channelId);
+      const isHpPt = isHpBoard;
       const boardNumber = elodinSlotFromBoardId(boardId);
 
       sensors.push({

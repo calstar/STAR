@@ -63,6 +63,7 @@ try:
         resolve_path,
         get_boards,
         build_orchestrator_key_to_packet_ch,
+        is_current_loop_board,
     )
 
     _cfg_loaded = True
@@ -321,7 +322,7 @@ class CalibrationOrchestrator:
                 )
                 for board in boards:
                     # Skip HP PT boards (4-20 mA) — they use linear conversion, not robust calibration
-                    if stype == "PT" and exclude_hp and board.get("hp_pt_connectors"):
+                    if stype == "PT" and exclude_hp and is_current_loop_board(board):
                         logger.info(
                             f"  {stype} ({board.get('name', '?')}, {board.get('ip', '?')}): skipped (HP PT board)"
                         )
