@@ -64,6 +64,15 @@ interface ConfigData {
   sensor_roles_tc_board?: Record<string, number>;
   abort_pts?: Record<string, number>;
   adc?: { internal_v?: number; vdd_nominal_v?: number; absolute_5v_v?: number };
+  fire?: { state?: string; expiry_target?: string; duration_ms?: number; extended_ms?: number };
+  states?: Array<{
+    id?: number;
+    name?: string;
+    panel_row?: number;
+    panel_col?: number;
+    is_abort?: boolean;
+    is_boot?: boolean;
+  }>;
   actuator_roles?: Record<string, [string, number] | [string, number, number] | [string, number, string]>;
   actuator_abbrev?: Record<string, string>;
   actuator_service?: { port?: number; bind_address?: string };
@@ -226,6 +235,25 @@ const reconcileRows = (g: CsvGrid, keys: string[], fill: string): CsvGrid => ({
   }),
 });
 
+/**
+ * Friendly board name for display: "PT Board #2" rather than the raw `pt_board_2` config key.
+ * Numbered by position among boards of the same type, so it tracks what is actually configured
+ * instead of parsing digits out of the key. The key stays the identity everywhere else (it is what
+ * `sensor_roles_<key>` binds to), so it is kept in the tooltip.
+ */
+const BOARD_TYPE_LABEL: Record<string, string> = {
+  PT: 'PT', ACTUATOR: 'Actuator', LC: 'LC', TC: 'TC', RTD: 'RTD', ENCODER: 'Encoder',
+};
+
+const boardDisplayName = (boards: Record<string, any>, boardKey: string): string => {
+  const type = boards?.[boardKey]?.type;
+  if (typeof type !== 'string' || !type) return boardKey;
+  const sameType = Object.keys(boards).filter((k) => boards[k]?.type === type);
+  const ordinal = sameType.indexOf(boardKey) + 1;
+  const label = BOARD_TYPE_LABEL[type] ?? type;
+  return sameType.length > 1 ? `${label} Board #${ordinal}` : `${label} Board`;
+};
+
 export default function ConfigPage() {
   const [config, setConfig] = useState<ConfigData>(DEFAULT_CONFIG);
   const [loading, setLoading] = useState(true);
@@ -242,6 +270,9 @@ export default function ConfigPage() {
   // Boards start collapsed to a one-line summary — a stand has ~6 of them and
   // each expands to ~18 fields, which is a lot of scrolling to reach the last one.
   const [openBoards, setOpenBoards] = useState<Record<string, boolean>>({});
+  // Disabled boards are declared-but-not-running. Hidden by default so the list shows what the
+  // pipeline will actually talk to; the hidden count stays visible so nothing disappears silently.
+  const [showDisabledBoards, setShowDisabledBoards] = useState(false);
   const [showRunning, setShowRunning] = useState(false);
 
   const ws = getWebSocketClient();
@@ -576,6 +607,55 @@ export default function ConfigPage() {
   const delayShapeMismatch = !!(csvActuators && csvDelays &&
     (csvDelays.states.length !== csvActuators.states.length ||
       csvDelays.rows.length !== csvActuators.rows.length));
+
+  // ── [[states]] editor ──────────────────────────────────────────────────────
+  const stateList = (config.states || []) as NonNullable<ConfigData['states']>;
+
+  const setState = (idx: number, patch: Record<string, unknown>) =>
+    setConfig((prev) => {
+      const list = [...((prev.states || []) as any[])];
+      list[idx] = { ...list[idx], ...patch };
+      // An empty coordinate means "not on the diagram" — drop the key rather than writing null,
+      // which is what the loaders treat as absent.
+      for (const k of ['panel_row', 'panel_col']) {
+        if (list[idx][k] === undefined || list[idx][k] === '' || Number.isNaN(list[idx][k])) delete list[idx][k];
+      }
+      if (!list[idx].is_abort) delete list[idx].is_abort;
+      if (!list[idx].is_boot) delete list[idx].is_boot;
+      return { ...prev, states: list } as ConfigData;
+    });
+
+  const addState = () => {
+    const used = new Set(stateList.map((s) => s.id));
+    // Never reuse an id: old Elodin run history stores the raw number with no name table beside
+    // it, so a recycled id silently relabels past runs. Always take the next free one.
+    let next = 0;
+    while (used.has(next)) next++;
+    setConfig((prev) => ({
+      ...prev,
+      states: [...((prev.states || []) as any[]), { id: next, name: `New State ${next}` }],
+    } as ConfigData));
+  };
+
+  const removeState = (idx: number) =>
+    setConfig((prev) => ({
+      ...prev,
+      states: ((prev.states || []) as any[]).filter((_, i) => i !== idx),
+    } as ConfigData));
+
+  /** Ids must be unique, and so should names — both are lookup keys. */
+  const stateIdDupes = stateList
+    .map((s) => s.id)
+    .filter((id, i, arr) => id !== undefined && arr.indexOf(id) !== i);
+  const stateNameDupes = stateList
+    .map((s) => s.name)
+    .filter((n, i, arr) => n !== undefined && arr.indexOf(n) !== i);
+  /** States named in the CSVs but absent from the list, and vice versa. */
+  const csvStateNames = csvActuators?.states ?? [];
+  const stateListNames = stateList.map((s) => s.name).filter(Boolean) as string[];
+  const stateCsvDiff = csvActuators
+    ? diffKeys(csvStateNames, stateListNames)
+    : { orphan: [], missing: [] };
 
   const setActuatorCell = (rowIdx: number, colIdx: number, value: string) =>
     setCsvActuators((g) => g && ({
@@ -914,8 +994,29 @@ export default function ConfigPage() {
                 pipeline (daq_bridge/calibration/controller) picks up routing/identity changes on the
                 next session start.
               </p>
+              {(() => {
+                const hidden = Object.values(config.boards || {})
+                  .filter((b: any) => b?.enabled === false).length;
+                return (
+                  <label className="flex items-center gap-2 mb-3 text-sm text-text-muted select-none w-fit">
+                    <input
+                      type="checkbox"
+                      checked={showDisabledBoards}
+                      onChange={(e) => setShowDisabledBoards(e.target.checked)}
+                      className="w-4 h-4"
+                    />
+                    Show boards that are not enabled
+                    {hidden > 0 && !showDisabledBoards && (
+                      <span className="text-xs">({hidden} hidden)</span>
+                    )}
+                  </label>
+                );
+              })()}
+
               <div className="space-y-3">
-                {Object.entries(config.boards || {}).map(([boardKey, board]) => {
+                {Object.entries(config.boards || {})
+                  .filter(([, board]) => showDisabledBoards || (board as any)?.enabled !== false)
+                  .map(([boardKey, board]) => {
                   const b = board as any;
                   const open = !!openBoards[boardKey];
                   const toggle = () => setOpenBoards((prev) => ({ ...prev, [boardKey]: !prev[boardKey] }));
@@ -958,11 +1059,17 @@ export default function ConfigPage() {
                       className={`flex flex-wrap items-center gap-x-3 gap-y-1 p-4 cursor-pointer select-none hover:bg-white/5 rounded-lg${open ? ' rounded-b-none' : ''}`}
                     >
                       <span className="text-text-muted w-3 shrink-0">{open ? '▾' : '▸'}</span>
-                      <span
-                        className={`w-2 h-2 rounded-full shrink-0 ${b.enabled ? 'bg-green-500' : 'bg-gray-600'}`}
-                        title={b.enabled ? 'Enabled' : 'Disabled'}
-                      />
-                      <h3 className="text-lg font-semibold font-mono">{boardKey}</h3>
+                      {/* No status dot here. `enabled` is a config declaration, not connectivity —
+                          a green dot would read as "online" on a page sitting next to live
+                          telemetry, and would stay green for an unplugged board. Disabled boards
+                          are dimmed and carry an explicit chip instead; the Boards page is where
+                          connection state belongs. */}
+                      <h3
+                        className={`text-lg font-semibold ${b.enabled ? '' : 'text-text-muted'}`}
+                        title={`config key: ${boardKey}`}
+                      >
+                        {boardDisplayName((config.boards || {}) as Record<string, any>, boardKey)}
+                      </h3>
                       <span className="px-2 py-0.5 text-xs rounded bg-gray-700 text-text-muted">{b.type ?? '—'}</span>
                       {isHp && (
                         <span className="px-2 py-0.5 text-xs rounded bg-sky-900/60 text-sky-300" title="High-pressure 4-20 mA current-loop PT board">HP</span>
@@ -972,7 +1079,14 @@ export default function ConfigPage() {
                           {b.board_id !== undefined && <span title="Board ID">ID {b.board_id}</span>}
                           {b.ip && <span title="IP : send port">{b.ip}{b.send_port !== undefined ? `:${b.send_port}` : ''}</span>}
                           {channels && <span title="Channel count">{channels}</span>}
-                          {!b.enabled && <span className="text-amber-300/90">disabled</span>}
+                          {!b.enabled && (
+                            <span
+                              className="px-2 py-0.5 text-xs rounded bg-gray-700 text-text-muted not-italic"
+                              title="Declared in config but not enabled — the pipeline ignores it. Says nothing about whether the hardware is connected."
+                            >
+                              not enabled
+                            </span>
+                          )}
                         </span>
                       )}
                     </div>
@@ -1589,6 +1703,235 @@ export default function ConfigPage() {
                 </p>
               </div>
 
+              {/* ── Fire ───────────────────────────────────────────────────────────── */}
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold">Fire</h3>
+                <p className="text-sm text-text-muted">
+                  Which state is the burn and where its timer lands when it expires. Both are state
+                  names, not positions, so renaming a state here is safe as long as both fields
+                  still name a state that exists.
+                </p>
+                {(() => {
+                  const names = stateList.map((x) => x.name).filter(Boolean) as string[];
+                  const fireState = config.fire?.state ?? '';
+                  const target = config.fire?.expiry_target ?? '';
+                  const unknownFire = !!fireState && names.length > 0 && !names.includes(fireState);
+                  const unknownTarget = !!target && names.length > 0 && !names.includes(target);
+                  // The fire state must be able to REACH its expiry target, or the timer expires
+                  // into a refused transition and the system sits in fire with a dead timer.
+                  let unreachable = false;
+                  if (csvTransitions && fireState && target) {
+                    const r = csvTransitions.rows.find((x) => x.key === fireState);
+                    const ci = csvTransitions.states.indexOf(target);
+                    if (r && ci >= 0) unreachable = (r.cells[ci] || '0').trim() !== '1';
+                  }
+                  return (
+                    <>
+                      {(unknownFire || unknownTarget || unreachable) && (
+                        <div className="p-3 bg-red-900/30 border border-red-500 rounded-lg text-red-200 text-sm space-y-1">
+                          {unknownFire && <p><strong>{fireState}</strong> is not a state in the list above.</p>}
+                          {unknownTarget && <p><strong>{target}</strong> is not a state in the list above.</p>}
+                          {unreachable && (
+                            <p>
+                              <strong>{fireState} → {target}</strong> is not an allowed transition. The fire timer
+                              would expire into a refused transition and the system would stay in fire. Tick that
+                              cell in Allowed transitions below.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        {renderField('Fire state', fireState,
+                          (v) => updateField('fire', 'state', v), 'select',
+                          names.length ? names : [fireState].filter(Boolean),
+                          'the state that starts the burn')}
+                        {renderField('Expires to', target,
+                          (v) => updateField('fire', 'expiry_target', v), 'select',
+                          names.length ? names : [target].filter(Boolean),
+                          'where the timer lands')}
+                        {renderField('Duration (ms)', config.fire?.duration_ms,
+                          (v) => updateField('fire', 'duration_ms', v), 'number')}
+                        {renderField('Extended (ms)', config.fire?.extended_ms,
+                          (v) => updateField('fire', 'extended_ms', v), 'number',
+                          undefined, 'window EXTEND FIRE restarts at')}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+
+              {/* ── Abort thresholds ────────────────────────────────────────────────── */}
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold">Abort pressure thresholds</h3>
+                <p className="text-sm text-text-muted">
+                  PSI limits broadcast to the boards, which abort autonomously when a sensor exceeds
+                  them — they do not depend on the server being alive. The name must match a sensor
+                  role exactly.
+                </p>
+                <div className="space-y-2">
+                  {Object.entries(config.abort_pts || {}).map(([role, psi], i) => (
+                    <div key={`abort:${i}`} className="flex items-center gap-3">
+                      <CommitOnBlurName
+                        value={role}
+                        siblings={Object.keys(config.abort_pts || {})}
+                        onRename={(next) => {
+                          const rebuilt: Record<string, any> = {};
+                          for (const [k, v] of Object.entries(config.abort_pts || {})) rebuilt[k === role ? next : k] = v;
+                          setConfig({ ...config, abort_pts: rebuilt } as ConfigData);
+                        }}
+                        onError={(msg) => { setError(msg); setTimeout(() => setError(null), 4000); }}
+                        className="flex-1 px-3 py-2 bg-gray-800 border border-gray-600 rounded text-white"
+                      />
+                      <CommitOnBlurNumber
+                        value={psi as number}
+                        onCommit={(v) => setConfig({ ...config, abort_pts: { ...(config.abort_pts || {}), [role]: v } } as ConfigData)}
+                        className="w-28 px-3 py-2 bg-gray-800 border border-gray-600 rounded text-white"
+                      />
+                      <span className="text-sm text-text-muted w-10">PSI</span>
+                      <button
+                        onClick={() => {
+                          const next = { ...(config.abort_pts || {}) };
+                          delete next[role];
+                          setConfig({ ...config, abort_pts: next } as ConfigData);
+                        }}
+                        disabled={!canEdit}
+                        className="px-3 py-2 bg-red-600 rounded hover:bg-red-700 disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  {Object.keys(config.abort_pts || {}).length === 0 && (
+                    <p className="text-sm text-amber-300/90">
+                      No abort thresholds configured — the boards will not abort on over-pressure by themselves.
+                    </p>
+                  )}
+                  <button
+                    onClick={() => setConfig({ ...config, abort_pts: { ...(config.abort_pts || {}), 'New Abort PT': 0 } } as ConfigData)}
+                    disabled={!canEdit}
+                    className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600 disabled:opacity-50"
+                  >
+                    + Add threshold
+                  </button>
+                </div>
+              </div>
+
+              {/* ── The state list itself ───────────────────────────────────────────── */}
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-lg font-semibold mr-auto">States</h3>
+                  <button onClick={addState} disabled={!canEdit} className="px-3 py-1.5 bg-gray-700 rounded hover:bg-gray-600 text-sm disabled:opacity-50">
+                    + Add state
+                  </button>
+                </div>
+                <p className="text-sm text-text-muted">
+                  Names shown everywhere — logs, the diagram, and the column headers below. Row and
+                  column place the state on the state diagram; leave them blank to keep it off the
+                  diagram. Ids are a stable key: rename and reorder freely, but never reuse an id,
+                  because past runs store the raw number.
+                </p>
+
+                {(stateIdDupes.length > 0 || stateNameDupes.length > 0 || stateCsvDiff.orphan.length > 0 || stateCsvDiff.missing.length > 0) && (
+                  <div className="p-3 bg-yellow-900/40 border border-yellow-600 rounded-lg text-yellow-200 text-sm space-y-1">
+                    {stateIdDupes.length > 0 && <p>Duplicate id(s): <strong>{stateIdDupes.join(', ')}</strong> — the later entry wins and the earlier state disappears.</p>}
+                    {stateNameDupes.length > 0 && <p>Duplicate name(s): <strong>{stateNameDupes.join(', ')}</strong> — CSV columns resolve by name, so one of them is unreachable.</p>}
+                    {stateCsvDiff.orphan.length > 0 && <p>In the tables below but not a state: <strong>{stateCsvDiff.orphan.join(', ')}</strong>.</p>}
+                    {stateCsvDiff.missing.length > 0 && <p>A state with no column in the tables below: <strong>{stateCsvDiff.missing.join(', ')}</strong> — entering it commands nothing.</p>}
+                  </div>
+                )}
+
+                <div className="overflow-x-auto rounded-lg border border-gray-600">
+                  <table className="text-sm w-full border-collapse">
+                    <thead>
+                      <tr className="bg-gray-700 text-white">
+                        <th className="px-3 py-2 text-left font-semibold w-20">ID</th>
+                        <th className="px-3 py-2 text-left font-semibold">Name</th>
+                        <th className="px-3 py-2 text-left font-semibold w-24">Row</th>
+                        <th className="px-3 py-2 text-left font-semibold w-24">Col</th>
+                        <th className="px-3 py-2 text-left font-semibold w-20">Boot</th>
+                        <th className="px-3 py-2 text-left font-semibold w-20">Abort</th>
+                        <th className="px-3 py-2 w-20" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stateList.map((st, i) => (
+                        <tr key={`state:${i}`} className={i % 2 ? 'bg-white/[0.04]' : ''}>
+                          <td className="px-3 py-1.5">
+                            <CommitOnBlurNumber
+                              value={st.id}
+                              onCommit={(v) => setState(i, { id: v })}
+                              className="w-16 px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <input
+                              type="text"
+                              value={st.name ?? ''}
+                              onChange={(e) => setState(i, { name: e.target.value })}
+                              disabled={!canEdit}
+                              className="w-full px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white disabled:opacity-60"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <CommitOnBlurNumber
+                              value={st.panel_row}
+                              allowEmpty
+                              onCommit={(v) => setState(i, { panel_row: v })}
+                              className="w-16 px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <CommitOnBlurNumber
+                              value={st.panel_col}
+                              allowEmpty
+                              onCommit={(v) => setState(i, { panel_col: v })}
+                              className="w-16 px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <input
+                              type="checkbox"
+                              checked={st.is_boot === true}
+                              onChange={(e) => setState(i, { is_boot: e.target.checked })}
+                              disabled={!canEdit}
+                              title="The state the sequencer starts in"
+                              className="w-4 h-4 accent-blue-400"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <input
+                              type="checkbox"
+                              checked={st.is_abort === true}
+                              onChange={(e) => setState(i, { is_abort: e.target.checked })}
+                              disabled={!canEdit}
+                              title="Triggers the physical abort broadcast, and skips actuator delays"
+                              className="w-4 h-4 accent-red-400"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5 text-right">
+                            <button
+                              onClick={() => removeState(i)}
+                              disabled={!canEdit}
+                              className="px-2 py-1 bg-red-600 rounded hover:bg-red-700 text-xs disabled:opacity-50"
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {stateList.length === 0 && (
+                        <tr><td colSpan={7} className="px-3 py-3 text-sm text-text-muted">
+                          No [[states]] declared — the built-in list is in use. Add one to start overriding it.
+                        </td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-sm text-text-muted">
+                  States are saved with the rest of the config — use <strong>Save Config</strong> at the top.
+                </p>
+              </div>
+
               {csvLoading && <p className="text-sm text-text-muted">Loading…</p>}
               {!csvLoading && !csvActuators && (
                 <button onClick={loadStateCsvs} className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600">
@@ -1640,28 +1983,44 @@ export default function ConfigPage() {
                     </div>
                   )}
 
-                  <div className="overflow-x-auto border border-gray-800 rounded">
-                    <table className="text-sm min-w-max">
+                  <div className="overflow-x-auto rounded-lg border border-gray-600">
+                    <table className="text-sm min-w-max border-collapse">
                       <thead>
-                        <tr className="bg-background/60">
-                          <th className="sticky left-0 bg-background/95 px-3 py-2 text-left font-semibold">Actuator</th>
+                        {/* Header and row-key column are lifted well above the cell surface — at
+                            20 columns wide the grid is unreadable if everything sits at the same
+                            near-black level. */}
+                        <tr className="bg-gray-700 text-white">
+                          <th className="sticky left-0 z-10 bg-gray-700 px-3 py-2 text-left font-semibold border-r border-gray-500">
+                            Actuator
+                          </th>
                           {csvActuators.states.map((st) => (
-                            <th key={st} className="px-2 py-2 text-left font-semibold whitespace-nowrap">{st}</th>
+                            <th key={st} className="px-2 py-2 text-left font-semibold whitespace-nowrap border-l border-gray-600/60">{st}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {csvActuators.rows.map((row, ri) => (
-                          <tr key={`act:${ri}`} className="border-t border-gray-800">
-                            <td className="sticky left-0 bg-card px-3 py-1.5 font-mono whitespace-nowrap">{row.key}</td>
+                          <tr key={`act:${ri}`} className={ri % 2 ? 'bg-white/[0.04]' : 'bg-transparent'}>
+                            <td className={`sticky left-0 z-10 px-3 py-1.5 font-mono whitespace-nowrap border-r border-gray-600 ${ri % 2 ? 'bg-[#232a36]' : 'bg-[#1d2430]'}`}>{row.key}</td>
                             {csvActuators.states.map((st, ci) => (
-                              <td key={`${ri}:${ci}`} className="px-2 py-1.5">
+                              <td key={`${ri}:${ci}`} className="px-2 py-1.5 border-l border-gray-700/50">
                                 <div className="flex items-center gap-1">
+                                  {/* Value-coloured: OPEN is the exception in most tables, so it
+                                      is the one that should catch the eye when scanning a state
+                                      column. CLOSE stays muted rather than shouting. */}
                                   <select
                                     value={(row.cells[ci] || 'CLOSE').toUpperCase()}
                                     onChange={(e) => setActuatorCell(ri, ci, e.target.value)}
                                     disabled={!canEdit}
-                                    className="px-2 py-1 bg-background border border-gray-700 rounded text-white disabled:opacity-50"
+                                    // OPEN is filled and light, CLOSE is dark and recessed. The
+                                    // difference has to survive being scanned across a 20-column
+                                    // grid at a glance, so it is a light/dark flip rather than two
+                                    // similar dark tints.
+                                    className={`px-2 py-1 rounded border disabled:opacity-60 ${
+                                      (row.cells[ci] || 'CLOSE').toUpperCase() === 'OPEN'
+                                        ? 'bg-slate-200 border-slate-100 text-slate-900 font-bold'
+                                        : 'bg-slate-900 border-slate-700 text-slate-500 font-normal'
+                                    }`}
                                   >
                                     <option value="CLOSE">CLOSE</option>
                                     <option value="OPEN">OPEN</option>
@@ -1673,7 +2032,7 @@ export default function ConfigPage() {
                                       onChange={(e) => setDelayCell(row.key, ci, e.target.value)}
                                       disabled={!canEdit}
                                       title="Delay in seconds after the transition before this actuator moves"
-                                      className="w-14 px-1 py-1 bg-background border border-gray-700 rounded text-white text-xs disabled:opacity-50"
+                                      className="w-14 px-1 py-1 bg-gray-800 border border-gray-600 rounded text-white text-xs disabled:opacity-60"
                                     />
                                   )}
                                 </div>
@@ -1685,9 +2044,11 @@ export default function ConfigPage() {
                     </table>
                   </div>
                   {showDelays && (
-                    <p className="text-sm text-amber-300/90">
-                      Delays are seconds after the transition before that actuator moves. Not yet
-                      honoured by the sequencer — <code>applyForState</code> sends every command at once.
+                    <p className="text-sm text-text-muted">
+                      Seconds after the transition before that actuator moves. 0 (or blank) is
+                      immediate. Delays run on a state change only — the sequencer&apos;s 1 Hz
+                      republish holds a delayed actuator at its previous position until its delay
+                      elapses, and abort states ignore delays entirely.
                     </p>
                   )}
                 </div>
@@ -1720,31 +2081,39 @@ export default function ConfigPage() {
                   )}
 
                   <p className="text-sm text-text-muted">Row = state you are in, column = state you may go to.</p>
-                  <div className="overflow-x-auto border border-gray-800 rounded">
-                    <table className="text-sm min-w-max">
+                  <div className="overflow-x-auto rounded-lg border border-gray-600">
+                    <table className="text-sm min-w-max border-collapse">
                       <thead>
-                        <tr className="bg-background/60">
-                          <th className="sticky left-0 bg-background/95 px-3 py-2 text-left font-semibold">From \ To</th>
+                        <tr className="bg-gray-700 text-white">
+                          <th className="sticky left-0 z-10 bg-gray-700 px-3 py-2 text-left font-semibold border-r border-gray-500">From \ To</th>
                           {csvTransitions.states.map((st) => (
-                            <th key={st} className="px-2 py-2 text-left font-semibold whitespace-nowrap">{st}</th>
+                            <th key={st} className="px-2 py-2 text-left font-semibold whitespace-nowrap border-l border-gray-600/60">{st}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {csvTransitions.rows.map((row, ri) => (
-                          <tr key={`tr:${ri}`} className="border-t border-gray-800">
-                            <td className="sticky left-0 bg-card px-3 py-1.5 font-mono whitespace-nowrap">{row.key}</td>
-                            {csvTransitions.states.map((st, ci) => (
-                              <td key={`${ri}:${ci}`} className="px-2 py-1.5 text-center">
+                          <tr key={`tr:${ri}`} className={ri % 2 ? 'bg-white/[0.04]' : 'bg-transparent'}>
+                            <td className={`sticky left-0 z-10 px-3 py-1.5 font-mono whitespace-nowrap border-r border-gray-600 ${ri % 2 ? 'bg-[#232a36]' : 'bg-[#1d2430]'}`}>{row.key}</td>
+                            {csvTransitions.states.map((st, ci) => {
+                              const on = (row.cells[ci] || '0').trim() === '1';
+                              return (
+                              // Allowed cells are tinted, not just ticked: a 20x20 matrix of bare
+                              // checkboxes is very hard to read a row or column out of.
+                              <td
+                                key={`${ri}:${ci}`}
+                                className={`px-2 py-1.5 text-center border-l border-gray-700/50 ${on ? 'bg-blue-500/25' : ''}`}
+                              >
                                 <input
                                   type="checkbox"
-                                  checked={(row.cells[ci] || '0').trim() === '1'}
+                                  checked={on}
                                   onChange={(e) => setTransitionCell(ri, ci, e.target.checked)}
                                   disabled={!canEdit}
-                                  className="w-4 h-4 disabled:opacity-50"
+                                  className="w-4 h-4 accent-blue-400 disabled:opacity-60"
                                 />
                               </td>
-                            ))}
+                              );
+                            })}
                           </tr>
                         ))}
                       </tbody>
