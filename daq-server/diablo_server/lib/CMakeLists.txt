@@ -8,6 +8,7 @@ set(FSW_SOURCES
     src/config/SensorAssignment.cpp
     src/config/ConfigParser.cpp
     src/config/LoadActiveBoards.cpp
+    src/config/Config.cpp
     src/routing/HeartbeatRouter.cpp
     src/routing/SensorRouter.cpp
     src/time/BoardClockSync.cpp
@@ -64,6 +65,15 @@ target_include_directories(test_board_clock_sync PRIVATE
 target_link_libraries(test_board_clock_sync
     fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME board_clock_sync COMMAND test_board_clock_sync)
+
+# Temporary parity harness for the toml++ config migration (removed in the cleanup commit).
+add_executable(config_parity_check test/config_parity_check.cpp)
+target_include_directories(config_parity_check PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(config_parity_check
+    fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
 
 add_executable(test_fire_lifecycle
     test/test_fire_lifecycle.cpp
