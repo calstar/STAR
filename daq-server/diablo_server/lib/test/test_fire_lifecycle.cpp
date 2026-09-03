@@ -25,11 +25,10 @@
 #include <fstream>
 #include <iostream>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
-
-#include <set>
 
 #include "DiabloPacketUtils.h"
 #include "control/ActuatorCommander.hpp"
@@ -66,15 +65,15 @@ int main() {
         const auto t0 = Clock::now();
         fm.setNotifier([&](bool active) {
             std::lock_guard<std::mutex> lk(m);
-            notices.emplace_back(active, std::chrono::duration_cast<std::chrono::milliseconds>(
-                                             Clock::now() - t0)
-                                             .count());
+            notices.emplace_back(
+                active,
+                std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count());
         });
 
         std::atomic<long long> expired_at{-1};
         fm.start([&]() {
-            expired_at = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0)
-                             .count();
+            expired_at =
+                std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
         });
         std::this_thread::sleep_for(std::chrono::milliseconds(kDuration + 400));
 
@@ -98,13 +97,14 @@ int main() {
         const uint32_t kDuration = 500;
         const uint32_t kExtended = 1200;
         FireManager fm(kDuration, kExtended);
-        fm.setNotifier([](bool) {});
+        fm.setNotifier([](bool) {
+        });
 
         const auto t0 = Clock::now();
         std::atomic<long long> expired_at{-1};
         fm.start([&]() {
-            expired_at = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0)
-                             .count();
+            expired_at =
+                std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
         });
         std::this_thread::sleep_for(std::chrono::milliseconds(300));  // inside the original window
         fm.extend();
@@ -125,8 +125,12 @@ int main() {
         FireManager fm(600, 1200);
         std::atomic<int> notify_count{0};
         std::atomic<bool> expired{false};
-        fm.setNotifier([&](bool) { notify_count++; });
-        fm.start([&]() { expired = true; });
+        fm.setNotifier([&](bool) {
+            notify_count++;
+        });
+        fm.start([&]() {
+            expired = true;
+        });
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
         fm.stop();  // leaving the fire state early
         std::this_thread::sleep_for(std::chrono::milliseconds(800));
@@ -149,7 +153,6 @@ int main() {
               "stateId() reports unknown rather than guessing an id");
     }
 
-
     // ── 5. The system STAYS in fire for the whole window, then transitions once ───────────────
     {
         // Sampling the reported state across the burn: it must remain the fire state throughout
@@ -157,7 +160,8 @@ int main() {
         // twice both show up here.
         const uint32_t kDuration = 800;
         FireManager fm(kDuration, 2000);
-        fm.setNotifier([](bool) {});
+        fm.setNotifier([](bool) {
+        });
 
         std::atomic<bool> in_fire{true};
         std::atomic<int> expiries{0};

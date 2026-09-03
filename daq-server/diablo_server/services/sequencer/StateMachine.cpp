@@ -1,12 +1,12 @@
 #include "control/StateMachine.hpp"
-#include <string>
-#include <map>
-#include <set>
 
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <set>
 #include <sstream>
+#include <string>
 
 namespace sequencer {
 
@@ -52,8 +52,8 @@ const std::map<std::string, State>& StateMachine::csvStateMap() {
 namespace {
 
 struct ConfigStates {
-    std::map<State, std::string> names;       // id → display name
-    std::map<std::string, State> by_name;     // display name → id
+    std::map<State, std::string> names;    // id → display name
+    std::map<std::string, State> by_name;  // display name → id
     std::set<State> aborts;
     State boot = State::IDLE;
     bool boot_set = false;
@@ -149,8 +149,8 @@ void StateMachine::loadStatesFromConfig(const std::string& config_content) {
     configStates() = fresh;
     if (fresh.loaded)
         std::cout << "[StateMachine] Loaded " << fresh.names.size() << " state(s) from config"
-                  << (fresh.aborts.empty() ? "" : " (" + std::to_string(fresh.aborts.size()) +
-                                                      " abort)")
+                  << (fresh.aborts.empty() ? ""
+                                           : " (" + std::to_string(fresh.aborts.size()) + " abort)")
                   << std::endl;
 }
 
@@ -264,6 +264,11 @@ bool StateMachine::load(const std::string& csv_path) {
         "config/state_transitions.csv",
         "../config/state_transitions.csv",
         "../../config/state_transitions.csv",
+        // Generated config/*.csv are absent on a fresh checkout (they are gitignored deploy
+        // output); fall back to the profile that owns them.
+        "config/profiles/default/state_transitions.csv",
+        "../config/profiles/default/state_transitions.csv",
+        "../../config/profiles/default/state_transitions.csv",
     };
 
     std::ifstream f(csv_path);

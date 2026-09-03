@@ -200,10 +200,17 @@ bool ActuatorCommander::load(const std::string& config_content, const std::strin
               << std::endl;
 
     // -- State→actuator CSV -- canonical source: daq-server/config/.
+        // The deployed config/*.csv are generated artifacts (gitignored), written when a profile
+        // is deployed. On a fresh checkout — CI, or a clone that has never started the backend —
+        // they do not exist yet, so fall back to the profile that owns them. Mirrors what
+        // readConfig() does for config.toml on the TypeScript side.
     const char* fallbacks[] = {
         "config/state_machine_actuators.csv",
         "../config/state_machine_actuators.csv",
         "../../config/state_machine_actuators.csv",
+        "config/profiles/default/state_machine_actuators.csv",
+        "../config/profiles/default/state_machine_actuators.csv",
+        "../../config/profiles/default/state_machine_actuators.csv",
     };
 
     std::ifstream f(csv_path);
@@ -371,11 +378,11 @@ bool ActuatorCommander::sendBatch(
     std::vector<Outgoing> outgoing;
     outgoing.reserve(by_board.size());
 
-    const uint32_t ts_ms = static_cast<uint32_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count() &
-        0xFFFFFFFFu);
+    const uint32_t ts_ms =
+        static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now().time_since_epoch())
+                                  .count() &
+                              0xFFFFFFFFu);
 
     for (const auto& [board_ip, id_state_pairs] : by_board) {
         if (id_state_pairs.empty())
@@ -420,9 +427,9 @@ bool ActuatorCommander::sendBatch(
     bool all_ok = true;
     for (int round = 0; round < 3; ++round) {
         for (const auto& o : outgoing) {
-            ssize_t sent = sendto(sock, o.buf.data(), o.buf.size(), 0,
-                                  reinterpret_cast<const struct sockaddr*>(&o.dest),
-                                  sizeof(o.dest));
+            ssize_t sent =
+                sendto(sock, o.buf.data(), o.buf.size(), 0,
+                       reinterpret_cast<const struct sockaddr*>(&o.dest), sizeof(o.dest));
             if (sent != static_cast<ssize_t>(o.buf.size()))
                 all_ok = false;
         }
@@ -527,7 +534,8 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
                 std::cout << " (+" << delay_s << "s)";
             std::cout << std::endl;
         } else {
-            std::cerr << "[ActuatorCommander] UDP send failed for state " << state_name << std::endl;
+            std::cerr << "[ActuatorCommander] UDP send failed for state " << state_name
+                      << std::endl;
         }
         for (const auto& [ch, pos] : logical)
             publishCommandedState(ch, pos);
