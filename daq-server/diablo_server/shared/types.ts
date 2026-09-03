@@ -254,13 +254,54 @@ export type CalibrationCommandType =
   | 'disable_phase2'
   | 'zero_all'            // zero-point init: all PTs set current ADC → 0 PSI
   | 'save_coefficients'   // persist current coefficients to disk
-  | 'clear_calibration';  // clear all state and start from scratch
+  | 'clear_calibration'   // clear all state and start from scratch
+  | 'capture_cubic_point' // add one (current ADC, ref PSI) point to a channel's cubic fit
+  | 'clear_cubic_channel';// drop a channel's cubic points and revert to the factory cubic
 
 export interface CalibrationCommand {
   commandType: CalibrationCommandType;
   sensorId?: number;
   boardId?: number;
   referencePressure?: number;  // PSI ground-truth for capture_reference
+}
+
+// ── Cubic PT calibration (service-owned fit, served read-only at GET /api/cubic_calibration) ──
+
+/** One operator-captured calibration point for a channel's cubic fit. */
+export interface CubicCalibrationPoint {
+  adc: number;   // averaged raw ADC code at capture time
+  psi: number;   // operator-entered reference pressure
+  t: number;     // capture time (unix seconds)
+}
+
+/**
+ * Per-sensor cubic calibration record produced by the calibration service. The frontend renders the
+ * captured `points` as a scatter and overlays the curve by evaluating `polyCoeffs` over
+ * `((adc - adcNormMin)/adcNormScale)^i` — no fitting in the browser.
+ */
+export interface CubicCalibrationChannel {
+  boardId: number;
+  connector: number;              // 1-based board-local connector
+  logicalCh: number;              // (slot-1)*10 + connector (PTCalibrationManager key)
+  role: string;                   // may be empty; the UI supplies it from sensor config
+  active_model: 'cubic';
+  numPoints: number;
+  status: 'PENDING' | 'OK' | 'ERROR';
+  last_error: string;
+  rmse: number;
+  degree: number;
+  updatedAt: number;              // unix seconds
+  coeffs: { A: number; B: number; C: number; D: number };  // raw-ADC-space cubic
+  polyCoeffs: number[];           // normalized coeffs (well-conditioned; used for display eval)
+  adcNormMin: number;
+  adcNormScale: number;
+  points: CubicCalibrationPoint[];
+}
+
+/** Body of GET /api/cubic_calibration: the service's cubic_calibration.json, keyed by uid. */
+export interface CubicCalibrationPayload {
+  cubic_state?: Record<string, CubicCalibrationChannel>;
+  [key: string]: unknown;  // also carries calibration_polynomials/poly_coeffs/norm maps
 }
 
 // ── Board / heartbeat status ───────────────────────────────────────────────────

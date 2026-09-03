@@ -144,6 +144,55 @@ export function handleCalibrationCommand(
             console.log(`📐 Calibration: CH${sensorId} (Board ${boardId}) ref=${refPsi} PSI → calibration_service (Elodin)`);
             break;
         }
+        case 'capture_cubic_point': {
+            // Operator-built cubic: forward (channel, ref PSI) to calibration_service, which pairs it
+            // with the current ADC, refits the cubic, applies it live, and persists it.
+            const refPsi = Number(referencePressure);
+            if (sensorId == null || referencePressure == null || !Number.isFinite(refPsi)) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'capture_cubic_point requires sensorId and a numeric referencePressure (PSI)' }
+                });
+                return;
+            }
+            const activeChannels = getActiveChannels(host);
+            if (uniqueId == null || !activeChannels.includes(uniqueId)) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: `Channel ${sensorId} on Board ${boardId} is not a valid PT channel` }
+                });
+                return;
+            }
+            if (!host.elodin) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'Elodin not connected — start calibration_service and DB; cannot forward capture_cubic_point.' }
+                });
+                return;
+            }
+            publishCalibrationCommand(host, 3, uniqueId, refPsi);
+            console.log(`📐 Cubic capture: CH${sensorId} (Board ${boardId}) ref=${refPsi} PSI → calibration_service`);
+            break;
+        }
+        case 'clear_cubic_channel': {
+            if (uniqueId == null) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'clear_cubic_channel requires sensorId and boardId' }
+                });
+                return;
+            }
+            if (!host.elodin) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'Elodin not connected — cannot forward clear_cubic_channel.' }
+                });
+                return;
+            }
+            publishCalibrationCommand(host, 4, uniqueId, 0);
+            console.log(`🗑️ Cubic clear: CH${sensorId} (Board ${boardId}) → calibration_service`);
+            break;
+        }
         case 'enable_phase2':
             console.log('[Calibration] enable_phase2 ignored — robust calibration runs in calibration_service');
             break;

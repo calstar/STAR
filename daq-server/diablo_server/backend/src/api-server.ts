@@ -698,6 +698,29 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         const status = getCalibrationStatus ? await getCalibrationStatus() : null;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(status ?? { error: 'Calibration status not available' }));
+      } else if (url.pathname === '/api/cubic_calibration' && req.method === 'GET') {
+        // Read-only view of the calibration service's cubic_calibration.json (the service is the
+        // sole writer; it rewrites the file atomically per capture). Search the same candidate
+        // roots loadPTCalibration() uses, covering both dev (tsx) and dist layouts.
+        const candidates = [
+          path.join(__dirname, '../../../scripts/calibration/calibrations/cubic_calibration.json'),
+          path.join(__dirname, '../../../../scripts/calibration/calibrations/cubic_calibration.json'),
+          path.join(process.cwd(), 'scripts/calibration/calibrations/cubic_calibration.json'),
+          path.join(process.cwd(), '../../scripts/calibration/calibrations/cubic_calibration.json'),
+        ];
+        let body: string | null = null;
+        for (const c of candidates) {
+          try {
+            if (fs.existsSync(c)) { body = fs.readFileSync(c, 'utf8'); break; }
+          } catch { /* try next candidate */ }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        if (body == null) {
+          res.end(JSON.stringify({ cubic_state: {} }));
+        } else {
+          try { JSON.parse(body); res.end(body); }
+          catch { res.end(JSON.stringify({ cubic_state: {} })); }  // partial/corrupt → empty
+        }
       } else if (url.pathname === '/api/config_packets' && req.method === 'GET') {
         // Config packets now built by config_broadcast_service.py (standalone). Return empty.
         res.writeHead(200, { 'Content-Type': 'application/json' });

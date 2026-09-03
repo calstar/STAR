@@ -81,6 +81,7 @@ export default function App() {
               {/* ── Panes / tools ──────────────────────────────────────── */}
               <Route path="/boards" element={<P.BoardsPage />} />
               <Route path="/calibration" element={<P.CalibrationPage />} />
+              <Route path="/calibration-cubic" element={<P.CubicCalPage />} />
               <Route path="/config" element={<P.ConfigPage />} />
               <Route path="/controller" element={<P.ControllerPage />} />
               <Route path="/controls" element={<P.ControlsPage />} />

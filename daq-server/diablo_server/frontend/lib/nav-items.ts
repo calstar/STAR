@@ -61,6 +61,8 @@ export const NAV_ITEMS: NavItem[] = [
     description: 'Manual actuator & state controls' },
   { id: 'calibration', name: 'Calibration', path: '/calibration', accent: '#A3E635',
     description: 'RLS + GLR drift · Bayesian auto-recal' },
+  { id: 'calibration-cubic', name: 'Cubic Calibration', path: '/calibration-cubic', accent: '#84CC16',
+    description: 'Per-PT cubic fit from captured reference points · scatter + fitted curve' },
   { id: 'feed-char', name: 'Feed System Char', path: '/feed-char', accent: '#3B82F6',
     description: 'CdA, MDOT, Reynolds number characterization' },
   { id: 'solenoid-char', name: 'Solenoid Characterization', path: '/solenoid-char', accent: '#F59E0B',
