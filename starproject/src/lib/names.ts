@@ -28,3 +28,22 @@ export function displayNameOf(u: {
   const custom = (u.displayName ?? "").trim();
   return custom || shortName(u.name, u.email);
 }
+
+/**
+ * Up-to-two-letter initials for avatar circles: first + last name initials,
+ * falling back to the first letters of a custom display name, then the email.
+ */
+export function initialsOf(u: {
+  displayName?: string | null;
+  name?: string | null;
+  email?: string | null;
+}): string {
+  const source = (u.name ?? "").trim() || (u.displayName ?? "").trim();
+  if (source) {
+    const parts = source.split(/\s+/);
+    const first = parts[0][0];
+    const last = parts.length > 1 ? parts[parts.length - 1][0] : "";
+    return (first + last).toUpperCase();
+  }
+  return (u.email ?? "?").slice(0, 1).toUpperCase();
+}

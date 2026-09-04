@@ -4,9 +4,9 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useRef } from "react";
 
+import { AssigneeChip } from "@/components/AssigneeChip";
 import { useTaskModal } from "@/components/TaskModalProvider";
 import type { BoardTask } from "@/lib/board";
-import { displayNameOf } from "@/lib/names";
 import { PRIORITY_BADGE, isBlocked } from "@/lib/tasks";
 
 import { BlockedBadge } from "./BlockedBadge";
@@ -68,9 +68,7 @@ export function TaskCard({ task }: { task: BoardTask }) {
           </span>
         )}
         {task.assignees.map((a) => (
-          <span key={a.id} className="text-neutral-500 dark:text-neutral-400">
-            {displayNameOf(a)}
-          </span>
+          <AssigneeChip key={a.id} user={a} />
         ))}
         {due && (
           <span className={overdue ? "font-medium text-red-600" : "text-neutral-500 dark:text-neutral-400"}>
