@@ -125,15 +125,29 @@ struct ServerHeartbeatConfig {
     bool send_from_daq_bridge = true;  // false when heartbeat_service is used
 };
 
-// Ordered list of (ip, config) for enabled boards in parse order. Used when board_simulator
-// falls back to 127.0.0.2, 127.0.0.3, ... so each simulated board gets correct board_id.
-using BoardOrder = std::vector<std::pair<std::string, BoardConfig>>;
+// Loopback fallback routing (integration test only): the simulator binds 127.0.0.<host-octet> per
+// board, where host-octet is the last octet of that board's config IP, so the bridge resolves those
+// packets by that octet — identity-based and immune to how the TOML parser happens to order
+// [boards] (toml++ sorts alphabetically; the Python sim iterates file order). Keyed by host octet.
+using BoardByOctet = std::map<int, BoardConfig>;
+
+/** Last octet of a dotted IPv4 string (e.g. "192.168.2.51" -> 51), or -1 if not parseable. */
+static int ipv4_host_octet(const std::string& ip) {
+    const auto dot = ip.rfind('.');
+    if (dot == std::string::npos || dot + 1 >= ip.size())
+        return -1;
+    const std::string tail = ip.substr(dot + 1);
+    if (tail.empty() || tail.find_first_not_of("0123456789") != std::string::npos)
+        return -1;
+    const int v = std::atoi(tail.c_str());
+    return (v >= 0 && v <= 255) ? v : -1;
+}
 
 // Minimal config parse: [database] host/port, [network] sensor_port/bind_ip, [server_heartbeat],
 // [boards.xxx] type/ip/enabled
 static void load_board_map_from_config(const std::string& config_path,
                                        std::map<std::string, BoardConfig>& board_map,
-                                       BoardOrder* out_board_order, std::string& db_host,
+                                       BoardByOctet* out_board_by_octet, std::string& db_host,
                                        uint16_t& db_port, uint16_t* out_sensor_port = nullptr,
                                        std::string* out_bind_ip = nullptr,
                                        ServerHeartbeatConfig* out_hb = nullptr,
@@ -188,11 +202,23 @@ static void load_board_map_from_config(const std::string& config_path,
             continue;
         BoardConfig bc{bt, b.ip, b.num_sensors, b.enabled, b.board_id};
         board_map[b.ip] = bc;
-        if (out_board_order && b.enabled)
-            out_board_order->emplace_back(b.ip, std::move(bc));
+        // Index the board by its config-IP host octet for the loopback fallback (see BoardByOctet).
+        if (out_board_by_octet && b.enabled) {
+            const int octet = ipv4_host_octet(b.ip);
+            if (octet >= 2) {
+                auto [it, inserted] = out_board_by_octet->emplace(octet, bc);
+                if (!inserted)
+                    std::cerr << "[Config] WARN: loopback host octet " << octet << " (127.0.0."
+                              << octet << ") is claimed by both [" << it->second.ip << "] and ["
+                              << b.ip
+                              << "]; keeping the first. Give boards config IPs with distinct "
+                                 "last octets."
+                              << std::endl;
+            }
+        }
     }
-    // NOTE: do NOT add 127.0.0.1→PT. When simulator can't bind to config IPs, it uses
-    // 127.0.0.2, 127.0.0.3, ... (one per board). board_order maps index→config for that fallback.
+    // NOTE: do NOT add 127.0.0.1→PT. When the simulator can't bind config IPs it binds
+    // 127.0.0.<host octet> (one per board); resolve_board_config_by_source_ip maps that back.
 }
 
 // Map discovery signature board_type (DAQv2 wire: 1=PT, 2=LC, 3=RTD, 4=TC, 5=ACT, 6=ENC)
@@ -235,24 +261,26 @@ static uint8_t config_board_type_to_wire_u8(BoardType t) {
 }
 
 /**
- * Match config.toml board_id to the packet source IP. board_simulator uses 127.0.0.2, 127.0.0.3, …
- * while [boards.*] lists 192.168.2.* — the main sensor path used this mapping for Elodin packet
- * IDs. Heartbeats must use the same mapping or {0x10, low} uses the firmware slot byte (1–8)
- * instead of config board_id (e.g. 21, 12), and the thin backend boardsStatus / Boards UI show
- * PT/ACT disconnected.
+ * Resolve a packet's source IP to its config board. Real deployments send from the config IP, so
+ * the direct board_map lookup hits. The integration test can't bind the 192.168.2.* config IPs, so
+ * the simulator binds each board to 127.0.0.<host-octet> (the last octet of its config IP); those
+ * packets resolve by that octet via board_by_octet. This is identity-based — unlike the old
+ * index-based scheme it does NOT depend on the bridge and the sim iterating [boards] in the same
+ * order, which they don't (toml++ sorts alphabetically; the Python sim uses file order).
  */
 static const BoardConfig* resolve_board_config_by_source_ip(
     const std::string& source_ip, const std::map<std::string, BoardConfig>& board_map,
-    const BoardOrder& board_order) {
+    const BoardByOctet& board_by_octet) {
     auto it = board_map.find(source_ip);
     if (it != board_map.end() && it->second.enabled)
         return &it->second;
-    if (source_ip.compare(0, 8, "127.0.0.") == 0 && !board_order.empty()) {
-        int idx = (source_ip.size() >= 9) ? (std::atoi(source_ip.c_str() + 8) - 2) : -1;
-        if (idx < 0)
-            idx = 0;
-        if (idx < static_cast<int>(board_order.size()))
-            return &board_order[static_cast<size_t>(idx)].second;
+    if (source_ip.compare(0, 8, "127.0.0.") == 0) {
+        const int octet = ipv4_host_octet(source_ip);
+        if (octet >= 2) {
+            auto bo = board_by_octet.find(octet);
+            if (bo != board_by_octet.end() && bo->second.enabled)
+                return &bo->second;
+        }
     }
     return nullptr;
 }
@@ -296,7 +324,7 @@ int main(int argc, char* argv[]) {
 
     // ── Board IP → Type mapping from config ([boards.*]), DB host/port, network sensor_port ──
     std::map<std::string, BoardConfig> board_map;
-    BoardOrder board_order;
+    BoardByOctet board_by_octet;
     std::string db_host;
     uint16_t db_port;
     uint16_t config_sensor_port = 0;
@@ -304,7 +332,7 @@ int main(int argc, char* argv[]) {
     ServerHeartbeatConfig hb_config;
     fsw::time::TimeSyncConfig time_sync_cfg;
     uint16_t log_backend_port = 8092;  // [logs] backend_udp_port default
-    load_board_map_from_config(config_path, board_map, &board_order, db_host, db_port,
+    load_board_map_from_config(config_path, board_map, &board_by_octet, db_host, db_port,
                                &config_sensor_port, &config_bind_ip, &hb_config, &time_sync_cfg,
                                &log_backend_port);
     std::cout << "[TimeSync] mode="
@@ -316,7 +344,7 @@ int main(int argc, char* argv[]) {
     if (!config_bind_ip.empty())
         bind_address = config_bind_ip;
 
-    std::cout << "[Config] Board order (127.0.0.x fallback): " << board_order.size()
+    std::cout << "[Config] Loopback fallback (127.0.0.<host-octet>): " << board_by_octet.size()
               << " enabled boards" << std::endl;
     std::cout << "[Config] Board routing table (from " << config_path << "):" << std::endl;
     for (const auto& [ip, cfg] : board_map) {
@@ -575,7 +603,7 @@ int main(int argc, char* argv[]) {
                     uint8_t board_type_wire = fsw::daq_wire::kUnknown;
                     int elodin_board_id = -1;
                     if (const BoardConfig* hb_cfg = resolve_board_config_by_source_ip(
-                            hb->source_ip, board_map, board_order)) {
+                            hb->source_ip, board_map, board_by_octet)) {
                         board_type_wire = config_board_type_to_wire_u8(hb_cfg->type);
                         if (hb_cfg->board_id >= 0)
                             elodin_board_id = hb_cfg->board_id;
@@ -615,7 +643,7 @@ int main(int argc, char* argv[]) {
                     // Board attribution by source IP (same mapping as sensor/heartbeat paths).
                     uint8_t board_id = 0;
                     if (const BoardConfig* log_cfg = resolve_board_config_by_source_ip(
-                            log->source_ip, board_map, board_order)) {
+                            log->source_ip, board_map, board_by_octet)) {
                         if (log_cfg->board_id >= 0)
                             board_id = static_cast<uint8_t>(log_cfg->board_id);
                     }
@@ -679,7 +707,7 @@ int main(int argc, char* argv[]) {
         // then discovery, else treat as PT) ──
         auto board_it = board_map.find(source_ip);
         const BoardConfig* effective_cfg =
-            resolve_board_config_by_source_ip(source_ip, board_map, board_order);
+            resolve_board_config_by_source_ip(source_ip, board_map, board_by_octet);
         // Use board type from config even when disabled — we still publish actuator/PT data to DB
         BoardType board_type = board_it != board_map.end()
                                    ? board_it->second.type
@@ -706,9 +734,9 @@ int main(int argc, char* argv[]) {
             elodin_client.begin_batch();
             for (const auto& st_packet : batch.value().self_tests) {
                 // Self-test UDP has no board_id on wire; map source IP → config board_id.
-                // Must match sensor routing: simulators often use 127.0.0.2+ (board_order) while
-                // board_map is keyed by config IPs — without effective_cfg, board_id stayed 0 and
-                // no [0x60,*] rows reached Elodin (UI showed UNTESTED despite ACTIVE).
+                // Must match sensor routing: simulators use 127.0.0.<host-octet> (board_by_octet)
+                // while board_map is keyed by config IPs — without effective_cfg, board_id stayed 0
+                // and no [0x60,*] rows reached Elodin (UI showed UNTESTED despite ACTIVE).
                 uint8_t board_id = 0;
                 if (effective_cfg && effective_cfg->board_id >= 0)
                     board_id = static_cast<uint8_t>(effective_cfg->board_id);
@@ -894,15 +922,8 @@ int main(int argc, char* argv[]) {
 
             std::cout << "\n[Stats] Total: " << packet_count << " pkts";
             for (const auto& [ip, cnt] : packets_per_board) {
-                auto it = board_map.find(ip);
-                const BoardConfig* cfg = (it != board_map.end()) ? &it->second : nullptr;
-                if (!cfg && ip.compare(0, 8, "127.0.0.") == 0 && !board_order.empty()) {
-                    int idx = (ip.size() >= 9) ? (std::atoi(ip.c_str() + 8) - 2) : -1;
-                    if (idx < 0)
-                        idx = 0;
-                    if (idx < static_cast<int>(board_order.size()))
-                        cfg = &board_order[idx].second;
-                }
+                const BoardConfig* cfg =
+                    resolve_board_config_by_source_ip(ip, board_map, board_by_octet);
                 const char* tag = "???";
                 if (cfg) {
                     switch (cfg->type) {
