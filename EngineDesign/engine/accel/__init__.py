@@ -11,11 +11,40 @@ against.
 """
 from __future__ import annotations
 
+import enum
 import os
 
 __all__ = ["available", "enabled", "can_handle", "can_handle_chamber",
            "evaluate", "solve", "chamber_solve", "warmup", "require",
-           "chug_margin_fast"]
+           "chug_margin_fast", "Outcome",
+           "evaluate_ex", "solve_ex", "chamber_solve_ex"]
+
+
+class Outcome(enum.Enum):
+    """Why an accelerated call did not return a result.
+
+    These two failures look identical to callers today -- both surface as a bare
+    None -- but they mean opposite things:
+
+      NOT_HANDLED  the accelerator has no implementation for this config (wrong
+                   injector type, film/regen cooling, a non-3D CEA cache). Python
+                   is the ONLY implementation, so falling back is mandatory and
+                   the fallback does real work.
+
+      NO_SOLUTION  the physics ran and did not converge. Measured over 102 such
+                   candidates, the Python path then failed on every one -- it
+                   re-derives "infeasible" at full cost and also gives up. So this
+                   fallback is (almost always) wasted work.
+
+    Conflating them is what made that impossible to see or measure. The public
+    evaluate/solve/chamber_solve keep returning None exactly as before -- every
+    caller keys on `is None` and none of them change -- while the *_ex variants
+    expose the reason for instrumentation and for any future short-circuit.
+    """
+
+    OK = "ok"
+    NOT_HANDLED = "not_handled"
+    NO_SOLUTION = "no_solution"
 
 
 def available() -> bool:
@@ -81,35 +110,38 @@ def can_handle_chamber(config) -> bool:
 
 
 def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
-    """Single-call chamber + nozzle + thrust + stability. None => caller falls back.
+    """Single-call chamber + nozzle + thrust + stability. None => caller falls back."""
+    return evaluate_ex(config, cache, P_tank_O, P_tank_F, P_ambient)[0]
 
-    """
+
+def evaluate_ex(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
+    """As evaluate(), but returns (result_or_None, Outcome)."""
     from engine.accel import diagnostics as _diag
     from engine.accel import kernels as _k
     from engine.accel import params as _p
     from engine.pipeline.stability.analysis import comprehensive_stability_analysis
 
     if not can_handle_chamber(config):
-        return None
+        return None, Outcome.NOT_HANDLED
     if not getattr(cache, "use_3d", False):
-        return None
+        return None, Outcome.NOT_HANDLED
     try:
         P = _p.extract_params(config)
     except AssertionError:
-        return None                       # config outside the ported subset
+        return None, Outcome.NOT_HANDLED  # config outside the ported subset
     arr = _k._cea_arrays_cached(cache)
 
     r = _k.evaluate_core(P, *arr, float(P_tank_O), float(P_tank_F), float(P_ambient))
     if not r[0]:
-        return None
+        return None, Outcome.NO_SOLUTION
     (_, Pc, F, Isp, MR, csa, gm, tc, mdt, vex, cfa,
      mO, mF, cs_id, eta, Rg, Pex, Pth, Tex, Tth, cf_id, tc_eff) = r
     if F != F:
-        return None
+        return None, Outcome.NO_SOLUTION
 
     sol = _k._solve_injector(P, float(P_tank_O), float(P_tank_F), float(Pc))
     if not sol[0]:
-        return None
+        return None, Outcome.NO_SOLUTION
     diag = _diag.build_diag(P, sol)
     diag.update({
         "mdot_O": mO, "mdot_F": mF, "mdot_total": mdt, "Pc": Pc, "MR": MR,
@@ -121,7 +153,7 @@ def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
             config=config, Pc=Pc, MR=MR, mdot_total=mdt,
             cstar=csa, gamma=gm, R=Rg, Tc=tc_eff, diagnostics=diag)
     except Exception:
-        return None
+        return None, Outcome.NO_SOLUTION
     return {
         "Pc": Pc, "mdot_O": mO, "mdot_F": mF, "mdot_total": mdt, "MR": MR,
         "F": F, "Isp": Isp, "v_exit": vex, "P_exit": Pex, "P_throat": Pth,
@@ -133,11 +165,16 @@ def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
         "stability": stab, "stability_results": stab,
         "diagnostics": diag, "P_ambient": float(P_ambient),
         "native_fast_eval": True, "numba_fast_eval": True,
-    }
+    }, Outcome.OK
 
 
 def solve(config, P_tank_O, P_tank_F, Pc):
-    """Injector mass flows at a given Pc -> (mdot_O, mdot_F, diagnostics), or None.
+    """Injector mass flows at a given Pc -> (mdot_O, mdot_F, diagnostics), or None."""
+    return solve_ex(config, P_tank_O, P_tank_F, Pc)[0]
+
+
+def solve_ex(config, P_tank_O, P_tank_F, Pc):
+    """As solve(), but returns (result_or_None, Outcome).
 
     Sits on the FALLBACK path: closure.flows
     calls it on every residual iteration of the Python chamber solve, so it runs
@@ -154,19 +191,24 @@ def solve(config, P_tank_O, P_tank_F, Pc):
     from engine.accel import params as _p
 
     if not can_handle(config):
-        return None
+        return None, Outcome.NOT_HANDLED
     try:
         P = _p.extract_params(config)
     except AssertionError:
-        return None
+        return None, Outcome.NOT_HANDLED
     sol = _k._solve_injector(P, float(P_tank_O), float(P_tank_F), float(Pc))
     if not sol[0]:
-        return None
-    return float(sol[1]), float(sol[2]), _diag.build_diag(P, sol)
+        return None, Outcome.NO_SOLUTION
+    return (float(sol[1]), float(sol[2]), _diag.build_diag(P, sol)), Outcome.OK
 
 
 def chamber_solve(config, cache, P_tank_O, P_tank_F):
-    """Whole chamber residual loop -> (Pc, diagnostics), or None.
+    """Whole chamber residual loop -> (Pc, diagnostics), or None."""
+    return chamber_solve_ex(config, cache, P_tank_O, P_tank_F)[0]
+
+
+def chamber_solve_ex(config, cache, P_tank_O, P_tank_F):
+    """As chamber_solve(), but returns (result_or_None, Outcome).
 
     The only consumer (chamber_solver._native_chamber_pc) reads element 0.
 
@@ -178,24 +220,24 @@ def chamber_solve(config, cache, P_tank_O, P_tank_F):
     from engine.accel import params as _p
 
     if not can_handle_chamber(config):
-        return None
+        return None, Outcome.NOT_HANDLED
     if not getattr(cache, "use_3d", False):
-        return None
+        return None, Outcome.NOT_HANDLED
     try:
         P = _p.extract_params(config)
     except AssertionError:
-        return None
+        return None, Outcome.NOT_HANDLED
     arr = _k._cea_arrays_cached(cache)
     r = _k.evaluate_core(P, *arr, float(P_tank_O), float(P_tank_F), 101325.0)
     if not r[0]:
-        return None
+        return None, Outcome.NO_SOLUTION
     Pc = float(r[1])
     if not (Pc > 0.0) or Pc != Pc:
-        return None
-    return Pc, {"Pc": Pc, "mdot_O": r[11], "mdot_F": r[12], "mdot_total": r[8],
+        return None, Outcome.NO_SOLUTION
+    return (Pc, {"Pc": Pc, "mdot_O": r[11], "mdot_F": r[12], "mdot_total": r[8],
                 "MR": r[4], "cstar_ideal": r[13], "cstar_actual": r[5],
                 "eta_cstar": r[14], "gamma": r[6], "R": r[15],
-                "Tc": r[21], "Tc_ideal": r[7], "converged": True}
+                "Tc": r[21], "Tc_ideal": r[7], "converged": True}), Outcome.OK
 
 
 def warmup():
