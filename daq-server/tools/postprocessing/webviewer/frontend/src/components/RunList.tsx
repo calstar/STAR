@@ -29,7 +29,7 @@ export default function RunList({ runs, selected, onSelect, loading }: Props) {
             <span className="run-date">{fmtStarted(r.started)}</span>
             <span className="run-idline">
               <span className="run-id">{r.id}</span>
-              {r.simulated && <span className="sim-badge" title="Simulated data — not from the test stand">SIM</span>}
+              {r.simulated && <span className="sim-badge" title="Simulated data, not from the test stand">SIM</span>}
             </span>
             {/* The whole point of the description: knowing what a run was without
                 opening it. Only rendered when set, so 300 unlabelled runs stay compact. */}

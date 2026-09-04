@@ -27,8 +27,8 @@ export default function SensorPicker({ components, selected, showNames, onToggle
   const shortEntity = (c: Component) => c.entity.replace(new RegExp(`^${c.family}\\.?`), '') || c.entity;
   // With names on, what the channel IS beats what Elodin called it: "Ox Upstream" over
   // "1.CH5". Whichever form is hidden goes in the leaf's tooltip, so the raw component
-  // name, the CSV column key and the only handle an unnamed channel has, stays a hover
-  // away either way.
+  // name — the CSV column key, and the only handle an unnamed channel has — stays a
+  // hover away either way.
   const entityName = (c: Component) => (showNames && c.label) || shortEntity(c);
   const leafTitle = (c: Component) =>
     showNames && c.label ? c.name : c.label ? `${c.name} (${c.label})` : c.name;
@@ -91,7 +91,7 @@ export default function SensorPicker({ components, selected, showNames, onToggle
     <div className="picker">
       <div className="picker-controls">
         <input
-          className="picker-search"
+          className="input picker-search"
           placeholder="Filter sensors…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -101,8 +101,8 @@ export default function SensorPicker({ components, selected, showNames, onToggle
           all fields
         </label>
         {selected.size > 0 && (
-          <button className="btn-link" onClick={onClear}>
-            clear ({selected.size})
+          <button className="btn ghost sm" onClick={onClear} title="Deselect every channel">
+            Clear ({selected.size})
           </button>
         )}
       </div>

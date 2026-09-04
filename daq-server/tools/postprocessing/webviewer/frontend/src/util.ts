@@ -6,7 +6,7 @@ export function colorFor(i: number): string {
 }
 
 export function fmtDuration(s: number | null | undefined): string {
-  if (s == null) return '—';
+  if (s == null) return '\u2013';
   if (s < 60) return `${s.toFixed(1)}s`;
   const m = Math.floor(s / 60);
   const sec = Math.round(s % 60);
@@ -16,7 +16,7 @@ export function fmtDuration(s: number | null | undefined): string {
 }
 
 export function fmtBytes(b: number | null | undefined): string {
-  if (b == null) return '—';
+  if (b == null) return '\u2013';
   const u = ['B', 'KB', 'MB', 'GB', 'TB'];
   let i = 0;
   let n = b;
