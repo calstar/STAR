@@ -106,6 +106,7 @@ body {
 }
 .tab:hover { color: var(--color-text-secondary); }
 .tab.active { color: var(--color-text-primary); border-bottom-color: var(--color-accent); font-weight: 550; }
+.tabs-note { color: var(--color-text-muted); font-size: var(--text-2xs); white-space: nowrap; }
 
 /* Config tab: the run's config snapshot, verbatim */
 .cfg { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 12px; }

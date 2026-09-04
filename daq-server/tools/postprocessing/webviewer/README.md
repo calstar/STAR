@@ -95,6 +95,104 @@ uPlot canvas ──toBlob()──▶ PNG
 (cd frontend && npm test)                              # theme guardrails
 ```
 
+## Which clock the x-axis is
+
+Every row carries two clocks, and the DB indexes on the wrong one.
+
+`elodin-db` stamps each row as the bridge's TCP flush lands. The boards ship several
+samples per UDP packet, so a whole packet gets written microseconds apart and then
+nothing for ~100 ms: a steady 90 Hz channel draws as bursts separated by gaps. The row's
+own `timestamp_ns` field is the real sample time, reconstructed by `BoardClockSync`, and
+it is evenly spaced. `elodin-db` never learns this because `DatabaseConfig.cpp` declares
+that field as an ordinary data column instead of wrapping it in db.hpp's
+`builder::timestamp(...)` op, so the DB falls back to arrival order. (The live GUI is
+unaffected: `elodin-protocol.ts` reads field 0 itself.)
+
+So the viewer plots the **sensor clock** by default, taken positionally from the sibling
+`<entity>.timestamp_ns` parquet: the flattened export writes one file per field from the
+same rows, so row *i* is row *i* in both. On a real run that turns a 65-128 ms jitter on
+`PT1_Cal.CH1.pressure_psi` into a clean 101-104 ms.
+
+### Reconciling the two clocks
+
+They are the same wall clock. The sample time is anchored to daq_bridge's `system_clock`
+receive; the DB time is elodin-db writing those same rows. The gap between them is write
+latency: ~1 ms on raw channels, growing to ~29 ms across a run on calibrated ones, where
+the calibration service adds a republish hop. So mixing them on one axis is coherent, and
+it is the *DB* clock that drifts, which argues for the sensor clock rather than against
+it. Calibrated rows carry the raw sample's stamp verbatim (`calibration_main.cpp:862`
+reads it out of the raw payload), so a `_Cal` channel and its raw twin sit at exactly the
+same x, where the DB clock separated them by up to 49 ms.
+
+**Not every publisher stamps a wall clock.** daq_bridge and the calibration service use
+`system_clock`; the sequencer (`ACT_CMD.*`, `SEQUENCER.state`) and the heartbeat router
+(`BOARD.HB_*`) use `steady_clock`: nanoseconds since boot, ~56 years off. But that is
+still a good clock, and CLOCK_MONOTONIC is system-wide, so it sits a fixed distance from
+CLOCK_REALTIME over a run. Recovering that distance puts the channel back on the epoch
+with its precise relative timing intact. Worth doing rather than falling back: on
+`ACT_CMD` the DB write time carries 12 ms of jitter (p99 55 ms), and "when was the valve
+commanded, relative to chamber pressure" is exactly the question these channels exist to
+answer.
+
+This is not a second scheme bolted on beside the bridge's, it is the *same* one.
+`BoardClockSync` takes the board's `millis()` (relative, origin = board boot) and adds an
+offset estimated as the sliding-window **minimum** of `arrival - board_time`, because
+delay is one-sided: a packet cannot arrive before it was sent. Re-anchoring takes
+`steady_clock` (relative, origin = machine boot) and adds the **minimum** of
+`db_write - stamp`, for the identical reason: the DB cannot write a row before it was
+stamped. Both guarantee the stamp never lands after the event that observed it. (The
+bridge needs a *sliding* window because it compares two oscillators, a board crystal
+against the server, which drift continuously; MONOTONIC and REALTIME share one
+oscillator, so a whole-run floor suffices. Measured drift of that floor: 0.13 ms.)
+
+Every entity is then classified once, on `series.SENSOR_CLOCK_TOLERANCE_S`:
+
+| `time_source` | when | absolute accuracy |
+|---|---|---|
+| `sensor` | the stamp is already an epoch time | exact |
+| `monotonic` | boot-relative, or a board whose clock was never set, shifted by `min(db - stamp)` | a few ms of write-latency bias; **relative timing exact** |
+| `db` | no stamp column at all | the write pattern itself |
+
+On a representative run: 650 components `sensor`, 100 `monotonic` (the 25 ACT_CMD /
+BOARD.HB / SEQUENCER entities), 0 `db`. The tab strip says how many were re-anchored.
+
+**The run extent is a union across every entity, each on its own clock.** They do not
+cover the same interval: heartbeat and command channels start at boot, measured 3.7 s
+before the first sensor packet, so taking only the sensor-clocked entities' extent
+clipped the start of every one of those traces off the default window.
+
+### What each publisher's stamp actually means
+
+Worth knowing before overlaying two families, because "epoch" does not imply "sample
+time":
+
+| entity | publisher | stamp is |
+|---|---|---|
+| `PT*`, `TC*`, `RTD*`, `LC*`, `ACT*`, `ENC*` | daq_bridge | the **sample** time (board crystal + window-min offset) |
+| `*_Cal.*` | calibration service | the **same** stamp, carried through from the raw row (`calibration_main.cpp:862`), identical, not merely close |
+| `ACT_CMD.*`, `SEQUENCER.state` | sequencer | when the command/transition **happened** (`steady_clock`, re-anchored) |
+| `BOARD.HB_*` | heartbeat router | when the heartbeat was **built** (`steady_clock`, re-anchored) |
+| `CONTROLLER.*` | controller service | **when the controller published**: `system_clock::now()` at publish (`ControllerService.cpp:344/397/455`), *not* the sample time of the measurement it acted on |
+
+That last row is the one to be careful with: `CONTROLLER.measurement.p_ch` is stamped when
+the control loop emitted the row, so it sits later than the `PT*_Cal` sample it was
+computed from by however long the loop took. Comparing the two tells you about controller
+latency; it does not tell you the sensor sampled at that moment.
+
+Two further time-like columns ride along as ordinary data and are never used as an axis:
+`sample_ts_ms` (the board's raw `millis()`, origin = board boot) and `packet_ts_ms`.
+
+The **DB write time** checkbox switches everything back to `elodin-db`'s order: off by
+default, kept because it is what every run so far was read on and it is the only way to
+see the raw arrival pattern. The run's extent differs between the two clocks, so both are
+indexed (`t_min`/`t_max` vs `sensor_t_min`/`sensor_t_max`) and the window follows.
+
+The real fix is upstream: wrap field 0 in `builder::timestamp(...)` in the three
+registration paths in `DatabaseConfig.cpp` so the DB indexes on the reconstructed time.
+That needs a bench check first (the vendored header does not say whether `OpTimestamp`
+wants ns or the µs the index stores) and only helps runs recorded after it lands, which
+is why this viewer-side mapping exists: it repairs every run already on disk.
+
 ## Run names
 
 `elodin-db` records identities, not meanings: a run DB holds `PT1.CH5`, `ACT2.CH3`,

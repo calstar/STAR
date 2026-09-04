@@ -33,6 +33,13 @@ def _parse_components(components: str | None) -> list[str]:
     return [c for c in components.split(",") if c]
 
 
+def _time_source(value: str) -> str:
+    """Which clock the x-axis is. Defaults to the sensor clock; see series.py."""
+    if value not in series.TIME_SOURCES:
+        raise HTTPException(400, f"time_source must be one of {series.TIME_SOURCES}")
+    return value
+
+
 @app.get("/api/runs")
 def api_runs():
     return runs.list_runs()
@@ -78,15 +85,19 @@ def api_series(
     start: float | None = None,
     end: float | None = None,
     max_points: int = 4000,
+    time_source: str = "sensor",
 ):
     if not config.RUN_RE.match(run_id):
         raise HTTPException(400, "invalid run id")
     comps = _parse_components(components)
     if not comps:
         raise HTTPException(400, "no components requested")
+    src = _time_source(time_source)
     export_cache.ensure_exported(run_id)
     try:
-        return series.series_json(run_id, comps, start, end, max(4, min(max_points, 50000)))
+        return series.series_json(
+            run_id, comps, start, end, max(4, min(max_points, 50000)), src
+        )
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
 
@@ -97,6 +108,7 @@ def api_download(
     components: str | None = None,
     start: float | None = None,
     end: float | None = None,
+    time_source: str = "sensor",
 ):
     """CSV export.
 
@@ -109,16 +121,17 @@ def api_download(
     """
     if not config.RUN_RE.match(run_id):
         raise HTTPException(400, "invalid run id")
+    src = _time_source(time_source)
     index = export_cache.get_index(run_id)
     comps = _parse_components(components)
     if comps:
-        rows = series.wide_csv_rows(run_id, comps, start, end)
+        rows = series.wide_csv_rows(run_id, comps, start, end, src)
         fname = f"{run_id}_selection.csv"
     else:
         comps = [c["name"] for c in index["components"] if c["primary"]]
         if not comps:
             raise HTTPException(404, "no exportable channels")
-        rows = series.long_csv_rows(run_id, comps, start, end)
+        rows = series.long_csv_rows(run_id, comps, start, end, src)
         fname = f"{run_id}.csv"
     # Rate-limit the stream so a large export can't saturate the host uplink.
     rows = series.throttle(rows, config.MAX_DOWNLOAD_BYTES_PER_SEC)
