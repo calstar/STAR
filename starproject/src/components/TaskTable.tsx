@@ -27,9 +27,10 @@ export type { TaskRowData } from "@/lib/board";
 
 const col = createColumnHelper<TaskRowData>();
 
-// CSS-only responsive visibility per column, applied to both <th> and <td>.
-// Mobile shows Task/Status/Due; md: adds Priority + Assignees; lg: the rest.
-const columnVisibility: Record<string, string> = {
+// CSS-only responsive classes per column id, applied to both <th> and <td>.
+// Mobile shows Task/Status/Due (+ admin delete); md: adds Priority +
+// Assignees; lg: the rest. Columns absent here are visible at every width.
+const columnClasses: Record<string, string> = {
   subproject: "hidden lg:table-cell",
   projectName: "hidden lg:table-cell",
   subteamName: "hidden lg:table-cell",
@@ -188,7 +189,7 @@ export function TaskTable({
                 <th
                   key={h.id}
                   onClick={h.column.getToggleSortingHandler()}
-                  className={`cursor-pointer select-none px-3 py-3 font-medium md:py-2 ${columnVisibility[h.column.id] ?? ""}`}
+                  className={`cursor-pointer select-none px-3 py-3 font-medium md:py-2 ${columnClasses[h.column.id] ?? ""}`}
                 >
                   {flexRender(h.column.columnDef.header, h.getContext())}
                   {{ asc: " ▲", desc: " ▼" }[h.column.getIsSorted() as string] ?? ""}
@@ -217,7 +218,7 @@ export function TaskTable({
               {row.getVisibleCells().map((cell) => (
                 <td
                   key={cell.id}
-                  className={`px-3 py-2.5 align-middle md:py-1.5 ${columnVisibility[cell.column.id] ?? ""}`}
+                  className={`px-3 py-2.5 align-middle md:py-1.5 ${columnClasses[cell.column.id] ?? ""}`}
                 >
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </td>
