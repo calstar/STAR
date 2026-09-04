@@ -74,8 +74,8 @@ export async function ProjectView({
   const admin = await isAdmin((await getCurrentUser()).email);
 
   const header = (
-    <div className="flex items-start justify-between gap-4">
-      <div>
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+      <div className="min-w-0">
         {project.parent && (
           <div className="mb-1 text-sm text-neutral-500 dark:text-neutral-400">
             <Link
@@ -90,7 +90,7 @@ export async function ProjectView({
         )}
         <div className="flex items-center gap-3">
           <span
-            className="inline-block h-4 w-4 rounded-full"
+            className="inline-block h-4 w-4 shrink-0 rounded-full"
             style={{ background: project.color ?? "#a3a3a3" }}
           />
           <h1 className="text-2xl font-semibold">{project.name}</h1>
@@ -109,7 +109,7 @@ export async function ProjectView({
               <Link
                 key={c.id}
                 href={`/projects/${c.id}`}
-                className="flex items-center gap-1.5 rounded-full border border-neutral-300 dark:border-neutral-700 px-2.5 py-0.5 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                className="flex items-center gap-1.5 rounded-full border border-neutral-300 dark:border-neutral-700 px-2.5 py-1.5 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800 sm:py-0.5"
               >
                 <span
                   className="inline-block h-2 w-2 rounded-full"
@@ -123,7 +123,7 @@ export async function ProjectView({
       </div>
       <Link
         href="/projects"
-        className="shrink-0 text-sm text-neutral-500 dark:text-neutral-400 hover:underline"
+        className="inline-flex min-h-11 shrink-0 items-center self-start text-sm text-neutral-500 dark:text-neutral-400 hover:underline sm:min-h-0"
       >
         ← All projects
       </Link>

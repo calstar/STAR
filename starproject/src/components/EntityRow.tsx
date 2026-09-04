@@ -2,6 +2,10 @@ import Link from "next/link";
 
 import { ConfirmButton } from "@/components/ConfirmButton";
 
+/** Shared page container so the list and detail pages keep identical gutters. */
+export const PAGE_CONTAINER =
+  "mx-auto max-w-[88rem] px-4 py-6 sm:px-6 sm:py-8";
+
 /** Shared container for the list-page `<ul>` so projects and subteams match. */
 export const LIST_CARD =
   "mt-6 divide-y divide-neutral-200 dark:divide-neutral-800 overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900";
@@ -37,7 +41,7 @@ export function EntityRow({
 }) {
   return (
     <li
-      className={`relative flex items-center justify-between hover:bg-neutral-50 dark:hover:bg-neutral-800 ${
+      className={`relative flex flex-col gap-1 hover:bg-neutral-50 dark:hover:bg-neutral-800 sm:flex-row sm:items-center sm:justify-between sm:gap-0 ${
         indent ? "py-2.5 pl-10 pr-4" : "p-4"
       }`}
     >
@@ -61,7 +65,7 @@ export function EntityRow({
         )}
       </span>
       <span className="flex shrink-0 items-center gap-4">
-        <span className="text-sm text-neutral-500 dark:text-neutral-400">
+        <span className="mr-auto text-sm text-neutral-500 dark:text-neutral-400">
           {taskCount} task{taskCount === 1 ? "" : "s"}
         </span>
         {editSlot && <span className="relative">{editSlot}</span>}
@@ -70,7 +74,7 @@ export function EntityRow({
             <ConfirmButton
               action={deleteAction}
               id={id}
-              className="text-sm text-red-600 hover:underline"
+              className="inline-flex min-h-11 items-center px-2 text-sm text-red-600 hover:underline sm:min-h-0 sm:px-0"
               title={`Delete “${name}”?`}
               message={deleteMessage}
             />

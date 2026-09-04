@@ -1,6 +1,6 @@
 import { Fragment } from "react";
 
-import { EntityRow, LIST_CARD } from "@/components/EntityRow";
+import { EntityRow, LIST_CARD, PAGE_CONTAINER } from "@/components/EntityRow";
 import { prisma } from "@/lib/db";
 import { projectTaskTotal } from "@/lib/projects";
 
@@ -22,7 +22,7 @@ export default async function ProjectsPage() {
   });
 
   return (
-    <div className="mx-auto max-w-[88rem] px-6 py-8">
+    <div className={PAGE_CONTAINER}>
       <h1 className="text-2xl font-semibold">Projects</h1>
 
       <ul className={LIST_CARD}>
