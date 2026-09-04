@@ -1,13 +1,13 @@
 """Numba-backed physics accelerator for the Layer-1 optimizer inner loop.
 
-Replaces the hand-written C port at engine/native. During the migration both
-backends exist and must be *simultaneously* callable -- the parity suite, the
-benchmark and CI all compare them -- so backend selection lives here rather than
-being baked into either implementation.
+Replaced the hand-written C port that used to live at engine/native (deleted once
+this reached parity and then overtook it). Every entry point returns None rather
+than raising when it cannot handle a config, because every caller treats None as
+"fall back to the authoritative Python path".
 
-Public surface mirrors native_injector's, so call sites change an import and
-nothing else. Every entry point returns None rather than raising when it cannot
-handle a config, because every caller already treats None as "use Python".
+Set ED_ACCEL=off to disable the accelerator entirely; everything then runs on the
+Python physics, which stays authoritative and is what the parity suite diffs
+against.
 """
 from __future__ import annotations
 
@@ -16,22 +16,6 @@ import os
 __all__ = ["available", "enabled", "can_handle", "can_handle_chamber",
            "evaluate", "solve", "chamber_solve", "warmup", "require",
            "chug_margin_fast"]
-
-
-def _c_backend():
-    """native_injector when ED_ACCEL=c, else None.
-
-    Lets a single run route the whole accelerated surface through the C port, so
-    the parity suite and CI can exercise both backends without either
-    implementation knowing the other exists. Deleted with the C tree.
-    """
-    if os.environ.get("ED_ACCEL") != "c":
-        return None
-    try:
-        from engine.native.python import native_injector
-    except Exception:
-        return None
-    return native_injector
 
 
 def available() -> bool:
@@ -44,29 +28,24 @@ def available() -> bool:
 
 
 def enabled() -> bool:
-    mode = os.environ.get("ED_ACCEL", "numba")
-    if mode == "off":
+    if os.environ.get("ED_ACCEL", "numba") == "off":
         return False
-    if os.environ.get("ED_USE_NATIVE") == "0":   # honour the historical switch
+    if os.environ.get("ED_USE_NATIVE") == "0":   # historical switch, still honoured
         return False
-    if mode == "c":
-        ni = _c_backend()
-        return bool(ni and ni.native_enabled())
     return available()
 
 
 def require() -> bool:
     """Strict mode: a genuine accelerator failure raises instead of falling back.
 
-    Honours ED_REQUIRE_NATIVE too, so the existing CI parity job keeps its contract
-    while both backends coexist.
+    Without it a broken accelerator is invisible -- every caller falls back to
+    Python and the suite passes green on the wrong path.
     """
-    return (os.environ.get("ED_REQUIRE_ACCEL") == "1"
-            or os.environ.get("ED_REQUIRE_NATIVE") == "1")
+    return os.environ.get("ED_REQUIRE_ACCEL") == "1"
 
 
 def can_handle(config) -> bool:
-    """Mirrors native_injector._can_handle."""
+    """Impinging only; regen-coupled feed loss is not ported."""
     inj = getattr(config, "injector", None)
     if inj is None or inj.type != "impinging":
         return False
@@ -77,11 +56,11 @@ def can_handle(config) -> bool:
 
 
 def can_handle_chamber(config) -> bool:
-    """Mirrors native_injector._can_handle_chamber.
+    """Adds the chamber-solve gates on top of can_handle().
 
     No ablative gate: ablative IS ported (kernels._cooling_evaluate). No graphite
-    gate either -- graphite never enters the chamber residual, exactly as the C
-    kernel treats it.
+    gate either -- graphite never enters the chamber residual; it lives in the
+    burn/recession path and chamber_solver.py references it zero times.
     """
     if not can_handle(config):
         return False
@@ -97,11 +76,7 @@ def can_handle_chamber(config) -> bool:
 def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
     """Single-call chamber + nozzle + thrust + stability. None => caller falls back.
 
-    Signature matches native_injector.evaluate so it drops into the same slot.
     """
-    _ni = _c_backend()
-    if _ni is not None:
-        return _ni.evaluate(config, cache, P_tank_O, P_tank_F, P_ambient)
     from engine.accel import diagnostics as _diag
     from engine.accel import kernels as _k
     from engine.accel import params as _p
@@ -157,7 +132,7 @@ def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
 def solve(config, P_tank_O, P_tank_F, Pc):
     """Injector mass flows at a given Pc -> (mdot_O, mdot_F, diagnostics), or None.
 
-    Mirrors native_injector.solve. This sits on the FALLBACK path: closure.flows
+    Sits on the FALLBACK path: closure.flows
     calls it on every residual iteration of the Python chamber solve, so it runs
     far more often than evaluate() does.
 
@@ -167,9 +142,6 @@ def solve(config, P_tank_O, P_tank_F, Pc):
     (_apply_x_to_worker_config_inplace), so a config-keyed cache would serve stale
     geometry.
     """
-    _ni = _c_backend()
-    if _ni is not None:
-        return _ni.solve(config, P_tank_O, P_tank_F, Pc)
     from engine.accel import diagnostics as _diag
     from engine.accel import kernels as _k
     from engine.accel import params as _p
@@ -189,17 +161,12 @@ def solve(config, P_tank_O, P_tank_F, Pc):
 def chamber_solve(config, cache, P_tank_O, P_tank_F):
     """Whole chamber residual loop -> (Pc, diagnostics), or None.
 
-    Mirrors native_injector.chamber_solve. The only consumer
-    (chamber_solver._native_chamber_pc) reads element 0, so the second element is
-    a plain dict here rather than the C path's ctypes struct.
+    The only consumer (chamber_solver._native_chamber_pc) reads element 0.
 
     Shares evaluate_core's Brent solve instead of duplicating it. That computes a
     little more than Pc (nozzle/thrust), which is deliberate: a second, subtly
     different root-find is exactly how the two paths would drift apart.
     """
-    _ni = _c_backend()
-    if _ni is not None:
-        return _ni.chamber_solve(config, cache, P_tank_O, P_tank_F)
     from engine.accel import kernels as _k
     from engine.accel import params as _p
 
@@ -230,7 +197,7 @@ def warmup():
     @njit(cache=True) persists compiled code, but each worker process still
     deserializes it on first call -- un-warmed, that lands inside the first CMA
     generation and skews it. Call this in the parent AND in the pool's worker
-    initialiser, which is where the C path called autobuild.prewarm().
+    initialiser.
 
     Never raises: a warmup failure must not block optimization, exactly as the
     C prewarm didn't.
@@ -256,8 +223,5 @@ def chug_margin_fast(streams, chamber, **kw):
     Python against 4.2 us in C, and acoustic.fast_acoustic has no loop to compile.
     A 6 us difference does not justify a kernel, so that path stays pure Python.
     """
-    _ni = _c_backend()
-    if _ni is not None:
-        return _ni.chug_margin_fast(streams, chamber, **kw)
     from engine.accel import stability as _stab
     return _stab.chug_margin_fast(streams, chamber, **kw)
