@@ -134,6 +134,20 @@ export default function App() {
     [series, byName, showNames, index],
   );
 
+  // The run's full extent, and the window actually being shown. The chart draws the
+  // window it was asked for rather than the extent of whatever data came back for it,
+  // so these have to be resolved here, where `win`'s nulls mean "the whole run".
+  const bounds = useMemo<[number, number]>(
+    () => [index?.t_min ?? 0, index?.t_max ?? 0],
+    [index],
+  );
+  const view = useMemo<[number, number]>(
+    () => [win.start ?? bounds[0], win.end ?? bounds[1]],
+    [win, bounds],
+  );
+  const zoomed = win.start != null || win.end != null;
+  const resetView = useCallback(() => setWin({ start: null, end: null }), []);
+
   const toggle = (name: string) =>
     setSelected((prev) => {
       const n = new Set(prev);
@@ -154,13 +168,13 @@ export default function App() {
     (start: number, end: number) => {
       // Only refetch if the zoom window differs meaningfully from the current one.
       setWin((cur) => {
-        const cs = cur.start ?? index?.t_min ?? start;
-        const ce = cur.end ?? index?.t_max ?? end;
+        const cs = cur.start ?? bounds[0];
+        const ce = cur.end ?? bounds[1];
         if (Math.abs(cs - start) < 1e-3 && Math.abs(ce - end) < 1e-3) return cur;
         return { start, end };
       });
     },
-    [index],
+    [bounds],
   );
 
   const savePng = () => {
@@ -280,6 +294,11 @@ export default function App() {
                           onChange={(s, e) => setWin({ start: s, end: e })}
                         />
                       )}
+                      {/* Sits with the window it resets, not with the exports, and keeps
+                          the export cluster to the three buttons that fit on one row. */}
+                      <button className="btn" onClick={resetView} disabled={!zoomed}>
+                        Reset view
+                      </button>
                       <div className="spacer" />
                       <a className="btn" href={api.downloadUrl(runId, [], null, null)}>
                         Download run CSV
@@ -300,7 +319,10 @@ export default function App() {
                         <Chart
                           series={series}
                           meta={meta}
+                          view={view}
+                          bounds={bounds}
                           onViewChange={onViewChange}
+                          onResetView={resetView}
                           onReady={(u) => (uplotRef.current = u)}
                         />
                       ) : (

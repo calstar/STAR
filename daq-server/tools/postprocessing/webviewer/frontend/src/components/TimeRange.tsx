@@ -37,7 +37,6 @@ export default function TimeRange({ t0, tEnd, start, end, onChange }: Props) {
       <span className="tr-dash">→</span>
       <input className="tr-input" value={e} onChange={(ev) => setE(ev.target.value)}
              onBlur={apply} onKeyDown={(ev) => ev.key === 'Enter' && apply()} />
-      <button className="btn-link" onClick={() => onChange(null, null)}>full run</button>
       <span className="tr-total">of {fmtDuration(tEnd - t0)}</span>
     </div>
   );
