@@ -219,7 +219,7 @@ export interface CubicCalibrationChannel {
     connector: number;
     logicalCh: number;
     role: string;
-    active_model: 'cubic' | 'robust';
+    active_model: 'cubic' | 'robust' | 'physics';
     numPoints: number;
     status: 'PENDING' | 'OK' | 'ERROR';
     last_error: string;

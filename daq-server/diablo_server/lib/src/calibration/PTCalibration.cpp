@@ -85,9 +85,10 @@ std::string PTCalibrationManager::default_json_dir_ = "scripts/calibration/calib
 std::string PTCalibrationManager::default_csv_path_ =
     "external/DiabloAvionics/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv";
 
-PTCalibrationManager::PTCalibrationManager() {
-    // Auto-load calibration on construction
-    load_calibration();
+PTCalibrationManager::PTCalibrationManager(bool auto_load) {
+    // Auto-load calibration on construction unless the caller opts out (physics-or-nothing).
+    if (auto_load)
+        load_calibration();
 }
 
 bool PTCalibrationManager::load_calibration() {
@@ -303,6 +304,10 @@ bool PTCalibrationManager::is_calibrated(uint8_t channel_id) const {
 
 void PTCalibrationManager::set_calibration(uint8_t channel_id, const PTCalibrationCoeffs& coeffs) {
     calibrations_[channel_id] = coeffs;
+}
+
+void PTCalibrationManager::clear_calibration(uint8_t channel_id) {
+    calibrations_.erase(channel_id);
 }
 
 double PTCalibrationManager::calculate_pressure(uint8_t channel_id, int32_t adc_code) const {

@@ -181,18 +181,23 @@ static double select_pt_psi(uint16_t uid, double psi_fac, double psi_rob, double
     const PtModel m = g_env_override ? *g_env_override : pt_model_for(uid);
     switch (m) {
         case PtModel::Physics:
+            // Physics is a datasheet conversion, used only when explicitly selected.
             return psi_phys;
         case PtModel::Robust:
-            return has_robust ? psi_rob : psi_phys;
+            // Robust streams its learned model; before any captured points its baseline is 0, so an
+            // uncalibrated robust sensor reads nothing (0) rather than a physics fallback.
+            return has_robust ? psi_rob : 0.0;
         case PtModel::Blend: {
-            if (!fac_ok || !has_robust)
-                return fac_ok ? psi_fac : (has_robust ? psi_rob : psi_phys);
-            constexpr double kFactoryWeight = 0.25;  // 75% robust + 25% factory
-            return (1.0 - kFactoryWeight) * psi_rob + kFactoryWeight * psi_fac;
+            if (fac_ok && has_robust) {
+                constexpr double kFactoryWeight = 0.25;  // 75% robust + 25% factory
+                return (1.0 - kFactoryWeight) * psi_rob + kFactoryWeight * psi_fac;
+            }
+            return fac_ok ? psi_fac : (has_robust ? psi_rob : 0.0);
         }
         case PtModel::Cubic:
         default:
-            return fac_ok ? psi_fac : psi_phys;
+            // Uncalibrated / cleared cubic reads nothing (0) — no factory/physics fallback.
+            return fac_ok ? psi_fac : 0.0;
     }
 }
 
@@ -486,11 +491,14 @@ int main(int argc, char* argv[]) {
     };
 
     // Load calibration coefficients
-    fsw::calibration::PTCalibrationManager pt_calibration;
+    // Physics-or-nothing baseline: PT cubics come ONLY from operator captures (the cubic store,
+    // resumed below) or an explicit bench-cal import — never auto-loaded from a factory file. An
+    // uncalibrated cubic/robust sensor streams 0. set_default_paths still sets the default CSV the
+    // bench-cal import reads.
+    fsw::calibration::PTCalibrationManager pt_calibration(/*auto_load=*/false);
     pt_calibration.set_default_paths(
         "scripts/calibration/calibrations",
-        "external/DiabloAvionics/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv");
-    pt_calibration.load_calibration();
+        "firmware/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv");
 
     fsw::calibration::RobustCalibrationManager robust_manager;
 
@@ -511,12 +519,9 @@ int main(int argc, char* argv[]) {
         or_default(cal_cfg.calibration.lc_json_dir, "scripts/calibration/calibrations/lc"),
         cal_cfg.calibration.lc_csv_path);
 
-    std::cout << "[Calibration] PT:  " << pt_calibration.get_calibrated_count()
-              << " logical channels (slot1→JSON 1..10, slot2→11..20, … — avoids reusing board1 "
-                 "polynomials on PT2)"
+    std::cout << "[Calibration] PT:  physics-or-nothing baseline — cubics come from operator "
+                 "captures / bench-cal import only (resumed from the cubic store below)"
               << std::endl;
-    if (!pt_calibration.is_calibrated(5))
-        std::cerr << "[Calibration] WARNING: PT ch5 (Ox Upstream) not calibrated" << std::endl;
     std::cout << "[Calibration] TC:  " << tc_calibration.calibrated_count() << " channels"
               << std::endl;
     std::cout << "[Calibration] RTD: " << rtd_calibration.calibrated_count() << " channels"
@@ -654,34 +659,16 @@ int main(int argc, char* argv[]) {
     // filed by role and re-attaches to the role's current connector (mirrors the cubic store).
     const std::map<uint16_t, std::string> uid_role(g_uid_role.begin(), g_uid_role.end());
 
-    const fsw::calibration::PTCalibrationCoeffs* fallback_pt_coeffs = nullptr;
-    for (uint8_t probe_ch = 1; probe_ch <= 10; ++probe_ch) {
-        if (pt_calibration.is_calibrated(probe_ch)) {
-            fallback_pt_coeffs = pt_calibration.get_calibration(probe_ch);
-            break;
-        }
-    }
-    for (const auto& bc : pt_boards) {
-        for (uint8_t local_ch : bc.channels) {
-            uint16_t uid = static_cast<uint16_t>(bc.board_id) * 100u + local_ch;
-            const uint8_t log_ch =
-                fsw::calibration::pt_logical_calibration_channel(bc.board_number, local_ch);
-            if (pt_calibration.is_calibrated(log_ch)) {
-                robust_manager.initialize_sensor(uid, *pt_calibration.get_calibration(log_ch));
-            } else if (fallback_pt_coeffs != nullptr) {
-                // Keep channels alive even when per-channel baseline fit is missing.
-                robust_manager.initialize_sensor(uid, *fallback_pt_coeffs);
-            }
-        }
-    }
+    // Robust is NOT factory-seeded here anymore. Its per-sensor baseline is the operator's shared
+    // cubic fit, so it's initialized AFTER the cubic store loads (see below). A sensor with no
+    // captured points gets a zero baseline and reads 0 until it learns from captures.
 
     // ---- Operator-built cubic PT calibration (see CubicCalibrationStore) ----
-    // The store owns per-connector captured (adc, psi) points and the fitted cubic. Its file is
-    // excluded from the factory-cubic overlay loader, so factory_pt_snapshot is pure factory and
-    // the store is the sole applier of operator cubics (via pt_calibration.set_calibration).
+    // The store owns per-connector captured (adc, psi) points and the fitted cubic; it is the sole
+    // source of PT cubics (there is no factory overlay). Captured points are shared: each capture
+    // feeds both this cubic fit and the robust learner.
     fsw::calibration::CubicCalibrationStore cubic_store(
         "scripts/calibration/calibrations/cubic_calibration.json");
-    std::map<uint8_t, fsw::calibration::PTCalibrationCoeffs> factory_pt_snapshot;
     std::unordered_map<uint16_t, std::deque<int32_t>> pt_adc_ring;  // recent raw ADC per uid
     constexpr size_t kPtAdcRingMax = 128;                           // ~0.5 s of samples at ~250 Hz
     for (const auto& bc : pt_boards) {
@@ -693,8 +680,6 @@ int main(int argc, char* argv[]) {
             const std::string role = rit != g_uid_role.end() ? rit->second : std::string();
             cubic_store.register_channel(uid, bc.board_id, local_ch, log_ch, role,
                                          pt_model_name(pt_model_for(uid)));
-            if (pt_calibration.is_calibrated(log_ch))
-                factory_pt_snapshot[log_ch] = *pt_calibration.get_calibration(log_ch);
         }
     }
 
@@ -725,35 +710,33 @@ int main(int argc, char* argv[]) {
         }
         return curve;
     };
+    // Shared points: every capture — regardless of the sensor's active model — feeds BOTH the cubic
+    // fit and the robust learner, so switching a sensor's model later reuses the same points, and
+    // the merged UI can preview all three curves. The robust display curve is refreshed for every
+    // sensor that has points (not just robust ones).
     auto apply_capture = [&](uint16_t uid, double adc_avg, double ref) {
-        if (pt_model_for(uid) == PtModel::Robust) {
-            cubic_store.add_point(uid, adc_avg, ref);  // display/audit only for robust
-            robust_manager.update_calibration(uid, static_cast<int32_t>(std::llround(adc_avg)),
-                                              ref);
-            cubic_store.set_fit_curve(uid, sample_robust_curve(uid));
-        } else {  // Cubic (and Blend, whose factory half is the cubic)
-            const fsw::calibration::CubicFit fit = cubic_store.add_point(uid, adc_avg, ref);
-            const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
-            if (fit.valid && cch != nullptr)
-                pt_calibration.set_calibration(
-                    cch->logical_ch,
-                    fsw::calibration::PTCalibrationCoeffs(fit.A, fit.B, fit.C, fit.D));
-        }
+        const fsw::calibration::CubicFit fit = cubic_store.add_point(uid, adc_avg, ref);
+        const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+        if (fit.valid && cch != nullptr)
+            pt_calibration.set_calibration(
+                cch->logical_ch, fsw::calibration::PTCalibrationCoeffs(fit.A, fit.B, fit.C, fit.D));
+        robust_manager.update_calibration(uid, static_cast<int32_t>(std::llround(adc_avg)), ref);
+        cubic_store.set_fit_curve(uid, sample_robust_curve(uid));
         cubic_store.save();
+        // Persist robust learning on every capture (not only the 5-min auto-save / clean stop), so
+        // a crash can't lose it.
+        robust_manager.save_adjustments(adjustments_path, &uid_role);
     };
+    // Clear = back to nothing: drop the captured points, remove the operator cubic (so cubic reads
+    // 0), and reset the robust learner. No factory/baseline revert.
     auto apply_clear = [&](uint16_t uid) {
+        const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+        if (cch != nullptr)
+            pt_calibration.clear_calibration(cch->logical_ch);
         cubic_store.clear_channel(uid);
-        if (pt_model_for(uid) == PtModel::Robust) {
-            robust_manager.reset_adjustment(uid);
-        } else {
-            const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
-            if (cch != nullptr) {
-                auto fac = factory_pt_snapshot.find(cch->logical_ch);
-                if (fac != factory_pt_snapshot.end())
-                    pt_calibration.set_calibration(cch->logical_ch, fac->second);
-            }
-        }
+        robust_manager.reset_adjustment(uid);
         cubic_store.save();
+        robust_manager.save_adjustments(adjustments_path, &uid_role);
     };
 
     // Resume previously captured points and re-apply their fitted cubics to the live stream.
@@ -771,26 +754,39 @@ int main(int argc, char* argv[]) {
                   << " channel(s) from cubic_calibration.json" << std::endl;
     }
 
+    // Seed the robust learner from each sensor's shared cubic fit (zero baseline when it has no
+    // points, so an uncalibrated robust sensor reads 0). Seeding from the cubic — not a factory
+    // file — means a reloaded robust θ (from the same points) matches its baseline and survives the
+    // load-time reconcile guard. Must run BEFORE load_adjustments (which restores θ + reconciles).
+    for (uint16_t uid : cubic_store.uids()) {
+        const fsw::calibration::CubicFit* fit = cubic_store.fit_for(uid);
+        const fsw::calibration::PTCalibrationCoeffs baseline =
+            (fit != nullptr && fit->valid)
+                ? fsw::calibration::PTCalibrationCoeffs(fit->A, fit->B, fit->C, fit->D)
+                : fsw::calibration::PTCalibrationCoeffs(0.0, 0.0, 0.0, 0.0);
+        robust_manager.initialize_sensor(uid, baseline);
+    }
+
     std::cout << "[Calibration] Robust adjustments path: " << adjustments_path << std::endl;
     std::cout << "[Calibration]   (override with --adjustments, CAL_BACKUP_PATH, or "
                  "calibration_backups/calibration_backup_*.json mtime)"
               << std::endl;
     if (!robust_manager.load_adjustments(adjustments_path, &uid_role)) {
-        std::cout << "[Calibration]   File missing/unreadable — using factory-seeded robust only"
-                  << std::endl;
+        std::cout
+            << "[Calibration]   File missing/unreadable — robust starts from the cubic-seeded "
+               "baseline (0 where uncalibrated)"
+            << std::endl;
     }
-    // Robust uids: resume points are display-only, so re-sample the display curve from the now-
-    // restored robust model (adjustments.json). Cubic uids already had their fit re-applied above.
-    {
-        bool any = false;
-        for (uint16_t uid : cubic_store.uids())
-            if (pt_model_for(uid) == PtModel::Robust) {
-                cubic_store.set_fit_curve(uid, sample_robust_curve(uid));
-                any = true;
-            }
-        if (any)
-            cubic_store.save();
+    // Sample the robust preview curve for EVERY sensor that has points (not just robust ones), so
+    // the merged UI can show "what robust would look like" before you switch a sensor to it.
+    for (uint16_t uid : cubic_store.uids()) {
+        const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+        if (cch != nullptr && !cch->points.empty())
+            cubic_store.set_fit_curve(uid, sample_robust_curve(uid));
     }
+    // Always persist at startup so the record (with each channel's active_model) exists immediately
+    // — the UI / cal_model_select read it before any capture.
+    cubic_store.save();
     if (g_env_override) {
         const char* label = *g_env_override == PtModel::Cubic ? "factory cubic (CAL_USE_FACTORY_PT)"
                             : *g_env_override == PtModel::Blend
@@ -940,13 +936,19 @@ int main(int argc, char* argv[]) {
                             const uint8_t bid = static_cast<uint8_t>(id / 100);
                             const uint8_t lch = static_cast<uint8_t>(id % 100);
                             const uint8_t bn = (bid % 10) == 0 ? 10u : (bid % 10);
+                            // Zero/tare only applies to robust sensors: a cubic's zero is defined
+                            // by its fit and a physics sensor's by the datasheet line, so taring
+                            // them would silently shift a calibrated curve. Clear any stale offset.
+                            if (pt_model_for(id) != PtModel::Robust) {
+                                g_zero_offsets.erase(id);
+                                continue;
+                            }
                             const bool is_hp = current_loop_board(bn) != nullptr;
                             robust_manager.zero_sensor(id, val);
                             if (is_hp) {
                                 g_zero_offsets.erase(id);
                                 continue;
                             }
-                            // Offset must match streaming path (robust vs factory), after RCF zero.
                             const double psi_base = lp_pt_psi_before_offset(
                                 bn, lch, id, val, pt_calibration, robust_manager);
                             if (std::isfinite(psi_base))
@@ -960,18 +962,24 @@ int main(int argc, char* argv[]) {
                             const uint8_t bid = static_cast<uint8_t>(sensor_id / 100);
                             const uint8_t lch = static_cast<uint8_t>(sensor_id % 100);
                             const uint8_t bn = (bid % 10) == 0 ? 10u : (bid % 10);
-                            const bool is_hp = current_loop_board(bn) != nullptr;
-                            robust_manager.zero_sensor(sensor_id, last_adc_map[sensor_id]);
-                            if (!is_hp) {
-                                const double psi_base = lp_pt_psi_before_offset(
-                                    bn, lch, sensor_id, last_adc_map[sensor_id], pt_calibration,
-                                    robust_manager);
-                                if (std::isfinite(psi_base))
-                                    g_zero_offsets[sensor_id] = -psi_base;
-                            } else {
+                            // Robust-only tare (see Zero-All-of-all above).
+                            if (pt_model_for(sensor_id) != PtModel::Robust) {
                                 g_zero_offsets.erase(sensor_id);
+                                g_lp_ema.erase(sensor_id);
+                            } else {
+                                const bool is_hp = current_loop_board(bn) != nullptr;
+                                robust_manager.zero_sensor(sensor_id, last_adc_map[sensor_id]);
+                                if (!is_hp) {
+                                    const double psi_base = lp_pt_psi_before_offset(
+                                        bn, lch, sensor_id, last_adc_map[sensor_id], pt_calibration,
+                                        robust_manager);
+                                    if (std::isfinite(psi_base))
+                                        g_zero_offsets[sensor_id] = -psi_base;
+                                } else {
+                                    g_zero_offsets.erase(sensor_id);
+                                }
+                                g_lp_ema.erase(sensor_id);
                             }
-                            g_lp_ema.erase(sensor_id);
                         }
                     }
                 } else if (cmd_type == 1) {  // Capture Reference
@@ -997,30 +1005,16 @@ int main(int argc, char* argv[]) {
                         have_adc = true;
                     }
                     if (have_adc) {
-                        const fsw::calibration::CubicFit fit =
-                            cubic_store.add_point(sensor_id, adc_avg, ref_val);
-                        const fsw::calibration::CubicChannel* cch = cubic_store.channel(sensor_id);
-                        if (fit.valid && cch != nullptr)
-                            pt_calibration.set_calibration(
-                                cch->logical_ch,
-                                fsw::calibration::PTCalibrationCoeffs(fit.A, fit.B, fit.C, fit.D));
-                        cubic_store.save();
+                        // Legacy cubic capture is now a shared capture (feeds cubic + robust).
+                        apply_capture(sensor_id, adc_avg, ref_val);
                         std::cout << "[Cal] Cubic capture uid=" << static_cast<int>(sensor_id)
-                                  << " adc=" << adc_avg << " psi=" << ref_val
-                                  << (fit.valid ? " (fit ok)" : " (pending/err)") << std::endl;
+                                  << " adc=" << adc_avg << " psi=" << ref_val << std::endl;
                     } else {
                         std::cout << "[Cal] Cubic capture: no ADC seen yet for uid "
                                   << static_cast<int>(sensor_id) << std::endl;
                     }
-                } else if (cmd_type == 4) {  // Clear cubic channel (revert to factory)
-                    cubic_store.clear_channel(sensor_id);
-                    const fsw::calibration::CubicChannel* cch = cubic_store.channel(sensor_id);
-                    if (cch != nullptr) {
-                        auto fac = factory_pt_snapshot.find(cch->logical_ch);
-                        if (fac != factory_pt_snapshot.end())
-                            pt_calibration.set_calibration(cch->logical_ch, fac->second);
-                    }
-                    cubic_store.save();
+                } else if (cmd_type == 4) {  // Clear channel → nothing (no factory revert)
+                    apply_clear(sensor_id);
                     std::cout << "[Cal] Cubic cleared uid=" << static_cast<int>(sensor_id)
                               << std::endl;
                 } else if (cmd_type == 5) {  // Unified capture point — routed by configured model

@@ -286,7 +286,7 @@ export interface CubicCalibrationChannel {
   connector: number;              // 1-based board-local connector
   logicalCh: number;              // (slot-1)*10 + connector (PTCalibrationManager key)
   role: string;                   // may be empty; the UI supplies it from sensor config
-  active_model: 'cubic' | 'robust';  // the model this uid streams (config truth); which page shows it
+  active_model: 'cubic' | 'robust' | 'physics';  // the model this uid streams (config truth)
   numPoints: number;
   status: 'PENDING' | 'OK' | 'ERROR';
   last_error: string;

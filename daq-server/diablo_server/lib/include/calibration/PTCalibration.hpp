@@ -66,7 +66,9 @@ inline uint8_t pt_logical_calibration_channel(uint8_t board_slot_number, uint8_t
  */
 class PTCalibrationManager {
 public:
-    PTCalibrationManager();
+    // auto_load=false constructs with NO calibration (used by the physics-or-nothing calibration
+    // service, which applies only operator cubics from the store / an explicit bench-cal import).
+    explicit PTCalibrationManager(bool auto_load = true);
     ~PTCalibrationManager() = default;
 
     /**
@@ -132,6 +134,14 @@ public:
      * (pt_logical_calibration_channel), not a board-local connector.
      */
     void set_calibration(uint8_t channel_id, const PTCalibrationCoeffs& coeffs);
+
+    /**
+     * @brief Remove any cubic for a logical channel, so is_calibrated() returns false again.
+     *
+     * Used by the calibration service's "clear" so a cleared/uncalibrated cubic sensor streams
+     * nothing (0) rather than reverting to a factory/baseline curve.
+     */
+    void clear_calibration(uint8_t channel_id);
 
     /**
      * @brief Set default calibration file paths
