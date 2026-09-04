@@ -19,6 +19,10 @@
 
   --color-border: #383848;
   --color-accent: #3b82f6;
+  /* Drag-to-zoom band. uPlot's own .u-select is rgba(0,0,0,.07): black on a near-black
+     plot, i.e. invisible, so the gesture gave no feedback at all. Accent-tinted instead,
+     light enough to read the lines through. */
+  --color-select: color-mix(in srgb, var(--color-accent) 20%, transparent);
   --color-accent-hover: #2563eb;
   --color-danger: #ef4444;
   /* Simulated-run badge. Amber reads as "caution, not real data" and clears
@@ -186,6 +190,20 @@ body {
 /* Chart */
 .chart-wrap { position: relative; background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: 8px; padding: 20px 22px; flex: 1; min-height: 440px; }
 .chart-busy { position: absolute; top: 16px; right: 18px; color: var(--color-accent); font-size: var(--text-2xs); }
+
+/* Drag-to-zoom: the band you are about to zoom into, and what it is worth in seconds. */
+.u-select {
+  background: var(--color-select);
+  border-left: 1px solid var(--color-accent);
+  border-right: 1px solid var(--color-accent);
+}
+.u-select-span {
+  position: absolute; top: 6px; transform: translateX(-50%);
+  padding: 2px 7px; border-radius: 4px; pointer-events: none; white-space: nowrap;
+  background: var(--color-bg-primary); border: 1px solid var(--color-accent);
+  color: var(--color-text-primary); font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
 
 /* uPlot legend — canvas axis text is themed in chartTheme.ts (var() doesn't
    resolve in a canvas), the legend is real DOM so it is themed here. */

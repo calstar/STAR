@@ -50,9 +50,12 @@ Single-process (build the frontend, serve everything from uvicorn):
   [Run names](#run-names) below.
 - **Config tab** — the config snapshot for the selected run, verbatim, with a line
   filter (matches keep their enclosing `[section]`), copy, and download.
-- **Plot** — uPlot; drag to zoom (which refetches that window at higher
-  resolution), continuous series are min/max-decimated (spikes preserved),
+- **Plot** — uPlot; continuous series are min/max-decimated (spikes preserved),
   discrete series are step-drawn.
+- **Zoom** — drag a range (the band is highlighted as you drag, labelled with how long
+  it is), or scroll the wheel to zoom about the cursor. Either way the new window is
+  refetched at higher resolution. **Reset view**, or a double-click on the plot, goes
+  back to the whole run. Zooming out stops at the run's own bounds.
 - **Export plot CSV** — selected channels over the current window, **wide**
   (aligned) format.
 - **Download run CSV** — every primary channel, **long/tidy** (`time,component,
