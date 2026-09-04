@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <fstream>
@@ -389,6 +390,11 @@ int main(int argc, char* argv[]) {
     std::cout << "[ConfigBroadcast] " << packets.size() << " packet types" << std::endl;
 
     unsigned long total_sent = 0;
+    // Per-destination send accounting. The single global counter could not distinguish
+    // "all 8 boards got their config" from "the same board got it 8 times".
+    std::map<std::string, unsigned long> tx_ok, tx_fail, tx_bad_addr;
+    std::map<std::string, size_t> tx_bytes;
+    std::map<std::string, uint8_t> tx_type;
     auto last_log = std::chrono::steady_clock::now();
 
     while (g_running) {
@@ -399,18 +405,49 @@ int main(int argc, char* argv[]) {
             packets.swap(fresh);
 
         for (const auto& [pkt_type, pkt, ip, listen_port] : packets) {
-            if (inet_pton(AF_INET, ip.c_str(), &dest.sin_addr) != 1)
+            const std::string dest_key = ip + ":" + std::to_string(listen_port);
+            if (inet_pton(AF_INET, ip.c_str(), &dest.sin_addr) != 1) {
+                tx_bad_addr[dest_key]++;
                 continue;
+            }
             dest.sin_port = htons(listen_port);
+            errno = 0;
             ssize_t sent = sendto(sock, pkt.data(), pkt.size(), 0,
                                   reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest));
-            if (sent == static_cast<ssize_t>(pkt.size()))
+            if (sent == static_cast<ssize_t>(pkt.size())) {
                 total_sent++;
+                tx_ok[dest_key]++;
+                tx_bytes[dest_key] = pkt.size();
+                tx_type[dest_key] = pkt_type;
+            } else {
+                // A short or failed send is the whole bug class we are chasing: the old code
+                // counted only successes, so a silently dropped packet looked identical to a
+                // delivered one. Report errno the first time and then once per 10s per dest.
+                tx_fail[dest_key]++;
+                int e = errno;
+                if (tx_fail[dest_key] == 1 || tx_fail[dest_key] % 10 == 0) {
+                    std::cerr << "[ConfigBroadcast] ✗ sendto(" << dest_key << ") type=" << (int)pkt_type
+                              << " len=" << pkt.size() << " returned " << sent << " errno=" << e
+                              << " (" << std::strerror(e) << ")" << std::endl;
+                }
+            }
         }
 
         auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration<double>(now - last_log).count() >= 10.0 && total_sent > 0) {
-            std::cout << "[ConfigBroadcast] Sent " << total_sent << " packets total" << std::endl;
+        if (std::chrono::duration<double>(now - last_log).count() >= 10.0) {
+            std::cout << "[ConfigBroadcast] Sent " << total_sent << " packets total ("
+                      << packets.size() << " dests this cycle)" << std::endl;
+            for (const auto& [dkey, n] : tx_ok) {
+                std::cout << "   → " << dkey << "  type=" << (int)tx_type[dkey]
+                          << " len=" << tx_bytes[dkey] << "  ok=" << n
+                          << " fail=" << tx_fail[dkey] << std::endl;
+            }
+            for (const auto& [dkey, n] : tx_fail)
+                if (tx_ok.find(dkey) == tx_ok.end())
+                    std::cout << "   → " << dkey << "  ok=0 fail=" << n << std::endl;
+            for (const auto& [dkey, n] : tx_bad_addr)
+                std::cout << "   → " << dkey << "  INVALID ADDRESS, never sent (n=" << n << ")"
+                          << std::endl;
             last_log = now;
         }
 

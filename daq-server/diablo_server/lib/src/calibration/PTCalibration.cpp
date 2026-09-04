@@ -377,6 +377,13 @@ std::string PTCalibrationManager::find_latest_json_file(const std::string& json_
 
     std::string latest_file;
     std::time_t latest_time = 0;
+    // Seeding "newest so far" with 0 silently discarded every candidate: libstdc++'s
+    // fs::file_time_type is __file_clock, whose epoch is 2174-01-01, so a present-day file's
+    // time_since_epoch() is NEGATIVE (~-4.6e9 s) and `time_t > 0` is never true. This function
+    // therefore always returned "" and no JSON calibration has ever loaded — the service stat()ed
+    // the file and then skipped it, reporting "No calibration files found". Track the first
+    // candidate explicitly instead of relying on a sentinel that assumes a 1970 epoch.
+    bool have_candidate = false;
 
 #if __cplusplus >= 201703L
     for (const auto& entry : fs::directory_iterator(json_dir)) {
@@ -389,7 +396,8 @@ std::string PTCalibrationManager::find_latest_json_file(const std::string& json_
         auto time_t =
             std::chrono::duration_cast<std::chrono::seconds>(file_time.time_since_epoch()).count();
 
-        if (time_t > latest_time) {
+        if (!have_candidate || time_t > latest_time) {
+            have_candidate = true;
             latest_time = time_t;
             latest_file = entry.path().string();
         }
@@ -407,7 +415,8 @@ std::string PTCalibrationManager::find_latest_json_file(const std::string& json_
                 std::string full_path = json_dir + "/" + filename;
                 struct stat file_stat;
                 if (stat(full_path.c_str(), &file_stat) == 0 && S_ISREG(file_stat.st_mode)) {
-                    if (file_stat.st_mtime > latest_time) {
+                    if (!have_candidate || file_stat.st_mtime > latest_time) {
+                        have_candidate = true;
                         latest_time = file_stat.st_mtime;
                         latest_file = full_path;
                     }
