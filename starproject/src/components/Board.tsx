@@ -5,7 +5,8 @@ import {
   type DragEndEvent,
   DragOverlay,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   closestCorners,
   useSensor,
   useSensors,
@@ -25,9 +26,21 @@ import {
 } from "@/lib/board";
 
 import { Column } from "./Column";
-import { TaskCard } from "./TaskCard";
+import { TaskCardOverlay } from "./TaskCard";
 
 const EMPTY: Columns = { backlog: [], todo: [], in_progress: [], blocked: [], done: [] };
+
+// dnd-kit's MouseSensor only rejects right-click; require the primary button so
+// middle-click can't start a drag that commits a move.
+class PrimaryMouseSensor extends MouseSensor {
+  static activators = [
+    {
+      eventName: "onMouseDown",
+      handler: ({ nativeEvent }: { nativeEvent: MouseEvent }) =>
+        nativeEvent.button === 0,
+    },
+  ] as typeof MouseSensor.activators;
+}
 
 export function Board({ tasks, sort }: { tasks: BoardTask[]; sort: BoardSort }) {
   // Seeded once from props; local state is authoritative while on the board.
@@ -55,8 +68,11 @@ export function Board({ tasks, sort }: { tasks: BoardTask[]; sort: BoardSort }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature, sort]);
 
+  // Mouse drags start after 4px of movement (so plain clicks open the modal);
+  // touch drags need a 250ms press so quick swipes scroll the page instead.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(PrimaryMouseSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
@@ -141,7 +157,12 @@ export function Board({ tasks, sort }: { tasks: BoardTask[]; sort: BoardSort }) 
       onDragEnd={onDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
-      <div className="flex gap-3 pb-2">
+      {/* Snap is dropped mid-drag so it cannot fight dnd-kit's auto-scroll. */}
+      <div
+        className={`flex gap-3 overflow-x-auto pb-2 lg:overflow-visible ${
+          activeId ? "" : "snap-x snap-mandatory lg:snap-none"
+        }`}
+      >
         {STATUS_COLUMNS.map((c) => (
           <Column
             key={c.key}
@@ -151,7 +172,7 @@ export function Board({ tasks, sort }: { tasks: BoardTask[]; sort: BoardSort }) 
           />
         ))}
       </div>
-      <DragOverlay>{activeTask ? <TaskCard task={activeTask} /> : null}</DragOverlay>
+      <DragOverlay>{activeTask ? <TaskCardOverlay task={activeTask} /> : null}</DragOverlay>
     </DndContext>
   );
 }
