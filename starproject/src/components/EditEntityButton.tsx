@@ -45,7 +45,7 @@ export function EditEntityButton({
           e.stopPropagation();
           setOpen(true);
         }}
-        className="-m-2 p-2 text-sm text-neutral-500 hover:text-neutral-800 hover:underline dark:text-neutral-400 dark:hover:text-neutral-200"
+        className="inline-flex min-h-11 items-center text-sm text-neutral-500 hover:text-neutral-800 hover:underline dark:text-neutral-400 dark:hover:text-neutral-200 sm:min-h-0"
       >
         Edit
       </button>

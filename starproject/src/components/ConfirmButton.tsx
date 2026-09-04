@@ -42,7 +42,7 @@ export function ConfirmButton({
           e.stopPropagation();
           setOpen(true);
         }}
-        className={className}
+        className={`inline-flex min-h-11 items-center sm:min-h-0 ${className ?? ""}`}
       >
         {label}
       </button>
