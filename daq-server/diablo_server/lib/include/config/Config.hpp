@@ -82,6 +82,13 @@ struct CalibrationConfig {  // [calibration.tc/.rtd/.lc]
     double lc_sensitivity_mv_per_v = 2.0;
     double lc_pga_gain = 32.0;
     double lc_full_scale_value = 300.0;
+    // Per-type coefficient sources from the TOML (previously ignored; the service used to hardcode
+    // these). json_dir = newest-*.json dir of per-channel coeffs; csv_path = first of
+    // [calibration.*] csv_paths. Empty string keeps the historical hardcoded default at the call
+    // site.
+    std::string tc_json_dir, tc_csv_path;
+    std::string rtd_json_dir, rtd_csv_path;
+    std::string lc_json_dir, lc_csv_path;
 };
 
 struct FireConfig {     // [fire]
@@ -163,9 +170,13 @@ struct Config {
     // section name -> {role name -> channel}, e.g. "sensor_roles_pt_board" -> {"Fuel Upstream": 1}.
     std::map<std::string, std::map<std::string, int>> sensor_roles;
     std::map<std::string, double> abort_pts;  // [abort_pts]
-    // section name -> {role name -> "cubic"|"robust"|"blend"}, e.g.
+    // section name -> {role name -> "cubic"|"robust"|"physics"|"blend"}, e.g.
     // "calibration_model_pt_board" -> {"Ox Upstream": "robust"}. Per-sensor PT streaming model.
     std::map<std::string, std::map<std::string, std::string>> calibration_models;
+    // Per-sensor physics-mode parameters, role-keyed, parallel to calibration_models:
+    // [calibration_full_scale_<board>] role->PSI and [calibration_sense_resistor_<board>] role->Ω.
+    std::map<std::string, std::map<std::string, double>> calibration_full_scale;
+    std::map<std::string, std::map<std::string, double>> calibration_sense_resistor;
 
     /** [sensor_roles_<board>] with a legacy [sensor_roles] fallback. */
     const std::map<std::string, int>* sensor_roles_for(const std::string& board_key) const;
@@ -173,6 +184,12 @@ struct Config {
     /** [calibration_model_<board>] role->model map, or nullptr when absent/empty. */
     const std::map<std::string, std::string>* calibration_model_for(
         const std::string& section_key) const;
+
+    /** [calibration_full_scale_<board>] role->PSI map, or nullptr when absent/empty. */
+    const std::map<std::string, double>* full_scale_for(const std::string& section_key) const;
+
+    /** [calibration_sense_resistor_<board>] role->Ω map, or nullptr when absent/empty. */
+    const std::map<std::string, double>* sense_resistor_for(const std::string& section_key) const;
 };
 
 /** Parse config.toml at `path`. On any error, logs and returns a default-constructed Config. */

@@ -83,26 +83,27 @@ export function getConfigPath(): string {
 }
 
 /**
- * Default every PT sensor's calibration model to 'cubic' when the config omits it. For each
- * [boards.*] of type 'PT' — excluding current-loop 4-20 mA boards, which never use cubic/robust —
- * ensure a parallel `calibration_model_<boardKey>` map exists with an entry for every role in
- * `sensor_roles_<boardKey>`. Mutates config in place on read (mirrors applyControllerDefaults) so
- * the editor and any reader see cubic for sensors the file leaves unset.
+ * Default every PT sensor's calibration model when the config omits it. For each [boards.*] of type
+ * 'PT', ensure a parallel `calibration_model_<boardKey>` map exists with an entry for every role in
+ * `sensor_roles_<boardKey>`. The default is interface-aware: current-loop 4-20 mA boards default to
+ * 'physics' (their historical hardwired conversion), all other PT boards to 'cubic'. All three
+ * models (cubic/robust/physics) are valid on any PT board. Mutates config in place on read (mirrors
+ * applyControllerDefaults) so the editor and any reader see a model for sensors the file leaves unset.
  */
 export function applyCalibrationModelDefaults(config: any): void {
   const boards = config?.boards;
   if (!boards || typeof boards !== 'object') return;
   for (const [boardKey, b] of Object.entries<any>(boards)) {
     if (!b || b.type !== 'PT') continue;
-    if (b.hp_pt_connectors || b.hp_pt_full_scale_psi != null || b.pt_type === '4-20 mA absolute')
-      continue; // current-loop board — cubic/robust never applies
+    const isLoop =
+      b.hp_pt_connectors || b.hp_pt_full_scale_psi != null || b.pt_type === '4-20 mA absolute';
     const roles = config[`sensor_roles_${boardKey}`];
     if (!roles || typeof roles !== 'object') continue;
     const modelKey = `calibration_model_${boardKey}`;
     const models =
       config[modelKey] && typeof config[modelKey] === 'object' ? config[modelKey] : {};
     for (const role of Object.keys(roles)) {
-      if (models[role] == null) models[role] = 'cubic';
+      if (models[role] == null) models[role] = isLoop ? 'physics' : 'cubic';
     }
     config[modelKey] = models;
   }
