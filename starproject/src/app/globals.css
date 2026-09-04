@@ -48,6 +48,32 @@ html {
   filter: brightness(0.94);
 }
 
+/* frappe-gantt wraps its fixed-width SVG in .gantt-container (overflow: auto),
+   which is the element that actually pans the timeline. Give it smooth touch
+   momentum and keep a horizontal swipe from chaining into browser navigation
+   or scrolling the page behind it. */
+.gantt-container {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+/* Small screens: bar/row sizing is bumped via frappe-gantt options in
+   GanttChart.tsx (CSS can't reflow the SVG layout); here we just enlarge the
+   SVG text to stay legible on a phone and drop the grey tap flash so a tap on
+   a bar reads as opening the task modal, not a stray highlight. */
+@media (max-width: 640px) {
+  .gantt-container {
+    -webkit-tap-highlight-color: transparent;
+  }
+  .gantt .bar-label {
+    font-size: 13px !important;
+  }
+  .gantt .lower-text,
+  .gantt .upper-text {
+    font-size: 13px !important;
+  }
+}
+
 /* We open our own task modal on bar click, so hide frappe-gantt's popup. */
 .gantt-container .popup-wrapper,
 .popup-wrapper {
