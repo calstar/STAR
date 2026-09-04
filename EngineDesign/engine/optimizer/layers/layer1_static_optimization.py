@@ -241,8 +241,12 @@ def _store_last_good_eval_bundle_from_worker_res(
         rf = float("nan")
     if not np.isfinite(rf):
         return
+    # ``res`` came off the pool by unpickling, so this process is already the only
+    # holder of ``fr``; the parent reads scalars off ``res`` afterwards and never mutates
+    # full_results. The one consumer of this bundle (see the validation replay) deep-copies
+    # on read, so a copy here was the second of three on the same payload.
     state["last_good_eval_bundle"] = {
-        "results": copy.deepcopy(fr),
+        "results": fr,
         "P_O_Pa": float(res.get("P_O_Pa", 0.0)),
         "P_F_Pa": float(res.get("P_F_Pa", 0.0)),
         "thrust_error": float(res.get("thrust_error", 1.0)),
@@ -1992,7 +1996,13 @@ def _eval_candidate(x_raw):
             'F': _f,
             'MR': _mr,
             'Pc': float(result.get('Pc', 0)),
-            'full_results': copy.deepcopy(result),
+            # No copy: ``result`` is a fresh dict (runner.evaluate and accel.evaluate
+            # both build one per call and retain no reference to it), nothing here mutates
+            # it, and returning it hands it straight to the pool -- which pickles it, and
+            # pickling already yields an object the parent owns outright. The deepcopy was
+            # a third copy of data that crosses a process boundary anyway, and it cost
+            # 0.12 ms against a 1.17 ms evaluate(), i.e. ~10% of every worker candidate.
+            'full_results': result,
             'P_O_Pa': float(P_O_Pa),
             'P_F_Pa': float(P_F_Pa),
             'thrust_error': float(thr_e),
