@@ -30,6 +30,8 @@ _NO, _NF = _IDX["NO"], _IDX["NF"]
 _RHO_O, _RHO_F = _IDX["RHO_O"], _IDX["RHO_F"]
 _ANG_O, _ANG_F = _IDX["ANG_O"], _IDX["ANG_F"]
 _MU_O, _MU_F = _IDX["MU_O"], _IDX["MU_F"]
+_INJ_TYPE = _IDX["INJ_TYPE"]
+_PIN_DHO, _PIN_DHF = _IDX["PIN_DHO"], _IDX["PIN_DHF"]
 
 
 def build_diag(P, sol):
@@ -39,7 +41,8 @@ def build_diag(P, sol):
     """
     (_ok, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, mom_R, Cd_O, Cd_F,
      Pi_O, Pi_F, dpi_O, dpi_F, A_geom_O, A_geom_F,
-     dpf_O, dpf_F, We_O, We_F, u_rel, x_star, constraints_ok, n_iter) = sol
+     dpf_O, dpf_F, We_O, We_F, u_rel, x_star, constraints_ok, n_iter,
+     ti_O, ti_F) = sol
 
     djo, djf = float(P[_DJO]), float(P[_DJF])
     rho_O, rho_F = float(P[_RHO_O]), float(P[_RHO_F])
@@ -54,16 +57,19 @@ def build_diag(P, sol):
     A_eff_O = Cd_O * A_geom_O
     A_eff_F = Cd_F * A_geom_F
 
-    # Shear-layer turbulence, mirroring impinging.py:155-172 (d_hyd == d_jet for
-    # impinging, impinging.py:117-118). Consumed via closure diagnostics at
-    # chamber_solver.py:180 -- that is the accel.solve path, not the evaluate path.
-    def _ti(rho, u, d, mu):
-        Re = (rho * u * d / mu) if mu > 0 else 0.0
-        t = 0.16 * (Re ** -0.125) if Re > 0 else 0.1
-        return min(max(t, 0.02), 0.3)
-
-    ti_O = _ti(rho_O, u_O, djo, float(P[_MU_O]))
-    ti_F = _ti(rho_F, u_F, djf, float(P[_MU_F]))
+    # Shear-layer turbulence, mirroring impinging.py:155-172 / pintle.py:218-228.
+    # The characteristic length is the HYDRAULIC diameter, which for impinging
+    # happens to equal d_jet (impinging.py:117-118) but for pintle is a separate
+    # geometry field -- using d_jet there gives Re=0 and a flat 0.1.
+    # Consumed via closure diagnostics at chamber_solver.py:180, i.e. the
+    # accel.solve path rather than accel.evaluate.
+    # ti_O/ti_F come from the solve rather than being recomputed here: pintle
+    # derives them from PRE-update Reynolds numbers while weighting with
+    # POST-update velocities, which cannot be reconstructed from the outputs.
+    if float(P[_INJ_TYPE]) == 0.0:                 # pintle
+        dh_O, dh_F = float(P[_PIN_DHO]), float(P[_PIN_DHF])
+    else:
+        dh_O, dh_F = djo, djf
     v_tot = max(u_O + u_F, 1e-6)
     ti_mix = min(max((ti_O * u_O + ti_F * u_F) / v_tot, 0.02), 0.35)
 
@@ -71,7 +77,7 @@ def build_diag(P, sol):
         "injector_type": "impinging",
         "A_eff_O": A_eff_O, "A_eff_F": A_eff_F,
         "turbulence_intensity_O": ti_O, "turbulence_intensity_F": ti_F,
-        "turbulence_length_O": 0.07 * djo, "turbulence_length_F": 0.07 * djf,
+        "turbulence_length_O": 0.07 * dh_O, "turbulence_length_F": 0.07 * dh_F,
         "turbulence_intensity_mix": ti_mix,
         "iterations": int(n_iter),
         "constraints_satisfied": bool(constraints_ok),

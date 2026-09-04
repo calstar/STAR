@@ -197,6 +197,7 @@ def injector_solve(P, P_tank_O, P_tank_F, Pc):
     dpi_O = 0.0; dpi_F = 0.0
     We_O = 0.0; We_F = 0.0; D32_O = 0.0; D32_F = 0.0; u_rel = 0.0
     dpf_O = 0.0; dpf_F = 0.0; x_star = 0.0; n_iter = 0
+    ti_O = 0.1; ti_F = 0.1
     u_O = 0.0; u_F = 0.0
     constraints_ok = 0
 
@@ -282,6 +283,13 @@ def injector_solve(P, P_tank_O, P_tank_F, Pc):
         Cd_O_eff *= Cd_red; Cd_F_eff *= Cd_red
         Cd_O_eff = max(Cd_O_eff, P[DO_CDMIN]); Cd_F_eff = max(Cd_F_eff, P[DF_CDMIN])
 
+    # Shear-layer turbulence. impinging.py calls _injector_turbulence_fields with
+    # the FINAL velocities (:612), so Re and the ti_mix weighting are consistent
+    # here -- unlike pintle, which weights pre-update Re with post-update u.
+    _reO = _reynolds(rho_O, u_O, djo, mu_O); _reF = _reynolds(rho_F, u_F, djf, mu_F)
+    ti_O = _clip(0.16*(_reO**(-0.125)) if _reO > 0 else 0.1, 0.02, 0.3)
+    ti_F = _clip(0.16*(_reF**(-0.125)) if _reF > 0 else 0.1, 0.02, 0.3)
+
     # momentum ratio (bulk jet velocities)
     A_jet_O = PI*(djo*0.5)**2; A_jet_F = PI*(djf*0.5)**2
     n_O = nO if nO >= 1 else 1; n_F = nF if nF >= 1 else 1
@@ -294,8 +302,8 @@ def injector_solve(P, P_tank_O, P_tank_F, Pc):
         if den > 0 and num >= 0:
             mom_R = np.sqrt(num/den)
     if not (np.isfinite(mdot_O) and np.isfinite(mdot_F)) or mdot_F <= 0.0:
-        return (0, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, mom_R, Cd_O, Cd_F, Pi_O, Pi_F, dpi_O, dpi_F, A_O, A_F, dpf_O, dpf_F, We_O, We_F, u_rel, x_star, float(constraints_ok), float(n_iter))
-    return (1, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, mom_R, Cd_O, Cd_F, Pi_O, Pi_F, dpi_O, dpi_F, A_O, A_F, dpf_O, dpf_F, We_O, We_F, u_rel, x_star, float(constraints_ok), float(n_iter))
+        return (0.0, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, mom_R, Cd_O, Cd_F, Pi_O, Pi_F, dpi_O, dpi_F, A_O, A_F, dpf_O, dpf_F, We_O, We_F, u_rel, x_star, float(constraints_ok), float(n_iter), ti_O, ti_F)
+    return (1.0, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, mom_R, Cd_O, Cd_F, Pi_O, Pi_F, dpi_O, dpi_F, A_O, A_F, dpf_O, dpf_F, We_O, We_F, u_rel, x_star, float(constraints_ok), float(n_iter), ti_O, ti_F)
 
 
 @njit(cache=True)
@@ -332,7 +340,7 @@ def _gasification(Tc, Pc, tau_res, SMD, L_eff, cp_g, rho_g, U_slip, T_star_cap):
 
 @njit(cache=True)
 def _eta_advanced(P, Lstar, Pc, Tc, gamma, R, MR, Ac, At, Dinj, mdot_total,
-                  u_F, u_O, D32_O, D32_F, mom_R, R_opt):
+                  u_F, u_O, D32_O, D32_F, mom_R, R_opt, use_mom_penalty):
     if R <= 0 or Tc <= 0 or Ac <= 0 or At <= 0 or Dinj <= 0 or Lstar <= 0 or mdot_total <= 0:
         return -1.0
     rho_ch = Pc/(R*Tc)
@@ -380,13 +388,24 @@ def _eta_advanced(P, Lstar, Pc, Tc, gamma, R, MR, Ac, At, Dinj, mdot_total,
     tau_chem = P[C_TAUREF]*pf*np.exp(exp_arg)
     Da = np.inf if tau_chem <= 0 else tau_res/tau_chem
     eta_k = 1.0 - np.exp(-np.sqrt(Da))
-    # eta_mixing (Rupe)
-    if not (mom_R > 0.0 and np.isfinite(mom_R)):
-        return -1.0
-    Ro = R_opt if (R_opt > 0 and np.isfinite(R_opt)) else 1.0
-    sig = P[C_SIGMA] if (P[C_SIGMA] > 0 and np.isfinite(P[C_SIGMA])) else 1.5
-    z = np.log(mom_R/Ro)
-    eta_m = P[C_EMPEAK]*np.exp(-(z*z)/(2.0*sig*sig))
+    # eta_mixing (Rupe) -- IMPINGING ONLY.
+    #
+    # combustion_physics.py:1183-1200 deliberately applies NO momentum-mixing
+    # penalty for pintle: momentum_ratio_R is None there, and TMR is explicitly
+    # NOT substituted for it (different quantity, different scale -- doing so
+    # crushes eta_mix). So pintle gets eta_m = Em_peak flat. This is an explicit
+    # flag rather than a branch on mom_R validity, because the impinging path
+    # RELIES on invalid mom_R -> -1.0 -> NaN -> bail; a lenient branch here would
+    # silently change impinging results.
+    if use_mom_penalty == 0.0:
+        eta_m = P[C_EMPEAK]
+    else:
+        if not (mom_R > 0.0 and np.isfinite(mom_R)):
+            return -1.0
+        Ro = R_opt if (R_opt > 0 and np.isfinite(R_opt)) else 1.0
+        sig = P[C_SIGMA] if (P[C_SIGMA] > 0 and np.isfinite(P[C_SIGMA])) else 1.5
+        z = np.log(mom_R/Ro)
+        eta_m = P[C_EMPEAK]*np.exp(-(z*z)/(2.0*sig*sig))
     eta_total = eta_L*eta_k*eta_m
     if not np.isfinite(eta_total):
         return -1.0
@@ -551,11 +570,141 @@ def _cooling_evaluate(P, Pc, mdot_total, Tc, gamma, R, M):
 
 
 @njit(cache=True)
+def _smd_pintle(L_open, V_rel, rho_f, mu_f, sigma_f, C, B, n, p):
+    """spray.smd_pintle: SMD = C * L_open * We_rel^(-n) * (1 + B*Oh_f)^p."""
+    We_rel = (rho_f*V_rel*V_rel*L_open)/sigma_f
+    denom = np.sqrt(rho_f*sigma_f*L_open)
+    Oh_f = mu_f/denom if denom > 0 else 0.0
+    factor_we = We_rel**(-n) if We_rel > 0 else 1.0
+    factor_oh = (1.0 + B*Oh_f)**p
+    return C*L_open*factor_we*factor_oh
+
+
+@njit(cache=True)
+def injector_solve_pintle(P, P_tank_O, P_tank_F, Pc):
+    """Pintle branch flows. Same 24-tuple shape as injector_solve.
+
+    Ports what PintleInjector.solve actually EXECUTES. Two things in that
+    function do not run and are deliberately not reproduced:
+      * the `if feed_iter < 2:` quick-update block is dead -- `feed_iter` is 2
+        once the `for feed_iter in range(3)` loop exits, so the condition is
+        never true (confirmed by counting cd_from_re calls: 2/iteration, not 4);
+      * that 3-iteration feed loop recomputes delta_p_feed from an unchanged
+        mdot, so its 6 calls all return the same two values.
+    Mass flow therefore converges through the outer Cd-relaxation loop alone.
+
+    mom_R is left NaN: pintle has no momentum_ratio_R (see _eta_advanced).
+    """
+    rho_O = P[RHO_O]; mu_O = P[MU_O]; sig_O = P[SIG_O]; tO = P[T_O]
+    rho_F = P[RHO_F]; mu_F = P[MU_F]; sig_F = P[SIG_F]; tF = P[T_F]
+    A_O = P[PIN_AO]; A_F = P[PIN_AF]
+    dh_O = P[PIN_DHO]; dh_F = P[PIN_DHF]
+    d_orif = P[PIN_DORIF]; h_gap = P[PIN_HGAP]
+    max_iter = int(P[SV_CLMAX]); Cd_red = P[SV_CLCDRED]
+    Cd_O_eff = P[DO_CDINF]; Cd_F_eff = P[DF_CDINF]
+
+    mdot_O = 0.1; mdot_F = 0.1
+    Cd_O = 0.0; Cd_F = 0.0; Pi_O = P_tank_O; Pi_F = P_tank_F
+    dpi_O = 0.0; dpi_F = 0.0; dpf_O = 0.0; dpf_F = 0.0
+    We_O = 0.0; We_F = 0.0; D32 = 0.0; u_O = 0.0; u_F = 0.0
+    V_rel = 0.0; x_star = 0.0; constraints_ok = 0; n_iter = 0
+    ti_O = 0.1; ti_F = 0.1
+
+    for iteration in range(max_iter):
+        n_iter = iteration + 1
+        dpf_bal_O = _dpf(mdot_O, rho_O, P[FO_DIN], P[FO_AH], P[FO_K0], P[FO_K1], P[FO_PHI], P_tank_O)
+        dpf_bal_F = _dpf(mdot_F, rho_F, P[FF_DIN], P[FF_AH], P[FF_K0], P[FF_K1], P[FF_PHI], P_tank_F)
+        Pi_O = P_tank_O - dpf_bal_O
+        Pi_F = P_tank_F - dpf_bal_F
+        dpi_O = Pi_O - Pc if Pi_O - Pc > 0.0 else 0.0
+        dpi_F = Pi_F - Pc if Pi_F - Pc > 0.0 else 0.0
+        if Pi_F < Pc:
+            mdot_F = 0.0
+        if Pi_O < Pc:
+            mdot_O = 0.0
+
+        u_O = mdot_O/(rho_O*A_O) if A_O > 0 else 0.0
+        u_F = mdot_F/(rho_F*A_F) if A_F > 0 else 0.0
+        Re_O = _reynolds(rho_O, u_O, dh_O, mu_O)
+        Re_F = _reynolds(rho_F, u_F, dh_F, mu_F)
+        cO = _cd_from_re(Re_O, Pi_O, tO, dh_O, P[DO_CDINF], P[DO_ARE], P[DO_CDMIN], P[DO_GEOM],
+                         P[DO_DREF], P[DO_DMIN], P[DO_EXPS], P[DO_LOGG], P[DO_CDMAX], P[DO_CDFLOOR],
+                         P[DO_UPC], P[DO_PREF], P[DO_AP], P[DO_UTC], P[DO_TREF], P[DO_AT])
+        cF = _cd_from_re(Re_F, Pi_F, tF, dh_F, P[DF_CDINF], P[DF_ARE], P[DF_CDMIN], P[DF_GEOM],
+                         P[DF_DREF], P[DF_DMIN], P[DF_EXPS], P[DF_LOGG], P[DF_CDMAX], P[DF_CDFLOOR],
+                         P[DF_UPC], P[DF_PREF], P[DF_AP], P[DF_UTC], P[DF_TREF], P[DF_AT])
+        Cd_O = cO if cO < Cd_O_eff else Cd_O_eff
+        Cd_F = cF if cF < Cd_F_eff else Cd_F_eff
+
+        mdot_O = Cd_O*A_O*np.sqrt(2.0*rho_O*dpi_O) if dpi_O > 0 else 0.0
+        mdot_F = Cd_F*A_F*np.sqrt(2.0*rho_F*dpi_F) if dpi_F > 0 else 0.0
+        u_O = mdot_O/(rho_O*A_O) if A_O > 0 else 0.0
+        u_F = mdot_F/(rho_F*A_F) if A_F > 0 else 0.0
+
+        We_O = rho_O*u_O*u_O*d_orif/sig_O if sig_O > 0 else np.inf
+        We_F = rho_F*u_F*u_F*dh_F/sig_F if sig_F > 0 else np.inf
+
+        V_rel = np.sqrt(u_O*u_O + u_F*u_F)
+        D32 = _smd_pintle(h_gap, V_rel, rho_F, mu_F, sig_F,
+                          P[PIN_SMDC], P[PIN_SMDB], P[PIN_SMDN], P[PIN_SMDP])
+
+        # ti uses the PRE-UPDATE Reynolds numbers, while the ti_mix weighting
+        # below uses the POST-update velocities. That asymmetry is pintle.py's
+        # (Re_O/Re_F are computed before mdot is refreshed, ti at :218 after);
+        # impinging is self-consistent instead, recomputing Re from the same u.
+        ti_O = 0.16*(Re_O**(-0.125)) if Re_O > 0 else 0.1
+        ti_F = 0.16*(Re_F**(-0.125)) if Re_F > 0 else 0.1
+        ti_O = _clip(ti_O, 0.02, 0.3); ti_F = _clip(ti_F, 0.02, 0.3)
+
+        te = P[SP_EVAPK]*D32*D32
+        x_star = V_rel*te                       # both streams share D32
+        if P[SP_USETURB] != 0.0:
+            v_tot = u_O + u_F if u_O + u_F > 1e-6 else 1e-6
+            ti_mix = _clip((ti_O*u_O + ti_F*u_F)/v_tot, 0.02, 0.35)
+            x_star *= _clip(1.0/(1.0 + P[SP_PENGAIN]*ti_mix), 0.3, 1.0)
+
+        # Reported feed loss is recomputed from the CONVERGED mdot, matching
+        # pintle.py's "recalculate one final time ... so diagnostics have the
+        # correct final values". This deliberately makes the reported
+        # delta_p_feed inconsistent with the P_inj used in the balance above,
+        # which came from the previous iteration's mdot. Faithful, not tidy.
+        dpf_O = _dpf(mdot_O, rho_O, P[FO_DIN], P[FO_AH], P[FO_K0], P[FO_K1], P[FO_PHI], P_tank_O)
+        dpf_F = _dpf(mdot_F, rho_F, P[FF_DIN], P[FF_AH], P[FF_K0], P[FF_K1], P[FF_PHI], P_tank_F)
+
+        constraints_ok = 1
+        if We_O < P[SP_WEMIN] or We_F < P[SP_WEMIN]:
+            constraints_ok = 0
+        if P[SP_EVAPUSE] != 0 and x_star >= P[SP_EVAPXLIM]:
+            constraints_ok = 0
+        if constraints_ok:
+            break
+        Cd_O_eff *= Cd_red; Cd_F_eff *= Cd_red
+        if Cd_O_eff < P[DO_CDMIN]: Cd_O_eff = P[DO_CDMIN]
+        if Cd_F_eff < P[DF_CDMIN]: Cd_F_eff = P[DF_CDMIN]
+
+    if not (np.isfinite(mdot_O) and np.isfinite(mdot_F) and mdot_F > 0.0):
+        return (0.0, mdot_O, mdot_F, u_O, u_F, D32, D32, np.nan, Cd_O, Cd_F, Pi_O, Pi_F,
+                dpi_O, dpi_F, A_O, A_F, dpf_O, dpf_F, We_O, We_F, V_rel, x_star,
+                float(constraints_ok), float(n_iter), ti_O, ti_F)
+    return (1.0, mdot_O, mdot_F, u_O, u_F, D32, D32, np.nan, Cd_O, Cd_F, Pi_O, Pi_F,
+            dpi_O, dpi_F, A_O, A_F, dpf_O, dpf_F, We_O, We_F, V_rel, x_star,
+            float(constraints_ok), float(n_iter), ti_O, ti_F)
+
+
+@njit(cache=True)
+def _solve_injector(P, P_O, P_F, Pc):
+    """Dispatch on injector type. Both branches return the same tuple type."""
+    if P[INJ_TYPE] == 0.0:
+        return injector_solve_pintle(P, P_O, P_F, Pc)
+    return injector_solve(P, P_O, P_F, Pc)
+
+
+@njit(cache=True)
 def _residual(Pc, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F):
     if not (np.isfinite(Pc) and Pc > 0):
         return np.nan
     (ok, mO, mF, uO, uF, D32O, D32F, momR, CdO, CdF, PiO, PiF, dpiO, dpiF, AgO, AgF,
-     dpfO, dpfF, WeO, WeF, urel, xstar, constr, nit) = injector_solve(P, P_O, P_F, Pc)
+     dpfO, dpfF, WeO, WeF, urel, xstar, constr, nit, tiO, tiF) = _solve_injector(P, P_O, P_F, Pc)
     if ok == 0:
         return np.nan
     mdot_supply = mO + mF
@@ -564,14 +713,17 @@ def _residual(Pc, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F
     if not (cs_id > 0 and np.isfinite(cs_id)):
         return np.nan
     Lstar = P[G_LSTAR] if P[G_LSTAR] > 0 else (P[G_VOL]/P[G_AT] if P[G_AT] > 0 else 0.0)
-    Dinj = P[DJO]
+    # Characteristic injector diameter for the mixing models, matching
+    # chamber_solver._infer_injector_diameter: d_jet for impinging,
+    # d_pintle_tip for pintle (P[DJO] is zero on a pintle config).
+    Dinj = P[DJO] if P[INJ_TYPE] != 0.0 else P[PIN_DTIP]
     Ac = PI*(P[G_DCHAM]*0.5)**2
     if P[C_ROPT] > 0.0:
         R_opt = P[C_ROPT]
     else:
         sO = np.sin(P[ANG_O]*PI/180.0); sF = np.sin(P[ANG_F]*PI/180.0)
         R_opt = np.sqrt(sF/sO) if (sO > 0 and sF > 0) else 1.0
-    eta_total = _eta_advanced(P, Lstar, Pc, tc, gm, Rg, MR, Ac, P[G_AT], Dinj, mdot_supply, uF, uO, D32O, D32F, momR, R_opt)
+    eta_total = _eta_advanced(P, Lstar, Pc, tc, gm, Rg, MR, Ac, P[G_AT], Dinj, mdot_supply, uF, uO, D32O, D32F, momR, R_opt, 1.0 if P[INJ_TYPE] != 0.0 else 0.0)
     if eta_total < 0:
         return np.nan
     cok, cooling_eff, _tc_eff = _cooling_evaluate(P, Pc, mdot_supply, tc, gm, Rg, Mg)
@@ -688,19 +840,20 @@ def evaluate_core(P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F
             return (0.0,)*22
     # recompute converged state
     (ok, mO, mF, uO, uF, D32O, D32F, momR, CdO, CdF, PiO, PiF, dpiO, dpiF, AgO, AgF,
-     dpfO, dpfF, WeO, WeF, urel, xstar, constr, nit) = injector_solve(P, P_O, P_F, Pc)
+     dpfO, dpfF, WeO, WeF, urel, xstar, constr, nit, tiO, tiF) = _solve_injector(P, P_O, P_F, Pc)
     if ok == 0:
         return (0.0,)*22
     mdot_total = mO + mF; MR = mO/mF
     cs_id, cf_id, tc, gm, Rg, Mg, cfv = cea_eval(Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, MR, Pc, P[G_EPS])
     Lstar = P[G_LSTAR] if P[G_LSTAR] > 0 else (P[G_VOL]/P[G_AT] if P[G_AT] > 0 else 0.0)
+    Dinj = P[DJO] if P[INJ_TYPE] != 0.0 else P[PIN_DTIP]
     Ac = PI*(P[G_DCHAM]*0.5)**2
     if P[C_ROPT] > 0.0:
         R_opt = P[C_ROPT]
     else:
         sO = np.sin(P[ANG_O]*PI/180.0); sF = np.sin(P[ANG_F]*PI/180.0)
         R_opt = np.sqrt(sF/sO) if (sO > 0 and sF > 0) else 1.0
-    eta_total = _eta_advanced(P, Lstar, Pc, tc, gm, Rg, MR, Ac, P[G_AT], P[DJO], mdot_total, uF, uO, D32O, D32F, momR, R_opt)
+    eta_total = _eta_advanced(P, Lstar, Pc, tc, gm, Rg, MR, Ac, P[G_AT], Dinj, mdot_total, uF, uO, D32O, D32F, momR, R_opt, 1.0 if P[INJ_TYPE] != 0.0 else 0.0)
     # Cooling at the converged point, matching the residual. C reports
     # eta_cstar = eta_total*cooling_eff and derives cstar_actual from THAT
     # (ed_chamber.c:91-92), so report eta_final here, not eta_total.

@@ -179,6 +179,27 @@ def _geom(cg):
     )
 
 
+def _pintle(geom):
+    """Pintle geometry, flattened.
+
+    The area/hydraulic-diameter maths lives in engine.core.geometry and is called
+    HERE, at the boundary, so the kernel sees scalars and the two implementations
+    cannot drift on geometry.
+    """
+    from engine.core.geometry import get_effective_areas, get_hydraulic_diameters
+    A_O, A_F = get_effective_areas(geom)
+    dh_O, dh_F = get_hydraulic_diameters(geom)
+    return _ns(A_O=float(A_O), A_F=float(A_F),
+               d_hyd_O=float(dh_O), d_hyd_F=float(dh_F),
+               d_orifice=float(geom.lox.d_orifice),
+               h_gap=float(geom.fuel.h_gap),
+               d_pintle_tip=float(geom.fuel.d_pintle_tip))
+
+
+_PIN_ZERO = _ns(A_O=0.0, A_F=0.0, d_hyd_O=0.0, d_hyd_F=0.0, d_orifice=0.0, h_gap=0.0,
+                d_pintle_tip=0.0)
+
+
 def _imp(b):
     """Mirrors native_injector._fill_imp."""
     return _ns(
@@ -199,6 +220,17 @@ def build_state(config):
 
     g = config.injector.geometry
     sp = config.spray
+    inj_type = _INJ[config.injector.type]
+
+    # Only one geometry block is populated; the other stays zero. The kernels
+    # branch on injector.type, so the unused half is never read.
+    if inj_type == _INJ["impinging"]:
+        imp_O, imp_F, pin = _imp(g.oxidizer), _imp(g.fuel), _PIN_ZERO
+    elif inj_type == _INJ["pintle"]:
+        _z = _ns(n_elements=0, d_jet=0.0, impingement_angle=0.0, spacing=0.0)
+        imp_O, imp_F, pin = _z, _z, _pintle(g)
+    else:
+        raise NotImplementedError(f"injector type {config.injector.type!r} not ported")
 
     spray = _ns(
         # Impinging atomization is ALWAYS Ingebo (see impinging.py); a stale
@@ -210,6 +242,10 @@ def build_state(config):
         # Falsy check, not `is None`: we_corr_max of 0.0 and null both -> 0.0.
         smd_we_corr_max=float(getattr(sp.smd, "we_corr_max", None))
         if getattr(sp.smd, "we_corr_max", None) else 0.0,
+        use_turbulence_corrections=int(bool(getattr(sp, "use_turbulence_corrections", False))),
+        turbulence_penetration_gain=float(getattr(sp, "turbulence_penetration_gain", 0.0) or 0.0),
+        pintle_C=float(sp.pintle.C), pintle_B=float(sp.pintle.B),
+        pintle_n=float(sp.pintle.n), pintle_p=float(sp.pintle.p),
         chamber_gas_R=float(sp.smd.chamber_gas_R),
         chamber_gas_T=float(sp.smd.chamber_gas_T),
         spray_angle_model=0 if sp.spray_angle.model == "J" else 1,
@@ -230,8 +266,8 @@ def build_state(config):
     )
 
     return _ns(
-        injector=_ns(type=_INJ[config.injector.type],
-                     imp_O=_imp(g.oxidizer), imp_F=_imp(g.fuel)),
+        injector=_ns(type=inj_type, imp_O=imp_O, imp_F=imp_F),
+        pin=pin,
         discharge_O=_discharge(config.discharge["oxidizer"]),
         discharge_F=_discharge(config.discharge["fuel"]),
         feed_O=_feed(config.feed_system["oxidizer"]),
@@ -294,6 +330,13 @@ _NAMES = [
     "AB_BLOWEFF", "AB_BLOWC", "AB_BLOWMIN",
     "AB_TIREF", "AB_TISENS", "AB_TIEXP", "AB_TIMAX",
     "AB_EMIS", "AB_TAMB", "AB_SINKMIN", "AB_SINKFB",
+    # injector-type discriminator (0=pintle, 1=impinging) -- kernels branch on it
+    "INJ_TYPE",
+    # pintle injector (zero for impinging configs)
+    "PIN_AO", "PIN_AF", "PIN_DHO", "PIN_DHF", "PIN_DORIF", "PIN_HGAP",
+    "PIN_SMDC", "PIN_SMDB", "PIN_SMDN", "PIN_SMDP", "PIN_DTIP",
+    # spray turbulence corrections (used by the pintle path)
+    "SP_USETURB", "SP_PENGAIN",
 ]
 _IDX = {n: i for i, n in enumerate(_NAMES)}
 globals().update(_IDX)                      # module-level int constants for njit
@@ -302,7 +345,7 @@ NP = len(_NAMES)
 
 def _assert_supported(st):
     """Guard the assumptions that let this port skip cooling / use the impinging path."""
-    assert int(st.injector.type) == 1, "not impinging"
+    assert int(st.injector.type) in (0, 1), "injector type not ported (coaxial)"
     # Ablative IS ported (see _cooling_evaluate). Film/regen are not -- C refuses
     # them too (ed_cooling.c:147), so they stay a Python fallback.
     assert int(getattr(st.cooling, "film_enabled")) == 0 and int(getattr(st.cooling, "regen_enabled")) == 0
@@ -400,6 +443,16 @@ def _build_path_table():
                       ("AB_SINKMIN","ablative_radiative_sink_minimum_threshold"),
                       ("AB_SINKFB","ablative_radiative_sink_fallback_temperature")):
         paths[name] = f"cooling.{fld}"
+    paths["INJ_TYPE"] = "injector.type"
+    for suf, fld in (("AO","A_O"),("AF","A_F"),("DHO","d_hyd_O"),("DHF","d_hyd_F"),
+                     ("DORIF","d_orifice"),("HGAP","h_gap"),
+                     ("DTIP","d_pintle_tip")):
+        paths[f"PIN_{suf}"] = f"pin.{fld}"
+    for name, fld in (("PIN_SMDC","pintle_C"),("PIN_SMDB","pintle_B"),
+                      ("PIN_SMDN","pintle_n"),("PIN_SMDP","pintle_p"),
+                      ("SP_USETURB","use_turbulence_corrections"),
+                      ("SP_PENGAIN","turbulence_penetration_gain")):
+        paths[name] = f"spray.{fld}"
     missing = set(_NAMES) - set(paths)
     assert not missing, f"param(s) with no source path: {sorted(missing)}"
     return paths

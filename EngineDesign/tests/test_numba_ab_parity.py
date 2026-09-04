@@ -18,10 +18,13 @@ the same numba kernels and the comparison is self-referential (it reads as ~1e-1
 agreement, which is the tell). _python_only() below disables the accelerator for
 the reference computation; without it this suite proves nothing.
 
-BOTH CONFIGS ARE EXERCISED ON PURPOSE: configs/canonical/impinging.yaml has
-ablative cooling ON (the path the project's default configs take) and
-impinging_lox_ch4_8000N.yaml has it off. Different routes through
-kernels._cooling_evaluate.
+THE CONFIG LIST IS DELIBERATE. canonical/impinging.yaml has ablative cooling ON
+(the path the project's default configs take), impinging_lox_ch4_8000N.yaml has
+it off, and canonical/pintle.yaml exercises the pintle injector -- a different
+solve (kernels.injector_solve_pintle) and, critically, a different mixing term:
+pintle gets eta_mixing = Em_peak flat, with NO momentum-mixing penalty. Reusing
+the impinging mom_R/R_opt logic there would silently diverge from the
+authoritative path, so that divergence is pinned here.
 """
 from __future__ import annotations
 
@@ -46,14 +49,16 @@ POINTS_PSI = [(563.467, 567.644), (518.4, 550.6), (597.3, 584.7)]
 RTOL = 1e-6
 
 CONFIGS = [
-    ("configs/canonical/impinging.yaml", True),          # ablative ON
-    ("configs/impinging_lox_ch4_8000N.yaml", False),     # ablative off
+    ("configs/canonical/impinging.yaml", True),          # impinging, ablative ON
+    ("configs/impinging_lox_ch4_8000N.yaml", False),     # impinging, ablative off
+    ("configs/canonical/pintle.yaml", True),             # pintle, ablative ON
 ]
 
 CORE_FIELDS = ["Pc", "F", "Isp", "MR", "cstar_actual", "eta_cstar",
                "mdot_total", "mdot_O", "mdot_F", "Cf_actual",
                "P_exit", "T_exit", "v_exit"]
 
+# momentum_ratio_R is impinging-only (absent for pintle); the .get() guards skip it.
 DIAG_FIELDS = ["D32_O", "D32_F", "Cd_O", "Cd_F", "momentum_ratio_R",
                "delta_p_feed_O", "delta_p_feed_F", "delta_p_injector_O",
                "delta_p_injector_F", "A_geom_O", "A_geom_F", "A_eff_O", "A_eff_F",

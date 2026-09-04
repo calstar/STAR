@@ -45,13 +45,20 @@ def require() -> bool:
 
 
 def can_handle(config) -> bool:
-    """Impinging only; regen-coupled feed loss is not ported."""
+    """Impinging and pintle; regen-coupled feed loss is not ported for either."""
     inj = getattr(config, "injector", None)
-    if inj is None or inj.type != "impinging":
-        return False
+    if inj is None or inj.type not in ("impinging", "pintle"):
+        return False          # coaxial has no port
     regen = getattr(config, "regen_cooling", None)
     if regen is not None and getattr(regen, "enabled", False):
-        return False  # regen-coupled feed loss not ported
+        return False          # regen-coupled feed loss not ported
+    if inj.type == "pintle":
+        # PintleInjector.solve calls cd_from_re WITHOUT an orifice diameter, so a
+        # config with geometry-based Cd enabled resolves Cd_inf differently there
+        # than the kernel would. Untested corner: hand it to Python.
+        for side in ("oxidizer", "fuel"):
+            if getattr(config.discharge[side], "use_geometry_cd", False):
+                return False
     return True
 
 
@@ -100,7 +107,7 @@ def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
     if F != F:
         return None
 
-    sol = _k.injector_solve(P, float(P_tank_O), float(P_tank_F), float(Pc))
+    sol = _k._solve_injector(P, float(P_tank_O), float(P_tank_F), float(Pc))
     if not sol[0]:
         return None
     diag = _diag.build_diag(P, sol)
@@ -152,7 +159,7 @@ def solve(config, P_tank_O, P_tank_F, Pc):
         P = _p.extract_params(config)
     except AssertionError:
         return None
-    sol = _k.injector_solve(P, float(P_tank_O), float(P_tank_F), float(Pc))
+    sol = _k._solve_injector(P, float(P_tank_O), float(P_tank_F), float(Pc))
     if not sol[0]:
         return None
     return float(sol[1]), float(sol[2]), _diag.build_diag(P, sol)
