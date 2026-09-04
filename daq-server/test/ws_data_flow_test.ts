@@ -90,6 +90,7 @@ function parseOnlyTests(): Set<string> | null {
   }
   const allowed = new Set([
     'sensor_config', 'sensor_data', 'cal_stability', 'raw_cal_presence',
+    'cal_values', 'cal_model_select', 'cal_robust_learn',
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
     'controller', 'timestamps', 'conservation', 'board_logs', 'board_log_mode',
@@ -1732,6 +1733,183 @@ async function testCalibratedDataStability(ws: WebSocket): Promise<void> {
   }
 }
 
+// ── Calibration correctness: value, model selection, robust learning ─────────
+// These verify what the presence/stability checks above cannot: that PT_Cal carries the RIGHT
+// number, that the per-sensor cubic/robust choice in config is honored, and that the robust stack
+// actually learns. (The "PT_Cal not uniformly 0" guard would have caught fa0e27f9, where a broken
+// JSON loader made every PT read 0 PSI yet presence+stability still passed.)
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.floor(s.length / 2)];
+}
+
+/** Collect PT1_Cal.CH<n> pressure_psi and raw_adc_counts (same message → time-aligned) for `ms`.
+ *  Subscriptions from Test 1 are already active. */
+function collectPtCal(
+  ws: WebSocket, ms: number,
+): Promise<{ cal: Map<number, number[]>; adc: Map<number, number[]> }> {
+  const cal = new Map<number, number[]>();
+  const adc = new Map<number, number[]>();
+  const push = (m: Map<number, number[]>, ch: number, v: number) => {
+    const a = m.get(ch); if (a) a.push(v); else m.set(ch, [v]);
+  };
+  return new Promise((resolve) => {
+    function handler(data: WebSocket.Data) {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg.type !== MessageType.SENSOR_UPDATE) return;
+        const { entity, component, value } = msg.payload;
+        if (!entity || !Number.isFinite(value)) return;
+        const m = /^PT1_Cal\.CH(\d+)$/.exec(entity);
+        if (!m) return;
+        const ch = Number(m[1]);
+        if (component === 'pressure_psi') push(cal, ch, value);
+        else if (component === 'raw_adc_counts') push(adc, ch, value);
+      } catch { /* ignore */ }
+    }
+    ws.on('message', handler);
+    setTimeout(() => { ws.removeListener('message', handler); resolve({ cal, adc }); }, ms);
+  });
+}
+
+/** Newest non-excluded factory-cubic JSON in the cal dir → logical-ch → [A,B,C,D], matching the
+ *  service's find_latest_json_file (which skips adjustments / cubic_calibration / *learned_prior*). */
+// The test runs from diablo_server/backend, so resolve the service's cal dir via the env the harness
+// exports (INTEGRATION_CAL_DIR) or known-relative fallbacks.
+function findCalDir(): string | null {
+  const candidates = [
+    process.env.INTEGRATION_CAL_DIR,
+    'scripts/calibration/calibrations',
+    '../../scripts/calibration/calibrations',
+  ].filter((d): d is string => !!d);
+  return candidates.find((d) => { try { return fs.existsSync(d); } catch { return false; } }) ?? null;
+}
+
+function loadFactoryPtCoeffs(): Map<number, [number, number, number, number]> | null {
+  const dir = findCalDir();
+  if (!dir) return null;
+  let files: string[];
+  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { return null; }
+  const excluded = (f: string) => /adjustments|cubic_calibration|learned_prior/.test(f);
+  const cand = files.filter((f) => !excluded(f))
+    .map((f) => ({ f, m: fs.statSync(`${dir}/${f}`).mtimeMs }))
+    .sort((a, b) => b.m - a.m);
+  if (cand.length === 0) return null;
+  try {
+    const j = JSON.parse(fs.readFileSync(`${dir}/${cand[0].f}`, 'utf-8'));
+    const polys = j.calibration_polynomials;
+    if (!polys || typeof polys !== 'object') return null;
+    const out = new Map<number, [number, number, number, number]>();
+    for (const [k, v] of Object.entries(polys)) {
+      const arr = v as number[];
+      if (Array.isArray(arr) && arr.length >= 4) out.set(Number(k), [arr[0], arr[1], arr[2], arr[3]]);
+    }
+    return out.size ? out : null;
+  } catch { return null; }
+}
+
+function evalCubic(adc: number, c: [number, number, number, number]): number {
+  const v = c[0] * adc * adc * adc + c[1] * adc * adc + c[2] * adc + c[3];
+  return Math.max(-3000, Math.min(20000, v));  // matches PTCalibration.cpp clamp
+}
+
+// ── Test: calibrated PT VALUES equal the factory cubic applied to the raw ADC ─
+async function testCalibratedValueCorrectness(ws: WebSocket): Promise<void> {
+  console.log('\n🎯 Test 16: Calibrated PT values (PT1_Cal ≈ factory_cubic(raw ADC))');
+  const coeffs = loadFactoryPtCoeffs();
+  if (!coeffs) { assert(false, 'cal_values: could not read factory PT coefficients'); return; }
+
+  const { cal, adc } = await collectPtCal(ws, 5000);
+  let checked = 0, anyNonZero = false;
+  const fails: string[] = [];
+  for (let ch = 1; ch <= 10; ch++) {
+    const cs = cal.get(ch), as = adc.get(ch), c = coeffs.get(ch);
+    if (!cs || cs.length < 3 || !as || as.length < 3 || !c) continue;
+    const a = median(as), psi = median(cs), expected = evalCubic(a, c);
+    const tol = Math.max(Math.abs(expected) * 0.03, 5);  // 3% or 5 PSI
+    checked++;
+    if (Math.abs(psi) > 1) anyNonZero = true;
+    if (Math.abs(psi - expected) > tol) {
+      fails.push(`CH${ch}: got ${psi.toFixed(1)} expected ${expected.toFixed(1)} PSI (adc ${a.toFixed(0)}, tol ${tol.toFixed(1)})`);
+    } else if (VERBOSE) {
+      console.log(`  ✓ CH${ch}: ${psi.toFixed(1)} ≈ ${expected.toFixed(1)} PSI (adc ${a.toFixed(0)})`);
+    }
+  }
+  assert(checked >= 5, `cal_values: checked ${checked} LP PT channel(s) against factory cubic (need ≥5)`);
+  assert(anyNonZero, 'cal_values: PT_Cal is not uniformly 0 (guards the "no JSON cal loaded → 0 PSI" regression)');
+  assert(fails.length === 0,
+    fails.length === 0 ? 'cal_values: every LP PT calibrated value matches factory_cubic(ADC)'
+                       : `cal_values: ${fails.length} channel(s) off: ${fails.join('; ')}`);
+}
+
+// ── Test: the per-sensor cubic/robust config choice is respected ─────────────
+async function testCalibrationModelSelection(): Promise<void> {
+  console.log('\n🔀 Test 17: cubic/robust config selection respected (service cubic_calibration.json)');
+  // Read the service's own authoritative record — it tags each uid with the model it resolved from
+  // config, so this proves config -> service selection end to end (the /api view is a passthrough of
+  // this same file).
+  const dir = findCalDir();
+  if (!dir) { assert(false, 'cal_model_select: could not locate the calibration dir'); return; }
+  let state: Record<string, any> | null = null;
+  for (let i = 0; i < 6; i++) {  // the service rewrites the file at startup; retry for readiness
+    try {
+      const j = JSON.parse(fs.readFileSync(`${dir}/cubic_calibration.json`, 'utf-8'));
+      if (j?.cubic_state && Object.keys(j.cubic_state).length > 0) { state = j.cubic_state; break; }
+    } catch { /* not written yet */ }
+    await sleep(500);
+  }
+  if (!state) {
+    assert(false, 'cal_model_select: cubic_calibration.json had no populated cubic_state after retries');
+    return;
+  }
+  // test_integration.sh sets "Ox Upstream" (pt_board conn 5 → uid 2105) to robust; the rest stay
+  // cubic. "Fuel Upstream" is conn 1 → uid 2101.
+  const robust = state['2105']?.active_model;
+  const cubic = state['2101']?.active_model;
+  assert(robust === 'robust', `cal_model_select: uid 2105 (Ox Upstream) active_model=robust — config respected (got ${robust})`);
+  assert(cubic === 'cubic', `cal_model_select: uid 2101 (Fuel Upstream) active_model=cubic (got ${cubic})`);
+}
+
+// ── Test: the robust stack actually learns (and the cubic channel is unaffected) ─
+async function testRobustLearns(ws: WebSocket): Promise<void> {
+  console.log('\n🧠 Test 18: robust stack learns an operator offset (cubic channel unchanged)');
+  const ROBUST_CH = 5, CUBIC_CH = 1, BOARD = 21;
+  const base = await collectPtCal(ws, 3000);
+  const f5 = base.cal.get(ROBUST_CH), c1 = base.cal.get(CUBIC_CH);
+  if (!f5 || f5.length < 3 || !c1 || c1.length < 3) {
+    assert(false, 'cal_robust_learn: missing baseline PT_Cal for ch5/ch1');
+    return;
+  }
+  const factory5 = median(f5), before1 = median(c1);
+  const operatorPsi = factory5 + 50;  // within robust reconcile tolerance (<125 PSI)
+
+  for (let i = 0; i < 15; i++) {  // teach robust the offset at the (constant) ADC
+    send(ws, {
+      type: 'calibration_command', timestamp: Date.now(),
+      payload: { commandType: 'capture_point', sensorId: ROBUST_CH, boardId: BOARD, referencePressure: operatorPsi },
+    });
+    await sleep(120);
+  }
+  await sleep(3000);  // let RLS converge + stream + EMA catch up
+
+  const after = await collectPtCal(ws, 3000);
+  const a5 = after.cal.get(ROBUST_CH), a1 = after.cal.get(CUBIC_CH);
+  if (!a5 || a5.length < 3 || !a1 || a1.length < 3) {
+    assert(false, 'cal_robust_learn: missing post-capture PT_Cal for ch5/ch1');
+    return;
+  }
+  const after5 = median(a5), after1 = median(a1);
+  const moved5 = after5 - factory5, moved1 = Math.abs(after1 - before1);
+  console.log(`  ch5(robust): factory=${factory5.toFixed(1)} operator=${operatorPsi.toFixed(1)} after=${after5.toFixed(1)} (moved ${moved5.toFixed(1)}) ; ch1(cubic): ${before1.toFixed(1)}→${after1.toFixed(1)}`);
+  assert(moved5 > 15, `cal_robust_learn: robust ch5 moved ${moved5.toFixed(1)} PSI toward the operator value (+50) — robust stack learns`);
+  assert(moved1 < 10, `cal_robust_learn: cubic ch1 unaffected by robust captures (moved ${moved1.toFixed(1)} PSI)`);
+}
+
 // ── Test 6: Elodin State Sync ────────────────────────────────────────────────
 
 async function testElodinStateSync(): Promise<void> {
@@ -2552,6 +2730,8 @@ async function main(): Promise<void> {
     if (runTest('raw_cal_presence')) await testRawAndCalibratedPresence(ws);
     if (runTest('timestamps')) await testTimestampQuality(ws);
     if (runTest('cal_stability')) await testCalibratedDataStability(ws);
+    if (runTest('cal_values')) await testCalibratedValueCorrectness(ws);
+    if (IS_THIN && runTest('cal_model_select')) await testCalibrationModelSelection();
     if (IS_THIN) {
       if (runTest('heartbeat')) await testServerHeartbeatUdp();
       if (runTest('board_status')) await testBoardStatusToFrontend(ws);
@@ -2581,6 +2761,9 @@ async function main(): Promise<void> {
     }
     // Last on purpose: maximizes the sample count both sides of the comparison.
     if (IS_THIN && runTest('conservation')) await testSampleConservation();
+    // Truly last: this drives capture commands that mutate the robust channel's learned state, so it
+    // must run after every read-only value/stability/conservation check.
+    if (IS_THIN && canRunCommandTests && runTest('cal_robust_learn')) await testRobustLearns(ws);
   } finally {
     ws.close();
   }
