@@ -20,6 +20,15 @@ export async function getTaskDetailData(projectId: string, taskId: string) {
         assignees: {
           select: { id: true, name: true, email: true, displayName: true },
         },
+        createdBy: {
+          select: { name: true, email: true, displayName: true },
+        },
+        activities: {
+          orderBy: { createdAt: "desc" },
+          include: {
+            actor: { select: { name: true, email: true, displayName: true } },
+          },
+        },
         blockedBy: {
           include: {
             blockedByTask: { select: { id: true, title: true, status: true } },
@@ -32,7 +41,7 @@ export async function getTaskDetailData(projectId: string, taskId: string) {
     }),
     getTeamUsers(),
     prisma.task.findMany({
-      where: { projectId },
+      where: { projectId, archived: false },
       select: { id: true, title: true },
       orderBy: { createdAt: "asc" },
     }),

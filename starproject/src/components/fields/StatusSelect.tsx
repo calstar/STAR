@@ -10,6 +10,7 @@ const OPTS: { value: string; label: string; badge: string }[] = [
   { value: "backlog", label: "Backlog", badge: STATUS_BADGE.backlog },
   { value: "todo", label: "To do", badge: STATUS_BADGE.todo },
   { value: "in_progress", label: "In progress", badge: STATUS_BADGE.in_progress },
+  { value: "blocked", label: "Blocked", badge: STATUS_BADGE.blocked },
   { value: "done", label: "Done", badge: STATUS_BADGE.done },
 ];
 

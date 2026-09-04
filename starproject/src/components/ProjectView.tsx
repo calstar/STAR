@@ -45,7 +45,7 @@ export async function ProjectView({
   // `subproject` tag when it isn't the parent's own.
   const projectIds = [project.id, ...project.children.map((c) => c.id)];
   const rawTasks = await prisma.task.findMany({
-    where: { projectId: { in: projectIds } },
+    where: { projectId: { in: projectIds }, archived: false },
     include: {
       assignees: {
         select: { id: true, name: true, email: true, displayName: true },

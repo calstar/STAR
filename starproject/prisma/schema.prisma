@@ -19,6 +19,7 @@ enum TaskStatus {
   todo
   in_progress
   done
+  blocked
 }
 
 enum TaskPriority {
@@ -121,6 +122,9 @@ model DigestSubscription {
 
 model Task {
   id          String        @id @default(cuid())
+  // Global, human-facing task number (#N). Monotonic Postgres sequence: never
+  // reused (gaps remain after a delete) and never edited — no update path writes it.
+  number      Int           @unique @default(autoincrement())
   projectId   String
   project     Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   subteamId   String?
@@ -134,6 +138,7 @@ model Task {
   startDate   DateTime?
   dueDate     DateTime?
   boardOrder  Float         @default(0) // ordering within a kanban column (Phase 2)
+  archived    Boolean       @default(false) // hidden from active board/lists once done
   createdById String
   createdBy   User          @relation("TaskCreatedBy", fields: [createdById], references: [id])
   createdAt   DateTime      @default(now())
@@ -177,10 +182,10 @@ model NotifLog {
 // human-readable strings at the time of the change (immutable history).
 model Activity {
   id        String   @id @default(cuid())
-  kind      String // created | deleted | updated | blocker_added | blocker_removed
-  field     String? // for kind=updated: assignee | status | priority | due | title | subteam
+  kind      String // created | deleted | updated | assigned | unassigned | blocker_added | blocker_removed
+  field     String? // for kind=updated: status | priority | due | title | subteam
   fromValue String?
-  toValue   String?
+  toValue   String? // for kind=assigned/unassigned: the affected person's display name
   taskTitle String
   taskId    String?
   task      Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
@@ -195,6 +200,15 @@ model Activity {
 // Runtime-added admins, on top of the built-in seed list in src/lib/admins.ts.
 // Email matches the X-Auth-Email identity, stored lowercase.
 model AdminEmail {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+}
+
+// A seed admin (SEED_ADMIN_EMAILS in src/lib/admins.ts) that an admin removed
+// via the UI. Seeds live in code and would otherwise re-appear every request, so
+// a tombstone here suppresses one; re-adding the email deletes its tombstone.
+model RemovedSeedAdmin {
   id        String   @id @default(cuid())
   email     String   @unique
   createdAt DateTime @default(now())

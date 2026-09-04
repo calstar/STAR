@@ -1,9 +1,9 @@
 "use client";
 
-import { updateField } from "@/lib/fieldUpdate";
+import { RichTextEditor } from "@/components/fields/RichTextEditor";
 
-/** Free-text "why is this blocked" comment. Auto-saves on blur, like the
- * description field — no explicit save button. */
+/** Free-text "why is this blocked" comment. Same markdown editor as the
+ * description — auto-saves on blur, no explicit save button. */
 export function BlockedNoteInput({
   taskId,
   value,
@@ -12,13 +12,11 @@ export function BlockedNoteInput({
   value: string;
 }) {
   return (
-    <textarea
-      name="blockedNote"
-      defaultValue={value}
-      onBlur={(e) => updateField(taskId, "blockedNote", e.target.value)}
-      rows={2}
+    <RichTextEditor
+      taskId={taskId}
+      field="blockedNote"
+      value={value}
       placeholder="Why is this blocked?…"
-      className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"
     />
   );
 }

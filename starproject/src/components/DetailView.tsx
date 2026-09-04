@@ -1,7 +1,7 @@
 import type { User } from "@prisma/client";
 import Link from "next/link";
 
-import { Board } from "@/components/Board";
+import { BoardWithSort } from "@/components/BoardWithSort";
 import { GanttChart } from "@/components/GanttChart";
 import { TaskTable } from "@/components/TaskTable";
 import { type WorkspaceTask, toRowData } from "@/lib/board";
@@ -63,7 +63,7 @@ export function DetailView({
 
       {view === "board" ? (
         <div className="mt-6">
-          <Board tasks={tasks} />
+          <BoardWithSort tasks={tasks} />
         </div>
       ) : view === "gantt" ? (
         <div className="mt-6">

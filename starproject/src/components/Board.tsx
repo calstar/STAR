@@ -16,6 +16,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 
 import { moveTask } from "@/lib/actions/tasks";
 import {
+  type BoardSort,
   type BoardTask,
   type Columns,
   STATUS_COLUMNS,
@@ -26,11 +27,11 @@ import {
 import { Column } from "./Column";
 import { TaskCard } from "./TaskCard";
 
-const EMPTY: Columns = { backlog: [], todo: [], in_progress: [], done: [] };
+const EMPTY: Columns = { backlog: [], todo: [], in_progress: [], blocked: [], done: [] };
 
-export function Board({ tasks }: { tasks: BoardTask[] }) {
+export function Board({ tasks, sort }: { tasks: BoardTask[]; sort: BoardSort }) {
   // Seeded once from props; local state is authoritative while on the board.
-  const [cols, setCols] = useState<Columns>(() => groupByStatus(tasks));
+  const [cols, setCols] = useState<Columns>(() => groupByStatus(tasks, sort));
   const [activeId, setActiveId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
@@ -50,9 +51,9 @@ export function Board({ tasks }: { tasks: BoardTask[] }) {
     [tasks],
   );
   useEffect(() => {
-    setCols(groupByStatus(tasks));
+    setCols(groupByStatus(tasks, sort));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signature]);
+  }, [signature, sort]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -94,6 +95,7 @@ export function Board({ tasks }: { tasks: BoardTask[] }) {
       backlog: [...cols.backlog],
       todo: [...cols.todo],
       in_progress: [...cols.in_progress],
+      blocked: [...cols.blocked],
       done: [...cols.done],
     };
     next[from] = next[from].filter((t) => t.id !== activeId);
