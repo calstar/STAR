@@ -14,27 +14,43 @@ export function UserMenu({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
+  // Close on outside tap and Escape.
   useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
+    if (!open) return;
+    const onDoc = (e: PointerEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, []);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        buttonRef.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   return (
     <div ref={ref} className="relative">
       <button
+        ref={buttonRef}
+        type="button"
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex items-center gap-2 rounded-full border border-neutral-300 py-1 pl-1 pr-2.5 text-sm text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        aria-label={name}
+        className="flex min-h-11 items-center gap-2 rounded-full border border-neutral-300 py-1 pl-1 pr-2.5 text-sm text-neutral-700 hover:bg-neutral-100 sm:min-h-0 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
       >
         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-neutral-900 text-xs font-semibold text-white dark:bg-neutral-100 dark:text-neutral-900">
           {name.charAt(0).toUpperCase()}
         </span>
-        <span className="max-w-[10rem] truncate">{name}</span>
+        <span className="hidden max-w-[10rem] truncate sm:inline">{name}</span>
         <svg
           viewBox="0 0 20 20"
           fill="currentColor"
@@ -49,13 +65,13 @@ export function UserMenu({
         </svg>
       </button>
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-56 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-1 shadow-lg">
+        <div className="absolute right-0 z-50 mt-2 w-56 max-w-[calc(100vw-3rem)] rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-1 shadow-lg">
           <div className="px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400">{email}</div>
           <div className="my-1 border-t border-neutral-100 dark:border-neutral-800" />
           <Link
             href="/settings"
             onClick={() => setOpen(false)}
-            className="block rounded px-3 py-2 text-sm text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+            className="flex min-h-11 items-center rounded px-3 py-2 text-sm text-neutral-700 sm:min-h-0 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
           >
             Settings
           </Link>
@@ -63,7 +79,7 @@ export function UserMenu({
             <Link
               href="/workspace"
               onClick={() => setOpen(false)}
-              className="block rounded px-3 py-2 text-sm text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+              className="flex min-h-11 items-center rounded px-3 py-2 text-sm text-neutral-700 sm:min-h-0 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
             >
               Workspace setup
             </Link>

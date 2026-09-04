@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 
 import { AppHeader } from "@/components/AppHeader";
 import { TaskModalProvider } from "@/components/TaskModalProvider";
@@ -10,6 +10,8 @@ export const metadata: Metadata = {
   description: "STAR team task tracker",
   icons: { icon: "/star-icon.svg" },
 };
+
+export const viewport: Viewport = { width: "device-width", initialScale: 1 };
 
 export default async function RootLayout({
   children,
