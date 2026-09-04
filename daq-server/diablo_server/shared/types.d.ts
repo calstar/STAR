@@ -196,7 +196,7 @@ export interface CalibrationStatusPayload {
     calibrationFilePath?: string | null;
 }
 /** Commands the frontend sends to drive the calibration engine */
-export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'save_coefficients' | 'clear_calibration' | 'capture_cubic_point' | 'clear_cubic_channel';
+export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'save_coefficients' | 'clear_calibration' | 'capture_cubic_point' | 'clear_cubic_channel' | 'capture_point' | 'new_calibration';
 export interface CalibrationCommand {
     commandType: CalibrationCommandType;
     sensorId?: number;
@@ -219,7 +219,7 @@ export interface CubicCalibrationChannel {
     connector: number;
     logicalCh: number;
     role: string;
-    active_model: 'cubic';
+    active_model: 'cubic' | 'robust';
     numPoints: number;
     status: 'PENDING' | 'OK' | 'ERROR';
     last_error: string;
@@ -236,6 +236,10 @@ export interface CubicCalibrationChannel {
     adcNormMin: number;
     adcNormScale: number;
     points: CubicCalibrationPoint[];
+    fitCurve?: {
+        adc: number;
+        psi: number;
+    }[];
 }
 /** Body of GET /api/cubic_calibration: the service's cubic_calibration.json, keyed by uid. */
 export interface CubicCalibrationPayload {
