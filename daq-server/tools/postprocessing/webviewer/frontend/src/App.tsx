@@ -9,6 +9,7 @@ import SensorPicker from './components/SensorPicker';
 import TimeRange from './components/TimeRange';
 import Chart from './components/Chart';
 import ConfigView from './components/ConfigView';
+import RunDescription from './components/RunDescription';
 
 const MAX_POINTS = 4000;
 
@@ -211,6 +212,7 @@ export default function App() {
   };
 
   const selArr = Array.from(selected);
+  const run = runs.find((r) => r.id === runId);
 
   return (
     <div className="app">
@@ -235,7 +237,7 @@ export default function App() {
             <>
               <div className="run-header">
                 <div className="run-title">{runId}</div>
-                {runs.find((r) => r.id === runId)?.simulated && (
+                {run?.simulated && (
                   <span className="sim-badge" title="Simulated data — not from the test stand">SIM</span>
                 )}
                 {indexBusy && <span className="busy">exporting &amp; indexing… (first open of a run)</span>}
@@ -254,6 +256,16 @@ export default function App() {
                   </span>
                 )}
               </div>
+
+              {run && (
+                <RunDescription
+                  runId={run.id}
+                  value={run.description}
+                  onSaved={(text) =>
+                    setRuns((rs) => rs.map((r) => (r.id === run.id ? { ...r, description: text } : r)))
+                  }
+                />
+              )}
 
               {index && (
                 <div className="tabs">

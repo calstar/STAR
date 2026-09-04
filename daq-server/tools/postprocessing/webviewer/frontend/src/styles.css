@@ -89,12 +89,34 @@ body {
   color: var(--color-sim); border: 1px solid var(--color-sim);
 }
 .run-cached { position: absolute; right: 14px; top: 13px; color: var(--color-accent); font-size: var(--text-2xs); }
+/* Clamped to one line: it is a label, and a long one must not push the list around. */
+.run-desc-line {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--color-text-secondary); font-size: var(--text-2xs); font-style: italic;
+}
 
 /* Run header */
 .run-header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
 .run-title { font-size: var(--text-base); font-weight: 650; }
 .run-meta { color: var(--color-text-muted); font-size: var(--text-xs); }
 .busy { color: var(--color-accent); font-size: var(--text-xs); }
+
+/* Shared, editable one-liner for the run. Reads as text until you go near it, so it
+   does not compete with the run title above it, but is plainly a field once hovered. */
+.run-desc { display: flex; align-items: center; gap: 10px; margin: -4px 0 12px; }
+.run-desc-input {
+  flex: 0 1 620px; min-width: 0; padding: 5px 9px; border-radius: 6px;
+  border: 1px solid transparent; background: none;
+  color: var(--color-text-secondary); font-size: var(--text-xs); font-family: inherit;
+}
+.run-desc-input::placeholder { color: var(--color-text-muted); }
+.run-desc-input:hover { border-color: var(--color-border); }
+.run-desc-input:focus {
+  outline: none; border-color: var(--color-accent);
+  background: var(--color-bg-secondary); color: var(--color-text-primary);
+}
+.run-desc-input:disabled { opacity: .6; }
+.run-desc-note { color: var(--color-text-muted); font-size: var(--text-2xs); }
 .error { color: var(--color-danger); font-size: var(--text-xs); }
 
 /* Tabs: Plot / Config, plus the view-wide names toggle. Spans both panes because

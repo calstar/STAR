@@ -50,6 +50,11 @@ Single-process (build the frontend, serve everything from uvicorn):
   [Run names](#run-names) below.
 - **Config tab** — the config snapshot for the selected run, verbatim, with a line
   filter (matches keep their enclosing `[section]`), copy, and download.
+- **Description** — a shared one-liner per run, editable in place under the run title
+  and shown in the run list. Anyone can write or rewrite any run's line and everyone
+  sees the same text; there is no login here, so there is nobody to attribute it to.
+  Stored in `<ELODIN_DB_DIR>/run_descriptions.json`: beside the runs, *not* in the
+  parquet cache, which compose explicitly calls safe to wipe.
 - **Plot** — uPlot; continuous series are min/max-decimated (spikes preserved),
   discrete series are step-drawn.
 - **Zoom** — drag a range (the band is highlighted as you drag, labelled with how long

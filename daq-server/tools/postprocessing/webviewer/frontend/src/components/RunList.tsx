@@ -31,6 +31,9 @@ export default function RunList({ runs, selected, onSelect, loading }: Props) {
               <span className="run-id">{r.id}</span>
               {r.simulated && <span className="sim-badge" title="Simulated data — not from the test stand">SIM</span>}
             </span>
+            {/* The whole point of the description: knowing what a run was without
+                opening it. Only rendered when set, so 300 unlabelled runs stay compact. */}
+            {r.description && <span className="run-desc-line">{r.description}</span>}
             {r.cached && <span className="run-cached" title="Exported & cached">●</span>}
           </button>
         ))}
