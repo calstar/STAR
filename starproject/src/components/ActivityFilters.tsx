@@ -47,7 +47,7 @@ export function ActivityFilters({
   };
 
   return (
-    <div className="mt-4 flex flex-wrap items-center gap-2">
+    <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center [&_button]:min-h-11 sm:[&_button]:min-h-0">
       <FieldSelect
         ariaLabel="Filter by type"
         value={kind}
@@ -78,7 +78,7 @@ export function ActivityFilters({
       {(kind || actor || project) && (
         <button
           onClick={() => router.push(pathname)}
-          className="text-sm text-neutral-500 dark:text-neutral-400 hover:underline"
+          className="self-start px-2 text-sm text-neutral-500 dark:text-neutral-400 hover:underline sm:self-auto sm:px-0"
         >
           Clear
         </button>

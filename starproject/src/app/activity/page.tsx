@@ -66,12 +66,12 @@ export default async function ActivityPage({
   };
 
   const pageBtn =
-    "rounded border border-neutral-300 px-3 py-1 text-sm dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800";
+    "inline-flex min-h-11 items-center rounded border border-neutral-300 px-4 py-1 text-sm dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 sm:min-h-0 sm:px-3";
   const pageBtnDisabled =
-    "rounded border border-neutral-200 px-3 py-1 text-sm text-neutral-400 dark:border-neutral-800 dark:text-neutral-600";
+    "inline-flex min-h-11 items-center rounded border border-neutral-200 px-4 py-1 text-sm text-neutral-400 dark:border-neutral-800 dark:text-neutral-600 sm:min-h-0 sm:px-3";
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
+    <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
       <h1 className="text-2xl font-semibold">Activity</h1>
 
       <ActivityFilters
@@ -91,9 +91,9 @@ export default async function ActivityPage({
         {items.map((a) => (
           <li
             key={a.id}
-            className="flex items-start justify-between gap-4 p-3 text-sm"
+            className="flex flex-col gap-1 p-3 text-sm sm:flex-row sm:items-start sm:justify-between sm:gap-4"
           >
-            <span className="text-neutral-700 dark:text-neutral-200">
+            <span className="min-w-0 break-words text-neutral-700 dark:text-neutral-200">
               {renderActivity(a)}
             </span>
             <span className="shrink-0 text-xs text-neutral-400">
@@ -104,7 +104,7 @@ export default async function ActivityPage({
       </ul>
 
       {total > 0 && (
-        <div className="mt-4 flex items-center justify-between text-sm text-neutral-500 dark:text-neutral-400">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm text-neutral-500 dark:text-neutral-400">
           <span>
             Page {page} of {totalPages} · {total} event{total === 1 ? "" : "s"}
           </span>
