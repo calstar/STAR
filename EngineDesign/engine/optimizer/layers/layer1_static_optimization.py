@@ -2153,11 +2153,24 @@ def _layer1_emit_objective_plot_point(
     current_obj: float,
     best_obj: float,
 ) -> None:
-    """SSE / UI objective curve (parallel CMA does not call ``objective()``)."""
+    """SSE / UI objective curve (parallel CMA does not call ``objective()``).
+
+    ``iteration`` arrives from two different counters -- the parent candidate index in
+    ``_eval_candidate`` and ``function_evaluations`` in the parallel CMA generation loop --
+    and both are reset between phases. Plotted raw, the x-axis folded back on itself
+    (observed: 1, 17, 65, 113, 161, 209, then 2, 3, 4 ...), which made the curve unreadable.
+    Clamp to a non-decreasing sequence here, at the single point every emission passes
+    through, rather than trying to keep every call site's counter in sync.
+    """
     if objective_callback is None:
         return
+    x = int(iteration)
+    x_max = int(opt_state.get("_plot_x_max", 0))
+    if x <= x_max:
+        x = x_max + 1
+    opt_state["_plot_x_max"] = x
     try:
-        objective_callback(int(iteration), float(current_obj), float(best_obj))
+        objective_callback(x, float(current_obj), float(best_obj))
     except Exception:
         pass
 
@@ -3361,8 +3374,19 @@ def run_layer1_optimization(
         iteration = opt_state["iteration"]
         opt_state["function_evaluations"] += 1
         
-        # Progress update
-        progress = 0.10 + 0.40 * min(iteration / max_iterations, 1.0)
+        # Progress update. ``iteration`` counts candidate evaluations, so it must be
+        # measured against the evaluation budget (max_iterations x popsize x restarts),
+        # not against ``max_iterations``, which caps CMA *generations*.
+        # Set once popsize/restarts are known; before that (x0 validation, warm start)
+        # there is no budget to measure against, so report the raw count rather than a
+        # fraction of the wrong denominator.
+        eval_budget = int(opt_state.get("eval_budget", 0))
+        if eval_budget > 0:
+            progress = 0.10 + 0.40 * min(iteration / eval_budget, 1.0)
+            eval_str = f"{iteration}/{eval_budget}"
+        else:
+            progress = 0.10
+            eval_str = f"{iteration}"
         if iteration <= 3 or iteration % 25 == 0:
             try:
                 _bo = float(opt_state["best_objective"])
@@ -3375,8 +3399,8 @@ def run_layer1_optimization(
                 _lv = float("inf")
             best_obj_str = f"{_bo:.3e}" if np.isfinite(_bo) else "inf"
             curr_obj_str = f"{_lv:.3e}" if np.isfinite(_lv) else "inf"
-            update_progress("Layer 1: Optimization", progress, f"Iter {iteration}/{max_iterations} | Curr: {curr_obj_str} | Best: {best_obj_str}")
-            layer1_logger.info(f"[{int(progress*100)}%] Iteration {iteration}/{max_iterations} - "
+            update_progress("Layer 1: Optimization", progress, f"Eval {eval_str} | Curr: {curr_obj_str} | Best: {best_obj_str}")
+            layer1_logger.info(f"[{int(progress*100)}%] Evaluation {eval_str} - "
                             f"Objective: {curr_obj_str} (Best: {best_obj_str})")
             for handler in layer1_logger.handlers:
                 handler.flush()
@@ -4306,7 +4330,9 @@ def run_layer1_optimization(
             try:
                 # Send all buffered entries (batch reporting)
                 for buffered_entry in opt_state["objective_buffer"]:
-                    objective_callback(
+                    _layer1_emit_objective_plot_point(
+                        objective_callback,
+                        opt_state,
                         buffered_entry["iteration"],
                         buffered_entry["objective"],
                         buffered_entry["best_objective"],
@@ -4412,6 +4438,11 @@ def run_layer1_optimization(
 
     # Legacy CMA uses this for ``maxiter`` per restart (hybrid path sets its own budget).
     total_eval_budget = max_iterations
+
+    # Evaluation budget for progress reporting only -- never used to bound the search.
+    # CMA runs ``max_iterations`` generations of ``popsize`` per restart; the hybrid
+    # branch replaces this with its own cap once it computes one.
+    opt_state["eval_budget"] = max(1, int(max_iterations) * int(popsize) * int(num_restarts))
     
     best_x_global = x0_refined
     best_f_global = float('inf')
@@ -4624,6 +4655,7 @@ def run_layer1_optimization(
             # not a fixed run length. (The default max_iterations is sized so this is fast under the
             # native kernel — see where max_iterations is set.)
             total_budget_evals = max(int(popsize), int(max_iterations) * int(popsize))
+            opt_state["eval_budget"] = int(total_budget_evals)
             layer1_logger.info(
                 "Hybrid evaluation budget: %s (max(%s, max_iterations=%s x popsize=%s))",
                 total_budget_evals,
