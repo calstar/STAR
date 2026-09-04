@@ -12,6 +12,7 @@ import { getCurrentDbUser } from "@/lib/user";
 export async function AppHeader() {
   const user = await getCurrentDbUser();
 
+  // `relative` anchors HeaderNav's full-width mobile panel (absolute inset-x-0 top-full).
   return (
     <header className="relative border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
       <div className="mx-auto flex max-w-[88rem] items-center justify-between px-4 py-2 sm:px-6">
