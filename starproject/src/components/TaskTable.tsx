@@ -27,6 +27,16 @@ export type { TaskRowData } from "@/lib/board";
 
 const col = createColumnHelper<TaskRowData>();
 
+// CSS-only responsive visibility per column, applied to both <th> and <td>.
+// Mobile shows Task/Status/Due; md: adds Priority + Assignees; lg: the rest.
+const columnVisibility: Record<string, string> = {
+  subproject: "hidden lg:table-cell",
+  projectName: "hidden lg:table-cell",
+  subteamName: "hidden lg:table-cell",
+  priority: "hidden md:table-cell",
+  assigneeName: "hidden md:table-cell",
+};
+
 // The single list/table view used everywhere (project, subteam, /tasks). Cells
 // are inline-editable; the Project/Subteam columns show only where relevant.
 // Clicking a row (outside an editor) opens the task modal in place.
@@ -56,7 +66,7 @@ export function TaskTable({
       col.accessor("title", {
         header: "Task",
         cell: (info) => (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="text-neutral-400 dark:text-neutral-500">
               #{info.row.original.number}
             </span>
@@ -178,7 +188,7 @@ export function TaskTable({
                 <th
                   key={h.id}
                   onClick={h.column.getToggleSortingHandler()}
-                  className="cursor-pointer select-none px-3 py-2 font-medium"
+                  className={`cursor-pointer select-none px-3 py-3 font-medium md:py-2 ${columnVisibility[h.column.id] ?? ""}`}
                 >
                   {flexRender(h.column.columnDef.header, h.getContext())}
                   {{ asc: " ▲", desc: " ▼" }[h.column.getIsSorted() as string] ?? ""}
@@ -205,7 +215,10 @@ export function TaskTable({
               className="cursor-pointer border-b border-neutral-100 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800"
             >
               {row.getVisibleCells().map((cell) => (
-                <td key={cell.id} className="px-3 py-1.5 align-middle">
+                <td
+                  key={cell.id}
+                  className={`px-3 py-2.5 align-middle md:py-1.5 ${columnVisibility[cell.column.id] ?? ""}`}
+                >
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </td>
               ))}
