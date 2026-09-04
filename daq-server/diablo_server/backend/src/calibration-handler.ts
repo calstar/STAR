@@ -40,7 +40,10 @@ export interface CalibrationHost {
 
 /**
  * Publish a CalibrationCommand [0x46, 0x00] packet to Elodin DB.
- * Layout: [timestamp_ns(8), command_type(1), sensor_id(uint16 LE), pad(1), reference_value(f32)]
+ * Layout: [timestamp_ns(8), command_type(1)@8, pad(1)@9, sensor_id(uint16 LE)@10, reference(f32)@12].
+ * sensor_id sits at the even offset 10 so it is an aligned u16 in the Elodin VTable (see
+ * register_calibration_command_vtable) — it carries the full uid board_id*100+connector, so its high
+ * byte must survive.
  */
 function publishCalibrationCommand(host: CalibrationHost, type: number, sensorId: number, ref: number): void {
     if (!host.elodin) {
@@ -51,8 +54,8 @@ function publishCalibrationCommand(host: CalibrationHost, type: number, sensorId
     // timestamp_ns (8 bytes)
     payload.writeBigUInt64LE(BigInt(Date.now()) * 1000000n, 0);
     payload.writeUInt8(type, 8);
-    payload.writeUInt16LE(sensorId & 0xffff, 9);
-    payload.writeUInt8(0, 11);
+    payload.writeUInt8(0, 9);  // pad (keeps sensor_id 2-byte aligned at offset 10)
+    payload.writeUInt16LE(sensorId & 0xffff, 10);
     payload.writeFloatLE(ref, 12);
     host.elodin.publishTable([0x46, 0x00], payload);
 }

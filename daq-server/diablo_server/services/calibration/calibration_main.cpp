@@ -833,12 +833,14 @@ int main(int argc, char* argv[]) {
 
         // Only process RAW sensor packets or Calibration Commands.
         if (type_hi == 0x46) {
-            // CalibrationCommand: ts(8) | cmd(1) | sensor_id(2 LE) | pad(1) | ref_f32(4)
+            // CalibrationCommand: ts(8) | cmd(1)@8 | pad(1)@9 | sensor_id(2 LE)@10 | ref_f32(4)@12.
+            // sensor_id is at even offset 10 so it is an aligned u16 in the Elodin VTable and its
+            // high byte survives (uid = board_id*100+connector can exceed 255).
             if (pkt_len >= 8 + 16) {
                 const uint8_t* p = pkt_buf + 8;
                 uint8_t cmd_type = p[8];
                 uint16_t sensor_id =
-                    static_cast<uint16_t>(p[9]) | (static_cast<uint16_t>(p[10]) << 8);
+                    static_cast<uint16_t>(p[10]) | (static_cast<uint16_t>(p[11]) << 8);
                 float ref_val = *reinterpret_cast<const float*>(p + 12);
 
                 std::cout << "[Cal] Received CalibrationCommand: type=" << (int)cmd_type
