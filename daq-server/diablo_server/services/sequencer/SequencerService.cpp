@@ -105,40 +105,6 @@ static std::string resolveDataPath(const std::string& rel) {
     return rel;  // original — caller will get the open error
 }
 
-// Read a "section.key" string value from raw config.toml content, stripping
-// surrounding whitespace and quotes. Returns `fallback` if not found.
-static std::string configString(const std::string& content, const std::string& section,
-                                const std::string& key, const std::string& fallback) {
-    const std::string header = "[" + section + "]";
-    auto pos = content.find(header);
-    if (pos == std::string::npos)
-        return fallback;
-    auto start = pos + header.size();
-    auto next = content.find("\n[", start);
-    const std::string sec =
-        (next == std::string::npos) ? content.substr(start) : content.substr(start, next - start);
-    std::istringstream iss(sec);
-    std::string line;
-    while (std::getline(iss, line)) {
-        auto c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        auto eq = line.find('=');
-        if (eq == std::string::npos)
-            continue;
-        std::string k = line.substr(0, eq);
-        k.erase(0, k.find_first_not_of(" \t"));
-        k.erase(k.find_last_not_of(" \t") + 1);
-        if (k != key)
-            continue;
-        std::string v = line.substr(eq + 1);
-        v.erase(0, v.find_first_not_of(" \t\r\n\""));
-        v.erase(v.find_last_not_of(" \t\r\n\"") + 1);
-        return v.empty() ? fallback : v;
-    }
-    return fallback;
-}
-
 bool SequencerService::init(const std::string& config_path) {
     loadConfig(config_path);
     const fsw::config::Config cfg = fsw::config::load_from_string(config_content_);

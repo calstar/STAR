@@ -112,38 +112,5 @@ bool DynamicConfigManager::update_with_boards(const std::vector<DiscoveredBoard>
     return true;
 }
 
-bool DynamicConfigManager::save_config(const std::string& output_path) const {
-    std::ofstream file(output_path);
-    if (!file.is_open()) {
-        std::cerr << "[DynamicConfig] Failed to open config file: " << output_path << std::endl;
-        return false;
-    }
-
-    // Write TOML format (simplified - use proper TOML library in production)
-    file << "# Auto-generated configuration from board discovery\n";
-    file << "# DO NOT EDIT MANUALLY - This file is updated automatically\n\n";
-
-    for (const auto& [section, values] : config_) {
-        file << "[" << section << "]\n";
-        for (const auto& [key, value] : values) {
-            file << key << " = ";
-            // Check if value is a number or string
-            bool is_number =
-                !value.empty() && (std::isdigit(value[0]) || value[0] == '-' || value[0] == '+');
-            if (is_number || value == "true" || value == "false") {
-                file << value;
-            } else {
-                file << "\"" << value << "\"";
-            }
-            file << "\n";
-        }
-        file << "\n";
-    }
-
-    file.close();
-    std::cout << "[DynamicConfig] Saved config to: " << output_path << std::endl;
-    return true;
-}
-
 }  // namespace config
 }  // namespace fsw

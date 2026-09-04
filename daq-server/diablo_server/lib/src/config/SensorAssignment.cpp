@@ -356,43 +356,6 @@ bool SensorAssignmentManager::update_board_config_from_packet(uint8_t board_id,
     return false;
 }
 
-bool SensorAssignmentManager::save_assignments_to_config(const std::string& output_path) const {
-    std::ofstream file(output_path);
-    if (!file.is_open()) {
-        std::cerr << "[SensorAssignment] Failed to open config file: " << output_path << std::endl;
-        return false;
-    }
-
-    file << "# Auto-generated sensor assignments\n";
-    file << "# DO NOT EDIT MANUALLY\n\n";
-
-    // Write board configurations
-    for (const auto& [board_id, config] : board_configs_) {
-        file << "[board_" << (int)board_id << "]\n";
-        file << "ip = \"" << config.board_ip << "\"\n";
-        file << "port = " << config.board_port << "\n";
-        file << "mac_address = \"" << config.mac_address << "\"\n";
-        file << "system_state = \"" << (config.system_state == SystemState::GSE ? "GSE" : "FLIGHT")
-             << "\"\n";
-        file << "primary_sensor_type = \"" << sensor_type_to_string(config.primary_sensor_type)
-             << "\"\n";
-        file << "is_configured = " << (config.is_configured ? "true" : "false") << "\n";
-        file << "\n";
-
-        // Write sensor assignments
-        file << "[board_" << (int)board_id << ".sensors]\n";
-        for (const auto& sensor : config.sensors) {
-            file << sensor.sensor_id << " = { channel = " << (int)sensor.channel_id << ", type = \""
-                 << sensor_type_to_string(sensor.sensor_type) << "\" }\n";
-        }
-        file << "\n";
-    }
-
-    file.close();
-    std::cout << "[SensorAssignment] Saved assignments to: " << output_path << std::endl;
-    return true;
-}
-
 std::string SensorAssignmentManager::calculate_ip_from_mac(const std::string& mac_address,
                                                            SystemState state) const {
     // Parse MAC address

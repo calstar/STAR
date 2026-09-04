@@ -67,17 +67,6 @@ ConfigStates& configStates() {
     return cs;
 }
 
-std::string trimQuoted(std::string v) {
-    auto hash = v.find('#');
-    if (hash != std::string::npos)
-        v = v.substr(0, hash);
-    v.erase(0, v.find_first_not_of(" \t\"'"));
-    auto e = v.find_last_not_of(" \t\r\n\"'");
-    if (e != std::string::npos)
-        v.erase(e + 1);
-    return v;
-}
-
 }  // namespace
 
 void StateMachine::loadStatesFromConfig(const std::string& config_content) {

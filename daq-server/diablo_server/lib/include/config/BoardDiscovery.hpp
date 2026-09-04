@@ -271,11 +271,6 @@ public:
     bool update_with_boards(const std::vector<DiscoveredBoard>& boards);
 
     /**
-     * @brief Save updated configuration
-     */
-    bool save_config(const std::string& output_path) const;
-
-    /**
      * @brief Get current configuration
      */
     std::map<std::string, std::map<std::string, std::string>> get_config() const {
