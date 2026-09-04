@@ -10,10 +10,10 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, export_cache, runs, series
+from . import config, export_cache, run_config, runs, series
 
 app = FastAPI(title="Elodin Past-Run Viewer")
 
@@ -48,6 +48,27 @@ def api_components(run_id: str):
         raise HTTPException(404, str(e))
     except RuntimeError as e:
         raise HTTPException(500, str(e))
+
+
+@app.get("/api/runs/{run_id}/config", response_class=PlainTextResponse)
+def api_config(run_id: str):
+    """The config snapshot taken beside this run's DB when the session started.
+
+    Served verbatim: it is the record of what actually ran, so it is never reformatted
+    or re-serialised. Runs recorded before the snapshot existed simply have no file.
+    """
+    if not config.RUN_RE.match(run_id):
+        raise HTTPException(400, "invalid run id")
+    path = run_config.snapshot_path(run_id)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        raise HTTPException(404, "no config snapshot for this run")
+    return PlainTextResponse(
+        text,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'inline; filename="{run_id}.toml"'},
+    )
 
 
 @app.get("/api/runs/{run_id}/series")

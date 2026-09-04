@@ -42,6 +42,14 @@ Single-process (build the frontend, serve everything from uvicorn):
 - **Sensors** — grouped by family (PT, PT_Cal, TC, RTD, LC, ACT, CONTROLLER,
   BOARD). Meaningful fields are shown by default; raw/status/plumbing fields are
   behind the "all fields" toggle.
+- **Names** — Elodin stores only numeric identities (`PT1.CH5`, `ACT_CMD.B2.CH1`,
+  states as a raw `u8`), so the viewer reads the run's own config snapshot and shows
+  what each channel actually was: "Ox Upstream", "LOX Main", "Fire". The **names**
+  checkbox on the tab strip flips the whole view (picker, chart legend, state axis)
+  back to the raw identities; whichever form is hidden is in the tooltip. See
+  [Run names](#run-names) below.
+- **Config tab** — the config snapshot for the selected run, verbatim, with a line
+  filter (matches keep their enclosing `[section]`), copy, and download.
 - **Plot** — uPlot; drag to zoom (which refetches that window at higher
   resolution), continuous series are min/max-decimated (spikes preserved),
   discrete series are step-drawn.
@@ -66,6 +74,9 @@ uPlot canvas ──toBlob()──▶ PNG
 ```
 
 - `backend/runs.py` — discover timestamped runs (cheap; no per-run `du`).
+- `backend/run_config.py` — the run's `<run_id>.toml` snapshot into entity roles + state
+  names; served through `GET /api/runs/<id>/config` (verbatim) and layered onto the
+  component index.
 - `backend/export_cache.py` — lazy parquet export (the `--pattern '*'` is
   required for human names) + a component index (families, units, time bounds,
   DB size), cached per run.
@@ -77,9 +88,39 @@ uPlot canvas ──toBlob()──▶ PNG
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest backend/test_series.py -q   # backend data logic
+.venv/bin/python -m pytest backend/ -q                 # data logic, run discovery, naming
 (cd frontend && npm test)                              # theme guardrails
 ```
+
+## Run names
+
+`elodin-db` records identities, not meanings: a run DB holds `PT1.CH5`, `ACT2.CH3`,
+`ACT_CMD.B2.CH3`, `BOARD.HB_52`, and every state as a bare `u8`. The names live in
+`config.toml`, which the DAQ backend copies to `<dbDir>.toml` beside the run dir when a
+session starts (`diablo_server/backend/src/service-controller.ts`, `snapshotRunConfig`;
+a sim run snapshots `sim_config.toml`). `backend/run_config.py` reads that back:
+
+| Config | Names |
+|---|---|
+| `[sensor_roles_<board key>]` | `PT1.CH5` and `PT1_Cal.CH5` become "Ox Upstream" |
+| `[actuator_roles]` | `ACT2.CH1`, `ACT2_Cal.CH1`, `ACT_CMD.B2.CH1` become "LOX Main" |
+| `[boards.*]` | `BOARD.HB_22`, `SELF_TEST.BOARD_22` become "PT Board #2" |
+| `[[states]]` | `current_state` / `from_state` / `to_state` `16` becomes "Fire" |
+
+The Elodin slot in an entity name is `board_id % 10` (0 meaning 10), matching
+`LoadActiveBoards.hpp` and `backend/src/sensor-config.ts`; entity spellings come from
+`DatabaseConfig.cpp`; board display names match the config editor's `boardDisplayName`.
+`BOARD.HB_*.engine_state` is deliberately *not* named: it carries the coarse
+`daq::EngineState`, a different enum.
+
+Runs recorded before the snapshot existed have no `.toml`: their channels keep the raw
+identities and the run header says "no config snapshot". State ids are a stable key by
+contract, so they are still named, from a built-in table (`run_config.BUILTIN_STATES`)
+that `[[states]]` overrides entry by entry, the same override rule the C++ uses.
+
+Names are applied when the index is *served*, not baked into the parquet cache, so a
+snapshot copied in later (or corrected) takes effect on the next open without
+re-exporting the run.
 
 ## Theme
 
