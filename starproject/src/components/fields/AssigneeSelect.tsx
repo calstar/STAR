@@ -1,7 +1,14 @@
 "use client";
 
 import type { User } from "@prisma/client";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 
 import { updateField } from "@/lib/fieldUpdate";
@@ -44,9 +51,12 @@ export function AssigneeSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [coords, setCoords] = useState<{
-    top: number;
+    top?: number;
+    bottom?: number;
     left: number;
     width: number;
+    maxH: number;
+    maxW: number;
   } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
@@ -81,16 +91,29 @@ export function AssigneeSelect({
     );
   };
 
+  // Clamped to the viewport with an 8px margin and capped to the space
+  // actually available above/below the trigger; the visual viewport keeps it
+  // clear of mobile keyboards.
   const place = useCallback(() => {
     const el = triggerRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
+    const vv = window.visualViewport;
+    const vh = vv ? vv.offsetTop + vv.height : window.innerHeight;
+    const vw = window.innerWidth;
     const estH = Math.min(users.length * 36 + 44 + 8, 300);
-    const fitsBelow = window.innerHeight - r.bottom > estH + 8;
+    const spaceBelow = vh - r.bottom - 12;
+    const spaceAbove = r.top - 12;
+    const openBelow = spaceBelow >= estH || spaceBelow >= spaceAbove;
+    const menuW = popupRef.current?.offsetWidth ?? r.width;
     setCoords({
-      top: fitsBelow ? r.bottom + 4 : Math.max(8, r.top - 4 - estH),
-      left: r.left,
-      width: r.width,
+      ...(openBelow
+        ? { top: r.bottom + 4 }
+        : { bottom: window.innerHeight - r.top + 4 }),
+      left: Math.max(8, Math.min(r.left, vw - menuW - 8)),
+      width: Math.min(r.width, vw - 16),
+      maxH: Math.max(96, Math.min(openBelow ? spaceBelow : spaceAbove, 320)),
+      maxW: vw - 16,
     });
   }, [users.length]);
 
@@ -104,6 +127,11 @@ export function AssigneeSelect({
     setQuery("");
     setOpen(true);
   };
+
+  // Re-place once the popup mounts so clamping uses its measured width.
+  useLayoutEffect(() => {
+    if (open) place();
+  }, [open, place]);
 
   useEffect(() => {
     if (open) searchRef.current?.focus();
@@ -120,10 +148,13 @@ export function AssigneeSelect({
     document.addEventListener("mousedown", onDown);
     window.addEventListener("scroll", reposition, true);
     window.addEventListener("resize", reposition);
+    // The visual viewport shrinks when the mobile keyboard opens.
+    window.visualViewport?.addEventListener("resize", reposition);
     return () => {
       document.removeEventListener("mousedown", onDown);
       window.removeEventListener("scroll", reposition, true);
       window.removeEventListener("resize", reposition);
+      window.visualViewport?.removeEventListener("resize", reposition);
     };
   }, [open, close, place]);
 
@@ -174,11 +205,14 @@ export function AssigneeSelect({
             style={{
               position: "fixed",
               top: coords.top,
+              bottom: coords.bottom,
               left: coords.left,
               minWidth: coords.width,
+              maxWidth: coords.maxW,
+              maxHeight: coords.maxH,
               zIndex: 9999,
             }}
-            className="flex max-h-80 flex-col rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 shadow-lg"
+            className="flex flex-col rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 shadow-lg"
           >
             <input
               ref={searchRef}
@@ -194,14 +228,14 @@ export function AssigneeSelect({
                 }
               }}
               placeholder="Search…"
-              className="m-1 shrink-0 rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"
+              className="m-1 shrink-0 rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1.5 text-base sm:py-1 sm:text-sm"
             />
             <div
               id={listId}
               role="listbox"
               aria-multiselectable="true"
               aria-label="Assignees"
-              className="max-h-64 overflow-auto py-1"
+              className="min-h-0 max-h-64 overflow-auto py-1"
             >
               {visible.length === 0 ? (
                 <div className="px-2 py-1.5 text-sm text-neutral-500 dark:text-neutral-400">
@@ -216,7 +250,7 @@ export function AssigneeSelect({
                       role="option"
                       aria-selected={isSelected}
                       onClick={() => toggle(u.id)}
-                      className={`flex cursor-pointer items-center justify-between gap-2 px-2 py-1.5 text-sm text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800`}
+                      className={`flex min-h-11 cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm sm:min-h-0 sm:px-2 sm:py-1.5 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800`}
                     >
                       <span className="truncate">{displayNameOf(u)}</span>
                       {isSelected && (
