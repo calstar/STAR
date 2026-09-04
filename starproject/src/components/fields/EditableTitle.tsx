@@ -47,12 +47,12 @@ export function EditableTitle({
   }
 
   return (
-    <div className="flex flex-1 items-center gap-2">
-      <h2 className="text-2xl font-semibold">{title}</h2>
+    <div className="flex min-w-0 flex-1 items-center gap-2">
+      <h2 className="min-w-0 break-words text-2xl font-semibold">{title}</h2>
       <button
         onClick={() => setEditing(true)}
         title="Rename"
-        className="rounded px-1.5 py-0.5 text-xs text-neutral-500 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700 hover:text-neutral-700"
+        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1.5 py-0.5 text-xs text-neutral-500 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700 hover:text-neutral-700 sm:min-h-0 sm:min-w-0"
       >
         ✎ Edit
       </button>
