@@ -177,10 +177,13 @@ Config from_table(const toml::table& t) {
                 c.actuator_roles[std::string(k.str())] = r;
             }
 
-    c.fire.state = s_or(t["fire"]["state"], c.fire.state);
-    c.fire.expiry_target = s_or(t["fire"]["expiry_target"], c.fire.expiry_target);
-    c.fire.duration_ms = static_cast<uint32_t>(i_or(t["fire"]["duration_ms"], 6000));
-    c.fire.extended_ms = static_cast<uint32_t>(i_or(t["fire"]["extended_ms"], 10000));
+    c.fire.state = s_or(t["fire"]["state"], "");
+    c.fire.expiry_target = s_or(t["fire"]["expiry_target"], "");
+    // Durations: [fire] is the home; fall back to the legacy [controller_service].fire_* keys.
+    c.fire.duration_ms = static_cast<uint32_t>(
+        i_or(t["fire"]["duration_ms"], i_or(t["controller_service"]["fire_duration_ms"], 6000)));
+    c.fire.extended_ms = static_cast<uint32_t>(
+        i_or(t["fire"]["extended_ms"], i_or(t["controller_service"]["fire_extended_ms"], 10000)));
 
     c.controller_service.port = static_cast<uint16_t>(i_or(t["controller_service"]["port"], 9999));
     c.controller_service.host = s_or(t["controller_service"]["host"], c.controller_service.host);

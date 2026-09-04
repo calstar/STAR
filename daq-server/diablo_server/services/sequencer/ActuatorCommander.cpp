@@ -15,6 +15,8 @@
 #include <sstream>
 #include <thread>
 
+#include "config/Config.hpp"
+
 // daqv2comms — all packet construction goes through here
 #include "DiabloPacketUtils.h"
 #include "comms/CommsMessage.hpp"
@@ -125,76 +127,36 @@ bool ActuatorCommander::load(const std::string& config_content, const std::strin
     roles_.clear();
     state_actuators_.clear();
 
+    const fsw::config::Config cfg = fsw::config::load_from_string(config_content);
+
     // -- Config: bind address and actuator port --
-    bind_addr_ = getTomlValue(config_content, "actuator_service", "bind_address", "0.0.0.0");
+    bind_addr_ = cfg.actuator_service.bind_address;
     if (bind_addr_.empty())
         bind_addr_ = "0.0.0.0";
+    actuator_port_ = cfg.network.actuator_cmd_port;
 
-    const std::string port_str =
-        getTomlValue(config_content, "network", "actuator_cmd_port", "5005");
-    try {
-        actuator_port_ = static_cast<uint16_t>(std::stoi(port_str));
-    } catch (...) {
-    }
-
-    // -- Board IP map: board_id → IP (from [boards.xxx] sections) --
+    // -- Board IP map: board_id → IP (from [boards.*]); canonical 192.168.2.N fallback --
     std::map<int, std::string> board_id_to_ip;
-    {
-        size_t pos = 0;
-        while (pos < config_content.size()) {
-            size_t next = config_content.find("[boards.", pos);
-            if (next == std::string::npos)
-                break;
-            size_t end = config_content.find(']', next);
-            if (end == std::string::npos)
-                break;
-            std::string sec = config_content.substr(next + 1, end - next - 1);
-            std::string ip = getTomlValue(config_content, sec, "ip", "");
-            std::string id_str = getTomlValue(config_content, sec, "id",
-                                              getTomlValue(config_content, sec, "board_id", ""));
-            if (!ip.empty() && !id_str.empty()) {
-                try {
-                    int id = std::stoi(id_str);
-                    if (id > 0)
-                        board_id_to_ip[id] = ip;
-                } catch (...) {
-                }
-            }
-            pos = end + 1;
-        }
-    }
-    if (board_id_to_ip.empty()) {
-        // Minimal fallback: canonical 192.168.2.N scheme
+    for (const auto& b : cfg.boards)
+        if (!b.ip.empty() && b.board_id > 0)
+            board_id_to_ip[b.board_id] = b.ip;
+    if (board_id_to_ip.empty())
         for (int i = 11; i <= 14; ++i)
             board_id_to_ip[i] = "192.168.2." + std::to_string(i);
-    }
 
-    // -- Actuator roles from [actuator_roles] section --
-    {
-        std::string current_section;
-        std::istringstream cfg(config_content);
-        std::string line;
-        while (std::getline(cfg, line)) {
-            auto c = line.find('#');
-            if (c != std::string::npos)
-                line = line.substr(0, c);
-            if (line.size() >= 2 && line[0] == '[') {
-                size_t end = line.find(']');
-                current_section = (end != std::string::npos) ? line.substr(1, end - 1) : "";
-                continue;
-            }
-            if (current_section != "actuator_roles")
-                continue;
-            auto eq = line.find('=');
-            if (eq == std::string::npos)
-                continue;
-
-            std::string role_name = trimVal(line.substr(0, eq));
-            ActuatorRole role;
-            if (!parseActuatorRole(trimVal(line.substr(eq + 1)), role, board_id_to_ip))
-                continue;
-            roles_[role_name] = role;
-        }
+    // -- Actuator roles from [actuator_roles] (channels 1..10 only) --
+    for (const auto& [name, r] : cfg.actuator_roles) {
+        if (r.channel < 1 || r.channel > 10)
+            continue;
+        ActuatorRole role;
+        role.is_no = r.is_no;
+        role.is_pwm = (r.kind == "PWM" || r.kind == "pwm");
+        role.channel = r.channel;
+        role.board_id = r.board_id;
+        auto it = board_id_to_ip.find(r.board_id);
+        role.board_ip =
+            (it != board_id_to_ip.end()) ? it->second : "192.168.2." + std::to_string(r.board_id);
+        roles_[name] = role;
     }
     std::cout << "[ActuatorCommander] Loaded " << roles_.size() << " actuator roles from config"
               << std::endl;
