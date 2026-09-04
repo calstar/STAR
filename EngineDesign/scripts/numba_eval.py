@@ -41,6 +41,16 @@ _NAMES = [
     # combustion
     "C_MODEL", "C_C", "C_TAUREF", "C_TAUREFP", "C_TAUREFT", "C_NPRESS", "C_TSTARCAP",
     "C_HASFLOOR", "C_TAUFLOOR", "C_EMPEAK", "C_SIGMA", "C_ROPT",
+    # chamber lengths (ablative wetted area only)
+    "G_LEN", "G_LCYL", "G_LCONTR",
+    # cooling gates + hot-gas block (ed_cooling.c)
+    "K_ABLEN", "K_FILMEN", "K_REGENEN", "K_USECOUP", "K_EFFFLOOR",
+    "K_HGMU", "K_HGK", "K_HGPR", "K_TI", "K_RECOV", "K_EMISHOT", "K_VIEWF", "K_DREGEN",
+    # ablative material / blowing / turbulence / radiative sink
+    "AB_COV", "AB_TSURF", "AB_TPYRO", "AB_HABL", "AB_CP", "AB_USEPHYS",
+    "AB_BLOWEFF", "AB_BLOWC", "AB_BLOWMIN",
+    "AB_TIREF", "AB_TISENS", "AB_TIEXP", "AB_TIMAX",
+    "AB_EMIS", "AB_TAMB", "AB_SINKMIN", "AB_SINKFB",
 ]
 _IDX = {n: i for i, n in enumerate(_NAMES)}
 globals().update(_IDX)                      # module-level int constants for njit
@@ -50,6 +60,10 @@ NP = len(_NAMES)
 PI = np.pi
 G0 = 9.80665
 P_SEA = 101325.0
+# ed_cooling.c / ed_phys_const.h
+RANKINE_PER_K = 1.8; HUZEL_COEFF = 46.6e-10; LB_S_PER_IN2_TO_PA_S = 6894.76
+STEFAN = 5.670374419e-8; MIN_DENS = 0.01; EPS_SMALL = 1e-6; EPS_TINY = 1e-8
+NU_LAMINAR = 4.36; NU_TURB_COEF = 0.023; NU_TURB_RE_EXP = 0.8; NU_TURB_PR_EXP = 0.4
 PRANDTL = 0.8
 D_M_REF = 5e-5; D_M_TREF = 1500.0; D_M_PREF = 2.5e6; U_SLIP_CAP = 50.0; D_MIN_GAS = 1e-6
 CS_C_L = 0.1; CS_C_U = 0.5; CS_U_RMS_CAP = 200.0
@@ -61,9 +75,14 @@ EFF_CONSTANT = 0; EFF_LINEAR = 1
 def _assert_supported(st):
     """Guard the assumptions that let this port skip cooling / use the impinging path."""
     assert int(st.injector.type) == 1, "not impinging"
-    assert int(getattr(st.cooling, "ablative_enabled")) == 0, "ablative on: cooling port needed"
+    # Ablative IS ported (see _cooling_evaluate). Film/regen are not -- C refuses
+    # them too (ed_cooling.c:147), so they stay a Python fallback.
     assert int(getattr(st.cooling, "film_enabled")) == 0 and int(getattr(st.cooling, "regen_enabled")) == 0
-    assert int(getattr(st.cooling, "graphite_enabled")) == 0
+    # No graphite gate, deliberately: C does not check it either (ed_cooling.c
+    # refuses only film/regen at :147), because graphite never enters the chamber
+    # residual -- it lives in the burn/recession path (runner.py), and
+    # chamber_solver.py references it zero times. Gating on it here would reject
+    # configs/canonical/impinging.yaml, which C handles fine.
 
 
 def extract_params(config):
@@ -449,6 +468,164 @@ def _eta_advanced(P, Lstar, Pc, Tc, gamma, R, MR, Ac, At, Dinj, mdot_total,
     return eta_total
 
 @njit(cache=True)
+def _gas_viscosity_huzel(T_K, M):
+    """ed_gas_viscosity_huzel: Huzel-Huang gas viscosity correlation."""
+    mu_lb_s_in2 = HUZEL_COEFF*np.sqrt(M)*(T_K*RANKINE_PER_K)**0.6
+    return mu_lb_s_in2*LB_S_PER_IN2_TO_PA_S
+
+
+@njit(cache=True)
+def _chamber_wetted_area(P):
+    """ed_chamber_wetted_area: frustum when both sub-lengths present, else cylinder."""
+    d = P[G_DCHAM]
+    if d <= 0:
+        d = 0.08                      # matches Python's final fallback
+    if d < 1e-6:
+        d = 1e-6
+    area_cross = PI*(d*0.5)*(d*0.5)
+    circumference = PI*d
+    if P[G_LCYL] > 0 and P[G_LCONTR] > 0:
+        area_cyl = circumference*P[G_LCYL]
+        r1 = d*0.5
+        A_t = P[G_AT] if P[G_AT] > 0 else area_cross/3.0
+        r2 = np.sqrt(A_t/PI)
+        slant = np.sqrt((r1-r2)*(r1-r2) + P[G_LCONTR]*P[G_LCONTR])
+        return area_cyl + PI*(r1+r2)*slant
+    return circumference*P[G_LEN]
+
+
+@njit(cache=True)
+def _hot_wall_flux(P, Pc, Tc, gamma, R, M, mdot_total, wall_T):
+    """estimate_hot_wall_heat_flux -> (q_total, q_conv, q_rad).
+
+    NOTE the diameter: this uses the REGEN block's chamber_inner_diameter, while
+    _cooling_evaluate's bulk-velocity term uses geom.chamber_diameter. They are
+    different numbers and ed_cooling.c:43 vs :151 keeps them distinct -- do not
+    collapse them.
+    """
+    d = P[K_DREGEN]
+    A_cross = PI*d*d/4.0
+    rho_g = max(Pc/(R*max(Tc, 1.0)), MIN_DENS)
+    V_g = mdot_total/(rho_g*A_cross)
+    mu_g = _gas_viscosity_huzel(Tc, M) if (M > 0 and Tc > 0) else P[K_HGMU]
+    k_g = P[K_HGK]
+    cp_g = gamma*R/max(gamma-1.0, EPS_SMALL)
+    Pr_g = P[K_HGPR] if P[K_HGPR] > 0 else (mu_g*cp_g/max(k_g, EPS_SMALL))
+    Re_g = rho_g*V_g*d/max(mu_g, EPS_TINY)
+    if Re_g < 2000.0:
+        Nu_g = NU_LAMINAR
+    else:
+        Nu_g = NU_TURB_COEF*Re_g**NU_TURB_RE_EXP*Pr_g**NU_TURB_PR_EXP
+    h_g = Nu_g*k_g/d
+    Taw = Tc*P[K_RECOV]
+    dT = max(Taw - wall_T, 0.0)
+    q_conv = h_g*dT
+    qr = P[K_EMISHOT]*P[K_VIEWF]*STEFAN*(Tc**4 - wall_T**4)
+    q_rad = max(qr, 0.0)
+    return q_conv + q_rad, q_conv, q_rad
+
+
+@njit(cache=True)
+def _ablative_heat_removed(P, surface_T, area, ti, q_conv, q_rad, gas_mdot):
+    """compute_ablative_response -> heat_removed (cooling_power)."""
+    if P[K_ABLEN] == 0 or area <= 0:
+        return 0.0
+    turb = 1.0
+    if ti > 0 and P[AB_TIREF] > 0:
+        ratio = (ti/P[AB_TIREF])**P[AB_TIEXP]
+        turb = 1.0 + P[AB_TISENS]*ratio
+    turb = _clip(turb, 1.0, P[AB_TIMAX])
+
+    below_pyro = surface_T < P[AB_TPYRO]
+    use_physics = False
+    convective_reduction = 1.0
+    if below_pyro:
+        convective_reduction = 1.0
+    elif P[AB_USEPHYS] != 0 and gas_mdot > 0:
+        use_physics = True
+    else:
+        convective_reduction = 1.0 - _clip(P[AB_BLOWEFF], 0.0, 1.0)
+
+    T_sink = P[AB_SINKFB] if P[AB_TAMB] < P[AB_SINKMIN] else P[AB_TAMB]
+    radiative_relief = max(P[AB_EMIS]*STEFAN*(surface_T**4 - T_sink**4), 0.0)
+
+    if use_physics:
+        q_conv_prov = q_conv*turb
+        q_total_prov = max(q_conv_prov + q_rad - radiative_relief, 0.0)
+        if q_total_prov > 0:
+            dT_pyro = max(surface_T - P[AB_TPYRO], 0.0)
+            energy_per_mass = P[AB_HABL] + P[AB_CP]*dT_pyro
+            if energy_per_mass > 0:
+                mass_flux_prov = q_total_prov/max(energy_per_mass, EPS_SMALL)
+                m_dot_pyro = mass_flux_prov*area
+                B = m_dot_pyro/max(gas_mdot, EPS_SMALL)
+                blow = 1.0/(1.0 + P[AB_BLOWC]*B)
+                convective_reduction = max(blow, P[AB_BLOWMIN])
+            else:
+                convective_reduction = 1.0
+        else:
+            convective_reduction = 1.0
+
+    q_conv_eff = q_conv*turb*convective_reduction
+    effective_heat_flux = max(q_conv_eff + q_rad - radiative_relief, 0.0)
+    if below_pyro or effective_heat_flux <= 0:
+        return 0.0
+    dT_pyro = max(surface_T - P[AB_TPYRO], 0.0)
+    if P[AB_HABL] + P[AB_CP]*dT_pyro <= 0:
+        return 0.0
+    return effective_heat_flux*area
+
+
+@njit(cache=True)
+def _cooling_evaluate(P, Pc, mdot_total, Tc, gamma, R, M):
+    """ed_cooling_evaluate -> (ok, cooling_eff, effective_Tc).
+
+    ok==0 mirrors C's ED_ERR_NOT_IMPLEMENTED (film/regen enabled), which the
+    caller turns into a Python fallback rather than a wrong number.
+    """
+    if mdot_total <= 0:
+        return 1.0, 1.0, Tc
+    if P[K_FILMEN] != 0 or P[K_REGENEN] != 0:
+        return 0.0, 1.0, Tc                 # not ported -> fall back to Python
+    if P[K_USECOUP] == 0 or P[K_ABLEN] == 0:
+        return 1.0, 1.0, Tc
+
+    d = P[G_DCHAM]
+    if d <= 0:
+        d = 0.08
+    if d < 1e-6:
+        d = 1e-6
+    area_cross = PI*(d*0.5)*(d*0.5)
+    rho_g = max(Pc/(R*max(Tc, 1.0)), 1e-6)
+    velocity_g = mdot_total/(rho_g*area_cross)
+    mu_g = _gas_viscosity_huzel(Tc, M) if (M > 0 and Tc > 0) else P[K_HGMU]
+    Re_g = rho_g*velocity_g*d/max(mu_g, 1e-8)
+
+    ti = 0.05
+    if Re_g > 0:
+        ti = _clip(0.16*Re_g**(-0.125), 0.02, 0.25)
+    ti = max(ti, _clip(P[K_TI], 0.0, 0.5))
+
+    # hot-wall flux uses Tc_ideal (film disabled => effective_Tc == Tc here)
+    q_total, q_conv, q_rad = _hot_wall_flux(P, Pc, Tc, gamma, R, M, mdot_total, P[AB_TSURF])
+    abl_area = _chamber_wetted_area(P)*_clip(P[AB_COV], 0.0, 1.0)
+    heat_removed = _ablative_heat_removed(P, P[AB_TSURF], abl_area, ti, q_conv, q_rad, mdot_total)
+
+    effective_Tc = Tc
+    cp = gamma*R/max(gamma-1.0, EPS_SMALL)
+    if heat_removed > 0 and mdot_total > 0:
+        delta_T = heat_removed/max(mdot_total*cp, EPS_SMALL)
+        effective_Tc = max(effective_Tc - delta_T, 1.0)
+
+    cooling_eff = 1.0
+    if heat_removed > 0:
+        available = mdot_total*cp*max(effective_Tc, 1.0)
+        if available > 0:
+            cooling_eff = _clip(1.0 - heat_removed/available, P[K_EFFFLOOR], 1.0)
+    return 1.0, cooling_eff, effective_Tc
+
+
+@njit(cache=True)
 def _residual(Pc, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F):
     if not (np.isfinite(Pc) and Pc > 0):
         return np.nan
@@ -471,7 +648,10 @@ def _residual(Pc, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F
     eta_total = _eta_advanced(P, Lstar, Pc, tc, gm, Rg, MR, Ac, P[G_AT], Dinj, mdot_supply, uF, uO, D32O, D32F, momR, R_opt)
     if eta_total < 0:
         return np.nan
-    eta_final = eta_total * 1.0  # cooling_eff == 1 (ablative disabled)
+    cok, cooling_eff, _tc_eff = _cooling_evaluate(P, Pc, mdot_supply, tc, gm, Rg, Mg)
+    if cok == 0.0:
+        return np.nan
+    eta_final = eta_total*cooling_eff
     if not (np.isfinite(eta_final) and eta_final > 0.0 and eta_final <= 1.0):
         return np.nan
     cstar_actual = eta_final*cs_id
@@ -565,25 +745,25 @@ def evaluate_core(P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F
     Pc_max = min(P_O, P_F)*(1.0 - 0.15)
     Pc_min = max(Pc_min, P[SV_PCMIN]); Pc_max = min(Pc_max, P[SV_PCMAX])
     if Pc_max <= Pc_min:
-        return (0.0,)*21
+        return (0.0,)*22
     xtol = P[SV_TOL]; rtol = P[SV_TOL]*1e-3; maxit = int(P[SV_MAXIT]) if P[SV_MAXIT] > 0 else 100
     rmin = _residual(Pc_min, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F)
     rmax = _residual(Pc_max, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F)
     if not np.isfinite(rmin) or not np.isfinite(rmax):
-        return (0.0,)*21
+        return (0.0,)*22
     if _sign(rmin) == _sign(rmax):
         if rmin > 0 and rmax > 0 and rmax < 0.1:
             Pc = Pc_max
         else:
-            return (0.0,)*21
+            return (0.0,)*22
     else:
         Pc = _brentq(P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F, Pc_min, Pc_max, xtol, rtol, maxit)
         if not np.isfinite(Pc):
-            return (0.0,)*21
+            return (0.0,)*22
     # recompute converged state
     ok, mO, mF, uO, uF, D32O, D32F, momR, CdO, CdF, PiO, PiF, dpiO, dpiF, AgO, AgF = injector_solve(P, P_O, P_F, Pc)
     if ok == 0:
-        return (0.0,)*21
+        return (0.0,)*22
     mdot_total = mO + mF; MR = mO/mF
     cs_id, cf_id, tc, gm, Rg, Mg, cfv = cea_eval(Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, MR, Pc, P[G_EPS])
     Lstar = P[G_LSTAR] if P[G_LSTAR] > 0 else (P[G_VOL]/P[G_AT] if P[G_AT] > 0 else 0.0)
@@ -594,11 +774,18 @@ def evaluate_core(P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F
         sO = np.sin(P[ANG_O]*PI/180.0); sF = np.sin(P[ANG_F]*PI/180.0)
         R_opt = np.sqrt(sF/sO) if (sO > 0 and sF > 0) else 1.0
     eta_total = _eta_advanced(P, Lstar, Pc, tc, gm, Rg, MR, Ac, P[G_AT], P[DJO], mdot_total, uF, uO, D32O, D32F, momR, R_opt)
-    cstar_actual = eta_total*cs_id
+    # Cooling at the converged point, matching the residual. C reports
+    # eta_cstar = eta_total*cooling_eff and derives cstar_actual from THAT
+    # (ed_chamber.c:91-92), so report eta_final here, not eta_total.
+    cok, cooling_eff, Tc_eff = _cooling_evaluate(P, Pc, mdot_total, tc, gm, Rg, Mg)
+    if cok == 0.0:
+        return (0.0,)*22
+    eta_final = eta_total*cooling_eff
+    cstar_actual = eta_final*cs_id
     # nozzle CEA at converged point (Pa ignored in 3D lookup)
     cs2, cf2, tc2, gm2, Rg2, Mg2, cfv2 = cea_eval(Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, MR, Pc, P[G_EPS])
     if not np.isfinite(cfv2):
-        return (0.0,)*21
+        return (0.0,)*22
     M_exit = _solve_exit_mach(P[G_EPS], gm2)
     factor = 1.0 + (gm2-1.0)/2.0*M_exit*M_exit
     T_exit = tc2/factor
@@ -609,11 +796,16 @@ def evaluate_core(P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F
     P_throat = Pc*thr**(gm2/(gm2-1.0))
     F = P[G_NOZZEFF]*cfv2*Pc*P[G_AT] - Pa*P[G_AE]
     if not np.isfinite(F):
-        return (0.0,)*21
+        return (0.0,)*22
     Isp = F/(mdot_total*G0)
     Cf_actual = F/(Pc*P[G_AT])
+    # Index 7 is Tc_IDEAL (EdEvaluateResult.Tc = ch.Tc_ideal, ed_evaluate.c:89) and
+    # index 21 is Tc_EFFECTIVE (out->Tc_effective = ch.Tc, :111). The wrapper dict's
+    # "Tc" must use the EFFECTIVE one -- native_injector.py:538 does, and it feeds
+    # comprehensive_stability_analysis. They are equal only while cooling is off.
     return (1.0, Pc, F, Isp, MR, cstar_actual, gm, tc, mdot_total, v_exit, Cf_actual,
-            mO, mF, cs_id, eta_total, Rg2, P_exit, P_throat, T_exit, T_throat, cf2)
+            mO, mF, cs_id, eta_final, Rg2, P_exit, P_throat, T_exit, T_throat, cf2,
+            Tc_eff)
 
 
 # ---- Python wrappers matching native_injector -------------------------------
@@ -632,9 +824,9 @@ class NumbaEvaluator:
         if not r[0]:
             return None
         (_, Pc, F, Isp, MR, csa, gm, tc, mdt, vex, cfa,
-         mO, mF, cs_id, eta, Rg, Pex, Pth, Tex, Tth, cf_id) = r
+         mO, mF, cs_id, eta, Rg, Pex, Pth, Tex, Tth, cf_id, tc_eff) = r
         return {"Pc": Pc, "F": F, "Isp": Isp, "MR": MR, "cstar_actual": csa,
-                "gamma": gm, "Tc": tc, "mdot_total": mdt, "v_exit": vex, "Cf_actual": cfa}
+                "gamma": gm, "Tc": tc_eff, "mdot_total": mdt, "v_exit": vex, "Cf_actual": cfa}
 
 
 def _cea_arrays_cached(cache):
@@ -675,7 +867,7 @@ def make_native_signature_evaluate():
         if not r[0]:
             return None
         (_, Pc, F, Isp, MR, csa, gm, tc, mdt, vex, cfa,
-         mO, mF, cs_id, eta, Rg, Pex, Pth, Tex, Tth, cf_id) = r
+         mO, mF, cs_id, eta, Rg, Pex, Pth, Tex, Tth, cf_id, tc_eff) = r
         if F != F:
             return None
         # --- identical tail to native_injector.evaluate: C diag solve + Python stability ---
@@ -686,18 +878,18 @@ def make_native_signature_evaluate():
         diagnostics.update({
             "mdot_O": mO, "mdot_F": mF, "mdot_total": mdt, "Pc": Pc, "MR": MR,
             "cstar_ideal": cs_id, "cstar_actual": csa, "eta_cstar": eta,
-            "gamma": gm, "R": Rg, "Tc": tc, "SMD": max(ir.D32_O, ir.D32_F),
+            "gamma": gm, "R": Rg, "Tc": tc_eff, "SMD": max(ir.D32_O, ir.D32_F),
         })
         try:
             stab = comprehensive_stability_analysis(
                 config=config, Pc=Pc, MR=MR, mdot_total=mdt,
-                cstar=csa, gamma=gm, R=Rg, Tc=tc, diagnostics=diagnostics)
+                cstar=csa, gamma=gm, R=Rg, Tc=tc_eff, diagnostics=diagnostics)
         except Exception:
             return None
         return {
             "Pc": Pc, "mdot_O": mO, "mdot_F": mF, "mdot_total": mdt, "MR": MR,
             "F": F, "Isp": Isp, "v_exit": vex, "P_exit": Pex, "P_throat": Pth,
-            "T_exit": Tex, "T_throat": Tth, "Tc": tc, "eps": float(P[G_EPS]),
+            "T_exit": Tex, "T_throat": Tth, "Tc": tc_eff, "eps": float(P[G_EPS]),
             "A_throat": float(P[G_AT]), "A_exit": float(P[G_AE]),
             "cstar_actual": csa, "cstar_ideal": cs_id, "eta_cstar": eta, "gamma": gm, "R": Rg,
             "Cf": cfa, "Cf_actual": cfa, "Cf_ideal": cf_id,
@@ -746,5 +938,31 @@ def _params_from_state(st):
                      ("NPRESS","n_pressure"),("TSTARCAP","T_star_fuel_cap_K"),("HASFLOOR","has_tau_Tc_floor"),
                      ("TAUFLOOR","tau_Tc_floor"),("EMPEAK","Em_peak"),("SIGMA","mixing_sigma"),("ROPT","R_opt")):
         P[_IDX[f"C_{suf}"]] = g(f"comb.{fld}")
+    for suf, fld in (("LEN","length"),("LCYL","length_cylindrical"),("LCONTR","length_contraction")):
+        P[_IDX[f"G_{suf}"]] = g(f"geom.{fld}")
+    for name, fld in (("K_ABLEN","ablative_enabled"),("K_FILMEN","film_enabled"),
+                      ("K_REGENEN","regen_enabled"),("K_USECOUP","use_cooling_coupling"),
+                      ("K_EFFFLOOR","cooling_efficiency_floor"),("K_HGMU","hot_gas_viscosity"),
+                      ("K_HGK","hot_gas_thermal_conductivity"),("K_HGPR","hot_gas_prandtl"),
+                      ("K_TI","gas_turbulence_intensity"),("K_RECOV","recovery_factor"),
+                      ("K_EMISHOT","radiation_emissivity_hot"),("K_VIEWF","radiation_view_factor"),
+                      ("K_DREGEN","regen_chamber_inner_diameter"),
+                      ("AB_COV","ablative_coverage_fraction"),
+                      ("AB_TSURF","ablative_surface_temperature_limit"),
+                      ("AB_TPYRO","ablative_pyrolysis_temperature"),
+                      ("AB_HABL","ablative_heat_of_ablation"),("AB_CP","ablative_specific_heat"),
+                      ("AB_USEPHYS","ablative_use_physics_based_blowing"),
+                      ("AB_BLOWEFF","ablative_blowing_efficiency"),
+                      ("AB_BLOWC","ablative_blowing_coefficient"),
+                      ("AB_BLOWMIN","ablative_blowing_min_reduction_factor"),
+                      ("AB_TIREF","ablative_turbulence_reference_intensity"),
+                      ("AB_TISENS","ablative_turbulence_sensitivity"),
+                      ("AB_TIEXP","ablative_turbulence_exponent"),
+                      ("AB_TIMAX","ablative_turbulence_max_multiplier"),
+                      ("AB_EMIS","ablative_surface_emissivity"),
+                      ("AB_TAMB","ablative_ambient_temperature"),
+                      ("AB_SINKMIN","ablative_radiative_sink_minimum_threshold"),
+                      ("AB_SINKFB","ablative_radiative_sink_fallback_temperature")):
+        P[_IDX[name]] = g(f"cooling.{fld}")
     return P
 
