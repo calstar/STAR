@@ -8,6 +8,8 @@
 #include <sstream>
 #include <string>
 
+#include "config/Config.hpp"
+
 namespace sequencer {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -80,70 +82,21 @@ std::string trimQuoted(std::string v) {
 
 void StateMachine::loadStatesFromConfig(const std::string& config_content) {
     ConfigStates fresh;
-    std::istringstream iss(config_content);
-    std::string line;
-    bool in_entry = false;
-    int id = -1;
-    std::string nm;
-    bool is_abort = false, is_boot = false;
-
-    auto flush = [&]() {
-        if (!in_entry)
-            return;
-        // An entry needs both an id and a name to mean anything. Skip incomplete ones rather than
-        // half-registering a state.
-        if (id >= 0 && id <= 255 && !nm.empty()) {
-            const State st = static_cast<State>(static_cast<uint8_t>(id));
-            fresh.names[st] = nm;
-            fresh.by_name[nm] = st;
-            if (is_abort)
-                fresh.aborts.insert(st);
-            if (is_boot && !fresh.boot_set) {
-                fresh.boot = st;
-                fresh.boot_set = true;
-            }
-        }
-        id = -1;
-        nm.clear();
-        is_abort = is_boot = false;
-    };
-
-    while (std::getline(iss, line)) {
-        std::string t = line;
-        t.erase(0, t.find_first_not_of(" \t"));
-        if (t.rfind("[[states]]", 0) == 0) {
-            flush();
-            in_entry = true;
+    const fsw::config::Config cfg = fsw::config::load_from_string(config_content);
+    for (const auto& s : cfg.states) {
+        // An entry needs a valid id and a name; skip incomplete ones. First is_boot wins.
+        if (s.id < 0 || s.id > 255 || s.name.empty())
             continue;
-        }
-        // Any other section header ends the array.
-        if (!t.empty() && t[0] == '[') {
-            flush();
-            in_entry = false;
-            continue;
-        }
-        if (!in_entry)
-            continue;
-        auto eq = t.find('=');
-        if (eq == std::string::npos)
-            continue;
-        std::string k = t.substr(0, eq);
-        k.erase(k.find_last_not_of(" \t") + 1);
-        const std::string v = trimQuoted(t.substr(eq + 1));
-        if (k == "id") {
-            try {
-                id = std::stoi(v);
-            } catch (...) {
-            }
-        } else if (k == "name") {
-            nm = v;
-        } else if (k == "is_abort") {
-            is_abort = (v == "true" || v == "1");
-        } else if (k == "is_boot") {
-            is_boot = (v == "true" || v == "1");
+        const State st = static_cast<State>(static_cast<uint8_t>(s.id));
+        fresh.names[st] = s.name;
+        fresh.by_name[s.name] = st;
+        if (s.is_abort)
+            fresh.aborts.insert(st);
+        if (s.is_boot && !fresh.boot_set) {
+            fresh.boot = st;
+            fresh.boot_set = true;
         }
     }
-    flush();
 
     fresh.loaded = !fresh.names.empty();
     configStates() = fresh;

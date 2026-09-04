@@ -13,6 +13,7 @@
 #include <thread>
 
 #include "comms/CommsMessage.hpp"
+#include "config/Config.hpp"
 #include "config/LoadActiveBoards.hpp"
 #include "elodin/DatabaseConfig.hpp"
 
@@ -140,10 +141,10 @@ static std::string configString(const std::string& content, const std::string& s
 
 bool SequencerService::init(const std::string& config_path) {
     loadConfig(config_path);
+    const fsw::config::Config cfg = fsw::config::load_from_string(config_content_);
 
     // State machine CSV — path from config.toml (canonical: daq-server/config/).
-    std::string sm_csv = resolveDataPath(configString(
-        config_content_, "state_machine", "transitions_csv", "config/state_transitions.csv"));
+    std::string sm_csv = resolveDataPath(cfg.state_machine.transitions_csv);
     if (!state_machine_.load(sm_csv)) {
         std::cerr
             << "[SequencerService] Failed to load state_transitions.csv (tried relative to cwd: "
@@ -152,8 +153,7 @@ bool SequencerService::init(const std::string& config_path) {
     }
 
     // Actuator commander — path from config.toml (canonical: daq-server/config/).
-    std::string act_csv = resolveDataPath(configString(
-        config_content_, "state_machine", "actuator_csv", "config/state_machine_actuators.csv"));
+    std::string act_csv = resolveDataPath(cfg.state_machine.actuator_csv);
     if (!actuator_commander_.load(config_content_, act_csv)) {
         std::cerr << "[SequencerService] Failed to load state_machine_actuators.csv (tried: "
                   << act_csv << ")" << std::endl;
@@ -164,85 +164,14 @@ bool SequencerService::init(const std::string& config_path) {
     // its state and expiry target by name, and the CSVs are parsed by name too.
     StateMachine::loadStatesFromConfig(config_content_);
 
-    // FireManager: load durations from config
-    auto getStr = [&](const std::string& sec, const std::string& key,
-                      const std::string& def) -> std::string {
-        const std::string& cc = config_content_;
-        const std::string header = "[" + sec + "]";
-        auto pos = cc.find(header);
-        if (pos == std::string::npos)
-            return def;
-        auto start = pos + header.size();
-        auto next = cc.find("\n[", start);
-        const std::string section =
-            (next == std::string::npos) ? cc.substr(start) : cc.substr(start, next - start);
-        std::istringstream iss(section);
-        std::string line;
-        while (std::getline(iss, line)) {
-            auto hash = line.find('#');
-            if (hash != std::string::npos)
-                line = line.substr(0, hash);
-            auto eq = line.find('=');
-            if (eq == std::string::npos)
-                continue;
-            std::string k = line.substr(0, eq);
-            k.erase(0, k.find_first_not_of(" \t"));
-            k.erase(k.find_last_not_of(" \t\r\n") + 1);
-            if (k != key)
-                continue;
-            std::string v = line.substr(eq + 1);
-            v.erase(0, v.find_first_not_of(" \t\"'"));
-            auto endq = v.find_last_not_of(" \t\r\n\"'");
-            if (endq != std::string::npos)
-                v.erase(endq + 1);
-            return v;
-        }
-        return def;
-    };
-
-    auto getInt = [&](const std::string& sec, const std::string& key, uint32_t def) -> uint32_t {
-        const std::string& cc = config_content_;
-        const std::string header = "[" + sec + "]";
-        auto pos = cc.find(header);
-        if (pos == std::string::npos)
-            return def;
-        auto start = pos + header.size();
-        auto next = cc.find("\n[", start);
-        const std::string section =
-            (next == std::string::npos) ? cc.substr(start) : cc.substr(start, next - start);
-        std::istringstream iss(section);
-        std::string line;
-        while (std::getline(iss, line)) {
-            auto eq = line.find('=');
-            if (eq == std::string::npos)
-                continue;
-            std::string k = line.substr(0, eq);
-            k.erase(0, k.find_first_not_of(" \t"));
-            k.erase(k.find_last_not_of(" \t") + 1);
-            if (k != key)
-                continue;
-            std::string v = line.substr(eq + 1);
-            v.erase(0, v.find_first_not_of(" \t\r\n"));
-            v.erase(v.find_last_not_of(" \t\r\n") + 1);
-            try {
-                return static_cast<uint32_t>(std::stoul(v));
-            } catch (...) {
-            }
-        }
-        return def;
-    };
-
-    // [fire] is the new home; [controller_service] is still read as a fallback so an un-migrated
-    // config keeps working. (That read used to name [state_machine], which holds only the CSV
-    // paths, so the lookup always missed and every burn silently ran the 6000 ms default.)
-    const uint32_t fire_duration_ms =
-        getInt("fire", "duration_ms", getInt("controller_service", "fire_duration_ms", 6000));
-    const uint32_t fire_extended_ms =
-        getInt("fire", "extended_ms", getInt("controller_service", "fire_extended_ms", 10000));
+    // FireManager durations from config.toml [fire] (see the parser for the
+    // [controller_service].fire_* fallback that keeps an un-migrated config working).
+    const uint32_t fire_duration_ms = cfg.fire.duration_ms;
+    const uint32_t fire_extended_ms = cfg.fire.extended_ms;
 
     // Which state is the burn, and where its timer lands. Names, not enumerators.
     {
-        const std::string fs = getStr("fire", "state", "");
+        const std::string fs = cfg.fire.state;
         if (!fs.empty()) {
             State s = StateMachine::fromName(fs);
             if (s == State::UNKNOWN)
@@ -251,7 +180,7 @@ bool SequencerService::init(const std::string& config_path) {
             else
                 fire_state_ = s;
         }
-        const std::string ft = getStr("fire", "expiry_target", "");
+        const std::string ft = cfg.fire.expiry_target;
         if (!ft.empty()) {
             State s = StateMachine::fromName(ft);
             if (s == State::UNKNOWN)
@@ -279,77 +208,15 @@ bool SequencerService::init(const std::string& config_path) {
 
     // Controller service endpoint for FIRE_START / FIRE_STOP
     // Read from config; defaults to 127.0.0.1:8000
-    std::string ctrl_host = "127.0.0.1";
-    uint16_t ctrl_port = 8000;
-    {
-        std::istringstream cfg(config_content_);
-        std::string line, cur_sec;
-        while (std::getline(cfg, line)) {
-            if (line.size() > 1 && line[0] == '[') {
-                auto e = line.find(']');
-                cur_sec = (e != std::string::npos) ? line.substr(1, e - 1) : "";
-                continue;
-            }
-            if (cur_sec != "controller_service")
-                continue;
-            auto eq = line.find('=');
-            if (eq == std::string::npos)
-                continue;
-            std::string k = line.substr(0, eq);
-            k.erase(0, k.find_first_not_of(" \t"));
-            k.erase(k.find_last_not_of(" \t") + 1);
-            std::string v = line.substr(eq + 1);
-            v.erase(0, v.find_first_not_of(" \t\r\n\""));
-            v.erase(v.find_last_not_of(" \t\r\n\"") + 1);
-            if (k == "host")
-                ctrl_host = v;
-            else if (k == "port") {
-                try {
-                    ctrl_port = static_cast<uint16_t>(std::stoi(v));
-                } catch (...) {
-                }
-            }
-        }
-    }
-    controller_host_ = ctrl_host;
-    controller_port_ = ctrl_port;
+    controller_host_ = cfg.controller_service.host;
+    controller_port_ = cfg.controller_service.port;
     fire_manager_.setNotifier([this](bool active) {
         notifyControllerFire(active);
     });
 
     // Elodin — connection is best-effort; service runs without it
-    const std::string elodin_host = "127.0.0.1";
-    uint16_t elodin_port = 2240;
-    {
-        std::istringstream cfg(config_content_);
-        std::string line, cur_sec;
-        while (std::getline(cfg, line)) {
-            if (line.size() > 1 && line[0] == '[') {
-                auto e = line.find(']');
-                cur_sec = (e != std::string::npos) ? line.substr(1, e - 1) : "";
-                continue;
-            }
-            if (cur_sec != "database")
-                continue;
-            auto eq = line.find('=');
-            if (eq == std::string::npos)
-                continue;
-            std::string k = line.substr(0, eq);
-            k.erase(0, k.find_first_not_of(" \t"));
-            k.erase(k.find_last_not_of(" \t") + 1);
-            if (k != "port")
-                continue;
-            std::string v = line.substr(eq + 1);
-            v.erase(0, v.find_first_not_of(" \t\r\n"));
-            v.erase(v.find_last_not_of(" \t\r\n") + 1);
-            try {
-                elodin_port = static_cast<uint16_t>(std::stoi(v));
-            } catch (...) {
-            }
-        }
-    }
-    elodin_host_ = elodin_host;
-    elodin_port_ = elodin_port;
+    elodin_host_ = "127.0.0.1";
+    elodin_port_ = cfg.database.port;
     if (!tryConnectElodin()) {
         std::cerr << "[SequencerService] Cannot connect to Elodin yet — retrying every "
                   << kElodinRetrySeconds << "s in the background" << std::endl;
@@ -481,15 +348,14 @@ bool SequencerService::extendFire() {
 bool SequencerService::reloadConfig() {
     std::cout << "[SequencerService] Reloading config..." << std::endl;
     loadConfig(config_path_);
+    const fsw::config::Config cfg = fsw::config::load_from_string(config_content_);
 
-    std::string act_csv = resolveDataPath(configString(
-        config_content_, "state_machine", "actuator_csv", "config/state_machine_actuators.csv"));
+    std::string act_csv = resolveDataPath(cfg.state_machine.actuator_csv);
     if (!actuator_commander_.load(config_content_, act_csv)) {
         std::cerr << "[SequencerService] Reload: failed to reload actuator CSV" << std::endl;
         return false;
     }
-    std::string sm_csv = resolveDataPath(configString(
-        config_content_, "state_machine", "transitions_csv", "config/state_transitions.csv"));
+    std::string sm_csv = resolveDataPath(cfg.state_machine.transitions_csv);
     if (!state_machine_.load(sm_csv)) {
         std::cerr << "[SequencerService] Reload: failed to reload state transitions CSV"
                   << std::endl;

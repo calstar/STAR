@@ -84,9 +84,9 @@ struct CalibrationConfig {  // [calibration.tc/.rtd/.lc]
     double lc_full_scale_value = 300.0;
 };
 
-struct FireConfig {  // [fire]
-    std::string state = "Fire";
-    std::string expiry_target = "Armed";
+struct FireConfig {     // [fire]
+    std::string state;  // "" when absent; consumers guard on empty and keep their own default
+    std::string expiry_target;
     uint32_t duration_ms = 6000;
     uint32_t extended_ms = 10000;
 };
