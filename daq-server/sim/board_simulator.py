@@ -199,10 +199,19 @@ class SimulatedBoard:
                     f"{self.config.get('board_id')}. Run the simulator against config/sim_config.toml "
                     f"(loopback IPs), or pass --allow-ip-fallback (integration test only)."
                 )
-            # When config IPs (e.g. 192.168.2.21) are not on this host, use distinct
-            # loopback IPs so daq_bridge can route each board's data correctly.
-            # 127.0.0.2 = first board, 127.0.0.3 = second, etc.
-            fallback_ip = f"127.0.0.{2 + self.board_index}"
+            # When config IPs (e.g. 192.168.2.21) are not on this host, bind a distinct loopback IP
+            # per board so daq_bridge can route each board's data. Mirror the config IP's host octet
+            # (192.168.2.51 -> 127.0.0.51): the bridge resolves loopback packets by that octet, which
+            # is identity-based and immune to [boards] iteration order (the C++ toml++ loader sorts
+            # alphabetically, this file iterates source order — an index-based scheme mislabels
+            # boards). Falls back to the old index scheme only if the config IP has no usable octet.
+            try:
+                host_octet = int(str(self.config.get("ip", "")).rsplit(".", 1)[-1])
+            except (ValueError, TypeError):
+                host_octet = 0
+            fallback_ip = (
+                f"127.0.0.{host_octet}" if host_octet >= 2 else f"127.0.0.{2 + self.board_index}"
+            )
             try:
                 self.sock.bind((fallback_ip, bind_port))
                 self.ip = fallback_ip

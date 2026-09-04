@@ -182,11 +182,12 @@ echo ""
 mkdir -p "$REPO_ROOT/.tmp"
 
 # ── macOS loopback aliases for board simulator ────────────────────────────────
-# On Linux, 127.0.0.x all resolve to lo. On macOS, only 127.0.0.1 works unless
-# we add explicit aliases. The board_simulator binds each board to a distinct
-# 127.0.0.{2+index} IP so the DAQ bridge can route by source address.
+# On Linux, 127.0.0.x all resolve to lo. On macOS, only 127.0.0.1 works unless we add explicit
+# aliases. The board_simulator binds each board to 127.0.0.<host-octet> (the last octet of its
+# config IP, which equals its board_id here) so the DAQ bridge can route by source address. These
+# are the board_id octets from config_base.toml (enabled and not) plus the startup board (60).
 if [ "$(uname)" = "Darwin" ]; then
-  LOOPBACK_IPS=(2 3 4 5 6 7 8 9 60 61)
+  LOOPBACK_IPS=(11 12 13 14 21 22 31 32 41 42 51 52 60 61)
   NEED_ALIAS=false
   for i in "${LOOPBACK_IPS[@]}"; do
     if ! ifconfig lo0 2>/dev/null | grep -q "127.0.0.$i "; then
@@ -199,7 +200,7 @@ if [ "$(uname)" = "Darwin" ]; then
     for i in "${LOOPBACK_IPS[@]}"; do
       sudo ifconfig lo0 alias "127.0.0.$i" up 2>/dev/null || true
     done
-    echo "  ✅ Loopback aliases added (127.0.0.{2-9,60,61})"
+    echo "  ✅ Loopback aliases added (127.0.0.{board_id octets})"
   fi
 fi
 
