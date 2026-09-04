@@ -67,14 +67,14 @@ def _assert_supported(st):
 
 
 def extract_params(config):
-    """Flatten the native EdEngineState scalars this port needs into a float64 vec.
+    """Flatten the config scalars this port needs into a float64 vec.
 
     Delegates the field mapping to _params_from_state so there is ONE table of
     field names; the two used to carry independent copies of the whole mapping,
     which would drift the moment a field was added on one side only.
     """
-    from engine.native.python import native_injector as ni
-    st = ni.build_state(config)
+    from engine.accel.params import build_state
+    st = build_state(config)          # pure Python -- no C library required
     _assert_supported(st)
     return _params_from_state(st)
 

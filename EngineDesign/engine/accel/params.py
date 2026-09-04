@@ -1,0 +1,244 @@
+"""Config -> flat scalar state, in pure Python (no C dependency).
+
+WHY THIS EXISTS
+    The Numba kernels used to read their inputs out of the C `EdEngineState`
+    struct (numba_eval.extract_params called native_injector.build_state), so
+    Numba could not run without the C library loaded. That made the C port
+    impossible to delete. This module reproduces that reconciliation with no
+    ctypes involved.
+
+WHY IT IS A TRANSCRIPTION, NOT A REWRITE
+    `native_injector.build_state` encodes decisions that are NOT recoverable by
+    reading the config schema -- see the inline notes on smd_model and
+    we_corr_max below. Re-deriving "what the config means" from the YAML would
+    silently produce different numbers on some configs. So each field here is a
+    line-for-line transcription of the corresponding `_fill_*` helper, and
+    tests/test_accel_params_match_native_state.py asserts exact equality against
+    the real EdEngineState for every committed config while the C port still
+    exists to compare against.
+
+The returned object mirrors EdEngineState's attribute paths exactly
+(`st.fluid_O.density`, `st.injector.imp_O.d_jet`, ...) so the existing
+param-vector mapping reads from either interchangeably.
+"""
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+# Enum mappings -- mirror native_injector._PHI / _INJ / _EFF_MODEL.
+_PHI = {"none": 0, "sqrtP": 1, "logP": 2}
+_INJ = {"pintle": 0, "impinging": 1, "coaxial": 2}
+_EFF_MODEL = {"constant": 0, "linear": 1, "exponential": 2}
+
+
+def _ns(**kw):
+    return SimpleNamespace(**kw)
+
+
+def _discharge(c):
+    """Mirrors native_injector._fill_discharge."""
+    return _ns(
+        Cd_inf=float(c.Cd_inf), a_Re=float(c.a_Re), Cd_min=float(c.Cd_min),
+        use_geometry_cd=int(bool(c.use_geometry_cd)),
+        d_ref_m=float(c.d_ref_m), d_min_m=float(c.d_min_m),
+        cd_small_hole_exponent=float(c.cd_small_hole_exponent),
+        cd_large_hole_log_gain=float(c.cd_large_hole_log_gain),
+        cd_inf_max=float(c.cd_inf_max), cd_inf_min_geom=float(c.cd_inf_min_geom),
+        use_pressure_correction=int(bool(c.use_pressure_correction)),
+        P_ref=float(c.P_ref), a_P=float(c.a_P),
+        use_temperature_correction=int(bool(c.use_temperature_correction)),
+        T_ref=float(c.T_ref), a_T=float(c.a_T),
+    )
+
+
+def _feed(c):
+    """Mirrors native_injector._fill_feed."""
+    return _ns(
+        d_inlet=float(getattr(c, "d_inlet", 0.0) or 0.0),
+        A_hydraulic=float(getattr(c, "A_hydraulic", 0.0) or 0.0),
+        K0=float(c.K0), K1=float(c.K1), phi_type=_PHI[c.phi_type],
+    )
+
+
+def _fluid(f):
+    """Mirrors native_injector._fill_fluid.
+
+    Note the `or` defaults: a missing OR zero temperature becomes 0.0, and a
+    missing OR zero latent_heat becomes 300e3. Falsy checks, not `is None`.
+    """
+    return _ns(
+        density=float(f.density), viscosity=float(f.viscosity),
+        surface_tension=float(f.surface_tension),
+        temperature=float(getattr(f, "temperature", 0.0) or 0.0),
+        latent_heat=float(getattr(f, "latent_heat", 300e3) or 300e3),
+    )
+
+
+def _comb(eff):
+    """Mirrors native_injector._fill_comb."""
+    floor = getattr(eff, "tau_Tc_floor_K", None)
+    ropt = getattr(eff, "R_opt", None)
+    return _ns(
+        model=_EFF_MODEL.get(eff.model, 2),
+        C=float(eff.C), K=float(eff.K),
+        cooling_efficiency_floor=float(eff.cooling_efficiency_floor),
+        use_cooling_coupling=int(bool(eff.use_cooling_coupling)),
+        tau_ref=float(eff.tau_ref), tau_ref_P=float(eff.tau_ref_P),
+        tau_ref_T=float(eff.tau_ref_T), n_pressure=float(eff.n_pressure),
+        T_star_fuel_cap_K=float(getattr(eff, "T_star_fuel_cap_K", 1000.0)),
+        has_tau_Tc_floor=int(floor is not None),
+        tau_Tc_floor=float(floor or 0.0),
+        # Rupe momentum-ratio mixing; R_opt<=0 => derive from impingement angles.
+        Em_peak=float(getattr(eff, "Em_peak", 0.96)),
+        mixing_sigma=float(getattr(eff, "mixing_sigma", 1.5)),
+        R_opt=float(ropt) if ropt is not None else 0.0,
+    )
+
+
+def _cooling(cfg):
+    """Mirrors native_injector._fill_cooling.
+
+    The C struct is zero-initialised, so fields guarded by `if rg is not None` /
+    `if ab is not None` stay 0.0 when that config block is absent. The defaults
+    below reproduce that -- do not "improve" them into schema defaults.
+    """
+    rg, ab = cfg.regen_cooling, cfg.ablative_cooling
+    fc = getattr(cfg, "film_cooling", None)
+    eff = cfg.combustion.efficiency
+    c = _ns(
+        regen_enabled=int(bool(rg and rg.enabled)),
+        film_enabled=int(bool(fc and fc.enabled)),
+        ablative_enabled=int(bool(ab and ab.enabled)),
+        graphite_enabled=int(bool(getattr(cfg, "graphite_insert", None)
+                                  and cfg.graphite_insert.enabled)),
+        use_cooling_coupling=int(bool(eff.use_cooling_coupling)),
+        cooling_efficiency_floor=float(eff.cooling_efficiency_floor),
+        # zero-init defaults for the two optional blocks
+        hot_gas_viscosity=0.0, hot_gas_thermal_conductivity=0.0,
+        hot_gas_prandtl=0.0, gas_turbulence_intensity=0.0, recovery_factor=0.0,
+        radiation_emissivity_hot=0.0, radiation_view_factor=0.0,
+        regen_chamber_inner_diameter=0.0,
+        ablative_coverage_fraction=0.0, ablative_surface_temperature_limit=0.0,
+        ablative_material_density=0.0, ablative_heat_of_ablation=0.0,
+        ablative_specific_heat=0.0, ablative_pyrolysis_temperature=0.0,
+        ablative_use_physics_based_blowing=0, ablative_blowing_efficiency=0.0,
+        ablative_blowing_coefficient=0.0, ablative_blowing_min_reduction_factor=0.0,
+        ablative_turbulence_reference_intensity=0.0, ablative_turbulence_sensitivity=0.0,
+        ablative_turbulence_exponent=0.0, ablative_turbulence_max_multiplier=0.0,
+        ablative_surface_emissivity=0.0, ablative_ambient_temperature=0.0,
+        ablative_radiative_sink_minimum_threshold=0.0,
+        ablative_radiative_sink_fallback_temperature=0.0,
+    )
+    if rg is not None:
+        c.hot_gas_viscosity = float(rg.hot_gas_viscosity)
+        c.hot_gas_thermal_conductivity = float(rg.hot_gas_thermal_conductivity)
+        c.hot_gas_prandtl = float(rg.hot_gas_prandtl)
+        c.gas_turbulence_intensity = float(rg.gas_turbulence_intensity)
+        c.recovery_factor = float(rg.recovery_factor) if rg.recovery_factor is not None else 0.94
+        c.radiation_emissivity_hot = float(rg.radiation_emissivity_hot)
+        c.radiation_view_factor = float(rg.radiation_view_factor)
+        c.regen_chamber_inner_diameter = float(rg.chamber_inner_diameter or 0.0)
+    if ab is not None:
+        c.ablative_coverage_fraction = float(ab.coverage_fraction)
+        c.ablative_surface_temperature_limit = float(ab.surface_temperature_limit)
+        c.ablative_material_density = float(ab.material_density)
+        c.ablative_heat_of_ablation = float(ab.heat_of_ablation)
+        c.ablative_specific_heat = float(ab.specific_heat)
+        c.ablative_pyrolysis_temperature = float(ab.pyrolysis_temperature)
+        c.ablative_use_physics_based_blowing = int(bool(ab.use_physics_based_blowing))
+        c.ablative_blowing_efficiency = float(ab.blowing_efficiency)
+        c.ablative_blowing_coefficient = float(ab.blowing_coefficient)
+        c.ablative_blowing_min_reduction_factor = float(ab.blowing_min_reduction_factor)
+        c.ablative_turbulence_reference_intensity = float(ab.turbulence_reference_intensity)
+        c.ablative_turbulence_sensitivity = float(ab.turbulence_sensitivity)
+        c.ablative_turbulence_exponent = float(ab.turbulence_exponent)
+        c.ablative_turbulence_max_multiplier = float(ab.turbulence_max_multiplier)
+        c.ablative_surface_emissivity = float(ab.surface_emissivity)
+        c.ablative_ambient_temperature = float(ab.ambient_temperature)
+        c.ablative_radiative_sink_minimum_threshold = float(ab.radiative_sink_minimum_threshold)
+        c.ablative_radiative_sink_fallback_temperature = float(ab.radiative_sink_fallback_temperature)
+    return c
+
+
+def _geom(cg):
+    """Mirrors native_injector._fill_geom. `cg` must come from ensure_chamber_geometry."""
+    return _ns(
+        A_throat=float(cg.A_throat), A_exit=float(cg.A_exit), volume=float(cg.volume),
+        Lstar=float(cg.Lstar) if cg.Lstar else 0.0,
+        length=float(cg.length),
+        length_cylindrical=float(cg.length_cylindrical or 0.0),
+        length_contraction=float(cg.length_contraction or 0.0),
+        chamber_diameter=float(cg.chamber_diameter or 0.0),
+        exit_diameter=float(cg.exit_diameter or 0.0),
+        expansion_ratio=float(cg.expansion_ratio),
+        nozzle_efficiency=float(cg.nozzle_efficiency),
+        Cf=float(cg.Cf or 0.0),
+        design_pressure=float(cg.design_pressure or 0.0),
+    )
+
+
+def _imp(b):
+    """Mirrors native_injector._fill_imp."""
+    return _ns(
+        n_elements=int(b.n_elements), d_jet=float(b.d_jet),
+        impingement_angle=float(b.impingement_angle),
+        spacing=float(getattr(b, "spacing", 0.0) or 0.0),
+    )
+
+
+def build_state(config):
+    """Pure-Python equivalent of native_injector.build_state.
+
+    Returns a namespace with EdEngineState's attribute paths. Raises the same way
+    build_state does on a config it cannot map (e.g. a pintle config, whose
+    injector geometry has no .oxidizer/.fuel impinging branches).
+    """
+    from engine.pipeline.config_schemas import ensure_chamber_geometry
+
+    g = config.injector.geometry
+    sp = config.spray
+
+    spray = _ns(
+        # Impinging atomization is ALWAYS Ingebo (see impinging.py); a stale
+        # `lefebvre` in YAML is deliberately ignored. Reading spray.smd.model
+        # here instead would change results on configs that carry the stale key.
+        smd_model=1,
+        smd_C=float(sp.smd.C), smd_m=float(sp.smd.m), smd_p=float(sp.smd.p),
+        smd_C_ingebo=float(sp.smd.C_ingebo),
+        # Falsy check, not `is None`: we_corr_max of 0.0 and null both -> 0.0.
+        smd_we_corr_max=float(getattr(sp.smd, "we_corr_max", None))
+        if getattr(sp.smd, "we_corr_max", None) else 0.0,
+        chamber_gas_R=float(sp.smd.chamber_gas_R),
+        chamber_gas_T=float(sp.smd.chamber_gas_T),
+        spray_angle_model=0 if sp.spray_angle.model == "J" else 1,
+        spray_angle_k=float(sp.spray_angle.k), spray_angle_n=float(sp.spray_angle.n),
+        we_min=float(sp.weber.get("We_min", 15.0)),
+        evap_K=float(sp.evaporation.K),
+        evap_x_star_limit=float(sp.evaporation.x_star_limit),
+        evap_use_constraint=int(bool(sp.evaporation.use_constraint)),
+    )
+
+    solver = _ns(
+        closure_max_iterations=int(config.solver.closure.max_iterations),
+        closure_Cd_reduction_factor=float(config.solver.closure.Cd_reduction_factor),
+        Pc_min_bound=float(config.solver.Pc_bounds[0]),
+        Pc_max_bound=float(config.solver.Pc_bounds[1]),
+        tolerance=float(config.solver.tolerance),
+        max_iterations=int(config.solver.max_iterations),
+    )
+
+    return _ns(
+        injector=_ns(type=_INJ[config.injector.type],
+                     imp_O=_imp(g.oxidizer), imp_F=_imp(g.fuel)),
+        discharge_O=_discharge(config.discharge["oxidizer"]),
+        discharge_F=_discharge(config.discharge["fuel"]),
+        feed_O=_feed(config.feed_system["oxidizer"]),
+        feed_F=_feed(config.feed_system["fuel"]),
+        fluid_O=_fluid(config.fluids["oxidizer"]),
+        fluid_F=_fluid(config.fluids["fuel"]),
+        spray=spray,
+        solver=solver,
+        comb=_comb(config.combustion.efficiency),
+        cooling=_cooling(config),
+        geom=_geom(ensure_chamber_geometry(config)),
+    )
