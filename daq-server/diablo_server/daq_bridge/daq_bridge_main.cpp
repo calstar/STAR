@@ -90,6 +90,7 @@ private:
 #include "calibration/PTCalibration.hpp"
 #include "calibration/SensorCalibration.hpp"
 #include "config/BoardDiscovery.hpp"
+#include "config/Config.hpp"
 #include "config/LoadActiveBoards.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
@@ -140,123 +141,56 @@ static void load_board_map_from_config(const std::string& config_path,
                                        uint16_t* out_log_port = nullptr) {
     db_host = "127.0.0.1";
     db_port = 2240;
-    std::ifstream f(config_path);
-    if (!f.is_open())
-        return;
-    std::string line, current_section;
-    std::string board_type_str, board_ip;
-    int board_num_sensors = 10;
-    int board_id = -1;  // Added board_id
-    bool board_enabled = true;
-    auto add_board = [&]() {
-        if (board_ip.empty())
-            return;
-        BoardType bt = BoardType::UNKNOWN;
-        if (board_type_str == "PT")
-            bt = BoardType::PT;
-        else if (board_type_str == "LC")
-            bt = BoardType::LC;
-        else if (board_type_str == "TC")
-            bt = BoardType::TC;
-        else if (board_type_str == "RTD")
-            bt = BoardType::RTD;
-        else if (board_type_str == "ACTUATOR")
-            bt = BoardType::ACTUATOR;
-        else if (board_type_str == "ENCODER")
-            bt = BoardType::ENCODER;
-        if (bt != BoardType::UNKNOWN) {
-            BoardConfig cfg{bt, board_ip, board_num_sensors, board_enabled, board_id};
-            board_map[board_ip] = cfg;
-            if (out_board_order && board_enabled)
-                out_board_order->emplace_back(board_ip, std::move(cfg));
-        }
-        board_ip.clear();
-        board_type_str.clear();
-        board_id = -1;
-    };
-    while (std::getline(f, line)) {
-        size_t c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
-            line.pop_back();
-        size_t start = line.find_first_not_of(" \t");
-        if (start != std::string::npos)
-            line = line.substr(start);
-        if (line.empty())
-            continue;
-        if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
-            add_board();
-            current_section = line.substr(1, line.size() - 2);
-            board_num_sensors = 10;
-            board_id = -1;
-            board_enabled = true;
-            continue;
-        }
-        size_t eq = line.find('=');
-        if (eq == std::string::npos)
-            continue;
-        std::string key = line.substr(0, eq);
-        std::string val = line.substr(eq + 1);
-        while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
-            key.pop_back();
-        while (!val.empty() && (val[0] == ' ' || val[0] == '\t'))
-            val.erase(0, 1);
-        if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
-            val = val.substr(1, val.size() - 2);
-        if (current_section == "database") {
-            if (key == "host")
-                db_host = val;
-            else if (key == "port")
-                db_port = static_cast<uint16_t>(std::stoul(val));
-        } else if (current_section == "network") {
-            if (out_sensor_port && key == "sensor_port")
-                *out_sensor_port = static_cast<uint16_t>(std::stoul(val));
-            else if (out_bind_ip && key == "bind_ip")
-                *out_bind_ip = val;
-        } else if (current_section == "server_heartbeat" && out_hb) {
-            if (key == "interval_ms")
-                out_hb->interval_ms = std::stoul(val);
-            else if (key == "broadcast_port")
-                out_hb->broadcast_port = static_cast<uint16_t>(std::stoul(val));
-            else if (key == "broadcast_ip")
-                out_hb->broadcast_ip = val;
-            else if (key == "send_from_daq_bridge")
-                out_hb->send_from_daq_bridge = (val == "true" || val == "1");
-        } else if (current_section == "heartbeat_service" && out_hb) {
-            if (key == "enabled" && (val == "true" || val == "1"))
-                out_hb->send_from_daq_bridge = false;  // heartbeat_service owns it
-        } else if (current_section == "logs" && out_log_port) {
-            if (key == "backend_udp_port")
-                *out_log_port = static_cast<uint16_t>(std::stoul(val));
-        } else if (current_section == "time_sync" && out_ts) {
-            if (key == "mode")
-                out_ts->mode = (val == "arrival") ? fsw::time::TimeSyncConfig::Mode::Arrival
-                                                  : fsw::time::TimeSyncConfig::Mode::BoardClock;
-            else if (key == "window_seconds")
-                out_ts->window_seconds = static_cast<uint32_t>(std::stoul(val));
-            else if (key == "max_plausible_gap_s")
-                out_ts->max_plausible_gap_s = static_cast<uint32_t>(std::stoul(val));
-            else if (key == "max_batch_age_s")
-                out_ts->max_batch_age_s = static_cast<uint32_t>(std::stoul(val));
-            else if (key == "resync_threshold_ms")
-                out_ts->resync_threshold_ms = static_cast<uint32_t>(std::stoul(val));
-            else if (key == "log_interval_s")
-                out_ts->log_interval_s = static_cast<uint32_t>(std::stoul(val));
-        } else if (current_section.compare(0, 7, "boards.") == 0) {
-            if (key == "type")
-                board_type_str = val;
-            else if (key == "ip")
-                board_ip = val;
-            else if (key == "num_sensors")
-                board_num_sensors = std::stoi(val);
-            else if (key == "board_id")
-                board_id = std::stoi(val);  // Parse board_id
-            else if (key == "enabled")
-                board_enabled = (val == "true" || val == "1");
-        }
+    {
+        std::ifstream f(config_path);
+        if (!f.is_open())
+            return;  // missing file → keep defaults, no boards (matches old behavior)
     }
-    add_board();
+
+    const fsw::config::Config c = fsw::config::load(config_path);
+    db_host = c.database.host;
+    db_port = c.database.port;
+    if (out_sensor_port)
+        *out_sensor_port = c.network.sensor_port;
+    if (out_bind_ip)
+        *out_bind_ip = c.network.bind_ip;
+    if (out_hb) {
+        out_hb->interval_ms = c.server_heartbeat.interval_ms;
+        out_hb->broadcast_port = c.server_heartbeat.broadcast_port;
+        out_hb->broadcast_ip = c.server_heartbeat.broadcast_ip;
+        out_hb->send_from_daq_bridge = c.server_heartbeat.send_from_daq_bridge;
+    }
+    if (out_ts)
+        *out_ts = c.time_sync;
+    if (out_log_port)
+        *out_log_port = c.logs.backend_udp_port;
+
+    auto kind = [](const std::string& t) {
+        if (t == "PT")
+            return BoardType::PT;
+        if (t == "LC")
+            return BoardType::LC;
+        if (t == "TC")
+            return BoardType::TC;
+        if (t == "RTD")
+            return BoardType::RTD;
+        if (t == "ACTUATOR")
+            return BoardType::ACTUATOR;
+        if (t == "ENCODER")
+            return BoardType::ENCODER;
+        return BoardType::UNKNOWN;
+    };
+    for (const auto& b : c.boards) {
+        if (b.ip.empty())
+            continue;
+        BoardType bt = kind(b.type);
+        if (bt == BoardType::UNKNOWN)
+            continue;
+        BoardConfig bc{bt, b.ip, b.num_sensors, b.enabled, b.board_id};
+        board_map[b.ip] = bc;
+        if (out_board_order && b.enabled)
+            out_board_order->emplace_back(b.ip, std::move(bc));
+    }
     // NOTE: do NOT add 127.0.0.1→PT. When simulator can't bind to config IPs, it uses
     // 127.0.0.2, 127.0.0.3, ... (one per board). board_order maps index→config for that fallback.
 }
