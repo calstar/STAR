@@ -22,13 +22,13 @@ export function EmailPrefToggle({
   };
 
   return (
-    <div className="flex items-center justify-between gap-3">
+    <div className="flex min-h-11 items-center justify-between gap-3">
       <span className="text-sm">{label}</span>
       <button
         onClick={toggle}
         role="switch"
         aria-checked={on}
-        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors after:absolute after:-inset-2.5 after:content-[''] ${
           on ? "bg-green-600" : "bg-neutral-300"
         }`}
       >

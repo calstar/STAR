@@ -49,7 +49,7 @@ export function AdminConfig({ admins }: { admins: { email: string }[] }) {
               onClick={() => remove(a.email)}
               disabled={onlyOne}
               title={onlyOne ? "Can't remove the last admin" : undefined}
-              className="shrink-0 rounded px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:cursor-not-allowed disabled:text-neutral-400 disabled:hover:bg-transparent"
+              className="min-h-11 sm:min-h-0 shrink-0 rounded px-3 sm:px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:cursor-not-allowed disabled:text-neutral-400 disabled:hover:bg-transparent"
             >
               Remove
             </button>
@@ -57,7 +57,7 @@ export function AdminConfig({ admins }: { admins: { email: string }[] }) {
         ))}
       </ul>
 
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-2">
         <input
           type="email"
           value={email}
@@ -73,11 +73,11 @@ export function AdminConfig({ admins }: { admins: { email: string }[] }) {
           }}
           placeholder="name@berkeley.edu"
           aria-label="New admin email"
-          className="min-w-56 flex-1 rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm"
+          className="min-h-11 sm:min-h-0 w-full sm:w-auto sm:min-w-56 sm:flex-1 rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm"
         />
         <button
           onClick={add}
-          className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
+          className="min-h-11 sm:min-h-0 w-full sm:w-auto rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
         >
           Add admin
         </button>
