@@ -271,6 +271,13 @@ jobs:
     # ED_REQUIRE_ACCEL=1 makes a genuine accelerator failure RAISE instead of
     # falling back, so this step cannot pass on the Python path and report a false
     # green. It proves the backend RAN; the numeric comparison is the next step.
+    #
+    # test_accel_is_actually_used closes a different false-green: every other check
+    # proves the accelerator WORKS, none proves production still CALLS it. With the
+    # accel.evaluate call removed from Layer-1's _eval_candidate, all of them stay
+    # green while the optimizer silently runs ~120x slower on Python. That test
+    # asserts the real call sites are reached, and is mutation-verified against
+    # both the Layer-1 and chamber_solver/closure seams.
     - name: Run impinging tests through the accelerator (strict)
       env:
         ED_ACCEL: 'numba'
@@ -279,6 +286,8 @@ jobs:
         python -m pytest \
           tests/test_layer1_impinging_vector.py \
           tests/test_flow_capacity_effective_area.py \
+          tests/test_accel_is_actually_used.py \
+          tests/test_accel_outcomes.py \
           --timeout=180 --timeout-method=thread -q
 
     # Live A/B numeric parity: run the accelerator and the authoritative Python
