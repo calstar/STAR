@@ -193,6 +193,55 @@ export function handleCalibrationCommand(
             console.log(`🗑️ Cubic clear: CH${sensorId} (Board ${boardId}) → calibration_service`);
             break;
         }
+        case 'capture_point': {
+            // Unified capture: forward (channel, ref PSI); calibration_service pairs it with the
+            // current ADC and routes it to the channel's configured model (cubic fit OR robust RLS).
+            const refPsi = Number(referencePressure);
+            if (sensorId == null || referencePressure == null || !Number.isFinite(refPsi)) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'capture_point requires sensorId and a numeric referencePressure (PSI)' }
+                });
+                return;
+            }
+            const activeChannels = getActiveChannels(host);
+            if (uniqueId == null || !activeChannels.includes(uniqueId)) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: `Channel ${sensorId} on Board ${boardId} is not a valid PT channel` }
+                });
+                return;
+            }
+            if (!host.elodin) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'Elodin not connected — start calibration_service and DB; cannot forward capture_point.' }
+                });
+                return;
+            }
+            publishCalibrationCommand(host, 5, uniqueId, refPsi);
+            console.log(`📐 Capture: CH${sensorId} (Board ${boardId}) ref=${refPsi} PSI → calibration_service (routes by model)`);
+            break;
+        }
+        case 'new_calibration': {
+            if (uniqueId == null) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'new_calibration requires sensorId and boardId' }
+                });
+                return;
+            }
+            if (!host.elodin) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'Elodin not connected — cannot forward new_calibration.' }
+                });
+                return;
+            }
+            publishCalibrationCommand(host, 6, uniqueId, 0);
+            console.log(`🆕 New calibration: CH${sensorId} (Board ${boardId}) → calibration_service (routes by model)`);
+            break;
+        }
         case 'enable_phase2':
             console.log('[Calibration] enable_phase2 ignored — robust calibration runs in calibration_service');
             break;

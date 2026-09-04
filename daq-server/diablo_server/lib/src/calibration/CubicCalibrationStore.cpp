@@ -33,7 +33,8 @@ CubicCalibrationStore::CubicCalibrationStore(std::string file_path)
 }
 
 void CubicCalibrationStore::register_channel(uint16_t uid, uint8_t board_id, uint8_t connector,
-                                             uint8_t logical_ch, const std::string& role) {
+                                             uint8_t logical_ch, const std::string& role,
+                                             const std::string& active_model) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto& ch = channels_[uid];
     ch.uid = uid;
@@ -42,6 +43,8 @@ void CubicCalibrationStore::register_channel(uint16_t uid, uint8_t board_id, uin
     ch.logical_ch = logical_ch;
     if (!role.empty())
         ch.role = role;
+    if (!active_model.empty())
+        ch.active_model = active_model;  // config truth; wins over a disk-restored value
 }
 
 CubicFit CubicCalibrationStore::compute_fit(const std::vector<CubicPoint>& pts) const {
@@ -128,8 +131,19 @@ CubicFit CubicCalibrationStore::add_point(uint16_t uid, double adc, double psi) 
         ch.points.erase(ch.points.begin(), ch.points.begin() + static_cast<std::ptrdiff_t>(
                                                                    ch.points.size() - kMaxPoints));
 
-    ch.fit = compute_fit(ch.points);
     ch.updated_at = pt.t;
+
+    if (ch.active_model == "robust") {
+        // Robust: the point is display-only; the RLS learner is updated by the service. Leave the
+        // cubic fit invalid so this uid is excluded from the logical polynomial maps and no cubic
+        // is applied. Status tracks point count.
+        ch.fit = CubicFit{};
+        ch.status = ch.points.size() < 2 ? "PENDING" : "OK";
+        ch.last_error.clear();
+        return ch.fit;
+    }
+
+    ch.fit = compute_fit(ch.points);
     if (!ch.fit.valid) {
         ch.status = "ERROR";
         ch.last_error = "fit produced non-finite coefficients";
@@ -143,6 +157,14 @@ CubicFit CubicCalibrationStore::add_point(uint16_t uid, double adc, double psi) 
     return ch.fit;
 }
 
+void CubicCalibrationStore::set_fit_curve(uint16_t uid,
+                                          const std::vector<std::pair<double, double>>& curve) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = channels_.find(uid);
+    if (it != channels_.end())
+        it->second.fit_curve = curve;
+}
+
 void CubicCalibrationStore::clear_channel(uint16_t uid) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = channels_.find(uid);
@@ -150,6 +172,7 @@ void CubicCalibrationStore::clear_channel(uint16_t uid) {
         return;
     it->second.points.clear();
     it->second.fit = CubicFit{};
+    it->second.fit_curve.clear();
     it->second.status = "PENDING";
     it->second.last_error.clear();
     it->second.updated_at = unix_now_sec();
@@ -208,7 +231,7 @@ std::string CubicCalibrationStore::serialize() const {
         cj["connector"] = static_cast<int>(ch.connector);
         cj["logicalCh"] = static_cast<int>(ch.logical_ch);
         cj["role"] = ch.role;
-        cj["active_model"] = "cubic";
+        cj["active_model"] = ch.active_model;
         cj["numPoints"] = ch.points.size();
         cj["status"] = ch.status;
         cj["last_error"] = ch.last_error;
@@ -223,6 +246,13 @@ std::string CubicCalibrationStore::serialize() const {
         for (const auto& p : ch.points)
             pts.push_back({{"adc", p.adc}, {"psi", p.psi}, {"t", p.t}});
         cj["points"] = pts;
+        // Robust display overlay: sampled model curve (absent/empty for cubic uids).
+        if (!ch.fit_curve.empty()) {
+            json fc = json::array();
+            for (const auto& [adc, psi] : ch.fit_curve)
+                fc.push_back({{"adc", adc}, {"psi", psi}});
+            cj["fitCurve"] = fc;
+        }
         state[std::to_string(static_cast<int>(uid))] = cj;
     }
 
@@ -282,14 +312,23 @@ size_t CubicCalibrationStore::load() {
             continue;
         }
 
-        CubicChannel ch;
+        // Merge into the channel register_channel() already created at startup: config is the
+        // source of truth for identity/role/active_model, so don't clobber them with disk values.
+        auto& ch = channels_[uid];
+        const bool registered = ch.uid != 0;
         ch.uid = uid;
         ch.board_id = static_cast<uint8_t>(uid / 100);
         ch.connector = static_cast<uint8_t>(uid % 100);
         ch.logical_ch =
             pt_logical_calibration_channel(slot_from_board_id(ch.board_id), ch.connector);
-        ch.role = cj.value("role", std::string());
+        if (!registered) {
+            ch.role = cj.value("role", std::string());
+            ch.active_model = cj.value("active_model", std::string("cubic"));
+        } else if (ch.role.empty()) {
+            ch.role = cj.value("role", std::string());
+        }
 
+        ch.points.clear();
         if (cj.contains("points") && cj["points"].is_array()) {
             for (const auto& pj : cj["points"]) {
                 CubicPoint p;
@@ -304,11 +343,22 @@ size_t CubicCalibrationStore::load() {
                             ch.points.begin() +
                                 static_cast<std::ptrdiff_t>(ch.points.size() - kMaxPoints));
 
-        ch.fit = compute_fit(ch.points);
+        ch.fit_curve.clear();
+        if (cj.contains("fitCurve") && cj["fitCurve"].is_array())
+            for (const auto& pj : cj["fitCurve"])
+                ch.fit_curve.emplace_back(pj.value("adc", 0.0), pj.value("psi", 0.0));
+
+        if (ch.active_model == "robust") {
+            // Display-only points; no cubic fit. The service re-samples fit_curve after restoring
+            // the robust model from adjustments.json.
+            ch.fit = CubicFit{};
+            ch.status = ch.points.size() < 2 ? "PENDING" : "OK";
+        } else {
+            ch.fit = compute_fit(ch.points);
+            ch.status = !ch.fit.valid ? (ch.points.empty() ? "PENDING" : "ERROR")
+                                      : (ch.points.size() < 2 ? "PENDING" : "OK");
+        }
         ch.updated_at = unix_now_sec();
-        ch.status = !ch.fit.valid ? (ch.points.empty() ? "PENDING" : "ERROR")
-                                  : (ch.points.size() < 2 ? "PENDING" : "OK");
-        channels_[uid] = std::move(ch);
         ++loaded;
     }
     return loaded;

@@ -256,7 +256,9 @@ export type CalibrationCommandType =
   | 'save_coefficients'   // persist current coefficients to disk
   | 'clear_calibration'   // clear all state and start from scratch
   | 'capture_cubic_point' // add one (current ADC, ref PSI) point to a channel's cubic fit
-  | 'clear_cubic_channel';// drop a channel's cubic points and revert to the factory cubic
+  | 'clear_cubic_channel' // drop a channel's cubic points and revert to the factory cubic
+  | 'capture_point'       // unified: add one (current ADC, ref PSI) point; service routes by config model
+  | 'new_calibration';    // unified: start fresh for a channel; service routes clear by config model
 
 export interface CalibrationCommand {
   commandType: CalibrationCommandType;
@@ -284,18 +286,21 @@ export interface CubicCalibrationChannel {
   connector: number;              // 1-based board-local connector
   logicalCh: number;              // (slot-1)*10 + connector (PTCalibrationManager key)
   role: string;                   // may be empty; the UI supplies it from sensor config
-  active_model: 'cubic';
+  active_model: 'cubic' | 'robust';  // the model this uid streams (config truth); which page shows it
   numPoints: number;
   status: 'PENDING' | 'OK' | 'ERROR';
   last_error: string;
   rmse: number;
   degree: number;
   updatedAt: number;              // unix seconds
-  coeffs: { A: number; B: number; C: number; D: number };  // raw-ADC-space cubic
+  coeffs: { A: number; B: number; C: number; D: number };  // raw-ADC-space cubic (cubic uids)
   polyCoeffs: number[];           // normalized coeffs (well-conditioned; used for display eval)
   adcNormMin: number;
   adcNormScale: number;
   points: CubicCalibrationPoint[];
+  // Robust uids only: (adc, psi) samples of the live robust model, for the overlay curve. Cubic
+  // uids draw their curve from polyCoeffs instead, so this is absent for them.
+  fitCurve?: { adc: number; psi: number }[];
 }
 
 /** Body of GET /api/cubic_calibration: the service's cubic_calibration.json, keyed by uid. */
