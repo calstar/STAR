@@ -257,10 +257,10 @@ Config from_table(const toml::table& t) {
 
 const std::map<std::string, int>* Config::sensor_roles_for(const std::string& board_key) const {
     auto it = sensor_roles.find(board_key);
-    if (it != sensor_roles.end())
+    if (it != sensor_roles.end() && !it->second.empty())
         return &it->second;
-    it = sensor_roles.find("sensor_roles");  // legacy fallback
-    if (it != sensor_roles.end())
+    it = sensor_roles.find("sensor_roles");  // legacy fallback (only if non-empty)
+    if (it != sensor_roles.end() && !it->second.empty())
         return &it->second;
     return nullptr;
 }

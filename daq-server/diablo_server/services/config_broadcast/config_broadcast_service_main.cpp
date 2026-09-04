@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "calibration/PTCalibration.hpp"
+#include "config/Config.hpp"
 
 namespace {
 std::atomic<bool> g_running{true};
@@ -340,19 +341,24 @@ using ConfigPacket = std::tuple<uint8_t, std::vector<uint8_t>, std::string, uint
 // the caller keeps the last-good set rather than dropping board config for a cycle.
 std::vector<ConfigPacket> buildPackets(const std::string& config_path,
                                        fsw::calibration::PTCalibrationManager& pt_cal) {
-    std::string config_content;
-    {
-        std::ifstream f(config_path);
-        if (!f.is_open())
-            return {};
-        std::ostringstream ss;
-        ss << f.rdbuf();
-        config_content = ss.str();
-    }
-    if (config_content.empty())
-        return {};
+    const fsw::config::Config cfg = fsw::config::load(config_path);
 
-    auto boards = parseBoards(config_content);
+    // Map typed boards -> local BoardInfo (expand active_connectors, synthesize ip like the old
+    // parser).
+    std::vector<BoardInfo> boards;
+    for (const auto& b : cfg.boards) {
+        std::vector<int> active = b.active_connectors;
+        if (active.empty())
+            for (int i = 1; i <= b.num_sensors; ++i)
+                active.push_back(i);
+        std::string ip = b.ip;
+        if (ip.empty() && b.board_id > 0)
+            ip = "192.168.2." + std::to_string(b.board_id);
+        boards.push_back({b.board_id, ip, b.type, b.enabled, b.designated_survivor,
+                          b.necessary_for_abort, b.voltage_reference, b.enable_serial_printing,
+                          active, b.num_sensors, b.listen_port});
+    }
+
     std::string designated_ip;
     int designated_id = -1;
     for (const auto& b : boards) {
@@ -372,8 +378,7 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path,
             board_id_to_ip[b.id] = b.ip;
 
     std::map<std::string, int> vent_map, abort_map;
-    std::string csv_path = getTomlValue(config_content, "state_machine", "actuator_csv",
-                                        "config/state_machine_actuators.csv");
+    std::string csv_path = cfg.state_machine.actuator_csv;
     const char* csv_fbs[] = {
         "config/state_machine_actuators.csv",
         "../config/state_machine_actuators.csv",
@@ -388,37 +393,15 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path,
     }
     parseVentAbortFromCsv(csv_path, vent_map, abort_map);
 
-    auto sensor_roles = parseSensorRoles(config_content, "sensor_roles_pt_board");
-    if (sensor_roles.empty())
-        sensor_roles = parseSensorRoles(config_content, "sensor_roles");
-    auto abort_pts = parseAbortPts(config_content);
+    const std::map<std::string, int>* roles_ptr = cfg.sensor_roles_for("sensor_roles_pt_board");
+    const std::map<std::string, int> sensor_roles =
+        roles_ptr ? *roles_ptr : std::map<std::string, int>{};
+    const std::map<std::string, double>& abort_pts = cfg.abort_pts;
 
-    std::string current_section;
     std::map<std::string, std::tuple<int, int, bool>> actuator_roles;
-    std::istringstream cfg(config_content);
-    std::string line;
-    while (std::getline(cfg, line)) {
-        auto c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        if (line.size() >= 2 && line[0] == '[') {
-            size_t end = line.find(']');
-            current_section = (end != std::string::npos) ? line.substr(1, end - 1) : "";
-            continue;
-        }
-        auto eq = line.find('=');
-        if (eq == std::string::npos || current_section != "actuator_roles")
-            continue;
-        std::string key = trim(line.substr(0, eq));
-        std::string val = trim(line.substr(eq + 1));
-        if (key.size() >= 2 && key.front() == '"' && key.back() == '"')
-            key = key.substr(1, key.size() - 2);
-        int ch = 0, bid = 0;
-        bool is_no = false;
-        parseActuatorRole(val, ch, bid, is_no);
-        if (ch >= 1 && ch <= 255)
-            actuator_roles[key] = {ch, bid > 0 ? bid : 12, is_no};
-    }
+    for (const auto& [name, r] : cfg.actuator_roles)
+        if (r.channel >= 1 && r.channel <= 255)
+            actuator_roles[name] = {r.channel, r.board_id > 0 ? r.board_id : 12, r.is_no};
 
     auto build_actuator_config = [&](int is_abort_controller,
                                      int enable_serial) -> std::vector<uint8_t> {
@@ -582,18 +565,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (interval_ms < 0 && !config_content.empty()) {
-        std::string val =
-            getTomlValue(config_content, "config_broadcast_service", "interval_ms", "");
-        if (!val.empty()) {
-            try {
-                interval_ms = std::max(500, std::stoi(val));
-            } catch (...) {
-            }
-        }
+    // Precedence: defaults < config < CLI (--interval-ms). Config value clamped to >=500 ms.
+    if (interval_ms < 0) {
+        const fsw::config::Config cfg = fsw::config::load(config_path);
+        interval_ms = std::max(500, static_cast<int>(cfg.config_broadcast_interval_ms));
     }
-    if (interval_ms < 0)
-        interval_ms = 1000;
 
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
