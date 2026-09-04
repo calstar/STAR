@@ -413,6 +413,12 @@ sedi "s/^send_port = 5005/send_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 sedi 's/^fallback_fuel_duty_cycle = 0.0/fallback_fuel_duty_cycle = 0.1/' "$TEST_CONFIG"
 sedi 's/^fallback_ox_duty_cycle = 0.0/fallback_ox_duty_cycle = 0.1/' "$TEST_CONFIG"
 
+# Exercise the per-sensor cubic/robust selector: make one LP PT sensor (Ox Upstream, pt_board conn 5
+# -> uid 2105) robust; the rest stay cubic. ws_data_flow_test's cal_model_select verifies the config
+# choice is honored, and cal_robust_learn verifies the robust stack learns. Anchored to the
+# [calibration_model_pt_board] line ("... = \"cubic\""), not sensor_roles (= 5) or abort_pts (= 400).
+sedi 's/^"Ox Upstream" = "cubic"$/"Ox Upstream" = "robust"/' "$TEST_CONFIG"
+
 cat >> "$TEST_CONFIG" << EOF
 
 [boards.integration_startup]
@@ -690,6 +696,8 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 export TEST_DAQ_UDP_PORT TEST_STARTUP_LISTEN_PORT BOARD_STARTUP_SIM="$REPO_ROOT/sim/board_startup_sim.py" PYTHON_BIN
 # Test 15 (sample conservation) reads the sim's live ground-truth stats file
 export INTEGRATION_SIM_STATS="$SIM_STATS_FILE"
+# cal_values reads the factory PT coeffs the service loaded (the test cwd is diablo_server/backend).
+export INTEGRATION_CAL_DIR="$REPO_ROOT/scripts/calibration/calibrations"
 # Must match the points_per_second sed above — arms the envelope cap/floor asserts
 # (envelope mode only; throttle ignores points_per_second)
 if [ "$INTEGRATION_GUI_MODE" = "envelope" ]; then
