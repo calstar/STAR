@@ -67,14 +67,22 @@ DIAG_FIELDS = ["D32_O", "D32_F", "Cd_O", "Cd_F", "momentum_ratio_R",
 
 @contextmanager
 def _python_only():
-    """Force the authoritative Python path for the reference computation."""
+    """Force the authoritative Python path for the reference computation.
+
+    Disables strict mode as well as the accelerator. Under ED_REQUIRE_ACCEL=1 (the
+    CI parity job) closure._try_native_flows treats "disabled + strict" as a
+    genuine accelerator failure and raises -- which is exactly right in
+    production, and exactly wrong here, where the accelerator is off ON PURPOSE.
+    Without this the whole suite fails under CI's env while passing locally.
+    """
     from engine import accel
-    real = accel.enabled
+    real_enabled, real_require = accel.enabled, accel.require
     accel.enabled = lambda: False
+    accel.require = lambda: False
     try:
         yield
     finally:
-        accel.enabled = real
+        accel.enabled, accel.require = real_enabled, real_require
 
 
 def _rel(got, want):
