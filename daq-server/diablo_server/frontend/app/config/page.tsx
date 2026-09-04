@@ -62,10 +62,16 @@ interface ConfigData {
   sensor_roles_pt_board_2?: Record<string, number>; // HP PT board (was sensor_roles_pt2)
   sensor_roles_rtd_board?: Record<string, number>;
   sensor_roles_tc_board?: Record<string, number>;
-  // Per-sensor PT streaming model ('cubic' | 'robust'), role-keyed, parallel to sensor_roles_*.
-  // Read/written dynamically as calibration_model_<boardKey>; these fields document the shape.
+  // Per-sensor PT streaming model ('cubic' | 'robust' | 'physics'), role-keyed, parallel to
+  // sensor_roles_*. Read/written dynamically as calibration_model_<boardKey>; these fields document
+  // the shape. Physics-mode params (full-scale PSI, sense-resistor Ω) live in the parallel
+  // calibration_full_scale_<boardKey> / calibration_sense_resistor_<boardKey> role->number maps.
   calibration_model_pt_board?: Record<string, string>;
   calibration_model_pt_board_2?: Record<string, string>;
+  calibration_full_scale_pt_board?: Record<string, number>;
+  calibration_full_scale_pt_board_2?: Record<string, number>;
+  calibration_sense_resistor_pt_board?: Record<string, number>;
+  calibration_sense_resistor_pt_board_2?: Record<string, number>;
   abort_pts?: Record<string, number>;
   adc?: { internal_v?: number; vdd_nominal_v?: number; absolute_5v_v?: number };
   fire?: { state?: string; expiry_target?: string; duration_ms?: number; extended_ms?: number };
@@ -122,7 +128,7 @@ const DEFAULT_CONFIG: ConfigData = {};
  * list mid-edit and yank the row (and your cursor) elsewhere. Syncs down when the prop changes.
  */
 function CommitOnBlurNumber({
-  value, onCommit, allowEmpty, disabled, className, placeholder,
+  value, onCommit, allowEmpty, disabled, className, placeholder, title,
 }: {
   value: number | undefined;
   onCommit: (n: number | undefined) => void;
@@ -130,6 +136,7 @@ function CommitOnBlurNumber({
   disabled?: boolean;
   className?: string;
   placeholder?: string;
+  title?: string;
 }) {
   const toStr = (v?: number) => (v === undefined || v === null || Number.isNaN(v) ? '' : String(v));
   const [local, setLocal] = useState<string>(toStr(value));
@@ -146,6 +153,7 @@ function CommitOnBlurNumber({
       value={local}
       disabled={disabled}
       placeholder={placeholder}
+      title={title}
       className={className}
       onChange={(e) => setLocal(e.target.value)}
       onBlur={commit}
@@ -1368,18 +1376,26 @@ export default function ConfigPage() {
                     HP board) gets a panel; the HP board is no longer special (was sensor_roles_pt2). */}
                 {(Object.entries(((config as any).boards || {}) as Record<string, any>)
                   .filter(([, b]) => ['PT', 'RTD', 'TC', 'ENCODER'].includes(b?.type))
-                  .map(([boardKey, b]) => ({
-                    key: `sensor_roles_${boardKey}`,
-                    title: `${b.type} Roles — ${boardKey} (sensor_roles_${boardKey})`,
-                    maxCh: typeof b.num_sensors === 'number' && b.num_sensors > 0 ? b.num_sensors : 10,
-                    // Per-sensor cubic/robust picker only for low-pressure PT boards. Current-loop
-                    // (4-20 mA) PT boards always use 4-20 mA — no model applies.
-                    modelKey: `calibration_model_${boardKey}`,
-                    showModel:
-                      b?.type === 'PT' &&
-                      !(b?.hp_pt_connectors || b?.hp_pt_full_scale_psi != null || b?.pt_type === '4-20 mA absolute'),
-                  }))
-                ).map(({ key, title, maxCh, modelKey, showModel }) => {
+                  .map(([boardKey, b]) => {
+                    const isPT = b?.type === 'PT';
+                    const isLoop = isPT && !!(b?.hp_pt_connectors || b?.hp_pt_full_scale_psi != null || b?.pt_type === '4-20 mA absolute');
+                    return {
+                      key: `sensor_roles_${boardKey}`,
+                      title: `${b.type} Roles — ${boardKey} (sensor_roles_${boardKey})`,
+                      maxCh: typeof b.num_sensors === 'number' && b.num_sensors > 0 ? b.num_sensors : 10,
+                      // cubic/robust/physics applies to every PT (cubic/robust fit the raw ADC; physics
+                      // is the datasheet conversion). Default: 4-20 mA -> physics, 0-5 V -> cubic.
+                      modelKey: `calibration_model_${boardKey}`,
+                      fullScaleKey: `calibration_full_scale_${boardKey}`,
+                      resistorKey: `calibration_sense_resistor_${boardKey}`,
+                      showModel: isPT,
+                      isLoop,
+                      defaultModel: isLoop ? 'physics' : 'cubic',
+                      boardFullScale: isLoop ? (typeof b?.hp_pt_full_scale_psi === 'number' ? b.hp_pt_full_scale_psi : 5000) : 1000,
+                      boardResistor: typeof b?.hp_pt_sense_resistor_ohms === 'number' ? b.hp_pt_sense_resistor_ohms : 120,
+                    };
+                  })
+                ).map(({ key, title, maxCh, modelKey, fullScaleKey, resistorKey, showModel, isLoop, defaultModel, boardFullScale, boardResistor }) => {
                   const map = (config as any)[key] as Record<string, number> | undefined;
                   // Display ordered by channel number (not config/insertion order). The number field
                   // commits on blur so this re-sort doesn't fire mid-keystroke.
@@ -1407,12 +1423,14 @@ export default function ConfigPage() {
                                 const rebuilt: Record<string, any> = {};
                                 for (const [k, v] of Object.entries(map || {})) rebuilt[k === name ? newName : k] = v;
                                 const patch: any = { ...config, [key]: rebuilt };
-                                // Keep the parallel calibration_model_<board> map in sync on rename.
-                                const mm = (config as any)[modelKey];
-                                if (mm && name in mm) {
-                                  const rebuiltModel: Record<string, any> = {};
-                                  for (const [k, v] of Object.entries(mm)) rebuiltModel[k === name ? newName : k] = v;
-                                  patch[modelKey] = rebuiltModel;
+                                // Keep the parallel per-sensor maps (model + physics params) in sync.
+                                for (const pk of [modelKey, fullScaleKey, resistorKey]) {
+                                  const mm = (config as any)[pk];
+                                  if (mm && name in mm) {
+                                    const rebuiltMap: Record<string, any> = {};
+                                    for (const [k, v] of Object.entries(mm)) rebuiltMap[k === name ? newName : k] = v;
+                                    patch[pk] = rebuiltMap;
+                                  }
                                 }
                                 setConfig(patch);
                               }}
@@ -1430,32 +1448,68 @@ export default function ConfigPage() {
                               }}
                               className="w-28 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                             />
-                            {showModel && (
-                              <select
-                                value={((config as any)[modelKey]?.[name] as string) ?? 'cubic'}
-                                onChange={(e) => {
-                                  const updated = { ...((config as any)[modelKey] || {}) };
-                                  updated[name] = e.target.value;
-                                  setConfig({ ...config, [modelKey]: updated } as any);
-                                }}
-                                title="Streaming calibration model for this sensor"
-                                className="px-3 py-2 bg-background border border-gray-700 rounded text-white"
-                              >
-                                <option value="cubic">Cubic</option>
-                                <option value="robust">Robust</option>
-                              </select>
-                            )}
+                            {showModel && (() => {
+                              const model = ((config as any)[modelKey]?.[name] as string) ?? defaultModel;
+                              return (
+                                <>
+                                  <select
+                                    value={model}
+                                    onChange={(e) => {
+                                      const updated = { ...((config as any)[modelKey] || {}) };
+                                      updated[name] = e.target.value;
+                                      setConfig({ ...config, [modelKey]: updated } as any);
+                                    }}
+                                    title="Streaming calibration model for this sensor"
+                                    className="px-3 py-2 bg-background border border-gray-700 rounded text-white"
+                                  >
+                                    <option value="cubic">Cubic</option>
+                                    <option value="robust">Robust</option>
+                                    <option value="physics">Physics ({isLoop ? '4-20 mA' : '0-5 V'})</option>
+                                  </select>
+                                  {model === 'physics' && (
+                                    <>
+                                      <CommitOnBlurNumber
+                                        value={((config as any)[fullScaleKey]?.[name]) ?? boardFullScale}
+                                        onCommit={(n) => {
+                                          if (n === undefined) return;
+                                          const u = { ...((config as any)[fullScaleKey] || {}) };
+                                          u[name] = n;
+                                          setConfig({ ...config, [fullScaleKey]: u } as any);
+                                        }}
+                                        title="Full-scale PSI (physics mode)"
+                                        className="w-24 px-3 py-2 bg-background border border-gray-700 rounded text-white"
+                                      />
+                                      {isLoop && (
+                                        <CommitOnBlurNumber
+                                          value={((config as any)[resistorKey]?.[name]) ?? boardResistor}
+                                          onCommit={(n) => {
+                                            if (n === undefined) return;
+                                            const u = { ...((config as any)[resistorKey] || {}) };
+                                            u[name] = n;
+                                            setConfig({ ...config, [resistorKey]: u } as any);
+                                          }}
+                                          title="Sense resistor Ω (4-20 mA shunt)"
+                                          className="w-20 px-3 py-2 bg-background border border-gray-700 rounded text-white"
+                                        />
+                                      )}
+                                    </>
+                                  )}
+                                </>
+                              );
+                            })()}
                             <button
                               onClick={() => {
                                 const updated = { ...(map || {}) };
                                 delete updated[name];
                                 const patch: any = { ...config, [key]: updated };
-                                // Drop the sensor's calibration_model entry too.
-                                const mm = (config as any)[modelKey];
-                                if (mm && name in mm) {
-                                  const um = { ...mm };
-                                  delete um[name];
-                                  patch[modelKey] = um;
+                                // Drop the sensor's parallel per-sensor entries too.
+                                for (const pk of [modelKey, fullScaleKey, resistorKey]) {
+                                  const mm = (config as any)[pk];
+                                  if (mm && name in mm) {
+                                    const um = { ...mm };
+                                    delete um[name];
+                                    patch[pk] = um;
+                                  }
                                 }
                                 setConfig(patch);
                               }}

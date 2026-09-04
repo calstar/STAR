@@ -215,6 +215,22 @@ Config from_table(const toml::table& t) {
     c.calibration.lc_pga_gain = d_or(t["calibration"]["lc"]["pga_gain"], 32.0);
     c.calibration.lc_full_scale_value = d_or(t["calibration"]["lc"]["full_scale_value"], 300.0);
 
+    // [calibration.<type>] coefficient sources (json_dir + first of csv_paths) — previously
+    // ignored.
+    auto first_csv = [&](const char* type) -> std::string {
+        if (auto arr = t["calibration"][type]["csv_paths"].as_array())
+            for (const auto& el : *arr)
+                if (auto sv = el.value<std::string>())
+                    return *sv;
+        return std::string();
+    };
+    c.calibration.tc_json_dir = s_or(t["calibration"]["tc"]["json_dir"], "");
+    c.calibration.tc_csv_path = first_csv("tc");
+    c.calibration.rtd_json_dir = s_or(t["calibration"]["rtd"]["json_dir"], "");
+    c.calibration.rtd_csv_path = first_csv("rtd");
+    c.calibration.lc_json_dir = s_or(t["calibration"]["lc"]["json_dir"], "");
+    c.calibration.lc_csv_path = first_csv("lc");
+
     c.state_machine.transitions_csv =
         s_or(t["state_machine"]["transitions_csv"], c.state_machine.transitions_csv);
     c.state_machine.actuator_csv =
@@ -265,6 +281,27 @@ Config from_table(const toml::table& t) {
             }
     }
 
+    // Per-sensor physics params: [calibration_full_scale*] and [calibration_sense_resistor*] as
+    // role -> double sections (accept int or double).
+    for (auto&& [k, v] : t) {
+        const std::string key(k.str());
+        std::map<std::string, std::map<std::string, double>>* target = nullptr;
+        if (key.rfind("calibration_full_scale", 0) == 0)
+            target = &c.calibration_full_scale;
+        else if (key.rfind("calibration_sense_resistor", 0) == 0)
+            target = &c.calibration_sense_resistor;
+        if (target)
+            if (auto rt = v.as_table()) {
+                auto& m = (*target)[key];
+                for (auto&& [rk, rv] : *rt) {
+                    if (auto dv = rv.value<double>())
+                        m[std::string(rk.str())] = *dv;
+                    else if (auto iv = rv.value<int64_t>())
+                        m[std::string(rk.str())] = static_cast<double>(*iv);
+                }
+            }
+    }
+
     return c;
 }
 
@@ -284,6 +321,21 @@ const std::map<std::string, std::string>* Config::calibration_model_for(
     const std::string& section_key) const {
     auto it = calibration_models.find(section_key);
     if (it != calibration_models.end() && !it->second.empty())
+        return &it->second;
+    return nullptr;
+}
+
+const std::map<std::string, double>* Config::full_scale_for(const std::string& section_key) const {
+    auto it = calibration_full_scale.find(section_key);
+    if (it != calibration_full_scale.end() && !it->second.empty())
+        return &it->second;
+    return nullptr;
+}
+
+const std::map<std::string, double>* Config::sense_resistor_for(
+    const std::string& section_key) const {
+    auto it = calibration_sense_resistor.find(section_key);
+    if (it != calibration_sense_resistor.end() && !it->second.empty())
         return &it->second;
     return nullptr;
 }

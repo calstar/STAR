@@ -340,10 +340,11 @@ active_connectors = [ 1, 2 ]
 "Chamber Throat PT 1" = 9
 "Chamber Throat PT 2" = 10
 
-# Per-sensor streaming calibration model for the low-pressure PT board: "cubic" (factory cubic,
-# default) or "robust". Keyed by the same role names as [sensor_roles_pt_board]; the calibration
-# service applies it after a restart. Current-loop (4-20 mA) PT boards are always 4-20 mA and have
-# no model here.
+# Per-sensor streaming calibration model, keyed by the same role names as [sensor_roles_pt_board];
+# the calibration service applies it after a restart. Values: "cubic" (factory cubic — the
+# ratiometric default), "robust" (online learner), or "physics" (datasheet closed form: ratiometric
+# psi = adc/2^31 * full_scale, or 4-20 mA current-loop conversion). All three apply to every PT board
+# regardless of electrical interface; current-loop (4-20 mA) boards default to "physics".
 [calibration_model_pt_board]
 "Fuel Upstream" = "cubic"
 "GSE Low" = "cubic"
@@ -355,6 +356,16 @@ active_connectors = [ 1, 2 ]
 "Chamber Mid PT 2" = "cubic"
 "Chamber Throat PT 1" = "cubic"
 "Chamber Throat PT 2" = "cubic"
+
+# Per-sensor physics-mode parameters, role-keyed and parallel to [calibration_model_pt_board].
+# Consulted only when a sensor's model is "physics"; each overrides the board-level default.
+#   [calibration_full_scale_pt_board]   role -> full-scale PSI (both interfaces; default 1000 for
+#                                       ratiometric, hp_pt_full_scale_psi for 4-20 mA boards)
+#   [calibration_sense_resistor_pt_board] role -> sense-resistor Ω (4-20 mA boards only; default
+#                                       hp_pt_sense_resistor_ohms)
+# Both are optional — omit them to keep the board defaults. Example:
+# [calibration_full_scale_pt_board]
+# "Fuel Upstream" = 1000
 
 [abort_pts]
 "Fuel Upstream" = 400
