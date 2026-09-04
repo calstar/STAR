@@ -240,15 +240,16 @@ class TestDiagnosticsMatchC:
     from the accelerated evaluate path.
     """
 
-    # C also emits these. None is read off an accelerated result anywhere on the
-    # stability or optimizer path: A_eff_O/F is recomputed downstream from Cd by
-    # flow_capacity.effective_flow_areas_from_cd, turbulence_intensity_mix is read
-    # only at chamber_solver.py:180 (the full-Python path, which never sees this
-    # dict), and J/TMR/theta/feed_orifice_coupling_iterations have no reader at all.
-    KNOWN_ABSENT = {
-        "A_eff_O", "A_eff_F", "J", "TMR", "theta",
-        "turbulence_intensity_mix", "feed_orifice_coupling_iterations",
-    }
+    # C also emits these four; no reader for any of them exists anywhere, and they
+    # are impinging spray quantities the accelerated path never needs.
+    #
+    # A_eff_O/F and turbulence_intensity_mix were briefly on this list and that was
+    # WRONG -- the suite caught it. A_eff is asserted present (not merely derivable
+    # from Cd) by test_flow_capacity_effective_area, and turbulence_intensity_mix
+    # reaches chamber_solver.py:180 via *closure* diagnostics, i.e. the accel.solve
+    # path rather than the accel.evaluate path the first analysis examined. Both are
+    # now produced. Treat every addition here with that in mind.
+    KNOWN_ABSENT = {"J", "TMR", "theta", "feed_orifice_coupling_iterations"}
 
     @pytest.mark.parametrize("cfg_rel,ablative", CONFIGS, ids=lambda v: str(v).split("/")[-1])
     def test_fields_match_and_nothing_new_is_missing(self, cfg_rel, ablative):

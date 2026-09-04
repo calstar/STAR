@@ -24,6 +24,7 @@ param-vector mapping reads from either interchangeably.
 from __future__ import annotations
 
 import numpy as np
+from operator import attrgetter as _attrgetter
 from types import SimpleNamespace
 
 # Enum mappings -- mirror native_injector._PHI / _INJ / _EFF_MODEL.
@@ -325,45 +326,56 @@ def extract_params(config):
 
 
 
-def _params_from_state(st):
-    """Build the param vector from an already-built EdEngineState (avoids a 2nd build_state)."""
-    def g(path):
-        o = st
-        for part in path.split("."):
-            o = getattr(o, part)
-        return float(o)
-    P = np.zeros(NP)
-    P[_IDX["RHO_O"]] = g("fluid_O.density"); P[_IDX["MU_O"]] = g("fluid_O.viscosity"); P[_IDX["SIG_O"]] = g("fluid_O.surface_tension"); P[_IDX["T_O"]] = g("fluid_O.temperature")
-    P[_IDX["RHO_F"]] = g("fluid_F.density"); P[_IDX["MU_F"]] = g("fluid_F.viscosity"); P[_IDX["SIG_F"]] = g("fluid_F.surface_tension"); P[_IDX["T_F"]] = g("fluid_F.temperature"); P[_IDX["LAT_F"]] = g("fluid_F.latent_heat")
-    P[_IDX["DJO"]] = g("injector.imp_O.d_jet"); P[_IDX["DJF"]] = g("injector.imp_F.d_jet")
-    P[_IDX["NO"]] = g("injector.imp_O.n_elements"); P[_IDX["NF"]] = g("injector.imp_F.n_elements")
-    P[_IDX["ANG_O"]] = g("injector.imp_O.impingement_angle"); P[_IDX["ANG_F"]] = g("injector.imp_F.impingement_angle")
+# ---------------------------------------------------------------------------
+# state -> param vector
+#
+# The (index, attribute-path) mapping is STATIC, so it is built once at import
+# and frozen into attrgetters. It used to be walked per call with str.split(".")
+# and f-string key lookups, which cost 96 us per extraction -- 6x the cost of
+# building the state itself, and paid on EVERY residual iteration of the fallback
+# path via accel.solve. Same field list, same order; only the lookup is hoisted.
+# ---------------------------------------------------------------------------
+def _build_path_table():
+    paths = {
+        "RHO_O": "fluid_O.density", "MU_O": "fluid_O.viscosity",
+        "SIG_O": "fluid_O.surface_tension", "T_O": "fluid_O.temperature",
+        "RHO_F": "fluid_F.density", "MU_F": "fluid_F.viscosity",
+        "SIG_F": "fluid_F.surface_tension", "T_F": "fluid_F.temperature",
+        "LAT_F": "fluid_F.latent_heat",
+        "DJO": "injector.imp_O.d_jet", "DJF": "injector.imp_F.d_jet",
+        "NO": "injector.imp_O.n_elements", "NF": "injector.imp_F.n_elements",
+        "ANG_O": "injector.imp_O.impingement_angle",
+        "ANG_F": "injector.imp_F.impingement_angle",
+    }
     for pre, side in (("DO", "discharge_O"), ("DF", "discharge_F")):
         for suf, fld in (("CDINF","Cd_inf"),("ARE","a_Re"),("CDMIN","Cd_min"),("GEOM","use_geometry_cd"),
-                         ("DREF","d_ref_m"),("DMIN","d_min_m"),("EXPS","cd_small_hole_exponent"),("LOGG","cd_large_hole_log_gain"),
-                         ("CDMAX","cd_inf_max"),("CDFLOOR","cd_inf_min_geom"),("UPC","use_pressure_correction"),("PREF","P_ref"),
-                         ("AP","a_P"),("UTC","use_temperature_correction"),("TREF","T_ref"),("AT","a_T")):
-            P[_IDX[f"{pre}_{suf}"]] = g(f"{side}.{fld}")
+                         ("DREF","d_ref_m"),("DMIN","d_min_m"),("EXPS","cd_small_hole_exponent"),
+                         ("LOGG","cd_large_hole_log_gain"),("CDMAX","cd_inf_max"),("CDFLOOR","cd_inf_min_geom"),
+                         ("UPC","use_pressure_correction"),("PREF","P_ref"),("AP","a_P"),
+                         ("UTC","use_temperature_correction"),("TREF","T_ref"),("AT","a_T")):
+            paths[f"{pre}_{suf}"] = f"{side}.{fld}"
     for pre, side in (("FO", "feed_O"), ("FF", "feed_F")):
         for suf, fld in (("DIN","d_inlet"),("AH","A_hydraulic"),("K0","K0"),("K1","K1"),("PHI","phi_type")):
-            P[_IDX[f"{pre}_{suf}"]] = g(f"{side}.{fld}")
-    for suf, fld in (("SMDMODEL","smd_model"),("SMDC","smd_C"),("SMDM","smd_m"),("SMDP","smd_p"),("SMDCING","smd_C_ingebo"),
-                     ("SMDWECORR","smd_we_corr_max"),("GASR","chamber_gas_R"),("GAST","chamber_gas_T"),("ANGMODEL","spray_angle_model"),
-                     ("ANGK","spray_angle_k"),("ANGN","spray_angle_n"),("WEMIN","we_min"),("EVAPK","evap_K"),
+            paths[f"{pre}_{suf}"] = f"{side}.{fld}"
+    for suf, fld in (("SMDMODEL","smd_model"),("SMDC","smd_C"),("SMDM","smd_m"),("SMDP","smd_p"),
+                     ("SMDCING","smd_C_ingebo"),("SMDWECORR","smd_we_corr_max"),("GASR","chamber_gas_R"),
+                     ("GAST","chamber_gas_T"),("ANGMODEL","spray_angle_model"),("ANGK","spray_angle_k"),
+                     ("ANGN","spray_angle_n"),("WEMIN","we_min"),("EVAPK","evap_K"),
                      ("EVAPXLIM","evap_x_star_limit"),("EVAPUSE","evap_use_constraint")):
-        P[_IDX[f"SP_{suf}"]] = g(f"spray.{fld}")
-    for suf, fld in (("CLMAX","closure_max_iterations"),("CLCDRED","closure_Cd_reduction_factor"),("PCMIN","Pc_min_bound"),
-                     ("PCMAX","Pc_max_bound"),("TOL","tolerance"),("MAXIT","max_iterations")):
-        P[_IDX[f"SV_{suf}"]] = g(f"solver.{fld}")
-    for suf, fld in (("EPS","expansion_ratio"),("AT","A_throat"),("AE","A_exit"),("VOL","volume"),("LSTAR","Lstar"),
-                     ("DCHAM","chamber_diameter"),("NOZZEFF","nozzle_efficiency")):
-        P[_IDX[f"G_{suf}"]] = g(f"geom.{fld}")
-    for suf, fld in (("MODEL","model"),("C","C"),("TAUREF","tau_ref"),("TAUREFP","tau_ref_P"),("TAUREFT","tau_ref_T"),
-                     ("NPRESS","n_pressure"),("TSTARCAP","T_star_fuel_cap_K"),("HASFLOOR","has_tau_Tc_floor"),
-                     ("TAUFLOOR","tau_Tc_floor"),("EMPEAK","Em_peak"),("SIGMA","mixing_sigma"),("ROPT","R_opt")):
-        P[_IDX[f"C_{suf}"]] = g(f"comb.{fld}")
-    for suf, fld in (("LEN","length"),("LCYL","length_cylindrical"),("LCONTR","length_contraction")):
-        P[_IDX[f"G_{suf}"]] = g(f"geom.{fld}")
+        paths[f"SP_{suf}"] = f"spray.{fld}"
+    for suf, fld in (("CLMAX","closure_max_iterations"),("CLCDRED","closure_Cd_reduction_factor"),
+                     ("PCMIN","Pc_min_bound"),("PCMAX","Pc_max_bound"),("TOL","tolerance"),
+                     ("MAXIT","max_iterations")):
+        paths[f"SV_{suf}"] = f"solver.{fld}"
+    for suf, fld in (("EPS","expansion_ratio"),("AT","A_throat"),("AE","A_exit"),("VOL","volume"),
+                     ("LSTAR","Lstar"),("DCHAM","chamber_diameter"),("NOZZEFF","nozzle_efficiency"),
+                     ("LEN","length"),("LCYL","length_cylindrical"),("LCONTR","length_contraction")):
+        paths[f"G_{suf}"] = f"geom.{fld}"
+    for suf, fld in (("MODEL","model"),("C","C"),("TAUREF","tau_ref"),("TAUREFP","tau_ref_P"),
+                     ("TAUREFT","tau_ref_T"),("NPRESS","n_pressure"),("TSTARCAP","T_star_fuel_cap_K"),
+                     ("HASFLOOR","has_tau_Tc_floor"),("TAUFLOOR","tau_Tc_floor"),("EMPEAK","Em_peak"),
+                     ("SIGMA","mixing_sigma"),("ROPT","R_opt")):
+        paths[f"C_{suf}"] = f"comb.{fld}"
     for name, fld in (("K_ABLEN","ablative_enabled"),("K_FILMEN","film_enabled"),
                       ("K_REGENEN","regen_enabled"),("K_USECOUP","use_cooling_coupling"),
                       ("K_EFFFLOOR","cooling_efficiency_floor"),("K_HGMU","hot_gas_viscosity"),
@@ -387,7 +399,19 @@ def _params_from_state(st):
                       ("AB_TAMB","ablative_ambient_temperature"),
                       ("AB_SINKMIN","ablative_radiative_sink_minimum_threshold"),
                       ("AB_SINKFB","ablative_radiative_sink_fallback_temperature")):
-        P[_IDX[name]] = g(f"cooling.{fld}")
+        paths[name] = f"cooling.{fld}"
+    missing = set(_NAMES) - set(paths)
+    assert not missing, f"param(s) with no source path: {sorted(missing)}"
+    return paths
+
+
+_PATHS = _build_path_table()
+_GETTERS = tuple((_IDX[n], _attrgetter(_PATHS[n])) for n in _NAMES)
+
+
+def _params_from_state(st):
+    """Flatten a state namespace (or EdEngineState) into the float64 param vector."""
+    P = np.zeros(NP)
+    for i, get in _GETTERS:
+        P[i] = get(st)
     return P
-
-

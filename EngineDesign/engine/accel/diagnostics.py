@@ -9,16 +9,15 @@ Everything is derived from the flat param vector plus the solve tuple; no config
 object is needed, which is what keeps this callable from inside a worker without
 re-parsing YAML.
 
-DELIBERATE OMISSIONS, measured rather than assumed. C's _result_to_diag also
-emits A_eff_O/F, J, TMR, theta, turbulence_intensity_mix and
-feed_orifice_coupling_iterations. A grep of every reader on the stability and
-optimizer paths shows none of them is ever read off an accelerated result:
-A_eff_O/F is recomputed downstream from Cd by
-engine/core/injectors/flow_capacity.effective_flow_areas_from_cd, and
-turbulence_intensity_mix is consumed only at chamber_solver.py:180, which is the
-full-Python chamber path and never sees this dict. Emitting them would mean
-porting spray quantities no consumer wants. If a future consumer needs one, the
-parity test below is where that will surface.
+OMISSIONS. C's _result_to_diag also emits J, TMR, theta and
+feed_orifice_coupling_iterations; no reader for those exists anywhere, and they
+are impinging spray quantities the accelerated path never needs.
+
+A_eff_O/F and the turbulence block ARE emitted, after an initial omission proved
+wrong: A_eff is asserted present (not merely derivable) by
+tests/test_flow_capacity_effective_area.py, and turbulence_intensity_mix reaches
+chamber_solver.py:180 through *closure* diagnostics -- i.e. the accel.solve path,
+which is distinct from the accel.evaluate path the first analysis looked at.
 """
 from __future__ import annotations
 
@@ -30,6 +29,7 @@ _DJO, _DJF = _IDX["DJO"], _IDX["DJF"]
 _NO, _NF = _IDX["NO"], _IDX["NF"]
 _RHO_O, _RHO_F = _IDX["RHO_O"], _IDX["RHO_F"]
 _ANG_O, _ANG_F = _IDX["ANG_O"], _IDX["ANG_F"]
+_MU_O, _MU_F = _IDX["MU_O"], _IDX["MU_F"]
 
 
 def build_diag(P, sol):
@@ -48,8 +48,31 @@ def build_diag(P, sol):
     mdot_bn_O = Cd_O * A_geom_O * math.sqrt(2.0 * rho_O * dpi_O) if dpi_O > 0 else 0.0
     mdot_bn_F = Cd_F * A_geom_F * math.sqrt(2.0 * rho_F * dpi_F) if dpi_F > 0 else 0.0
 
+    # Effective flow areas. flow_capacity.effective_flow_areas_from_cd recomputes
+    # these downstream, but tests and consumers require them PRESENT on the result,
+    # so emit them here exactly as Cd * A_geom.
+    A_eff_O = Cd_O * A_geom_O
+    A_eff_F = Cd_F * A_geom_F
+
+    # Shear-layer turbulence, mirroring impinging.py:155-172 (d_hyd == d_jet for
+    # impinging, impinging.py:117-118). Consumed via closure diagnostics at
+    # chamber_solver.py:180 -- that is the accel.solve path, not the evaluate path.
+    def _ti(rho, u, d, mu):
+        Re = (rho * u * d / mu) if mu > 0 else 0.0
+        t = 0.16 * (Re ** -0.125) if Re > 0 else 0.1
+        return min(max(t, 0.02), 0.3)
+
+    ti_O = _ti(rho_O, u_O, djo, float(P[_MU_O]))
+    ti_F = _ti(rho_F, u_F, djf, float(P[_MU_F]))
+    v_tot = max(u_O + u_F, 1e-6)
+    ti_mix = min(max((ti_O * u_O + ti_F * u_F) / v_tot, 0.02), 0.35)
+
     diag = {
         "injector_type": "impinging",
+        "A_eff_O": A_eff_O, "A_eff_F": A_eff_F,
+        "turbulence_intensity_O": ti_O, "turbulence_intensity_F": ti_F,
+        "turbulence_length_O": 0.07 * djo, "turbulence_length_F": 0.07 * djf,
+        "turbulence_intensity_mix": ti_mix,
         "iterations": int(n_iter),
         "constraints_satisfied": bool(constraints_ok),
         "We_O": We_O, "We_F": We_F,

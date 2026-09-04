@@ -239,17 +239,16 @@ class ChamberSolver:
         ed_native.py. A solve that raises or returns a non-finite Pc falls back to the
         Python solver for that call.
         """
-        from engine.native.python import native_injector
-        if not native_injector.native_enabled():
+        from engine import accel
+        if not accel.enabled():
             return None
         try:
-            res = native_injector.chamber_solve(self.config, self.cea_cache,
-                                                P_tank_O, P_tank_F)
+            res = accel.chamber_solve(self.config, self.cea_cache, P_tank_O, P_tank_F)
         except Exception:
-            # Strict mode (ED_REQUIRE_NATIVE=1, CI parity job): surface a genuine
-            # native failure loudly instead of silently falling back to Python (which
-            # would report a false green). Default runs fall back quietly.
-            if native_injector.require_native():
+            # Strict mode (ED_REQUIRE_ACCEL=1, CI parity job): surface a genuine
+            # accelerator failure loudly instead of silently falling back to Python
+            # (which would report a false green). Default runs fall back quietly.
+            if accel.require():
                 raise
             return None
         if res is None:

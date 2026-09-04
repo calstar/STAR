@@ -25,7 +25,12 @@ C = _C(); C.reset()
 
 
 def _install_instrumentation():
-    from engine.native.python import native_injector as ni
+    """Count accelerated evaluates and Python fallbacks.
+
+    Wraps engine.accel.evaluate, which is what Layer 1 now calls; the ED_ACCEL
+    dispatcher inside it routes to numba or C, so one wrapper counts both modes.
+    """
+    from engine import accel as ni
     from engine.core.runner import PintleEngineRunner
     if getattr(ni.evaluate, "_benched", False):
         return
@@ -65,14 +70,12 @@ def _one(cfg_path, max_it, restarts, seed):
 
 
 def _run_condition(mode, cfg_path, max_it, restarts, seed):
-    if mode == "python":
-        os.environ["ED_USE_NATIVE"] = "0"; os.environ["ED_LAYER1_NATIVE_EVAL"] = "0"
-    else:
-        os.environ["ED_USE_NATIVE"] = "1"; os.environ["ED_LAYER1_NATIVE_EVAL"] = "1"
-    if mode == "numba":
-        from engine import accel
-        from engine.native.python import native_injector as ni
-        ni.evaluate = accel.evaluate  # patch BEFORE instrumentation
+    # One knob now selects the backend: the accel dispatcher routes ED_ACCEL=c to
+    # native_injector and ED_ACCEL=numba to the kernels. "python" disables the
+    # accelerator entirely so every candidate takes the authoritative Python path.
+    os.environ["ED_ACCEL"] = {"python": "off", "native": "c", "numba": "numba"}[mode]
+    os.environ["ED_USE_NATIVE"] = "0" if mode == "python" else "1"
+    os.environ["ED_LAYER1_NATIVE_EVAL"] = "0" if mode == "python" else "1"
     _install_instrumentation()
     _one(cfg_path, 1, 1, seed)     # warmup (JIT compile, CEA load) — discarded
     C.reset()

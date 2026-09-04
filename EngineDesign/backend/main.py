@@ -18,21 +18,23 @@ project_root = Path(__file__).resolve().parents[1]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-# Enable the native physics kernel (engine/native) for backend-launched work,
-# including the Layer-1 optimizer. This MUST run before the engine/optimizer
-# modules import and before the Layer-1 ProcessPool spawns, so worker processes
-# inherit the flag. Opt out with ED_USE_NATIVE=0. The native path self-checks
-# against Python on first use and falls back automatically on any mismatch, so
-# enabling it cannot change results — only speed (chamber solve ~400x; an
-# optimizer candidate ~60x).
-os.environ.setdefault("ED_USE_NATIVE", "1")
-if os.environ.get("ED_USE_NATIVE") == "1":
-    try:
-        from engine.native.python import autobuild as _ed_autobuild
-        _ed_lib = _ed_autobuild.ensure_lib()  # build once here so pool workers don't race
-        print(f"[native] kernel enabled (ED_USE_NATIVE=1): {_ed_lib}")
-    except Exception as _ed_err:  # pragma: no cover - native is best-effort
-        print(f"[native] kernel unavailable, using Python path: {_ed_err}")
+# Warm the physics accelerator (engine/accel) for backend-launched work, including
+# the Layer-1 optimizer. This MUST run before the engine/optimizer modules import
+# and before the Layer-1 ProcessPool spawns. Opt out with ED_ACCEL=off.
+#
+# Correction to what this comment used to claim: there is NO runtime self-check
+# against Python (see engine/accel/__init__.py and the note in native_injector).
+# Equivalence is enforced ahead of time by tests/test_numba_ab_parity.py, which
+# diffs the accelerated and Python paths live on the same inputs.
+try:
+    from engine import accel as _accel
+    if _accel.enabled():
+        _accel.warmup()
+        print("[accel] numba kernels warmed (ED_ACCEL=numba)")
+    else:
+        print("[accel] disabled; using the Python path")
+except Exception as _ed_err:  # pragma: no cover - accelerator is best-effort
+    print(f"[accel] unavailable, using Python path: {_ed_err}")
 
 # Import control router first (required for controller)
 from backend.routers import control

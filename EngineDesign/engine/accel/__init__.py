@@ -13,7 +13,24 @@ from __future__ import annotations
 
 import os
 
-__all__ = ["available", "enabled", "can_handle", "can_handle_chamber", "evaluate"]
+__all__ = ["available", "enabled", "can_handle", "can_handle_chamber",
+           "evaluate", "solve", "chamber_solve", "warmup", "require"]
+
+
+def _c_backend():
+    """native_injector when ED_ACCEL=c, else None.
+
+    Lets a single run route the whole accelerated surface through the C port, so
+    the parity suite and CI can exercise both backends without either
+    implementation knowing the other exists. Deleted with the C tree.
+    """
+    if os.environ.get("ED_ACCEL") != "c":
+        return None
+    try:
+        from engine.native.python import native_injector
+    except Exception:
+        return None
+    return native_injector
 
 
 def available() -> bool:
@@ -26,11 +43,25 @@ def available() -> bool:
 
 
 def enabled() -> bool:
-    if os.environ.get("ED_ACCEL", "numba") == "off":
+    mode = os.environ.get("ED_ACCEL", "numba")
+    if mode == "off":
         return False
     if os.environ.get("ED_USE_NATIVE") == "0":   # honour the historical switch
         return False
+    if mode == "c":
+        ni = _c_backend()
+        return bool(ni and ni.native_enabled())
     return available()
+
+
+def require() -> bool:
+    """Strict mode: a genuine accelerator failure raises instead of falling back.
+
+    Honours ED_REQUIRE_NATIVE too, so the existing CI parity job keeps its contract
+    while both backends coexist.
+    """
+    return (os.environ.get("ED_REQUIRE_ACCEL") == "1"
+            or os.environ.get("ED_REQUIRE_NATIVE") == "1")
 
 
 def can_handle(config) -> bool:
@@ -67,6 +98,9 @@ def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
 
     Signature matches native_injector.evaluate so it drops into the same slot.
     """
+    _ni = _c_backend()
+    if _ni is not None:
+        return _ni.evaluate(config, cache, P_tank_O, P_tank_F, P_ambient)
     from engine.accel import diagnostics as _diag
     from engine.accel import kernels as _k
     from engine.accel import params as _p
@@ -117,3 +151,98 @@ def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
         "diagnostics": diag, "P_ambient": float(P_ambient),
         "native_fast_eval": True, "numba_fast_eval": True,
     }
+
+
+def solve(config, P_tank_O, P_tank_F, Pc):
+    """Injector mass flows at a given Pc -> (mdot_O, mdot_F, diagnostics), or None.
+
+    Mirrors native_injector.solve. This sits on the FALLBACK path: closure.flows
+    calls it on every residual iteration of the Python chamber solve, so it runs
+    far more often than evaluate() does.
+
+    The param vector is rebuilt per call rather than cached on the config, exactly
+    as the C path rebuilds its state per call. Caching would be wrong here: Layer 1
+    mutates the worker's config in place between candidates
+    (_apply_x_to_worker_config_inplace), so a config-keyed cache would serve stale
+    geometry.
+    """
+    _ni = _c_backend()
+    if _ni is not None:
+        return _ni.solve(config, P_tank_O, P_tank_F, Pc)
+    from engine.accel import diagnostics as _diag
+    from engine.accel import kernels as _k
+    from engine.accel import params as _p
+
+    if not can_handle(config):
+        return None
+    try:
+        P = _p.extract_params(config)
+    except AssertionError:
+        return None
+    sol = _k.injector_solve(P, float(P_tank_O), float(P_tank_F), float(Pc))
+    if not sol[0]:
+        return None
+    return float(sol[1]), float(sol[2]), _diag.build_diag(P, sol)
+
+
+def chamber_solve(config, cache, P_tank_O, P_tank_F):
+    """Whole chamber residual loop -> (Pc, diagnostics), or None.
+
+    Mirrors native_injector.chamber_solve. The only consumer
+    (chamber_solver._native_chamber_pc) reads element 0, so the second element is
+    a plain dict here rather than the C path's ctypes struct.
+
+    Shares evaluate_core's Brent solve instead of duplicating it. That computes a
+    little more than Pc (nozzle/thrust), which is deliberate: a second, subtly
+    different root-find is exactly how the two paths would drift apart.
+    """
+    _ni = _c_backend()
+    if _ni is not None:
+        return _ni.chamber_solve(config, cache, P_tank_O, P_tank_F)
+    from engine.accel import kernels as _k
+    from engine.accel import params as _p
+
+    if not can_handle_chamber(config):
+        return None
+    if not getattr(cache, "use_3d", False):
+        return None
+    try:
+        P = _p.extract_params(config)
+    except AssertionError:
+        return None
+    arr = _k._cea_arrays_cached(cache)
+    r = _k.evaluate_core(P, *arr, float(P_tank_O), float(P_tank_F), 101325.0)
+    if not r[0]:
+        return None
+    Pc = float(r[1])
+    if not (Pc > 0.0) or Pc != Pc:
+        return None
+    return Pc, {"Pc": Pc, "mdot_O": r[11], "mdot_F": r[12], "mdot_total": r[8],
+                "MR": r[4], "cstar_ideal": r[13], "cstar_actual": r[5],
+                "eta_cstar": r[14], "gamma": r[6], "R": r[15],
+                "Tc": r[21], "Tc_ideal": r[7], "converged": True}
+
+
+def warmup():
+    """Force the JIT to compile/load before a ProcessPool is built.
+
+    @njit(cache=True) persists compiled code, but each worker process still
+    deserializes it on first call -- un-warmed, that lands inside the first CMA
+    generation and skews it. Call this in the parent AND in the pool's worker
+    initialiser, which is where the C path called autobuild.prewarm().
+
+    Never raises: a warmup failure must not block optimization, exactly as the
+    C prewarm didn't.
+    """
+    try:
+        import numpy as np
+        from engine.accel import kernels as _k
+        from engine.accel.params import NP
+        n = 2
+        grid = np.linspace(1.0, 2.0, n)
+        tab = np.ones((n, n, n), dtype=np.float64)
+        _k.evaluate_core(np.zeros(NP), grid, grid, grid,
+                         tab, tab, tab, tab, tab, tab, tab, 1.0, 1.0, 1.0)
+        return True
+    except Exception:
+        return False

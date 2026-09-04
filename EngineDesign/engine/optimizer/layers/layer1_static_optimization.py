@@ -1256,7 +1256,19 @@ def _init_worker(config_dict: dict, bounds_array: np.ndarray, requirements_dict:
         debug_strict: If True, re-raise exceptions; if False, return penalties
     """
     global _worker_runner, _worker_base_config, _worker_bounds, _worker_requirements, _worker_constants, _worker_debug_strict
-    
+
+    # Warm the JIT in THIS process. @njit(cache=True) persists compiled code to
+    # disk, but the cache is not shared memory -- every worker still loads and
+    # deserializes it on first call. Un-warmed, that cost lands inside the first
+    # CMA generation and skews it. (The C path never needed this: one .so was
+    # mmapped into every child for free.)
+    try:
+        from engine import accel as _accel
+        if _accel.enabled():
+            _accel.warmup()
+    except Exception:
+        pass  # a warmup failure must never stop a worker from starting
+
     # Reconstruct config from dict
     _worker_base_config = _dict_to_config(config_dict)
     
@@ -1882,15 +1894,15 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
 def _native_fast_eval_enabled() -> bool:
     """Whether the Layer-1 inner loop uses the single-call native ed_evaluate.
 
-    On whenever the native kernel is enabled (the default). Set
-    ED_LAYER1_NATIVE_EVAL=0 to force the full Python+shifting path for the inner
-    loop (debugging / A-B parity) without disabling native elsewhere.
+    On whenever the accelerator is enabled (the default). Set
+    ED_LAYER1_NATIVE_EVAL=0 to force the full Python path for the inner loop
+    (debugging / A-B parity) without disabling the accelerator elsewhere.
     """
     import os
     if os.environ.get("ED_LAYER1_NATIVE_EVAL", "1") != "1":
         return False
-    from engine.native.python import native_injector
-    return native_injector.native_enabled()
+    from engine import accel
+    return accel.enabled()
 
 
 def _eval_candidate(x_raw):
@@ -1922,16 +1934,21 @@ def _eval_candidate(x_raw):
         P_F_Pa = P_F_psi * 6894.76
         
         # Evaluate using worker's runner (reused across calls).
-        # Inner-loop fast path: single native ed_evaluate call (chamber + frozen
-        # nozzle) + native-accelerated stability, ~4x faster per candidate. Falls
-        # back to the full Python+shifting path for unsupported configs (e.g.
-        # pintle) or any non-converged native solve. The winning design is always
-        # re-evaluated at full Python fidelity at finalization, so the frozen
-        # inner-loop nozzle never sets a reported number.
+        # Inner-loop fast path: one accelerated evaluate (chamber + nozzle + thrust)
+        # + accelerated stability, ~25x faster per candidate. Falls back to the full
+        # Python path for unsupported configs (e.g. pintle) or a non-converged
+        # accelerated solve. The winning design is always re-evaluated at full
+        # Python fidelity at finalization.
+        #
+        # NOTE: both paths compute the SAME delivered thrust
+        # (F = zeta_n*Cf_vac*Pc*At - Pa*Ae). The old "frozen vs shifting nozzle"
+        # distinction is gone -- the shifting-equilibrium nozzle was retired
+        # 2026-06-28 (reaction_chemistry.py) in favour of CEA's Cf_vac, which is
+        # itself a shifting-equilibrium coefficient baked into the cache.
         result = None
         if _native_fast_eval_enabled():
-            from engine.native.python import native_injector as _ni
-            result = _ni.evaluate(
+            from engine import accel as _accel
+            result = _accel.evaluate(
                 _worker_runner.config, _worker_runner.cea_cache,
                 P_O_Pa, P_F_Pa, _worker_constants['P_ambient'])
         if result is None:
@@ -4500,18 +4517,21 @@ def run_layer1_optimization(
             optimizer_mode,
         )
 
-    # Native kernel is the Layer-1 inner-loop accelerator (single ed_evaluate call
-    # per candidate). Build it once here in the parent — before the worker pool is
-    # created — so workers load a ready library instead of racing to compile it.
-    # (Mirrors backend/main.py startup; replaces the old closure-import prewarm.)
-    # The build is otherwise lazy/idempotent, so this just front-loads it.
-    if os.environ.get("ED_USE_NATIVE", "1") != "0":
-        try:
-            from engine.native.python import autobuild as _ed_autobuild
-            _ed_autobuild.ensure_lib()
-        except Exception as e:  # never let a build hiccup block optimization
-            layer1_logger.warning(
-                "Native kernel pre-build failed (%s); Layer-1 falls back to Python evaluation.", e)
+    # The accelerator (engine/accel) is the Layer-1 inner-loop fast path: one
+    # evaluate() per candidate. Warm the JIT once here in the parent — before the
+    # worker pool is created — so workers deserialize ready-compiled kernels rather
+    # than each compiling inside the first CMA generation.
+    #
+    # Unlike the old C prewarm, this is NOT free per worker: a .so is mmapped into
+    # every child at no cost, whereas each worker still loads the cached njit
+    # artifacts on first call. _init_worker warms them again for that reason.
+    try:
+        from engine import accel as _accel
+        if _accel.enabled():
+            _accel.warmup()
+    except Exception as e:  # never let a warmup hiccup block optimization
+        layer1_logger.warning(
+            "Accelerator warmup failed (%s); Layer-1 falls back to Python evaluation.", e)
 
     # Create evaluator executor for candidate scoring.
     # On some macOS/sandboxed environments, ProcessPool creation can fail with
