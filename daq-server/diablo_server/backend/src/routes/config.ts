@@ -6,7 +6,7 @@
 import { readFileSync, writeFileSync, copyFileSync, existsSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { parse as parseToml, stringify as stringifyToml } from '@iarna/toml';
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { applyControllerDefaults } from '../controller-config.js';
 
 // ES module __dirname equivalent
@@ -82,119 +82,20 @@ export function getConfigPath(): string {
   throw new Error('Config file not found (and no config/profiles/*.toml to generate it from)');
 }
 
-let _actuatorRolesParseWarned = false;
-
 /** Read + parse a config TOML. Defaults to the deployed config.toml (getConfigPath), but any
- *  path can be given — the config-profiles editor reads the active profile file this way. */
+ *  path can be given — the config-profiles editor reads the active profile file this way.
+ *  smol-toml is a strict TOML 1.0 parser, so actuator_roles' mixed-type inline arrays
+ *  (e.g. ["NC", 1, 12]) parse natively — no special-casing needed. */
 export function readConfig(path: string = getConfigPath()): any {
   try {
     const content = readFileSync(path, 'utf-8');
-
-    // Try to parse normally first
-    try {
-      const config = parseToml(content);
-      applyControllerDefaults(config);
-      return config;
-    } catch (parseError: any) {
-      // If parsing fails due to mixed types in arrays (actuator_roles), handle it manually
-      if (parseError.message && parseError.message.includes('Inline lists must be a single type')) {
-        if (!_actuatorRolesParseWarned) {
-          _actuatorRolesParseWarned = true;
-          console.warn('⚠️ TOML parser strict mode issue with actuator_roles, parsing manually (once).');
-        }
-
-        // Parse everything except actuator_roles
-        const lines = content.split('\n');
-        let inActuatorRoles = false;
-        const configWithoutActuators: string[] = [];
-        const actuatorRolesLines: string[] = [];
-
-        for (const line of lines) {
-          if (line.trim().startsWith('[actuator_roles]')) {
-            inActuatorRoles = true;
-          } else if (line.trim().startsWith('[') && inActuatorRoles) {
-            inActuatorRoles = false;
-            configWithoutActuators.push(line);
-          } else if (inActuatorRoles) {
-            actuatorRolesLines.push(line);
-          } else {
-            configWithoutActuators.push(line);
-          }
-        }
-
-        const config = parseToml(configWithoutActuators.join('\n'));
-
-        // Manually parse actuator_roles (trim lines so leading-space keys match)
-        // Format: ["NC"|"NO", channel_id] or ["NC"|"NO", channel_id, board_id] or ["NC"|"NO", channel_id, "board_ip"]
-        // Third element: number = board_id (preferred), string = legacy board_ip
-        config.actuator_roles = {};
-        for (const line of actuatorRolesLines) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith('#')) continue;
-          const matchStr = trimmed.match(/^"([^"]+)"\s*=\s*\["([^"]+)",\s*(\d+)(?:,\s*"([^"]+)")?\]/);
-          const matchNum = trimmed.match(/^"([^"]+)"\s*=\s*\["([^"]+)",\s*(\d+),\s*(\d+)\]/);
-          if (matchNum) {
-            const [, name, type, channelId, boardId] = matchNum;
-            const channel = parseInt(channelId, 10);
-            const bid = parseInt(boardId, 10);
-            (config.actuator_roles as any)[name] = [type, channel, bid];
-          } else if (matchStr) {
-            const [, name, type, channelId, boardIp] = matchStr;
-            const channel = parseInt(channelId, 10);
-            if (boardIp) {
-              (config.actuator_roles as any)[name] = [type, channel, boardIp];
-            } else {
-              (config.actuator_roles as any)[name] = [type, channel];
-            }
-          }
-        }
-
-        applyControllerDefaults(config);
-        return config;
-      }
-      throw parseError;
-    }
+    const config = parseToml(content) as any;
+    applyControllerDefaults(config);
+    return config;
   } catch (error) {
     console.error('Failed to read config:', error);
     throw error;
   }
-}
-
-/**
- * Serialize `actuator_roles` by hand. Its values are mixed-type inline arrays
- * (e.g. ["NC", 1, 12]) which @iarna/toml's stringify rejects ("Array values
- * can't have mixed types"), so we emit the section manually — the inverse of the
- * manual parse in readConfig. Strings are quoted, numbers are raw.
- */
-function stringifyActuatorRoles(roles: Record<string, unknown>): string {
-  const lines = ['[actuator_roles]'];
-  for (const [name, value] of Object.entries(roles)) {
-    const arr = Array.isArray(value) ? value : [];
-    const parts = arr.map((v) => (typeof v === 'string' ? JSON.stringify(v) : String(v)));
-    lines.push(`${JSON.stringify(name)} = [${parts.join(', ')}]`);
-  }
-  return lines.join('\n') + '\n';
-}
-
-/** Remove `_` digit-separators from numeric tokens in TOML text, leaving quoted
- *  strings intact. @iarna emits e.g. `port = 5_006`; our C++ parsers need `5006`.
- *  Char-level scan so it also covers numbers inside arrays (`[1_000, 2_000]`). */
-export function stripNumericUnderscores(toml: string): string {
-  let out = '';
-  let quote: '"' | "'" | null = null; // inside a basic (") or literal (') string
-  for (let i = 0; i < toml.length; i++) {
-    const c = toml[i];
-    if (quote) {
-      out += c;
-      if (c === quote) quote = null;
-      continue;
-    }
-    if (c === '"' || c === "'") { quote = c; out += c; continue; }
-    // Drop a separator only when it sits between two digits, outside any string.
-    if (c === '_' && /[0-9]/.test(toml[i - 1] ?? '') && /[0-9]/.test(toml[i + 1] ?? '')) continue;
-    out += c;
-  }
-  return out;
 }
 
 /** Serialize + write a config object as TOML. Defaults to the deployed config.toml, but any path
@@ -211,18 +112,9 @@ export function writeConfig(config: any, configPath: string = getConfigPath()): 
       console.warn(`   File may not exist yet, will create`);
     }
 
-    // actuator_roles holds mixed-type arrays that @iarna/toml can't stringify —
-    // pull it out, stringify the rest, then append the section by hand.
-    const { actuator_roles, ...rest } = config ?? {};
-    let content = stringifyToml(rest);
-    if (actuator_roles && typeof actuator_roles === 'object') {
-      content += '\n' + stringifyActuatorRoles(actuator_roles as Record<string, unknown>);
-    }
-    // @iarna/toml stringifies integers ≥1000 with `_` digit separators (5006 → "5_006").
-    // Valid TOML, but the minimal C++ config parsers use std::stoul, which stops at the
-    // underscore (→ 5) — truncating ports/timeouts and crash-looping daq_bridge. Strip the
-    // separators from numeric tokens; quoted strings are left untouched.
-    content = stripNumericUnderscores(content);
+    // smol-toml (TOML 1.0) stringifies actuator_roles' mixed-type arrays natively and emits
+    // integers without `_` digit separators, so no post-processing is needed.
+    const content = stringifyToml(config ?? {});
     console.log(`   Generated TOML content: ${content.length} bytes`);
 
     // Write with explicit error handling
@@ -244,7 +136,7 @@ export function writeConfig(config: any, configPath: string = getConfigPath()): 
 /**
  * Surgically set a single integer field on the `[boards.<key>]` section whose
  * `board_id` matches `boardId`, editing the raw TOML text in place. Unlike
- * writeConfig (whole-object round-trip via @iarna/toml, which drops comments and
+ * writeConfig (whole-object round-trip via smol-toml, which drops comments and
  * could clobber a concurrent edit), this rewrites only the one line, leaving the
  * rest of the file — comments included — byte-for-byte unchanged. Used by the
  * Boards-tab logging-mode dropdown; config_broadcast_service re-reads the file.
