@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type ReactNode } from 'react';
 import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { MessageType } from '@/lib/types';
 import { useControlMode } from '@/lib/control-mode';
@@ -127,6 +127,25 @@ const DEFAULT_CONFIG: ConfigData = {};
  * fields the list is sorted by (sensor channel) — committing on every keystroke would re-sort the
  * list mid-edit and yank the row (and your cursor) elsewhere. Syncs down when the prop changes.
  */
+/**
+ * A titled group of related board fields inside an expanded board card. Renders a small uppercase
+ * header with a divider, then the fields in the standard responsive grid. Grouping the ~17 board
+ * fields (previously one flat grid) by concern — General / Network / Channels / Signal / Safety —
+ * makes a board legible at a glance instead of a wall of inputs.
+ */
+function FieldSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-3">
+      <h4 className="text-xs font-semibold uppercase tracking-wider text-text-muted border-b border-gray-700/70 pb-1.5">
+        {title}
+      </h4>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {children}
+      </div>
+    </section>
+  );
+}
+
 function CommitOnBlurNumber({
   value, onCommit, allowEmpty, disabled, className, placeholder, title,
 }: {
@@ -1158,155 +1177,168 @@ export default function ConfigPage() {
                       )}
                     </div>
                     {open && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4 pt-0">
-                      {renderField(
-                        'Type',
-                        (board as any).type,
-                        (val) => updateBoard(boardKey, 'type', val),
-                        'select',
-                        ['PT', 'ACTUATOR', 'LC', 'TC', 'RTD', 'ENCODER']
-                      )}
-                      {b.type === 'PT' && (
-                        <div className="space-y-1">
-                          <label className="block text-sm font-semibold">
-                            Sensor type
-                            <span className="text-xs text-text-muted ml-2">(sets the ADC reference)</span>
-                          </label>
-                          <select
-                            value={ptType}
-                            onChange={(e) => setPtType(e.target.value)}
-                            disabled={!canEdit}
-                            className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            <option value={PT_TYPE_RATIOMETRIC}>0-5V ratiometric</option>
-                            <option value={PT_TYPE_CURRENT_LOOP}>4-20 mA absolute</option>
-                          </select>
-                          <p className="text-xs text-text-muted">
-                            {isHp
-                              ? 'Current loop across a shunt resistor, measured against the internal 2.5 V reference. Supply-independent, so no excitation monitor is needed.'
-                              : 'Excitation is the ADC reference (VDD), so the ratio cancels in hardware.'}
-                          </p>
-                        </div>
-                      )}
-                      {renderField(
-                        'IP',
-                        (board as any).ip,
-                        (val) => updateBoard(boardKey, 'ip', val)
-                      )}
-                      {renderField(
-                        'Send Port',
-                        (board as any).send_port,
-                        (val) => updateBoard(boardKey, 'send_port', val),
-                        'number'
-                      )}
-                      {(board as any).listen_port !== undefined && renderField(
-                        'Listen Port',
-                        (board as any).listen_port,
-                        (val) => updateBoard(boardKey, 'listen_port', val),
-                        'number'
-                      )}
-                      <div className="space-y-1">
+                    <div className="p-4 pt-0 space-y-6">
+                      <FieldSection title="General">
                         {renderField(
-                          'Board ID',
-                          (board as any).board_id,
-                          (val) => updateBoard(boardKey, 'board_id', val),
+                          'Type',
+                          (board as any).type,
+                          (val) => updateBoard(boardKey, 'type', val),
+                          'select',
+                          ['PT', 'ACTUATOR', 'LC', 'TC', 'RTD', 'ENCODER']
+                        )}
+                        <div className="space-y-1">
+                          {renderField(
+                            'Board ID',
+                            (board as any).board_id,
+                            (val) => updateBoard(boardKey, 'board_id', val),
+                            'number'
+                          )}
+                          {slotIssue && (
+                            <p className="text-xs text-red-400">{slotIssue}</p>
+                          )}
+                        </div>
+                        {renderField(
+                          'Enabled',
+                          (board as any).enabled,
+                          (val) => updateBoard(boardKey, 'enabled', val),
+                          'boolean'
+                        )}
+                      </FieldSection>
+
+                      <FieldSection title="Network">
+                        {renderField(
+                          'IP',
+                          (board as any).ip,
+                          (val) => updateBoard(boardKey, 'ip', val)
+                        )}
+                        {renderField(
+                          'Send Port',
+                          (board as any).send_port,
+                          (val) => updateBoard(boardKey, 'send_port', val),
                           'number'
                         )}
-                        {slotIssue && (
-                          <p className="text-xs text-red-400">{slotIssue}</p>
+                        {(board as any).listen_port !== undefined && renderField(
+                          'Listen Port',
+                          (board as any).listen_port,
+                          (val) => updateBoard(boardKey, 'listen_port', val),
+                          'number'
                         )}
-                      </div>
-                      {renderField(
-                        'Enabled',
-                        (board as any).enabled,
-                        (val) => updateBoard(boardKey, 'enabled', val),
-                        'boolean'
-                      )}
-                      {renderField(
-                        'Logging mode',
-                        String((board as any).enable_serial_printing ?? 0),
-                        (val) => updateBoard(boardKey, 'enable_serial_printing', Number(val)),
-                        'select',
-                        ['0', '1', '2', '3'],
-                        '0 USB only · 1 USB verbose · 2 stream Tier-1 · 3 stream Tier-1+2'
-                      )}
-                      {(board as any).necessary_for_abort !== undefined && renderField(
-                        'Necessary for abort',
-                        (board as any).necessary_for_abort,
-                        (val) => updateBoard(boardKey, 'necessary_for_abort', val),
-                        'boolean'
-                      )}
-                      {(board as any).designated_survivor !== undefined && renderField(
-                        'Designated survivor (actuator only)',
-                        (board as any).designated_survivor,
-                        (val) => updateBoard(boardKey, 'designated_survivor', val),
-                        'boolean'
-                      )}
-                      <div className="space-y-1">
-                        <label className="block text-sm font-semibold">
-                          Voltage reference
-                          {b.type === 'PT' && (
-                            <span className="text-xs text-text-muted ml-2">(set by Sensor type)</span>
-                          )}
-                        </label>
-                        <select
-                          value={String((board as any).voltage_reference ?? 0)}
-                          onChange={(e) => updateBoard(boardKey, 'voltage_reference', parseInt(e.target.value, 10))}
-                          // On a PT board the reference follows from the sensor interface, so it is
-                          // shown rather than edited — the two cannot be made to disagree.
-                          disabled={!canEdit || b.type === 'PT'}
-                          className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <option value="0">Internal (2.5V)</option>
-                          <option value="1">VDD (ratiometric)</option>
-                          <option value="2">5V (absolute)</option>
-                        </select>
-                      </div>
-                      {(board as any).adc_ref_voltage !== undefined && renderField(
-                        'ADC Reference Voltage (V)',
-                        (board as any).adc_ref_voltage,
-                        (val) => updateBoard(boardKey, 'adc_ref_voltage', val),
-                        'number'
-                      )}
-                      {renderField(
-                        'Num Sensors',
-                        (board as any).num_sensors,
-                        (val) => updateBoard(boardKey, 'num_sensors', val),
-                        'number'
-                      )}
-                      {(board as any).num_actuators !== undefined && renderField(
-                        'Num Actuators',
-                        (board as any).num_actuators,
-                        (val) => updateBoard(boardKey, 'num_actuators', val),
-                        'number'
-                      )}
-                      {renderField(
-                        'Active Connectors',
-                        (board as any).active_connectors,
-                        (val) => updateBoard(boardKey, 'active_connectors', val),
-                        'array'
-                      )}
+                      </FieldSection>
 
-                      {/* 4-20 mA conversion parameters — shown whenever the board declares that
-                          interface, not only when the keys already exist, so a board can actually
-                          be converted here. There is no per-connector list: the ADC reference is
-                          set once per board, so every active connector uses the same path. */}
-                      {isHp && renderField(
-                        'Full Scale (PSI)',
-                        b.hp_pt_full_scale_psi,
-                        (val) => updateBoard(boardKey, 'hp_pt_full_scale_psi', val),
-                        'number',
-                        undefined,
-                        'pressure at 20 mA; 4 mA is 0 PSI'
-                      )}
-                      {isHp && renderField(
-                        'Sense Resistor (Ω)',
-                        b.hp_pt_sense_resistor_ohms,
-                        (val) => updateBoard(boardKey, 'hp_pt_sense_resistor_ohms', val),
-                        'number',
-                        undefined,
-                        'shunt the loop current is measured across'
-                      )}
+                      <FieldSection title="Channels">
+                        {renderField(
+                          'Num Sensors',
+                          (board as any).num_sensors,
+                          (val) => updateBoard(boardKey, 'num_sensors', val),
+                          'number'
+                        )}
+                        {(board as any).num_actuators !== undefined && renderField(
+                          'Num Actuators',
+                          (board as any).num_actuators,
+                          (val) => updateBoard(boardKey, 'num_actuators', val),
+                          'number'
+                        )}
+                        {renderField(
+                          'Active Connectors',
+                          (board as any).active_connectors,
+                          (val) => updateBoard(boardKey, 'active_connectors', val),
+                          'array'
+                        )}
+                      </FieldSection>
+
+                      <FieldSection title="Signal & ADC">
+                        {b.type === 'PT' && (
+                          <div className="space-y-1">
+                            <label className="block text-sm font-semibold">
+                              Sensor type
+                              <span className="text-xs text-text-muted ml-2">(sets the ADC reference)</span>
+                            </label>
+                            <select
+                              value={ptType}
+                              onChange={(e) => setPtType(e.target.value)}
+                              disabled={!canEdit}
+                              className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <option value={PT_TYPE_RATIOMETRIC}>0-5V ratiometric</option>
+                              <option value={PT_TYPE_CURRENT_LOOP}>4-20 mA absolute</option>
+                            </select>
+                            <p className="text-xs text-text-muted">
+                              {isHp
+                                ? 'Current loop across a shunt resistor, measured against the internal 2.5 V reference. Supply-independent, so no excitation monitor is needed.'
+                                : 'Excitation is the ADC reference (VDD), so the ratio cancels in hardware.'}
+                            </p>
+                          </div>
+                        )}
+                        <div className="space-y-1">
+                          <label className="block text-sm font-semibold">
+                            Voltage reference
+                            {b.type === 'PT' && (
+                              <span className="text-xs text-text-muted ml-2">(set by Sensor type)</span>
+                            )}
+                          </label>
+                          <select
+                            value={String((board as any).voltage_reference ?? 0)}
+                            onChange={(e) => updateBoard(boardKey, 'voltage_reference', parseInt(e.target.value, 10))}
+                            // On a PT board the reference follows from the sensor interface, so it is
+                            // shown rather than edited — the two cannot be made to disagree.
+                            disabled={!canEdit || b.type === 'PT'}
+                            className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <option value="0">Internal (2.5V)</option>
+                            <option value="1">VDD (ratiometric)</option>
+                            <option value="2">5V (absolute)</option>
+                          </select>
+                        </div>
+                        {(board as any).adc_ref_voltage !== undefined && renderField(
+                          'ADC Reference Voltage (V)',
+                          (board as any).adc_ref_voltage,
+                          (val) => updateBoard(boardKey, 'adc_ref_voltage', val),
+                          'number'
+                        )}
+                        {/* 4-20 mA conversion parameters — shown whenever the board declares that
+                            interface, not only when the keys already exist, so a board can actually
+                            be converted here. There is no per-connector list: the ADC reference is
+                            set once per board, so every active connector uses the same path. */}
+                        {isHp && renderField(
+                          'Full Scale (PSI)',
+                          b.hp_pt_full_scale_psi,
+                          (val) => updateBoard(boardKey, 'hp_pt_full_scale_psi', val),
+                          'number',
+                          undefined,
+                          'pressure at 20 mA; 4 mA is 0 PSI'
+                        )}
+                        {isHp && renderField(
+                          'Sense Resistor (Ω)',
+                          b.hp_pt_sense_resistor_ohms,
+                          (val) => updateBoard(boardKey, 'hp_pt_sense_resistor_ohms', val),
+                          'number',
+                          undefined,
+                          'shunt the loop current is measured across'
+                        )}
+                      </FieldSection>
+
+                      <FieldSection title="Safety & logging">
+                        {renderField(
+                          'Logging mode',
+                          String((board as any).enable_serial_printing ?? 0),
+                          (val) => updateBoard(boardKey, 'enable_serial_printing', Number(val)),
+                          'select',
+                          ['0', '1', '2', '3'],
+                          '0 USB only · 1 USB verbose · 2 stream Tier-1 · 3 stream Tier-1+2'
+                        )}
+                        {(board as any).necessary_for_abort !== undefined && renderField(
+                          'Necessary for abort',
+                          (board as any).necessary_for_abort,
+                          (val) => updateBoard(boardKey, 'necessary_for_abort', val),
+                          'boolean'
+                        )}
+                        {(board as any).designated_survivor !== undefined && renderField(
+                          'Designated survivor (actuator only)',
+                          (board as any).designated_survivor,
+                          (val) => updateBoard(boardKey, 'designated_survivor', val),
+                          'boolean'
+                        )}
+                      </FieldSection>
                     </div>
                     )}
                   </div>
@@ -1410,8 +1442,35 @@ export default function ConfigPage() {
                           No entries. Add one to create this section in `config.toml`.
                         </p>
                       )}
+                      {/* Column headers — the row is a flex of fixed-width cells, so each header
+                          span carries the matching width to stay aligned above its input. The
+                          physics params (Max PSI / Sense Ω) are always-present columns so the table
+                          doesn't reflow when a sensor's model changes; they're only editable in
+                          physics mode (see the disabled inputs below). */}
+                      {entries.length > 0 && (
+                        <div className="flex items-center gap-4 px-1 text-xs font-semibold uppercase tracking-wider text-text-muted">
+                          <span className="flex-1">Role</span>
+                          <span className="w-4 shrink-0" aria-hidden="true" />
+                          <span className="w-28 shrink-0">Channel</span>
+                          {showModel && <span className="w-32 shrink-0">Model</span>}
+                          {showModel && (
+                            <span className="w-24 shrink-0" title="Full-scale pressure (only used in physics-conversion mode)">Max PSI</span>
+                          )}
+                          {showModel && isLoop && (
+                            <span className="w-24 shrink-0" title="Sense resistor for the 4-20 mA shunt (only used in physics-conversion mode)">Sense Ω</span>
+                          )}
+                          <span className="w-24 shrink-0" aria-hidden="true" />
+                        </div>
+                      )}
                       <div className="space-y-3">
-                        {entries.map(([name, sensorId], idx) => (
+                        {entries.map(([name, sensorId], idx) => {
+                          // model resolves to '' for non-PT boards (showModel false); PT rows show
+                          // the configured model with the interface-aware default.
+                          const model = showModel
+                            ? (((config as any)[modelKey]?.[name] as string) ?? defaultModel)
+                            : '';
+                          const isPhysics = model === 'physics';
+                          return (
                           // Key by index, not name: keying by the (changing) name remounts the input
                           // on every keystroke → focus loss. Renames rebuild the map preserving order
                           // so the row stays in place (delete+re-add would jump it to the end).
@@ -1437,7 +1496,7 @@ export default function ConfigPage() {
                               onError={(msg) => { setError(msg); setTimeout(() => setError(null), 4000); }}
                               className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                             />
-                            <span className="text-text-muted">=</span>
+                            <span className="w-4 text-center text-text-muted shrink-0">=</span>
                             <CommitOnBlurNumber
                               value={typeof sensorId === 'number' ? sensorId : Number(sensorId)}
                               onCommit={(n) => {
@@ -1446,57 +1505,55 @@ export default function ConfigPage() {
                                 updated[name] = n;
                                 setConfig({ ...config, [key]: updated } as any);
                               }}
-                              className="w-28 px-3 py-2 bg-background border border-gray-700 rounded text-white"
+                              className="w-28 shrink-0 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                             />
-                            {showModel && (() => {
-                              const model = ((config as any)[modelKey]?.[name] as string) ?? defaultModel;
-                              return (
-                                <>
-                                  <select
-                                    value={model}
-                                    onChange={(e) => {
-                                      const updated = { ...((config as any)[modelKey] || {}) };
-                                      updated[name] = e.target.value;
-                                      setConfig({ ...config, [modelKey]: updated } as any);
+                            {showModel && (
+                              <>
+                                <select
+                                  value={model}
+                                  onChange={(e) => {
+                                    const updated = { ...((config as any)[modelKey] || {}) };
+                                    updated[name] = e.target.value;
+                                    setConfig({ ...config, [modelKey]: updated } as any);
+                                  }}
+                                  title="Streaming calibration model for this sensor"
+                                  className="w-32 shrink-0 px-3 py-2 bg-background border border-gray-700 rounded text-white"
+                                >
+                                  <option value="cubic">Cubic</option>
+                                  <option value="robust">Robust</option>
+                                  <option value="physics">Physics ({isLoop ? '4-20 mA' : '0-5 V'})</option>
+                                </select>
+                                {/* Always rendered so the table structure is stable across model
+                                    changes; editable only in physics mode, otherwise it shows the
+                                    board default read-only. */}
+                                <CommitOnBlurNumber
+                                  value={((config as any)[fullScaleKey]?.[name]) ?? boardFullScale}
+                                  onCommit={(n) => {
+                                    if (n === undefined) return;
+                                    const u = { ...((config as any)[fullScaleKey] || {}) };
+                                    u[name] = n;
+                                    setConfig({ ...config, [fullScaleKey]: u } as any);
+                                  }}
+                                  disabled={!isPhysics}
+                                  title={isPhysics ? 'Full-scale PSI (physics mode)' : 'Full-scale PSI — editable when this sensor is in physics mode'}
+                                  className="w-24 shrink-0 px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                                />
+                                {isLoop && (
+                                  <CommitOnBlurNumber
+                                    value={((config as any)[resistorKey]?.[name]) ?? boardResistor}
+                                    onCommit={(n) => {
+                                      if (n === undefined) return;
+                                      const u = { ...((config as any)[resistorKey] || {}) };
+                                      u[name] = n;
+                                      setConfig({ ...config, [resistorKey]: u } as any);
                                     }}
-                                    title="Streaming calibration model for this sensor"
-                                    className="px-3 py-2 bg-background border border-gray-700 rounded text-white"
-                                  >
-                                    <option value="cubic">Cubic</option>
-                                    <option value="robust">Robust</option>
-                                    <option value="physics">Physics ({isLoop ? '4-20 mA' : '0-5 V'})</option>
-                                  </select>
-                                  {model === 'physics' && (
-                                    <>
-                                      <CommitOnBlurNumber
-                                        value={((config as any)[fullScaleKey]?.[name]) ?? boardFullScale}
-                                        onCommit={(n) => {
-                                          if (n === undefined) return;
-                                          const u = { ...((config as any)[fullScaleKey] || {}) };
-                                          u[name] = n;
-                                          setConfig({ ...config, [fullScaleKey]: u } as any);
-                                        }}
-                                        title="Full-scale PSI (physics mode)"
-                                        className="w-24 px-3 py-2 bg-background border border-gray-700 rounded text-white"
-                                      />
-                                      {isLoop && (
-                                        <CommitOnBlurNumber
-                                          value={((config as any)[resistorKey]?.[name]) ?? boardResistor}
-                                          onCommit={(n) => {
-                                            if (n === undefined) return;
-                                            const u = { ...((config as any)[resistorKey] || {}) };
-                                            u[name] = n;
-                                            setConfig({ ...config, [resistorKey]: u } as any);
-                                          }}
-                                          title="Sense resistor Ω (4-20 mA shunt)"
-                                          className="w-20 px-3 py-2 bg-background border border-gray-700 rounded text-white"
-                                        />
-                                      )}
-                                    </>
-                                  )}
-                                </>
-                              );
-                            })()}
+                                    disabled={!isPhysics}
+                                    title={isPhysics ? 'Sense resistor Ω (4-20 mA shunt)' : 'Sense resistor Ω — editable when this sensor is in physics mode'}
+                                    className="w-24 shrink-0 px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                                  />
+                                )}
+                              </>
+                            )}
                             <button
                               onClick={() => {
                                 const updated = { ...(map || {}) };
@@ -1513,12 +1570,13 @@ export default function ConfigPage() {
                                 }
                                 setConfig(patch);
                               }}
-                              className="px-3 py-2 bg-red-600 rounded hover:bg-red-700"
+                              className="w-24 shrink-0 px-3 py-2 bg-red-600 rounded hover:bg-red-700"
                             >
                               Remove
                             </button>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                       <button
                         onClick={() => {
