@@ -76,7 +76,7 @@ fi
 # Check if services are already running via systemd
 if systemctl --user is-active --quiet sensor-backend.service 2>/dev/null; then
   echo "⚠️  Systemd services are currently running!"
-  echo "   Stop them first: systemctl --user stop sensor-elodin sensor-backend sensor-frontend sensor-sidecar sensor-actuator"
+  echo "   Stop them first: systemctl --user stop sensor-elodin sensor-backend sensor-frontend sensor-actuator"
   exit 1
 fi
 
