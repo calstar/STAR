@@ -59,6 +59,13 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
   const { scheduled, unscheduled } = useMemo(() => toGanttTasks(tasks), [tasks]);
   const [viewMode, setViewMode] = useState<ViewMode>("Week");
   const ref = useRef<HTMLDivElement>(null);
+
+  // On phones default to the denser Month view so more of the timeline fits in
+  // one screenful. Checked once on mount (not in the initial state) so the
+  // server-rendered markup and the hydration pass agree.
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 640px)").matches) setViewMode("Month");
+  }, []);
   const router = useRouter();
   const { openTask } = useTaskModal();
   const projById = useMemo(
@@ -104,10 +111,17 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
       if (cancelled || !ref.current) return;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const Gantt: any = (mod as any).default ?? mod;
+      // Taller bars/rows on small screens so each bar is a comfortable tap
+      // target (28 + 16 padding ≈ 44px rows). column_width is not passed:
+      // frappe-gantt 0.6.1 overwrites it per view mode in update_view_scale.
+      const compact = window.matchMedia("(max-width: 640px)").matches;
       const gantt = new Gantt(ref.current, scheduled, {
         view_mode: viewMode,
         date_format: "YYYY-MM-DD",
+        ...(compact ? { bar_height: 28, padding: 16 } : {}),
         // Drag or resize a bar to reschedule; persist the new start/due dates.
+        // frappe-gantt 0.6.1 binds dragging to mouse events only, so touch
+        // scrolling/tapping never triggers an accidental reschedule.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         on_date_change: (task: any, start: Date, end: Date) => {
           setTaskDates(task.id, ymd(start), ymd(end)).then(() =>
@@ -154,7 +168,7 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
             <button
               key={m}
               onClick={() => setViewMode(m)}
-              className={`rounded px-3 py-1 text-sm ${
+              className={`rounded px-4 py-3 text-sm sm:px-3 sm:py-1 ${
                 viewMode === m
                   ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
                   : "text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
@@ -176,6 +190,10 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
           ))}
         </div>
       </div>
+      {/* The SVG is rendered at a fixed pixel width; it pans horizontally
+          inside frappe's own .gantt-container scroller (touch momentum and
+          overscroll containment are set in globals.css), so the timeline
+          scrolls within this bordered box and never widens the page body. */}
       <div className="overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-2">
         <div ref={ref} />
       </div>
