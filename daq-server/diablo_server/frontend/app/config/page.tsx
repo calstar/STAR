@@ -62,6 +62,10 @@ interface ConfigData {
   sensor_roles_pt_board_2?: Record<string, number>; // HP PT board (was sensor_roles_pt2)
   sensor_roles_rtd_board?: Record<string, number>;
   sensor_roles_tc_board?: Record<string, number>;
+  // Per-sensor PT streaming model ('cubic' | 'robust'), role-keyed, parallel to sensor_roles_*.
+  // Read/written dynamically as calibration_model_<boardKey>; these fields document the shape.
+  calibration_model_pt_board?: Record<string, string>;
+  calibration_model_pt_board_2?: Record<string, string>;
   abort_pts?: Record<string, number>;
   adc?: { internal_v?: number; vdd_nominal_v?: number; absolute_5v_v?: number };
   fire?: { state?: string; expiry_target?: string; duration_ms?: number; extended_ms?: number };
@@ -1368,8 +1372,14 @@ export default function ConfigPage() {
                     key: `sensor_roles_${boardKey}`,
                     title: `${b.type} Roles — ${boardKey} (sensor_roles_${boardKey})`,
                     maxCh: typeof b.num_sensors === 'number' && b.num_sensors > 0 ? b.num_sensors : 10,
+                    // Per-sensor cubic/robust picker only for low-pressure PT boards. Current-loop
+                    // (4-20 mA) PT boards always use 4-20 mA — no model applies.
+                    modelKey: `calibration_model_${boardKey}`,
+                    showModel:
+                      b?.type === 'PT' &&
+                      !(b?.hp_pt_connectors || b?.hp_pt_full_scale_psi != null || b?.pt_type === '4-20 mA absolute'),
                   }))
-                ).map(({ key, title, maxCh }) => {
+                ).map(({ key, title, maxCh, modelKey, showModel }) => {
                   const map = (config as any)[key] as Record<string, number> | undefined;
                   // Display ordered by channel number (not config/insertion order). The number field
                   // commits on blur so this re-sort doesn't fire mid-keystroke.
@@ -1396,7 +1406,15 @@ export default function ConfigPage() {
                               onRename={(newName) => {
                                 const rebuilt: Record<string, any> = {};
                                 for (const [k, v] of Object.entries(map || {})) rebuilt[k === name ? newName : k] = v;
-                                setConfig({ ...config, [key]: rebuilt } as any);
+                                const patch: any = { ...config, [key]: rebuilt };
+                                // Keep the parallel calibration_model_<board> map in sync on rename.
+                                const mm = (config as any)[modelKey];
+                                if (mm && name in mm) {
+                                  const rebuiltModel: Record<string, any> = {};
+                                  for (const [k, v] of Object.entries(mm)) rebuiltModel[k === name ? newName : k] = v;
+                                  patch[modelKey] = rebuiltModel;
+                                }
+                                setConfig(patch);
                               }}
                               onError={(msg) => { setError(msg); setTimeout(() => setError(null), 4000); }}
                               className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded text-white"
@@ -1412,11 +1430,34 @@ export default function ConfigPage() {
                               }}
                               className="w-28 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                             />
+                            {showModel && (
+                              <select
+                                value={((config as any)[modelKey]?.[name] as string) ?? 'cubic'}
+                                onChange={(e) => {
+                                  const updated = { ...((config as any)[modelKey] || {}) };
+                                  updated[name] = e.target.value;
+                                  setConfig({ ...config, [modelKey]: updated } as any);
+                                }}
+                                title="Streaming calibration model for this sensor"
+                                className="px-3 py-2 bg-background border border-gray-700 rounded text-white"
+                              >
+                                <option value="cubic">Cubic</option>
+                                <option value="robust">Robust</option>
+                              </select>
+                            )}
                             <button
                               onClick={() => {
                                 const updated = { ...(map || {}) };
                                 delete updated[name];
-                                setConfig({ ...config, [key]: updated } as any);
+                                const patch: any = { ...config, [key]: updated };
+                                // Drop the sensor's calibration_model entry too.
+                                const mm = (config as any)[modelKey];
+                                if (mm && name in mm) {
+                                  const um = { ...mm };
+                                  delete um[name];
+                                  patch[modelKey] = um;
+                                }
+                                setConfig(patch);
                               }}
                               className="px-3 py-2 bg-red-600 rounded hover:bg-red-700"
                             >
