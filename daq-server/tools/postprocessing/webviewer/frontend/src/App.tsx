@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type uPlot from 'uplot';
 import { api } from './api';
 import starWordmark from './assets/star-wordmark.png';
-import type { Component, Run, RunIndex, Series, SeriesMeta } from './types';
+import type { Component, Run, RunIndex, Series, SeriesMeta, TimeSource } from './types';
 import { fmtBytes, fmtDuration } from './util';
 import RunList from './components/RunList';
 import SensorPicker from './components/SensorPicker';
@@ -18,12 +18,19 @@ type Tab = 'plot' | 'config';
 // the run, so it lives per browser rather than in any saved state. Default on: the
 // numbers are what nobody could read.
 const NAMES_KEY = 'webviewer.showNames';
-const loadShowNames = () => {
+const DB_CLOCK_KEY = 'webviewer.dbClock';
+const loadPref = (key: string, dflt: boolean) => {
   try {
-    return localStorage.getItem(NAMES_KEY) !== '0';
+    const v = localStorage.getItem(key);
+    return v === null ? dflt : v === '1';
   } catch {
-    return true; // storage blocked (private window, site data off), just use the default
+    return dflt; // storage blocked (private window, site data off), use the default
   }
+};
+const savePref = (key: string, on: boolean) => {
+  try {
+    localStorage.setItem(key, on ? '1' : '0');
+  } catch { /* the preference simply doesn't persist */ }
 };
 
 export default function App() {
@@ -36,7 +43,12 @@ export default function App() {
   const [indexErr, setIndexErr] = useState<string | null>(null);
 
   const [tab, setTab] = useState<Tab>('plot');
-  const [showNames, setShowNames] = useState(loadShowNames);
+  const [showNames, setShowNames] = useState(() => loadPref(NAMES_KEY, true));
+  // Off by default: elodin-db's write time bunches each UDP packet's samples into
+  // microseconds, so it is the wrong axis. Kept because it is what every run recorded so
+  // far was read on, and it is the only way to see the raw arrival pattern.
+  const [dbClock, setDbClock] = useState(() => loadPref(DB_CLOCK_KEY, false));
+  const timeSource: TimeSource = dbClock ? 'db' : 'sensor';
   // undefined = not fetched yet, null = this run has no snapshot.
   const [configText, setConfigText] = useState<string | null | undefined>(undefined);
   const [configErr, setConfigErr] = useState<string | null>(null);
@@ -55,9 +67,14 @@ export default function App() {
 
   const toggleNames = (on: boolean) => {
     setShowNames(on);
-    try {
-      localStorage.setItem(NAMES_KEY, on ? '1' : '0');
-    } catch { /* preference simply doesn't persist */ }
+    savePref(NAMES_KEY, on);
+  };
+
+  // Switching clocks moves every point, so the old window means nothing on the new axis.
+  const toggleDbClock = (on: boolean) => {
+    setDbClock(on);
+    savePref(DB_CLOCK_KEY, on);
+    setWin({ start: null, end: null });
   };
 
   const selectRun = useCallback((id: string) => {
@@ -98,7 +115,7 @@ export default function App() {
     setSeriesBusy(true);
     const h = setTimeout(() => {
       api
-        .series(runId, names, win.start, win.end, MAX_POINTS)
+        .series(runId, names, win.start, win.end, MAX_POINTS, timeSource)
         .then((r) => {
           if (req === seriesReq.current) setSeries(r.series);
         })
@@ -108,7 +125,7 @@ export default function App() {
         });
     }, 200);
     return () => clearTimeout(h);
-  }, [runId, selected, win]);
+  }, [runId, selected, win, timeSource]);
 
   const byName = useMemo(() => {
     const m = new Map<string, Component>();
@@ -138,8 +155,11 @@ export default function App() {
   // window it was asked for rather than the extent of whatever data came back for it,
   // so these have to be resolved here, where `win`'s nulls mean "the whole run".
   const bounds = useMemo<[number, number]>(
-    () => [index?.t_min ?? 0, index?.t_max ?? 0],
-    [index],
+    () =>
+      dbClock
+        ? [index?.t_min ?? 0, index?.t_max ?? 0]
+        : [index?.sensor_t_min ?? index?.t_min ?? 0, index?.sensor_t_max ?? index?.t_max ?? 0],
+    [index, dbClock],
   );
   const view = useMemo<[number, number]>(
     () => [win.start ?? bounds[0], win.end ?? bounds[1]],
@@ -222,7 +242,7 @@ export default function App() {
                 {indexErr && <span className="error">Error: {indexErr}</span>}
                 {index && (
                   <span className="run-meta">
-                    {index.n_components} components · {fmtDuration(index.duration_s)} · {fmtBytes(index.size_bytes)} on disk
+                    {index.n_components} components · {fmtDuration(bounds[1] - bounds[0])} · {fmtBytes(index.size_bytes)} on disk
                   </span>
                 )}
                 {index && !index.has_config && (
@@ -263,6 +283,43 @@ export default function App() {
                     />
                     names
                   </label>
+                  <label
+                    className="picker-toggle"
+                    title={
+                      'Plot on elodin-db\u2019s write time instead of each row\u2019s own sample time. ' +
+                      'The DB stamps a whole UDP packet of samples microseconds apart and then nothing ' +
+                      'for ~100 ms, so a steady channel draws as bursts. Off unless you want to see ' +
+                      'that arrival pattern.'
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      checked={dbClock}
+                      onChange={(e) => toggleDbClock(e.target.checked)}
+                    />
+                    DB write time
+                  </label>
+                  {!dbClock && index.n_reanchored > 0 && (
+                    <span
+                      className="tabs-note"
+                      title={
+                        'The sequencer (ACT_CMD, SEQUENCER.state) and the board-heartbeat router ' +
+                        '(BOARD.HB_*) stamp steady_clock: monotonic since boot, not a wall ' +
+                        'clock. It is still a good clock, so it is shifted onto the epoch by the ' +
+                        'floor of (DB write time minus stamp). Relative timing on these channels ' +
+                        'is exact; their absolute position carries a few ms of write latency as ' +
+                        'bias. Without this they would sit on the DB write time, which adds up to ' +
+                        '~60 ms of jitter to a valve command.'
+                      }
+                    >
+                      · {index.n_reanchored} channels re-anchored
+                    </span>
+                  )}
+                  {!dbClock && index.n_db_only > 0 && (
+                    <span className="tabs-note" title="No per-row timestamp at all, so these keep elodin-db's write time.">
+                      · {index.n_db_only} on DB time
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -287,8 +344,8 @@ export default function App() {
                     <div className="toolbar">
                       {index.t_min != null && index.t_max != null && (
                         <TimeRange
-                          t0={index.t_min}
-                          tEnd={index.t_max}
+                          t0={bounds[0]}
+                          tEnd={bounds[1]}
                           start={win.start}
                           end={win.end}
                           onChange={(s, e) => setWin({ start: s, end: e })}
@@ -300,12 +357,12 @@ export default function App() {
                         Reset view
                       </button>
                       <div className="spacer" />
-                      <a className="btn" href={api.downloadUrl(runId, [], null, null)}>
+                      <a className="btn" href={api.downloadUrl(runId, [], null, null, timeSource)}>
                         Download run CSV
                       </a>
                       <a
                         className={`btn${selArr.length ? '' : ' disabled'}`}
-                        href={selArr.length ? api.downloadUrl(runId, selArr, win.start, win.end) : undefined}
+                        href={selArr.length ? api.downloadUrl(runId, selArr, win.start, win.end, timeSource) : undefined}
                       >
                         Export plot CSV
                       </a>

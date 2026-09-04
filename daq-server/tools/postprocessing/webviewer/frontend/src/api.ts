@@ -1,4 +1,4 @@
-import type { Run, RunIndex, SeriesResponse } from './types';
+import type { Run, RunIndex, SeriesResponse, TimeSource } from './types';
 
 async function getJSON<T>(url: string): Promise<T> {
   const r = await fetch(url);
@@ -34,10 +34,12 @@ export const api = {
     start: number | null,
     end: number | null,
     maxPoints = 4000,
+    timeSource: TimeSource = 'sensor',
   ) => {
     const p = new URLSearchParams({
       components: components.join(','),
       max_points: String(maxPoints),
+      time_source: timeSource,
     });
     if (start != null) p.set('start', String(start));
     if (end != null) p.set('end', String(end));
@@ -50,8 +52,9 @@ export const api = {
     components: string[],
     start: number | null,
     end: number | null,
+    timeSource: TimeSource = 'sensor',
   ) => {
-    const p = new URLSearchParams();
+    const p = new URLSearchParams({ time_source: timeSource });
     if (components.length) p.set('components', components.join(','));
     if (start != null) p.set('start', String(start));
     if (end != null) p.set('end', String(end));

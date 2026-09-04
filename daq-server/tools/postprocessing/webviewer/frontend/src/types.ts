@@ -1,3 +1,8 @@
+/** Which clock the x-axis is. "sensor" is each row's own sample time (evenly spaced,
+ *  the truth); "db" is elodin-db's write time, which bunches a UDP packet's worth of
+ *  samples into microseconds and then leaves a ~100 ms gap. See backend/series.py. */
+export type TimeSource = 'sensor' | 'db';
+
 export interface Run {
   id: string;
   name: string;
@@ -21,6 +26,11 @@ export interface Component {
    * that entity: then the numeric identity is all there is.
    */
   label: string;
+  /** Which clock this channel is drawn on when the sensor axis is selected: its own
+   *  stamp ("sensor"), its own stamp re-anchored to the epoch ("monotonic", exact
+   *  relative timing, a few ms of absolute bias), or the DB's write time ("db", only
+   *  when the channel carries no stamp at all). */
+  time_source: 'sensor' | 'monotonic' | 'db';
   t_min?: number;
   t_max?: number;
 }
@@ -32,6 +42,14 @@ export interface RunIndex {
   duration_s: number | null;
   n_components: number;
   size_bytes: number | null;
+  /** Extent on the sensor clock: what the window spans by default. */
+  sensor_t_min: number | null;
+  sensor_t_max: number | null;
+  sensor_duration_s: number | null;
+  /** Channels whose boot-relative stamp was re-anchored onto the epoch. */
+  n_reanchored: number;
+  /** Channels with no stamp at all, still drawn on elodin-db's write time. */
+  n_db_only: number;
   components: Component[];
   /** A config snapshot was found beside this run's DB, so entity labels are its own. */
   has_config: boolean;
