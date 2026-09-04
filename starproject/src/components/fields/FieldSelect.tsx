@@ -198,7 +198,7 @@ export function FieldSelect({
         disabled={disabled}
         onClick={() => (open ? close() : openMenu())}
         onKeyDown={onTriggerKeyDown}
-        className={`inline-flex max-w-full items-center gap-1 rounded border border-neutral-300 dark:border-neutral-700 py-1 pl-2 pr-1.5 text-sm ${
+        className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-neutral-300 dark:border-neutral-700 py-1 pl-2 pr-1.5 text-sm ${
           disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
         } ${
           selected?.badge
