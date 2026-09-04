@@ -206,7 +206,8 @@ void RobustCalibrationManager::reset_adjustment(uint16_t sensor_id) {
     state.framework->seed_from_factory_cubic(state.baseline);
 }
 
-bool RobustCalibrationManager::save_adjustments(const std::string& path) const {
+bool RobustCalibrationManager::save_adjustments(
+    const std::string& path, const std::map<uint16_t, std::string>* uid_to_role) const {
     std::lock_guard<std::mutex> lock(mutex_);
     constexpr int N = RobustCalibrationFramework::N;
     nlohmann::json fw2 = nlohmann::json::object();
@@ -225,7 +226,14 @@ bool RobustCalibrationManager::save_adjustments(const std::string& path) const {
                 row.push_back(cov(r, c));
             cvec.push_back(row);
         }
-        fw2[std::to_string(static_cast<int>(id))] = {{"theta_mean", mean}, {"theta_cov", cvec}};
+        nlohmann::json entry = {{"theta_mean", mean}, {"theta_cov", cvec}};
+        // Record the role so load can re-attach this state to the role's current sensor_id.
+        if (uid_to_role) {
+            auto rit = uid_to_role->find(id);
+            if (rit != uid_to_role->end() && !rit->second.empty())
+                entry["role"] = rit->second;
+        }
+        fw2[std::to_string(static_cast<int>(id))] = std::move(entry);
     }
     const nlohmann::json root = {{"framework_v2", fw2}};
 
@@ -236,7 +244,8 @@ bool RobustCalibrationManager::save_adjustments(const std::string& path) const {
     return file.good();
 }
 
-bool RobustCalibrationManager::load_adjustments(const std::string& path) {
+bool RobustCalibrationManager::load_adjustments(
+    const std::string& path, const std::map<uint16_t, std::string>* uid_to_role) {
     std::lock_guard<std::mutex> lock(mutex_);
     std::ifstream file(path);
     if (!file.is_open())
@@ -260,6 +269,14 @@ bool RobustCalibrationManager::load_adjustments(const std::string& path) {
 
     constexpr int N = RobustCalibrationFramework::N;
 
+    // Inverse role -> current sensor_id, so a role-tagged entry is restored onto the connector that
+    // role now occupies (calibration follows the sensor across a move).
+    std::map<std::string, uint16_t> role_to_uid;
+    if (uid_to_role)
+        for (const auto& [uid, role] : *uid_to_role)
+            if (!role.empty())
+                role_to_uid.emplace(role, uid);  // roles are unique; first wins
+
     auto apply_restored = [&]() {
         for (auto& [id, state] : states_) {
             if (!state.framework)
@@ -281,7 +298,14 @@ bool RobustCalibrationManager::load_adjustments(const std::string& path) {
         for (auto& [id_str, sub] : root["framework_v2"].items()) {
             if (!is_numeric_key(id_str) || !sub.is_object())
                 continue;
-            const uint16_t id = static_cast<uint16_t>(std::stoi(id_str));
+            uint16_t id = static_cast<uint16_t>(std::stoi(id_str));
+            // Re-file by role onto its current sensor_id when the role is known; else keep the
+            // persisted id (legacy entries / roles no longer in config).
+            if (sub.contains("role") && sub["role"].is_string()) {
+                auto rit = role_to_uid.find(sub["role"].get<std::string>());
+                if (rit != role_to_uid.end())
+                    id = rit->second;
+            }
             auto mean = sub.contains("theta_mean") ? json_vec(sub["theta_mean"], N) : std::nullopt;
             auto cov = sub.contains("theta_cov") ? json_mat(sub["theta_cov"], N) : std::nullopt;
             if (mean && cov) {
