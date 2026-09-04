@@ -140,6 +140,7 @@ cleanup() {
   rm -f "$TEST_CONFIG" 2>/dev/null || true
   rm -f "$UDP_COMMANDS_FILE" 2>/dev/null || true
   rm -f "$SIM_STATS_FILE" "$SIM_STATS_FILE.tmp" 2>/dev/null || true
+  rm -f "$REPO_ROOT/.tmp/integration_adjustments_$$.json" 2>/dev/null || true
   echo "✅ Cleanup done"
 }
 
@@ -585,8 +586,20 @@ CALIB_SVC="$REPO_ROOT/build/bin/calibration_service"
 [ -x "$CALIB_SVC" ] || CALIB_SVC=""
 if [ -n "$CALIB_SVC" ]; then
   echo "🔬 Starting calibration_service..."
-  "$CALIB_SVC" --config "$TEST_CONFIG" --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
-    > "$REPO_ROOT/.tmp/integration_calibration_$$.log" 2>&1 &
+  # Run from $REPO_ROOT (the daq-server dir) like daq_bridge/sequencer above: the service resolves
+  # its factory PT calibration dir ("scripts/calibration/calibrations") and CSV relative to cwd, so
+  # without this the test only passes when invoked from daq-server/ (a bare `bash daq-server/test/...`
+  # from the repo root left cwd there → PT: 0 channels → robust never seeds → cal_robust_learn fails).
+  #
+  # --adjustments points robust learned-state at a per-run temp file (not the shared, untracked
+  # scripts/calibration/calibrations/adjustments.json): cal_robust_learn teaches CH5 a +50 offset and
+  # the service persists it on shutdown, so without isolation that offset survives into the next run
+  # and breaks cal_values (which expects pristine factory). A missing file just seeds from factory.
+  CAL_ADJ="$REPO_ROOT/.tmp/integration_adjustments_$$.json"
+  rm -f "$CAL_ADJ" 2>/dev/null || true
+  (cd "$REPO_ROOT" && "$CALIB_SVC" --config "$TEST_CONFIG" --adjustments "$CAL_ADJ" \
+    --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
+    > "$REPO_ROOT/.tmp/integration_calibration_$$.log" 2>&1) &
   PIDS+=($!)
   sleep 1
   if kill -0 "${PIDS[-1]}" 2>/dev/null; then
