@@ -84,6 +84,11 @@ enum class PtModel { Cubic, Robust, Blend };
  *  uid means Cubic, so this stays small and the startup log lists only meaningful overrides. */
 std::unordered_map<uint16_t, PtModel> g_pt_model;
 
+/** uid -> role name (from [sensor_roles_*]). Durable calibration is filed under the role, so it
+ *  follows the sensor when its connector changes (see re-file-by-role in the stores). Empty for
+ *  connectors with no configured role. */
+std::unordered_map<uint16_t, std::string> g_uid_role;
+
 /** Set once at startup: when a CAL_USE_* PT env var is present it forces every sensor, else nullopt
  *  and the per-sensor config governs. */
 std::optional<PtModel> g_env_override;
@@ -537,6 +542,7 @@ int main(int argc, char* argv[]) {
         g_env_override = PtModel::Robust;
 
     g_pt_model.clear();
+    g_uid_role.clear();
     for (const auto& b : cal_cfg.boards) {
         if (b.type != "PT" || !b.enabled || b.board_id < 0)
             continue;
@@ -551,6 +557,8 @@ int main(int argc, char* argv[]) {
         for (const auto& [role, connector] : *roles) {
             if (connector < 1 || connector > 99)
                 continue;
+            const uint16_t uid = static_cast<uint16_t>(b.board_id * 100 + connector);
+            g_uid_role[uid] = role;  // the identity durable cal is filed under
             PtModel m = PtModel::Cubic;
             if (models != nullptr) {
                 auto it = models->find(role);
@@ -558,9 +566,12 @@ int main(int argc, char* argv[]) {
                     m = parse_pt_model(it->second);
             }
             if (m != PtModel::Cubic)  // only store overrides; absence means cubic
-                g_pt_model[static_cast<uint16_t>(b.board_id * 100 + connector)] = m;
+                g_pt_model[uid] = m;
         }
     }
+    // Ordered uid->role for RobustCalibrationManager save/load, so the robust learned state is
+    // filed by role and re-attaches to the role's current connector (mirrors the cubic store).
+    const std::map<uint16_t, std::string> uid_role(g_uid_role.begin(), g_uid_role.end());
 
     const fsw::calibration::PTCalibrationCoeffs* fallback_pt_coeffs = nullptr;
     for (uint8_t probe_ch = 1; probe_ch <= 10; ++probe_ch) {
@@ -597,7 +608,9 @@ int main(int argc, char* argv[]) {
             const uint16_t uid = static_cast<uint16_t>(bc.board_id) * 100u + local_ch;
             const uint8_t log_ch =
                 fsw::calibration::pt_logical_calibration_channel(bc.board_number, local_ch);
-            cubic_store.register_channel(uid, bc.board_id, local_ch, log_ch, /*role=*/"",
+            const auto rit = g_uid_role.find(uid);
+            const std::string role = rit != g_uid_role.end() ? rit->second : std::string();
+            cubic_store.register_channel(uid, bc.board_id, local_ch, log_ch, role,
                                          pt_model_name(pt_model_for(uid)));
             if (pt_calibration.is_calibrated(log_ch))
                 factory_pt_snapshot[log_ch] = *pt_calibration.get_calibration(log_ch);
@@ -681,7 +694,7 @@ int main(int argc, char* argv[]) {
     std::cout << "[Calibration]   (override with --adjustments, CAL_BACKUP_PATH, or "
                  "calibration_backups/calibration_backup_*.json mtime)"
               << std::endl;
-    if (!robust_manager.load_adjustments(adjustments_path)) {
+    if (!robust_manager.load_adjustments(adjustments_path, &uid_role)) {
         std::cout << "[Calibration]   File missing/unreadable — using factory-seeded robust only"
                   << std::endl;
     }
@@ -880,7 +893,7 @@ int main(int argc, char* argv[]) {
                                                           ref_val);
                     }
                 } else if (cmd_type == 2) {  // Save
-                    robust_manager.save_adjustments(adjustments_path);
+                    robust_manager.save_adjustments(adjustments_path, &uid_role);
                     std::cout << "[Cal] Adjustments saved to " << adjustments_path << std::endl;
                 } else if (cmd_type == 3) {  // Capture cubic point (operator-built factory cubic)
                     bool have_adc = false;
@@ -1157,14 +1170,14 @@ int main(int argc, char* argv[]) {
         // Periodic auto-save every 5 minutes
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::seconds>(now - last_save).count() > 300) {
-            robust_manager.save_adjustments(adjustments_path);
+            robust_manager.save_adjustments(adjustments_path, &uid_role);
             last_save = now;
         }
     }
 
     // Persist on shutdown so a clean SIGINT/SIGTERM doesn't drop up to ~5 min of learning since the
     // last periodic auto-save. (The cubic store already saves per capture; this covers robust θ.)
-    if (robust_manager.save_adjustments(adjustments_path))
+    if (robust_manager.save_adjustments(adjustments_path, &uid_role))
         std::cout << "[Cal] Saved robust adjustments on shutdown → " << adjustments_path
                   << std::endl;
     cubic_store.save();

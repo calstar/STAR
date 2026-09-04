@@ -6,6 +6,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <nlohmann/json.hpp>
 
 #include "calibration/PTCalibration.hpp"  // pt_logical_calibration_channel
@@ -303,29 +304,54 @@ size_t CubicCalibrationStore::load() {
     if (!root.contains("cubic_state") || !root["cubic_state"].is_object())
         return 0;
 
+    // role -> current uid, from the channels register_channel() created before this load. Durable
+    // cal is filed by role, so an entry re-attaches to the connector its role now occupies — the
+    // calibration follows the sensor when its cable moves to a different board port.
+    std::map<std::string, uint16_t> role_to_uid;
+    for (const auto& [uid, ch] : channels_)
+        if (!ch.role.empty())
+            role_to_uid.emplace(ch.role, uid);
+
     size_t loaded = 0;
     for (auto& [id_str, cj] : root["cubic_state"].items()) {
-        uint16_t uid = 0;
+        uint16_t persisted_uid = 0;
         try {
-            uid = static_cast<uint16_t>(std::stoi(id_str));
+            persisted_uid = static_cast<uint16_t>(std::stoi(id_str));
         } catch (...) {
             continue;
         }
 
-        // Merge into the channel register_channel() already created at startup: config is the
-        // source of truth for identity/role/active_model, so don't clobber them with disk values.
+        // The entry's durable identity is its role. Legacy entries (written before roles were
+        // tracked) adopt the role of the channel currently at their persisted uid — a one-time
+        // migration, after which they too follow moves.
+        std::string entry_role = cj.value("role", std::string());
+        if (entry_role.empty()) {
+            auto pit = channels_.find(persisted_uid);
+            if (pit != channels_.end())
+                entry_role = pit->second.role;
+        }
+
+        // Destination = where that role lives now (config truth); else the persisted uid.
+        uint16_t uid = persisted_uid;
+        if (!entry_role.empty()) {
+            auto rit = role_to_uid.find(entry_role);
+            if (rit != role_to_uid.end())
+                uid = rit->second;
+        }
+
+        // Merge into the channel register_channel() created at startup (config is the source of
+        // truth for its identity/role/active_model); only synthesize identity when no current board
+        // owns the destination uid (an orphaned role no longer in config).
         auto& ch = channels_[uid];
         const bool registered = ch.uid != 0;
-        ch.uid = uid;
-        ch.board_id = static_cast<uint8_t>(uid / 100);
-        ch.connector = static_cast<uint8_t>(uid % 100);
-        ch.logical_ch =
-            pt_logical_calibration_channel(slot_from_board_id(ch.board_id), ch.connector);
         if (!registered) {
-            ch.role = cj.value("role", std::string());
+            ch.uid = uid;
+            ch.board_id = static_cast<uint8_t>(uid / 100);
+            ch.connector = static_cast<uint8_t>(uid % 100);
+            ch.logical_ch =
+                pt_logical_calibration_channel(slot_from_board_id(ch.board_id), ch.connector);
+            ch.role = entry_role;
             ch.active_model = cj.value("active_model", std::string("cubic"));
-        } else if (ch.role.empty()) {
-            ch.role = cj.value("role", std::string());
         }
 
         ch.points.clear();
@@ -359,6 +385,10 @@ size_t CubicCalibrationStore::load() {
                                       : (ch.points.size() < 2 ? "PENDING" : "OK");
         }
         ch.updated_at = unix_now_sec();
+        if (uid != persisted_uid)
+            std::cout << "[CubicStore] role '" << entry_role << "' cal re-attached to connector "
+                      << static_cast<int>(uid % 100) << " (was "
+                      << static_cast<int>(persisted_uid % 100) << ") — sensor moved" << std::endl;
         ++loaded;
     }
     return loaded;
