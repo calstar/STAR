@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type uPlot from 'uplot';
 import { api } from './api';
+import starWordmark from './assets/star-wordmark.png';
 import type { Component, Run, RunIndex, Series } from './types';
 import { fmtBytes, fmtDuration } from './util';
 import RunList from './components/RunList';
@@ -130,8 +131,12 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
+        {/* Wordmark, divider, title, the header the other STAR apps use
+            (star-openrocket/frontend/src/App.tsx). The asset is synced from
+            assets/brand by scripts/sync-brand.sh; do not hand-edit the copy. */}
+        <img className="topbar-logo" src={starWordmark} alt="STAR" />
+        <div className="topbar-divider" />
         <h1>DAQ Run Viewer</h1>
-        <span className="sub">past-run reconstruction · read-only</span>
       </header>
 
       <div className="body">

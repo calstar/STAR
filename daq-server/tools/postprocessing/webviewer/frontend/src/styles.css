@@ -50,11 +50,15 @@ body {
 
 .app { display: flex; flex-direction: column; height: 100%; }
 .topbar {
-  display: flex; align-items: baseline; gap: 12px;
-  padding: 12px 18px; background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border);
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 18px; background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border);
 }
+/* Wordmark then a rule then the title, as in the other STAR apps. The rule is
+   --color-border, not bg-secondary: this header IS bg-secondary, so openrocket's
+   divider colour would be invisible here. */
+.topbar-logo { height: 34px; width: auto; display: block; }
+.topbar-divider { width: 1px; align-self: stretch; margin: 2px 0; background: var(--color-border); }
 .topbar h1 { font-size: var(--text-base); margin: 0; font-weight: 650; }
-.topbar .sub { color: var(--color-text-muted); font-size: var(--text-2xs); }
 
 .body { display: flex; flex: 1; min-height: 0; }
 .sidebar { width: 290px; border-right: 1px solid var(--color-border); background: var(--color-bg-secondary); display: flex; }
