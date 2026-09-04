@@ -37,7 +37,7 @@ export function NewTaskForm({
   const [err, setErr] = useState<string | null>(null);
 
   const control =
-    "rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm";
+    "min-h-11 sm:min-h-0 rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm";
 
   return (
     <form
@@ -59,13 +59,13 @@ export function NewTaskForm({
         setAssignees([]);
         setSubteam("");
       }}
-      className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3"
+      className="flex flex-col gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 sm:flex-row sm:flex-wrap sm:items-center"
     >
       <input
         name="title"
         required
         placeholder="New task…"
-        className={`min-w-56 flex-1 ${control}`}
+        className={`w-full sm:w-auto sm:min-w-56 sm:flex-1 ${control}`}
       />
 
       {projectId ? (
@@ -122,7 +122,7 @@ export function NewTaskForm({
       <input type="date" name="dueDate" min="1900-01-01" max="9999-12-31" className={control} aria-label="Due date" />
       <button
         type="submit"
-        className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
+        className="min-h-11 rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300 sm:min-h-0"
       >
         Add task
       </button>

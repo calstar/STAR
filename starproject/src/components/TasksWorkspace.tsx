@@ -79,13 +79,13 @@ export function TasksWorkspace({
     !!search || !!status || myOnly || projSel.size > 0 || subSel.size > 0;
 
   const tabBtn = (v: View) =>
-    `rounded px-3 py-1 text-sm ${
+    `min-h-11 flex-1 rounded px-3 py-1 text-sm sm:min-h-0 sm:flex-none ${
       view === v
         ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
         : "text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
     }`;
   const chip = (active: boolean) =>
-    `rounded-full border px-2.5 py-0.5 text-sm ${
+    `min-h-11 shrink-0 whitespace-nowrap rounded-full border px-3 py-0.5 text-sm sm:min-h-0 sm:shrink sm:px-2.5 ${
       active
         ? "border-neutral-900 bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
         : "border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
@@ -94,7 +94,7 @@ export function TasksWorkspace({
   return (
     <div>
       <div className="flex flex-col gap-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
           <div className="flex items-center gap-1">
             <button onClick={() => setView("table")} className={tabBtn("table")}>
               List
@@ -110,56 +110,58 @@ export function TasksWorkspace({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search tasks…"
-            className="min-w-48 flex-1 rounded border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm"
+            className="min-h-11 w-full rounded border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm sm:min-h-0 sm:w-auto sm:min-w-48 sm:flex-1"
           />
-          <button
-            onClick={() => setMyOnly((v) => !v)}
-            className={`rounded px-3 py-1.5 text-sm font-medium ${
-              myOnly
-                ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
-                : "border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-            }`}
-          >
-            My tasks
-          </button>
-          <FieldSelect
-            ariaLabel="Filter by status"
-            value={status}
-            onChange={setStatus}
-            options={[
-              { value: "", label: "All statuses" },
-              ...(Object.keys(STATUS_LABEL) as TaskStatus[]).map((s) => ({
-                value: s,
-                label: STATUS_LABEL[s],
-              })),
-            ]}
-          />
-          {view === "board" && (
-            <FieldSelect
-              ariaLabel="Sort board"
-              value={boardSort}
-              onChange={(v) => setBoardSort(v as BoardSort)}
-              options={BOARD_SORT_OPTIONS}
-            />
-          )}
-          {anyFilter && (
+          <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={() => {
-                setSearch("");
-                setStatus("");
-                setMyOnly(false);
-                setProjSel(new Set());
-                setSubSel(new Set());
-              }}
-              className="text-sm text-neutral-500 dark:text-neutral-400 hover:underline"
+              onClick={() => setMyOnly((v) => !v)}
+              className={`min-h-11 rounded px-3 py-1.5 text-sm font-medium sm:min-h-0 ${
+                myOnly
+                  ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
+                  : "border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+              }`}
             >
-              Clear
+              My tasks
             </button>
-          )}
+            <FieldSelect
+              ariaLabel="Filter by status"
+              value={status}
+              onChange={setStatus}
+              options={[
+                { value: "", label: "All statuses" },
+                ...(Object.keys(STATUS_LABEL) as TaskStatus[]).map((s) => ({
+                  value: s,
+                  label: STATUS_LABEL[s],
+                })),
+              ]}
+            />
+            {view === "board" && (
+              <FieldSelect
+                ariaLabel="Sort board"
+                value={boardSort}
+                onChange={(v) => setBoardSort(v as BoardSort)}
+                options={BOARD_SORT_OPTIONS}
+              />
+            )}
+            {anyFilter && (
+              <button
+                onClick={() => {
+                  setSearch("");
+                  setStatus("");
+                  setMyOnly(false);
+                  setProjSel(new Set());
+                  setSubSel(new Set());
+                }}
+                className="min-h-11 px-2 text-sm text-neutral-500 dark:text-neutral-400 hover:underline sm:min-h-0 sm:px-0"
+              >
+                Clear
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+        <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto sm:flex-wrap sm:overflow-x-visible">
+          <span className="shrink-0 text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
             Projects
           </span>
           {projects.map((p) => (
@@ -174,8 +176,8 @@ export function TasksWorkspace({
         </div>
 
         {subteams.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto sm:flex-wrap sm:overflow-x-visible">
+            <span className="shrink-0 text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
               Subteams
             </span>
             {subteams.map((s) => (
