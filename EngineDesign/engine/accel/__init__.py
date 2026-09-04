@@ -14,7 +14,8 @@ from __future__ import annotations
 import os
 
 __all__ = ["available", "enabled", "can_handle", "can_handle_chamber",
-           "evaluate", "solve", "chamber_solve", "warmup", "require"]
+           "evaluate", "solve", "chamber_solve", "warmup", "require",
+           "chug_margin_fast"]
 
 
 def _c_backend():
@@ -246,3 +247,17 @@ def warmup():
         return True
     except Exception:
         return False
+
+
+def chug_margin_fast(streams, chamber, **kw):
+    """Chug gain/phase margin. Dispatches like the rest of this surface.
+
+    fast_acoustic deliberately has no counterpart here: it measured 10.5 us in
+    Python against 4.2 us in C, and acoustic.fast_acoustic has no loop to compile.
+    A 6 us difference does not justify a kernel, so that path stays pure Python.
+    """
+    _ni = _c_backend()
+    if _ni is not None:
+        return _ni.chug_margin_fast(streams, chamber, **kw)
+    from engine.accel import stability as _stab
+    return _stab.chug_margin_fast(streams, chamber, **kw)
