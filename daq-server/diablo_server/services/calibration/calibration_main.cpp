@@ -993,6 +993,13 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Persist on shutdown so a clean SIGINT/SIGTERM doesn't drop up to ~5 min of learning since the
+    // last periodic auto-save. (The cubic store already saves per capture; this covers robust θ.)
+    if (robust_manager.save_adjustments(adjustments_path))
+        std::cout << "[Cal] Saved robust adjustments on shutdown → " << adjustments_path
+                  << std::endl;
+    cubic_store.save();
+
     std::cout << "[Cal] Stopped." << std::endl;
     return 0;
 }
