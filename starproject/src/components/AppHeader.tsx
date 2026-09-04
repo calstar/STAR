@@ -13,9 +13,9 @@ export async function AppHeader() {
   const user = await getCurrentDbUser();
 
   return (
-    <header className="border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-      <div className="mx-auto flex max-w-[88rem] items-center justify-between px-6 py-2">
-        <div className="flex items-center gap-6">
+    <header className="relative border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+      <div className="mx-auto flex max-w-[88rem] items-center justify-between px-4 py-2 sm:px-6">
+        <div className="flex min-w-0 items-center gap-3 sm:gap-6">
           <Link href="/" className="flex items-center gap-2 leading-none">
             {/* Blue wordmark in light mode, white wordmark in dark mode. */}
             <Image
@@ -25,7 +25,7 @@ export async function AppHeader() {
               height={1772}
               priority
               unoptimized
-              className="h-10 w-auto dark:hidden"
+              className="h-8 w-auto sm:h-10 dark:hidden"
             />
             <Image
               src="/star-wordmark.png"
@@ -34,9 +34,9 @@ export async function AppHeader() {
               height={1772}
               priority
               unoptimized
-              className="hidden h-10 w-auto dark:block"
+              className="hidden h-8 w-auto sm:h-10 dark:block"
             />
-            <span className="text-2xl font-semibold leading-none tracking-tight text-neutral-900 dark:text-neutral-100">
+            <span className="hidden text-2xl font-semibold leading-none tracking-tight text-neutral-900 min-[420px]:inline dark:text-neutral-100">
               Project
             </span>
           </Link>
