@@ -12,7 +12,11 @@ WITH ordered AS (
 UPDATE "Task" t SET "number" = o.rn FROM ordered o WHERE t."id" = o."id";
 
 CREATE SEQUENCE "Task_number_seq" OWNED BY "Task"."number";
-SELECT setval('"Task_number_seq"', COALESCE((SELECT MAX("number") FROM "Task"), 0));
+-- Point the sequence at MAX+1 (or 1 on an empty table) with is_called=false, so
+-- the NEXT nextval() returns exactly that value. Using COALESCE(...,0)+1 avoids
+-- setval(seq, 0), which Postgres rejects (sequence minvalue is 1) — that failed
+-- `migrate deploy` on a fresh/empty database.
+SELECT setval('"Task_number_seq"', COALESCE((SELECT MAX("number") FROM "Task"), 0) + 1, false);
 ALTER TABLE "Task" ALTER COLUMN "number" SET DEFAULT nextval('"Task_number_seq"');
 ALTER TABLE "Task" ALTER COLUMN "number" SET NOT NULL;
 
