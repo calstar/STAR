@@ -487,6 +487,8 @@ def compute_physical_stability(config, Pc: float, MR: float, mdot_total: float, 
     chug_fast = None
     if accel.enabled():
         try:
+            # attribute access, not a direct import -- see the note in
+            # tests/test_accel_is_actually_used.py
             chug_fast = accel.chug_margin_fast(inp["streams"], inp["chamber"])
         except Exception:
             chug_fast = None

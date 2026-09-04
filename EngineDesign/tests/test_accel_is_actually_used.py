@@ -61,7 +61,12 @@ def test_runner_evaluate_routes_through_the_accelerator(cfg, monkeypatch):
 
 
 def test_layer1_inner_loop_routes_through_the_accelerator(cfg):
-    """The Layer-1 seam: _eval_candidate must call accel.evaluate per candidate.
+    """The Layer-1 seam: EVERY candidate must go through accel.evaluate.
+
+    Asserts a RATIO, not merely a non-zero count. A count-only check would pass
+    if one candidate went through the accelerator and the next thousand did not.
+    Measured ratio is exactly 1.000 -- every candidate -- so the 0.9 floor has
+    real margin while still failing hard (ratio 0.0) on a bypass.
 
     Runs a genuine one-iteration smoke optimization rather than calling the
     accelerator directly, because the thing under test is the WIRING.
@@ -70,12 +75,16 @@ def test_layer1_inner_loop_routes_through_the_accelerator(cfg):
     import engine.optimizer.layers.layer1_static_optimization as L1
     from engine.core.runner import PintleEngineRunner
 
-    n = {"calls": 0}
-    real = accel.evaluate
+    n = {"cand": 0, "accel": 0}
+    real_ec, real_ev = L1._eval_candidate, accel.evaluate
 
-    def counting(*a, **k):
-        n["calls"] += 1
-        return real(*a, **k)
+    def counting_candidate(x):
+        n["cand"] += 1
+        return real_ec(x)
+
+    def counting_evaluate(*a, **k):
+        n["accel"] += 1
+        return real_ev(*a, **k)
 
     base = copy.deepcopy(cfg)
     req = base.design_requirements.model_dump()
@@ -84,8 +93,8 @@ def test_layer1_inner_loop_routes_through_the_accelerator(cfg):
             "max_lox_pressure_psi": float(req["max_lox_tank_pressure_psi"]),
             "max_fuel_pressure_psi": float(req["max_fuel_tank_pressure_psi"])}
 
-    L1._get_num_workers = lambda c: 1      # serial, so the patch is visible in-process
-    accel.evaluate = counting
+    L1._get_num_workers = lambda c: 1      # serial, so the patches are in-process
+    L1._eval_candidate, accel.evaluate = counting_candidate, counting_evaluate
     try:
         L1.run_layer1_optimization(
             copy.deepcopy(base), PintleEngineRunner(copy.deepcopy(base)), req,
@@ -93,10 +102,44 @@ def test_layer1_inner_loop_routes_through_the_accelerator(cfg):
             tolerances={"thrust": 0.10, "apogee": 0.15}, pressure_config=pcfg,
             layer1_smoke=True, layer1_max_iterations=1, layer1_cma_restarts=1)
     finally:
-        accel.evaluate = real
+        L1._eval_candidate, accel.evaluate = real_ec, real_ev
+
+    assert n["cand"] > 0, "no candidates were evaluated -- the smoke run did nothing"
+    ratio = n["accel"] / n["cand"]
+    assert ratio >= 0.9, (
+        f"only {n['accel']}/{n['cand']} candidates ({ratio:.1%}) went through the "
+        "accelerator -- the Layer-1 inner-loop fast path is bypassed. The optimizer "
+        "still produces correct results on the Python path, which is why no other "
+        "test catches this."
+    )
+
+
+def test_stability_tail_routes_through_the_chug_kernel(cfg, monkeypatch):
+    """The chug seam: stability analysis must reach accel.chug_margin_fast.
+
+    Separate from the others because it is reached through
+    comprehensive_stability_analysis rather than the chamber solve, so a bypass
+    there is invisible to every check above. Chug is ~53x accelerated and is the
+    dominant per-evaluation stability cost, so silently dropping to Python here
+    is a large regression with no wrong answer to give it away.
+    """
+    from engine import accel
+    from engine.core.runner import PintleEngineRunner
+
+    n = {"calls": 0}
+    real = accel.chug_margin_fast
+
+    def counting(*a, **k):
+        n["calls"] += 1
+        return real(*a, **k)
+
+    monkeypatch.setattr(accel, "chug_margin_fast", counting)
+    r = PintleEngineRunner(cfg)
+    res = r.evaluate(4.0e6, 4.0e6, P_ambient=PA, silent=True)
+    assert res is not None
 
     assert n["calls"] > 0, (
-        "Layer-1 ran a full iteration without ever calling accel.evaluate -- the "
-        "inner-loop fast path is bypassed. The optimizer still produces correct "
-        "results on the Python path, which is why no other test catches this."
+        "stability analysis ran without reaching accel.chug_margin_fast -- the "
+        "compiled chug sweep is bypassed and the ~53x slower Python sweep is "
+        "running instead, with identical numbers."
     )

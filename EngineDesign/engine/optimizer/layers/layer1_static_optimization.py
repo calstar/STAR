@@ -1947,6 +1947,10 @@ def _eval_candidate(x_raw):
         # itself a shifting-equilibrium coefficient baked into the cache.
         result = None
         if _native_fast_eval_enabled():
+            # NOTE: `from engine import accel` + attribute access is load-bearing.
+            # tests/test_accel_is_actually_used.py patches accel.evaluate to prove
+            # this seam is still reached; a `from engine.accel import evaluate`
+            # import would bind at import time and silently defeat that guard.
             from engine import accel as _accel
             result = _accel.evaluate(
                 _worker_runner.config, _worker_runner.cea_cache,
