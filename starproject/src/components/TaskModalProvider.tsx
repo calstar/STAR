@@ -115,21 +115,21 @@ export function TaskModalProvider({ children }: { children: React.ReactNode }) {
       {children}
       {open && (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:p-8"
+          className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 sm:p-8"
           onClick={close}
         >
           <div
-            className="relative w-full max-w-3xl rounded-xl bg-neutral-50 dark:bg-neutral-900 shadow-xl"
+            className="relative flex h-dvh w-full flex-col overflow-hidden bg-neutral-50 dark:bg-neutral-900 shadow-xl sm:h-auto sm:max-h-[85dvh] sm:max-w-3xl sm:rounded-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <button
               onClick={close}
               aria-label="Close"
-              className="absolute right-3 top-3 z-10 rounded p-1 text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700 hover:text-neutral-700 dark:hover:text-neutral-200"
+              className="absolute right-1 top-1 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-neutral-100 text-neutral-400 ring-1 ring-neutral-200 dark:bg-neutral-800 dark:ring-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-700 hover:text-neutral-700 dark:hover:text-neutral-200"
             >
               ✕
             </button>
-            <div className="p-6">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
               {data ? (
                 <TaskDetail data={data} />
               ) : (
