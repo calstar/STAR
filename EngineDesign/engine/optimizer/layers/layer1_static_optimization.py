@@ -4796,7 +4796,10 @@ def run_layer1_optimization(
                 layer1_logger.info(f"")
                 layer1_logger.info(f"Starting {restart_name} (sigma: {current_sigma_fraction*100:.0f}% of range)...")
                 
-                iter_budget = total_eval_budget // num_restarts
+                # Floor at 1: layer1_max_iterations < num_restarts floors this to 0,
+                # which hands CMA maxiter=0 and then divides by it at the progress
+                # update below (ZeroDivisionError on any run with max_iterations < 4).
+                iter_budget = max(1, total_eval_budget // num_restarts)
                 
                 # Without an explicit ``seed``, cma uses non-deterministic defaults → different optima each run.
                 _cma_restart_seed = layer1_seed_base + int(restart_idx) * 1_000_003
