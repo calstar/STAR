@@ -4,7 +4,7 @@ This is the authoritative, pure-Python chamber solver used by every general
 evaluation path (frontend solves, time-varying, flight, Layer-1 finalization). The
 native C kernel does not hook in here: it accelerates only the Layer-1 inner loop,
 through a single ``ed_evaluate`` call in
-``engine/native/python/native_injector.evaluate``. Keeping native out of this solver
+``engine.accel.evaluate``. Keeping the accelerator out of this solver
 is deliberate — it leaves the general path simple, authoritative, and free of any
 runtime native/Python switch.
 """
@@ -229,14 +229,14 @@ class ChamberSolver:
         
         return float(residual)
 
-    def _native_chamber_pc(self, P_tank_O: float, P_tank_F: float):
+    def _accel_chamber_pc(self, P_tank_O: float, P_tank_F: float):
         """Solve Pc with the native C kernel (whole residual loop + Brent) when native
         is enabled and can handle this config; otherwise return None so the Python
         Brent solver runs.
 
         Pure capability routing — no runtime parity self-check or process latch. Parity
         is enforced by the golden test suite and the load-time ABI assert in
-        ed_native.py. A solve that raises or returns a non-finite Pc falls back to the
+        the accelerator. A solve that raises or returns a non-finite Pc falls back to the
         Python solver for that call.
         """
         from engine import accel
@@ -331,9 +331,9 @@ class ChamberSolver:
         # single-call ed_evaluate seam and fall back to runner.evaluate -> here, so
         # keeping it native keeps that fallback fast (a pure-Python Brent solve here is
         # ~100x slower). Any failure -> Python Brent below.
-        _native_pc = self._native_chamber_pc(P_tank_O, P_tank_F)
-        if _native_pc is not None:
-            Pc = _native_pc
+        _accel_pc = self._accel_chamber_pc(P_tank_O, P_tank_F)
+        if _accel_pc is not None:
+            Pc = _accel_pc
             success = True
             skip_solve = True
             residual_min, residual_max = -1.0, 1.0

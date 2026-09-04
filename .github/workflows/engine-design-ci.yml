@@ -140,7 +140,7 @@ jobs:
       continue-on-error: true
 
   # Browser E2E (Playwright). Playwright's webServer auto-boots the FastAPI
-  # backend (ED_USE_NATIVE=0 -> pure Python, so no C build here) and Vite, so
+  # backend (ED_ACCEL=off -> pure Python) and Vite, so
   # this job just needs Python deps, node deps, and Chromium. The guard that
   # matters is connect-no-loop.spec.ts: it asserts idle /api/config/load traffic
   # settles instead of the ~7 req/s bootstrap fetch loop that hung the UI. tsc
@@ -218,48 +218,19 @@ jobs:
         if-no-files-found: warn
         retention-days: 7
 
-  # Native C physics kernel: compile libed_physics and run its golden-vector /
-  # unit tests via CTest. Fully self-contained — golden vectors are committed
-  # (engine/native/tests/golden/), so no rocketcea/Python is involved. ubuntu
-  # ships gcc + cmake. ED_NATIVE_ARCH=OFF drops -march=native for a portable,
-  # runner-independent build; chamber_golden self-skips (exit 77) until that
-  # stage lands (CTest reports it skipped, not failed).
-  native-kernel:
-    name: Native kernel (C golden/unit tests)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Configure + build (portable — no -march=native)
-      working-directory: EngineDesign/engine/native
-      run: cmake -S . -B build -DED_NATIVE_ARCH=OFF && cmake --build build -j
-
-    - name: Run CTest suite
-      working-directory: EngineDesign/engine/native
-      run: ctest --test-dir build --output-on-failure
-
-  # Accelerator parity. The Layer-1 inner loop runs on engine/accel (numba); the
-  # C port in engine/native is the outgoing implementation and is kept here as a
-  # numeric oracle until it is deleted. The matrix runs the production impinging
-  # tests through BOTH backends so neither can rot while both exist.
+  # Accelerator parity: the numba Layer-1 accelerator vs the authoritative Python
+  # physics, diffed live on identical inputs.
   #
   # CRITICAL: every accelerated entry point returns None on any failure and the
-  # caller silently falls back to Python (chamber_solver._native_chamber_pc,
+  # caller silently falls back to Python (chamber_solver._accel_chamber_pc,
   # closure.flows), so `pytest` alone can be a FALSE GREEN — everything runs on
-  # Python and passes. The pre-flight positively proves the selected backend is
-  # real, and ED_REQUIRE_ACCEL=1 turns a genuine accelerator failure into a raise
-  # rather than a quiet fallback.
+  # Python and passes. The pre-flight positively proves the accelerator is real,
+  # and ED_REQUIRE_ACCEL=1 turns a genuine failure into a raise, not a quiet
+  # fallback.
   accel-parity:
-    name: Accelerator parity (ED_ACCEL=${{ matrix.backend }})
+    name: Accelerator parity (numba vs Python)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        backend: [numba, c]
 
     steps:
     - name: Checkout code
@@ -286,61 +257,41 @@ jobs:
     - name: Verify committed CEA cache is present
       run: test -f output/cache/cea_cache_LOX_CH4_3D.npz
 
-    # Positive proof the selected backend is real, not a silent Python fallback.
-    # The C library is built in BOTH legs: the numba parity suite diffs numba
-    # against C on identical inputs, so it needs the oracle present regardless of
-    # which backend production is routed through.
-    - name: Pre-flight — backend is genuinely available
-      env:
-        ED_ACCEL: ${{ matrix.backend }}
+    # Positive proof the accelerator is real, not a silent Python fallback.
+    - name: Pre-flight — accelerator is genuinely available
       run: |
         python -c "
-        from engine.native.python import autobuild, ed_native, native_injector
-        p = autobuild.ensure_lib(verbose=True)
-        ed_native.load(p)
-        assert native_injector.available(), 'native_injector.available() is False'
-        print('C oracle built + ctypes-loaded OK:', p)
         import numba
         from engine import accel
         assert accel.available(), 'accel.available() is False (numba missing?)'
-        assert accel.enabled(), 'accel.enabled() is False for ED_ACCEL=${{ matrix.backend }}'
+        assert accel.enabled(), 'accel.enabled() is False'
         print('accel enabled, numba', numba.__version__)
         "
 
     # ED_REQUIRE_ACCEL=1 makes a genuine accelerator failure RAISE instead of
     # falling back, so this step cannot pass on the Python path and report a false
     # green. It proves the backend RAN; the numeric comparison is the next step.
-    - name: Run impinging tests through ED_ACCEL=${{ matrix.backend }} (strict)
+    - name: Run impinging tests through the accelerator (strict)
       env:
-        ED_ACCEL: ${{ matrix.backend }}
+        ED_ACCEL: 'numba'
         ED_REQUIRE_ACCEL: '1'
-        ED_REQUIRE_NATIVE: '1'
       run: |
         python -m pytest \
           tests/test_layer1_impinging_vector.py \
           tests/test_flow_capacity_effective_area.py \
           --timeout=180 --timeout-method=thread -q
 
-    # Live A/B numeric parity, run once (it is backend-independent: it calls the
-    # numba kernels and the C kernel directly and diffs them, plus both against
-    # the authoritative Python physics). Unlike the golden-vector C tests — frozen
-    # snapshots that go stale when the PYTHON side changes — a live comparison
-    # fails no matter which side drifted.
-    #
-    # test_accel_params_match_native_state asserts the pure-Python config->scalar
-    # extraction reproduces the C EdEngineState EXACTLY; it is deleted with the C
-    # tree, having done its job.
-    - name: Live A/B parity — numba vs C vs Python on identical inputs (strict)
-      if: matrix.backend == 'numba'
+    # Live A/B numeric parity: run the accelerator and the authoritative Python
+    # physics on the same inputs and diff them field by field. A live comparison
+    # fails no matter which side drifted — unlike a frozen snapshot, which goes
+    # stale silently when the Python side changes.
+    - name: Live A/B parity — numba vs Python on identical inputs (strict)
       env:
         ED_REQUIRE_ACCEL: '1'
-        ED_REQUIRE_NATIVE: '1'
         ED_AB_PARITY: '1'
       run: |
         python -m pytest \
           tests/test_numba_ab_parity.py \
-          tests/test_native_ab_parity.py \
-          tests/test_accel_params_match_native_state.py \
           --timeout=300 --timeout-method=thread -v
 
   # Aggregate status, mirroring daq-server-ci.yml's build-summary.
@@ -352,7 +303,6 @@ jobs:
       - backend-smoke
       - frontend
       - frontend-e2e
-      - native-kernel
       - accel-parity
     if: always()
 
@@ -368,5 +318,4 @@ jobs:
         echo "| Backend smoke | ${{ needs.backend-smoke.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Frontend build | ${{ needs.frontend.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Frontend E2E (Playwright) | ${{ needs.frontend-e2e.result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Native kernel (C tests) | ${{ needs.native-kernel.result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Accelerator parity (numba + C) | ${{ needs.accel-parity.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Accelerator parity (numba vs Python) | ${{ needs.accel-parity.result }} |" >> $GITHUB_STEP_SUMMARY

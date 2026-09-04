@@ -23,7 +23,7 @@ if str(project_root) not in sys.path:
 # and before the Layer-1 ProcessPool spawns. Opt out with ED_ACCEL=off.
 #
 # Correction to what this comment used to claim: there is NO runtime self-check
-# against Python (see engine/accel/__init__.py and the note in native_injector).
+# against Python (see engine/accel/__init__.py).
 # Equivalence is enforced ahead of time by tests/test_numba_ab_parity.py, which
 # diffs the accelerated and Python paths live on the same inputs.
 try:

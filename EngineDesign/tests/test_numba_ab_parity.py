@@ -12,7 +12,7 @@ than the old contract. If a change pushes this above 1e-6, that is a physics
 divergence, not rounding: fix it rather than widening the bound.
 
 THE REFERENCE MUST BE FORCED TO PYTHON. With the accelerator enabled,
-runner.evaluate reaches chamber_solver._native_chamber_pc -> accel.chamber_solve
+runner.evaluate reaches chamber_solver._accel_chamber_pc -> accel.chamber_solve
 and closure.flows -> accel.solve, so an unguarded "Python" reference is largely
 the same numba kernels and the comparison is self-referential (it reads as ~1e-15
 agreement, which is the tell). _python_only() below disables the accelerator for

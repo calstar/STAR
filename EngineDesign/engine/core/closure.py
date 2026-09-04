@@ -40,7 +40,7 @@ def _try_native_flows(
     disabled or can't handle this config (caller falls back to the Python model).
 
     Parity is enforced by the A/B suite, not a runtime self-check (capability
-    dispatch). Strict mode (``ED_REQUIRE_ACCEL=1``/``ED_REQUIRE_NATIVE=1``, the CI
+    dispatch). Strict mode (``ED_REQUIRE_ACCEL=1``, the CI
     parity job) makes a *genuine* accelerator failure raise instead of silently
     falling back to Python, which would report a false green. A config the kernel
     simply doesn't handle (``solve`` returns None) still falls back quietly.

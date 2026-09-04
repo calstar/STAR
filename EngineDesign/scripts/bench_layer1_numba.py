@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Three-way Layer-1 optimizer benchmark: plain Python vs C vs Numba.
+"""Two-way Layer-1 optimizer benchmark: plain Python vs the numba accelerator.
 
-Same harness as bench_layer1_native_vs_python.py (serial in-process, subprocess per
-condition, warmup discarded), with a third mode that patches native_injector.evaluate
-to the Numba core (numba_eval.make_native_signature_evaluate) — Numba does the
-chamber+nozzle+thrust physics, the C diagnostic injector solve + Python stability tail
-is identical to the C mode, so the only difference is the chamber-solve core.
+Serial in-process, one subprocess per condition, warmup discarded. "python" sets
+ED_ACCEL=off so every candidate takes the authoritative Python path; "numba" runs
+the accelerator. The C backend this once compared against was deleted after the
+numba path overtook it.
 
-Run: .venv/bin/python scripts/bench_layer1_numba.py --max-iterations 8
+Timing here is noisy enough that a single run is not a measurement: identical work
+(seed pinned) has varied by 40% on a loaded box. Hence --reps and min/median.
+
+Run: .venv/bin/python scripts/bench_layer1_numba.py --max-iterations 20 --reps 5
 """
 from __future__ import annotations
 import argparse, copy, json, os, subprocess, sys, time
@@ -25,11 +27,7 @@ C = _C(); C.reset()
 
 
 def _install_instrumentation():
-    """Count accelerated evaluates and Python fallbacks.
-
-    Wraps engine.accel.evaluate, which is what Layer 1 now calls; the ED_ACCEL
-    dispatcher inside it routes to numba or C, so one wrapper counts both modes.
-    """
+    """Count accelerated evaluates and Python fallbacks."""
     from engine import accel as ni
     from engine.core.runner import PintleEngineRunner
     if getattr(ni.evaluate, "_benched", False):
@@ -70,11 +68,7 @@ def _one(cfg_path, max_it, restarts, seed):
 
 
 def _run_condition(mode, cfg_path, max_it, restarts, seed):
-    # One knob now selects the backend: the accel dispatcher routes ED_ACCEL=c to
-    # native_injector and ED_ACCEL=numba to the kernels. "python" disables the
-    # accelerator entirely so every candidate takes the authoritative Python path.
-    os.environ["ED_ACCEL"] = {"python": "off", "native": "c", "numba": "numba"}[mode]
-    os.environ["ED_USE_NATIVE"] = "0" if mode == "python" else "1"
+    os.environ["ED_ACCEL"] = "off" if mode == "python" else "numba"
     os.environ["ED_LAYER1_NATIVE_EVAL"] = "0" if mode == "python" else "1"
     _install_instrumentation()
     _one(cfg_path, 1, 1, seed)     # warmup (JIT compile, CEA load) — discarded
@@ -125,7 +119,7 @@ def main():
                     help="timed repetitions per accelerated mode (noise control)")
     ap.add_argument("--python-reps", type=int, default=1,
                     help="reps for the Python baseline (~10x slower, 1 is usually enough)")
-    ap.add_argument("--mode", choices=["python", "native", "numba"], default=None)
+    ap.add_argument("--mode", choices=["python", "numba"], default=None)
     a = ap.parse_args()
     cfg_path = (ROOT / a.config) if not os.path.isabs(a.config) else Path(a.config)
     if a.mode:
@@ -133,7 +127,7 @@ def main():
     print(f"config: {cfg_path}\nbudget: max_iterations={a.max_iterations} restarts={a.cma_restarts} "
           f"seed={a.seed} reps={a.reps} (serial, warmup discarded)")
     agg = {}
-    for mode in ("python", "native", "numba"):
+    for mode in ("python", "numba"):
         runs = []
         for _ in range(a.python_reps if mode == "python" else a.reps):
             cmd = [sys.executable, str(Path(__file__).resolve()), "--config", a.config,
@@ -146,13 +140,11 @@ def main():
                       + "\n".join(p.stderr.splitlines()[-20:])); return
             runs.append(json.loads(line[len("BENCH_JSON "):]))
         agg[mode] = _pc(mode, runs)
-    py, nat, nb = agg["python"], agg["native"], agg["numba"]
+    py, nb = agg["python"], agg["numba"]
     print("\n" + "=" * 68)
     for stat in ("min", "median"):
-        print(f"  [{stat:6s}] per-candidate us:  python={py[stat]:.0f}  C={nat[stat]:.0f}  numba={nb[stat]:.0f}")
-        print(f"           speedup vs python:  C={py[stat]/nat[stat]:.1f}x  numba={py[stat]/nb[stat]:.1f}x")
-        print(f"           numba vs C: {nb[stat]/nat[stat]:.2f}x the C time"
-              f"  ({nat[stat]/nb[stat]:.2f}x speed of C)")
+        print(f"  [{stat:6s}] per-candidate us:  python={py[stat]:.0f}  numba={nb[stat]:.0f}"
+              f"   speedup={py[stat]/nb[stat]:.1f}x")
     print("=" * 68)
 
 
