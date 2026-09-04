@@ -26,11 +26,11 @@ export interface Component {
   /**
    * What this channel actually is, from the run's config snapshot: "Ox Upstream",
    * "LOX Main". Empty when the run has no snapshot, or when config does not name
-   * that entity: then the numeric identity is all there is.
+   * that entity — then the numeric identity is all there is.
    */
   label: string;
   /** Which clock this channel is drawn on when the sensor axis is selected: its own
-   *  stamp ("sensor"), its own stamp re-anchored to the epoch ("monotonic", exact
+   *  stamp ("sensor"), its own stamp re-anchored to the epoch ("monotonic" — exact
    *  relative timing, a few ms of absolute bias), or the DB's write time ("db", only
    *  when the channel carries no stamp at all). */
   time_source: 'sensor' | 'monotonic' | 'db';
@@ -45,7 +45,7 @@ export interface RunIndex {
   duration_s: number | null;
   n_components: number;
   size_bytes: number | null;
-  /** Extent on the sensor clock: what the window spans by default. */
+  /** Extent on the sensor clock — what the window spans by default. */
   sensor_t_min: number | null;
   sensor_t_max: number | null;
   sensor_duration_s: number | null;
@@ -56,10 +56,23 @@ export interface RunIndex {
   components: Component[];
   /** A config snapshot was found beside this run's DB, so entity labels are its own. */
   has_config: boolean;
-  /** State id -> name, keyed as strings (JSON). Built-in table, overridden by the snapshot. */
+  /** State id → name, keyed as strings (JSON). Built-in table, overridden by the snapshot. */
   states: Record<string, string>;
   /** Fields whose value is a state id, so the chart can name it instead of plotting a bare u8. */
   state_fields: string[];
+}
+
+/** What a run says about itself before it has been indexed. Cheap: filesystem metadata
+ *  only, no export. `duration_s` is approximate (see backend/summary.py). */
+export interface RunSummary {
+  run_id: string;
+  cached: boolean;
+  size_bytes: number | null;
+  n_components: number;
+  duration_s: number | null;
+  duration_approx: boolean;
+  /** A <run>.toml exists beside the DB. False for runs recorded before snapshots. */
+  has_config: boolean;
 }
 
 export interface Series {
@@ -75,13 +88,13 @@ export interface SeriesResponse {
   series: Series[];
 }
 
-/** How one plotted series should be labelled: resolved by App from the run index and
+/** How one plotted series should be labelled — resolved by App from the run index and
  *  the names toggle, so Chart never has to know where a name came from. */
 export interface SeriesMeta {
   /** Display name for the line: the config role, or the Elodin entity. */
   label: string;
   unit: string;
   field: string;
-  /** State id -> name, for the fields whose value IS a state. null for everything else. */
+  /** State id → name, for the fields whose value IS a state. null for everything else. */
   valueNames: Record<string, string> | null;
 }

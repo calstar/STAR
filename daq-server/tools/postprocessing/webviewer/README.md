@@ -16,8 +16,10 @@ cd daq-server/tools/postprocessing/webviewer
 # open http://localhost:5173
 ```
 
-First open of a run triggers a one-time parquet export into `.cache/` (~20 s for
-a ~1.3 GB run); subsequent opens are instant.
+Opening a run is cheap: it shows what the run directory knows (component count, an
+approximate duration, size on disk) and nothing more. **Index this run** does the
+one-time parquet export into `.cache/` (~20 s per GB); after that the run opens straight
+into its plot. The Config tab needs no export.
 
 Single-process (build the frontend, serve everything from uvicorn):
 
@@ -39,6 +41,8 @@ Single-process (build the frontend, serve everything from uvicorn):
 - **Runs** — only timestamped runs (`daq_YYYYMMDD_HHMMSS`) are listed; ad-hoc
   DBs (`daq_live`, calibration, hand-named) are ignored. Past runs are immutable,
   so exporting is safe alongside a live collection writing to a *different* dir.
+- **Indexing is explicit** — selecting a run costs a few `stat`s, not an export. See
+  [Opening a run](#opening-a-run).
 - **Sensors** — grouped by family (PT, PT_Cal, TC, RTD, LC, ACT, CONTROLLER,
   BOARD). Meaningful fields are shown by default; raw/status/plumbing fields are
   behind the "all fields" toggle.
@@ -99,6 +103,27 @@ uPlot canvas ──toBlob()──▶ PNG
 .venv/bin/python -m pytest backend/ -q                 # data logic, run discovery, naming
 (cd frontend && npm test)                              # theme guardrails
 ```
+
+## Opening a run
+
+Plotting needs every component exported to parquet: tens of seconds and a few hundred MB
+of cache on a big run. That used to happen on selection, so it was spent on every
+mis-click. It is now an explicit **Index this run**, and selecting a run only reads
+`backend/summary.py`:
+
+| shown before indexing | where it comes from | exact? |
+|---|---|---|
+| components in the DB | count of component directories | exact, but *larger* than the indexed count: the export only resolves components it can name, the rest stay bare numeric ids |
+| duration | span between the oldest and newest component `data` mtime | **approximate**, shown with a `~`; runs 0.2-0.7 s short on a 20-35 s run because it measures writes, not samples |
+| on disk | `du -sk` (the data/index files are sparse 8 GiB each, so apparent size is useless) | exact |
+
+All of it is filesystem metadata, deliberately. elodin-db's on-disk layout is
+undocumented and version-specific; an attempt to read component names and row counts out
+of it directly produced a plausible-looking row count that was wrong for every component
+(2536 where the parquet had 314). Sizes, counts and mtimes cannot fail that way.
+
+`GET /components` therefore refuses an un-indexed run with **409** rather than exporting
+behind the caller's back; `POST /index` is the way to build one.
 
 ## Which clock the x-axis is
 
