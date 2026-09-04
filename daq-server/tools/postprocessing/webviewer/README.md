@@ -83,7 +83,12 @@ uPlot canvas ──toBlob()──▶ PNG
 
 ## Theme
 
-Dark-only, adopting the conventions the recovery-calculator enforces
+The header is the one the other STAR apps use: wordmark, rule, title (see
+`star-openrocket/frontend/src/App.tsx`). `star-wordmark.png` is synced from
+`assets/brand` by `scripts/sync-brand.sh`; the copy under `src/assets/` is generated, so
+edit the master and re-run the script.
+
+Dark-only otherwise, adopting the conventions the recovery-calculator enforces
 (`recovery-calculator/frontend/src/lib/theme.test.ts`): a `--color-*` token
 namespace where every text tier clears WCAG **AAA (7:1)** on every background, a
 `--text-*` scale that never drops below **13px**, and a chart palette kept as
