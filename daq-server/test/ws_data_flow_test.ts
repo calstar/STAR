@@ -90,7 +90,7 @@ function parseOnlyTests(): Set<string> | null {
   }
   const allowed = new Set([
     'sensor_config', 'sensor_data', 'cal_stability', 'raw_cal_presence',
-    'cal_values', 'cal_model_select', 'cal_robust_learn',
+    'cal_values', 'cal_model_select', 'cal_robust_learn', 'cal_shared_points', 'cal_clear',
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
     'controller', 'timestamps', 'conservation', 'board_logs', 'board_log_mode',
@@ -1818,33 +1818,34 @@ function evalCubic(adc: number, c: [number, number, number, number]): number {
   return Math.max(-3000, Math.min(20000, v));  // matches PTCalibration.cpp clamp
 }
 
-// ── Test: calibrated PT VALUES equal the factory cubic applied to the raw ADC ─
+// ── Test: physics conversion is correct, and an uncalibrated cubic reads nothing (0) ─
+// Under the physics-or-nothing baseline there is no factory cubic: a sensor set to `physics` streams
+// the datasheet closed form, and a `cubic`/`robust` sensor with no captured points streams 0. This
+// replaces the old "matches factory cubic" check (that baseline no longer exists).
 async function testCalibratedValueCorrectness(ws: WebSocket): Promise<void> {
-  console.log('\n🎯 Test 16: Calibrated PT values (PT1_Cal ≈ factory_cubic(raw ADC))');
-  const coeffs = loadFactoryPtCoeffs();
-  if (!coeffs) { assert(false, 'cal_values: could not read factory PT coefficients'); return; }
-
+  console.log('\n🎯 Test 16: physics conversion correct + uncalibrated cubic reads 0');
   const { cal, adc } = await collectPtCal(ws, 5000);
-  let checked = 0, anyNonZero = false;
-  const fails: string[] = [];
-  for (let ch = 1; ch <= 10; ch++) {
-    const cs = cal.get(ch), as = adc.get(ch), c = coeffs.get(ch);
-    if (!cs || cs.length < 3 || !as || as.length < 3 || !c) continue;
-    const a = median(as), psi = median(cs), expected = evalCubic(a, c);
-    const tol = Math.max(Math.abs(expected) * 0.03, 5);  // 3% or 5 PSI
-    checked++;
-    if (Math.abs(psi) > 1) anyNonZero = true;
-    if (Math.abs(psi - expected) > tol) {
-      fails.push(`CH${ch}: got ${psi.toFixed(1)} expected ${expected.toFixed(1)} PSI (adc ${a.toFixed(0)}, tol ${tol.toFixed(1)})`);
-    } else if (VERBOSE) {
-      console.log(`  ✓ CH${ch}: ${psi.toFixed(1)} ≈ ${expected.toFixed(1)} PSI (adc ${a.toFixed(0)})`);
-    }
+  const ADC_MAX = 2147483648; // 2^31
+
+  // test_integration.sh sets "GSE Low" (pt_board conn 2 → CH2) to physics; pt_board is 0-5V
+  // ratiometric with the default 1000 PSI full scale, so PT_Cal = (adc/2^31)*1000.
+  const phCal = cal.get(2), phAdc = adc.get(2);
+  if (!phCal || phCal.length < 3 || !phAdc || phAdc.length < 3) {
+    assert(false, 'cal_values: no PT1_Cal.CH2 (physics sensor) samples'); return;
   }
-  assert(checked >= 5, `cal_values: checked ${checked} LP PT channel(s) against factory cubic (need ≥5)`);
-  assert(anyNonZero, 'cal_values: PT_Cal is not uniformly 0 (guards the "no JSON cal loaded → 0 PSI" regression)');
-  assert(fails.length === 0,
-    fails.length === 0 ? 'cal_values: every LP PT calibrated value matches factory_cubic(ADC)'
-                       : `cal_values: ${fails.length} channel(s) off: ${fails.join('; ')}`);
+  const a2 = median(phAdc), psi2 = median(phCal), expected2 = (a2 / ADC_MAX) * 1000;
+  const tol2 = Math.max(Math.abs(expected2) * 0.03, 5);
+  assert(Math.abs(psi2) > 1, 'cal_values: physics CH2 is not 0 (datasheet conversion active)');
+  assert(Math.abs(psi2 - expected2) <= tol2,
+    `cal_values: physics CH2 = ${psi2.toFixed(1)} ≈ (adc/2^31)*1000 = ${expected2.toFixed(1)} (adc ${a2.toFixed(0)}, tol ${tol2.toFixed(1)})`);
+
+  // A cubic sensor with no captured points reads nothing. CH1 (Fuel Upstream) is cubic + uncalibrated.
+  const c1 = cal.get(1);
+  if (c1 && c1.length >= 3) {
+    const psi1 = median(c1);
+    assert(Math.abs(psi1) < 1,
+      `cal_values: uncalibrated cubic CH1 reads ~0 (physics-or-nothing baseline) — got ${psi1.toFixed(2)}`);
+  }
 }
 
 // ── Test: the per-sensor cubic/robust config choice is respected ─────────────
@@ -1871,8 +1872,64 @@ async function testCalibrationModelSelection(): Promise<void> {
   // cubic. "Fuel Upstream" is conn 1 → uid 2101.
   const robust = state['2105']?.active_model;
   const cubic = state['2101']?.active_model;
+  const physics = state['2102']?.active_model;  // GSE Low, conn 2, set to physics
   assert(robust === 'robust', `cal_model_select: uid 2105 (Ox Upstream) active_model=robust — config respected (got ${robust})`);
   assert(cubic === 'cubic', `cal_model_select: uid 2101 (Fuel Upstream) active_model=cubic (got ${cubic})`);
+  assert(physics === 'physics', `cal_model_select: uid 2102 (GSE Low) active_model=physics (got ${physics})`);
+}
+
+// Read the service's cubic_calibration.json record for a uid (fresh each capture/clear).
+function readCalRecord(uid: number): Record<string, unknown> | null {
+  const dir = findCalDir();
+  if (!dir) return null;
+  try {
+    const j = JSON.parse(fs.readFileSync(`${dir}/cubic_calibration.json`, 'utf-8'));
+    return (j?.cubic_state?.[String(uid)] as Record<string, unknown>) ?? null;
+  } catch { return null; }
+}
+
+// ── Test: one capture feeds BOTH the cubic fit and the robust learner (shared points) ─
+// The headline guarantee of the merge. Captures on a CUBIC sensor must land in the cubic store's
+// points AND be fed to the robust learner — the service samples robust into `fitCurve` for any
+// sensor with points, so a populated fitCurve reflecting the taught PSI proves robust got them too.
+// (In sim the ADC is constant per channel, so a real cubic FIT can't form — this checks the routing,
+// not the fit quality.)
+async function testSharedPoints(ws: WebSocket): Promise<void> {
+  console.log('\n🔗 Test 19: one capture feeds both cubic + robust (shared points)');
+  const CH = 3, BOARD = 21, UID = BOARD * 100 + CH, REF = 100;  // Fuel Downstream — cubic by config
+  for (let i = 0; i < 10; i++) {
+    send(ws, { type: 'calibration_command', timestamp: Date.now(),
+      payload: { commandType: 'capture_point', sensorId: CH, boardId: BOARD, referencePressure: REF } });
+    await sleep(120);
+  }
+  await sleep(1500);
+  let rec: Record<string, unknown> | null = null;
+  for (let i = 0; i < 8; i++) { rec = readCalRecord(UID); if (rec && (rec.numPoints as number ?? 0) > 0) break; await sleep(400); }
+  if (!rec) { assert(false, `cal_shared_points: no record for uid ${UID}`); return; }
+  const numPoints = rec.numPoints as number ?? 0;
+  const fc = (Array.isArray(rec.fitCurve) ? rec.fitCurve : []) as { adc: number; psi: number }[];
+  const medRob = fc.length ? median(fc.map((p) => p.psi)) : NaN;
+  console.log(`  uid ${UID}: numPoints=${numPoints} fitCurve=${fc.length} robustMedian=${Number.isFinite(medRob) ? medRob.toFixed(1) : 'n/a'}`);
+  assert(numPoints >= 1, `cal_shared_points: cubic store recorded ${numPoints} point(s)`);
+  assert(fc.length > 0, `cal_shared_points: robust fitCurve populated on a cubic sensor (${fc.length}) — the capture fed robust too`);
+  assert(Number.isFinite(medRob) && Math.abs(medRob - REF) < 40,
+    `cal_shared_points: robust learned ~${REF} from the cubic-mode capture (fitCurve median ${Number.isFinite(medRob) ? medRob.toFixed(1) : 'n/a'})`);
+}
+
+// ── Test: clear returns a sensor to nothing (points + robust wiped) ─ (runs after cal_shared_points)
+async function testClearToNothing(ws: WebSocket): Promise<void> {
+  console.log('\n🧹 Test 20: clear wipes points + robust → nothing');
+  const CH = 3, BOARD = 21, UID = BOARD * 100 + CH;
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'new_calibration', sensorId: CH, boardId: BOARD } });
+  await sleep(1500);
+  let rec: Record<string, unknown> | null = null;
+  for (let i = 0; i < 8; i++) { rec = readCalRecord(UID); if (rec && (rec.numPoints as number ?? 0) === 0) break; await sleep(400); }
+  if (!rec) { assert(false, `cal_clear: no record for uid ${UID}`); return; }
+  const numPoints = rec.numPoints as number ?? -1;
+  const fc = (Array.isArray(rec.fitCurve) ? rec.fitCurve : []) as unknown[];
+  assert(numPoints === 0, `cal_clear: captured points wiped (numPoints ${numPoints})`);
+  assert(fc.length === 0, `cal_clear: robust preview curve cleared (${fc.length} samples)`);
 }
 
 // ── Test: the robust stack actually learns (and the cubic channel is unaffected) ─
@@ -2764,6 +2821,9 @@ async function main(): Promise<void> {
     // Truly last: this drives capture commands that mutate the robust channel's learned state, so it
     // must run after every read-only value/stability/conservation check.
     if (IS_THIN && canRunCommandTests && runTest('cal_robust_learn')) await testRobustLearns(ws);
+    // Shared-points then clear run last (they mutate CH3's cubic store + robust state).
+    if (IS_THIN && canRunCommandTests && runTest('cal_shared_points')) await testSharedPoints(ws);
+    if (IS_THIN && canRunCommandTests && runTest('cal_clear')) await testClearToNothing(ws);
   } finally {
     ws.close();
   }

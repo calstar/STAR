@@ -414,11 +414,12 @@ sedi "s/^send_port = 5005/send_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 sedi 's/^fallback_fuel_duty_cycle = 0.0/fallback_fuel_duty_cycle = 0.1/' "$TEST_CONFIG"
 sedi 's/^fallback_ox_duty_cycle = 0.0/fallback_ox_duty_cycle = 0.1/' "$TEST_CONFIG"
 
-# Exercise the per-sensor cubic/robust selector: make one LP PT sensor (Ox Upstream, pt_board conn 5
-# -> uid 2105) robust; the rest stay cubic. ws_data_flow_test's cal_model_select verifies the config
-# choice is honored, and cal_robust_learn verifies the robust stack learns. Anchored to the
-# [calibration_model_pt_board] line ("... = \"cubic\""), not sensor_roles (= 5) or abort_pts (= 400).
+# Exercise the per-sensor model selector: make Ox Upstream (pt_board conn 5 -> uid 2105) robust and
+# GSE Low (conn 2 -> uid 2102, CH2) physics; the rest stay cubic. cal_model_select verifies the
+# config choice is honored, cal_values verifies the physics conversion, and cal_robust_learn verifies
+# the robust stack learns. Anchored to the [calibration_model_pt_board] lines ("... = \"cubic\"").
 sedi 's/^"Ox Upstream" = "cubic"$/"Ox Upstream" = "robust"/' "$TEST_CONFIG"
+sedi 's/^"GSE Low" = "cubic"$/"GSE Low" = "physics"/' "$TEST_CONFIG"
 
 cat >> "$TEST_CONFIG" << EOF
 
@@ -597,6 +598,10 @@ if [ -n "$CALIB_SVC" ]; then
   # and breaks cal_values (which expects pristine factory). A missing file just seeds from factory.
   CAL_ADJ="$REPO_ROOT/.tmp/integration_adjustments_$$.json"
   rm -f "$CAL_ADJ" 2>/dev/null || true
+  # Start from a clean operator-cubic store (physics-or-nothing: uncalibrated cubic reads 0), the way
+  # a fresh checkout does — otherwise a stale cubic_calibration.json from a prior local run would
+  # carry captured cubics into this run. The service regenerates it at startup.
+  rm -f "$REPO_ROOT/scripts/calibration/calibrations/cubic_calibration.json" 2>/dev/null || true
   (cd "$REPO_ROOT" && "$CALIB_SVC" --config "$TEST_CONFIG" --adjustments "$CAL_ADJ" \
     --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
     > "$REPO_ROOT/.tmp/integration_calibration_$$.log" 2>&1) &

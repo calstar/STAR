@@ -5,26 +5,22 @@ import { useSensorStore, useGetSensorValue, useSensorDataVersion, useLoadCellFor
 import { getWebSocketClient } from '@/lib/websocket';
 import {
   MessageType,
-  SensorUpdate,
   CalibrationChannelStatus,
   CalibrationStatusPayload,
   CalibrationCommand,
-  CalibrationConfidence,
   CubicCalibrationChannel,
 } from '@/lib/types';
 import { useSensorConfig, SensorConfig } from '@/lib/sensor-config';
 import { getApiBaseUrl } from '@/lib/websocket';
-import { CalibrationChart } from '@/components/calibration/CalibrationChart';
+import { CalibrationChart, PhysicsParams, CURVE_COLORS } from '@/components/calibration/CalibrationChart';
 
-// ── PT_CHANNELS is now derived from config.toml via useSensorConfig().
-// The hardcoded list below is removed.
+type Model = 'cubic' | 'robust' | 'physics';
 
-const CONFIDENCE_COLORS: Record<CalibrationConfidence, string> = {
-  MAXIMUM: 'text-green-400 border-green-700 bg-green-900/30',
-  HIGH: 'text-blue-400 border-blue-700 bg-blue-900/30',
-  MEDIUM: 'text-yellow-400 border-yellow-700 bg-yellow-900/30',
-  LOW: 'text-orange-400 border-orange-700 bg-orange-900/30',
-  UNCALIBRATED: 'text-gray-500 border-gray-700 bg-gray-800/40',
+// Per-model badge styling — the whole point is that a sensor's selected model reads at a glance.
+const MODEL_BADGE: Record<Model, string> = {
+  cubic: 'text-sky-300 border-sky-700 bg-sky-900/40',
+  robust: 'text-violet-300 border-violet-700 bg-violet-900/40',
+  physics: 'text-orange-300 border-orange-700 bg-orange-900/40',
 };
 
 function fmtPsi(v: number | null | undefined): string {
@@ -32,7 +28,6 @@ function fmtPsi(v: number | null | undefined): string {
   if (Math.abs(v) > 99999) return '---';
   return v.toFixed(2);
 }
-
 function fmtAdc(v: number | null | undefined): string {
   if (v === null || v === undefined || !isFinite(v)) return '---';
   return v.toLocaleString();
@@ -40,8 +35,8 @@ function fmtAdc(v: number | null | undefined): string {
 
 const LBF_TO_KG = 0.453592;
 
-// ── Load cell 0-point card: show offset-adjusted force + Zero button ───────────
-function LoadCellZeroCard({ calEntity, label, onZero }: { calEntity: string; label: string; getSensorValue: (e: string, c: string) => number | null; onZero: () => void }) {
+// ── Load cell 0-point card (separate concern; kept until LC calibration gets its own home) ──────
+function LoadCellZeroCard({ calEntity, label, onZero }: { calEntity: string; label: string; onZero: () => void }) {
   const forceLbf = useLoadCellForceLbf(calEntity);
   const kg = forceLbf != null && Number.isFinite(forceLbf) ? forceLbf * LBF_TO_KG : null;
   const display = kg != null ? kg.toFixed(2) : '—';
@@ -49,31 +44,30 @@ function LoadCellZeroCard({ calEntity, label, onZero }: { calEntity: string; lab
     <div className="flex items-center gap-2 rounded border border-gray-700 bg-card px-3 py-2">
       <span className="text-[10px] font-bold text-gray-500 w-16">{label}</span>
       <span className="text-sm font-mono text-green-400 tabular-nums w-14">{display} kg</span>
-      <button
-        type="button"
-        onClick={onZero}
-        className="px-2 py-1 text-[10px] font-bold rounded border border-amber-600 bg-amber-900/30 text-amber-300 hover:bg-amber-800/50"
-      >
+      <button type="button" onClick={onZero}
+        className="px-2 py-1 text-[10px] font-bold rounded border border-amber-600 bg-amber-900/30 text-amber-300 hover:bg-amber-800/50">
         Zero
       </button>
     </div>
   );
 }
 
-// ── Single channel card — compact and readable ─────────────────────────────────
+// ── Single PT channel card ──────────────────────────────────────────────────────
 interface ChannelCardProps {
   ch: SensorConfig;
+  model: Model;
   status?: CalibrationChannelStatus;
   rawAdc?: number | null;
   calPsi?: number | null;
+  numPoints: number;
   selected?: boolean;
   onSelect?: () => void;
   onCapture: (sensorId: number, boardId: number, refPsi: number) => void;
 }
 
-function ChannelCard({ ch, status, rawAdc, calPsi, selected, onSelect, onCapture }: ChannelCardProps) {
+function ChannelCard({ ch, model, status, rawAdc, calPsi, numPoints, selected, onSelect, onCapture }: ChannelCardProps) {
   const [refInput, setRefInput] = useState('');
-  const conf = status?.confidence ?? 'UNCALIBRATED';
+  const isPhysics = model === 'physics';
   const isDrift = status?.driftDetected ?? false;
 
   const handleCapture = () => {
@@ -89,76 +83,50 @@ function ChannelCard({ ch, status, rawAdc, calPsi, selected, onSelect, onCapture
       className={`rounded border p-2.5 flex flex-col gap-1.5 transition-all bg-card cursor-pointer
         ${selected ? 'ring-2 ring-blue-500 ' : ''}${isDrift ? 'border-red-600 shadow-[0_0_10px_rgba(239,68,68,0.2)]' : 'border-gray-800'}`}
     >
-      {/* Header row: CH + name + confidence */}
+      {/* Header: CH + name + MODEL badge */}
       <div className="flex items-center justify-between gap-1">
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="text-[10px] font-bold text-gray-500">CH{ch.id}</span>
           <span className="text-xs font-semibold text-text truncate">{ch.role}</span>
         </div>
-        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border flex-shrink-0 ${CONFIDENCE_COLORS[conf]}`}>
-          {conf === 'UNCALIBRATED' ? 'UNCAL' : conf}
+        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border flex-shrink-0 uppercase ${MODEL_BADGE[model]}`}>
+          {model}
         </span>
       </div>
 
       {/* Big PSI readout */}
       <div className="bg-gray-900/60 rounded px-2 py-1.5 flex items-baseline justify-between">
         <span className="text-[10px] text-gray-500 font-bold">PSI</span>
-        <span className="text-xl font-bold font-mono tabular-nums text-green-400 leading-none">
-          {fmtPsi(calPsi)}
-        </span>
+        <span className="text-xl font-bold font-mono tabular-nums text-green-400 leading-none">{fmtPsi(calPsi)}</span>
       </div>
 
-      {/* ADC + RLS count (compact row) */}
+      {/* ADC + points/RLS */}
       <div className="flex items-center justify-between text-[10px] font-mono text-gray-500 px-0.5">
         <span>ADC {fmtAdc(rawAdc)}</span>
-        <span>RLS {status?.rlsUpdateCount ?? 0}</span>
+        <span>{model === 'robust' ? `RLS ${status?.rlsUpdateCount ?? 0}` : `${numPoints} pts`}</span>
       </div>
 
-      {/* GLR drift bar — tiny but informative */}
-      {status && (
-        <div className="flex items-center gap-1.5 px-0.5">
-          <span className="text-[9px] text-gray-600">GLR</span>
-          <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-300"
-              style={{
-                width: `${Math.min((status.glrStat / 6) * 100, 100)}%`,
-                background: status.glrStat > 3 ? '#EF4444' : status.glrStat > 2 ? '#F59E0B' : '#22C55E',
-              }}
-            />
-          </div>
-          <span className="text-[9px] font-mono text-gray-500 w-6 text-right">
-            {status.glrStat.toFixed(1)}
-          </span>
-          {isDrift && <span className="text-[9px] text-red-400 font-bold animate-pulse">⚠</span>}
-        </div>
-      )}
-
-      {/* Capture input — only for channels in calibration sequence (low-pressure PTs) */}
+      {/* Capture — disabled in physics (points are meaningless for a datasheet conversion) */}
       <div className="flex gap-1 mt-auto pt-1 border-t border-gray-800/60">
-        {ch.inCalibrationSequence ? (
+        {isPhysics ? (
+          <span className="text-[10px] text-gray-500 italic">Physics — no points</span>
+        ) : (
           <>
             <input
-              type="number"
-              step="any"
-              placeholder="Ref PSI"
-              value={refInput}
+              type="number" step="any" placeholder="Ref PSI" value={refInput}
               onChange={(e) => setRefInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleCapture()}
-              className="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-xs
-                         font-mono text-text placeholder-gray-600 focus:outline-none focus:border-blue-500"
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-xs font-mono text-text placeholder-gray-600 focus:outline-none focus:border-blue-500"
             />
             <button
-              onClick={handleCapture}
+              onClick={(e) => { e.stopPropagation(); handleCapture(); }}
               disabled={!refInput}
-              className="px-2 py-1 text-[10px] font-bold rounded bg-blue-700 hover:bg-blue-600
-                         disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-white"
+              className="px-2 py-1 text-[10px] font-bold rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-white"
             >
               CAPTURE
             </button>
           </>
-        ) : (
-          <span className="text-[10px] text-gray-500 italic">HP — no cal</span>
         )}
       </div>
     </div>
@@ -167,62 +135,78 @@ function ChannelCard({ ch, status, rawAdc, calPsi, selected, onSelect, onCapture
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function CalibrationPage() {
-  useSensorDataVersion(); // re-render on sensor flush so getSensorValue() shows fresh data
+  useSensorDataVersion();
   const getSensorValue = useGetSensorValue();
   const ws = getWebSocketClient();
   const ptChannels = useSensorConfig();
 
   const [calStatus, setCalStatus] = useState<CalibrationStatusPayload | null>(null);
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-  const [calFilePath, setCalFilePath] = useState<string | null>(null);
-  const [phase2Active, setPhase2Active] = useState(true); // reflects backend flag; RLS lives in calibration_service
-  const [numReferenceGauges, setNumReferenceGauges] = useState(1);
   const [singleRefPsi, setSingleRefPsi] = useState('');
   const [selectedBoardId, setSelectedBoardId] = useState<number | 'all'>('all');
   const [cubicState, setCubicState] = useState<Record<string, CubicCalibrationChannel>>({});
   const [selectedUid, setSelectedUid] = useState<number | null>(null);
+  const [overlay, setOverlay] = useState<{ cubic: boolean; robust: boolean; physics: boolean }>({ cubic: true, robust: true, physics: true });
 
-  // Gauge → PT channel mapping (when multiple gauges): gauge index 1..N → channel ids
-  const [gaugeToChannels, setGaugeToChannels] = useState<Record<number, number[]>>({ 1: [1] });
-  const [gaugeRefs, setGaugeRefs] = useState<Record<number, string>>({});
+  // Full config (for physics params + LC list). Boards keyed by config key (e.g. "pt_board").
+  const [cfgBoards, setCfgBoards] = useState<Record<string, any>>({});
+  const [cfgRoot, setCfgRoot] = useState<Record<string, any>>({});
   const [lcChannels, setLcChannels] = useState<{ calEntity: string; label: string }[]>([]);
   const setLoadCellZeroOffset = useSensorStore((s) => s.setLoadCellZeroOffset);
 
-  // This page shows only valves configured for the robust model (the service reports each uid's
-  // active_model in the calibration record); cubic-configured valves live on the Cubic page.
-  const robustChannels = useMemo(
-    () => ptChannels.filter((c) => cubicState[String(c.boardId * 100 + c.id)]?.active_model === 'robust'),
-    [ptChannels, cubicState],
-  );
-  const availableBoards = Array.from(new Set(robustChannels.map((c) => c.boardId))).sort((a, b) => a - b);
-  const visibleChannels = robustChannels.filter((c) => selectedBoardId === 'all' || c.boardId === selectedBoardId);
+  // Each sensor's streaming model (service truth); default by interface when the record is absent.
+  const modelOf = useCallback((uid: number): Model => {
+    const rec = cubicState[String(uid)];
+    if (rec?.active_model) return rec.active_model as Model;
+    const ch = ptChannels.find((c) => c.boardId * 100 + c.id === uid);
+    return ch?.isHpPt ? 'physics' : 'cubic';
+  }, [cubicState, ptChannels]);
+
+  // board_id → { key, board } so we can resolve per-sensor physics params from config.
+  const boardById = useMemo(() => {
+    const m = new Map<number, { key: string; board: any }>();
+    for (const [key, board] of Object.entries(cfgBoards)) {
+      if (board && typeof (board as any).board_id === 'number') m.set((board as any).board_id, { key, board });
+    }
+    return m;
+  }, [cfgBoards]);
+
+  const physicsParamsOf = useCallback((uid: number): PhysicsParams | undefined => {
+    const ch = ptChannels.find((c) => c.boardId * 100 + c.id === uid);
+    if (!ch) return undefined;
+    const entry = boardById.get(ch.boardId);
+    if (!entry) return undefined;
+    const { key, board } = entry;
+    const isLoop = board.pt_type === '4-20 mA absolute' || board.hp_pt_full_scale_psi != null;
+    const fsMap = cfgRoot[`calibration_full_scale_${key}`] as Record<string, number> | undefined;
+    const rsMap = cfgRoot[`calibration_sense_resistor_${key}`] as Record<string, number> | undefined;
+    const fullScale = (ch.role && fsMap?.[ch.role] != null) ? fsMap[ch.role] : (isLoop ? (board.hp_pt_full_scale_psi ?? 5000) : 1000);
+    const senseResistor = (ch.role && rsMap?.[ch.role] != null) ? rsMap[ch.role] : (board.hp_pt_sense_resistor_ohms ?? 120);
+    return { fullScale, isLoop, senseResistor, adcRefVoltage: board.adc_ref_voltage ?? 2.5 };
+  }, [ptChannels, boardById, cfgRoot]);
+
+  // Every PT sensor appears here; the model badge says which calibration each uses.
+  const availableBoards = Array.from(new Set(ptChannels.map((c) => c.boardId))).sort((a, b) => a - b);
+  const visibleChannels = ptChannels.filter((c) => selectedBoardId === 'all' || c.boardId === selectedBoardId);
   const selectedState = selectedUid != null ? cubicState[String(selectedUid)] : undefined;
   const selectedChannel = selectedUid != null ? ptChannels.find((c) => c.boardId * 100 + c.id === selectedUid) : undefined;
+  const selectedModel = selectedUid != null ? modelOf(selectedUid) : undefined;
 
-  // Default mapping when number of gauges changes: Gauge 1→[1], Gauge 2→[2], ...
-  useEffect(() => {
-    const n = numReferenceGauges;
-    setGaugeToChannels((prev) => {
-      const next = { ...prev };
-      for (let g = 1; g <= n; g++) {
-        if (!next[g]?.length) next[g] = [g];
-      }
-      return next;
-    });
-  }, [numReferenceGauges]);
-
+  // Load full config once (physics params + LC channels).
   useEffect(() => {
     fetch(`${getApiBaseUrl()}/api/config`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((data: { config?: { boards?: Record<string, { type?: string; enabled?: boolean; active_connectors?: number[]; num_sensors?: number }> } } | null) => {
-        const boards = data?.config?.boards;
-        if (!boards) return;
+      .then((data: { config?: Record<string, any> } | null) => {
+        const cfg = data?.config;
+        if (!cfg) return;
+        setCfgRoot(cfg);
+        const boards = (cfg.boards ?? {}) as Record<string, any>;
+        setCfgBoards(boards);
         const chs: number[] = [];
         for (const board of Object.values(boards)) {
-          if (board?.type !== 'LC' || board.enabled === false) continue;
-          const active = Array.isArray(board.active_connectors) && board.active_connectors.length > 0
-            ? board.active_connectors
-            : Array.from({ length: board.num_sensors ?? 10 }, (_, i) => i + 1);
+          if ((board as any)?.type !== 'LC' || (board as any).enabled === false) continue;
+          const active = Array.isArray((board as any).active_connectors) && (board as any).active_connectors.length > 0
+            ? (board as any).active_connectors
+            : Array.from({ length: (board as any).num_sensors ?? 10 }, (_, i) => i + 1);
           chs.push(...active);
         }
         setLcChannels(chs.map((ch) => ({ calEntity: `LC_Cal.CH${ch}`, label: `LC Ch${ch}` })));
@@ -231,44 +215,29 @@ export default function CalibrationPage() {
   }, []);
 
   useEffect(() => {
-    const u2 = ws.on(MessageType.CALIBRATION_STATUS, (p: unknown) => {
-      const payload = p as CalibrationStatusPayload;
-      setCalStatus(payload);
-      setLastUpdate(new Date(payload.timestamp ?? Date.now()));
-      setPhase2Active(payload.phase2Enabled);
-      if (payload.calibrationFilePath != null) setCalFilePath(payload.calibrationFilePath);
-    });
+    const u2 = ws.on(MessageType.CALIBRATION_STATUS, (p: unknown) => setCalStatus(p as CalibrationStatusPayload));
     const u3 = ws.on(MessageType.ERROR, (p: unknown) => {
-      const payload = p as { message?: string };
-      const msg = payload?.message ?? 'Unknown error';
+      const msg = (p as { message?: string })?.message ?? 'Unknown error';
       console.error('[Calibration] Backend error:', msg);
       alert(`❌ Calibration: ${msg}`);
     });
     return () => { u2(); u3(); };
   }, [ws]);
 
-  // Poll calibration status (backend no longer syncs every 2s)
   useEffect(() => {
     const poll = async () => {
       try {
         const res = await fetch(`${getApiBaseUrl()}/api/calibration_status`);
         if (!res.ok) return;
         const data = await res.json();
-        if (data && !data.error) {
-          setCalStatus(data as CalibrationStatusPayload);
-          setLastUpdate(new Date(data.timestamp ?? Date.now()));
-          setPhase2Active(data.phase2Enabled);
-          if (data.calibrationFilePath != null) setCalFilePath(data.calibrationFilePath);
-        }
-      } catch (_) { /* ignore */ }
+        if (data && !data.error) setCalStatus(data as CalibrationStatusPayload);
+      } catch { /* ignore */ }
     };
     poll();
     const id = setInterval(poll, 2000);
     return () => clearInterval(id);
   }, []);
 
-  // The service reports each valve's model + captured robust points in the cubic-calibration record;
-  // poll it to filter this page and draw the selected valve's points/curve.
   const fetchCubic = useCallback(async () => {
     try {
       const res = await fetch(`${getApiBaseUrl()}/api/cubic_calibration`);
@@ -277,7 +246,7 @@ export default function CalibrationPage() {
       if (data && typeof data.cubic_state === 'object' && data.cubic_state) {
         setCubicState(data.cubic_state as Record<string, CubicCalibrationChannel>);
       }
-    } catch { /* ignore transient fetch errors */ }
+    } catch { /* ignore */ }
   }, []);
 
   useEffect(() => {
@@ -288,7 +257,6 @@ export default function CalibrationPage() {
 
   const sendCalCmd = useCallback((cmd: CalibrationCommand) => {
     ws.send({ type: MessageType.CALIBRATION_COMMAND, timestamp: Date.now(), payload: cmd });
-    // Nudge a refetch after the service has processed + persisted the capture/clear.
     setTimeout(fetchCubic, 350);
     setTimeout(fetchCubic, 900);
   }, [ws, fetchCubic]);
@@ -299,84 +267,47 @@ export default function CalibrationPage() {
 
   const handleNewCalibration = useCallback(() => {
     if (!selectedChannel) return;
-    if (typeof window !== 'undefined' && !window.confirm(`Start a new calibration for ${selectedChannel.role || 'CH' + selectedChannel.id}? Clears its captured points and resets the robust adjustment.`)) return;
+    if (typeof window !== 'undefined' && !window.confirm(`Clear the calibration for ${selectedChannel.role || 'CH' + selectedChannel.id}? Drops its captured points and resets both cubic and robust to nothing (0).`)) return;
     sendCalCmd({ commandType: 'new_calibration', sensorId: selectedChannel.id, boardId: selectedChannel.boardId });
   }, [selectedChannel, sendCalCmd]);
 
-  const handleZeroAll = useCallback(() => {
+  const handleZeroAllRobust = useCallback(() => {
     sendCalCmd({ commandType: 'zero_all' });
-  }, [sendCalCmd]);
-
-  const handleClearCalibration = useCallback(() => {
-    if (typeof window !== 'undefined' && !window.confirm('Clear all calibration and start from scratch?')) return;
-    sendCalCmd({ commandType: 'clear_calibration' });
   }, [sendCalCmd]);
 
   const handleCaptureAll = useCallback(() => {
     const psi = parseFloat(singleRefPsi);
     if (isNaN(psi)) return;
     for (const ch of visibleChannels) {
-      if (!ch.inCalibrationSequence) continue;
+      if (modelOf(ch.boardId * 100 + ch.id) === 'physics') continue; // no points in physics
       sendCalCmd({ commandType: 'capture_point', sensorId: ch.id, boardId: ch.boardId, referencePressure: psi });
     }
     setSingleRefPsi('');
-  }, [sendCalCmd, singleRefPsi, visibleChannels]);
-
-  const toggleGaugeChannel = useCallback((gauge: number, uniqueId: number) => {
-    setGaugeToChannels((prev) => {
-      const list = prev[gauge] ?? [];
-      const next = list.includes(uniqueId) ? list.filter((c) => c !== uniqueId) : [...list, uniqueId].sort((a, b) => a - b);
-      return { ...prev, [gauge]: next };
-    });
-  }, []);
-
-  const handleCaptureByGauges = useCallback(() => {
-    for (let g = 1; g <= numReferenceGauges; g++) {
-      const refStr = gaugeRefs[g];
-      const ref = parseFloat(refStr ?? '');
-      if (isNaN(ref)) continue;
-      const uniqueIds = gaugeToChannels[g] ?? [];
-      for (const uid of uniqueIds) {
-        // Find by unique board*100 + channel
-        const ch = ptChannels.find(c => (c.boardId * 100 + c.id) === uid);
-        if (ch) {
-          sendCalCmd({ commandType: 'capture_point', sensorId: ch.id, boardId: ch.boardId, referencePressure: ref });
-        }
-      }
-    }
-    setGaugeRefs({});
-  }, [sendCalCmd, numReferenceGauges, gaugeToChannels, gaugeRefs, ptChannels]);
+  }, [sendCalCmd, singleRefPsi, visibleChannels, modelOf]);
 
   const handleSave = useCallback(() => {
     sendCalCmd({ commandType: 'save_coefficients' });
   }, [sendCalCmd]);
 
-  const statusMap = new Map<number, CalibrationChannelStatus>(
-    (calStatus?.channels ?? []).map((c) => [c.sensorId, c])
-  );
+  const statusMap = new Map<number, CalibrationChannelStatus>((calStatus?.channels ?? []).map((c) => [c.sensorId, c]));
+  const getStatus = (channelId: number, boardId: number) => statusMap.get(boardId * 100 + channelId);
 
-  const getStatus = (channelId: number, boardId: number) => {
-    return statusMap.get(boardId * 100 + channelId);
-  };
-
-  const driftCount = (calStatus?.channels ?? []).filter(c => c.driftDetected).length;
-  const totalRls = (calStatus?.channels ?? []).reduce((s, c) => s + (c.rlsUpdateCount ?? 0), 0);
+  const counts = useMemo(() => {
+    const c = { cubic: 0, robust: 0, physics: 0 };
+    for (const ch of ptChannels) c[modelOf(ch.boardId * 100 + ch.id)]++;
+    return c;
+  }, [ptChannels, modelOf]);
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden">
-
       {/* ── Toolbar ─────────────────────────────────────────────────────── */}
       <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 border-b border-gray-800 bg-card">
         <div className="flex items-center gap-4">
-          <h1 className="text-lg font-bold tracking-tight">Robust Calibration</h1>
-          <span className="text-xs text-gray-400 font-semibold bg-gray-800 px-2 py-0.5 rounded uppercase tracking-wider">
-            Single Pipeline
-          </span>
+          <h1 className="text-lg font-bold tracking-tight">PT Calibration</h1>
           <span className="text-xs text-gray-500 font-mono">
-            {calStatus ? `${(calStatus.channels ?? []).length} ch` : '—'}
-            {' · '}
-            {totalRls} RLS
-            {driftCount > 0 && <span className="text-red-400 ml-1">· {driftCount} drift</span>}
+            <span className="text-sky-300">{counts.cubic} cubic</span>{' · '}
+            <span className="text-violet-300">{counts.robust} robust</span>{' · '}
+            <span className="text-orange-300">{counts.physics} physics</span>
           </span>
         </div>
 
@@ -385,186 +316,55 @@ export default function CalibrationPage() {
           <select
             value={selectedBoardId}
             onChange={(e) => setSelectedBoardId(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-            className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-text mr-4"
+            className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-text mr-3"
           >
             <option value="all">All</option>
-            {availableBoards.map((bId) => (
-              <option key={bId} value={bId}>Board {bId}</option>
-            ))}
+            {availableBoards.map((bId) => (<option key={bId} value={bId}>Board {bId}</option>))}
           </select>
 
-          <span className="text-[10px] text-gray-500 mr-1">Ref gauges:</span>
-          <select
-            value={numReferenceGauges}
-            onChange={(e) => setNumReferenceGauges(Number(e.target.value))}
-            className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-text"
-          >
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
-              <option key={n} value={n}>{n}</option>
-            ))}
-          </select>
-          {numReferenceGauges === 1 && (
-            <>
-              <input
-                type="number"
-                step="any"
-                placeholder="Ref PSI (all ch)"
-                value={singleRefPsi}
-                onChange={(e) => setSingleRefPsi(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleCaptureAll()}
-                className="w-24 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs font-mono text-text"
-              />
-              <button
-                onClick={handleCaptureAll}
-                disabled={!singleRefPsi}
-                className="px-2 py-1 text-[10px] font-bold rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white"
-              >
-                CAPTURE ALL
-              </button>
-            </>
-          )}
-          <button
-            onClick={handleZeroAll}
-            className="px-3 py-1.5 text-xs font-bold rounded border transition-all
-                       bg-yellow-900/40 border-yellow-600 text-yellow-300 hover:bg-yellow-800/60"
-          >
-            ZERO ALL
+          <input
+            type="number" step="any" placeholder="Ref PSI (all ch)" value={singleRefPsi}
+            onChange={(e) => setSingleRefPsi(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleCaptureAll()}
+            className="w-28 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs font-mono text-text"
+          />
+          <button onClick={handleCaptureAll} disabled={!singleRefPsi}
+            className="px-2 py-1 text-[10px] font-bold rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white">
+            CAPTURE ALL
           </button>
-          <button
-            onClick={handleClearCalibration}
-            className="px-3 py-1.5 text-xs font-bold rounded border border-red-700 bg-red-900/30 text-red-300 hover:bg-red-800/50"
-          >
-            CLEAR
+          <button onClick={handleZeroAllRobust}
+            title="Tare robust sensors to read 0 at the current pressure. Cubic/physics sensors are unaffected (their zero is defined by the fit / datasheet)."
+            className="px-3 py-1.5 text-xs font-bold rounded border bg-yellow-900/40 border-yellow-600 text-yellow-300 hover:bg-yellow-800/60">
+            ZERO ROBUST
           </button>
-          <span
-            className="px-3 py-1.5 text-xs font-bold rounded border bg-green-900/30 border-green-700 text-green-400 cursor-default"
-            title="Recursive calibration runs in calibration_service (FSW). This UI only sends commands and shows Elodin data."
-          >
-            FSW {phase2Active ? 'active' : 'idle'}
-          </span>
-          <button
-            onClick={handleSave}
-            className="px-3 py-1.5 text-xs font-bold rounded border bg-blue-900/30
-                       border-blue-700 text-blue-400 hover:bg-blue-800/50 transition-all"
-          >
+          <button onClick={handleSave}
+            className="px-3 py-1.5 text-xs font-bold rounded border bg-blue-900/30 border-blue-700 text-blue-400 hover:bg-blue-800/50">
             SAVE
           </button>
-          <span className="text-[10px] text-gray-600 font-mono ml-1">
-            {lastUpdate ? lastUpdate.toLocaleTimeString() : '—'}
-          </span>
         </div>
       </div>
 
-      {/* ── Instruction strip (only if never zeroed) ────────────────── */}
-      {(!calStatus || (calStatus.channels ?? []).every(c => c.rlsUpdateCount === 0)) && (
-        <div className="flex-shrink-0 bg-blue-950/20 border-b border-blue-800/30 px-4 py-2 text-xs text-blue-300">
-          <strong>Quick start:</strong> With all PTs at atmospheric (0 PSI), click{' '}
-          <span className="font-mono bg-blue-900/40 px-1 rounded">ZERO ALL</span> to initialize.
-          Then provide known reference pressures via CAPTURE to build the calibration curve.
-          Robust Calibration auto-refines in the background.
-        </div>
-      )}
-
-      {/* ── Calibration file path strip ──────────────────────────────── */}
-      {calFilePath && (
-        <div className="flex-shrink-0 border-b border-gray-800 px-4 py-1.5 flex items-center gap-2">
-          <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Cal file</span>
-          <span
-            className="text-[10px] font-mono text-gray-400 truncate"
-            title={calFilePath}
-          >
-            {calFilePath}
-          </span>
-        </div>
-      )}
-
-      {/* ── Load cells: 0-point offset (display = raw − offset) ───────── */}
+      {/* ── Load cells (separate concern) ────────────────────────────────── */}
       {lcChannels.length > 0 && (
         <div className="flex-shrink-0 border-b border-gray-700 bg-gray-900/50 px-4 py-3">
-          <div className="text-xs font-bold text-gray-400 mb-2">Load cells — 0 point (offset only)</div>
+          <div className="text-xs font-bold text-gray-400 mb-2">Load cells — 0 point (offset only; separate from PT calibration)</div>
           <div className="flex flex-wrap items-center gap-3">
             {lcChannels.map(({ calEntity, label }) => (
-              <LoadCellZeroCard
-                key={calEntity}
-                calEntity={calEntity}
-                label={label}
-                getSensorValue={getSensorValue}
+              <LoadCellZeroCard key={calEntity} calEntity={calEntity} label={label}
                 onZero={() => {
                   const raw = getSensorValue(calEntity, 'force_lbf');
                   if (raw != null && Number.isFinite(raw)) setLoadCellZeroOffset(calEntity, raw);
                 }}
               />
             ))}
-            <button
-              type="button"
-              onClick={() => {
-                lcChannels.forEach(({ calEntity }) => {
-                  const raw = getSensorValue(calEntity, 'force_lbf');
-                  if (raw != null && Number.isFinite(raw)) setLoadCellZeroOffset(calEntity, raw);
-                });
-              }}
-              className="px-3 py-1.5 text-xs font-bold rounded border border-amber-600 bg-amber-900/30 text-amber-300 hover:bg-amber-800/50"
-            >
-              Zero all LCs
-            </button>
           </div>
         </div>
       )}
 
-      {/* ── Gauge → PT mapping (when multiple gauges) ────────────────── */}
-      {numReferenceGauges > 1 && (
-        <div className="flex-shrink-0 border-b border-gray-700 bg-gray-900/50 px-4 py-3">
-          <div className="text-xs font-bold text-gray-400 mb-2">Map each reference gauge to PT channels, then enter ref (PSI) and capture</div>
-          <div className="flex flex-wrap items-center gap-4">
-            {Array.from({ length: numReferenceGauges }, (_, i) => i + 1).map((g) => (
-              <div key={g} className="flex items-center gap-2 flex-wrap">
-                <span className="text-[10px] font-bold text-gray-500 w-14">Gauge {g}:</span>
-                <div className="flex items-center gap-0.5">
-                  {visibleChannels.filter((c) => c.inCalibrationSequence).map((c) => {
-                    const uid = c.boardId * 100 + c.id;
-                    return (
-                      <label key={uid} className="flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={(gaugeToChannels[g] ?? []).includes(uid)}
-                          onChange={() => toggleGaugeChannel(g, uid)}
-                          className="sr-only peer"
-                        />
-                        <span className="px-1.5 py-0.5 text-[9px] font-mono rounded border border-gray-600 peer-checked:bg-blue-700 peer-checked:border-blue-500 text-gray-400 peer-checked:text-white" title={`Board ${c.boardId}`}>
-                          {c.id}<sup>{c.boardId}</sup>
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-                <input
-                  type="number"
-                  step="any"
-                  placeholder="Ref PSI"
-                  value={gaugeRefs[g] ?? ''}
-                  onChange={(e) => setGaugeRefs((prev) => ({ ...prev, [g]: e.target.value }))}
-                  onKeyDown={(e) => e.key === 'Enter' && handleCaptureByGauges()}
-                  className="w-20 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs font-mono text-text"
-                />
-              </div>
-            ))}
-            <button
-              onClick={handleCaptureByGauges}
-              className="px-3 py-1.5 text-xs font-bold rounded bg-blue-700 hover:bg-blue-600 text-white"
-            >
-              CAPTURE ALL GAUGES
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Channel grid — 5 columns × 2 rows ──────────────────────── */}
+      {/* ── PT channel grid ──────────────────────────────────────────────── */}
       <div className="flex-1 overflow-auto min-h-0 p-3">
-        {robustChannels.length === 0 ? (
-          <div className="text-sm text-gray-500 p-2">
-            No valves are set to the robust model. Set a valve&apos;s model to <span className="text-text font-semibold">Robust</span> in
-            the config editor&apos;s Roles tab, then restart the session — it will appear here.
-          </div>
+        {ptChannels.length === 0 ? (
+          <div className="text-sm text-gray-500 p-2">No PT sensors configured.</div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 auto-rows-fr">
             {visibleChannels.map((ch) => {
@@ -573,9 +373,11 @@ export default function CalibrationPage() {
                 <ChannelCard
                   key={`${ch.boardId}-${ch.id}`}
                   ch={ch}
+                  model={modelOf(uid)}
                   status={getStatus(ch.id, ch.boardId)}
                   rawAdc={getSensorValue(ch.calEntity, 'raw_adc_counts')}
                   calPsi={getSensorValue(ch.calEntity, 'pressure_psi')}
+                  numPoints={cubicState[String(uid)]?.numPoints ?? 0}
                   selected={uid === selectedUid}
                   onSelect={() => setSelectedUid(uid)}
                   onCapture={handleCapture}
@@ -586,28 +388,69 @@ export default function CalibrationPage() {
         )}
       </div>
 
-      {/* ── Selected valve: captured points + robust curve ──────────── */}
-      {selectedChannel && (
-        <div className="flex-shrink-0 border-t border-gray-800 bg-card/40 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div>
+      {/* ── Selected sensor: model + curve previews + points ─────────────── */}
+      {selectedChannel && selectedModel && (
+        <div className="flex-shrink-0 border-t border-gray-800 bg-card/40 p-3 max-h-[46vh] overflow-auto">
+          <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
               <span className="text-sm font-bold text-text">{selectedChannel.role || `CH${selectedChannel.id}`}</span>
-              <span className="text-[11px] text-gray-500 font-mono ml-2">
+              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase ${MODEL_BADGE[selectedModel]}`}>{selectedModel}</span>
+              <span className="text-[11px] text-gray-500 font-mono">
                 B{selectedChannel.boardId} · CH{selectedChannel.id} · {selectedState?.numPoints ?? 0} pts
               </span>
+              <span className="text-[10px] text-gray-500">· change model in Config → Roles</span>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={handleNewCalibration}
-                className="px-3 py-1.5 text-xs font-bold rounded border border-amber-700 bg-amber-900/30 text-amber-300 hover:bg-amber-800/50"
-                title="Clear this valve's captured points and reset its robust adjustment"
-              >
-                NEW CALIBRATION
-              </button>
+              {selectedModel !== 'physics' && (
+                <button onClick={handleNewCalibration}
+                  className="px-3 py-1.5 text-xs font-bold rounded border border-red-700 bg-red-900/30 text-red-300 hover:bg-red-800/50"
+                  title="Drop captured points and reset both cubic and robust to nothing (0)">
+                  CLEAR
+                </button>
+              )}
               <button onClick={() => setSelectedUid(null)} className="px-2 py-1.5 text-xs text-gray-400 hover:text-gray-200" title="Close">✕</button>
             </div>
           </div>
-          <CalibrationChart state={selectedState} height={260} />
+
+          {/* Overlay toggles / legend */}
+          <div className="flex items-center gap-4 mb-2 text-[11px] flex-wrap">
+            {(['cubic', 'robust', 'physics'] as Model[]).map((m) => (
+              <label key={m} className="flex items-center gap-1.5 cursor-pointer select-none">
+                <input type="checkbox" checked={overlay[m]} onChange={(e) => setOverlay((o) => ({ ...o, [m]: e.target.checked }))} />
+                <span className="inline-block w-3 h-0.5 rounded" style={{ background: CURVE_COLORS[m], height: m === selectedModel ? 3 : 2 }} />
+                <span className={m === selectedModel ? 'font-bold text-text' : 'text-gray-400'}>{m}{m === selectedModel ? ' (active)' : ''}</span>
+              </label>
+            ))}
+            <span className="text-gray-500 ml-auto">points fade <span className="text-gray-600">older</span> → <span className="text-gray-200">newer</span></span>
+          </div>
+
+          <CalibrationChart
+            state={selectedState}
+            height={240}
+            activeModel={selectedModel}
+            show={overlay}
+            physics={physicsParamsOf(selectedUid!)}
+          />
+
+          {/* Captured points table */}
+          {selectedState?.points && selectedState.points.length > 0 && (
+            <div className="mt-2 max-h-32 overflow-auto border border-gray-800 rounded">
+              <table className="w-full text-[11px] font-mono">
+                <thead className="sticky top-0 bg-gray-900 text-gray-500">
+                  <tr><th className="text-left px-2 py-1">#</th><th className="text-right px-2 py-1">PSI</th><th className="text-right px-2 py-1">ADC</th></tr>
+                </thead>
+                <tbody>
+                  {selectedState.points.map((p, i) => (
+                    <tr key={i} className="odd:bg-gray-900/40">
+                      <td className="px-2 py-0.5 text-gray-500">{i + 1}</td>
+                      <td className="px-2 py-0.5 text-right text-text">{p.psi.toFixed(2)}</td>
+                      <td className="px-2 py-0.5 text-right text-gray-400">{p.adc.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </main>
