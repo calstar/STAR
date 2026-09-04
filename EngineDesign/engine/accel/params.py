@@ -23,6 +23,7 @@ param-vector mapping reads from either interchangeably.
 """
 from __future__ import annotations
 
+import numpy as np
 from types import SimpleNamespace
 
 # Enum mappings -- mirror native_injector._PHI / _INJ / _EFF_MODEL.
@@ -242,3 +243,151 @@ def build_state(config):
         cooling=_cooling(config),
         geom=_geom(ensure_chamber_geometry(config)),
     )
+
+
+# ---------------------------------------------------------------------------
+# Parameter-vector layout
+#
+# The kernels take one flat float64 array rather than a struct, so every scalar
+# needs a stable index. _NAMES is that layout and the single source of truth for
+# it; kernels.py pulls these names into its module globals so @njit code can use
+# them as compile-time constants (P[G_AT] and friends).
+#
+# APPEND ONLY. Inserting a name shifts every index after it, which silently
+# invalidates the cached .nbc artifacts compiled against the old layout.
+# ---------------------------------------------------------------------------
+# ---- parameter vector layout (mirrors the fields the C residual reads) -------
+_NAMES = [
+    # fluids
+    "RHO_O", "MU_O", "SIG_O", "T_O",
+    "RHO_F", "MU_F", "SIG_F", "T_F", "LAT_F",
+    # injector geom
+    "DJO", "DJF", "NO", "NF", "ANG_O", "ANG_F",
+    # discharge O (16)
+    "DO_CDINF", "DO_ARE", "DO_CDMIN", "DO_GEOM", "DO_DREF", "DO_DMIN", "DO_EXPS",
+    "DO_LOGG", "DO_CDMAX", "DO_CDFLOOR", "DO_UPC", "DO_PREF", "DO_AP", "DO_UTC", "DO_TREF", "DO_AT",
+    # discharge F (16)
+    "DF_CDINF", "DF_ARE", "DF_CDMIN", "DF_GEOM", "DF_DREF", "DF_DMIN", "DF_EXPS",
+    "DF_LOGG", "DF_CDMAX", "DF_CDFLOOR", "DF_UPC", "DF_PREF", "DF_AP", "DF_UTC", "DF_TREF", "DF_AT",
+    # feed O / F
+    "FO_DIN", "FO_AH", "FO_K0", "FO_K1", "FO_PHI",
+    "FF_DIN", "FF_AH", "FF_K0", "FF_K1", "FF_PHI",
+    # spray
+    "SP_SMDMODEL", "SP_SMDC", "SP_SMDM", "SP_SMDP", "SP_SMDCING", "SP_SMDWECORR",
+    "SP_GASR", "SP_GAST", "SP_ANGMODEL", "SP_ANGK", "SP_ANGN", "SP_WEMIN",
+    "SP_EVAPK", "SP_EVAPXLIM", "SP_EVAPUSE",
+    # solver
+    "SV_CLMAX", "SV_CLCDRED", "SV_PCMIN", "SV_PCMAX", "SV_TOL", "SV_MAXIT",
+    # geom
+    "G_EPS", "G_AT", "G_AE", "G_VOL", "G_LSTAR", "G_DCHAM", "G_NOZZEFF",
+    # combustion
+    "C_MODEL", "C_C", "C_TAUREF", "C_TAUREFP", "C_TAUREFT", "C_NPRESS", "C_TSTARCAP",
+    "C_HASFLOOR", "C_TAUFLOOR", "C_EMPEAK", "C_SIGMA", "C_ROPT",
+    # chamber lengths (ablative wetted area only)
+    "G_LEN", "G_LCYL", "G_LCONTR",
+    # cooling gates + hot-gas block (ed_cooling.c)
+    "K_ABLEN", "K_FILMEN", "K_REGENEN", "K_USECOUP", "K_EFFFLOOR",
+    "K_HGMU", "K_HGK", "K_HGPR", "K_TI", "K_RECOV", "K_EMISHOT", "K_VIEWF", "K_DREGEN",
+    # ablative material / blowing / turbulence / radiative sink
+    "AB_COV", "AB_TSURF", "AB_TPYRO", "AB_HABL", "AB_CP", "AB_USEPHYS",
+    "AB_BLOWEFF", "AB_BLOWC", "AB_BLOWMIN",
+    "AB_TIREF", "AB_TISENS", "AB_TIEXP", "AB_TIMAX",
+    "AB_EMIS", "AB_TAMB", "AB_SINKMIN", "AB_SINKFB",
+]
+_IDX = {n: i for i, n in enumerate(_NAMES)}
+globals().update(_IDX)                      # module-level int constants for njit
+NP = len(_NAMES)
+
+
+def _assert_supported(st):
+    """Guard the assumptions that let this port skip cooling / use the impinging path."""
+    assert int(st.injector.type) == 1, "not impinging"
+    # Ablative IS ported (see _cooling_evaluate). Film/regen are not -- C refuses
+    # them too (ed_cooling.c:147), so they stay a Python fallback.
+    assert int(getattr(st.cooling, "film_enabled")) == 0 and int(getattr(st.cooling, "regen_enabled")) == 0
+    # No graphite gate, deliberately: C does not check it either (ed_cooling.c
+    # refuses only film/regen at :147), because graphite never enters the chamber
+    # residual -- it lives in the burn/recession path (runner.py), and
+    # chamber_solver.py references it zero times. Gating on it here would reject
+    # configs/canonical/impinging.yaml, which C handles fine.
+
+
+def extract_params(config):
+    """Flatten the config scalars this port needs into a float64 vec.
+
+    Delegates the field mapping to _params_from_state so there is ONE table of
+    field names; the two used to carry independent copies of the whole mapping,
+    which would drift the moment a field was added on one side only.
+    """
+    st = build_state(config)          # pure Python -- no C library required
+    _assert_supported(st)
+    return _params_from_state(st)
+
+
+
+def _params_from_state(st):
+    """Build the param vector from an already-built EdEngineState (avoids a 2nd build_state)."""
+    def g(path):
+        o = st
+        for part in path.split("."):
+            o = getattr(o, part)
+        return float(o)
+    P = np.zeros(NP)
+    P[_IDX["RHO_O"]] = g("fluid_O.density"); P[_IDX["MU_O"]] = g("fluid_O.viscosity"); P[_IDX["SIG_O"]] = g("fluid_O.surface_tension"); P[_IDX["T_O"]] = g("fluid_O.temperature")
+    P[_IDX["RHO_F"]] = g("fluid_F.density"); P[_IDX["MU_F"]] = g("fluid_F.viscosity"); P[_IDX["SIG_F"]] = g("fluid_F.surface_tension"); P[_IDX["T_F"]] = g("fluid_F.temperature"); P[_IDX["LAT_F"]] = g("fluid_F.latent_heat")
+    P[_IDX["DJO"]] = g("injector.imp_O.d_jet"); P[_IDX["DJF"]] = g("injector.imp_F.d_jet")
+    P[_IDX["NO"]] = g("injector.imp_O.n_elements"); P[_IDX["NF"]] = g("injector.imp_F.n_elements")
+    P[_IDX["ANG_O"]] = g("injector.imp_O.impingement_angle"); P[_IDX["ANG_F"]] = g("injector.imp_F.impingement_angle")
+    for pre, side in (("DO", "discharge_O"), ("DF", "discharge_F")):
+        for suf, fld in (("CDINF","Cd_inf"),("ARE","a_Re"),("CDMIN","Cd_min"),("GEOM","use_geometry_cd"),
+                         ("DREF","d_ref_m"),("DMIN","d_min_m"),("EXPS","cd_small_hole_exponent"),("LOGG","cd_large_hole_log_gain"),
+                         ("CDMAX","cd_inf_max"),("CDFLOOR","cd_inf_min_geom"),("UPC","use_pressure_correction"),("PREF","P_ref"),
+                         ("AP","a_P"),("UTC","use_temperature_correction"),("TREF","T_ref"),("AT","a_T")):
+            P[_IDX[f"{pre}_{suf}"]] = g(f"{side}.{fld}")
+    for pre, side in (("FO", "feed_O"), ("FF", "feed_F")):
+        for suf, fld in (("DIN","d_inlet"),("AH","A_hydraulic"),("K0","K0"),("K1","K1"),("PHI","phi_type")):
+            P[_IDX[f"{pre}_{suf}"]] = g(f"{side}.{fld}")
+    for suf, fld in (("SMDMODEL","smd_model"),("SMDC","smd_C"),("SMDM","smd_m"),("SMDP","smd_p"),("SMDCING","smd_C_ingebo"),
+                     ("SMDWECORR","smd_we_corr_max"),("GASR","chamber_gas_R"),("GAST","chamber_gas_T"),("ANGMODEL","spray_angle_model"),
+                     ("ANGK","spray_angle_k"),("ANGN","spray_angle_n"),("WEMIN","we_min"),("EVAPK","evap_K"),
+                     ("EVAPXLIM","evap_x_star_limit"),("EVAPUSE","evap_use_constraint")):
+        P[_IDX[f"SP_{suf}"]] = g(f"spray.{fld}")
+    for suf, fld in (("CLMAX","closure_max_iterations"),("CLCDRED","closure_Cd_reduction_factor"),("PCMIN","Pc_min_bound"),
+                     ("PCMAX","Pc_max_bound"),("TOL","tolerance"),("MAXIT","max_iterations")):
+        P[_IDX[f"SV_{suf}"]] = g(f"solver.{fld}")
+    for suf, fld in (("EPS","expansion_ratio"),("AT","A_throat"),("AE","A_exit"),("VOL","volume"),("LSTAR","Lstar"),
+                     ("DCHAM","chamber_diameter"),("NOZZEFF","nozzle_efficiency")):
+        P[_IDX[f"G_{suf}"]] = g(f"geom.{fld}")
+    for suf, fld in (("MODEL","model"),("C","C"),("TAUREF","tau_ref"),("TAUREFP","tau_ref_P"),("TAUREFT","tau_ref_T"),
+                     ("NPRESS","n_pressure"),("TSTARCAP","T_star_fuel_cap_K"),("HASFLOOR","has_tau_Tc_floor"),
+                     ("TAUFLOOR","tau_Tc_floor"),("EMPEAK","Em_peak"),("SIGMA","mixing_sigma"),("ROPT","R_opt")):
+        P[_IDX[f"C_{suf}"]] = g(f"comb.{fld}")
+    for suf, fld in (("LEN","length"),("LCYL","length_cylindrical"),("LCONTR","length_contraction")):
+        P[_IDX[f"G_{suf}"]] = g(f"geom.{fld}")
+    for name, fld in (("K_ABLEN","ablative_enabled"),("K_FILMEN","film_enabled"),
+                      ("K_REGENEN","regen_enabled"),("K_USECOUP","use_cooling_coupling"),
+                      ("K_EFFFLOOR","cooling_efficiency_floor"),("K_HGMU","hot_gas_viscosity"),
+                      ("K_HGK","hot_gas_thermal_conductivity"),("K_HGPR","hot_gas_prandtl"),
+                      ("K_TI","gas_turbulence_intensity"),("K_RECOV","recovery_factor"),
+                      ("K_EMISHOT","radiation_emissivity_hot"),("K_VIEWF","radiation_view_factor"),
+                      ("K_DREGEN","regen_chamber_inner_diameter"),
+                      ("AB_COV","ablative_coverage_fraction"),
+                      ("AB_TSURF","ablative_surface_temperature_limit"),
+                      ("AB_TPYRO","ablative_pyrolysis_temperature"),
+                      ("AB_HABL","ablative_heat_of_ablation"),("AB_CP","ablative_specific_heat"),
+                      ("AB_USEPHYS","ablative_use_physics_based_blowing"),
+                      ("AB_BLOWEFF","ablative_blowing_efficiency"),
+                      ("AB_BLOWC","ablative_blowing_coefficient"),
+                      ("AB_BLOWMIN","ablative_blowing_min_reduction_factor"),
+                      ("AB_TIREF","ablative_turbulence_reference_intensity"),
+                      ("AB_TISENS","ablative_turbulence_sensitivity"),
+                      ("AB_TIEXP","ablative_turbulence_exponent"),
+                      ("AB_TIMAX","ablative_turbulence_max_multiplier"),
+                      ("AB_EMIS","ablative_surface_emissivity"),
+                      ("AB_TAMB","ablative_ambient_temperature"),
+                      ("AB_SINKMIN","ablative_radiative_sink_minimum_threshold"),
+                      ("AB_SINKFB","ablative_radiative_sink_fallback_temperature")):
+        P[_IDX[name]] = g(f"cooling.{fld}")
+    return P
+
+

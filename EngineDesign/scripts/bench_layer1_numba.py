@@ -70,9 +70,9 @@ def _run_condition(mode, cfg_path, max_it, restarts, seed):
     else:
         os.environ["ED_USE_NATIVE"] = "1"; os.environ["ED_LAYER1_NATIVE_EVAL"] = "1"
     if mode == "numba":
-        import numba_eval
+        from engine import accel
         from engine.native.python import native_injector as ni
-        ni.evaluate = numba_eval.make_native_signature_evaluate()  # patch BEFORE instrumentation
+        ni.evaluate = accel.evaluate  # patch BEFORE instrumentation
     _install_instrumentation()
     _one(cfg_path, 1, 1, seed)     # warmup (JIT compile, CEA load) — discarded
     C.reset()

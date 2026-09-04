@@ -1,61 +1,25 @@
 """Numba port of the C ed_evaluate impinging inner-loop physics.
 
 Faithful mirror of engine/native/src/{ed_injector_impinging,ed_discharge,ed_feed_loss,
-ed_spray,ed_combustion_physics,ed_cea,ed_nozzle,ed_chamber,ed_evaluate,ed_root_find}.c
-for the config class the C path actually handles: impinging injector, advanced/
-exponential combustion, ablative cooling DISABLED (cooling_eff==1, so ed_cooling.c
-is a no-op and is not ported — asserted at extract time).
+ed_spray,ed_combustion_physics,ed_cea,ed_nozzle,ed_chamber,ed_cooling,ed_evaluate,
+ed_root_find}.c for the config class the accelerated path handles: impinging
+injector, advanced/exponential combustion, ablative cooling (film/regen fall back
+to Python, as the C kernel also refuses them).
 
-Inputs are pulled from the SAME native EdEngineState (native_injector.build_state)
-and the SAME CEA cache, so there is no risk of misreading the config: we reuse the
-C's own reconciled scalar inputs and only re-implement the arithmetic in @njit.
+All state arrives as one flat float64 vector built by params.build_params, plus
+the CEA tables as plain arrays -- @njit sees no Python objects.
 """
 from __future__ import annotations
+
 import numpy as np
 from numba import njit
 
-# ---- parameter vector layout (mirrors the fields the C residual reads) -------
-_NAMES = [
-    # fluids
-    "RHO_O", "MU_O", "SIG_O", "T_O",
-    "RHO_F", "MU_F", "SIG_F", "T_F", "LAT_F",
-    # injector geom
-    "DJO", "DJF", "NO", "NF", "ANG_O", "ANG_F",
-    # discharge O (16)
-    "DO_CDINF", "DO_ARE", "DO_CDMIN", "DO_GEOM", "DO_DREF", "DO_DMIN", "DO_EXPS",
-    "DO_LOGG", "DO_CDMAX", "DO_CDFLOOR", "DO_UPC", "DO_PREF", "DO_AP", "DO_UTC", "DO_TREF", "DO_AT",
-    # discharge F (16)
-    "DF_CDINF", "DF_ARE", "DF_CDMIN", "DF_GEOM", "DF_DREF", "DF_DMIN", "DF_EXPS",
-    "DF_LOGG", "DF_CDMAX", "DF_CDFLOOR", "DF_UPC", "DF_PREF", "DF_AP", "DF_UTC", "DF_TREF", "DF_AT",
-    # feed O / F
-    "FO_DIN", "FO_AH", "FO_K0", "FO_K1", "FO_PHI",
-    "FF_DIN", "FF_AH", "FF_K0", "FF_K1", "FF_PHI",
-    # spray
-    "SP_SMDMODEL", "SP_SMDC", "SP_SMDM", "SP_SMDP", "SP_SMDCING", "SP_SMDWECORR",
-    "SP_GASR", "SP_GAST", "SP_ANGMODEL", "SP_ANGK", "SP_ANGN", "SP_WEMIN",
-    "SP_EVAPK", "SP_EVAPXLIM", "SP_EVAPUSE",
-    # solver
-    "SV_CLMAX", "SV_CLCDRED", "SV_PCMIN", "SV_PCMAX", "SV_TOL", "SV_MAXIT",
-    # geom
-    "G_EPS", "G_AT", "G_AE", "G_VOL", "G_LSTAR", "G_DCHAM", "G_NOZZEFF",
-    # combustion
-    "C_MODEL", "C_C", "C_TAUREF", "C_TAUREFP", "C_TAUREFT", "C_NPRESS", "C_TSTARCAP",
-    "C_HASFLOOR", "C_TAUFLOOR", "C_EMPEAK", "C_SIGMA", "C_ROPT",
-    # chamber lengths (ablative wetted area only)
-    "G_LEN", "G_LCYL", "G_LCONTR",
-    # cooling gates + hot-gas block (ed_cooling.c)
-    "K_ABLEN", "K_FILMEN", "K_REGENEN", "K_USECOUP", "K_EFFFLOOR",
-    "K_HGMU", "K_HGK", "K_HGPR", "K_TI", "K_RECOV", "K_EMISHOT", "K_VIEWF", "K_DREGEN",
-    # ablative material / blowing / turbulence / radiative sink
-    "AB_COV", "AB_TSURF", "AB_TPYRO", "AB_HABL", "AB_CP", "AB_USEPHYS",
-    "AB_BLOWEFF", "AB_BLOWC", "AB_BLOWMIN",
-    "AB_TIREF", "AB_TISENS", "AB_TIEXP", "AB_TIMAX",
-    "AB_EMIS", "AB_TAMB", "AB_SINKMIN", "AB_SINKFB",
-]
-_IDX = {n: i for i, n in enumerate(_NAMES)}
-globals().update(_IDX)                      # module-level int constants for njit
-NP = len(_NAMES)
+from engine.accel.cea import cea_arrays, _cea_arrays_cached
+from engine.accel.params import _IDX, NP, extract_params
 
+globals().update(_IDX)          # param indices as module-level int constants
+
+# physical constants (ed_phys_const.h)
 # physical constants (ed_phys_const.h)
 PI = np.pi
 G0 = 9.80665
@@ -70,53 +34,6 @@ CS_C_L = 0.1; CS_C_U = 0.5; CS_U_RMS_CAP = 200.0
 GAS_MU = 7e-5; GAS_RHO_L = 800.0; GAS_CP_L = 2000.0; GAS_T_INJ = 293.0; GAS_CP_G = 2200.0
 SMD_INGEBO = 1; SPRAYANG_J = 1; PHI_NONE = 0; PHI_SQRTP = 1; PHI_LOGP = 2
 EFF_CONSTANT = 0; EFF_LINEAR = 1
-
-
-def _assert_supported(st):
-    """Guard the assumptions that let this port skip cooling / use the impinging path."""
-    assert int(st.injector.type) == 1, "not impinging"
-    # Ablative IS ported (see _cooling_evaluate). Film/regen are not -- C refuses
-    # them too (ed_cooling.c:147), so they stay a Python fallback.
-    assert int(getattr(st.cooling, "film_enabled")) == 0 and int(getattr(st.cooling, "regen_enabled")) == 0
-    # No graphite gate, deliberately: C does not check it either (ed_cooling.c
-    # refuses only film/regen at :147), because graphite never enters the chamber
-    # residual -- it lives in the burn/recession path (runner.py), and
-    # chamber_solver.py references it zero times. Gating on it here would reject
-    # configs/canonical/impinging.yaml, which C handles fine.
-
-
-def extract_params(config):
-    """Flatten the config scalars this port needs into a float64 vec.
-
-    Delegates the field mapping to _params_from_state so there is ONE table of
-    field names; the two used to carry independent copies of the whole mapping,
-    which would drift the moment a field was added on one side only.
-    """
-    from engine.accel.params import build_state
-    st = build_state(config)          # pure Python -- no C library required
-    _assert_supported(st)
-    return _params_from_state(st)
-
-
-def cea_arrays(cache):
-    """Grids + 7 property tables (float64, C-order), Cf_vac with the _ensure_cea fallback."""
-    assert getattr(cache, "use_3d", False), "cache is not a 3D grid"
-    Pc = np.ascontiguousarray(cache.Pc_grid, np.float64)
-    MR = np.ascontiguousarray(cache.MR_grid, np.float64)
-    eps = np.ascontiguousarray(cache.eps_grid, np.float64)
-    cf_vac = getattr(cache, "Cf_vac_table", None)
-    if cf_vac is None:
-        from engine.pipeline.cea_cache import _isentropic_cf_vac
-        gt = np.asarray(cache.gamma_table, np.float64)
-        cf_vac = np.empty_like(gt)
-        for k in range(gt.shape[2]):
-            ek = float(eps[k])
-            for i in range(gt.shape[0]):
-                for j in range(gt.shape[1]):
-                    cf_vac[i, j, k] = _isentropic_cf_vac(gt[i, j, k], ek)
-    A = lambda t: np.ascontiguousarray(t, np.float64)
-    return (Pc, MR, eps, A(cache.cstar_table), A(cache.Cf_table), A(cache.Tc_table),
-            A(cache.gamma_table), A(cache.R_table), A(cache.M_table), A(cf_vac))
 
 
 # ------------------------- njit kernels --------------------------------------
@@ -258,7 +175,13 @@ def _ohnesorge(mu, rho, sigma, d):
 @njit(cache=True)
 def injector_solve(P, P_tank_O, P_tank_F, Pc):
     """Returns (ok, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, mom_R, Cd_O, Cd_F,
-    Pi_O, Pi_F, dpi_O, dpi_F, A_geom_O, A_geom_F). ok=0 => NaN/invalid."""
+    Pi_O, Pi_F, dpi_O, dpi_F, A_geom_O, A_geom_F,
+    dpf_O, dpf_F, We_O, We_F, u_rel, x_star, constraints_ok, n_iter).
+    ok=0 => NaN/invalid.
+
+    The trailing eight are already computed by the solve; they are returned so the
+    diagnostics dict can be assembled here instead of by a second solve in C.
+    """
     rho_O = P[RHO_O]; mu_O = P[MU_O]; sig_O = P[SIG_O]; tO = P[T_O]
     rho_F = P[RHO_F]; mu_F = P[MU_F]; sig_F = P[SIG_F]; tF = P[T_F]
     djo = P[DJO]; djf = P[DJF]; nO = int(P[NO]); nF = int(P[NF])
@@ -273,10 +196,12 @@ def injector_solve(P, P_tank_O, P_tank_F, Pc):
     Cd_O = 0.0; Cd_F = 0.0; Pi_O = P_tank_O; Pi_F = P_tank_F
     dpi_O = 0.0; dpi_F = 0.0
     We_O = 0.0; We_F = 0.0; D32_O = 0.0; D32_F = 0.0; u_rel = 0.0
+    dpf_O = 0.0; dpf_F = 0.0; x_star = 0.0; n_iter = 0
     u_O = 0.0; u_F = 0.0
     constraints_ok = 0
 
     for iteration in range(max_iter):
+        n_iter = iteration + 1
         mo = mdot_O; mf = mdot_F
         for fp in range(1, 151):
             mo_prev = mo; mf_prev = mf
@@ -369,8 +294,8 @@ def injector_solve(P, P_tank_O, P_tank_F, Pc):
         if den > 0 and num >= 0:
             mom_R = np.sqrt(num/den)
     if not (np.isfinite(mdot_O) and np.isfinite(mdot_F)) or mdot_F <= 0.0:
-        return (0, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, mom_R, Cd_O, Cd_F, Pi_O, Pi_F, dpi_O, dpi_F, A_O, A_F)
-    return (1, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, mom_R, Cd_O, Cd_F, Pi_O, Pi_F, dpi_O, dpi_F, A_O, A_F)
+        return (0, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, mom_R, Cd_O, Cd_F, Pi_O, Pi_F, dpi_O, dpi_F, A_O, A_F, dpf_O, dpf_F, We_O, We_F, u_rel, x_star, float(constraints_ok), float(n_iter))
+    return (1, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, mom_R, Cd_O, Cd_F, Pi_O, Pi_F, dpi_O, dpi_F, A_O, A_F, dpf_O, dpf_F, We_O, We_F, u_rel, x_star, float(constraints_ok), float(n_iter))
 
 
 @njit(cache=True)
@@ -629,7 +554,8 @@ def _cooling_evaluate(P, Pc, mdot_total, Tc, gamma, R, M):
 def _residual(Pc, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F):
     if not (np.isfinite(Pc) and Pc > 0):
         return np.nan
-    ok, mO, mF, uO, uF, D32O, D32F, momR, CdO, CdF, PiO, PiF, dpiO, dpiF, AgO, AgF = injector_solve(P, P_O, P_F, Pc)
+    (ok, mO, mF, uO, uF, D32O, D32F, momR, CdO, CdF, PiO, PiF, dpiO, dpiF, AgO, AgF,
+     dpfO, dpfF, WeO, WeF, urel, xstar, constr, nit) = injector_solve(P, P_O, P_F, Pc)
     if ok == 0:
         return np.nan
     mdot_supply = mO + mF
@@ -761,7 +687,8 @@ def evaluate_core(P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F
         if not np.isfinite(Pc):
             return (0.0,)*22
     # recompute converged state
-    ok, mO, mF, uO, uF, D32O, D32F, momR, CdO, CdF, PiO, PiF, dpiO, dpiF, AgO, AgF = injector_solve(P, P_O, P_F, Pc)
+    (ok, mO, mF, uO, uF, D32O, D32F, momR, CdO, CdF, PiO, PiF, dpiO, dpiF, AgO, AgF,
+     dpfO, dpfF, WeO, WeF, urel, xstar, constr, nit) = injector_solve(P, P_O, P_F, Pc)
     if ok == 0:
         return (0.0,)*22
     mdot_total = mO + mF; MR = mO/mF
@@ -808,6 +735,8 @@ def evaluate_core(P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F
             Tc_eff)
 
 
+
+
 # ---- Python wrappers matching native_injector -------------------------------
 class NumbaEvaluator:
     """Parity/bench helper: core physics only (Pc, F, Isp, ...)."""
@@ -827,142 +756,3 @@ class NumbaEvaluator:
          mO, mF, cs_id, eta, Rg, Pex, Pth, Tex, Tth, cf_id, tc_eff) = r
         return {"Pc": Pc, "F": F, "Isp": Isp, "MR": MR, "cstar_actual": csa,
                 "gamma": gm, "Tc": tc_eff, "mdot_total": mdt, "v_exit": vex, "Cf_actual": cfa}
-
-
-def _cea_arrays_cached(cache):
-    """Memoise cea_arrays for a cache, storing the result ON the cache object.
-
-    NOT keyed on id(cache): a freed cache's id can be reused, which would
-    silently serve a previous config's CEA tables in a multi-config process
-    (test sessions, GUI config switches). This is the same hazard
-    native_injector._ensure_cea documents and defends against with a token; tying
-    the memo to the object's own lifetime is simpler and cannot leak.
-    """
-    arr = getattr(cache, "_numba_cea_arrays", None)
-    if arr is None:
-        arr = cea_arrays(cache)
-        try:
-            cache._numba_cea_arrays = arr
-        except Exception:
-            pass  # cache rejects attributes -> rebuild per call (correct, slower)
-    return arr
-
-def make_native_signature_evaluate():
-    """Return an evaluate(config, cache, P_O, P_F, P_ambient) that drops into
-    native_injector.evaluate's slot: Numba computes the chamber+nozzle+thrust core,
-    then the SAME C diagnostic injector solve + Python stability tail runs (identical
-    to native_injector.evaluate), isolating the C-vs-Numba difference to the core."""
-    from engine.native.python import native_injector as ni
-    from engine.pipeline.stability.analysis import comprehensive_stability_analysis
-
-    def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
-        if not ni._can_handle_chamber(config):
-            return None
-        if not ni._ensure_cea(cache):
-            return None
-        st = ni.build_state(config)              # once, reused for core + diag (as C path does)
-        P = _params_from_state(st)
-        arr = _cea_arrays_cached(cache)
-        r = evaluate_core(P, *arr, float(P_tank_O), float(P_tank_F), float(P_ambient))
-        if not r[0]:
-            return None
-        (_, Pc, F, Isp, MR, csa, gm, tc, mdt, vex, cfa,
-         mO, mF, cs_id, eta, Rg, Pex, Pth, Tex, Tth, cf_id, tc_eff) = r
-        if F != F:
-            return None
-        # --- identical tail to native_injector.evaluate: C diag solve + Python stability ---
-        rci, ir = ni._nat().injector_solve(st, float(P_tank_O), float(P_tank_F), float(Pc))
-        if rci != 0:
-            return None
-        diagnostics = ni._result_to_diag(config, ir)
-        diagnostics.update({
-            "mdot_O": mO, "mdot_F": mF, "mdot_total": mdt, "Pc": Pc, "MR": MR,
-            "cstar_ideal": cs_id, "cstar_actual": csa, "eta_cstar": eta,
-            "gamma": gm, "R": Rg, "Tc": tc_eff, "SMD": max(ir.D32_O, ir.D32_F),
-        })
-        try:
-            stab = comprehensive_stability_analysis(
-                config=config, Pc=Pc, MR=MR, mdot_total=mdt,
-                cstar=csa, gamma=gm, R=Rg, Tc=tc_eff, diagnostics=diagnostics)
-        except Exception:
-            return None
-        return {
-            "Pc": Pc, "mdot_O": mO, "mdot_F": mF, "mdot_total": mdt, "MR": MR,
-            "F": F, "Isp": Isp, "v_exit": vex, "P_exit": Pex, "P_throat": Pth,
-            "T_exit": Tex, "T_throat": Tth, "Tc": tc_eff, "eps": float(P[G_EPS]),
-            "A_throat": float(P[G_AT]), "A_exit": float(P[G_AE]),
-            "cstar_actual": csa, "cstar_ideal": cs_id, "eta_cstar": eta, "gamma": gm, "R": Rg,
-            "Cf": cfa, "Cf_actual": cfa, "Cf_ideal": cf_id,
-            "Cd_O": ir.Cd_O, "Cd_F": ir.Cd_F, "A_geom_O": ir.A_geom_O, "A_geom_F": ir.A_geom_F,
-            "stability": stab, "stability_results": stab,
-            "diagnostics": diagnostics, "P_ambient": float(P_ambient),
-            "native_fast_eval": True, "numba_fast_eval": True,
-        }
-    return evaluate
-
-
-def _params_from_state(st):
-    """Build the param vector from an already-built EdEngineState (avoids a 2nd build_state)."""
-    def g(path):
-        o = st
-        for part in path.split("."):
-            o = getattr(o, part)
-        return float(o)
-    P = np.zeros(NP)
-    P[_IDX["RHO_O"]] = g("fluid_O.density"); P[_IDX["MU_O"]] = g("fluid_O.viscosity"); P[_IDX["SIG_O"]] = g("fluid_O.surface_tension"); P[_IDX["T_O"]] = g("fluid_O.temperature")
-    P[_IDX["RHO_F"]] = g("fluid_F.density"); P[_IDX["MU_F"]] = g("fluid_F.viscosity"); P[_IDX["SIG_F"]] = g("fluid_F.surface_tension"); P[_IDX["T_F"]] = g("fluid_F.temperature"); P[_IDX["LAT_F"]] = g("fluid_F.latent_heat")
-    P[_IDX["DJO"]] = g("injector.imp_O.d_jet"); P[_IDX["DJF"]] = g("injector.imp_F.d_jet")
-    P[_IDX["NO"]] = g("injector.imp_O.n_elements"); P[_IDX["NF"]] = g("injector.imp_F.n_elements")
-    P[_IDX["ANG_O"]] = g("injector.imp_O.impingement_angle"); P[_IDX["ANG_F"]] = g("injector.imp_F.impingement_angle")
-    for pre, side in (("DO", "discharge_O"), ("DF", "discharge_F")):
-        for suf, fld in (("CDINF","Cd_inf"),("ARE","a_Re"),("CDMIN","Cd_min"),("GEOM","use_geometry_cd"),
-                         ("DREF","d_ref_m"),("DMIN","d_min_m"),("EXPS","cd_small_hole_exponent"),("LOGG","cd_large_hole_log_gain"),
-                         ("CDMAX","cd_inf_max"),("CDFLOOR","cd_inf_min_geom"),("UPC","use_pressure_correction"),("PREF","P_ref"),
-                         ("AP","a_P"),("UTC","use_temperature_correction"),("TREF","T_ref"),("AT","a_T")):
-            P[_IDX[f"{pre}_{suf}"]] = g(f"{side}.{fld}")
-    for pre, side in (("FO", "feed_O"), ("FF", "feed_F")):
-        for suf, fld in (("DIN","d_inlet"),("AH","A_hydraulic"),("K0","K0"),("K1","K1"),("PHI","phi_type")):
-            P[_IDX[f"{pre}_{suf}"]] = g(f"{side}.{fld}")
-    for suf, fld in (("SMDMODEL","smd_model"),("SMDC","smd_C"),("SMDM","smd_m"),("SMDP","smd_p"),("SMDCING","smd_C_ingebo"),
-                     ("SMDWECORR","smd_we_corr_max"),("GASR","chamber_gas_R"),("GAST","chamber_gas_T"),("ANGMODEL","spray_angle_model"),
-                     ("ANGK","spray_angle_k"),("ANGN","spray_angle_n"),("WEMIN","we_min"),("EVAPK","evap_K"),
-                     ("EVAPXLIM","evap_x_star_limit"),("EVAPUSE","evap_use_constraint")):
-        P[_IDX[f"SP_{suf}"]] = g(f"spray.{fld}")
-    for suf, fld in (("CLMAX","closure_max_iterations"),("CLCDRED","closure_Cd_reduction_factor"),("PCMIN","Pc_min_bound"),
-                     ("PCMAX","Pc_max_bound"),("TOL","tolerance"),("MAXIT","max_iterations")):
-        P[_IDX[f"SV_{suf}"]] = g(f"solver.{fld}")
-    for suf, fld in (("EPS","expansion_ratio"),("AT","A_throat"),("AE","A_exit"),("VOL","volume"),("LSTAR","Lstar"),
-                     ("DCHAM","chamber_diameter"),("NOZZEFF","nozzle_efficiency")):
-        P[_IDX[f"G_{suf}"]] = g(f"geom.{fld}")
-    for suf, fld in (("MODEL","model"),("C","C"),("TAUREF","tau_ref"),("TAUREFP","tau_ref_P"),("TAUREFT","tau_ref_T"),
-                     ("NPRESS","n_pressure"),("TSTARCAP","T_star_fuel_cap_K"),("HASFLOOR","has_tau_Tc_floor"),
-                     ("TAUFLOOR","tau_Tc_floor"),("EMPEAK","Em_peak"),("SIGMA","mixing_sigma"),("ROPT","R_opt")):
-        P[_IDX[f"C_{suf}"]] = g(f"comb.{fld}")
-    for suf, fld in (("LEN","length"),("LCYL","length_cylindrical"),("LCONTR","length_contraction")):
-        P[_IDX[f"G_{suf}"]] = g(f"geom.{fld}")
-    for name, fld in (("K_ABLEN","ablative_enabled"),("K_FILMEN","film_enabled"),
-                      ("K_REGENEN","regen_enabled"),("K_USECOUP","use_cooling_coupling"),
-                      ("K_EFFFLOOR","cooling_efficiency_floor"),("K_HGMU","hot_gas_viscosity"),
-                      ("K_HGK","hot_gas_thermal_conductivity"),("K_HGPR","hot_gas_prandtl"),
-                      ("K_TI","gas_turbulence_intensity"),("K_RECOV","recovery_factor"),
-                      ("K_EMISHOT","radiation_emissivity_hot"),("K_VIEWF","radiation_view_factor"),
-                      ("K_DREGEN","regen_chamber_inner_diameter"),
-                      ("AB_COV","ablative_coverage_fraction"),
-                      ("AB_TSURF","ablative_surface_temperature_limit"),
-                      ("AB_TPYRO","ablative_pyrolysis_temperature"),
-                      ("AB_HABL","ablative_heat_of_ablation"),("AB_CP","ablative_specific_heat"),
-                      ("AB_USEPHYS","ablative_use_physics_based_blowing"),
-                      ("AB_BLOWEFF","ablative_blowing_efficiency"),
-                      ("AB_BLOWC","ablative_blowing_coefficient"),
-                      ("AB_BLOWMIN","ablative_blowing_min_reduction_factor"),
-                      ("AB_TIREF","ablative_turbulence_reference_intensity"),
-                      ("AB_TISENS","ablative_turbulence_sensitivity"),
-                      ("AB_TIEXP","ablative_turbulence_exponent"),
-                      ("AB_TIMAX","ablative_turbulence_max_multiplier"),
-                      ("AB_EMIS","ablative_surface_emissivity"),
-                      ("AB_TAMB","ablative_ambient_temperature"),
-                      ("AB_SINKMIN","ablative_radiative_sink_minimum_threshold"),
-                      ("AB_SINKFB","ablative_radiative_sink_fallback_temperature")):
-        P[_IDX[name]] = g(f"cooling.{fld}")
-    return P
-

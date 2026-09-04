@@ -95,9 +95,7 @@ def _rig(cfg_rel):
     if not native_injector.native_enabled():
         pytest.skip("native kernel not enabled")
 
-    import sys
-    sys.path.insert(0, str(ROOT / "scripts"))
-    import numba_eval
+    from engine.accel import kernels
     from engine.core.runner import PintleEngineRunner
     from engine.pipeline.io import load_config
 
@@ -109,8 +107,8 @@ def _rig(cfg_rel):
     points = [(po * PSI_TO_PA, pf * PSI_TO_PA) for po, pf in POINTS_PSI]
     rig = {
         "config": config, "runner": runner, "cache": runner.cea_cache,
-        "ni": native_injector, "nb": numba_eval.NumbaEvaluator(config, runner.cea_cache),
-        "mod": numba_eval, "points": points,
+        "ni": native_injector, "nb": kernels.NumbaEvaluator(config, runner.cea_cache),
+        "mod": kernels, "points": points,
         "reference": {p: runner.evaluate(p[0], p[1], P_ambient=PA_AMBIENT, silent=True)
                       for p in points},
     }
@@ -231,3 +229,57 @@ class TestCoolingIsActuallyApplied:
         c = r["ni"].evaluate(r["config"], r["cache"], p_o, p_f, PA_AMBIENT)
         n = r["nb"].evaluate(p_o, p_f, PA_AMBIENT)
         _assert_close("Tc (effective)", n["Tc"], c["Tc"], RTOL_TIGHT)
+
+
+class TestDiagnosticsMatchC:
+    """The injector diagnostics dict, assembled from Numba's own solve.
+
+    This used to come from a second solve in C (native_injector._nat().injector_solve
+    + _result_to_diag). Numba's injector_solve already computed every value; they
+    were simply discarded. Assembling them here is what removes the last C call
+    from the accelerated evaluate path.
+    """
+
+    # C also emits these. None is read off an accelerated result anywhere on the
+    # stability or optimizer path: A_eff_O/F is recomputed downstream from Cd by
+    # flow_capacity.effective_flow_areas_from_cd, turbulence_intensity_mix is read
+    # only at chamber_solver.py:180 (the full-Python path, which never sees this
+    # dict), and J/TMR/theta/feed_orifice_coupling_iterations have no reader at all.
+    KNOWN_ABSENT = {
+        "A_eff_O", "A_eff_F", "J", "TMR", "theta",
+        "turbulence_intensity_mix", "feed_orifice_coupling_iterations",
+    }
+
+    @pytest.mark.parametrize("cfg_rel,ablative", CONFIGS, ids=lambda v: str(v).split("/")[-1])
+    def test_fields_match_and_nothing_new_is_missing(self, cfg_rel, ablative):
+        import math
+        from engine.accel import diagnostics, params
+        r = _rig(cfg_rel)
+        ni, kernels = r["ni"], r["mod"]
+
+        P = params.extract_params(r["config"])
+        arr = kernels.cea_arrays(r["cache"])
+        state = ni.build_state(r["config"])
+
+        for p_o, p_f in r["points"]:
+            core = kernels.evaluate_core(P, *arr, p_o, p_f, PA_AMBIENT)
+            assert core[0], f"kernel did not converge at {p_o:.0f}/{p_f:.0f}"
+            Pc = core[1]
+            got = diagnostics.build_diag(P, kernels.injector_solve(P, p_o, p_f, Pc))
+            rc, ir = ni._nat().injector_solve(state, p_o, p_f, Pc)
+            assert rc == 0, "C injector solve failed"
+            want = ni._result_to_diag(r["config"], ir)
+
+            # A newly-missing field means a consumer could silently get None.
+            newly_absent = (set(want) - set(got)) - self.KNOWN_ABSENT
+            assert not newly_absent, (
+                f"fields C provides but Numba dropped: {sorted(newly_absent)}. "
+                "Either produce them or justify the omission in KNOWN_ABSENT."
+            )
+
+            for k in sorted(set(want) & set(got)):
+                a, b = got[k], want[k]
+                if isinstance(b, bool) or not isinstance(b, (int, float)):
+                    assert a == b, f"{k}: numba={a!r} C={b!r}"
+                elif b and math.isfinite(float(b)):
+                    _assert_close(f"diag[{k}]", a, b, RTOL_TIGHT)
