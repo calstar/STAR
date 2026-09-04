@@ -102,7 +102,7 @@ export default function ConfigView({ runId, text, error }: Props) {
     <div className="cfg">
       <div className="cfg-toolbar">
         <input
-          className="picker-search cfg-search"
+          className="input cfg-search"
           placeholder="Filter lines…"
           value={q}
           onChange={(e) => setQ(e.target.value)}

@@ -60,7 +60,7 @@ export default function RunDescription({ runId, value, onSaved }: Props) {
   return (
     <div className="run-desc">
       <input
-        className="run-desc-input"
+        className="input run-desc-input"
         placeholder="Add a description: what was this run? (shared with everyone)"
         value={draft}
         maxLength={MAX_LEN}

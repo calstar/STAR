@@ -26,7 +26,7 @@ const loadPref = (key: string, dflt: boolean) => {
     const v = localStorage.getItem(key);
     return v === null ? dflt : v === '1';
   } catch {
-    return dflt; // storage blocked (private window, site data off), use the default
+    return dflt; // storage blocked (private window, site data off) — use the default
   }
 };
 const savePref = (key: string, on: boolean) => {
@@ -239,7 +239,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        {/* Wordmark, divider, title, the header the other STAR apps use
+        {/* Wordmark, divider, title — the header the other STAR apps use
             (star-openrocket/frontend/src/App.tsx). The asset is synced from
             assets/brand by scripts/sync-brand.sh; do not hand-edit the copy. */}
         <img className="topbar-logo" src={starWordmark} alt="STAR" />
@@ -260,7 +260,7 @@ export default function App() {
               <div className="run-header">
                 <div className="run-title">{runId}</div>
                 {run?.simulated && (
-                  <span className="sim-badge" title="Simulated data — not from the test stand">SIM</span>
+                  <span className="sim-badge" title="Simulated data, not from the test stand">SIM</span>
                 )}
                 {indexErr && <span className="error">Error: {indexErr}</span>}
                 {index ? (
@@ -358,7 +358,7 @@ export default function App() {
                         'The sequencer (ACT_CMD, SEQUENCER.state) and the board-heartbeat router ' +
                         '(BOARD.HB_*) stamp steady_clock: monotonic since boot, not a wall ' +
                         'clock. It is still a good clock, so it is shifted onto the epoch by the ' +
-                        'floor of (DB write time minus stamp). Relative timing on these channels ' +
+                        'median of (DB write time \u2212 stamp). Relative timing on these channels ' +
                         'is exact; their absolute position carries a few ms of write latency as ' +
                         'bias. Without this they would sit on the DB write time, which adds up to ' +
                         '~60 ms of jitter to a valve command.'
@@ -409,7 +409,7 @@ export default function App() {
                           onChange={(s, e) => setWin({ start: s, end: e })}
                         />
                       )}
-                      {/* Sits with the window it resets, not with the exports, and keeps
+                      {/* Sits with the window it resets, not with the exports — and keeps
                           the export cluster to the three buttons that fit on one row. */}
                       <button className="btn" onClick={resetView} disabled={!zoomed}>
                         Reset view
