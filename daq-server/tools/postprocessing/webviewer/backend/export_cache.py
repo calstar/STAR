@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pyarrow.parquet as pq
 
-from . import config
+from . import config, run_config
 from .naming import classify
 
 
@@ -159,12 +159,17 @@ def ensure_exported(run_id: str, refresh: bool = False) -> Path:
 
 
 def get_index(run_id: str) -> dict:
-    """Return the component index, exporting/rebuilding lazily if needed."""
+    """Return the component index, exporting/rebuilding lazily if needed.
+
+    Config-derived names (run_config.annotate) are layered on at read time rather than
+    cached with the index -- the snapshot is a separate file from the parquet, so one
+    added or corrected later takes effect without discarding the export.
+    """
     ensure_exported(run_id)
     idx = cache_dir(run_id) / _INDEX
     if idx.exists():
         data = json.loads(idx.read_text())
         if data.get("index_version") == INDEX_VERSION:
-            return data
+            return run_config.annotate(data, run_id)
         # Stale index from an older classification — rebuild from the parquet.
-    return build_index(run_id)
+    return run_config.annotate(build_index(run_id), run_id)

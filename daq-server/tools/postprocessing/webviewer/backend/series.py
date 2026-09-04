@@ -13,7 +13,7 @@ from typing import Iterable, Iterator
 import numpy as np
 import pandas as pd
 
-from . import export_cache
+from . import export_cache, run_config
 from .naming import classify
 
 
@@ -174,17 +174,34 @@ def long_csv_rows(run_id: str, components: list[str], start, end):
             yield "".join(buf)
 
 
+def _csv_cell(text: str) -> str:
+    """Quote a header cell only if it needs it. Role names are plain words today, but
+    they are operator-typed config strings, so a comma must not shift the columns."""
+    if any(c in text for c in ',"\n'):
+        return '"' + text.replace('"', '""') + '"'
+    return text
+
+
 def wide_csv_rows(run_id: str, components: list[str], start, end):
     """Yield CSV text rows: a 'time' column (epoch seconds) plus one column per
     component, aligned on the union of timestamps. Discrete series are
-    forward-filled; continuous series are left as sampled (NaN between samples)."""
+    forward-filled; continuous series are left as sampled (NaN between samples).
+
+    Two header rows: the component name, then the role it played in this run
+    (from the run's config snapshot; blank where config names nothing). The
+    component name stays the column KEY -- analysis scripts and analyze_run.py
+    key on it -- and the role rides underneath as the legend, so a spreadsheet
+    says "Ox Upstream" without the file losing its stable identifiers."""
     frames = []
+    entities = []
     for name in components:
         t, v = load_series(run_id, name)
         t, v = _slice(t, v, start, end)
         s = pd.Series(v, index=pd.Index(t, name="time"), name=name)
         s = s[~s.index.duplicated(keep="last")]
-        frames.append((name, classify(name).discrete, s))
+        comp = classify(name)
+        entities.append(comp.entity)
+        frames.append((name, comp.discrete, s))
 
     if not frames:
         yield "time\n"
@@ -204,7 +221,11 @@ def wide_csv_rows(run_id: str, components: list[str], start, end):
     df = pd.DataFrame(cols, index=union)
     df.index.name = "time"
 
-    yield "time," + ",".join(components) + "\n"
+    labels = run_config.entity_labels(run_config.load(run_id))
+    yield "time," + ",".join(_csv_cell(c) for c in components) + "\n"
+    yield "," + ",".join(
+        _csv_cell(run_config.label_for(e, labels)) for e in entities
+    ) + "\n"
     buf = []
     for ts, row in zip(df.index.to_numpy(), df.to_numpy()):
         cells = ["" if (x != x) else f"{float(x):.9g}" for x in row]

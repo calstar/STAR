@@ -1,13 +1,13 @@
 import { useEffect, useRef } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
-import type { Series } from '../types';
+import type { Series, SeriesMeta } from '../types';
 import { colorFor, mergeForUplot } from '../util';
 import { AXIS_FONT, AXIS_STROKE, GRID_STROKE, LABEL_FONT } from '../chartTheme';
 
 interface Props {
   series: Series[];
-  units: string[]; // parallel to series
+  meta: SeriesMeta[]; // parallel to series — display name, unit, field, value names
   minHeight?: number;
   // Called when the user zooms/pans the x-axis (epoch seconds), so the parent
   // can refetch that window at higher resolution.
@@ -34,21 +34,58 @@ const fmt = (v: number): string => {
   return String(+v.toFixed(2));
 };
 
-const fieldOf = (name: string) => name.split('.').pop() || name;
-
 /** Assign each series a y-scale keyed by its unit — or, when it has no unit, by
  *  its field name — so like-united channels share an axis while distinct
  *  unitless field-types (raw_adc_counts vs sample_ts_ms) each get their own.
  *  Returns the scale key per series + the ordered distinct groups (first group
  *  is the primary/grid axis). */
-function axisGroups(series: Series[], units: string[]) {
-  const scaleOf = series.map((s, i) => units[i] || fieldOf(s.name));
+function axisGroups(meta: SeriesMeta[]) {
+  const scaleOf = meta.map((m) => m.unit || m.field);
   const order: string[] = [];
   for (const k of scaleOf) if (!order.includes(k)) order.push(k);
   return { scaleOf, order };
 }
 
-export default function Chart({ series, units, minHeight = 320, onViewChange, onReady }: Props) {
+/** Legend line for one series: what it is, then how to read it. The field suffix
+ *  only appears for unitless channels — without it `from_state` and `to_state` both
+ *  render as the bare entity and are indistinguishable in the legend. */
+const legendLabel = (m: SeriesMeta) =>
+  m.label + (m.unit ? ` (${m.unit})` : ` · ${m.field}`);
+
+/** Name an enum value (a state id) for the legend and the axis; unknown ids stay
+ *  numeric rather than vanishing — an id with no entry is exactly what you want to see. */
+const named = (names: Record<string, string>, v: number) =>
+  names[String(v)] ?? String(v);
+
+// A named axis ticks once per state actually visited, not on uPlot's even spacing —
+// past this many distinct values that stops being readable and even ticks win.
+const MAX_NAMED_TICKS = 12;
+
+/** Evenly spaced ticks over [min, max] at uPlot's chosen increment — what uPlot's own
+ *  default split generator produces, restated here as the fallback for a busy axis. */
+function evenSplits(min: number, max: number, incr: number): number[] {
+  const out: number[] = [];
+  for (let v = Math.ceil(min / incr) * incr; v <= max; v += incr) out.push(v);
+  return out;
+}
+
+/** The distinct values a scale's series hold, sorted — one tick per state the run was
+ *  actually in. `null` when there are too many to label, or none. */
+function visitedSplits(u: uPlot, rows: number[]): number[] | null {
+  const seen = new Set<number>();
+  for (const r of rows) {
+    const d = u.data[r];
+    for (let i = 0; i < d.length; i++) {
+      const x = d[i];
+      if (x == null || !Number.isFinite(x)) continue;
+      seen.add(x as number);
+      if (seen.size > MAX_NAMED_TICKS) return null;
+    }
+  }
+  return seen.size ? [...seen].sort((a, b) => a - b) : null;
+}
+
+export default function Chart({ series, meta, minHeight = 320, onViewChange, onReady }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const uRef = useRef<uPlot | null>(null);
   const legendH = useRef(0); // uPlot renders its legend below the canvas
@@ -73,20 +110,28 @@ export default function Chart({ series, units, minHeight = 320, onViewChange, on
     };
   };
 
-  // Rebuild uPlot when the series set OR the axis layout (units) changes.
-  const structKey = series.map((s, i) => `${s.name}:${s.discrete}:${units[i]}`).join('|');
+  // Rebuild uPlot when the series set, the axis layout, or the labelling changes —
+  // flipping the names toggle rewrites legend labels and axis ticks, which uPlot only
+  // picks up on construction.
+  const structKey = series
+    .map((s, i) => `${s.name}:${s.discrete}:${meta[i].unit}:${meta[i].label}:${meta[i].valueNames ? 'n' : ''}`)
+    .join('|');
 
   useEffect(() => {
     if (!rootRef.current) return;
     const el = rootRef.current;
 
-    const { scaleOf, order } = axisGroups(series, units);
+    const { scaleOf, order } = axisGroups(meta);
 
     const uSeries: uPlot.Series[] = [
       {},
       ...series.map((s, i) => ({
-        label: s.name.replace(/\.[^.]+$/, '') + (units[i] ? ` (${units[i]})` : ''),
+        label: legendLabel(meta[i]),
         scale: scaleOf[i],
+        // A state channel's raw u8 means nothing on its own: show "Fire", not 16.
+        value: meta[i].valueNames
+          ? (_u: uPlot, v: number | null) => (v == null ? '--' : named(meta[i].valueNames!, v))
+          : undefined,
         stroke: colorFor(i),
         width: 1.5,
         spanGaps: !s.discrete,
@@ -113,12 +158,15 @@ export default function Chart({ series, units, minHeight = 320, onViewChange, on
     // multiple scales don't stack conflicting gridlines. If a group has exactly
     // one series, colour its axis to match that line.
     const yAxes: uPlot.Axis[] = order.map((scale, gi) => {
-      const members = series.filter((_, i) => scaleOf[i] === scale);
-      const onlyIdx = members.length === 1 ? scaleOf.indexOf(scale) : -1;
+      // uPlot data rows are 1-based (row 0 is x), so a series index i is data row i+1.
+      const memberRows = scaleOf.flatMap((k, i) => (k === scale ? [i + 1] : []));
+      const onlyIdx = memberRows.length === 1 ? scaleOf.indexOf(scale) : -1;
+      // Every series on one scale shares a field, so they share a value map too.
+      const names = meta[scaleOf.indexOf(scale)].valueNames;
       return {
         scale,
         side: SIDES[gi % SIDES.length],
-        size: 58,
+        size: names ? 108 : 58, // state names are words, not 4 digits
         label: scale,
         labelSize: 26,
         stroke: onlyIdx >= 0 ? colorFor(onlyIdx) : AXIS_STROKE,
@@ -126,7 +174,15 @@ export default function Chart({ series, units, minHeight = 320, onViewChange, on
         labelFont: LABEL_FONT,
         grid: { show: gi === 0, stroke: GRID_STROKE, width: 1 },
         ticks: { stroke: GRID_STROKE, width: 1 },
-        values: (_u, vals) => vals.map(fmt),
+        // Tick where the run actually was — "Idle / Armed / Fire" rather than an even
+        // 0/5/10/15/20 ramp through ids nothing ever entered.
+        splits: names
+          ? (u, _ai, min, max, incr) =>
+              visitedSplits(u, memberRows) ?? evenSplits(min, max, incr)
+          : undefined,
+        values: names
+          ? (_u, vals) => vals.map((v) => (Number.isInteger(v) ? named(names, v) : ''))
+          : (_u, vals) => vals.map(fmt),
       };
     });
 

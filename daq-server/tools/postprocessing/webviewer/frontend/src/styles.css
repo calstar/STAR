@@ -93,6 +93,38 @@ body {
 .busy { color: var(--color-accent); font-size: var(--text-xs); }
 .error { color: var(--color-danger); font-size: var(--text-xs); }
 
+/* Tabs: Plot / Config, plus the view-wide names toggle. Spans both panes because
+   the toggle governs the picker on the left and the chart on the right. */
+.tabs { display: flex; align-items: center; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--color-border); }
+.tab {
+  padding: 7px 15px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  background: none; color: var(--color-text-muted); cursor: pointer; font-size: var(--text-xs);
+}
+.tab:hover { color: var(--color-text-secondary); }
+.tab.active { color: var(--color-text-primary); border-bottom-color: var(--color-accent); font-weight: 550; }
+
+/* Config tab: the run's config snapshot, verbatim */
+.cfg { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 12px; }
+.cfg-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cfg-search { flex: 0 1 260px; }
+.cfg-count { color: var(--color-text-muted); font-size: var(--text-2xs); }
+.cfg-note { max-width: 46em; margin: 10px auto 0; color: var(--color-text-muted); font-size: var(--text-xs); text-align: left; }
+.cfg-pre {
+  flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 14px 0;
+  background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: 8px;
+  font: var(--text-2xs)/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  tab-size: 4;
+}
+.cfg-line { display: flex; gap: 14px; padding: 0 16px; white-space: pre; }
+.cfg-line:hover { background: var(--color-bg-tertiary); }
+/* Gutter is excluded from selection so copying a range yields clean TOML. */
+.cfg-ln { flex: none; width: 3.5em; text-align: right; color: var(--color-text-muted); user-select: none; }
+.cfg-src { color: var(--color-text-secondary); }
+.tok-comment { color: var(--color-text-muted); }
+.tok-section { color: var(--color-accent); font-weight: 600; }
+.tok-key { color: var(--color-text-primary); }
+.tok-val { color: var(--color-text-secondary); }
+
 /* Workspace layout */
 .workspace { display: flex; gap: 16px; flex: 1; min-height: 0; }
 .pane-left { width: 290px; flex-shrink: 0; display: flex; }

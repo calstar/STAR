@@ -5,7 +5,7 @@ Run: cd webviewer && .venv/bin/python -m pytest backend/test_series.py -q
 
 import numpy as np
 
-from . import series
+from . import config, series
 from .naming import classify
 
 
@@ -80,17 +80,44 @@ def test_wide_csv_union_and_ffill(monkeypatch):
     monkeypatch.setattr(series, "load_series", fake_load)
     monkeypatch.setattr(
         series, "classify",
-        lambda n: type("C", (), {"discrete": n == "disc"})(),
+        lambda n: type("C", (), {"discrete": n == "disc", "entity": n})(),
     )
     text = "".join(series.wide_csv_rows("r", ["cont", "disc"], None, None))
     lines = text.strip().split("\n")
     assert lines[0] == "time,cont,disc"
-    body = [ln.split(",") for ln in lines[1:]]
+    assert lines[1] == ",,"  # role row: this fake run has no config snapshot
+    body = [ln.split(",") for ln in lines[2:]]
     times = [float(r[0]) for r in body]
     assert times == [0.0, 1.0, 2.0]  # union of {0,2} and {1}
     # discrete forward-fills from t=1 onward; empty before it.
     disc_col = [r[2] for r in body]
     assert disc_col[0] == "" and disc_col[1] == "1" and disc_col[2] == "1"
+
+
+def test_wide_csv_role_row_aligns_with_the_columns(monkeypatch, tmp_path):
+    """The second header row names what each column IS. The component name stays the
+    column key (analyze_run.py and every analysis script key on it); the role rides
+    underneath, blank where the run's config names nothing."""
+    monkeypatch.setattr(config, "ELODIN_DIR", tmp_path)
+    (tmp_path / "daq_20260902_120000.toml").write_text(
+        '[boards.pt_board]\ntype = "PT"\nboard_id = 21\n'
+        '\n[sensor_roles_pt_board]\n"Ox Upstream" = 5\n'
+    )
+    monkeypatch.setattr(
+        series, "load_series", lambda _r, _n: (np.array([0.0]), np.array([1.0]))
+    )
+    text = "".join(
+        series.wide_csv_rows(
+            "daq_20260902_120000",
+            ["PT1.CH5.pressure_psi", "PT1.CH9.pressure_psi"],
+            None,
+            None,
+        )
+    )
+    header, roles = text.split("\n")[:2]
+    assert header == "time,PT1.CH5.pressure_psi,PT1.CH9.pressure_psi"
+    assert roles == ",Ox Upstream,"  # CH9 has no role; the column still holds its place
+    assert header.count(",") == roles.count(",")
 
 
 def test_throttle_paces_throughput():

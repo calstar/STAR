@@ -6,11 +6,27 @@ async function getJSON<T>(url: string): Promise<T> {
   return r.json() as Promise<T>;
 }
 
+/** The config snapshot taken beside a run's DB, as TOML text. `null` when the run
+ *  has none: recorded before the backend started snapshotting it. */
+async function getConfig(runId: string): Promise<string | null> {
+  const r = await fetch(configUrl(runId));
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`${r.status}: ${(await r.text()).slice(0, 200)}`);
+  return r.text();
+}
+
+const configUrl = (runId: string) => `/api/runs/${runId}/config`;
+
 export const api = {
   runs: () => getJSON<Run[]>('/api/runs'),
 
   components: (runId: string) =>
     getJSON<RunIndex>(`/api/runs/${runId}/components`),
+
+  config: getConfig,
+
+  // Same URL, used as an <a download> href for "save the .toml".
+  configUrl,
 
   series: (
     runId: string,
