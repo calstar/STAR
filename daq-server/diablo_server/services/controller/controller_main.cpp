@@ -35,13 +35,6 @@
 #include "control/RobustDDPController.hpp"
 #include "control/StateMachine.hpp"
 
-// ── Simple TOML value parser (no library dependency) ───────────────────
-static std::string trim(const std::string& s) {
-    size_t a = s.find_first_not_of(" \t\r\n\"");
-    size_t b = s.find_last_not_of(" \t\r\n\"");
-    return (a == std::string::npos) ? "" : s.substr(a, b - a + 1);
-}
-
 /** Resolve path relative to config: paths like output/lut/... are relative to project root. */
 static std::string resolveConfigPath(const std::string& config_path, const std::string& path) {
     if (path.empty() || (path.size() > 0 && path[0] == '/'))
@@ -51,101 +44,6 @@ static std::string resolveConfigPath(const std::string& config_path, const std::
     last = config_dir.rfind('/');
     std::string project_root = (last != std::string::npos) ? config_dir.substr(0, last) : ".";
     return project_root + "/" + path;
-}
-
-static std::string getTomlValue(const std::string& content, const std::string& section,
-                                const std::string& key, const std::string& fallback = "") {
-    std::string sec_header = "[" + section + "]";
-    auto sec_pos = content.find(sec_header);
-    if (sec_pos == std::string::npos)
-        return fallback;
-
-    auto search_start = sec_pos + sec_header.size();
-    auto next_sec = content.find("\n[", search_start);
-    std::string sec_content = (next_sec == std::string::npos)
-                                  ? content.substr(search_start)
-                                  : content.substr(search_start, next_sec - search_start);
-
-    std::istringstream iss(sec_content);
-    std::string line;
-    while (std::getline(iss, line)) {
-        auto c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        auto eq = line.find('=');
-        if (eq == std::string::npos)
-            continue;
-        std::string k = trim(line.substr(0, eq));
-        std::string v = trim(line.substr(eq + 1));
-        if (k == key)
-            return v;
-    }
-    return fallback;
-}
-
-// Parse [actuator_roles] entry: "Fuel Press" = ["NC", 3, 12] → channel, board_id, is_no
-static void parseActuatorRole(const std::string& val, int& channel, int& board_id, bool& is_no) {
-    channel = 0;
-    board_id = 0;
-    is_no = false;
-    size_t i = val.find('[');
-    if (i == std::string::npos)
-        return;
-    size_t j = val.find(',', i + 1);
-    if (j == std::string::npos)
-        return;
-    std::string type_str = trim(val.substr(i + 1, j - i - 1));
-    if (type_str == "NO" || type_str == "no")
-        is_no = true;
-    size_t k = val.find(',', j + 1);
-    try {
-        if (k != std::string::npos)
-            board_id = std::stoi(trim(val.substr(k + 1)));
-        channel =
-            std::stoi(trim(val.substr(j + 1, (k != std::string::npos ? k : val.size()) - j - 1)));
-    } catch (...) {
-    }
-}
-
-// Build board_id → IP map from all [boards.xxx] sections (mirrors actuator_service logic)
-static std::map<int, std::string> buildBoardIpMap(const std::string& config_content,
-                                                  const std::string& config_path) {
-    std::map<int, std::string> m;
-
-    // Fallback: scan [boards.xxx] sections in config.toml
-    if (!config_content.empty()) {
-        size_t pos = 0;
-        while (pos < config_content.size()) {
-            size_t next = config_content.find("[boards.", pos);
-            if (next == std::string::npos)
-                break;
-            size_t end = config_content.find(']', next);
-            if (end == std::string::npos)
-                break;
-            std::string sec = config_content.substr(next + 1, end - next - 1);
-            std::string ip = getTomlValue(config_content, sec, "ip", "");
-            std::string id_str = getTomlValue(config_content, sec, "board_id",
-                                              getTomlValue(config_content, sec, "id", "0"));
-            if (!ip.empty() && !m.count(0)) {
-                try {
-                    int id = std::stoi(id_str);
-                    if (id > 0 && !m.count(id))
-                        m[id] = ip;
-                } catch (...) {
-                }
-            }
-            pos = end + 1;
-        }
-    }
-
-    // Last-resort defaults matching standard subnet layout
-    if (m.empty()) {
-        m[11] = "192.168.2.11";
-        m[12] = "192.168.2.12";
-        m[13] = "192.168.2.13";
-        m[14] = "192.168.2.14";
-    }
-    return m;
 }
 
 // ── Signal handling ────────────────────────────────────────────────────
