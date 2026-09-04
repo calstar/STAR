@@ -42,7 +42,7 @@ export function ConfirmButton({
           e.stopPropagation();
           setOpen(true);
         }}
-        className={className}
+        className={`inline-flex min-h-11 items-center sm:min-h-0 ${className ?? ""}`}
       >
         {label}
       </button>
@@ -60,7 +60,7 @@ export function ConfirmButton({
           }}
         >
           <div
-            className="w-full max-w-sm rounded-xl bg-white dark:bg-neutral-900 p-5 shadow-xl"
+            className="max-h-[85dvh] w-full max-w-sm overflow-y-auto rounded-xl bg-white dark:bg-neutral-900 p-5 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
@@ -75,7 +75,7 @@ export function ConfirmButton({
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="rounded border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                className="inline-flex min-h-11 items-center justify-center rounded border border-neutral-300 px-4 py-1.5 text-sm hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800 sm:min-h-0 sm:px-3"
               >
                 Cancel
               </button>
@@ -85,7 +85,7 @@ export function ConfirmButton({
                   setOpen(false);
                   formRef.current?.requestSubmit();
                 }}
-                className="rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700"
+                className="inline-flex min-h-11 items-center justify-center rounded bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700 sm:min-h-0 sm:px-3"
               >
                 {confirmLabel}
               </button>
