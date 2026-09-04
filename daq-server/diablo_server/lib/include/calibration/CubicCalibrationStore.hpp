@@ -5,6 +5,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace fsw {
@@ -43,8 +44,16 @@ struct CubicChannel {
     uint8_t logical_ch =
         0;             // pt_logical_calibration_channel(slot, connector) — PTCalibrationManager key
     std::string role;  // human role from config, e.g. "Fuel Upstream"
+    // Which model this uid streams (from config g_pt_model): "cubic" (default) | "robust". Decides
+    // capture routing at the service and which display the frontend renders. For robust uids the
+    // cubic `fit` is left invalid (points are display-only) and `fit_curve` holds the sampled
+    // model.
+    std::string active_model = "cubic";
     std::vector<CubicPoint> points;
     CubicFit fit;
+    // Robust display overlay: (adc, psi) samples of the live robust model (predict_pressure_psi),
+    // set by the service on each robust capture. Empty for cubic uids.
+    std::vector<std::pair<double, double>> fit_curve;
     std::string status = "PENDING";  // PENDING (<2 pts) | OK | ERROR
     std::string last_error;
     double updated_at = 0.0;
@@ -62,16 +71,21 @@ class CubicCalibrationStore {
 public:
     explicit CubicCalibrationStore(std::string file_path);
 
-    /** Attach/refresh identity + role for a uid (idempotent; call at startup and on each capture).
-     */
+    /** Attach/refresh identity + role + streaming model for a uid (idempotent; call at startup).
+     *  `active_model` is the config truth ("cubic"|"robust"); it takes precedence over a value
+     *  restored from disk by load(). */
     void register_channel(uint16_t uid, uint8_t board_id, uint8_t connector, uint8_t logical_ch,
-                          const std::string& role);
+                          const std::string& role, const std::string& active_model = "cubic");
 
     /** Append a capture point (raw ADC, reference PSI), cap history, and re-fit. Returns the fit.
-     */
+     *  For a robust uid the point is recorded for display only and an invalid fit is returned
+     *  (the robust learner is updated by the service, not here). */
     CubicFit add_point(uint16_t uid, double adc, double psi);
 
-    /** Drop all points + fit for a uid (channel goes back to PENDING). */
+    /** Replace a robust uid's display fit-curve (sampled predict_pressure_psi points). */
+    void set_fit_curve(uint16_t uid, const std::vector<std::pair<double, double>>& curve);
+
+    /** Drop all points, fit, and fit-curve for a uid (channel goes back to PENDING). */
     void clear_channel(uint16_t uid);
 
     const CubicFit* fit_for(uint16_t uid) const;

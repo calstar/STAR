@@ -117,6 +117,11 @@ static PtModel pt_model_for(uint16_t uid) {
     return it == g_pt_model.end() ? PtModel::Cubic : it->second;
 }
 
+/** Config-string form of a model, for the cubic store's per-uid active_model tag. */
+static const char* pt_model_name(PtModel m) {
+    return m == PtModel::Robust ? "robust" : (m == PtModel::Blend ? "blend" : "cubic");
+}
+
 /**
  * The single LP PT source-selection rule, shared by the streaming path and the Zero-All helper so
  * both agree. Guards first: no factory fit -> robust; robust not seeded -> factory. Otherwise the
@@ -592,11 +597,71 @@ int main(int argc, char* argv[]) {
             const uint16_t uid = static_cast<uint16_t>(bc.board_id) * 100u + local_ch;
             const uint8_t log_ch =
                 fsw::calibration::pt_logical_calibration_channel(bc.board_number, local_ch);
-            cubic_store.register_channel(uid, bc.board_id, local_ch, log_ch, /*role=*/"");
+            cubic_store.register_channel(uid, bc.board_id, local_ch, log_ch, /*role=*/"",
+                                         pt_model_name(pt_model_for(uid)));
             if (pt_calibration.is_calibrated(log_ch))
                 factory_pt_snapshot[log_ch] = *pt_calibration.get_calibration(log_ch);
         }
     }
+
+    // ---- Unified capture/clear routing (see the [calibration_model_*] plan)
+    // ---------------------- One capture path: the frontend sends {uid, ref}; the service routes by
+    // the uid's configured model. Cubic/Blend -> record point + fit + apply to pt_calibration.
+    // Robust -> record point for display + feed the RLS learner + refresh the sampled display
+    // curve. Same split for clear.
+    auto sample_robust_curve = [&](uint16_t uid) -> std::vector<std::pair<double, double>> {
+        std::vector<std::pair<double, double>> curve;
+        const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+        if (cch == nullptr || cch->points.empty())
+            return curve;
+        double amin = cch->points.front().adc, amax = amin;
+        for (const auto& p : cch->points) {
+            amin = std::min(amin, p.adc);
+            amax = std::max(amax, p.adc);
+        }
+        if (!(amax > amin))
+            amax = amin + 1.0;
+        constexpr int kSamples = 40;
+        curve.reserve(kSamples + 1);
+        for (int i = 0; i <= kSamples; ++i) {
+            const double adc = amin + (amax - amin) * i / kSamples;
+            const double psi =
+                robust_manager.predict_pressure_psi(uid, static_cast<int32_t>(std::llround(adc)));
+            curve.emplace_back(adc, psi);
+        }
+        return curve;
+    };
+    auto apply_capture = [&](uint16_t uid, double adc_avg, double ref) {
+        if (pt_model_for(uid) == PtModel::Robust) {
+            cubic_store.add_point(uid, adc_avg, ref);  // display/audit only for robust
+            robust_manager.update_calibration(uid, static_cast<int32_t>(std::llround(adc_avg)),
+                                              ref);
+            cubic_store.set_fit_curve(uid, sample_robust_curve(uid));
+        } else {  // Cubic (and Blend, whose factory half is the cubic)
+            const fsw::calibration::CubicFit fit = cubic_store.add_point(uid, adc_avg, ref);
+            const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+            if (fit.valid && cch != nullptr)
+                pt_calibration.set_calibration(
+                    cch->logical_ch,
+                    fsw::calibration::PTCalibrationCoeffs(fit.A, fit.B, fit.C, fit.D));
+        }
+        cubic_store.save();
+    };
+    auto apply_clear = [&](uint16_t uid) {
+        cubic_store.clear_channel(uid);
+        if (pt_model_for(uid) == PtModel::Robust) {
+            robust_manager.reset_adjustment(uid);
+        } else {
+            const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+            if (cch != nullptr) {
+                auto fac = factory_pt_snapshot.find(cch->logical_ch);
+                if (fac != factory_pt_snapshot.end())
+                    pt_calibration.set_calibration(cch->logical_ch, fac->second);
+            }
+        }
+        cubic_store.save();
+    };
+
     // Resume previously captured points and re-apply their fitted cubics to the live stream.
     const size_t cubic_loaded = cubic_store.load();
     if (cubic_loaded > 0) {
@@ -619,6 +684,18 @@ int main(int argc, char* argv[]) {
     if (!robust_manager.load_adjustments(adjustments_path)) {
         std::cout << "[Calibration]   File missing/unreadable — using factory-seeded robust only"
                   << std::endl;
+    }
+    // Robust uids: resume points are display-only, so re-sample the display curve from the now-
+    // restored robust model (adjustments.json). Cubic uids already had their fit re-applied above.
+    {
+        bool any = false;
+        for (uint16_t uid : cubic_store.uids())
+            if (pt_model_for(uid) == PtModel::Robust) {
+                cubic_store.set_fit_curve(uid, sample_robust_curve(uid));
+                any = true;
+            }
+        if (any)
+            cubic_store.save();
     }
     if (g_env_override) {
         const char* label = *g_env_override == PtModel::Cubic ? "factory cubic (CAL_USE_FACTORY_PT)"
@@ -846,6 +923,33 @@ int main(int argc, char* argv[]) {
                     cubic_store.save();
                     std::cout << "[Cal] Cubic cleared uid=" << static_cast<int>(sensor_id)
                               << std::endl;
+                } else if (cmd_type == 5) {  // Unified capture point — routed by configured model
+                    bool have_adc = false;
+                    double adc_avg = 0.0;
+                    auto rit = pt_adc_ring.find(sensor_id);
+                    if (rit != pt_adc_ring.end() && !rit->second.empty()) {
+                        double sum = 0.0;
+                        for (int32_t a : rit->second)
+                            sum += static_cast<double>(a);
+                        adc_avg = sum / static_cast<double>(rit->second.size());
+                        have_adc = true;
+                    } else if (last_adc_map.count(sensor_id)) {
+                        adc_avg = static_cast<double>(last_adc_map[sensor_id]);
+                        have_adc = true;
+                    }
+                    if (have_adc) {
+                        apply_capture(sensor_id, adc_avg, ref_val);
+                        std::cout << "[Cal] Capture uid=" << static_cast<int>(sensor_id) << " ("
+                                  << pt_model_name(pt_model_for(sensor_id)) << ") adc=" << adc_avg
+                                  << " psi=" << ref_val << std::endl;
+                    } else {
+                        std::cout << "[Cal] Capture: no ADC seen yet for uid "
+                                  << static_cast<int>(sensor_id) << std::endl;
+                    }
+                } else if (cmd_type == 6) {  // Unified new calibration / clear — routed by model
+                    apply_clear(sensor_id);
+                    std::cout << "[Cal] New calibration uid=" << static_cast<int>(sensor_id) << " ("
+                              << pt_model_name(pt_model_for(sensor_id)) << ")" << std::endl;
                 }
             }
             continue;

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useSensorStore, useGetSensorValue, useSensorDataVersion, useLoadCellForceLbf } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import {
@@ -10,9 +10,11 @@ import {
   CalibrationStatusPayload,
   CalibrationCommand,
   CalibrationConfidence,
+  CubicCalibrationChannel,
 } from '@/lib/types';
 import { useSensorConfig, SensorConfig } from '@/lib/sensor-config';
 import { getApiBaseUrl } from '@/lib/websocket';
+import { CalibrationChart } from '@/components/calibration/CalibrationChart';
 
 // ── PT_CHANNELS is now derived from config.toml via useSensorConfig().
 // The hardcoded list below is removed.
@@ -64,10 +66,12 @@ interface ChannelCardProps {
   status?: CalibrationChannelStatus;
   rawAdc?: number | null;
   calPsi?: number | null;
+  selected?: boolean;
+  onSelect?: () => void;
   onCapture: (sensorId: number, boardId: number, refPsi: number) => void;
 }
 
-function ChannelCard({ ch, status, rawAdc, calPsi, onCapture }: ChannelCardProps) {
+function ChannelCard({ ch, status, rawAdc, calPsi, selected, onSelect, onCapture }: ChannelCardProps) {
   const [refInput, setRefInput] = useState('');
   const conf = status?.confidence ?? 'UNCALIBRATED';
   const isDrift = status?.driftDetected ?? false;
@@ -81,8 +85,9 @@ function ChannelCard({ ch, status, rawAdc, calPsi, onCapture }: ChannelCardProps
 
   return (
     <div
-      className={`rounded border p-2.5 flex flex-col gap-1.5 transition-all bg-card
-        ${isDrift ? 'border-red-600 shadow-[0_0_10px_rgba(239,68,68,0.2)]' : 'border-gray-800'}`}
+      onClick={onSelect}
+      className={`rounded border p-2.5 flex flex-col gap-1.5 transition-all bg-card cursor-pointer
+        ${selected ? 'ring-2 ring-blue-500 ' : ''}${isDrift ? 'border-red-600 shadow-[0_0_10px_rgba(239,68,68,0.2)]' : 'border-gray-800'}`}
     >
       {/* Header row: CH + name + confidence */}
       <div className="flex items-center justify-between gap-1">
@@ -174,6 +179,8 @@ export default function CalibrationPage() {
   const [numReferenceGauges, setNumReferenceGauges] = useState(1);
   const [singleRefPsi, setSingleRefPsi] = useState('');
   const [selectedBoardId, setSelectedBoardId] = useState<number | 'all'>('all');
+  const [cubicState, setCubicState] = useState<Record<string, CubicCalibrationChannel>>({});
+  const [selectedUid, setSelectedUid] = useState<number | null>(null);
 
   // Gauge → PT channel mapping (when multiple gauges): gauge index 1..N → channel ids
   const [gaugeToChannels, setGaugeToChannels] = useState<Record<number, number[]>>({ 1: [1] });
@@ -181,8 +188,16 @@ export default function CalibrationPage() {
   const [lcChannels, setLcChannels] = useState<{ calEntity: string; label: string }[]>([]);
   const setLoadCellZeroOffset = useSensorStore((s) => s.setLoadCellZeroOffset);
 
-  const availableBoards = Array.from(new Set(ptChannels.map((c) => c.boardId))).sort((a, b) => a - b);
-  const visibleChannels = ptChannels.filter((c) => selectedBoardId === 'all' || c.boardId === selectedBoardId);
+  // This page shows only valves configured for the robust model (the service reports each uid's
+  // active_model in the calibration record); cubic-configured valves live on the Cubic page.
+  const robustChannels = useMemo(
+    () => ptChannels.filter((c) => cubicState[String(c.boardId * 100 + c.id)]?.active_model === 'robust'),
+    [ptChannels, cubicState],
+  );
+  const availableBoards = Array.from(new Set(robustChannels.map((c) => c.boardId))).sort((a, b) => a - b);
+  const visibleChannels = robustChannels.filter((c) => selectedBoardId === 'all' || c.boardId === selectedBoardId);
+  const selectedState = selectedUid != null ? cubicState[String(selectedUid)] : undefined;
+  const selectedChannel = selectedUid != null ? ptChannels.find((c) => c.boardId * 100 + c.id === selectedUid) : undefined;
 
   // Default mapping when number of gauges changes: Gauge 1→[1], Gauge 2→[2], ...
   useEffect(() => {
@@ -252,13 +267,41 @@ export default function CalibrationPage() {
     return () => clearInterval(id);
   }, []);
 
+  // The service reports each valve's model + captured robust points in the cubic-calibration record;
+  // poll it to filter this page and draw the selected valve's points/curve.
+  const fetchCubic = useCallback(async () => {
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/api/cubic_calibration`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && typeof data.cubic_state === 'object' && data.cubic_state) {
+        setCubicState(data.cubic_state as Record<string, CubicCalibrationChannel>);
+      }
+    } catch { /* ignore transient fetch errors */ }
+  }, []);
+
+  useEffect(() => {
+    fetchCubic();
+    const id = setInterval(fetchCubic, 2000);
+    return () => clearInterval(id);
+  }, [fetchCubic]);
+
   const sendCalCmd = useCallback((cmd: CalibrationCommand) => {
     ws.send({ type: MessageType.CALIBRATION_COMMAND, timestamp: Date.now(), payload: cmd });
-  }, [ws]);
+    // Nudge a refetch after the service has processed + persisted the capture/clear.
+    setTimeout(fetchCubic, 350);
+    setTimeout(fetchCubic, 900);
+  }, [ws, fetchCubic]);
 
   const handleCapture = useCallback((sensorId: number, boardId: number, referencePressure: number) => {
-    sendCalCmd({ commandType: 'capture_reference', sensorId, boardId, referencePressure });
+    sendCalCmd({ commandType: 'capture_point', sensorId, boardId, referencePressure });
   }, [sendCalCmd]);
+
+  const handleNewCalibration = useCallback(() => {
+    if (!selectedChannel) return;
+    if (typeof window !== 'undefined' && !window.confirm(`Start a new calibration for ${selectedChannel.role || 'CH' + selectedChannel.id}? Clears its captured points and resets the robust adjustment.`)) return;
+    sendCalCmd({ commandType: 'new_calibration', sensorId: selectedChannel.id, boardId: selectedChannel.boardId });
+  }, [selectedChannel, sendCalCmd]);
 
   const handleZeroAll = useCallback(() => {
     sendCalCmd({ commandType: 'zero_all' });
@@ -274,7 +317,7 @@ export default function CalibrationPage() {
     if (isNaN(psi)) return;
     for (const ch of visibleChannels) {
       if (!ch.inCalibrationSequence) continue;
-      sendCalCmd({ commandType: 'capture_reference', sensorId: ch.id, boardId: ch.boardId, referencePressure: psi });
+      sendCalCmd({ commandType: 'capture_point', sensorId: ch.id, boardId: ch.boardId, referencePressure: psi });
     }
     setSingleRefPsi('');
   }, [sendCalCmd, singleRefPsi, visibleChannels]);
@@ -297,7 +340,7 @@ export default function CalibrationPage() {
         // Find by unique board*100 + channel
         const ch = ptChannels.find(c => (c.boardId * 100 + c.id) === uid);
         if (ch) {
-          sendCalCmd({ commandType: 'capture_reference', sensorId: ch.id, boardId: ch.boardId, referencePressure: ref });
+          sendCalCmd({ commandType: 'capture_point', sensorId: ch.id, boardId: ch.boardId, referencePressure: ref });
         }
       }
     }
@@ -517,19 +560,56 @@ export default function CalibrationPage() {
 
       {/* ── Channel grid — 5 columns × 2 rows ──────────────────────── */}
       <div className="flex-1 overflow-auto min-h-0 p-3">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 h-full auto-rows-fr">
-          {visibleChannels.map((ch) => (
-            <ChannelCard
-              key={`${ch.boardId}-${ch.id}`}
-              ch={ch}
-              status={getStatus(ch.id, ch.boardId)}
-              rawAdc={getSensorValue(ch.calEntity, 'raw_adc_counts')}
-              calPsi={getSensorValue(ch.calEntity, 'pressure_psi')}
-              onCapture={handleCapture}
-            />
-          ))}
-        </div>
+        {robustChannels.length === 0 ? (
+          <div className="text-sm text-gray-500 p-2">
+            No valves are set to the robust model. Set a valve&apos;s model to <span className="text-text font-semibold">Robust</span> in
+            the config editor&apos;s Roles tab, then restart the session — it will appear here.
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 auto-rows-fr">
+            {visibleChannels.map((ch) => {
+              const uid = ch.boardId * 100 + ch.id;
+              return (
+                <ChannelCard
+                  key={`${ch.boardId}-${ch.id}`}
+                  ch={ch}
+                  status={getStatus(ch.id, ch.boardId)}
+                  rawAdc={getSensorValue(ch.calEntity, 'raw_adc_counts')}
+                  calPsi={getSensorValue(ch.calEntity, 'pressure_psi')}
+                  selected={uid === selectedUid}
+                  onSelect={() => setSelectedUid(uid)}
+                  onCapture={handleCapture}
+                />
+              );
+            })}
+          </div>
+        )}
       </div>
+
+      {/* ── Selected valve: captured points + robust curve ──────────── */}
+      {selectedChannel && (
+        <div className="flex-shrink-0 border-t border-gray-800 bg-card/40 p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <span className="text-sm font-bold text-text">{selectedChannel.role || `CH${selectedChannel.id}`}</span>
+              <span className="text-[11px] text-gray-500 font-mono ml-2">
+                B{selectedChannel.boardId} · CH{selectedChannel.id} · {selectedState?.numPoints ?? 0} pts
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleNewCalibration}
+                className="px-3 py-1.5 text-xs font-bold rounded border border-amber-700 bg-amber-900/30 text-amber-300 hover:bg-amber-800/50"
+                title="Clear this valve's captured points and reset its robust adjustment"
+              >
+                NEW CALIBRATION
+              </button>
+              <button onClick={() => setSelectedUid(null)} className="px-2 py-1.5 text-xs text-gray-400 hover:text-gray-200" title="Close">✕</button>
+            </div>
+          </div>
+          <CalibrationChart state={selectedState} height={260} />
+        </div>
+      )}
     </main>
   );
 }

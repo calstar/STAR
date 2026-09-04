@@ -1,23 +1,11 @@
 'use client'
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import {
-  ComposedChart, Scatter, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Label,
-} from 'recharts';
 import { useGetSensorValue, useSensorDataVersion } from '@/lib/store';
 import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { MessageType, CalibrationCommand, CubicCalibrationChannel } from '@/lib/types';
 import { useSensorConfig } from '@/lib/sensor-config';
-
-// ── The service returns coeffs; the browser only EVALUATES them for the overlay (no fitting). ──
-function evalCubicNorm(adc: number, poly: number[], min: number, scale: number): number {
-  const s = scale || 1;
-  const x = (adc - min) / s;
-  let xp = 1;
-  let y = 0;
-  for (let i = 0; i < poly.length; i++) { y += poly[i] * xp; xp *= x; }
-  return y;
-}
+import { CalibrationChart } from '@/components/calibration/CalibrationChart';
 
 function fmt(v: number | null | undefined, digits = 2): string {
   if (v === null || v === undefined || !isFinite(v)) return '---';
@@ -37,16 +25,19 @@ export default function CubicCalibrationPage() {
   const ws = getWebSocketClient();
   const allChannels = useSensorConfig();
 
-  // Low-pressure PTs only — HP (4-20 mA) PTs are not cubic-calibrated.
-  const ptChannels = useMemo(
-    () => allChannels.filter((c) => c.inCalibrationSequence && !c.isHpPt)
-      .sort((a, b) => (a.boardId - b.boardId) || (a.id - b.id)),
-    [allChannels],
-  );
-
   const [selectedUid, setSelectedUid] = useState<number | null>(null);
   const [refInput, setRefInput] = useState('');
   const [cubicState, setCubicState] = useState<Record<string, CubicCalibrationChannel>>({});
+
+  // Low-pressure PTs configured for the cubic model. The service reports each uid's active_model in
+  // the calibration record; filter by that (the source of truth), defaulting to cubic when a uid has
+  // no record yet. Robust-configured valves live on the Robust Calibration page.
+  const ptChannels = useMemo(
+    () => allChannels.filter((c) => c.inCalibrationSequence && !c.isHpPt
+        && (cubicState[String(c.boardId * 100 + c.id)]?.active_model ?? 'cubic') === 'cubic')
+      .sort((a, b) => (a.boardId - b.boardId) || (a.id - b.id)),
+    [allChannels, cubicState],
+  );
 
   // Default selection once channels load.
   useEffect(() => {
@@ -90,35 +81,15 @@ export default function CubicCalibrationPage() {
     if (!selected) return;
     const psi = parseFloat(refInput);
     if (isNaN(psi)) return;
-    sendCalCmd({ commandType: 'capture_cubic_point', sensorId: selected.id, boardId: selected.boardId, referencePressure: psi });
+    sendCalCmd({ commandType: 'capture_point', sensorId: selected.id, boardId: selected.boardId, referencePressure: psi });
     setRefInput('');
   }, [selected, refInput, sendCalCmd]);
 
-  const handleClear = useCallback(() => {
+  const handleNewCalibration = useCallback(() => {
     if (!selected) return;
-    if (typeof window !== 'undefined' && !window.confirm(`Clear all captured points for ${selected.role || 'CH' + selected.id}? Reverts to the factory cubic.`)) return;
-    sendCalCmd({ commandType: 'clear_cubic_channel', sensorId: selected.id, boardId: selected.boardId });
+    if (typeof window !== 'undefined' && !window.confirm(`Start a new calibration for ${selected.role || 'CH' + selected.id}? Clears its captured points and reverts to the factory cubic.`)) return;
+    sendCalCmd({ commandType: 'new_calibration', sensorId: selected.id, boardId: selected.boardId });
   }, [selected, sendCalCmd]);
-
-  // Build the chart series: captured scatter points + a sampled fitted curve.
-  const chartData = useMemo(() => {
-    const pts = selectedState?.points ?? [];
-    const rows: { adc: number; psi?: number; psiFit?: number }[] = pts.map((p) => ({ adc: p.adc, psi: p.psi }));
-    const poly = selectedState?.polyCoeffs;
-    if (poly && poly.length >= 2 && pts.length >= 2) {
-      const adcs = pts.map((p) => p.adc);
-      let lo = Math.min(...adcs);
-      let hi = Math.max(...adcs);
-      const pad = (hi - lo) * 0.05 || 1;
-      lo -= pad; hi += pad;
-      const N = 60;
-      for (let i = 0; i <= N; i++) {
-        const adc = lo + ((hi - lo) * i) / N;
-        rows.push({ adc, psiFit: evalCubicNorm(adc, poly, selectedState!.adcNormMin, selectedState!.adcNormScale) });
-      }
-    }
-    return rows.sort((a, b) => a.adc - b.adc);
-  }, [selectedState]);
 
   const statusOf = (uid: number): string => cubicState[String(uid)]?.status ?? 'NONE';
   const pointsOf = (uid: number): number => cubicState[String(uid)]?.points?.length ?? 0;
@@ -216,10 +187,11 @@ export default function CubicCalibrationPage() {
                   CAPTURE POINT
                 </button>
                 <button
-                  onClick={handleClear}
-                  className="px-3 py-1.5 text-xs font-bold rounded border border-red-700 bg-red-900/30 text-red-300 hover:bg-red-800/50 ml-auto"
+                  onClick={handleNewCalibration}
+                  className="px-3 py-1.5 text-xs font-bold rounded border border-amber-700 bg-amber-900/30 text-amber-300 hover:bg-amber-800/50 ml-auto"
+                  title="Clear this valve's captured points and start a fresh calibration"
                 >
-                  CLEAR CHANNEL
+                  NEW CALIBRATION
                 </button>
               </div>
 
@@ -235,28 +207,7 @@ export default function CubicCalibrationPage() {
               </div>
 
               {/* Graph: captured points + fitted curve */}
-              <div className="border border-gray-800 rounded bg-card p-2" style={{ height: 420 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={chartData} margin={{ top: 12, right: 20, bottom: 28, left: 12 }}>
-                    <CartesianGrid stroke="#222" />
-                    <XAxis type="number" dataKey="adc" domain={['auto', 'auto']} stroke="#888"
-                           tick={{ fontSize: 10, fill: '#888' }} tickFormatter={(v) => Number(v).toExponential(1)}>
-                      <Label value="Raw ADC code" position="bottom" offset={12} fill="#888" fontSize={11} />
-                    </XAxis>
-                    <YAxis type="number" stroke="#888" tick={{ fontSize: 10, fill: '#888' }}
-                           tickFormatter={(v) => Number(v).toFixed(0)}>
-                      <Label value="Pressure (PSI)" angle={-90} position="insideLeft" fill="#888" fontSize={11} />
-                    </YAxis>
-                    <Tooltip
-                      contentStyle={{ background: '#111', border: '1px solid #333', fontSize: 11 }}
-                      labelFormatter={(v) => `ADC ${Number(v).toExponential(3)}`}
-                      formatter={(val: number, name: string) => [Number(val).toFixed(2) + ' PSI', name === 'psi' ? 'captured' : 'fit']}
-                    />
-                    <Line type="monotone" dataKey="psiFit" stroke="#38BDF8" dot={false} strokeWidth={2} connectNulls isAnimationActive={false} name="fit" />
-                    <Scatter dataKey="psi" fill="#F59E0B" name="psi" isAnimationActive={false} />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
+              <CalibrationChart state={selectedState} />
 
               {/* Captured points table */}
               {selectedState?.points && selectedState.points.length > 0 && (
