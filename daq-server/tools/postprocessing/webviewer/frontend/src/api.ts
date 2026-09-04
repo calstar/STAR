@@ -17,6 +17,18 @@ async function getConfig(runId: string): Promise<string | null> {
 
 const configUrl = (runId: string) => `/api/runs/${runId}/config`;
 
+/** Set (or clear, with '') this run's shared description. Returns what was stored:
+ *  the server normalises to one line and truncates, so echo that back into the box. */
+async function setDescription(runId: string, text: string): Promise<string> {
+  const r = await fetch(`/api/runs/${runId}/description`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!r.ok) throw new Error(`${r.status}: ${(await r.text()).slice(0, 200)}`);
+  return (await r.json()).description as string;
+}
+
 export const api = {
   runs: () => getJSON<Run[]>('/api/runs'),
 
@@ -24,6 +36,8 @@ export const api = {
     getJSON<RunIndex>(`/api/runs/${runId}/components`),
 
   config: getConfig,
+
+  setDescription,
 
   // Same URL, used as an <a download> href for "save the .toml".
   configUrl,

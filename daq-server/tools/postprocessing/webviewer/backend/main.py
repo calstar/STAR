@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, export_cache, run_config, runs, series
+from . import config, descriptions, export_cache, run_config, runs, series
 
 app = FastAPI(title="Elodin Past-Run Viewer")
 
@@ -43,6 +43,26 @@ def _time_source(value: str) -> str:
 @app.get("/api/runs")
 def api_runs():
     return runs.list_runs()
+
+
+@app.put("/api/runs/{run_id}/description")
+def api_set_description(run_id: str, text: str = Body(..., embed=True, max_length=4000)):
+    """Set (or clear, with empty text) this run's shared one-line description.
+
+    Unowned on purpose: there is no login on this viewer, so anyone who can see a run can
+    label it and everyone else sees that label. Last write wins.
+    """
+    if not config.RUN_RE.match(run_id):
+        raise HTTPException(400, "invalid run id")
+    if not (config.ELODIN_DIR / run_id).is_dir():
+        raise HTTPException(404, f"run not found: {run_id}")
+    try:
+        entry = descriptions.set_text(run_id, text)
+    except OSError as e:
+        # Almost always a read-only or missing mount. Say so, rather than accepting the
+        # edit and quietly dropping it: the user would have no way to tell.
+        raise HTTPException(503, f"could not save description: {e}")
+    return {"run_id": run_id, "description": entry["text"], "updated_at": entry["updated_at"]}
 
 
 @app.get("/api/runs/{run_id}/components")

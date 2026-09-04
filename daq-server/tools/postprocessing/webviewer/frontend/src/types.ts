@@ -10,6 +10,9 @@ export interface Run {
   cached: boolean;
   /** Written by a sim session (daq_sim_… prefix), not the real test stand. */
   simulated: boolean;
+  /** Shared one-liner saying what this run was. Anyone can edit it; everyone sees the
+   *  same text. "" when nobody has labelled it. */
+  description: string;
 }
 
 export interface Component {
