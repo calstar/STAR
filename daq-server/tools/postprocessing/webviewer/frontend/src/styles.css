@@ -210,6 +210,16 @@ body {
 .btn.disabled, .btn:disabled { opacity: .45; pointer-events: none; }
 .btn-link { background: none; border: 0; color: var(--color-accent); cursor: pointer; font-size: var(--text-2xs); padding: 2px 4px; }
 
+/* The plot surface before a run is indexed. Same treatment as .chart-wrap, so it reads
+   as the plot area not yet filled, with the content anchored top-left like every other
+   pane. The run's facts are not repeated here; they are in the run header. */
+.notice {
+  flex: 1; min-height: 0; padding: 20px 22px;
+  background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: 8px;
+}
+.notice-title { font-size: var(--text-sm); font-weight: 600; }
+.notice-body { max-width: 56ch; margin: 8px 0 16px; color: var(--color-text-secondary); font-size: var(--text-xs); }
+
 /* Chart */
 .chart-wrap { position: relative; background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: 8px; padding: 20px 22px; flex: 1; min-height: 440px; }
 .chart-busy { position: absolute; top: 16px; right: 18px; color: var(--color-accent); font-size: var(--text-2xs); }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type uPlot from 'uplot';
 import { api } from './api';
 import starWordmark from './assets/star-wordmark.png';
-import type { Component, Run, RunIndex, Series, SeriesMeta, TimeSource } from './types';
+import type { Component, Run, RunIndex, RunSummary, Series, SeriesMeta, TimeSource } from './types';
 import { fmtBytes, fmtDuration } from './util';
 import RunList from './components/RunList';
 import SensorPicker from './components/SensorPicker';
@@ -10,6 +10,7 @@ import TimeRange from './components/TimeRange';
 import Chart from './components/Chart';
 import ConfigView from './components/ConfigView';
 import RunDescription from './components/RunDescription';
+import RunSummaryPanel from './components/RunSummaryPanel';
 
 const MAX_POINTS = 4000;
 
@@ -42,6 +43,8 @@ export default function App() {
   const [index, setIndex] = useState<RunIndex | null>(null);
   const [indexBusy, setIndexBusy] = useState(false);
   const [indexErr, setIndexErr] = useState<string | null>(null);
+  // What the run says about itself before any export. Selecting a run costs only this.
+  const [summary, setSummary] = useState<RunSummary | null>(null);
 
   const [tab, setTab] = useState<Tab>('plot');
   const [showNames, setShowNames] = useState(() => loadPref(NAMES_KEY, true));
@@ -66,6 +69,23 @@ export default function App() {
     api.runs().then(setRuns).catch((e) => console.error(e)).finally(() => setLoadingRuns(false));
   }, []);
 
+  // The expensive step, on request. Synchronous on the server; this holds a busy state
+  // for the duration and marks the run cached in the list when it lands.
+  const runIndex = useCallback(() => {
+    if (!runId) return;
+    setIndexBusy(true);
+    setIndexErr(null);
+    api
+      .index(runId)
+      .then((idx) => {
+        setIndex(idx);
+        setSummary((s) => (s ? { ...s, cached: true } : s));
+        setRuns((rs) => rs.map((r) => (r.id === runId ? { ...r, cached: true } : r)));
+      })
+      .catch((e) => setIndexErr(String(e.message || e)))
+      .finally(() => setIndexBusy(false));
+  }, [runId]);
+
   const toggleNames = (on: boolean) => {
     setShowNames(on);
     savePref(NAMES_KEY, on);
@@ -88,21 +108,23 @@ export default function App() {
     setTab('plot');
     setConfigText(undefined);
     setConfigErr(null);
-    setIndexBusy(true);
+    setSummary(null);
+    // Cheap either way: the summary never exports, and the index is only fetched when one
+    // already exists. A run is indexed on request (runIndex), not by being clicked.
     api
-      .components(id)
-      .then((idx) => {
-        setIndex(idx);
-        setRuns((rs) => rs.map((r) => (r.id === id ? { ...r, cached: true } : r)));
+      .summary(id)
+      .then((sum) => {
+        setSummary(sum);
+        // Runs predating the snapshot have no config; asking anyway just logs a 404.
+        if (sum.has_config) {
+          api.config(id).then(setConfigText).catch((e) => setConfigErr(String(e.message || e)));
+        } else {
+          setConfigText(null);
+        }
+        if (!sum.cached) return;
+        api.components(id).then(setIndex).catch((e) => setIndexErr(String(e.message || e)));
       })
-      .catch((e) => setIndexErr(String(e.message || e)))
-      .finally(() => setIndexBusy(false));
-    // The snapshot is small (~30 KB) and wanted by both tabs: the Config tab shows it,
-    // and it is where the names come from, so fetch it once with the index.
-    api
-      .config(id)
-      .then(setConfigText)
-      .catch((e) => setConfigErr(String(e.message || e)));
+      .catch((e) => setIndexErr(String(e.message || e)));
   }, []);
 
   // Fetch series whenever the selection or window changes (debounced).
@@ -240,12 +262,25 @@ export default function App() {
                 {run?.simulated && (
                   <span className="sim-badge" title="Simulated data — not from the test stand">SIM</span>
                 )}
-                {indexBusy && <span className="busy">exporting &amp; indexing… (first open of a run)</span>}
                 {indexErr && <span className="error">Error: {indexErr}</span>}
-                {index && (
+                {index ? (
                   <span className="run-meta">
                     {index.n_components} components · {fmtDuration(bounds[1] - bounds[0])} · {fmtBytes(index.size_bytes)} on disk
                   </span>
+                ) : (
+                  summary && (
+                    <span className="run-meta">
+                      <span title="Every component the DB holds. Indexing reports a smaller number: the export only resolves the ones it can name, and the rest stay bare numeric ids.">
+                        {summary.n_components} components
+                      </span>
+                      {' · '}
+                      <span title="Estimated from when the run's files were written, so it runs a fraction of a second short. The exact figure appears once indexed.">
+                        ~{fmtDuration(summary.duration_s)}
+                      </span>
+                      {' · '}
+                      {fmtBytes(summary.size_bytes)} on disk · not indexed
+                    </span>
+                  )
                 )}
                 {index && !index.has_config && (
                   <span
@@ -267,7 +302,7 @@ export default function App() {
                 />
               )}
 
-              {index && (
+              {(index || summary) && (
                 <div className="tabs">
                   <button
                     className={`tab${tab === 'plot' ? ' active' : ''}`}
@@ -283,7 +318,9 @@ export default function App() {
                   </button>
                   <div className="spacer" />
                   {/* View-wide, hence its place on the strip that spans both panes: it
-                      renames the picker tree, the chart legend and the state axis at once. */}
+                      renames the picker tree, the chart legend and the state axis at once.
+                      Both toggles describe plotted data, so they appear with it. */}
+                  {index && (
                   <label
                     className="picker-toggle"
                     title="Show config roles (Ox Upstream, LOX Main, Fire) instead of the raw Elodin identities"
@@ -295,6 +332,8 @@ export default function App() {
                     />
                     names
                   </label>
+                  )}
+                  {index && (
                   <label
                     className="picker-toggle"
                     title={
@@ -311,7 +350,8 @@ export default function App() {
                     />
                     DB write time
                   </label>
-                  {!dbClock && index.n_reanchored > 0 && (
+                  )}
+                  {index && !dbClock && index.n_reanchored > 0 && (
                     <span
                       className="tabs-note"
                       title={
@@ -327,7 +367,7 @@ export default function App() {
                       · {index.n_reanchored} channels re-anchored
                     </span>
                   )}
-                  {!dbClock && index.n_db_only > 0 && (
+                  {index && !dbClock && index.n_db_only > 0 && (
                     <span className="tabs-note" title="No per-row timestamp at all, so these keep elodin-db's write time.">
                       · {index.n_db_only} on DB time
                     </span>
@@ -335,8 +375,14 @@ export default function App() {
                 </div>
               )}
 
-              {index && tab === 'config' && (
+              {tab === 'config' && (
                 <ConfigView runId={runId} text={configText} error={configErr} />
+              )}
+
+              {/* Not indexed: what the run directory knows, and the button that pays for
+                  the rest. Selecting a run must not itself cost a multi-second export. */}
+              {!index && tab === 'plot' && (
+                <RunSummaryPanel busy={indexBusy} error={indexErr} onIndex={runIndex} />
               )}
 
               {index && tab === 'plot' && (

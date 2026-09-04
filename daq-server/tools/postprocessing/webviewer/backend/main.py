@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, descriptions, export_cache, run_config, runs, series
+from . import config, descriptions, export_cache, run_config, runs, series, summary
 
 app = FastAPI(title="Elodin Past-Run Viewer")
 
@@ -60,13 +60,44 @@ def api_set_description(run_id: str, text: str = Body(..., embed=True, max_lengt
         entry = descriptions.set_text(run_id, text)
     except OSError as e:
         # Almost always a read-only or missing mount. Say so, rather than accepting the
-        # edit and quietly dropping it: the user would have no way to tell.
+        # edit and quietly dropping it — the user would have no way to tell.
         raise HTTPException(503, f"could not save description: {e}")
     return {"run_id": run_id, "description": entry["text"], "updated_at": entry["updated_at"]}
 
 
+@app.get("/api/runs/{run_id}/summary")
+def api_summary(run_id: str):
+    """What is knowable about a run without exporting it — size, component count and an
+    approximate duration. Sub-second; safe to call on every run selection."""
+    if not config.RUN_RE.match(run_id):
+        raise HTTPException(400, "invalid run id")
+    if not (config.ELODIN_DIR / run_id).is_dir():
+        raise HTTPException(404, f"run not found: {run_id}")
+    return summary.summarize(run_id)
+
+
 @app.get("/api/runs/{run_id}/components")
 def api_components(run_id: str):
+    """The component index. Only for an already-indexed run: selecting a run must not
+    cost a multi-second export, so building one is POST /index, an explicit action."""
+    if not config.RUN_RE.match(run_id):
+        raise HTTPException(400, "invalid run id")
+    if not export_cache.is_cached(run_id):
+        raise HTTPException(409, "run is not indexed yet")
+    try:
+        return export_cache.get_index(run_id)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/runs/{run_id}/index")
+def api_index(run_id: str):
+    """Export the run to parquet and build its index — the expensive step, run only when
+    asked for. Synchronous: tens of seconds on a multi-GB run, and the caller shows a
+    busy state for the duration. Concurrent callers share one export (export_cache holds
+    a per-run lock), so a double click costs nothing extra."""
     if not config.RUN_RE.match(run_id):
         raise HTTPException(400, "invalid run id")
     try:
@@ -81,7 +112,7 @@ def api_components(run_id: str):
 def api_config(run_id: str):
     """The config snapshot taken beside this run's DB when the session started.
 
-    Served verbatim: it is the record of what actually ran, so it is never reformatted
+    Served verbatim — it is the record of what actually ran, so it is never reformatted
     or re-serialised. Runs recorded before the snapshot existed simply have no file.
     """
     if not config.RUN_RE.match(run_id):

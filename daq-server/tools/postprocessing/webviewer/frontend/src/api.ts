@@ -1,4 +1,4 @@
-import type { Run, RunIndex, SeriesResponse, TimeSource } from './types';
+import type { Run, RunIndex, RunSummary, SeriesResponse, TimeSource } from './types';
 
 async function getJSON<T>(url: string): Promise<T> {
   const r = await fetch(url);
@@ -7,7 +7,7 @@ async function getJSON<T>(url: string): Promise<T> {
 }
 
 /** The config snapshot taken beside a run's DB, as TOML text. `null` when the run
- *  has none: recorded before the backend started snapshotting it. */
+ *  has none — recorded before the backend started snapshotting it. */
 async function getConfig(runId: string): Promise<string | null> {
   const r = await fetch(configUrl(runId));
   if (r.status === 404) return null;
@@ -17,7 +17,7 @@ async function getConfig(runId: string): Promise<string | null> {
 
 const configUrl = (runId: string) => `/api/runs/${runId}/config`;
 
-/** Set (or clear, with '') this run's shared description. Returns what was stored:
+/** Set (or clear, with '') this run's shared description. Returns what was stored —
  *  the server normalises to one line and truncates, so echo that back into the box. */
 async function setDescription(runId: string, text: string): Promise<string> {
   const r = await fetch(`/api/runs/${runId}/description`, {
@@ -32,8 +32,19 @@ async function setDescription(runId: string, text: string): Promise<string> {
 export const api = {
   runs: () => getJSON<Run[]>('/api/runs'),
 
+  // Cheap: what the run says about itself with no export.
+  summary: (runId: string) => getJSON<RunSummary>(`/api/runs/${runId}/summary`),
+
+  // Only valid once indexed; 409 otherwise.
   components: (runId: string) =>
     getJSON<RunIndex>(`/api/runs/${runId}/components`),
+
+  // The expensive step, run only when asked for. Resolves with the finished index.
+  index: async (runId: string) => {
+    const r = await fetch(`/api/runs/${runId}/index`, { method: 'POST' });
+    if (!r.ok) throw new Error(`${r.status}: ${(await r.text()).slice(0, 200)}`);
+    return (await r.json()) as RunIndex;
+  },
 
   config: getConfig,
 
