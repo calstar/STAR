@@ -163,9 +163,16 @@ struct Config {
     // section name -> {role name -> channel}, e.g. "sensor_roles_pt_board" -> {"Fuel Upstream": 1}.
     std::map<std::string, std::map<std::string, int>> sensor_roles;
     std::map<std::string, double> abort_pts;  // [abort_pts]
+    // section name -> {role name -> "cubic"|"robust"|"blend"}, e.g.
+    // "calibration_model_pt_board" -> {"Ox Upstream": "robust"}. Per-sensor PT streaming model.
+    std::map<std::string, std::map<std::string, std::string>> calibration_models;
 
     /** [sensor_roles_<board>] with a legacy [sensor_roles] fallback. */
     const std::map<std::string, int>* sensor_roles_for(const std::string& board_key) const;
+
+    /** [calibration_model_<board>] role->model map, or nullptr when absent/empty. */
+    const std::map<std::string, std::string>* calibration_model_for(
+        const std::string& section_key) const;
 };
 
 /** Parse config.toml at `path`. On any error, logs and returns a default-constructed Config. */

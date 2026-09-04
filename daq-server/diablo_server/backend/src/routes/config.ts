@@ -82,6 +82,32 @@ export function getConfigPath(): string {
   throw new Error('Config file not found (and no config/profiles/*.toml to generate it from)');
 }
 
+/**
+ * Default every PT sensor's calibration model to 'cubic' when the config omits it. For each
+ * [boards.*] of type 'PT' — excluding current-loop 4-20 mA boards, which never use cubic/robust —
+ * ensure a parallel `calibration_model_<boardKey>` map exists with an entry for every role in
+ * `sensor_roles_<boardKey>`. Mutates config in place on read (mirrors applyControllerDefaults) so
+ * the editor and any reader see cubic for sensors the file leaves unset.
+ */
+export function applyCalibrationModelDefaults(config: any): void {
+  const boards = config?.boards;
+  if (!boards || typeof boards !== 'object') return;
+  for (const [boardKey, b] of Object.entries<any>(boards)) {
+    if (!b || b.type !== 'PT') continue;
+    if (b.hp_pt_connectors || b.hp_pt_full_scale_psi != null || b.pt_type === '4-20 mA absolute')
+      continue; // current-loop board — cubic/robust never applies
+    const roles = config[`sensor_roles_${boardKey}`];
+    if (!roles || typeof roles !== 'object') continue;
+    const modelKey = `calibration_model_${boardKey}`;
+    const models =
+      config[modelKey] && typeof config[modelKey] === 'object' ? config[modelKey] : {};
+    for (const role of Object.keys(roles)) {
+      if (models[role] == null) models[role] = 'cubic';
+    }
+    config[modelKey] = models;
+  }
+}
+
 /** Read + parse a config TOML. Defaults to the deployed config.toml (getConfigPath), but any
  *  path can be given — the config-profiles editor reads the active profile file this way.
  *  smol-toml is a strict TOML 1.0 parser, so actuator_roles' mixed-type inline arrays
@@ -91,6 +117,7 @@ export function readConfig(path: string = getConfigPath()): any {
     const content = readFileSync(path, 'utf-8');
     const config = parseToml(content) as any;
     applyControllerDefaults(config);
+    applyCalibrationModelDefaults(config);
     return config;
   } catch (error) {
     console.error('Failed to read config:', error);

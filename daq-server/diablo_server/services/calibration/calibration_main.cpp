@@ -37,6 +37,7 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -72,6 +73,21 @@ std::mutex g_zero_offsets_mutex;
 std::unordered_map<uint16_t, double> g_lp_ema;
 constexpr double LP_EMA_ALPHA = 0.25;  // ~4-sample effective window
 
+/**
+ * Which model an LP PT streams: factory cubic (default), full robust, or the 75/25 blend.
+ * Chosen per sensor from [calibration_model_<board>] in config.toml (see main); a CAL_USE_* env
+ * var, when set, overrides all sensors via g_env_override.
+ */
+enum class PtModel { Cubic, Robust, Blend };
+
+/** uid (board_id*100 + connector) -> streaming model. Only non-cubic sensors are stored; an absent
+ *  uid means Cubic, so this stays small and the startup log lists only meaningful overrides. */
+std::unordered_map<uint16_t, PtModel> g_pt_model;
+
+/** Set once at startup: when a CAL_USE_* PT env var is present it forces every sensor, else nullopt
+ *  and the per-sensor config governs. */
+std::optional<PtModel> g_env_override;
+
 }  // namespace
 
 static std::atomic<bool> running{true};
@@ -86,21 +102,44 @@ static bool env_flag_true(const char* name) {
     return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T');
 }
 
-/** Default true: LP PT uses factory cubic for streaming (letsfix / hardware-trusted). Set
- * CAL_USE_ROBUST_PT=1 or CAL_USE_ROBUST_BLEND=1 to opt into robust-dominated output. */
-static constexpr bool kLpPtDefaultFactoryOnly = true;
-
-static bool lp_pt_use_factory_only() {
-    if (env_flag_true("CAL_USE_FACTORY_PT"))
-        return true;
-    if (env_flag_true("CAL_USE_ROBUST_PT") || env_flag_true("CAL_USE_ROBUST_BLEND"))
-        return false;
-    return kLpPtDefaultFactoryOnly;
+/** Parse a config model string to the enum; "cubic" and anything unrecognized map to Cubic. */
+static PtModel parse_pt_model(const std::string& s) {
+    if (s == "robust")
+        return PtModel::Robust;
+    if (s == "blend")
+        return PtModel::Blend;
+    return PtModel::Cubic;
 }
 
-/** Optional 75% robust / 25% factory blend. */
-static bool lp_pt_use_robust_blend() {
-    return env_flag_true("CAL_USE_ROBUST_BLEND");
+/** Per-sensor streaming model; sensors absent from the map default to factory cubic. */
+static PtModel pt_model_for(uint16_t uid) {
+    auto it = g_pt_model.find(uid);
+    return it == g_pt_model.end() ? PtModel::Cubic : it->second;
+}
+
+/**
+ * The single LP PT source-selection rule, shared by the streaming path and the Zero-All helper so
+ * both agree. Guards first: no factory fit -> robust; robust not seeded -> factory. Otherwise the
+ * env override (if set) wins, else this sensor's configured model.
+ */
+static double select_lp_pt_psi(uint16_t uid, double psi_fac, double psi_rob, bool fac_ok,
+                               bool has_robust) {
+    if (!fac_ok)
+        return psi_rob;
+    if (!has_robust)
+        return psi_fac;
+    const PtModel m = g_env_override ? *g_env_override : pt_model_for(uid);
+    switch (m) {
+        case PtModel::Robust:
+            return psi_rob;
+        case PtModel::Blend: {
+            constexpr double kFactoryWeight = 0.25;  // 75% robust + 25% factory
+            return (1.0 - kFactoryWeight) * psi_rob + kFactoryWeight * psi_fac;
+        }
+        case PtModel::Cubic:
+        default:
+            return psi_fac;
+    }
 }
 
 /**
@@ -317,18 +356,7 @@ static double lp_pt_psi_before_offset(uint8_t board_number, uint8_t local_ch, ui
     const bool fac_ok = pt_calibration.is_calibrated(pt_log_ch);
     const double psi_fac = fac_ok ? pt_calibration.calculate_pressure(pt_log_ch, adc_i32) : 0.0;
     const double psi_rob = robust_manager.predict_pressure_psi(uid, adc_i32);
-
-    if (!fac_ok)
-        return psi_rob;
-    if (!robust_manager.has_sensor(uid))
-        return psi_fac;
-    if (lp_pt_use_factory_only())
-        return psi_fac;
-    if (lp_pt_use_robust_blend()) {
-        constexpr double kFactoryWeight = 0.25;
-        return (1.0 - kFactoryWeight) * psi_rob + kFactoryWeight * psi_fac;
-    }
-    return psi_rob;
+    return select_lp_pt_psi(uid, psi_fac, psi_rob, fac_ok, robust_manager.has_sensor(uid));
 }
 
 int main(int argc, char* argv[]) {
@@ -490,6 +518,45 @@ int main(int argc, char* argv[]) {
     std::cout << "[Calibration] LC default:  " << lc_sensitivity_mv_per_v
               << "mV/V, PGA=" << lc_pga_gain << ", FS=" << lc_full_scale_value << "kg" << std::endl;
 
+    // ---- Per-sensor streaming model (cubic vs robust) from config ----
+    // [calibration_model_<board_key>] maps a PT role name to "cubic"|"robust"|"blend"; resolve it
+    // to the same uid the streaming path uses (board_id*100 + connector) via
+    // [sensor_roles_<board_key>]. Absent/unknown => cubic. Current-loop (4-20 mA) boards are
+    // skipped: they never take this path. A CAL_USE_* env var overrides every sensor (dev/testing)
+    // — computed once here.
+    if (env_flag_true("CAL_USE_FACTORY_PT"))
+        g_env_override = PtModel::Cubic;
+    else if (env_flag_true("CAL_USE_ROBUST_BLEND"))
+        g_env_override = PtModel::Blend;
+    else if (env_flag_true("CAL_USE_ROBUST_PT"))
+        g_env_override = PtModel::Robust;
+
+    g_pt_model.clear();
+    for (const auto& b : cal_cfg.boards) {
+        if (b.type != "PT" || !b.enabled || b.board_id < 0)
+            continue;
+        if (b.has_hp_pt_keys || b.pt_type == "4-20 mA absolute")
+            continue;  // current-loop board — cubic/robust never applies
+        const std::string board_key =
+            b.section.rfind("boards.", 0) == 0 ? b.section.substr(7) : b.section;
+        const auto* roles = cal_cfg.sensor_roles_for("sensor_roles_" + board_key);
+        if (roles == nullptr)
+            continue;  // no role map -> every connector defaults to cubic
+        const auto* models = cal_cfg.calibration_model_for("calibration_model_" + board_key);
+        for (const auto& [role, connector] : *roles) {
+            if (connector < 1 || connector > 99)
+                continue;
+            PtModel m = PtModel::Cubic;
+            if (models != nullptr) {
+                auto it = models->find(role);
+                if (it != models->end())
+                    m = parse_pt_model(it->second);
+            }
+            if (m != PtModel::Cubic)  // only store overrides; absence means cubic
+                g_pt_model[static_cast<uint16_t>(b.board_id * 100 + connector)] = m;
+        }
+    }
+
     const fsw::calibration::PTCalibrationCoeffs* fallback_pt_coeffs = nullptr;
     for (uint8_t probe_ch = 1; probe_ch <= 10; ++probe_ch) {
         if (pt_calibration.is_calibrated(probe_ch)) {
@@ -553,16 +620,25 @@ int main(int argc, char* argv[]) {
         std::cout << "[Calibration]   File missing/unreadable — using factory-seeded robust only"
                   << std::endl;
     }
-    if (lp_pt_use_factory_only()) {
-        std::cout << "[Calibration] LP PT: factory cubic (default / CAL_USE_FACTORY_PT) — "
-                     "letsfix-style stable path"
-                  << std::endl;
-    } else if (lp_pt_use_robust_blend()) {
-        std::cout << "[Calibration] LP PT: CAL_USE_ROBUST_BLEND=1 — 75% robust + 25% factory"
-                  << std::endl;
+    if (g_env_override) {
+        const char* label = *g_env_override == PtModel::Cubic ? "factory cubic (CAL_USE_FACTORY_PT)"
+                            : *g_env_override == PtModel::Blend
+                                ? "75% robust + 25% factory (CAL_USE_ROBUST_BLEND)"
+                                : "100% robust when initialized (CAL_USE_ROBUST_PT)";
+        std::cout << "[Calibration] LP PT: env override — all sensors " << label << std::endl;
     } else {
-        std::cout << "[Calibration] LP PT: CAL_USE_ROBUST_PT=1 — 100% robust when initialized"
-                  << std::endl;
+        size_t robust_n = 0, blend_n = 0;
+        for (const auto& [uid, m] : g_pt_model) {
+            if (m == PtModel::Robust)
+                ++robust_n;
+            else if (m == PtModel::Blend)
+                ++blend_n;
+        }
+        std::cout << "[Calibration] LP PT: per-sensor model from config — default factory cubic; "
+                  << robust_n << " robust, " << blend_n << " blend" << std::endl;
+        for (const auto& [uid, m] : g_pt_model)
+            std::cout << "[Calibration]   uid " << uid << " -> "
+                      << (m == PtModel::Robust ? "robust" : "blend") << std::endl;
     }
 
     if (verbose())
@@ -867,19 +943,8 @@ int main(int argc, char* argv[]) {
                     fac_ok ? pt_calibration.calculate_pressure(pt_log_ch, adc_i32) : 0.0;
                 const double psi_rob = robust_manager.predict_pressure_psi(uid, adc_i32);
 
-                if (!fac_ok) {
-                    psi = psi_rob;
-                } else if (!robust_manager.has_sensor(uid)) {
-                    psi = psi_fac;
-                } else if (lp_pt_use_factory_only()) {
-                    psi = psi_fac;
-                } else if (lp_pt_use_robust_blend()) {
-                    constexpr double kFactoryWeight = 0.25;
-                    psi = (1.0 - kFactoryWeight) * psi_rob + kFactoryWeight * psi_fac;
-                } else {
-                    // Default: full robust prediction (matches calibration_server.py RCF path).
-                    psi = psi_rob;
-                }
+                psi =
+                    select_lp_pt_psi(uid, psi_fac, psi_rob, fac_ok, robust_manager.has_sensor(uid));
                 cal_status = fac_ok ? 1u : 0u;
                 // Apply zero offset then EMA for LP PT channels.
                 {

@@ -253,6 +253,18 @@ Config from_table(const toml::table& t) {
                 c.abort_pts[std::string(k.str())] = static_cast<double>(*iv);
         }
 
+    // All [calibration_model*] top-level tables -> section -> {role name -> model string}.
+    for (auto&& [k, v] : t) {
+        const std::string key(k.str());
+        if (key.rfind("calibration_model", 0) == 0)
+            if (auto rt = v.as_table()) {
+                auto& m = c.calibration_models[key];
+                for (auto&& [rk, rv] : *rt)
+                    if (auto sv = rv.value<std::string>())
+                        m[std::string(rk.str())] = *sv;
+            }
+    }
+
     return c;
 }
 
@@ -264,6 +276,14 @@ const std::map<std::string, int>* Config::sensor_roles_for(const std::string& bo
         return &it->second;
     it = sensor_roles.find("sensor_roles");  // legacy fallback (only if non-empty)
     if (it != sensor_roles.end() && !it->second.empty())
+        return &it->second;
+    return nullptr;
+}
+
+const std::map<std::string, std::string>* Config::calibration_model_for(
+    const std::string& section_key) const {
+    auto it = calibration_models.find(section_key);
+    if (it != calibration_models.end() && !it->second.empty())
         return &it->second;
     return nullptr;
 }

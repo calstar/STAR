@@ -340,6 +340,22 @@ active_connectors = [ 1, 2 ]
 "Chamber Throat PT 1" = 9
 "Chamber Throat PT 2" = 10
 
+# Per-sensor streaming calibration model for the low-pressure PT board: "cubic" (factory cubic,
+# default) or "robust". Keyed by the same role names as [sensor_roles_pt_board]; the calibration
+# service applies it after a restart. Current-loop (4-20 mA) PT boards are always 4-20 mA and have
+# no model here.
+[calibration_model_pt_board]
+"Fuel Upstream" = "cubic"
+"GSE Low" = "cubic"
+"Fuel Downstream" = "cubic"
+"Chamber Mid PT 1" = "cubic"
+"Ox Upstream" = "cubic"
+"GN2 Regulated" = "cubic"
+"Ox Downstream" = "cubic"
+"Chamber Mid PT 2" = "cubic"
+"Chamber Throat PT 1" = "cubic"
+"Chamber Throat PT 2" = "cubic"
+
 [abort_pts]
 "Fuel Upstream" = 400
 "Ox Upstream" = 400
