@@ -39,10 +39,10 @@ export default async function SettingsPage() {
     .map((s) => s.subteamId)
     .filter((x): x is string => !!x);
 
-  const card = "rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 shadow-sm";
+  const card = "rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 sm:p-5 shadow-sm";
 
   return (
-    <div className="mx-auto max-w-2xl px-6 py-8">
+    <div className="mx-auto max-w-2xl px-4 sm:px-6 py-6 sm:py-8">
       <h1 className="text-2xl font-semibold">Settings</h1>
 
       <section className={`mt-6 ${card}`}>

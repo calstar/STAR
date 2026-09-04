@@ -34,7 +34,7 @@ export default async function Health() {
   const db = await checkDb();
 
   return (
-    <main className="mx-auto flex max-w-xl flex-col gap-6 px-6 py-10">
+    <main className="mx-auto flex max-w-xl flex-col gap-6 px-4 sm:px-6 py-6 sm:py-10">
       <h1 className="text-xl font-semibold">Health</h1>
 
       <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 shadow-sm">

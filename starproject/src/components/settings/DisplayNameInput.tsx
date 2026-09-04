@@ -32,7 +32,7 @@ export function DisplayNameInput({
       maxLength={60}
       placeholder={placeholder}
       aria-label="Display name"
-      className="w-full max-w-xs rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm"
+      className="min-h-11 sm:min-h-0 w-full max-w-xs rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm"
     />
   );
 }

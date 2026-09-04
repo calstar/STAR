@@ -18,12 +18,12 @@ export function ThemeToggle({ theme }: { theme: string }) {
   };
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex min-h-11 items-center gap-3">
       <button
         onClick={toggle}
         role="switch"
         aria-checked={dark}
-        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors after:absolute after:-inset-2.5 after:content-[''] ${
           dark ? "bg-neutral-500" : "bg-neutral-300"
         }`}
       >
