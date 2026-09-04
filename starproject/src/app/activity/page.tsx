@@ -108,7 +108,7 @@ export default async function ActivityPage({
           <span>
             Page {page} of {totalPages} · {total} event{total === 1 ? "" : "s"}
           </span>
-          <div className="flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-2">
             {page > 1 ? (
               <Link href={pageHref(page - 1)} className={pageBtn}>
                 ← Prev

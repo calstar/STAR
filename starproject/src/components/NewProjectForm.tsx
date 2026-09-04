@@ -16,7 +16,7 @@ export function NewProjectForm({
   return (
     <form
       action={createProject}
-      className="flex flex-col gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 sm:flex-row sm:flex-wrap sm:items-center [&_button]:min-h-11 sm:[&_button]:min-h-0"
+      className="flex flex-col items-start gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 sm:flex-row sm:flex-wrap sm:items-center [&_button]:min-h-11 sm:[&_button]:min-h-0"
     >
       <input
         name="name"
