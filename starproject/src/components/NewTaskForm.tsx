@@ -7,6 +7,7 @@ import { AssigneeSelect } from "@/components/fields/AssigneeSelect";
 import { FieldSelect } from "@/components/fields/FieldSelect";
 import { createTask } from "@/lib/actions/tasks";
 import { PRIORITY_BADGE } from "@/lib/tasks";
+import { isValidDateInput } from "@/lib/validation";
 
 // One task-create form for every context: a project detail page pins the
 // project (`projectId`); a subteam detail page pins the subteam (`subteamId`)
@@ -46,6 +47,10 @@ export function NewTaskForm({
           setErr("Pick a project first.");
           return;
         }
+        if (!isValidDateInput(String(fd.get("dueDate") ?? ""))) {
+          setErr("Enter a valid due date with a 4-digit year.");
+          return;
+        }
         setErr(null);
         await createTask(fd);
         formRef.current?.reset();
@@ -69,6 +74,7 @@ export function NewTaskForm({
         <FieldSelect
           name="projectId"
           ariaLabel="Project"
+          searchable
           placeholder="Project…"
           value={proj}
           onChange={setProj}
@@ -79,6 +85,7 @@ export function NewTaskForm({
       <FieldSelect
         name="priority"
         ariaLabel="Priority"
+        searchable
         value={priority}
         onChange={setPriority}
         options={[
@@ -102,6 +109,7 @@ export function NewTaskForm({
         <FieldSelect
           name="subteamId"
           ariaLabel="Subteam"
+          searchable
           value={subteam}
           onChange={setSubteam}
           options={[
@@ -111,7 +119,7 @@ export function NewTaskForm({
         />
       )}
 
-      <input type="date" name="dueDate" className={control} aria-label="Due date" />
+      <input type="date" name="dueDate" min="1900-01-01" max="9999-12-31" className={control} aria-label="Due date" />
       <button
         type="submit"
         className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"

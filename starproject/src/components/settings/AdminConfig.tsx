@@ -7,14 +7,14 @@ import { addAdmin, removeAdmin } from "@/lib/actions/admins";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function AdminConfig({
-  admins,
-}: {
-  admins: { email: string; removable: boolean }[];
-}) {
+export function AdminConfig({ admins }: { admins: { email: string }[] }) {
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+
+  // Guard against locking everyone out: the sole remaining admin can't be
+  // removed. The removeAdmin action enforces the same rule server-side.
+  const onlyOne = admins.length === 1;
 
   const add = async () => {
     const clean = email.trim().toLowerCase();
@@ -26,9 +26,14 @@ export function AdminConfig({
     router.refresh();
   };
 
-  const remove = async (e: string) => {
-    await removeAdmin(e);
-    router.refresh();
+  const remove = async (target: string) => {
+    setError(null);
+    try {
+      await removeAdmin(target);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't remove that admin");
+    }
   };
 
   return (
@@ -40,16 +45,14 @@ export function AdminConfig({
             className="flex items-center justify-between gap-2 px-3 py-1.5 text-sm"
           >
             <span className="truncate">{a.email}</span>
-            {a.removable ? (
-              <button
-                onClick={() => remove(a.email)}
-                className="shrink-0 rounded px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40"
-              >
-                Remove
-              </button>
-            ) : (
-              <span className="shrink-0 text-xs text-neutral-400">built-in</span>
-            )}
+            <button
+              onClick={() => remove(a.email)}
+              disabled={onlyOne}
+              title={onlyOne ? "Can't remove the last admin" : undefined}
+              className="shrink-0 rounded px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:cursor-not-allowed disabled:text-neutral-400 disabled:hover:bg-transparent"
+            >
+              Remove
+            </button>
           </li>
         ))}
       </ul>

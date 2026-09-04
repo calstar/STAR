@@ -7,7 +7,7 @@ import { Board } from "@/components/Board";
 import { FieldSelect } from "@/components/fields/FieldSelect";
 import { GanttChart } from "@/components/GanttChart";
 import { TaskTable } from "@/components/TaskTable";
-import { type WorkspaceTask, toRowData } from "@/lib/board";
+import { BOARD_SORT_OPTIONS, type BoardSort, type WorkspaceTask, toRowData } from "@/lib/board";
 import { STATUS_LABEL } from "@/lib/tasks";
 
 export type { WorkspaceTask } from "@/lib/board";
@@ -34,6 +34,8 @@ export function TasksWorkspace({
   initialMine?: boolean;
 }) {
   const [view, setView] = useState<View>("table");
+  const [boardSort, setBoardSort] = useState<BoardSort>("due");
+  const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [myOnly, setMyOnly] = useState(initialMine);
@@ -61,7 +63,10 @@ export function TasksWorkspace({
     [tasks, status, myOnly, currentUserId, projSel, subSel, search],
   );
 
-  const rows = useMemo(() => filtered.map(toRowData), [filtered]);
+  const active = useMemo(() => filtered.filter((t) => !t.archived), [filtered]);
+  const archived = useMemo(() => filtered.filter((t) => t.archived), [filtered]);
+  const rows = useMemo(() => active.map(toRowData), [active]);
+  const archivedRows = useMemo(() => archived.map(toRowData), [archived]);
 
   function toggle(set: Set<string>, id: string) {
     const next = new Set(set);
@@ -129,6 +134,14 @@ export function TasksWorkspace({
               })),
             ]}
           />
+          {view === "board" && (
+            <FieldSelect
+              ariaLabel="Sort board"
+              value={boardSort}
+              onChange={(v) => setBoardSort(v as BoardSort)}
+              options={BOARD_SORT_OPTIONS}
+            />
+          )}
           {anyFilter && (
             <button
               onClick={() => {
@@ -179,7 +192,7 @@ export function TasksWorkspace({
       </div>
 
       <p className="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
-        {filtered.length} task{filtered.length === 1 ? "" : "s"}
+        {active.length} task{active.length === 1 ? "" : "s"}
       </p>
 
       <div className="mt-2">
@@ -192,9 +205,39 @@ export function TasksWorkspace({
             showSubteam
           />
         )}
-        {view === "board" && <Board tasks={filtered} />}
-        {view === "gantt" && <GanttChart tasks={filtered} />}
+        {view === "board" && <Board tasks={active} sort={boardSort} />}
+        {view === "gantt" && <GanttChart tasks={active} />}
       </div>
+
+      {archived.length > 0 && (
+        <div className="mt-6">
+          <button
+            type="button"
+            onClick={() => setShowArchived((v) => !v)}
+            aria-expanded={showArchived}
+            className="flex items-center gap-2"
+          >
+            <span className="text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+              Archived
+            </span>
+            <span className="text-xs text-neutral-400">({archived.length})</span>
+            <span className="text-neutral-400" aria-hidden>
+              {showArchived ? "▾" : "▸"}
+            </span>
+          </button>
+          {showArchived && (
+            <div className="mt-2">
+              <TaskTable
+                rows={archivedRows}
+                users={users}
+                admin={admin}
+                showProject
+                showSubteam
+              />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

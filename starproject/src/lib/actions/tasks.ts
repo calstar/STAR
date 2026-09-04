@@ -10,17 +10,18 @@ import {
   priorityLabel,
   recordActivity,
   subteamLabel,
-  usersLabel,
+  userLabel,
 } from "@/lib/activity";
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
 import { notifyAssignment } from "@/lib/notifications";
-import { STATUS_LABEL } from "@/lib/tasks";
+import { STATUS_LABEL, archivedForStatusChange } from "@/lib/tasks";
 import { getCurrentDbUser } from "@/lib/user";
 import {
   TaskPriorityEnum,
   TaskStatusEnum,
   csvToIds,
+  isValidDateInput,
   taskCreateSchema,
 } from "@/lib/validation";
 
@@ -56,6 +57,7 @@ export async function createTask(formData: FormData) {
       dueDate: data.dueDate,
       createdById: user.id,
     },
+    include: withNames,
   });
 
   await recordActivity({
@@ -65,6 +67,16 @@ export async function createTask(formData: FormData) {
     taskTitle: created.title,
     kind: "created",
   });
+  // Log any initial assignees so history reads "created" then "assigned …".
+  for (const a of created.assignees)
+    await recordActivity({
+      actorId: user.id,
+      taskId: created.id,
+      projectId: created.projectId,
+      taskTitle: created.title,
+      kind: "assigned",
+      to: userLabel(a),
+    });
 
   revalidatePath(`/projects/${data.projectId}`);
   revalidatePath("/tasks");
@@ -118,7 +130,9 @@ export async function updateTask(formData: FormData) {
     data.blockedNote = v === "" ? null : v;
   }
   if (formData.has("status")) {
-    data.status = TaskStatusEnum.parse(formData.get("status"));
+    const status = TaskStatusEnum.parse(formData.get("status"));
+    data.status = status;
+    Object.assign(data, archivedForStatusChange(old.status, status));
   }
   if (formData.has("priority")) {
     const v = formData.get("priority");
@@ -134,10 +148,12 @@ export async function updateTask(formData: FormData) {
   }
   if (formData.has("dueDate")) {
     const v = String(formData.get("dueDate") ?? "");
+    if (!isValidDateInput(v)) throw new Error("Enter a valid due date with a 4-digit year.");
     data.dueDate = v === "" ? null : new Date(v);
   }
   if (formData.has("startDate")) {
     const v = String(formData.get("startDate") ?? "");
+    if (!isValidDateInput(v)) throw new Error("Enter a valid start date with a 4-digit year.");
     data.startDate = v === "" ? null : new Date(v);
   }
 
@@ -161,6 +177,16 @@ export async function updateTask(formData: FormData) {
       from,
       to,
     });
+  // Assignee changes are logged per person, one row each.
+  const logAssignee = (kind: "assigned" | "unassigned", who: string) =>
+    recordActivity({
+      actorId: user.id,
+      taskId: task.id,
+      projectId: task.projectId,
+      taskTitle: task.title,
+      kind,
+      to: who,
+    });
 
   if (formData.has("title") && old.title !== task.title)
     await log("title", old.title, task.title);
@@ -175,11 +201,17 @@ export async function updateTask(formData: FormData) {
     await log("due", dateLabel(old.dueDate), dateLabel(task.dueDate));
   const oldAssigneeIds = old.assignees.map((a) => a.id);
   const newAssigneeIds = task.assignees.map((a) => a.id);
-  const assigneesChanged =
-    oldAssigneeIds.length !== newAssigneeIds.length ||
-    oldAssigneeIds.some((id) => !newAssigneeIds.includes(id));
-  if (formData.has("assigneeIds") && assigneesChanged)
-    await log("assignee", usersLabel(old.assignees), usersLabel(task.assignees));
+  const addedAssignees = task.assignees.filter(
+    (a) => !oldAssigneeIds.includes(a.id),
+  );
+  const removedAssignees = old.assignees.filter(
+    (a) => !newAssigneeIds.includes(a.id),
+  );
+  if (formData.has("assigneeIds")) {
+    for (const a of addedAssignees) await logAssignee("assigned", userLabel(a));
+    for (const a of removedAssignees)
+      await logAssignee("unassigned", userLabel(a));
+  }
   if (formData.has("subteamId") && old.subteamId !== task.subteamId)
     await log(
       "subteam",
@@ -190,14 +222,26 @@ export async function updateTask(formData: FormData) {
   revalidatePath("/activity");
 
   // Notify only the newly-added assignees (not those who were already on it).
-  const addedAssigneeIds = newAssigneeIds.filter(
-    (id) => !oldAssigneeIds.includes(id),
-  );
-  for (const assigneeId of addedAssigneeIds) {
+  for (const a of addedAssignees) {
     after(() =>
-      notifyAssignment({ taskId: task.id, assigneeId, actorId: user.id }),
+      notifyAssignment({ taskId: task.id, assigneeId: a.id, actorId: user.id }),
     );
   }
+}
+
+// Archive / unarchive a task: it stays in the DB (fully recoverable) but drops
+// out of the active board and lists into the Archived section. Reversible and
+// low-risk, so any signed-in user may do it; the UI only offers it once done.
+export async function archiveTask(taskId: string, archived: boolean) {
+  await getCurrentDbUser();
+  const task = await prisma.task.update({
+    where: { id: taskId },
+    data: { archived },
+    select: { projectId: true },
+  });
+  revalidatePath(`/projects/${task.projectId}`);
+  revalidatePath("/tasks");
+  revalidatePath("/");
 }
 
 export async function deleteTask(formData: FormData) {
@@ -245,7 +289,12 @@ export async function moveTask(
 
   const task = await prisma.task.update({
     where: { id: parsed.id },
-    data: { status: parsed.status, boardOrder: parsed.boardOrder },
+    data: {
+      status: parsed.status,
+      boardOrder: parsed.boardOrder,
+      // Auto-archive on completion; dragging back out of Done restores it.
+      ...(old ? archivedForStatusChange(old.status, parsed.status) : {}),
+    },
   });
   revalidatePath(`/projects/${task.projectId}`);
   revalidatePath("/tasks");

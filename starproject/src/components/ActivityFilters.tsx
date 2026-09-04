@@ -8,6 +8,8 @@ import { displayNameOf } from "@/lib/names";
 const KINDS: [string, string][] = [
   ["created", "Created"],
   ["updated", "Updated"],
+  ["assigned", "Assigned"],
+  ["unassigned", "Unassigned"],
   ["deleted", "Deleted"],
   ["blocker_added", "Blocker added"],
   ["blocker_removed", "Blocker removed"],
