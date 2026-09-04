@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# Robust Calibration Stack Startup
-# Pipeline: Elodin DB → Relay (first subscriber) → DAQ bridge → Calibration server
+# Robust Calibration Stack Startup — LEGACY / standalone.
+#
+# NOTE: The deployed calibration path is the C++ calibration_service (systemd sensor-calibration,
+# start_tmux_dev.sh), which implements the same robust framework in C++. This script runs the
+# dormant Python calibration_server.py sidecar and is kept only for standalone experimentation.
+#
+# Pipeline: Elodin DB → Relay (first subscriber) → DAQ bridge → Calibration server (Python)
 # Calibration server: RobustCalibrationFramework (TLS, Bayesian, RLS, GLR) + AutonomousCalibrationEngine
 #
 # Usage: ./scripts/startup/start_calibration_stack.sh
