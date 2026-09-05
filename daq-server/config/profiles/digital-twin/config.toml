@@ -40,53 +40,53 @@ connection_retry_delay_ms = 1000
 [gui]
 downsample_mode = "envelope"
 points_per_second = 20
-tabs = [ "unified", "boards", "config", "session" ]
+tabs = [ "unified", "boards", "config", "calibration", "session" ]
 
-  [[gui.pressure_bars]]
-  label = "FF Vent"
-  role = "Fuel Fill Vent"
-  limits = ""
-  color = "#ff0000"
+[[gui.pressure_bars]]
+label = "FF Vent"
+role = "Fuel Fill Vent"
+limits = ""
+color = "#ff0000"
 
-  [[gui.pressure_bars]]
-  label = "Fuel Up"
-  role = "Fuel Upstream"
-  limits = "Fuel_Upstream"
-  color = "#00ff2a"
+[[gui.pressure_bars]]
+label = "Fuel Up"
+role = "Fuel Upstream"
+limits = "Fuel_Upstream"
+color = "#00ff2a"
 
-  [[gui.pressure_bars]]
-  label = "Dome CTRL"
-  role = "Dome CTRL"
-  limits = ""
-  color = "#fff700"
+[[gui.pressure_bars]]
+label = "Dome CTRL"
+role = "Dome CTRL"
+limits = ""
+color = "#fff700"
 
-  [[gui.pressure_bars]]
-  label = "Dome Mid"
-  role = "Dome Mid"
-  limits = ""
-  color = "#4c00ff"
+[[gui.pressure_bars]]
+label = "Dome Mid"
+role = "Dome Mid"
+limits = ""
+color = "#4c00ff"
 
-  [[gui.pressure_bars]]
-  label = "GN2 High"
-  role = "GN2 High"
-  limits = "GN2_High"
-  color = "#fb00ff"
+[[gui.pressure_bars]]
+label = "GN2 High"
+role = "GN2 High"
+limits = "GN2_High"
+color = "#fb00ff"
 
-  [[gui.pressure_bars]]
-  label = "High Press"
-  role = "High Press"
-  limits = ""
-  color = "#00ffd5"
+[[gui.pressure_bars]]
+label = "High Press"
+role = "High Press"
+limits = ""
+color = "#00ffd5"
 
-  [[gui.pressure_bars]]
-  label = "Low Press"
-  role = "Low Press"
-  limits = ""
-  color = "#ff0088"
+[[gui.pressure_bars]]
+label = "Low Press"
+role = "Low Press"
+limits = ""
+color = "#ff0088"
 
-  [gui.groups]
-  LOX = [ "LOX Upper", "LOX Mid", "LOX Lower", "COPV RTD" ]
-  Fuel = [ "Fuel Upstream" ]
+[gui.groups]
+LOX = [ "LOX Upper", "LOX Mid", "LOX Lower", "COPV RTD" ]
+Fuel = [ "Fuel Upstream" ]
 
 [time_sync]
 mode = "board-clock"
@@ -242,7 +242,7 @@ enable_serial_printing = true
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 0
-active_connectors = [ ]
+active_connectors = []
 
 [boards.rtd_board]
 type = "RTD"
@@ -268,7 +268,7 @@ enable_serial_printing = true
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 0
-active_connectors = [ ]
+active_connectors = []
 
 [boards.encoder_board]
 type = "ENCODER"
@@ -306,17 +306,12 @@ active_connectors = [ 1, 2 ]
 "Dome CTRL" = 3
 "Low Press" = 4
 
-# No bench cal data for this rig, so stream the datasheet conversion rather than the
-# cubic default, which reads 0 until an operator captures points. Ratiometric physics is
-# psi = adc/2^31 * full_scale — the linear 0 ADC = 0 PSI mapping these PTs are specced to.
 [calibration_model_pt_board]
 "Fuel Fill Vent" = "physics"
 "Fuel Upstream" = "physics"
 "Dome CTRL" = "physics"
 "Low Press" = "physics"
 
-# 1000 PSI at full ADC scale. Same as the current built-in default; stated so a change
-# to that default cannot silently rescale this rig.
 [calibration_full_scale_pt_board]
 "Fuel Fill Vent" = 1000
 "Fuel Upstream" = 1000
@@ -413,15 +408,7 @@ channels = 2
 description = "Raw encoder angle (0-4095) — AS5600 12-bit"
 
 [daq_bridge]
-publish = [
-  "pt_raw",
-  "tc_raw",
-  "rtd_raw",
-  "lc_raw",
-  "actuator_status",
-  "actuator_cal",
-  "encoder_raw"
-]
+publish = [ "pt_raw", "tc_raw", "rtd_raw", "lc_raw", "actuator_status", "actuator_cal", "encoder_raw" ]
 
 [calibration]
 enabled = true
@@ -429,63 +416,61 @@ use_robust_stack = true
 exclude_hp_pt = true
 prior_from_polynomial = true
 
-  [calibration.orchestrator]
-  consensus_enabled = true
-  self_cal_alpha_threshold = 0.6
-  agreement_threshold = 0.6
-  min_points = 5
-  target_points = 15
-  max_points = 30
-  min_r_squared = 0.95
-  target_r_squared = 0.99
-  rls_forgetting_factor = 0.995
-  drift_glr_threshold = 3
-  auto_save_interval_sec = 300
-  status_interval_sec = 30
+[calibration.orchestrator]
+consensus_enabled = true
+self_cal_alpha_threshold = 0.6
+agreement_threshold = 0.6
+min_points = 5
+target_points = 15
+max_points = 30
+min_r_squared = 0.95
+target_r_squared = 0.99
+rls_forgetting_factor = 0.995
+drift_glr_threshold = 3
+auto_save_interval_sec = 300
+status_interval_sec = 30
 
-  [calibration.pt]
-  json_dir = "scripts/calibration/calibrations"
-  csv_paths = [
-  "../firmware/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv"
-]
+[calibration.pt]
+json_dir = "scripts/calibration/calibrations"
+csv_paths = [ "../firmware/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv" ]
 
-  [calibration.tc]
-  json_dir = "scripts/calibration/calibrations/tc"
-  csv_paths = [ ]
-  adc_ref_voltage = 2.5
+[calibration.tc]
+json_dir = "scripts/calibration/calibrations/tc"
+csv_paths = []
+adc_ref_voltage = 2.5
 
-  [calibration.rtd]
-  json_dir = "scripts/calibration/calibrations/rtd"
-  csv_paths = [ ]
-  r0_ohm = 1000
-  adc_ref_voltage = 2.5
-  excitation_ua = 1000
+[calibration.rtd]
+json_dir = "scripts/calibration/calibrations/rtd"
+csv_paths = []
+r0_ohm = 1000
+adc_ref_voltage = 2.5
+excitation_ua = 1000
 
-  [calibration.lc]
-  json_dir = "scripts/calibration/calibrations/lc"
-  csv_paths = [ ]
-  sensitivity_mv_per_v = 2
-  pga_gain = 32
-  full_scale_value = 300
+[calibration.lc]
+json_dir = "scripts/calibration/calibrations/lc"
+csv_paths = []
+sensitivity_mv_per_v = 2
+pga_gain = 32
+full_scale_value = 300
 
-  [calibration.sidecar]
-  enabled = true
-  host = "127.0.0.1"
-  port = 8100
-  relay_host = "127.0.0.1"
-  relay_port = 9090
-  reconnect_interval_ms = 5000
-  adc_forward_interval_ms = 200
-  write_interval_sec = 0.01
-  write_to_elodin = false
+[calibration.sidecar]
+enabled = true
+host = "127.0.0.1"
+port = 8100
+relay_host = "127.0.0.1"
+relay_port = 9090
+reconnect_interval_ms = 5000
+adc_forward_interval_ms = 200
+write_interval_sec = 0.01
+write_to_elodin = false
 
-  [calibration.environmental]
-  temperature = 25
-  humidity = 50
-  vibration = 0
-  aging_factor = 1
-  mounting_torque = 1
-  min_consensus_sensors = 2
+[calibration.environmental]
+temperature = 25
+humidity = 50
+vibration = 0
+aging_factor = 1
+mounting_torque = 1
+min_consensus_sensors = 2
 
 [pressure_limits.GN2_High]
 NOP = 4000
@@ -574,13 +559,7 @@ pressure_fuel_target = 0
 pressure_ox_target = 0
 duty_sweep_enabled = false
 duty_sweep_step_duration_sec = 2
-duty_sweep_steps = [
-  [ 0.1, 0.1 ],
-  [ 0.3, 0.2 ],
-  [ 0.5, 0.4 ],
-  [ 0.3, 0.3 ],
-  [ 0.1, 0.1 ]
-]
+duty_sweep_steps = [ [ 0.1, 0.1 ], [ 0.3, 0.2 ], [ 0.5, 0.4 ], [ 0.3, 0.3 ], [ 0.1, 0.1 ] ]
 use_cpp_controller = true
 lut_path = "output/lut/controller_policy_fsw.bin"
 thrust_curve_path = "output/lut/thrust_curve.csv"
@@ -604,6 +583,8 @@ backend_udp_port = 8092
 [fire]
 state = "Fire"
 expiry_target = "Armed"
+duration_ms = 1000
+extended_ms = 1000
 
 [[states]]
 id = 1
@@ -611,90 +592,6 @@ name = "Idle"
 panel_row = 0
 panel_col = 0
 is_boot = true
-
-[[states]]
-id = 2
-name = "Armed"
-panel_row = 1
-panel_col = 0
-
-[[states]]
-id = 3
-name = "Fuel Fill"
-panel_row = 1
-panel_col = 1
-
-[[states]]
-id = 4
-name = "Ox Fill"
-panel_row = 1
-panel_col = 2
-
-[[states]]
-id = 5
-name = "GN2 Low Press"
-panel_row = 2
-panel_col = 1
-
-[[states]]
-id = 6
-name = "GN2 Low Vent"
-panel_row = 3
-panel_col = 1
-
-[[states]]
-id = 7
-name = "Fuel Press"
-panel_row = 2
-panel_col = 2
-
-[[states]]
-id = 8
-name = "Fuel Vent"
-panel_row = 3
-panel_col = 2
-
-[[states]]
-id = 9
-name = "Ox Press"
-panel_row = 2
-panel_col = 3
-
-[[states]]
-id = 10
-name = "Ox Vent"
-panel_row = 3
-panel_col = 3
-
-[[states]]
-id = 11
-name = "GN2 High Press"
-panel_row = 2
-panel_col = 4
-
-[[states]]
-id = 12
-name = "GN2 High Vent"
-panel_row = 3
-panel_col = 4
-
-[[states]]
-id = 13
-name = "Vent"
-panel_row = 3
-panel_col = 0
-
-[[states]]
-id = 14
-name = "Calibrate"
-panel_row = 4
-panel_col = 0
-
-[[states]]
-id = 15
-name = "Ready"
-panel_row = 4
-panel_col = 1
 
 [[states]]
 id = 16
@@ -724,10 +621,16 @@ panel_row = 2
 panel_col = 0
 
 [actuator_roles]
-"Dome CTRL" = ["NO", 1, 14]
-"Fuel Fill Press" = ["NC", 2, 14]
-"High Press Vent" = ["NC", 3, 14]
-"Fuel Upstream" = ["NC", 1, 12]
-"High Press CTRL" = ["NC", 2, 12]
-"Dome CTRL Vent" = ["NC", 3, 12]
-"Fuel Main" = ["NC", 5, 12]
+"Dome CTRL" = [ "NO", 1, 14 ]
+"Fuel Fill Press" = [ "NC", 2, 14 ]
+"High Press Vent" = [ "NC", 3, 14 ]
+"Fuel Upstream" = [ "NC", 1, 12 ]
+"High Press CTRL" = [ "NC", 2, 12 ]
+"Dome CTRL Vent" = [ "NC", 3, 12 ]
+"Fuel Main" = [ "NC", 5, 12 ]
+
+[calibration_model_pt_board_2]
+"GN2 High" = "physics"
+"Excitation V" = "physics"
+"Dome Mid" = "physics"
+"High Press" = "physics"
