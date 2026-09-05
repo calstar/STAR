@@ -57,8 +57,10 @@ const BUILT_IN: StateDef[] = [
   { id: 20, name: 'Press Standby', isAbort: false, isBoot: false , panelRow: 2, panelCol: 0 },
 ];
 
+const BUILT_IN_BY_ID = new Map<number, StateDef>(BUILT_IN.map((s) => [s.id, s]));
+
 let states: StateDef[] = BUILT_IN;
-let byId = new Map<number, StateDef>(BUILT_IN.map((s) => [s.id, s]));
+let byId = new Map<number, StateDef>(BUILT_IN_BY_ID);
 let loaded = false;
 let inFlight: Promise<StateDef[]> | null = null;
 
@@ -74,15 +76,23 @@ function adopt(next: StateDef[]): StateDef[] {
   return states;
 }
 
-/** Fetch the config-declared states once and cache them. Safe to call repeatedly. */
-export async function loadStates(apiBase: string): Promise<StateDef[]> {
-  if (loaded) return states;
-  if (inFlight) return inFlight;
+/** Fetch the config-declared states and cache them. Safe to call repeatedly — cached after the
+ *  first success. Pass force=true to refetch (e.g. after a config edit), which rebuilds from the
+ *  built-in baseline first so removed/renamed states don't linger from a previous fetch. */
+export async function loadStates(apiBase: string, force = false): Promise<StateDef[]> {
+  if (loaded && !force) return states;
+  if (inFlight && !force) return inFlight;
   inFlight = (async () => {
     try {
       const r = await fetch(`${apiBase}/api/states`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const body = await r.json();
+      if (force) {
+        // Clean baseline before overlaying the fresh server list, so a state the config no longer
+        // declares reverts to its built-in (or drops) instead of persisting from the last fetch.
+        byId = new Map(BUILT_IN_BY_ID);
+        states = BUILT_IN;
+      }
       return adopt(Array.isArray(body?.states) ? body.states : []);
     } catch {
       // Built-in list stands; labels stay correct, they just stop tracking config.

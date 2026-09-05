@@ -250,6 +250,11 @@ const serializeCsvGrid = (g: CsvGrid): string =>
     ...g.rows.map((r) => [r.key, ...g.states.map((_, i) => r.cells[i] ?? '')].join(',')),
   ].join('\n') + '\n';
 
+/** A single string that changes whenever any of the three state tables changes — used to detect
+ *  unsaved edits without deep-comparing the grids. */
+const csvSignature = (a: CsvGrid | null, d: CsvGrid | null, t: CsvGrid | null): string =>
+  [a, d, t].map((g) => (g ? serializeCsvGrid(g) : '')).join(' ');
+
 /** Rows/columns present in `have` but not `want`, and vice versa — the orphan/missing warnings. */
 const diffKeys = (have: string[], want: string[]) => ({
   orphan: have.filter((k) => !want.includes(k)),
@@ -357,6 +362,10 @@ export default function ConfigPage() {
   const [calProfiles, setCalProfiles] = useState<{ name: string; active: boolean }[]>([]);
   const [calActive, setCalActive] = useState('');
   const [calMsg, setCalMsg] = useState<string | null>(null);
+  // Snapshots of the last-saved config + state CSVs, so we can tell if there are unsaved edits
+  // (null until first load, so we never flag "dirty" before anything has loaded).
+  const savedConfigRef = useRef<string | null>(null);
+  const savedCsvRef = useRef<string | null>(null);
   // Boards start collapsed to a one-line summary — a stand has ~6 of them and
   // each expands to ~18 fields, which is a lot of scrolling to reach the last one.
   const [openBoards, setOpenBoards] = useState<Record<string, boolean>>({});
@@ -410,6 +419,7 @@ export default function ConfigPage() {
       // GET /api/config returns the ACTIVE PROFILE (the draft you edit) + its name.
       const nextConfig = (data.config || {}) as ConfigData;
       setConfig(nextConfig);
+      savedConfigRef.current = JSON.stringify(nextConfig);  // mark this as the saved baseline
       if (typeof data.active === 'string') setActiveProfile(data.active);
       const adc = nextConfig.adc;
       if (adc && typeof adc.internal_v === 'number' && typeof adc.absolute_5v_v === 'number') {
@@ -439,10 +449,26 @@ export default function ConfigPage() {
         throw new Error(error.message || 'Failed to save config');
       }
 
+      // Save the state-machine tables together with the config — there is no separate CSV Save.
+      const csvJobs: Array<[string, CsvGrid | null]> = [
+        ['actuators', csvActuators], ['delays', csvDelays], ['transitions', csvTransitions],
+      ];
+      for (const [name, grid] of csvJobs) {
+        if (!grid) continue;
+        const r = await fetch(`${getApiBaseUrl()}/api/state-csv?name=${name}`, {
+          method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: serializeCsvGrid(grid),
+        });
+        if (!r.ok) {
+          const b = await r.json().catch(() => ({}));
+          throw new Error(b.error || `Failed to save the ${name} table (${r.status})`);
+        }
+      }
+
       setSuccess(true);
       setSaving(false);
-      // Re-fetch canonical config so UI mirrors what was written to disk
+      // Re-fetch canonical config + tables so the UI (and the saved baselines) mirror disk.
       await loadConfig();
+      if (csvActuators || csvDelays || csvTransitions) await loadStateCsvs();
       setTimeout(() => setSuccess(false), 3000);
     } catch (err: any) {
       setError(err.message || 'Failed to save config');
@@ -704,6 +730,7 @@ export default function ConfigPage() {
       setCsvActuators(a);
       setCsvDelays(d);
       setCsvTransitions(t);
+      savedCsvRef.current = csvSignature(a, d, t);  // baseline for the unsaved-changes check
     } catch (e: any) {
       setError(e?.message || 'Failed to load state CSVs');
       setTimeout(() => setError(null), 4000);
@@ -719,26 +746,8 @@ export default function ConfigPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
-  const saveStateCsv = async (name: string, grid: CsvGrid) => {
-    setSaving(true);
-    setError(null);
-    try {
-      const r = await fetch(`${getApiBaseUrl()}/api/state-csv?name=${name}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/csv' },
-        body: serializeCsvGrid(grid),
-      });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body.error || `Save failed (${r.status})`);
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
-    } catch (e: any) {
-      setError(e?.message || 'Failed to save CSV');
-      setTimeout(() => setError(null), 5000);
-    } finally {
-      setSaving(false);
-    }
-  };
+  // State tables are saved together with the config via the top Save button (saveConfig), not on
+  // their own — so an operator's edits to the tables can never be silently lost by saving only one.
 
   // Role names are the source of truth for which rows should exist; the CSV is what currently does.
   const roleNames = Object.keys((config.actuator_roles || {}) as Record<string, unknown>);
@@ -773,14 +782,103 @@ export default function ConfigPage() {
   const addState = () => {
     const used = new Set(stateList.map((s) => s.id));
     // Never reuse an id: old Elodin run history stores the raw number with no name table beside
-    // it, so a recycled id silently relabels past runs. Always take the next free one.
-    let next = 0;
+    // it, so a recycled id silently relabels past runs. Always take the next free one. Ids start at
+    // 1 — id 0 is the legacy Debug enumerator (name-only, never a real state), so it's off-limits.
+    let next = 1;
     while (used.has(next)) next++;
+    const name = `New State ${next}`;
+    // Auto-place on the diagram at the first free (row, col) so a new state is visible there right
+    // away rather than off-diagram. Coordinates are 0-based (see lib/states.ts).
+    const usedCells = new Set(
+      stateList
+        .filter((s) => typeof s.panel_row === 'number' && typeof s.panel_col === 'number')
+        .map((s) => `${s.panel_row}:${s.panel_col}`),
+    );
+    const WIDTH = 6;
+    let pr = 0, pc = 0;
+    while (usedCells.has(`${pr}:${pc}`)) { pc += 1; if (pc >= WIDTH) { pc = 0; pr += 1; } }
     setConfig((prev) => ({
       ...prev,
-      states: [...((prev.states || []) as any[]), { id: next, name: `New State ${next}` }],
+      states: [...((prev.states || []) as any[]), { id: next, name, panel_row: pr, panel_col: pc }],
     } as ConfigData));
+    // Keep the tables in step: the new state appears as a column everywhere immediately (and a
+    // self-transition-only row in the transitions matrix), so a freshly added state is usable
+    // without a manual Regenerate.
+    const addCol = (g: CsvGrid | null, fill: string): CsvGrid | null =>
+      g && ({ states: [...g.states, name], rows: g.rows.map((r) => ({ ...r, cells: [...r.cells, fill] })) });
+    setCsvActuators((g) => addCol(g, 'CLOSE'));
+    setCsvDelays((g) => addCol(g, '0'));
+    setCsvTransitions((g) => {
+      if (!g) return g;
+      const states = [...g.states, name];
+      const rows = g.rows.map((r) => ({ ...r, cells: [...r.cells, '0'] }));
+      rows.push({ key: name, cells: states.map((s) => (s === name ? '1' : '0')) });
+      return { states, rows };
+    });
   };
+
+  // Swap two state columns in a grid (and, for transitions, the matching from-rows) so the table
+  // column order follows the state list order when states are reordered.
+  const swapGridCols = (g: CsvGrid | null, a: string, b: string, alsoRows: boolean): CsvGrid | null => {
+    if (!g) return g;
+    const ia = g.states.indexOf(a), ib = g.states.indexOf(b);
+    if (ia < 0 || ib < 0) return g;
+    const states = g.states.slice();
+    [states[ia], states[ib]] = [states[ib], states[ia]];
+    let rows = g.rows.map((r) => {
+      const cells = r.cells.slice();
+      [cells[ia], cells[ib]] = [cells[ib], cells[ia]];
+      return { ...r, cells };
+    });
+    if (alsoRows) {
+      const ra = rows.findIndex((r) => r.key === a), rb = rows.findIndex((r) => r.key === b);
+      if (ra >= 0 && rb >= 0) { rows = rows.slice(); [rows[ra], rows[rb]] = [rows[rb], rows[ra]]; }
+    }
+    return { states, rows };
+  };
+
+  const moveState = (idx: number, dir: -1 | 1) => {
+    const j = idx + dir;
+    if (j < 0 || j >= stateList.length) return;
+    const a = stateList[idx]?.name, b = stateList[j]?.name;
+    setConfig((prev) => ({ ...prev, states: moveInArray((prev.states || []) as any[], idx, dir) } as ConfigData));
+    if (a && b && a !== b) {
+      setCsvActuators((g) => swapGridCols(g, a, b, false));
+      setCsvDelays((g) => swapGridCols(g, a, b, false));
+      setCsvTransitions((g) => swapGridCols(g, a, b, true));
+    }
+  };
+
+  // Unsaved-changes tracking: compare the current config + state tables against the last-saved
+  // baselines. Null baseline = nothing loaded yet, so we never flag dirty prematurely.
+  const dirty =
+    (savedConfigRef.current !== null && JSON.stringify(config) !== savedConfigRef.current) ||
+    (savedCsvRef.current !== null && csvSignature(csvActuators, csvDelays, csvTransitions) !== savedCsvRef.current);
+
+  // Warn before losing unsaved edits: the browser dialog on close/refresh, and a confirm on in-app
+  // navigation (Next <Link> renders an <a>, so a capture-phase click handler catches it).
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    const onClick = (e: MouseEvent) => {
+      const a = (e.target as HTMLElement)?.closest?.('a');
+      if (!a) return;
+      if (a.hasAttribute('download') || a.getAttribute('target') === '_blank') return;
+      const href = a.getAttribute('href');
+      if (!href || href.startsWith('#') || href.startsWith('http')) return;
+      if (href === window.location.pathname) return;  // same page
+      if (!window.confirm('You have unsaved config changes. Leave this page and discard them?')) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    document.addEventListener('click', onClick, true);
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      document.removeEventListener('click', onClick, true);
+    };
+  }, [dirty]);
 
   // Drop a state's column (and, for the transitions grid, its from-row) from a CSV grid. Actuator/
   // delay rows are keyed by role so no row is removed there — only the state column disappears.
@@ -1070,10 +1168,10 @@ export default function ConfigPage() {
             <button
               onClick={saveConfig}
               disabled={saving || loading || !canEdit}
-              className="px-4 py-2 bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
-              title={canEdit ? undefined : 'Operators only: config changes disabled'}
+              className={`px-4 py-2 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed ${dirty && canEdit ? 'bg-blue-600 hover:bg-blue-700 ring-2 ring-blue-400/60' : 'bg-blue-600 hover:bg-blue-700'}`}
+              title={canEdit ? (dirty ? 'You have unsaved changes' : undefined) : 'Operators only: config changes disabled'}
             >
-              {saving ? 'Saving...' : canEdit ? 'Save Config' : 'Save Disabled (Read-only)'}
+              {saving ? 'Saving...' : canEdit ? (dirty ? 'Save Config •' : 'Save Config') : 'Save Disabled (Read-only)'}
             </button>
           </div>
         </div>
@@ -2057,6 +2155,16 @@ export default function ConfigPage() {
                     {stateCsvDiff.missing.length > 0 && <p>A state with no column in the tables below: <strong>{stateCsvDiff.missing.join(', ')}</strong> — entering it commands nothing.</p>}
                   </InlineIssue>
                 )}
+                {stateList.length > 0 && stateList.every((s) => !s.is_abort) && (
+                  <InlineIssue level="warn">
+                    <p>
+                      No state is flagged <strong>Abort</strong>. Aborts are <em>not</em> disabled — the
+                      controller falls back to its built-in aborts (Engine / GSE / Emergency), which may
+                      not match your states. Flag the intended abort state(s) explicitly. (Board over-pressure
+                      aborts via <code>[abort_pts]</code> are separate and still active.)
+                    </p>
+                  </InlineIssue>
+                )}
 
                 <div className="overflow-x-auto rounded-lg border border-gray-600">
                   <table className="text-sm w-full border-collapse">
@@ -2077,7 +2185,7 @@ export default function ConfigPage() {
                           <td className="px-3 py-1.5">
                             <CommitOnBlurNumber
                               value={st.id}
-                              onCommit={(v) => setState(i, { id: v })}
+                              onCommit={(v) => setState(i, { id: Math.max(1, Math.round(v)) })}
                               className={`w-16 px-2 py-1 bg-gray-800 border rounded text-white ${st.id !== undefined && stateIdDupes.includes(st.id) ? 'border-red-500 ring-1 ring-red-500' : 'border-gray-600'}`}
                             />
                             {st.id !== undefined && stateIdDupes.includes(st.id) && <div className="text-[10px] text-red-400 mt-0.5">duplicate id</div>}
@@ -2128,7 +2236,19 @@ export default function ConfigPage() {
                               className="w-4 h-4 accent-red-400"
                             />
                           </td>
-                          <td className="px-3 py-1.5 text-right">
+                          <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                            <button
+                              onClick={() => moveState(i, -1)}
+                              disabled={!canEdit || i === 0}
+                              title="Move up (also reorders the table columns)"
+                              className="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-xs disabled:opacity-30 mr-1"
+                            >↑</button>
+                            <button
+                              onClick={() => moveState(i, 1)}
+                              disabled={!canEdit || i === stateList.length - 1}
+                              title="Move down (also reorders the table columns)"
+                              className="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-xs disabled:opacity-30 mr-1"
+                            >↓</button>
                             <button
                               onClick={() => removeState(i)}
                               disabled={!canEdit}
@@ -2178,13 +2298,6 @@ export default function ConfigPage() {
                     </label>
                     <button onClick={generateEmptyActuators} disabled={!canEdit} className="px-3 py-1.5 bg-gray-700 rounded hover:bg-gray-600 text-sm disabled:opacity-50" title="Every configured actuator, every current state, all CLOSE">
                       Regenerate empty
-                    </button>
-                    <button
-                      onClick={() => { saveStateCsv('actuators', csvActuators); if (csvDelays) saveStateCsv('delays', csvDelays); }}
-                      disabled={saving}
-                      className="px-3 py-1.5 bg-blue-600 rounded hover:bg-blue-700 text-sm disabled:opacity-50"
-                    >
-                      {saving ? 'Saving…' : 'Save'}
                     </button>
                   </div>
 
@@ -2287,9 +2400,6 @@ export default function ConfigPage() {
                       />
                     </label>
                     <button onClick={generateEmptyTransitions} disabled={!canEdit} className="px-3 py-1.5 bg-gray-700 rounded hover:bg-gray-600 text-sm disabled:opacity-50" title="Blank matrix: the only allowed move from each state is to itself (the diagonal)">Regenerate empty</button>
-                    <button onClick={() => saveStateCsv('transitions', csvTransitions)} disabled={saving} className="px-3 py-1.5 bg-blue-600 rounded hover:bg-blue-700 text-sm disabled:opacity-50">
-                      {saving ? 'Saving…' : 'Save'}
-                    </button>
                   </div>
 
                   {(stateColDiff.orphan.length > 0 || stateColDiff.missing.length > 0) && (
@@ -2383,14 +2493,29 @@ export default function ConfigPage() {
                         </InlineIssue>
                       )}
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                        {renderField('Fire state', fireState,
-                          (v) => updateField('fire', 'state', v), 'select',
-                          names.length ? names : [fireState].filter(Boolean),
-                          'the state that starts the burn')}
+                        <div className="space-y-1">
+                          <label className="block text-sm font-semibold">
+                            Fire state
+                            <span className="text-xs text-text-muted ml-2">
+                              ({fireState ? 'the state that starts the burn' : 'none — the fire timer never arms'})
+                            </span>
+                          </label>
+                          <select
+                            value={fireState}
+                            onChange={(e) => updateField('fire', 'state', e.target.value)}
+                            disabled={!canEdit}
+                            className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <option value="">— none (never fires) —</option>
+                            {(names.length ? names : [fireState].filter(Boolean)).map((n) => (
+                              <option key={n} value={n}>{n}</option>
+                            ))}
+                          </select>
+                        </div>
                         {renderField('Expires to', target,
                           (v) => updateField('fire', 'expiry_target', v), 'select',
                           names.length ? names : [target].filter(Boolean),
-                          'where the timer lands')}
+                          fireState ? 'where the timer lands' : 'unused while there is no fire state')}
                         {renderField('Duration (ms)', config.fire?.duration_ms,
                           (v) => updateField('fire', 'duration_ms', v), 'number')}
                         {renderField('Extended (ms)', config.fire?.extended_ms,

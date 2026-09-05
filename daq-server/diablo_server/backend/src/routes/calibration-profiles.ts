@@ -14,6 +14,10 @@
  */
 import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+// ESM has no __dirname — derive it. (Under `node dist/…` there is no tsx shim, so this is required.)
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 

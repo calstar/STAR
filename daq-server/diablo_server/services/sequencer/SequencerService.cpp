@@ -138,7 +138,11 @@ bool SequencerService::init(const std::string& config_path) {
     // Which state is the burn, and where its timer lands. Names, not enumerators.
     {
         const std::string fs = cfg.fire.state;
-        if (!fs.empty()) {
+        if (fs.empty()) {
+            // No fire state configured → the fire timer never arms (nothing to auto-transition out
+            // of). UNKNOWN never equals a real state in transitionTo's `to == fire_state_` check.
+            fire_state_ = State::UNKNOWN;
+        } else {
             State s = StateMachine::fromName(fs);
             if (s == State::UNKNOWN)
                 std::cerr << "[SequencerService] [fire] state \"" << fs
@@ -156,17 +160,21 @@ bool SequencerService::init(const std::string& config_path) {
                 fire_expiry_state_ = s;
         }
         actuator_commander_.setFireState(fire_state_);
-        std::cout << "[SequencerService] Fire state: " << StateMachine::name(fire_state_)
-                  << " → expires to " << StateMachine::name(fire_expiry_state_) << std::endl;
-        // The expiry transition goes through the same isAllowed() gate as any other, so a target
-        // the fire state cannot reach leaves the system sitting in FIRE with a dead timer. Say so
-        // at startup rather than at T-0.
-        if (!state_machine_.isAllowed(fire_state_, fire_expiry_state_))
-            std::cerr << "[SequencerService] WARNING: " << StateMachine::name(fire_state_) << " → "
-                      << StateMachine::name(fire_expiry_state_)
-                      << " is not an allowed transition — the fire timer will expire into a "
-                         "refused transition and the system will stay in fire."
-                      << std::endl;
+        if (fire_state_ == State::UNKNOWN) {
+            std::cout << "[SequencerService] Fire state: (none) — fire timer disabled" << std::endl;
+        } else {
+            std::cout << "[SequencerService] Fire state: " << StateMachine::name(fire_state_)
+                      << " → expires to " << StateMachine::name(fire_expiry_state_) << std::endl;
+            // The expiry transition goes through the same isAllowed() gate as any other, so a
+            // target the fire state cannot reach leaves the system sitting in FIRE with a dead
+            // timer. Say so at startup rather than at T-0.
+            if (!state_machine_.isAllowed(fire_state_, fire_expiry_state_))
+                std::cerr << "[SequencerService] WARNING: " << StateMachine::name(fire_state_)
+                          << " → " << StateMachine::name(fire_expiry_state_)
+                          << " is not an allowed transition — the fire timer will expire into a "
+                             "refused transition and the system will stay in fire."
+                          << std::endl;
+        }
     }
     fire_manager_.configure(fire_duration_ms, fire_extended_ms);
     std::cout << "[SequencerService] Fire window: " << fire_duration_ms << " ms (extended "
