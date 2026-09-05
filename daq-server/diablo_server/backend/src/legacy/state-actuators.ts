@@ -9,6 +9,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { SystemState } from '../../../shared/types.js';
 import { readConfig } from '../routes/config.js';
+import { csvStateMap } from './state-ids.js';
 
 // ES module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -80,36 +81,6 @@ export const CSV_ACTUATOR_TO_ENTITY = buildActuatorEntityMap();
 
 // CSV_ACTUATOR_TO_ENTITY is now built from config above (exported)
 
-// CSV state name → SystemState enum mapping (new format)
-const CSV_STATE_MAP: Record<string, SystemState> = {
-  'Debug': SystemState.DEBUG,
-  'Idle': SystemState.IDLE,
-  'Armed': SystemState.ARMED,
-  'Fuel Fill': SystemState.FUEL_FILL,
-  'Ox Fill': SystemState.OX_FILL,
-  'Press Standby': SystemState.PRESS_STANDBY, // Press Standby is a separate state
-  'GN2 Low Press': SystemState.GN2_LOW_PRESS,
-  'GN2 Low Vent': SystemState.GN2_VENT,
-  'Fuel Press': SystemState.FUEL_PRESS,
-  'Fuel Vent': SystemState.FUEL_VENT,
-  'Ox Press': SystemState.OX_PRESS,
-  'Ox Vent': SystemState.OX_VENT,
-  'GN2 High Press': SystemState.GN2_HIGH_PRESS,
-  'GN2 High Vent': SystemState.GN2_HIGH_VENT,
-  'Calibrate': SystemState.CALIBRATE,
-  'Ready': SystemState.READY,
-  'Fire': SystemState.FIRE,
-  'Vent': SystemState.VENT,
-  'Engine Abort': SystemState.ENGINE_ABORT,
-  'GSE Abort': SystemState.GSE_ABORT,
-  'Emergency Abort': SystemState.EMERGENCY_ABORT,
-  // Legacy mappings
-  'GN2 Press': SystemState.GN2_LOW_PRESS, // Old name for GN2 Low Press
-  'GN2 Vent': SystemState.GN2_VENT, // Old name for GN2 Low Vent
-  'Quick Fire': SystemState.READY,
-  'High Press': SystemState.GN2_HIGH_PRESS,
-  'Abort': SystemState.EMERGENCY_ABORT,
-};
 
 /**
  * StateActuatorMap: SystemState → { actuatorName → 0|1 (CLOSED|OPEN) }
@@ -218,6 +189,7 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
 
     // First line is header: ,Idle,Armed,Fuel Fill,...
     const headers = lines[0].split(',').slice(1).map(h => h.trim()); // Skip first empty cell
+    const stateMap = csvStateMap();
 
     let actuatorCount = 0;
 
@@ -251,7 +223,7 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
           continue;
         }
 
-        const systemState = CSV_STATE_MAP[stateName];
+        const systemState = stateMap[stateName];
         if (systemState === undefined) {
           console.warn(`⚠️ Unknown state name: "${stateName}"`);
           continue;
@@ -275,12 +247,18 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
 
     console.log(`📋 Parsed state actuator map: ${Object.keys(result).length} states`);
     console.log(`📋 Found ${actuatorCount} actuators in CSV`);
+    const nameById: Record<number, string> = {};
+    for (const [n, id] of Object.entries(csvStateMap())) nameById[id as number] = n;
     for (const [state, actuators] of Object.entries(result)) {
       const count = Object.keys(actuators).length;
       const actuatorList = Object.entries(actuators)
         .map(([name, val]) => `${name}=${val ? 'OPEN' : 'CLOSE'}`)
         .join(', ');
-      console.log(`   State ${SystemState[Number(state)]}: ${count} actuators (${actuatorList})`);
+      // Label from the same map the ids came from. Printing SystemState[id] here named a
+      // different state than the row actually described, which is precisely the confusion this
+      // whole class of bug creates.
+      const label = nameById[Number(state)] ?? SystemState[Number(state)] ?? `STATE ${state}`;
+      console.log(`   State ${label}: ${count} actuators (${actuatorList})`);
     }
     return result;
   } catch (error) {
