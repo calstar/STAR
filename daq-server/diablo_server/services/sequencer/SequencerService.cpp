@@ -109,6 +109,15 @@ bool SequencerService::init(const std::string& config_path) {
     loadConfig(config_path);
     const fsw::config::Config cfg = fsw::config::load_from_string(config_content_);
 
+    // Adopt [[states]] BEFORE anything resolves a state name. Both CSVs are parsed by name through
+    // StateMachine::fromName(), which prefers the config's by_name map and falls back to the
+    // compiled enum. This call used to sit below both loads, so the transition table was built
+    // against the fallback numbering and every later fromName() answered from the config's — the
+    // table said Armed(2) -> Press Standby(20) while a command for Press Standby resolved to 3,
+    // and the transition was refused. Only ids identical in both numberings survived, which is why
+    // Idle <-> Armed worked and nothing else did.
+    StateMachine::loadStatesFromConfig(config_content_);
+
     // State machine CSV — path from config.toml (canonical: daq-server/config/).
     std::string sm_csv = resolveDataPath(cfg.state_machine.transitions_csv);
     if (!state_machine_.load(sm_csv)) {
@@ -125,10 +134,6 @@ bool SequencerService::init(const std::string& config_path) {
                   << act_csv << ")" << std::endl;
         return false;
     }
-
-    // Adopt [[states]] before anything resolves a state name — the fire config below looks up
-    // its state and expiry target by name, and the CSVs are parsed by name too.
-    StateMachine::loadStatesFromConfig(config_content_);
 
     // FireManager durations from config.toml [fire] (see the parser for the
     // [controller_service].fire_* fallback that keeps an un-migrated config working).
@@ -237,6 +242,12 @@ bool SequencerService::transitionTo(State to) {
         if (!state_machine_.isAllowed(from, to)) {
             std::cerr << "[SequencerService] Transition " << StateMachine::name(from) << " → "
                       << StateMachine::name(to) << " is not allowed" << std::endl;
+            // Republish the state we are actually in. A refusal used to publish nothing, so a
+            // client that had moved its own display in anticipation was never corrected and went
+            // on showing a state the rig had refused to enter — the failure was invisible, which
+            // is worse than the failure. Publishing on the way out also resyncs any client that
+            // drifted for some other reason.
+            publishState();
             return false;
         }
     }
@@ -323,6 +334,10 @@ bool SequencerService::reloadConfig() {
     std::cout << "[SequencerService] Reloading config..." << std::endl;
     loadConfig(config_path_);
     const fsw::config::Config cfg = fsw::config::load_from_string(config_content_);
+
+    // Same ordering rule as init(), and this path did not adopt [[states]] at all — a reload after
+    // an edit that renamed or renumbered a state re-parsed both CSVs against the previous list.
+    StateMachine::loadStatesFromConfig(config_content_);
 
     std::string act_csv = resolveDataPath(cfg.state_machine.actuator_csv);
     if (!actuator_commander_.load(config_content_, act_csv)) {
