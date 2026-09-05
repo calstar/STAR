@@ -315,7 +315,7 @@ jobs:
   # points at publish-apps' scopes so PRs reuse main's layers; nothing is
   # written back (GitHub isolates branch caches from the default branch's
   # anyway, so a PR could not poison them even if it tried).
-  docker-images:
+  docker-image:
     name: Docker image (${{ matrix.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -324,8 +324,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: engine-design-api,      dockerfile: ./EngineDesign/Dockerfile.api }
-          - { name: engine-design-frontend, dockerfile: ./EngineDesign/frontend/Dockerfile }
+          - { name: engine-design-api,      context: ., dockerfile: ./EngineDesign/Dockerfile.api }
+          - { name: engine-design-frontend, context: ., dockerfile: ./EngineDesign/frontend/Dockerfile }
 
     steps:
       - uses: actions/checkout@v4
@@ -338,7 +338,7 @@ jobs:
         with:
           # Repo root, matching publish-apps.yml: these images copy several
           # EngineDesign/ subtrees plus lib/stardesign.
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: false
           cache-from: type=gha,scope=${{ matrix.name }}
@@ -352,7 +352,7 @@ jobs:
       - frontend
       - frontend-e2e
       - accel-parity
-      - docker-images
+      - docker-image
     if: always()
 
     steps:
@@ -368,4 +368,4 @@ jobs:
         echo "| Frontend build | ${{ needs.frontend.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Frontend E2E (Playwright) | ${{ needs.frontend-e2e.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Accelerator parity (numba vs Python) | ${{ needs.accel-parity.result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Docker images (build, no push) | ${{ needs.docker-images.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Docker images (build, no push) | ${{ needs.docker-image.result }} |" >> $GITHUB_STEP_SUMMARY

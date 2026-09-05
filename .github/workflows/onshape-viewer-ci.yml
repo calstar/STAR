@@ -175,6 +175,45 @@ jobs:
       run: npm run build
 
   # Aggregate status, mirroring engine-design-ci.yml's summary job.
+
+  # Docker image build. This is the gate that was missing: publish-apps.yml (and
+  # publish-auth.yml) only trigger on push to main, so a Dockerfile that no
+  # longer matches the tree -- a COPY of a directory the branch deleted, say --
+  # got its first real build *after* the merge, and broke the deploy image
+  # instead of the PR. That is exactly how EngineDesign/Dockerfile.api broke
+  # main when PR #37 deleted engine/native.
+  #
+  # Same Dockerfile and context as the publisher, but push: false: this proves
+  # the image builds, publishes nothing, and needs no GHCR login. cache-from
+  # points at the publisher's cache scope so PRs reuse main's layers; nothing is
+  # written back (GitHub isolates a branch's cache from the default branch's
+  # anyway, so a PR could not poison them even if it tried).
+  docker-image:
+    name: Docker image (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: onshape-viewer-api,      context: ./onshape-viewer,          dockerfile: ./onshape-viewer/Dockerfile.api }
+          - { name: onshape-viewer-frontend, context: ./onshape-viewer/frontend, dockerfile: ./onshape-viewer/frontend/Dockerfile }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.name }}
+
   onshape-viewer-summary:
     name: Onshape Viewer Summary
     runs-on: ubuntu-latest
@@ -183,6 +222,7 @@ jobs:
       - offline-guarantee
       - backend-smoke
       - frontend
+      - docker-image
     if: always()
 
     steps:
@@ -199,3 +239,4 @@ jobs:
         echo "| Offline guarantee | ${{ needs.offline-guarantee.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Backend smoke | ${{ needs.backend-smoke.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Frontend build | ${{ needs.frontend.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Docker images (build, no push) | ${{ needs.docker-image.result }} |" >> $GITHUB_STEP_SUMMARY
