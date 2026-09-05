@@ -594,31 +594,48 @@ panel_col = 0
 is_boot = true
 
 [[states]]
-id = 16
-name = "Fire"
-panel_row = 5
-panel_col = 0
+id = 0
+name = "Armed"
 
 [[states]]
-id = 17
-name = "Engine Abort"
-is_abort = true
-
-[[states]]
-id = 18
-name = "GSE Abort"
-is_abort = true
-
-[[states]]
-id = 19
-name = "Emergency Abort"
-is_abort = true
-
-[[states]]
-id = 20
+id = 2
 name = "Press Standby"
-panel_row = 2
-panel_col = 0
+
+[[states]]
+id = 3
+name = "Dome Press"
+
+[[states]]
+id = 4
+name = "COPV Fill"
+
+[[states]]
+id = 5
+name = "Fuel Press"
+
+[[states]]
+id = 6
+name = "Vent"
+
+[[states]]
+id = 7
+name = "Dome Vent"
+
+[[states]]
+id = 8
+name = "High Press Vent"
+
+[[states]]
+id = 9
+name = "Fuel Tank Vent"
+
+[[states]]
+id = 10
+name = "Ready"
+
+[[states]]
+id = 11
+name = "Fire"
 
 [actuator_roles]
 "Dome CTRL" = [ "NO", 1, 14 ]
