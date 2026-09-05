@@ -341,7 +341,7 @@ export function handleCalibrationCommand(
                 host.ptCalibration.set(ch, { ...defaultCoeffs });
             }
             host.lastRawAdc.clear();
-            console.log('🗑️ Calibration cleared — ZERO ALL then CAPTURE to build ADC→pressure fit');
+            console.log('🗑️ Calibration cleared — capture points (incl. a 0 psi point) to build the ADC→pressure fit');
             break;
         }
         default:
