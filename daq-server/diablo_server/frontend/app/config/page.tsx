@@ -256,6 +256,27 @@ const csvSignature = (a: CsvGrid | null, d: CsvGrid | null, t: CsvGrid | null): 
   [a, d, t].map((g) => (g ? serializeCsvGrid(g) : '')).join(' ');
 
 /** Rows/columns present in `have` but not `want`, and vice versa — the orphan/missing warnings. */
+// Roles are edited in file order (so a row stays put while you type) and re-ordered only on Save:
+// actuator_roles by board_id then channel, and each sensor_roles_<board> by channel. smol-toml
+// preserves object key order, so the sorted order round-trips through config.toml.
+function sortRolesForSave(cfg: any): any {
+  const out = { ...(cfg || {}) };
+  if (out.actuator_roles && typeof out.actuator_roles === 'object') {
+    const sorted = Object.entries(out.actuator_roles).sort((a: any, b: any) => {
+      const av = Array.isArray(a[1]) ? a[1] : [], bv = Array.isArray(b[1]) ? b[1] : [];
+      return (Number(av[2] ?? 0) - Number(bv[2] ?? 0)) || (Number(av[1] ?? 0) - Number(bv[1] ?? 0));
+    });
+    out.actuator_roles = Object.fromEntries(sorted);
+  }
+  for (const k of Object.keys(out)) {
+    if (k.startsWith('sensor_roles_') && out[k] && typeof out[k] === 'object') {
+      const sorted = Object.entries(out[k]).sort((a: any, b: any) => (Number(a[1]) || 0) - (Number(b[1]) || 0));
+      out[k] = Object.fromEntries(sorted);
+    }
+  }
+  return out;
+}
+
 const diffKeys = (have: string[], want: string[]) => ({
   orphan: have.filter((k) => !want.includes(k)),
   missing: want.filter((k) => !have.includes(k)),
@@ -441,7 +462,8 @@ export default function ConfigPage() {
       const response = await fetch(`${getApiBaseUrl()}/api/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config }),
+        // Re-sort the role maps (board→channel) at save time only, so editing never moves a row.
+        body: JSON.stringify({ config: sortRolesForSave(config) }),
       });
 
       if (!response.ok) {
@@ -1643,11 +1665,10 @@ export default function ConfigPage() {
                   })
                 ).map(({ key, title, maxCh, modelKey, fullScaleKey, resistorKey, showModel, isLoop, defaultModel, boardFullScale, boardResistor }) => {
                   const map = (config as any)[key] as Record<string, number> | undefined;
-                  // Display ordered by channel number (not config/insertion order). The number field
-                  // commits on blur so this re-sort doesn't fire mid-keystroke.
-                  const entries = Object.entries(map || {}).sort(
-                    (a, b) => (Number(a[1]) || 0) - (Number(b[1]) || 0),
-                  );
+                  // File (insertion) order so a row stays put while you edit its channel or name —
+                  // the map is re-sorted by channel only on Save (see sortRolesForSave), never
+                  // mid-edit. Renaming rebuilds the map preserving order, so rows don't jump.
+                  const entries = Object.entries(map || {});
                   return (
                     <div key={key} className="space-y-4">
                       <h3 className="text-lg font-semibold">{title}</h3>
@@ -1827,11 +1848,8 @@ export default function ConfigPage() {
               <h2 className="text-xl font-bold mb-4">Actuator Roles</h2>
               <div className="space-y-4">
                 {Object.entries(config.actuator_roles || {})
-                  // Order by board_id then channel (numbers commit on blur, so this re-sort doesn't fire mid-edit).
-                  .sort((a, b) => {
-                    const av = Array.isArray(a[1]) ? a[1] : [], bv = Array.isArray(b[1]) ? b[1] : [];
-                    return (Number(av[2] ?? 0) - Number(bv[2] ?? 0)) || (Number(av[1] ?? 0) - Number(bv[1] ?? 0));
-                  })
+                  // File (insertion) order so editing a channel/board/name doesn't move the row.
+                  // Re-sorted by board_id then channel only on Save (sortRolesForSave), not mid-edit.
                   .map(([name, value], idx) => {
                   const arr = Array.isArray(value) ? value : [];
                   const type = (arr[0] as string) || 'NC';
