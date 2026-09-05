@@ -113,6 +113,10 @@ describe('StateMachineDiagram', () => {
             commandType: 'state_transition',
             data: { state: SystemState.FIRE }
         });
-        expect(useSensorStore.getState().currentState).toBe(SystemState.FIRE);
+        // The command goes out, but the display must NOT move on its own: the sequencer is
+        // authoritative and reports through _SEQUENCER_STATE. This used to assert the opposite,
+        // and that optimistic update is exactly what let a refused transition look successful —
+        // the rig stayed in Armed while the GUI showed the state it had refused to enter.
+        expect(useSensorStore.getState().currentState).toBe(SystemState.IDLE);
     });
 });
