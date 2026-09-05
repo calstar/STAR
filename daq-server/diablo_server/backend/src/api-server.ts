@@ -426,6 +426,11 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         try {
           const cfg = readActiveProfile();
           const raw = Array.isArray((cfg as any)?.states) ? (cfg as any).states : [];
+          // Which state is the burn is [fire].state, a name — the GUI used to answer this with
+          // `currentState === SystemState.FIRE`, a literal 16, so on a rig whose Fire is any other
+          // id the Extend Fire button stayed disabled through the burn and the PWM page refused to
+          // send. Carry it beside isAbort so the client never has to know an id.
+          const fireStateName = typeof (cfg as any)?.fire?.state === 'string' ? (cfg as any).fire.state : null;
           const states = raw
             .filter((e: any) => typeof e?.id === 'number' && typeof e?.name === 'string')
             .map((e: any) => ({
@@ -433,6 +438,7 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
               name: e.name,
               isAbort: e.is_abort === true,
               isBoot: e.is_boot === true,
+              isFire: fireStateName !== null && e.name === fireStateName,
               // Absent coordinates mean "not on the control panel" — no separate hidden flag.
               panelRow: typeof e.panel_row === 'number' ? e.panel_row : null,
               panelCol: typeof e.panel_col === 'number' ? e.panel_col : null,
