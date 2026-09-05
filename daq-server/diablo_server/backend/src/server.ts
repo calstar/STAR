@@ -574,7 +574,24 @@ const stats = {
 };
 
 // ── Local state (sequencer / actuator_service authoritative) ────────────────
-let currentState: SystemState = SystemState.IDLE;
+/** Boot state id from the config's [[states]] (is_boot), or IDLE if none is flagged. This was a
+ *  bare SystemState.IDLE — a literal 1 — which names a different state on a rig that renumbered,
+ *  so the backend reported and mismatch-checked against the wrong state until the first
+ *  _SEQUENCER_STATE packet arrived. */
+function configBootStateId(): SystemState {
+  try {
+    const raw = (readConfig() as any)?.states;
+    if (Array.isArray(raw)) {
+      const boot = raw.find((e: any) => e?.is_boot === true && typeof e?.id === 'number');
+      if (boot) return boot.id as SystemState;
+    }
+  } catch {
+    /* fall through */
+  }
+  return SystemState.IDLE;
+}
+
+let currentState: SystemState = configBootStateId();
 let debugMode = false;
 
 // ── HTTP + WebSocket server ──────────────────────────────────────────────────
@@ -925,7 +942,7 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
   switch (command.commandType) {
     case 'state_transition': {
       const targetState = command.data.state!;
-      const stateName = SystemState[targetState] ?? String(targetState);
+      const stateName = configStateName(targetState) ?? SystemState[targetState] ?? String(targetState);
       // Resolve the id through the config the sequencer itself loaded, not the compiled enum.
       // The GUI sends a [[states]] id; SystemState is a fixed table that only agrees with it on a
       // rig that never renumbered. On one that did, every id from the first divergence up named a
