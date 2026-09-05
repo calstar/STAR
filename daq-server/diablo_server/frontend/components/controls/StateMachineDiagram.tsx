@@ -337,9 +337,9 @@ export default function StateMachineDiagram() {
     ALWAYS_REACHABLE.forEach(s => set.add(s));
     // In debug mode, all non-excluded states are reachable
     if (debugMode) {
-      Object.values(SystemState)
-        .filter((s) => typeof s === 'number' && !EXCLUDED_STATES.has(s as SystemState))
-        .forEach((s) => set.add(s as SystemState));
+      allStates()
+        .filter((s) => !s.isAbort)
+        .forEach((s) => set.add(s.id as SystemState));
     }
     return set;
   }, [effectiveState, transitions, debugMode]);
@@ -359,13 +359,18 @@ export default function StateMachineDiagram() {
     s => s !== effectiveState && statePos(s) !== undefined,
   );
 
-  // Filter out excluded states from rendering
-  // Only states the config gives a position to are drawn. Enumerating the SystemState enum and
-  // relying on EXCLUDED_STATES alone meant anything without a position still rendered — at [0, 0],
-  // on top of Idle.
-  const states = (Object.values(SystemState).filter(
-    (s) => typeof s === 'number' && !EXCLUDED_STATES.has(s as SystemState) && hasPos(s as SystemState)
-  ) as SystemState[]);
+  // Draw the states the CONFIG declares, not the ones the compiled SystemState enum happens to
+  // contain. Enumerating the enum drew every id 0-20 that could still find a position, so a rig
+  // that renamed its states kept rendering the built-in ones underneath — Calibrate (id 14, cell
+  // 4,0) landing on top of a config whose Ready also sits at (4,0).
+  //
+  // Aborts drop out by their config flag rather than by hardcoded id 17/18/19: they are reached
+  // from the emergency arrows, not placed on the grid. Nothing is excluded by id any more, which
+  // is what hid a state the operator put at id 0 — EXCLUDED_STATES holds SystemState.DEBUG = 0,
+  // so an Armed declared at id 0 was filtered out as though it were the legacy Debug state.
+  const states = allStates()
+    .filter((s) => !s.isAbort && hasPos(s.id as SystemState))
+    .map((s) => s.id as SystemState);
 
   // Derived from the placed states, so adding one in config widens the canvas instead of
   // drawing it off the edge.
