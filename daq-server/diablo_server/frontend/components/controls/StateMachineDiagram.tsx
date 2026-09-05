@@ -145,7 +145,6 @@ function StateNode({
 
 export default function StateMachineDiagram() {
   const currentState = useSensorStore((s) => s.currentState);
-  const updateState = useSensorStore((s) => s.updateState);
   const ws = getWebSocketClient();
   const [backendTransitions, setBackendTransitions] = useState<Transition[]>([]);
   // Bumped after states are (re)loaded so the diagram re-renders — allStates()/statePos() read the
@@ -221,11 +220,11 @@ export default function StateMachineDiagram() {
       return;
     }
 
-    updateState({
-      currentState: targetState,
-      stateName: stateNameUpper(targetState) ?? `STATE ${targetState}`,
-      timestamp: Date.now(),
-    });
+    // Deliberately no optimistic update. The sequencer is authoritative and reports through
+    // _SEQUENCER_STATE [0x50]; moving the display here asserted a transition that had not happened
+    // yet, and nothing corrected it when the sequencer refused — the rig sat in Armed while the GUI
+    // showed Press Standby. The backend command path dropped its own optimistic update for this
+    // reason; this was the copy left behind.
     const command: CommandPayload = {
       commandType: 'state_transition',
       data: { state: targetState },
