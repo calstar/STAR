@@ -39,7 +39,7 @@ import { recordBoardScanIngest, getBoardScanRateHz, isPrimaryPhysicalStream, map
 import { EnvelopeAccumulator, parseGuiStreamConfig, envelopeWindowMs, type GuiStreamConfig } from './gui-stream.js';
 import { HistoryCache } from './history-cache.js';
 import { startGuiStaticServer } from './static-gui.js';
-import { handleCalibrationCommand, type CalibrationHost } from './calibration-handler.js';
+import { handleCalibrationCommand, publishCalibrationReload, type CalibrationHost } from './calibration-handler.js';
 import { loadPTCalibration, type CalibrationCoefficients } from './calibration.js';
 import { MessageType, SystemState } from '../../shared/types.js';
 import { isOperator } from './operators.js';
@@ -592,6 +592,11 @@ const apiHandler = createAPIHandler({
       ))
       .catch(() => console.log('[ThinServer] sequencer not running — CSVs apply at next session start'));
     broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
+  },
+  onCalibrationReload: () => {
+    // A calibration profile was loaded / a blank created on disk (api-server swapped the live
+    // store file). Ask the calibration service to re-read it so the whole rig's cal switches live.
+    publishCalibrationReload(calibrationHost);
   },
   onConfigUpdated: () => {
     reloadGuiStreamConfig();

@@ -13,6 +13,12 @@ import {
   getActiveProfileName, ensureSeeded, readActiveProfile, writeActiveProfile, deployActiveProfile,
   getActiveProfilePath, readStateCsv, writeStateCsv, isStateCsvName, STATE_CSVS,
 } from './routes/config-profiles.js';
+import {
+  listCalibrationProfiles,
+  saveCalibrationProfile,
+  loadCalibrationProfile,
+  newBlankCalibration,
+} from './routes/calibration-profiles.js';
 import { isCurrentLoopBoard } from './sensor-config.js';
 import { sessionManager } from './session-manager.js';
 import { isOperator } from './operators.js';
@@ -260,6 +266,9 @@ export interface APIHandlerOptions {
   onStateCsvUpdated?: () => void;
   getEngineState?: () => number;
   getCalibrationStatus?: () => Promise<any>;
+  /** A calibration profile was loaded / a blank was created on disk: tell the calibration service
+   *  to re-read the live store (cmd 7) so the swap takes effect without a session restart. */
+  onCalibrationReload?: () => void;
 }
 
 /**
@@ -292,7 +301,7 @@ function readJsonBody(req: IncomingMessage): Promise<any> {
  * Returns true if the request was handled, false if not (so the caller can fall through).
  */
 export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
-  const { getQueryClient, getDebugInfo, onConfigUpdated, onStateCsvUpdated, getEngineState, getCalibrationStatus } = opts;
+  const { getQueryClient, getDebugInfo, onConfigUpdated, onStateCsvUpdated, getEngineState, getCalibrationStatus, onCalibrationReload } = opts;
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const urlPath = (req.url ?? '').split('?')[0] ?? '';
@@ -721,6 +730,43 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
           try { JSON.parse(body); res.end(body); }
           catch { res.end(JSON.stringify({ cubic_state: {} })); }  // partial/corrupt → empty
         }
+      } else if (url.pathname === '/api/calibration_profiles' && req.method === 'GET') {
+        // List committed whole-rig calibration snapshots + which one is loaded.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(listCalibrationProfiles()));
+      } else if (url.pathname === '/api/calibration_profiles/save' && req.method === 'POST') {
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        const body = await readJsonBody(req);
+        saveCalibrationProfile(String(body?.name ?? ''));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(listCalibrationProfiles()));
+      } else if (url.pathname === '/api/calibration_profiles/load' && req.method === 'POST') {
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        const body = await readJsonBody(req);
+        loadCalibrationProfile(String(body?.name ?? ''));
+        if (onCalibrationReload) onCalibrationReload();  // service re-reads the swapped live store
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(listCalibrationProfiles()));
+      } else if (url.pathname === '/api/calibration_profiles/new_blank' && req.method === 'POST') {
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        const body = await readJsonBody(req);
+        const name = body?.name ? String(body.name) : undefined;
+        newBlankCalibration(name);
+        if (onCalibrationReload) onCalibrationReload();  // service re-reads the blank live store
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(listCalibrationProfiles()));
       } else if (url.pathname === '/api/config_packets' && req.method === 'GET') {
         // Config packets now built by config_broadcast_service.py (standalone). Return empty.
         res.writeHead(200, { 'Content-Type': 'application/json' });

@@ -122,6 +122,9 @@ export default function CalibrationPage() {
   const [overlay, setOverlay] = useState<{ cubic: boolean; robust: boolean; physics: boolean }>({ cubic: true, robust: true, physics: true });
   const [refInput, setRefInput] = useState('');
   const [showLoadCells, setShowLoadCells] = useState(false);
+  // Captures write into the live ADC stream, which only exists while a session runs; with it off the
+  // calibration service is down and a capture/zero is silently dropped. Gate the controls on it.
+  const [sessionActive, setSessionActive] = useState(false);
 
   // Draggable sidebar width (persisted). Clamped so it can't swallow the detail panel or vanish.
   const SIDEBAR_MIN = 240, SIDEBAR_MAX = 640;
@@ -228,7 +231,13 @@ export default function CalibrationPage() {
       console.error('[Calibration] Backend error:', msg);
       alert(`❌ Calibration: ${msg}`);
     });
-    return () => { u2(); u3(); };
+    // Track session state so capture/zero controls are inert when there is no live stream.
+    const u4 = ws.on(MessageType.SESSION_UPDATE, (p: unknown) => setSessionActive(!!(p as { active?: boolean })?.active));
+    fetch(`${getApiBaseUrl()}/api/config/profiles`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setSessionActive(!!d.sessionActive); })
+      .catch(() => {});
+    return () => { u2(); u3(); u4(); };
   }, [ws]);
 
   useEffect(() => {
@@ -379,11 +388,16 @@ export default function CalibrationPage() {
             It's a real point (feeds the shared fit + persists), not a tare. */}
         {(counts.cubic + counts.robust) > 0 && (
           <div className="flex-shrink-0 px-4 py-3 border-t border-gray-800">
-            <button onClick={handleZeroAll}
-              title="Capture a 0 psi reference point on every cubic/robust PT sensor. Vent to atmosphere first — this adds a real point to each sensor's shared fit (physics sensors are skipped)."
-              className="w-full px-4 py-2.5 text-sm font-bold rounded-lg border bg-yellow-900/30 border-yellow-600/60 text-yellow-300 hover:bg-yellow-800/50 transition-colors">
+            <button onClick={handleZeroAll} disabled={!sessionActive}
+              title={sessionActive
+                ? "Capture a 0 psi reference point on every cubic/robust PT sensor. Vent to atmosphere first — this adds a real point to each sensor's shared fit (physics sensors are skipped)."
+                : 'Start a session to calibrate — with no live stream there is nothing to capture.'}
+              className="w-full px-4 py-2.5 text-sm font-bold rounded-lg border bg-yellow-900/30 border-yellow-600/60 text-yellow-300 hover:bg-yellow-800/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-yellow-900/30">
               Zero all
             </button>
+            {!sessionActive && (
+              <p className="mt-1 text-[11px] text-text-muted text-center">Start a session to calibrate.</p>
+            )}
           </div>
         )}
 
@@ -450,9 +464,9 @@ export default function CalibrationPage() {
                 </div>
               </div>
               {selectedModel !== 'physics' && (
-                <button onClick={handleNewCalibration}
-                  className="px-5 py-2.5 text-sm font-bold rounded-lg border border-red-700 bg-red-900/30 text-red-300 hover:bg-red-800/50 transition-colors"
-                  title="Drop captured points and reset both cubic and robust to nothing (0)">
+                <button onClick={handleNewCalibration} disabled={!sessionActive}
+                  className="px-5 py-2.5 text-sm font-bold rounded-lg border border-red-700 bg-red-900/30 text-red-300 hover:bg-red-800/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-red-900/30"
+                  title={sessionActive ? 'Drop captured points and reset both cubic and robust to nothing (0)' : 'Start a session to change calibration.'}>
                   Clear calibration
                 </button>
               )}
@@ -482,12 +496,17 @@ export default function CalibrationPage() {
                   />
                   <button
                     onClick={handleCaptureSelected}
-                    disabled={!refInput}
+                    disabled={!refInput || !sessionActive}
+                    title={sessionActive ? undefined : 'Start a session to calibrate — there is no live stream to capture.'}
                     className="px-6 py-2.5 text-sm font-bold rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-white"
                   >
                     Capture
                   </button>
-                  <span className="text-sm text-text-muted">Records the current ADC at this known pressure. Feeds both the cubic &amp; robust fits.</span>
+                  <span className="text-sm text-text-muted">
+                    {sessionActive
+                      ? <>Records the current ADC at this known pressure. Feeds both the cubic &amp; robust fits.</>
+                      : <>Start a session to calibrate — there is no live stream to capture.</>}
+                  </span>
                 </div>
               )}
             </div>

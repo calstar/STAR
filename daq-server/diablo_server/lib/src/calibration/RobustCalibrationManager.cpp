@@ -206,6 +206,15 @@ void RobustCalibrationManager::reset_adjustment(uint16_t sensor_id) {
     state.framework->seed_from_factory_cubic(state.baseline);
 }
 
+void RobustCalibrationManager::reseed_sensor(uint16_t sensor_id,
+                                             const PTCalibrationCoeffs& baseline) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& state = states_[sensor_id];
+    state.baseline = baseline;
+    state.framework = std::make_unique<RobustCalibrationFramework>(static_cast<int>(sensor_id));
+    state.framework->seed_from_factory_cubic(baseline);
+}
+
 bool RobustCalibrationManager::save_adjustments(
     const std::string& path, const std::map<uint16_t, std::string>* uid_to_role) const {
     std::lock_guard<std::mutex> lock(mutex_);
