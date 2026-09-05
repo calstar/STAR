@@ -3,6 +3,7 @@
 #include <atomic>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -50,13 +51,23 @@ public:
      * Groups commands by board IP, sends one UDP packet per board.
      * PWM actuators are skipped in FIRE state.
      */
-    void applyForState(State state);
+    /**
+     * Command every actuator for `state`.
+     *
+     * `is_transition` selects between the two things this does. On an actual state change it runs
+     * the CSV's per-actuator delays as a staged schedule; on the 1 Hz republish it sends the
+     * settled (final) positions with no delay. Without that split the republish would re-arm every
+     * pending delay once a second and the schedule would never finish.
+     */
+    void applyForState(State state, bool is_transition = false);
 
     /**
      * Start the 1 Hz continuous re-send loop for the given state.
      * Stops any previously running loop first.
      */
-    void startContinuousLoop(State state);
+    /** `allow_delays` false makes the entry apply immediately — used for abort states, which must
+     *  not sit behind a delay. */
+    void startContinuousLoop(State state, bool allow_delays = true);
 
     /** Stop the continuous re-send loop (blocks until the thread exits). */
     void stopContinuousLoop();
@@ -71,6 +82,15 @@ public:
     void clearAllManualOverrides();
 
     /** Set the Elodin client for publishing commanded state [0x32, ch] to the DB. */
+    /**
+     * Which state hands PWM actuators to controller_service. During it this commander stops
+     * commanding PWM roles entirely, so exactly one thing drives them during a burn. Was the
+     * State::FIRE enumerator; now follows [fire] state like every other fire decision.
+     */
+    void setFireState(State s) {
+        fire_state_ = s;
+    }
+
     void setElodinClient(fsw::elodin::ElodinClient* client) {
         elodin_ = client;
     }
@@ -85,6 +105,18 @@ public:
 
 private:
     std::map<std::string, ActuatorRole> roles_;
+    /** state -> actuator -> delay in seconds, from state_machine_actuator_delays.csv. */
+    std::map<std::string, std::map<std::string, double>> state_actuator_delays_;
+    /** Bumped on every transition so an in-flight delayed stage from the previous state aborts
+     *  instead of landing after we have already moved on. */
+    State fire_state_{State::FIRE};
+    std::atomic<uint64_t> schedule_gen_{0};
+    /** Roles whose delayed stage has not fired yet. The 1 Hz republish skips these: the board holds
+     *  its last commanded position, which is exactly the pre-transition value we want it to keep
+     *  until the delay elapses. Without this the republish would send the settled position first
+     *  and any delay longer than the republish period could never be observed. */
+    std::set<std::string> pending_roles_;
+    std::mutex pending_roles_mutex_;
     // CSV: state_name → { actuator_name → logical_pos (0 or 1) }
     std::map<std::string, std::map<std::string, int>> state_actuators_;
 
@@ -105,6 +137,8 @@ private:
         const std::string& state_name) const;
 
     // Build and send one UDP actuator command packet to a board.
+    /** Send to every board with the retransmits interleaved, so boards stay in step. */
+    bool sendBatch(const std::map<std::string, std::vector<std::pair<uint8_t, uint8_t>>>& by_board);
     bool sendUDP(const std::string& board_ip,
                  const std::vector<std::pair<uint8_t, uint8_t>>& id_state_pairs);
 

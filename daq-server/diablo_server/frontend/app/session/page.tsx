@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { useControlMode } from '@/lib/control-mode';
@@ -26,21 +25,27 @@ export default function SessionPage() {
   const session = useSensorStore((s) => s.session);
   const { controlEnabled } = useControlMode();
   const ws = getWebSocketClient();
-  const navigate = useNavigate();
-
-  const backLink = (
-    <button
-      type="button"
-      onClick={() => navigate('/')}
-      className="mb-4 inline-flex items-center gap-1 text-sm text-gray-400 hover:text-white"
-    >
-      <span aria-hidden>←</span> Back to dashboard
-    </button>
-  );
 
   const [keepData, setKeepData] = useState(true); // Save is the safe default
+  const [simulated, setSimulated] = useState(false); // Live data is the safe default
   const [durationMin, setDurationMin] = useState(60);
   const [addMin, setAddMin] = useState(15);
+
+  // While a start/stop is in flight the backend is tearing down / bringing up the
+  // pipeline (which now blocks until it's a clean slate). Gate the buttons on this
+  // so a rapid stop→start can't race the teardown. Cleared when session.active
+  // settles to the expected value, or after a timeout if the command never lands.
+  const [pending, setPending] = useState<null | 'start' | 'stop'>(null);
+  const active = !!session?.active;
+  useEffect(() => {
+    if (pending === 'start' && active) setPending(null);
+    if (pending === 'stop' && !active) setPending(null);
+  }, [pending, active]);
+  useEffect(() => {
+    if (!pending) return;
+    const id = setTimeout(() => setPending(null), 30000); // failsafe
+    return () => clearTimeout(id);
+  }, [pending]);
 
   // 1 Hz tick so the live countdown re-renders even when no WS update arrives.
   const [, setNow] = useState(Date.now());
@@ -64,8 +69,7 @@ export default function SessionPage() {
   // the real problem is the WebSocket never connected.
   if (!session) {
     return (
-      <main className="p-8 text-text">
-        {backLink}
+      <main className="h-full bg-background text-text overflow-auto p-8">
         <h1 className="text-3xl font-bold mb-3">Session control</h1>
         <p className="text-lg text-gray-200 max-w-2xl leading-relaxed">
           Connecting… (waiting for the backend WebSocket). If this persists, the live data
@@ -77,8 +81,7 @@ export default function SessionPage() {
 
   if (!session.enabled) {
     return (
-      <main className="p-8 text-text">
-        {backLink}
+      <main className="h-full bg-background text-text overflow-auto p-8">
         <h1 className="text-3xl font-bold mb-3">Session control</h1>
         <p className="text-lg text-gray-200 max-w-2xl leading-relaxed">
           Session control is disabled in this deployment — the stack runs until the process is
@@ -89,12 +92,11 @@ export default function SessionPage() {
     );
   }
 
-  const active = session.active;
   const lockedNote = controlEnabled ? undefined : 'Viewer mode: unlock as an operator to control runs.';
 
   return (
-    <main className="p-6 sm:p-8 text-text max-w-3xl mx-auto w-full">
-      {backLink}
+    <main className="h-full bg-background text-text overflow-auto">
+      <div className="p-6 sm:p-8 max-w-3xl mx-auto w-full">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-3xl font-bold">Session control</h1>
         <span
@@ -154,6 +156,26 @@ export default function SessionPage() {
             </div>
 
             <div>
+              <div className="text-sm uppercase tracking-widest text-gray-300 mb-2">Data source</div>
+              <div className="flex rounded-lg border border-gray-700 bg-gray-900 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setSimulated(false)}
+                  className={`rounded-md px-3 py-1.5 text-sm font-semibold ${!simulated ? 'bg-white text-black' : 'text-gray-300 hover:bg-white/10'}`}
+                >
+                  Real
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSimulated(true)}
+                  className={`rounded-md px-3 py-1.5 text-sm font-semibold ${simulated ? 'bg-purple-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+                >
+                  Simulated
+                </button>
+              </div>
+            </div>
+
+            <div>
               <div className="text-sm uppercase tracking-widest text-gray-300 mb-2">Auto-stop after (min)</div>
               <input
                 type="number"
@@ -166,12 +188,12 @@ export default function SessionPage() {
 
             <button
               type="button"
-              disabled={!controlEnabled}
-              title={lockedNote}
-              onClick={() => send({ commandType: 'session_start', data: { keepData, durationMs: durationMin * 60000 } })}
+              disabled={!controlEnabled || pending !== null}
+              title={pending ? 'Waiting for the pipeline to settle…' : lockedNote}
+              onClick={() => { setPending('start'); send({ commandType: 'session_start', data: { keepData, durationMs: durationMin * 60000, simulated } }); }}
               className="rounded-lg border border-green-600 bg-green-800/70 px-5 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Start run
+              {pending === 'start' ? 'Starting…' : 'Start run'}
             </button>
           </div>
         </div>
@@ -213,22 +235,23 @@ export default function SessionPage() {
             </div>
             <button
               type="button"
-              disabled={!controlEnabled}
-              title={lockedNote}
+              disabled={!controlEnabled || pending !== null}
+              title={pending ? 'Tearing down the pipeline…' : lockedNote}
               onClick={() => {
                 if (confirm(`Stop this run? Its data will be ${session.keepData ? 'KEPT' : 'DISCARDED'}.`)) {
-                  send({ commandType: 'session_stop', data: {} });
+                  setPending('stop'); send({ commandType: 'session_stop', data: {} });
                 }
               }}
               className="ml-auto rounded-lg border border-red-600 bg-red-800/70 px-5 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Stop run
+              {pending === 'stop' ? 'Stopping…' : 'Stop run'}
             </button>
           </div>
         </div>
       )}
 
       {lockedNote && <p className="mt-4 text-sm text-yellow-400">{lockedNote}</p>}
+      </div>
     </main>
   );
 }

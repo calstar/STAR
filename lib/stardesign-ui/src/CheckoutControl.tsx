@@ -9,7 +9,7 @@
  */
 
 import type { Checkout } from './useCheckout';
-import { ghostBtn, primaryBtn } from './theme';
+import { btn, primaryBtn } from './theme';
 
 export function CheckoutControl({
   checkout,
@@ -34,19 +34,19 @@ export function CheckoutControl({
       {held ? (
         <>
           <span
-            className={`${chip} border-emerald-600/40 bg-emerald-600/10 text-emerald-600 dark:text-emerald-400`}
+            className={`${chip} border-emerald-600/40 bg-emerald-600/10 text-emerald-400`}
             title={`You have ${noun === 'config' ? 'this config' : `this ${noun}`} checked out. It returns on its own if you stop editing.`}
           >
             <span className={`${dot} bg-emerald-500`} />
             Editing
           </span>
-          <button onClick={() => void release()} disabled={busy} className={ghostBtn}>
+          <button onClick={() => void release()} disabled={busy} className={btn}>
             {busy ? 'Releasing…' : 'Release'}
           </button>
         </>
       ) : takenByOther ? (
         <span
-          className={`${chip} border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400`}
+          className={`${chip} border-amber-500/40 bg-amber-500/10 text-amber-400`}
           title={`${holderName} is editing this ${noun}. You can read it, or take a copy from Change → View only.`}
         >
           <span className={`${dot} bg-amber-500`} />

@@ -372,9 +372,7 @@ class CalibrationOrchestratorGUI(QtWidgets.QMainWindow):
                     # Fallback: try to count from CSV
                     csv_path = (
                         Path(__file__).parent.parent.parent
-                        / "external"
-                        / "DiabloAvionics"
-                        / "test_guis"
+                        / "config"
                         / "state_machine_actuators.csv"
                     )
                     if csv_path.exists():

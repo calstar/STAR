@@ -14,6 +14,7 @@ import type { SessionStatus, NotificationPayload } from '../../shared/types.js';
 import { MessageType } from '../../shared/types.js';
 import { ServiceController, getSessionServiceMode } from './service-controller.js';
 import { loadSession, saveSession } from './session-state.js';
+import { deployActiveProfile } from './routes/config-profiles.js';
 
 // Warn the operator at each of these leads before auto-stop. Default: 5 min and
 // 1 min. Override with SESSION_WARN_LEADS_MS (comma-separated ms) to exercise the
@@ -34,10 +35,14 @@ const ELODIN_ROOT = join(homedir(), '.local', 'share', 'elodin');
 type Broadcast = (message: object) => void;
 type Notify = (payload: NotificationPayload) => void;
 
-function timestampName(): string {
+function timestampName(simulated = false): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, '0');
-  return `daq_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  // Simulated runs get a `daq_sim_` prefix so recorded synthetic data is self-identifying on disk —
+  // a .sensorlog reviewed weeks later can't be mistaken for real test-stand data. Still starts with
+  // `daq_` so existing path assertions hold.
+  const prefix = simulated ? 'daq_sim_' : 'daq_';
+  return `${prefix}${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
 // True on WSL, where the Linux home lives on a thin-provisioned ext4 vhdx.
@@ -77,18 +82,24 @@ class SessionManager {
   private readonly controller = new ServiceController(this.mode);
   private broadcast: Broadcast = () => {};
   private notify: Notify = () => {};
+  /** Fired after a run stops, so the server can revert board status to the
+   *  pristine config baseline (else boards keep a stale heartbeat timestamp and
+   *  read "---" instead of the disconnected baseline shown on fresh startup). */
+  private onStopped: () => void = () => {};
 
   private active = false;
   private dbDir: string | null = null;
   private keepData = false;
+  private simulated = false;
   private deadlineMs: number | null = null;
   private durationMs: number | null = null;
   private warnTimers: NodeJS.Timeout[] = [];
   private stopTimer: NodeJS.Timeout | null = null;
 
-  init(broadcast: Broadcast, notify: Notify): void {
+  init(broadcast: Broadcast, notify: Notify, onStopped: () => void = () => {}): void {
     this.broadcast = broadcast;
     this.notify = notify;
+    this.onStopped = onStopped;
     if (!this.enabled) return;
     // Recover a session that outlived a backend restart.
     const persisted = loadSession();
@@ -96,18 +107,27 @@ class SessionManager {
       this.active = true;
       this.dbDir = persisted.dbDir;
       this.keepData = persisted.keepData;
+      this.simulated = persisted.simulated;
       this.deadlineMs = persisted.deadlineMs;
       this.durationMs = persisted.durationMs;
       if (this.deadlineMs != null && this.deadlineMs <= Date.now()) {
         void this.stop(true); // expired while we were down
       } else {
         this.scheduleTimers();
+        // The spawned simulator (mock mode) dies with the backend — re-launch it
+        // for a recovered simulated run. (systemd units survive; resume is a no-op.)
+        void this.controller.resume(this.simulated);
       }
     }
   }
 
   isEnabled(): boolean {
     return this.enabled;
+  }
+
+  /** True when an active run is fed by the board simulator (drives the "Simulated Data" badge). */
+  isSimulated(): boolean {
+    return this.active && this.simulated;
   }
 
   getStatus(): SessionStatus {
@@ -119,6 +139,7 @@ class SessionManager {
       deadlineMs: this.deadlineMs,
       remainingMs: this.deadlineMs != null ? this.deadlineMs - Date.now() : null,
       freeDiskBytes: this.enabled ? freeDiskBytes() : null,
+      simulated: this.active && this.simulated,
     };
   }
 
@@ -184,20 +205,29 @@ class SessionManager {
       keepData: this.keepData,
       deadlineMs: this.deadlineMs,
       durationMs: this.durationMs,
+      simulated: this.simulated,
     });
   }
 
-  async start(keepData: boolean, durationMs: number): Promise<void> {
+  async start(keepData: boolean, durationMs: number, simulated = false): Promise<void> {
     if (!this.enabled) throw new Error('Session control is disabled in this mode.');
     if (this.active) throw new Error('A run is already active.');
     if (!Number.isFinite(durationMs) || durationMs <= 0) {
       throw new Error('durationMs must be a positive number.');
     }
-    this.dbDir = join(ELODIN_ROOT, timestampName());
+    this.dbDir = join(ELODIN_ROOT, timestampName(simulated));
     this.keepData = keepData;
+    this.simulated = simulated;
     this.durationMs = durationMs;
     this.deadlineMs = Date.now() + durationMs;
-    await this.controller.start(this.dbDir);
+    // Deploy the selected profile into config.toml right before the (live) run starts, then it's
+    // frozen for the session. Simulated runs use the committed frozen sim overlay (config_base →
+    // sim_config.toml) instead, so we don't touch config.toml for them.
+    if (!this.simulated) {
+      try { deployActiveProfile(); }
+      catch (e) { console.warn('⚠️ Failed to deploy active profile at session start:', e); }
+    }
+    await this.controller.start(this.dbDir, this.simulated);
     this.active = true;
     this.scheduleTimers();
     this.persist();
@@ -211,24 +241,36 @@ class SessionManager {
     this.clearWarnings();
     await this.controller.stop();
     const stoppedDir = this.dbDir;
+    // Did the run actually record anything? elodin creates the DB dir; a pipeline that never
+    // came up leaves it absent. Don't report "saved" for a run that recorded nothing.
+    const recorded = !!stoppedDir && existsSync(stoppedDir);
     if (!this.keepData && stoppedDir) {
       try {
         rmSync(stoppedDir, { recursive: true, force: true });
         rmSync(`${stoppedDir}_metadata`, { recursive: true, force: true });
+        // The run-config snapshot written beside the DB at start (service-controller
+        // snapshotRunConfig) follows the DB's retention — otherwise the elodin dir fills with
+        // orphaned .toml files describing runs that no longer exist.
+        rmSync(`${stoppedDir}.toml`, { force: true });
       } catch (err) {
         console.warn('⚠️ Failed to remove discarded DB dir:', err);
       }
     }
-    console.log(
-      `[Session] ${auto ? 'auto-' : ''}stopped run (${this.keepData ? 'saved' : 'discarded'}) ${stoppedDir}`,
+    const disposition = this.keepData
+      ? (recorded ? 'saved' : 'saved — WARNING: no data recorded (DB dir was never created)')
+      : 'discarded';
+    (this.keepData && !recorded ? console.warn : console.log)(
+      `[Session] ${auto ? 'auto-' : ''}stopped run (${disposition}) ${stoppedDir}`,
     );
     this.active = false;
     this.dbDir = null;
     this.deadlineMs = null;
     this.durationMs = null;
     this.keepData = false;
+    this.simulated = false;
     this.persist();
     this.emit();
+    this.onStopped(); // revert board status to the disconnected baseline
   }
 
   extend(addMs: number): void {

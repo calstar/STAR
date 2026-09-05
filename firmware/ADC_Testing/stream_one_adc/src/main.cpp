@@ -5,10 +5,10 @@
 #include "main.h"
 
 #include <Arduino.h>
-#include <DAQv2-Comms.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 
 #include <cstring>
 
@@ -45,7 +45,7 @@ void sendSensorDataPacket();
 
 #define NUM_SENSORS 1
 #define MAX_CHUNKS 10
-std::vector<Diablo::SensorDataChunkCollection> dataChunks;
+std::vector<daq::SensorDataChunkCollection> dataChunks;
 static const uint8_t kSensorId = 1;  // Single channel, fixed ID
 
 float convert_code_to_voltage(int32_t code) {
@@ -117,7 +117,7 @@ void loop() {
 }
 
 void read_data(int count) {
-    Diablo::SensorDataChunkCollection chunk(millis(), NUM_SENSORS);
+    daq::SensorDataChunkCollection chunk(millis(), NUM_SENSORS);
 
     for (int i = 0; i < count; i++) {
         while (digitalRead(Pins.ADC_DRDY_1) != LOW) {
@@ -141,7 +141,7 @@ void sendSensorDataPacket() {
         return;
 
     uint8_t packetBuffer[MAX_PACKET_SIZE];
-    size_t packetSize = Diablo::create_sensor_data_packet(
+    size_t packetSize = daq::create_sensor_data_packet(
         dataChunks, NUM_SENSORS, millis(), packetBuffer, sizeof(packetBuffer));
 
     if (packetSize == 0) {

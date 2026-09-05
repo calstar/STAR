@@ -6,20 +6,23 @@ import ActuatorStatePanel from '@/components/plots/ActuatorStatePanel';
 import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
 import { useSensorValue } from '@/lib/store';
 import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
-import { useSensorConfig, filterByRole } from '@/lib/sensor-config';
+import { useSensorConfig, resolveGroup, filterByRole } from '@/lib/sensor-config';
+import { useGuiConfig } from '@/lib/gui-config';
 import { usePressureLimits, getLimitsForSystem } from '@/lib/pressure-limits';
 
 
 
 export default function FuelGraphsPage() {
   const allSensors = useSensorConfig();
+  const { groups } = useGuiConfig();
   const pressureLimits = usePressureLimits();
   const ethLimits = getLimitsForSystem(pressureLimits, 'ETH');
 
-  // Propulsion-side fuel sensors only — exclude anything fill-related
-  const fuelSensors = filterByRole(allSensors, 'Fuel').filter(
-    (s) => !s.role.toLowerCase().includes('fill')
-  );
+  // Explicit membership from config [gui.groups].Fuel (ordered). Fallback to legacy role-name
+  // matching (propulsion-side fuel, excluding fill) if the config has no Fuel group.
+  const fuelSensors = groups.Fuel
+    ? resolveGroup(allSensors, groups.Fuel)
+    : filterByRole(allSensors, 'Fuel').filter((s) => !s.role.toLowerCase().includes('fill'));
   const entities = fuelSensors.map((s) => s.calEntity);
   const labels = fuelSensors.map((s) => s.role);
   const colors = entities.map((e) => getEntityColor(e));

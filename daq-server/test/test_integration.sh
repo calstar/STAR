@@ -54,6 +54,9 @@ TEST_BACKEND_WS_PORT="${TEST_BACKEND_WS_PORT:-8181}"
 TEST_BACKEND_API_PORT="${TEST_BACKEND_API_PORT:-8182}"
 TEST_ACTUATOR_UDP_PORT="${TEST_ACTUATOR_UDP_PORT:-5015}"
 TEST_STARTUP_LISTEN_PORT="${TEST_STARTUP_LISTEN_PORT:-5014}"
+# Board-log ingest UDP port (daq_bridge → backend). Fixed 8092 in prod; offset here
+# so the test never collides with a running stack's log receiver.
+TEST_LOG_INGEST_PORT="${TEST_LOG_INGEST_PORT:-8192}"
 # sequencer_service TCP port (thin backend forwards SEND_COMMAND here)
 TEST_SEQUENCER_PORT="${TEST_SEQUENCER_PORT:-9998}"
 TEST_CONTROLLER_PORT="${TEST_CONTROLLER_PORT:-9997}"
@@ -95,7 +98,7 @@ kill_stale_integration_processes() {
   # Elodin DB — match on the test DB path pattern
   pkill -f "elodin.*integration_test" 2>/dev/null && killed=$((killed + 1)) || true
   # Also kill any process bound to our test ports
-  for port in $TEST_ELODIN_PORT $TEST_DAQ_UDP_PORT $TEST_BACKEND_WS_PORT $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_SEQUENCER_PORT; do
+  for port in $TEST_ELODIN_PORT $TEST_DAQ_UDP_PORT $TEST_BACKEND_WS_PORT $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_LOG_INGEST_PORT $TEST_SEQUENCER_PORT; do
     lsof -ti ":$port" 2>/dev/null | xargs kill 2>/dev/null || true
   done
   if [ "$killed" -gt 0 ]; then
@@ -137,6 +140,7 @@ cleanup() {
   rm -f "$TEST_CONFIG" 2>/dev/null || true
   rm -f "$UDP_COMMANDS_FILE" 2>/dev/null || true
   rm -f "$SIM_STATS_FILE" "$SIM_STATS_FILE.tmp" 2>/dev/null || true
+  rm -f "$REPO_ROOT/.tmp/integration_adjustments_$$.json" 2>/dev/null || true
   echo "✅ Cleanup done"
 }
 
@@ -179,11 +183,12 @@ echo ""
 mkdir -p "$REPO_ROOT/.tmp"
 
 # ── macOS loopback aliases for board simulator ────────────────────────────────
-# On Linux, 127.0.0.x all resolve to lo. On macOS, only 127.0.0.1 works unless
-# we add explicit aliases. The board_simulator binds each board to a distinct
-# 127.0.0.{2+index} IP so the DAQ bridge can route by source address.
+# On Linux, 127.0.0.x all resolve to lo. On macOS, only 127.0.0.1 works unless we add explicit
+# aliases. The board_simulator binds each board to 127.0.0.<host-octet> (the last octet of its
+# config IP, which equals its board_id here) so the DAQ bridge can route by source address. These
+# are the board_id octets from config_base.toml (enabled and not) plus the startup board (60).
 if [ "$(uname)" = "Darwin" ]; then
-  LOOPBACK_IPS=(2 3 4 5 6 7 8 9 60 61)
+  LOOPBACK_IPS=(11 12 13 14 21 22 31 32 41 42 51 52 60 61)
   NEED_ALIAS=false
   for i in "${LOOPBACK_IPS[@]}"; do
     if ! ifconfig lo0 2>/dev/null | grep -q "127.0.0.$i "; then
@@ -196,7 +201,7 @@ if [ "$(uname)" = "Darwin" ]; then
     for i in "${LOOPBACK_IPS[@]}"; do
       sudo ifconfig lo0 alias "127.0.0.$i" up 2>/dev/null || true
     done
-    echo "  ✅ Loopback aliases added (127.0.0.{2-9,60,61})"
+    echo "  ✅ Loopback aliases added (127.0.0.{board_id octets})"
   fi
 fi
 
@@ -219,7 +224,7 @@ kill_port() {
   fi
 }
 
-for port in $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_DAQ_UDP_PORT; do
+for port in $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_LOG_INGEST_PORT $TEST_DAQ_UDP_PORT; do
   kill_port "$port" udp
 done
 sleep 0.3
@@ -305,7 +310,7 @@ else
   echo "  ⚠️  controller_service not found — controller tests will be skipped"
 fi
 
-# Data source: board_simulator.py (speaks the current DAQv2-Comms protocol).
+# Data source: board_simulator.py (speaks the current daq-protocol protocol).
 # NOTE: transport/src/fake_packet_generator.cpp is a pre-DAQv2 fossil (0xAA
 # magic + XOR framing the current daq_bridge cannot parse) with no CMake
 # target — never use it here even if someone makes it buildable again.
@@ -343,8 +348,11 @@ echo ""
 # our test Elodin DB and listens on our test UDP port.
 
 echo "📝 Creating test config..."
-CONFIG_FILE="$REPO_ROOT/config/config.toml"
-[ ! -f "$CONFIG_FILE" ] && fail "config/config.toml not found"
+# Source from the frozen canonical config (config_base.toml), NOT config.toml — the latter is
+# overwritten at runtime by the config-profile deploy/switch, so tests must not depend on it.
+# config_base.toml is committed and only changed deliberately alongside test assertions.
+CONFIG_FILE="$REPO_ROOT/config/config_base.toml"
+[ ! -f "$CONFIG_FILE" ] && fail "config/config_base.toml not found"
 
 # Cross-platform in-place sed (macOS requires -i '', Linux requires -i)
 sedi() {
@@ -362,6 +370,8 @@ sedi "s/^port = 2240/port = $TEST_ELODIN_PORT/" "$TEST_CONFIG"
 sedi "s/^sensor_port = 5006/sensor_port = $TEST_DAQ_UDP_PORT/" "$TEST_CONFIG"
 # Replace actuator_cmd_port (under [network] section)
 sedi "s/^actuator_cmd_port = 5005/actuator_cmd_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
+# Replace board-log ingest port (under [logs] section) — daq_bridge reads it, backend binds it (env below)
+sedi "s/^backend_udp_port = .*/backend_udp_port = $TEST_LOG_INGEST_PORT/" "$TEST_CONFIG"
 # Pin the GUI downsample config so the test's assertions are deterministic
 # regardless of the production [gui] toggle, and so envelope downsampling is
 # OBSERVABLE: the sim's eligible streams are only 10 Hz, and at the production
@@ -376,6 +386,11 @@ sedi "s/^downsample_mode = .*/downsample_mode = \"$INTEGRATION_GUI_MODE\"/" "$TE
 sedi 's/^points_per_second = .*/points_per_second = 4/' "$TEST_CONFIG"
 # Point heartbeat broadcast to localhost to avoid sending to the real subnet
 sedi 's/^broadcast_ip = .*/broadcast_ip = "127.0.0.1"/' "$TEST_CONFIG"
+# Short burn: the fire lifecycle check asserts the configured duration is honoured, so the value
+# just has to be distinguishable from FireManager's 6000 ms default — no need to sit through a
+# realistic burn on every CI run.
+sedi 's/^duration_ms = .*/duration_ms = 1500/' "$TEST_CONFIG"
+sedi 's/^extended_ms = .*/extended_ms = 3000/' "$TEST_CONFIG"
 # Align SERVER_HEARTBEAT UDP with the same port as udp_listener (actuator/control path in CI)
 sedi "s/^broadcast_port = 5005/broadcast_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 # NOTE: Do NOT replace board IPs — the DAQ bridge routes by source IP.
@@ -399,6 +414,13 @@ sedi "s/^send_port = 5005/send_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 sedi 's/^fallback_fuel_duty_cycle = 0.0/fallback_fuel_duty_cycle = 0.1/' "$TEST_CONFIG"
 sedi 's/^fallback_ox_duty_cycle = 0.0/fallback_ox_duty_cycle = 0.1/' "$TEST_CONFIG"
 
+# Exercise the per-sensor model selector: make Ox Upstream (pt_board conn 5 -> uid 2105) robust and
+# GSE Low (conn 2 -> uid 2102, CH2) physics; the rest stay cubic. cal_model_select verifies the
+# config choice is honored, cal_values verifies the physics conversion, and cal_robust_learn verifies
+# the robust stack learns. Anchored to the [calibration_model_pt_board] lines ("... = \"cubic\"").
+sedi 's/^"Ox Upstream" = "cubic"$/"Ox Upstream" = "robust"/' "$TEST_CONFIG"
+sedi 's/^"GSE Low" = "cubic"$/"GSE Low" = "physics"/' "$TEST_CONFIG"
+
 cat >> "$TEST_CONFIG" << EOF
 
 [boards.integration_startup]
@@ -412,7 +434,7 @@ num_sensors = 1
 active_connectors = [1]
 voltage_reference = 1
 necessary_for_abort = false
-enable_serial_printing = false
+enable_serial_printing = 0
 designated_survivor = false
 EOF
 
@@ -532,6 +554,7 @@ if [ "$BACKEND" = "thin" ]; then
     ELODIN_PORT=$TEST_ELODIN_PORT \
     ACTUATOR_SERVICE_PORT=9998 \
     CONFIG_PATH="$TEST_CONFIG" \
+    LOG_INGEST_PORT=$TEST_LOG_INGEST_PORT \
     npx tsx src/server.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
 else
   echo "🖥️  Starting Backend server (server-legacy.ts)..."
@@ -564,8 +587,24 @@ CALIB_SVC="$REPO_ROOT/build/bin/calibration_service"
 [ -x "$CALIB_SVC" ] || CALIB_SVC=""
 if [ -n "$CALIB_SVC" ]; then
   echo "🔬 Starting calibration_service..."
-  "$CALIB_SVC" --config "$TEST_CONFIG" --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
-    > "$REPO_ROOT/.tmp/integration_calibration_$$.log" 2>&1 &
+  # Run from $REPO_ROOT (the daq-server dir) like daq_bridge/sequencer above: the service resolves
+  # its factory PT calibration dir ("scripts/calibration/calibrations") and CSV relative to cwd, so
+  # without this the test only passes when invoked from daq-server/ (a bare `bash daq-server/test/...`
+  # from the repo root left cwd there → PT: 0 channels → robust never seeds → cal_robust_learn fails).
+  #
+  # --adjustments points robust learned-state at a per-run temp file (not the shared, untracked
+  # scripts/calibration/calibrations/adjustments.json): cal_robust_learn teaches CH5 a +50 offset and
+  # the service persists it on shutdown, so without isolation that offset survives into the next run
+  # and breaks cal_values (which expects pristine factory). A missing file just seeds from factory.
+  CAL_ADJ="$REPO_ROOT/.tmp/integration_adjustments_$$.json"
+  rm -f "$CAL_ADJ" 2>/dev/null || true
+  # Start from a clean operator-cubic store (physics-or-nothing: uncalibrated cubic reads 0), the way
+  # a fresh checkout does — otherwise a stale cubic_calibration.json from a prior local run would
+  # carry captured cubics into this run. The service regenerates it at startup.
+  rm -f "$REPO_ROOT/scripts/calibration/calibrations/cubic_calibration.json" 2>/dev/null || true
+  (cd "$REPO_ROOT" && "$CALIB_SVC" --config "$TEST_CONFIG" --adjustments "$CAL_ADJ" \
+    --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
+    > "$REPO_ROOT/.tmp/integration_calibration_$$.log" 2>&1) &
   PIDS+=($!)
   sleep 1
   if kill -0 "${PIDS[-1]}" 2>/dev/null; then
@@ -631,7 +670,10 @@ if [ -n "$INTEGRATION_SENSOR_HZ" ]; then
   SIM_RATE_FLAG="--sensor-hz $INTEGRATION_SENSOR_HZ"
 fi
 # shellcheck disable=SC2086  # intentional word splitting of the flags
-"$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --skip-startup $SIM_RATE_FLAG --stats-file "$SIM_STATS_FILE" $INTEGRATION_TIME_FLAGS > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
+# --allow-ip-fallback: this test's config keeps 192.168.2.x board IPs and deliberately relies on the
+# sim's loopback rebind (127.0.0.{2+idx}); the flag is REQUIRED here since that fallback now aborts by
+# default (so a hardware config can't silently emit synthetic data tagged as real boards).
+"$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --skip-startup --allow-ip-fallback $SIM_RATE_FLAG --stats-file "$SIM_STATS_FILE" $INTEGRATION_TIME_FLAGS > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
 SIM_PID=$!
 PIDS+=($SIM_PID)
 sleep 2
@@ -672,10 +714,14 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 export TEST_DAQ_UDP_PORT TEST_STARTUP_LISTEN_PORT BOARD_STARTUP_SIM="$REPO_ROOT/sim/board_startup_sim.py" PYTHON_BIN
 # Test 15 (sample conservation) reads the sim's live ground-truth stats file
 export INTEGRATION_SIM_STATS="$SIM_STATS_FILE"
+# cal_values reads the factory PT coeffs the service loaded (the test cwd is diablo_server/backend).
+export INTEGRATION_CAL_DIR="$REPO_ROOT/scripts/calibration/calibrations"
 # Must match the points_per_second sed above — arms the envelope cap/floor asserts
 # (envelope mode only; throttle ignores points_per_second)
 if [ "$INTEGRATION_GUI_MODE" = "envelope" ]; then
   export INTEGRATION_GUI_PPS=4
+  # The WS test reads [fire] from the config the stack is actually running, not a baked-in number.
+  export INTEGRATION_CONFIG="$TEST_CONFIG"
 fi
 export INTEGRATION_SKIP_STARTUP_E2E
 # Test 9 (SELF_TEST E2E): log every SELF_TEST.* SENSOR_UPDATE on the WS client

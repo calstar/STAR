@@ -5,30 +5,9 @@ import { getWebSocketClient } from '@/lib/websocket';
 import { SystemState, CommandPayload } from '@/lib/types';
 import { useEffect, useState, useMemo } from 'react';
 import { useControlMode } from '@/lib/control-mode';
+import { allStates, loadStates, stateNameUpper } from '@/lib/states';
+import { getApiBaseUrl } from '@/lib/websocket';
 
-const STATE_NAMES: Record<SystemState, string> = {
-  [SystemState.DEBUG]: 'DEBUG',
-  [SystemState.IDLE]: 'IDLE',
-  [SystemState.ARMED]: 'ARMED',
-  [SystemState.FUEL_FILL]: 'FUEL FILL',
-  [SystemState.OX_FILL]: 'OX FILL',
-  [SystemState.GN2_LOW_PRESS]: 'GN2 LOW PRESS',
-  [SystemState.GN2_VENT]: 'GN2 LOW VENT',
-  [SystemState.FUEL_PRESS]: 'FUEL PRESS',
-  [SystemState.FUEL_VENT]: 'FUEL VENT',
-  [SystemState.OX_PRESS]: 'OX PRESS',
-  [SystemState.OX_VENT]: 'OX VENT',
-  [SystemState.GN2_HIGH_PRESS]: 'GN2 HIGH PRESS',
-  [SystemState.GN2_HIGH_VENT]: 'GN2 HIGH VENT',
-  [SystemState.VENT]: 'VENT',
-  [SystemState.CALIBRATE]: 'CALIBRATE',
-  [SystemState.READY]: 'READY',
-  [SystemState.FIRE]: 'FIRE',
-  [SystemState.ENGINE_ABORT]: 'ENGINE ABORT',
-  [SystemState.GSE_ABORT]: 'GSE ABORT',
-  [SystemState.EMERGENCY_ABORT]: 'EMERGENCY ABORT',
-  [SystemState.PRESS_STANDBY]: 'PRESS STANDBY',
-};
 
 // States to exclude from diagram rendering
 const EXCLUDED_STATES = new Set([
@@ -40,41 +19,27 @@ const EXCLUDED_STATES = new Set([
 
 const NW = 320; // node width
 const NH = 115; // node height
-const COLS = 5; // Updated to accommodate 5 columns in row 2 and 3
+const COLS_FALLBACK = 5;
 const COL_GAP = 360;
 const ROW_GAP = 155;
 const PAD = 24;
-const ROW_COUNT = 6; // rows 0–5
+const ROW_COUNT_FALLBACK = 6;
 
 // Grid layout: [row, col] 0-based
 // IMPORTANT: All states from SystemState enum must be included here to appear in the diagram
 // States without positions will default to [0, 0] and may overlap
 // DEBUG, ENGINE_ABORT, GSE_ABORT, EMERGENCY_ABORT are excluded from rendering
-const STATE_POS: Partial<Record<SystemState, [number, number]>> = {
-  // Row 0: IDLE
-  [SystemState.IDLE]: [0, 0],
-  // Row 1: Armed, Fuel Fill, Ox Fill
-  [SystemState.ARMED]: [1, 0],
-  [SystemState.FUEL_FILL]: [1, 1],
-  [SystemState.OX_FILL]: [1, 2],
-  // Row 2: Press Standby, GN2 Low Press, Fuel Press, OX Press, GN2 High Press
-  [SystemState.PRESS_STANDBY]: [2, 0],
-  [SystemState.GN2_LOW_PRESS]: [2, 1],
-  [SystemState.FUEL_PRESS]: [2, 2],
-  [SystemState.OX_PRESS]: [2, 3],
-  [SystemState.GN2_HIGH_PRESS]: [2, 4],
-  // Row 3: Vent, GN2 Low Vent, Fuel Vent, Ox Vent, GN2 High Vent
-  [SystemState.VENT]: [3, 0],
-  [SystemState.GN2_VENT]: [3, 1],
-  [SystemState.FUEL_VENT]: [3, 2],
-  [SystemState.OX_VENT]: [3, 3],
-  [SystemState.GN2_HIGH_VENT]: [3, 4],
-  // Row 4: Calibrate, Ready
-  [SystemState.CALIBRATE]: [4, 0],
-  [SystemState.READY]: [4, 1],
-  // Row 5: Fire
-  [SystemState.FIRE]: [5, 0],
-};
+/**
+ * Node positions come from [[states]] panel_row / panel_col in the active config profile, not from
+ * a table in this file. The old map silently defaulted a missing state to [0, 0] (`?? 0` below),
+ * so any state it did not know about rendered on top of Idle. A state with no coordinates is now
+ * simply not drawn.
+ */
+function statePos(state: SystemState): [number, number] | undefined {
+  const s = allStates().find((x) => x.id === state);
+  if (!s || s.panelRow === null || s.panelCol === null) return undefined;
+  return [s.panelRow, s.panelCol];
+}
 
 /**
  * Hardcoded state transitions derived from PressureStateMachine.cpp.
@@ -175,8 +140,13 @@ const STATIC_TRANSITIONS: Transition[] = [
 // Note: DEBUG, ENGINE_ABORT, GSE_ABORT, EMERGENCY_ABORT are handled via top bar buttons, not diagram
 const ALWAYS_REACHABLE: SystemState[] = [];
 
-function nodeX(state: SystemState) { return PAD + (STATE_POS[state]?.[1] ?? 0) * COL_GAP; }
-function nodeY(state: SystemState) { return PAD + (STATE_POS[state]?.[0] ?? 0) * ROW_GAP; }
+// `?? 0` is deliberate here ONLY as a last resort — callers filter unplaced states out first
+// (hasPos below). Previously nothing filtered, so a state the position map did not know about was
+// drawn at [0, 0], stacked on top of Idle.
+function nodeX(state: SystemState) { return PAD + (statePos(state)?.[1] ?? 0) * COL_GAP; }
+function nodeY(state: SystemState) { return PAD + (statePos(state)?.[0] ?? 0) * ROW_GAP; }
+/** True if this state has a place on the diagram; unplaced states are not drawn. */
+function hasPos(state: SystemState) { return statePos(state) !== undefined; }
 
 /**
  * Draw an orthogonal elbow arrow between two nodes.
@@ -231,7 +201,7 @@ function StateNode({
 }: { state: SystemState; isActive: boolean; isReachable: boolean; onClick: () => void; }) {
   const isEmergency = false;
   const isClickable = isReachable || isActive || isEmergency;
-  const name = STATE_NAMES[state] ?? 'UNKNOWN';
+  const name = stateNameUpper(state) ?? 'UNKNOWN';
   const x = nodeX(state); const y = nodeY(state);
 
   const fill = isActive ? '#2563EB' : isReachable ? '#059669' : isEmergency ? '#7F1D1D' : '#1F2937';
@@ -275,6 +245,11 @@ export default function StateMachineDiagram() {
   const { controlEnabled } = useControlMode();
 
   // Request transitions from backend on mount; fall back to STATIC_TRANSITIONS if unavailable
+  // Adopt the config-declared states (names + panel positions) once.
+  useEffect(() => {
+    void loadStates(getApiBaseUrl());
+  }, []);
+
   useEffect(() => {
     const handleTransitions = (payload: unknown) => {
       const data = payload as { transitions: Transition[] };
@@ -321,14 +296,14 @@ export default function StateMachineDiagram() {
 
     // In debug mode, allow any transition
     if (!isAllowed && !isEmergency && !isInDebugMode && effectiveState !== targetState) {
-      console.warn(`⚠️ Invalid transition: ${STATE_NAMES[effectiveState]} → ${STATE_NAMES[targetState]}`);
-      alert(`Invalid transition: Cannot go from ${STATE_NAMES[effectiveState]} to ${STATE_NAMES[targetState]}`);
+      console.warn(`⚠️ Invalid transition: ${stateNameUpper(effectiveState)} → ${stateNameUpper(targetState)}`);
+      alert(`Invalid transition: Cannot go from ${stateNameUpper(effectiveState)} to ${stateNameUpper(targetState)}`);
       return;
     }
 
     updateState({
       currentState: targetState,
-      stateName: STATE_NAMES[targetState] ?? `STATE ${targetState}`,
+      stateName: stateNameUpper(targetState) ?? `STATE ${targetState}`,
       timestamp: Date.now(),
     });
     const command: CommandPayload = {
@@ -369,14 +344,22 @@ export default function StateMachineDiagram() {
 
   // Emergency arrows from current state (always draw these separately)
   const emergencyTargets = ALWAYS_REACHABLE.filter(
-    s => s !== effectiveState && STATE_POS[s] !== undefined,
+    s => s !== effectiveState && statePos(s) !== undefined,
   );
 
   // Filter out excluded states from rendering
-  const states = Object.values(SystemState).filter(
-    (s) => typeof s === 'number' && !EXCLUDED_STATES.has(s as SystemState)
-  ) as SystemState[];
+  // Only states the config gives a position to are drawn. Enumerating the SystemState enum and
+  // relying on EXCLUDED_STATES alone meant anything without a position still rendered — at [0, 0],
+  // on top of Idle.
+  const states = (Object.values(SystemState).filter(
+    (s) => typeof s === 'number' && !EXCLUDED_STATES.has(s as SystemState) && hasPos(s as SystemState)
+  ) as SystemState[]);
 
+  // Derived from the placed states, so adding one in config widens the canvas instead of
+  // drawing it off the edge.
+  const placed = allStates().filter((x) => x.panelRow !== null && x.panelCol !== null);
+  const COLS = placed.length ? Math.max(...placed.map((x) => x.panelCol as number)) + 1 : COLS_FALLBACK;
+  const ROW_COUNT = placed.length ? Math.max(...placed.map((x) => x.panelRow as number)) + 1 : ROW_COUNT_FALLBACK;
   const svgW = PAD * 2 + COLS * COL_GAP;
   const svgH = PAD * 2 + ROW_COUNT * ROW_GAP; // rows 0-5 (IDLE, Armed/Fill, Press, Vent, Calibrate/Ready, Fire)
 
@@ -389,7 +372,7 @@ export default function StateMachineDiagram() {
         <h2 className="text-[10px] font-bold tracking-widest text-text-muted uppercase">State Machine</h2>
         <span className="text-[10px] font-mono">
           <span className="text-text-muted">CURRENT: </span>
-          <span className="text-blue-400 font-bold">{STATE_NAMES[effectiveState]}</span>
+          <span className="text-blue-400 font-bold">{stateNameUpper(effectiveState)}</span>
         </span>
       </div>
 

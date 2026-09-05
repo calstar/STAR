@@ -1,0 +1,13 @@
+[Unit]
+Description=Wi-Fi connectivity watchdog (recovers dead-but-associated links)
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wifi-watchdog.sh
+# Uncomment to pin values instead of autodetecting:
+#Environment=WIFI_IFACE=wlan0
+#Environment=WIFI_CONN=eduroam
+#Environment=WIFI_MODULE=rtw88_8822bu
+#Environment=WIFI_PROBES=1.1.1.1:443 8.8.8.8:443 198.41.192.7:7844

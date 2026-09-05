@@ -1,6 +1,7 @@
-# Applies to builds that use the repo root as their context -- now all three
-# design-tool API images, which are built on lib/stardesign (the shared design
-# core) alongside their own sources. Without this the context would include
+# Applies to builds that use the repo root as their context -- now every
+# design-tool API and frontend image, which are built on lib/stardesign and
+# lib/stardesign-ui (the shared design core and its UI) alongside their own
+# sources. Without this the context would include
 # every sibling project and their node_modules, which is slow and bloats the
 # layer cache.
 
@@ -22,9 +23,14 @@ lib
 !lib/stardesign
 !lib/stardesign-ui
 
-# recovery-calculator and pid-designer now build from the repo root too, so
-# their sources have to reach the context -- but only their own image copies
-# them, and each Dockerfile copies just the subtrees it needs.
+# star-openrocket and pid-designer now build from the repo root too, so their
+# sources have to reach the context -- but only their own image copies them, and
+# each Dockerfile copies just the subtrees it needs.
+
+# star-openrocket's built-model cache: gitignored, and up to hundreds of MB on a
+# machine that has run a build. The image mounts it as a volume instead.
+star-openrocket/cache
+**/.userdata
 
 # Dependencies and build output
 **/node_modules

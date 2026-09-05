@@ -1,8 +1,8 @@
 #include <Arduino.h>
-#include <DAQv2-Comms.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -122,7 +122,7 @@ void setup() {
 
 void loop() {
     // Create sensor data chunk with timestamp
-    Diablo::SensorDataChunkCollection chunk(millis(), NUM_LC_SENSORS);
+    daq::SensorDataChunkCollection chunk(millis(), NUM_LC_SENSORS);
 
     // Read all ADC1 LC connectors (connectors 1, 2, 3, 6, 7)
     for (uint8_t i = 0; i < NUM_LC_SENSORS; i++) {
@@ -177,10 +177,10 @@ void loop() {
     Serial.println();  // Blank line between readings
 
     // Send packet via Ethernet UDP
-    std::vector<Diablo::SensorDataChunkCollection> chunks;
+    std::vector<daq::SensorDataChunkCollection> chunks;
     chunks.push_back(chunk);
 
-    size_t packetSize = Diablo::create_sensor_data_packet(
+    size_t packetSize = daq::create_sensor_data_packet(
         chunks, NUM_LC_SENSORS, millis(), packetBuffer, sizeof(packetBuffer));
     if (packetSize > 0) {
         udp.beginPacket(receiverIP, receiverPort);

@@ -21,6 +21,12 @@
 #
 # Let's Encrypt instead of a tunnel (single public machine): leave SCHEME=https
 # and `docker compose up -d --build`.
+#
+# Image pinning: every ghcr.io/calstar/star-* image is tagged ${STAR_IMAGE_TAG:-latest}.
+# Unset (the default) tracks :latest — the newest push to main. To pin the whole
+# stack to a specific build, set STAR_IMAGE_TAG=sha-<short> in .env (CI publishes a
+# sha-<short> tag alongside :latest on every push). Roll back = change that one line
+# and `docker compose up -d`. See deploy/apps/README.md.
 
 services:
   # ── Reverse proxy + TLS + auth gate ──────────────────────────────────────
@@ -60,10 +66,8 @@ services:
       - engine-design-frontend
       - pid-designer-api
       - pid-designer-frontend
-      - recovery-calculator-api
-      - recovery-calculator-frontend
-      - onshape-viewer-api
-      - onshape-viewer-frontend
+      - star-openrocket-api
+      - star-openrocket-frontend
       - daq-viewer
       - landing
 
@@ -98,7 +102,7 @@ services:
 
   # ── Auth service ─────────────────────────────────────────────────────────
   auth:
-    image: ghcr.io/calstar/star-auth:latest
+    image: ghcr.io/calstar/star-auth:${STAR_IMAGE_TAG:-latest}
     build:
       context: ./auth
     restart: unless-stopped
@@ -121,12 +125,22 @@ services:
       # needs no auth/.env at all. On a login node, keep the Google/Flask secrets
       # in auth/.env; JWT_SECRET here still wins, so set it in root .env.
       JWT_SECRET: ${JWT_SECRET:-}
+      # Read the onshape allowlist from the bind-mounted config dir below, not
+      # the copy baked into the image, so it can be edited live on the server.
+      ONSHAPE_ALLOWLIST_FILE: /config/onshape_allowlist.txt
+    volumes:
+      # Editable-on-the-server allowlists. allowlist.py re-reads on mtime change,
+      # so edits here take effect on the user's next request -- no restart, no
+      # rebuild. Mount the *directory* (not the single file): an editor that
+      # saves via rename swaps the inode, which a single-file bind mount would
+      # not follow and the mtime watch would never see.
+      - ./auth/allowlists:/config:ro
 
   # ── Engine Design ────────────────────────────────────────────────────────
   # Built from the repo root: the native-builder stage and runtime copy several
   # EngineDesign/ subtrees. Auth is Caddy's job, so no JWT_SECRET here.
   engine-design-api:
-    image: ghcr.io/calstar/star-engine-design-api:latest
+    image: ghcr.io/calstar/star-engine-design-api:${STAR_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: EngineDesign/Dockerfile.api
@@ -165,7 +179,7 @@ services:
       - userdata:/data
 
   engine-design-frontend:
-    image: ghcr.io/calstar/star-engine-design-frontend:latest
+    image: ghcr.io/calstar/star-engine-design-frontend:${STAR_IMAGE_TAG:-latest}
     build:
       # Repo root, not the subproject: the app compiles lib/stardesign-ui,
       # the design-tool UI shared by all three frontends.
@@ -179,7 +193,7 @@ services:
   # Auth is Caddy's job; the image is self-contained, so it builds from the
   # subproject dir.
   pid-designer-api:
-    image: ghcr.io/calstar/star-pid-designer-api:latest
+    image: ghcr.io/calstar/star-pid-designer-api:${STAR_IMAGE_TAG:-latest}
     build:
       # Repo root, not the subproject: the backend is built on lib/stardesign,
       # the design core shared by all three design tools.
@@ -213,7 +227,7 @@ services:
       - userdata:/data
 
   pid-designer-frontend:
-    image: ghcr.io/calstar/star-pid-designer-frontend:latest
+    image: ghcr.io/calstar/star-pid-designer-frontend:${STAR_IMAGE_TAG:-latest}
     build:
       # Repo root, not the subproject: the app compiles lib/stardesign-ui,
       # the design-tool UI shared by all three frontends.
@@ -223,62 +237,20 @@ services:
     mem_limit: 512m
     memswap_limit: 512m   # == mem_limit -> no swap; OOM this container alone
 
-  # ── Recovery Calculator ──────────────────────────────────────────────────
-  # No in-app auth (Caddy is the gate) and no dependency on auth/shared_auth.py,
-  # so the build context is the subproject, not the repo root.
-  recovery-calculator-api:
-    image: ghcr.io/calstar/star-recovery-calculator-api:latest
+  # ── STAR OpenRocket ──────────────────────────────────────────────────────
+  # CAD stability + ascent flight dynamics + recovery (the recovery calculator
+  # merged in as a tab). No in-app auth: Caddy is the gate, and it brokers the
+  # Onshape key pair server-side.
+  star-openrocket-api:
+    image: ghcr.io/calstar/star-openrocket-api:${STAR_IMAGE_TAG:-latest}
     build:
       # Repo root, not the subproject: the backend is built on lib/stardesign,
       # the design core shared by all three design tools.
       context: .
-      dockerfile: recovery-calculator/Dockerfile.api
+      dockerfile: star-openrocket/Dockerfile.api
     restart: unless-stopped
     mem_limit: 2g
     memswap_limit: 2g   # == mem_limit -> no swap; OOM this container alone
-    environment:
-      # Per-user units + saved configs + working copies live here (a mounted
-      # volume). See userdata.py.
-      USERDATA_DIR: /data
-      # Who a design can be shared with. The tool asks auth for the roster of
-      # everyone who has signed in. Only the EC2 login node keeps one (the auth
-      # container on this machine is verify-only and never sees a /callback),
-      # so this deliberately points across at the public URL, not at auth:5000.
-      # The backend forwards the caller's own session cookie and nothing else,
-      # to this URL and never one from the request -- see
-      # recovery-calculator/backend/directory.py. Unset is fine: the roster then
-      # falls back to whoever already has data on the shared volume.
-      AUTH_USERS_URL: ${AUTH_USERS_URL:-${AUTH_PUBLIC_URL:-https://auth.starberkeley.org}}
-      # Config version history (microversions + releases) in S3. Empty bucket ->
-      # history falls back to the local volume (dev/no-AWS).
-      RECOVERY_S3_BUCKET: ${RECOVERY_S3_BUCKET:-}
-      RECOVERY_S3_PREFIX: ${RECOVERY_S3_PREFIX:-recovery}
-      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-    volumes:
-      - userdata:/data
-
-  recovery-calculator-frontend:
-    image: ghcr.io/calstar/star-recovery-calculator-frontend:latest
-    build:
-      # Repo root, not the subproject: the app compiles lib/stardesign-ui,
-      # the design-tool UI shared by all three frontends.
-      context: .
-      dockerfile: recovery-calculator/frontend/Dockerfile
-    restart: unless-stopped
-    mem_limit: 512m
-    memswap_limit: 512m   # == mem_limit -> no swap; OOM this container alone
-
-  # ── Onshape CM Viewer ────────────────────────────────────────────────────
-  onshape-viewer-api:
-    image: ghcr.io/calstar/star-onshape-viewer-api:latest
-    build:
-      context: ./onshape-viewer
-      dockerfile: Dockerfile.api
-    restart: unless-stopped
-    mem_limit: 1g
-    memswap_limit: 1g   # == mem_limit -> no swap; OOM this container alone
     environment:
       # Onshape API key pair. Lives in the shared root .env like every other
       # service's secrets (JWT_SECRET, AWS_*) -- one env file for the whole
@@ -289,16 +261,38 @@ services:
       ONSHAPE_SECRET_KEY: ${ONSHAPE_SECRET_KEY:-}
       # Optional: only to target a non-default Onshape instance / api version.
       ONSHAPE_BASE_URL: ${ONSHAPE_BASE_URL:-}
+      # Per-user saved designs, units and configs live here (a mounted volume).
+      USERDATA_DIR: /data
+      # Who a design can be shared with. The tool asks auth for the roster of
+      # everyone who has signed in. Only the EC2 login node keeps one (the auth
+      # container on this machine is verify-only and never sees a /callback),
+      # so this deliberately points across at the public URL, not at auth:5000.
+      # The backend forwards the caller's own session cookie and nothing else,
+      # to this URL and never one from the request -- see
+      # star-openrocket/backend/directory.py. Unset is fine: the roster then
+      # falls back to whoever already has data on the shared volume.
+      AUTH_USERS_URL: ${AUTH_USERS_URL:-${AUTH_PUBLIC_URL:-https://auth.starberkeley.org}}
+      # Design version history (microversions + releases) in S3. Empty bucket ->
+      # history falls back to the local volume (dev/no-AWS).
+      OPENROCKET_S3_BUCKET: ${OPENROCKET_S3_BUCKET:-}
+      OPENROCKET_S3_PREFIX: ${OPENROCKET_S3_PREFIX:-openrocket}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     volumes:
       # Built-model cache: expensive Onshape builds (manifest + glb) survive a
       # rebuild. CACHE_ROOT in backend/main.py is /app/cache.
       - onshape_cache:/app/cache
+      # Per-user designs / configs (userdata.py writes under USERDATA_DIR).
+      - userdata:/data
 
-  onshape-viewer-frontend:
-    image: ghcr.io/calstar/star-onshape-viewer-frontend:latest
+  star-openrocket-frontend:
+    image: ghcr.io/calstar/star-openrocket-frontend:${STAR_IMAGE_TAG:-latest}
     build:
-      context: ./onshape-viewer/frontend
-      dockerfile: Dockerfile
+      # Repo root, not the subproject: the app compiles lib/stardesign-ui,
+      # the design-tool UI shared by all three frontends.
+      context: .
+      dockerfile: star-openrocket/frontend/Dockerfile
     restart: unless-stopped
     mem_limit: 512m
     memswap_limit: 512m   # == mem_limit -> no swap; OOM this container alone
@@ -310,7 +304,7 @@ services:
   # elodin-db binary baked into the image to export them to parquet. This is a
   # separate concern from the DAQ *server* below, which stays on the host.
   daq-viewer:
-    image: ghcr.io/calstar/star-daq-viewer:latest
+    image: ghcr.io/calstar/star-daq-viewer:${STAR_IMAGE_TAG:-latest}
     build:
       context: ./daq-server/tools/postprocessing/webviewer
       dockerfile: Dockerfile
@@ -347,7 +341,7 @@ services:
 
   # ── Landing page ─────────────────────────────────────────────────────────
   landing:
-    image: ghcr.io/calstar/star-landing:latest
+    image: ghcr.io/calstar/star-landing:${STAR_IMAGE_TAG:-latest}
     build:
       context: ./landing
       dockerfile: Dockerfile
@@ -362,7 +356,7 @@ volumes:
   # Parquet export cache for the DAQ Run Viewer. Immutable past runs, so this is
   # a pure cache -- safe to wipe; it just re-exports on next view.
   daq_viewer_cache:
-  # Per-user data (engine-design + recovery-calculator + pid-designer): named
+  # Per-user data (engine-design + star-openrocket + pid-designer): named
   # configs, recovery unit prefs, and P&ID working copies. One shared volume,
   # which is what makes cross-user "browse + copy" and sharing a directory walk
   # rather than a database -- each app lists its siblings under <user>/<app>/.

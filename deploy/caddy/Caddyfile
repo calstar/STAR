@@ -100,31 +100,21 @@
 	}
 }
 
-# ── Recovery Calculator ──────────────────────────────────────────────────────
-{$SCHEME:https}://recovery-calculator.{$BASE_DOMAIN:starberkeley.org} {
+# ── STAR OpenRocket ───────────────────────────────────────────────────────────
+# `import protected` is the same shared @berkeley.edu gate as everywhere else, so
+# the whole app still requires a login. The tighter approved-users allowlist is
+# enforced inside auth's /verify ONLY on the Onshape search/build paths (those
+# spend the shared key pair) -- /verify reads the forwarded URI and answers 403
+# for an unapproved user on just those calls, 200 everywhere else. Nothing extra
+# is needed here. See auth/allowlist.py (_APP_PROTECTED_PATHS).
+{$SCHEME:https}://openrocket.{$BASE_DOMAIN:starberkeley.org} {
 	import protected
 
 	handle /api/* {
-		reverse_proxy recovery-calculator-api:8100
+		reverse_proxy star-openrocket-api:8002
 	}
 	handle {
-		reverse_proxy recovery-calculator-frontend:4176
-	}
-}
-
-# ── Onshape CM Viewer ─────────────────────────────────────────────────────────
-# `import protected` is the same shared gate as everywhere else. The tighter
-# approved-users allowlist for this app is enforced inside auth's /verify (it
-# brokers Onshape credentials), so it needs nothing extra here -- /verify simply
-# answers 403 for a signed-in user who is not on the list. See auth/allowlist.py.
-{$SCHEME:https}://onshape-viewer.{$BASE_DOMAIN:starberkeley.org} {
-	import protected
-
-	handle /api/* {
-		reverse_proxy onshape-viewer-api:8002
-	}
-	handle {
-		reverse_proxy onshape-viewer-frontend:4177
+		reverse_proxy star-openrocket-frontend:4177
 	}
 }
 

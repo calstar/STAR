@@ -76,7 +76,7 @@ fi
 # Check if services are already running via systemd
 if systemctl --user is-active --quiet sensor-backend.service 2>/dev/null; then
   echo "⚠️  Systemd services are currently running!"
-  echo "   Stop them first: systemctl --user stop sensor-elodin sensor-backend sensor-frontend sensor-sidecar sensor-actuator"
+  echo "   Stop them first: systemctl --user stop sensor-elodin sensor-backend sensor-frontend sensor-actuator"
   exit 1
 fi
 
@@ -119,11 +119,17 @@ OTA_CMD_PORT="${OTA_SERVICE_CMD_PORT:-9997}"
 # When USE_SIM=1, remap board IPs from 192.168.2.x (real hardware subnet) to
 # 127.0.0.x (loopback — the full /8 is routable on Linux). This lets the board
 # simulator bind to the config IPs and config_broadcast_service actually reach them.
+# config.toml is a generated runtime artifact — materialize it from the committed default profile if
+# a fresh checkout hasn't deployed one (build.sh also does this; this covers SKIP_CPP_BUILD runs).
+[ -f "$PROJECT/config/config.toml" ] || cp "$PROJECT/config/profiles/default.toml" "$PROJECT/config/config.toml"
+
 CONFIG_FILE="config/config.toml"
 if [ "${USE_SIM:-0}" = "1" ]; then
+  # Sim runs derive from the frozen canonical config_base.toml (the dedicated sim/test config),
+  # NOT the runtime-mutable config.toml — keeps E2E deterministic and matches "sim forces the sim config".
   CONFIG_FILE="/tmp/gui_logs/sim_config.toml"
-  sed 's/192\.168\.2\./127.0.0./g' "$PROJECT/config/config.toml" > "$CONFIG_FILE"
-  echo "  📝 Sim config: board IPs remapped 192.168.2.x → 127.0.0.x"
+  sed 's/192\.168\.2\./127.0.0./g' "$PROJECT/config/config_base.toml" > "$CONFIG_FILE"
+  echo "  📝 Sim config: board IPs remapped 192.168.2.x → 127.0.0.x (from config_base.toml)"
   echo "     $CONFIG_FILE"
 fi
 

@@ -1,7 +1,7 @@
-#include <DAQv2-Comms.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 
 #include <cstring>
 
@@ -139,15 +139,15 @@ void sendExampleMessage() {
  */
 bool sendHeartbeatPacket() {
     // Prepare heartbeat packet data
-    Diablo::BoardHeartbeatPacket heartbeatData;
+    daq::BoardHeartbeatPacket heartbeatData;
     memset(heartbeatData.firmware_hash, 0, sizeof(heartbeatData.firmware_hash));
-    heartbeatData.board_id = 1;                              // Change as needed
-    heartbeatData.engine_state = Diablo::EngineState::SAFE;  // Change as needed
-    heartbeatData.board_state = Diablo::BoardState::ACTIVE;  // Change as needed
+    heartbeatData.board_id = 1;                           // Change as needed
+    heartbeatData.engine_state = daq::EngineState::SAFE;  // Change as needed
+    heartbeatData.board_state = daq::BoardState::ACTIVE;  // Change as needed
 
     // Create the encoded packet
     uint8_t packetBuffer[MAX_PACKET_SIZE];
-    size_t packetSize = Diablo::create_board_heartbeat_packet(
+    size_t packetSize = daq::create_board_heartbeat_packet(
         heartbeatData, millis(), packetBuffer, sizeof(packetBuffer));
 
     if (packetSize == 0) {

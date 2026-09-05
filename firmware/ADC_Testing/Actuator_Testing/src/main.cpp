@@ -1,8 +1,8 @@
 #include <Arduino.h>
-#include <DAQv2-Comms.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -46,13 +46,12 @@ unsigned long lastAdcReadTime = 0;
 
 // Forward declarations
 void initializeActuators();
-void processActuatorCommand(
-    const std::vector<Diablo::ActuatorCommand>& commands);
+void processActuatorCommand(const std::vector<daq::ActuatorCommand>& commands);
 void processPWMActuatorCommand(
-    const std::vector<Diablo::PWMActuatorCommand>& commands);
+    const std::vector<daq::PWMActuatorCommand>& commands);
 void updatePWM();
 void readCurrentSensePins();
-void sendSensorDataPacket(const Diablo::SensorDataChunkCollection& chunk);
+void sendSensorDataPacket(const daq::SensorDataChunkCollection& chunk);
 
 void setup() {
     Serial.begin(115200);
@@ -138,14 +137,14 @@ void loop() {
 
         if (bytesRead > 0) {
             // Check the packet type from the header
-            Diablo::PacketHeader* header = (Diablo::PacketHeader*)packetBuffer;
+            daq::PacketHeader* header = (daq::PacketHeader*)packetBuffer;
 
-            if (header->packet_type == Diablo::PacketType::ACTUATOR_COMMAND) {
+            if (header->packet_type == daq::PacketType::ACTUATOR_COMMAND) {
                 // Parse the packet as an actuator command
-                Diablo::PacketHeader parsedHeader;
-                std::vector<Diablo::ActuatorCommand> commands;
+                daq::PacketHeader parsedHeader;
+                std::vector<daq::ActuatorCommand> commands;
 
-                if (Diablo::parse_actuator_command_packet(
+                if (daq::parse_actuator_command_packet(
                         packetBuffer, bytesRead, parsedHeader, commands)) {
                     Serial.print("Received actuator command packet with ");
                     Serial.print(commands.size());
@@ -157,13 +156,13 @@ void loop() {
                         "Error: Failed to parse actuator command packet");
                 }
             } else if (header->packet_type ==
-                       Diablo::PacketType::PWM_ACTUATOR_COMMAND) {
+                       daq::PacketType::PWM_ACTUATOR_COMMAND) {
                 // Parse the packet as a PWM actuator command
-                Diablo::PacketHeader parsedHeader;
-                std::vector<Diablo::PWMActuatorCommand> commands;
+                daq::PacketHeader parsedHeader;
+                std::vector<daq::PWMActuatorCommand> commands;
 
-                if (Diablo::parse_pwm_actuator_packet(packetBuffer, bytesRead,
-                                                      parsedHeader, commands)) {
+                if (daq::parse_pwm_actuator_packet(packetBuffer, bytesRead,
+                                                   parsedHeader, commands)) {
                     Serial.print("Received PWM actuator command packet with ");
                     Serial.print(commands.size());
                     Serial.println(" commands");
@@ -227,8 +226,7 @@ void initializeActuators() {
     }
 }
 
-void processActuatorCommand(
-    const std::vector<Diablo::ActuatorCommand>& commands) {
+void processActuatorCommand(const std::vector<daq::ActuatorCommand>& commands) {
     for (const auto& cmd : commands) {
         // Actuator IDs are 1-indexed (1-10) from the server
         // Validate actuator ID
@@ -282,7 +280,7 @@ void processActuatorCommand(
 }
 
 void processPWMActuatorCommand(
-    const std::vector<Diablo::PWMActuatorCommand>& commands) {
+    const std::vector<daq::PWMActuatorCommand>& commands) {
     for (const auto& cmd : commands) {
         // Actuator IDs are 1-indexed (1-10) from the server
         if (cmd.actuator_id < 1 || cmd.actuator_id > NUM_ACTUATORS) {
@@ -373,7 +371,7 @@ void updatePWM() {
 
 void readCurrentSensePins() {
     // Create a sensor data chunk with timestamp
-    Diablo::SensorDataChunkCollection chunk(millis(), NUM_SENSORS);
+    daq::SensorDataChunkCollection chunk(millis(), NUM_SENSORS);
 
     // Read all current sense pins
     for (uint8_t actuator_id = 1; actuator_id <= NUM_SENSORS; actuator_id++) {
@@ -405,16 +403,16 @@ void readCurrentSensePins() {
     }
 }
 
-void sendSensorDataPacket(const Diablo::SensorDataChunkCollection& chunk) {
+void sendSensorDataPacket(const daq::SensorDataChunkCollection& chunk) {
     // Create packet buffer
     uint8_t packetBuffer[MAX_PACKET_SIZE];
 
     // Create a vector with a single chunk for the packet
-    std::vector<Diablo::SensorDataChunkCollection> chunks;
+    std::vector<daq::SensorDataChunkCollection> chunks;
     chunks.push_back(chunk);
 
     // Create the sensor data packet using DAQv2-Comms library
-    size_t packetSize = Diablo::create_sensor_data_packet(
+    size_t packetSize = daq::create_sensor_data_packet(
         chunks, NUM_SENSORS, millis(), packetBuffer, sizeof(packetBuffer));
 
     if (packetSize == 0) {

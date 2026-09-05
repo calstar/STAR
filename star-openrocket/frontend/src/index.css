@@ -1,0 +1,140 @@
+@import "tailwindcss";
+
+/* Tailwind v4 only scans files it can reach from this project's root, and the
+   shared design-tool components live outside it. Without this they compile and
+   type-check but render unstyled -- and silently, with no build error. */
+@source "../../../lib/stardesign-ui/src";
+
+/* ── Type scale ──────────────────────────────────────────────────────────────
+   Overrides Tailwind's default steps rather than rewriting call sites: the app
+   uses `text-xs` in ~40 places, so the size lives here and every one of them
+   moves together. Sizes are absolute px-equivalents, NOT a root font-size
+   multiplier -- a `html { font-size }` bump would scale the rem-based
+   utilities but silently leave the charts behind, since Recharts takes numeric
+   px font sizes (see chartTheme.ts) and SVG does not inherit the trick.
+
+       2xs  13px   axis-style labels, badges, units
+       xs   14px   the dominant body size
+       sm   16px   card titles, tab bar
+       base 18px
+       lg   22px   the big Stat readouts                                     */
+@theme {
+  --text-2xs: 0.8125rem;
+  --text-2xs--line-height: 1.45;
+  --text-xs: 0.875rem;
+  --text-xs--line-height: 1.45;
+  --text-sm: 1rem;
+  --text-sm--line-height: 1.5;
+  --text-base: 1.125rem;
+  --text-base--line-height: 1.55;
+  --text-lg: 1.375rem;
+  --text-lg--line-height: 1.3;
+  --text-xl: 1.625rem;
+  --text-xl--line-height: 1.25;
+
+  /* Padding, gaps and control heights are all multiples of this. Up 10% so
+     the larger text does not end up crowding the borders it sits inside. */
+  --spacing: 0.275rem;
+}
+
+/* Dark engineering palette (from the recovery calculator / EngineDesign). The
+   token-based components (ConfigVersions, ui.tsx, every recovery panel) read
+   these; the CAD/Flight viewer panels use Tailwind slate-* utilities directly. */
+:root {
+  --color-bg-primary: #0a0a0f;
+  --color-bg-secondary: #12121a;
+  --color-bg-tertiary: #1a1a24;
+  --color-accent: #3b82f6;
+  --color-accent-hover: #2563eb;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+
+  /* Contrast ratios are against --color-bg-tertiary (#1a1a24), the worst case.
+     All three text tiers clear 7:1 (AAA). src/recovery/lib/theme.test.ts
+     recomputes these from this file and fails if any tier drops below 7:1. */
+  --color-text-primary: #f8fafc;   /* 16.5:1 */
+  --color-text-secondary: #cbd5e1; /* 11.6:1 */
+  --color-text-muted: #9fb0c4;     /*  7.8:1 */
+
+  --color-border: #383848;
+
+  /* One colour per off-nominal recovery case, shared by the case selector and
+     the trajectory chart so a line and its tab always agree. */
+  --case-nominal: #3b82f6;
+  --case-simultaneous: #a855f7;
+  --case-no-main: #f59e0b;
+  --case-no-drogue: #ef4444;
+}
+
+/* The viewer's CAD tab fills the viewport (three.js scene + flex column). */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  @apply bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] antialiased;
+  /* The system UI face, for all chrome, labels, prose and headings. This used to
+     name 'Inter' first, but nothing ever shipped the file -- no @font-face, no
+     stylesheet link, no package -- so every element fell through to the stack
+     below anyway. Naming a font we do not serve made the two halves of this app
+     look like they disagreed about typography when they never did; what differed
+     was weight and size, which the type scale above now settles. Add an
+     @font-face here if we ever want a face that renders the same on every OS. */
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+}
+
+/* Numbers use the same sans face; `tabular-nums` only makes digits share one
+   advance width so columns of figures line up. */
+.font-num {
+  font-feature-settings: 'tnum' 1;
+  font-variant-numeric: tabular-nums;
+}
+
+table {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-secondary);
+}
+
+/* Number inputs: drop the spinners (they steal horizontal room). */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Breathing room before a section heading, but not above the first one. */
+[data-field-group] + [data-field-group] {
+  padding-top: 0.85rem;
+}
+
+.recharts-tooltip-wrapper:focus {
+  outline: none;
+}

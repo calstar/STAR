@@ -31,8 +31,7 @@ Service URL `http://caddy:80`:
 | *(none / apex)* | `starberkeley.org` → landing | `http://caddy:80` |
 | `engine-design` | `starberkeley.org` | `http://caddy:80` |
 | `pid-designer` | `starberkeley.org` | `http://caddy:80` |
-| `recovery-calculator` | `starberkeley.org` | `http://caddy:80` |
-| `onshape-viewer` | `starberkeley.org` | `http://caddy:80` |
+| `star-openrocket` | `starberkeley.org` | `http://caddy:80` |
 | `daq-viewer` | `starberkeley.org` | `http://caddy:80` |
 
 Plus one **SSH** route on the same tunnel for remote admin — the `ssh://` scheme
@@ -49,7 +48,7 @@ that stays on the EC2 tunnel.
 
 > **Firewall:** the connector reaches the host's sshd over the Docker bridge, so
 > `ufw` must allow it — `sudo ufw allow from 172.16.0.0/12 to any port 22 proto
-> tcp`. `bootstrap.sh` does this; without it SSH times out
+> tcp`. `bootstrap_apps.sh` does this; without it SSH times out
 > (`dial tcp 172.17.0.1:22: i/o timeout`) while the web apps still work.
 
 ## 2. On the apps machine — get the compose + configure
@@ -81,7 +80,7 @@ Set in `.env`:
 | `CLOUDFLARE_TUNNEL_TOKEN` | this machine's tunnel token |
 
 No `auth/.env` is needed (verify-only). For live Onshape builds, put the key pair
-in `onshape-viewer/.env` (optional — cache-first endpoints work without it).
+in `star-openrocket/.env` (optional — cache-first endpoints work without it).
 
 ## 3. Launch
 ```bash
@@ -91,6 +90,23 @@ docker compose ps
 ```
 (Building on the box instead — needs a full clone and ≥4 GB RAM for the React
 builds — is `docker compose --profile tunnel up -d --build`.)
+
+**Image version (`STAR_IMAGE_TAG`).** Every `star-*` image is pulled at the tag
+`${STAR_IMAGE_TAG:-latest}`. CI publishes two tags on each push to `main`:
+`latest` (moving) and an immutable `sha-<short>` (e.g. `sha-abc1234`).
+- **Default — `latest`:** leave `STAR_IMAGE_TAG` unset (or `=latest`). `pull` then
+  `up -d` moves the stack to the newest build. This is the current workflow.
+- **Pinned — `sha-<short>`:** set `STAR_IMAGE_TAG=sha-abc1234` in `.env` to lock the
+  whole stack to one build. `pull` + `up -d` fetches exactly that build; nothing
+  moves until you change the line. Roll back the same way — set an older `sha-…`
+  and `up -d`.
+
+  Pin only to a sha CI actually published: `publish-apps.yml` builds *all* app
+  images together and `publish-auth.yml` builds auth, each on their own path
+  filters, so a given commit's `sha-…` exists for every image only if that commit
+  touched both an app path and `auth/`. Check the repo's GHCR **Packages** for the
+  tags that exist. `docker compose config --images` prints the exact tags Compose
+  will pull, so you can confirm the pin before `up -d`.
 Then drop the host's published web ports (cloudflared is the only ingress): remove
 the `80:80` / `443:443` lines from the `caddy` service, or block them at the
 firewall. SSH (22) is all you need inbound.
@@ -101,7 +117,7 @@ Open `https://engine-design.starberkeley.org` in a browser → it bounces to
 ```bash
 curl -sI https://engine-design.starberkeley.org/          # 302 → auth.../login
 ```
-Log in as an `@berkeley.edu` account; open onshape-viewer to confirm the allowlist
+Log in as an `@berkeley.edu` account; open star-openrocket to confirm the allowlist
 (non-approved users authenticate but get 403 there).
 
 ## Version history in S3 (P&ID + Engine + Recovery)
@@ -122,7 +138,7 @@ keys**, not an instance role.
 **One-time AWS setup** (run where you're logged into AWS — your laptop is fine):
 ```bash
 # 1. Three versioned, private buckets — same recipe for each.
-for b in star-pid-designer star-engine-design star-recovery-calculator; do
+for b in star-pid-designer star-engine-design star-openrocket; do
   aws s3api create-bucket --bucket "$b" --region us-east-2 \
     --create-bucket-configuration LocationConstraint=us-east-2
   aws s3api put-public-access-block --bucket "$b" \
@@ -152,8 +168,8 @@ PID_S3_BUCKET=star-pid-designer
 PID_S3_PREFIX=pid
 ENGINE_S3_BUCKET=star-engine-design
 ENGINE_S3_PREFIX=engine
-RECOVERY_S3_BUCKET=star-recovery-calculator
-RECOVERY_S3_PREFIX=recovery
+OPENROCKET_S3_BUCKET=star-openrocket
+OPENROCKET_S3_PREFIX=openrocket
 AWS_DEFAULT_REGION=us-east-2
 AWS_ACCESS_KEY_ID=AKIA…
 AWS_SECRET_ACCESS_KEY=…
@@ -170,4 +186,6 @@ own `…/releases/<label>.json`. (Swap bucket + prefix for the other two apps.)
   working copies**) lives in the `userdata` volume on this machine, keyed by
   `X-Auth-Email`. P&ID *version history* additionally lives in S3 (above).
 - **Updating:** `docker compose --profile tunnel pull && docker compose --profile tunnel up -d`
-  (CI republishes `:latest` on every push to `main`).
+  (CI republishes `:latest` on every push to `main`). To deploy a **specific**
+  build instead of the newest, set `STAR_IMAGE_TAG=sha-<short>` in `.env` first —
+  see §3 "Image version". Default (unset) tracks `latest`.

@@ -37,8 +37,8 @@ AbortBroadcaster::~AbortBroadcaster() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 void AbortBroadcaster::sendPacket(uint8_t packet_type_byte) {
-    Diablo::PacketHeader hdr{};
-    hdr.packet_type = static_cast<Diablo::PacketType>(packet_type_byte);
+    daq::PacketHeader hdr{};
+    hdr.packet_type = static_cast<daq::PacketType>(packet_type_byte);
     hdr.version = 0;  // DIABLO_COMMS_VERSION
     hdr.timestamp = host_timestamp_ms();
 
@@ -75,7 +75,7 @@ void AbortBroadcaster::sendPacket(uint8_t packet_type_byte) {
 // ─────────────────────────────────────────────────────────────────────────────
 void AbortBroadcaster::triggerAbort() {
     // Immediate ABORT
-    sendPacket(static_cast<uint8_t>(Diablo::PacketType::ABORT));
+    sendPacket(static_cast<uint8_t>(daq::PacketType::ABORT));
 
     // Cancel any previously scheduled ABORT_DONE thread
     done_thread_running_ = false;
@@ -99,11 +99,11 @@ void AbortBroadcaster::waitAndSendAbortDone() {
         elapsed += step;
     }
     if (done_thread_running_)
-        sendPacket(static_cast<uint8_t>(Diablo::PacketType::ABORT_DONE));
+        sendPacket(static_cast<uint8_t>(daq::PacketType::ABORT_DONE));
 }
 
 void AbortBroadcaster::sendClearAbort() {
-    sendPacket(static_cast<uint8_t>(Diablo::PacketType::CLEAR_ABORT));
+    sendPacket(static_cast<uint8_t>(daq::PacketType::CLEAR_ABORT));
 }
 
 }  // namespace sequencer

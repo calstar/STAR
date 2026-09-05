@@ -7,10 +7,19 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { IncomingMessage, ServerResponse } from 'http';
-import { readConfig, writeConfig } from './routes/config.js';
+import { readConfig, writeConfig, getConfigPath, patchBoardField } from './routes/config.js';
+import {
+  listProfiles, switchProfile, createProfile, renameProfile, deleteProfile,
+  getActiveProfileName, ensureSeeded, readActiveProfile, writeActiveProfile, deployActiveProfile,
+  getActiveProfilePath, readStateCsv, writeStateCsv, isStateCsvName, STATE_CSVS,
+} from './routes/config-profiles.js';
+import { isCurrentLoopBoard } from './sensor-config.js';
+import { sessionManager } from './session-manager.js';
+import { isOperator } from './operators.js';
 import { discoverProjects, getEnabledBoardsForFlash, getOtaWorkspaceRoot, BOARD_TYPE_TO_PROJECT } from './ota-build.js';
 import { otaBuildFlash, otaFlashFirmwareFile } from './ota-service-cmd.js';
 import { ElodinQueryClient, QueryOptions } from './elodin-query.js';
+import { getBoardLogHistory, getBoardLogStats } from './board-logs.js';
 import type { SensorUpdate } from './shared-types.js';
 
 // ── Sensor config helpers ──────────────────────────────────────────────────
@@ -24,7 +33,7 @@ export interface SensorConfigEntry {
   boardId: number;
   /** Board IP address */
   boardIp: string;
-  /** true if this sensor is a high-pressure 4-20 mA PT (sensor_roles_pt2) */
+  /** true if this sensor is on a high-pressure 4-20 mA PT board (config hp_pt_* fields) */
   isHpPt: boolean;
   /** true → eligible for calibration capture */
   inCalibrationSequence: boolean;
@@ -58,11 +67,9 @@ function buildSensorConfig(): SensorConfigEntry[] {
 
     const boardIp: string = board.ip || '';
     const boardId = asBoardId(board.board_id, 1);
-    const isHpBoard = Array.isArray(board.hp_pt_connectors) && board.hp_pt_connectors.length > 0;
-    const excitationConnectorId: number = board.excitation_connector_id ?? -1;
-    const hpPtConnectors: Set<number> = new Set(
-      isHpBoard ? (board.hp_pt_connectors as number[]) : []
-    );
+    // The ADC reference is set once per board, so the interface is a property of the whole
+    // board — every one of its sensor channels converts through the same path.
+    const isHpBoard = isCurrentLoopBoard(board);
 
     // Determine which sensor_roles section to use for this board
     const boardRolesKey = `sensor_roles_${boardKey}`;
@@ -73,25 +80,13 @@ function buildSensorConfig(): SensorConfigEntry[] {
       rolesSection = config.sensor_roles as Record<string, any>;
     }
 
-    // sensor_roles_pt2 uses the same format but is stored separately
-    const pt2Roles = isHpBoard
-      ? ((config.sensor_roles_pt2 || {}) as Record<string, any>)
-      : {};
-
-    // Build entries from the relevant roles section
-    const effectiveRoles = Object.keys(pt2Roles).length > 0 && isHpBoard ? pt2Roles : rolesSection;
-
-    for (const [roleName, channelIdRaw] of Object.entries(effectiveRoles)) {
+    // Every PT board uses its own [sensor_roles_<boardKey>] section — HP boards included
+    // (no separate sensor_roles_pt2 section).
+    for (const [roleName, channelIdRaw] of Object.entries(rolesSection)) {
       const channelId = typeof channelIdRaw === 'number' ? channelIdRaw : Number(channelIdRaw);
       if (!isFinite(channelId)) continue;
 
-      // Skip excitation connector — it is never a sensor
-      if (isHpBoard && channelId === excitationConnectorId) continue;
-
-      // Skip channels not in hp_pt_connectors for HP boards
-      if (isHpBoard && !hpPtConnectors.has(channelId)) continue;
-
-      const isHpPt = isHpBoard && hpPtConnectors.has(channelId);
+      const isHpPt = isHpBoard;
       const boardNumber = elodinSlotFromBoardId(boardId);
 
       sensors.push({
@@ -239,16 +234,12 @@ function buildSensorConfig(): SensorConfigEntry[] {
   return sensors;
 }
 
-/** Average Hz of primary raw streams per board group from relay ingest (pre-WS-throttle). */
-export interface BoardScanRateHz {
-  pt1: number;
-  pt2: number;
-  tc: number;
-  rtd: number;
-  lc: number;
-  act: number;
-  enc: number;
-}
+/**
+ * Average Hz of primary raw streams per board group from relay ingest (pre-WS-throttle).
+ * Dynamic keys: `pt<n>` per PT board (n = board_id % 10) plus aggregated `tc`/`rtd`/`lc`/`act`/`enc`.
+ * A group only appears once it has seen data — read a missing group as 0.
+ */
+export type BoardScanRateHz = Record<string, number>;
 
 export interface DebugInfo {
   ingestConnected: boolean;
@@ -264,8 +255,35 @@ export interface APIHandlerOptions {
   getQueryClient?: () => ElodinQueryClient | null;
   getDebugInfo?: () => DebugInfo | null;
   onConfigUpdated?: () => void;
+  /** A state-machine CSV was saved and deployed: rebuild derived maps and tell the sequencer to
+   *  re-read (it exposes RELOAD_CONFIG, which re-loads both CSVs without a restart). */
+  onStateCsvUpdated?: () => void;
   getEngineState?: () => number;
   getCalibrationStatus?: () => Promise<any>;
+}
+
+/**
+ * Config edits require an approved operator. Identity is the `X-Auth-Email`
+ * header Caddy injects on every proxied request; an empty header means no proxy
+ * in front (local/dev/test stand) and is treated as operator — same rule the WS
+ * control path uses in server.ts. Present-but-not-allowlisted → denied.
+ */
+function isConfigWriteAuthorized(req: IncomingMessage): boolean {
+  const authEmail = ((req.headers['x-auth-email'] as string | undefined) || '').trim();
+  return authEmail === '' ? true : isOperator(authEmail);
+}
+
+/** Collect and JSON-parse a request body. Rejects on invalid JSON. */
+function readJsonBody(req: IncomingMessage): Promise<any> {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk.toString(); });
+    req.on('end', () => {
+      try { resolve(body.trim() ? JSON.parse(body) : {}); }
+      catch { reject(new Error('Invalid JSON body')); }
+    });
+    req.on('error', reject);
+  });
 }
 
 /**
@@ -274,7 +292,7 @@ export interface APIHandlerOptions {
  * Returns true if the request was handled, false if not (so the caller can fall through).
  */
 export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
-  const { getQueryClient, getDebugInfo, onConfigUpdated, getEngineState, getCalibrationStatus } = opts;
+  const { getQueryClient, getDebugInfo, onConfigUpdated, onStateCsvUpdated, getEngineState, getCalibrationStatus } = opts;
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const urlPath = (req.url ?? '').split('?')[0] ?? '';
@@ -295,12 +313,18 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
 
     try {
       if (url.pathname === '/api/config' && req.method === 'GET') {
-        // Read config
-        const config = readConfig();
+        // The editor reads the ACTIVE PROFILE (the draft you edit), not the deployed config.toml.
+        const config = readActiveProfile();
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ config }));
+        res.end(JSON.stringify({ config, active: getActiveProfileName() }));
       } else if (url.pathname === '/api/config' && req.method === 'POST') {
-        // Write config
+        // Save to the ACTIVE PROFILE. When idle, also deploy it to config.toml (the running file);
+        // during a session config.toml is frozen — the write is a draft applied at the next start.
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
         let body = '';
         req.on('data', (chunk) => {
           body += chunk.toString();
@@ -308,32 +332,238 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         req.on('end', () => {
           try {
             const { config } = JSON.parse(body);
-            console.log(`📝 Received config save request`);
-            writeConfig(config);
-            try {
+            const sessionActive = sessionManager.getStatus().active;
+            console.log(`📝 Config save → active profile "${getActiveProfileName()}"${sessionActive ? ' (draft; config.toml frozen — session active)' : ' (+ deploy to config.toml)'}`);
+            writeActiveProfile(config);
+            if (!sessionActive) {
+              deployActiveProfile();
               if (onConfigUpdated) {
                 setImmediate(() => {
                   try { onConfigUpdated(); } catch (e) { console.warn('⚠️ onConfigUpdated handler threw:', e); }
                 });
               }
-            } catch (e) {
-              console.warn('⚠️ onConfigUpdated handler threw:', e);
             }
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, message: 'Config saved successfully' }));
+            res.end(JSON.stringify({ success: true, deployed: !sessionActive, message: sessionActive ? 'Saved as draft (applies at next session start)' : 'Config saved and deployed' }));
           } catch (error: any) {
             console.error('❌ Config save error:', error);
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: error.message || 'Failed to save config' }));
           }
         });
+      } else if (url.pathname === '/api/config/export' && req.method === 'GET') {
+        // Raw config.toml download (backup). Read-only — no operator gate.
+        try {
+          const raw = fs.readFileSync(getConfigPath(), 'utf-8');
+          res.writeHead(200, {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Content-Disposition': 'attachment; filename="config.toml"',
+          });
+          res.end(raw);
+        } catch (error: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message || 'Failed to read config' }));
+        }
+      } else if (url.pathname === '/api/config/import' && req.method === 'POST') {
+        // Replace config.toml with an uploaded file (restore). Operators only.
+        // Validate by writing then re-reading with the app's tolerant parser;
+        // roll back to the previous contents if it fails to parse.
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        let body = '';
+        req.on('data', (chunk) => { body += chunk.toString(); });
+        req.on('end', () => {
+          // Import replaces the ACTIVE PROFILE (validated), then deploys to config.toml when idle —
+          // same freeze rule as a save.
+          const target = getActiveProfilePath();
+          let previous: string | null = null;
+          try {
+            if (!body.trim()) throw new Error('Uploaded config is empty');
+            previous = fs.existsSync(target) ? fs.readFileSync(target, 'utf-8') : null;
+            fs.writeFileSync(target, body, 'utf-8');
+            readConfig(target); // throws if the uploaded TOML is invalid
+            const sessionActive = sessionManager.getStatus().active;
+            if (!sessionActive) {
+              deployActiveProfile();
+              if (onConfigUpdated) {
+                setImmediate(() => {
+                  try { onConfigUpdated(); } catch (e) { console.warn('⚠️ onConfigUpdated handler threw:', e); }
+                });
+              }
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, deployed: !sessionActive, message: sessionActive ? 'Imported as draft (applies at next session start)' : 'Config imported and deployed' }));
+          } catch (error: any) {
+            if (previous !== null) {
+              try { fs.writeFileSync(target, previous, 'utf-8'); } catch { /* best effort */ }
+            }
+            console.error('❌ Config import error:', error);
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message || 'Invalid config file' }));
+          }
+        });
+      } else if (url.pathname === '/api/states' && req.method === 'GET') {
+        // The state list from the active profile's [[states]]. One source for the labels the GUI
+        // used to keep in six separate maps, several of which had drifted — the top bar rendered
+        // ids 18 and 19 as "STATE 18"/"STATE 19" because they were simply missing from its copy.
+        try {
+          const cfg = readActiveProfile();
+          const raw = Array.isArray((cfg as any)?.states) ? (cfg as any).states : [];
+          const states = raw
+            .filter((e: any) => typeof e?.id === 'number' && typeof e?.name === 'string')
+            .map((e: any) => ({
+              id: e.id,
+              name: e.name,
+              isAbort: e.is_abort === true,
+              isBoot: e.is_boot === true,
+              // Absent coordinates mean "not on the control panel" — no separate hidden flag.
+              panelRow: typeof e.panel_row === 'number' ? e.panel_row : null,
+              panelCol: typeof e.panel_col === 'number' ? e.panel_col : null,
+            }));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ states }));
+        } catch (error: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message || 'Failed to read states' }));
+        }
+      } else if (url.pathname === '/api/state-csv' && req.method === 'GET') {
+        // Raw state-machine CSV from the ACTIVE PROFILE. Read-only — no operator gate, matching
+        // /api/config/export.
+        try {
+          const which = String(url.searchParams.get('name') || '');
+          if (!isStateCsvName(which)) throw new Error(`Unknown CSV "${which}"`);
+          res.writeHead(200, {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Content-Disposition': `attachment; filename="${STATE_CSVS[which]}"`,
+          });
+          res.end(readStateCsv(which));
+        } catch (error: any) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message || 'Failed to read CSV' }));
+        }
+      } else if (url.pathname === '/api/state-csv' && req.method === 'POST') {
+        // Write a state CSV into the active profile; deploy when idle (same freeze rule as a
+        // config save — during a session it stays a draft applied at the next start).
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        let body = '';
+        req.on('data', (chunk) => { body += chunk.toString(); });
+        req.on('end', () => {
+          try {
+            const which = String(url.searchParams.get('name') || '');
+            if (!isStateCsvName(which)) throw new Error(`Unknown CSV "${which}"`);
+            if (!body.trim()) throw new Error('CSV is empty');
+            // A header row plus at least one data row; anything less is a truncated upload, and a
+            // CSV that parses to nothing silently disables every actuator for every state.
+            const rows = body.split('\n').map((l) => l.trim()).filter(Boolean);
+            if (rows.length < 2) throw new Error('CSV needs a header row and at least one data row');
+            const sessionActive = sessionManager.getStatus().active;
+            const deployed = writeStateCsv(which, body, !sessionActive);
+            if (deployed && onStateCsvUpdated) {
+              setImmediate(() => {
+                try { onStateCsvUpdated(); } catch (e) { console.warn('⚠️ onStateCsvUpdated handler threw:', e); }
+              });
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: true,
+              deployed,
+              message: deployed ? 'Saved and applied' : 'Saved as draft (applies at next session start)',
+            }));
+          } catch (error: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message || 'Invalid CSV' }));
+          }
+        });
+      } else if (url.pathname === '/api/config/profiles' && req.method === 'GET') {
+        // List profiles + which is active + whether a session freezes deploys/switching.
+        ensureSeeded();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          profiles: listProfiles(),
+          active: getActiveProfileName(),
+          sessionActive: sessionManager.getStatus().active,
+        }));
+      } else if (url.pathname === '/api/config/profiles/switch' && req.method === 'POST') {
+        // Switch the active profile and deploy it. Operators only; blocked while a session runs.
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        try {
+          const { name } = await readJsonBody(req);
+          if (sessionManager.getStatus().active) {
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Cannot switch config while a session is running' }));
+            return true;
+          }
+          switchProfile(name);
+          if (onConfigUpdated) setImmediate(() => { try { onConfigUpdated(); } catch (e) { console.warn('⚠️ onConfigUpdated threw:', e); } });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, active: getActiveProfileName() }));
+        } catch (error: any) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error?.message || 'Failed to switch profile' }));
+        }
+      } else if (url.pathname === '/api/config/profiles/create' && req.method === 'POST') {
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        try {
+          const { name, from } = await readJsonBody(req);
+          createProfile(name, from);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, profiles: listProfiles() }));
+        } catch (error: any) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error?.message || 'Failed to create profile' }));
+        }
+      } else if (url.pathname === '/api/config/profiles/rename' && req.method === 'POST') {
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        try {
+          const { name, newName } = await readJsonBody(req);
+          renameProfile(name, newName);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, profiles: listProfiles(), active: getActiveProfileName() }));
+        } catch (error: any) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error?.message || 'Failed to rename profile' }));
+        }
+      } else if (url.pathname === '/api/config/profiles/delete' && req.method === 'POST') {
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        try {
+          const { name } = await readJsonBody(req);
+          deleteProfile(name);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, profiles: listProfiles() }));
+        } catch (error: any) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error?.message || 'Failed to delete profile' }));
+        }
       } else if (url.pathname === '/api/query' && req.method === 'GET') {
         // Query historical data from Elodin DB
         const currentQueryClient = getQueryClient ? getQueryClient() : null;
         if (!currentQueryClient) {
           res.writeHead(503, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Query client not available' }));
-          return;
+          return true;
         }
 
         const packetIdHigh = parseInt(url.searchParams.get('packet_id_high') || '0x20', 16);
@@ -364,6 +594,20 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         const limits = config.pressure_limits || {};
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ pressure_limits: limits }));
+      } else if (url.pathname === '/api/gui-config' && req.method === 'GET') {
+        // GUI-driven config lists from config.toml [gui]: the ordered top-bar
+        // pressure gauges ([[gui.pressure_bars]]) and the tab-bar tabs+order
+        // (gui.tabs). Fresh per request → reflects edits live. Bar NOP/MEOP come
+        // from [pressure_limits]; tab ids index the frontend view catalog.
+        const config = readConfig();
+        const gui = config.gui ?? {};
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          pressure_bars: gui.pressure_bars ?? [],
+          tabs: gui.tabs ?? [],
+          // [gui.groups]: page name → ordered role-name list (explicit sensor→page membership).
+          groups: gui.groups ?? {},
+        }));
       } else if (url.pathname === '/api/sensor-config' && req.method === 'GET') {
         // Return sensor configuration derived from config.toml:
         // role names, board assignments, entity strings, calibration flags
@@ -376,7 +620,7 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         if (!currentQueryClient) {
           res.writeHead(503, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Query client not available' }));
-          return;
+          return true;
         }
 
         const packetIds = currentQueryClient.getSubscribedPacketIds();
@@ -399,6 +643,49 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
           entity,
           message: 'Use WebSocket for real-time data. Historical queries via /api/query',
         }));
+      } else if (url.pathname === '/api/board-logs' && req.method === 'GET') {
+        // Recent cached board diagnostic logs (in-memory, session-scoped).
+        // Optional ?board=<id> and ?limit=<n>. Lets a freshly-opened GUI backfill.
+        const boardRaw = url.searchParams.get('board');
+        const limitRaw = url.searchParams.get('limit');
+        const board = boardRaw !== null ? Number(boardRaw) : undefined;
+        const limit = limitRaw !== null ? Number(limitRaw) : undefined;
+        const history = getBoardLogHistory({
+          board: board !== undefined && Number.isFinite(board) ? board : undefined,
+          limit: limit !== undefined && Number.isFinite(limit) ? limit : undefined,
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(history));
+      } else if (url.pathname === '/api/board-logs/stats' && req.method === 'GET') {
+        // Cumulative per-board log counters { boardId: { received, truncated } }.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ stats: getBoardLogStats() }));
+      } else if (url.pathname === '/api/board-log-mode' && req.method === 'POST') {
+        // Set one board's logging/serial-print mode byte (0..3) via a surgical
+        // single-field edit of config.toml. Operators only. config_broadcast_service
+        // re-reads config.toml and sends the board the new byte on its next cycle.
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        let body = '';
+        req.on('data', (chunk) => { body += chunk.toString(); });
+        req.on('end', () => {
+          try {
+            const { boardId, mode } = JSON.parse(body || '{}');
+            const bid = Number(boardId);
+            const m = Number(mode);
+            if (!Number.isInteger(bid) || bid <= 0) throw new Error('Invalid boardId');
+            if (!Number.isInteger(m) || m < 0 || m > 3) throw new Error('mode must be an integer 0..3');
+            patchBoardField(bid, 'enable_serial_printing', m);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, boardId: bid, mode: m }));
+          } catch (error: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message || 'Failed to set log mode' }));
+          }
+        });
       } else if (url.pathname === '/api/debug' && req.method === 'GET') {
         const info = getDebugInfo ? getDebugInfo() : null;
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -411,6 +698,29 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         const status = getCalibrationStatus ? await getCalibrationStatus() : null;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(status ?? { error: 'Calibration status not available' }));
+      } else if (url.pathname === '/api/cubic_calibration' && req.method === 'GET') {
+        // Read-only view of the calibration service's cubic_calibration.json (the service is the
+        // sole writer; it rewrites the file atomically per capture). Search the same candidate
+        // roots loadPTCalibration() uses, covering both dev (tsx) and dist layouts.
+        const candidates = [
+          path.join(__dirname, '../../../scripts/calibration/calibrations/cubic_calibration.json'),
+          path.join(__dirname, '../../../../scripts/calibration/calibrations/cubic_calibration.json'),
+          path.join(process.cwd(), 'scripts/calibration/calibrations/cubic_calibration.json'),
+          path.join(process.cwd(), '../../scripts/calibration/calibrations/cubic_calibration.json'),
+        ];
+        let body: string | null = null;
+        for (const c of candidates) {
+          try {
+            if (fs.existsSync(c)) { body = fs.readFileSync(c, 'utf8'); break; }
+          } catch { /* try next candidate */ }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        if (body == null) {
+          res.end(JSON.stringify({ cubic_state: {} }));
+        } else {
+          try { JSON.parse(body); res.end(body); }
+          catch { res.end(JSON.stringify({ cubic_state: {} })); }  // partial/corrupt → empty
+        }
       } else if (url.pathname === '/api/config_packets' && req.method === 'GET') {
         // Config packets now built by config_broadcast_service.py (standalone). Return empty.
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -424,7 +734,7 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         if (boards.length === 0) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, message: 'No enabled boards in config' }));
-          return;
+          return true;
         }
 
         res.writeHead(200, {

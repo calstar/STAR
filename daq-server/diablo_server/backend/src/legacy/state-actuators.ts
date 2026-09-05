@@ -342,16 +342,11 @@ function buildCSVSearchPaths(): string[] {
     // Config not available, use fallback paths
   }
 
-  // 2. Relative __dirname-based fallback (no absolute/hardcoded paths)
-  const relBaseDirs = [
-    join(__dirname, '..', '..', '..', '..', 'external', 'DiabloAvionics', 'test_guis'),
-    join(process.cwd(), '..', '..', 'external', 'DiabloAvionics', 'test_guis'),
-    join(process.cwd(), '..', 'external', 'DiabloAvionics', 'test_guis'),
-  ];
-  for (const base of relBaseDirs) {
-    paths.push(join(base, 'Avionics Board Status - State Machine Actuators.csv'));
-    paths.push(join(base, 'state_machine_actuators.csv'));
-  }
+  // 2. Direct config/ fallback (canonical source of truth) if config.toml unreadable.
+  const rel = join('config', 'state_machine_actuators.csv');
+  paths.push(join(__dirname, '..', '..', '..', '..', rel));
+  paths.push(join(process.cwd(), '..', '..', rel));
+  paths.push(join(process.cwd(), '..', rel));
 
   return paths;
 }

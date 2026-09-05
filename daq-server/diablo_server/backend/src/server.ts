@@ -26,10 +26,11 @@ import * as http from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
-import { loadSensorRoleMap } from './sensor-config.js';
+import { loadSensorRoleMap, hpBoardNumbers } from './sensor-config.js';
 import { registerVTables, clearSubscriptionState } from './elodin-vtable-registry.js';
 import { registerControllerVTables } from './legacy/elodin-vtable-controller.js';
 import { createAPIHandler } from './api-server.js';
+import { startBoardLogReceiver } from './board-logs.js';
 import { readConfig } from './routes/config.js';
 import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } from './legacy/state-actuators.js';
 import type { StateActuatorMap } from './legacy/state-actuators.js';
@@ -48,10 +49,6 @@ import type { SensorUpdate, StateUpdate, CommandPayload, BoardStatus, ActuatorUp
 // ── Config ───────────────────────────────────────────────────────────────────
 
 const WS_PORT = parseInt(process.env.WS_PORT ?? '8081', 10);
-// Engine-control fat-finger password (server-side). Shared, not per-user; the
-// real authorization is the operators allowlist (see operators.ts). Default is
-// the well-known dev value; set CONTROL_PASSWORD on the deployed server.
-const CONTROL_PASSWORD = process.env.CONTROL_PASSWORD || 'diablo';
 // Command types that actuate/transition the engine — gated by the operator
 // unlock. Read-only queries and countdown display are not.
 const CONTROL_COMMAND_TYPES = new Set(['state_transition', 'actuator', 'extend_fire', 'debug_mode', 'session_start', 'session_stop', 'session_extend']);
@@ -174,7 +171,14 @@ try {
   }
 } catch { /* no calibration file — fine */ }
 
-const calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
+// Sensor-role → entity naming. Rebuilt on config save (onConfigUpdated) so a
+// Sensor Roles edit reflects without a backend restart. calibrationHost reads
+// this via its channelToEntityMap property (updated in lockstep below).
+let calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
+
+/** Cached HP (4-20 mA) PT board-number set for the Elodin decode hot path. Rebuilt on config
+ *  reload (onConfigUpdated) so moving/adding an HP board takes effect without a restart. */
+let _hpBoardNumbers = hpBoardNumbers();
 
 /** Cached slot→board_id map for uniqueIdFromPtEntity — built once, avoids config re-reads on hot path. */
 const _ptSlotToBoardId = new Map<number, number>();
@@ -255,7 +259,11 @@ loadBoardsFromConfig();
 
 // ── State actuator map (expected positions per state from CSV) ────────────────
 
-const STATE_ACTUATOR_MAP: StateActuatorMap = getStateActuatorMap();
+// `let`, not `const`: this is parsed from state_machine_actuators.csv at import time, and the
+// State Management tab can now change that file at runtime. It used to be a const that nothing
+// ever rebuilt, so expected-position / mismatch detection kept using the CSV as it was when the
+// backend booted.
+let STATE_ACTUATOR_MAP: StateActuatorMap = getStateActuatorMap();
 
 /**
  * Build entity→expected map for a given state.
@@ -425,8 +433,25 @@ const selfTestNotifiedBoards = new Set<number>();
  *  Replayed as SENSOR_UPDATE on WS connect so late-connecting browsers see results. */
 const selfTestLatest = new Map<string, SensorUpdate>();
 
+// Rolling notification history so a reloaded/late-connecting browser recovers the
+// last few minutes of warnings/info instead of starting blank. Replayed on connect.
+const NOTIFICATION_BUFFER_MS = 5 * 60 * 1000;
+const NOTIFICATION_BUFFER_MAX = 500; // hard cap so a flapping alert can't grow it unbounded
+const notificationBuffer: { at: number; payload: NotificationPayload }[] = [];
+
+function pruneNotificationBuffer(now: number): void {
+  const cutoff = now - NOTIFICATION_BUFFER_MS;
+  while (notificationBuffer.length > 0 && notificationBuffer[0].at < cutoff) notificationBuffer.shift();
+  if (notificationBuffer.length > NOTIFICATION_BUFFER_MAX) {
+    notificationBuffer.splice(0, notificationBuffer.length - NOTIFICATION_BUFFER_MAX);
+  }
+}
+
 function broadcastNotification(payload: NotificationPayload): void {
-  broadcast({ type: MessageType.NOTIFICATION, timestamp: Date.now(), payload });
+  const at = Date.now();
+  notificationBuffer.push({ at, payload });
+  pruneNotificationBuffer(at);
+  broadcast({ type: MessageType.NOTIFICATION, timestamp: at, payload });
 }
 
 function boardLabel(status: BoardStatus): string {
@@ -509,6 +534,12 @@ setInterval(markStaleBoards, 1000);
 // burst (multi-chunk board packets), forwarding at least one row per channel per
 // packet; DB *storage* keeps every row. See integration Test 15 for the invariant.
 
+// Authoritative "data is actually flowing" signal: epoch-ms of the last entity we
+// ingested from Elodin. The status badge derives dataFresh from this, so it reflects
+// real end-to-end delivery — not just "a run is marked active" or the WS being open.
+let lastIngestMs = 0;
+const DATA_FRESH_MS = 3000; // no ingest for this long ⇒ pipeline is not delivering
+
 const stats = {
   ingestEntityUpdatesReceived: 0,  // every finite-value entity parsed from Elodin DB
   // Raw physical channel samples (non-_Cal, canonical component only): exactly one
@@ -541,8 +572,38 @@ const apiHandler = createAPIHandler({
     useRelay: false,
     boardScanRateHz: getBoardScanRateHz(),
   }),
+  onStateCsvUpdated: () => {
+    // The CSV on disk changed and was deployed. Rebuild what we derive from it, then tell the
+    // sequencer to re-read — it already exposes RELOAD_CONFIG (sequencer_main.cpp), which re-loads
+    // the actuator table and the transition table without restarting the pipeline.
+    try {
+      STATE_ACTUATOR_MAP = getStateActuatorMap();
+    } catch (e) {
+      console.warn('\u26a0\ufe0f Failed to rebuild STATE_ACTUATOR_MAP:', e);
+    }
+    // Best-effort: only the tmux stack keeps the sequencer up between runs. Under systemd the
+    // pipeline is session-gated, so while idle there is nothing listening — which is fine, because
+    // the CSV is already deployed to config/ and the sequencer reads it when the session starts.
+    sendToActuatorService('RELOAD_CONFIG\n')
+      .then(({ ok, reply }) => console.log(
+        ok
+          ? '[ThinServer] sequencer reloaded the state CSVs'
+          : `[ThinServer] sequencer not running (${reply || 'no reply'}) — CSVs apply at next session start`,
+      ))
+      .catch(() => console.log('[ThinServer] sequencer not running — CSVs apply at next session start'));
+    broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
+  },
   onConfigUpdated: () => {
     reloadGuiStreamConfig();
+    // Rebuild sensor-role-derived caches so a Sensor Roles / board_id edit reflects
+    // live (the backend is always-on and isn't restarted by a session start).
+    calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
+    calibrationHost.channelToEntityMap = calChannelToEntityMap;
+    _ptSlotToBoardId.clear();
+    _hpBoardNumbers = hpBoardNumbers();
+    // Tell every open client the config changed so they refetch /api/* live
+    // (sensor-config, pressure-limits, pressure-bars) — no reload/restart.
+    broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
   },
 });
 
@@ -622,8 +683,9 @@ wss.on('connection', (ws: WebSocket, req) => {
 
   // Engine-control authorization. Caddy injects X-Auth-Email on the upgrade
   // (from the session cookie). No header ⇒ no Caddy in front (dev/test-stand) ⇒
-  // trusted local ⇒ treat as operator. Control still requires the password
-  // unlock below (__daqControlAuthorized) — a fat-finger guard in every env.
+  // trusted local ⇒ treat as operator. Approved operators still explicitly arm
+  // control via the toggle below (__daqControlAuthorized) — a fat-finger guard
+  // in every env.
   const authEmail = ((req.headers['x-auth-email'] as string | undefined) || '').trim();
   const isOp = authEmail === '' ? true : isOperator(authEmail);
   (ws as WsWithControl).__daqOperator = isOp;
@@ -638,14 +700,13 @@ wss.on('connection', (ws: WebSocket, req) => {
   // Connection status
   send(ws, {
     type: MessageType.CONNECTION_STATUS, timestamp: Date.now(),
-    payload: { connected: true, elodinConnected: elodin.isConnected(), connId },
+    payload: connectionStatusPayload({ connId }),
   });
   outboundMessages++;
   lastOutboundAt = Date.now();
 
   // Control authorization status — lets the UI enable/disable the arm step
-  // before any password is typed (non-operators see it disabled, never a
-  // false-armed state).
+  // before arming (non-operators see it disabled, never a false-armed state).
   send(ws, {
     type: MessageType.CONTROL_STATUS, timestamp: Date.now(),
     payload: { operator: isOp, email: authEmail || null },
@@ -719,6 +780,21 @@ wss.on('connection', (ws: WebSocket, req) => {
     lastOutboundAt = Date.now();
   }
 
+  // Notification history: replay the last few minutes (chronological, so the
+  // client's keyed dedup reconstructs current vs cleared state) so a reloaded
+  // browser recovers recent warnings/info instead of starting blank.
+  {
+    const now = Date.now();
+    pruneNotificationBuffer(now);
+    for (const n of notificationBuffer) {
+      send(ws, { type: MessageType.NOTIFICATION, timestamp: n.at, payload: n.payload });
+    }
+    if (notificationBuffer.length > 0) {
+      outboundMessages += notificationBuffer.length;
+      lastOutboundAt = now;
+    }
+  }
+
   // Historical data
   sendHistoricalData(ws);
   outboundMessages++;
@@ -780,15 +856,13 @@ function handleMessage(ws: WebSocket, message: any): void {
       handleCommand(ws, message.payload as CommandPayload);
       break;
     case MessageType.CONTROL_UNLOCK: {
-      // Fat-finger password + operator identity, both checked server-side. The
-      // reply drives the UI's armed state, so it can never disagree with what the
-      // backend will actually accept.
-      const password = (message.payload && message.payload.password) || '';
+      // Arming is identity-only: approved operators may toggle control on. Checked
+      // server-side; the reply drives the UI's armed state, so it can never
+      // disagree with what the backend will actually accept.
       const op = (ws as WsWithControl).__daqOperator === true;
-      const ok = op && password === CONTROL_PASSWORD;
-      (ws as WsWithControl).__daqControlAuthorized = ok;
-      const reason = !op ? 'not_operator' : ok ? 'ok' : 'incorrect_password';
-      send(ws, { type: MessageType.CONTROL_UNLOCK_RESULT, timestamp: Date.now(), payload: { ok, reason } });
+      (ws as WsWithControl).__daqControlAuthorized = op;
+      const reason = op ? 'ok' : 'not_operator';
+      send(ws, { type: MessageType.CONTROL_UNLOCK_RESULT, timestamp: Date.now(), payload: { ok: op, reason } });
       break;
     }
     case MessageType.QUERY_HISTORICAL:
@@ -817,8 +891,8 @@ function broadcastStateUpdate(): void {
 }
 
 function handleCommand(ws: WebSocket, command: CommandPayload): void {
-  // The real, unbypassable gate: engine-control commands require an unlocked
-  // (operator + password) connection, regardless of what the UI shows.
+  // The real, unbypassable gate: engine-control commands require an armed
+  // (approved-operator) connection, regardless of what the UI shows.
   if (CONTROL_COMMAND_TYPES.has(command.commandType) && !(ws as WsWithControl).__daqControlAuthorized) {
     send(ws, {
       type: MessageType.ERROR, timestamp: Date.now(),
@@ -878,12 +952,14 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       break;
     case 'session_start':
       sessionManager
-        .start(!!command.data.keepData, command.data.durationMs ?? 0)
+        .start(!!command.data.keepData, command.data.durationMs ?? 0, !!command.data.simulated)
+        .then(() => broadcastConnectionStatus())
         .catch((err) => send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Session start failed: ${err.message}` } }));
       break;
     case 'session_stop':
       sessionManager
         .stop(false)
+        .then(() => broadcastConnectionStatus())
         .catch((err) => send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Session stop failed: ${err.message}` } }));
       break;
     case 'session_extend':
@@ -997,9 +1073,45 @@ function scheduleResubscribe(attempt: number): void {
   }, 5000);
 }
 
+// True when incoming data is synthetic. In a session-enabled deployment this is
+// exactly "an active simulated run" — the backend's own USE_SIM env is ignored
+// there because the systemd sim harness sets USE_SIM=1 on the backend process
+// permanently (so it would wrongly read simulated even when the run is stopped or
+// live). Only the field-laptop path (session control off, no run concept) falls
+// back to USE_SIM=1 (the terminal `dev.sh --sim` stack). Drives the purple badge.
+function isSimulated(): boolean {
+  if (sessionManager.isEnabled()) return sessionManager.isSimulated();
+  return process.env.USE_SIM === '1';
+}
+
+// Single source of truth for the status badge. Every field is backend-observed —
+// no frontend guessing: connected (this socket), elodinConnected (backend↔Elodin
+// link), simulated (active simulated run), and dataFresh (we actually ingested a
+// row from Elodin within DATA_FRESH_MS — i.e. the pipeline is really delivering).
+function connectionStatusPayload(extra: Record<string, unknown> = {}) {
+  return {
+    connected: true,
+    elodinConnected: elodin.isConnected(),
+    simulated: isSimulated(),
+    dataFresh: Date.now() - lastIngestMs < DATA_FRESH_MS,
+    ...extra,
+  };
+}
+
+// Re-broadcast connection status (used when the simulated state flips on session
+// start/stop so the badge updates without waiting for an Elodin reconnect).
+function broadcastConnectionStatus(): void {
+  broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: connectionStatusPayload() });
+}
+
+// Push the authoritative status ~1 Hz so dataFresh (and thus the badge) never goes
+// stale — otherwise it would only refresh on connect/elodin-flip and could show
+// "Simulated Data" long after the pipeline stopped delivering.
+setInterval(broadcastConnectionStatus, 1000);
+
 elodin.on('connected', () => {
   console.log('[ThinServer] Elodin Connected');
-  broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true } });
+  broadcastConnectionStatus();
 
   if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
   shouldResubscribe = true;
@@ -1014,7 +1126,11 @@ elodin.on('connected', () => {
 
 elodin.on('disconnected', () => {
   console.log('[ThinServer] Elodin DB disconnected');
-  broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: false } });
+  // The data source is gone (run stopped / DB swap). Clear the freshness clock so a
+  // new run starts as "not delivering" (dataFresh=false) instead of briefly showing
+  // the stale previous run's fresh state — fixes the "Simulated Data" flash on start.
+  lastIngestMs = 0;
+  broadcastConnectionStatus();
   if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
   clearSubscriptionState();
 });
@@ -1035,7 +1151,7 @@ elodin.on('packet', (header: any, payload: Buffer) => {
     }
 
     // ── Parse sensor/actuator/state packets ──────────────────────────────────
-    const parsedList = parseElodinPacket(header.packetId, payload);
+    const parsedList = parseElodinPacket(header.packetId, payload, _hpBoardNumbers);
 
     if (parsedList.length === 0) {
       if (high >= 0x40) {
@@ -1086,21 +1202,11 @@ elodin.on('packet', (header: any, payload: Buffer) => {
       broadcastStateUpdate();
       broadcastCommandedActuatorsForState(currentState);
       scheduleActuatorMismatchCheck(currentState);
-      if (currentState === SystemState.FIRE && prevState !== SystemState.FIRE) {
-        sendToControllerService('FIRE_START\n').then(({ ok, reply }) => {
-          if (!ok) {
-            console.error(`[ThinServer] FIRE_START not acknowledged by controller_service: ${reply}`);
-            broadcastNotification({ key: 'fire_start_failed', category: 'error', message: `FIRE_START not acknowledged by controller: ${reply}`, timestampMs: Date.now(), ongoing: false });
-          }
-        });
-      } else if (prevState === SystemState.FIRE && currentState !== SystemState.FIRE) {
-        sendToControllerService('FIRE_STOP\n').then(({ ok, reply }) => {
-          if (!ok) {
-            console.error(`[ThinServer] FIRE_STOP not acknowledged by controller_service: ${reply}`);
-            broadcastNotification({ key: 'fire_stop_failed', category: 'error', message: `FIRE_STOP not acknowledged by controller: ${reply}`, timestampMs: Date.now(), ongoing: false });
-          }
-        });
-      }
+      // FIRE_START / FIRE_STOP are NOT sent from here. The sequencer owns the burn gate and
+      // notifies controller_service itself (SequencerService::notifyControllerFire). This branch
+      // used to send them too, so a safety-critical gate had two writers in two processes racing
+      // on the same TCP endpoint — and this one keyed off SystemState.FIRE, a hardcoded enum,
+      // rather than the configured fire state.
       return;
     }
 
@@ -1136,6 +1242,7 @@ elodin.on('packet', (header: any, payload: Buffer) => {
 
       const key = `${parsed.entity}.${parsed.component}`;
       stats.ingestEntityUpdatesReceived++;
+      lastIngestMs = Date.now();
 
       // Pre-downsample ingest rate (what boards/Elodin actually deliver) — not WS broadcast rate.
       recordBoardScanIngest(parsed.entity, parsed.component);
@@ -1216,5 +1323,12 @@ httpServer.listen(WS_PORT, () => {
   console.log(`[ThinServer] Actuator service: localhost:${ACT_SVC_PORT}`);
   // Init the run-session manager last, once broadcast/notify + wss are live.
   // No-op (enabled=false) unless SESSION_SERVICE_MODE is mock/systemd.
-  sessionManager.init(broadcast, broadcastNotification);
+  // On run stop, re-baseline board status from config (clears stale heartbeat
+  // timestamps) so boards read "disconnected", matching fresh startup, instead of "---".
+  sessionManager.init(broadcast, broadcastNotification, () => {
+    loadBoardsFromConfig();
+    broadcastBoardStatus();
+  });
+  // Board diagnostic logs (type-15 LOGS forwarded by daq_bridge over loopback UDP).
+  startBoardLogReceiver(broadcast);
 });

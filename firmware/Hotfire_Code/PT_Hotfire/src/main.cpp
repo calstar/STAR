@@ -10,10 +10,10 @@
 #include "main.h"
 
 #include <Arduino.h>
-#include <DAQv2-Comms.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -43,7 +43,7 @@ ADS126X_ASSERT_FILTER_RATE(FILTER, DATA_RATE);
 
 static ADS126X ads126x;
 SPIClass ADC_SPI(HSPI);
-std::vector<Diablo::SensorDataChunkCollection> dataChunks;
+std::vector<daq::SensorDataChunkCollection> dataChunks;
 
 static SensorHotfire::CoreState coreState;
 static SensorHotfire::Config coreConfig;
@@ -51,7 +51,7 @@ static SensorHotfire::Config coreConfig;
 static unsigned long g_last_sensor_packet_log_ms = 0;
 
 // Set to true to enable Serial output from core and board; false to disable.
-bool g_sensor_hotfire_serial = true;
+bool g_verbose = true;
 
 static float convert_code_to_voltage(int32_t code) {
     return (static_cast<float>(code) * 2.5f) / 2147483648.0f;
@@ -71,7 +71,7 @@ static void collect_chunk_impl() {
         return;
     const uint8_t* active_ids = coreState.stored_config.sensor_ids;
 
-    Diablo::SensorDataChunkCollection chunk(millis(), active_count);
+    daq::SensorDataChunkCollection chunk(millis(), active_count);
     for (uint8_t i = 0; i < active_count; i++) {
         ads126x.setInputMux(getAdcChannel(active_ids[i], TEST_PIN),
                             ADS126X_AINCOM);
@@ -98,37 +98,37 @@ static void send_chunks_to_impl(IPAddress dest_ip, int dest_port,
         return;
     uint8_t packetBuffer[SENSOR_HOTFIRE_MAX_PACKET_SIZE];
     const uint8_t num_sensors = dataChunks[0].num_sensors;
-    size_t packetSize = Diablo::create_sensor_data_packet(
+    size_t packetSize = daq::create_sensor_data_packet(
         dataChunks, num_sensors, millis(), packetBuffer, sizeof(packetBuffer));
     if (packetSize == 0)
         return;
     coreState.udp.beginPacket(dest_ip, dest_port);
     coreState.udp.write(packetBuffer, packetSize);
     coreState.udp.endPacket();
-    SENSOR_HOTFIRE_PRINT("Sent: sensor_data to ");
-    SENSOR_HOTFIRE_PRINT(dest_ip);
-    SENSOR_HOTFIRE_PRINT(":");
-    SENSOR_HOTFIRE_PRINTLN(dest_port);
+    HF_VERBOSE("Sent: sensor_data to ");
+    HF_VERBOSE(dest_ip);
+    HF_VERBOSE(":");
+    HF_VERBOSELN(dest_port);
 
     unsigned long now = millis();
     if (now - g_last_sensor_packet_log_ms >= 1000) {
         g_last_sensor_packet_log_ms = now;
-        SENSOR_HOTFIRE_PRINTLN("SENSOR_DATA contents:");
+        HF_VERBOSELN("SENSOR_DATA contents:");
         for (size_t i = 0; i < dataChunks.size(); ++i) {
             const auto& chunk = dataChunks[i];
-            SENSOR_HOTFIRE_PRINT("  chunk ");
-            SENSOR_HOTFIRE_PRINT(i);
-            SENSOR_HOTFIRE_PRINT(" ts=");
-            SENSOR_HOTFIRE_PRINT(chunk.timestamp);
-            SENSOR_HOTFIRE_PRINT(" :");
+            HF_VERBOSE("  chunk ");
+            HF_VERBOSE(i);
+            HF_VERBOSE(" ts=");
+            HF_VERBOSE(chunk.timestamp);
+            HF_VERBOSE(" :");
             for (const auto& dp : chunk.datapoints) {
-                SENSOR_HOTFIRE_PRINT(" (id=");
-                SENSOR_HOTFIRE_PRINT(static_cast<unsigned>(dp.sensor_id));
-                SENSOR_HOTFIRE_PRINT(", data=");
-                SENSOR_HOTFIRE_PRINT(dp.data);
-                SENSOR_HOTFIRE_PRINT(")");
+                HF_VERBOSE(" (id=");
+                HF_VERBOSE(static_cast<unsigned>(dp.sensor_id));
+                HF_VERBOSE(", data=");
+                HF_VERBOSE(dp.data);
+                HF_VERBOSE(")");
             }
-            SENSOR_HOTFIRE_PRINTLN_();
+            HF_VERBOSELN_();
         }
     }
 
@@ -136,10 +136,10 @@ static void send_chunks_to_impl(IPAddress dest_ip, int dest_port,
         coreState.udp.beginPacket(abort_controller_ip, abort_controller_port);
         coreState.udp.write(packetBuffer, packetSize);
         coreState.udp.endPacket();
-        SENSOR_HOTFIRE_PRINT("Sent: sensor_data to ");
-        SENSOR_HOTFIRE_PRINT(abort_controller_ip);
-        SENSOR_HOTFIRE_PRINT(":");
-        SENSOR_HOTFIRE_PRINTLN(abort_controller_port);
+        HF_VERBOSE("Sent: sensor_data to ");
+        HF_VERBOSE(abort_controller_ip);
+        HF_VERBOSE(":");
+        HF_VERBOSELN(abort_controller_port);
     }
     dataChunks.clear();
 }
@@ -194,37 +194,38 @@ static const char* bias_result_str(SensorSelfTest::BiasResult r) {
 
 static void run_self_test_cb(void*,
                              const SensorHotfire::StoredSensorConfig& cfg,
-                             std::vector<Diablo::SelfTestResult>& results_out) {
+                             std::vector<daq::SelfTestResult>& results_out) {
     // 1. ADC self-test (TDAC internal)
     auto adc_result = SensorSelfTest::run_adc_self_test(
         ads126x, Pins.ADC_DRDY_1, ADS126X_REF_NEG_VSS, ADS126X_REF_POS_INT);
-    results_out.push_back(Diablo::SelfTestResult{
+    results_out.push_back(daq::SelfTestResult{
         0u, static_cast<uint8_t>(adc_result.passed ? 1 : 0)});
 
-    Serial.println("=== ADC TDAC Self-Test ===");
-    Serial.print("  read code  = ");
-    Serial.println(adc_result.code);
-    Serial.print("  expected   = ");
-    Serial.println(SensorSelfTest::ADC_TDAC_EXPECTED_CODE);
-    Serial.print("  tolerance  = ");
-    Serial.println(SensorSelfTest::ADC_TDAC_TOLERANCE);
-    Serial.print("  checksum   = ");
-    Serial.println(adc_result.checksum_valid ? "OK" : "FAIL");
-    Serial.print("  result     = ");
-    Serial.println(adc_result.passed ? "PASS" : "FAIL");
+    HF_LOGLN("=== ADC TDAC Self-Test ===");
+    // Verdict is Tier 1; the numeric detail is verbose-only.
+    HF_VERBOSE("  read code  = ");
+    HF_VERBOSELN(adc_result.code);
+    HF_VERBOSE("  expected   = ");
+    HF_VERBOSELN(SensorSelfTest::ADC_TDAC_EXPECTED_CODE);
+    HF_VERBOSE("  tolerance  = ");
+    HF_VERBOSELN(SensorSelfTest::ADC_TDAC_TOLERANCE);
+    HF_VERBOSE("  checksum   = ");
+    HF_VERBOSELN(adc_result.checksum_valid ? "OK" : "FAIL");
+    HF_LOG("  result     = ");
+    HF_LOGLN(adc_result.passed ? "PASS" : "FAIL");
     Serial.flush();
 
     // 2. Sensor bias continuity test
-    Serial.println("=== Sensor Bias Test ===");
+    HF_LOGLN("=== Sensor Bias Test ===");
     SensorSelfTest::sensor_bias_enable(ads126x);
     for (uint8_t i = 0; i < cfg.num_sensors; i++) {
         uint8_t id = cfg.sensor_ids[i];
         int channel = getAdcChannel(id, TEST_PIN);
         if (channel < 0) {
-            Serial.print("  sensor id=");
-            Serial.print(id);
-            Serial.println("  channel=INVALID  result=FAIL");
-            results_out.push_back(Diablo::SelfTestResult{id, 0u});
+            HF_LOG("  sensor id=");
+            HF_LOG(id);
+            HF_LOGLN("  channel=INVALID  result=FAIL");
+            results_out.push_back(daq::SelfTestResult{id, 0u});
             continue;
         }
         auto bias = SensorSelfTest::read_sensor_bias(
@@ -233,18 +234,18 @@ static void run_self_test_cb(void*,
         uint8_t pass =
             (bias.result == SensorSelfTest::BiasResult::CONNECTED) ? 1u : 0u;
 
-        Serial.print("  sensor id=");
-        Serial.print(id);
-        Serial.print("  ch=");
-        Serial.print(channel);
-        Serial.print("  code=");
-        Serial.print(bias.code);
-        Serial.print("  chk=");
-        Serial.print(bias.checksum_valid ? "OK" : "FAIL");
-        Serial.print("  -> ");
-        Serial.println(bias_result_str(bias.result));
+        HF_LOG("  sensor id=");
+        HF_LOG(id);
+        HF_VERBOSE("  ch=");
+        HF_VERBOSE(channel);
+        HF_VERBOSE("  code=");
+        HF_VERBOSE(bias.code);
+        HF_VERBOSE("  chk=");
+        HF_VERBOSE(bias.checksum_valid ? "OK" : "FAIL");
+        HF_LOG("  -> ");
+        HF_LOGLN(bias_result_str(bias.result));
 
-        results_out.push_back(Diablo::SelfTestResult{id, pass});
+        results_out.push_back(daq::SelfTestResult{id, pass});
     }
     Serial.flush();
     SensorSelfTest::sensor_bias_disable(ads126x);

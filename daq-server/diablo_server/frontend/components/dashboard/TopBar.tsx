@@ -12,15 +12,11 @@ import { plotEntityKeysForPressureBar } from '@/lib/sensor-colors';
 import NotificationPanel from '@/components/dashboard/NotificationPanel';
 import { useControlMode } from '@/lib/control-mode';
 import { useSensorConfig } from '@/lib/sensor-config';
+import { useGuiConfig } from '@/lib/gui-config';
+import { usePressureLimits } from '@/lib/pressure-limits';
 import { buildPressureBarDefsFromSensorConfig, type PressureBarDef } from '@/lib/pressure-bar-defs';
+import { stateNameUpper } from '@/lib/states';
 
-const STATE_NAMES: Record<number, string> = {
-  0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
-  5: 'GN2 LOW PRESS', 6: 'GN2 VENT', 7: 'FUEL PRESS', 8: 'FUEL VENT',
-  9: 'OX PRESS', 10: 'OX VENT', 11: 'GN2 HIGH PRESS', 12: 'HIGH VENT',
-  13: 'VENT', 14: 'CALIBRATE', 15: 'READY', 16: 'FIRE', 17: 'ABORT',
-  20: 'PRESS STANDBY',
-};
 
 const STATE_COLORS: Record<number, string> = {
   16: 'text-red-400',
@@ -100,16 +96,23 @@ export default function TopBar() {
   const countdownTargetTimeMs = useSensorStore((s) => s.countdownTargetTimeMs);
   const session = useSensorStore((s) => s.session);
   const navigate = useNavigate();
-  const { controlEnabled, isOperator, unlocking, error, unlock, lock } = useControlMode();
-  const [passwordInput, setPasswordInput] = useState('');
+  const { controlEnabled, isOperator, error, unlock, lock } = useControlMode();
   const [showUnlockForm, setShowUnlockForm] = useState(false);
 
   const connectionStatus = useSensorStore((s) => s.connectionStatus) ?? { connected: false, elodinConnected: false };
   const [clock, setClock] = useState('');
   const [countdown, setCountdown] = useState('---:--:--');
   const [countdownExpired, setCountdownExpired] = useState(false);
-  const [pressureBars, setPressureBars] = useState<PressureBarDef[]>([]);
   const sensors = useSensorConfig();
+  const { pressureBars: barConfig } = useGuiConfig();
+  const pressureLimits = usePressureLimits();
+
+  // Top-bar gauges come from config ([[gui.pressure_bars]]) with NOP/MEOP from
+  // [pressure_limits]; all three hooks refetch on CONFIG_UPDATED, so edits are live.
+  const pressureBars = useMemo(
+    () => buildPressureBarDefsFromSensorConfig(sensors, barConfig, pressureLimits),
+    [sensors, barConfig, pressureLimits],
+  );
 
   const ws = getWebSocketClient();
 
@@ -119,23 +122,13 @@ export default function TopBar() {
   const [dateTimeInput, setDateTimeInput] = useState('');
   const [hitZeroMode, setHitZeroMode] = useState<'time' | 'datetime'>('time');
 
-  const loadPressureBars = useCallback(() => {
-    setPressureBars(buildPressureBarDefsFromSensorConfig(sensors));
-  }, [sensors]);
-
-  useEffect(() => {
-    loadPressureBars();
-  }, [loadPressureBars]);
-
   useEffect(() => {
     try {
       startDataCache(); // begin 1 Hz background sampling for plot history
     } catch (err) {
       console.error('[TopBar] Failed to start data cache:', err);
     }
-    const unsubConfig = ws.on(MessageType.CONFIG_UPDATED, () => loadPressureBars());
-    return () => { unsubConfig(); };
-  }, [ws, loadPressureBars]);
+  }, []);
 
   useEffect(() => {
     const tick = () => setClock(new Date().toLocaleTimeString('en-US', { hour12: true }));
@@ -215,10 +208,18 @@ export default function TopBar() {
   }, [dateTimeInput, hitZeroMode, sendCountdownTarget, timeOfDayInput]);
 
   const effectiveState = currentState ?? SystemState.IDLE;
-  const currentStateName = STATE_NAMES[effectiveState] ?? `STATE ${effectiveState}`;
+  const currentStateName = stateNameUpper(effectiveState);
   const stateColor = STATE_COLORS[effectiveState] ?? 'text-text';
   const isConnected = connectionStatus.connected;
   const isFullyConnected = connectionStatus.connected && connectionStatus.elodinConnected;
+  const isSimulated = !!connectionStatus.simulated;
+  // Backend-authoritative "pipeline is actually delivering data" — the badge shows
+  // Simulated/Connected only when this is true, so a run marked active but not yet
+  // (or no longer) producing data reads "Data Pipeline Down", never a stale badge.
+  const dataFresh = !!connectionStatus.dataFresh;
+  // Session-enabled deployment with no active run: the pipeline is intentionally
+  // down, so show "Session Stopped" rather than a "Data Pipeline Down" alarm.
+  const sessionStopped = !!(session?.enabled && !session.active);
 
   const effectivePressureBars = useMemo(() => {
     if (pressureBars.length > 0) return pressureBars;
@@ -237,7 +238,7 @@ export default function TopBar() {
     if (!controlEnabled) return;
     updateState({
       currentState: state,
-      stateName: STATE_NAMES[state] ?? `STATE ${state}`,
+      stateName: stateNameUpper(state),
       timestamp: Date.now(),
     });
     const cmd: CommandPayload = { commandType: 'state_transition', data: { state } };
@@ -277,9 +278,9 @@ export default function TopBar() {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isFullyConnected ? 'bg-green-500' : isConnected ? 'bg-yellow-500' : 'bg-red-500'}`} />
+            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${!isConnected ? 'bg-red-500' : sessionStopped ? 'bg-gray-500' : dataFresh ? (isSimulated ? 'bg-purple-500' : 'bg-green-500') : 'bg-yellow-500'}`} />
             <span className="text-sm text-gray-300 font-semibold">
-              {isFullyConnected ? 'Connected' : isConnected ? 'Data Pipeline Down' : 'Disconnected'}
+              {!isConnected ? 'Disconnected' : sessionStopped ? 'Session Stopped' : dataFresh ? (isSimulated ? 'Simulated Data' : 'Connected') : 'Data Pipeline Down'}
             </span>
           </div>
           {session?.enabled && (
@@ -492,7 +493,8 @@ export default function TopBar() {
                 if (controlEnabled) {
                   lock();
                   setShowUnlockForm(false);
-                  setPasswordInput('');
+                } else if (isOperator) {
+                  unlock();
                 } else {
                   setShowUnlockForm((v) => !v);
                 }
@@ -501,40 +503,22 @@ export default function TopBar() {
                   ? 'border-green-500 bg-green-900/40 text-green-300 hover:bg-green-800/60'
                   : 'border-gray-700 bg-gray-900 text-gray-400 hover:bg-gray-800'
                 }`}
+              title={
+                controlEnabled
+                  ? 'Controller mode: click to return to viewer'
+                  : isOperator
+                    ? 'Click to take control'
+                    : 'Viewer mode: you are not an approved operator'
+              }
             >
               {controlEnabled ? 'CONTROLLER' : 'VIEWER'}
             </button>
 
-            {!controlEnabled && showUnlockForm && (
+            {!controlEnabled && !isOperator && showUnlockForm && (
               <div className="absolute top-full right-0 mt-1 flex flex-col gap-1 bg-background border border-gray-700 rounded px-2 py-2 shadow-lg z-50 w-48">
-                {!isOperator ? (
-                  <span className="text-[10px] text-yellow-400">
-                    You&apos;re not an approved operator — control is view-only.
-                  </span>
-                ) : (
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      unlock(passwordInput);
-                    }}
-                    className="flex flex-col gap-1"
-                  >
-                    <input
-                      type="password"
-                      value={passwordInput}
-                      onChange={(e) => setPasswordInput(e.target.value)}
-                      placeholder="Control password"
-                      className="px-2 py-1 rounded bg-black/60 border border-gray-700 text-[11px] text-white"
-                    />
-                    <button
-                      type="submit"
-                      disabled={unlocking || !passwordInput}
-                      className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wider border border-blue-700 bg-blue-700/80 hover:bg-blue-600 disabled:opacity-50"
-                    >
-                      {unlocking ? 'Unlocking…' : 'Submit'}
-                    </button>
-                  </form>
-                )}
+                <span className="text-[10px] text-yellow-400">
+                  You&apos;re not an approved operator — control is view-only.
+                </span>
                 {error && (
                   <span className="text-[10px] text-red-400">
                     {error}

@@ -27,7 +27,12 @@ target_link_libraries(sequencer_service
 
 # ── Controller Service ────────────────────────────────────────────────────────
 # Thrust/altitude control (LUT-based or robust DDP)
-add_executable(controller_service controller/controller_main.cpp)
+# StateMachine.cpp: the controller resolves the [fire] state name to its id rather than carrying a
+# second copy of the enum.
+add_executable(controller_service
+    controller/controller_main.cpp
+    sequencer/StateMachine.cpp
+)
 target_include_directories(controller_service PRIVATE ${COMMON_INCLUDES})
 target_link_libraries(controller_service
     fsw_daq_lib daq_comms_lib Eigen3::Eigen Threads::Threads pthread ${RT_LIBRARY}
@@ -61,11 +66,6 @@ target_include_directories(ota_service PRIVATE ${COMMON_INCLUDES})
 target_link_libraries(ota_service Threads::Threads pthread ${RT_LIBRARY})
 
 # ── Data Logger Service ───────────────────────────────────────────────────────
-add_executable(data_logger_service data_logger/data_logger_main.cpp)
-target_include_directories(data_logger_service PRIVATE ${COMMON_INCLUDES})
-target_link_libraries(data_logger_service
-    fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY}
-)
 
 # ── uWebSockets (optional, for future fsw_web_bridge) ────────────────────────
 set(USOCKETS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../external/uWebSockets")
@@ -85,6 +85,6 @@ endif()
 
 install(TARGETS
     sequencer_service controller_service calibration_service
-    heartbeat_service config_broadcast_service ota_service data_logger_service
+    heartbeat_service config_broadcast_service ota_service
     RUNTIME DESTINATION bin
 )

@@ -2,5 +2,9 @@
   "name": "sensor-system-shared-types",
   "version": "1.0.0",
   "type": "module",
-  "private": true
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json && git diff --exit-code -- types.js types.d.ts types.js.map types.d.ts.map"
+  }
 }

@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { parseElodinPacket } from '../elodin-protocol.js';
 
-describe('elodin-protocol HP PT board slot 2 (unsigned raw)', () => {
+describe('elodin-protocol HP PT boards (unsigned raw)', () => {
+  // Which slots are 4-20 mA boards comes from config (sensor-config.hpBoardNumbers); the
+  // decoder has no positional "slot 2 is HP" assumption, so every call states it.
+  const hpSlot2 = new Set([2]);
   it('parses PT2 raw ADC as uint32 (high bit set stays positive)', () => {
     const buf = Buffer.alloc(21);
     buf.writeBigUInt64LE(0n, 0);
@@ -10,7 +13,7 @@ describe('elodin-protocol HP PT board slot 2 (unsigned raw)', () => {
     buf.writeUInt32LE(u, 12);
     buf.writeUInt32LE(0, 16);
     buf.writeUInt8(0, 20);
-    const out = parseElodinPacket([0x20, 0x21], buf);
+    const out = parseElodinPacket([0x20, 0x21], buf, hpSlot2);
     expect(out).toHaveLength(1);
     expect(out[0].entity).toBe('PT2.CH1');
     expect(out[0].value).toBe(u);
@@ -24,9 +27,35 @@ describe('elodin-protocol HP PT board slot 2 (unsigned raw)', () => {
     const u = 0xa0000000 >>> 0;
     buf.writeUInt32LE(u, 16);
     buf.writeUInt8(1, 20);
-    const out = parseElodinPacket([0x20, 0x31], buf);
+    const out = parseElodinPacket([0x20, 0x31], buf, hpSlot2);
     const raw = out.find((p) => p.component === 'raw_adc_counts');
     expect(raw!.value).toBe(u);
+  });
+
+  it('parses a second HP PT board (slot 3) as uint32 too', () => {
+    const buf = Buffer.alloc(21);
+    buf.writeBigUInt64LE(0n, 0);
+    buf.writeUInt8(1, 8);
+    const u = 0x90000000 >>> 0;
+    buf.writeUInt32LE(u, 12);
+    buf.writeUInt32LE(0, 16);
+    buf.writeUInt8(0, 20);
+    // low = (3-1) * 0x20 + 1 = 0x41
+    const out = parseElodinPacket([0x20, 0x41], buf, new Set([2, 3]));
+    expect(out).toHaveLength(1);
+    expect(out[0].entity).toBe('PT3.CH1');
+    expect(out[0].value).toBe(u);
+  });
+
+  it('parses slot 2 as signed when it is not declared a 4-20 mA board', () => {
+    const buf = Buffer.alloc(21);
+    buf.writeBigUInt64LE(0n, 0);
+    buf.writeUInt8(1, 8);
+    buf.writeInt32LE(-500_000, 12);
+    buf.writeUInt32LE(0, 16);
+    buf.writeUInt8(0, 20);
+    const out = parseElodinPacket([0x20, 0x21], buf, new Set([3]));
+    expect(out[0].value).toBe(-500_000);
   });
 });
 

@@ -17,7 +17,9 @@
 
 \section{Overview}
 
-\textbf{Yes} — the robust calibration stack is the primary calibration path. When \texttt{start\_tmux\_dev.sh} runs (default \texttt{USE\_ROBUST\_CALIBRATION=1}), only \texttt{calibration\_server.py} writes calibrated values to Elodin DB. The C++ \texttt{calibration\_service} (polynomial) is disabled. The Python path implements the full robust mathematical framework described below.
+The C++ \texttt{calibration\_service} is the primary, deployed calibration path: it is what \texttt{start\_tmux\_dev.sh} and the systemd \texttt{sensor-calibration.service} run, subscribing to raw sensor data on Elodin and publishing calibrated values back. It implements the full robust mathematical framework described below (ported to C++ in \texttt{RobustCalibrationFramework.cpp}) alongside the factory cubic and the per-sensor physics conversions (ITS-90 thermocouple, Callendar--Van Dusen RTD, ratiometric load cell, 4--20\,mA HP PT). For low-pressure PTs it streams the factory cubic by default; the robust model runs as a background learner and becomes the streamed output only under \texttt{CAL\_USE\_ROBUST\_PT}/\texttt{CAL\_USE\_ROBUST\_BLEND}.
+
+The Python \texttt{calibration\_server.py} is a \emph{dormant reference implementation} of the same framework, retained for development and for the standalone calibration tools; it is no longer deployed as a service and no current launch path starts it. The mathematics below describes the algorithm as implemented in both.
 
 \section{Data Pipeline}
 

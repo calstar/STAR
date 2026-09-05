@@ -125,7 +125,7 @@ def _is_prod_request() -> bool:
 def _requested_app() -> str:
     """The app being accessed, as the leftmost label of the forwarded host.
 
-    `onshape-viewer.starberkeley.org` -> `onshape-viewer`; the bare domain ->
+    `openrocket.starberkeley.org` -> `openrocket`; the bare domain ->
     `""`. This is what /verify uses to look up a per-app allowlist. Off
     production (localhost dev) Caddy is not in the loop, so this is not reached.
     """
@@ -285,10 +285,14 @@ def verify():
         app = _requested_app()
 
         # Authentication passed (valid @berkeley.edu session). Some apps add an
-        # authorization step -- a named allowlist -- on top. A denied user is
-        # already logged in, so this is a 403, never a login bounce: re-logging
-        # in would not change the answer.
-        if not allowlist.is_approved(app, email):
+        # authorization step -- a named allowlist -- on top, but only for the
+        # paths that spend a brokered credential (e.g. STAR OpenRocket's Onshape
+        # search/build). Every other path is open to any signed-in user, so the
+        # allowlist is consulted only when the requested path is one that needs
+        # it. A denied user is already logged in, so this is a 403, never a login
+        # bounce: re-logging in would not change the answer.
+        uri = request.headers.get("X-Forwarded-Uri", "/")
+        if allowlist.path_needs_approval(app, uri) and not allowlist.is_approved(app, email):
             if _wants_interactive_login():
                 return _not_approved_page(email, app), 403
             return "Forbidden", 403

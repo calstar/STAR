@@ -8,11 +8,11 @@
  */
 
 #include <Arduino.h>
-#include <DAQv2-Comms.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
 #include <SPIFFS.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -61,8 +61,8 @@ static unsigned long state_enter_ms = 0;
 
 // Parsed actuator config from server
 static bool is_abort_controller = false;
-static std::vector<Diablo::AbortActuatorLocation> abort_actuator_locations;
-static std::vector<Diablo::AbortPTLocation> abort_pt_locations;
+static std::vector<daq::AbortActuatorLocation> abort_actuator_locations;
+static std::vector<daq::AbortPTLocation> abort_pt_locations;
 static bool config_valid = false;
 
 // For ConnectionLossDetected -> StandaloneAbort: last time we got sensor data
@@ -162,43 +162,43 @@ static void updateLedNonBlocking() {
 }
 
 //-----------------------------------------------------------------------------
-// Helpers: map state to Diablo::BoardState for heartbeats
+// Helpers: map state to daq::BoardState for heartbeats
 //-----------------------------------------------------------------------------
-static Diablo::BoardState getBoardStateForHeartbeat() {
+static daq::BoardState getBoardStateForHeartbeat() {
     switch (state) {
         case ActuatorControllerState::WaitingForServer:
-            return Diablo::BoardState::SETUP;
+            return daq::BoardState::SETUP;
         case ActuatorControllerState::Active:
-            return Diablo::BoardState::ACTIVE;
+            return daq::BoardState::ACTIVE;
         case ActuatorControllerState::ConnectionLossDetected:
-            return Diablo::BoardState::CONNECTION_LOSS_DETECTED;
+            return daq::BoardState::CONNECTION_LOSS_DETECTED;
         case ActuatorControllerState::NoConnectionAbort:
-            return Diablo::BoardState::NO_CONNECTION_ABORT;
+            return daq::BoardState::NO_CONNECTION_ABORT;
         case ActuatorControllerState::PTAbort:
-            return Diablo::BoardState::PT_ABORT;
+            return daq::BoardState::PT_ABORT;
         case ActuatorControllerState::NoPTAbort:
-            return Diablo::BoardState::NO_PT_ABORT;
+            return daq::BoardState::NO_PT_ABORT;
         case ActuatorControllerState::AbortFinished:
-            return Diablo::BoardState::ABORT_FINISHED;
+            return daq::BoardState::ABORT_FINISHED;
         case ActuatorControllerState::StandardAbort:
-            return Diablo::BoardState::PT_ABORT;
+            return daq::BoardState::PT_ABORT;
         case ActuatorControllerState::StandaloneAbort:
-            return Diablo::BoardState::STANDALONE_ABORT;
+            return daq::BoardState::STANDALONE_ABORT;
         default:
-            return Diablo::BoardState::SETUP;
+            return daq::BoardState::SETUP;
     }
 }
 
 static void sendBoardHeartbeat() {
-    Diablo::BoardHeartbeatPacket hb;
+    daq::BoardHeartbeatPacket hb;
     memcpy(hb.firmware_hash, FirmwareHash::get(), 32);
     hb.board_id = board_id;
-    hb.engine_state = Diablo::EngineState::SAFE;
+    hb.engine_state = daq::EngineState::SAFE;
     hb.board_state = getBoardStateForHeartbeat();
 
     uint8_t packetBuffer[MAX_PACKET_SIZE];
-    size_t len = Diablo::create_board_heartbeat_packet(
-        hb, millis(), packetBuffer, sizeof(packetBuffer));
+    size_t len = daq::create_board_heartbeat_packet(hb, millis(), packetBuffer,
+                                                    sizeof(packetBuffer));
     if (len == 0)
         return;
 
@@ -227,10 +227,10 @@ static IPAddress uint32ToIPAddress(uint32_t ip) {
 // Parse incoming UDP
 //-----------------------------------------------------------------------------
 static bool readPacketHeader(const uint8_t* buffer, size_t buffer_size,
-                             Diablo::PacketHeader& header_out) {
-    if (buffer_size < sizeof(Diablo::PacketHeader))
+                             daq::PacketHeader& header_out) {
+    if (buffer_size < sizeof(daq::PacketHeader))
         return false;
-    memcpy(&header_out, buffer, sizeof(Diablo::PacketHeader));
+    memcpy(&header_out, buffer, sizeof(daq::PacketHeader));
     return true;
 }
 
@@ -245,33 +245,32 @@ enum class IncomingPacketKind {
 };
 
 static void processActuatorCommands(
-    const std::vector<Diablo::ActuatorCommand>& commands);
+    const std::vector<daq::ActuatorCommand>& commands);
 
 static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
                                                 size_t len,
                                                 IPAddress remoteIP) {
-    Diablo::PacketHeader hdr;
+    daq::PacketHeader hdr;
     if (!readPacketHeader(buffer, len, hdr))
         return IncomingPacketKind::None;
 
     switch (hdr.packet_type) {
-        case Diablo::PacketType::SERVER_HEARTBEAT: {
-            Diablo::PacketHeader dummy;
-            Diablo::ServerHeartbeatPacket data;
-            if (Diablo::parse_server_heartbeat_packet(buffer, len, dummy,
-                                                      data)) {
+        case daq::PacketType::SERVER_HEARTBEAT: {
+            daq::PacketHeader dummy;
+            daq::ServerHeartbeatPacket data;
+            if (daq::parse_server_heartbeat_packet(buffer, len, dummy, data)) {
                 last_server_heartbeat_ms = millis();
                 return IncomingPacketKind::ServerHeartbeat;
             }
             return IncomingPacketKind::None;
         }
-        case Diablo::PacketType::ACTUATOR_CONFIG: {
-            Diablo::PacketHeader dummy;
+        case daq::PacketType::ACTUATOR_CONFIG: {
+            daq::PacketHeader dummy;
             uint8_t is_controller = 0;
-            std::vector<Diablo::AbortActuatorLocation> act_locs;
-            std::vector<Diablo::AbortPTLocation> pt_locs;
+            std::vector<daq::AbortActuatorLocation> act_locs;
+            std::vector<daq::AbortPTLocation> pt_locs;
             uint8_t enable_serial_printing = 0;
-            if (Diablo::parse_actuator_config_packet(
+            if (daq::parse_actuator_config_packet(
                     buffer, len, dummy, is_controller, act_locs, pt_locs,
                     enable_serial_printing)) {
                 (void)enable_serial_printing;
@@ -283,13 +282,13 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
             }
             return IncomingPacketKind::None;
         }
-        case Diablo::PacketType::ABORT:
+        case daq::PacketType::ABORT:
             return IncomingPacketKind::Abort;
-        case Diablo::PacketType::ABORT_DONE:
+        case daq::PacketType::ABORT_DONE:
             return IncomingPacketKind::AbortDone;
-        case Diablo::PacketType::CLEAR_ABORT:
+        case daq::PacketType::CLEAR_ABORT:
             return IncomingPacketKind::ClearAbort;
-        case Diablo::PacketType::SENSOR_DATA:
+        case daq::PacketType::SENSOR_DATA:
             if (state == ActuatorControllerState::NoConnectionAbort) {
                 pt_data_received_during_no_conn_abort_wait = true;
             }
@@ -300,11 +299,11 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
                 }
             }
             return IncomingPacketKind::SensorData;
-        case Diablo::PacketType::ACTUATOR_COMMAND: {
-            Diablo::PacketHeader cmd_header;
-            std::vector<Diablo::ActuatorCommand> commands;
-            if (Diablo::parse_actuator_command_packet(buffer, len, cmd_header,
-                                                      commands) &&
+        case daq::PacketType::ACTUATOR_COMMAND: {
+            daq::PacketHeader cmd_header;
+            std::vector<daq::ActuatorCommand> commands;
+            if (daq::parse_actuator_command_packet(buffer, len, cmd_header,
+                                                   commands) &&
                 (state == ActuatorControllerState::Active ||
                  state == ActuatorControllerState::StandardAbort)) {
                 processActuatorCommands(commands);
@@ -317,7 +316,7 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
 }
 
 static void processActuatorCommands(
-    const std::vector<Diablo::ActuatorCommand>& commands) {
+    const std::vector<daq::ActuatorCommand>& commands) {
     for (const auto& cmd : commands) {
         if (cmd.actuator_id < 1 || cmd.actuator_id > NUM_ACTUATORS)
             continue;
@@ -337,7 +336,7 @@ static void processActuatorCommands(
 // Sensor data: read current sense pins and send (like Actuator_Testing)
 //-----------------------------------------------------------------------------
 static void readCurrentSensePinsAndSend() {
-    Diablo::SensorDataChunkCollection chunk(millis(), NUM_SENSORS);
+    daq::SensorDataChunkCollection chunk(millis(), NUM_SENSORS);
     for (uint8_t i = 0; i < NUM_SENSORS; i++) {
         int pin = getCurrentSensePin(i);
         if (pin < 0)
@@ -352,9 +351,9 @@ static void readCurrentSensePinsAndSend() {
         return;
 
     uint8_t packetBuffer[MAX_PACKET_SIZE];
-    std::vector<Diablo::SensorDataChunkCollection> chunks;
+    std::vector<daq::SensorDataChunkCollection> chunks;
     chunks.push_back(chunk);
-    size_t packetSize = Diablo::create_sensor_data_packet(
+    size_t packetSize = daq::create_sensor_data_packet(
         chunks, NUM_SENSORS, millis(), packetBuffer, sizeof(packetBuffer));
     if (packetSize == 0)
         return;
@@ -383,10 +382,10 @@ static void streamSensorDataIfDue() {
 //-----------------------------------------------------------------------------
 static size_t create_no_connection_abort_packet(uint8_t* buffer,
                                                 size_t buffer_size) {
-    if (buffer_size < sizeof(Diablo::PacketHeader))
+    if (buffer_size < sizeof(daq::PacketHeader))
         return 0;
-    Diablo::PacketHeader header;
-    header.packet_type = Diablo::PacketType::NO_CONNECTION_ABORT;
+    daq::PacketHeader header;
+    header.packet_type = daq::PacketType::NO_CONNECTION_ABORT;
     header.version = DIABLO_COMMS_VERSION;
     header.timestamp = millis();
     memcpy(buffer, &header, sizeof(header));

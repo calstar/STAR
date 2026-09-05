@@ -9,10 +9,10 @@
  */
 
 #include <Arduino.h>
-#include <DAQv2-Comms.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -43,17 +43,17 @@ uint8_t replyBuffer[MAX_PACKET_SIZE];
 void sendReplyTo(IPAddress primaryIP) {
     unsigned long ts = millis();
     const uint8_t numSensors = 1;
-    Diablo::SensorDataChunkCollection chunk(ts, numSensors);
+    daq::SensorDataChunkCollection chunk(ts, numSensors);
     float ack = 42.0f;  // simple "ACK" value
     uint32_t ackBits;
     memcpy(&ackBits, &ack, sizeof(float));
     chunk.add_datapoint(0, ackBits);
 
-    std::vector<Diablo::SensorDataChunkCollection> chunks;
+    std::vector<daq::SensorDataChunkCollection> chunks;
     chunks.push_back(chunk);
 
-    size_t n = Diablo::create_sensor_data_packet(
-        chunks, numSensors, millis(), replyBuffer, sizeof(replyBuffer));
+    size_t n = daq::create_sensor_data_packet(chunks, numSensors, millis(),
+                                              replyBuffer, sizeof(replyBuffer));
     if (n == 0)
         return;
 

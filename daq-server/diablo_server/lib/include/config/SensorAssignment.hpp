@@ -158,11 +158,6 @@ public:
     bool update_board_config_from_packet(uint8_t board_id, const uint8_t* data, size_t size);
 
     /**
-     * @brief Generate configuration file with assignments
-     */
-    bool save_assignments_to_config(const std::string& output_path) const;
-
-    /**
      * @brief Load assignments from config file
      */
     bool load_assignments_from_config(const std::string& config_path);

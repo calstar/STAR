@@ -1,6 +1,6 @@
 /**
- * Build DiabloAvionics firmware with PlatformIO.
- * Scans external/DiabloAvionics for platformio.ini projects,
+ * Build board firmware with PlatformIO.
+ * Scans firmware/Hotfire_Code for platformio.ini projects,
  * runs `pio run`, and returns the firmware.bin path.
  */
 
@@ -9,25 +9,32 @@ import * as path from 'path';
 import { spawn, execSync } from 'child_process';
 import { readConfig } from './routes/config.js';
 
-const DIABLOAVIONICS_REL = 'external/DiabloAvionics';
+// Board firmware lives in the monorepo now (was external/DiabloAvionics before the
+// migration). The flashable hotfire projects are under firmware/Hotfire_Code.
+const FIRMWARE_REL = 'firmware/Hotfire_Code';
+// Projects under FIRMWARE_REL that are not board firmware (won't espota-flash).
+const NON_FLASHABLE = new Set(['Hotfire_Tests']);
 
 function getWorkspaceRoot(): string {
-  const cwd = process.cwd();
-  // Try cwd, then cwd/.., then cwd/../.. for external/DiabloAvionics
-  for (const root of [cwd, path.join(cwd, '..'), path.join(cwd, '..', '..')]) {
-    const p = path.join(root, DIABLOAVIONICS_REL);
-    if (fs.existsSync(p)) return path.resolve(root);
+  // Walk up from cwd (daq-server under systemd, or .../backend in dev) until we find
+  // the repo root that contains firmware/Hotfire_Code.
+  let dir = process.cwd();
+  for (let i = 0; i < 6; i++) {
+    if (fs.existsSync(path.join(dir, FIRMWARE_REL))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
   }
-  return path.resolve(cwd, '..', '..'); // fallback: web-gui/backend -> sensor_system
+  return path.resolve(process.cwd(), '..'); // fallback: cwd is daq-server ⇒ repo root
 }
 
-/** Repo root containing external/DiabloAvionics (OTA paths, config). */
+/** Repo root containing firmware/Hotfire_Code (OTA paths, config). */
 export function getOtaWorkspaceRoot(): string {
   return getWorkspaceRoot();
 }
 
 export interface OtaProject {
-  path: string;       // relative to workspace, e.g. external/DiabloAvionics/Hotfire_Code/PT_Hotfire
+  path: string;       // relative to workspace, e.g. firmware/Hotfire_Code/PT_Hotfire
   name: string;       // display name, e.g. PT_Hotfire
 }
 
@@ -40,12 +47,12 @@ export interface BuildResult {
 }
 
 /**
- * Scan for PlatformIO projects under external/DiabloAvionics.
+ * Scan for PlatformIO projects under firmware/Hotfire_Code.
  */
 export function discoverProjects(): OtaProject[] {
   const root = getWorkspaceRoot();
-  const diabloPath = path.join(root, DIABLOAVIONICS_REL);
-  if (!fs.existsSync(diabloPath)) return [];
+  const firmwarePath = path.join(root, FIRMWARE_REL);
+  if (!fs.existsSync(firmwarePath)) return [];
 
   const projects: OtaProject[] = [];
   const walk = (dir: string, relPrefix: string) => {
@@ -55,14 +62,19 @@ export function discoverProjects(): OtaProject[] {
       const rel = path.join(relPrefix, e.name);
       if (e.isDirectory()) {
         if (e.name === '.git' || e.name === '.pio' || e.name === 'node_modules') continue;
+        if (NON_FLASHABLE.has(e.name)) continue; // e.g. the native test harness
         walk(full, rel);
       } else if (e.name === 'platformio.ini') {
-        const name = path.basename(path.dirname(rel));
-        projects.push({ path: rel.replace(/\\/g, '/'), name });
+        // Return the PROJECT DIRECTORY (not the .ini path) — the flash endpoint joins
+        // this with the workspace root and pio runs in it. Including platformio.ini
+        // made single-board flash build in a non-existent ".../platformio.ini" dir.
+        const dirRel = path.dirname(rel);
+        const name = path.basename(dirRel);
+        projects.push({ path: dirRel.replace(/\\/g, '/'), name });
       }
     }
   };
-  walk(diabloPath, DIABLOAVIONICS_REL);
+  walk(firmwarePath, FIRMWARE_REL);
   return projects.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -170,13 +182,13 @@ export async function buildProject(projectPath: string, buildFlags?: string): Pr
   });
 }
 
-/** Board type → DiabloAvionics project path (firmware with TEMP_HARDCODE_BOARD_ID support) */
+/** Board type → firmware project path (firmware with TEMP_HARDCODE_BOARD_ID support). */
 export const BOARD_TYPE_TO_PROJECT: Record<string, string> = {
-  PT: 'external/DiabloAvionics/Hotfire_Code/PT_Hotfire',
-  ACTUATOR: 'external/DiabloAvionics/Hotfire_Code/Actuator_Hotfire',
-  LC: 'external/DiabloAvionics/Hotfire_Code/LC_Hotfire',
-  TC: 'external/DiabloAvionics/Hotfire_Code/TC_Hotfire',
-  RTD: 'external/DiabloAvionics/Hotfire_Code/RTD_Hotfire',
+  PT: 'firmware/Hotfire_Code/PT_Hotfire',
+  ACTUATOR: 'firmware/Hotfire_Code/Actuator_Hotfire',
+  LC: 'firmware/Hotfire_Code/LC_Hotfire',
+  TC: 'firmware/Hotfire_Code/TC_Hotfire',
+  RTD: 'firmware/Hotfire_Code/RTD_Hotfire',
 };
 
 export interface FlashAllBoard {

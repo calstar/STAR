@@ -21,10 +21,11 @@ top-level directory with its own README. Start with the one you're working on.
 | [`daq-server/`](daq-server/README.md) | Ground support **DAQ server / flight software** — receives sensor data over the network, logs it, drives the state machine and actuators, and serves the live web GUI used during hotfires. | C++, TypeScript/Node, Next.js, Elodin DB |
 | [`firmware/`](firmware/README.md) | **Board firmware** for every avionics board (PT, TC, RTD, LC, Encoder, Actuator). Reads sensors, talks to the DAQ server over Ethernet, runs the on-board abort logic. Subtree of [`calstar/DiabloAvionics`](https://github.com/calstar/DiabloAvionics). | Arduino / PlatformIO, ESP32-S3, C++ |
 | [`lib/DAQv2-Comms/`](lib/DAQv2-Comms/README.md) | The **wire protocol** shared by the firmware and the DAQ server — packet definitions, enums, and (de)serialization. The single source of truth for what goes over the wire. | C++ (Arduino library) |
-| [`lib/stardesign/`](lib/stardesign/README.md) | The **design core** shared by the three design tools — per-user storage, cross-user sharing (who may edit whose design), and version history. Extracted once all three needed the same permission check. | Python |
+| [`lib/stardesign/`](lib/stardesign/README.md) | The **design core** shared by the design tools — per-user storage, cross-user sharing (who may edit whose design), and version history. Extracted once they all needed the same permission check. | Python |
+| [`lib/stardesign-ui/`](lib/stardesign-ui/README.md) | The **client half** of the same thing — the Change dialog, the checkout chip, the read-only context, and the design API client. | TypeScript, React |
 | [`EngineDesign/`](EngineDesign/README.md) | **Engine design & optimization pipeline** — physics simulation of liquid bipropellant engines (propellants and injector type are configurable) plus a multi-layer optimizer, a control system, and a web UI. Solves chamber pressure, thrust, and Isp from tank pressures. | Python, FastAPI, React |
 | [`pid-designer/`](pid-designer/README.md) | Interactive **P&ID (Piping & Instrumentation Diagram) editor** for the propulsion feed system, with git-backed versioning. | FastAPI, React + React Flow |
-| [`onshape-viewer/`](onshape-viewer/README.md) | **Onshape CM viewer** — renders an assembly from CAD and computes its centre of mass, recomputing live as parts are toggled or re-materialled. | FastAPI, React + three.js |
+| [`star-openrocket/`](star-openrocket/README.md) | **Onshape CM viewer, stability, ascent flight dynamics and recovery** (the recovery calculator merged in as a tab) — renders an assembly from CAD and computes its centre of mass, recomputing live as parts are toggled or re-materialled. | FastAPI, React + three.js |
 
 ### How they fit together
 
@@ -44,12 +45,13 @@ top-level directory with its own README. Start with the one you're working on.
 they speak the protocol defined in `lib/DAQv2-Comms/` (the firmware reaches it
 through a symlink at `firmware/libraries/DAQv2-Comms`).
 
-`EngineDesign/`, `pid-designer/` and `recovery-calculator/` are the design
-tools. They are separate apps with separate UIs, but they store, share and
-version designs identically, and all three build on `lib/stardesign/` and mount
-one shared `userdata` volume — which is what lets you browse a teammate's
-designs and take a copy, or share one and edit it together.
-`onshape-viewer/` is standalone.
+`EngineDesign/`, `pid-designer/` and `star-openrocket/` are the design tools.
+They are separate apps with separate UIs, but they store, share and version
+designs identically, and all three build on `lib/stardesign/` (server) and
+`lib/stardesign-ui/` (client) and mount one shared `userdata` volume - which is
+what lets you browse a teammate's designs and take a copy, or share one and edit
+it together. `star-openrocket/` is the Onshape viewer with the recovery
+calculator merged into it.
 
 ---
 
@@ -66,7 +68,7 @@ cd STAR
 The top-level `setup.sh` is a thin dispatcher over per-project setup scripts.
 Each subproject owns its own install steps
 (`daq-server/setup.sh`, `firmware/setup.sh`, `EngineDesign/setup.sh`,
-`pid-designer/setup.sh`, `onshape-viewer/setup.sh`), so you only pay for what
+`pid-designer/setup.sh`, `star-openrocket/setup.sh`), so you only pay for what
 you use — cloning the repo just to edit the P&ID shouldn't force you to build
 Rust + `elodin-db`.
 
@@ -178,7 +180,7 @@ install an optional pre-push hook; CI also enforces it.
 | `firmware-ci.yml` | changes under `firmware/` | compiles each flight project + host unit tests with PlatformIO |
 | `pid-designer-ci.yml` | changes under `pid-designer/` | TypeScript build + backend import check |
 | `engine-design-ci.yml` | changes under `EngineDesign/` | pytest gate, native C kernel + parity, frontend build |
-| `onshape-viewer-ci.yml` | changes under `onshape-viewer/` | pytest gate, frontend build, and a check that the suite makes no Onshape API calls |
+| `star-openrocket-ci.yml` | changes under `star-openrocket/` | pytest gate, frontend build, and a check that the suite makes no Onshape API calls |
 | `large-files.yml` | every pull request | fails any file over 5 MB added or modified by the PR |
 | `docs.yml` | push to `main` | builds Doxygen docs and deploys to GitHub Pages |
 

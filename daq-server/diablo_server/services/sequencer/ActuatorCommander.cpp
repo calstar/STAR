@@ -15,6 +15,8 @@
 #include <sstream>
 #include <thread>
 
+#include "config/Config.hpp"
+
 // daqv2comms — all packet construction goes through here
 #include "DiabloPacketUtils.h"
 #include "comms/CommsMessage.hpp"
@@ -50,74 +52,6 @@ static std::string toLower(std::string s) {
     return s;
 }
 
-static std::string getTomlValue(const std::string& content, const std::string& section,
-                                const std::string& key, const std::string& fallback = "") {
-    const std::string header = "[" + section + "]";
-    auto sec_pos = content.find(header);
-    if (sec_pos == std::string::npos)
-        return fallback;
-
-    auto start = sec_pos + header.size();
-    auto next_sec = content.find("\n[", start);
-    const std::string sec = (next_sec == std::string::npos)
-                                ? content.substr(start)
-                                : content.substr(start, next_sec - start);
-    std::istringstream iss(sec);
-    std::string line;
-    while (std::getline(iss, line)) {
-        auto c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        auto eq = line.find('=');
-        if (eq == std::string::npos)
-            continue;
-        if (trimVal(line.substr(0, eq)) == key)
-            return trimVal(line.substr(eq + 1));
-    }
-    return fallback;
-}
-
-/**
- * Parse [type, channel, board_id] from a TOML array value.
- * type may be "NC", "NO", or "PWM".
- */
-static bool parseActuatorRole(const std::string& val, ActuatorRole& out,
-                              const std::map<int, std::string>& board_id_to_ip) {
-    size_t bracket = val.find('[');
-    if (bracket == std::string::npos)
-        return false;
-
-    size_t c1 = val.find(',', bracket + 1);
-    if (c1 == std::string::npos)
-        return false;
-    size_t c2 = val.find(',', c1 + 1);
-
-    std::string type_str = trimVal(val.substr(bracket + 1, c1 - bracket - 1));
-    std::string type_lower = toLower(type_str);
-    out.is_no = (type_lower == "no");
-    out.is_pwm = (type_lower == "pwm");
-
-    try {
-        std::string ch_str = trimVal(
-            val.substr(c1 + 1, (c2 != std::string::npos) ? c2 - c1 - 1 : std::string::npos));
-        out.channel = std::stoi(ch_str);
-
-        if (c2 != std::string::npos) {
-            int bid = std::stoi(trimVal(val.substr(c2 + 1)));
-            out.board_id = bid;
-            auto it = board_id_to_ip.find(bid);
-            out.board_ip =
-                (it != board_id_to_ip.end()) ? it->second : "192.168.2." + std::to_string(bid);
-        } else {
-            out.board_id = 11;              // fallback
-            out.board_ip = "192.168.2.11";  // fallback
-        }
-    } catch (...) {
-        return false;
-    }
-    return out.channel >= 1 && out.channel <= 10;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // load()
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,85 +59,52 @@ bool ActuatorCommander::load(const std::string& config_content, const std::strin
     roles_.clear();
     state_actuators_.clear();
 
+    const fsw::config::Config cfg = fsw::config::load_from_string(config_content);
+
     // -- Config: bind address and actuator port --
-    bind_addr_ = getTomlValue(config_content, "actuator_service", "bind_address", "0.0.0.0");
+    bind_addr_ = cfg.actuator_service.bind_address;
     if (bind_addr_.empty())
         bind_addr_ = "0.0.0.0";
+    actuator_port_ = cfg.network.actuator_cmd_port;
 
-    const std::string port_str =
-        getTomlValue(config_content, "network", "actuator_cmd_port", "5005");
-    try {
-        actuator_port_ = static_cast<uint16_t>(std::stoi(port_str));
-    } catch (...) {
-    }
-
-    // -- Board IP map: board_id → IP (from [boards.xxx] sections) --
+    // -- Board IP map: board_id → IP (from [boards.*]); canonical 192.168.2.N fallback --
     std::map<int, std::string> board_id_to_ip;
-    {
-        size_t pos = 0;
-        while (pos < config_content.size()) {
-            size_t next = config_content.find("[boards.", pos);
-            if (next == std::string::npos)
-                break;
-            size_t end = config_content.find(']', next);
-            if (end == std::string::npos)
-                break;
-            std::string sec = config_content.substr(next + 1, end - next - 1);
-            std::string ip = getTomlValue(config_content, sec, "ip", "");
-            std::string id_str = getTomlValue(config_content, sec, "id",
-                                              getTomlValue(config_content, sec, "board_id", ""));
-            if (!ip.empty() && !id_str.empty()) {
-                try {
-                    int id = std::stoi(id_str);
-                    if (id > 0)
-                        board_id_to_ip[id] = ip;
-                } catch (...) {
-                }
-            }
-            pos = end + 1;
-        }
-    }
-    if (board_id_to_ip.empty()) {
-        // Minimal fallback: canonical 192.168.2.N scheme
+    for (const auto& b : cfg.boards)
+        if (!b.ip.empty() && b.board_id > 0)
+            board_id_to_ip[b.board_id] = b.ip;
+    if (board_id_to_ip.empty())
         for (int i = 11; i <= 14; ++i)
             board_id_to_ip[i] = "192.168.2." + std::to_string(i);
-    }
 
-    // -- Actuator roles from [actuator_roles] section --
-    {
-        std::string current_section;
-        std::istringstream cfg(config_content);
-        std::string line;
-        while (std::getline(cfg, line)) {
-            auto c = line.find('#');
-            if (c != std::string::npos)
-                line = line.substr(0, c);
-            if (line.size() >= 2 && line[0] == '[') {
-                size_t end = line.find(']');
-                current_section = (end != std::string::npos) ? line.substr(1, end - 1) : "";
-                continue;
-            }
-            if (current_section != "actuator_roles")
-                continue;
-            auto eq = line.find('=');
-            if (eq == std::string::npos)
-                continue;
-
-            std::string role_name = trimVal(line.substr(0, eq));
-            ActuatorRole role;
-            if (!parseActuatorRole(trimVal(line.substr(eq + 1)), role, board_id_to_ip))
-                continue;
-            roles_[role_name] = role;
-        }
+    // -- Actuator roles from [actuator_roles] (channels 1..10 only) --
+    for (const auto& [name, r] : cfg.actuator_roles) {
+        if (r.channel < 1 || r.channel > 10)
+            continue;
+        ActuatorRole role;
+        role.is_no = r.is_no;
+        role.is_pwm = (r.kind == "PWM" || r.kind == "pwm");
+        role.channel = r.channel;
+        role.board_id = r.board_id;
+        auto it = board_id_to_ip.find(r.board_id);
+        role.board_ip =
+            (it != board_id_to_ip.end()) ? it->second : "192.168.2." + std::to_string(r.board_id);
+        roles_[name] = role;
     }
     std::cout << "[ActuatorCommander] Loaded " << roles_.size() << " actuator roles from config"
               << std::endl;
 
-    // -- State→actuator CSV --
+    // -- State→actuator CSV -- canonical source: daq-server/config/.
+    // The deployed config/*.csv are generated artifacts (gitignored), written when a profile
+    // is deployed. On a fresh checkout — CI, or a clone that has never started the backend —
+    // they do not exist yet, so fall back to the profile that owns them. Mirrors what
+    // readConfig() does for config.toml on the TypeScript side.
     const char* fallbacks[] = {
-        "firmware/test_guis/state_machine_actuators.csv",
-        "../firmware/test_guis/state_machine_actuators.csv",
-        "../../firmware/test_guis/state_machine_actuators.csv",
+        "config/state_machine_actuators.csv",
+        "../config/state_machine_actuators.csv",
+        "../../config/state_machine_actuators.csv",
+        "config/profiles/default/state_machine_actuators.csv",
+        "../config/profiles/default/state_machine_actuators.csv",
+        "../../config/profiles/default/state_machine_actuators.csv",
     };
 
     std::ifstream f(csv_path);
@@ -263,6 +164,58 @@ bool ActuatorCommander::load(const std::string& config_content, const std::strin
         }
     }
 
+    // ── Per-actuator delays (same rows x columns as the positions table) ────────
+    // Optional: a stand with no delays configured simply has every cell 0, and a missing file
+    // leaves the map empty, which means "everything at t=0" — the behaviour before delays existed.
+    state_actuator_delays_.clear();
+    {
+        std::string delay_csv = used_csv;
+        const std::string suffix = "state_machine_actuators.csv";
+        if (delay_csv.size() >= suffix.size() &&
+            delay_csv.compare(delay_csv.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            delay_csv.replace(delay_csv.size() - suffix.size(), suffix.size(),
+                              "state_machine_actuator_delays.csv");
+        }
+        std::ifstream df(delay_csv);
+        if (df.is_open()) {
+            std::string dline;
+            std::vector<std::string> dheaders;
+            if (std::getline(df, dline)) {
+                std::istringstream iss(dline);
+                std::string cell;
+                while (std::getline(iss, cell, ','))
+                    dheaders.push_back(trimVal(cell));
+            }
+            size_t nonzero = 0;
+            while (std::getline(df, dline)) {
+                std::vector<std::string> cells;
+                std::istringstream iss(dline);
+                std::string cell;
+                while (std::getline(iss, cell, ','))
+                    cells.push_back(trimVal(cell));
+                if (cells.empty() || cells[0].empty())
+                    continue;
+                for (size_t col = 1; col < dheaders.size() && col < cells.size(); ++col) {
+                    if (dheaders[col].empty() || cells[col].empty())
+                        continue;
+                    try {
+                        double d = std::stod(cells[col]);
+                        if (d > 0.0) {
+                            state_actuator_delays_[dheaders[col]][cells[0]] = d;
+                            nonzero++;
+                        }
+                    } catch (...) {
+                        // A non-numeric cell means "no delay" rather than an error — same
+                        // tolerance the positions table gives a cell that is not OPEN/CLOSE.
+                    }
+                }
+            }
+            if (nonzero)
+                std::cout << "[ActuatorCommander] Loaded " << nonzero
+                          << " non-zero actuator delay(s) from " << delay_csv << std::endl;
+        }
+    }
+
     loaded_ = true;
     std::cout << "[ActuatorCommander] Loaded " << state_actuators_.size() << " states from "
               << used_csv << std::endl;
@@ -291,24 +244,67 @@ ActuatorCommander::findStateActuators(const std::string& state_name) const {
 // ─────────────────────────────────────────────────────────────────────────────
 bool ActuatorCommander::sendUDP(const std::string& board_ip,
                                 const std::vector<std::pair<uint8_t, uint8_t>>& id_state_pairs) {
-    if (id_state_pairs.empty())
+    return sendBatch({{board_ip, id_state_pairs}});
+}
+
+/**
+ * Send one command batch to every board, interleaving the retransmits.
+ *
+ * Each packet still goes out 3x ~1 ms apart so it lands in the board's UDP receive window whatever
+ * its loop() rate. What changed is the ordering: round 1 to ALL boards, then round 2, then round 3,
+ * instead of finishing all three rounds for board A before starting board B. The old order meant
+ * every extra board added ~2 ms of skew to a state change -- with two actuator boards, board 2's
+ * first packet left ~2 ms after board 1's, on every transition. Now the boards are within
+ * microseconds of each other and the batch takes ~2 ms total instead of ~2 ms per board.
+ *
+ * One socket for the whole batch rather than one per board, since we now revisit each board 3x.
+ */
+bool ActuatorCommander::sendBatch(
+    const std::map<std::string, std::vector<std::pair<uint8_t, uint8_t>>>& by_board) {
+    if (by_board.empty())
         return true;
 
-    std::vector<Diablo::ActuatorCommand> cmds;
-    cmds.reserve(id_state_pairs.size());
-    for (const auto& [id, st] : id_state_pairs)
-        cmds.push_back({id, st});
+    // Serialize every board's packet up front so the timed rounds below do nothing but sendto().
+    struct Outgoing {
+        struct sockaddr_in dest;
+        std::vector<uint8_t> buf;
+    };
+    std::vector<Outgoing> outgoing;
+    outgoing.reserve(by_board.size());
 
-    uint8_t buf[512];
-    uint32_t ts_ms = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                               std::chrono::steady_clock::now().time_since_epoch())
-                                               .count() &
-                                           0xFFFFFFFFu);
-    size_t len = Diablo::create_actuator_command_packet(cmds, ts_ms, buf, sizeof(buf));
-    if (len == 0) {
-        std::cerr << "[ActuatorCommander] create_actuator_command_packet returned 0" << std::endl;
-        return false;
+    const uint32_t ts_ms =
+        static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now().time_since_epoch())
+                                  .count() &
+                              0xFFFFFFFFu);
+
+    for (const auto& [board_ip, id_state_pairs] : by_board) {
+        if (id_state_pairs.empty())
+            continue;
+        std::vector<daq::ActuatorCommand> cmds;
+        cmds.reserve(id_state_pairs.size());
+        for (const auto& [id, st] : id_state_pairs)
+            cmds.push_back({id, st});
+
+        uint8_t buf[512];
+        size_t len = daq::create_actuator_command_packet(cmds, ts_ms, buf, sizeof(buf));
+        if (len == 0) {
+            std::cerr << "[ActuatorCommander] create_actuator_command_packet returned 0 for "
+                      << board_ip << std::endl;
+            continue;
+        }
+        Outgoing o{};
+        o.dest.sin_family = AF_INET;
+        o.dest.sin_port = htons(actuator_port_);
+        if (inet_pton(AF_INET, board_ip.c_str(), &o.dest.sin_addr) != 1) {
+            std::cerr << "[ActuatorCommander] bad board IP " << board_ip << std::endl;
+            continue;
+        }
+        o.buf.assign(buf, buf + len);
+        outgoing.push_back(std::move(o));
     }
+    if (outgoing.empty())
+        return false;
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0)
@@ -322,30 +318,26 @@ bool ActuatorCommander::sendUDP(const std::string& board_ip,
         return false;
     }
 
-    struct sockaddr_in dest{};
-    dest.sin_family = AF_INET;
-    dest.sin_port = htons(actuator_port_);
-    if (inet_pton(AF_INET, board_ip.c_str(), &dest.sin_addr) != 1) {
-        close(sock);
-        return false;
-    }
-
-    // Send 3× in rapid succession (1 ms apart) so the command lands in the
-    // board's UDP receive window regardless of its loop() polling rate.
-    ssize_t sent = -1;
-    for (int i = 0; i < 3; ++i) {
-        sent = sendto(sock, buf, len, 0, reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest));
-        if (i < 2)
-            usleep(1000);  // 1 ms between retries
+    bool all_ok = true;
+    for (int round = 0; round < 3; ++round) {
+        for (const auto& o : outgoing) {
+            ssize_t sent =
+                sendto(sock, o.buf.data(), o.buf.size(), 0,
+                       reinterpret_cast<const struct sockaddr*>(&o.dest), sizeof(o.dest));
+            if (sent != static_cast<ssize_t>(o.buf.size()))
+                all_ok = false;
+        }
+        if (round < 2)
+            usleep(1000);
     }
     close(sock);
-    return sent == static_cast<ssize_t>(len);
+    return all_ok;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // applyForState — send all actuator commands for a state (one shot, batched by board)
 // ─────────────────────────────────────────────────────────────────────────────
-void ActuatorCommander::applyForState(State state) {
+void ActuatorCommander::applyForState(State state, bool is_transition) {
     const std::string state_name = StateMachine::name(state);
     auto it = findStateActuators(state_name);
     if (it == state_actuators_.end()) {
@@ -353,10 +345,19 @@ void ActuatorCommander::applyForState(State state) {
         return;
     }
 
-    const bool is_fire = (state == State::FIRE);
+    const bool is_fire = (state == fire_state_);
 
-    std::map<std::string, std::vector<std::pair<uint8_t, uint8_t>>> by_board;
-    std::vector<std::pair<uint8_t, uint8_t>> logical_commands;
+    // Collected first, then split into delay stages below — a command needs its role name to look
+    // up its delay, which the by-board packing throws away.
+    struct PendingCmd {
+        std::string role_name;
+        std::string board_ip;
+        uint8_t channel;
+        uint8_t hw_state;
+        uint8_t global_ch;
+        uint8_t logical_pos;
+    };
+    std::vector<PendingCmd> pending;
     std::unique_lock lock(overrides_mutex_);
     for (const auto& [act_name, logical_pos] : it->second) {
         auto role_it = roles_.find(act_name);
@@ -372,40 +373,133 @@ void ActuatorCommander::applyForState(State state) {
             pos = ov->second;
 
         uint8_t hw_state = static_cast<uint8_t>(role.is_no ? (1 - pos) : pos);
-        by_board[role.board_ip].emplace_back(static_cast<uint8_t>(role.channel), hw_state);
         uint8_t global_ch =
             actuator_elodin_low_byte(role.board_id, static_cast<uint8_t>(role.channel));
-        logical_commands.emplace_back(global_ch, static_cast<uint8_t>(pos));
+        pending.push_back({act_name, role.board_ip, static_cast<uint8_t>(role.channel), hw_state,
+                           global_ch, static_cast<uint8_t>(pos)});
     }
     lock.unlock();
 
-    for (const auto& [ip, cmds] : by_board) {
-        if (sendUDP(ip, cmds))
-            std::cout << "[ActuatorCommander] Sent " << cmds.size() << " commands to " << ip
-                      << " for state " << state_name << std::endl;
-        else
-            std::cerr << "[ActuatorCommander] UDP send failed to " << ip << std::endl;
+    // Only an actual entry supersedes a pending schedule — the 1 Hz republish must not, or it
+    // would cancel the very stages it is meant to leave alone.
+    const uint64_t gen = is_transition ? ++schedule_gen_ : schedule_gen_.load();
+    if (is_transition) {
+        std::lock_guard<std::mutex> lk(pending_roles_mutex_);
+        pending_roles_.clear();
     }
 
-    // Publish commanded state to Elodin DB [0x32, ch]
-    for (const auto& [ch, pos] : logical_commands) {
-        publishCommandedState(ch, pos);
+    // Split into stages by delay. On a republish (is_transition false) everything is stage 0, so
+    // the settled positions go out together.
+    std::map<double, std::map<std::string, std::vector<std::pair<uint8_t, uint8_t>>>> staged;
+    std::map<double, std::vector<std::pair<uint8_t, uint8_t>>> staged_logical;
+    for (size_t i = 0; i < pending.size(); ++i) {
+        const auto& pc = pending[i];
+        double d = 0.0;
+        if (is_transition) {
+            auto ds = state_actuator_delays_.find(state_name);
+            if (ds != state_actuator_delays_.end()) {
+                auto it = ds->second.find(pc.role_name);
+                if (it != ds->second.end() && it->second > 0.0)
+                    d = it->second;
+            }
+        }
+        if (!is_transition) {
+            std::lock_guard<std::mutex> lk(pending_roles_mutex_);
+            if (pending_roles_.count(pc.role_name))
+                continue;  // still waiting on its delay — leave the board holding its last position
+        }
+        staged[d][pc.board_ip].emplace_back(pc.channel, pc.hw_state);
+        staged_logical[d].emplace_back(pc.global_ch, pc.logical_pos);
+        if (d > 0.0) {
+            std::lock_guard<std::mutex> lk(pending_roles_mutex_);
+            pending_roles_.insert(pc.role_name);
+        }
     }
+
+    auto emit = [this, state_name](
+                    const std::map<std::string, std::vector<std::pair<uint8_t, uint8_t>>>& by_ip,
+                    const std::vector<std::pair<uint8_t, uint8_t>>& logical, double delay_s) {
+        if (sendBatch(by_ip)) {
+            size_t n = 0;
+            for (const auto& [ip, c] : by_ip)
+                n += c.size();
+            std::cout << "[ActuatorCommander] Sent " << n << " commands for state " << state_name;
+            if (delay_s > 0.0)
+                std::cout << " (+" << delay_s << "s)";
+            std::cout << std::endl;
+        } else {
+            std::cerr << "[ActuatorCommander] UDP send failed for state " << state_name
+                      << std::endl;
+        }
+        for (const auto& [ch, pos] : logical)
+            publishCommandedState(ch, pos);
+    };
+
+    // Stage 0 goes out on this thread, immediately.
+    auto zero = staged.find(0.0);
+    if (zero != staged.end())
+        emit(zero->second, staged_logical[0.0], 0.0);
+
+    if (staged.size() <= (zero != staged.end() ? 1u : 0u))
+        return;
+
+    // Later stages run on their own thread: a send blocks ~2 ms for the retransmits, so a pending
+    // delay must not queue behind another stage's send. Detached + generation-checked, so a new
+    // transition abandons it rather than landing a stale command seconds later.
+    std::vector<std::pair<double, size_t>> order;
+    for (const auto& [d, _] : staged)
+        if (d > 0.0)
+            order.emplace_back(d, 0);
+
+    std::map<double, std::vector<std::string>> roles_by_delay;
+    for (const auto& pc : pending) {
+        auto ds = state_actuator_delays_.find(state_name);
+        if (ds == state_actuator_delays_.end())
+            continue;
+        auto it = ds->second.find(pc.role_name);
+        if (it != ds->second.end() && it->second > 0.0)
+            roles_by_delay[it->second].push_back(pc.role_name);
+    }
+
+    std::thread([this, gen, staged, staged_logical, order, emit, roles_by_delay]() mutable {
+        auto t0 = std::chrono::steady_clock::now();
+        for (const auto& [delay_s, _] : order) {
+            const auto due = t0 + std::chrono::microseconds(static_cast<long long>(delay_s * 1e6));
+            while (std::chrono::steady_clock::now() < due) {
+                if (schedule_gen_.load() != gen)
+                    return;  // superseded by a newer transition
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            if (schedule_gen_.load() != gen)
+                return;
+            emit(staged[delay_s], staged_logical[delay_s], delay_s);
+            {
+                std::lock_guard<std::mutex> lk(pending_roles_mutex_);
+                for (const auto& r : roles_by_delay[delay_s])
+                    pending_roles_.erase(r);
+            }
+        }
+    }).detach();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Continuous loop
 // ─────────────────────────────────────────────────────────────────────────────
-void ActuatorCommander::startContinuousLoop(State state) {
+void ActuatorCommander::startContinuousLoop(State state, bool allow_delays) {
     stopContinuousLoop();
 
     loop_running_ = true;
     loop_state_ = state;
-    loop_thread_ = std::thread([this, state]() {
+    loop_thread_ = std::thread([this, state, allow_delays]() {
         std::cout << "[ActuatorCommander] Continuous loop started for state "
                   << StateMachine::name(state) << std::endl;
+        // Only the FIRST pass is the state entry — that one runs the delay schedule. Every pass
+        // after it is the 1 Hz republish and must send settled positions, or each tick would
+        // re-arm the pending delays and nothing would ever settle.
+        bool entry = allow_delays;
         while (loop_running_) {
-            applyForState(loop_state_);
+            applyForState(loop_state_, entry);
+            entry = false;
             for (int i = 0; i < 10 && loop_running_; ++i)
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }

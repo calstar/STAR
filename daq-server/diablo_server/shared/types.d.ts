@@ -23,8 +23,9 @@ export declare enum MessageType {
     CONFIG_UPDATED = "config_updated",
     COUNTDOWN_TARGET_UPDATE = "countdown_target_update",
     SESSION_UPDATE = "session_update",
-    CONTROL_STATUS = "control_status",
-    CONTROL_UNLOCK = "control_unlock",
+    BOARD_LOG = "board_log",// Server → Client: { boardId, ts, lines, truncated }
+    CONTROL_STATUS = "control_status",// Server → Client: { operator, email }
+    CONTROL_UNLOCK = "control_unlock",// Client → Server: {} (arm control; identity-gated)
     CONTROL_UNLOCK_RESULT = "control_unlock_result"
 }
 export declare enum SensorType {
@@ -120,11 +121,21 @@ export interface CommandPayload {
         debugMode?: boolean;
         /** Unix timestamp in milliseconds. null clears/pauses the countdown. */
         targetTimeMs?: number | null;
+        /** session_start: Save (true) keeps the run's DB; Discard (false) deletes it on stop. */
         keepData?: boolean;
+        /** session_start: auto-stop timeout in milliseconds. */
         durationMs?: number;
+        /** session_start: run against the board simulator (true) instead of live hardware. */
+        simulated?: boolean;
+        /** session_extend: milliseconds to push the auto-stop deadline out by. */
         addMs?: number;
     };
 }
+/**
+ * DAQ run session — a run started/stopped from the session screen with a
+ * backend-owned auto-stop timeout. `enabled` is false when SESSION_SERVICE_MODE
+ * is off (the launch-site laptop): the UI hides the button and nothing auto-stops.
+ */
 export interface SessionStatus {
     enabled: boolean;
     active: boolean;
@@ -133,6 +144,8 @@ export interface SessionStatus {
     deadlineMs: number | null;
     remainingMs: number | null;
     freeDiskBytes: number | null;
+    /** True when the active run is fed by the board simulator instead of hardware. */
+    simulated: boolean;
 }
 export interface ConnectionStatus {
     connected: boolean;
@@ -140,6 +153,11 @@ export interface ConnectionStatus {
     connId?: string;
     latency?: number;
     error?: string;
+    /** True when incoming data is synthetic (board simulator running). */
+    simulated?: boolean;
+    /** Backend-authoritative: an Elodin row was ingested within the freshness window,
+     *  i.e. the pipeline is actually delivering data right now (not just "run active"). */
+    dataFresh?: boolean;
 }
 export interface MissionStartTime {
     missionStartTime: number;
@@ -178,12 +196,55 @@ export interface CalibrationStatusPayload {
     calibrationFilePath?: string | null;
 }
 /** Commands the frontend sends to drive the calibration engine */
-export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'save_coefficients' | 'clear_calibration';
+export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'save_coefficients' | 'clear_calibration' | 'capture_cubic_point' | 'clear_cubic_channel' | 'capture_point' | 'new_calibration';
 export interface CalibrationCommand {
     commandType: CalibrationCommandType;
     sensorId?: number;
     boardId?: number;
     referencePressure?: number;
+}
+/** One operator-captured calibration point for a channel's cubic fit. */
+export interface CubicCalibrationPoint {
+    adc: number;
+    psi: number;
+    t: number;
+}
+/**
+ * Per-sensor cubic calibration record produced by the calibration service. The frontend renders the
+ * captured `points` as a scatter and overlays the curve by evaluating `polyCoeffs` over
+ * `((adc - adcNormMin)/adcNormScale)^i` — no fitting in the browser.
+ */
+export interface CubicCalibrationChannel {
+    boardId: number;
+    connector: number;
+    logicalCh: number;
+    role: string;
+    active_model: 'cubic' | 'robust' | 'physics';
+    numPoints: number;
+    status: 'PENDING' | 'OK' | 'ERROR';
+    last_error: string;
+    rmse: number;
+    degree: number;
+    updatedAt: number;
+    coeffs: {
+        A: number;
+        B: number;
+        C: number;
+        D: number;
+    };
+    polyCoeffs: number[];
+    adcNormMin: number;
+    adcNormScale: number;
+    points: CubicCalibrationPoint[];
+    fitCurve?: {
+        adc: number;
+        psi: number;
+    }[];
+}
+/** Body of GET /api/cubic_calibration: the service's cubic_calibration.json, keyed by uid. */
+export interface CubicCalibrationPayload {
+    cubic_state?: Record<string, CubicCalibrationChannel>;
+    [key: string]: unknown;
 }
 /** Aggregated status for a single hardware board (PT, ACTUATOR, RTD, LC, TC, etc.). */
 export interface BoardStatus {
@@ -226,6 +287,25 @@ export interface BoardStatus {
 }
 export interface BoardStatusPayload {
     boards: BoardStatus[];
+}
+/** One cached board log line, stamped with server arrival time. */
+export interface BoardLogLine {
+    boardId: number;
+    ts: number;
+    line: string;
+}
+/** Running per-board log counters (cumulative since backend start). */
+export interface BoardLogTotals {
+    received: number;
+    truncated: number;
+}
+/** MessageType.BOARD_LOG payload: one packet's worth of newline-split lines. */
+export interface BoardLogPayload {
+    boardId: number;
+    ts: number;
+    lines: string[];
+    truncated: boolean;
+    totals: BoardLogTotals;
 }
 export type NotificationCategory = 'info' | 'warning' | 'error';
 /** Ongoing notification (keyed); when ongoing turns false, frontend keeps entry but no longer "current". */

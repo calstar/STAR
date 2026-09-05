@@ -3,7 +3,12 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <set>
 #include <sstream>
+#include <string>
+
+#include "config/Config.hpp"
 
 namespace sequencer {
 
@@ -44,9 +49,76 @@ const std::map<std::string, State>& StateMachine::csvStateMap() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Config-declared states ([[states]]) — an override layer over the built-in table
+// ─────────────────────────────────────────────────────────────────────────────
+namespace {
+
+struct ConfigStates {
+    std::map<State, std::string> names;    // id → display name
+    std::map<std::string, State> by_name;  // display name → id
+    std::set<State> aborts;
+    State boot = State::IDLE;
+    bool boot_set = false;
+    bool loaded = false;
+};
+
+ConfigStates& configStates() {
+    static ConfigStates cs;
+    return cs;
+}
+
+}  // namespace
+
+void StateMachine::loadStatesFromConfig(const std::string& config_content) {
+    ConfigStates fresh;
+    const fsw::config::Config cfg = fsw::config::load_from_string(config_content);
+    for (const auto& s : cfg.states) {
+        // An entry needs a valid id and a name; skip incomplete ones. First is_boot wins.
+        if (s.id < 0 || s.id > 255 || s.name.empty())
+            continue;
+        const State st = static_cast<State>(static_cast<uint8_t>(s.id));
+        fresh.names[st] = s.name;
+        fresh.by_name[s.name] = st;
+        if (s.is_abort)
+            fresh.aborts.insert(st);
+        if (s.is_boot && !fresh.boot_set) {
+            fresh.boot = st;
+            fresh.boot_set = true;
+        }
+    }
+
+    fresh.loaded = !fresh.names.empty();
+    configStates() = fresh;
+    if (fresh.loaded)
+        std::cout << "[StateMachine] Loaded " << fresh.names.size() << " state(s) from config"
+                  << (fresh.aborts.empty() ? ""
+                                           : " (" + std::to_string(fresh.aborts.size()) + " abort)")
+                  << std::endl;
+}
+
+bool StateMachine::isAbort(State s) {
+    const auto& cs = configStates();
+    if (cs.loaded && !cs.aborts.empty())
+        return cs.aborts.count(s) > 0;
+    // Built-in fallback: the three abort states the enum has always had.
+    return s == State::ENGINE_ABORT || s == State::GSE_ABORT || s == State::EMERGENCY_ABORT;
+}
+
+State StateMachine::bootState() {
+    const auto& cs = configStates();
+    return (cs.loaded && cs.boot_set) ? cs.boot : State::IDLE;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // State → display name (for logging)
 // ─────────────────────────────────────────────────────────────────────────────
 std::string StateMachine::name(State s) {
+    {
+        const auto& cs = configStates();
+        auto it = cs.names.find(s);
+        if (it != cs.names.end())
+            return it->second;
+    }
     switch (s) {
         case State::DEBUG:
             return "Debug";
@@ -97,6 +169,12 @@ std::string StateMachine::name(State s) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 State StateMachine::fromName(const std::string& name) {
+    {
+        const auto& cs = configStates();
+        auto it = cs.by_name.find(name);
+        if (it != cs.by_name.end())
+            return it->second;
+    }
     const auto& map = csvStateMap();
     auto it = map.find(name);
     if (it != map.end())
@@ -125,9 +203,14 @@ static std::string trimCell(const std::string& s) {
 
 bool StateMachine::load(const std::string& csv_path) {
     const char* fallbacks[] = {
-        "firmware/test_guis/state_transitions.csv",
-        "../firmware/test_guis/state_transitions.csv",
-        "../../firmware/test_guis/state_transitions.csv",
+        "config/state_transitions.csv",
+        "../config/state_transitions.csv",
+        "../../config/state_transitions.csv",
+        // Generated config/*.csv are absent on a fresh checkout (they are gitignored deploy
+        // output); fall back to the profile that owns them.
+        "config/profiles/default/state_transitions.csv",
+        "../config/profiles/default/state_transitions.csv",
+        "../../config/profiles/default/state_transitions.csv",
     };
 
     std::ifstream f(csv_path);

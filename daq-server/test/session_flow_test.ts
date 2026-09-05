@@ -52,6 +52,10 @@ const state = {
   elodinConnected: false,
   warnKeys: new Set<string>(),
   lastSession: null as any,
+  // Boards that produced a SELF_TEST.* SENSOR_UPDATE — proves the config→self-test
+  // lifecycle ran (i.e. config_broadcast reached the sim boards). A wrong-config
+  // service unit leaves this empty even though plain sensor data still flows.
+  selfTestBoards: new Set<string>(),
 };
 
 function connect(): Promise<WebSocket> {
@@ -82,7 +86,11 @@ function waitFor(ws: WebSocket, type: string, timeoutMs: number, pred?: (p: any)
 function attachObserver(ws: WebSocket): void {
   ws.on('message', (d) => {
     let m: WSMessage; try { m = JSON.parse(d.toString()); } catch { return; }
-    if (m.type === 'sensor_update') state.sensorUpdates++;
+    if (m.type === 'sensor_update') {
+      state.sensorUpdates++;
+      const ent = m.payload?.entity;
+      if (typeof ent === 'string' && ent.startsWith('SELF_TEST.')) state.selfTestBoards.add(ent.split('.')[1] ?? ent);
+    }
     else if (m.type === 'connection_status' && m.payload?.elodinConnected) state.elodinConnected = true;
     else if (m.type === 'session_update') state.lastSession = m.payload;
     else if (m.type === 'notification' && typeof m.payload?.key === 'string'
@@ -100,6 +108,29 @@ async function unlock(ws: WebSocket): Promise<void> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Poll until `pred()` holds, resolving the instant it does; return whether it held
+ * within `timeoutMs`. Replaces the old fixed `sleep(6000)`-then-count, which raced a
+ * cold systemd pipeline: `elodinConnected` only means the backend's socket to the
+ * freshly-restarted elodin is open — NOT that the sim / daq_bridge that same session
+ * unit started are producing yet. On a slow CI runner first data landed just after the
+ * 6s window, so the count read 0. Polling passes fast on the happy path and tolerates a
+ * slow startup, while still failing (after the longer window) if data genuinely never flows.
+ */
+async function waitUntil(pred: () => boolean, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (pred()) return true;
+    await sleep(200);
+  }
+  return pred();
+}
+
+// Max time to wait for the session's pipeline to start delivering data after
+// elodinConnected. Kept below Run 1's DURATION_MS (30s) so the auto-stop / warning
+// timeline is unaffected; the poll resolves in ~1–10s on a healthy stack.
+const PIPELINE_DATA_TIMEOUT_MS = parseInt(process.env.SESSION_TEST_DATA_TIMEOUT_MS || '15000', 10);
+
 async function main(): Promise<void> {
   console.log(`▶ session_flow_test → ${WS_URL} (duration ${DURATION_MS}ms, warn keys ${EXPECTED_WARN_KEYS.join(', ')})`);
   const ws = await connect();
@@ -111,10 +142,11 @@ async function main(): Promise<void> {
   console.log('\n▶ Run 1 — Discard, auto-stop');
   const startedAt = Date.now();
   const activePromise = waitFor(ws, 'session_update', 10000, (p) => p.active === true);
-  send(ws, 'send_command', { commandType: 'session_start', data: { keepData: false, durationMs: DURATION_MS } });
+  send(ws, 'send_command', { commandType: 'session_start', data: { keepData: false, durationMs: DURATION_MS, simulated: true } });
   const active = await activePromise;
   const dbDir1: string = active.dbDir;
   assert(active.active === true, 'session_start → active');
+  assert(active.simulated === true, 'session_start (simulated) → SESSION_UPDATE.simulated true');
   assert(typeof dbDir1 === 'string' && dbDir1.startsWith(join(ELODIN_ROOT, 'daq_')), `fresh timestamped dbDir (${dbDir1})`);
   await sleep(300);
   assert(existsSync(dbDir1), 'run DB dir created on disk');
@@ -123,9 +155,16 @@ async function main(): Promise<void> {
   await waitFor(ws, 'connection_status', 30000, (p) => p.elodinConnected === true).catch(() => {});
   assert(state.elodinConnected, 'Elodin connected (pipeline came up via systemctl)');
   const before = state.sensorUpdates;
-  await sleep(6000);
+  // Wait until the pipeline is actually delivering (sensor data + the one-shot
+  // self-test lifecycle), rather than blindly sleeping past a slow cold start.
+  await waitUntil(() => state.sensorUpdates - before > 50 && state.selfTestBoards.size > 0, PIPELINE_DATA_TIMEOUT_MS);
   const flowed = state.sensorUpdates - before;
-  assert(flowed > 50, `sensor data flowing (${flowed} SENSOR_UPDATE in 6s)`);
+  assert(flowed > 50, `sensor data flowing (${flowed} SENSOR_UPDATE within ${PIPELINE_DATA_TIMEOUT_MS / 1000}s)`);
+  // Config→self-test lifecycle ran: sim boards received SENSOR_CONFIG and emitted
+  // SELF_TEST. Empty here means config_broadcast never reached the boards (e.g. a
+  // service unit wired to the hardware config instead of the sim overlay).
+  assert(state.selfTestBoards.size > 0,
+    `boards ran self-test (${state.selfTestBoards.size} boards: ${[...state.selfTestBoards].join(',') || 'none'})`);
 
   // Auto-stop at the deadline; warnings should have fired before it.
   const remaining = Math.max(0, DURATION_MS - (Date.now() - startedAt));
@@ -140,11 +179,21 @@ async function main(): Promise<void> {
   // ── Run 2: Save + extend → deadline moves out, dir persists on stop ────────
   console.log('\n▶ Run 2 — Save, extend, manual stop');
   const active2Promise = waitFor(ws, 'session_update', 10000, (p) => p.active === true);
-  send(ws, 'send_command', { commandType: 'session_start', data: { keepData: true, durationMs: 600000 } });
+  send(ws, 'send_command', { commandType: 'session_start', data: { keepData: true, durationMs: 600000, simulated: true } });
   const active2 = await active2Promise;
   const dbDir2: string = active2.dbDir;
   const deadline1: number = active2.deadlineMs;
   assert(active2.active === true && active2.keepData === true, 'session_start (Save) → active, keepData');
+
+  // Data must flow AGAIN on the second run over the SAME long-lived WS connection.
+  // Start/Stop run bounces elodin to a fresh DB without restarting the backend, so
+  // a client that never reconnects must still receive the new run's data. (Regression
+  // guard for the "no data after stop→start until manual reload" class of bug.)
+  await waitFor(ws, 'connection_status', 30000, (p) => p.elodinConnected === true).catch(() => {});
+  const before2 = state.sensorUpdates;
+  await waitUntil(() => state.sensorUpdates - before2 > 50, PIPELINE_DATA_TIMEOUT_MS);
+  const flowed2 = state.sensorUpdates - before2;
+  assert(flowed2 > 50, `sensor data flowing after session restart (${flowed2} SENSOR_UPDATE within ${PIPELINE_DATA_TIMEOUT_MS / 1000}s, same WS connection)`);
 
   const extendedPromise = waitFor(ws, 'session_update', 8000, (p) => p.active && p.deadlineMs > deadline1);
   send(ws, 'send_command', { commandType: 'session_extend', data: { addMs: 120000 } });

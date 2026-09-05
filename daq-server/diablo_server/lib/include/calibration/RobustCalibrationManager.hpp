@@ -44,9 +44,16 @@ public:
 
     void reset_adjustment(uint16_t sensor_id);
 
-    bool save_adjustments(const std::string& path) const;
+    /** Persist per-sensor θ. When uid_to_role is given, each entry also records its role so a later
+     *  load can re-attach it to the role's current sensor_id (calibration follows the sensor). */
+    bool save_adjustments(const std::string& path,
+                          const std::map<uint16_t, std::string>* uid_to_role = nullptr) const;
 
-    bool load_adjustments(const std::string& path);
+    /** Restore per-sensor θ. When uid_to_role is given, an entry tagged with a role is restored
+     * into the sensor_id that role currently maps to (so a moved sensor keeps its learned state),
+     *  falling back to the persisted numeric id for untagged/legacy entries. */
+    bool load_adjustments(const std::string& path,
+                          const std::map<uint16_t, std::string>* uid_to_role = nullptr);
 
 private:
     mutable std::mutex mutex_;

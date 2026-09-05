@@ -13,6 +13,7 @@ export interface PersistedSession {
   keepData: boolean;
   deadlineMs: number | null;
   durationMs: number | null;
+  simulated: boolean;
 }
 
 export function getSessionStatePath(): string {
@@ -33,6 +34,7 @@ export function loadSession(): PersistedSession | null {
       keepData: !!p.keepData,
       deadlineMs: typeof p.deadlineMs === 'number' ? p.deadlineMs : null,
       durationMs: typeof p.durationMs === 'number' ? p.durationMs : null,
+      simulated: !!p.simulated,
     };
   } catch {
     return null;

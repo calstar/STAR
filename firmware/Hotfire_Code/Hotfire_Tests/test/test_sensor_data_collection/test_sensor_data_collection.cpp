@@ -18,7 +18,7 @@
 // ===========================================================================
 
 void test_chunk_constructor() {
-    Diablo::SensorDataChunkCollection chunk(12345, 5);
+    daq::SensorDataChunkCollection chunk(12345, 5);
     TEST_ASSERT_EQUAL(12345, chunk.timestamp);
     TEST_ASSERT_EQUAL(5, chunk.num_sensors);
     TEST_ASSERT_EQUAL(0, chunk.size());
@@ -27,7 +27,7 @@ void test_chunk_constructor() {
 }
 
 void test_chunk_add_datapoint() {
-    Diablo::SensorDataChunkCollection chunk(100, 3);
+    daq::SensorDataChunkCollection chunk(100, 3);
     TEST_ASSERT_TRUE(chunk.add_datapoint(1, 0xDEAD));
     TEST_ASSERT_EQUAL(1, chunk.size());
     TEST_ASSERT_FALSE(chunk.empty());
@@ -40,7 +40,7 @@ void test_chunk_add_datapoint() {
 }
 
 void test_chunk_add_over_capacity() {
-    Diablo::SensorDataChunkCollection chunk(100, 2);
+    daq::SensorDataChunkCollection chunk(100, 2);
     TEST_ASSERT_TRUE(chunk.add_datapoint(1, 100));
     TEST_ASSERT_TRUE(chunk.add_datapoint(2, 200));
     TEST_ASSERT_FALSE(chunk.add_datapoint(3, 300));  // over capacity
@@ -48,7 +48,7 @@ void test_chunk_add_over_capacity() {
 }
 
 void test_chunk_clear() {
-    Diablo::SensorDataChunkCollection chunk(100, 3);
+    daq::SensorDataChunkCollection chunk(100, 3);
     chunk.add_datapoint(1, 100);
     chunk.add_datapoint(2, 200);
     TEST_ASSERT_EQUAL(2, chunk.size());
@@ -60,7 +60,7 @@ void test_chunk_clear() {
 }
 
 void test_chunk_datapoint_values() {
-    Diablo::SensorDataChunkCollection chunk(999, 2);
+    daq::SensorDataChunkCollection chunk(999, 2);
     chunk.add_datapoint(5, 0x12345678);
     chunk.add_datapoint(10, 0xABCDEF00);
 
@@ -71,7 +71,7 @@ void test_chunk_datapoint_values() {
 }
 
 void test_chunk_zero_capacity() {
-    Diablo::SensorDataChunkCollection chunk(100, 0);
+    daq::SensorDataChunkCollection chunk(100, 0);
     TEST_ASSERT_EQUAL(0, chunk.size());
     TEST_ASSERT_TRUE(chunk.empty());
     TEST_ASSERT_TRUE(chunk.full());  // 0 >= 0
@@ -79,7 +79,7 @@ void test_chunk_zero_capacity() {
 }
 
 void test_chunk_single_sensor() {
-    Diablo::SensorDataChunkCollection chunk(500, 1);
+    daq::SensorDataChunkCollection chunk(500, 1);
     TEST_ASSERT_TRUE(chunk.add_datapoint(1, 42));
     TEST_ASSERT_TRUE(chunk.full());
     TEST_ASSERT_FALSE(chunk.add_datapoint(2, 43));

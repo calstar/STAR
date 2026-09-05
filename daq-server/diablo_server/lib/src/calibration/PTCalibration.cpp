@@ -10,6 +10,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <regex>
 #include <sstream>
 
@@ -84,9 +85,10 @@ std::string PTCalibrationManager::default_json_dir_ = "scripts/calibration/calib
 std::string PTCalibrationManager::default_csv_path_ =
     "external/DiabloAvionics/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv";
 
-PTCalibrationManager::PTCalibrationManager() {
-    // Auto-load calibration on construction
-    load_calibration();
+PTCalibrationManager::PTCalibrationManager(bool auto_load) {
+    // Auto-load calibration on construction unless the caller opts out (physics-or-nothing).
+    if (auto_load)
+        load_calibration();
 }
 
 bool PTCalibrationManager::load_calibration() {
@@ -168,31 +170,39 @@ bool PTCalibrationManager::load_from_json(const std::string& json_path, bool mer
         return false;
     }
 
-    // Simple JSON parser for calibration format
     // Format: {"calibration_polynomials": {"1": [A, B, C, D], "2": [A, B, C, D], ...}}
     std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     file.close();
 
-    // Find calibration_polynomials section
-    // Match pattern: "channel_id": [A, B, C, D]
-    std::regex poly_regex(
-        "\"(\\d+)\":\\s*\\[([\\d\\.\\-\\+eE]+),\\s*([\\d\\.\\-\\+eE]+),\\s*([\\d\\.\\-\\+eE]+),\\s*"
-        "([\\d\\.\\-\\+eE]+)\\]");
-    std::sregex_iterator iter(content.begin(), content.end(), poly_regex);
-    std::sregex_iterator end;
+    nlohmann::json root;
+    try {
+        root = nlohmann::json::parse(content);
+    } catch (const std::exception& e) {
+        std::cerr << "[PTCalibration] JSON parse error in " << json_path << ": " << e.what()
+                  << std::endl;
+        return false;
+    }
+    if (!root.contains("calibration_polynomials") || !root["calibration_polynomials"].is_object())
+        return false;
 
     size_t loaded = 0;
-    for (; iter != end; ++iter) {
-        std::smatch match = *iter;
-        uint8_t channel_id = static_cast<uint8_t>(std::stoi(match[1].str()));
+    for (const auto& [ch_str, arr] : root["calibration_polynomials"].items()) {
+        if (!arr.is_array() || arr.size() < 4)
+            continue;
+        if (!arr[0].is_number() || !arr[1].is_number() || !arr[2].is_number() ||
+            !arr[3].is_number())
+            continue;
+        int ch = 0;
+        try {
+            ch = std::stoi(ch_str);
+        } catch (...) {
+            continue;
+        }
+        const uint8_t channel_id = static_cast<uint8_t>(ch);
         if (merge_missing_only && calibrations_.find(channel_id) != calibrations_.end())
             continue;
-        double A = std::stod(match[2].str());
-        double B = std::stod(match[3].str());
-        double C = std::stod(match[4].str());
-        double D = std::stod(match[5].str());
-
-        calibrations_[channel_id] = PTCalibrationCoeffs(A, B, C, D);
+        calibrations_[channel_id] = PTCalibrationCoeffs(arr[0].get<double>(), arr[1].get<double>(),
+                                                        arr[2].get<double>(), arr[3].get<double>());
         loaded++;
     }
 
@@ -292,6 +302,14 @@ bool PTCalibrationManager::is_calibrated(uint8_t channel_id) const {
     return calibrations_.find(channel_id) != calibrations_.end();
 }
 
+void PTCalibrationManager::set_calibration(uint8_t channel_id, const PTCalibrationCoeffs& coeffs) {
+    calibrations_[channel_id] = coeffs;
+}
+
+void PTCalibrationManager::clear_calibration(uint8_t channel_id) {
+    calibrations_.erase(channel_id);
+}
+
 double PTCalibrationManager::calculate_pressure(uint8_t channel_id, int32_t adc_code) const {
     const auto* coeffs = get_calibration(channel_id);
     if (coeffs) {
@@ -349,6 +367,11 @@ static bool skip_json_for_pt_polynomial_load(const std::string& filename) {
         return true;
     if (filename.find("learned_prior") != std::string::npos)
         return true;
+    // Operator-built cubics are owned by CubicCalibrationStore, which applies them via
+    // set_calibration() after load. Excluding the file here keeps the factory overlay pure so the
+    // service can snapshot true factory coefficients (for revert-on-clear).
+    if (filename == "cubic_calibration.json")
+        return true;
     return false;
 }
 
@@ -359,6 +382,13 @@ std::string PTCalibrationManager::find_latest_json_file(const std::string& json_
 
     std::string latest_file;
     std::time_t latest_time = 0;
+    // Seeding "newest so far" with 0 silently discarded every candidate: libstdc++'s
+    // fs::file_time_type is __file_clock, whose epoch is 2174-01-01, so a present-day file's
+    // time_since_epoch() is NEGATIVE (~-4.6e9 s) and `time_t > 0` is never true. This function
+    // therefore always returned "" and no JSON calibration has ever loaded — the service stat()ed
+    // the file and then skipped it, reporting "No calibration files found". Track the first
+    // candidate explicitly instead of relying on a sentinel that assumes a 1970 epoch.
+    bool have_candidate = false;
 
 #if __cplusplus >= 201703L
     for (const auto& entry : fs::directory_iterator(json_dir)) {
@@ -371,7 +401,8 @@ std::string PTCalibrationManager::find_latest_json_file(const std::string& json_
         auto time_t =
             std::chrono::duration_cast<std::chrono::seconds>(file_time.time_since_epoch()).count();
 
-        if (time_t > latest_time) {
+        if (!have_candidate || time_t > latest_time) {
+            have_candidate = true;
             latest_time = time_t;
             latest_file = entry.path().string();
         }
@@ -389,7 +420,8 @@ std::string PTCalibrationManager::find_latest_json_file(const std::string& json_
                 std::string full_path = json_dir + "/" + filename;
                 struct stat file_stat;
                 if (stat(full_path.c_str(), &file_stat) == 0 && S_ISREG(file_stat.st_mode)) {
-                    if (file_stat.st_mtime > latest_time) {
+                    if (!have_candidate || file_stat.st_mtime > latest_time) {
+                        have_candidate = true;
                         latest_time = file_stat.st_mtime;
                         latest_file = full_path;
                     }

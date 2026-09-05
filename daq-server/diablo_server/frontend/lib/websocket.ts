@@ -31,6 +31,13 @@ export class WebSocketClient {
   private fallbackUrls: string[];
   private urlIndex = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  /** Last elodinConnected we saw, to detect a session restart (elodin bounces to
+   *  a fresh run DB) under a socket that never closed — the backend is not
+   *  restarted by Start/Stop run, so onopen does not re-fire and the data view
+   *  would otherwise go stale (no historical backfill for the new run). */
+  private lastElodinConnected = false;
+  /** Last session.active we saw, to detect a new run (Start run) and re-init data. */
+  private lastSessionActive = false;
   private staleCheckTimer: ReturnType<typeof setInterval> | null = null;
   private lastMessageTime = 0;
   private listeners: Map<string, Set<(payload: unknown) => void>> = new Map();
@@ -114,20 +121,8 @@ export class WebSocketClient {
           }
         }
 
-        // Subscribe immediately - WebSocket is ready when onopen fires
-        console.log('📡 Subscribing to all sensors...');
-        this.subscribeToAllSensors();
-        console.log('✅ Subscription requests sent');
-
-        // Request historical data for plots. The provider (data-cache)
-        // narrows this to a sinceMs backfill once we hold data, so
-        // reconnects fetch only the gap instead of the full dump.
-        console.log('📊 Requesting historical plot data...');
-        this.send({
-          type: MessageType.QUERY_HISTORICAL,
-          timestamp: Date.now(),
-          payload: this.historicalQueryProvider ? this.historicalQueryProvider() : {},
-        });
+        // Subscribe + backfill. WebSocket is ready when onopen fires.
+        this.initDataStreams('socket_open');
       };
 
       socket.onmessage = (event) => {
@@ -174,6 +169,8 @@ export class WebSocketClient {
           const nextUrl = this.fallbackUrls[this.urlIndex];
           this.log('fallback_advance', { nextUrl, urlIndex: this.urlIndex });
         }
+        this.lastElodinConnected = false;
+        this.lastSessionActive = false;
         this.notifyConnectionStatus({ connected: false, elodinConnected: false });
         this.scheduleReconnect();
       };
@@ -181,6 +178,19 @@ export class WebSocketClient {
       this.log('create_failed', { message: String(error) });
       this.scheduleReconnect();
     }
+  }
+
+  /** (Re)establish the data view: re-subscribe and request historical backfill.
+   *  Runs on socket open AND on an elodin reconnect (session Start/Stop run),
+   *  since the backend socket is not restarted by a session change. */
+  private initDataStreams(reason: string): void {
+    this.log('init_data_streams', { reason });
+    this.subscribeToAllSensors();
+    this.send({
+      type: MessageType.QUERY_HISTORICAL,
+      timestamp: Date.now(),
+      payload: this.historicalQueryProvider ? this.historicalQueryProvider() : {},
+    });
   }
 
   private async subscribeToAllSensors(): Promise<void> {
@@ -251,7 +261,25 @@ export class WebSocketClient {
         elodinConnected: status.elodinConnected,
         connId: status.connId ?? null,
       });
+      // Session restart: elodin dropped to a fresh run DB and reconnected while
+      // our socket stayed open. Re-run the onopen data-init so the new run's
+      // history backfills and subscriptions are re-established — otherwise plots
+      // stay empty until a manual reload.
+      if (status.elodinConnected && !this.lastElodinConnected && this.ws?.readyState === WebSocket.OPEN) {
+        this.initDataStreams('elodin_reconnect');
+      }
+      this.lastElodinConnected = status.elodinConnected;
       this.notifyConnectionStatus(status);
+    }
+    // Belt-and-suspenders with the elodin-reconnect trigger above: a new run
+    // (session.active false→true) deterministically means a fresh DB, so re-run
+    // the data-init even if the elodin connection_status transition was missed.
+    if (message.type === MessageType.SESSION_UPDATE) {
+      const active = !!(message.payload as { active?: boolean } | null)?.active;
+      if (active && !this.lastSessionActive && this.ws?.readyState === WebSocket.OPEN) {
+        this.initDataStreams('session_start');
+      }
+      this.lastSessionActive = active;
     }
   }
 

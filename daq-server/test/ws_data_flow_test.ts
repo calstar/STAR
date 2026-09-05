@@ -90,9 +90,10 @@ function parseOnlyTests(): Set<string> | null {
   }
   const allowed = new Set([
     'sensor_config', 'sensor_data', 'cal_stability', 'raw_cal_presence',
+    'cal_values', 'cal_model_select', 'cal_robust_learn', 'cal_shared_points', 'cal_clear',
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
-    'controller', 'timestamps', 'conservation',
+    'controller', 'timestamps', 'conservation', 'board_logs', 'board_log_mode',
   ]);
   for (const id of out) {
     if (!allowed.has(id)) {
@@ -160,11 +161,20 @@ enum MessageType {
   BOARD_STATUS_UPDATE = 'board_status_update',
   CONTROL_UNLOCK = 'control_unlock',
   CONTROL_UNLOCK_RESULT = 'control_unlock_result',
+  BOARD_LOG = 'board_log',
 }
 
+// A local copy of the state ids, kept in step with diablo_server/shared/types.ts. It used to hold
+// only the handful this file referenced by name, which silently broke the [fire] lookup below:
+// resolving "Fire" produced undefined and the whole fire phase skipped itself. Complete now.
+// (This is one of several duplicates of the state list across the tree — the config-owned state
+// list is what should eventually replace them all.)
 enum SystemState {
   DEBUG = 0, IDLE = 1, ARMED = 2, FUEL_FILL = 3, OX_FILL = 4,
-  ENGINE_ABORT = 17, GSE_ABORT = 18, EMERGENCY_ABORT = 19,
+  GN2_LOW_PRESS = 5, GN2_VENT = 6, FUEL_PRESS = 7, FUEL_VENT = 8,
+  OX_PRESS = 9, OX_VENT = 10, GN2_HIGH_PRESS = 11, GN2_HIGH_VENT = 12,
+  VENT = 13, CALIBRATE = 14, READY = 15, FIRE = 16,
+  ENGINE_ABORT = 17, GSE_ABORT = 18, EMERGENCY_ABORT = 19, PRESS_STANDBY = 20,
 }
 
 enum ActuatorState {
@@ -404,6 +414,74 @@ function collectMessages(
 
 function formatLatency(ms: number): string {
   return ms < 1 ? `${(ms * 1000).toFixed(0)}µs` : `${ms.toFixed(1)}ms`;
+}
+
+/**
+ * Read [fire] from the config the stack under test is actually running, so the assertions compare
+ * against configuration rather than a number baked into this file.
+ */
+function readFireConfig(): { durationMs: number; expiryState: number; fireState: number } | null {
+  const candidates = [
+    process.env.INTEGRATION_CONFIG,
+    process.env.DAQ_CONFIG,
+    'config/config.toml',
+    '../config/config.toml',
+    '../../config/config.toml',
+  ].filter(Boolean) as string[];
+  for (const path of candidates) {
+    let raw = '';
+    try { raw = fs.readFileSync(path, 'utf-8'); } catch { continue; }
+    const section = raw.split(/^\[fire\]$/m)[1];
+    if (!section) continue;
+    const body = section.split(/^\[/m)[0];
+    const pick = (k: string) => {
+      const m = body.match(new RegExp(`^\\s*${k}\\s*=\\s*(.+)$`, 'm'));
+      return m ? m[1].trim().replace(/^["']|["'].*$/g, '') : '';
+    };
+    const durationMs = parseInt(pick('duration_ms'), 10);
+    const stateName = pick('state');
+    const expiryName = pick('expiry_target');
+    const toId = (n: string): number => {
+      const key = n.toUpperCase().replace(/\s+/g, '_');
+      const v = (SystemState as any)[key];
+      return typeof v === 'number' ? v : NaN;
+    };
+    const fireState = toId(stateName);
+    const expiryState = toId(expiryName);
+    if (!Number.isFinite(durationMs) || !Number.isFinite(fireState) || !Number.isFinite(expiryState))
+      continue;
+    return { durationMs, expiryState, fireState };
+  }
+  return null;
+}
+
+/** The UDP actuator packets captured so far by udp_listener.ts (it rewrites the file per packet). */
+function readUdpCommands(): any[] {
+  if (!UDP_COMMANDS_FILE) return [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(UDP_COMMANDS_FILE, 'utf-8'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Passive latest-state tracker. There is no get_state command, so mid-burn sampling watches the
+ * STATE_UPDATE broadcasts rather than asking — which is also closer to what the GUI does.
+ */
+function trackState(ws: WebSocket, seed: number): { get: () => number; stop: () => void } {
+  let latest = seed;
+  const onMsg = (data: WebSocket.RawData) => {
+    try {
+      const m = JSON.parse(data.toString());
+      if (m?.type === MessageType.STATE_UPDATE && typeof m.payload?.currentState === 'number') {
+        latest = m.payload.currentState;
+      }
+    } catch { /* not JSON — ignore */ }
+  };
+  ws.on('message', onMsg);
+  return { get: () => latest, stop: () => ws.removeListener('message', onMsg) };
 }
 
 function printLatencyStats(label: string, latencies: number[]): void {
@@ -859,6 +937,43 @@ function fetchBackendStats(): Promise<BackendStats | null> {
   });
 }
 
+/** GET a JSON body from the backend REST API (served on WS_PORT for the thin backend). */
+function httpGetJson(path: string): Promise<any | null> {
+  return new Promise((resolve) => {
+    const req = http.get(`http://127.0.0.1:${WS_PORT}${path}`, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve(null); } });
+    });
+    req.on('error', () => resolve(null));
+    req.setTimeout(3000, () => { req.destroy(); resolve(null); });
+  });
+}
+
+/** POST a JSON body to the backend REST API; resolves { status, json }. */
+function httpPostJson(path: string, body: unknown): Promise<{ status: number; json: any | null }> {
+  return new Promise((resolve) => {
+    const payload = Buffer.from(JSON.stringify(body), 'utf-8');
+    const req = http.request(
+      `http://127.0.0.1:${WS_PORT}${path}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': payload.length } },
+      (res) => {
+        let data = '';
+        res.on('data', (c) => { data += c; });
+        res.on('end', () => {
+          let json: any = null;
+          try { json = JSON.parse(data); } catch { /* non-JSON */ }
+          resolve({ status: res.statusCode ?? 0, json });
+        });
+      },
+    );
+    req.on('error', () => resolve({ status: 0, json: null }));
+    req.setTimeout(3000, () => { req.destroy(); resolve({ status: 0, json: null }); });
+    req.write(payload);
+    req.end();
+  });
+}
+
 async function testSensorDataFlow(ws: WebSocket): Promise<void> {
   console.log('\n📡 Test 1: Sensor Data Flow');
 
@@ -1245,6 +1360,88 @@ async function testStateTransitionDebugMode(ws: WebSocket): Promise<void> {
 
   printLatencyStats('[Debug] State Transition Command Latency', commandLatencies);
 
+  // ── FIRE lifecycle, against the running stack ───────────────────────────────────────────────
+  // Nothing here used to touch fire, which is how fire_duration_ms went unread for so long: the
+  // keys live in [controller_service] but the sequencer read [state_machine], so every burn ran
+  // FireManager's 6000 ms default and no test ever compared a burn against its configured length.
+  // This drives the real sequencer_service over the real WS/TCP path and checks the whole cycle:
+  // enter fire, STAY in fire for the configured window, then auto-transition to [fire]
+  // expiry_target without anyone asking.
+  {
+    const fireCfg = readFireConfig();
+    if (!fireCfg) {
+      console.log('  ⚠️  [fire] section not found in the test config — skipping fire lifecycle');
+    } else {
+      const { durationMs, expiryState, fireState } = fireCfg;
+      console.log(`  [Fire] configured: ${durationMs} ms → ${SystemState[expiryState] ?? expiryState}`);
+
+      const enteredFire = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
+        (payload) => payload.currentState === fireState);
+      const firedAt = Date.now();
+      send(ws, {
+        type: MessageType.SEND_COMMAND,
+        timestamp: Date.now(),
+        payload: { commandType: 'state_transition', data: { state: fireState } },
+      });
+
+      let inFire = false;
+      let enteredAt = firedAt;
+      let leftFireAt = Number.MAX_SAFE_INTEGER;
+      const tracker = trackState(ws, fireState);
+      try {
+        const { receivedAt } = await enteredFire;
+        // Measure the burn from when fire was ENTERED, not from when the command was sent —
+        // otherwise the command's round trip is charged to the burn length and the assertion has
+        // to be loose enough to be nearly meaningless.
+        enteredAt = receivedAt;
+        inFire = true;
+        assert(true, `[Fire] entered the fire state (+${receivedAt - firedAt} ms after the command)`);
+      } catch (err: any) {
+        assert(false, `[Fire] could not enter the fire state: ${err.message}`);
+      }
+
+      if (inFire) {
+        // It must NOT leave early. Sample well inside the window; the auto-transition landing
+        // here would mean the timer is running short (or running at all when it should not).
+        const midMs = Math.max(200, Math.floor(durationMs * 0.4));
+        await new Promise((r) => setTimeout(r, midMs));
+        const midState = tracker.get();
+        assert(midState === fireState, `[Fire] still in fire ${midMs} ms in (got ${midState})`);
+
+        // Then it must leave on its own, at roughly the configured duration.
+        try {
+          const { receivedAt } = await waitForMessage(ws, MessageType.STATE_UPDATE,
+            durationMs + 4000, (payload) => payload.currentState === expiryState);
+          const elapsed = receivedAt - enteredAt;
+          leftFireAt = receivedAt;
+          assert(true, `[Fire] auto-transitioned to ${SystemState[expiryState] ?? expiryState} after ${elapsed} ms`);
+          // Generous window: this crosses two processes, a TCP hop and the WS broadcast. The point
+          // is that it tracks the CONFIGURED duration rather than the 6000 ms default.
+          // The trailing edge carries the sequencer -> Elodin -> backend -> WS hop, measured at
+          // roughly a second on this box (the entry edge above reports the same order). So the
+          // window is deliberately generous on the upper side; what it has to exclude is
+          // FireManager's 6000 ms default masquerading as a configured burn, which would land
+          // around 7 s and is nowhere near this range.
+          const upper = durationMs + 2500;
+          assert(elapsed >= durationMs - 400 && elapsed <= upper,
+            `[Fire] burn length tracked the configured ${durationMs} ms (measured ${elapsed} ms, window ${durationMs - 400}-${upper})`);
+        } catch (err: any) {
+          assert(false, `[Fire] no auto-transition out of fire: ${err.message}`);
+        }
+
+        // The PWM handoff (sequencer stops commanding PWM roles during a burn so
+        // controller_service is the only writer) is NOT assertable here. Actuator commands go to
+        // each board's own address, which in this harness is the simulator — so a 0.0.0.0 UDP
+        // listener never sees them, and remapping the boards onto a shared address to make it
+        // visible breaks daq_bridge's routing by source address. That behaviour is covered instead
+        // by test_fire_lifecycle (ctest), which drives ActuatorCommander directly and asserts the
+        // PWM channel is withheld in fire and commanded outside it.
+      }
+      tracker.stop();
+    }
+  }
+
+
   // Disable debug mode
   send(ws, {
     type: MessageType.SEND_COMMAND,
@@ -1534,6 +1731,240 @@ async function testCalibratedDataStability(ws: WebSocket): Promise<void> {
   } else {
     assert(true, `All ${values.size} calibrated entities stable (0 spikes in ${COLLECT_MS / 1000}s)`);
   }
+}
+
+// ── Calibration correctness: value, model selection, robust learning ─────────
+// These verify what the presence/stability checks above cannot: that PT_Cal carries the RIGHT
+// number, that the per-sensor cubic/robust choice in config is honored, and that the robust stack
+// actually learns. (The "PT_Cal not uniformly 0" guard would have caught fa0e27f9, where a broken
+// JSON loader made every PT read 0 PSI yet presence+stability still passed.)
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.floor(s.length / 2)];
+}
+
+/** Collect PT1_Cal.CH<n> pressure_psi and raw_adc_counts (same message → time-aligned) for `ms`.
+ *  Subscriptions from Test 1 are already active. */
+function collectPtCal(
+  ws: WebSocket, ms: number,
+): Promise<{ cal: Map<number, number[]>; adc: Map<number, number[]> }> {
+  const cal = new Map<number, number[]>();
+  const adc = new Map<number, number[]>();
+  const push = (m: Map<number, number[]>, ch: number, v: number) => {
+    const a = m.get(ch); if (a) a.push(v); else m.set(ch, [v]);
+  };
+  return new Promise((resolve) => {
+    function handler(data: WebSocket.Data) {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg.type !== MessageType.SENSOR_UPDATE) return;
+        const { entity, component, value } = msg.payload;
+        if (!entity || !Number.isFinite(value)) return;
+        const m = /^PT1_Cal\.CH(\d+)$/.exec(entity);
+        if (!m) return;
+        const ch = Number(m[1]);
+        if (component === 'pressure_psi') push(cal, ch, value);
+        else if (component === 'raw_adc_counts') push(adc, ch, value);
+      } catch { /* ignore */ }
+    }
+    ws.on('message', handler);
+    setTimeout(() => { ws.removeListener('message', handler); resolve({ cal, adc }); }, ms);
+  });
+}
+
+/** Newest non-excluded factory-cubic JSON in the cal dir → logical-ch → [A,B,C,D], matching the
+ *  service's find_latest_json_file (which skips adjustments / cubic_calibration / *learned_prior*). */
+// The test runs from diablo_server/backend, so resolve the service's cal dir via the env the harness
+// exports (INTEGRATION_CAL_DIR) or known-relative fallbacks.
+function findCalDir(): string | null {
+  const candidates = [
+    process.env.INTEGRATION_CAL_DIR,
+    'scripts/calibration/calibrations',
+    '../../scripts/calibration/calibrations',
+  ].filter((d): d is string => !!d);
+  return candidates.find((d) => { try { return fs.existsSync(d); } catch { return false; } }) ?? null;
+}
+
+function loadFactoryPtCoeffs(): Map<number, [number, number, number, number]> | null {
+  const dir = findCalDir();
+  if (!dir) return null;
+  let files: string[];
+  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { return null; }
+  const excluded = (f: string) => /adjustments|cubic_calibration|learned_prior/.test(f);
+  const cand = files.filter((f) => !excluded(f))
+    .map((f) => ({ f, m: fs.statSync(`${dir}/${f}`).mtimeMs }))
+    .sort((a, b) => b.m - a.m);
+  if (cand.length === 0) return null;
+  try {
+    const j = JSON.parse(fs.readFileSync(`${dir}/${cand[0].f}`, 'utf-8'));
+    const polys = j.calibration_polynomials;
+    if (!polys || typeof polys !== 'object') return null;
+    const out = new Map<number, [number, number, number, number]>();
+    for (const [k, v] of Object.entries(polys)) {
+      const arr = v as number[];
+      if (Array.isArray(arr) && arr.length >= 4) out.set(Number(k), [arr[0], arr[1], arr[2], arr[3]]);
+    }
+    return out.size ? out : null;
+  } catch { return null; }
+}
+
+function evalCubic(adc: number, c: [number, number, number, number]): number {
+  const v = c[0] * adc * adc * adc + c[1] * adc * adc + c[2] * adc + c[3];
+  return Math.max(-3000, Math.min(20000, v));  // matches PTCalibration.cpp clamp
+}
+
+// ── Test: physics conversion is correct, and an uncalibrated cubic reads nothing (0) ─
+// Under the physics-or-nothing baseline there is no factory cubic: a sensor set to `physics` streams
+// the datasheet closed form, and a `cubic`/`robust` sensor with no captured points streams 0. This
+// replaces the old "matches factory cubic" check (that baseline no longer exists).
+async function testCalibratedValueCorrectness(ws: WebSocket): Promise<void> {
+  console.log('\n🎯 Test 16: physics conversion correct + uncalibrated cubic reads 0');
+  const { cal, adc } = await collectPtCal(ws, 5000);
+  const ADC_MAX = 2147483648; // 2^31
+
+  // test_integration.sh sets "GSE Low" (pt_board conn 2 → CH2) to physics; pt_board is 0-5V
+  // ratiometric with the default 1000 PSI full scale, so PT_Cal = (adc/2^31)*1000.
+  const phCal = cal.get(2), phAdc = adc.get(2);
+  if (!phCal || phCal.length < 3 || !phAdc || phAdc.length < 3) {
+    assert(false, 'cal_values: no PT1_Cal.CH2 (physics sensor) samples'); return;
+  }
+  const a2 = median(phAdc), psi2 = median(phCal), expected2 = (a2 / ADC_MAX) * 1000;
+  const tol2 = Math.max(Math.abs(expected2) * 0.03, 5);
+  assert(Math.abs(psi2) > 1, 'cal_values: physics CH2 is not 0 (datasheet conversion active)');
+  assert(Math.abs(psi2 - expected2) <= tol2,
+    `cal_values: physics CH2 = ${psi2.toFixed(1)} ≈ (adc/2^31)*1000 = ${expected2.toFixed(1)} (adc ${a2.toFixed(0)}, tol ${tol2.toFixed(1)})`);
+
+  // A cubic sensor with no captured points reads nothing. CH1 (Fuel Upstream) is cubic + uncalibrated.
+  const c1 = cal.get(1);
+  if (c1 && c1.length >= 3) {
+    const psi1 = median(c1);
+    assert(Math.abs(psi1) < 1,
+      `cal_values: uncalibrated cubic CH1 reads ~0 (physics-or-nothing baseline) — got ${psi1.toFixed(2)}`);
+  }
+}
+
+// ── Test: the per-sensor cubic/robust config choice is respected ─────────────
+async function testCalibrationModelSelection(): Promise<void> {
+  console.log('\n🔀 Test 17: cubic/robust config selection respected (service cubic_calibration.json)');
+  // Read the service's own authoritative record — it tags each uid with the model it resolved from
+  // config, so this proves config -> service selection end to end (the /api view is a passthrough of
+  // this same file).
+  const dir = findCalDir();
+  if (!dir) { assert(false, 'cal_model_select: could not locate the calibration dir'); return; }
+  let state: Record<string, any> | null = null;
+  for (let i = 0; i < 6; i++) {  // the service rewrites the file at startup; retry for readiness
+    try {
+      const j = JSON.parse(fs.readFileSync(`${dir}/cubic_calibration.json`, 'utf-8'));
+      if (j?.cubic_state && Object.keys(j.cubic_state).length > 0) { state = j.cubic_state; break; }
+    } catch { /* not written yet */ }
+    await sleep(500);
+  }
+  if (!state) {
+    assert(false, 'cal_model_select: cubic_calibration.json had no populated cubic_state after retries');
+    return;
+  }
+  // test_integration.sh sets "Ox Upstream" (pt_board conn 5 → uid 2105) to robust; the rest stay
+  // cubic. "Fuel Upstream" is conn 1 → uid 2101.
+  const robust = state['2105']?.active_model;
+  const cubic = state['2101']?.active_model;
+  const physics = state['2102']?.active_model;  // GSE Low, conn 2, set to physics
+  assert(robust === 'robust', `cal_model_select: uid 2105 (Ox Upstream) active_model=robust — config respected (got ${robust})`);
+  assert(cubic === 'cubic', `cal_model_select: uid 2101 (Fuel Upstream) active_model=cubic (got ${cubic})`);
+  assert(physics === 'physics', `cal_model_select: uid 2102 (GSE Low) active_model=physics (got ${physics})`);
+}
+
+// Read the service's cubic_calibration.json record for a uid (fresh each capture/clear).
+function readCalRecord(uid: number): Record<string, unknown> | null {
+  const dir = findCalDir();
+  if (!dir) return null;
+  try {
+    const j = JSON.parse(fs.readFileSync(`${dir}/cubic_calibration.json`, 'utf-8'));
+    return (j?.cubic_state?.[String(uid)] as Record<string, unknown>) ?? null;
+  } catch { return null; }
+}
+
+// ── Test: one capture feeds BOTH the cubic fit and the robust learner (shared points) ─
+// The headline guarantee of the merge. Captures on a CUBIC sensor must land in the cubic store's
+// points AND be fed to the robust learner — the service samples robust into `fitCurve` for any
+// sensor with points, so a populated fitCurve reflecting the taught PSI proves robust got them too.
+// (In sim the ADC is constant per channel, so a real cubic FIT can't form — this checks the routing,
+// not the fit quality.)
+async function testSharedPoints(ws: WebSocket): Promise<void> {
+  console.log('\n🔗 Test 19: one capture feeds both cubic + robust (shared points)');
+  const CH = 3, BOARD = 21, UID = BOARD * 100 + CH, REF = 100;  // Fuel Downstream — cubic by config
+  for (let i = 0; i < 10; i++) {
+    send(ws, { type: 'calibration_command', timestamp: Date.now(),
+      payload: { commandType: 'capture_point', sensorId: CH, boardId: BOARD, referencePressure: REF } });
+    await sleep(120);
+  }
+  await sleep(1500);
+  let rec: Record<string, unknown> | null = null;
+  for (let i = 0; i < 8; i++) { rec = readCalRecord(UID); if (rec && (rec.numPoints as number ?? 0) > 0) break; await sleep(400); }
+  if (!rec) { assert(false, `cal_shared_points: no record for uid ${UID}`); return; }
+  const numPoints = rec.numPoints as number ?? 0;
+  const fc = (Array.isArray(rec.fitCurve) ? rec.fitCurve : []) as { adc: number; psi: number }[];
+  const medRob = fc.length ? median(fc.map((p) => p.psi)) : NaN;
+  console.log(`  uid ${UID}: numPoints=${numPoints} fitCurve=${fc.length} robustMedian=${Number.isFinite(medRob) ? medRob.toFixed(1) : 'n/a'}`);
+  assert(numPoints >= 1, `cal_shared_points: cubic store recorded ${numPoints} point(s)`);
+  assert(fc.length > 0, `cal_shared_points: robust fitCurve populated on a cubic sensor (${fc.length}) — the capture fed robust too`);
+  assert(Number.isFinite(medRob) && Math.abs(medRob - REF) < 40,
+    `cal_shared_points: robust learned ~${REF} from the cubic-mode capture (fitCurve median ${Number.isFinite(medRob) ? medRob.toFixed(1) : 'n/a'})`);
+}
+
+// ── Test: clear returns a sensor to nothing (points + robust wiped) ─ (runs after cal_shared_points)
+async function testClearToNothing(ws: WebSocket): Promise<void> {
+  console.log('\n🧹 Test 20: clear wipes points + robust → nothing');
+  const CH = 3, BOARD = 21, UID = BOARD * 100 + CH;
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'new_calibration', sensorId: CH, boardId: BOARD } });
+  await sleep(1500);
+  let rec: Record<string, unknown> | null = null;
+  for (let i = 0; i < 8; i++) { rec = readCalRecord(UID); if (rec && (rec.numPoints as number ?? 0) === 0) break; await sleep(400); }
+  if (!rec) { assert(false, `cal_clear: no record for uid ${UID}`); return; }
+  const numPoints = rec.numPoints as number ?? -1;
+  const fc = (Array.isArray(rec.fitCurve) ? rec.fitCurve : []) as unknown[];
+  assert(numPoints === 0, `cal_clear: captured points wiped (numPoints ${numPoints})`);
+  assert(fc.length === 0, `cal_clear: robust preview curve cleared (${fc.length} samples)`);
+}
+
+// ── Test: the robust stack actually learns (and the cubic channel is unaffected) ─
+async function testRobustLearns(ws: WebSocket): Promise<void> {
+  console.log('\n🧠 Test 18: robust stack learns an operator offset (cubic channel unchanged)');
+  const ROBUST_CH = 5, CUBIC_CH = 1, BOARD = 21;
+  const base = await collectPtCal(ws, 3000);
+  const f5 = base.cal.get(ROBUST_CH), c1 = base.cal.get(CUBIC_CH);
+  if (!f5 || f5.length < 3 || !c1 || c1.length < 3) {
+    assert(false, 'cal_robust_learn: missing baseline PT_Cal for ch5/ch1');
+    return;
+  }
+  const factory5 = median(f5), before1 = median(c1);
+  const operatorPsi = factory5 + 50;  // within robust reconcile tolerance (<125 PSI)
+
+  for (let i = 0; i < 15; i++) {  // teach robust the offset at the (constant) ADC
+    send(ws, {
+      type: 'calibration_command', timestamp: Date.now(),
+      payload: { commandType: 'capture_point', sensorId: ROBUST_CH, boardId: BOARD, referencePressure: operatorPsi },
+    });
+    await sleep(120);
+  }
+  await sleep(3000);  // let RLS converge + stream + EMA catch up
+
+  const after = await collectPtCal(ws, 3000);
+  const a5 = after.cal.get(ROBUST_CH), a1 = after.cal.get(CUBIC_CH);
+  if (!a5 || a5.length < 3 || !a1 || a1.length < 3) {
+    assert(false, 'cal_robust_learn: missing post-capture PT_Cal for ch5/ch1');
+    return;
+  }
+  const after5 = median(a5), after1 = median(a1);
+  const moved5 = after5 - factory5, moved1 = Math.abs(after1 - before1);
+  console.log(`  ch5(robust): factory=${factory5.toFixed(1)} operator=${operatorPsi.toFixed(1)} after=${after5.toFixed(1)} (moved ${moved5.toFixed(1)}) ; ch1(cubic): ${before1.toFixed(1)}→${after1.toFixed(1)}`);
+  assert(moved5 > 15, `cal_robust_learn: robust ch5 moved ${moved5.toFixed(1)} PSI toward the operator value (+50) — robust stack learns`);
+  assert(moved1 < 10, `cal_robust_learn: cubic ch1 unaffected by robust captures (moved ${moved1.toFixed(1)} PSI)`);
 }
 
 // ── Test 6: Elodin State Sync ────────────────────────────────────────────────
@@ -2221,6 +2652,82 @@ async function testSampleConservation(): Promise<void> {
       : `Ingested ${ingested.toLocaleString()} exceeds sent ${sent.toLocaleString()} by >5% — counter double-counting a stream?`);
 }
 
+// ── Test: Board logs reach the frontend (board_simulator → daq_bridge → backend → WS/REST) ──
+// The sim streams simple type-15 LOGS unconditionally (it does NOT honor the mode byte).
+async function testBoardLogs(ws: WebSocket): Promise<void> {
+  console.log('\n🪵 Test: Board diagnostic logs → WebSocket + REST cache');
+  console.log('  The board_simulator streams type-15 LOGS (1 Hz/board); daq_bridge forwards them to the backend cache.');
+  try {
+    const { payload } = await waitForMessage(
+      ws,
+      MessageType.BOARD_LOG,
+      12000,
+      (p) => p && p.boardId > 0 && Array.isArray(p.lines) && p.lines.length > 0,
+    );
+    assert(payload.boardId > 0 && payload.lines.length > 0,
+      `BOARD_LOG frame received over WS (board ${payload.boardId}, ${payload.lines.length} line(s): "${String(payload.lines[0]).slice(0, 60)}")`);
+  } catch (e: any) {
+    assert(false, `BOARD_LOG frame over WS: ${e.message}`);
+  }
+
+  // REST cache: /api/board-logs/stats should show a board with received > 0.
+  const stats = await httpGetJson('/api/board-logs/stats');
+  const entries: [string, any][] = stats && stats.stats ? Object.entries(stats.stats) : [];
+  const streaming = entries.find(([, v]) => v && v.received > 0);
+  assert(!!streaming, streaming
+    ? `/api/board-logs/stats shows board ${streaming[0]} received=${streaming[1].received}`
+    : `/api/board-logs/stats has a board with received>0 (got ${JSON.stringify(stats?.stats ?? {})})`);
+
+  if (streaming) {
+    const hist = await httpGetJson(`/api/board-logs?board=${streaming[0]}&limit=20`);
+    const lines = hist && Array.isArray(hist.lines) ? hist.lines : [];
+    assert(lines.length > 0,
+      lines.length > 0
+        ? `/api/board-logs?board=${streaming[0]} returned ${lines.length} cached line(s)`
+        : `/api/board-logs?board=${streaming[0]} returned cached lines`);
+  }
+}
+
+// ── Test: a GUI logging-mode change reaches the board (frontend → config → config_broadcast → board 60) ──
+// board_startup_sim (127.0.0.60) receives SENSOR_CONFIG and reports the enable_serial_printing byte;
+// the board does NOT have to act on it — we only prove the changed byte arrives.
+async function testBoardLogMode(_ws: WebSocket): Promise<void> {
+  console.log('\n🎚️  Test: GUI log-mode change reaches board 60 (POST → config.toml → config_broadcast → SENSOR_CONFIG)');
+  if (!BOARD_STARTUP_SIM || !fs.existsSync(BOARD_STARTUP_SIM) || TEST_STARTUP_LISTEN_PORT <= 0) {
+    console.log('  SKIPPED (BOARD_STARTUP_SIM / port not available)');
+    return;
+  }
+  const TARGET_MODE = 3;
+  const post = await httpPostJson('/api/board-log-mode', { boardId: 60, mode: TARGET_MODE });
+  assert(post.status === 200 && post.json?.success === true,
+    post.status === 200 ? `POST /api/board-log-mode {60,${TARGET_MODE}} accepted` : `POST /api/board-log-mode failed (status ${post.status})`);
+  if (post.status !== 200) return;
+
+  // Let config_broadcast (≥1.5s cycle) re-read the patched config and start sending the new byte.
+  const waitMs = parseInt(process.env.INTEGRATION_LOGMODE_WAIT_MS || '4000', 10);
+  console.log(`  Waiting ${waitMs / 1000}s for config_broadcast to pick up the change before starting the board sim…`);
+  await new Promise((r) => setTimeout(r, waitMs));
+
+  const r = spawnSync(
+    PYTHON_BIN,
+    [
+      BOARD_STARTUP_SIM,
+      '--listen-port', String(TEST_STARTUP_LISTEN_PORT),
+      '--daq-port', String(TEST_DAQ_UDP_PORT),
+      '--board-ip', '127.0.0.60',
+      '--board-id', '60',
+    ],
+    { stdio: 'pipe', encoding: 'utf-8', timeout: 30000 },
+  );
+  const out = `${r.stdout || ''}`;
+  const m = out.match(/enable_serial_printing=(\d+)/);
+  const seen = m ? parseInt(m[1], 10) : -1;
+  assert(seen === TARGET_MODE,
+    seen === TARGET_MODE
+      ? `Board 60 received the GUI-set log mode over the wire (enable_serial_printing=${seen})`
+      : `Board 60 should receive enable_serial_printing=${TARGET_MODE} (saw ${seen === -1 ? 'no config' : seen}). Sim out: ${out.slice(0, 300)}`);
+}
+
 async function main(): Promise<void> {
   console.log('🧪 WebSocket Data Flow Integration Test');
   console.log(`   Backend: ${WS_URL} (${IS_THIN ? 'server.ts' : 'server-legacy.ts'})`);
@@ -2280,11 +2787,16 @@ async function main(): Promise<void> {
     if (runTest('raw_cal_presence')) await testRawAndCalibratedPresence(ws);
     if (runTest('timestamps')) await testTimestampQuality(ws);
     if (runTest('cal_stability')) await testCalibratedDataStability(ws);
+    if (runTest('cal_values')) await testCalibratedValueCorrectness(ws);
+    if (IS_THIN && runTest('cal_model_select')) await testCalibrationModelSelection();
     if (IS_THIN) {
       if (runTest('heartbeat')) await testServerHeartbeatUdp();
       if (runTest('board_status')) await testBoardStatusToFrontend(ws);
       if (runTest('selftest')) await testBoardStartupSelfTestToFrontend(ws);
       if (runTest('selftest_replay')) await testSelfTestReplayOnLateConnect();
+      if (runTest('board_logs')) await testBoardLogs(ws);
+      // After selftest so board_startup_sim's port (5014) is free to reuse.
+      if (runTest('board_log_mode')) await testBoardLogMode(ws);
     }
     if (canRunCommandTests) {
       if (runTest('state_transition')) await testStateTransition(ws);
@@ -2306,6 +2818,12 @@ async function main(): Promise<void> {
     }
     // Last on purpose: maximizes the sample count both sides of the comparison.
     if (IS_THIN && runTest('conservation')) await testSampleConservation();
+    // Truly last: this drives capture commands that mutate the robust channel's learned state, so it
+    // must run after every read-only value/stability/conservation check.
+    if (IS_THIN && canRunCommandTests && runTest('cal_robust_learn')) await testRobustLearns(ws);
+    // Shared-points then clear run last (they mutate CH3's cubic store + robust state).
+    if (IS_THIN && canRunCommandTests && runTest('cal_shared_points')) await testSharedPoints(ws);
+    if (IS_THIN && canRunCommandTests && runTest('cal_clear')) await testClearToNothing(ws);
   } finally {
     ws.close();
   }

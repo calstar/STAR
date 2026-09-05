@@ -266,7 +266,7 @@ std::vector<uint8_t> SensorAssignmentManager::generate_board_config_packet(uint8
     const auto& config = it->second;
 
     // Generate SENSOR_CONFIG packet using canonical DAQv2-Comms serializer so that
-    // the on-wire format exactly matches Diablo::parse_sensor_config_packet.
+    // the on-wire format exactly matches daq::parse_sensor_config_packet.
     // Body: num_sensors | sensor_ids | reference_voltage | necessary_for_abort
     //       | [controller_ip if necessary_for_abort] | enable_serial_printing
 
@@ -289,7 +289,7 @@ std::vector<uint8_t> SensorAssignmentManager::generate_board_config_packet(uint8
                                                std::chrono::steady_clock::now().time_since_epoch())
                                                .count() &
                                            0xFFFFFFFFu);
-    size_t written = Diablo::create_sensor_config_packet(
+    size_t written = daq::create_sensor_config_packet(
         sensor_ids, reference_voltage, necessary_for_abort, controller_ip, enable_serial_printing,
         ts_ms, buffer, sizeof(buffer));
 
@@ -354,43 +354,6 @@ bool SensorAssignmentManager::update_board_config_from_packet(uint8_t board_id,
         return true;
     }
     return false;
-}
-
-bool SensorAssignmentManager::save_assignments_to_config(const std::string& output_path) const {
-    std::ofstream file(output_path);
-    if (!file.is_open()) {
-        std::cerr << "[SensorAssignment] Failed to open config file: " << output_path << std::endl;
-        return false;
-    }
-
-    file << "# Auto-generated sensor assignments\n";
-    file << "# DO NOT EDIT MANUALLY\n\n";
-
-    // Write board configurations
-    for (const auto& [board_id, config] : board_configs_) {
-        file << "[board_" << (int)board_id << "]\n";
-        file << "ip = \"" << config.board_ip << "\"\n";
-        file << "port = " << config.board_port << "\n";
-        file << "mac_address = \"" << config.mac_address << "\"\n";
-        file << "system_state = \"" << (config.system_state == SystemState::GSE ? "GSE" : "FLIGHT")
-             << "\"\n";
-        file << "primary_sensor_type = \"" << sensor_type_to_string(config.primary_sensor_type)
-             << "\"\n";
-        file << "is_configured = " << (config.is_configured ? "true" : "false") << "\n";
-        file << "\n";
-
-        // Write sensor assignments
-        file << "[board_" << (int)board_id << ".sensors]\n";
-        for (const auto& sensor : config.sensors) {
-            file << sensor.sensor_id << " = { channel = " << (int)sensor.channel_id << ", type = \""
-                 << sensor_type_to_string(sensor.sensor_type) << "\" }\n";
-        }
-        file << "\n";
-    }
-
-    file.close();
-    std::cout << "[SensorAssignment] Saved assignments to: " << output_path << std::endl;
-    return true;
 }
 
 std::string SensorAssignmentManager::calculate_ip_from_mac(const std::string& mac_address,

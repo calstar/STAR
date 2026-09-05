@@ -8,11 +8,11 @@
  */
 
 #include <Arduino.h>
-#include <DAQv2-Comms.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
 #include <Wire.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -86,7 +86,7 @@ static constexpr int serverPort = HOTFIRE_SERVER_PORT;
 static EthernetUDP udp;
 static OTAEthernetServer otaServer(HOTFIRE_OTA_PORT);
 
-static std::vector<Diablo::SensorDataChunkCollection> dataChunks;
+static std::vector<daq::SensorDataChunkCollection> dataChunks;
 static unsigned long lastHeartbeatMs = 0;
 
 // ---------------------------------------------------------------------------
@@ -178,15 +178,15 @@ static void runSelfTest() {
     Serial.print("  Encoder 2 I2C: ");
     Serial.println(enc2_ok ? "PASS" : "FAIL");
 
-    std::vector<Diablo::SelfTestResult> results;
-    results.push_back(Diablo::SelfTestResult{
+    std::vector<daq::SelfTestResult> results;
+    results.push_back(daq::SelfTestResult{
         SENSOR_ID_ENC1, static_cast<uint8_t>(enc1_ok ? 1 : 0)});
-    results.push_back(Diablo::SelfTestResult{
+    results.push_back(daq::SelfTestResult{
         SENSOR_ID_ENC2, static_cast<uint8_t>(enc2_ok ? 1 : 0)});
 
     uint8_t buf[ENCODER_PACKET_BUF_SIZE];
-    size_t n = Diablo::create_self_test_packet(adc_good, results, millis(), buf,
-                                               sizeof(buf));
+    size_t n = daq::create_self_test_packet(adc_good, results, millis(), buf,
+                                            sizeof(buf));
     if (n > 0) {
         udp.beginPacket(serverIP, serverPort);
         udp.write(buf, n);
@@ -211,8 +211,8 @@ static void sendDataChunks() {
         return;
 
     uint8_t buf[ENCODER_PACKET_BUF_SIZE];
-    size_t n = Diablo::create_sensor_data_packet(dataChunks, NUM_SENSORS,
-                                                 millis(), buf, sizeof(buf));
+    size_t n = daq::create_sensor_data_packet(dataChunks, NUM_SENSORS, millis(),
+                                              buf, sizeof(buf));
     if (n == 0) {
         dataChunks.clear();
         return;
@@ -225,29 +225,29 @@ static void sendDataChunks() {
     dataChunks.clear();
 }
 
-static Diablo::BoardState currentBoardState() {
+static daq::BoardState currentBoardState() {
     switch (boardState) {
         case State::Setup:
-            return Diablo::BoardState::SETUP;
+            return daq::BoardState::SETUP;
         case State::SelfTest:
-            return Diablo::BoardState::SELF_TEST;
+            return daq::BoardState::SELF_TEST;
         case State::Active:
-            return Diablo::BoardState::ACTIVE;
+            return daq::BoardState::ACTIVE;
         default:
-            return Diablo::BoardState::SETUP;
+            return daq::BoardState::SETUP;
     }
 }
 
 static void sendHeartbeat() {
-    Diablo::BoardHeartbeatPacket hb;
+    daq::BoardHeartbeatPacket hb;
     memcpy(hb.firmware_hash, FirmwareHash::get(), 32);
     hb.board_id = (uint8_t)BOARD_ID;
-    hb.engine_state = Diablo::EngineState::SAFE;
+    hb.engine_state = daq::EngineState::SAFE;
     hb.board_state = currentBoardState();
 
     uint8_t buf[ENCODER_PACKET_BUF_SIZE];
     size_t n =
-        Diablo::create_board_heartbeat_packet(hb, millis(), buf, sizeof(buf));
+        daq::create_board_heartbeat_packet(hb, millis(), buf, sizeof(buf));
     if (n == 0)
         return;
 
@@ -323,7 +323,7 @@ void loop() {
                 udp.read(&typeByte, 1);
                 udp.flush();
                 if (typeByte ==
-                    static_cast<uint8_t>(Diablo::PacketType::SENSOR_CONFIG)) {
+                    static_cast<uint8_t>(daq::PacketType::SENSOR_CONFIG)) {
                     Serial.println(
                         "SENSOR_CONFIG received -> State -> SelfTest");
                     Serial.flush();
@@ -346,7 +346,7 @@ void loop() {
             uint32_t val2 =
                 (raw2 != READ_ERROR) ? static_cast<uint32_t>(raw2) : 0u;
 
-            Diablo::SensorDataChunkCollection chunk(millis(), NUM_SENSORS);
+            daq::SensorDataChunkCollection chunk(millis(), NUM_SENSORS);
             chunk.add_datapoint(SENSOR_ID_ENC1, val1);
             chunk.add_datapoint(SENSOR_ID_ENC2, val2);
 

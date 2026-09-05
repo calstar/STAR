@@ -1,4 +1,8 @@
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <signal.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include <array>
 #include <atomic>
@@ -15,10 +19,10 @@
 #include <thread>
 #include <vector>
 
-#include "DAQv2-Comms.h"
 #include "comms/messages/board/BoardHeartbeatMessage.hpp"
 #include "comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "comms/messages/sensor/SensorMessages.hpp"
+#include "daq-protocol.h"
 #include "fsw/BoardTypeWire.hpp"
 
 namespace {
@@ -39,10 +43,54 @@ std::vector<uint8_t> build_server_heartbeat_packet() {
     pkt[6] = 0;  // engine_state = SAFE
     return pkt;
 }
+
+// Forwards parsed board-log text to the Node backend over UDP (loopback). The
+// backend caches it in memory and pushes it to the GUI — logs deliberately do
+// NOT go to Elodin (no need to replay board logs for past runs).
+//
+// Envelope (little-endian): [board_id:u8][flags:u8][text_len:u16][text bytes].
+class BackendLogForwarder {
+public:
+    BackendLogForwarder(const std::string& host, uint16_t port) {
+        sock_ = socket(AF_INET, SOCK_DGRAM, 0);
+        std::memset(&dest_, 0, sizeof(dest_));
+        dest_.sin_family = AF_INET;
+        dest_.sin_port = htons(port);
+        inet_pton(AF_INET, host.c_str(), &dest_.sin_addr);
+    }
+    ~BackendLogForwarder() {
+        if (sock_ >= 0)
+            close(sock_);
+    }
+
+    bool ready() const {
+        return sock_ >= 0;
+    }
+
+    void forward(uint8_t board_id, uint8_t flags, const uint8_t* text, uint16_t text_len) {
+        if (sock_ < 0)
+            return;
+        std::vector<uint8_t> env;
+        env.reserve(4u + text_len);
+        env.push_back(board_id);
+        env.push_back(flags);
+        env.push_back(static_cast<uint8_t>(text_len & 0xFF));
+        env.push_back(static_cast<uint8_t>((text_len >> 8) & 0xFF));
+        if (text && text_len)
+            env.insert(env.end(), text, text + text_len);
+        sendto(sock_, env.data(), env.size(), 0, reinterpret_cast<sockaddr*>(&dest_),
+               sizeof(dest_));
+    }
+
+private:
+    int sock_ = -1;
+    sockaddr_in dest_{};
+};
 }  // namespace
 #include "calibration/PTCalibration.hpp"
 #include "calibration/SensorCalibration.hpp"
 #include "config/BoardDiscovery.hpp"
+#include "config/Config.hpp"
 #include "config/LoadActiveBoards.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
@@ -77,137 +125,100 @@ struct ServerHeartbeatConfig {
     bool send_from_daq_bridge = true;  // false when heartbeat_service is used
 };
 
-// Ordered list of (ip, config) for enabled boards in parse order. Used when board_simulator
-// falls back to 127.0.0.2, 127.0.0.3, ... so each simulated board gets correct board_id.
-using BoardOrder = std::vector<std::pair<std::string, BoardConfig>>;
+// Loopback fallback routing (integration test only): the simulator binds 127.0.0.<host-octet> per
+// board, where host-octet is the last octet of that board's config IP, so the bridge resolves those
+// packets by that octet — identity-based and immune to how the TOML parser happens to order
+// [boards] (toml++ sorts alphabetically; the Python sim iterates file order). Keyed by host octet.
+using BoardByOctet = std::map<int, BoardConfig>;
+
+/** Last octet of a dotted IPv4 string (e.g. "192.168.2.51" -> 51), or -1 if not parseable. */
+static int ipv4_host_octet(const std::string& ip) {
+    const auto dot = ip.rfind('.');
+    if (dot == std::string::npos || dot + 1 >= ip.size())
+        return -1;
+    const std::string tail = ip.substr(dot + 1);
+    if (tail.empty() || tail.find_first_not_of("0123456789") != std::string::npos)
+        return -1;
+    const int v = std::atoi(tail.c_str());
+    return (v >= 0 && v <= 255) ? v : -1;
+}
 
 // Minimal config parse: [database] host/port, [network] sensor_port/bind_ip, [server_heartbeat],
 // [boards.xxx] type/ip/enabled
 static void load_board_map_from_config(const std::string& config_path,
                                        std::map<std::string, BoardConfig>& board_map,
-                                       BoardOrder* out_board_order, std::string& db_host,
+                                       BoardByOctet* out_board_by_octet, std::string& db_host,
                                        uint16_t& db_port, uint16_t* out_sensor_port = nullptr,
                                        std::string* out_bind_ip = nullptr,
                                        ServerHeartbeatConfig* out_hb = nullptr,
-                                       fsw::time::TimeSyncConfig* out_ts = nullptr) {
+                                       fsw::time::TimeSyncConfig* out_ts = nullptr,
+                                       uint16_t* out_log_port = nullptr) {
     db_host = "127.0.0.1";
     db_port = 2240;
-    std::ifstream f(config_path);
-    if (!f.is_open())
-        return;
-    std::string line, current_section;
-    std::string board_type_str, board_ip;
-    int board_num_sensors = 10;
-    int board_id = -1;  // Added board_id
-    bool board_enabled = true;
-    auto add_board = [&]() {
-        if (board_ip.empty())
-            return;
-        BoardType bt = BoardType::UNKNOWN;
-        if (board_type_str == "PT")
-            bt = BoardType::PT;
-        else if (board_type_str == "LC")
-            bt = BoardType::LC;
-        else if (board_type_str == "TC")
-            bt = BoardType::TC;
-        else if (board_type_str == "RTD")
-            bt = BoardType::RTD;
-        else if (board_type_str == "ACTUATOR")
-            bt = BoardType::ACTUATOR;
-        else if (board_type_str == "ENCODER")
-            bt = BoardType::ENCODER;
-        if (bt != BoardType::UNKNOWN) {
-            BoardConfig cfg{bt, board_ip, board_num_sensors, board_enabled, board_id};
-            board_map[board_ip] = cfg;
-            if (out_board_order && board_enabled)
-                out_board_order->emplace_back(board_ip, std::move(cfg));
-        }
-        board_ip.clear();
-        board_type_str.clear();
-        board_id = -1;
+    {
+        std::ifstream f(config_path);
+        if (!f.is_open())
+            return;  // missing file → keep defaults, no boards (matches old behavior)
+    }
+
+    const fsw::config::Config c = fsw::config::load(config_path);
+    db_host = c.database.host;
+    db_port = c.database.port;
+    if (out_sensor_port)
+        *out_sensor_port = c.network.sensor_port;
+    if (out_bind_ip)
+        *out_bind_ip = c.network.bind_ip;
+    if (out_hb) {
+        out_hb->interval_ms = c.server_heartbeat.interval_ms;
+        out_hb->broadcast_port = c.server_heartbeat.broadcast_port;
+        out_hb->broadcast_ip = c.server_heartbeat.broadcast_ip;
+        out_hb->send_from_daq_bridge = c.server_heartbeat.send_from_daq_bridge;
+    }
+    if (out_ts)
+        *out_ts = c.time_sync;
+    if (out_log_port)
+        *out_log_port = c.logs.backend_udp_port;
+
+    auto kind = [](const std::string& t) {
+        if (t == "PT")
+            return BoardType::PT;
+        if (t == "LC")
+            return BoardType::LC;
+        if (t == "TC")
+            return BoardType::TC;
+        if (t == "RTD")
+            return BoardType::RTD;
+        if (t == "ACTUATOR")
+            return BoardType::ACTUATOR;
+        if (t == "ENCODER")
+            return BoardType::ENCODER;
+        return BoardType::UNKNOWN;
     };
-    while (std::getline(f, line)) {
-        size_t c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
-            line.pop_back();
-        size_t start = line.find_first_not_of(" \t");
-        if (start != std::string::npos)
-            line = line.substr(start);
-        if (line.empty())
+    for (const auto& b : c.boards) {
+        if (b.ip.empty())
             continue;
-        if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
-            add_board();
-            current_section = line.substr(1, line.size() - 2);
-            board_num_sensors = 10;
-            board_id = -1;
-            board_enabled = true;
+        BoardType bt = kind(b.type);
+        if (bt == BoardType::UNKNOWN)
             continue;
-        }
-        size_t eq = line.find('=');
-        if (eq == std::string::npos)
-            continue;
-        std::string key = line.substr(0, eq);
-        std::string val = line.substr(eq + 1);
-        while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
-            key.pop_back();
-        while (!val.empty() && (val[0] == ' ' || val[0] == '\t'))
-            val.erase(0, 1);
-        if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
-            val = val.substr(1, val.size() - 2);
-        if (current_section == "database") {
-            if (key == "host")
-                db_host = val;
-            else if (key == "port")
-                db_port = static_cast<uint16_t>(std::stoul(val));
-        } else if (current_section == "network") {
-            if (out_sensor_port && key == "sensor_port")
-                *out_sensor_port = static_cast<uint16_t>(std::stoul(val));
-            else if (out_bind_ip && key == "bind_ip")
-                *out_bind_ip = val;
-        } else if (current_section == "server_heartbeat" && out_hb) {
-            if (key == "interval_ms")
-                out_hb->interval_ms = std::stoul(val);
-            else if (key == "broadcast_port")
-                out_hb->broadcast_port = static_cast<uint16_t>(std::stoul(val));
-            else if (key == "broadcast_ip")
-                out_hb->broadcast_ip = val;
-            else if (key == "send_from_daq_bridge")
-                out_hb->send_from_daq_bridge = (val == "true" || val == "1");
-        } else if (current_section == "heartbeat_service" && out_hb) {
-            if (key == "enabled" && (val == "true" || val == "1"))
-                out_hb->send_from_daq_bridge = false;  // heartbeat_service owns it
-        } else if (current_section == "time_sync" && out_ts) {
-            if (key == "mode")
-                out_ts->mode = (val == "arrival") ? fsw::time::TimeSyncConfig::Mode::Arrival
-                                                  : fsw::time::TimeSyncConfig::Mode::BoardClock;
-            else if (key == "window_seconds")
-                out_ts->window_seconds = static_cast<uint32_t>(std::stoul(val));
-            else if (key == "max_plausible_gap_s")
-                out_ts->max_plausible_gap_s = static_cast<uint32_t>(std::stoul(val));
-            else if (key == "max_batch_age_s")
-                out_ts->max_batch_age_s = static_cast<uint32_t>(std::stoul(val));
-            else if (key == "resync_threshold_ms")
-                out_ts->resync_threshold_ms = static_cast<uint32_t>(std::stoul(val));
-            else if (key == "log_interval_s")
-                out_ts->log_interval_s = static_cast<uint32_t>(std::stoul(val));
-        } else if (current_section.compare(0, 7, "boards.") == 0) {
-            if (key == "type")
-                board_type_str = val;
-            else if (key == "ip")
-                board_ip = val;
-            else if (key == "num_sensors")
-                board_num_sensors = std::stoi(val);
-            else if (key == "board_id")
-                board_id = std::stoi(val);  // Parse board_id
-            else if (key == "enabled")
-                board_enabled = (val == "true" || val == "1");
+        BoardConfig bc{bt, b.ip, b.num_sensors, b.enabled, b.board_id};
+        board_map[b.ip] = bc;
+        // Index the board by its config-IP host octet for the loopback fallback (see BoardByOctet).
+        if (out_board_by_octet && b.enabled) {
+            const int octet = ipv4_host_octet(b.ip);
+            if (octet >= 2) {
+                auto [it, inserted] = out_board_by_octet->emplace(octet, bc);
+                if (!inserted)
+                    std::cerr << "[Config] WARN: loopback host octet " << octet << " (127.0.0."
+                              << octet << ") is claimed by both [" << it->second.ip << "] and ["
+                              << b.ip
+                              << "]; keeping the first. Give boards config IPs with distinct "
+                                 "last octets."
+                              << std::endl;
+            }
         }
     }
-    add_board();
-    // NOTE: do NOT add 127.0.0.1→PT. When simulator can't bind to config IPs, it uses
-    // 127.0.0.2, 127.0.0.3, ... (one per board). board_order maps index→config for that fallback.
+    // NOTE: do NOT add 127.0.0.1→PT. When the simulator can't bind config IPs it binds
+    // 127.0.0.<host octet> (one per board); resolve_board_config_by_source_ip maps that back.
 }
 
 // Map discovery signature board_type (DAQv2 wire: 1=PT, 2=LC, 3=RTD, 4=TC, 5=ACT, 6=ENC)
@@ -250,24 +261,26 @@ static uint8_t config_board_type_to_wire_u8(BoardType t) {
 }
 
 /**
- * Match config.toml board_id to the packet source IP. board_simulator uses 127.0.0.2, 127.0.0.3, …
- * while [boards.*] lists 192.168.2.* — the main sensor path used this mapping for Elodin packet
- * IDs. Heartbeats must use the same mapping or {0x10, low} uses the firmware slot byte (1–8)
- * instead of config board_id (e.g. 21, 12), and the thin backend boardsStatus / Boards UI show
- * PT/ACT disconnected.
+ * Resolve a packet's source IP to its config board. Real deployments send from the config IP, so
+ * the direct board_map lookup hits. The integration test can't bind the 192.168.2.* config IPs, so
+ * the simulator binds each board to 127.0.0.<host-octet> (the last octet of its config IP); those
+ * packets resolve by that octet via board_by_octet. This is identity-based — unlike the old
+ * index-based scheme it does NOT depend on the bridge and the sim iterating [boards] in the same
+ * order, which they don't (toml++ sorts alphabetically; the Python sim uses file order).
  */
 static const BoardConfig* resolve_board_config_by_source_ip(
     const std::string& source_ip, const std::map<std::string, BoardConfig>& board_map,
-    const BoardOrder& board_order) {
+    const BoardByOctet& board_by_octet) {
     auto it = board_map.find(source_ip);
     if (it != board_map.end() && it->second.enabled)
         return &it->second;
-    if (source_ip.compare(0, 8, "127.0.0.") == 0 && !board_order.empty()) {
-        int idx = (source_ip.size() >= 9) ? (std::atoi(source_ip.c_str() + 8) - 2) : -1;
-        if (idx < 0)
-            idx = 0;
-        if (idx < static_cast<int>(board_order.size()))
-            return &board_order[static_cast<size_t>(idx)].second;
+    if (source_ip.compare(0, 8, "127.0.0.") == 0) {
+        const int octet = ipv4_host_octet(source_ip);
+        if (octet >= 2) {
+            auto bo = board_by_octet.find(octet);
+            if (bo != board_by_octet.end() && bo->second.enabled)
+                return &bo->second;
+        }
     }
     return nullptr;
 }
@@ -290,20 +303,38 @@ int main(int argc, char* argv[]) {
     std::cout << "Listening on: " << bind_address << ":" << bind_port << std::endl;
     std::cout << std::endl;
 
+    // Hard-fail on a missing config. Otherwise every downstream loader treats "not found" as an
+    // empty config: daq_bridge binds :5006, registers 0 VTables, prints a green ✅, and sits
+    // "active (running)" forever while nothing can ever arrive — a healthy-looking no-op that
+    // presents as a vague "pipeline down". (This is exactly what a sim run does when it points at a
+    // config/sim_config.toml that was never generated.) A visible exit is far better.
+    {
+        std::ifstream cfg_check(config_path);
+        if (!cfg_check.is_open()) {
+            std::cerr << "❌ FATAL: daq_bridge config not found: '" << config_path
+                      << "'. Refusing to start as a 0-board no-op. For a simulated run the backend "
+                      << "generates config/sim_config.toml at session start; for hardware it is "
+                      << "config/config.toml (generated from config/profiles/*.toml)." << std::endl;
+            return 1;
+        }
+    }
+
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
     // ── Board IP → Type mapping from config ([boards.*]), DB host/port, network sensor_port ──
     std::map<std::string, BoardConfig> board_map;
-    BoardOrder board_order;
+    BoardByOctet board_by_octet;
     std::string db_host;
     uint16_t db_port;
     uint16_t config_sensor_port = 0;
     std::string config_bind_ip;
     ServerHeartbeatConfig hb_config;
     fsw::time::TimeSyncConfig time_sync_cfg;
-    load_board_map_from_config(config_path, board_map, &board_order, db_host, db_port,
-                               &config_sensor_port, &config_bind_ip, &hb_config, &time_sync_cfg);
+    uint16_t log_backend_port = 8092;  // [logs] backend_udp_port default
+    load_board_map_from_config(config_path, board_map, &board_by_octet, db_host, db_port,
+                               &config_sensor_port, &config_bind_ip, &hb_config, &time_sync_cfg,
+                               &log_backend_port);
     std::cout << "[TimeSync] mode="
               << (time_sync_cfg.mode == fsw::time::TimeSyncConfig::Mode::BoardClock ? "board-clock"
                                                                                     : "arrival")
@@ -313,7 +344,7 @@ int main(int argc, char* argv[]) {
     if (!config_bind_ip.empty())
         bind_address = config_bind_ip;
 
-    std::cout << "[Config] Board order (127.0.0.x fallback): " << board_order.size()
+    std::cout << "[Config] Loopback fallback (127.0.0.<host-octet>): " << board_by_octet.size()
               << " enabled boards" << std::endl;
     std::cout << "[Config] Board routing table (from " << config_path << "):" << std::endl;
     for (const auto& [ip, cfg] : board_map) {
@@ -406,6 +437,13 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "✅ Sensor pipeline ready on port " << bind_port << std::endl;
 
+    // Board-log forwarder → Node backend (loopback UDP; not Elodin).
+    BackendLogForwarder log_forwarder("127.0.0.1", log_backend_port);
+    if (log_forwarder.ready())
+        std::cout << "✅ Board-log forwarder → 127.0.0.1:" << log_backend_port << std::endl;
+    else
+        std::cerr << "⚠️  Board-log forwarder socket failed (logs won't reach backend)" << std::endl;
+
     if (pipeline.set_broadcast(true)) {
         if (hb_config.send_from_daq_bridge)
             std::cout << "✅ Broadcast enabled for SERVER_HEARTBEAT" << std::endl;
@@ -422,12 +460,12 @@ int main(int argc, char* argv[]) {
     for (const auto& [ip, cfg] : board_map) {
         if (cfg.board_id < 0 || !cfg.enabled || cfg.type == BoardType::ACTUATOR)
             continue;
-        Diablo::BoardHeartbeatPacket synthetic{};
+        daq::BoardHeartbeatPacket synthetic{};
         synthetic.board_id = static_cast<uint8_t>(cfg.board_id);
-        synthetic.engine_state = Diablo::EngineState::SAFE;
-        synthetic.board_state = Diablo::BoardState::SETUP;
-        Diablo::PacketHeader syn_hdr{};
-        syn_hdr.packet_type = Diablo::PacketType::BOARD_HEARTBEAT;
+        synthetic.engine_state = daq::EngineState::SAFE;
+        synthetic.board_state = daq::BoardState::SETUP;
+        daq::PacketHeader syn_hdr{};
+        syn_hdr.packet_type = daq::PacketType::BOARD_HEARTBEAT;
         syn_hdr.version = DIABLO_COMMS_VERSION;
         syn_hdr.timestamp =
             static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -558,14 +596,14 @@ int main(int argc, char* argv[]) {
             if (hb) {
                 discovery.process_board_announcement(hb->data.data(), hb->data.size(),
                                                      hb->source_ip);
-                Diablo::PacketHeader ph;
-                Diablo::BoardHeartbeatPacket hb_body;
-                if (Diablo::parse_board_heartbeat_packet(hb->data.data(), hb->data.size(), ph,
-                                                         hb_body)) {
+                daq::PacketHeader ph;
+                daq::BoardHeartbeatPacket hb_body;
+                if (daq::parse_board_heartbeat_packet(hb->data.data(), hb->data.size(), ph,
+                                                      hb_body)) {
                     uint8_t board_type_wire = fsw::daq_wire::kUnknown;
                     int elodin_board_id = -1;
                     if (const BoardConfig* hb_cfg = resolve_board_config_by_source_ip(
-                            hb->source_ip, board_map, board_order)) {
+                            hb->source_ip, board_map, board_by_octet)) {
                         board_type_wire = config_board_type_to_wire_u8(hb_cfg->type);
                         if (hb_cfg->board_id >= 0)
                             elodin_board_id = hb_cfg->board_id;
@@ -593,6 +631,26 @@ int main(int argc, char* argv[]) {
                 // for this process only; other services must use config/config.toml.
             }
 
+            // ── Board LOGS (type 15): forward to backend, do NOT publish to Elodin ──
+            auto log = pipeline.get_last_log();
+            if (log) {
+                daq::PacketHeader log_hdr;
+                uint8_t flags = 0;
+                const uint8_t* text = nullptr;
+                uint16_t text_len = 0;
+                if (daq::parse_log_packet(log->data.data(), log->data.size(), log_hdr, flags, text,
+                                          text_len)) {
+                    // Board attribution by source IP (same mapping as sensor/heartbeat paths).
+                    uint8_t board_id = 0;
+                    if (const BoardConfig* log_cfg = resolve_board_config_by_source_ip(
+                            log->source_ip, board_map, board_by_octet)) {
+                        if (log_cfg->board_id >= 0)
+                            board_id = static_cast<uint8_t>(log_cfg->board_id);
+                    }
+                    log_forwarder.forward(board_id, flags, text, text_len);
+                }
+            }
+
             std::this_thread::sleep_for(std::chrono::microseconds(500));
 
             // Drain Elodin socket: we only write TABLE packets; if the DB sends anything back
@@ -605,14 +663,20 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            // Try reconnect every 5 seconds if disconnected
-            if (elodin_connected && !elodin_client.is_connected()) {
+            // Try reconnect every 5 seconds if disconnected. NOT gated on elodin_connected:
+            // that flag is only set by a successful FIRST connect, so gating on it meant a bridge
+            // that lost the startup race to elodin-db never retried and published nothing for the
+            // life of the process.
+            if (!elodin_client.is_connected()) {
                 auto since = std::chrono::steady_clock::now() - last_reconnect_time;
                 if (std::chrono::duration_cast<std::chrono::seconds>(since).count() >= 5) {
                     last_reconnect_time = std::chrono::steady_clock::now();
                     if (elodin_client.reconnect()) {
                         std::cout << "✅ Reconnected to Elodin — re-registering VTables"
                                   << std::endl;
+                        // Publishing is gated on this flag everywhere below; without setting it
+                        // here a bridge that only connected on a RETRY would stay silent.
+                        elodin_connected = true;
                         fsw::elodin::DatabaseConfig::register_tables(
                             elodin_client, pt_boards, act_boards, tc_boards, rtd_boards, lc_boards,
                             enc_boards);
@@ -643,7 +707,7 @@ int main(int argc, char* argv[]) {
         // then discovery, else treat as PT) ──
         auto board_it = board_map.find(source_ip);
         const BoardConfig* effective_cfg =
-            resolve_board_config_by_source_ip(source_ip, board_map, board_order);
+            resolve_board_config_by_source_ip(source_ip, board_map, board_by_octet);
         // Use board type from config even when disabled — we still publish actuator/PT data to DB
         BoardType board_type = board_it != board_map.end()
                                    ? board_it->second.type
@@ -670,9 +734,9 @@ int main(int argc, char* argv[]) {
             elodin_client.begin_batch();
             for (const auto& st_packet : batch.value().self_tests) {
                 // Self-test UDP has no board_id on wire; map source IP → config board_id.
-                // Must match sensor routing: simulators often use 127.0.0.2+ (board_order) while
-                // board_map is keyed by config IPs — without effective_cfg, board_id stayed 0 and
-                // no [0x60,*] rows reached Elodin (UI showed UNTESTED despite ACTIVE).
+                // Must match sensor routing: simulators use 127.0.0.<host-octet> (board_by_octet)
+                // while board_map is keyed by config IPs — without effective_cfg, board_id stayed 0
+                // and no [0x60,*] rows reached Elodin (UI showed UNTESTED despite ACTIVE).
                 uint8_t board_id = 0;
                 if (effective_cfg && effective_cfg->board_id >= 0)
                     board_id = static_cast<uint8_t>(effective_cfg->board_id);
@@ -858,15 +922,8 @@ int main(int argc, char* argv[]) {
 
             std::cout << "\n[Stats] Total: " << packet_count << " pkts";
             for (const auto& [ip, cnt] : packets_per_board) {
-                auto it = board_map.find(ip);
-                const BoardConfig* cfg = (it != board_map.end()) ? &it->second : nullptr;
-                if (!cfg && ip.compare(0, 8, "127.0.0.") == 0 && !board_order.empty()) {
-                    int idx = (ip.size() >= 9) ? (std::atoi(ip.c_str() + 8) - 2) : -1;
-                    if (idx < 0)
-                        idx = 0;
-                    if (idx < static_cast<int>(board_order.size()))
-                        cfg = &board_order[idx].second;
-                }
+                const BoardConfig* cfg =
+                    resolve_board_config_by_source_ip(ip, board_map, board_by_octet);
                 const char* tag = "???";
                 if (cfg) {
                     switch (cfg->type) {

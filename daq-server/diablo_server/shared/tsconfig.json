@@ -1,0 +1,17 @@
+{
+  "//": "Canonical build for the shared wire types. The emitted types.js is a real runtime artifact: the production backend (node dist/server.js) does `await import('../../shared/types.js')` and Vite bundles the literal .js into the frontend. Regenerate with `npm run build` in this dir; CI guards freshness via git diff. Do NOT hand-edit types.js.",
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "removeComments": false,
+    "outDir": ".",
+    "rootDir": ".",
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "files": ["types.ts"]
+}

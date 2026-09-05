@@ -652,11 +652,11 @@ void PressureStateMachine::sendActuatorCommandUDP(ActuatorID actuator, CommandTy
         static_cast<uint8_t>(actuator) + 1;  // Convert 0-indexed to 1-indexed
 
     // Construct actuator command packet (matching DAQv2-Comms format exactly)
-    Diablo::ActuatorCommand cmd;
+    daq::ActuatorCommand cmd;
     cmd.actuator_id = actuator_channel;
     cmd.actuator_state = actuator_state;
 
-    std::vector<Diablo::ActuatorCommand> commands;
+    std::vector<daq::ActuatorCommand> commands;
     commands.push_back(cmd);
 
     uint8_t buf[512];
@@ -664,7 +664,7 @@ void PressureStateMachine::sendActuatorCommandUDP(ActuatorID actuator, CommandTy
                                                std::chrono::steady_clock::now().time_since_epoch())
                                                .count() &
                                            0xFFFFFFFFu);
-    size_t len = Diablo::create_actuator_command_packet(commands, ts_ms, buf, sizeof(buf));
+    size_t len = daq::create_actuator_command_packet(commands, ts_ms, buf, sizeof(buf));
     std::vector<uint8_t> packet(buf, buf + len);
     if (packet.empty()) {
         std::cerr << "[PressureStateMachine] ERROR: Failed to construct actuator command packet"
