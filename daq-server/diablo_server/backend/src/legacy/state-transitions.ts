@@ -7,44 +7,17 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { SystemState } from '../shared-types.js';
 import { readConfig } from '../routes/config.js';
+import { csvStateMap } from './state-ids.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const CSV_STATE_MAP: Record<string, SystemState> = {
-  'Debug': SystemState.DEBUG,
-  'Idle': SystemState.IDLE,
-  'Armed': SystemState.ARMED,
-  'Fuel Fill': SystemState.FUEL_FILL,
-  'Ox Fill': SystemState.OX_FILL,
-  'Press Standby': SystemState.PRESS_STANDBY, // Press Standby is a separate state
-  'GN2 Low Press': SystemState.GN2_LOW_PRESS,
-  'GN2 Low Vent': SystemState.GN2_VENT,
-  'Fuel Press': SystemState.FUEL_PRESS,
-  'Fuel Vent': SystemState.FUEL_VENT,
-  'Ox Press': SystemState.OX_PRESS,
-  'Ox Vent': SystemState.OX_VENT,
-  'GN2 High Press': SystemState.GN2_HIGH_PRESS,
-  'GN2 High Vent': SystemState.GN2_HIGH_VENT,
-  'Vent': SystemState.VENT,
-  'Calibrate': SystemState.CALIBRATE,
-  'Ready': SystemState.READY,
-  'Fire': SystemState.FIRE,
-  'Engine Abort': SystemState.ENGINE_ABORT,
-  'GSE Abort': SystemState.GSE_ABORT,
-  'Emergency Abort': SystemState.EMERGENCY_ABORT,
-  // Legacy mappings
-  'GN2 Press': SystemState.GN2_LOW_PRESS, // Old name
-  'GN2 Vent': SystemState.GN2_VENT, // Old name
-  'Quick Fire': SystemState.READY,
-  'High Press': SystemState.GN2_HIGH_PRESS,
-  'Abort': SystemState.EMERGENCY_ABORT,
-};
 
 interface Transition {
   from: SystemState;
   to: SystemState;
 }
+
 
 export function parseStateTransitionsCSV(csvPath: string): Transition[] {
   try {
@@ -58,12 +31,13 @@ export function parseStateTransitionsCSV(csvPath: string): Transition[] {
     // First line is header: ,Idle,Armed,...
     const headers = lines[0].split(',').slice(1); // Skip first empty cell
     const transitions: Transition[] = [];
+    const stateMap = csvStateMap();
 
     // Parse each row (skip header)
     for (let i = 1; i < lines.length; i++) {
       const row = lines[i].split(',');
       const fromStateName = row[0].trim();
-      const fromState = CSV_STATE_MAP[fromStateName];
+      const fromState = stateMap[fromStateName];
 
       if (fromState === undefined && fromStateName !== '') {
         continue; // Skip unknown states
@@ -76,7 +50,7 @@ export function parseStateTransitionsCSV(csvPath: string): Transition[] {
         if (row[j].trim() === '1') {
           const toStateName = headers[j - 1]?.trim();
           if (!toStateName) continue;
-          const toState = CSV_STATE_MAP[toStateName];
+          const toState = stateMap[toStateName];
 
           if (toState !== undefined && fromState !== undefined) {
             transitions.push({ from: fromState, to: toState });
@@ -156,9 +130,14 @@ export function buildTransitionMap(): Map<SystemState, Set<SystemState>> {
   }
 
   console.log(`📋 Built transition map: ${transitions.length} allowed transitions`);
+  // Label from the same map the ids came from — SystemState[id] here would name a different
+  // state than the row describes, which is the confusion this class of bug creates.
+  const nameById: Record<number, string> = {};
+  for (const [n, id] of Object.entries(csvStateMap())) nameById[id as number] = n;
+  const nm = (id: number) => nameById[id] ?? SystemState[id] ?? `STATE ${id}`;
   // Debug: log all transitions
   for (const [from, allowed] of _transitionMap.entries()) {
-    console.log(`   ${SystemState[from]}: can go to [${Array.from(allowed).map(s => SystemState[s]).join(', ')}]`);
+    console.log(`   ${nm(from)}: can go to [${Array.from(allowed).map(s => nm(s)).join(', ')}]`);
   }
   return _transitionMap;
 }
