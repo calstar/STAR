@@ -66,12 +66,20 @@ let inFlight: Promise<StateDef[]> | null = null;
 
 function adopt(next: StateDef[]): StateDef[] {
   if (next.length === 0) return states;
-  // Overlay rather than replace, matching the C++ side: anything the config omits keeps its
-  // built-in label instead of becoming an unnamed id.
-  const merged = new Map<number, StateDef>(byId);
+  // Two different questions, two different answers, which this used to conflate.
+  //
+  // "What is state 14 called?" is asked of ids read back from Elodin run history, which may name
+  // a state the current config no longer declares. That lookup still overlays config onto the
+  // built-in table, so an old run decodes to "Calibrate" instead of "STATE 14".
+  //
+  // "Which states exist?" is asked by the diagram and the panel, and there the overlay was wrong:
+  // a config declaring ids 1-12 left built-in 13-20 standing, each keeping its built-in panel
+  // position. A rig whose own Ready sits at (4,0) then drew built-in Calibrate in the same cell.
+  // The config is the whole list of states that exist; anything it drops is gone.
+  const merged = new Map<number, StateDef>(BUILT_IN_BY_ID);
   for (const s of next) merged.set(s.id, s);
   byId = merged;
-  states = [...merged.values()].sort((a, b) => a.id - b.id);
+  states = [...next].sort((a, b) => a.id - b.id);
   loaded = true;
   return states;
 }
