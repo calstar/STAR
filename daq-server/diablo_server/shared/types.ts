@@ -252,7 +252,7 @@ export type CalibrationCommandType =
   | 'reset_channel'       // clear all points and restart
   | 'enable_phase2'
   | 'disable_phase2'
-  | 'zero_all'            // zero-point init: all PTs set current ADC → 0 PSI
+  | 'zero_all'            // capture a 0 psi reference point on every cubic/robust PT (shared fit)
   | 'save_coefficients'   // persist current coefficients to disk
   | 'clear_calibration'   // clear all state and start from scratch
   | 'capture_cubic_point' // add one (current ADC, ref PSI) point to a channel's cubic fit

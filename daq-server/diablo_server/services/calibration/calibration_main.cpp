@@ -65,10 +65,6 @@ namespace {
  */
 std::map<uint8_t, std::array<uint8_t, 11>> g_hp_ma_live;
 
-/** Per-sensor zero offsets (PSI) applied after LP PT path (factory or robust) and Zero All. */
-std::unordered_map<uint16_t, double> g_zero_offsets;
-std::mutex g_zero_offsets_mutex;
-
 /** Per-sensor EMA state for LP PT output smoothing (initialized to NaN = not yet set). */
 std::unordered_map<uint16_t, double> g_lp_ema;
 constexpr double LP_EMA_ALPHA = 0.25;  // ~4-sample effective window
@@ -928,59 +924,51 @@ int main(int argc, char* argv[]) {
                           << " sensor=" << static_cast<int>(sensor_id) << " ref=" << ref_val
                           << std::endl;
 
-                if (cmd_type == 0) {       // Zero All
+                if (cmd_type == 0) {  // Zero All — capture a 0 psi reference point on every PT
+                    // A "zero" is just a captured reference point at 0 psi: it feeds the same shared
+                    // fit as any other capture (cubic + robust), persists, and naturally averages
+                    // repeated zeroes — capturing real zero-drift over time rather than assuming a
+                    // uniform tare. Physics sensors take no points, so they're skipped.
+                    auto avg_adc = [&](uint16_t uid, double& out) -> bool {
+                        auto rit = pt_adc_ring.find(uid);
+                        if (rit != pt_adc_ring.end() && !rit->second.empty()) {
+                            double sum = 0.0;
+                            for (int32_t a : rit->second)
+                                sum += static_cast<double>(a);
+                            out = sum / static_cast<double>(rit->second.size());
+                            return true;
+                        }
+                        auto lit = last_adc_map.find(uid);
+                        if (lit != last_adc_map.end()) {
+                            out = static_cast<double>(lit->second);
+                            return true;
+                        }
+                        return false;
+                    };
+                    int zeroed = 0;
                     if (sensor_id == 0) {  // All sensors
-                        std::lock_guard<std::mutex> lk(g_zero_offsets_mutex);
-                        g_lp_ema.clear();  // reset EMA so zeroed value reaches GUI immediately
                         for (auto const& [id, val] : last_adc_map) {
-                            const uint8_t bid = static_cast<uint8_t>(id / 100);
-                            const uint8_t lch = static_cast<uint8_t>(id % 100);
-                            const uint8_t bn = (bid % 10) == 0 ? 10u : (bid % 10);
-                            // Zero/tare only applies to robust sensors: a cubic's zero is defined
-                            // by its fit and a physics sensor's by the datasheet line, so taring
-                            // them would silently shift a calibrated curve. Clear any stale offset.
-                            if (pt_model_for(id) != PtModel::Robust) {
-                                g_zero_offsets.erase(id);
+                            (void)val;
+                            if (pt_model_for(id) == PtModel::Physics)
+                                continue;  // datasheet zero; no points
+                            double adc_avg = 0.0;
+                            if (!avg_adc(id, adc_avg))
                                 continue;
-                            }
-                            const bool is_hp = current_loop_board(bn) != nullptr;
-                            robust_manager.zero_sensor(id, val);
-                            if (is_hp) {
-                                g_zero_offsets.erase(id);
-                                continue;
-                            }
-                            const double psi_base = lp_pt_psi_before_offset(
-                                bn, lch, id, val, pt_calibration, robust_manager);
-                            if (std::isfinite(psi_base))
-                                g_zero_offsets[id] = -psi_base;
+                            apply_capture(id, adc_avg, 0.0);
+                            ++zeroed;
                         }
-                        std::cout << "[Cal] Performed Zero All for " << last_adc_map.size()
-                                  << " sensors" << std::endl;
+                        std::cout << "[Cal] Zero All: captured 0 psi on " << zeroed
+                                  << " PT sensors" << std::endl;
                     } else {
-                        if (last_adc_map.count(sensor_id)) {
-                            std::lock_guard<std::mutex> lk(g_zero_offsets_mutex);
-                            const uint8_t bid = static_cast<uint8_t>(sensor_id / 100);
-                            const uint8_t lch = static_cast<uint8_t>(sensor_id % 100);
-                            const uint8_t bn = (bid % 10) == 0 ? 10u : (bid % 10);
-                            // Robust-only tare (see Zero-All-of-all above).
-                            if (pt_model_for(sensor_id) != PtModel::Robust) {
-                                g_zero_offsets.erase(sensor_id);
-                                g_lp_ema.erase(sensor_id);
-                            } else {
-                                const bool is_hp = current_loop_board(bn) != nullptr;
-                                robust_manager.zero_sensor(sensor_id, last_adc_map[sensor_id]);
-                                if (!is_hp) {
-                                    const double psi_base = lp_pt_psi_before_offset(
-                                        bn, lch, sensor_id, last_adc_map[sensor_id], pt_calibration,
-                                        robust_manager);
-                                    if (std::isfinite(psi_base))
-                                        g_zero_offsets[sensor_id] = -psi_base;
-                                } else {
-                                    g_zero_offsets.erase(sensor_id);
-                                }
-                                g_lp_ema.erase(sensor_id);
-                            }
+                        double adc_avg = 0.0;
+                        if (pt_model_for(sensor_id) != PtModel::Physics &&
+                            avg_adc(sensor_id, adc_avg)) {
+                            apply_capture(sensor_id, adc_avg, 0.0);
+                            ++zeroed;
                         }
+                        std::cout << "[Cal] Zero: captured 0 psi on uid "
+                                  << static_cast<int>(sensor_id) << " (" << zeroed << ")"
+                                  << std::endl;
                     }
                 } else if (cmd_type == 1) {  // Capture Reference
                     if (last_adc_map.count(sensor_id)) {
@@ -1150,13 +1138,8 @@ int main(int argc, char* argv[]) {
             else if (eff_model == PtModel::Blend)
                 cal_status = (fac_ok && has_rob) ? 1u : 0u;
 
-            // Zero offset then EMA smoothing (applies to all PTs now).
-            {
-                std::lock_guard<std::mutex> lk(g_zero_offsets_mutex);
-                auto it_off = g_zero_offsets.find(uid);
-                if (it_off != g_zero_offsets.end())
-                    psi += it_off->second;
-            }
+            // EMA smoothing (zeroing is now a captured 0 psi point that flows through the fit above,
+            // not a post-hoc offset).
             {
                 auto& ema = g_lp_ema[uid];
                 if (!std::isfinite(ema))

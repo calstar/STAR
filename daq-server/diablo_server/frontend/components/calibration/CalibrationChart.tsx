@@ -53,6 +53,29 @@ const AgeDot = (props: { cx?: number; cy?: number; payload?: Row }) => {
 
 const CURVE_COLORS = { cubic: '#38BDF8', robust: '#A78BFA', physics: '#FB923C' } as const;
 
+// Custom tooltip: recharts' default duplicates the numeric X value on a scatter/number axis, and
+// its label text renders black. We render the ADC once, then one row per present series.
+interface TipItem { name?: string; value?: number; color?: string; dataKey?: string }
+function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: TipItem[]; label?: number }) {
+  if (!active || !payload || payload.length === 0) return null;
+  const seen = new Set<string>();
+  const rows = payload
+    .filter((p) => p.value != null && isFinite(p.value) && p.dataKey && p.dataKey !== 'adc')
+    .filter((p) => { const k = String(p.dataKey); if (seen.has(k)) return false; seen.add(k); return true; });
+  if (rows.length === 0) return null;
+  return (
+    <div style={{ background: '#111', border: '1px solid #333', borderRadius: 6, padding: '6px 8px', fontSize: 11 }}>
+      <div style={{ color: '#e2e2e2', fontWeight: 600, marginBottom: 3 }}>ADC {Number(label).toExponential(3)}</div>
+      {rows.map((p) => (
+        <div key={String(p.dataKey)} style={{ color: p.color ?? '#e2e2e2', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+          <span>{p.name ?? p.dataKey}</span>
+          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Number(p.value).toFixed(2)} psi</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export interface CalibrationChartProps {
   state?: CubicCalibrationChannel;
   height?: number;
@@ -127,11 +150,7 @@ export function CalibrationChart({ state, height = 420, activeModel, show, physi
                  tickFormatter={(v) => Number(v).toFixed(0)}>
             <Label value="Pressure (PSI)" angle={-90} position="insideLeft" fill="#888" fontSize={11} />
           </YAxis>
-          <Tooltip
-            contentStyle={{ background: '#111', border: '1px solid #333', fontSize: 11 }}
-            labelFormatter={(v) => `ADC ${Number(v).toExponential(3)}`}
-            formatter={(val: number, name: string) => [Number(val).toFixed(2) + ' PSI', name]}
-          />
+          <Tooltip content={<ChartTooltip />} cursor={{ stroke: '#555', strokeDasharray: '3 3' }} />
           {showCubic && (
             <Line type="monotone" dataKey="psiCubic" stroke={CURVE_COLORS.cubic} dot={false}
                   strokeWidth={w('cubic')} strokeDasharray={dash('cubic')} connectNulls
