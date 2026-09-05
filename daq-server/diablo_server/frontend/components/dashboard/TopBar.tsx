@@ -15,7 +15,7 @@ import { useSensorConfig } from '@/lib/sensor-config';
 import { useGuiConfig } from '@/lib/gui-config';
 import { usePressureLimits } from '@/lib/pressure-limits';
 import { buildPressureBarDefsFromSensorConfig, type PressureBarDef } from '@/lib/pressure-bar-defs';
-import { stateNameUpper } from '@/lib/states';
+import { stateNameUpper, isFireState, stateIdByName, bootStateId } from '@/lib/states';
 
 
 const STATE_COLORS: Record<number, string> = {
@@ -207,7 +207,7 @@ export default function TopBar() {
     setCountdownMenuOpen(false);
   }, [dateTimeInput, hitZeroMode, sendCountdownTarget, timeOfDayInput]);
 
-  const effectiveState = currentState ?? SystemState.IDLE;
+  const effectiveState = currentState ?? bootStateId() ?? -1;
   const currentStateName = stateNameUpper(effectiveState);
   const stateColor = STATE_COLORS[effectiveState] ?? 'text-text';
   const isConnected = connectionStatus.connected;
@@ -245,20 +245,35 @@ export default function TopBar() {
     requestAnimationFrame(() => ws.sendCommand(cmd));
   };
 
+  // Abort targets by name, from the config's own [[states]]. These were literals — VENT 13,
+  // ENGINE_ABORT 17, GSE_ABORT 18, EMERGENCY_ABORT 19 — and a rig on any other numbering has no
+  // such ids, so the command resolved to nothing and the button did nothing while looking like it
+  // had worked. sendStateNamed() no-ops loudly instead, and hasState() disables a control the
+  // config cannot satisfy.
+  const sendStateNamed = (name: string) => {
+    const id = stateIdByName(name);
+    if (id === null) {
+      console.error(`[TopBar] config declares no "${name}" state — command not sent`);
+      return;
+    }
+    sendState(id);
+  };
+  const hasState = (name: string) => stateIdByName(name) !== null;
+
   const handleEngineAbort = () => {
-    sendState(SystemState.VENT);
-    setTimeout(() => sendState(SystemState.ENGINE_ABORT), 5000);
+    sendStateNamed('Vent');
+    setTimeout(() => sendStateNamed('Engine Abort'), 5000);
   };
 
-  const handleGseAbort = () => sendState(SystemState.GSE_ABORT);
+  const handleGseAbort = () => sendStateNamed('GSE Abort');
 
   const handleEmergencyAbort = () => {
     if (!confirm('⚠️ EMERGENCY ABORT — immediately vent GN2 and abort all operations?')) return;
-    sendState(SystemState.EMERGENCY_ABORT);
+    sendStateNamed('Emergency Abort');
   };
 
   const handleExtendFire = () => {
-    if (!controlEnabled || currentState !== SystemState.FIRE) return;
+    if (!controlEnabled || !isFireState(currentState)) return;
     const cmd: CommandPayload = { commandType: 'extend_fire', data: {} };
     requestAnimationFrame(() => ws.sendCommand(cmd));
   };
@@ -532,10 +547,10 @@ export default function TopBar() {
           <div className="flex flex-col justify-center gap-2 flex-1 min-w-[7.25rem] border-l border-gray-800/60 pl-2">
             <button
               onClick={handleExtendFire}
-              disabled={!controlEnabled || currentState !== SystemState.FIRE}
+              disabled={!controlEnabled || !isFireState(currentState)}
               className="w-full min-w-0 py-2 xl:py-3 bg-emerald-800 hover:bg-emerald-700 active:bg-emerald-900 border border-emerald-600
                          text-white font-semibold text-[10px] xl:text-xs rounded-xl tracking-wider transition-colors disabled:bg-gray-800 disabled:border-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed"
-              title={currentState === SystemState.FIRE ? 'Extend fire to 5s from fire start' : 'Only active in FIRE'}
+              title={isFireState(currentState) ? 'Extend fire to 5s from fire start' : 'Only active in FIRE'}
             >
               EXTEND FIRE
             </button>

@@ -6,6 +6,7 @@ import { useSensorConfig } from '@/lib/sensor-config';
 import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
 import { SystemState, engineStateCodeToLabel } from '@/lib/types';
 import { serverNowMs } from '@/lib/plot-time';
+import { bootStateId } from '@/lib/states';
 
 type PressureOption = {
   entity: string;
@@ -250,7 +251,7 @@ export default function LivestreamStatsPane() {
     }
   }, [rightEntity]);
 
-  const effectiveState = currentState ?? SystemState.IDLE;
+  const effectiveState = currentState ?? bootStateId() ?? -1;
   const stateLabel = engineStateCodeToLabel(effectiveState);
 
   return (

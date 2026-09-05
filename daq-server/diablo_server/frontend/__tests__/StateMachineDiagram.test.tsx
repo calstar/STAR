@@ -35,7 +35,19 @@ vi.mock('uplot', () => {
 
 describe('StateMachineDiagram', () => {
     let mockSendCommand = vi.fn();
-    let mockOn = vi.fn(() => vi.fn()); // returns unsub function
+
+    // The backend is the only source of the transition graph now. There used to be a hardcoded
+    // STATIC_TRANSITIONS fallback in the component, and this suite leaned on it — it subscribed
+    // but never delivered a payload, so the graph the test exercised was the compiled enum's, not
+    // one any rig actually runs. Deliver the graph the way the real backend does.
+    const BACKEND_TRANSITIONS = [
+        { from: SystemState.IDLE, to: SystemState.ARMED },
+        { from: SystemState.ARMED, to: SystemState.IDLE },
+    ];
+    let mockOn = vi.fn((event: string, handler: (payload: unknown) => void) => {
+        if (event === 'state_transitions') handler({ transitions: BACKEND_TRANSITIONS });
+        return vi.fn(); // unsub
+    });
 
     beforeEach(() => {
         vi.clearAllMocks();
