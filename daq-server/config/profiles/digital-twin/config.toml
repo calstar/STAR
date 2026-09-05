@@ -594,48 +594,70 @@ panel_col = 0
 is_boot = true
 
 [[states]]
-id = 0
-name = "Armed"
-
-[[states]]
 id = 2
-name = "Press Standby"
+name = "Armed"
+panel_row = 1
+panel_col = 0
 
 [[states]]
 id = 3
-name = "Dome Press"
+name = "Press Standby"
+panel_row = 2
+panel_col = 0
 
 [[states]]
 id = 4
-name = "COPV Fill"
+name = "Dome Press"
+panel_row = 2
+panel_col = 1
 
 [[states]]
 id = 5
-name = "Fuel Press"
+name = "COPV Fill"
+panel_row = 2
+panel_col = 2
 
 [[states]]
 id = 6
-name = "Vent"
+name = "Fuel Press"
+panel_row = 2
+panel_col = 3
 
 [[states]]
 id = 7
-name = "Dome Vent"
+name = "Vent"
+panel_row = 3
+panel_col = 0
 
 [[states]]
 id = 8
-name = "High Press Vent"
+name = "Dome Vent"
+panel_row = 3
+panel_col = 1
 
 [[states]]
 id = 9
-name = "Fuel Tank Vent"
+name = "High Press Vent"
+panel_row = 3
+panel_col = 2
 
 [[states]]
 id = 10
-name = "Ready"
+name = "Fuel Tank Vent"
+panel_row = 3
+panel_col = 3
 
 [[states]]
 id = 11
+name = "Ready"
+panel_row = 4
+panel_col = 0
+
+[[states]]
+id = 12
 name = "Fire"
+panel_row = 4
+panel_col = 1
 
 [actuator_roles]
 "Dome CTRL" = [ "NO", 1, 14 ]
