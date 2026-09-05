@@ -108,6 +108,23 @@ function safeReadConfigForGui(): unknown {
   try { return readConfig(); } catch { return null; }
 }
 
+/**
+ * Name of a state id as the ACTIVE config declares it, or null if the config declares no [[states]]
+ * (or not this id). Read per command rather than cached: transitions are operator-paced, and a
+ * profile can be redeployed under a running backend, in which case a cache would keep commanding
+ * the previous rig's names.
+ */
+function configStateName(id: number): string | null {
+  try {
+    const raw = (readConfig() as any)?.states;
+    if (!Array.isArray(raw)) return null;
+    const hit = raw.find((e: any) => e?.id === id && typeof e?.name === 'string');
+    return hit ? (hit.name as string) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Re-read [gui] settings after a config save (wired via onConfigUpdated). */
 function reloadGuiStreamConfig(): void {
   const next = parseGuiStreamConfig(safeReadConfigForGui());
@@ -340,7 +357,7 @@ function checkActuatorMismatch(state: SystemState): void {
 
   const key = 'actuator_mismatch';
   if (mismatched.length > 0) {
-    const stateName = SystemState[state] ?? 'UNKNOWN';
+    const stateName = configStateName(state) ?? SystemState[state] ?? 'UNKNOWN';
     const msg = `Actuator mismatch in ${stateName}: ${mismatched.join(', ')}`;
     console.warn(`[ThinServer] ⚠️ ${msg}`);
     broadcastNotification({ key, category: 'warning', message: msg, timestampMs: now, ongoing: true });
@@ -744,7 +761,7 @@ wss.on('connection', (ws: WebSocket, req) => {
   // Current state
   send(ws, {
     type: MessageType.STATE_UPDATE, timestamp: Date.now(),
-    payload: { currentState, stateName: SystemState[currentState] ?? 'UNKNOWN', timestamp: Date.now(), debugMode },
+    payload: { currentState, stateName: configStateName(currentState) ?? SystemState[currentState] ?? 'UNKNOWN', timestamp: Date.now(), debugMode },
   });
   outboundMessages++;
   lastOutboundAt = Date.now();
@@ -891,7 +908,7 @@ function handleMessage(ws: WebSocket, message: any): void {
 function broadcastStateUpdate(): void {
   broadcast({
     type: MessageType.STATE_UPDATE, timestamp: Date.now(),
-    payload: { currentState, stateName: SystemState[currentState] ?? 'UNKNOWN', timestamp: Date.now(), debugMode },
+    payload: { currentState, stateName: configStateName(currentState) ?? SystemState[currentState] ?? 'UNKNOWN', timestamp: Date.now(), debugMode },
   });
 }
 
@@ -909,7 +926,14 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
     case 'state_transition': {
       const targetState = command.data.state!;
       const stateName = SystemState[targetState] ?? String(targetState);
-      const csvName = STATE_TO_CSV_NAME[stateName] ?? stateName;
+      // Resolve the id through the config the sequencer itself loaded, not the compiled enum.
+      // The GUI sends a [[states]] id; SystemState is a fixed table that only agrees with it on a
+      // rig that never renumbered. On one that did, every id from the first divergence up named a
+      // different state: id 7 is Vent in config and FUEL_PRESS in the enum, so pressing Vent sent
+      // TRANSITION:Fuel Press — and because Fuel Press is a real state here, fromName() resolved
+      // it and the sequencer would have run it. A vent request executing a press is not a failure
+      // mode worth keeping for the sake of a fallback.
+      const csvName = configStateName(targetState) ?? STATE_TO_CSV_NAME[stateName] ?? stateName;
       // No optimistic update — real state/actuator positions arrive via _SEQUENCER_STATE [0x50]
       // and [0x32] packets from Elodin. FIRE_START/FIRE_STOP are sent from the subscriber path.
       sendToActuatorService(`TRANSITION:${csvName}\n`).then(({ ok, reply }) => {
