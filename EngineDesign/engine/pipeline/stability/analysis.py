@@ -480,30 +480,28 @@ def compute_physical_stability(config, Pc: float, MR: float, mdot_total: float, 
     """
     from engine.pipeline.stability import chug, acoustic
     inp = build_stability_inputs(config, Pc, MR, mdot_total, cstar, gamma, R, Tc, diagnostics, cg)
-    # Native fast path: the 200-pt complex chug sweep is the dominant per-eval
-    # stability cost. Run it in C (~machine-precision parity) when native is
-    # enabled; fall back to Python on any issue.
-    from engine.native.python import native_injector
-    _native = native_injector.native_enabled()
+    # Accelerated fast path: the 200-pt complex chug sweep is the dominant
+    # per-eval stability cost. Run the compiled kernel when the accelerator is
+    # enabled; fall back to the (now vectorised) Python sweep on any issue.
+    from engine import accel
     chug_fast = None
-    if _native:
+    if accel.enabled():
         try:
-            chug_fast = native_injector.chug_margin_fast(inp["streams"], inp["chamber"])
+            # attribute access, not a direct import -- see the note in
+            # tests/test_accel_is_actually_used.py
+            chug_fast = accel.chug_margin_fast(inp["streams"], inp["chamber"])
         except Exception:
             chug_fast = None
     if chug_fast is None:
         chug_fast = chug.chug_margin_fast(inp["streams"], inp["chamber"])
 
-    ac_fast = None
-    if _native:
-        try:
-            ac_fast = native_injector.fast_acoustic(inp["D_ch"], inp["L_ch"], inp["gas"],
-                                                    n=inp["n_interaction"], tau_sens=inp["tau_sens"])
-        except Exception:
-            ac_fast = None
-    if ac_fast is None:
-        ac_fast = acoustic.fast_acoustic(inp["D_ch"], inp["L_ch"], inp["gas"],
-                                         n=inp["n_interaction"], tau_sens=inp["tau_sens"])
+    # fast_acoustic stays pure Python on purpose: 10.5 us here vs 4.2 us in C, and
+    # acoustic.fast_acoustic is two mode_growth_rate calls with no loop. A ~6 us
+    # difference does not earn a kernel. (The chug sweep did: 200 complex points,
+    # measured at ~8.8% of Layer-1 wall time when left unaccelerated.)
+    ac_fast = acoustic.fast_acoustic(inp["D_ch"], inp["L_ch"], inp["gas"],
+                                     n=inp["n_interaction"], tau_sens=inp["tau_sens"])
+
     return {
         "chug": chug_fast,
         "acoustic": ac_fast,

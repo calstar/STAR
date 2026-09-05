@@ -12,13 +12,13 @@ three thrust numbers WITHOUT touching any production code:
 The claim under test: delivered Isp must be <= eta_c* * Isp_ideal. The MODEL instead sits at the
 ideal ceiling; the CF_VAC method should land at eta_c**ideal.
 
-Run:  ED_USE_NATIVE=0 python scripts/thrust_model_comparison.py
+Run:  ED_ACCEL=off python scripts/thrust_model_comparison.py
 """
 import os
 import sys
 from pathlib import Path
 
-os.environ["ED_USE_NATIVE"] = "0"  # pure-Python authoritative path is the subject under test
+os.environ["ED_ACCEL"] = "off"  # pure-Python authoritative path is the subject under test
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np  # noqa: E402

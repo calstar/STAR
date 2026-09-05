@@ -140,7 +140,7 @@ jobs:
       continue-on-error: true
 
   # Browser E2E (Playwright). Playwright's webServer auto-boots the FastAPI
-  # backend (ED_USE_NATIVE=0 -> pure Python, so no C build here) and Vite, so
+  # backend (ED_ACCEL=off -> pure Python) and Vite, so
   # this job just needs Python deps, node deps, and Chromium. The guard that
   # matters is connect-no-loop.spec.ts: it asserts idle /api/config/load traffic
   # settles instead of the ~7 req/s bootstrap fetch loop that hung the UI. tsc
@@ -218,40 +218,17 @@ jobs:
         if-no-files-found: warn
         retention-days: 7
 
-  # Native C physics kernel: compile libed_physics and run its golden-vector /
-  # unit tests via CTest. Fully self-contained — golden vectors are committed
-  # (engine/native/tests/golden/), so no rocketcea/Python is involved. ubuntu
-  # ships gcc + cmake. ED_NATIVE_ARCH=OFF drops -march=native for a portable,
-  # runner-independent build; chamber_golden self-skips (exit 77) until that
-  # stage lands (CTest reports it skipped, not failed).
-  native-kernel:
-    name: Native kernel (C golden/unit tests)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Configure + build (portable — no -march=native)
-      working-directory: EngineDesign/engine/native
-      run: cmake -S . -B build -DED_NATIVE_ARCH=OFF && cmake --build build -j
-
-    - name: Run CTest suite
-      working-directory: EngineDesign/engine/native
-      run: ctest --test-dir build --output-on-failure
-
-  # Python <-> native parity: re-run the impinging tests with ED_USE_NATIVE=1 so
-  # chamber_solver's residual/Brent loop and closure's injector flows route
-  # through the C kernel. autobuild compiles libed_physics on demand.
+  # Accelerator parity: the numba Layer-1 accelerator vs the authoritative Python
+  # physics, diffed live on identical inputs.
   #
-  # CRITICAL: the native path silently falls back to Python on any load failure
-  # (chamber_solver._native_chamber_pc), so `ED_USE_NATIVE=1 pytest` alone can be
-  # a FALSE GREEN — everything runs on Python and passes. The pre-flight below
-  # positively proves the lib compiles + ctypes-loads (ensure_lib/load raise on
-  # failure) before the parity run, so a broken native path fails loudly here.
-  native-parity:
-    name: Python-native parity (ED_USE_NATIVE=1)
+  # CRITICAL: every accelerated entry point returns None on any failure and the
+  # caller silently falls back to Python (chamber_solver._accel_chamber_pc,
+  # closure.flows), so `pytest` alone can be a FALSE GREEN — everything runs on
+  # Python and passes. The pre-flight positively proves the accelerator is real,
+  # and ED_REQUIRE_ACCEL=1 turns a genuine failure into a raise, not a quiet
+  # fallback.
+  accel-parity:
+    name: Accelerator parity (numba vs Python)
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -280,52 +257,50 @@ jobs:
     - name: Verify committed CEA cache is present
       run: test -f output/cache/cea_cache_LOX_CH4_3D.npz
 
-    # Positive proof the native path is real (not a silent Python fallback):
-    # ensure_lib() compiles and raises on build failure; load() ctypes-loads and
-    # raises if broken; available() confirms the injector shim is wired.
-    - name: Pre-flight — native library compiles and loads
-      env:
-        ED_USE_NATIVE: '1'
+    # Positive proof the accelerator is real, not a silent Python fallback.
+    - name: Pre-flight — accelerator is genuinely available
       run: |
         python -c "
-        from engine.native.python import autobuild, ed_native, native_injector
-        p = autobuild.ensure_lib(verbose=True)
-        ed_native.load(p)
-        assert native_injector.available(), 'native_injector.available() is False'
-        print('native lib built + ctypes-loaded OK:', p)
+        import numba
+        from engine import accel
+        assert accel.available(), 'accel.available() is False (numba missing?)'
+        assert accel.enabled(), 'accel.enabled() is False'
+        print('accel enabled, numba', numba.__version__)
         "
 
-    # ED_REQUIRE_NATIVE=1 makes a genuine native failure (lib won't build/load,
-    # native not enabled, or a solver error) RAISE instead of silently falling
-    # back to Python — so this job can't pass on the Python path and report a
-    # false green. NOTE: since the runtime parity self-checks were removed
-    # (capability-dispatch architecture), this flag alone only proves native RAN;
-    # it no longer compares native's numbers to Python's.
-    - name: Run impinging tests through the native path (strict)
+    # ED_REQUIRE_ACCEL=1 makes a genuine accelerator failure RAISE instead of
+    # falling back, so this step cannot pass on the Python path and report a false
+    # green. It proves the backend RAN; the numeric comparison is the next step.
+    #
+    # test_accel_is_actually_used closes a different false-green: every other check
+    # proves the accelerator WORKS, none proves production still CALLS it. With the
+    # accel.evaluate call removed from Layer-1's _eval_candidate, all of them stay
+    # green while the optimizer silently runs ~120x slower on Python. That test
+    # asserts the real call sites are reached, and is mutation-verified against
+    # both the Layer-1 and chamber_solver/closure seams.
+    - name: Run impinging tests through the accelerator (strict)
       env:
-        ED_USE_NATIVE: '1'
-        ED_REQUIRE_NATIVE: '1'
+        ED_ACCEL: 'numba'
+        ED_REQUIRE_ACCEL: '1'
       run: |
         python -m pytest \
           tests/test_layer1_impinging_vector.py \
           tests/test_flow_capacity_effective_area.py \
+          tests/test_accel_is_actually_used.py \
+          tests/test_accel_outcomes.py \
           --timeout=180 --timeout-method=thread -q
 
-    # Live A/B numeric parity: run the C kernel and the authoritative Python
-    # physics on the same inputs and diff the outputs field by field — at the
-    # wrapper level (the dict Layer-1 consumes) AND the raw EdEvaluateResult
-    # struct level (the C kernel's own numbers, no Python shim). This is the
-    # actual parity enforcement for this job: unlike the golden-vector C tests
-    # (frozen snapshots that go stale when the PYTHON side changes), a live
-    # comparison fails no matter which side drifted. ED_REQUIRE_NATIVE=1 turns
-    # the test's no-toolchain skip into a hard failure here.
-    - name: Live A/B parity — native vs Python on identical inputs (strict)
+    # Live A/B numeric parity: run the accelerator and the authoritative Python
+    # physics on the same inputs and diff them field by field. A live comparison
+    # fails no matter which side drifted — unlike a frozen snapshot, which goes
+    # stale silently when the Python side changes.
+    - name: Live A/B parity — numba vs Python on identical inputs (strict)
       env:
-        ED_USE_NATIVE: '1'
-        ED_REQUIRE_NATIVE: '1'
+        ED_REQUIRE_ACCEL: '1'
+        ED_AB_PARITY: '1'
       run: |
         python -m pytest \
-          tests/test_native_ab_parity.py \
+          tests/test_numba_ab_parity.py \
           --timeout=300 --timeout-method=thread -v
 
   # Aggregate status, mirroring daq-server-ci.yml's build-summary.
@@ -337,8 +312,7 @@ jobs:
       - backend-smoke
       - frontend
       - frontend-e2e
-      - native-kernel
-      - native-parity
+      - accel-parity
     if: always()
 
     steps:
@@ -353,5 +327,4 @@ jobs:
         echo "| Backend smoke | ${{ needs.backend-smoke.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Frontend build | ${{ needs.frontend.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Frontend E2E (Playwright) | ${{ needs.frontend-e2e.result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Native kernel (C tests) | ${{ needs.native-kernel.result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Python-native parity | ${{ needs.native-parity.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Accelerator parity (numba vs Python) | ${{ needs.accel-parity.result }} |" >> $GITHUB_STEP_SUMMARY

@@ -14,7 +14,7 @@ retired: it never applied combustion efficiency and over-predicted thrust by
 ~(1 - zeta_c*zeta_n). The exit state computed here (M_exit, P_exit, T_exit,
 v_exit) is frozen-isentropic and REPORTING-ONLY — thrust does not depend on it.
 
-The native C kernel (engine/native/src/ed_evaluate.c) computes the SAME delivered
+The numba accelerator (engine/accel/kernels.py) computes the SAME delivered
 formula from the same tables for the Layer-1 inner loop; parity is enforced live by
 tests/test_native_ab_parity.py.
 """
