@@ -182,39 +182,50 @@ function CommitOnBlurNumber({
 }
 
 /**
- * Text input for a map KEY (role name) that commits on blur / Enter and refuses to silently merge
- * onto an existing name. Holds a local value while typing (so no mid-keystroke object rebuilds), and
- * on commit: empty or unchanged → revert; duplicate of another key → call onError + revert; otherwise
- * onRename. Renaming a role onto an existing one used to overwrite it (one role vanished).
+ * Text input for a map KEY (role name). Names are the object key, so two rows genuinely can't share
+ * one in storage — but blocking the rename outright made editing painful. Instead: you can type a
+ * duplicate and it STAYS in the box (marked red), it is NOT applied to config (so nothing is merged
+ * or lost), and it is reported via onDupChange so the page can refuse to Save until it's unique.
+ * On commit: empty → error+revert; unchanged → revert; duplicate → keep (don't apply); unique →
+ * apply (onRename). rowKey is a stable per-row id used to track which rows are currently duplicated.
  */
 function CommitOnBlurName({
-  value, siblings, onRename, onError, className,
+  value, siblings, rowKey, onRename, onDupChange, onError, className,
 }: {
   value: string;
   siblings: string[];
+  rowKey: string;
   onRename: (newName: string) => void;
+  onDupChange: (rowKey: string, isDup: boolean) => void;
   onError: (msg: string) => void;
   className?: string;
 }) {
   const [local, setLocal] = useState<string>(value);
-  useEffect(() => { setLocal(value); }, [value]);
+  const isDup = (v: string) => {
+    const t = v.trim();
+    return t !== '' && t !== value && siblings.some((s) => s !== value && s === t);
+  };
+  // Config was renamed (unique commit succeeded) → resync + clear any duplicate flag.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setLocal(value); onDupChange(rowKey, false); }, [value]);
+  // Clear this row's duplicate flag if it unmounts (e.g. the row is removed).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => () => onDupChange(rowKey, false), [rowKey]);
+  const dup = isDup(local);
   const commit = () => {
     const next = local.trim();
     if (next === value) { setLocal(value); return; }
-    if (next === '') { onError('Name cannot be empty.'); setLocal(value); return; }
-    if (siblings.some((s) => s !== value && s === next)) {
-      onError(`A role named "${next}" already exists — rename skipped so the two aren't merged.`);
-      setLocal(value);
-      return;
-    }
-    onRename(next);
+    if (next === '') { onError('Name cannot be empty.'); setLocal(value); onDupChange(rowKey, false); return; }
+    if (isDup(local)) return;  // keep the duplicate visible; Save stays blocked until it's resolved
+    onRename(next);            // unique → apply (value changes, effect above clears the dup flag)
   };
   return (
     <input
       type="text"
       value={local}
-      className={className}
-      onChange={(e) => setLocal(e.target.value)}
+      title={dup ? `Duplicate name "${local.trim()}" — make it unique before saving` : undefined}
+      className={`${className ?? ''} ${dup ? 'border-red-500 ring-1 ring-red-500' : ''}`}
+      onChange={(e) => { setLocal(e.target.value); onDupChange(rowKey, isDup(e.target.value)); }}
       onBlur={commit}
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
     />
@@ -387,6 +398,15 @@ export default function ConfigPage() {
   // (null until first load, so we never flag "dirty" before anything has loaded).
   const savedConfigRef = useRef<string | null>(null);
   const savedCsvRef = useRef<string | null>(null);
+  // Row ids whose name is currently a duplicate (allowed while editing, but blocks Save).
+  const [dupRoleRows, setDupRoleRows] = useState<Set<string>>(new Set());
+  const onRoleDup = (rowKey: string, isDup: boolean) =>
+    setDupRoleRows((prev) => {
+      if (isDup === prev.has(rowKey)) return prev;
+      const n = new Set(prev);
+      if (isDup) n.add(rowKey); else n.delete(rowKey);
+      return n;
+    });
   // Boards start collapsed to a one-line summary — a stand has ~6 of them and
   // each expands to ~18 fields, which is a lot of scrolling to reach the last one.
   const [openBoards, setOpenBoards] = useState<Record<string, boolean>>({});
@@ -454,6 +474,11 @@ export default function ConfigPage() {
   };
 
   const saveConfig = async () => {
+    if (dupRoleRows.size > 0) {
+      setError(`Resolve ${dupRoleRows.size} duplicate role name${dupRoleRows.size === 1 ? '' : 's'} before saving (highlighted in red).`);
+      setTimeout(() => setError(null), 5000);
+      return;
+    }
     try {
       setSaving(true);
       setError(null);
@@ -874,6 +899,7 @@ export default function ConfigPage() {
   // Unsaved-changes tracking: compare the current config + state tables against the last-saved
   // baselines. Null baseline = nothing loaded yet, so we never flag dirty prematurely.
   const dirty =
+    dupRoleRows.size > 0 ||  // a typed-but-unresolved duplicate name is an unsaved edit too
     (savedConfigRef.current !== null && JSON.stringify(config) !== savedConfigRef.current) ||
     (savedCsvRef.current !== null && csvSignature(csvActuators, csvDelays, csvTransitions) !== savedCsvRef.current);
 
@@ -1713,6 +1739,8 @@ export default function ConfigPage() {
                             <CommitOnBlurName
                               value={name}
                               siblings={Object.keys(map || {})}
+                              rowKey={`${key}:${name}`}
+                              onDupChange={onRoleDup}
                               onRename={(newName) => {
                                 const rebuilt: Record<string, any> = {};
                                 for (const [k, v] of Object.entries(map || {})) rebuilt[k === name ? newName : k] = v;
@@ -1863,6 +1891,8 @@ export default function ConfigPage() {
                     <CommitOnBlurName
                       value={name}
                       siblings={Object.keys(config.actuator_roles || {})}
+                      rowKey={`act:${name}`}
+                      onDupChange={onRoleDup}
                       onRename={(newName) => {
                         const rebuilt: Record<string, any> = {};
                         for (const [k, v] of Object.entries(config.actuator_roles || {})) rebuilt[k === name ? newName : k] = v;
@@ -2559,6 +2589,8 @@ export default function ConfigPage() {
                       <CommitOnBlurName
                         value={role}
                         siblings={Object.keys(config.abort_pts || {})}
+                        rowKey={`abort:${role}`}
+                        onDupChange={onRoleDup}
                         onRename={(next) => {
                           const rebuilt: Record<string, any> = {};
                           for (const [k, v] of Object.entries(config.abort_pts || {})) rebuilt[k === role ? next : k] = v;
