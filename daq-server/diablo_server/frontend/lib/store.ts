@@ -386,7 +386,10 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   selfTestTs: {},
   _staleRenderTick: 0,
   actuators: new Map(),
-  currentState: SystemState.IDLE,
+  // null until the sequencer reports one. This was SystemState.IDLE, a literal 1, which both
+  // asserted a state the rig had not reported and named the wrong one on a rig that renumbered.
+  // Consumers already fall back through bootStateId().
+  currentState: null,
   connectionStatus: { connected: false, elodinConnected: false },
   debugMode: false,
   missionStartTime: null,

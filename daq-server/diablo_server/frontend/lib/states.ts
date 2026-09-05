@@ -20,6 +20,8 @@ export interface StateDef {
   name: string;
   isAbort: boolean;
   isBoot: boolean;
+  /** True for the state [fire].state names — the burn. Not an id: the burn is wherever config says. */
+  isFire: boolean;
   /** Position on the State Machine control panel. null = not shown there. */
   panelRow: number | null;
   panelCol: number | null;
@@ -35,26 +37,26 @@ export interface StateDef {
  * The C++ enumerator still exists so historic run data decodes, but it is not offered as a state.
  */
 const BUILT_IN: StateDef[] = [
-  { id: 1, name: 'Idle', isAbort: false, isBoot: true , panelRow: 0, panelCol: 0 },
-  { id: 2, name: 'Armed', isAbort: false, isBoot: false , panelRow: 1, panelCol: 0 },
-  { id: 3, name: 'Fuel Fill', isAbort: false, isBoot: false , panelRow: 1, panelCol: 1 },
-  { id: 4, name: 'Ox Fill', isAbort: false, isBoot: false , panelRow: 1, panelCol: 2 },
-  { id: 5, name: 'GN2 Low Press', isAbort: false, isBoot: false , panelRow: 2, panelCol: 1 },
-  { id: 6, name: 'GN2 Low Vent', isAbort: false, isBoot: false , panelRow: 3, panelCol: 1 },
-  { id: 7, name: 'Fuel Press', isAbort: false, isBoot: false , panelRow: 2, panelCol: 2 },
-  { id: 8, name: 'Fuel Vent', isAbort: false, isBoot: false , panelRow: 3, panelCol: 2 },
-  { id: 9, name: 'Ox Press', isAbort: false, isBoot: false , panelRow: 2, panelCol: 3 },
-  { id: 10, name: 'Ox Vent', isAbort: false, isBoot: false , panelRow: 3, panelCol: 3 },
-  { id: 11, name: 'GN2 High Press', isAbort: false, isBoot: false , panelRow: 2, panelCol: 4 },
-  { id: 12, name: 'GN2 High Vent', isAbort: false, isBoot: false , panelRow: 3, panelCol: 4 },
-  { id: 13, name: 'Vent', isAbort: false, isBoot: false , panelRow: 3, panelCol: 0 },
-  { id: 14, name: 'Calibrate', isAbort: false, isBoot: false , panelRow: 4, panelCol: 0 },
-  { id: 15, name: 'Ready', isAbort: false, isBoot: false , panelRow: 4, panelCol: 1 },
-  { id: 16, name: 'Fire', isAbort: false, isBoot: false , panelRow: 5, panelCol: 0 },
-  { id: 17, name: 'Engine Abort', isAbort: true, isBoot: false , panelRow: null, panelCol: null },
-  { id: 18, name: 'GSE Abort', isAbort: true, isBoot: false , panelRow: null, panelCol: null },
-  { id: 19, name: 'Emergency Abort', isAbort: true, isBoot: false , panelRow: null, panelCol: null },
-  { id: 20, name: 'Press Standby', isAbort: false, isBoot: false , panelRow: 2, panelCol: 0 },
+  { id: 1, name: 'Idle', isAbort: false, isBoot: true, isFire: false, panelRow: 0, panelCol: 0 },
+  { id: 2, name: 'Armed', isAbort: false, isBoot: false, isFire: false, panelRow: 1, panelCol: 0 },
+  { id: 3, name: 'Fuel Fill', isAbort: false, isBoot: false, isFire: false, panelRow: 1, panelCol: 1 },
+  { id: 4, name: 'Ox Fill', isAbort: false, isBoot: false, isFire: false, panelRow: 1, panelCol: 2 },
+  { id: 5, name: 'GN2 Low Press', isAbort: false, isBoot: false, isFire: false, panelRow: 2, panelCol: 1 },
+  { id: 6, name: 'GN2 Low Vent', isAbort: false, isBoot: false, isFire: false, panelRow: 3, panelCol: 1 },
+  { id: 7, name: 'Fuel Press', isAbort: false, isBoot: false, isFire: false, panelRow: 2, panelCol: 2 },
+  { id: 8, name: 'Fuel Vent', isAbort: false, isBoot: false, isFire: false, panelRow: 3, panelCol: 2 },
+  { id: 9, name: 'Ox Press', isAbort: false, isBoot: false, isFire: false, panelRow: 2, panelCol: 3 },
+  { id: 10, name: 'Ox Vent', isAbort: false, isBoot: false, isFire: false, panelRow: 3, panelCol: 3 },
+  { id: 11, name: 'GN2 High Press', isAbort: false, isBoot: false, isFire: false, panelRow: 2, panelCol: 4 },
+  { id: 12, name: 'GN2 High Vent', isAbort: false, isBoot: false, isFire: false, panelRow: 3, panelCol: 4 },
+  { id: 13, name: 'Vent', isAbort: false, isBoot: false, isFire: false, panelRow: 3, panelCol: 0 },
+  { id: 14, name: 'Calibrate', isAbort: false, isBoot: false, isFire: false, panelRow: 4, panelCol: 0 },
+  { id: 15, name: 'Ready', isAbort: false, isBoot: false, isFire: false, panelRow: 4, panelCol: 1 },
+  { id: 16, name: 'Fire', isAbort: false, isBoot: false, isFire: true, panelRow: 5, panelCol: 0 },
+  { id: 17, name: 'Engine Abort', isAbort: true, isBoot: false, isFire: false, panelRow: null, panelCol: null },
+  { id: 18, name: 'GSE Abort', isAbort: true, isBoot: false, isFire: false, panelRow: null, panelCol: null },
+  { id: 19, name: 'Emergency Abort', isAbort: true, isBoot: false, isFire: false, panelRow: null, panelCol: null },
+  { id: 20, name: 'Press Standby', isAbort: false, isBoot: false, isFire: false, panelRow: 2, panelCol: 0 },
 ];
 
 const BUILT_IN_BY_ID = new Map<number, StateDef>(BUILT_IN.map((s) => [s.id, s]));
@@ -123,9 +125,41 @@ export function stateNameUpper(id: number | null | undefined): string {
   return stateName(id).toUpperCase();
 }
 
+/** True if this id is the burn, per [fire].state in config — never a hardcoded FIRE id. */
+export function isFireState(id: number | null | undefined): boolean {
+  return id !== null && id !== undefined && (byId.get(id)?.isFire ?? false);
+}
+
 /** True if the state carries abort semantics (drives the red styling). */
 export function isAbortState(id: number | null | undefined): boolean {
   return id !== null && id !== undefined && (byId.get(id)?.isAbort ?? false);
+}
+
+/** True once /api/states has supplied the config's own list. Callers with a hardcoded fallback
+ *  keyed by the compiled enum must not use it after this: on a rig that renumbered, those ids name
+ *  different states, so the fallback silently offers the wrong transitions rather than none. */
+export function statesAreFromConfig(): boolean {
+  return loaded;
+}
+
+/** The state the rig boots into, per is_boot in config; null if none is flagged. Callers used to
+ *  write `currentState ?? SystemState.IDLE`, a literal 1, which names a different state on a rig
+ *  that renumbered. */
+export function bootStateId(): number | null {
+  const boot = states.find((s) => s.isBoot);
+  return boot ? boot.id : null;
+}
+
+/** Id of the state the config declares under this exact name, or null if it declares none.
+ *
+ *  The abort and vent buttons used to send SystemState.ENGINE_ABORT / GSE_ABORT /
+ *  EMERGENCY_ABORT / VENT — literals 17, 18, 19, 13. A rig that does not use that numbering has no
+ *  such ids, so the command resolved to nothing and the button did nothing, with no error: the
+ *  press looked exactly like a press that worked. Resolve by name, and let the caller disable a
+ *  button the config has no state for rather than offering a control that cannot fire. */
+export function stateIdByName(name: string): number | null {
+  const hit = states.find((s) => s.name === name);
+  return hit ? hit.id : null;
 }
 
 /** All known states, ordered by id. */

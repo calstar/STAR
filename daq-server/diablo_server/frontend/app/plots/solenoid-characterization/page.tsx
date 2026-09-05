@@ -8,6 +8,7 @@ import { useSensorStore } from '@/lib/store';
 import { MessageType, SystemState } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { getEntityColor } from '@/lib/sensor-colors';
+import { isFireState } from '@/lib/states';
 
 const DUTY_MIN = 0;
 const DUTY_MAX = 100;
@@ -36,7 +37,7 @@ export default function SolenoidCharacterizationPage() {
         s.calEntity.startsWith('PT.')) &&
       !s.calEntity.includes('RTD')
   );
-  const canSendPwm = debugMode || currentState === SystemState.FIRE;
+  const canSendPwm = debugMode || isFireState(currentState);
 
   useEffect(() => {
     if (actuators.length > 0 && !actuatorName) {

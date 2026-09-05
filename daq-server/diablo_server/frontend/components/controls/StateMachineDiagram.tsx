@@ -5,18 +5,11 @@ import { getWebSocketClient } from '@/lib/websocket';
 import { SystemState, CommandPayload, MessageType } from '@/lib/types';
 import { useEffect, useState, useMemo } from 'react';
 import { useControlMode } from '@/lib/control-mode';
-import { allStates, loadStates, stateNameUpper } from '@/lib/states';
+import { allStates, loadStates, stateNameUpper, bootStateId } from '@/lib/states';
 import { getApiBaseUrl } from '@/lib/websocket';
 
 
 // States to exclude from diagram rendering
-const EXCLUDED_STATES = new Set([
-  SystemState.DEBUG,
-  SystemState.ENGINE_ABORT,
-  SystemState.GSE_ABORT,
-  SystemState.EMERGENCY_ABORT,
-]);
-
 const NW = 320; // node width
 const NH = 115; // node height
 const COLS_FALLBACK = 5;
@@ -42,103 +35,16 @@ function statePos(state: SystemState): [number, number] | undefined {
 }
 
 /**
- * Hardcoded state transitions derived from PressureStateMachine.cpp.
- * Used as the permanent fallback so arrows are always visible even when
- * the backend hasn't loaded the CSV yet.
+ * A transition edge, as the backend parsed it out of state_transitions.csv.
+ *
+ * A hardcoded STATIC_TRANSITIONS graph used to live here, transcribed from
+ * PressureStateMachine.cpp, keyed by the compiled enum and kept as a "permanent fallback so
+ * arrows are always visible". On a rig that renumbered its states those ids name different
+ * states, so the fallback did not show this rig's transitions - it showed another rig's, and
+ * every gate built on it disagreed with the config while looking perfectly populated.
+ * No graph beats a wrong graph.
  */
 interface Transition { from: SystemState; to: SystemState; }
-
-const STATIC_TRANSITIONS: Transition[] = [
-  // Main forward sequence
-  { from: SystemState.IDLE, to: SystemState.ARMED },
-  { from: SystemState.ARMED, to: SystemState.IDLE },
-  { from: SystemState.ARMED, to: SystemState.FUEL_FILL },
-  { from: SystemState.ARMED, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.FUEL_FILL, to: SystemState.ARMED },
-  { from: SystemState.FUEL_FILL, to: SystemState.OX_FILL },
-  { from: SystemState.OX_FILL, to: SystemState.ARMED },
-  { from: SystemState.OX_FILL, to: SystemState.PRESS_STANDBY },
-  // Press Standby can go to all press/vent states
-  { from: SystemState.PRESS_STANDBY, to: SystemState.GN2_LOW_PRESS },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.GN2_VENT },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.FUEL_PRESS },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.FUEL_VENT },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.OX_PRESS },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.OX_VENT },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.GN2_HIGH_PRESS },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.GN2_HIGH_VENT },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.FIRE },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.VENT },
-  // GN2 low-pressure regulation loop
-  { from: SystemState.GN2_LOW_PRESS, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.GN2_LOW_PRESS, to: SystemState.GN2_VENT },
-  { from: SystemState.GN2_LOW_PRESS, to: SystemState.FUEL_PRESS },
-  { from: SystemState.GN2_LOW_PRESS, to: SystemState.OX_PRESS },
-  { from: SystemState.GN2_LOW_PRESS, to: SystemState.GN2_HIGH_VENT },
-  { from: SystemState.GN2_LOW_PRESS, to: SystemState.FIRE },
-  { from: SystemState.GN2_VENT, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.GN2_VENT, to: SystemState.GN2_LOW_PRESS },
-  { from: SystemState.GN2_VENT, to: SystemState.FUEL_VENT },
-  { from: SystemState.GN2_VENT, to: SystemState.OX_VENT },
-  { from: SystemState.GN2_VENT, to: SystemState.GN2_HIGH_VENT },
-  { from: SystemState.GN2_VENT, to: SystemState.FIRE },
-  // Fuel pressurisation loop
-  { from: SystemState.FUEL_PRESS, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.FUEL_PRESS, to: SystemState.GN2_VENT },
-  { from: SystemState.FUEL_PRESS, to: SystemState.FUEL_VENT },
-  { from: SystemState.FUEL_PRESS, to: SystemState.OX_PRESS },
-  { from: SystemState.FUEL_PRESS, to: SystemState.OX_VENT },
-  { from: SystemState.FUEL_PRESS, to: SystemState.GN2_HIGH_VENT },
-  { from: SystemState.FUEL_PRESS, to: SystemState.FIRE },
-  { from: SystemState.FUEL_VENT, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.FUEL_VENT, to: SystemState.GN2_VENT },
-  { from: SystemState.FUEL_VENT, to: SystemState.FUEL_PRESS },
-  { from: SystemState.FUEL_VENT, to: SystemState.OX_VENT },
-  { from: SystemState.FUEL_VENT, to: SystemState.GN2_HIGH_VENT },
-  { from: SystemState.FUEL_VENT, to: SystemState.FIRE },
-  // Ox pressurisation loop
-  { from: SystemState.OX_PRESS, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.OX_PRESS, to: SystemState.GN2_VENT },
-  { from: SystemState.OX_PRESS, to: SystemState.FUEL_VENT },
-  { from: SystemState.OX_PRESS, to: SystemState.OX_VENT },
-  { from: SystemState.OX_PRESS, to: SystemState.GN2_HIGH_VENT },
-  { from: SystemState.OX_PRESS, to: SystemState.FIRE },
-  { from: SystemState.OX_VENT, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.OX_VENT, to: SystemState.GN2_VENT },
-  { from: SystemState.OX_VENT, to: SystemState.FUEL_VENT },
-  { from: SystemState.OX_VENT, to: SystemState.OX_PRESS },
-  { from: SystemState.OX_VENT, to: SystemState.GN2_HIGH_VENT },
-  { from: SystemState.OX_VENT, to: SystemState.FIRE },
-  // GN2 high-pressure regulation loop
-  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.GN2_VENT },
-  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.FUEL_VENT },
-  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.OX_VENT },
-  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.GN2_HIGH_VENT },
-  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.CALIBRATE },
-  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.VENT },
-  { from: SystemState.GN2_HIGH_VENT, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.GN2_HIGH_VENT, to: SystemState.GN2_VENT },
-  { from: SystemState.GN2_HIGH_VENT, to: SystemState.FUEL_VENT },
-  { from: SystemState.GN2_HIGH_VENT, to: SystemState.OX_VENT },
-  { from: SystemState.GN2_HIGH_VENT, to: SystemState.GN2_HIGH_PRESS },
-  { from: SystemState.GN2_HIGH_VENT, to: SystemState.VENT },
-  // Calibrate and Ready
-  { from: SystemState.CALIBRATE, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.CALIBRATE, to: SystemState.READY },
-  { from: SystemState.CALIBRATE, to: SystemState.VENT },
-  { from: SystemState.READY, to: SystemState.FIRE },
-  { from: SystemState.READY, to: SystemState.VENT },
-  // Fire and Vent
-  { from: SystemState.FIRE, to: SystemState.IDLE },
-  { from: SystemState.FIRE, to: SystemState.ARMED },
-  { from: SystemState.FIRE, to: SystemState.VENT },
-  { from: SystemState.VENT, to: SystemState.IDLE },
-];
-
-// States reachable from *any* state (emergencies + vent)
-// Note: DEBUG, ENGINE_ABORT, GSE_ABORT, EMERGENCY_ABORT are handled via top bar buttons, not diagram
-const ALWAYS_REACHABLE: SystemState[] = [];
 
 // `?? 0` is deliberate here ONLY as a last resort — callers filter unplaced states out first
 // (hasPos below). Previously nothing filtered, so a state the position map did not know about was
@@ -296,18 +202,20 @@ export default function StateMachineDiagram() {
 
   const debugMode = useSensorStore((s) => s.debugMode);
 
-  // Use backend transitions when available, otherwise fall back to hardcoded static transitions
-  const transitions = backendTransitions.length > 0 ? backendTransitions : STATIC_TRANSITIONS;
+  // Backend transitions when available. The hardcoded fallback is keyed by the compiled
+  // SystemState enum, so it is only meaningful while the built-in state list is also in force —
+  // once the config has supplied its own ids those pairs name different states, and offering them
+  // is worse than offering nothing.
+  const transitions = backendTransitions;
 
   const sendStateTransition = (targetState: SystemState) => {
     if (!controlEnabled) return;
-    const effectiveState = currentState ?? SystemState.IDLE;
+    const effectiveState = currentState ?? bootStateId() ?? -1;
     const isAllowed = transitions.some(t => t.from === effectiveState && t.to === targetState);
-    const isEmergency = ALWAYS_REACHABLE.includes(targetState);
     const isInDebugMode = debugMode;
 
     // In debug mode, allow any transition
-    if (!isAllowed && !isEmergency && !isInDebugMode && effectiveState !== targetState) {
+    if (!isAllowed && !isInDebugMode && effectiveState !== targetState) {
       console.warn(`⚠️ Invalid transition: ${stateNameUpper(effectiveState)} → ${stateNameUpper(targetState)}`);
       alert(`Invalid transition: Cannot go from ${stateNameUpper(effectiveState)} to ${stateNameUpper(targetState)}`);
       return;
@@ -325,7 +233,7 @@ export default function StateMachineDiagram() {
     ws.sendCommand(command);
   };
 
-  const effectiveState = currentState ?? SystemState.IDLE;
+  const effectiveState = currentState ?? bootStateId() ?? -1;
 
   const reachableStates = useMemo(() => {
     const set = new Set(
@@ -333,8 +241,6 @@ export default function StateMachineDiagram() {
         .filter(t => t.from === effectiveState && t.from !== t.to)
         .map(t => t.to),
     );
-    // Emergency states are always reachable
-    ALWAYS_REACHABLE.forEach(s => set.add(s));
     // In debug mode, all non-excluded states are reachable
     if (debugMode) {
       allStates()
@@ -354,11 +260,6 @@ export default function StateMachineDiagram() {
       .map(t => t.to),
   );
 
-  // Emergency arrows from current state (always draw these separately)
-  const emergencyTargets = ALWAYS_REACHABLE.filter(
-    s => s !== effectiveState && statePos(s) !== undefined,
-  );
-
   // Draw the states the CONFIG declares, not the ones the compiled SystemState enum happens to
   // contain. Enumerating the enum drew every id 0-20 that could still find a position, so a rig
   // that renamed its states kept rendering the built-in ones underneath — Calibrate (id 14, cell
@@ -366,7 +267,7 @@ export default function StateMachineDiagram() {
   //
   // Aborts drop out by their config flag rather than by hardcoded id 17/18/19: they are reached
   // from the emergency arrows, not placed on the grid. Nothing is excluded by id any more, which
-  // is what hid a state the operator put at id 0 — EXCLUDED_STATES holds SystemState.DEBUG = 0,
+  // is what hid a state the operator put at id 0: the excluded-id set held SystemState.DEBUG = 0,
   // so an Armed declared at id 0 was filtered out as though it were the legacy Debug state.
   const states = allStates()
     .filter((s) => !s.isAbort && hasPos(s.id as SystemState))

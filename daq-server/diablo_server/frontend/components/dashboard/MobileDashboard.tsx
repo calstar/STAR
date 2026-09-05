@@ -15,6 +15,7 @@ import { useGuiConfig } from '@/lib/gui-config';
 import { usePressureLimits } from '@/lib/pressure-limits';
 import { buildPressureBarDefsFromSensorConfig, buildPressurePlotSeriesFromSensorList } from '@/lib/pressure-bar-defs';
 import { stateNameUpper } from '@/lib/states';
+import { stateIdByName, bootStateId } from '@/lib/states';
 
 // ── Constants shared with TopBar/UnifiedDashboard ────────────────────────────
 
@@ -97,7 +98,7 @@ export default function MobileDashboard() {
   }, []);
 
   // ── Derived state ─────────────────────────────────────────────────────────
-  const effectiveState = currentState ?? SystemState.IDLE;
+  const effectiveState = currentState ?? bootStateId() ?? -1;
   const currentStateName = stateNameUpper(effectiveState) ?? `STATE ${effectiveState}`;
   const stateColor = STATE_COLORS[effectiveState] ?? 'text-text';
   const isFullyConnected = connected && elodinConnected;
@@ -113,14 +114,25 @@ export default function MobileDashboard() {
     ws.sendCommand(cmd);
   };
 
-  const handleEngineAbort = () => {
-    sendState(SystemState.VENT);
-    setTimeout(() => sendState(SystemState.ENGINE_ABORT), 5000);
+  // Same as TopBar: abort targets come from the config's [[states]] by name, not from the compiled
+  // enum's 13/17/18/19, which a rig on another numbering simply does not have.
+  const sendStateNamed = (name: string) => {
+    const id = stateIdByName(name);
+    if (id === null) {
+      console.error(`[MobileDashboard] config declares no "${name}" state — command not sent`);
+      return;
+    }
+    sendState(id);
   };
-  const handleGseAbort = () => sendState(SystemState.GSE_ABORT);
+
+  const handleEngineAbort = () => {
+    sendStateNamed('Vent');
+    setTimeout(() => sendStateNamed('Engine Abort'), 5000);
+  };
+  const handleGseAbort = () => sendStateNamed('GSE Abort');
   const handleEmergencyAbort = () => {
     if (!confirm('⚠️ EMERGENCY ABORT — immediately vent GN2 and abort all operations?')) return;
-    sendState(SystemState.EMERGENCY_ABORT);
+    sendStateNamed('Emergency Abort');
   };
 
   const { pressureBars } = useGuiConfig();

@@ -8,7 +8,7 @@ import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { MessageType, SystemState } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { getEntityColor } from '@/lib/sensor-colors';
-import { stateNameUpper } from '@/lib/states';
+import { stateNameUpper, stateName, isFireState, isAbortState } from '@/lib/states';
 
 const LBF_TO_N = 4.44822;
 
@@ -140,9 +140,12 @@ export default function ControllerPage() {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 text-xs bg-gray-900 rounded px-3 py-1.5 border border-gray-800">
             <span className="text-text-muted">STATE:</span>
-            <span className={`font-mono font-bold ${currentState === SystemState.FIRE ? 'text-red-400' :
-                currentState === SystemState.READY ? 'text-green-400' :
-                  currentState === SystemState.ABORT ? 'text-red-500' :
+            {/* Colour by what the state IS, not by a compiled id — SystemState.FIRE is 16 and this
+                rig's Fire is 12, so the burn rendered in plain text while some unrelated state
+                got the red. Ready has no flag of its own, so it stays a name match. */}
+            <span className={`font-mono font-bold ${isFireState(currentState) ? 'text-red-400' :
+                isAbortState(currentState) ? 'text-red-500' :
+                  stateName(currentState) === 'Ready' ? 'text-green-400' :
                     'text-text'
               }`}>
               {currentState !== null ? stateNameUpper(currentState) : '---'}
