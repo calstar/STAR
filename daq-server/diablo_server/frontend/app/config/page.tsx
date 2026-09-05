@@ -256,16 +256,6 @@ const diffKeys = (have: string[], want: string[]) => ({
   missing: want.filter((k) => !have.includes(k)),
 });
 
-/** Rebuild a grid so its rows are exactly `keys`, preserving existing cells and defaulting new
- *  ones. Used to follow actuator add/remove without hand-editing the CSV. */
-const reconcileRows = (g: CsvGrid, keys: string[], fill: string): CsvGrid => ({
-  states: g.states,
-  rows: keys.map((k) => {
-    const existing = g.rows.find((r) => r.key === k);
-    return { key: k, cells: g.states.map((_, i) => existing?.cells[i] ?? fill) };
-  }),
-});
-
 /**
  * Friendly board name for display: "PT Board #2" rather than the raw `pt_board_2` config key.
  * Numbered by position among boards of the same type, so it tracks what is actually configured
@@ -332,6 +322,24 @@ const boardSlotIssue = (boards: Record<string, any>, boardKey: string): string |
   return null;
 };
 
+/**
+ * One consistently-styled inline validation message, rendered next to the element it refers to
+ * (a board row, a state row, a table) rather than as a scattered banner. `error` = will break the
+ * running config; `warn` = a mismatch worth fixing. One look for all of them.
+ */
+function InlineIssue({ level = 'error', className = '', children }:
+  { level?: 'error' | 'warn'; className?: string; children: ReactNode }) {
+  const tone = level === 'warn'
+    ? 'border-yellow-600/70 bg-yellow-900/25 text-yellow-200'
+    : 'border-red-600/70 bg-red-900/25 text-red-200';
+  return (
+    <div className={`flex items-start gap-2 px-3 py-2 rounded-md border text-sm ${tone} ${className}`}>
+      <span aria-hidden className="mt-px leading-none">⚠</span>
+      <div className="space-y-1 min-w-0">{children}</div>
+    </div>
+  );
+}
+
 export default function ConfigPage() {
   const [config, setConfig] = useState<ConfigData>(DEFAULT_CONFIG);
   const [loading, setLoading] = useState(true);
@@ -345,6 +353,10 @@ export default function ConfigPage() {
   const [activeProfile, setActiveProfile] = useState('');
   const [sessionActive, setSessionActive] = useState(false);
   const [runningToml, setRunningToml] = useState<string | null>(null); // read-only view of config.toml
+  // Calibration profiles: whole-rig calibration snapshots you can Load / Save / blank from here.
+  const [calProfiles, setCalProfiles] = useState<{ name: string; active: boolean }[]>([]);
+  const [calActive, setCalActive] = useState('');
+  const [calMsg, setCalMsg] = useState<string | null>(null);
   // Boards start collapsed to a one-line summary — a stand has ~6 of them and
   // each expands to ~18 fields, which is a lot of scrolling to reach the last one.
   const [openBoards, setOpenBoards] = useState<Record<string, boolean>>({});
@@ -362,6 +374,7 @@ export default function ConfigPage() {
   useEffect(() => {
     loadConfig();
     loadProfiles();
+    loadCalProfiles();
 
     const unsubConn = ws.on(MessageType.CONNECTION_STATUS, () => {});
     const unsubConfig = ws.on(MessageType.CONFIG_UPDATED, () => {
@@ -534,6 +547,60 @@ export default function ConfigPage() {
     } catch (err: any) {
       setError(err.message || 'Failed to delete config');
     }
+  };
+
+  // ── Calibration profiles ─────────────────────────────────────────────────────
+  // A calibration profile is one file holding EVERY sensor's cal (keyed by uid). Load/New-blank
+  // swap the live store and take effect on the running stream immediately when a session is up
+  // (else at the next session start); Save-as snapshots the current live cal into a named file.
+  const loadCalProfiles = async () => {
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/api/calibration_profiles`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setCalProfiles(Array.isArray(data.profiles) ? data.profiles : []);
+      setCalActive(data.active || '');
+    } catch { /* non-fatal */ }
+  };
+
+  const calProfileAction = async (action: string, body: Record<string, unknown>) => {
+    const res = await fetch(`${getApiBaseUrl()}/api/calibration_profiles/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `${action} failed (${res.status})`);
+    setCalProfiles(Array.isArray(data.profiles) ? data.profiles : []);
+    setCalActive(data.active || '');
+  };
+
+  const flashCalMsg = (m: string) => { setCalMsg(m); setTimeout(() => setCalMsg(null), 4000); };
+
+  const loadCalProfile = async (name: string) => {
+    if (!name) return;
+    try {
+      await calProfileAction('load', { name });
+      flashCalMsg(`Loaded calibration "${name}" — live${sessionActive ? '' : ' at next session start'}.`);
+    } catch (err: any) { setError(err.message || 'Failed to load calibration'); }
+  };
+
+  const saveCalProfileAs = async () => {
+    const name = window.prompt('Save current calibration as (letters, digits, _ or -):', calActive || '')?.trim();
+    if (!name) return;
+    try {
+      await calProfileAction('save', { name });
+      flashCalMsg(`Saved current calibration as "${name}".`);
+    } catch (err: any) { setError(err.message || 'Failed to save calibration'); }
+  };
+
+  const newBlankCalibration = async () => {
+    if (!window.confirm('Start a blank calibration? Every sensor reads 0 until re-calibrated. (Save the current one first if you want to keep it.)')) return;
+    const name = window.prompt('Optional: also save this blank as a named profile (leave empty to skip):', '')?.trim();
+    try {
+      await calProfileAction('new_blank', name ? { name } : {});
+      flashCalMsg(`Started a blank calibration${name ? ` ("${name}")` : ''} — every sensor reads 0.`);
+    } catch (err: any) { setError(err.message || 'Failed to create blank calibration'); }
   };
 
   // Upload a config.toml to replace the current one (operators only, server-validated).
@@ -715,11 +782,35 @@ export default function ConfigPage() {
     } as ConfigData));
   };
 
-  const removeState = (idx: number) =>
+  // Drop a state's column (and, for the transitions grid, its from-row) from a CSV grid. Actuator/
+  // delay rows are keyed by role so no row is removed there — only the state column disappears.
+  const dropStateFromGrid = (g: CsvGrid | null, stateName: string): CsvGrid | null => {
+    if (!g) return g;
+    const ci = g.states.indexOf(stateName);
+    if (ci < 0) return g;
+    return {
+      states: g.states.filter((_, i) => i !== ci),
+      rows: g.rows
+        .filter((r) => r.key !== stateName)
+        .map((r) => ({ ...r, cells: r.cells.filter((_, j) => j !== ci) })),
+    };
+  };
+
+  const removeState = (idx: number) => {
+    const name = stateList[idx]?.name;
     setConfig((prev) => ({
       ...prev,
       states: ((prev.states || []) as any[]).filter((_, i) => i !== idx),
     } as ConfigData));
+    // A deleted state must also leave both tables (and the delays grid), or it lingers as a column
+    // and re-persists on the next Save. Row = state only in the transitions grid, so it's removed
+    // there too.
+    if (name) {
+      setCsvActuators((g) => dropStateFromGrid(g, name));
+      setCsvDelays((g) => dropStateFromGrid(g, name));
+      setCsvTransitions((g) => dropStateFromGrid(g, name));
+    }
+  };
 
   /** Ids must be unique, and so should names — both are lookup keys. */
   const stateIdDupes = stateList
@@ -753,17 +844,41 @@ export default function ConfigPage() {
       rows: g.rows.map((r, i) => (i === rowIdx ? { ...r, cells: r.cells.map((c, j) => (j === colIdx ? (on ? '1' : '0') : c)) } : r)),
     }));
 
-  /** Rebuild both actuator grids from [actuator_roles], keeping any cell that already existed. */
+  /** Rebuild both actuator grids so rows = [actuator_roles] and columns = the current state list,
+   *  preserving any existing (role, state) cell. Reconciling columns too — not just rows — is what
+   *  keeps a deleted/renamed state from lingering as a stale column. */
   const syncActuatorRows = () => {
-    if (csvActuators) setCsvActuators(reconcileRows(csvActuators, roleNames, 'CLOSE'));
-    if (csvDelays) setCsvDelays(reconcileRows(csvDelays, roleNames, '0'));
+    const states = stateListNames;
+    const rebuild = (g: CsvGrid, fill: string): CsvGrid => ({
+      states,
+      rows: roleNames.map((k) => {
+        const existing = g.rows.find((r) => r.key === k);
+        return {
+          key: k,
+          cells: states.map((s) => {
+            const oldCi = g.states.indexOf(s);
+            return existing && oldCi >= 0 ? (existing.cells[oldCi] ?? fill) : fill;
+          }),
+        };
+      }),
+    });
+    if (csvActuators) setCsvActuators(rebuild(csvActuators, 'CLOSE'));
+    if (csvDelays) setCsvDelays(rebuild(csvDelays, '0'));
   };
 
-  /** A blank table: every configured actuator, every state, everything closed. */
+  /** A blank table: every configured actuator, every CURRENT state, everything closed. Columns come
+   *  from the live state list (not the last-loaded CSV), so deleted states don't reappear. */
   const generateEmptyActuators = () => {
-    if (!csvActuators) return;
-    setCsvActuators({ states: csvActuators.states, rows: roleNames.map((k) => ({ key: k, cells: csvActuators.states.map(() => 'CLOSE') })) });
-    setCsvDelays({ states: csvActuators.states, rows: roleNames.map((k) => ({ key: k, cells: csvActuators.states.map(() => '0') })) });
+    const states = stateListNames;
+    setCsvActuators({ states, rows: roleNames.map((k) => ({ key: k, cells: states.map(() => 'CLOSE') })) });
+    setCsvDelays({ states, rows: roleNames.map((k) => ({ key: k, cells: states.map(() => '0') })) });
+  };
+
+  /** A blank transitions table: the only allowed move from each state is to itself (the diagonal).
+   *  Everything else disallowed. Columns/rows come from the live state list. */
+  const generateEmptyTransitions = () => {
+    const states = stateListNames;
+    setCsvTransitions({ states, rows: states.map((k) => ({ key: k, cells: states.map((s) => (s === k ? '1' : '0')) })) });
   };
 
   const downloadStateCsv = (name: string) => {
@@ -908,6 +1023,7 @@ export default function ConfigPage() {
     { id: 'gui', label: 'Top Bar & Limits' },
     { id: 'controller', label: 'Controller' },
     { id: 'state', label: 'State Machine' },
+    { id: 'calibration', label: 'Calibration' },
     { id: 'system', label: 'System' },
   ];
 
@@ -1194,7 +1310,7 @@ export default function ConfigPage() {
                             'number'
                           )}
                           {slotIssue && (
-                            <p className="text-xs text-red-400">{slotIssue}</p>
+                            <InlineIssue level="error" className="mt-2">{slotIssue}</InlineIssue>
                           )}
                         </div>
                         {renderField(
@@ -1914,119 +2030,6 @@ export default function ConfigPage() {
                 </p>
               </div>
 
-              {/* ── Fire ───────────────────────────────────────────────────────────── */}
-              <div className="space-y-3">
-                <h3 className="text-lg font-semibold">Fire</h3>
-                <p className="text-sm text-text-muted">
-                  Which state is the burn and where its timer lands when it expires. Both are state
-                  names, not positions, so renaming a state here is safe as long as both fields
-                  still name a state that exists.
-                </p>
-                {(() => {
-                  const names = stateList.map((x) => x.name).filter(Boolean) as string[];
-                  const fireState = config.fire?.state ?? '';
-                  const target = config.fire?.expiry_target ?? '';
-                  const unknownFire = !!fireState && names.length > 0 && !names.includes(fireState);
-                  const unknownTarget = !!target && names.length > 0 && !names.includes(target);
-                  // The fire state must be able to REACH its expiry target, or the timer expires
-                  // into a refused transition and the system sits in fire with a dead timer.
-                  let unreachable = false;
-                  if (csvTransitions && fireState && target) {
-                    const r = csvTransitions.rows.find((x) => x.key === fireState);
-                    const ci = csvTransitions.states.indexOf(target);
-                    if (r && ci >= 0) unreachable = (r.cells[ci] || '0').trim() !== '1';
-                  }
-                  return (
-                    <>
-                      {(unknownFire || unknownTarget || unreachable) && (
-                        <div className="p-3 bg-red-900/30 border border-red-500 rounded-lg text-red-200 text-sm space-y-1">
-                          {unknownFire && <p><strong>{fireState}</strong> is not a state in the list above.</p>}
-                          {unknownTarget && <p><strong>{target}</strong> is not a state in the list above.</p>}
-                          {unreachable && (
-                            <p>
-                              <strong>{fireState} → {target}</strong> is not an allowed transition. The fire timer
-                              would expire into a refused transition and the system would stay in fire. Tick that
-                              cell in Allowed transitions below.
-                            </p>
-                          )}
-                        </div>
-                      )}
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                        {renderField('Fire state', fireState,
-                          (v) => updateField('fire', 'state', v), 'select',
-                          names.length ? names : [fireState].filter(Boolean),
-                          'the state that starts the burn')}
-                        {renderField('Expires to', target,
-                          (v) => updateField('fire', 'expiry_target', v), 'select',
-                          names.length ? names : [target].filter(Boolean),
-                          'where the timer lands')}
-                        {renderField('Duration (ms)', config.fire?.duration_ms,
-                          (v) => updateField('fire', 'duration_ms', v), 'number')}
-                        {renderField('Extended (ms)', config.fire?.extended_ms,
-                          (v) => updateField('fire', 'extended_ms', v), 'number',
-                          undefined, 'window EXTEND FIRE restarts at')}
-                      </div>
-                    </>
-                  );
-                })()}
-              </div>
-
-              {/* ── Abort thresholds ────────────────────────────────────────────────── */}
-              <div className="space-y-3">
-                <h3 className="text-lg font-semibold">Abort pressure thresholds</h3>
-                <p className="text-sm text-text-muted">
-                  PSI limits broadcast to the boards, which abort autonomously when a sensor exceeds
-                  them — they do not depend on the server being alive. The name must match a sensor
-                  role exactly.
-                </p>
-                <div className="space-y-2">
-                  {Object.entries(config.abort_pts || {}).map(([role, psi], i) => (
-                    <div key={`abort:${i}`} className="flex items-center gap-3">
-                      <CommitOnBlurName
-                        value={role}
-                        siblings={Object.keys(config.abort_pts || {})}
-                        onRename={(next) => {
-                          const rebuilt: Record<string, any> = {};
-                          for (const [k, v] of Object.entries(config.abort_pts || {})) rebuilt[k === role ? next : k] = v;
-                          setConfig({ ...config, abort_pts: rebuilt } as ConfigData);
-                        }}
-                        onError={(msg) => { setError(msg); setTimeout(() => setError(null), 4000); }}
-                        className="flex-1 px-3 py-2 bg-gray-800 border border-gray-600 rounded text-white"
-                      />
-                      <CommitOnBlurNumber
-                        value={psi as number}
-                        onCommit={(v) => setConfig({ ...config, abort_pts: { ...(config.abort_pts || {}), [role]: v } } as ConfigData)}
-                        className="w-28 px-3 py-2 bg-gray-800 border border-gray-600 rounded text-white"
-                      />
-                      <span className="text-sm text-text-muted w-10">PSI</span>
-                      <button
-                        onClick={() => {
-                          const next = { ...(config.abort_pts || {}) };
-                          delete next[role];
-                          setConfig({ ...config, abort_pts: next } as ConfigData);
-                        }}
-                        disabled={!canEdit}
-                        className="px-3 py-2 bg-red-600 rounded hover:bg-red-700 disabled:opacity-50"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                  {Object.keys(config.abort_pts || {}).length === 0 && (
-                    <p className="text-sm text-amber-300/90">
-                      No abort thresholds configured — the boards will not abort on over-pressure by themselves.
-                    </p>
-                  )}
-                  <button
-                    onClick={() => setConfig({ ...config, abort_pts: { ...(config.abort_pts || {}), 'New Abort PT': 0 } } as ConfigData)}
-                    disabled={!canEdit}
-                    className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600 disabled:opacity-50"
-                  >
-                    + Add threshold
-                  </button>
-                </div>
-              </div>
-
               {/* ── The state list itself ───────────────────────────────────────────── */}
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -2042,13 +2045,17 @@ export default function ConfigPage() {
                   because past runs store the raw number.
                 </p>
 
-                {(stateIdDupes.length > 0 || stateNameDupes.length > 0 || stateCsvDiff.orphan.length > 0 || stateCsvDiff.missing.length > 0) && (
-                  <div className="p-3 bg-yellow-900/40 border border-yellow-600 rounded-lg text-yellow-200 text-sm space-y-1">
+                {(stateIdDupes.length > 0 || stateNameDupes.length > 0) && (
+                  <InlineIssue level="error">
                     {stateIdDupes.length > 0 && <p>Duplicate id(s): <strong>{stateIdDupes.join(', ')}</strong> — the later entry wins and the earlier state disappears.</p>}
                     {stateNameDupes.length > 0 && <p>Duplicate name(s): <strong>{stateNameDupes.join(', ')}</strong> — CSV columns resolve by name, so one of them is unreachable.</p>}
+                  </InlineIssue>
+                )}
+                {(stateCsvDiff.orphan.length > 0 || stateCsvDiff.missing.length > 0) && (
+                  <InlineIssue level="warn">
                     {stateCsvDiff.orphan.length > 0 && <p>In the tables below but not a state: <strong>{stateCsvDiff.orphan.join(', ')}</strong>.</p>}
                     {stateCsvDiff.missing.length > 0 && <p>A state with no column in the tables below: <strong>{stateCsvDiff.missing.join(', ')}</strong> — entering it commands nothing.</p>}
-                  </div>
+                  </InlineIssue>
                 )}
 
                 <div className="overflow-x-auto rounded-lg border border-gray-600">
@@ -2071,8 +2078,9 @@ export default function ConfigPage() {
                             <CommitOnBlurNumber
                               value={st.id}
                               onCommit={(v) => setState(i, { id: v })}
-                              className="w-16 px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white"
+                              className={`w-16 px-2 py-1 bg-gray-800 border rounded text-white ${st.id !== undefined && stateIdDupes.includes(st.id) ? 'border-red-500 ring-1 ring-red-500' : 'border-gray-600'}`}
                             />
+                            {st.id !== undefined && stateIdDupes.includes(st.id) && <div className="text-[10px] text-red-400 mt-0.5">duplicate id</div>}
                           </td>
                           <td className="px-3 py-1.5">
                             <input
@@ -2080,8 +2088,9 @@ export default function ConfigPage() {
                               value={st.name ?? ''}
                               onChange={(e) => setState(i, { name: e.target.value })}
                               disabled={!canEdit}
-                              className="w-full px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white disabled:opacity-60"
+                              className={`w-full px-2 py-1 bg-gray-800 border rounded text-white disabled:opacity-60 ${st.name && stateNameDupes.includes(st.name) ? 'border-red-500 ring-1 ring-red-500' : 'border-gray-600'}`}
                             />
+                            {st.name && stateNameDupes.includes(st.name) && <div className="text-[10px] text-red-400 mt-0.5">duplicate name</div>}
                           </td>
                           <td className="px-3 py-1.5">
                             <CommitOnBlurNumber
@@ -2167,8 +2176,8 @@ export default function ConfigPage() {
                         onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadStateCsv('actuators', f); e.target.value = ''; }}
                       />
                     </label>
-                    <button onClick={generateEmptyActuators} className="px-3 py-1.5 bg-gray-700 rounded hover:bg-gray-600 text-sm" title="Every configured actuator, every state, all CLOSE">
-                      Generate empty
+                    <button onClick={generateEmptyActuators} disabled={!canEdit} className="px-3 py-1.5 bg-gray-700 rounded hover:bg-gray-600 text-sm disabled:opacity-50" title="Every configured actuator, every current state, all CLOSE">
+                      Regenerate empty
                     </button>
                     <button
                       onClick={() => { saveStateCsv('actuators', csvActuators); if (csvDelays) saveStateCsv('delays', csvDelays); }}
@@ -2180,7 +2189,7 @@ export default function ConfigPage() {
                   </div>
 
                   {(actuatorDiff.orphan.length > 0 || actuatorDiff.missing.length > 0 || delayShapeMismatch) && (
-                    <div className="p-3 bg-yellow-900/40 border border-yellow-600 rounded-lg text-yellow-200 text-sm space-y-1">
+                    <InlineIssue level="warn">
                       {actuatorDiff.orphan.length > 0 && (
                         <p>In this table but not in <code>[actuator_roles]</code>: <strong>{actuatorDiff.orphan.join(', ')}</strong> — these rows command nothing.</p>
                       )}
@@ -2191,7 +2200,7 @@ export default function ConfigPage() {
                       <button onClick={syncActuatorRows} className="mt-1 px-3 py-1.5 bg-gray-700 rounded hover:bg-gray-600 text-yellow-100">
                         Sync rows to [actuator_roles]
                       </button>
-                    </div>
+                    </InlineIssue>
                   )}
 
                   <div className="overflow-x-auto rounded-lg border border-gray-600">
@@ -2277,18 +2286,21 @@ export default function ConfigPage() {
                         onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadStateCsv('transitions', f); e.target.value = ''; }}
                       />
                     </label>
+                    <button onClick={generateEmptyTransitions} disabled={!canEdit} className="px-3 py-1.5 bg-gray-700 rounded hover:bg-gray-600 text-sm disabled:opacity-50" title="Blank matrix: the only allowed move from each state is to itself (the diagonal)">Regenerate empty</button>
                     <button onClick={() => saveStateCsv('transitions', csvTransitions)} disabled={saving} className="px-3 py-1.5 bg-blue-600 rounded hover:bg-blue-700 text-sm disabled:opacity-50">
                       {saving ? 'Saving…' : 'Save'}
                     </button>
                   </div>
 
                   {(stateColDiff.orphan.length > 0 || stateColDiff.missing.length > 0) && (
-                    <div className="p-3 bg-yellow-900/40 border border-yellow-600 rounded-lg text-yellow-200 text-sm">
-                      The two tables disagree on states
-                      {stateColDiff.orphan.length > 0 && <> — only in actuators: <strong>{stateColDiff.orphan.join(', ')}</strong></>}
-                      {stateColDiff.missing.length > 0 && <> — only in transitions: <strong>{stateColDiff.missing.join(', ')}</strong></>}.
-                      A state missing from the actuator table commands nothing when entered.
-                    </div>
+                    <InlineIssue level="warn">
+                      <p>
+                        The two tables disagree on states
+                        {stateColDiff.orphan.length > 0 && <> — only in actuators: <strong>{stateColDiff.orphan.join(', ')}</strong></>}
+                        {stateColDiff.missing.length > 0 && <> — only in transitions: <strong>{stateColDiff.missing.join(', ')}</strong></>}.
+                        A state missing from the actuator table commands nothing when entered.
+                      </p>
+                    </InlineIssue>
                   )}
 
                   <p className="text-sm text-text-muted">Row = state you are in, column = state you may go to.</p>
@@ -2332,6 +2344,161 @@ export default function ConfigPage() {
                   </div>
                 </div>
               )}
+
+              {/* ── Fire ───────────────────────────────────────────────────────────── */}
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold">Fire</h3>
+                <p className="text-sm text-text-muted">
+                  Which state is the burn and where its timer lands when it expires. Both are state
+                  names, not positions, so renaming a state here is safe as long as both fields
+                  still name a state that exists.
+                </p>
+                {(() => {
+                  const names = stateList.map((x) => x.name).filter(Boolean) as string[];
+                  const fireState = config.fire?.state ?? '';
+                  const target = config.fire?.expiry_target ?? '';
+                  const unknownFire = !!fireState && names.length > 0 && !names.includes(fireState);
+                  const unknownTarget = !!target && names.length > 0 && !names.includes(target);
+                  // The fire state must be able to REACH its expiry target, or the timer expires
+                  // into a refused transition and the system sits in fire with a dead timer.
+                  let unreachable = false;
+                  if (csvTransitions && fireState && target) {
+                    const r = csvTransitions.rows.find((x) => x.key === fireState);
+                    const ci = csvTransitions.states.indexOf(target);
+                    if (r && ci >= 0) unreachable = (r.cells[ci] || '0').trim() !== '1';
+                  }
+                  return (
+                    <>
+                      {(unknownFire || unknownTarget || unreachable) && (
+                        <InlineIssue level="error">
+                          {unknownFire && <p><strong>{fireState}</strong> is not a state in the States list above.</p>}
+                          {unknownTarget && <p><strong>{target}</strong> is not a state in the States list above.</p>}
+                          {unreachable && (
+                            <p>
+                              <strong>{fireState} → {target}</strong> is not an allowed transition. The fire timer
+                              would expire into a refused transition and the system would stay in fire. Tick that
+                              cell in the Allowed transitions table above.
+                            </p>
+                          )}
+                        </InlineIssue>
+                      )}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        {renderField('Fire state', fireState,
+                          (v) => updateField('fire', 'state', v), 'select',
+                          names.length ? names : [fireState].filter(Boolean),
+                          'the state that starts the burn')}
+                        {renderField('Expires to', target,
+                          (v) => updateField('fire', 'expiry_target', v), 'select',
+                          names.length ? names : [target].filter(Boolean),
+                          'where the timer lands')}
+                        {renderField('Duration (ms)', config.fire?.duration_ms,
+                          (v) => updateField('fire', 'duration_ms', v), 'number')}
+                        {renderField('Extended (ms)', config.fire?.extended_ms,
+                          (v) => updateField('fire', 'extended_ms', v), 'number',
+                          undefined, 'window EXTEND FIRE restarts at')}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+
+              {/* ── Abort thresholds ────────────────────────────────────────────────── */}
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold">Abort pressure thresholds</h3>
+                <p className="text-sm text-text-muted">
+                  PSI limits broadcast to the boards, which abort autonomously when a sensor exceeds
+                  them — they do not depend on the server being alive. The name must match a sensor
+                  role exactly.
+                </p>
+                <div className="space-y-2">
+                  {Object.entries(config.abort_pts || {}).map(([role, psi], i) => (
+                    <div key={`abort:${i}`} className="flex items-center gap-3">
+                      <CommitOnBlurName
+                        value={role}
+                        siblings={Object.keys(config.abort_pts || {})}
+                        onRename={(next) => {
+                          const rebuilt: Record<string, any> = {};
+                          for (const [k, v] of Object.entries(config.abort_pts || {})) rebuilt[k === role ? next : k] = v;
+                          setConfig({ ...config, abort_pts: rebuilt } as ConfigData);
+                        }}
+                        onError={(msg) => { setError(msg); setTimeout(() => setError(null), 4000); }}
+                        className="flex-1 px-3 py-2 bg-gray-800 border border-gray-600 rounded text-white"
+                      />
+                      <CommitOnBlurNumber
+                        value={psi as number}
+                        onCommit={(v) => setConfig({ ...config, abort_pts: { ...(config.abort_pts || {}), [role]: v } } as ConfigData)}
+                        className="w-28 px-3 py-2 bg-gray-800 border border-gray-600 rounded text-white"
+                      />
+                      <span className="text-sm text-text-muted w-10">PSI</span>
+                      <button
+                        onClick={() => {
+                          const next = { ...(config.abort_pts || {}) };
+                          delete next[role];
+                          setConfig({ ...config, abort_pts: next } as ConfigData);
+                        }}
+                        disabled={!canEdit}
+                        className="px-3 py-2 bg-red-600 rounded hover:bg-red-700 disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  {Object.keys(config.abort_pts || {}).length === 0 && (
+                    <p className="text-sm text-amber-300/90">
+                      No abort thresholds configured — the boards will not abort on over-pressure by themselves.
+                    </p>
+                  )}
+                  <button
+                    onClick={() => setConfig({ ...config, abort_pts: { ...(config.abort_pts || {}), 'New Abort PT': 0 } } as ConfigData)}
+                    disabled={!canEdit}
+                    className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600 disabled:opacity-50"
+                  >
+                    + Add threshold
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'calibration' && (
+            <div className="bg-card rounded-lg p-6 space-y-4">
+              <div>
+                <h2 className="text-xl font-bold mb-1">Calibration profiles</h2>
+                <p className="text-sm text-text-muted">
+                  A calibration profile is the whole rig&apos;s cal in one file (every sensor, keyed by
+                  channel). Load one to switch the entire rig&apos;s calibration at once — it applies to
+                  the running stream immediately during a session, otherwise at the next session start.
+                  Capture points per sensor on the Calibration page.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-sm font-semibold">Profile:</span>
+                <select
+                  value={calActive}
+                  onChange={(e) => loadCalProfile(e.target.value)}
+                  disabled={!canEdit}
+                  title={canEdit ? 'Load a saved calibration (swaps the whole rig)' : 'Operators only'}
+                  className="px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed min-w-[14rem]"
+                >
+                  {calActive === '' && <option value="">{calProfiles.length ? '— unsaved / blank —' : '— none saved —'}</option>}
+                  {calProfiles.map((p) => (
+                    <option key={p.name} value={p.name}>{p.name}{p.active ? ' (loaded)' : ''}</option>
+                  ))}
+                </select>
+                <button onClick={saveCalProfileAs} disabled={!canEdit}
+                  className="px-3 py-2 bg-card border border-gray-700 rounded-lg hover:bg-opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={canEdit ? 'Snapshot the current live calibration as a named profile' : 'Operators only'}>Save as…</button>
+                <button onClick={newBlankCalibration} disabled={!canEdit}
+                  className="px-3 py-2 bg-card border border-gray-700 rounded-lg hover:bg-opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={canEdit ? 'Start from scratch — every sensor reads 0 until re-calibrated' : 'Operators only'}>New blank</button>
+              </div>
+              {calMsg && (
+                <div className="p-3 bg-blue-900/30 border border-blue-700 rounded-lg text-blue-100 text-sm">{calMsg}</div>
+              )}
+              <p className="text-xs text-text-muted">
+                Profiles live in <code>scripts/calibration/calibrations/profiles</code> and are committed to
+                the repo, so a saved calibration travels between computers. New blank resets every sensor to 0.
+              </p>
             </div>
           )}
 

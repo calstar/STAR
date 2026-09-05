@@ -60,6 +60,16 @@ function publishCalibrationCommand(host: CalibrationHost, type: number, sensorId
     host.elodin.publishTable([0x46, 0x00], payload);
 }
 
+/**
+ * Tell the calibration service to re-read the live cubic store from disk (cmd 7). Used after the
+ * backend swaps the store file for a calibration-profile load / new-blank, so the change takes
+ * effect on the running stream without a session restart. If the service is down (session off) the
+ * packet is silently dropped and the swapped file applies at the next session start.
+ */
+export function publishCalibrationReload(host: CalibrationHost): void {
+    publishCalibrationCommand(host, 7, 0, 0);
+}
+
 function getActiveChannels(host: CalibrationHost): number[] {
     const channels = new Set<number>();
 

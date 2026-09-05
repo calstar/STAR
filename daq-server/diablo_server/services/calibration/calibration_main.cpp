@@ -738,8 +738,8 @@ int main(int argc, char* argv[]) {
     // Seed on first run: if the live store file is missing, copy the committed default (a curated,
     // version-controlled calibration snapshot) into place so a fresh checkout / new machine boots
     // with the team's calibration instead of an empty store. The live file is gitignored and
-    // rewritten on every capture; cubic_calibration.default.json is the tracked source you promote a
-    // known-good cal into (see scripts/calibration/promote_default.sh).
+    // rewritten on every capture; cubic_calibration.default.json is the tracked source you promote
+    // a known-good cal into (see scripts/calibration/promote_default.sh).
     {
         const std::filesystem::path live_path(
             "scripts/calibration/calibrations/cubic_calibration.json");
@@ -759,51 +759,57 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Resume previously captured points and re-apply their fitted cubics to the live stream.
-    const size_t cubic_loaded = cubic_store.load();
-    if (cubic_loaded > 0) {
+    // Load (or reload) the live cubic store from disk and re-apply it to the running stream: each
+    // channel's fitted cubic → pt_calibration, and robust reseeded from that same cubic baseline.
+    // Used at startup AND when a calibration profile is swapped live (cmd 7): the file on disk is
+    // the source of truth, so re-reading it is all that's needed to switch the whole rig's cal.
+    //   restore_learned=true  (startup): additionally restore the learned robust θ from
+    //                                    adjustments.json on top of the cubic-seeded baseline.
+    //   restore_learned=false (profile swap): reset + reseed robust from the profile only — the
+    //                                    profile is the whole cal, so previously learned θ is
+    //                                    dropped.
+    auto reload_live_store = [&](bool restore_learned) -> size_t {
+        const size_t loaded = cubic_store.load();
         for (uint16_t uid : cubic_store.uids()) {
             const fsw::calibration::CubicFit* fit = cubic_store.fit_for(uid);
             const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
-            if (fit != nullptr && cch != nullptr)
+            if (cch == nullptr)
+                continue;
+            const bool fit_ok = fit != nullptr && fit->valid;
+            if (fit_ok)
                 pt_calibration.set_calibration(
                     cch->logical_ch,
                     fsw::calibration::PTCalibrationCoeffs(fit->A, fit->B, fit->C, fit->D));
+            else
+                // No valid cubic (e.g. a blank profile) → clear any stale cubic so it reads 0.
+                pt_calibration.clear_calibration(cch->logical_ch);
+            const fsw::calibration::PTCalibrationCoeffs baseline =
+                fit_ok ? fsw::calibration::PTCalibrationCoeffs(fit->A, fit->B, fit->C, fit->D)
+                       : fsw::calibration::PTCalibrationCoeffs(0.0, 0.0, 0.0, 0.0);
+            robust_manager.reseed_sensor(uid, baseline);
         }
-        std::cout << "[Calibration] Cubic: resumed " << cubic_loaded
-                  << " channel(s) from cubic_calibration.json" << std::endl;
-    }
-
-    // Seed the robust learner from each sensor's shared cubic fit (zero baseline when it has no
-    // points, so an uncalibrated robust sensor reads 0). Seeding from the cubic — not a factory
-    // file — means a reloaded robust θ (from the same points) matches its baseline and survives the
-    // load-time reconcile guard. Must run BEFORE load_adjustments (which restores θ + reconciles).
-    for (uint16_t uid : cubic_store.uids()) {
-        const fsw::calibration::CubicFit* fit = cubic_store.fit_for(uid);
-        const fsw::calibration::PTCalibrationCoeffs baseline =
-            (fit != nullptr && fit->valid)
-                ? fsw::calibration::PTCalibrationCoeffs(fit->A, fit->B, fit->C, fit->D)
-                : fsw::calibration::PTCalibrationCoeffs(0.0, 0.0, 0.0, 0.0);
-        robust_manager.initialize_sensor(uid, baseline);
-    }
+        // Restore learned robust θ only on process start (not on a live profile swap).
+        if (restore_learned)
+            robust_manager.load_adjustments(adjustments_path, &uid_role);
+        // Sample the robust preview curve for EVERY sensor that has points (not just robust ones),
+        // so the merged UI can show "what robust would look like" before you switch to it.
+        for (uint16_t uid : cubic_store.uids()) {
+            const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+            if (cch != nullptr && !cch->points.empty())
+                cubic_store.set_fit_curve(uid, sample_robust_curve(uid));
+        }
+        return loaded;
+    };
 
     std::cout << "[Calibration] Robust adjustments path: " << adjustments_path << std::endl;
     std::cout << "[Calibration]   (override with --adjustments, CAL_BACKUP_PATH, or "
                  "calibration_backups/calibration_backup_*.json mtime)"
               << std::endl;
-    if (!robust_manager.load_adjustments(adjustments_path, &uid_role)) {
-        std::cout
-            << "[Calibration]   File missing/unreadable — robust starts from the cubic-seeded "
-               "baseline (0 where uncalibrated)"
-            << std::endl;
-    }
-    // Sample the robust preview curve for EVERY sensor that has points (not just robust ones), so
-    // the merged UI can show "what robust would look like" before you switch a sensor to it.
-    for (uint16_t uid : cubic_store.uids()) {
-        const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
-        if (cch != nullptr && !cch->points.empty())
-            cubic_store.set_fit_curve(uid, sample_robust_curve(uid));
-    }
+    // Resume previously captured points + learned robust state from disk.
+    const size_t cubic_loaded = reload_live_store(/*restore_learned=*/true);
+    if (cubic_loaded > 0)
+        std::cout << "[Calibration] Cubic: resumed " << cubic_loaded
+                  << " channel(s) from cubic_calibration.json" << std::endl;
     // Always persist at startup so the record (with each channel's active_model) exists immediately
     // — the UI / cal_model_select read it before any capture.
     cubic_store.save();
@@ -949,10 +955,10 @@ int main(int argc, char* argv[]) {
                           << std::endl;
 
                 if (cmd_type == 0) {  // Zero All — capture a 0 psi reference point on every PT
-                    // A "zero" is just a captured reference point at 0 psi: it feeds the same shared
-                    // fit as any other capture (cubic + robust), persists, and naturally averages
-                    // repeated zeroes — capturing real zero-drift over time rather than assuming a
-                    // uniform tare. Physics sensors take no points, so they're skipped.
+                    // A "zero" is just a captured reference point at 0 psi: it feeds the same
+                    // shared fit as any other capture (cubic + robust), persists, and naturally
+                    // averages repeated zeroes — capturing real zero-drift over time rather than
+                    // assuming a uniform tare. Physics sensors take no points, so they're skipped.
                     auto avg_adc = [&](uint16_t uid, double& out) -> bool {
                         auto rit = pt_adc_ring.find(uid);
                         if (rit != pt_adc_ring.end() && !rit->second.empty()) {
@@ -981,8 +987,8 @@ int main(int argc, char* argv[]) {
                             apply_capture(id, adc_avg, 0.0);
                             ++zeroed;
                         }
-                        std::cout << "[Cal] Zero All: captured 0 psi on " << zeroed
-                                  << " PT sensors" << std::endl;
+                        std::cout << "[Cal] Zero All: captured 0 psi on " << zeroed << " PT sensors"
+                                  << std::endl;
                     } else {
                         double adc_avg = 0.0;
                         if (pt_model_for(sensor_id) != PtModel::Physics &&
@@ -1056,6 +1062,13 @@ int main(int argc, char* argv[]) {
                     apply_clear(sensor_id);
                     std::cout << "[Cal] New calibration uid=" << static_cast<int>(sensor_id) << " ("
                               << pt_model_name(pt_model_for(sensor_id)) << ")" << std::endl;
+                } else if (cmd_type == 7) {  // Reload live store — the backend swapped the cal file
+                    // A calibration profile was loaded / a blank was created on disk by the
+                    // backend; re-read the live store and re-apply it to the running stream (reset
+                    // + reseed robust from the new profile). No session restart needed.
+                    const size_t n = reload_live_store(/*restore_learned=*/false);
+                    std::cout << "[Cal] Reloaded live calibration store (" << n
+                              << " channel(s)) after profile swap" << std::endl;
                 }
             }
             continue;
@@ -1162,8 +1175,8 @@ int main(int argc, char* argv[]) {
             else if (eff_model == PtModel::Blend)
                 cal_status = (fac_ok && has_rob) ? 1u : 0u;
 
-            // EMA smoothing (zeroing is now a captured 0 psi point that flows through the fit above,
-            // not a post-hoc offset).
+            // EMA smoothing (zeroing is now a captured 0 psi point that flows through the fit
+            // above, not a post-hoc offset).
             {
                 auto& ema = g_lp_ema[uid];
                 if (!std::isfinite(ema))

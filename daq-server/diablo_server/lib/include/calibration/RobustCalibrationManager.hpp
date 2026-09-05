@@ -36,6 +36,11 @@ public:
 
     void zero_sensor(uint16_t sensor_id, int32_t adc_code);
 
+    /** Reseed a sensor's framework cleanly from the given cubic baseline, discarding any learned
+     * adjustments and ignoring restored/population priors. Used when a calibration profile is
+     * swapped live: the profile is the whole cal, so robust resets and relearns from it. */
+    void reseed_sensor(uint16_t sensor_id, const PTCalibrationCoeffs& baseline);
+
     /** Mean PSI from the robust model (default environment). */
     double predict_pressure_psi(uint16_t sensor_id, int32_t adc_code);
 
