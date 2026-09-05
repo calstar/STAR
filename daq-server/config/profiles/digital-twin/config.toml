@@ -112,6 +112,7 @@ discovery_timeout_seconds = 30
 
 [boards.pt_board]
 type = "PT"
+pt_type = "0-5V ratiometric"
 ip = "192.168.2.21"
 send_port = 5005
 num_sensors = 10
@@ -125,6 +126,7 @@ active_connectors = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
 
 [boards.pt_board_2]
 type = "PT"
+pt_type = "4-20 mA absolute"
 ip = "192.168.2.22"
 send_port = 5005
 num_sensors = 10
@@ -134,11 +136,8 @@ enable_serial_printing = true
 voltage_reference = 0
 adc_ref_voltage = 2.5
 active_connectors = [ 1, 2, 3, 4 ]
-hp_pt_connectors = [ 1, 3, 4 ]
-excitation_connector_id = 2
 hp_pt_full_scale_psi = 5000
 hp_pt_sense_resistor_ohms = 120
-excitation_divider_attenuation = 0.0762
 
 [boards.actuator_board]
 type = "ACTUATOR"
@@ -306,6 +305,23 @@ active_connectors = [ 1, 2 ]
 "Fuel Upstream" = 2
 "Dome CTRL" = 3
 "Low Press" = 4
+
+# No bench cal data for this rig, so stream the datasheet conversion rather than the
+# cubic default, which reads 0 until an operator captures points. Ratiometric physics is
+# psi = adc/2^31 * full_scale — the linear 0 ADC = 0 PSI mapping these PTs are specced to.
+[calibration_model_pt_board]
+"Fuel Fill Vent" = "physics"
+"Fuel Upstream" = "physics"
+"Dome CTRL" = "physics"
+"Low Press" = "physics"
+
+# 1000 PSI at full ADC scale. Same as the current built-in default; stated so a change
+# to that default cannot silently rescale this rig.
+[calibration_full_scale_pt_board]
+"Fuel Fill Vent" = 1000
+"Fuel Upstream" = 1000
+"Dome CTRL" = 1000
+"Low Press" = 1000
 
 [abort_pts]
 "Fuel Upstream" = 400
