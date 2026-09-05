@@ -2,7 +2,7 @@
 
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { SystemState, CommandPayload } from '@/lib/types';
+import { SystemState, CommandPayload, MessageType } from '@/lib/types';
 import { useEffect, useState, useMemo } from 'react';
 import { useControlMode } from '@/lib/control-mode';
 import { allStates, loadStates, stateNameUpper } from '@/lib/states';
@@ -242,13 +242,21 @@ export default function StateMachineDiagram() {
   const updateState = useSensorStore((s) => s.updateState);
   const ws = getWebSocketClient();
   const [backendTransitions, setBackendTransitions] = useState<Transition[]>([]);
+  // Bumped after states are (re)loaded so the diagram re-renders — allStates()/statePos() read the
+  // module cache synchronously, so a version tick is what tells React the positions changed.
+  const [, setStatesVersion] = useState(0);
   const { controlEnabled } = useControlMode();
 
-  // Request transitions from backend on mount; fall back to STATIC_TRANSITIONS if unavailable
-  // Adopt the config-declared states (names + panel positions) once.
+  // Load the config-declared states (names + panel positions) on mount, and RELOAD them whenever a
+  // config/CSV save is broadcast — otherwise the module-level cache in states.ts would hold the old
+  // positions until a full page reload.
   useEffect(() => {
-    void loadStates(getApiBaseUrl());
-  }, []);
+    const refreshStates = (force: boolean) =>
+      void loadStates(getApiBaseUrl(), force).then(() => setStatesVersion((v) => v + 1));
+    refreshStates(false);
+    const unsub = ws.on(MessageType.CONFIG_UPDATED, () => refreshStates(true));
+    return () => { unsub(); };
+  }, [ws]);
 
   useEffect(() => {
     const handleTransitions = (payload: unknown) => {
@@ -265,7 +273,7 @@ export default function StateMachineDiagram() {
       (ws as any).send({ type: 'get_state_transitions', timestamp: Date.now(), payload: {} });
     };
 
-    const timeoutId = setTimeout(() => {
+    const tryRequest = () => {
       if (ws.isConnected()) {
         requestTransitions();
       } else {
@@ -277,9 +285,13 @@ export default function StateMachineDiagram() {
         }, 100);
         setTimeout(() => clearInterval(checkConnection), 5000);
       }
-    }, 200);
+    };
 
-    return () => { clearTimeout(timeoutId); unsub(); };
+    const timeoutId = setTimeout(tryRequest, 200);
+    // Re-request the transition matrix after a config/CSV save so edited edges show without a reload.
+    const unsubCfg = ws.on(MessageType.CONFIG_UPDATED, () => tryRequest());
+
+    return () => { clearTimeout(timeoutId); unsub(); unsubCfg(); };
   }, [ws]);
 
   const debugMode = useSensorStore((s) => s.debugMode);

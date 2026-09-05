@@ -6,7 +6,12 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { IncomingMessage, ServerResponse } from 'http';
+
+// ESM has no __dirname global. tsx injects one in dev, but `node dist/server.js` (the systemd sim)
+// does not — so the __dirname candidates below would throw ReferenceError. Define it explicitly.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { readConfig, writeConfig, getConfigPath, patchBoardField } from './routes/config.js';
 import {
   listProfiles, switchProfile, createProfile, renameProfile, deleteProfile,

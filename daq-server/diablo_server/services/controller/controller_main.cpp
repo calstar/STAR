@@ -333,7 +333,12 @@ int main(int argc, char* argv[]) {
     // state packet. Config, not a literal — see ControllerService::setFireStateId.
     {
         const std::string fire_state = cfg.fire.state;
-        if (!fire_state.empty()) {
+        if (fire_state.empty()) {
+            // No fire state configured → the PWM fire gate never activates (id 255 = UNKNOWN never
+            // matches a real sequencer state), matching the sequencer's disabled fire timer.
+            service.setFireStateId(255);
+            std::cout << "  Fire state:     (none) — PWM fire gate disabled" << std::endl;
+        } else {
             const uint8_t id = sequencer::StateMachine::stateId(fire_state);
             if (id != 255) {
                 service.setFireStateId(id);
