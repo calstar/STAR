@@ -735,6 +735,30 @@ int main(int argc, char* argv[]) {
         robust_manager.save_adjustments(adjustments_path, &uid_role);
     };
 
+    // Seed on first run: if the live store file is missing, copy the committed default (a curated,
+    // version-controlled calibration snapshot) into place so a fresh checkout / new machine boots
+    // with the team's calibration instead of an empty store. The live file is gitignored and
+    // rewritten on every capture; cubic_calibration.default.json is the tracked source you promote a
+    // known-good cal into (see scripts/calibration/promote_default.sh).
+    {
+        const std::filesystem::path live_path(
+            "scripts/calibration/calibrations/cubic_calibration.json");
+        const std::filesystem::path seed_path(
+            "scripts/calibration/calibrations/cubic_calibration.default.json");
+        std::error_code ec;
+        if (!std::filesystem::exists(live_path, ec) && std::filesystem::exists(seed_path, ec)) {
+            std::filesystem::copy_file(seed_path, live_path,
+                                       std::filesystem::copy_options::overwrite_existing, ec);
+            if (ec)
+                std::cout << "[Calibration] Cubic: seed copy failed (" << ec.message() << ")"
+                          << std::endl;
+            else
+                std::cout
+                    << "[Calibration] Cubic: seeded live store from cubic_calibration.default.json"
+                    << std::endl;
+        }
+    }
+
     // Resume previously captured points and re-apply their fitted cubics to the live stream.
     const size_t cubic_loaded = cubic_store.load();
     if (cubic_loaded > 0) {

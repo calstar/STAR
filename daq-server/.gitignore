@@ -225,3 +225,8 @@ config/state_transitions.csv
 # reading. tools/calibration/calibrations/adjustments.json is the checked-in seed; the copy
 # the C++ services write under scripts/ is per-machine learned state and churns constantly.
 scripts/calibration/calibrations/adjustments.json
+
+# Live cubic/shared-points store the calibration service rewrites on every capture / Zero-All /
+# Clear. cubic_calibration.default.json (NOT ignored) is the tracked seed the service copies here
+# on first run when this file is missing; promote a good cal into it via promote_default.sh.
+scripts/calibration/calibrations/cubic_calibration.json
