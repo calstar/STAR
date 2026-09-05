@@ -123,8 +123,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:-}
 
   # ── Engine Design ────────────────────────────────────────────────────────
-  # Built from the repo root: the native-builder stage and runtime copy several
-  # EngineDesign/ subtrees. Auth is Caddy's job, so no JWT_SECRET here.
+  # Built from the repo root: the image copies several EngineDesign/ subtrees
+  # plus lib/stardesign. Auth is Caddy's job, so no JWT_SECRET here.
   engine-design-api:
     image: ghcr.io/calstar/star-engine-design-api:latest
     build:
