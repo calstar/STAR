@@ -304,6 +304,45 @@ jobs:
           --timeout=300 --timeout-method=thread -v
 
   # Aggregate status, mirroring daq-server-ci.yml's build-summary.
+
+  # Docker images build. This is the gate that was missing: publish-apps.yml
+  # only triggers on push to main, so a Dockerfile that no longer matches the
+  # tree -- e.g. a COPY of a directory the branch deleted -- got its first real
+  # build *after* the merge, and broke the deploy image instead of the PR.
+  #
+  # Same Dockerfiles, same root context as publish-apps.yml, but push: false --
+  # this proves the image builds, it does not publish anything. cache-from
+  # points at publish-apps' scopes so PRs reuse main's layers; nothing is
+  # written back (GitHub isolates branch caches from the default branch's
+  # anyway, so a PR could not poison them even if it tried).
+  docker-images:
+    name: Docker image (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: engine-design-api,      dockerfile: ./EngineDesign/Dockerfile.api }
+          - { name: engine-design-frontend, dockerfile: ./EngineDesign/frontend/Dockerfile }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          # Repo root, matching publish-apps.yml: these images copy several
+          # EngineDesign/ subtrees plus lib/stardesign.
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.name }}
+
   engine-design-summary:
     name: Engine Design Summary
     runs-on: ubuntu-latest
@@ -313,6 +352,7 @@ jobs:
       - frontend
       - frontend-e2e
       - accel-parity
+      - docker-images
     if: always()
 
     steps:
@@ -328,3 +368,4 @@ jobs:
         echo "| Frontend build | ${{ needs.frontend.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Frontend E2E (Playwright) | ${{ needs.frontend-e2e.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Accelerator parity (numba vs Python) | ${{ needs.accel-parity.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Docker images (build, no push) | ${{ needs.docker-images.result }} |" >> $GITHUB_STEP_SUMMARY
