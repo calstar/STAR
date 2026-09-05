@@ -13,18 +13,21 @@ python -c "import numpy, scipy, matplotlib; print('  ✓ numpy/scipy/matplotlib 
 (cd EngineDesign && python -c "import engine; print('  ✓ engine package importable')")
 deactivate
 
-echo "  → native kernel built"
-NATIVE_BUILD="EngineDesign/engine/native/build"
-if [ -d "$NATIVE_BUILD" ]; then
-  # Any .so / .dylib or executable is a good sign the cmake build did something.
-  if ! find "$NATIVE_BUILD" \( -name '*.so' -o -name '*.dylib' -o -name '*.a' \) | grep -q .; then
-    echo "  ! no shared/static libs found under $NATIVE_BUILD — build may have been skipped"
-  else
-    echo "  ✓ native artifacts present"
-  fi
-else
-  echo "  ! $NATIVE_BUILD missing (--no-native was passed?)"
-fi
+# The accelerator is numba (engine/accel); the C kernel at engine/native that
+# this used to check for is deleted. Nothing is compiled at setup time any more,
+# so the check is that numba imports and the kernels actually JIT -- warmup()
+# returns False rather than raising, which is what makes it safe to check here.
+echo "  → numba accelerator usable"
+source EngineDesign/.venv/bin/activate
+(cd EngineDesign && python -c "
+import sys
+import engine.accel as accel
+if not accel.available():
+    print('  ! numba not importable — the optimizer will fall back to pure Python (~25-30x slower)')
+    sys.exit(0)
+print('  ✓ numba kernels compile' if accel.warmup() else '  ! numba imports but kernels failed to compile')
+")
+deactivate
 
 echo "  → frontend node_modules"
 if [ -d EngineDesign/frontend ]; then
