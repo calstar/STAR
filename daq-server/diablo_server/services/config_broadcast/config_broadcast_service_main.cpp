@@ -122,6 +122,39 @@ void parseVentAbortFromCsv(const std::string& csv_path, std::map<std::string, in
 // One UDP packet to send: (packet type, bytes, dest IP, dest port).
 using ConfigPacket = std::tuple<uint8_t, std::vector<uint8_t>, std::string, uint16_t>;
 
+// Abort thresholds the calibration service computed through each sensor's REAL model (cubic /
+// robust / physics, with a physics fallback for sparse cal), keyed by uid -> {target_psi, raw_adc}.
+// The calibration service is the authority — it has every model loaded and re-emits on each
+// capture/clear/reload. config_broadcast prefers these and only falls back to its own inline
+// physics inversion when a uid is absent (calibration service starting up / down) or its recorded
+// PSI no longer matches the live config (an abort_pts edit the service hasn't re-emitted for yet).
+std::map<uint16_t, std::pair<double, uint32_t>> readAbortThresholds() {
+    std::map<uint16_t, std::pair<double, uint32_t>> out;
+    const char* candidates[] = {
+        "scripts/calibration/calibrations/abort_thresholds.txt",
+        "../scripts/calibration/calibrations/abort_thresholds.txt",
+        "../../scripts/calibration/calibrations/abort_thresholds.txt",
+    };
+    for (const char* path : candidates) {
+        std::ifstream f(path);
+        if (!f.is_open())
+            continue;
+        std::string line;
+        while (std::getline(f, line)) {
+            if (line.empty() || line[0] == '#')
+                continue;
+            std::istringstream is(line);
+            unsigned uid = 0;
+            double psi = 0.0;
+            unsigned long adc = 0;
+            if (is >> uid >> psi >> adc)
+                out[static_cast<uint16_t>(uid)] = {psi, static_cast<uint32_t>(adc)};
+        }
+        break;  // first found wins
+    }
+    return out;
+}
+
 // Read config.toml fresh and build the full SENSOR_CONFIG/ACTUATOR_CONFIG packet set.
 // Called every broadcast cycle so board edits (roles, active_connectors, voltage_reference,
 // abort thresholds, enable flags) go live without restarting the service or a session.
@@ -202,6 +235,7 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
     // calibration_model to "physics" for a board trip, or it has none) — inverting the operator
     // cubic or the current-loop curve would duplicate that math and is left as a follow-up. Both
     // shipped rigs' abort PTs are ratiometric physics.
+    const auto cal_thresholds = readAbortThresholds();
     std::vector<std::tuple<uint32_t, uint8_t, uint32_t>> abort_pt_list;
     std::set<std::string> abort_warnings;
     for (const auto& [sensor_name, threshold_psi] : abort_pts) {
@@ -221,11 +255,27 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
             resolved_role = true;
             const int channel = rit->second;
             if (channel < 1 || channel > 255) {
-                abort_warnings.insert(tag + "channel out of range — NO board overpressure trip");
+                abort_warnings.insert(tag + "channel out of range — no board abort threshold");
                 break;
             }
-            // Interface + model + full-scale resolved exactly as calibration_main does, so the trip
-            // ADC lands on the same curve the operator reads.
+            const uint16_t uid = static_cast<uint16_t>(b.board_id * 100 + channel);
+            // Prefer the calibration service's model-correct threshold, as long as the PSI it was
+            // computed for still matches the live config (it re-emits on capture/clear/reload, not
+            // on a bare abort_pts edit). This is the path that covers cubic/robust and operator
+            // cal.
+            {
+                auto cit = cal_thresholds.find(uid);
+                if (cit != cal_thresholds.end() &&
+                    std::abs(cit->second.first - threshold_psi) < 0.5) {
+                    abort_pt_list.push_back(
+                        {ipToU32Le(b.ip), static_cast<uint8_t>(channel), cit->second.second});
+                    break;
+                }
+            }
+            // Fallback (calibration service not up yet, or the abort PSI changed and it hasn't
+            // re-emitted): invert physics inline. Interface + model + full-scale resolved exactly
+            // as calibration_main does, so a physics threshold lands on the same curve the operator
+            // reads.
             const bool is_loop = b.has_hp_pt_keys || b.pt_type == "4-20 mA absolute";
             std::string model = is_loop ? "physics" : "cubic";  // interface-aware default
             if (const auto* models = cfg.calibration_model_for("calibration_model_" + board_key)) {

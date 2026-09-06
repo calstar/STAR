@@ -417,6 +417,70 @@ static double lp_pt_psi_before_offset(uint8_t board_number, uint8_t local_ch, ui
     return select_pt_psi(uid, psi_fac, psi_rob, psi_phys, fac_ok, robust_manager.has_sensor(uid));
 }
 
+/** A sensor needs at least this many captured points before its cubic/robust curve is trusted to
+ *  invert an abort threshold. Below it, the fit is too loose — a 1-2 point cubic can invert to an
+ *  ADC far from the intended pressure — so the abort threshold falls back to physics (the datasheet
+ *  mapping), which is always monotonic and sane. See invert_abort_psi_to_adc /
+ * write_abort_thresholds. */
+constexpr int kMinAbortCalPoints = 3;
+
+/**
+ * Invert an abort-procedure pressure (the level the boards vent DOWN below before completing an
+ * autonomous abort) to the raw ADC code the firmware compares against (dp.data < threshold_adc),
+ * for uid's model, by bisecting the SAME forward conversion the stream uses — so the board's
+ * "vented to safe" gate fires at exactly the pressure the operator configured on the curve they
+ * see.
+ *
+ * force_physics forces the datasheet (ratiometric / 4-20 mA) mapping regardless of the sensor's
+ * active model, used when the cubic/robust fit is too sparse to trust (see kMinAbortCalPoints).
+ *
+ * Monotonic increasing in adc for every model, so bisection is valid. Returns nullopt when the
+ * target is unreachable in [0, 2^31) — e.g. an uncalibrated cubic whose forward is flat 0, or
+ * full_scale 0 — so a sensor with no trustworthy mapping gets no threshold (the firmware then
+ * relies on its PT_ABORT_THRESHOLD_TIMEOUT) rather than a wrong one.
+ */
+static std::optional<int32_t> invert_abort_psi_to_adc(
+    uint16_t uid, uint8_t pt_log_ch, bool is_loop, const fsw::config::PtBoardConfig* loop_board,
+    double target_psi, bool force_physics,
+    const fsw::calibration::PTCalibrationManager& pt_calibration,
+    fsw::calibration::RobustCalibrationManager& robust_manager) {
+    if (!(target_psi > 0.0))
+        return std::nullopt;
+    const double full_scale = pt_full_scale_for(uid);
+    const double sense_resistor = pt_sense_resistor_for(uid);
+    const bool fac_ok = pt_calibration.is_calibrated(pt_log_ch);
+    const bool has_rob = robust_manager.has_sensor(uid);
+    auto forward = [&](int64_t adc) -> double {
+        const int32_t a = static_cast<int32_t>(adc);
+        std::array<uint8_t, 11> hyst{};  // fresh state → the static (unhysteresed) mapping
+        const double psi_phys =
+            is_loop && loop_board != nullptr
+                ? convert_hp_pt_to_pressure(static_cast<uint8_t>(uid % 100),
+                                            static_cast<uint32_t>(adc), *loop_board, full_scale,
+                                            sense_resistor, hyst)
+                : convert_ratiometric_pt_to_pressure(a, full_scale);
+        if (force_physics)
+            return psi_phys;
+        const double psi_fac = fac_ok ? pt_calibration.calculate_pressure(pt_log_ch, a) : 0.0;
+        const double psi_rob = robust_manager.predict_pressure_psi(uid, a);
+        return select_pt_psi(uid, psi_fac, psi_rob, psi_phys, fac_ok, has_rob);
+    };
+    constexpr int64_t kAdcMax = 2147483647;  // 2^31 - 1
+    if (forward(kAdcMax) < target_psi)
+        return std::nullopt;  // unreachable: uncalibrated, or target above full scale
+    if (forward(0) > target_psi)
+        return std::nullopt;  // target below the sensor's zero — nothing to gate on
+    int64_t lo = 0, hi = kAdcMax;
+    for (int i = 0; i < 40 && hi - lo > 1; ++i) {
+        const int64_t mid = lo + (hi - lo) / 2;
+        if (forward(mid) < target_psi)
+            lo = mid;
+        else
+            hi = mid;
+    }
+    return static_cast<int32_t>(hi);
+}
+
 int main(int argc, char* argv[]) {
     std::string config_path = "config/config.toml";
     std::string elodin_host = "127.0.0.1";
@@ -710,6 +774,82 @@ int main(int argc, char* argv[]) {
     // fit and the robust learner, so switching a sensor's model later reuses the same points, and
     // the merged UI can preview all three curves. The robust display curve is refreshed for every
     // sensor that has points (not just robust ones).
+    // Recompute the boards' abort-procedure "vent to safe" thresholds from the CURRENT calibration
+    // and write them for config_broadcast to broadcast. Called at startup and after every capture /
+    // clear / live profile swap, so a mid-session calibration updates the hardware threshold within
+    // a broadcast cycle — no restart. Each abort PSI is inverted through the sensor's active model;
+    // a sensor with fewer than kMinAbortCalPoints captured points falls back to physics so a sparse
+    // fit can't emit a wildly wrong ADC, and one with no usable mapping is omitted (the firmware
+    // then leans on PT_ABORT_THRESHOLD_TIMEOUT) rather than given a wrong gate.
+    auto write_abort_thresholds = [&]() {
+        const std::string out_path = "scripts/calibration/calibrations/abort_thresholds.txt";
+        const long long now_unix = std::chrono::duration_cast<std::chrono::seconds>(
+                                       std::chrono::system_clock::now().time_since_epoch())
+                                       .count();
+        std::ostringstream body;
+        body << "# abort thresholds — one line per PT: uid  target_psi  raw_adc\n";
+        body << "# regenerated on every capture/clear/reload. generated_unix " << now_unix << "\n";
+        for (const auto& [role, target_psi] : cal_cfg.abort_pts) {
+            uint16_t uid = 0;
+            bool found = false;
+            for (const auto& [u, r] : g_uid_role)
+                if (r == role) {
+                    uid = u;
+                    found = true;
+                    break;
+                }
+            if (!found) {
+                std::cerr << "[Calibration] abort_pts \"" << role
+                          << "\": no PT sensor_role declares this name — no threshold emitted"
+                          << std::endl;
+                continue;
+            }
+            const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+            if (cch == nullptr)
+                continue;
+            uint8_t board_number = static_cast<uint8_t>((uid / 100) % 10);
+            if (board_number == 0)
+                board_number = 10;
+            const fsw::config::PtBoardConfig* loop_board = current_loop_board(board_number);
+            const bool is_loop = loop_board != nullptr;
+            const int npoints = static_cast<int>(cch->points.size());
+            const PtModel model = g_env_override ? *g_env_override : pt_model_for(uid);
+            // Physics-model sensors always use physics; cubic/robust/blend use their own curve only
+            // with enough captured points to trust it, else fall back to physics.
+            const bool sparse = (model != PtModel::Physics) && (npoints < kMinAbortCalPoints);
+            std::optional<int32_t> adc =
+                invert_abort_psi_to_adc(uid, cch->logical_ch, is_loop, loop_board, target_psi,
+                                        /*force_physics=*/sparse, pt_calibration, robust_manager);
+            // Model curve couldn't reach the target (bad fit) → fall back to physics; a datasheet
+            // gate beats no gate.
+            if (!adc && model != PtModel::Physics && !sparse)
+                adc =
+                    invert_abort_psi_to_adc(uid, cch->logical_ch, is_loop, loop_board, target_psi,
+                                            /*force_physics=*/true, pt_calibration, robust_manager);
+            if (!adc) {
+                std::cerr << "[Calibration] abort_pts \"" << role << "\" (" << target_psi
+                          << " psi): no usable mapping (full_scale 0?) — no threshold emitted"
+                          << std::endl;
+                continue;
+            }
+            if (sparse)
+                std::cout << "[Calibration] abort_pts \"" << role << "\": only " << npoints
+                          << " cal point(s) (<" << kMinAbortCalPoints
+                          << ") — using physics threshold" << std::endl;
+            body << uid << " " << target_psi << " " << static_cast<uint32_t>(*adc) << "\n";
+        }
+        const std::string tmp = out_path + ".tmp";
+        {
+            std::ofstream f(tmp, std::ios::trunc);
+            f << body.str();
+        }
+        std::error_code ec;
+        std::filesystem::rename(tmp, out_path, ec);
+        if (ec)
+            std::cerr << "[Calibration] abort_thresholds write failed: " << ec.message()
+                      << std::endl;
+    };
+
     auto apply_capture = [&](uint16_t uid, double adc_avg, double ref) {
         const fsw::calibration::CubicFit fit = cubic_store.add_point(uid, adc_avg, ref);
         const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
@@ -722,6 +862,9 @@ int main(int argc, char* argv[]) {
         // Persist robust learning on every capture (not only the 5-min auto-save / clean stop), so
         // a crash can't lose it.
         robust_manager.save_adjustments(adjustments_path, &uid_role);
+        // This capture may have changed the sensor's curve → re-emit its abort threshold so the
+        // boards' vent-to-safe gate tracks the new calibration within a broadcast cycle.
+        write_abort_thresholds();
     };
     // Clear = back to nothing: drop the captured points, remove the operator cubic (so cubic reads
     // 0), and reset the robust learner. No factory/baseline revert.
@@ -733,6 +876,8 @@ int main(int argc, char* argv[]) {
         robust_manager.reset_adjustment(uid);
         cubic_store.save();
         robust_manager.save_adjustments(adjustments_path, &uid_role);
+        // Clearing drops the curve → re-emit (this sensor now falls back to physics or is omitted).
+        write_abort_thresholds();
     };
 
     // Seed on first run: if the live store file is missing, copy the committed default (a curated,
@@ -798,6 +943,9 @@ int main(int argc, char* argv[]) {
             if (cch != nullptr && !cch->points.empty())
                 cubic_store.set_fit_curve(uid, sample_robust_curve(uid));
         }
+        // Whole-rig cal just (re)loaded — startup or a live profile swap (cmd 7). Emit the abort
+        // thresholds from it so the boards' vent-to-safe gate matches the newly active calibration.
+        write_abort_thresholds();
         return loaded;
     };
 
