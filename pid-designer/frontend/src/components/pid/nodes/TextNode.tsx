@@ -69,6 +69,7 @@ export function TextNode({ id, data, selected }: NodeProps) {
           <textarea
             ref={taRef}
             autoFocus
+            readOnly={readOnly}
             value={text}
             onChange={e => setText(e.target.value)}
             onBlur={() => commit(text)}

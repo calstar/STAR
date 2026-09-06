@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ReactFlowInstance, Node, Edge } from '@xyflow/react';
 import type { InteractionMode, MicroVersion, ReleaseVersion } from './PIDDesigner';
+import { useReadOnly } from '@stardesign-ui';
 
 interface PIDToolbarProps {
   rfInstance:        ReactFlowInstance | null;
@@ -34,6 +35,10 @@ export function PIDToolbar({
   onRelease, onGetHistory, onGetReleases, onRestoreMicro, onRestoreRelease,
   canVersion, mode, onModeChange,
 }: PIDToolbarProps) {
+  // Undo, Redo, Clear, Import and the two Restores rewrite the diagram, so they
+  // need the checkout. Pan / Select / Fit View / Export / History only change
+  // what you are looking at, and stay live.
+  const readOnly = useReadOnly();
   const fitView = () => rfInstance?.fitView({ padding: 0.1 });
 
   const [showRelease, setShowRelease] = useState(false);
@@ -174,13 +179,13 @@ export function PIDToolbar({
         </button>
         <div className="w-px h-5 bg-[#334155]" />
 
-        <button onClick={onUndo} className={def} title="Undo (Ctrl+Z)">
+        <button onClick={onUndo} disabled={readOnly} className={`${def} disabled:opacity-40`} title="Undo (Ctrl+Z)">
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a5 5 0 015 5v2M3 10l4-4M3 10l4 4" />
           </svg>
           Undo
         </button>
-        <button onClick={onRedo} className={def} title="Redo (Ctrl+Shift+Z)">
+        <button onClick={onRedo} disabled={readOnly} className={`${def} disabled:opacity-40`} title="Redo (Ctrl+Shift+Z)">
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4M21 10l-4 4" />
           </svg>
@@ -201,7 +206,7 @@ export function PIDToolbar({
           </svg>
           Export
         </button>
-        <button onClick={importJSON} className={def}>
+        <button onClick={importJSON} disabled={readOnly} className={`${def} disabled:opacity-40`}>
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4-4m0 0l4 4m-4-4v12" />
           </svg>
@@ -211,7 +216,7 @@ export function PIDToolbar({
 
         <button
           onClick={() => { setShowRelease(true); setRelStatus('idle'); setRelError(''); }}
-          disabled={!canVersion}
+          disabled={!canVersion || readOnly}
           className={`${green} disabled:opacity-40`}
           title="Publish an immutable, named version (e.g. 0.1)"
         >
@@ -233,7 +238,7 @@ export function PIDToolbar({
         </button>
 
         <div className="ml-auto" />
-        <button onClick={onClear} className={danger}>
+        <button onClick={onClear} disabled={readOnly} className={`${danger} disabled:opacity-40`}>
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -257,7 +262,7 @@ export function PIDToolbar({
                     <button
                       key={r.label}
                       onClick={() => restoreRelease(r)}
-                      disabled={restoring === `rel:${r.label}`}
+                      disabled={readOnly || restoring === `rel:${r.label}`}
                       className="flex items-center gap-2 text-left px-2 py-1.5 rounded hover:bg-[#1e293b] transition-colors group disabled:opacity-50"
                     >
                       <span className="inline-flex items-center justify-center text-[10px] font-semibold text-emerald-300 bg-emerald-900/40 border border-emerald-800/50 rounded px-1.5 py-0.5 shrink-0">{r.label}</span>
@@ -277,7 +282,7 @@ export function PIDToolbar({
                     <button
                       key={v.versionId}
                       onClick={() => restoreMicro(v)}
-                      disabled={restoring === v.versionId}
+                      disabled={readOnly || restoring === v.versionId}
                       className="flex items-center gap-2 text-left px-2 py-1.5 rounded hover:bg-[#1e293b] transition-colors group disabled:opacity-50"
                     >
                       <span className="w-2 h-2 rounded-full shrink-0 bg-[#334155]" />

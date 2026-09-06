@@ -27,29 +27,42 @@
 import { describe, expect, it } from 'vitest'
 
 /**
- * The components that write the design today, and why.
+ * Files exempt from the control audit, with a reason each.
  *
- * "Writes the design" means it reaches the live config: PUT /api/config,
- * /config/switch, /config/upload, /optimizer/design-requirements, or an
- * optimizer layer run (which ends in set_config server-side).
+ * Deliberately a deny-list, not an allow-list. An allow-list only covers files
+ * somebody remembered to add, so a brand new component full of ungated inputs
+ * sails straight past it -- which is the one thing this test exists to prevent.
+ * Everything under components/ is audited unless it is named here.
  *
- * NOT yet listed, deliberately: ControllerMode, TimeSeriesMode's profile and
- * segment fields, Layer4Optimization, CustomPlotter. Their inputs are real
- * engineering input but are not part of the stored design yet -- they are not
- * in PintleEngineConfig and nothing persists them, so gating them today would
- * only stop a read-only viewer running their own analysis. When those move into
- * the design payload they must be added here in the same change.
+ * The "not part of the design yet" entries are temporary. Those panels hold
+ * real engineering input that simply has nowhere to persist: it is not in
+ * PintleEngineConfig, so gating it today would only stop a read-only viewer
+ * running their own analysis. As each one moves into the design payload
+ * (lib/designState.ts) its entry here must go, in the same change.
  */
-const EDITING = [
-  'ConfigEditor.tsx',
-  'ConfigUpload.tsx',
-  'ConfigurationSelector.tsx',
-  'DesignRequirements.tsx',
-  'Layer1Optimization.tsx',
-  'Layer2Optimization.tsx',
-  'Layer3Optimization.tsx',
-  'OptimizerDemo.tsx',
-]
+const NOT_EDITING: Record<string, string> = {
+  // The designs bar itself. Take, Release, History and the design picker must
+  // stay live precisely when you do not hold the design.
+  'DesignVersions.tsx': 'the designs bar; its controls are how you get the checkout',
+  'ui.tsx': 're-exports the shared Modal',
+
+  // Read-only analysis: these send the config somewhere and show a result.
+  'ForwardMode.tsx': 'runs evaluate(); tank pressures are run inputs, not stored',
+  'ChamberGeometry.tsx': 'reads geometry from the config',
+  'ChamberContourPlot.tsx': 'chart controls (half view, units)',
+  'ChamberThermalGraphic.tsx': 'chart controls (half view, units)',
+  'HeatFluxProfileChart.tsx': 'chart controls (which time slices to draw)',
+  'StabilityPanel.tsx': 'sensitivity sliders feeding one evaluate() call',
+
+  // Not part of the design yet -- see the note above.
+  'ControllerMode.tsx': 'controller commands are not in PintleEngineConfig yet',
+  'TimeSeriesMode.tsx': 'pressure-profile authoring is not in PintleEngineConfig yet',
+  'PressureProfileForm.tsx': 'keystroke buffers over TimeSeriesMode state',
+  'SegmentCurveBuilder.tsx': 'keystroke buffers over TimeSeriesMode state',
+  'Layer4Optimization.tsx': 'its vehicle definition is not in PintleEngineConfig yet',
+  'CustomPlotter.tsx': 'the plot definition is not in PintleEngineConfig yet',
+  'FlightSimulation.tsx': 'mostly run inputs; its one write is pinned in MUST_GATE',
+}
 
 /**
  * Individual controls that must be gated, in components that are NOT wholly
@@ -80,6 +93,11 @@ const VIEW_ONLY: Record<string, string> = {
   'Layer1Optimization.tsx:setMomentumRAuditOpen': 'diagnostics visibility',
   'Layer2Optimization.tsx:setShowAdvanced': 'shows the advanced settings block',
   'OptimizerDemo.tsx:setShowRequirementsForm': 'collapses the requirements form',
+  'Optimizer.tsx:setActiveSubTab': 'which optimizer sub-tab is shown',
+  'DemoLayerCard.tsx:setIsExpanded': 'expand/collapse a layer card',
+  'StabilityDiagnostics.tsx:setShowAssumptions': 'shows the assumptions block',
+  'StabilityGlossary.tsx:setOpen': 'opens the glossary',
+  'PressureCurveChart.tsx:headers': 'downloads the curve as CSV',
 
   // Stopping a run you started. Deliberately live: a checkout can lapse while a
   // long optimisation is going, and you must still be able to stop it.
@@ -199,11 +217,11 @@ function excuseFor(file: string, tag: string): string | null {
 }
 
 describe('every design-editing control is gated on the checkout', () => {
-  it('has a source file for each component named in EDITING', () => {
-    for (const name of EDITING) {
-      const found = Object.keys(files).find((p) => p.endsWith(`/${name}`))
-      expect(found, `${name} is listed in EDITING but no such component exists`).toBeTruthy()
-    }
+  it('keeps every exemption pointing at a real file', () => {
+    const stale = Object.keys(NOT_EDITING).filter(
+      (name) => !Object.keys(files).some((p) => p.endsWith(`/${name}`)),
+    )
+    expect(stale, `NOT_EDITING names files that no longer exist: ${stale.join(', ')}`).toEqual([])
   })
 
   it('leaves no ungated input, select, textarea or button', () => {
@@ -211,7 +229,7 @@ describe('every design-editing control is gated on the checkout', () => {
 
     for (const [path, src] of Object.entries(files)) {
       const name = path.split('/').pop()!
-      if (!EDITING.includes(name)) continue
+      if (name in NOT_EDITING) continue
 
       const spans = disabledFieldsetSpans(src)
       const inFieldset = (at: number) => spans.some(([s, e]) => at > s && at < e)
