@@ -1329,11 +1329,8 @@ int main(int argc, char* argv[]) {
                     // A "zero" is just a captured reference point at 0 (psi or kg): it feeds the
                     // same shared fit as any other capture, persists, and naturally averages
                     // repeated zeroes — capturing real zero-drift over time rather than assuming a
-                    // uniform tare. Physics sensors take no points, so they're skipped.
-                    auto is_physics = [&](uint16_t uid) -> bool {
-                        return g_lc_uids.count(uid) ? lc_model_for(uid) == LcModel::Physics
-                                                    : pt_model_for(uid) == PtModel::Physics;
-                    };
+                    // uniform tare. Physics sensors are captured too: the point is stored, not
+                    // applied.
                     auto avg_adc = [&](uint16_t uid, double& out) -> bool {
                         auto rit = pt_adc_ring.find(uid);
                         if (rit != pt_adc_ring.end() && !rit->second.empty()) {
@@ -1354,8 +1351,12 @@ int main(int argc, char* argv[]) {
                     if (sensor_id == 0) {  // All sensors
                         for (auto const& [id, val] : last_adc_map) {
                             (void)val;
-                            if (is_physics(id))
-                                continue;  // datasheet zero; no points
+                            // Physics sensors are captured too. The point does not change what
+                            // physics streams — that stays the datasheet conversion — but it is
+                            // recorded in the shared store, so a sensor can be calibrated while in
+                            // physics mode and switched to cubic or robust afterwards with its
+                            // points already there. Skipping them meant the only way to collect
+                            // points was to change a sensor's mode first, mid-campaign.
                             double adc_avg = 0.0;
                             if (!avg_adc(id, adc_avg))
                                 continue;
@@ -1366,7 +1367,7 @@ int main(int argc, char* argv[]) {
                                   << std::endl;
                     } else {
                         double adc_avg = 0.0;
-                        if (!is_physics(sensor_id) && avg_adc(sensor_id, adc_avg)) {
+                        if (avg_adc(sensor_id, adc_avg)) {
                             apply_capture(sensor_id, adc_avg, 0.0);
                             ++zeroed;
                         }
