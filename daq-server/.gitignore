@@ -230,3 +230,7 @@ scripts/calibration/calibrations/adjustments.json
 # Clear. cubic_calibration.default.json (NOT ignored) is the tracked seed the service copies here
 # on first run when this file is missing; promote a good cal into it via promote_default.sh.
 scripts/calibration/calibrations/cubic_calibration.json
+
+# Raw-ADC abort thresholds the calibration service regenerates from the live cal on every
+# capture/clear/reload (uid target_psi raw_adc), read by config_broadcast. Runtime-derived, per-rig.
+scripts/calibration/calibrations/abort_thresholds.txt
