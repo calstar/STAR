@@ -27,6 +27,7 @@ import type {
     SaveDesignRequirementsResponse,
 } from '../api/client';
 import { useReadOnly } from '@stardesign-ui';
+import { useDesignSlice } from '../lib/designState';
 
 interface Layer2OptimizationProps {
     requirements: DesignRequirements;
@@ -112,6 +113,11 @@ export function Layer2Optimization({
         de_popsize: 2,
         de_n_time_points: 25,
     });
+
+  // The run settings are part of the design: two people should not get
+  // different answers from the same design because one of them quietly had a
+  // different iteration budget.
+  useDesignSlice('layer2Settings', { settings: [settings, setSettings] });
     const [showAdvanced, setShowAdvanced] = useState(false);
 
     const [isRunning, setIsRunning] = useState(false);

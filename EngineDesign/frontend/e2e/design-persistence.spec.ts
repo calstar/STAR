@@ -179,3 +179,59 @@ test('the requirements form is editable only while checked out', async ({ page }
   await expect(thrust).toBeEnabled();
   for (const sel of configSelects) await expect(sel).toBeEnabled();
 });
+
+test('panel state outside the backend config survives a reload', async ({ page }) => {
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await waitForDesignBar(page);
+  await ensureCheckedOut(page);
+
+  // The controller tab is the clearest case: seventeen fields, none of them in
+  // PintleEngineConfig, so before the design payload grew a `ui` half every one
+  // of them was gone on reload. Simulation duration is the one we poke.
+  await page.getByRole('button', { name: 'Controller', exact: true }).click();
+
+  // Anchored to its label, and to the visible panel. App keeps every tab
+  // mounted and merely `hidden`, so an unscoped `.first()` reaches into
+  // Forward mode's inputs instead of this tab's.
+  // `.last()` on the DIVS, not on the inputs: ancestors come first in document
+  // order, so the last div containing this label is the field's own wrapper.
+  // Taking `.last()` of the inputs instead reaches across the whole panel and
+  // lands on the next field down.
+  const duration = page
+    .locator('div:visible')
+    .filter({ has: page.getByText('Duration', { exact: true }) })
+    .last()
+    .locator('input[type="number"]');
+  await expect(duration).toBeEnabled();
+
+  const marker = String(3 + (Date.now() % 90) / 10); // unique per run
+  await duration.fill(marker);
+  await expect(duration).toHaveValue(marker);
+
+  // Wait for the autosave tick to carry it to the server.
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(async () => {
+          const r = await fetch('/api/engine/documents');
+          const docs = await r.json();
+          if (!docs.length) return null;
+          const q = docs[0].owner ? `?owner=${encodeURIComponent(docs[0].owner)}` : '';
+          const d = await fetch(`/api/engine/documents/${docs[0].id}/load${q}`);
+          const body = await d.json();
+          return body.ui?.controller?.duration ?? null;
+        }),
+      {
+        timeout: 20_000,
+        message: 'the controller duration never reached the stored design -- ' +
+          'check that ControllerMode registers with useDesignSlice and that ' +
+          'DesignVersions sends {config, ui}.',
+      },
+    )
+    .toBe(marker);
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await waitForDesignBar(page);
+  await page.getByRole('button', { name: 'Controller', exact: true }).click();
+  await expect(duration).toHaveValue(marker);
+});

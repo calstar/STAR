@@ -285,7 +285,9 @@ def test_legacy_records_without_sharedwith_still_work(client, tmp_path):
     listed = client.get(BASE, headers=A).json()
     assert [d["id"] for d in listed] == ["old"]
     assert listed[0]["sharedWith"] == []
-    assert client.get(f"{BASE}/old/load", headers=A).json() == {"config": {}}
+    # The empty payload is `{config, ui}` now: a record with no stored working
+    # copy loads as both halves empty, not just the config.
+    assert client.get(f"{BASE}/old/load", headers=A).json() == {"config": {}, "ui": {}}
     assert client.get(f"{BASE}/old/history", headers=B, params=OWNER_A).status_code == 403
 
 
@@ -427,3 +429,66 @@ def test_microversion_history_is_in_write_order(client, tmp_path):
         for v in history[:10]
     ]
     assert seen == list(range(9, -1, -1)), f"history out of order: {seen}"
+
+
+# ── the `ui` half of the payload ─────────────────────────────────────────────
+#
+# A design is `{config, ui}`. `ui` carries the authored state that has no home
+# in PintleEngineConfig -- controller commands, time-series pressure profiles,
+# Layer 4's vehicle, the layer run settings, the plot definition. Before it
+# existed none of that survived a reload, which is most of what "I changed it
+# and it didn't save" meant. See frontend/src/lib/designState.ts.
+
+
+def test_ui_is_stored_and_returned_alongside_the_config(client):
+    doc_id = _create(client, A)
+    _take(client, doc_id)
+    ui = {"controller": {"duration": "7.5"}, "plotter": {"xAxis": "time"}}
+    r = client.post(f"{BASE}/{doc_id}/autosave", headers=A,
+                    json={"config": {"combustion": {}}, "ui": ui})
+    assert r.status_code == 200, r.text
+
+    loaded = client.get(f"{BASE}/{doc_id}/load", headers=A).json()
+    assert loaded["ui"] == ui
+    assert loaded["config"] == {"combustion": {}}
+
+
+def test_a_design_stored_before_ui_existed_still_loads(client, tmp_path):
+    """Every design saved before this change is a bare `{"config": ...}`, and
+    they must keep opening -- the client defaults the missing half to {}."""
+    doc_id = _create(client, A)
+    _take(client, doc_id)
+    r = client.post(f"{BASE}/{doc_id}/autosave", headers=A, json={"config": {"spray": {}}})
+    assert r.status_code == 200, r.text
+
+    loaded = client.get(f"{BASE}/{doc_id}/load", headers=A).json()
+    assert loaded["config"] == {"spray": {}}
+    assert loaded.get("ui") == {}
+
+
+def test_ui_round_trips_through_a_release(client):
+    doc_id = _create(client, A)
+    _take(client, doc_id)
+    ui = {"timeseries": {"inputMode": "segments"}}
+    client.post(f"{BASE}/{doc_id}/autosave", headers=A,
+                json={"config": {"combustion": {}}, "ui": ui})
+
+    r = client.post(f"{BASE}/{doc_id}/release", headers=A, json={"label": "0.1"})
+    assert r.status_code == 200, r.text
+    published = client.get(f"{BASE}/{doc_id}/release/0.1", headers=A).json()
+    assert published["ui"] == ui
+
+
+def test_ui_round_trips_through_a_microversion(client):
+    doc_id = _create(client, A)
+    _take(client, doc_id)
+    first = {"controller": {"duration": "1"}}
+    client.post(f"{BASE}/{doc_id}/autosave", headers=A,
+                json={"config": {"combustion": {}}, "ui": first})
+    client.post(f"{BASE}/{doc_id}/autosave", headers=A,
+                json={"config": {"combustion": {}}, "ui": {"controller": {"duration": "2"}}})
+
+    history = client.get(f"{BASE}/{doc_id}/history", headers=A).json()
+    oldest = history[-1]["versionId"]
+    restored = client.get(f"{BASE}/{doc_id}/version/{oldest}", headers=A).json()
+    assert restored["ui"] == first

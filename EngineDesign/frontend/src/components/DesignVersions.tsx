@@ -30,6 +30,7 @@ import type { DocMeta, DocRef, MicroVersion, ReleaseVersion } from '../api/docum
 import { designApi, keyOf, refOf } from '../api/documents';
 import { btn, dangerBtn, ghostBtn, primaryBtn, relativeTime } from '../lib/ui';
 import { readActive, writeActive } from '../lib/activeDesign';
+import { applyUiState, snapshotUiState } from '../lib/designState';
 import { ChangeModal, CheckoutControl, useCheckout } from '@stardesign-ui';
 import { Modal } from './ui';
 
@@ -69,6 +70,15 @@ async function fetchConfig(): Promise<EngineConfig | null> {
   return res.data?.config ?? null;
 }
 
+/**
+ * The design as it stands right now: the authoritative config from the backend
+ * session, plus the panel state that has no home in it (lib/designState.ts).
+ */
+async function fetchDoc(): Promise<api.EngineDesignDoc | null> {
+  const config = await fetchConfig();
+  return config ? { config, ui: snapshotUiState() } : null;
+}
+
 interface Props {
   /** Apply a config to the app's own state (the backend session is synced
    *  separately, before this is called). */
@@ -88,8 +98,8 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
   // Which design's state is actually loaded into the session, so a poll started
   // before a switch cannot autosave one design's config over another's.
   const loadedKey = useRef<string | null>(null);
-  const lastSaved = useRef<string>(''); // JSON of the last-autosaved config
-  const lastConfig = useRef<EngineConfig | null>(null); // for the close beacon
+  const lastSaved = useRef<string>(''); // JSON of the last-autosaved document
+  const lastDoc = useRef<api.EngineDesignDoc | null>(null); // for the close beacon
 
   const [showChange, setShowChange] = useState(false);
   // Name of a design that was unshared out from under us, or null.
@@ -124,11 +134,14 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
 
   // Apply a snapshot: sync the backend session first, then the app's state.
   const apply = useCallback(
-    async (config: EngineConfig) => {
-      await loadConfigJson(config);
-      onRestore(config);
-      lastConfig.current = config;
-      lastSaved.current = JSON.stringify(config);
+    async (doc: api.EngineDesignDoc) => {
+      await loadConfigJson(doc.config);
+      onRestore(doc.config);
+      // The panels own their own slice; pushing it back is what makes a
+      // controller gain or a pressure segment survive a reload or a restore.
+      applyUiState(doc.ui);
+      lastDoc.current = doc;
+      lastSaved.current = JSON.stringify(doc);
     },
     [onRestore],
   );
@@ -137,9 +150,9 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
     async (ref: DocRef) => {
       loadedKey.current = null;
       try {
-        const { config } = await api.loadDocument(ref);
-        if (config && Object.keys(config).length > 0) {
-          await apply(config as EngineConfig);
+        const doc = await api.loadDocument(ref);
+        if (doc.config && Object.keys(doc.config).length > 0) {
+          await apply(doc);
         }
       } finally {
         loadedKey.current = keyOf(ref);
@@ -209,7 +222,7 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
         const docs = await api.listDocuments();
         if (cancelled) return;
         if (docs.length === 0) {
-          const seed = (await fetchConfig()) ?? undefined;
+          const seed = (await fetchDoc()) ?? undefined;
           const meta = await api.createDocument('Design 1', seed);
           if (cancelled) return;
           setDocuments([meta]);
@@ -217,7 +230,7 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
           setActiveRef(ref);
           loadedKey.current = keyOf(ref); // seeded from current config
           if (seed) {
-            lastConfig.current = seed;
+            lastDoc.current = seed;
             lastSaved.current = JSON.stringify(seed);
           }
           writeActive(ref);
@@ -259,13 +272,13 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
       // No checkout, no autosave. The inputs are read-only in that state
       // anyway; this is the belt to that pair of braces.
       if (stopped || loadedKey.current !== key || !live.current.checkout.held) return;
-      const config = await fetchConfig();
-      if (!config) return;
-      const serialized = JSON.stringify(config);
-      lastConfig.current = config;
+      const doc = await fetchDoc();
+      if (!doc) return;
+      const serialized = JSON.stringify(doc);
+      lastDoc.current = doc;
       if (serialized === lastSaved.current) return;
       try {
-        await api.autosaveDocument(activeRef, config);
+        await api.autosaveDocument(activeRef, doc);
         lastSaved.current = serialized;
       } catch (e) {
         // 403 means this design was unshared from you while you had it open.
@@ -304,8 +317,8 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
   useEffect(() => {
     const flush = () => {
       // A beacon cannot read a rejection, so gate it here instead.
-      if (activeRef && loadedKey.current === keyOf(activeRef) && lastConfig.current && checkout.held) {
-        api.flushDocument(activeRef, lastConfig.current);
+      if (activeRef && loadedKey.current === keyOf(activeRef) && lastDoc.current && checkout.held) {
+        api.flushDocument(activeRef, lastDoc.current);
       }
     };
     const onVis = () => {
@@ -321,13 +334,13 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
 
   /** Adopt a freshly created/copied design: it becomes the active one, and the
    *  session already holds its config, so there is nothing to re-load. */
-  const adopt = useCallback((meta: DocMeta, seeded?: EngineConfig) => {
+  const adopt = useCallback((meta: DocMeta, seeded?: api.EngineDesignDoc) => {
     setDocuments((d) => [meta, ...d]);
     const ref = refOf(meta);
     setActiveRef(ref);
     loadedKey.current = keyOf(ref);
     if (seeded) {
-      lastConfig.current = seeded;
+      lastDoc.current = seeded;
       lastSaved.current = JSON.stringify(seeded);
     }
     writeActive(ref);
@@ -335,7 +348,7 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
 
   const create = useCallback(
     async (name: string) => {
-      const seed = (await fetchConfig()) ?? undefined;
+      const seed = (await fetchDoc()) ?? undefined;
       adopt(await api.createDocument(name, seed), seed);
     },
     [adopt],
@@ -373,39 +386,57 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
 
   // ── File save / load ──────────────────────────────────────────────────────
   // The server is the home for a design; these are the escape hatch: hand a
-  // design to someone as a file, or bring one in. A file holds the config, the
-  // same payload the server stores.
+  // design to someone as a file, or bring one in. A file holds `{config, ui}`,
+  // the same payload the server stores -- so a design handed over as a file
+  // arrives with its controller settings and pressure profiles intact.
   const saveToFile = async () => {
-    const cfg = (await fetchConfig()) ?? lastConfig.current;
-    if (!cfg) {
+    const doc = (await fetchDoc()) ?? lastDoc.current;
+    if (!doc) {
       setDialog({ kind: 'alert', title: 'Nothing to save', message: 'No configuration is loaded yet.' });
       return;
     }
     const slug = (active?.name ?? 'design').replace(/[^\w.-]+/g, '-').toLowerCase();
-    downloadJson(`${slug || 'design'}.engine.json`, cfg);
+    downloadJson(`${slug || 'design'}.engine.json`, doc);
+  };
+
+  /**
+   * Read a design file into a document.
+   *
+   * Files written before `ui` existed are a bare config with no wrapper, and
+   * people have them saved -- so both shapes have to load. A config has
+   * `fluids`/`injector` at the top level; the wrapper has `config`.
+   */
+  const parseDesignFile = (raw: unknown): api.EngineDesignDoc | null => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const o = raw as Record<string, unknown>;
+    if (o.config && typeof o.config === 'object') {
+      return { config: o.config as EngineConfig, ui: (o.ui as api.EngineDesignDoc['ui']) ?? {} };
+    }
+    return { config: raw as EngineConfig, ui: {} };
   };
 
   // Import a file as a new server-backed design and apply it to the session.
   const importFile = async (file: File) => {
-    let cfg: EngineConfig;
+    let parsed: unknown;
     try {
-      cfg = JSON.parse(await file.text());
+      parsed = JSON.parse(await file.text());
     } catch {
       setDialog({ kind: 'alert', title: 'Could not load file', message: `"${file.name}" is not valid JSON.` });
       return;
     }
-    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
+    const doc = parseDesignFile(parsed);
+    if (!doc) {
       setDialog({ kind: 'alert', title: 'Could not load file', message: `"${file.name}" is not a valid design file.` });
       return;
     }
     const name = file.name.replace(/\.engine\.json$/i, '').replace(/\.json$/i, '') || 'Imported design';
     try {
-      adopt(await api.createDocument(name, cfg));
+      adopt(await api.createDocument(name, doc), doc);
     } catch {
       // History backend unavailable -- still apply it to the live session below.
     }
     try {
-      await apply(cfg);
+      await apply(doc);
     } catch (e) {
       setDialog({ kind: 'alert', title: 'Could not load file', message: e instanceof Error ? e.message : 'The backend rejected this config.' });
     }
@@ -435,8 +466,8 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
     setRelStatus('saving');
     setRelError('');
     try {
-      const config = (await fetchConfig()) ?? undefined;
-      await api.createRelease(activeRef, relLabel.trim(), config);
+      const doc = (await fetchDoc()) ?? undefined;
+      await api.createRelease(activeRef, relLabel.trim(), doc);
       setRelStatus('ok');
       if (showHistory) void refreshHistory();
       setTimeout(() => {

@@ -47,7 +47,6 @@ const NOT_EDITING: Record<string, string> = {
   'ui.tsx': 're-exports the shared Modal',
 
   // Read-only analysis: these send the config somewhere and show a result.
-  'ForwardMode.tsx': 'runs evaluate(); tank pressures are run inputs, not stored',
   'ChamberGeometry.tsx': 'reads geometry from the config',
   'ChamberContourPlot.tsx': 'chart controls (half view, units)',
   'ChamberThermalGraphic.tsx': 'chart controls (half view, units)',
@@ -55,13 +54,6 @@ const NOT_EDITING: Record<string, string> = {
   'StabilityPanel.tsx': 'sensitivity sliders feeding one evaluate() call',
 
   // Not part of the design yet -- see the note above.
-  'ControllerMode.tsx': 'controller commands are not in PintleEngineConfig yet',
-  'TimeSeriesMode.tsx': 'pressure-profile authoring is not in PintleEngineConfig yet',
-  'PressureProfileForm.tsx': 'keystroke buffers over TimeSeriesMode state',
-  'SegmentCurveBuilder.tsx': 'keystroke buffers over TimeSeriesMode state',
-  'Layer4Optimization.tsx': 'its vehicle definition is not in PintleEngineConfig yet',
-  'CustomPlotter.tsx': 'the plot definition is not in PintleEngineConfig yet',
-  'FlightSimulation.tsx': 'mostly run inputs; its one write is pinned in MUST_GATE',
 }
 
 /**
@@ -95,9 +87,23 @@ const VIEW_ONLY: Record<string, string> = {
   'OptimizerDemo.tsx:setShowRequirementsForm': 'collapses the requirements form',
   'Optimizer.tsx:setActiveSubTab': 'which optimizer sub-tab is shown',
   'DemoLayerCard.tsx:setIsExpanded': 'expand/collapse a layer card',
+  'FlightSimulation.tsx:setIsExpanded': 'expand/collapse a section',
+  'Layer4Optimization.tsx:setIsExpanded': 'expand/collapse a section',
+  'Layer4Optimization.tsx:onClick={runSimulation}': 'runs the flight sim; writes nothing',
+  'ForwardMode.tsx:handleEvaluate()': 'runs evaluate(); reads the config, never writes it',
+  'FlightSimulation.tsx:handleOptimize : handleSimulate': 'runs the flight sim; writes nothing',
+  'CustomPlotter.tsx:setShowDataPreview': 'shows the raw data table under the chart',
+  'CustomPlotter.tsx:onClick={handleDownloadENG}': 'exports a thrust curve file',
+  'CustomPlotter.tsx:onClick={handleDownloadCSV}': 'exports the plotted data',
   'StabilityDiagnostics.tsx:setShowAssumptions': 'shows the assumptions block',
   'StabilityGlossary.tsx:setOpen': 'opens the glossary',
   'PressureCurveChart.tsx:headers': 'downloads the curve as CSV',
+  'ControllerMode.tsx:onClick={handleInit}': 'runs the controller sim; reads the config, never writes it',
+  'ControllerMode.tsx:onClick={handleSimulate}': 'runs the controller sim; reads the config, never writes it',
+  'PressureProfileForm.tsx:onClick={onSubmit}': 'generates the time series; results only',
+  'TimeSeriesMode.tsx:onClick={handleSegmentSubmit}': 'generates the time series; results only',
+  'TimeSeriesMode.tsx:onClick={handleBlowdownSubmit}': 'generates the time series; results only',
+  'TimeSeriesMode.tsx:onClick={handleUploadSubmit}': 'the file input beside it is what carries the checkout gate',
 
   // Stopping a run you started. Deliberately live: a checkout can lapse while a
   // long optimisation is going, and you must still be able to stop it.

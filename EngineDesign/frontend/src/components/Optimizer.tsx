@@ -5,6 +5,7 @@ import { Layer2Optimization } from './Layer2Optimization';
 import { Layer3Optimization } from './Layer3Optimization';
 import { Layer4Optimization } from './Layer4Optimization';
 import { useReadOnly } from '@stardesign-ui';
+import { useViewState } from '../lib/viewState';
 import {
   saveDesignRequirements,
   getDesignRequirements
@@ -22,7 +23,7 @@ interface OptimizerProps {
 type SubTab = 'requirements' | 'layer1' | 'layer2' | 'layer3' | 'layer4';
 
 export function Optimizer({ config }: OptimizerProps) {
-  const [activeSubTab, setActiveSubTab] = useState<SubTab>('requirements');
+  const [activeSubTab, setActiveSubTab] = useViewState<SubTab>('optimizerSubTab', 'requirements');
   const [requirements, setRequirements] = useState<DesignRequirementsType>(DEFAULT_DESIGN_REQUIREMENTS);
   const [savedRequirements, setSavedRequirements] = useState<DesignRequirementsType>(DEFAULT_DESIGN_REQUIREMENTS);
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);

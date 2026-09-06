@@ -22,6 +22,8 @@ import {
   type DesignRequirements,
   type SaveDesignRequirementsResponse,
 } from '../api/client';
+import { useDesignSlice } from '../lib/designState';
+import { useReadOnly } from '@stardesign-ui';
 
 interface Layer4OptimizationProps {
   requirements: DesignRequirements;
@@ -209,6 +211,9 @@ function InputField({
   step?: number;
   disabled?: boolean;
 }) {
+  const readOnly = useReadOnly();
+  // Every numeric field on this tab renders through here, and they all edit
+  // the vehicle definition this tab stores in the design.
   return (
     <div className="space-y-1">
       <label className="block text-sm font-medium text-[var(--color-text-secondary)]">
@@ -222,7 +227,7 @@ function InputField({
         min={min}
         max={max}
         step={step}
-        disabled={disabled}
+        disabled={disabled || readOnly}
         className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 disabled:opacity-50"
       />
       {help && <p className="text-xs text-[var(--color-text-tertiary)]">{help}</p>}
@@ -249,6 +254,7 @@ export function Layer4Optimization({
   const [rocketPyMessage, setRocketPyMessage] = useState<string>('');
 
   // Data source selection
+  const readOnly = useReadOnly();
   const [dataSource, setDataSource] = useState<DataSource>('manual');
 
   // Time series data from session (optional)
@@ -298,6 +304,26 @@ export function Layer4Optimization({
     radius: 0.08,
     position: 0.8,
   });
+
+  // Part of the design. This tab duplicates config.rocket / config.environment
+  // and syncs with neither, so its vehicle, launch site and tank geometry only
+  // ever lived in React state. Registering it is what makes them persist; the
+  // duplication itself is left alone deliberately -- reconciling it with the
+  // config is a behaviour change, not a persistence fix.
+  useDesignSlice('layer4', {
+    dataSource: [dataSource, setDataSource],
+    thrust: [thrust, setThrust],
+    burnTime: [burnTime, setBurnTime],
+    mdotO: [mdotO, setMdotO],
+    mdotF: [mdotF, setMdotF],
+    envConfig: [envConfig, setEnvConfig],
+    rocketConfig: [rocketConfig, setRocketConfig],
+    loxMass: [loxMass, setLoxMass],
+    fuelMass: [fuelMass, setFuelMass],
+    loxTankConfig: [loxTankConfig, setLoxTankConfig],
+    fuelTankConfig: [fuelTankConfig, setFuelTankConfig],
+  });
+
 
   // Results
   const [results, setResults] = useState<FlightSimResponse | null>(null);
@@ -556,6 +582,7 @@ export function Layer4Optimization({
               value="manual"
               checked={dataSource === 'manual'}
               onChange={() => setDataSource('manual')}
+              disabled={readOnly}
               className="w-4 h-4 text-cyan-500"
             />
             <span className="text-[var(--color-text-primary)]">Manual Parameters</span>
@@ -568,7 +595,7 @@ export function Layer4Optimization({
               value="timeseries"
               checked={dataSource === 'timeseries'}
               onChange={() => setDataSource('timeseries')}
-              disabled={!hasTimeSeriesData}
+              disabled={readOnly || !hasTimeSeriesData}
               className="w-4 h-4 text-cyan-500"
             />
             <span className="text-[var(--color-text-primary)]">Time-Series Data</span>
@@ -724,6 +751,7 @@ export function Layer4Optimization({
             <div className="space-y-1">
               <label className="block text-sm font-medium text-[var(--color-text-secondary)]">Date</label>
               <input
+                disabled={readOnly}
                 type="date"
                 value={formatDateForInput(envConfig.date)}
                 onChange={(e) => setEnvConfig(prev => ({ ...prev, date: parseDateInput(e.target.value) }))}

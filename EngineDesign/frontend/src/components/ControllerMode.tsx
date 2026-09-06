@@ -18,6 +18,8 @@ import {
   type ControllerSimulateResponse,
   API_BASE,
 } from '../api/client';
+import { useDesignSlice } from '../lib/designState';
+import { useReadOnly } from '@stardesign-ui';
 
 interface ControllerModeProps {
   config: EngineConfig | null;
@@ -51,6 +53,31 @@ export function ControllerMode({ config }: ControllerModeProps) {
   // Simulation parameters
   const [duration, setDuration] = useState('5.0');
   const [dt, setDt] = useState('0.01');
+
+  // Part of the design. None of this is in PintleEngineConfig, so before the
+  // design payload grew a `ui` half none of it survived a reload -- you set up
+  // a thrust curve and initial pressures, came back, and got the defaults.
+  // initialPdfuel / initialPdox are deliberately absent: they have no setter,
+  // they are fixed constants the form only displays.
+  useDesignSlice('controller', {
+    commandMode: [commandMode, setCommandMode],
+    thrustConstant: [thrustConstant, setThrustConstant],
+    thrustCurve: [thrustCurve, setThrustCurve],
+    useThrustCurve: [useThrustCurve, setUseThrustCurve],
+    altitudeGoal: [altitudeGoal, setAltitudeGoal],
+    initialPcopv: [initialPcopv, setInitialPcopv],
+    initialPreg: [initialPreg, setInitialPreg],
+    initialPufuel: [initialPufuel, setInitialPufuel],
+    initialPuox: [initialPuox, setInitialPuox],
+    initialAltitude: [initialAltitude, setInitialAltitude],
+    initialVelocity: [initialVelocity, setInitialVelocity],
+    vehicleMass: [vehicleMass, setVehicleMass],
+    duration: [duration, setDuration],
+    dt: [dt, setDt],
+  });
+
+  // ...and because it is part of the design, it needs the checkout.
+  const readOnly = useReadOnly();
   
   // Results
   const [results, setResults] = useState<ControllerSimulateResponse | null>(null);
@@ -263,6 +290,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
             <div className="space-y-3">
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
+                  disabled={readOnly}
                   type="radio"
                   name="commandMode"
                   value="thrust_desired"
@@ -274,6 +302,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
               </label>
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
+                  disabled={readOnly}
                   type="radio"
                   name="commandMode"
                   value="altitude_goal"
@@ -293,6 +322,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
               <div className="space-y-4">
                 <label className="flex items-center gap-3 cursor-pointer">
                   <input
+                    disabled={readOnly}
                     type="checkbox"
                     checked={useThrustCurve}
                     onChange={(e) => setUseThrustCurve(e.target.checked)}
@@ -307,6 +337,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                       Constant Thrust
                     </label>
                     <input
+                      disabled={readOnly}
                       type="number"
                       value={thrustConstant}
                       onChange={(e) => setThrustConstant(e.target.value)}
@@ -323,6 +354,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                       </label>
                       <button
                         onClick={addThrustPoint}
+                        disabled={readOnly}
                         className="px-3 py-1 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded"
                       >
                         Add Point
@@ -331,6 +363,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                     {thrustCurve.map(([time, thrust], index) => (
                       <div key={index} className="flex gap-2 items-center">
                         <input
+                          disabled={readOnly}
                           type="number"
                           value={time}
                           onChange={(e) => updateThrustPoint(index, parseFloat(e.target.value) || 0, thrust)}
@@ -338,6 +371,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                           placeholder="Time [s]"
                         />
                         <input
+                          disabled={readOnly}
                           type="number"
                           value={thrust}
                           onChange={(e) => updateThrustPoint(index, time, parseFloat(e.target.value) || 0)}
@@ -346,6 +380,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                         />
                         <button
                           onClick={() => removeThrustPoint(index)}
+                          disabled={readOnly}
                           className="px-2 py-1 text-sm bg-red-500 hover:bg-red-600 text-white rounded"
                         >
                           ×
@@ -370,6 +405,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                   Target Altitude
                 </label>
                 <input
+                  disabled={readOnly}
                   type="number"
                   value={altitudeGoal}
                   onChange={(e) => setAltitudeGoal(e.target.value)}
@@ -388,6 +424,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
               <div>
                 <label className="block text-sm text-[var(--color-text-secondary)] mb-1">COPV Pressure</label>
                 <input
+                  disabled={readOnly}
                   type="number"
                   value={initialPcopv}
                   onChange={(e) => setInitialPcopv(e.target.value)}
@@ -398,6 +435,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
               <div>
                 <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Regulator Pressure</label>
                 <input
+                  disabled={readOnly}
                   type="number"
                   value={initialPreg}
                   onChange={(e) => setInitialPreg(e.target.value)}
@@ -408,6 +446,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
               <div>
                 <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Fuel Ullage Pressure</label>
                 <input
+                  disabled={readOnly}
                   type="number"
                   value={initialPufuel}
                   onChange={(e) => setInitialPufuel(e.target.value)}
@@ -418,6 +457,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
               <div>
                 <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Ox Ullage Pressure</label>
                 <input
+                  disabled={readOnly}
                   type="number"
                   value={initialPuox}
                   onChange={(e) => setInitialPuox(e.target.value)}
@@ -428,6 +468,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
               <div>
                 <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Initial Altitude</label>
                 <input
+                  disabled={readOnly}
                   type="number"
                   value={initialAltitude}
                   onChange={(e) => setInitialAltitude(e.target.value)}
@@ -438,6 +479,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
               <div>
                 <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Initial Velocity</label>
                 <input
+                  disabled={readOnly}
                   type="number"
                   value={initialVelocity}
                   onChange={(e) => setInitialVelocity(e.target.value)}
@@ -448,6 +490,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
               <div>
                 <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Vehicle Mass</label>
                 <input
+                  disabled={readOnly}
                   type="number"
                   value={vehicleMass}
                   onChange={(e) => setVehicleMass(e.target.value)}
@@ -465,6 +508,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
               <div>
                 <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Duration</label>
                 <input
+                  disabled={readOnly}
                   type="number"
                   value={duration}
                   onChange={(e) => setDuration(e.target.value)}
@@ -475,6 +519,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
               <div>
                 <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Time Step</label>
                 <input
+                  disabled={readOnly}
                   type="number"
                   value={dt}
                   onChange={(e) => setDt(e.target.value)}
@@ -499,6 +544,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
             <label className="w-full px-6 py-3 bg-green-500 hover:bg-green-600 text-white font-semibold rounded-lg cursor-pointer transition-colors flex items-center justify-center gap-2">
               📁 Run from Layer 2 Config File
               <input
+                disabled={readOnly}
                 type="file"
                 accept=".yaml,.yml"
                 className="hidden"

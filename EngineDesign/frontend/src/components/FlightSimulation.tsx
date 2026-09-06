@@ -26,6 +26,7 @@ import {
   type TimeSeriesSummary,
 } from '../api/client';
 import { useReadOnly } from '@stardesign-ui';
+import { useDesignSlice } from '../lib/designState';
 import {
   loadTimeSeriesResults,
   TIMESERIES_UPDATED_EVENT,
@@ -105,6 +106,9 @@ function InputField({
   step?: number;
   disabled?: boolean;
 }) {
+  // Every numeric field on this tab renders through here, and they all feed
+  // Save Configuration, which writes the config.
+  const readOnly = useReadOnly();
   return (
     <div>
       <label className="block text-sm text-[var(--color-text-secondary)] mb-1">{label}</label>
@@ -116,7 +120,7 @@ function InputField({
           min={min}
           max={max}
           step={step}
-          disabled={disabled}
+          disabled={disabled || readOnly}
           className="w-full px-3 py-2 pr-12 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors disabled:opacity-50"
         />
         {unit && (
@@ -211,6 +215,19 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
   const [flightMode, setFlightMode] = useState<'manual' | 'optimize'>('manual');
   const [targetApogeeM, setTargetApogeeM] = useState('3048');
   const [apogeeToleranceM, setApogeeToleranceM] = useState('15');
+
+  // The fields Save Configuration does NOT write. Everything else on this tab
+  // round-trips through config.rocket / config.environment on an explicit save;
+  // these seven have no config field at all, so they were lost on reload.
+  useDesignSlice('flight', {
+    atmosphereModel: [atmosphereModel, setAtmosphereModel],
+    autoInertia: [autoInertia, setAutoInertia],
+    noseFineness: [noseFineness, setNoseFineness],
+    avionicsLength: [avionicsLength, setAvionicsLength],
+    flightMode: [flightMode, setFlightMode],
+    targetApogeeM: [targetApogeeM, setTargetApogeeM],
+    apogeeToleranceM: [apogeeToleranceM, setApogeeToleranceM],
+  });
   const [isLoading, setIsLoading] = useState(false);
   // Only Save Configuration writes the design (updateConfig); running the
   // flight sim just reads it, so the Run button stays live while read only.
@@ -846,6 +863,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
           <label className="block text-sm text-[var(--color-text-secondary)] mb-2">Flight sim mode</label>
           <div className="flex flex-wrap gap-2">
             <button
+              disabled={readOnly}
               type="button"
               onClick={() => setFlightMode('manual')}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -857,6 +875,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
               Manual iteration
             </button>
             <button
+              disabled={readOnly}
               type="button"
               onClick={() => setFlightMode('optimize')}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -983,6 +1002,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
               <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Launch Date</label>
               <div className="flex gap-1">
                 <input
+                  disabled={readOnly}
                   type="number"
                   value={launchYear}
                   onChange={(e) => setLaunchYear(e.target.value)}
@@ -990,6 +1010,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
                   className="w-20 px-2 py-2 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] text-sm"
                 />
                 <input
+                  disabled={readOnly}
                   type="number"
                   value={launchMonth}
                   onChange={(e) => setLaunchMonth(e.target.value)}
@@ -999,6 +1020,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
                   className="w-12 px-2 py-2 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] text-sm"
                 />
                 <input
+                  disabled={readOnly}
                   type="number"
                   value={launchDay}
                   onChange={(e) => setLaunchDay(e.target.value)}
@@ -1008,6 +1030,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
                   className="w-12 px-2 py-2 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] text-sm"
                 />
                 <input
+                  disabled={readOnly}
                   type="number"
                   value={launchHour}
                   onChange={(e) => setLaunchHour(e.target.value)}
@@ -1021,6 +1044,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
             <div>
               <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Atmosphere model</label>
               <select
+                disabled={readOnly}
                 value={atmosphereModel}
                 onChange={(e) => setAtmosphereModel(e.target.value as 'standard_atmosphere' | 'forecast')}
                 className="w-full px-2 py-2 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] text-sm"
@@ -1160,6 +1184,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
                 <h4 className="text-sm font-medium text-[var(--color-text-primary)]">Inertia (Airframe Only)</h4>
                 <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
                   <input
+                    disabled={readOnly}
                     type="checkbox"
                     checked={autoInertia}
                     onChange={(e) => setAutoInertia(e.target.checked)}

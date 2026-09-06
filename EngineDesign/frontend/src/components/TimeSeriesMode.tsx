@@ -14,6 +14,7 @@ import {
   type EngineConfig,
 } from '../api/client';
 import { useReadOnly } from '@stardesign-ui';
+import { useDesignSlice } from '../lib/designState';
 import {
   loadTimeSeriesResults,
   saveTimeSeriesResults,
@@ -131,10 +132,6 @@ function computeUllageLiters(tankVolumeM3: number, propMassKg: number, density: 
 }
 
 export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) {
-  // Only the CSV/YAML upload writes the design (from-csv -> set_config).
-  // Generating a profile from the fields below reads the config and returns
-  // results, so those inputs stay live -- until PR 2 makes them part of the
-  // design, at which point they need gating too.
   const readOnly = useReadOnly();
 
   // Mode selection
@@ -165,6 +162,36 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
   const [fuelUllageVolumeL, setFuelUllageVolumeL] = useState(2.5);
   const [totalPropellantKg, setTotalPropellantKg] = useState(13.75);
   const [ofRatio, setOfRatio] = useState(2.8);
+
+  // Part of the design. The pressure profile you author here -- simple curves,
+  // hand-drawn segments, or a blowdown -- is real engineering input with no
+  // home in PintleEngineConfig (`pressure_curves` holds Layer 2's *output*, not
+  // this). Before the payload grew a `ui` half it was gone on reload.
+  //
+  // The *Input suffixed fields are deliberately absent: those are keystroke
+  // buffers that commit into the values above on blur, and storing them would
+  // mark the design dirty on every keypress.
+  useDesignSlice('timeseries', {
+    inputMode: [inputMode, setInputMode],
+    duration: [duration, setDuration],
+    nSteps: [nSteps, setNSteps],
+    loxProfile: [loxProfile, setLoxProfile],
+    fuelProfile: [fuelProfile, setFuelProfile],
+    segmentDuration: [segmentDuration, setSegmentDuration],
+    nPoints: [nPoints, setNPoints],
+    loxSegments: [loxSegments, setLoxSegments],
+    fuelSegments: [fuelSegments, setFuelSegments],
+    loxInitialPressure: [loxInitialPressure, setLoxInitialPressure],
+    fuelInitialPressure: [fuelInitialPressure, setFuelInitialPressure],
+    loxVolumeMode: [loxVolumeMode, setLoxVolumeMode],
+    fuelVolumeMode: [fuelVolumeMode, setFuelVolumeMode],
+    loxTankVolumeL: [loxTankVolumeL, setLoxTankVolumeL],
+    loxUllageVolumeL: [loxUllageVolumeL, setLoxUllageVolumeL],
+    fuelTankVolumeL: [fuelTankVolumeL, setFuelTankVolumeL],
+    fuelUllageVolumeL: [fuelUllageVolumeL, setFuelUllageVolumeL],
+    totalPropellantKg: [totalPropellantKg, setTotalPropellantKg],
+    ofRatio: [ofRatio, setOfRatio],
+  });
 
   // Upload state
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -434,6 +461,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
         {/* Mode Toggle */}
         <div className="flex gap-2 p-1 bg-[var(--color-bg-primary)] rounded-lg w-fit">
           <button
+            disabled={readOnly}
             onClick={() => setInputMode('simple')}
             className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${inputMode === 'simple'
               ? 'bg-blue-600 text-white'
@@ -443,6 +471,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
             Simple Profile
           </button>
           <button
+            disabled={readOnly}
             onClick={() => setInputMode('segments')}
             className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${inputMode === 'segments'
               ? 'bg-blue-600 text-white'
@@ -452,6 +481,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
             Segment Builder
           </button>
           <button
+            disabled={readOnly}
             onClick={() => setInputMode('blowdown')}
             className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${inputMode === 'blowdown'
               ? 'bg-blue-600 text-white'
@@ -461,6 +491,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
             Pure Blowdown
           </button>
           <button
+            disabled={readOnly}
             onClick={() => setInputMode('upload')}
             className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${inputMode === 'upload'
               ? 'bg-blue-600 text-white'
@@ -511,6 +542,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                 </label>
                 <div className="relative">
                   <input
+                    disabled={readOnly}
                     type="text"
                     value={segmentDurationInput}
                     onChange={(e) => setSegmentDurationInput(e.target.value)}
@@ -530,6 +562,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                   Points
                 </label>
                 <input
+                  disabled={readOnly}
                   type="text"
                   value={nPointsInput}
                   onChange={(e) => setNPointsInput(e.target.value)}
@@ -618,6 +651,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                     LOX Initial Pressure (psi)
                   </label>
                   <input
+                    disabled={readOnly}
                     type="number"
                     value={loxInitialPressure}
                     onChange={(e) => setLoxInitialPressure(parseFloat(e.target.value) || 0)}
@@ -632,6 +666,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                     Fuel Initial Pressure (psi)
                   </label>
                   <input
+                    disabled={readOnly}
                     type="number"
                     value={fuelInitialPressure}
                     onChange={(e) => setFuelInitialPressure(parseFloat(e.target.value) || 0)}
@@ -653,6 +688,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                     Total Propellant (kg)
                   </label>
                   <input
+                    disabled={readOnly}
                     type="number"
                     value={totalPropellantKg}
                     onChange={(e) => setTotalPropellantKg(parseFloat(e.target.value) || 0)}
@@ -666,6 +702,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                     O/F Ratio
                   </label>
                   <input
+                    disabled={readOnly}
                     type="number"
                     value={ofRatio}
                     onChange={(e) => setOfRatio(parseFloat(e.target.value) || 0)}
@@ -692,6 +729,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                     <span className="text-sm font-medium text-cyan-400">LOX Tank</span>
                     <div className="flex rounded-md overflow-hidden border border-[var(--color-border)]">
                       <button
+                        disabled={readOnly}
                         type="button"
                         onClick={() => setLoxVolumeMode('tank')}
                         className={`px-2 py-1 text-xs ${loxVolumeMode === 'tank' ? 'bg-cyan-600 text-white' : 'text-[var(--color-text-secondary)]'}`}
@@ -699,6 +737,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                         Volume
                       </button>
                       <button
+                        disabled={readOnly}
                         type="button"
                         onClick={() => setLoxVolumeMode('ullage')}
                         className={`px-2 py-1 text-xs ${loxVolumeMode === 'ullage' ? 'bg-cyan-600 text-white' : 'text-[var(--color-text-secondary)]'}`}
@@ -711,6 +750,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                     <div>
                       <label className="block text-xs text-[var(--color-text-secondary)] mb-1">Tank Volume (L)</label>
                       <input
+                        disabled={readOnly}
                         type="number"
                         value={loxTankVolumeL}
                         onChange={(e) => setLoxTankVolumeL(parseFloat(e.target.value) || 0)}
@@ -723,6 +763,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                     <div>
                       <label className="block text-xs text-[var(--color-text-secondary)] mb-1">Initial Ullage Volume (L)</label>
                       <input
+                        disabled={readOnly}
                         type="number"
                         value={loxUllageVolumeL}
                         onChange={(e) => setLoxUllageVolumeL(parseFloat(e.target.value) || 0)}
@@ -739,6 +780,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                     <span className="text-sm font-medium text-orange-400">Fuel Tank</span>
                     <div className="flex rounded-md overflow-hidden border border-[var(--color-border)]">
                       <button
+                        disabled={readOnly}
                         type="button"
                         onClick={() => setFuelVolumeMode('tank')}
                         className={`px-2 py-1 text-xs ${fuelVolumeMode === 'tank' ? 'bg-orange-600 text-white' : 'text-[var(--color-text-secondary)]'}`}
@@ -746,6 +788,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                         Volume
                       </button>
                       <button
+                        disabled={readOnly}
                         type="button"
                         onClick={() => setFuelVolumeMode('ullage')}
                         className={`px-2 py-1 text-xs ${fuelVolumeMode === 'ullage' ? 'bg-orange-600 text-white' : 'text-[var(--color-text-secondary)]'}`}
@@ -758,6 +801,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                     <div>
                       <label className="block text-xs text-[var(--color-text-secondary)] mb-1">Tank Volume (L)</label>
                       <input
+                        disabled={readOnly}
                         type="number"
                         value={fuelTankVolumeL}
                         onChange={(e) => setFuelTankVolumeL(parseFloat(e.target.value) || 0)}
@@ -770,6 +814,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                     <div>
                       <label className="block text-xs text-[var(--color-text-secondary)] mb-1">Initial Ullage Volume (L)</label>
                       <input
+                        disabled={readOnly}
                         type="number"
                         value={fuelUllageVolumeL}
                         onChange={(e) => setFuelUllageVolumeL(parseFloat(e.target.value) || 0)}
@@ -791,6 +836,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                   </label>
                   <div className="relative">
                     <input
+                      disabled={readOnly}
                       type="text"
                       value={segmentDurationInput}
                       onChange={(e) => setSegmentDurationInput(e.target.value)}
@@ -810,6 +856,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                     Points
                   </label>
                   <input
+                    disabled={readOnly}
                     type="text"
                     value={nPointsInput}
                     onChange={(e) => setNPointsInput(e.target.value)}

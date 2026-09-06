@@ -5,8 +5,14 @@ design tools -- to this app's payload shape and route prefix. Everything of
 substance, including ``_resolve_doc`` (the one place cross-user access is
 granted), lives there.
 
-The payload here is a config blob (``{"config": <dict>}``); pid-designer's is
+The payload here is ``{"config": <dict>, "ui": <dict>}``; pid-designer's is
 ``{nodes, edges}``. That, the prefix, and the noun are the whole difference.
+
+``ui`` carries the authored state that is not in ``PintleEngineConfig`` -- the
+controller commands, the time-series pressure profiles, Layer 4's vehicle
+definition, the layer run settings, the plot definition. It is opaque here, as
+the config is: the frontend owns its shape (see frontend/src/lib/designState.ts).
+It defaults to ``{}`` so every design stored before it existed still loads.
 """
 
 from __future__ import annotations
@@ -28,16 +34,19 @@ from backend import storage, userdata
 
 class ConfigPayload(BaseModel):
     config: dict
+    ui: dict = {}
 
 
 class CreatePayload(BaseModel):
     name: str
     config: dict | None = None  # seed the working copy; {} if omitted
+    ui: dict | None = None
 
 
 class ReleasePayload(BaseModel):
     label: str
     config: dict | None = None  # snapshot this; else the current working copy
+    ui: dict | None = None
 
 
 store = DesignStore(
@@ -46,14 +55,19 @@ store = DesignStore(
     body_model=ConfigPayload,
     create_model=CreatePayload,
     release_model=ReleasePayload,
-    to_data=lambda p: {"config": getattr(p, "config", None) or {}},
-    release_body=lambda p: None if p.config is None else {"config": p.config},
+    to_data=lambda p: {
+        "config": getattr(p, "config", None) or {},
+        "ui": getattr(p, "ui", None) or {},
+    },
+    release_body=lambda p: (
+        None if p.config is None else {"config": p.config, "ui": p.ui or {}}
+    ),
     noun="design",
     default_slug="design",
     # Seconds between automatic microversion snapshots for one design while it
     # is being actively autosaved. The on-close /flush ignores this.
     micro_interval=int(os.environ.get("ENGINE_MICRO_INTERVAL", "300")),
-    empty_payload=lambda: {"config": {}},
+    empty_payload=lambda: {"config": {}, "ui": {}},
 )
 
 router = make_router(store, prefix="/api/engine/documents")

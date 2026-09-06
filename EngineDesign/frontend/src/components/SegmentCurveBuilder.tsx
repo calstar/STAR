@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { PressureSegment, SegmentType } from '../api/client';
+import { useReadOnly } from '@stardesign-ui';
 
 interface SegmentCurveBuilderProps {
   label: string;
@@ -119,6 +120,10 @@ export function SegmentCurveBuilder({
   overlaySegments,
   overlayStrokeColor,
 }: SegmentCurveBuilderProps) {
+  // These commit into TimeSeriesMode's segment state, which is part of the
+  // design, so they need the checkout.
+  const readOnly = useReadOnly();
+
   const svgRef = useRef<SVGSVGElement>(null);
   const [selectedSegment, setSelectedSegment] = useState<number | null>(null);
   const [dragging, setDragging] = useState<{
@@ -547,6 +552,7 @@ export function SegmentCurveBuilder({
           <div className="flex items-center gap-1">
             <span className="text-xs text-[var(--color-text-secondary)]">N:</span>
             <input
+              disabled={readOnly}
               type="text"
               value={numSegmentsInput}
               onChange={(e) => setNumSegmentsInput(e.target.value)}
@@ -561,7 +567,7 @@ export function SegmentCurveBuilder({
           </div>
           <button
             onClick={addSegment}
-            disabled={segments.length >= 20}
+            disabled={readOnly || segments.length >= 20}
             className="px-3 py-1 text-xs rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             + Add
@@ -779,6 +785,7 @@ export function SegmentCurveBuilder({
               </span>
               {segments.length > 1 && (
                 <button
+                  disabled={readOnly}
                   onClick={(e) => {
                     e.stopPropagation();
                     removeSegment(i);
@@ -797,6 +804,7 @@ export function SegmentCurveBuilder({
               <div>
                 <label className="block text-xs text-[var(--color-text-secondary)] mb-1">Start (psi)</label>
                 <input
+                  disabled={readOnly}
                   type="text"
                   value={startPressureInputs[i] ?? seg.start_pressure_psi.toFixed(0)}
                   onChange={(e) => setStartPressureInputs(prev => ({ ...prev, [i]: e.target.value }))}
@@ -813,6 +821,7 @@ export function SegmentCurveBuilder({
               <div>
                 <label className="block text-xs text-[var(--color-text-secondary)] mb-1">End (psi)</label>
                 <input
+                  disabled={readOnly}
                   type="text"
                   value={endPressureInputs[i] ?? seg.end_pressure_psi.toFixed(0)}
                   onChange={(e) => setEndPressureInputs(prev => ({ ...prev, [i]: e.target.value }))}
@@ -832,6 +841,7 @@ export function SegmentCurveBuilder({
             <div className="flex items-center gap-2 mb-2">
               <span className="text-xs text-[var(--color-text-secondary)] w-6">k:</span>
               <input
+                disabled={readOnly}
                 type="range"
                 min="0.1"
                 max="3"
@@ -842,6 +852,7 @@ export function SegmentCurveBuilder({
                 className="flex-1 accent-blue-500"
               />
               <input
+                disabled={readOnly}
                 type="text"
                 value={kInputs[i] ?? seg.k.toFixed(2)}
                 onChange={(e) => setKInputs(prev => ({ ...prev, [i]: e.target.value }))}
@@ -870,6 +881,7 @@ export function SegmentCurveBuilder({
                   );
                 })()}
                 <input
+                  disabled={readOnly}
                   type="text"
                   value={lengthRatioInputs[i] ?? ((seg.length_ratio / segments.reduce((s, seg) => s + seg.length_ratio, 0)) * 100).toFixed(1)}
                   onChange={(e) => setLengthRatioInputs(prev => ({ ...prev, [i]: e.target.value }))}

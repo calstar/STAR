@@ -23,6 +23,7 @@ import type {
     SaveDesignRequirementsResponse,
 } from '../api/client';
 import { useReadOnly } from '@stardesign-ui';
+import { useDesignSlice } from '../lib/designState';
 
 interface Layer3OptimizationProps {
     requirements: DesignRequirements;
@@ -102,6 +103,11 @@ export function Layer3Optimization({
         save_plots: false,
         optimization_method: 'gradient',
     });
+
+  // The run settings are part of the design: two people should not get
+  // different answers from the same design because one of them quietly had a
+  // different iteration budget.
+  useDesignSlice('layer3Settings', { settings: [settings, setSettings] });
 
     const [isRunning, setIsRunning] = useState(false);
     const [isStopping, setIsStopping] = useState(false);
