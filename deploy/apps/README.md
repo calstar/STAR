@@ -91,9 +91,21 @@ docker compose ps
 ```
 (Building on the box instead — needs a full clone and ≥4 GB RAM for the React
 builds — is `docker compose --profile tunnel up -d --build`.)
-Then drop the host's published web ports (cloudflared is the only ingress): remove
-the `80:80` / `443:443` lines from the `caddy` service, or block them at the
-firewall. SSH (22) is all you need inbound.
+Then make sure the host's published web ports aren't reachable (cloudflared is
+the only ingress). **Prefer blocking them at the firewall** — `bootstrap.sh`
+already does — over removing the `80:80` / `443:443` lines from the `caddy`
+service: that edits a tracked file, and auto-deploy (below) will then decline to
+sync the checkout rather than discard your change. SSH (22) is all you need
+inbound.
+
+Finally, turn on auto-deploy so merges to `main` land here by themselves
+([details](#auto-deploy-on-merge-to-main)) — `bootstrap.sh` does this too:
+
+```bash
+sudo cp deploy/apps/systemd/star-auto-update.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now star-auto-update.timer
+```
 
 ## 4. Verify
 Open `https://engine-design.starberkeley.org` in a browser → it bounces to
