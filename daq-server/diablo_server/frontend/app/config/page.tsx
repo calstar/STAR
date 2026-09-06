@@ -1809,6 +1809,15 @@ export default function ConfigPage() {
                                     patch[pk] = rebuiltMap;
                                   }
                                 }
+                                // abort_pts is keyed by the sensor role name and feeds the boards'
+                                // abort thresholds — rename it too, or that sensor's overpressure gate
+                                // silently orphans (the role no longer resolves to a uid).
+                                if (config.abort_pts && name in config.abort_pts) {
+                                  const rebuiltAbort: Record<string, number> = {};
+                                  for (const [k, v] of Object.entries(config.abort_pts))
+                                    rebuiltAbort[k === name ? newName : k] = v as number;
+                                  patch.abort_pts = rebuiltAbort;
+                                }
                                 setConfig(patch);
                               }}
                               onError={(msg) => { setError(msg); setTimeout(() => setError(null), 4000); }}
@@ -1885,6 +1894,13 @@ export default function ConfigPage() {
                                     delete um[name];
                                     patch[pk] = um;
                                   }
+                                }
+                                // And its abort threshold, or a removed sensor leaves a dangling
+                                // abort_pts entry that resolves to no sensor.
+                                if (config.abort_pts && name in config.abort_pts) {
+                                  const ua = { ...config.abort_pts };
+                                  delete ua[name];
+                                  patch.abort_pts = ua;
                                 }
                                 setConfig(patch);
                               }}
