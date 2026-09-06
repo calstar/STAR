@@ -98,15 +98,28 @@ void StateMachine::loadStatesFromConfig(const std::string& config_content) {
 
 bool StateMachine::isAbort(State s) {
     const auto& cs = configStates();
-    if (cs.loaded && !cs.aborts.empty())
+    // Once config declares states it is the sole authority — even when it flags none is_abort,
+    // which means "this rig has no abort states," not "fall back to 17/18/19." The compiled ids
+    // only stand in when no config states are loaded at all (no config / parse failure).
+    if (cs.loaded)
         return cs.aborts.count(s) > 0;
-    // Built-in fallback: the three abort states the enum has always had.
     return s == State::ENGINE_ABORT || s == State::GSE_ABORT || s == State::EMERGENCY_ABORT;
 }
 
 State StateMachine::bootState() {
     const auto& cs = configStates();
-    return (cs.loaded && cs.boot_set) ? cs.boot : State::IDLE;
+    if (cs.loaded && cs.boot_set)
+        return cs.boot;
+    if (cs.loaded && !cs.names.empty()) {
+        // Config declares states but flags none is_boot. Start in the lowest-id declared state
+        // rather than a compiled IDLE(1) that names a different state on a renumbered rig, and say
+        // so loudly — this is a misconfig the config editor should have prevented.
+        const State first = cs.names.begin()->first;
+        std::cerr << "[StateMachine] No is_boot state in config — booting into lowest-id state \""
+                  << cs.names.begin()->second << "\"" << std::endl;
+        return first;
+    }
+    return State::IDLE;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,6 +187,11 @@ State StateMachine::fromName(const std::string& name) {
         auto it = cs.by_name.find(name);
         if (it != cs.by_name.end())
             return it->second;
+        // Config is authoritative once loaded: a name it does not declare resolves to UNKNOWN, not
+        // a compiled/legacy id that names a different state on a renumbered rig. The table below
+        // stands in only when no config states are loaded at all (no config, or a parse failure).
+        if (cs.loaded)
+            return State::UNKNOWN;
     }
     const auto& map = csvStateMap();
     auto it = map.find(name);

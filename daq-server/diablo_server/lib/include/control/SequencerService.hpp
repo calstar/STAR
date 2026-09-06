@@ -124,8 +124,12 @@ private:
     // Which state fires, and where the timer lands when it expires, are config rather than
     // enumerators. `state_val == 16` in ControllerService and a stringified State::ARMED here were
     // the two places a rename or renumber silently broke ignition.
-    State fire_state_{State::FIRE};
-    State fire_expiry_state_{State::ARMED};
+    // Default to UNKNOWN, not a compiled Fire/Armed: an absent or misnamed [fire] entry leaves the
+    // fire timer disabled (UNKNOWN never matches a real state in transitionTo's `to ==
+    // fire_state_`) rather than silently attaching the burn to whatever state now holds the old
+    // literal id.
+    State fire_state_{State::UNKNOWN};
+    State fire_expiry_state_{State::UNKNOWN};
     std::string controller_host_{"127.0.0.1"};
     uint16_t controller_port_{8000};
 };

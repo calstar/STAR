@@ -208,6 +208,13 @@ int main(int argc, char* argv[]) {
 
     const fsw::config::Config cfg = fsw::config::load(config_path);
 
+    // Populate the config-declared [[states]] in THIS process before any name→id resolution below.
+    // The controller is a separate process from the sequencer and never called this; without it,
+    // stateId() resolved the fire state against the compiled enum (Fire→16) while the sequencer
+    // publishes ids from config — so on a renumbered rig the two disagreed on what "16" means and
+    // the PWM ignition parity gate watched the wrong id.
+    sequencer::StateMachine::loadStatesFromConfig(config_content);
+
     // ── Extract settings from config ───────────────────────────────────
     fsw::control::ControllerService::PWMConfig pwm;
 
@@ -345,8 +352,12 @@ int main(int argc, char* argv[]) {
                 std::cout << "  Fire state:     " << fire_state << " (id " << static_cast<int>(id)
                           << ")" << std::endl;
             } else {
+                // Config declares states but not this name: disable the gate (255 never matches a
+                // real sequencer state) rather than leaving it on a compiled id, matching the
+                // sequencer's disabled fire timer. Fail safe and loud, not silent-wrong.
+                service.setFireStateId(255);
                 std::cerr << "  ⚠️  [fire] state \"" << fire_state
-                          << "\" is not a known state — PWM gate falls back to id 16" << std::endl;
+                          << "\" is not a declared state — PWM fire gate DISABLED" << std::endl;
             }
         }
     }
