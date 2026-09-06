@@ -279,7 +279,9 @@ export default function CalibrationPage() {
   }, [ws, fetchCubic]);
 
   const handleCaptureSelected = useCallback(() => {
-    if (!selectedChannel || selectedModel === 'physics') return;
+    // Physics captures too. The point is recorded in the shared store and does not change what
+    // physics streams; it is there for when the sensor is switched to cubic or robust.
+    if (!selectedChannel) return;
     const psi = parseFloat(refInput);
     if (isNaN(psi)) return;
     sendCalCmd({ commandType: 'capture_point', sensorId: selectedChannel.id, boardId: selectedChannel.boardId, referencePressure: psi });
@@ -293,8 +295,8 @@ export default function CalibrationPage() {
   }, [selectedChannel, sendCalCmd]);
 
   const handleZeroAll = useCallback(() => {
-    const n = [...ptChannels, ...lcChannels].filter((c) => modelOf(c.boardId * 100 + c.id) !== 'physics').length;
-    if (typeof window !== 'undefined' && !window.confirm(`Capture a 0 reference point on all ${n} cubic/robust PT + LC sensor${n === 1 ? '' : 's'}? Vent PTs to atmosphere and unload load cells first — this adds a real point to each sensor's shared fit.`)) return;
+    const n = ptChannels.length + lcChannels.length;
+    if (typeof window !== 'undefined' && !window.confirm(`Capture a 0 reference point on all ${n} PT + LC sensor${n === 1 ? '' : 's'}? Vent PTs to atmosphere and unload load cells first — this adds a real point to each sensor's shared fit. Physics sensors are included: the point is stored but does not change what they stream.`)) return;
     sendCalCmd({ commandType: 'zero_all' });
   }, [sendCalCmd, ptChannels, lcChannels, modelOf]);
 
@@ -442,7 +444,7 @@ export default function CalibrationPage() {
           <div className="flex-shrink-0 px-4 py-3 border-t border-gray-800">
             <button onClick={handleZeroAll} disabled={!sessionActive}
               title={sessionActive
-                ? "Capture a 0 reference point on every cubic/robust PT + LC sensor. Vent PTs to atmosphere and unload load cells first — this adds a real point to each sensor's shared fit (physics sensors are skipped)."
+                ? "Capture a 0 reference point on every PT + LC sensor. Vent PTs to atmosphere and unload load cells first — this adds a real point to each sensor's shared fit. Physics sensors are included; their points are stored but do not change what they stream."
                 : 'Start a session to calibrate — with no live stream there is nothing to capture.'}
               className="w-full px-4 py-2.5 text-sm font-bold rounded-lg border bg-yellow-900/30 border-yellow-600/60 text-yellow-300 hover:bg-yellow-800/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-yellow-900/30">
               Zero all
@@ -479,7 +481,7 @@ export default function CalibrationPage() {
                 </div>
                 <div className="text-sm text-text-muted font-mono mt-1.5">
                   Board {selectedChannel.boardId} · CH{selectedChannel.id}
-                  {selectedModel !== 'physics' && ` · ${selectedState?.numPoints ?? 0} captured point${(selectedState?.numPoints ?? 0) === 1 ? '' : 's'}`}
+                  {` · ${selectedState?.numPoints ?? 0} captured point${(selectedState?.numPoints ?? 0) === 1 ? '' : 's'}`}
                 </div>
                 <div className="text-sm text-text-muted mt-1.5 max-w-2xl">
                   {modelDesc(selectedModel, selectedKind ?? 'PT')}
@@ -489,7 +491,7 @@ export default function CalibrationPage() {
                   {' '}<span className="text-gray-600">Change the model in Config → Roles.</span>
                 </div>
               </div>
-              {selectedModel !== 'physics' && (
+              {(
                 <button onClick={handleNewCalibration} disabled={!sessionActive}
                   className="px-5 py-2.5 text-sm font-bold rounded-lg border border-red-700 bg-red-900/30 text-red-300 hover:bg-red-800/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-red-900/30"
                   title={sessionActive ? 'Drop captured points and reset both cubic and robust to nothing (0)' : 'Start a session to change calibration.'}>
@@ -506,12 +508,20 @@ export default function CalibrationPage() {
               <Stat label={healthLabel} value={healthValue} className={`text-xl ${healthClass}`} />
             </div>
 
-            {/* Capture — disabled in physics (points are meaningless for a datasheet conversion) */}
+            {/* Capture works in every model, physics included. A physics sensor still streams the
+                datasheet conversion — the point is recorded in the shared store so a calibration
+                can be run in whatever mode the rig happens to be in, and is already there if the
+                sensor is later switched to cubic or robust. Previously the only way to collect
+                points was to change a sensor's model first, mid-campaign. */}
             <div className="rounded-xl border border-gray-700 bg-card p-5">
               <div className="text-sm font-bold text-text mb-3">Capture reference point</div>
-              {selectedModel === 'physics' ? (
-                <div className="text-sm text-text-muted italic">Physics conversion uses datasheet parameters — captured points don't apply.</div>
-              ) : (
+              {selectedModel === 'physics' && (
+                <div className="text-sm text-orange-300/90 mb-3">
+                  This sensor is in physics mode: points are recorded but do not change what it streams.
+                  Switch it to cubic or robust in Config &rarr; Roles to use them.
+                </div>
+              )}
+              {(
                 <div className="flex items-center gap-3 flex-wrap">
                   <input
                     type="number" step="any" placeholder={selectedKind === 'LC' ? 'Reference kg' : 'Reference PSI'}
@@ -530,7 +540,7 @@ export default function CalibrationPage() {
                   </button>
                   <span className="text-sm text-text-muted">
                     {sessionActive
-                      ? <>Records the current ADC at this known {selectedKind === 'LC' ? 'weight' : 'pressure'}. Feeds the {selectedKind === 'LC' ? 'cubic' : 'cubic & robust'} fit.</>
+                      ? <>Records the current ADC at this known {selectedKind === 'LC' ? 'weight' : 'pressure'}. Feeds the {selectedKind === 'LC' ? 'cubic' : 'cubic & robust'} fit{selectedModel === 'physics' ? ', for whenever this sensor is switched to one of them' : ''}.</>
                       : <>Start a session to calibrate — there is no live stream to capture.</>}
                   </span>
                 </div>
