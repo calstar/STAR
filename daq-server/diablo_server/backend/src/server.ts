@@ -942,7 +942,7 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
   switch (command.commandType) {
     case 'state_transition': {
       const targetState = command.data.state!;
-      const stateName = configStateName(targetState) ?? SystemState[targetState] ?? String(targetState);
+      const declaredName = configStateName(targetState);
       // Resolve the id through the config the sequencer itself loaded, not the compiled enum.
       // The GUI sends a [[states]] id; SystemState is a fixed table that only agrees with it on a
       // rig that never renumbered. On one that did, every id from the first divergence up named a
@@ -950,7 +950,25 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       // TRANSITION:Fuel Press — and because Fuel Press is a real state here, fromName() resolved
       // it and the sequencer would have run it. A vent request executing a press is not a failure
       // mode worth keeping for the sake of a fallback.
-      const csvName = configStateName(targetState) ?? STATE_TO_CSV_NAME[stateName] ?? stateName;
+      //
+      // So once the config declares a [[states]] list it is the sole authority: an id it does not
+      // declare is rejected, not rewritten through the enum. The enum fallback below stands only
+      // when the config declares no states at all (legacy / unconfigured rig).
+      const cfgStates = (() => {
+        try {
+          const r = (readConfig() as any)?.states;
+          return Array.isArray(r) ? r : null;
+        } catch {
+          return null;
+        }
+      })();
+      if (cfgStates && cfgStates.length > 0 && declaredName === null) {
+        console.warn(`[ThinServer] state_transition rejected: id ${targetState} not in active config [[states]]`);
+        send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition rejected: id ${targetState} is not a state in the active config` } });
+        break;
+      }
+      const stateName = declaredName ?? SystemState[targetState] ?? String(targetState);
+      const csvName = declaredName ?? STATE_TO_CSV_NAME[stateName] ?? stateName;
       // No optimistic update — real state/actuator positions arrive via _SEQUENCER_STATE [0x50]
       // and [0x32] packets from Elodin. FIRE_START/FIRE_STOP are sent from the subscriber path.
       sendToActuatorService(`TRANSITION:${csvName}\n`).then(({ ok, reply }) => {
