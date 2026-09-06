@@ -150,8 +150,11 @@ bool SequencerService::init(const std::string& config_path) {
         } else {
             State s = StateMachine::fromName(fs);
             if (s == State::UNKNOWN)
+                // Config is authoritative and does not declare this name. Disable the burn (leave
+                // UNKNOWN) rather than fall back to the compiled Fire id, which names a different
+                // state on a renumbered rig — a misconfig fails safe and loud, not silent-wrong.
                 std::cerr << "[SequencerService] [fire] state \"" << fs
-                          << "\" is not a known state — falling back to Fire" << std::endl;
+                          << "\" is not a declared state — FIRE DISABLED" << std::endl;
             else
                 fire_state_ = s;
         }
@@ -159,8 +162,10 @@ bool SequencerService::init(const std::string& config_path) {
         if (!ft.empty()) {
             State s = StateMachine::fromName(ft);
             if (s == State::UNKNOWN)
+                // Same rule for the timer's landing state: an undeclared name disables auto-expiry
+                // (leaves UNKNOWN → the isAllowed check below warns) instead of a compiled Armed.
                 std::cerr << "[SequencerService] [fire] expiry_target \"" << ft
-                          << "\" is not a known state — falling back to Armed" << std::endl;
+                          << "\" is not a declared state — fire auto-expiry disabled" << std::endl;
             else
                 fire_expiry_state_ = s;
         }
