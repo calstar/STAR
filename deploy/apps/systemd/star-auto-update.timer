@@ -1,0 +1,14 @@
+[Unit]
+Description=Check for newly published STAR app images every few minutes
+
+[Timer]
+# First check shortly after boot, then every 5 minutes. The script itself is a
+# cheap no-op when nothing changed, and it skips outright while CI is still
+# publishing, so a short interval mostly costs two GitHub API calls.
+OnBootSec=3min
+OnUnitActiveSec=5min
+# Spread the API calls so the two boxes don't tick in lockstep.
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

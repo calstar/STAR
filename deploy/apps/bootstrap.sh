@@ -198,7 +198,27 @@ if [[ "$LAUNCH" -eq 1 ]]; then
   say "§6 Launching the stack (pull + up, tunnel profile)"
   ( cd "$CLONE_DIR" && docker compose --profile tunnel pull \
       && docker compose --profile tunnel up -d && docker compose ps )
-  say "Done. Stack is up and behind the tunnel."
+
+  # ── §6b  Auto-deploy timer ─────────────────────────────────────────────────
+  # Polls for images CI published for main and redeploys, so a merged PR lands
+  # here without an SSH session. Pull-based because this box is outbound-only.
+  # See deploy/apps/README.md; the script itself is deploy/auto-update.sh.
+  say "§6b Auto-deploy timer (star-auto-update)"
+  install -m 644 "$CLONE_DIR"/deploy/apps/systemd/star-auto-update.service \
+                 "$CLONE_DIR"/deploy/apps/systemd/star-auto-update.timer \
+                 /etc/systemd/system/
+  # The units hardcode /opt/STAR; point them at CLONE_DIR if it differs.
+  if [[ "$CLONE_DIR" != "/opt/STAR" ]]; then
+    cat >/etc/star-auto-update.conf <<EOF
+REPO_DIR=$CLONE_DIR
+COMPOSE_DIR=$CLONE_DIR
+EOF
+    sed -i "s#^ExecStart=.*#ExecStart=$CLONE_DIR/deploy/auto-update.sh#" \
+      /etc/systemd/system/star-auto-update.service
+  fi
+  systemctl daemon-reload
+  systemctl enable --now star-auto-update.timer
+  say "Done. Stack is up behind the tunnel, and auto-deploying from $BRANCH."
 else
   cat <<EOF
 

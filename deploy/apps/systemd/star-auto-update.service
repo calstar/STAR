@@ -1,0 +1,23 @@
+[Unit]
+Description=STAR apps stack — pull images CI published for main and redeploy
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Adjust if the repo lives elsewhere than /opt/STAR (bootstrap.sh's default).
+Environment=REPO_DIR=/opt/STAR
+Environment=COMPOSE_DIR=/opt/STAR
+# The apps stack runs cloudflared under the `tunnel` profile — without this the
+# connector would be treated as not-part-of-the-project.
+Environment=COMPOSE_PROFILES_LIST=tunnel
+# Optional per-box overrides (GITHUB_TOKEN, SETTLE_SECONDS, PRUNE…). The leading
+# `-` means "fine if absent".
+EnvironmentFile=-/etc/star-auto-update.conf
+ExecStart=/opt/STAR/deploy/auto-update.sh
+# A pull of a dozen images on a slow uplink is not fast.
+TimeoutStartSec=45min
+
+[Install]
+WantedBy=multi-user.target

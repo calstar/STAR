@@ -53,6 +53,40 @@ OpenProject vars in `.env` (`OPENPROJECT_SECRET_KEY_BASE`, SES creds), then
 `docker compose --profile legacy up -d openproject`. Its data is intact on the
 external `openproject_pgdata` / `openproject_assets` volumes (+ S3 backups).
 
+## Auto-deploy on merge to `main`
+
+Same mechanism as the apps box — a systemd timer runs
+[`deploy/auto-update.sh`](../auto-update.sh), which waits for
+`publish-apps.yml` / `publish-auth.yml` to finish publishing, syncs the checkout
+to `origin/main`, then pulls and `up -d`s. This box's images from those workflows
+are **`star-starproject`** and **`star-auth`**. Full explanation of each step:
+[`deploy/apps/README.md`](../apps/README.md#auto-deploy-on-merge-to-main).
+
+```bash
+cd ~/STAR
+sudo cp deploy/ec2/systemd/star-auto-update.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now star-auto-update.timer
+sudo systemctl start star-auto-update.service     # run one tick now
+journalctl -u star-auto-update -f
+```
+
+Two things specific to this box:
+
+- **Migrations apply themselves.** `starproject`'s entrypoint runs
+  `prisma migrate deploy` on every start, so auto-deploy also means
+  auto-migrate. It is idempotent and forward-only, but it does mean a migration
+  merged to `main` reaches production data within minutes and with no human at
+  the keyboard — worth remembering when reviewing one. The nightly
+  `starproject-backup.timer` (03:30 UTC) is the safety net; take a manual
+  `starproject-backup.sh backup` before merging anything destructive.
+- **`--remove-orphans` stays off** (the script's default). Compose treats the
+  containers of a *disabled* profile as orphans, so it would delete a
+  `legacy`-profile OpenProject brought back up for a rollback.
+
+Pause it any time with `sudo systemctl disable --now star-auto-update.timer`;
+`cat /var/lib/star-auto-update/state` shows what is currently deployed.
+
 ## STARProject backups (S3)
 
 `starproject-backup.sh` `pg_dump`s the `starproject-db` Postgres to
