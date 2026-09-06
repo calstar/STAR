@@ -125,6 +125,10 @@ export default function MobileDashboard() {
     sendState(id);
   };
 
+  // Disable a control the config cannot satisfy, so an abort never looks armed while resolving to
+  // nothing — the same guard TopBar uses.
+  const hasState = (name: string) => stateIdByName(name) !== null;
+
   const handleEngineAbort = () => {
     sendStateNamed('Vent');
     setTimeout(() => sendStateNamed('Engine Abort'), 5000);
@@ -185,29 +189,47 @@ export default function MobileDashboard() {
           </button>
           <button
             onClick={handleEngineAbort}
-            disabled={!controlEnabled}
+            disabled={!controlEnabled || !hasState('Vent') || !hasState('Engine Abort')}
             className="flex-1 py-2 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border border-amber-600
                        text-white font-bold text-xs rounded tracking-wider transition-colors disabled:bg-amber-900 disabled:border-amber-900 disabled:text-amber-700 disabled:cursor-not-allowed"
-            title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+            title={
+              !controlEnabled
+                ? 'Viewer mode: controls locked'
+                : !hasState('Vent') || !hasState('Engine Abort')
+                  ? 'Config declares no Vent / Engine Abort state'
+                  : undefined
+            }
           >
             ENGINE ABORT
           </button>
           <button
             onClick={handleGseAbort}
-            disabled={!controlEnabled}
+            disabled={!controlEnabled || !hasState('GSE Abort')}
             className="flex-1 py-2 bg-orange-800 hover:bg-orange-700 active:bg-orange-900 border border-orange-600
                        text-white font-bold text-xs rounded tracking-wider transition-colors disabled:bg-orange-900 disabled:border-orange-900 disabled:text-orange-700 disabled:cursor-not-allowed"
-            title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+            title={
+              !controlEnabled
+                ? 'Viewer mode: controls locked'
+                : !hasState('GSE Abort')
+                  ? 'Config declares no GSE Abort state'
+                  : undefined
+            }
           >
             GSE ABORT
           </button>
           <button
             onClick={handleEmergencyAbort}
-            disabled={!controlEnabled}
+            disabled={!controlEnabled || !hasState('Emergency Abort')}
             className="flex-1 py-2 bg-red-700 hover:bg-red-600 active:bg-red-800 border border-red-500
                        text-white font-bold text-xs rounded tracking-wider transition-colors
                        shadow-[0_0_6px_rgba(239,68,68,0.3)] disabled:bg-red-900 disabled:border-red-900 disabled:text-red-700 disabled:cursor-not-allowed"
-            title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+            title={
+              !controlEnabled
+                ? 'Viewer mode: controls locked'
+                : !hasState('Emergency Abort')
+                  ? 'Config declares no Emergency Abort state'
+                  : undefined
+            }
           >
             E-ABORT
           </button>
