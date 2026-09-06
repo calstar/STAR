@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { DesignRequirements, DEFAULT_DESIGN_REQUIREMENTS } from './DesignRequirements';
 import { Layer1Optimization } from './Layer1Optimization';
 import { Layer2Optimization } from './Layer2Optimization';
 import { Layer3Optimization } from './Layer3Optimization';
 import { Layer4Optimization } from './Layer4Optimization';
+import { useReadOnly } from '@stardesign-ui';
 import {
   saveDesignRequirements,
   getDesignRequirements
@@ -55,7 +56,17 @@ export function Optimizer({ config }: OptimizerProps) {
     }
   };
 
+  // The four layer tabs all call this before a run, so it is the one place that
+  // has to refuse. Requirements are part of the design (config.design_requirements),
+  // and a read-only viewer running a layer must not rewrite them.
+  const readOnly = useReadOnly();
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
+
   const saveRequirementsToServer = useCallback(async (reqs: DesignRequirementsType) => {
+    if (readOnlyRef.current) {
+      return { error: 'Take the design before saving requirements.' };
+    }
     const response = await saveDesignRequirements(reqs);
     if (response.error) {
       return response;

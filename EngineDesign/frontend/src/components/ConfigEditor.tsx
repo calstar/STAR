@@ -594,6 +594,7 @@ export function ConfigEditor({ config, onConfigUpdated }: ConfigEditorProps) {
               </span>
               <button
                 onClick={handleDiscard}
+                disabled={readOnly}
                 className="px-3 py-1.5 text-sm rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-colors text-[var(--color-text-secondary)]"
               >
                 Discard

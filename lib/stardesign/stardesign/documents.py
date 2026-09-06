@@ -124,6 +124,68 @@ class DesignStore:
     #: twice the intended rate.
     last_micro: dict[tuple[str, str], float] = field(default_factory=dict)
 
+    # ── the index and the checkout, callable from outside the router ─────────
+    #
+    # These were closures inside make_router, which meant the checkout could
+    # only be enforced on the document routes. An app whose *own* routes edit
+    # the design -- EngineDesign writes the live config through /api/config --
+    # had no way to ask "does this caller hold it?", so the client was the only
+    # gate. They live here so any router can reuse the one implementation.
+
+    def index_path(self, user: str, *, create: bool = False) -> Path:
+        return self.ud.user_dir(user, create=create) / "index.json"
+
+    def load_index(self, user: str) -> list[dict]:
+        """One user's design records. Never creates their folder -- the
+        cross-user scan reads every sibling, and must not conjure a tree for
+        each one."""
+        p = self.index_path(user)
+        if not p.is_file():
+            return []
+        try:
+            data = json.loads(p.read_text("utf-8"))
+            return data if isinstance(data, list) else []
+        except (OSError, ValueError):
+            return []
+
+    def find_record(self, owner: str, doc_id: str) -> dict | None:
+        return next((r for r in self.load_index(owner) if r.get("id") == doc_id), None)
+
+    def lock_holder(self, record: dict) -> str | None:
+        """Whoever currently holds the design, or None if it is free.
+
+        A checkout with no save inside ``lock_ttl`` is treated as free. Expiry is
+        decided here, on read, rather than by a background sweep -- which means
+        there is no window where a record says "held" and the answer to "may I
+        take it?" disagrees.
+        """
+        holder = record.get("lockedBy")
+        if not holder:
+            return None
+        beat = record.get("lockHeartbeat") or record.get("lockedAt")
+        if not beat:
+            return None
+        try:
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(beat)).total_seconds()
+        except (TypeError, ValueError):
+            return None  # unparseable timestamp: treat as free rather than wedge the design
+        return str(holder) if age < self.lock_ttl else None
+
+    def require_lock_on(self, record: dict, doc_id: str, viewer: str) -> None:
+        """Refuse a content write unless ``viewer`` holds this design's checkout.
+
+        The 423 and its wording are the contract the design bar reads: it drops
+        to read-only on 423 rather than retrying into a void.
+        """
+        holder = self.lock_holder(record)
+        if holder != viewer:
+            name = record.get("name", doc_id)
+            detail = (
+                f"{name} is checked out by {holder}" if holder
+                else f"Take {name} before saving -- your checkout has lapsed"
+            )
+            raise HTTPException(status_code=423, detail=detail)
+
 
 # ── payloads that are the same in every app ──────────────────────────────────
 #
@@ -168,20 +230,11 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
     # ── working copy + document index (on the volume) ────────────────────────────
 
     def _index_path(user: str, *, create: bool = False) -> Path:
-        return store.ud.user_dir(user, create=create) / "index.json"
+        return store.index_path(user, create=create)
 
 
     def _load_index(user: str) -> list[dict]:
-        """One user's design records. Never creates their folder -- the cross-user
-        scan reads every sibling, and must not conjure a tree for each one."""
-        p = _index_path(user)
-        if not p.is_file():
-            return []
-        try:
-            data = json.loads(p.read_text("utf-8"))
-            return data if isinstance(data, list) else []
-        except (OSError, ValueError):
-            return []
+        return store.load_index(user)
 
 
     def _save_index(user: str, index: list[dict]) -> None:
@@ -318,7 +371,7 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
 
 
     def _find_record(owner: str, doc_id: str) -> dict | None:
-        return next((r for r in _load_index(owner) if r.get("id") == doc_id), None)
+        return store.find_record(owner, doc_id)
 
 
     def _resolve_doc(
@@ -353,24 +406,7 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
     # ── checkouts: who may save, right now ───────────────────────────────────
 
     def _lock_holder(record: dict) -> str | None:
-        """Whoever currently holds the design, or None if it is free.
-
-        A checkout with no save inside ``lock_ttl`` is treated as free. Expiry is
-        decided here, on read, rather than by a background sweep -- which means
-        there is no window where a record says "held" and the answer to "may I
-        take it?" disagrees.
-        """
-        holder = record.get("lockedBy")
-        if not holder:
-            return None
-        beat = record.get("lockHeartbeat") or record.get("lockedAt")
-        if not beat:
-            return None
-        try:
-            age = (datetime.now(timezone.utc) - datetime.fromisoformat(beat)).total_seconds()
-        except (TypeError, ValueError):
-            return None  # unparseable timestamp: treat as free rather than wedge the design
-        return str(holder) if age < store.lock_ttl else None
+        return store.lock_holder(record)
 
     def _lock_state(record: dict, viewer: str, names: dict[str, str]) -> dict:
         """The checkout, as the design bar wants to render it."""
@@ -434,14 +470,7 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         editing of content, and blocking them would mean a checkout could stop
         someone tidying up a design they can see.
         """
-        holder = _lock_holder(ref.record)
-        if holder != ref.viewer:
-            name = ref.record.get("name", ref.doc_id)
-            detail = (
-                f"{name} is checked out by {holder}" if holder
-                else f"Take {name} before saving -- your checkout has lapsed"
-            )
-            raise HTTPException(status_code=423, detail=detail)
+        store.require_lock_on(ref.record, ref.doc_id, ref.viewer)
 
     def _beat_lock(owner: str, doc_id: str, viewer: str) -> None:
         """Refresh the holder's checkout after a successful save.

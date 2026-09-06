@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getSwitchOptions, switchConfig, type SwitchOptions, type EngineConfig } from '../api/client';
 import { emitConfigChanged } from '../lib/configBus';
+import { useReadOnly } from '@stardesign-ui';
 
 /**
  * First-class injector + propellant selectors (UNIFICATION P6).
@@ -26,6 +27,9 @@ interface Props {
 }
 
 export default function ConfigurationSelector({ onConfigChange }: Props) {
+  // A switch replaces the config wholesale (POST /api/config/switch), so these
+  // two dropdowns edit the design as surely as any field does.
+  const readOnly = useReadOnly();
   const [opts, setOpts] = useState<SwitchOptions | null>(null);
   const [busy, setBusy] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -102,7 +106,7 @@ export default function ConfigurationSelector({ onConfigChange }: Props) {
         <span className="text-xs text-[var(--color-text-secondary)]">Propellant</span>
         <select
           className={selectCls}
-          disabled={busy}
+          disabled={busy || readOnly}
           value={opts.current.propellant ?? 'custom'}
           onChange={(e) => doSwitch({ propellant_preset: e.target.value })}
         >
@@ -117,7 +121,7 @@ export default function ConfigurationSelector({ onConfigChange }: Props) {
         <span className="text-xs text-[var(--color-text-secondary)]">Injector</span>
         <select
           className={selectCls}
-          disabled={busy}
+          disabled={busy || readOnly}
           value={opts.current.injector ?? ''}
           onChange={(e) => doSwitch({ injector_type: e.target.value })}
         >
@@ -128,6 +132,11 @@ export default function ConfigurationSelector({ onConfigChange }: Props) {
       </label>
 
       {busy && <span className="text-xs text-[var(--color-text-secondary)] animate-pulse">switching…</span>}
+      {readOnly && !busy && (
+        <span className="text-xs text-[var(--color-text-muted)]" title="Take the design to change the propellant or injector">
+          read only
+        </span>
+      )}
       {error && <span className="text-xs text-red-500" title={error}>switch failed</span>}
       {warnings.length > 0 && (
         <span className="text-xs text-amber-500" title={warnings.join('\n')}>

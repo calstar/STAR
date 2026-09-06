@@ -26,6 +26,7 @@ import type {
     ControllerStreamEvent,
     SaveDesignRequirementsResponse,
 } from '../api/client';
+import { useReadOnly } from '@stardesign-ui';
 
 interface Layer2OptimizationProps {
     requirements: DesignRequirements;
@@ -99,6 +100,11 @@ export function Layer2Optimization({
     isDirty,
     saveRequirementsToServer,
 }: Layer2OptimizationProps) {
+    // A layer run is an EDIT: on success the backend writes the optimized
+    // config straight into the session (backend/routers/optimizer.py
+    // set_config), so the Run button and the config-upload input are gated with
+    // the inputs, not left live as a read-only "action".
+    const readOnly = useReadOnly();
     const [settings, setSettings] = useState<Layer2Settings>({
         max_iterations: 20,
         save_plots: false,
@@ -488,7 +494,7 @@ export function Layer2Optimization({
                                         accept=".yaml,.yml"
                                         onChange={handleConfigUpload}
                                         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                                        disabled={isRunning}
+                                        disabled={isRunning || readOnly}
                                     />
                                     <div className="px-4 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] text-sm font-medium hover:border-blue-500 transition-colors flex items-center justify-center gap-2">
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -505,7 +511,7 @@ export function Layer2Optimization({
                             )}
                             <button
                                 onClick={handleRun}
-                                disabled={isRunning || (!requirements && !configLoaded)}
+                                disabled={isRunning || readOnly || (!requirements && !configLoaded)}
                                 className={`px-6 py-2 rounded-lg font-bold text-white transition-all ${isRunning || (!requirements && !configLoaded)
                                     ? 'bg-gray-500 cursor-not-allowed'
                                     : 'bg-purple-600 hover:bg-purple-700 shadow-lg shadow-purple-500/20'
@@ -544,6 +550,7 @@ export function Layer2Optimization({
                             <input
                                 type="number"
                                 value={settings.max_iterations}
+                                disabled={readOnly}
                                 onChange={(e) => setSettings({ ...settings, max_iterations: parseInt(e.target.value) })}
                                 className="w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded p-2 text-sm text-white"
                                 min="1"
@@ -555,6 +562,7 @@ export function Layer2Optimization({
                             <input
                                 type="number"
                                 value={settings.de_maxiter}
+                                disabled={readOnly}
                                 onChange={(e) => setSettings({ ...settings, de_maxiter: parseInt(e.target.value) })}
                                 className="w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded p-2 text-sm text-white"
                                 min="1"
@@ -566,6 +574,7 @@ export function Layer2Optimization({
                             <input
                                 type="number"
                                 value={settings.de_popsize}
+                                disabled={readOnly}
                                 onChange={(e) => setSettings({ ...settings, de_popsize: parseInt(e.target.value) })}
                                 className="w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded p-2 text-sm text-white"
                                 min="1"
@@ -577,6 +586,7 @@ export function Layer2Optimization({
                             <input
                                 type="number"
                                 value={settings.de_n_time_points}
+                                disabled={readOnly}
                                 onChange={(e) => setSettings({ ...settings, de_n_time_points: parseInt(e.target.value) })}
                                 className="w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded p-2 text-sm text-white"
                                 min="5"
@@ -588,6 +598,7 @@ export function Layer2Optimization({
                                 <input
                                     type="checkbox"
                                     checked={settings.save_plots}
+                                    disabled={readOnly}
                                     onChange={(e) => setSettings({ ...settings, save_plots: e.target.checked })}
                                     className="rounded border-[var(--color-border)] bg-[var(--color-bg-primary)]"
                                 />

@@ -13,6 +13,7 @@ import {
   type TimeSeriesSummary,
   type EngineConfig,
 } from '../api/client';
+import { useReadOnly } from '@stardesign-ui';
 import {
   loadTimeSeriesResults,
   saveTimeSeriesResults,
@@ -130,6 +131,12 @@ function computeUllageLiters(tankVolumeM3: number, propMassKg: number, density: 
 }
 
 export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) {
+  // Only the CSV/YAML upload writes the design (from-csv -> set_config).
+  // Generating a profile from the fields below reads the config and returns
+  // results, so those inputs stay live -- until PR 2 makes them part of the
+  // design, at which point they need gating too.
+  const readOnly = useReadOnly();
+
   // Mode selection
   const [inputMode, setInputMode] = useState<InputMode>('simple');
 
@@ -863,6 +870,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                 <input
                   type="file"
                   accept=".csv,.yaml,.yml"
+                  disabled={readOnly}
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) {

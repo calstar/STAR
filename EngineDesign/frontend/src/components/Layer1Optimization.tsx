@@ -25,6 +25,7 @@ import type {
   ChamberGeometryResponse,
   SaveDesignRequirementsResponse,
 } from '../api/client';
+import { useReadOnly } from '@stardesign-ui';
 import { ChamberContourPlot } from './ChamberContourPlot';
 import { stableStringify } from '../utils/stableStringify';
 
@@ -790,6 +791,11 @@ export function Layer1Optimization({
   isDirty,
   saveRequirementsToServer,
 }: Layer1OptimizationProps) {
+  // A layer run is an EDIT: on success the backend writes the optimized config
+  // straight into the session (backend/routers/optimizer.py set_config), so the
+  // Run button and the config-upload input are gated with the inputs, not left
+  // live as a read-only "action".
+  const readOnly = useReadOnly();
   const [settings, setSettings] = useState<Layer1Settings>({
     thrust_tolerance: 0.1, // 10%
   });
@@ -912,6 +918,13 @@ export function Layer1Optimization({
   };
 
   const ensureImpingingMode = async (): Promise<boolean> => {
+    // Writes injector.* + design_requirements through PUT /api/config. Reached
+    // only from handleRun, which is already gated, but this is the call that
+    // actually mutates the design -- so it refuses on its own too.
+    if (readOnly) {
+      setError('Take the design before switching the injector.');
+      return false;
+    }
     const cfg = await getConfig();
     const injector = (cfg.data?.config?.injector as Record<string, unknown> | undefined) ?? {};
     const designReq = (cfg.data?.config?.design_requirements as Record<string, unknown> | undefined) ?? {};
@@ -1135,6 +1148,7 @@ export function Layer1Optimization({
             </p>
             {activeInjectorType !== 'impinging' && (
               <button
+                disabled={readOnly}
                 onClick={async () => {
                   const ok = await ensureImpingingMode();
                   if (ok) setError(null);
@@ -1176,7 +1190,7 @@ export function Layer1Optimization({
               min="1"
               max="20"
               step="1"
-              disabled={isRunning}
+              disabled={isRunning || readOnly}
             />
             <p className="text-xs text-[var(--color-text-secondary)] mt-1">Acceptable deviation from target thrust</p>
           </div>
@@ -1192,7 +1206,7 @@ export function Layer1Optimization({
         )}
         <button
           onClick={handleRun}
-          disabled={isRunning}
+          disabled={isRunning || readOnly}
           className={`px-8 py-4 font-bold rounded-lg text-white text-lg transition-all ${isRunning
             ? 'bg-gray-500 cursor-not-allowed'
             : 'bg-blue-600 hover:bg-blue-700 hover:scale-105'

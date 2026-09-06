@@ -75,6 +75,12 @@ function App() {
   }, []);
 
   return (
+    // The whole app, not just <main>: the injector / propellant selectors sit up
+    // in the header, and switching either rewrites the config wholesale -- as
+    // much an edit as typing in a field. Gating is opt-in, so the designs bar
+    // inside is unaffected: Take / Release / History have to stay live exactly
+    // when you do not hold the design.
+    <ReadOnlyProvider readOnly={!editable}>
     <div className="min-h-screen bg-[var(--color-bg-primary)]">
       {/* Header */}
       <header className="border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
@@ -207,9 +213,10 @@ function App() {
 
       {/* Main content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {/* Inputs go grey without the checkout. Running an optimisation or a
-            simulation stays live -- those read the config, they do not change it. */}
-        <ReadOnlyProvider readOnly={!editable}>
+        {/* Inputs go grey without the checkout. Reading the design stays live:
+            Forward mode, the plotter and the charts never write it back. The
+            optimizer layers DO write their result into the config (see
+            backend/routers/optimizer.py), so those runs are gated too. */}
         {!isConnected && isConnected !== null && (
           <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400">
             <div className="flex items-center gap-3">
@@ -339,7 +346,6 @@ function App() {
             </div>
           </div>
         </div>
-        </ReadOnlyProvider>
       </main>
 
       {/* Footer */}
@@ -351,6 +357,7 @@ function App() {
         </div>
       </footer>
     </div>
+    </ReadOnlyProvider>
   );
 }
 

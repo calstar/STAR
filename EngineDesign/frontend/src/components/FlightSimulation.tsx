@@ -25,6 +25,7 @@ import {
   type TimeSeriesData,
   type TimeSeriesSummary,
 } from '../api/client';
+import { useReadOnly } from '@stardesign-ui';
 import {
   loadTimeSeriesResults,
   TIMESERIES_UPDATED_EVENT,
@@ -211,6 +212,9 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
   const [targetApogeeM, setTargetApogeeM] = useState('3048');
   const [apogeeToleranceM, setApogeeToleranceM] = useState('15');
   const [isLoading, setIsLoading] = useState(false);
+  // Only Save Configuration writes the design (updateConfig); running the
+  // flight sim just reads it, so the Run button stays live while read only.
+  const readOnly = useReadOnly();
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastPropellantConfigKey = useRef<string | null>(null);
@@ -775,7 +779,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
         <div className="flex justify-end gap-3 mb-4">
           <button
             onClick={handleSaveConfig}
-            disabled={isSaving}
+            disabled={isSaving || readOnly}
             className="px-4 py-2 bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-bg-hover)] text-[var(--color-text-primary)] border border-[var(--color-border)] rounded-lg disabled:opacity-50 transition-colors flex items-center gap-2"
           >
             {isSaving ? (

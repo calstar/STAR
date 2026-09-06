@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getInjectorSchema } from '../api/client';
 import { useConfigChanged } from '../lib/configBus';
+import { useReadOnly } from '@stardesign-ui';
 import type { DesignRequirements as DesignRequirementsType, FrozenParameters } from '../api/client';
 
 /** Default Design Requirements used until API/config loads. */
@@ -56,6 +57,7 @@ export function DesignRequirements({
   onRequirementsChange,
   onSave,
 }: DesignRequirementsProps) {
+  const readOnly = useReadOnly();
   // Which injector-specific frozen fields to show — fetched from the backend authority so the UI
   // matches the live injector type (no hardcoded pintle assumptions).
   const [injectorFrozenFields, setInjectorFrozenFields] = useState<string[]>([]);
@@ -107,7 +109,12 @@ export function DesignRequirements({
   };
 
   return (
-    <div className="space-y-6">
+    // A <fieldset disabled> rather than 33 individual `disabled` props. The
+    // browser disables every descendant control natively, so a field added here
+    // later cannot quietly escape the checkout -- which is the failure mode this
+    // panel had. Everything in it writes config.design_requirements via
+    // POST /api/optimizer/design-requirements.
+    <fieldset disabled={readOnly} className="space-y-6 min-w-0">
       {/* Header */}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
         <h2 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">Design Requirements</h2>
@@ -787,7 +794,7 @@ export function DesignRequirements({
           </div>
         </div>
       </div>
-    </div>
+    </fieldset>
   );
 }
 

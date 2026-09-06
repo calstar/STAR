@@ -29,39 +29,11 @@ import * as api from '../api/documents';
 import type { DocMeta, DocRef, MicroVersion, ReleaseVersion } from '../api/documents';
 import { designApi, keyOf, refOf } from '../api/documents';
 import { btn, dangerBtn, ghostBtn, primaryBtn, relativeTime } from '../lib/ui';
+import { readActive, writeActive } from '../lib/activeDesign';
 import { ChangeModal, CheckoutControl, useCheckout } from '@stardesign-ui';
 import { Modal } from './ui';
 
-// v2 because the remembered design is now (owner, id): a shared design is not
-// identified by its id alone. A v1 value is a bare id, which was always one of
-// your own, so it migrates to {owner: null}.
-const ACTIVE_KEY = 'engine-design.activeDoc.v2';
-const LEGACY_ACTIVE_KEY = 'engine-design.activeDoc.v1';
 const AUTOSAVE_POLL_MS = 4000;
-
-function readActive(): DocRef | null {
-  try {
-    const raw = localStorage.getItem(ACTIVE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as DocRef;
-      if (parsed && typeof parsed.id === 'string') return parsed;
-    }
-    const legacy = localStorage.getItem(LEGACY_ACTIVE_KEY);
-    return legacy ? { id: legacy, owner: null } : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeActive(ref: DocRef | null): void {
-  try {
-    if (ref) localStorage.setItem(ACTIVE_KEY, JSON.stringify({ id: ref.id, owner: ref.owner ?? null }));
-    else localStorage.removeItem(ACTIVE_KEY);
-    localStorage.removeItem(LEGACY_ACTIVE_KEY);
-  } catch {
-    /* private mode / storage disabled -- the bar still works, it just forgets */
-  }
-}
 
 /** The one at-a-time dialog the bar drives: a confirmation (optionally
  *  destructive) or a plain message. Replaces window.confirm / alert so every
@@ -122,6 +94,10 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
   const [showChange, setShowChange] = useState(false);
   // Name of a design that was unshared out from under us, or null.
   const [unshared, setUnshared] = useState<string | null>(null);
+  // Set when a save came back 423: the checkout is gone and we have dropped to
+  // read only. Said out loud, because the alternative is the user carrying on
+  // typing into a design that is no longer theirs to change.
+  const [lapsed, setLapsed] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [micro, setMicro] = useState<MicroVersion[]>([]);
   const [releases, setReleases] = useState<ReleaseVersion[]>([]);
@@ -209,6 +185,22 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
     }
   }, [select]);
 
+  // Everything the autosave tick needs that is NOT stable across renders.
+  //
+  // `useCheckout` returns a fresh object literal every render, so listing
+  // `checkout` in the effect's dependencies tore down and re-armed the interval
+  // on every render -- and a 4s timer re-armed more often than every 4s can
+  // never fire. Today the bar re-renders rarely enough that it did still fire,
+  // so this is hardening rather than a fix for an observed failure: it makes
+  // autosave independent of how often anything above it happens to render. The
+  // interval keys on the open design alone and reads the moving parts here.
+  const live = useRef({ checkout, active, reloadAndFallBack });
+  live.current = { checkout, active, reloadAndFallBack };
+
+  // `openDoc` for the bootstrap below, without making it a dependency.
+  const openDocRef = useRef(openDoc);
+  openDocRef.current = openDoc;
+
   // Mount: list documents; seed one from the current (default) config if none.
   useEffect(() => {
     let cancelled = false;
@@ -243,7 +235,7 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
         const pick = refOf(match ?? docs.find((d) => d.mine) ?? docs[0]);
         setActiveRef(pick);
         writeActive(pick);
-        void openDoc(pick);
+        void openDocRef.current(pick);
       } catch {
         loadedKey.current = null; // backend/history unavailable
       }
@@ -251,7 +243,12 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
     return () => {
       cancelled = true;
     };
-  }, [openDoc]);
+    // Mount only. This bootstrap pushes the stored design into the backend
+    // session, so re-running it would revert whatever you had just edited --
+    // and since it ends in `onRestore`, a `[openDoc]` dependency turns that
+    // into a self-feeding loop the moment `onRestore` is not memoised
+    // upstream. Keeping it at [] means that can no longer happen here.
+  }, []);
 
   // Autosave: poll the authoritative config and write the working copy on change.
   useEffect(() => {
@@ -261,7 +258,7 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
     const tick = async () => {
       // No checkout, no autosave. The inputs are read-only in that state
       // anyway; this is the belt to that pair of braces.
-      if (stopped || loadedKey.current !== key || !checkout.held) return;
+      if (stopped || loadedKey.current !== key || !live.current.checkout.held) return;
       const config = await fetchConfig();
       if (!config) return;
       const serialized = JSON.stringify(config);
@@ -277,15 +274,18 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
         // your own designs.
         if (e instanceof api.ApiError && e.status === 403) {
           stopped = true;
-          setUnshared(active?.name ?? 'This design');
-          void reloadAndFallBack();
+          setUnshared(live.current.active?.name ?? 'This design');
+          void live.current.reloadAndFallBack();
           return;
         }
         if (e instanceof api.ApiError && e.status === 423) {
-          // The checkout lapsed and somebody else took it. Drop to read-only
-          // rather than retry into a void -- we still have access, we are just
-          // not the editor any more.
-          checkout.lost();
+          // The checkout is gone: it lapsed after `lock_ttl` without a save (a
+          // long read counts as inactivity), or somebody else has taken it.
+          // Drop to read-only rather than retry into a void -- and SAY SO. This
+          // used to be silent, which is indistinguishable from "my edits
+          // stopped saving for no reason".
+          live.current.checkout.lost();
+          setLapsed(live.current.active?.name ?? 'This design');
           return;
         }
         /* otherwise keep the old lastSaved; retry next tick */
@@ -296,7 +296,9 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
       stopped = true;
       clearInterval(id);
     };
-  }, [activeRef, active, reloadAndFallBack, checkout]);
+    // Deliberately only `activeRef`: see `live` above. Anything else here
+    // re-arms the interval on every render and the tick never runs.
+  }, [activeRef]);
 
   // Best-effort flush on tab close, between the throttled microversions.
   useEffect(() => {
@@ -584,6 +586,23 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
           "{unshared}" was unshared from you, so it has stopped saving and you have been
           moved to one of your own designs. Nothing was deleted - you can still take a copy
           of it from <b>Change → View only</b>.
+        </p>
+      </Modal>
+
+      {/* The checkout went away mid-edit. Without this the design just quietly
+          stops saving, which is exactly the failure the checkout exists to
+          prevent people from experiencing. */}
+      <Modal
+        open={lapsed !== null}
+        onClose={() => setLapsed(null)}
+        title="Your checkout has ended"
+        footer={<button onClick={() => setLapsed(null)} className={primaryBtn}>OK</button>}
+      >
+        <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
+          "{lapsed}" is no longer checked out to you, so it has stopped saving and the
+          inputs are read only. A checkout ends on its own after a while without a save,
+          and someone else may have taken it since. Press <b>Take</b> to pick it back up -
+          that reloads the design first, so you will see any changes made in the meantime.
         </p>
       </Modal>
 
