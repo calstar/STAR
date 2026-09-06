@@ -276,14 +276,29 @@ docker compose --profile tunnel up -d
 docker compose ps
 ```
 
-Because ingress is entirely through the tunnel, drop the host's published web
-ports: remove the `80:80` / `443:443` lines from the `caddy` service (or block
-them at the firewall — §1 already does). With SSH also on the tunnel, **nothing
-inbound needs to be open.**
+Because ingress is entirely through the tunnel, the host's published web ports
+should not be reachable — §1's firewall already blocks them, which is the option
+to prefer: editing the `80:80` / `443:443` lines out of the `caddy` service
+leaves a local modification to a tracked file, and the auto-deploy below then
+refuses to sync the checkout (it won't clobber your edit). With SSH also on the
+tunnel, **nothing inbound needs to be open.**
 
 The stack restarts on boot on its own: every service uses
 `restart: unless-stopped` and Docker is `enable`d (§4), so a reboot brings the
 apps and the tunnel back up automatically.
+
+### 6a. Turn on auto-deploy
+
+`bootstrap.sh` does this for you; by hand it is two commands. After it, a PR
+merged to `main` reaches this box on its own within a few minutes — see
+[`README.md`](README.md#auto-deploy-on-merge-to-main) for what a tick does.
+
+```bash
+sudo cp deploy/apps/systemd/star-auto-update.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now star-auto-update.timer
+journalctl -u star-auto-update -f          # watch a tick
+```
 
 ---
 

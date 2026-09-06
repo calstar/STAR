@@ -1,0 +1,12 @@
+[Unit]
+Description=Check for newly published STAR images every few minutes
+
+[Timer]
+# Offset from the apps box by a minute so the two don't hit the unauthenticated
+# GitHub API rate limit together if they ever share an egress IP.
+OnBootSec=4min
+OnUnitActiveSec=5min
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

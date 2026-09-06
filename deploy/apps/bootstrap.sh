@@ -193,12 +193,37 @@ if [[ "$LAUNCH" -eq 1 ]] && ! grep -qE '^CLOUDFLARE_TUNNEL_TOKEN=.+' "$CLONE_DIR
   LAUNCH=0
 fi
 
+# ── §6a  Auto-deploy timer ───────────────────────────────────────────────────
+# Polls for the images CI published for $BRANCH and redeploys, so a merged PR
+# lands here without an SSH session. Pull-based because this box is
+# outbound-only. See deploy/apps/README.md; the worker is deploy/auto-update.sh.
+#
+# The units are installed even when the stack can't launch yet (an unfinished
+# .env), so a box configured by hand afterwards only has to enable the timer --
+# the "Almost there" instructions below say so. Enabling it against a
+# half-configured stack would just fail every five minutes.
+say "§6a Auto-deploy timer (star-auto-update)"
+install -m 644 "$CLONE_DIR"/deploy/apps/systemd/star-auto-update.service \
+               "$CLONE_DIR"/deploy/apps/systemd/star-auto-update.timer \
+               /etc/systemd/system/
+# The units hardcode /opt/STAR; point them at CLONE_DIR if it differs.
+if [[ "$CLONE_DIR" != "/opt/STAR" ]]; then
+  cat >/etc/star-auto-update.conf <<EOF
+REPO_DIR=$CLONE_DIR
+COMPOSE_DIR=$CLONE_DIR
+EOF
+  sed -i "s#^ExecStart=.*#ExecStart=$CLONE_DIR/deploy/auto-update.sh#" \
+    /etc/systemd/system/star-auto-update.service
+fi
+systemctl daemon-reload
+
 # ── §6  Launch ───────────────────────────────────────────────────────────────
 if [[ "$LAUNCH" -eq 1 ]]; then
   say "§6 Launching the stack (pull + up, tunnel profile)"
   ( cd "$CLONE_DIR" && docker compose --profile tunnel pull \
       && docker compose --profile tunnel up -d && docker compose ps )
-  say "Done. Stack is up and behind the tunnel."
+  systemctl enable --now star-auto-update.timer
+  say "Done. Stack is up behind the tunnel, auto-deploying from $BRANCH."
 else
   cat <<EOF
 
@@ -212,6 +237,8 @@ $(say "Almost there — finish the .env, then launch")
 2. Launch:
      cd $CLONE_DIR && docker compose --profile tunnel pull \\
        && docker compose --profile tunnel up -d
+3. Turn on auto-deploy (the units are already installed):
+     sudo systemctl enable --now star-auto-update.timer
 EOF
 fi
 
