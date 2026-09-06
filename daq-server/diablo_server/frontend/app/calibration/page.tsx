@@ -121,26 +121,52 @@ export default function CalibrationPage() {
     const saved = Number(window.localStorage.getItem('calibration.sidebarWidth'));
     return Number.isFinite(saved) && saved >= SIDEBAR_MIN && saved <= SIDEBAR_MAX ? saved : 320;
   });
-  const startResize = useCallback((e: React.MouseEvent) => {
+  /**
+   * Drag-to-resize on pointer events, so it works with a finger as well as a mouse.
+   *
+   * This was mouse-only, and it parked `user-select: none` on document.body for the duration of
+   * the drag, undone only by mouseup. On iOS the mouse events are synthesised from touches and a
+   * touch that turns into a scroll never delivers the mouseup — so the body kept user-select:none
+   * for the rest of the page's life, and since iOS only places a caret where selection is allowed,
+   * every input then took several taps to focus. pointerup and pointercancel both restore, and
+   * setPointerCapture guarantees this element receives them wherever the finger ends up.
+   */
+  const startResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     const startX = e.clientX;
     const startW = sidebarWidth;
-    const onMove = (ev: MouseEvent) => {
+    const el = e.currentTarget;
+    const pointerId = e.pointerId;
+    try { el.setPointerCapture(pointerId); } catch { /* not fatal — fall back to window listeners */ }
+
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
       const next = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startW + (ev.clientX - startX)));
       setSidebarWidth(next);
     };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+    const release = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', release);
+      window.removeEventListener('pointercancel', release);
+      try { el.releasePointerCapture(pointerId); } catch { /* already released */ }
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       setSidebarWidth((w) => { try { window.localStorage.setItem('calibration.sidebarWidth', String(w)); } catch { /* ignore */ } return w; });
     };
+
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
   }, [sidebarWidth]);
+
+  // Whatever happens to a drag, the page must not be left unselectable.
+  useEffect(() => () => {
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }, []);
 
   // Full config (for physics params). Boards keyed by config key (e.g. "pt_board").
   const [cfgBoards, setCfgBoards] = useState<Record<string, any>>({});
@@ -458,7 +484,7 @@ export default function CalibrationPage() {
 
       {/* Drag handle — widen/narrow the sidebar */}
       <div
-        onMouseDown={startResize}
+        onPointerDown={startResize}
         title="Drag to resize"
         className="w-1 flex-shrink-0 cursor-col-resize bg-gray-800 hover:bg-blue-500 active:bg-blue-500 transition-colors"
       />
@@ -532,6 +558,12 @@ export default function CalibrationPage() {
                   />
                   <button
                     onClick={handleCaptureSelected}
+                    // With the soft keyboard up from the field beside it, the first tap on this
+                    // button is spent dismissing the keyboard and never arrives as a click — on a
+                    // tablet that reads as the button ignoring you until the second or third press.
+                    // Preventing the default on press keeps focus (and the keyboard) where it is,
+                    // so the tap lands the first time and the next reading can be typed straight in.
+                    onPointerDown={(e) => e.preventDefault()}
                     disabled={!refInput || !sessionActive}
                     title={sessionActive ? undefined : 'Start a session to calibrate — there is no live stream to capture.'}
                     className="px-6 py-2.5 text-sm font-bold rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-white"
