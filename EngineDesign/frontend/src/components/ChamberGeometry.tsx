@@ -14,6 +14,7 @@ import { getChamberGeometry } from '../api/client';
 import type { ChamberGeometryResponse, EngineConfig } from '../api/client';
 import { ChamberContourPlot } from './ChamberContourPlot';
 import { ChamberThermalGraphic } from './ChamberThermalGraphic';
+import { useViewState } from '../lib/viewState';
 
 interface ChamberGeometryProps {
   config: EngineConfig | null;
@@ -27,7 +28,7 @@ export function ChamberGeometry({ config }: ChamberGeometryProps) {
   const [geometry, setGeometry] = useState<ChamberGeometryResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showLowerHalf, setShowLowerHalf] = useState(true);
+  const [showLowerHalf, setShowLowerHalf] = useViewState('chamberGeometry.lowerHalf', true);
 
   // Fetch geometry when component mounts or config changes
   const fetchGeometry = useCallback(async () => {

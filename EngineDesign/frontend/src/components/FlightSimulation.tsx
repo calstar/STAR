@@ -27,6 +27,7 @@ import {
 } from '../api/client';
 import { useReadOnly } from '@stardesign-ui';
 import { useDesignSlice } from '../lib/designState';
+import { useViewState } from '../lib/viewState';
 import {
   loadTimeSeriesResults,
   TIMESERIES_UPDATED_EVENT,
@@ -58,7 +59,7 @@ function CollapsibleSection({
   children: React.ReactNode;
   defaultExpanded?: boolean;
 }) {
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const [isExpanded, setIsExpanded] = useViewState(`flightSection.${title}`, defaultExpanded);
 
   return (
     <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">

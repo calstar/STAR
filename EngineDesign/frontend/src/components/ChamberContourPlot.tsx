@@ -11,6 +11,7 @@ import {
   ReferenceLine,
 } from 'recharts';
 import type { ChamberGeometryResponse } from '../api/client';
+import { useViewState } from '../lib/viewState';
 
 // Convert m to mm for display
 const M_TO_MM = 1000;
@@ -386,7 +387,7 @@ export function ChamberContourPlot({
   showCfBadge = true,
   className = ""
 }: ChamberContourPlotProps) {
-  const [showLowerHalf, setShowLowerHalf] = useState(true);
+  const [showLowerHalf, setShowLowerHalf] = useViewState('chamberContour.lowerHalf', true);
   const [ceaUnit, setCeaUnit] = useState<'mm' | 'inch'>('mm');
   const ceaContourContainerRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState({ width: 1000, height: 350 });

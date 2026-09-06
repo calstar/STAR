@@ -10,9 +10,22 @@
  *
  * Per browser, per person. It is not synced anywhere and nothing depends on it
  * being present -- every read falls back to the caller's initial value.
+ *
+ * Deliberately NOT remembered, though each is visual:
+ *
+ *   - ConfigEditor's search box. A filter restored from last week opens the tab
+ *     showing three fields instead of forty, which reads as "my config lost
+ *     most of itself" rather than "there is a filter on".
+ *   - Modal open/closed (history, release, the Change dialog). Reopening a
+ *     dialog on load is a nuisance, not a convenience.
+ *   - DemoLayerCard's expansion. It is driven by run status -- a layer expands
+ *     itself when it starts -- so a stored flag would fight the app.
+ *   - HeatFluxProfileChart's selected time slices. They are indices into a
+ *     result set that changes with every run; stale ones point at nothing.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 
 const KEY = 'engine-design.view.v1';
 
@@ -45,7 +58,10 @@ function writeStore(store: Store): void {
  * Use it for anything purely visual. Anything the user *authored* belongs in
  * `useDesignSlice` instead, or it will not reach the people they share with.
  */
-export function useViewState<T>(name: string, initial: T): [T, (value: T) => void] {
+export function useViewState<T>(
+  name: string,
+  initial: T,
+): [T, Dispatch<SetStateAction<T>>] {
   const [value, setValue] = useState<T>(() => {
     const stored = readStore()[name];
     return stored === undefined ? initial : (stored as T);
@@ -62,6 +78,7 @@ export function useViewState<T>(name: string, initial: T): [T, (value: T) => voi
     writeStore({ ...readStore(), [name]: value });
   }, [name, value]);
 
-  const set = useCallback((v: T) => setValue(v), []);
-  return [value, set];
+  // `setValue` is returned as-is so this is a drop-in for `useState`, updater
+  // form included -- several call sites toggle with `set(s => !s)`.
+  return [value, setValue];
 }

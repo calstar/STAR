@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo } from 'react';
 import { useReadOnly } from '@stardesign-ui';
 import { updateConfig } from '../api/client';
 import type { EngineConfig } from '../api/client';
+import { useViewState } from '../lib/viewState';
 
 interface ConfigEditorProps {
   config: EngineConfig | null;
@@ -313,7 +314,9 @@ interface SubSectionProps {
 }
 
 function SubSection({ title, data, path, onEdit, defaultExpanded = true }: SubSectionProps) {
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  // Keyed on the path: one remembered flag per subsection, not one shared by
+  // all of them, or opening `injector` would open every other section too.
+  const [isExpanded, setIsExpanded] = useViewState(`configSub.${path.join('.')}`, defaultExpanded);
 
   const renderField = (key: string, value: unknown) => {
     const fieldPath = [...path, key];
@@ -385,7 +388,7 @@ interface SectionCardProps {
 }
 
 function SectionCard({ sectionKey, data, onEdit }: SectionCardProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useViewState(`configSection.${sectionKey}`, false);
   const meta = SECTION_META[sectionKey] || {
     label: sectionKey.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
     icon: '📄',

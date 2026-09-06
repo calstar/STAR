@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useViewState } from '../../lib/viewState';
 
 interface Entry {
   sym: string;
@@ -103,7 +103,7 @@ const GROUPS: { title: string; entries: Entry[] }[] = [
  * this is the one place that defines every parameter and which direction is "better".
  */
 export function StabilityGlossary() {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useViewState('stability.glossary', false);
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden">

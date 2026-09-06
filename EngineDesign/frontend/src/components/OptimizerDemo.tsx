@@ -35,6 +35,7 @@ import {
 } from '../api/client';
 import { useReadOnly } from '@stardesign-ui';
 import { ChamberContourPlot } from './ChamberContourPlot';
+import { useViewState } from '../lib/viewState';
 
 interface OptimizerDemoProps {
   config: EngineConfig | null;
@@ -157,7 +158,7 @@ export function OptimizerDemo({ config }: OptimizerDemoProps) {
     copv_free_volume_L: 4.5,
   });
   const [requirementsSaved, setRequirementsSaved] = useState(false);
-  const [showRequirementsForm, setShowRequirementsForm] = useState(true);
+  const [showRequirementsForm, setShowRequirementsForm] = useViewState('demo.requirementsForm', true);
 
   // Layer progress and results
   const [layer1Progress, setLayer1Progress] = useState(0);

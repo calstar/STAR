@@ -24,6 +24,7 @@ import {
 } from '../api/client';
 import { useDesignSlice } from '../lib/designState';
 import { useReadOnly } from '@stardesign-ui';
+import { useViewState } from '../lib/viewState';
 
 interface Layer4OptimizationProps {
   requirements: DesignRequirements;
@@ -163,7 +164,7 @@ function CollapsibleSection({
   children: React.ReactNode;
   defaultExpanded?: boolean;
 }) {
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const [isExpanded, setIsExpanded] = useViewState(`layer4Section.${title}`, defaultExpanded);
 
   return (
     <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">

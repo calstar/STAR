@@ -29,6 +29,7 @@ import { useReadOnly } from '@stardesign-ui';
 import { useDesignSlice } from '../lib/designState';
 import { ChamberContourPlot } from './ChamberContourPlot';
 import { stableStringify } from '../utils/stableStringify';
+import { useViewState } from '../lib/viewState';
 
 /** Fill missing Design Requirements keys only; never overwrite user-saved values. */
 function withDefaults(user: Record<string, unknown>, defaults: Record<string, unknown>): Record<string, unknown> {
@@ -817,10 +818,10 @@ export function Layer1Optimization({
     objective: number;
     best_objective: number;
   }>>([]);
-  const [showParameterPlots, setShowParameterPlots] = useState(false);
-  const [showInjectorPressures, setShowInjectorPressures] = useState(false);
-  const [showSolverInputsEcho, setShowSolverInputsEcho] = useState(false);
-  const [momentumRAuditOpen, setMomentumRAuditOpen] = useState(false);
+  const [showParameterPlots, setShowParameterPlots] = useViewState('layer1.parameterPlots', false);
+  const [showInjectorPressures, setShowInjectorPressures] = useViewState('layer1.injectorPressures', false);
+  const [showSolverInputsEcho, setShowSolverInputsEcho] = useViewState('layer1.solverInputs', false);
+  const [momentumRAuditOpen, setMomentumRAuditOpen] = useViewState('layer1.momentumAudit', false);
   const [chamberGeometry, setChamberGeometry] = useState<ChamberGeometryResponse | null>(null);
   const [eventSourceRef, setEventSourceRef] = useState<EventSource | null>(null);
   const [activeInjectorType, setActiveInjectorType] = useState<string>('unknown');

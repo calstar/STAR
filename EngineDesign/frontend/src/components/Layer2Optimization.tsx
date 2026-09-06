@@ -28,6 +28,7 @@ import type {
 } from '../api/client';
 import { useReadOnly } from '@stardesign-ui';
 import { useDesignSlice } from '../lib/designState';
+import { useViewState } from '../lib/viewState';
 
 interface Layer2OptimizationProps {
     requirements: DesignRequirements;
@@ -118,7 +119,7 @@ export function Layer2Optimization({
   // different answers from the same design because one of them quietly had a
   // different iteration budget.
   useDesignSlice('layer2Settings', { settings: [settings, setSettings] });
-    const [showAdvanced, setShowAdvanced] = useState(false);
+    const [showAdvanced, setShowAdvanced] = useViewState('layer2.advanced', false);
 
     const [isRunning, setIsRunning] = useState(false);
     const [isStopping, setIsStopping] = useState(false);

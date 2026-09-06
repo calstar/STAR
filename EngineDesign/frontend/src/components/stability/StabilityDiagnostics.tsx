@@ -1,6 +1,6 @@
-import { useState } from 'react';
 import type { StabilityRichPayload } from './types';
 import { STABLE, UNSTABLE, MARGINAL, MUTED } from './shared';
+import { useViewState } from '../../lib/viewState';
 
 const STATE_COLOR: Record<string, string> = {
   stable: STABLE,
@@ -20,7 +20,7 @@ const SEV_COLOR: Record<string, string> = {
  * the same numbers the cards below render (plan §C).
  */
 export function StabilityDiagnostics({ data }: { data: StabilityRichPayload }) {
-  const [showAssumptions, setShowAssumptions] = useState(false);
+  const [showAssumptions, setShowAssumptions] = useViewState('stability.assumptions', false);
   const d = data.diagnostics;
   if (!d) return null;
 
