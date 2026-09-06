@@ -17,15 +17,16 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
 
-#include "calibration/PTCalibration.hpp"
 #include "config/Config.hpp"
 
 namespace {
@@ -126,8 +127,7 @@ using ConfigPacket = std::tuple<uint8_t, std::vector<uint8_t>, std::string, uint
 // abort thresholds, enable flags) go live without restarting the service or a session.
 // Returns an empty vector on any failure (missing/truncated file, no designated survivor);
 // the caller keeps the last-good set rather than dropping board config for a cycle.
-std::vector<ConfigPacket> buildPackets(const std::string& config_path,
-                                       fsw::calibration::PTCalibrationManager& pt_cal) {
+std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
     const fsw::config::Config cfg = fsw::config::load(config_path);
 
     // Map typed boards -> local BoardInfo (expand active_connectors, synthesize ip like the old
@@ -180,15 +180,97 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path,
     }
     parseVentAbortFromCsv(csv_path, vent_map, abort_map);
 
-    const std::map<std::string, int>* roles_ptr = cfg.sensor_roles_for("sensor_roles_pt_board");
-    const std::map<std::string, int> sensor_roles =
-        roles_ptr ? *roles_ptr : std::map<std::string, int>{};
     const std::map<std::string, double>& abort_pts = cfg.abort_pts;
 
     std::map<std::string, std::tuple<int, int, bool>> actuator_roles;
     for (const auto& [name, r] : cfg.actuator_roles)
         if (r.channel >= 1 && r.channel <= 255)
             actuator_roles[name] = {r.channel, r.board_id > 0 ? r.board_id : 12, r.is_no};
+
+    // Autonomous overpressure abort thresholds: invert each abort PSI to a raw ADC code through the
+    // SAME per-sensor model the calibration service streams to the GUI, so a board trips at the ADC
+    // that matches the pressure the operator sees. This used to invert a factory
+    // PTCalibrationManager that the physics-or-nothing deploy does not ship (and that deliberately
+    // excludes the operator cubic) — every lookup returned null, each abort sensor was silently
+    // skipped, and the ACTUATOR_CONFIG packet carried zero thresholds: the hardware overpressure
+    // net was simply absent. A threshold that cannot be computed is now logged loudly and omitted
+    // (no board trip for that one sensor) rather than shipped wrong or dropped in silence.
+    //
+    // Only ratiometric-physics (0-5 V) inversion is implemented: adc = psi/full_scale * 2^31, the
+    // exact inverse of the calibration service's convert_ratiometric_pt_to_pressure. A sensor whose
+    // model is cubic/robust/blend, or that sits on a 4-20 mA board, is refused here (set its
+    // calibration_model to "physics" for a board trip, or it has none) — inverting the operator
+    // cubic or the current-loop curve would duplicate that math and is left as a follow-up. Both
+    // shipped rigs' abort PTs are ratiometric physics.
+    std::vector<std::tuple<uint32_t, uint8_t, uint32_t>> abort_pt_list;
+    std::set<std::string> abort_warnings;
+    for (const auto& [sensor_name, threshold_psi] : abort_pts) {
+        const std::string tag = "[ConfigBroadcast] abort_pts \"" + sensor_name + "\": ";
+        bool resolved_role = false;
+        for (const auto& b : cfg.boards) {
+            if (b.type != "PT" || !b.enabled || b.board_id <= 0)
+                continue;
+            const std::string board_key =
+                b.section.rfind("boards.", 0) == 0 ? b.section.substr(7) : b.section;
+            const auto* roles = cfg.sensor_roles_for("sensor_roles_" + board_key);
+            if (roles == nullptr)
+                continue;
+            auto rit = roles->find(sensor_name);
+            if (rit == roles->end())
+                continue;  // not on this board — keep looking
+            resolved_role = true;
+            const int channel = rit->second;
+            if (channel < 1 || channel > 255) {
+                abort_warnings.insert(tag + "channel out of range — NO board overpressure trip");
+                break;
+            }
+            // Interface + model + full-scale resolved exactly as calibration_main does, so the trip
+            // ADC lands on the same curve the operator reads.
+            const bool is_loop = b.has_hp_pt_keys || b.pt_type == "4-20 mA absolute";
+            std::string model = is_loop ? "physics" : "cubic";  // interface-aware default
+            if (const auto* models = cfg.calibration_model_for("calibration_model_" + board_key)) {
+                auto mit = models->find(sensor_name);
+                if (mit != models->end())
+                    model = mit->second;
+            }
+            double full_scale = is_loop ? b.hp_pt_full_scale_psi : 1000.0;
+            if (const auto* fss = cfg.full_scale_for("calibration_full_scale_" + board_key)) {
+                auto fit = fss->find(sensor_name);
+                if (fit != fss->end() && fit->second > 0.0)
+                    full_scale = fit->second;
+            }
+
+            if (model != "physics" || is_loop) {
+                abort_warnings.insert(
+                    tag + "model \"" + model + (is_loop ? " (4-20 mA)" : "") +
+                    "\" cannot be inverted for a board trip — set "
+                    "calibration_model = \"physics\", or this sensor has NO trip");
+                break;
+            }
+            if (!(full_scale > 0.0) || !(threshold_psi > 0.0)) {
+                abort_warnings.insert(tag + "non-positive full_scale/threshold — NO board trip");
+                break;
+            }
+            constexpr double ADC_MAX = 2147483648.0;  // 2^31
+            double adc = std::clamp((threshold_psi / full_scale) * ADC_MAX, 0.0, ADC_MAX - 1.0);
+            abort_pt_list.push_back({ipToU32Le(b.ip), static_cast<uint8_t>(channel),
+                                     static_cast<uint32_t>(llround(adc))});
+            break;  // handled on its owning board
+        }
+        if (!resolved_role)
+            abort_warnings.insert(tag + "no PT sensor_role declares this name — NO board trip");
+    }
+    // Log each distinct abort-threshold problem once while it persists, and note recovery — never
+    // spam the every-cycle rebuild. Dropping resolved entries lets a re-break warn again.
+    {
+        static std::set<std::string> s_last_abort_warnings;
+        for (const auto& w : abort_warnings)
+            if (s_last_abort_warnings.count(w) == 0)
+                std::cerr << "⚠️  " << w << std::endl;
+        if (abort_warnings.empty() && !s_last_abort_warnings.empty())
+            std::cout << "[ConfigBroadcast] all abort_pts thresholds resolved" << std::endl;
+        s_last_abort_warnings = abort_warnings;
+    }
 
     auto build_actuator_config = [&](int is_abort_controller,
                                      int enable_serial) -> std::vector<uint8_t> {
@@ -199,31 +281,6 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path,
             uint8_t vent = static_cast<uint8_t>(vent_map.count(name) ? vent_map[name] : 0);
             uint8_t abort = static_cast<uint8_t>(abort_map.count(name) ? abort_map[name] : 0);
             abort_actuators.push_back({ipToU32Le(ip), static_cast<uint8_t>(ch), vent, abort});
-        }
-
-        std::string pt_board_ip;
-        for (const auto& b : boards) {
-            if (b.enabled && b.type == "PT") {
-                pt_board_ip = b.ip;
-                break;
-            }
-        }
-
-        std::vector<std::tuple<uint32_t, uint8_t, uint32_t>> abort_pt_list;
-        for (const auto& [sensor_name, threshold_psi] : abort_pts) {
-            auto it = sensor_roles.find(sensor_name);
-            if (it == sensor_roles.end())
-                continue;
-            int sensor_id = it->second;
-            const auto* coeffs = pt_cal.get_calibration(static_cast<uint8_t>(sensor_id));
-            if (!coeffs)
-                continue;
-            auto adc_opt = coeffs->invert_to_adc(threshold_psi);
-            if (!adc_opt)
-                continue;
-            if (!pt_board_ip.empty())
-                abort_pt_list.push_back({ipToU32Le(pt_board_ip), static_cast<uint8_t>(sensor_id),
-                                         static_cast<uint32_t>(*adc_opt & 0xFFFFFFFFu)});
         }
 
         size_t N = std::min(abort_actuators.size(), size_t(255));
@@ -361,15 +418,9 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
 
-    // Calibration is loaded once (board edits don't change it). Packets are rebuilt from
-    // the live config every cycle (below) so board changes apply with no restart / no session.
-    fsw::calibration::PTCalibrationManager::set_default_paths(
-        "scripts/calibration/calibrations",
-        "external/DiabloAvionics/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv");
-    fsw::calibration::PTCalibrationManager pt_cal;
-    pt_cal.load_calibration();
-
-    auto packets = buildPackets(config_path, pt_cal);
+    // Packets (including abort thresholds) are rebuilt from the live config every cycle (below) so
+    // board and calibration edits apply with no restart / no session.
+    auto packets = buildPackets(config_path);
     if (packets.empty())
         std::cerr << "[ConfigBroadcast] No packets from config yet (no designated_survivor?); "
                      "retrying each cycle"
@@ -400,7 +451,7 @@ int main(int argc, char* argv[]) {
     while (g_running) {
         // Re-read config.toml and rebuild each cycle so board edits go live. Keep the
         // last-good set if a read is empty/mid-write (buildPackets returns {} on failure).
-        auto fresh = buildPackets(config_path, pt_cal);
+        auto fresh = buildPackets(config_path);
         if (!fresh.empty())
             packets.swap(fresh);
 
@@ -426,9 +477,10 @@ int main(int argc, char* argv[]) {
                 tx_fail[dest_key]++;
                 int e = errno;
                 if (tx_fail[dest_key] == 1 || tx_fail[dest_key] % 10 == 0) {
-                    std::cerr << "[ConfigBroadcast] ✗ sendto(" << dest_key << ") type=" << (int)pkt_type
-                              << " len=" << pkt.size() << " returned " << sent << " errno=" << e
-                              << " (" << std::strerror(e) << ")" << std::endl;
+                    std::cerr << "[ConfigBroadcast] ✗ sendto(" << dest_key
+                              << ") type=" << (int)pkt_type << " len=" << pkt.size() << " returned "
+                              << sent << " errno=" << e << " (" << std::strerror(e) << ")"
+                              << std::endl;
                 }
             }
         }
@@ -439,8 +491,8 @@ int main(int argc, char* argv[]) {
                       << packets.size() << " dests this cycle)" << std::endl;
             for (const auto& [dkey, n] : tx_ok) {
                 std::cout << "   → " << dkey << "  type=" << (int)tx_type[dkey]
-                          << " len=" << tx_bytes[dkey] << "  ok=" << n
-                          << " fail=" << tx_fail[dkey] << std::endl;
+                          << " len=" << tx_bytes[dkey] << "  ok=" << n << " fail=" << tx_fail[dkey]
+                          << std::endl;
             }
             for (const auto& [dkey, n] : tx_fail)
                 if (tx_ok.find(dkey) == tx_ok.end())
