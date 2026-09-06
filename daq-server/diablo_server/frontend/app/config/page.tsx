@@ -398,6 +398,9 @@ export default function ConfigPage() {
   // (null until first load, so we never flag "dirty" before anything has loaded).
   const savedConfigRef = useRef<string | null>(null);
   const savedCsvRef = useRef<string | null>(null);
+  // The state name as it was when a name field gained focus, so on blur we can rename that exact
+  // column across the CSVs (the per-keystroke value would rename on every character).
+  const renameOrigRef = useRef<string | null>(null);
   // Row ids whose name is currently a duplicate (allowed while editing, but blocks Save).
   const [dupRoleRows, setDupRoleRows] = useState<Set<string>>(new Set());
   const onRoleDup = (rowKey: string, isDup: boolean) =>
@@ -478,6 +481,37 @@ export default function ConfigPage() {
       setError(`Resolve ${dupRoleRows.size} duplicate role name${dupRoleRows.size === 1 ? '' : 's'} before saving (highlighted in red).`);
       setTimeout(() => setError(null), 5000);
       return;
+    }
+    // State-machine consistency: the sequencer resolves transitions/actuators by state NAME, so if
+    // [[states]] and the CSV columns disagree (a rename that didn't propagate, an uploaded CSV, a
+    // stray column) that state is silently dropped on load. Refuse to save until it's clean — the
+    // same posture as the duplicate-role guard above.
+    {
+      const issues: string[] = [];
+      if (stateIdDupes.length)
+        issues.push(`duplicate state id(s): ${[...new Set(stateIdDupes)].join(', ')}`);
+      if (stateNameDupes.length)
+        issues.push(`duplicate state name(s): ${[...new Set(stateNameDupes)].join(', ')}`);
+      if (stateList.some((s) => !String(s.name ?? '').trim())) issues.push('a state has an empty name');
+      const colCheck = (g: CsvGrid | null, label: string) => {
+        if (!g) return;
+        const d = diffKeys(g.states, stateListNames);
+        if (d.orphan.length) issues.push(`${label} has column(s) not in the state list (${d.orphan.join(', ')})`);
+        if (d.missing.length) issues.push(`${label} is missing column(s) (${d.missing.join(', ')})`);
+      };
+      colCheck(csvActuators, 'Actuators');
+      colCheck(csvDelays, 'Delays');
+      colCheck(csvTransitions, 'Transitions');
+      if (csvTransitions) {
+        const d = diffKeys(csvTransitions.rows.map((r) => r.key), stateListNames);
+        if (d.orphan.length || d.missing.length)
+          issues.push('Transitions rows do not match the state list');
+      }
+      if (issues.length) {
+        setError(`Fix the state machine before saving — ${issues.join('; ')}. Use “Regenerate empty” or fix the tables.`);
+        setTimeout(() => setError(null), 9000);
+        return;
+      }
     }
     try {
       setSaving(true);
@@ -825,6 +859,27 @@ export default function ConfigPage() {
       if (!list[idx].is_boot) delete list[idx].is_boot;
       return { ...prev, states: list } as ConfigData;
     });
+
+  // Rename a state's column (and, in the transitions grid, its from-row key) so the CSVs track a
+  // [[states]] rename. addState/removeState/moveState already keep the grids in step; renaming did
+  // not, so a renamed state's column kept the OLD name, and on Save the sequencer's name→id
+  // resolution silently dropped that state's actuators/transitions. Called on blur (see the name
+  // input) with the pre-edit name, not per keystroke.
+  const renameCol = (g: CsvGrid | null, from: string, to: string): CsvGrid | null =>
+    g && {
+      states: g.states.map((s) => (s === from ? to : s)),
+      rows: g.rows.map((r) => (r.key === from ? { ...r, key: to } : r)),
+    };
+  const commitStateRename = (idx: number) => {
+    const from = renameOrigRef.current;
+    renameOrigRef.current = null;
+    const to = (stateList[idx]?.name ?? '').trim();
+    // Only a real, non-empty, changed name propagates. An empty name is invalid and blocked at Save;
+    // a transient duplicate is allowed (and flagged) like role names, resolved before Save.
+    if (from && to && from !== to)
+      for (const set of [setCsvActuators, setCsvDelays, setCsvTransitions])
+        set((g) => renameCol(g, from, to));
+  };
 
   const addState = () => {
     const used = new Set(stateList.map((s) => s.id));
@@ -2242,7 +2297,9 @@ export default function ConfigPage() {
                             <input
                               type="text"
                               value={st.name ?? ''}
+                              onFocus={() => { renameOrigRef.current = stateList[i]?.name ?? null; }}
                               onChange={(e) => setState(i, { name: e.target.value })}
+                              onBlur={() => commitStateRename(i)}
                               disabled={!canEdit}
                               className={`w-full px-2 py-1 bg-gray-800 border rounded text-white disabled:opacity-60 ${st.name && stateNameDupes.includes(st.name) ? 'border-red-500 ring-1 ring-red-500' : 'border-gray-600'}`}
                             />
