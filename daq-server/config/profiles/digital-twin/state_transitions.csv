@@ -1,7 +1,7 @@
 ,Idle,Armed,Press Standby,Dome Press,COPV Fill,Fuel Press,Vent,Dome Vent,High Press Vent,Fuel Tank Vent,Ready,Fire
 Idle,1,1,0,0,0,0,0,0,0,0,0,0
 Armed,1,1,1,0,0,0,1,0,0,0,0,0
-Press Standby,0,0,1,1,1,1,1,1,1,1,1,0
+Press Standby,1,1,1,1,1,1,1,1,1,1,1,0
 Dome Press,0,0,1,1,0,0,0,0,0,0,0,0
 COPV Fill,0,0,1,0,1,0,0,0,0,0,0,0
 Fuel Press,0,0,1,0,0,1,0,0,0,0,0,0
