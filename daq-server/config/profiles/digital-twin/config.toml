@@ -581,7 +581,7 @@ consensus_update_rate = 0.1
 backend_udp_port = 8092
 
 [fire]
-state = "Fire"
+state = ""
 expiry_target = "Armed"
 duration_ms = 1000
 extended_ms = 1000
@@ -660,13 +660,13 @@ panel_row = 4
 panel_col = 1
 
 [actuator_roles]
-"Dome CTRL" = [ "NO", 1, 14 ]
-"Fuel Fill Press" = [ "NC", 2, 14 ]
-"High Press Vent" = [ "NC", 3, 14 ]
 "Fuel Upstream" = [ "NC", 1, 12 ]
 "High Press CTRL" = [ "NC", 2, 12 ]
 "Dome CTRL Vent" = [ "NC", 3, 12 ]
 "Fuel Main" = [ "NC", 5, 12 ]
+"Dome CTRL" = [ "NO", 1, 14 ]
+"Fuel Fill Press" = [ "NC", 2, 14 ]
+"High Press Vent" = [ "NC", 3, 14 ]
 
 [calibration_model_pt_board_2]
 "GN2 High" = "physics"
