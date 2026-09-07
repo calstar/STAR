@@ -307,13 +307,25 @@ bool ActuatorCommander::sendBatch(
         return false;
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0)
+    if (sock < 0) {
+        std::cerr << "[ActuatorCommander] socket() failed: " << strerror(errno) << std::endl;
         return false;
+    }
+
+    // Without this a sendto() on a saturated interface blocks the calling thread indefinitely —
+    // and the caller is either the 1 Hz republish loop or a command thread mid-transition. A
+    // command that cannot be queued in 100 ms is a failure to report, not something to wait on.
+    {
+        struct timeval tv{.tv_sec = 0, .tv_usec = 100000};
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    }
 
     struct sockaddr_in local{};
     local.sin_family = AF_INET;
     inet_pton(AF_INET, bind_addr_.c_str(), &local.sin_addr);
     if (bind(sock, reinterpret_cast<struct sockaddr*>(&local), sizeof(local)) < 0) {
+        std::cerr << "[ActuatorCommander] bind(" << bind_addr_ << ") failed: " << strerror(errno)
+                  << std::endl;
         close(sock);
         return false;
     }
@@ -324,8 +336,17 @@ bool ActuatorCommander::sendBatch(
             ssize_t sent =
                 sendto(sock, o.buf.data(), o.buf.size(), 0,
                        reinterpret_cast<const struct sockaddr*>(&o.dest), sizeof(o.dest));
-            if (sent != static_cast<ssize_t>(o.buf.size()))
+            if (sent != static_cast<ssize_t>(o.buf.size())) {
+                // A short send used to only flip this boolean — errno was never read, so a
+                // partially delivered state change left no trace beyond a return value most
+                // callers ignore. Name the board and the reason.
+                char ip[INET_ADDRSTRLEN] = {0};
+                inet_ntop(AF_INET, &o.dest.sin_addr, ip, sizeof(ip));
+                std::cerr << "[ActuatorCommander] sendto(" << ip << ":" << actuator_port_
+                          << ") round " << (round + 1) << " failed: " << strerror(errno)
+                          << std::endl;
                 all_ok = false;
+            }
         }
         if (round < 2)
             usleep(1000);

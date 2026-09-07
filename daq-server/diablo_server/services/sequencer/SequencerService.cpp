@@ -1,12 +1,16 @@
 #include "control/SequencerService.hpp"
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <array>
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -27,6 +31,12 @@ namespace sequencer {
 static constexpr uint16_t VTABLE_SEQUENCER_STATE = 0x5000;
 static constexpr uint16_t VTABLE_STATE_TRANSITION = 0x4300;
 
+// How long notifyControllerFire() waits for the controller_service TCP connection before giving
+// up. Deliberately short: this is on the state-transition path, and a missed FIRE_START/FIRE_STOP
+// is recoverable (the controller also watches the sequencer state packet) while a stalled
+// transition is not.
+static constexpr int kControllerConnectTimeoutMs = 300;
+
 // SequencerState: u64 @0 | u8 @8 | pad[3] @9 (align u32) | allowed_bitmask u32 @12 | debug_mode u8
 // @16 — 17 bytes
 using SequencerStateMsg =
@@ -43,9 +53,86 @@ static uint64_t now_ns() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 SequencerService::~SequencerService() {
+    // Drain order matters. Stop accepting work first, then let the worker finish what it holds,
+    // and only then tear down the things a command body touches — otherwise the worker can be
+    // mid-transition while fire_manager_ is being destroyed under it.
+    {
+        std::lock_guard<std::mutex> lk(cmd_mutex_);
+        cmd_stop_ = true;
+    }
+    cmd_cv_.notify_all();
+    if (cmd_thread_.joinable())
+        cmd_thread_.join();
+
     stopElodinRetry();
     actuator_commander_.stopContinuousLoop();
     fire_manager_.stop();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Command queue
+// ─────────────────────────────────────────────────────────────────────────────
+void SequencerService::commandLoop() {
+    for (;;) {
+        Command cmd;
+        {
+            std::unique_lock<std::mutex> lk(cmd_mutex_);
+            cmd_cv_.wait(lk, [this] {
+                return cmd_stop_ || !cmd_queue_.empty();
+            });
+            // Shutdown wins over draining: a queue full of transitions is not worth running while
+            // the process is going down, and the caller of each is already gone or giving up.
+            if (cmd_stop_ && cmd_queue_.empty())
+                return;
+            if (cmd_queue_.empty())
+                continue;
+            cmd = std::move(cmd_queue_.front());
+            cmd_queue_.pop_front();
+        }
+
+        bool ok = false;
+        try {
+            ok = cmd.fn();
+        } catch (const std::exception& e) {
+            std::cerr << "[SequencerService] command threw: " << e.what() << std::endl;
+        } catch (...) {
+            std::cerr << "[SequencerService] command threw an unknown exception" << std::endl;
+        }
+        // The promise must be fulfilled on every path including a throw, or a caller waiting on
+        // the future blocks for the full timeout on what was an immediate failure.
+        if (cmd.result)
+            cmd.result->set_value(ok);
+    }
+}
+
+bool SequencerService::enqueueAndWait(std::function<bool()> fn) {
+    auto result = std::make_shared<std::promise<bool>>();
+    auto future = result->get_future();
+    {
+        std::lock_guard<std::mutex> lk(cmd_mutex_);
+        if (cmd_stop_)
+            return false;
+        cmd_queue_.push_back(Command{std::move(fn), result});
+    }
+    cmd_cv_.notify_one();
+
+    if (future.wait_for(std::chrono::seconds(kCommandTimeoutSeconds)) !=
+        std::future_status::ready) {
+        std::cerr << "[SequencerService] command timed out after " << kCommandTimeoutSeconds
+                  << "s waiting for the worker — reporting failure (it may still run)" << std::endl;
+        return false;
+    }
+    return future.get();
+}
+
+void SequencerService::enqueueDetached(std::function<bool()> fn) {
+    {
+        std::lock_guard<std::mutex> lk(cmd_mutex_);
+        if (cmd_stop_)
+            return;
+        cmd_queue_.push_back(Command{std::move(fn), nullptr});
+    }
+    cmd_cv_.notify_one();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,6 +192,78 @@ static std::string resolveDataPath(const std::string& rel) {
     return rel;  // original — caller will get the open error
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Resolve everything under [fire] against the currently-adopted state table.
+ *
+ * Called from init() and from doReloadConfig(). It used to live inline in init() only, which
+ * meant a reload re-adopted [[states]] — potentially renumbering every state — while
+ * fire_state_ and fire_expiry_state_ kept the ids resolved at startup. After such a reload
+ * `to == fire_state_` matched whichever state now occupied the old slot: the burn countdown
+ * armed on the wrong state and never on the right one. The configured window was not re-read
+ * either, so an edited fire duration silently did not take effect until a restart.
+ *
+ * Must run after StateMachine::loadStatesFromConfig() and after state_machine_.load(), since it
+ * resolves names through the former and sanity-checks the transition table from the latter.
+ */
+void SequencerService::applyFireConfig(const fsw::config::Config& cfg) {
+    // Reset before resolving: on a reload an entry that has since been removed from config must
+    // disable the burn, not leave the previous run's id in place.
+    fire_state_ = State::UNKNOWN;
+    fire_expiry_state_ = State::UNKNOWN;
+
+    const std::string fs = cfg.fire.state;
+    if (fs.empty()) {
+        // No fire state configured → the fire timer never arms (nothing to auto-transition out
+        // of). UNKNOWN never equals a real state in transitionTo's `to == fire_state_` check.
+        fire_state_ = State::UNKNOWN;
+    } else {
+        State s = StateMachine::fromName(fs);
+        if (s == State::UNKNOWN)
+            // Config is authoritative and does not declare this name. Disable the burn (leave
+            // UNKNOWN) rather than fall back to the compiled Fire id, which names a different
+            // state on a renumbered rig — a misconfig fails safe and loud, not silent-wrong.
+            std::cerr << "[SequencerService] [fire] state \"" << fs
+                      << "\" is not a declared state — FIRE DISABLED" << std::endl;
+        else
+            fire_state_ = s;
+    }
+    const std::string ft = cfg.fire.expiry_target;
+    if (!ft.empty()) {
+        State s = StateMachine::fromName(ft);
+        if (s == State::UNKNOWN)
+            // Same rule for the timer's landing state: an undeclared name disables auto-expiry
+            // (leaves UNKNOWN → the isAllowed check below warns) instead of a compiled Armed.
+            std::cerr << "[SequencerService] [fire] expiry_target \"" << ft
+                      << "\" is not a declared state — fire auto-expiry disabled" << std::endl;
+        else
+            fire_expiry_state_ = s;
+    }
+    actuator_commander_.setFireState(fire_state_);
+    if (fire_state_ == State::UNKNOWN) {
+        std::cout << "[SequencerService] Fire state: (none) — fire timer disabled" << std::endl;
+    } else {
+        std::cout << "[SequencerService] Fire state: " << StateMachine::name(fire_state_)
+                  << " → expires to " << StateMachine::name(fire_expiry_state_) << std::endl;
+        // The expiry transition goes through the same isAllowed() gate as any other, so a
+        // target the fire state cannot reach leaves the system sitting in FIRE with a dead
+        // timer. Say so at startup rather than at T-0.
+        if (!state_machine_.isAllowed(fire_state_, fire_expiry_state_))
+            std::cerr << "[SequencerService] WARNING: " << StateMachine::name(fire_state_) << " → "
+                      << StateMachine::name(fire_expiry_state_)
+                      << " is not an allowed transition — the fire timer will expire into a "
+                         "refused transition and the system will stay in fire."
+                      << std::endl;
+    }
+
+    // FireManager durations from config.toml [fire] (see the parser for the
+    // [controller_service].fire_* fallback that keeps an un-migrated config working).
+    fire_manager_.configure(cfg.fire.duration_ms, cfg.fire.extended_ms);
+    std::cout << "[SequencerService] Fire window: " << cfg.fire.duration_ms << " ms (extended "
+              << cfg.fire.extended_ms << " ms)" << std::endl;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 bool SequencerService::init(const std::string& config_path) {
     loadConfig(config_path);
     const fsw::config::Config cfg = fsw::config::load_from_string(config_content_);
@@ -135,60 +294,7 @@ bool SequencerService::init(const std::string& config_path) {
         return false;
     }
 
-    // FireManager durations from config.toml [fire] (see the parser for the
-    // [controller_service].fire_* fallback that keeps an un-migrated config working).
-    const uint32_t fire_duration_ms = cfg.fire.duration_ms;
-    const uint32_t fire_extended_ms = cfg.fire.extended_ms;
-
-    // Which state is the burn, and where its timer lands. Names, not enumerators.
-    {
-        const std::string fs = cfg.fire.state;
-        if (fs.empty()) {
-            // No fire state configured → the fire timer never arms (nothing to auto-transition out
-            // of). UNKNOWN never equals a real state in transitionTo's `to == fire_state_` check.
-            fire_state_ = State::UNKNOWN;
-        } else {
-            State s = StateMachine::fromName(fs);
-            if (s == State::UNKNOWN)
-                // Config is authoritative and does not declare this name. Disable the burn (leave
-                // UNKNOWN) rather than fall back to the compiled Fire id, which names a different
-                // state on a renumbered rig — a misconfig fails safe and loud, not silent-wrong.
-                std::cerr << "[SequencerService] [fire] state \"" << fs
-                          << "\" is not a declared state — FIRE DISABLED" << std::endl;
-            else
-                fire_state_ = s;
-        }
-        const std::string ft = cfg.fire.expiry_target;
-        if (!ft.empty()) {
-            State s = StateMachine::fromName(ft);
-            if (s == State::UNKNOWN)
-                // Same rule for the timer's landing state: an undeclared name disables auto-expiry
-                // (leaves UNKNOWN → the isAllowed check below warns) instead of a compiled Armed.
-                std::cerr << "[SequencerService] [fire] expiry_target \"" << ft
-                          << "\" is not a declared state — fire auto-expiry disabled" << std::endl;
-            else
-                fire_expiry_state_ = s;
-        }
-        actuator_commander_.setFireState(fire_state_);
-        if (fire_state_ == State::UNKNOWN) {
-            std::cout << "[SequencerService] Fire state: (none) — fire timer disabled" << std::endl;
-        } else {
-            std::cout << "[SequencerService] Fire state: " << StateMachine::name(fire_state_)
-                      << " → expires to " << StateMachine::name(fire_expiry_state_) << std::endl;
-            // The expiry transition goes through the same isAllowed() gate as any other, so a
-            // target the fire state cannot reach leaves the system sitting in FIRE with a dead
-            // timer. Say so at startup rather than at T-0.
-            if (!state_machine_.isAllowed(fire_state_, fire_expiry_state_))
-                std::cerr << "[SequencerService] WARNING: " << StateMachine::name(fire_state_)
-                          << " → " << StateMachine::name(fire_expiry_state_)
-                          << " is not an allowed transition — the fire timer will expire into a "
-                             "refused transition and the system will stay in fire."
-                          << std::endl;
-        }
-    }
-    fire_manager_.configure(fire_duration_ms, fire_extended_ms);
-    std::cout << "[SequencerService] Fire window: " << fire_duration_ms << " ms (extended "
-              << fire_extended_ms << " ms)" << std::endl;
+    applyFireConfig(cfg);
 
     // Controller service endpoint for FIRE_START / FIRE_STOP
     // Read from config; defaults to 127.0.0.1:8000
@@ -217,6 +323,15 @@ bool SequencerService::init(const std::string& config_path) {
     // Command IDLE actuators and keep resending so manual debug clicks cannot stick vs CSV.
     actuator_commander_.applyForState(current_state_.load());
     actuator_commander_.startContinuousLoop(current_state_.load());
+
+    // Start the command worker last. Everything above runs on the caller's thread before any
+    // command can be accepted, so init() needs no serialization of its own — and starting the
+    // worker earlier would let a command run against a half-initialized service.
+    cmd_stop_ = false;
+    cmd_thread_ = std::thread([this]() {
+        commandLoop();
+    });
+
     std::cout << "[SequencerService] Initialized. Current state: "
               << StateMachine::name(current_state_.load()) << std::endl;
     return true;
@@ -232,15 +347,26 @@ bool SequencerService::isAbortState(State s) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 bool SequencerService::transitionTo(const std::string& state_name) {
-    State to = StateMachine::fromName(state_name);
-    if (to == State::UNKNOWN) {
-        std::cerr << "[SequencerService] Unknown state: " << state_name << std::endl;
-        return false;
-    }
-    return transitionTo(to);
+    // Resolve on the worker, not here. fromName() reads the config-declared state table, which
+    // doReloadConfig() rewrites — resolving on the caller's thread would race a concurrent reload
+    // and could answer from a half-swapped table.
+    return enqueueAndWait([this, state_name]() {
+        State to = StateMachine::fromName(state_name);
+        if (to == State::UNKNOWN) {
+            std::cerr << "[SequencerService] Unknown state: " << state_name << std::endl;
+            return false;
+        }
+        return doTransitionTo(to);
+    });
 }
 
 bool SequencerService::transitionTo(State to) {
+    return enqueueAndWait([this, to]() {
+        return doTransitionTo(to);
+    });
+}
+
+bool SequencerService::doTransitionTo(State to) {
     State from = current_state_.load();
 
     if (!debug_mode_) {
@@ -256,6 +382,22 @@ bool SequencerService::transitionTo(State to) {
             return false;
         }
     }
+
+    // Physical abort broadcast FIRST — before any of the bookkeeping below.
+    //
+    // This used to sit after stopContinuousLoop(), fire_manager_.stop() and applyForState(), which
+    // meant the boards' abort packet queued behind: a join of the republish thread (up to 100 ms),
+    // a TCP round-trip to controller_service (previously unbounded — see notifyControllerFire),
+    // and a full actuator batch. Every one of those is the sequencer's own housekeeping, and none
+    // of it is a precondition for telling the boards to abort. The boards' independent abort logic
+    // is the last line of defence on this rig; it must not wait on the process that is, by
+    // definition, in the middle of something going wrong.
+    //
+    // triggerAbort() sends immediately and schedules ABORT_DONE on its own thread, so this does
+    // not block the transition either.
+    const bool entering_abort = isAbortState(to);
+    if (entering_abort)
+        abort_broadcaster_.triggerAbort();
 
     // New state wins over debug manual actuator overrides.
     actuator_commander_.clearAllManualOverrides();
@@ -273,16 +415,12 @@ bool SequencerService::transitionTo(State to) {
 
     // Start continuous re-send loop for new state
     // Abort states apply immediately: their CSV delays are ignored, because an abort must not sit
-    // behind a timer. (The physical UDP abort broadcast below is separate and always immediate.)
-    actuator_commander_.startContinuousLoop(to, !isAbortState(to));
+    // behind a timer. (The physical UDP abort broadcast is separate and already went out at the
+    // top of this function.)
+    actuator_commander_.startContinuousLoop(to, !entering_abort);
 
     // Update current state
     current_state_ = to;
-
-    // Abort lifecycle
-    if (isAbortState(to)) {
-        abort_broadcaster_.triggerAbort();
-    }
 
     // FIRE lifecycle — which state this is comes from [fire] state, not the enumerator.
     if (to == fire_state_) {
@@ -291,7 +429,14 @@ bool SequencerService::transitionTo(State to) {
             // through StateMachine::name(State::ARMED) → fromName(), so renaming the state made
             // fromName() return UNKNOWN and the transition was refused — stranding the system in
             // fire with the timer already stopped.
-            transitionTo(fire_expiry_state_);
+            //
+            // Detached, never enqueueAndWait: this runs on FireManager's timer thread, and the
+            // worker handling the expiry transition will call fire_manager_.stop(), which joins
+            // this very thread. Waiting here would be a guaranteed deadlock — the worker waiting
+            // on the join, this thread waiting on the worker.
+            enqueueDetached([this]() {
+                return doTransitionTo(fire_expiry_state_);
+            });
         });
     }
 
@@ -306,6 +451,12 @@ bool SequencerService::transitionTo(State to) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 bool SequencerService::setDebugMode(bool enabled) {
+    return enqueueAndWait([this, enabled]() {
+        return doSetDebugMode(enabled);
+    });
+}
+
+bool SequencerService::doSetDebugMode(bool enabled) {
     debug_mode_ = enabled;
     if (!enabled)
         actuator_commander_.clearAllManualOverrides();
@@ -316,6 +467,12 @@ bool SequencerService::setDebugMode(bool enabled) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 bool SequencerService::manualActuator(const std::string& name, int pos) {
+    return enqueueAndWait([this, name, pos]() {
+        return doManualActuator(name, pos);
+    });
+}
+
+bool SequencerService::doManualActuator(const std::string& name, int pos) {
     if (!debug_mode_) {
         std::cerr << "[SequencerService] Manual actuator commands require debug mode" << std::endl;
         return false;
@@ -326,6 +483,12 @@ bool SequencerService::manualActuator(const std::string& name, int pos) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 bool SequencerService::extendFire() {
+    return enqueueAndWait([this]() {
+        return doExtendFire();
+    });
+}
+
+bool SequencerService::doExtendFire() {
     if (current_state_ != fire_state_) {
         std::cerr << "[SequencerService] EXTEND_FIRE ignored: not in FIRE state" << std::endl;
         return false;
@@ -336,7 +499,26 @@ bool SequencerService::extendFire() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 bool SequencerService::reloadConfig() {
+    return enqueueAndWait([this]() {
+        return doReloadConfig();
+    });
+}
+
+bool SequencerService::doReloadConfig() {
     std::cout << "[SequencerService] Reloading config..." << std::endl;
+
+    // Stop the 1 Hz republish loop BEFORE touching the actuator tables.
+    //
+    // ActuatorCommander::load() begins by clearing roles_ and state_actuators_ and then rebuilds
+    // them from CSV. The republish loop walks those same maps once a second. Neither is mutex-
+    // guarded, so a reload issued from the GUI during a fill was clearing and rebuilding a
+    // std::map while another thread iterated it — undefined behaviour, not a stale read.
+    //
+    // Running on the worker fixes the command-vs-command races, but not this one: the republish
+    // loop is its own thread and keeps running regardless of what the worker is doing. It has to
+    // be stopped explicitly.
+    actuator_commander_.stopContinuousLoop();
+
     loadConfig(config_path_);
     const fsw::config::Config cfg = fsw::config::load_from_string(config_content_);
 
@@ -344,19 +526,35 @@ bool SequencerService::reloadConfig() {
     // an edit that renamed or renumbered a state re-parsed both CSVs against the previous list.
     StateMachine::loadStatesFromConfig(config_content_);
 
+    bool ok = true;
     std::string act_csv = resolveDataPath(cfg.state_machine.actuator_csv);
     if (!actuator_commander_.load(config_content_, act_csv)) {
         std::cerr << "[SequencerService] Reload: failed to reload actuator CSV" << std::endl;
-        return false;
+        ok = false;
     }
     std::string sm_csv = resolveDataPath(cfg.state_machine.transitions_csv);
-    if (!state_machine_.load(sm_csv)) {
+    if (ok && !state_machine_.load(sm_csv)) {
         std::cerr << "[SequencerService] Reload: failed to reload state transitions CSV"
                   << std::endl;
-        return false;
+        ok = false;
     }
-    std::cout << "[SequencerService] Config reloaded successfully" << std::endl;
-    return true;
+
+    // [fire] must be re-resolved too. fire_state_ / fire_expiry_state_ hold ids resolved once at
+    // init(); loadStatesFromConfig() above may have just renumbered every state, which would leave
+    // both pointing at whatever state now occupies the old slot — arming the burn on the wrong
+    // state and never on the right one. The configured window was not re-read either, so an edited
+    // fire duration silently did not take until a restart.
+    if (ok)
+        applyFireConfig(cfg);
+
+    // Restart the republish loop regardless of outcome — leaving the rig with no actuator
+    // republish is worse than running against the previous tables. Not a state entry, so no delay
+    // schedule: this resends settled positions.
+    actuator_commander_.startContinuousLoop(current_state_.load(), false);
+
+    if (ok)
+        std::cout << "[SequencerService] Config reloaded successfully" << std::endl;
+    return ok;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -383,7 +581,43 @@ void SequencerService::notifyControllerFire(bool active) {
         close(sock);
         return;
     }
+
+    // SO_SNDTIMEO above does NOT bound connection establishment. On a blocking socket, connect()
+    // to a host that drops SYNs rather than refusing them (powered off but still routable, or a
+    // network partition) sits in the kernel's SYN retry budget for ~2 minutes. This runs on
+    // whichever thread is performing the state transition — including an operator aborting out of
+    // FIRE — so an unreachable controller used to stall the abort itself. Bound it explicitly:
+    // non-blocking connect, wait with a deadline, then restore blocking mode for the send.
+    const int flags = fcntl(sock, F_GETFL, 0);
+    if (flags < 0 || fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0) {
+        close(sock);
+        return;
+    }
+
+    bool connected = false;
     if (connect(sock, reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest)) == 0) {
+        connected = true;  // immediate (loopback)
+    } else if (errno == EINPROGRESS) {
+        struct pollfd pfd{.fd = sock, .events = POLLOUT, .revents = 0};
+        // Any readiness at all means the attempt resolved — consult SO_ERROR rather than the
+        // revents bits. A refused connection can surface as POLLERR/POLLHUP without POLLOUT, and
+        // testing for POLLOUT alone would report that as a timeout and lose the real reason in
+        // the log. poll() returning 0 is the only genuine timeout.
+        if (poll(&pfd, 1, kControllerConnectTimeoutMs) > 0) {
+            int err = 0;
+            socklen_t len = sizeof(err);
+            if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &err, &len) != 0)
+                err = errno;
+            if (err == 0)
+                connected = true;
+            else
+                errno = err;
+        } else {
+            errno = ETIMEDOUT;
+        }
+    }
+
+    if (connected && fcntl(sock, F_SETFL, flags) == 0) {
         ssize_t n = send(sock, msg.c_str(), msg.size(), 0);
         (void)n;
         std::cout << "[SequencerService] → controller: " << (active ? "FIRE_START" : "FIRE_STOP")
@@ -391,7 +625,7 @@ void SequencerService::notifyControllerFire(bool active) {
     } else {
         std::cerr << "[SequencerService] could not reach controller_service at " << controller_host_
                   << ":" << controller_port_ << " for " << (active ? "FIRE_START" : "FIRE_STOP")
-                  << std::endl;
+                  << " (" << strerror(errno) << ")" << std::endl;
     }
     close(sock);
 }
