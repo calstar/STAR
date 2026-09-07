@@ -28,6 +28,9 @@ from engine.core.discharge import (
     calculate_reynolds_number,
 )
 from engine.core.spray import (
+    evaporation_constant_m2_s,
+    tau_evap_from_k,
+    spray_axial_velocity,
     momentum_flux_ratio,
     thrust_momentum_ratio,
     spray_angle_from_J,
@@ -45,6 +48,7 @@ from engine.core.injectors.flow_capacity import (
     effective_flow_areas_from_cd,
     merge_effective_area_warnings,
 )
+
 
 
 def impingement_standoff_m(
@@ -91,7 +95,6 @@ def impingement_standoff_m(
         return float("nan")
     val = dr / tan_sum
     return float(val) if _np.isfinite(val) else float("nan")
-
 
 def momentum_ratio_R_from_bulk_velocities(
     rho_O: float,
@@ -550,9 +553,44 @@ class ImpingingInjector(InjectorModel):
                 spray_cfg.smd.C_ingebo,
             )
 
-            tau_evap_O = tau_evap(D32_O, spray_cfg.evaporation.K)
-            tau_evap_F = tau_evap(D32_F, spray_cfg.evaporation.K)
-            x_star = max(xstar(u_rel, tau_evap_O), xstar(u_rel, tau_evap_F))
+            # Evaporation constant from propellant properties + chamber state, not a single
+            # hardcoded K. Falls back to the legacy tau = K*D32^2 when the derivation cannot run
+            # (missing latent heat / boiling point on a custom fluid), so old configs still work.
+            _ev = spray_cfg.evaporation
+            _use_derived = getattr(_ev, "model", "derived") == "derived"
+            k_evap_O = k_evap_F = float("nan")
+            if _use_derived:
+                k_evap_O = evaporation_constant_m2_s(
+                    Tc=spray_cfg.smd.chamber_gas_T, Pc=Pc, rho_g=rho_gas, rho_l=rho_O,
+                    L_vap=float(getattr(fluids["oxidizer"], "latent_heat", 0.0) or 0.0),
+                    T_boil=float(getattr(fluids["oxidizer"], "boiling_point", 0.0) or 0.0),
+                    cp_g=float(getattr(_ev, "cp_gas", 2200.0)),
+                    C_evap=float(getattr(_ev, "C_evap", 1.562)),
+                )
+                k_evap_F = evaporation_constant_m2_s(
+                    Tc=spray_cfg.smd.chamber_gas_T, Pc=Pc, rho_g=rho_gas, rho_l=rho_F,
+                    L_vap=float(getattr(fluids["fuel"], "latent_heat", 0.0) or 0.0),
+                    T_boil=float(getattr(fluids["fuel"], "boiling_point", 0.0) or 0.0),
+                    cp_g=float(getattr(_ev, "cp_gas", 2200.0)),
+                    C_evap=float(getattr(_ev, "C_evap", 1.562)),
+                )
+            if np.isfinite(k_evap_O) and np.isfinite(k_evap_F):
+                tau_evap_O = tau_evap_from_k(D32_O, k_evap_O)
+                tau_evap_F = tau_evap_from_k(D32_F, k_evap_F)
+            else:
+                tau_evap_O = tau_evap(D32_O, _ev.K)
+                tau_evap_F = tau_evap(D32_F, _ev.K)
+
+            # TRANSPORT velocity, not the jet-to-jet relative velocity. u_rel shears the sheet
+            # (it belongs in the Ingebo Weber number above); what carries droplets DOWN the
+            # chamber is the momentum-weighted axial resultant of the collision. Using u_rel here
+            # over-predicted x* by ~2x on a measured design.
+            u_axial = spray_axial_velocity(
+                mdot_O=mdot_O, u_O=u_O, theta_O_deg=geometry.oxidizer.impingement_angle,
+                mdot_F=mdot_F, u_F=u_F, theta_F_deg=geometry.fuel.impingement_angle,
+            )
+            u_transport = u_axial if np.isfinite(u_axial) and u_axial > 0 else u_rel
+            x_star = max(xstar(u_transport, tau_evap_O), xstar(u_transport, tau_evap_F))
 
             # ---- Impinging-doublet geometry (standoff + ring pitch) -------------------------------
             # Each stream's ``impingement_angle`` is the jet inclination from the chamber axis; the
@@ -568,7 +606,12 @@ class ImpingingInjector(InjectorModel):
             s_F = float(getattr(geometry.fuel, "spacing", 0.0) or 0.0)
             s_pair = 0.5 * (s_O + s_F)
             tan_sum = float(np.tan(theta_O) + np.tan(theta_F))
-            L_imp = float(s_pair / tan_sum) if tan_sum > 1e-9 else float("nan")
+            L_imp = impingement_standoff_m(
+                0.5 * (geometry.oxidizer.n_elements + geometry.fuel.n_elements),
+                s_O, s_F,
+                geometry.oxidizer.impingement_angle,
+                geometry.fuel.impingement_angle,
+            )
             nO_geom = max(1, int(geometry.oxidizer.n_elements))
             nF_geom = max(1, int(geometry.fuel.n_elements))
             D_pitch_O = float(nO_geom * s_O / np.pi)
@@ -578,7 +621,31 @@ class ImpingingInjector(InjectorModel):
             gap_F = float(s_F - geometry.fuel.d_jet)
             # Axial length the spray needs before it is fully vaporized, measured from the face:
             # standoff to impingement plus the droplet evaporation length x*.
-            vaporization_length_total = float((L_imp if np.isfinite(L_imp) else 0.0) + x_star)
+            # Sheet breakup length between impingement and droplet formation. Mass conservation
+            # in a radially spreading sheet gives h(r) = d^2/(4r); Kelvin-Helmholtz growth on a
+            # thin liquid sheet in gas gives t_b ~ (h/u)*sqrt(rho_l/rho_g), so L_b = u*t_b. At the
+            # Weber numbers here (3e4-6e4, far past the ~2e3 regime transition) this comes out
+            # small next to L_imp -- the sheet shreds almost immediately -- but it is the step
+            # between "jets meet" and "droplets exist", so the spray length is not complete
+            # without it.
+            _d_avg = 0.5 * (float(geometry.oxidizer.d_jet) + float(geometry.fuel.d_jet))
+            _u_sheet = max(float(u_rel), 1e-6)
+            _rho_l_avg = 0.5 * (float(rho_O) + float(rho_F))
+            # rho_gas carries a 1e-6 floor for solver robustness, and L_b ~ sqrt(rho_l/rho_g),
+            # so at that floor the sqrt is ~2.8e4 and L_b explodes -- during Pc bracketing that
+            # drove the spray length past the whole chamber, collapsed eta_Lstar, and made the
+            # chamber solve report "Supply < Demand at all Pc". Bound it to a physically sane
+            # multiple of the jet diameter: at these Weber numbers the sheet shreds in ~1 d_jet,
+            # and anything past ~20 is not a doublet sheet any more.
+            if np.isfinite(L_imp) and L_imp > 0 and _d_avg > 0 and rho_gas > 1e-4:
+                _h_sheet = (_d_avg ** 2) / (4.0 * L_imp)
+                L_b = float(_h_sheet * np.sqrt(_rho_l_avg / rho_gas))
+                L_b = float(np.clip(L_b, 0.0, 20.0 * _d_avg))
+            else:
+                L_b = 0.0
+            vaporization_length_total = float(
+                (L_imp if np.isfinite(L_imp) else 0.0) + L_b + x_star
+            )
 
             constraints_ok, violations = check_spray_constraints(We_O, We_F, x_star, spray_cfg)
 
@@ -599,7 +666,13 @@ class ImpingingInjector(InjectorModel):
                     "D32_O": D32_O,
                     "D32_F": D32_F,
                     "x_star": x_star,
+                    "u_axial_spray": float(u_transport),
+                    "k_evap_O": float(k_evap_O),
+                    "k_evap_F": float(k_evap_F),
+                    "tau_evap_O": float(tau_evap_O),
+                    "tau_evap_F": float(tau_evap_F),
                     "L_imp": L_imp,
+                    "L_sheet_breakup": float(L_b),
                     "D_pitch_O": D_pitch_O,
                     "D_pitch_F": D_pitch_F,
                     "s_pair": float(s_pair),

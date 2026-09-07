@@ -763,6 +763,37 @@ def calculate_residence_time(
     return float(tau_res)
 
 
+
+_EA_MR_W = 0.10   # smoothstep half-width in MR around each Ea_norm boundary
+
+
+def _ea_norm_from_mr(MR: float) -> float:
+    """Normalised activation energy for the kinetics timescale, continuous in MR.
+
+    Plateaus at 12 (fuel-rich), 10 (near-stoichiometric) and 8 (oxidiser-rich), blended with a
+    smoothstep across +/-`_EA_MR_W` of the MR = 1.5 and MR = 3.0 boundaries. Mirrored verbatim
+    in engine/accel/kernels.py -- keep the two in sync or the accelerator parity gate will fail.
+    """
+    try:
+        mr = float(MR)
+    except (TypeError, ValueError):
+        return 10.0
+    if not np.isfinite(mr):
+        return 10.0
+    w = _EA_MR_W
+    if mr <= 1.5 - w:
+        return 12.0
+    if mr < 1.5 + w:
+        t = (mr - (1.5 - w)) / (2.0 * w)
+        return 12.0 - 2.0 * (t * t * (3.0 - 2.0 * t))
+    if mr <= 3.0 - w:
+        return 10.0
+    if mr < 3.0 + w:
+        t = (mr - (3.0 - w)) / (2.0 * w)
+        return 10.0 - 2.0 * (t * t * (3.0 - 2.0 * t))
+    return 8.0
+
+
 def calculate_reaction_time_scale(
     Pc: float,
     Tc: float,
@@ -818,12 +849,17 @@ def calculate_reaction_time_scale(
     # Normalized activation energy (dimensionless)
     # Higher for more complex reactions (e.g., hydrocarbon combustion)
     # Lower for simpler reactions (e.g., H2/O2)
-    if MR < 1.5:  # Fuel-rich (more complex chemistry)
-        Ea_norm = 12.0
-    elif MR > 3.0:  # Oxidizer-rich (simpler chemistry)
-        Ea_norm = 8.0
-    else:  # Near-stoichiometric
-        Ea_norm = 10.0
+    # Normalised activation energy: 12 fuel-rich, 10 near-stoichiometric, 8 oxidiser-rich.
+    # These were hard `if` branches on MR, which put STEP DISCONTINUITIES at exactly MR = 1.5
+    # and MR = 3.0. tau_chem ~ exp(Ea_norm*(T_ref/Tc - 1)), so at Tc ~ 3017 K and T_ref 3500 K
+    # the 10 -> 12 step multiplies tau_chem by exp(2*0.16) = 1.38 -- a 38% jump for an
+    # infinitesimal change in MR. That is not physics (activation energy does not step at a
+    # round number), and it breaks the chamber solve: configs/canonical/impinging.yaml runs at
+    # MR = 1.5000, so brentq straddled the jump and could never drive |residual| below 1e-6
+    # ("Convergence validation failed: |residual| = 9.33e-03"). The residual is otherwise
+    # smooth and monotonic with a clean root, so the root was never the problem.
+    # Same plateau values, blended over a narrow band with a C1 smoothstep.
+    Ea_norm = _ea_norm_from_mr(MR)
     
     # Pressure effect (higher pressure → faster reactions)
     pressure_factor = (P_ref / max(Pc, 1e5)) ** n_pressure

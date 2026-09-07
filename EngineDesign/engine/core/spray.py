@@ -321,10 +321,88 @@ def smd_impinging_ingebo(
     return float(D32)
 
 
+def evaporation_constant_m2_s(
+    *,
+    Tc: float,
+    Pc: float,
+    rho_g: float,
+    rho_l: float,
+    L_vap: float,
+    T_boil: float,
+    cp_g: float = 2200.0,
+    D0: float = 2.0e-5,
+    C_evap: float = 1.562,
+) -> float:
+    """d²-law evaporation constant k_evap [m²/s], derived from propellant properties.
+
+    Replaces a single hardcoded ``K`` that was identical in all 14 configs and for every
+    propellant. That constant's VALUE was defensible for ethanol at ~3100 K (it implies
+    k_evap = 3.33e-6 m²/s, within 10% of a T^2 extrapolation of measured ethanol data), but its
+    SHAPE was wrong: it could not distinguish ethanol from methane from RP-1, and it did not
+    move with chamber temperature or pressure at all -- so a 200 psi design and a 600 psi design
+    evaporated at identical rates.
+
+        k_evap = C * (8 * rho_g * D_v / rho_l) * ln(1 + B_M)
+        B_M    = cp_g * (Tc - T_boil) / L_vap          (Spalding mass transfer number)
+        D_v    = D0 * (Tc/300)^1.75 * (101325/Pc)      (vapor diffusivity)
+
+    Every input except C and D0 already exists in the propellant presets, so this needs no new
+    tables. ``C_evap`` is the one calibration constant, anchored so ethanol at 3094 K / 450 psi
+    reproduces the 3.33e-6 m²/s the old fixed K implied -- i.e. this is a re-shaping of a value
+    that was already right for the propellant it was tuned on, not a change of magnitude.
+
+    The same form is already written (and disabled) in combustion_physics.py under
+    ``SPALDING_DIAGNOSTIC_ENABLED``, where it also hardcodes ``fuel="RP-1"``.
+    """
+    if not all(np.isfinite(v) for v in (Tc, Pc, rho_g, rho_l, L_vap, T_boil)):
+        return float("nan")
+    if Tc <= 0 or Pc <= 0 or rho_g <= 0 or rho_l <= 0 or L_vap <= 0:
+        return float("nan")
+    D_v = float(D0) * (float(Tc) / 300.0) ** 1.75 * (101325.0 / float(Pc))
+    B_M = float(cp_g) * max(0.0, float(Tc) - float(T_boil)) / float(L_vap)
+    k = float(C_evap) * (8.0 * float(rho_g) * D_v / float(rho_l)) * float(np.log1p(B_M))
+    return float(k) if (np.isfinite(k) and k > 0) else float("nan")
+
+
+def tau_evap_from_k(D32: float, k_evap_m2_s: float) -> float:
+    """Standard d²-law evaporation time: τ = D32² / k_evap. Note k is in m²/s, NOT its reciprocal."""
+    if not (np.isfinite(D32) and np.isfinite(k_evap_m2_s)) or k_evap_m2_s <= 0 or D32 <= 0:
+        return float("nan")
+    return float((D32 ** 2) / k_evap_m2_s)
+
+
+def spray_axial_velocity(
+    *,
+    mdot_O: float, u_O: float, theta_O_deg: float,
+    mdot_F: float, u_F: float, theta_F_deg: float,
+) -> float:
+    """Axial velocity of the combined spray after the doublet collides [m/s].
+
+    Momentum balance on the pair: the two jets arrive canted at theta_O / theta_F from the
+    chamber axis, and what survives downstream is the momentum-weighted axial component
+
+        u_axial = (mdot_O*u_O*cos(theta_O) + mdot_F*u_F*cos(theta_F)) / (mdot_O + mdot_F)
+
+    This is the velocity that TRANSPORTS droplets down the chamber, and therefore the one that
+    belongs in x* = u * tau_evap. The code previously used ``u_rel``, the jet-to-jet RELATIVE
+    velocity -- correct for atomisation (it is what shears the sheet, and it belongs in the
+    Ingebo Weber number) but wrong for transport: droplets do not travel downstream at the
+    closing speed of two jets. Measured on a converged design, u_rel was 28.4 m/s against a true
+    axial 13.8 m/s, so x* -- and hence the required chamber length -- was over-predicted 2.06x.
+    """
+    mt = float(mdot_O) + float(mdot_F)
+    if not np.isfinite(mt) or mt <= 0:
+        return float("nan")
+    ax = (float(mdot_O) * float(u_O) * np.cos(np.deg2rad(float(theta_O_deg)))
+          + float(mdot_F) * float(u_F) * np.cos(np.deg2rad(float(theta_F_deg))))
+    u = ax / mt
+    return float(u) if (np.isfinite(u) and u > 0) else float("nan")
+
+
 def tau_evap(D32: float, K: float) -> float:
     """
     Calculate evaporation time.
-    
+
     τ_evap = K × D32²
     
     Parameters:
