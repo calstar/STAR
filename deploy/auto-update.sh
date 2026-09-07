@@ -238,13 +238,27 @@ up_args=(up -d)
 compose "${up_args[@]}" || die "docker compose up failed — the stack may be half-updated"
 
 # ── 5. verify, then record ───────────────────────────────────────────────────
+# Only the services this box actually runs get a verdict. `config --services`
+# resolves against COMPOSE_PROFILES_LIST, so on EC2 it leaves out the `legacy`
+# profile's OpenProject — the container step 4 deliberately keeps around for a
+# rollback (it's why REMOVE_ORPHANS defaults to 0). Without this the deploy
+# fails on a container the script is preserving on purpose: `ps --all` lists it,
+# it's exited, and every genuine deploy exits 1 and skips writing $STATE_FILE.
+#
+# `--all` stays: a service that starts and immediately dies has to be caught,
+# and dropping it would hide exactly the failure this check exists for. An empty
+# list means compose couldn't answer, so judge everything rather than nothing.
+enabled_services="$(compose config --services 2>/dev/null | sort -u || true)"
+[[ -n "$enabled_services" ]] || log "warn: could not list enabled services — judging every container"
+
 # Give containers a moment to fail their first start before judging them.
 sleep 15
-bad="$(compose ps --all --format json | python3 -c '
-import json, sys
+bad="$(compose ps --all --format json | ENABLED_SERVICES="$enabled_services" python3 -c '
+import json, os, sys
 raw = sys.stdin.read().strip()
 if not raw:
     sys.exit(0)
+enabled = set(os.environ.get("ENABLED_SERVICES", "").split())
 # Compose emits either a JSON array or one object per line depending on version.
 try:
     rows = json.loads(raw)
@@ -253,9 +267,12 @@ try:
 except json.JSONDecodeError:
     rows = [json.loads(l) for l in raw.splitlines() if l.strip()]
 for r in rows:
+    service = r.get("Service", "?")
+    if enabled and service not in enabled:
+        continue        # belongs to a disabled profile: down on purpose
     state, health = r.get("State", ""), (r.get("Health") or "")
     if state != "running" or health == "unhealthy":
-        print("%s (%s%s)" % (r.get("Service", "?"), state, "/" + health if health else ""))
+        print("%s (%s%s)" % (service, state, "/" + health if health else ""))
 ')"
 
 if [[ -n "$bad" ]]; then
