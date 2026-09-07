@@ -4,9 +4,9 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useRef } from "react";
 
+import { AssigneeChip } from "@/components/AssigneeChip";
 import { useTaskModal } from "@/components/TaskModalProvider";
 import type { BoardTask } from "@/lib/board";
-import { displayNameOf } from "@/lib/names";
 import { PRIORITY_BADGE, isBlocked } from "@/lib/tasks";
 
 import { BlockedBadge } from "./BlockedBadge";
@@ -48,7 +48,10 @@ export function TaskCard({ task }: { task: BoardTask }) {
       }}
       className="cursor-pointer touch-none rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 shadow-sm hover:border-neutral-300 dark:border-neutral-700 active:cursor-grabbing"
     >
-      <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">{task.title}</p>
+      <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+        <span className="text-neutral-400 dark:text-neutral-500">#{task.number}</span>{" "}
+        {task.title}
+      </p>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
         {task.subproject && (
           <SubprojectBadge
@@ -65,9 +68,7 @@ export function TaskCard({ task }: { task: BoardTask }) {
           </span>
         )}
         {task.assignees.map((a) => (
-          <span key={a.id} className="text-neutral-500 dark:text-neutral-400">
-            {displayNameOf(a)}
-          </span>
+          <AssigneeChip key={a.id} user={a} />
         ))}
         {due && (
           <span className={overdue ? "font-medium text-red-600" : "text-neutral-500 dark:text-neutral-400"}>

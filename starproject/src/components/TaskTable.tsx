@@ -57,6 +57,9 @@ export function TaskTable({
         header: "Task",
         cell: (info) => (
           <div className="flex items-center gap-2">
+            <span className="text-neutral-400 dark:text-neutral-500">
+              #{info.row.original.number}
+            </span>
             <span className="font-medium">{info.getValue()}</span>
             {info.row.original.blocked && <BlockedBadge />}
           </div>

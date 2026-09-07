@@ -5,6 +5,8 @@ export type ActivityKind =
   | "created"
   | "deleted"
   | "updated"
+  | "assigned"
+  | "unassigned"
   | "blocker_added"
   | "blocker_removed";
 
@@ -57,12 +59,6 @@ export function subteamLabel(name: string | null | undefined): string {
   return name ?? "No subteam";
 }
 
-// For the feed: "changed {FIELD_LABEL[field]} of …"
-export const FIELD_LABEL: Record<string, string> = {
-  assignee: "assignee",
-  status: "status",
-  priority: "priority",
-  due: "due date",
-  title: "title",
-  subteam: "subteam",
-};
+// Re-exported so server-side importers (feed, digest) keep their `@/lib/activity`
+// import; the source of truth is the prisma-free module shared with the client.
+export { FIELD_LABEL } from "@/lib/activity-labels";

@@ -30,7 +30,7 @@ export default async function Home() {
       orderBy: { name: "asc" },
     }),
     prisma.task.findMany({
-      where: { assignees: { some: { id: user.id } } },
+      where: { archived: false, assignees: { some: { id: user.id } } },
       include: {
         project: { select: { id: true, name: true } },
         blockedBy: { include: { blockedByTask: { select: { status: true } } } },

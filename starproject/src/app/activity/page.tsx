@@ -1,101 +1,13 @@
 import Link from "next/link";
 
 import { ActivityFilters } from "@/components/ActivityFilters";
-import { TaskLink } from "@/components/TaskLink";
-import { FIELD_LABEL } from "@/lib/activity";
+import { renderActivity, timeAgo } from "@/components/ActivityLine";
 import { prisma } from "@/lib/db";
-import { displayNameOf } from "@/lib/names";
 import { getTeamUsers } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 50;
-
-type Item = {
-  id: string;
-  kind: string;
-  field: string | null;
-  fromValue: string | null;
-  toValue: string | null;
-  taskTitle: string;
-  taskId: string | null;
-  projectId: string | null;
-  createdAt: Date;
-  actor: { name: string | null; email: string; displayName: string | null };
-};
-
-function timeAgo(d: Date): string {
-  const s = Math.floor((Date.now() - new Date(d).getTime()) / 1000);
-  if (s < 60) return "just now";
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const days = Math.floor(h / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(d).toISOString().slice(0, 10);
-}
-
-function taskRef(a: Item) {
-  if (a.taskId && a.projectId)
-    return (
-      <TaskLink
-        projectId={a.projectId}
-        taskId={a.taskId}
-        className="font-medium hover:underline"
-      >
-        {a.taskTitle}
-      </TaskLink>
-    );
-  return <span className="font-medium">“{a.taskTitle}”</span>;
-}
-
-function bold(s: string | null) {
-  return <span className="font-medium">{s ?? "—"}</span>;
-}
-
-function renderActivity(a: Item) {
-  const who = <span className="font-medium">{displayNameOf(a.actor)}</span>;
-  switch (a.kind) {
-    case "created":
-      return (
-        <>
-          {who} created {taskRef(a)}
-        </>
-      );
-    case "deleted":
-      return (
-        <>
-          {who} deleted task {taskRef(a)}
-        </>
-      );
-    case "blocker_added":
-      return (
-        <>
-          {who} added a blocker to {taskRef(a)}: {bold(a.toValue)}
-        </>
-      );
-    case "blocker_removed":
-      return (
-        <>
-          {who} removed a blocker from {taskRef(a)}: {bold(a.toValue)}
-        </>
-      );
-    case "updated":
-      return (
-        <>
-          {who} changed {FIELD_LABEL[a.field ?? ""] ?? a.field} of {taskRef(a)}{" "}
-          from {bold(a.fromValue)} to {bold(a.toValue)}
-        </>
-      );
-    default:
-      return (
-        <>
-          {who} updated {taskRef(a)}
-        </>
-      );
-  }
-}
 
 export default async function ActivityPage({
   searchParams,

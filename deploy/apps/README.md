@@ -90,7 +90,6 @@ docker compose ps
 ```
 (Building on the box instead — needs a full clone and ≥4 GB RAM for the React
 builds — is `docker compose --profile tunnel up -d --build`.)
-
 **Image version (`STAR_IMAGE_TAG`).** Every `star-*` image is pulled at the tag
 `${STAR_IMAGE_TAG:-latest}`. CI publishes two tags on each push to `main`:
 `latest` (moving) and an immutable `sha-<short>` (e.g. `sha-abc1234`).
@@ -107,9 +106,28 @@ builds — is `docker compose --profile tunnel up -d --build`.)
   touched both an app path and `auth/`. Check the repo's GHCR **Packages** for the
   tags that exist. `docker compose config --images` prints the exact tags Compose
   will pull, so you can confirm the pin before `up -d`.
-Then drop the host's published web ports (cloudflared is the only ingress): remove
-the `80:80` / `443:443` lines from the `caddy` service, or block them at the
-firewall. SSH (22) is all you need inbound.
+
+  Note that a pin and auto-deploy (below) pull in opposite directions: auto-deploy
+  syncs the checkout and restarts the stack on every merge to `main`, but Compose
+  still resolves images at the tag `.env` names, so a `sha-…` pin keeps the
+  containers on that build. Unset the pin when you want the box tracking `main`
+  again.
+
+Then make sure the host's published web ports aren't reachable (cloudflared is
+the only ingress). **Prefer blocking them at the firewall** — `bootstrap.sh`
+already does — over removing the `80:80` / `443:443` lines from the `caddy`
+service: that edits a tracked file, and auto-deploy (below) will then decline to
+sync the checkout rather than discard your change. SSH (22) is all you need
+inbound.
+
+Finally, turn on auto-deploy so merges to `main` land here by themselves
+([details](#auto-deploy-on-merge-to-main)) — `bootstrap.sh` does this too:
+
+```bash
+sudo cp deploy/apps/systemd/star-auto-update.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now star-auto-update.timer
+```
 
 ## 4. Verify
 Open `https://engine-design.starberkeley.org` in a browser → it bounces to
@@ -180,12 +198,74 @@ AWS_SECRET_ACCESS_KEY=…
 see microversions accrue as versions of `…/current.json`, and any release as its
 own `…/releases/<label>.json`. (Swap bucket + prefix for the other two apps.)
 
+## Auto-deploy on merge to `main`
+
+A systemd timer polls for the images CI has published and redeploys the stack, so
+a merged PR reaches this box without anyone SSHing in. It is **pull-based on
+purpose**: the machine is outbound-only (`ufw default deny incoming`), and a
+push-based deploy would mean keeping an SSH key + a Cloudflare Access service
+token in GitHub that grant shell here. The cost is up to one timer interval of
+latency.
+
+```bash
+cd /opt/STAR
+sudo cp deploy/apps/systemd/star-auto-update.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now star-auto-update.timer
+sudo systemctl start star-auto-update.service     # run one tick now
+journalctl -u star-auto-update -f
+```
+
+Each tick ([`deploy/auto-update.sh`](../auto-update.sh)):
+
+1. **Waits for CI to go idle.** `publish-apps.yml` builds a dozen images in a
+   matrix spread over ~5–40 minutes, all pushing `:latest`. Pulling mid-matrix
+   would pair a *new* API with an *old* frontend, so the tick skips while any run
+   of `publish-apps.yml` / `publish-auth.yml` is still queued or in progress. The
+   repo is public, so this needs no credentials. Anything the API can't answer
+   (offline, rate limited) also skips — a late deploy is cheap, a half-deploy is
+   not.
+2. **Syncs the checkout** to `origin/main`, so compose and Caddyfile changes ship
+   with the images. A commit younger than `SETTLE_SECONDS` (120) is left for the
+   next tick — GitHub takes a moment to create a workflow run, and until it
+   exists step 1 would see an idle CI.
+3. **Pulls and `up -d`s.** It compares resolved image *digests*, not tags, so a
+   tick with nothing new is a genuine no-op and the journal stays readable.
+4. **Verifies** every service came back running, and leaves the unit failed (and
+   the recorded state unadvanced, so the next tick retries) if not.
+
+| | |
+| --- | --- |
+| Deploy right now | `sudo systemctl start star-auto-update` |
+| See what would happen | `sudo /opt/STAR/deploy/auto-update.sh --dry-run` |
+| Deploy without waiting for CI | `… /deploy/auto-update.sh --skip-ci-check` |
+| What is deployed | `cat /var/lib/star-auto-update/state` |
+| Pause auto-deploy | `sudo systemctl disable --now star-auto-update.timer` |
+| Per-box settings | `/etc/star-auto-update.conf` (`SETTLE_SECONDS`, `PRUNE`, `GITHUB_TOKEN`, …) |
+
+**Caveats**
+- **The DAQ server is not covered.** It's a native systemd install that needs the
+  test-stand hardware, not a compose service — updating it stays the flow in
+  [`../README.md`](../README.md).
+- **Local edits to tracked files stop the checkout sync** (the tick warns in the
+  journal and still ships the images). §3 above suggests deleting caddy's
+  `80:80`/`443:443` lines on the box; `bootstrap.sh` already blocks those at the
+  firewall, so prefer leaving the file alone. `--allow-dirty` discards such edits.
+- **Rollback is manual** — compose pins `:latest`, so there is nothing to revert
+  to automatically. Every image also carries a `sha-<short>` tag to pin by hand.
+- **In-flight user work is safe.** All persistent data is in named volumes
+  (`userdata`) or S3, which container recreation doesn't touch, and the design
+  tools' autosave only advances its "last saved" marker on success — a few
+  seconds of API downtime is retried on the next 4-second tick.
+
 ## Notes
 - **`JWT_SECRET` must match EC2 exactly** — it's the whole trust link.
 - **Per-user data** (engine + recovery saved configs, recovery units, **P&ID
   working copies**) lives in the `userdata` volume on this machine, keyed by
   `X-Auth-Email`. P&ID *version history* additionally lives in S3 (above).
-- **Updating:** `docker compose --profile tunnel pull && docker compose --profile tunnel up -d`
-  (CI republishes `:latest` on every push to `main`). To deploy a **specific**
-  build instead of the newest, set `STAR_IMAGE_TAG=sha-<short>` in `.env` first —
-  see §3 "Image version". Default (unset) tracks `latest`.
+- **Updating:** automatic — see [Auto-deploy on merge to `main`](#auto-deploy-on-merge-to-main)
+  above. By hand it is `docker compose --profile tunnel pull && docker compose
+  --profile tunnel up -d` (CI republishes `:latest` on every push to `main`). To
+  hold the box on a **specific** build instead of the newest, set
+  `STAR_IMAGE_TAG=sha-<short>` in `.env` — see §3 "Image version". Default (unset)
+  tracks `latest`.

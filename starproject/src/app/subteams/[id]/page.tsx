@@ -28,6 +28,7 @@ export default async function SubteamPage({
       where: { id },
       include: {
         tasks: {
+          where: { archived: false },
           include: {
             assignees: {
               select: { id: true, name: true, email: true, displayName: true },

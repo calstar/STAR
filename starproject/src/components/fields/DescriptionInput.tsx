@@ -1,6 +1,6 @@
 "use client";
 
-import { updateField } from "@/lib/fieldUpdate";
+import { RichTextEditor } from "@/components/fields/RichTextEditor";
 
 export function DescriptionInput({
   taskId,
@@ -10,13 +10,11 @@ export function DescriptionInput({
   value: string;
 }) {
   return (
-    <textarea
-      name="description"
-      defaultValue={value}
-      onBlur={(e) => updateField(taskId, "description", e.target.value)}
-      rows={3}
+    <RichTextEditor
+      taskId={taskId}
+      field="description"
+      value={value}
       placeholder="Add a description…"
-      className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"
     />
   );
 }

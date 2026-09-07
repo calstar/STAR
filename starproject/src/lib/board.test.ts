@@ -23,6 +23,38 @@ function task(over: Partial<BoardTask>): BoardTask {
   } as unknown as BoardTask;
 }
 
+describe("groupByStatus sort options", () => {
+  const todos = [
+    task({ id: "low-old", priority: "low", createdAt: new Date("2026-01-01"), title: "Zebra", boardOrder: 2 }),
+    task({ id: "high-new", priority: "high", createdAt: new Date("2026-03-01"), title: "Apple", boardOrder: 1 }),
+    task({ id: "mid", priority: "medium", createdAt: new Date("2026-02-01"), title: "Mango", boardOrder: 0 }),
+  ];
+
+  it("priority: high → medium → low", () => {
+    expect(groupByStatus(todos, "priority").todo.map((t) => t.id)).toEqual([
+      "high-new", "mid", "low-old",
+    ]);
+  });
+
+  it("created: newest first", () => {
+    expect(groupByStatus(todos, "created").todo.map((t) => t.id)).toEqual([
+      "high-new", "mid", "low-old",
+    ]);
+  });
+
+  it("title: A→Z (Apple, Mango, Zebra)", () => {
+    expect(groupByStatus(todos, "title").todo.map((t) => t.id)).toEqual([
+      "high-new", "mid", "low-old",
+    ]);
+  });
+
+  it("manual: by boardOrder", () => {
+    expect(groupByStatus(todos, "manual").todo.map((t) => t.id)).toEqual([
+      "mid", "high-new", "low-old",
+    ]);
+  });
+});
+
 describe("midpointOrder", () => {
   it("returns 0 for an empty column", () => {
     expect(midpointOrder(undefined, undefined)).toBe(0);
@@ -52,18 +84,44 @@ describe("groupByStatus", () => {
     expect(cols.in_progress).toEqual([]);
   });
 
-  it("orders each column by boardOrder then createdAt", () => {
+  it("orders non-done columns by soonest due date first, undated last", () => {
     const cols = groupByStatus([
-      task({ id: "later", status: "todo", boardOrder: 2 }),
-      task({ id: "earlier", status: "todo", boardOrder: 1 }),
+      task({ id: "soon", status: "todo", dueDate: new Date("2026-02-01") }),
+      task({ id: "overdue", status: "todo", dueDate: new Date("2020-01-01") }),
+      task({ id: "later", status: "todo", dueDate: new Date("2026-06-01") }),
+      task({ id: "undated", status: "todo", dueDate: null }),
+    ]);
+    // Overdue/soonest float to the top; the task with no due date sinks last.
+    expect(cols.todo.map((t) => t.id)).toEqual([
+      "overdue",
+      "soon",
+      "later",
+      "undated",
+    ]);
+  });
+
+  it("orders the done column by most-recently-due first, undated last", () => {
+    const cols = groupByStatus([
+      task({ id: "old", status: "done", dueDate: new Date("2026-01-01") }),
+      task({ id: "recent", status: "done", dueDate: new Date("2026-06-01") }),
+      task({ id: "undated", status: "done", dueDate: null }),
+    ]);
+    expect(cols.done.map((t) => t.id)).toEqual(["recent", "old", "undated"]);
+  });
+
+  it("breaks ties on equal or absent due dates by boardOrder then createdAt", () => {
+    const cols = groupByStatus([
+      task({ id: "later", status: "todo", boardOrder: 2, dueDate: null }),
+      task({ id: "earlier", status: "todo", boardOrder: 1, dueDate: null }),
       task({
         id: "tie-old",
         status: "todo",
         boardOrder: 1,
+        dueDate: null,
         createdAt: new Date("2025-01-01T00:00:00Z"),
       }),
     ]);
-    // boardOrder 1 before 2; within boardOrder 1, older createdAt first.
+    // Same (absent) due date → boardOrder 1 before 2; within 1, older createdAt first.
     expect(cols.todo.map((t) => t.id)).toEqual(["tie-old", "earlier", "later"]);
   });
 });

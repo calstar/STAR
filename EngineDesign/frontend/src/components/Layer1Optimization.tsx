@@ -1236,7 +1236,7 @@ export function Layer1Optimization({
               Objective Convergence
               {objectiveHistory.length > 0 && (
                 <span className="text-sm font-normal text-[var(--color-text-secondary)] ml-2">
-                  ({objectiveHistory.length} iterations)
+                  ({objectiveHistory.length} points &middot; lower is better)
                 </span>
               )}
             </h4>
@@ -1246,16 +1246,19 @@ export function Layer1Optimization({
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
                   <XAxis
                     dataKey="iteration"
+                    type="number"
+                    domain={['dataMin', 'dataMax']}
+                    allowDecimals={false}
                     stroke="var(--color-text-secondary)"
                     tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
-                    label={{ value: 'Iteration', position: 'insideBottom', offset: -5, fill: 'var(--color-text-secondary)' }}
+                    label={{ value: 'Candidate evaluation', position: 'insideBottom', offset: -5, fill: 'var(--color-text-secondary)' }}
                   />
                   <YAxis
                     scale="log"
                     domain={['auto', 'auto']}
                     stroke="var(--color-text-secondary)"
                     tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
-                    label={{ value: 'Objective Value (log)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
+                    label={{ value: 'Weighted penalty sum (log)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
                   />
                   <Tooltip
                     contentStyle={{
@@ -1265,24 +1268,32 @@ export function Layer1Optimization({
                       color: 'var(--color-text-primary)'
                     }}
                   />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="objective"
-                    name="Objective"
-                    stroke="#3b82f6"
-                    strokeWidth={0}
-                    dot={renderDot}
-                    isAnimationActive={false}
+                  <Legend
+                    payload={[
+                      { value: 'Candidate (feasible)', type: 'circle', color: '#3b82f6', id: 'cand' },
+                      { value: 'New best', type: 'circle', color: '#ef4444', id: 'newbest' },
+                      { value: `Rejected (penalty \u2265 ${LAYER1_BASE_INFEAS.toExponential(0)})`, type: 'circle', color: '#64748b', id: 'infeas' },
+                      { value: 'Best so far', type: 'plainline', color: '#f97316', id: 'best', payload: { strokeDasharray: '5 5' } },
+                    ]}
                   />
                   <Line
-                    type="monotone"
+                    type="stepAfter"
                     dataKey="best_objective"
-                    name="Best Objective"
+                    name="Best so far"
                     stroke="#f97316"
                     strokeWidth={2}
                     strokeDasharray="5 5"
                     dot={false}
+                    isAnimationActive={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="objective"
+                    name="Candidate"
+                    stroke="#3b82f6"
+                    strokeWidth={0}
+                    dot={renderDot}
+                    activeDot={{ r: 4 }}
                     isAnimationActive={false}
                   />
                 </LineChart>
@@ -1293,6 +1304,13 @@ export function Layer1Optimization({
                   Waiting for objective function data...
                 </p>
               </div>
+            )}
+            {objectiveHistory.length > 0 && (
+              <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                Dot size scales inversely with the objective, so the better a candidate is the
+                bigger its dot. The axis is logarithmic: near the end of a run the incumbent and
+                the surrounding candidates can differ by well under 1% and still look like a gap.
+              </p>
             )}
 
             {/* Button to show parameter plots */}

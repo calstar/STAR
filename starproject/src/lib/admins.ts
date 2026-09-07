@@ -6,10 +6,12 @@ import { prisma } from "@/lib/db";
 // This is NOT per-project access control — everyone still views and edits
 // everything; this only gates dangerous, hard-to-undo actions.
 //
-// The built-in seed list below is always admin and can't be removed from the UI.
-// Additional admins are added at runtime (Workspace setup → Admins) and live in the
-// AdminEmail table. Emails match the identity in X-Auth-Email (@berkeley.edu) /
-// DEV_AUTH_EMAIL, compared case-insensitively.
+// The built-in seed list below is admin by default. Both seed and runtime-added
+// admins can be removed from the UI (Workspace setup → Admins): runtime admins
+// live in the AdminEmail table; a removed seed is suppressed by a RemovedSeedAdmin
+// tombstone (it would otherwise re-appear from this code list every request).
+// Emails match the identity in X-Auth-Email (@berkeley.edu) / DEV_AUTH_EMAIL,
+// compared case-insensitively.
 export const SEED_ADMIN_EMAILS = [
   "aidanrickert@berkeley.edu",
   "tchang27@berkeley.edu",
@@ -24,11 +26,18 @@ export const SEED_ADMIN_EMAILS = [
   "hudson@berkeley.edu",
 ].map((e) => e.toLowerCase());
 
-// Seed + runtime admins, lowercased. Memoized per request so the many isAdmin()
-// checks in one render/action share a single DB read.
+// Effective admins = (seed list − removed seeds) ∪ runtime-added, lowercased.
+// Memoized per request so the many isAdmin() checks in one render/action share a
+// single pair of DB reads.
 const getAdminEmails = cache(async (): Promise<Set<string>> => {
-  const rows = await prisma.adminEmail.findMany({ select: { email: true } });
-  return new Set([...SEED_ADMIN_EMAILS, ...rows.map((r) => r.email.toLowerCase())]);
+  const [added, removed] = await Promise.all([
+    prisma.adminEmail.findMany({ select: { email: true } }),
+    prisma.removedSeedAdmin.findMany({ select: { email: true } }),
+  ]);
+  const removedSeeds = new Set(removed.map((r) => r.email.toLowerCase()));
+  const emails = new Set(SEED_ADMIN_EMAILS.filter((e) => !removedSeeds.has(e)));
+  for (const r of added) emails.add(r.email.toLowerCase());
+  return emails;
 });
 
 export async function isAdmin(email: string | null | undefined): Promise<boolean> {
@@ -36,19 +45,9 @@ export async function isAdmin(email: string | null | undefined): Promise<boolean
   return (await getAdminEmails()).has(email.toLowerCase());
 }
 
-// For the Workspace setup UI: every admin email with whether it can be removed (seed
-// admins are fixed in code, so only runtime-added ones are removable).
-export async function listAdmins(): Promise<{ email: string; removable: boolean }[]> {
-  const rows = await prisma.adminEmail.findMany({
-    orderBy: { email: "asc" },
-    select: { email: true },
-  });
-  const added = rows
-    .map((r) => r.email.toLowerCase())
-    .filter((e) => !SEED_ADMIN_EMAILS.includes(e))
-    .map((email) => ({ email, removable: true }));
-  return [
-    ...SEED_ADMIN_EMAILS.map((email) => ({ email, removable: false })),
-    ...added,
-  ];
+// For the Workspace setup UI: the effective admin emails, sorted. Every admin is
+// removable (seed included); the UI and removeAdmin only block removing the last.
+export async function listAdmins(): Promise<{ email: string }[]> {
+  const emails = [...(await getAdminEmails())].sort((a, b) => a.localeCompare(b));
+  return emails.map((email) => ({ email }));
 }

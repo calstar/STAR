@@ -194,6 +194,51 @@ jobs:
       run: npm run build
 
   # Aggregate status, mirroring engine-design-ci.yml's summary job.
+  # Docker image build. This is the gate that was missing: publish-apps.yml (and
+  # publish-auth.yml) only trigger on push to main, so a Dockerfile that no
+  # longer matches the tree -- a COPY of a directory the branch deleted, say --
+  # got its first real build *after* the merge, and broke the deploy image
+  # instead of the PR. That is exactly how EngineDesign/Dockerfile.api broke
+  # main when PR #37 deleted engine/native.
+  #
+  # Same Dockerfile and context as the publisher, but push: false: this proves
+  # the image builds, publishes nothing, and needs no GHCR login. cache-from
+  # points at the publisher's cache scope so PRs reuse main's layers; nothing is
+  # written back (GitHub isolates a branch's cache from the default branch's
+  # anyway, so a PR could not poison them even if it tried).
+  #
+  # Context is the repo root, not star-openrocket/: both images COPY the shared
+  # design core out of lib/, so the build context has to contain it. This
+  # matches publish-apps.yml exactly -- if the two drift, the gate stops
+  # proving anything about the image that actually ships.
+  docker-image:
+    name: Docker image (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: star-openrocket-api,      context: ., dockerfile: ./star-openrocket/Dockerfile.api }
+          - { name: star-openrocket-frontend, context: ., dockerfile: ./star-openrocket/frontend/Dockerfile }
+
+    steps:
+      # No checkout-relative `run` steps here, so the workflow-level
+      # working-directory never has to be overridden.
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.name }}
+
   star-openrocket-summary:
     name: STAR OpenRocket Summary
     runs-on: ubuntu-latest
@@ -202,6 +247,7 @@ jobs:
       - offline-guarantee
       - backend-smoke
       - frontend
+      - docker-image
     if: always()
 
     steps:
@@ -218,3 +264,4 @@ jobs:
         echo "| Offline guarantee | ${{ needs.offline-guarantee.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Backend smoke | ${{ needs.backend-smoke.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Frontend build | ${{ needs.frontend.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Docker images (build, no push) | ${{ needs.docker-image.result }} |" >> $GITHUB_STEP_SUMMARY
