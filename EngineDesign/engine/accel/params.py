@@ -73,9 +73,6 @@ def _fluid(f):
         surface_tension=float(f.surface_tension),
         temperature=float(getattr(f, "temperature", 0.0) or 0.0),
         latent_heat=float(getattr(f, "latent_heat", 300e3) or 300e3),
-        # Boiling point feeds the Spalding transfer number B_M in the derived evaporation
-        # constant. 0 => the kernel falls back to the legacy fixed-K path for that stream.
-        boiling_point=float(getattr(f, "boiling_point", 0.0) or 0.0),
     )
 
 
@@ -257,10 +254,6 @@ def build_state(config):
         evap_K=float(sp.evaporation.K),
         evap_x_star_limit=float(sp.evaporation.x_star_limit),
         evap_use_constraint=int(bool(sp.evaporation.use_constraint)),
-        evap_model_code=1 if getattr(sp.evaporation, "model", "derived") == "derived" else 0,
-        evap_C_evap=float(getattr(sp.evaporation, "C_evap", 1.562)),
-        evap_cp_gas=float(getattr(sp.evaporation, "cp_gas", 2200.0)),
-        evap_apply_tau_res=1.0 if getattr(sp.evaporation, "apply_tau_res_correction", False) else 0.0,
     )
 
     solver = _ns(
@@ -344,16 +337,6 @@ _NAMES = [
     "PIN_SMDC", "PIN_SMDB", "PIN_SMDN", "PIN_SMDP", "PIN_DTIP",
     # spray turbulence corrections (used by the pintle path)
     "SP_USETURB", "SP_PENGAIN",
-    # --- spray-length / evaporation block -------------------------------------------------
-    # Orifice SPACING was extracted into the namespace but never made it into this vector, so
-    # the kernel could not compute the doublet ring offset and therefore could not compute
-    # L_imp, the spray length, or an effective residence time. Everything downstream of the
-    # impingement point was invisible to the accelerated path -- which is what Layer 1 runs on.
-    # Appended at the END: every pre-existing index is unchanged.
-    "SPO", "SPF",
-    "RHO_O_BOIL", "RHO_F_BOIL",      # boiling points, for the Spalding transfer number
-    "LAT_O",                         # oxidiser latent heat (LAT_F already present)
-    "EV_MODEL", "EV_CEVAP", "EV_CPGAS", "EV_APPLY_TAURES",
 ]
 _IDX = {n: i for i, n in enumerate(_NAMES)}
 globals().update(_IDX)                      # module-level int constants for njit
@@ -402,14 +385,6 @@ def _build_path_table():
         "RHO_F": "fluid_F.density", "MU_F": "fluid_F.viscosity",
         "SIG_F": "fluid_F.surface_tension", "T_F": "fluid_F.temperature",
         "LAT_F": "fluid_F.latent_heat",
-        "LAT_O": "fluid_O.latent_heat",
-        "RHO_O_BOIL": "fluid_O.boiling_point",
-        "RHO_F_BOIL": "fluid_F.boiling_point",
-        "SPO": "injector.imp_O.spacing", "SPF": "injector.imp_F.spacing",
-        "EV_MODEL": "spray.evap_model_code",
-        "EV_CEVAP": "spray.evap_C_evap",
-        "EV_CPGAS": "spray.evap_cp_gas",
-        "EV_APPLY_TAURES": "spray.evap_apply_tau_res",
         "DJO": "injector.imp_O.d_jet", "DJF": "injector.imp_F.d_jet",
         "NO": "injector.imp_O.n_elements", "NF": "injector.imp_F.n_elements",
         "ANG_O": "injector.imp_O.impingement_angle",

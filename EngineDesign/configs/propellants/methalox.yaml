@@ -30,16 +30,6 @@ fluids:
     boiling_point: 90.2        # K, standard LOX (was _LOX_TBOIL_DEFAULT)
     molecular_weight: 32.0
     bulk_modulus_pa: 1500000000.0     # order-of-magnitude LOX (was hardcoded in stability/report.py); refine via test T5
-# Chamber-gas properties for the Ingebo aerodynamic Weber number (rho_g = Pc/(R*T)).
-# Every preset states these explicitly: the SMDConfig schema defaults (R=360, T=3500) are a
-# single hardcoded pair that cannot be right for three different propellants, and leaving a
-# preset silent meant inheriting another propellant's chamber. Read off
-# cea_cache_LOX_CH4_3D.npz at the design point (MR 2.8, averaged over Pc 300-600 psi).
-# The schema default was overstating gas density here by ~10%.
-spray:
-  smd:
-    chamber_gas_R: 426.1    # J/(kg*K), LOX/CH4 @ MR 2.8
-    chamber_gas_T: 3293.0   # K,        LOX/CH4 @ MR 2.8
 combustion:
   cea:
     ox_name: LOX

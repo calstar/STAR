@@ -83,6 +83,7 @@ const VIEW_ONLY: Record<string, string> = {
   'Layer1Optimization.tsx:setShowInjectorPressures': 'chart visibility',
   'Layer1Optimization.tsx:setShowSolverInputsEcho': 'diagnostics visibility',
   'Layer1Optimization.tsx:setMomentumRAuditOpen': 'diagnostics visibility',
+  'Layer1Optimization.tsx:setUnits': 'mm/in display units for the geometry table',
   'Layer2Optimization.tsx:setShowAdvanced': 'shows the advanced settings block',
   'OptimizerDemo.tsx:setShowRequirementsForm': 'collapses the requirements form',
   'Optimizer.tsx:setActiveSubTab': 'which optimizer sub-tab is shown',
