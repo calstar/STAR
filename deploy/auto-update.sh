@@ -82,8 +82,31 @@ flock -n 9 || skip "another run holds $LOCK_FILE"
 
 command -v docker >/dev/null || die "docker not found"
 docker compose version >/dev/null 2>&1 || die "the docker compose plugin is not installed"
+
+# ── every git call goes through this ─────────────────────────────────────────
+# The units run as root (they need the docker socket) but the checkout belongs
+# to the box's login user (ec2-user / ubuntu), and git's dubious-ownership guard
+# refuses to touch a repo it doesn't own:
+#
+#   fatal: detected dubious ownership in repository at '/home/ec2-user/STAR'
+#
+# Running the script by hand never shows this — sudo exports SUDO_UID and git
+# honours that as an implicit exception — so it only appears once systemd, which
+# sets no SUDO_UID, runs the real service. Marking the path safe for the
+# duration of one invocation fixes both boxes without running the unit as an
+# unprivileged user (it would lose the docker socket and $STATE_DIR) and without
+# writing anything into root's global gitconfig.
+git_repo() { git -c safe.directory="$REPO_DIR" -C "$REPO_DIR" "$@"; }
+
 # `.git` is a directory in a normal clone but a file in a worktree, so ask git.
-git -C "$REPO_DIR" rev-parse --git-dir >/dev/null 2>&1 || die "$REPO_DIR is not a git checkout"
+# Show what git actually said: "not a git checkout" is the same message for a
+# wrong path, a broken clone and the ownership guard above, and guessing between
+# them costs an afternoon.
+if ! git_err="$(git_repo rev-parse --git-dir 2>&1 >/dev/null)"; then
+  log "ERROR: cannot read a git checkout at $REPO_DIR — git said:"
+  printf '%s\n' "$git_err" | sed 's/^/    /' >&2
+  exit 1
+fi
 [[ -f "$COMPOSE_DIR/docker-compose.yml" ]] || die "no docker-compose.yml in $COMPOSE_DIR"
 
 compose() {
@@ -151,12 +174,12 @@ fi
 # Shallow clones (the apps box is one) must keep fetching shallow; a full clone
 # must not be silently converted into one.
 fetch_args=(fetch --quiet origin "$BRANCH")
-[[ "$(git -C "$REPO_DIR" rev-parse --is-shallow-repository)" == "true" ]] && fetch_args+=(--depth 1)
-git -C "$REPO_DIR" "${fetch_args[@]}" || die "git fetch failed"
+[[ "$(git_repo rev-parse --is-shallow-repository)" == "true" ]] && fetch_args+=(--depth 1)
+git_repo "${fetch_args[@]}" || die "git fetch failed"
 
-target="$(git -C "$REPO_DIR" rev-parse FETCH_HEAD)"
-current="$(git -C "$REPO_DIR" rev-parse HEAD)"
-commit_ts="$(git -C "$REPO_DIR" show -s --format=%ct "$target")"
+target="$(git_repo rev-parse FETCH_HEAD)"
+current="$(git_repo rev-parse HEAD)"
+commit_ts="$(git_repo show -s --format=%ct "$target")"
 age=$(( $(date +%s) - commit_ts ))
 if [[ "$target" != "$current" && "$age" -lt "$SETTLE_SECONDS" ]]; then
   skip "${target:0:7} is only ${age}s old; letting CI register its runs first"
@@ -165,19 +188,19 @@ fi
 git_moved=0
 if [[ "$target" == "$current" ]]; then
   :
-elif [[ -n "$(git -C "$REPO_DIR" status --porcelain --untracked-files=no)" && "$ALLOW_DIRTY" == "0" ]]; then
+elif [[ -n "$(git_repo status --porcelain --untracked-files=no)" && "$ALLOW_DIRTY" == "0" ]]; then
   # Someone hand-edited a tracked file on the box (the apps README used to
   # suggest deleting caddy's 80/443 port lines here). Clobbering that silently
   # would quietly undo it, so leave the checkout alone and still ship the images.
   log "warn: tracked files are modified in $REPO_DIR — NOT syncing the checkout."
   log "warn:   move the edit into .env, or re-run with --allow-dirty to discard it:"
-  git -C "$REPO_DIR" status --porcelain --untracked-files=no | sed 's/^/warn:   /' >&2
+  git_repo status --porcelain --untracked-files=no | sed 's/^/warn:   /' >&2
 elif [[ "$DRY_RUN" == "1" ]]; then
   log "dry-run: would reset $REPO_DIR to ${target:0:7}"
   git_moved=1
 else
   log "syncing $REPO_DIR: ${current:0:7} -> ${target:0:7}"
-  git -C "$REPO_DIR" reset --hard --quiet "$target" || die "git reset failed"
+  git_repo reset --hard --quiet "$target" || die "git reset failed"
   git_moved=1
 fi
 
@@ -202,7 +225,9 @@ log "pulling images in $COMPOSE_DIR"
 compose pull --quiet || die "docker compose pull failed"
 after="$(digests)"
 
-changed="$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") | grep '^>' | awk '{print $1}' || true)"
+# diff prefixes each added line with "> ", so a row reads `> <image> <digest>`
+# and the image name is $2 — $1 is the "> " marker itself.
+changed="$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") | grep '^>' | awk '{print $2}' || true)"
 if [[ -z "$changed" && "$git_moved" == "0" && "$FORCE" == "0" ]]; then
   log "up to date at ${current:0:7} — nothing to deploy"
   exit 0
@@ -215,13 +240,27 @@ up_args=(up -d)
 compose "${up_args[@]}" || die "docker compose up failed — the stack may be half-updated"
 
 # ── 5. verify, then record ───────────────────────────────────────────────────
+# Only the services this box actually runs get a verdict. `config --services`
+# resolves against COMPOSE_PROFILES_LIST, so on EC2 it leaves out the `legacy`
+# profile's OpenProject — the container step 4 deliberately keeps around for a
+# rollback (it's why REMOVE_ORPHANS defaults to 0). Without this the deploy
+# fails on a container the script is preserving on purpose: `ps --all` lists it,
+# it's exited, and every genuine deploy exits 1 and skips writing $STATE_FILE.
+#
+# `--all` stays: a service that starts and immediately dies has to be caught,
+# and dropping it would hide exactly the failure this check exists for. An empty
+# list means compose couldn't answer, so judge everything rather than nothing.
+enabled_services="$(compose config --services 2>/dev/null | sort -u || true)"
+[[ -n "$enabled_services" ]] || log "warn: could not list enabled services — judging every container"
+
 # Give containers a moment to fail their first start before judging them.
 sleep 15
-bad="$(compose ps --all --format json | python3 -c '
-import json, sys
+bad="$(compose ps --all --format json | ENABLED_SERVICES="$enabled_services" python3 -c '
+import json, os, sys
 raw = sys.stdin.read().strip()
 if not raw:
     sys.exit(0)
+enabled = set(os.environ.get("ENABLED_SERVICES", "").split())
 # Compose emits either a JSON array or one object per line depending on version.
 try:
     rows = json.loads(raw)
@@ -230,9 +269,12 @@ try:
 except json.JSONDecodeError:
     rows = [json.loads(l) for l in raw.splitlines() if l.strip()]
 for r in rows:
+    service = r.get("Service", "?")
+    if enabled and service not in enabled:
+        continue        # belongs to a disabled profile: down on purpose
     state, health = r.get("State", ""), (r.get("Health") or "")
     if state != "running" or health == "unhealthy":
-        print("%s (%s%s)" % (r.get("Service", "?"), state, "/" + health if health else ""))
+        print("%s (%s%s)" % (service, state, "/" + health if health else ""))
 ')"
 
 if [[ -n "$bad" ]]; then
