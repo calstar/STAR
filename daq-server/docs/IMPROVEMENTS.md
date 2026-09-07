@@ -5,129 +5,36 @@ frontend, and CI. Each item names the affected file(s), what actually goes wrong
 shape of the fix.
 
 **Last audited:** 2026-09-07 against `ab3ce2d2`.
-The previous revision of this file dated from April 2026 and predated the Vite frontend
-migration, the `smol-toml` config work, and the config-driven `[[states]]` rework. Items it
-listed that are now fixed are recorded at the bottom rather than silently dropped, so a
-future audit can tell "resolved" from "never looked at".
+**Last updated:** 2026-09-07 after `4bcbfb4e` — the sequencer concurrency work landed and its
+items moved to Resolved.
+
+The revision before this one dated from April 2026 and predated the Vite frontend migration,
+the `smol-toml` config work, and the config-driven `[[states]]` rework. Anything fixed is
+recorded at the bottom with *how*, rather than silently dropped, so a future audit can tell
+"resolved" from "never looked at".
 
 ---
 
 ## Critical
 
-### C++ — `SequencerService` serializes nothing; every command path is concurrent
+### C++ — The ABORT broadcast can leave on the wrong interface
 
-**Files:** `diablo_server/services/sequencer/SequencerService.cpp:243` (`transitionTo`),
-`diablo_server/services/sequencer/sequencer_main.cpp:215`
+**File:** `diablo_server/services/sequencer/AbortBroadcaster.cpp`
 
-`sequencer_main` spawns **one detached thread per TCP client** and every one of them calls
-into the same `SequencerService` instance. The `FireManager` timer thread is a third caller
-(`SequencerService.cpp:294`, `transitionTo(fire_expiry_state_)`). There is no mutex anywhere
-in the class — only `std::atomic` on the individual fields, which protects each load and
-store but not the multi-step sequence built out of them.
+*Partly addressed.* The abort is no longer a single datagram — it is sent 4× at 2 ms spacing
+with a send timeout and per-repeat `errno` logging, matching the redundancy
+`ActuatorCommander::sendBatch` already had for ordinary state changes.
 
-`transitionTo` is that sequence: clear overrides → `stopContinuousLoop()` →
-`applyForState()` → `startContinuousLoop()` → assign `current_state_` → maybe
-`triggerAbort()` → maybe `fire_manager_.start()`. Two threads running it at once interleave
-arbitrarily.
-
-The sharpest failure is not a logical race but a hard crash. `stopContinuousLoop()` joins
-`loop_thread_`; `startContinuousLoop()` move-assigns into it. Two threads doing that
-concurrently means either two `join()` calls on the same `std::thread` (undefined behavior)
-or a move-assignment into a still-joinable thread, which calls `std::terminate` — the exact
-failure `FireManager::stop()` documents at `FireManager.cpp:41-46` and guards against
-single-threaded, but which nothing guards against across threads.
-
-**Failure scenario:** two dashboards are open. The fire timer expires at the same moment an
-operator presses ABORT. Both threads enter `transitionTo`. The sequencer dies with
-`terminate called without an active exception` — during a burn, with the actuator republish
-loop dead and no process left to command the abort state.
-
-**Fix:** a single `std::recursive_mutex` held across the whole body of `transitionTo`,
-`setDebugMode`, `manualActuator`, `extendFire`, and `reloadConfig`. Recursive because the
-fire-expiry callback re-enters `transitionTo` from inside `FireManager`'s timer thread while
-`stop()` may be unwinding. Commands are human-rate; there is no throughput argument against
-a service-wide lock here.
-
----
-
-### C++ — `reloadConfig()` rewrites the actuator tables while the 1 Hz loop is reading them
-
-**Files:** `diablo_server/services/sequencer/SequencerService.cpp:338`,
-`diablo_server/services/sequencer/ActuatorCommander.cpp:58`
-
-`reloadConfig()` calls `actuator_commander_.load(...)`, whose first two statements are
-`roles_.clear(); state_actuators_.clear();` — followed by a full repopulate from CSV. It
-does **not** stop the continuous loop first. That loop
-(`ActuatorCommander.cpp:493`) is calling `applyForState()` → `findStateActuators()` →
-iterating `state_actuators_` once a second, forever.
-
-Neither `roles_` nor `state_actuators_` is guarded by a mutex (the class has
-`pending_roles_mutex_` and `overrides_mutex_`, which cover different members).
-Clearing and rebuilding a `std::map` under an active iterator is undefined behavior, not a
-stale read.
-
-`state_machine_.load(sm_csv)` on the next line has the same problem against any concurrent
-`transitionTo` reading the transition table.
-
-**Failure scenario:** an operator saves a config edit from the GUI (which sends
-`RELOAD_CONFIG`) during a fill. The republish loop is mid-iteration. The sequencer segfaults
-or sends actuator commands built from freed nodes.
-
-**Fix:** in `reloadConfig()`, stop the continuous loop, swap the tables, restart the loop —
-all under the service-wide lock from the item above. Better still, build the new
-`ActuatorCommander` state off to the side and swap it in under a lock, so a failed reload
-cannot leave the tables half-cleared (today a mid-load `return false` leaves the service
-with an empty actuator map and a running loop).
-
----
-
-### C++ — `reloadConfig()` re-adopts `[[states]]` but keeps the old fire state ids
-
-**File:** `diablo_server/services/sequencer/SequencerService.cpp:338-360`
-
-`reloadConfig()` calls `StateMachine::loadStatesFromConfig(config_content_)` — renumbering
-every state — but never re-reads `[fire]`. `fire_state_` and `fire_expiry_state_` are stored
-as `State` values (raw ids) resolved once in `init()`. After a reload that renumbers or
-renames states, both hold ids that now name *different* states, and
-`actuator_commander_.setFireState()` is never called again either.
-
-`fire_manager_.configure(duration, extended)` is also not re-applied, so an edited fire
-window silently doesn't take effect until the service restarts.
-
-This is the same class of bug as the ones already fixed in `init()`, the controller, and the
-backend — the reload path just never got the same treatment.
-
-**Failure scenario:** a rig adds a state, which shifts ids. Config is reloaded rather than
-the stack restarted. `to == fire_state_` in `transitionTo` now matches the wrong state: the
-fire countdown arms on entering some fill state, and entering the real fire state arms
-nothing.
-
-**Fix:** factor the `[fire]` resolution block out of `init()` (`SequencerService.cpp:144-191`,
-including the `isAllowed` sanity warning) and call it from both `init()` and
-`reloadConfig()`.
-
----
-
-### C++ — ABORT is a single unacknowledged UDP datagram
-
-**File:** `diablo_server/services/sequencer/AbortBroadcaster.cpp:39-73`
-
-`sendPacket()` sends the ABORT header exactly once and reports success if `sendto` accepted
-it. One dropped frame on a congested field network and no board ever hears the abort.
-
-The contrast inside the same service is stark: `ActuatorCommander::sendBatch` sends **three
-rounds 1 ms apart** for ordinary state changes precisely because a single UDP send is not
-trusted. The abort path — the one that matters most — sends one.
-
-Related, same function: `dest.sin_addr.s_addr = INADDR_BROADCAST` (255.255.255.255) with no
+What remains is routing. `dest.sin_addr.s_addr = INADDR_BROADCAST` (255.255.255.255) with no
 `SO_BINDTODEVICE` and no bind to the DAQ NIC. On the apps box, which has more than one
 interface, the kernel picks the egress interface by route. If the DAQ NIC is not the one
-chosen, the abort broadcast leaves on the wrong wire.
+chosen, all four repeats leave on the wrong wire together — redundancy does not help when the
+failure is common-mode.
 
-**Fix:** send the abort 3–5 times a few ms apart, matching `sendBatch`. Bind the socket to
-the configured DAQ interface address (or send to the subnet-directed broadcast address,
-`192.168.2.255`, rather than the limited broadcast address) so it cannot take the wrong
-route. Log `errno` on a short send instead of only a generic "failed".
+**Fix:** bind the socket to the configured DAQ interface address, or send to the
+subnet-directed broadcast address (`192.168.2.255`) rather than the limited broadcast address,
+so it cannot take the wrong route. See also the entry below on the hardcoded abort port — both
+are the same underlying gap, that the broadcaster is constructed with no knowledge of config.
 
 ---
 
@@ -195,7 +102,7 @@ blocking `recv` and no `SO_RCVTIMEO`. There is no per-client thread. A client th
 and sends no newline blocks the accept loop indefinitely — and this loop is the only path
 that opens and closes the PWM gate.
 
-`sequencer_main.cpp:48` sets a 5 s `SO_RCVTIMEO` and threads per client; the controller,
+`sequencer_main.cpp:158` sets a 5 s `SO_RCVTIMEO` and gives each client its own thread; the controller,
 which gates ignition, does neither.
 
 **Failure scenario:** the backend host is killed or drops off the network mid-connection.
@@ -285,27 +192,32 @@ a checked-in `.clang-tidy` rather than an arbitrary 20-file slice.
 
 ---
 
-### CI — No sanitizer build, and CMake sets no warning flags
+### CI — No ASan/UBSan build, and CMake sets no warning flags
 
 **Files:** `CMakeLists.txt`, `.github/workflows/daq-server-ci.yml`
 
-The top-level `CMakeLists.txt` sets no `-Wall`/`-Wextra` and offers no sanitizer option;
-nothing in CI builds with ASan, UBSan, or TSan. Every C++ item in the Critical section above
-is a data race or an unaligned/undefined access that a sanitizer run would have surfaced
-automatically.
+*Partly addressed.* A `thread-sanitizer` job now builds the sequencer concurrency tests with
+`-fsanitize=thread` and runs them, which is what proves the command-queue work stays fixed —
+the races it guards are invisible to the Release `ctest` job, to cppcheck and to clang-tidy.
 
-A concrete UBSan-visible instance today:
-`config_broadcast_service_main.cpp:351,360,363` do
-`*reinterpret_cast<uint32_t*>(&buf[off])` into a `std::vector<uint8_t>` at offsets that step
-by 7 and 9 — unaligned stores through a `uint32_t*`. It works on x86-64 and ARM64 and is
-still undefined behavior; `memcpy` compiles to the same instruction with none of the risk.
+Two things still missing:
 
-**Fix, in priority order:**
-1. A **TSan** CI job running the existing ctest suite plus a scripted burst of concurrent
-   sequencer commands. This is where the value is — the races above are the real bugs.
-2. `add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter)` in the top-level
-   `CMakeLists.txt`, with `-Werror=return-type` at minimum.
-3. A `-DSANITIZE=ON` option wiring `-fsanitize=address,undefined`, run over ctest.
+1. The top-level `CMakeLists.txt` still sets no `-Wall`/`-Wextra`. Implicit conversions,
+   signed/unsigned mismatches and unused variables pass silently.
+2. No ASan/UBSan build anywhere. A concrete UBSan-visible instance today:
+   `config_broadcast_service_main.cpp:351,360,363` do
+   `*reinterpret_cast<uint32_t*>(&buf[off])` into a `std::vector<uint8_t>` at offsets that step
+   by 7 and 9 — unaligned stores through a `uint32_t*`. It works on x86-64 and ARM64 and is
+   still undefined behaviour; `memcpy` compiles to the same instruction with none of the risk.
+
+**Fix:** `add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter)` with
+`-Werror=return-type` at minimum, and a `-DSANITIZE=ON` option wiring
+`-fsanitize=address,undefined` run over ctest — mirroring how the TSan job is already wired.
+
+**Note for whoever adds it:** the TSan job documents two traps that apply to any sanitizer job
+here — `setarch -R` is required or the sanitizer aborts at startup on modern kernels with
+`unexpected memory mapping`, and a sanitizer CHECK abort is *not* a `WARNING:` line, so gate on
+the process exit code rather than grepping the log.
 
 ---
 
@@ -364,62 +276,6 @@ code with it. Keep `console.error`.
 
 ---
 
-### C++ — Actuator UDP sends have no timeout and log nothing on failure
-
-**File:** `diablo_server/services/sequencer/ActuatorCommander.cpp:309-332`
-
-The batch socket is created without `SO_SNDTIMEO`. A `sendto` on a saturated interface with
-a full socket buffer blocks the calling thread — which, via `applyForState`, is either the
-republish loop or a command thread.
-
-Worse for diagnosis: a short send only sets `all_ok = false`. `errno` is never read and
-nothing is logged, so a partially-delivered abort or state change leaves no trace beyond a
-boolean the callers largely ignore.
-
-**Fix:**
-
-```cpp
-struct timeval tv{.tv_sec = 0, .tv_usec = 100000};  // 100 ms
-setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-```
-
-and log the board IP plus `strerror(errno)` on any send that doesn't complete.
-
----
-
-### C++ — `notifyControllerFire` has a send timeout but no connect timeout
-
-**File:** `diablo_server/services/sequencer/SequencerService.cpp:372-397`
-
-`SO_SNDTIMEO` is set, but `connect()` on a blocking socket ignores it — an unreachable host
-that drops SYNs takes the full kernel retry budget (~2 minutes) before returning. This runs
-on whichever thread called `transitionTo` → `fire_manager_.start()`, so a controller host
-that is powered off but still ARP-resolvable stalls the state transition itself.
-
-**Fix:** non-blocking `connect` + `select` with a ~500 ms deadline, then restore blocking
-mode for the `send`. Or set `TCP_SYNCNT` to 1–2.
-
----
-
-### C++ — Detached threads outlive the objects they reference
-
-**Files:** `diablo_server/services/sequencer/sequencer_main.cpp:215-217`,
-`diablo_server/services/controller/controller_main.cpp:412-413`
-
-Both services detach threads that capture a stack-allocated service by reference
-(`&svc`, `&service`) and then let `main` return. On SIGTERM the detached threads may still
-be inside `recv`/`accept` when the service destructor runs.
-
-In practice the process is exiting anyway, so this shows up as an occasional ugly crash in
-the shutdown logs rather than a field failure — but it also means shutdown logs can't be
-trusted as a signal that something is wrong.
-
-**Fix:** track the client threads in a vector and join them after the accept loop exits, or
-give the service static storage duration. In the controller's case `control_thread` is
-already a named `std::thread` — join it instead of detaching.
-
----
-
 ### Backend — The resolved config path is never logged
 
 **File:** `diablo_server/backend/src/routes/config.ts:19-81` (`getConfigPath`)
@@ -453,28 +309,24 @@ consequence, refusing to broadcast a truncated ACTUATOR_CONFIG is defensible too
 
 ---
 
-### Tests — `test_robust_ddp` is built but never run; `test_imu_calibration` is never built
+### Tests — `test_imu_calibration` is never built
 
-**Files:** `diablo_server/lib/CMakeLists.txt:52`,
-`diablo_server/lib/test/test_imu_calibration.cpp`, `.github/workflows/daq-server-ci.yml`
+**Files:** `diablo_server/lib/CMakeLists.txt`,
+`diablo_server/lib/test/test_imu_calibration.cpp`
 
-`add_executable(test_robust_ddp …)` has no matching `add_test`, and CI never invokes the
-binary directly (the way it does for `test_sequencer_elodin`). It compiles on every build
-and its assertions have never gated anything.
+`test_imu_calibration.cpp` has no `add_executable` at all — it is not compiled, so it can
+silently rot out of sync with the code it tests. (`test_robust_ddp`, which had the related
+problem of being built but never registered with CTest, is now registered and passing.)
 
-`test_imu_calibration.cpp` has no `add_executable` at all — it isn't compiled, so it can
-silently rot out of sync with the code it tests.
-
-**Fix:** `add_test(NAME robust_ddp COMMAND test_robust_ddp)`. For the IMU test, either wire
-it up or delete it; a test file that isn't built is worse than no test file, because it reads
-like coverage.
+**Fix:** either wire it up or delete it. A test file that isn't built is worse than no test
+file, because it reads like coverage.
 
 ---
 
 ### C++ — the abort broadcast port ignores config
 
 **Files:** `diablo_server/lib/include/control/SequencerService.hpp:144`,
-`diablo_server/lib/include/control/AbortBroadcaster.hpp:21`, `config/config.toml:8,16`
+`diablo_server/lib/include/control/AbortBroadcaster.hpp:22`, `config/config.toml:8,16`
 
 `AbortBroadcaster abort_broadcaster_;` is default-constructed — port 5005, ABORT_DONE delay
 3000 ms — and nothing in `SequencerService::init()` or `reloadConfig()` ever configures it.
@@ -489,30 +341,6 @@ ever observed one.
 **Fix:** construct the broadcaster from `cfg.<section>.broadcast_port` in `init()`, and re-apply
 it in `applyFireConfig()`/reload alongside the other config-derived values. Same for the
 ABORT_DONE delay if a config key is wanted for it.
-
----
-
-### Tests — the integration test points the sequencer at the wrong controller port
-
-**Files:** `test/test_integration.sh:62,625`, `config/config.toml:393-394`
-
-The script launches `controller_service` with `--control-port 9997`, but never rewrites
-`[controller_service].port` in the generated test config, which stays at the base value `9999`.
-The sequencer reads that key for `controller_port_`, so it dials 9999 while the controller
-listens on 9997.
-
-Result: `FIRE_START` / `FIRE_STOP` never reach the controller during the integration run, and
-nothing asserts that they should — the run passes with the sequencer→controller fire gate
-entirely uncovered. Confirmed in a live run: the sequencer log shows *"could not reach
-controller_service at 127.0.0.1:9999 for FIRE_START"* while the controller log shows
-*"Control server on TCP :9997"*, and the suite still reported PASS.
-
-The mechanism itself is covered by the `test_fire_lifecycle` unit test, which stands up its own
-listener — so this is a wiring gap in the integration harness, not an untested code path.
-
-**Fix:** rewrite `[controller_service].port` to `$TEST_CONTROLLER_PORT` alongside the other
-`sedi` port rewrites (~`test_integration.sh:368-410`), and add an assertion that the controller
-actually observed the fire gate open and close.
 
 ---
 
@@ -565,10 +393,26 @@ longer to flush, and on a fast machine it's a second wasted on every run.
 
 ---
 
-## Resolved since the April 2026 revision
+## Resolved
 
-Kept so a future audit can distinguish "fixed" from "never checked". Verified against
-`ab3ce2d2`.
+Kept so a future audit can distinguish "fixed" from "never checked".
+
+### By the sequencer concurrency work (2026-09-07, `0c0dfd6c` / `4bcbfb4e`)
+
+| Item | Resolution |
+|---|---|
+| `SequencerService` serializes nothing | **Fixed.** All commands now run on a single worker thread fed by a queue; the fire-expiry callback posts to it without waiting. Confirmed: the pre-fix binary dies under TSan in 0.2 s at ~50 commands with a double `pthread_join` inside `stopContinuousLoop`, the post-fix one runs 240 transitions clean. A mutex was tried first and does not work — `fire_manager_.stop()` joins the very thread that would be waiting on it. Guarded by `test_sequencer_concurrency` under the new TSan job. |
+| `reloadConfig()` rewrites the actuator tables while the 1 Hz loop reads them | **Fixed.** The republish loop is stopped before `ActuatorCommander::load()` and restarted after. |
+| `reloadConfig()` keeps stale `[fire]` ids after re-adopting `[[states]]` | **Fixed.** The `[fire]` resolution was extracted to `applyFireConfig()` and is now called from both `init()` and reload, so a renumbering reload re-resolves the burn state, the expiry target and the window. |
+| ABORT queued behind the sequencer's own housekeeping | **Fixed.** `triggerAbort()` is now the first thing `transitionTo()` does, ahead of the republish-thread join, the controller notification and the actuator batch. Measured 453 ms → 0 ms with an unreachable controller; `test_abort_ordering` pins it. |
+| ABORT sent as a single unacknowledged datagram | **Fixed.** Sent 4× at 2 ms spacing with a send timeout and per-repeat `errno` logging. The *routing* half of that entry is still open — see "The ABORT broadcast can leave on the wrong interface". |
+| `notifyControllerFire` has no connect timeout | **Fixed.** Non-blocking connect with a 300 ms deadline, consulting `SO_ERROR` on any poll readiness so a refused connection is not mislabelled a timeout. Measured on this box: blocking connect to a blackholed host took **133,348 ms**; bounded version returns in **301 ms**. |
+| Actuator UDP sends have no timeout and log nothing | **Fixed.** `SO_SNDTIMEO` of 100 ms on the batch socket, and a short send now names the board IP and `strerror(errno)` instead of only flipping a boolean. |
+| Detached threads outlive the objects they reference | **Fixed.** Client threads are bounded (64) and joined before `svc` goes out of scope; the accept loop reaps finished ones and refuses over-limit connections with `ERR:too many connections` rather than a bare close, which reached the client as a TCP reset. |
+| `test_robust_ddp` built but never run | **Fixed.** Registered with CTest (`add_test(NAME robust_ddp …)`) and passing. |
+| Integration test dialled the wrong controller port | **Fixed.** `test_integration.sh` now rewrites `[controller_service].port` to `$TEST_CONTROLLER_PORT`, and `ws_data_flow_test.ts` asserts the controller actually logged FIRE_START and FIRE_STOP — previously the sequencer sent to 9999 while the controller listened on 9997 and the suite passed anyway. |
+
+### Since the April 2026 revision
 
 | Item | Resolution |
 |---|---|
@@ -578,4 +422,4 @@ Kept so a future audit can distinguish "fixed" from "never checked". Verified ag
 | Catch-all `catch (...)` in `SequencerService` | **Fixed** — those handlers no longer exist. |
 | Integration test: hardcoded ports, no conflict detection | **Fixed.** All ports are `${TEST_*_PORT:-default}` and the script sweeps them before starting. |
 | Frontend API responses typed as `any` | **Largely fixed.** `dashboard-hooks.ts` is clean; roughly twenty `any` occurrences remain across the whole frontend, mostly local. Not worth a backlog entry on its own. |
-| Startup race: "controller never gets service" after reloading the UI during startup | **Superseded, unconfirmed.** The specific hypothesis was about the Next.js SPA's connection lifecycle, which no longer exists after the Vite migration. The Elodin side of the startup race was addressed independently by the retry loop at `SequencerService.cpp:438-451`. Re-file with fresh evidence if it recurs. |
+| Startup race: "controller never gets service" after reloading the UI during startup | **Superseded, unconfirmed.** The specific hypothesis was about the Next.js SPA's connection lifecycle, which no longer exists after the Vite migration. The Elodin side of the startup race was addressed independently by the retry loop at `SequencerService.cpp:672`. Re-file with fresh evidence if it recurs. |
