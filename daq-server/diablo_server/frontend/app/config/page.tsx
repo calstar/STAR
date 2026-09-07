@@ -383,12 +383,19 @@ export default function ConfigPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  // The API already distinguishes "deployed" from "saved as draft" (it returns a `deployed` flag
+  // and a message). The banner used to ignore both and always say "saved successfully", so an
+  // operator saving mid-session was told the change was in effect when it was only a draft.
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('boards');
   // Config profiles v2: the editor edits the ACTIVE PROFILE; config.toml is the deployed/running file.
   // When idle, a save/switch deploys to config.toml; during a session config.toml is frozen (draft).
   const [profiles, setProfiles] = useState<{ name: string; active: boolean }[]>([]);
   const [activeProfile, setActiveProfile] = useState('');
   const [sessionActive, setSessionActive] = useState(false);
+  // Profile files that differ from what is deployed — i.e. edits waiting for the next session
+  // start. Empty when the profile and config.toml agree.
+  const [undeployed, setUndeployed] = useState<string[]>([]);
   const [runningToml, setRunningToml] = useState<string | null>(null); // read-only view of config.toml
   // Calibration profiles: whole-rig calibration snapshots you can Load / Save / blank from here.
   const [calProfiles, setCalProfiles] = useState<{ name: string; active: boolean }[]>([]);
@@ -529,6 +536,7 @@ export default function ConfigPage() {
         const error = await response.json();
         throw new Error(error.message || 'Failed to save config');
       }
+      const saveResult = await response.json().catch(() => ({} as any));
 
       // Save the state-machine tables together with the config — there is no separate CSV Save.
       const csvJobs: Array<[string, CsvGrid | null]> = [
@@ -545,6 +553,10 @@ export default function ConfigPage() {
         }
       }
 
+      setSuccessMsg(saveResult?.message
+        ?? (saveResult?.deployed === false
+          ? 'Saved as draft — applies at next session start'
+          : 'Configuration saved and deployed'));
       setSuccess(true);
       setSaving(false);
       // Re-fetch canonical config + tables so the UI (and the saved baselines) mirror disk.
@@ -578,6 +590,7 @@ export default function ConfigPage() {
       setProfiles(Array.isArray(data.profiles) ? data.profiles : []);
       setActiveProfile(data.active || '');
       setSessionActive(!!data.sessionActive);
+      setUndeployed(Array.isArray(data.undeployed) ? data.undeployed : []);
     } catch { /* non-fatal */ }
   };
 
@@ -726,6 +739,11 @@ export default function ConfigPage() {
         const err = await response.json().catch(() => ({}));
         throw new Error(err.error || `Import failed (${response.status})`);
       }
+      const importResult = await response.json().catch(() => ({} as any));
+      setSuccessMsg(importResult?.message
+        ?? (importResult?.deployed === false
+          ? 'Imported as draft — applies at next session start'
+          : 'Configuration imported and deployed'));
       setSuccess(true);
       await loadConfig(); // mirror what the server accepted
       setTimeout(() => setSuccess(false), 3000);
@@ -1097,9 +1115,13 @@ export default function ConfigPage() {
       const r = await fetch(`${getApiBaseUrl()}/api/state-csv?name=${name}`, {
         method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: text,
       });
-      const body = await r.json().catch(() => ({}));
+      const body = await r.json().catch(() => ({} as any));
       if (!r.ok) throw new Error(body.error || `Upload failed (${r.status})`);
       await loadStateCsvs();
+      setSuccessMsg(body?.message
+        ?? (body?.deployed === false
+          ? `${name}.csv saved as draft — applies at next session start`
+          : `${name}.csv saved and deployed`));
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (e: any) {
@@ -1332,6 +1354,26 @@ export default function ConfigPage() {
           </div>
         )}
 
+        {/* Un-applied edits. Shown whether or not a session is running: while idle a save deploys
+            immediately so this is normally empty, and if it is NOT empty while idle something
+            failed to deploy — which is worth seeing. */}
+        {undeployed.length > 0 && (
+          <div className="mb-4 p-3 bg-amber-900/30 border border-amber-600 rounded-lg text-amber-200 text-sm">
+            <strong>{undeployed.length} un-applied change{undeployed.length === 1 ? '' : 's'}</strong>
+            {' '}in the <strong>{activeProfile || 'active'}</strong> profile
+            {sessionActive ? ' — applies at the next session start' : ' — not yet deployed'}:
+            {' '}<code>{undeployed.join(', ')}</code>.
+            {' '}
+            <button
+              type="button"
+              onClick={() => { setShowRunning(true); loadRunningToml(); }}
+              className="underline hover:text-amber-100"
+            >
+              Compare with the running config
+            </button>
+          </div>
+        )}
+
         {showRunning && (
           <div className="mb-4 p-3 bg-background border border-gray-700 rounded-lg">
             <div className="text-xs text-text-muted mb-2">Running <code>config.toml</code> (read-only — deployed to the pipeline)</div>
@@ -1346,8 +1388,12 @@ export default function ConfigPage() {
         )}
 
         {success && (
-          <div className="mb-4 p-4 bg-green-900/30 border border-green-500 rounded-lg text-green-200">
-            Configuration saved successfully!
+          <div className={`mb-4 p-4 rounded-lg border ${
+            sessionActive
+              ? 'bg-amber-900/30 border-amber-500 text-amber-200'
+              : 'bg-green-900/30 border-green-500 text-green-200'
+          }`}>
+            {successMsg ?? 'Configuration saved successfully!'}
           </div>
         )}
 

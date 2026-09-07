@@ -173,6 +173,16 @@ export default function SessionPage() {
                   Simulated
                 </button>
               </div>
+              {/* "Config applies at session start" is not true for sim, and someone testing that
+                  behaviour in sim would reasonably conclude it is broken. Sim deliberately runs
+                  the committed config_base.toml overlay rather than the active profile, so a sim
+                  run behaves the same on every box regardless of what is drafted locally. */}
+              {simulated && (
+                <div className="mt-2 text-xs text-purple-300/90 max-w-xs">
+                  Simulated runs use the committed sim config, not your config profile — config
+                  edits will not appear in this run.
+                </div>
+              )}
             </div>
 
             <div>
