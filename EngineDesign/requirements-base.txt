@@ -24,6 +24,14 @@ ezdxf
 cma
 CoolProp
 
+# JIT accelerator for the Layer-1 optimizer inner loop (engine/accel). Without
+# it the physics kernels fall back to pure Python, which is ~25-30x slower per
+# candidate -- the optimizer still runs, so a missing numba degrades rather than
+# breaks (engine/accel.available() returns False on ImportError). Pinned to a
+# floor rather than exactly: numba constrains the numpy upper bound, so a numba
+# too old for the resolved numpy is the failure mode to watch.
+numba>=0.60
+
 # FastAPI backend
 fastapi
 uvicorn[standard]

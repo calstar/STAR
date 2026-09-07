@@ -23,6 +23,7 @@ The regulator enters in **two separate roles** [Phys §3.2 / §6.1]:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 
@@ -120,6 +121,38 @@ def chug_open_loop(s: complex, streams: List[ChugStream], chamber: ChugChamber,
     return chamber.Y_ch(s) * acc
 
 
+def _open_loop_grid(omega: np.ndarray, streams: List[ChugStream], chamber: ChugChamber,
+                    *, with_regulator: bool = True) -> np.ndarray:
+    """Vectorised L(iw) over a whole frequency grid.
+
+    Same computation as calling chug_open_loop once per point: every operation in
+    Z_feed and Y_ch is element-wise in s, and the per-stream primitives (G_inj,
+    inertance, resistance, regulator corner) do not depend on s at all. The
+    per-point version recomputed all of them at each of the 200 grid points, which
+    made this the dominant per-eval stability cost.
+
+    Term order is kept identical to Z_feed/chug_open_loop deliberately, since
+    floating-point addition is not associative. Agreement is ~1 ULP rather than
+    bit-for-bit: numpy's complex exp takes a different code path on arrays than on
+    scalars, which is far below any tolerance here but is not exactly zero.
+    """
+    s_arr = 1j * np.asarray(omega, dtype=np.float64)
+    acc = np.zeros_like(s_arr)
+    for st in streams:
+        G = st.G_inj()
+        Zr = 0.0 + 0.0j
+        if with_regulator and st.regulator.enabled and st.regulator.Z_hf > 0.0:
+            wc = 2.0 * np.pi * max(st.regulator.corner_hz, 1e-6)
+            Zr = complex(st.regulator.Z_hf) * (s_arr / wc) / (1.0 + s_arr / wc)
+        Zf = Zr + st.inertance() * s_arr + st.resistance() + (1.0 / G if G > 0 else np.inf)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            term = np.exp(-s_arr * st.tau_conv) / Zf
+        # The scalar path skips a stream whose Z_feed is exactly 0 (`continue`);
+        # element-wise that is a zero contribution at those frequencies.
+        acc = acc + np.where(Zf == 0, 0.0 + 0.0j, term)
+    return chamber.K_c() / (chamber.theta_c() * s_arr + 1.0) * acc
+
+
 def chug_characteristic(s: complex, streams: List[ChugStream], chamber: ChugChamber,
                         *, with_regulator: bool = True) -> complex:
     """F(s) = 1 + L(s).  Roots s = alpha + i*omega give chug frequency/growth rate."""
@@ -130,10 +163,19 @@ def chug_characteristic(s: complex, streams: List[ChugStream], chamber: ChugCham
 # Fast tier: gain/phase-margin proxy (no transcendental root-find)
 # ---------------------------------------------------------------------------
 
+@lru_cache(maxsize=8)
+def _freq_grid_cached(f_lo: float, f_hi: float, n: int) -> np.ndarray:
+    grid = 2.0 * np.pi * np.logspace(np.log10(f_lo), np.log10(f_hi), n)
+    grid.flags.writeable = False   # cached and shared: never mutate in place
+    return grid
+
+
 def _freq_grid(f_lo: float = 2.0, f_hi: float = 2000.0, n: int = 200) -> np.ndarray:
     # 200 log-spaced points spans the chug band finely enough for crossover detection while keeping
-    # the per-eval cost ~0.5 ms (fast-tier budget). The rich tier refines via root-find anyway.
-    return 2.0 * np.pi * np.logspace(np.log10(f_lo), np.log10(f_hi), n)
+    # the per-eval cost inside the fast-tier budget. The rich tier refines via root-find anyway.
+    # The grid depends only on its arguments, so it is memoised: rebuilding it per
+    # call cost ~7 us of the ~135 us fast-tier budget, on every candidate.
+    return _freq_grid_cached(f_lo, f_hi, n)
 
 
 def chug_margin_fast(streams: List[ChugStream], chamber: ChugChamber,
@@ -148,7 +190,7 @@ def chug_margin_fast(streams: List[ChugStream], chamber: ChugChamber,
     the chug-frequency estimate), ``phase_margin_deg``, ``margin`` (= gain_margin, gate-facing).
     """
     omega = _freq_grid(f_lo, f_hi)
-    L = np.array([chug_open_loop(1j * w, streams, chamber, with_regulator=with_regulator) for w in omega])
+    L = _open_loop_grid(omega, streams, chamber, with_regulator=with_regulator)
     phase = np.unwrap(np.angle(L))
     mag = np.abs(L)
 
@@ -157,26 +199,33 @@ def chug_margin_fast(streams: List[ChugStream], chamber: ChugChamber,
     g = phase - target
     gm_best = np.inf
     f_pc = float("nan")
-    for i in range(len(omega) - 1):
-        if g[i] == 0.0 or g[i] * g[i + 1] < 0.0:
-            # linear-interpolate the crossover
-            frac = g[i] / (g[i] - g[i + 1]) if (g[i] - g[i + 1]) != 0 else 0.0
-            w_c = omega[i] + frac * (omega[i + 1] - omega[i])
-            mag_c = mag[i] + frac * (mag[i + 1] - mag[i])
-            gm = 1.0 / mag_c if mag_c > 0 else np.inf
-            if gm < gm_best:   # worst-case (smallest) gain margin
-                gm_best = gm
-                f_pc = w_c / (2.0 * np.pi)
+    # Vectorised sign-change scan. argmin returns the FIRST minimum, matching the
+    # scalar loop's strict `gm < gm_best` (which also kept the earliest tie).
+    g0, g1 = g[:-1], g[1:]
+    hits = np.flatnonzero((g0 == 0.0) | (g0 * g1 < 0.0))
+    if hits.size:
+        dg = g[hits] - g[hits + 1]
+        safe = dg != 0.0
+        frac = np.where(safe, g[hits] / np.where(safe, dg, 1.0), 0.0)
+        w_c = omega[hits] + frac * (omega[hits + 1] - omega[hits])
+        mag_c = mag[hits] + frac * (mag[hits + 1] - mag[hits])
+        pos = mag_c > 0
+        gm = np.where(pos, 1.0 / np.where(pos, mag_c, 1.0), np.inf)
+        k = int(np.argmin(gm))          # worst-case (smallest) gain margin
+        gm_best = float(gm[k])
+        f_pc = float(w_c[k] / (2.0 * np.pi))
 
     # Phase margin at gain crossover (|L|=1), if any
     pm_deg = float("nan")
     h = mag - 1.0
-    for i in range(len(omega) - 1):
-        if h[i] == 0.0 or h[i] * h[i + 1] < 0.0:
-            frac = h[i] / (h[i] - h[i + 1]) if (h[i] - h[i + 1]) != 0 else 0.0
-            ph_c = phase[i] + frac * (phase[i + 1] - phase[i])
-            pm_deg = float(np.degrees(ph_c - target))  # phase above -180
-            break
+    h0, h1 = h[:-1], h[1:]
+    gain_hits = np.flatnonzero((h0 == 0.0) | (h0 * h1 < 0.0))
+    if gain_hits.size:
+        i = int(gain_hits[0])           # scalar loop broke at the FIRST crossing
+        dh = h[i] - h[i + 1]
+        frac = h[i] / dh if dh != 0 else 0.0
+        ph_c = phase[i] + frac * (phase[i + 1] - phase[i])
+        pm_deg = float(np.degrees(ph_c - target))  # phase above -180
 
     if not np.isfinite(gm_best):
         # No phase crossover in band: stable if |L|<1 throughout (no encirclement possible)

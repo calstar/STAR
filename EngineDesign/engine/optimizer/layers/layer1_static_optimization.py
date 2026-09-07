@@ -241,8 +241,12 @@ def _store_last_good_eval_bundle_from_worker_res(
         rf = float("nan")
     if not np.isfinite(rf):
         return
+    # ``res`` came off the pool by unpickling, so this process is already the only
+    # holder of ``fr``; the parent reads scalars off ``res`` afterwards and never mutates
+    # full_results. The one consumer of this bundle (see the validation replay) deep-copies
+    # on read, so a copy here was the second of three on the same payload.
     state["last_good_eval_bundle"] = {
-        "results": copy.deepcopy(fr),
+        "results": fr,
         "P_O_Pa": float(res.get("P_O_Pa", 0.0)),
         "P_F_Pa": float(res.get("P_F_Pa", 0.0)),
         "thrust_error": float(res.get("thrust_error", 1.0)),
@@ -1256,7 +1260,19 @@ def _init_worker(config_dict: dict, bounds_array: np.ndarray, requirements_dict:
         debug_strict: If True, re-raise exceptions; if False, return penalties
     """
     global _worker_runner, _worker_base_config, _worker_bounds, _worker_requirements, _worker_constants, _worker_debug_strict
-    
+
+    # Warm the JIT in THIS process. @njit(cache=True) persists compiled code to
+    # disk, but the cache is not shared memory -- every worker still loads and
+    # deserializes it on first call. Un-warmed, that cost lands inside the first
+    # CMA generation and skews it. (The C path never needed this: one .so was
+    # mmapped into every child for free.)
+    try:
+        from engine import accel as _accel
+        if _accel.enabled():
+            _accel.warmup()
+    except Exception:
+        pass  # a warmup failure must never stop a worker from starting
+
     # Reconstruct config from dict
     _worker_base_config = _dict_to_config(config_dict)
     
@@ -1882,15 +1898,15 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
 def _native_fast_eval_enabled() -> bool:
     """Whether the Layer-1 inner loop uses the single-call native ed_evaluate.
 
-    On whenever the native kernel is enabled (the default). Set
-    ED_LAYER1_NATIVE_EVAL=0 to force the full Python+shifting path for the inner
-    loop (debugging / A-B parity) without disabling native elsewhere.
+    On whenever the accelerator is enabled (the default). Set
+    ED_LAYER1_NATIVE_EVAL=0 to force the full Python path for the inner loop
+    (debugging / A-B parity) without disabling the accelerator elsewhere.
     """
     import os
     if os.environ.get("ED_LAYER1_NATIVE_EVAL", "1") != "1":
         return False
-    from engine.native.python import native_injector
-    return native_injector.native_enabled()
+    from engine import accel
+    return accel.enabled()
 
 
 def _eval_candidate(x_raw):
@@ -1922,16 +1938,25 @@ def _eval_candidate(x_raw):
         P_F_Pa = P_F_psi * 6894.76
         
         # Evaluate using worker's runner (reused across calls).
-        # Inner-loop fast path: single native ed_evaluate call (chamber + frozen
-        # nozzle) + native-accelerated stability, ~4x faster per candidate. Falls
-        # back to the full Python+shifting path for unsupported configs (e.g.
-        # pintle) or any non-converged native solve. The winning design is always
-        # re-evaluated at full Python fidelity at finalization, so the frozen
-        # inner-loop nozzle never sets a reported number.
+        # Inner-loop fast path: one accelerated evaluate (chamber + nozzle + thrust)
+        # + accelerated stability, ~25x faster per candidate. Falls back to the full
+        # Python path for unsupported configs (e.g. pintle) or a non-converged
+        # accelerated solve. The winning design is always re-evaluated at full
+        # Python fidelity at finalization.
+        #
+        # NOTE: both paths compute the SAME delivered thrust
+        # (F = zeta_n*Cf_vac*Pc*At - Pa*Ae). The old "frozen vs shifting nozzle"
+        # distinction is gone -- the shifting-equilibrium nozzle was retired
+        # 2026-06-28 (reaction_chemistry.py) in favour of CEA's Cf_vac, which is
+        # itself a shifting-equilibrium coefficient baked into the cache.
         result = None
         if _native_fast_eval_enabled():
-            from engine.native.python import native_injector as _ni
-            result = _ni.evaluate(
+            # NOTE: `from engine import accel` + attribute access is load-bearing.
+            # tests/test_accel_is_actually_used.py patches accel.evaluate to prove
+            # this seam is still reached; a `from engine.accel import evaluate`
+            # import would bind at import time and silently defeat that guard.
+            from engine import accel as _accel
+            result = _accel.evaluate(
                 _worker_runner.config, _worker_runner.cea_cache,
                 P_O_Pa, P_F_Pa, _worker_constants['P_ambient'])
         if result is None:
@@ -1971,7 +1996,13 @@ def _eval_candidate(x_raw):
             'F': _f,
             'MR': _mr,
             'Pc': float(result.get('Pc', 0)),
-            'full_results': copy.deepcopy(result),
+            # No copy: ``result`` is a fresh dict (runner.evaluate and accel.evaluate
+            # both build one per call and retain no reference to it), nothing here mutates
+            # it, and returning it hands it straight to the pool -- which pickles it, and
+            # pickling already yields an object the parent owns outright. The deepcopy was
+            # a third copy of data that crosses a process boundary anyway, and it cost
+            # 0.12 ms against a 1.17 ms evaluate(), i.e. ~10% of every worker candidate.
+            'full_results': result,
             'P_O_Pa': float(P_O_Pa),
             'P_F_Pa': float(P_F_Pa),
             'thrust_error': float(thr_e),
@@ -2132,11 +2163,24 @@ def _layer1_emit_objective_plot_point(
     current_obj: float,
     best_obj: float,
 ) -> None:
-    """SSE / UI objective curve (parallel CMA does not call ``objective()``)."""
+    """SSE / UI objective curve (parallel CMA does not call ``objective()``).
+
+    ``iteration`` arrives from two different counters -- the parent candidate index in
+    ``_eval_candidate`` and ``function_evaluations`` in the parallel CMA generation loop --
+    and both are reset between phases. Plotted raw, the x-axis folded back on itself
+    (observed: 1, 17, 65, 113, 161, 209, then 2, 3, 4 ...), which made the curve unreadable.
+    Clamp to a non-decreasing sequence here, at the single point every emission passes
+    through, rather than trying to keep every call site's counter in sync.
+    """
     if objective_callback is None:
         return
+    x = int(iteration)
+    x_max = int(opt_state.get("_plot_x_max", 0))
+    if x <= x_max:
+        x = x_max + 1
+    opt_state["_plot_x_max"] = x
     try:
-        objective_callback(int(iteration), float(current_obj), float(best_obj))
+        objective_callback(x, float(current_obj), float(best_obj))
     except Exception:
         pass
 
@@ -3340,8 +3384,19 @@ def run_layer1_optimization(
         iteration = opt_state["iteration"]
         opt_state["function_evaluations"] += 1
         
-        # Progress update
-        progress = 0.10 + 0.40 * min(iteration / max_iterations, 1.0)
+        # Progress update. ``iteration`` counts candidate evaluations, so it must be
+        # measured against the evaluation budget (max_iterations x popsize x restarts),
+        # not against ``max_iterations``, which caps CMA *generations*.
+        # Set once popsize/restarts are known; before that (x0 validation, warm start)
+        # there is no budget to measure against, so report the raw count rather than a
+        # fraction of the wrong denominator.
+        eval_budget = int(opt_state.get("eval_budget", 0))
+        if eval_budget > 0:
+            progress = 0.10 + 0.40 * min(iteration / eval_budget, 1.0)
+            eval_str = f"{iteration}/{eval_budget}"
+        else:
+            progress = 0.10
+            eval_str = f"{iteration}"
         if iteration <= 3 or iteration % 25 == 0:
             try:
                 _bo = float(opt_state["best_objective"])
@@ -3354,8 +3409,8 @@ def run_layer1_optimization(
                 _lv = float("inf")
             best_obj_str = f"{_bo:.3e}" if np.isfinite(_bo) else "inf"
             curr_obj_str = f"{_lv:.3e}" if np.isfinite(_lv) else "inf"
-            update_progress("Layer 1: Optimization", progress, f"Iter {iteration}/{max_iterations} | Curr: {curr_obj_str} | Best: {best_obj_str}")
-            layer1_logger.info(f"[{int(progress*100)}%] Iteration {iteration}/{max_iterations} - "
+            update_progress("Layer 1: Optimization", progress, f"Eval {eval_str} | Curr: {curr_obj_str} | Best: {best_obj_str}")
+            layer1_logger.info(f"[{int(progress*100)}%] Evaluation {eval_str} - "
                             f"Objective: {curr_obj_str} (Best: {best_obj_str})")
             for handler in layer1_logger.handlers:
                 handler.flush()
@@ -4285,7 +4340,9 @@ def run_layer1_optimization(
             try:
                 # Send all buffered entries (batch reporting)
                 for buffered_entry in opt_state["objective_buffer"]:
-                    objective_callback(
+                    _layer1_emit_objective_plot_point(
+                        objective_callback,
+                        opt_state,
                         buffered_entry["iteration"],
                         buffered_entry["objective"],
                         buffered_entry["best_objective"],
@@ -4391,6 +4448,11 @@ def run_layer1_optimization(
 
     # Legacy CMA uses this for ``maxiter`` per restart (hybrid path sets its own budget).
     total_eval_budget = max_iterations
+
+    # Evaluation budget for progress reporting only -- never used to bound the search.
+    # CMA runs ``max_iterations`` generations of ``popsize`` per restart; the hybrid
+    # branch replaces this with its own cap once it computes one.
+    opt_state["eval_budget"] = max(1, int(max_iterations) * int(popsize) * int(num_restarts))
     
     best_x_global = x0_refined
     best_f_global = float('inf')
@@ -4500,18 +4562,21 @@ def run_layer1_optimization(
             optimizer_mode,
         )
 
-    # Native kernel is the Layer-1 inner-loop accelerator (single ed_evaluate call
-    # per candidate). Build it once here in the parent — before the worker pool is
-    # created — so workers load a ready library instead of racing to compile it.
-    # (Mirrors backend/main.py startup; replaces the old closure-import prewarm.)
-    # The build is otherwise lazy/idempotent, so this just front-loads it.
-    if os.environ.get("ED_USE_NATIVE", "1") != "0":
-        try:
-            from engine.native.python import autobuild as _ed_autobuild
-            _ed_autobuild.ensure_lib()
-        except Exception as e:  # never let a build hiccup block optimization
-            layer1_logger.warning(
-                "Native kernel pre-build failed (%s); Layer-1 falls back to Python evaluation.", e)
+    # The accelerator (engine/accel) is the Layer-1 inner-loop fast path: one
+    # evaluate() per candidate. Warm the JIT once here in the parent — before the
+    # worker pool is created — so workers deserialize ready-compiled kernels rather
+    # than each compiling inside the first CMA generation.
+    #
+    # Unlike the old C prewarm, this is NOT free per worker: a .so is mmapped into
+    # every child at no cost, whereas each worker still loads the cached njit
+    # artifacts on first call. _init_worker warms them again for that reason.
+    try:
+        from engine import accel as _accel
+        if _accel.enabled():
+            _accel.warmup()
+    except Exception as e:  # never let a warmup hiccup block optimization
+        layer1_logger.warning(
+            "Accelerator warmup failed (%s); Layer-1 falls back to Python evaluation.", e)
 
     # Create evaluator executor for candidate scoring.
     # On some macOS/sandboxed environments, ProcessPool creation can fail with
@@ -4600,6 +4665,7 @@ def run_layer1_optimization(
             # not a fixed run length. (The default max_iterations is sized so this is fast under the
             # native kernel — see where max_iterations is set.)
             total_budget_evals = max(int(popsize), int(max_iterations) * int(popsize))
+            opt_state["eval_budget"] = int(total_budget_evals)
             layer1_logger.info(
                 "Hybrid evaluation budget: %s (max(%s, max_iterations=%s x popsize=%s))",
                 total_budget_evals,
@@ -4740,7 +4806,10 @@ def run_layer1_optimization(
                 layer1_logger.info(f"")
                 layer1_logger.info(f"Starting {restart_name} (sigma: {current_sigma_fraction*100:.0f}% of range)...")
                 
-                iter_budget = total_eval_budget // num_restarts
+                # Floor at 1: layer1_max_iterations < num_restarts floors this to 0,
+                # which hands CMA maxiter=0 and then divides by it at the progress
+                # update below (ZeroDivisionError on any run with max_iterations < 4).
+                iter_budget = max(1, total_eval_budget // num_restarts)
                 
                 # Without an explicit ``seed``, cma uses non-deterministic defaults → different optima each run.
                 _cma_restart_seed = layer1_seed_base + int(restart_idx) * 1_000_003

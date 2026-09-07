@@ -1,40 +1,15 @@
-# Build context is the REPO ROOT, not EngineDesign/: the native-builder stage and
-# the runtime image copy several EngineDesign/ subtrees, and keeping one context
-# for both stages is simplest. The app implements no auth (Caddy is the gate), so
-# nothing from auth/ is needed here. See the engine-design-api service in
-# docker-compose.yml.
-
-# ── Stage 1: the native C physics kernel ───────────────────────────────────
+# Build context is the REPO ROOT, not EngineDesign/: the runtime image copies
+# several EngineDesign/ subtrees plus lib/stardesign, and only a root context
+# reaches both. The app implements no auth (Caddy is the gate), so nothing from
+# auth/ is needed here. See the engine-design-api service in docker-compose.yml.
 #
-# backend/main.py sets ED_USE_NATIVE=1 and auto-builds this at startup, which
-# needs CMake and a C compiler. The runtime image has neither, so it was
-# failing over to the pure-Python path -- ~68-88x slower on runner.evaluate(),
-# which is what turns a 15000-eval Layer-1 optimizer run from seconds into
-# minutes. It fails soft, so nothing errored; the optimizer was just crawling.
-#
-# Building it here keeps the compiler out of the runtime image entirely.
-FROM python:3.12-slim AS native-builder
-# build-essential, not bare gcc: on debian-slim, gcc alone has no C runtime
-# startup objects, so even CMake's compiler test fails with
-# "cannot find Scrt1.o". This stage is discarded, so its size does not matter.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends cmake build-essential \
-    && rm -rf /var/lib/apt/lists/*
-WORKDIR /build
-COPY EngineDesign/engine/native/ ./engine/native/
-# The output directory is arch-tagged, and autobuild.py::_build_dir() derives
-# the tag the same way -- so the runtime image finds this build instead of
-# trying (and failing) to make its own.
-# TAG mirrors autobuild.py::_build_dir(), which is
-# f"{platform.system().lower()}_{platform.machine().lower()}". This stage is
-# always Linux, and platform.machine() is uname -m there, so no Python needed
-# -- and no nested quoting to get wrong.
-RUN TAG="linux_$(uname -m | tr '[:upper:]' '[:lower:]')" \
-    && cmake -S engine/native -B "engine/native/build_auto_${TAG}" -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build "engine/native/build_auto_${TAG}" --config Release --target ed_physics_shared -j \
-    && ls -la "engine/native/build_auto_${TAG}"/libed_physics.so
+# There is no compiler stage any more. The accelerator is numba (engine/accel),
+# which JITs from the Python sources copied below -- so the image needs no
+# cmake, no build-essential, and no prebuilt .so. The C port this replaced lived
+# at EngineDesign/engine/native and is deleted; the COPY of that directory is
+# what broke this build on main.
 
-# ── Stage 2: the runtime image ─────────────────────────────────────────────
+# ── The runtime image ──────────────────────────────────────────────────────
 FROM python:3.12-slim
 WORKDIR /app
 
@@ -92,19 +67,25 @@ COPY EngineDesign/ui/ ./ui/
 # output/ is generated data and stays out (see .dockerignore).
 COPY EngineDesign/output/cache/ ./output/cache/
 
-# The prebuilt kernel, on top of the sources copied above. Its mtime is newer
-# than the .c/.h files (it was compiled after they were copied), which is what
-# autobuild.py's staleness check compares -- so it is accepted as current
-# rather than triggering a rebuild the runtime image could not perform.
-COPY --from=native-builder /build/engine/native/ ./engine/native/
-
 ENV PYTHONPATH=/app
 
-# Assert the kernel is actually usable, at build time. ensure_lib() returns the
-# prebuilt library if it is current; if it is missing or stale it shells out to
-# CMake, which is absent here, so this fails the build loudly. Without it a
-# mistake would surface only as the silent slow path in production.
-RUN python -c "from engine.native.python import autobuild; print('[native] prebuilt kernel:', autobuild.ensure_lib())"
+# Assert the accelerator is usable, at build time, and warm it.
+#
+# The assert is the point. engine.accel degrades to pure Python on any import
+# failure, so a numba missing from the image would never raise -- it would
+# surface only as an optimizer crawling ~25-30x slower in production, which is
+# exactly how the old C kernel used to fail. A failed build is the only place
+# that stays visible.
+#
+# The warmup is a bonus: the kernels are @njit(cache=True), so compiling here
+# bakes the on-disk cache into this layer and the first request in a fresh
+# container does not pay the JIT cost. warmup() never raises by contract, so its
+# return value is what gets checked.
+RUN python -c "\
+import sys, engine.accel as accel; \
+sys.exit('[accel] FATAL: numba is not importable in this image -- the optimizer would silently fall back to pure Python. Check that numba installed from requirements-base.txt.') if not accel.available() else None; \
+sys.exit('[accel] FATAL: numba imported but the kernels failed to compile. Run engine.accel.warmup() locally for the traceback.') if not accel.warmup() else None; \
+print('[accel] numba kernels compiled and cached')"
 
 EXPOSE 8000
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,6 +1,6 @@
 # Liquid Rocket Engine Design Pipeline
 
-A comprehensive physics-based simulation and **multi-layer optimization pipeline** for liquid bipropellant rocket engines. The propellants and the injector type are **whatever you put in the config** — the whole point is to evaluate and compare different engine designs, not to model one fixed engine. Presets ship for **LOX/RP‑1** and **LOX/CH₄ (methalox)** with **pintle** or **impinging** injectors. Takes tank pressures as input and solves for chamber pressure, mass flow rates, thrust, and all performance parameters, accelerated by a native C physics kernel.
+A comprehensive physics-based simulation and **multi-layer optimization pipeline** for liquid bipropellant rocket engines. The propellants and the injector type are **whatever you put in the config** — the whole point is to evaluate and compare different engine designs, not to model one fixed engine. Presets ship for **LOX/RP‑1** and **LOX/CH₄ (methalox)** with **pintle** or **impinging** injectors. Takes tank pressures as input and solves for chamber pressure, mass flow rates, thrust, and all performance parameters, accelerated by a Numba‑compiled physics kernel.
 
 ## Overview
 
@@ -10,37 +10,42 @@ A comprehensive physics-based simulation and **multi-layer optimization pipeline
 - Full flow path simulation: tank → feed system → injector → combustion → nozzle → thrust
 - **Injector modes:** pintle (`injector.type: pintle`) or twin-jet **impinging** (`injector.type: impinging`); see `docs/optimizer_readme.md` (Injector types) and `configs/canonical/impinging.yaml`
 - **Propellants:** LOX/RP‑1 and **LOX/CH₄ (methalox)** via propellant presets; canonical seeds in `configs/canonical/`
-- **Native C physics kernel** (`engine/native/`): the chamber solve + stability hot path runs in C, making `evaluate()` ~**88× faster** with machine‑precision parity — see [Native physics kernel](#native-c-physics-kernel-performance)
+- **Numba physics accelerator** (`engine/accel/`): the chamber solve + nozzle + stability hot path is JIT‑compiled, making a Layer‑1 candidate ~**120× faster** — see [Numba physics accelerator](#numba-physics-accelerator-performance)
 - Multi-layer optimization for complete engine design (geometry, pressure curves, thermal protection)
 - Time-varying analysis with ablative recession tracking
 - Stability analysis (chugging, acoustic, feed-system coupling)
 - Flight simulation validation via RocketPy integration
 
-## Native C physics kernel (performance)
+## Numba physics accelerator (performance)
 
 The evaluation hot path — chamber‑pressure solve (injector → CEA → combustion
-efficiency → ablative cooling → Brent root‑find) plus the chug/acoustic stability
-sweep — is implemented as a standalone **C11 library under `engine/native/`** and
-wired into the live path. It is an **opt‑in accelerator with automatic Python
-fallback**, not a rewrite: the Python physics remains the reference implementation
-and is used whenever native is disabled or a config isn't covered.
+efficiency → ablative cooling → Brent root‑find), the nozzle/thrust step, and the
+chug stability sweep — is JIT‑compiled with **Numba** under `engine/accel/`. It is
+an **accelerator with automatic Python fallback**, not a rewrite: the Python
+physics remains the reference implementation and runs whenever the accelerator is
+disabled or a config isn't covered.
 
-- **Enable:** the FastAPI backend sets `ED_USE_NATIVE=1` automatically at startup
-  (and prebuilds the library), so the **frontend optimizer uses it out of the box**.
-  For CLI/scripts, `export ED_USE_NATIVE=1`. Set `ED_USE_NATIVE=0` for pure Python.
-- **Auto‑build:** on first use the library is compiled with CMake into an
-  arch‑tagged directory — no manual build step. Requires a C compiler + CMake.
-- **Parity & safety:** a one‑time self‑check compares the native result against
-  Python and falls back on any mismatch. Measured agreement: chamber Pc ~5e‑10,
-  CEA/stability ~1e‑16. A full `runner.evaluate()` matches Python to ~5e‑10.
-- **Speed:** chamber solve ~400× faster; full `evaluate()` ~88× (≈68 ms → ≈0.8 ms),
-  which is what makes the 15000‑eval Layer‑1 optimizer runs finish in seconds.
+- **Enable:** on by default. Set `ED_ACCEL=off` for pure Python. `numba` is a
+  declared dependency (`requirements-base.txt`); if it is missing the accelerator
+  reports itself unavailable and everything runs on Python rather than failing.
+- **No build step:** kernels compile on first use and cache to `__pycache__`
+  (`@njit(cache=True)`). `accel.warmup()` front‑loads that in the parent process
+  and in each Layer‑1 pool worker, since the cache is not shared memory.
+- **Parity:** enforced ahead of time by `tests/test_numba_ab_parity.py`, which
+  runs the accelerated and Python paths live on identical inputs and diffs them
+  field by field. There is **no runtime self‑check**. Measured agreement is
+  ~2.5e‑9 (Brent convergence tolerance, not rounding); the suite asserts 1e‑6.
+- **Speed:** ~120× per Layer‑1 candidate (≈327 ms → ≈2.7 ms), which is what makes
+  the 15000‑eval Layer‑1 optimizer runs finish in seconds. The chug stability
+  sweep is ~53× (1537 µs → 29 µs); roughly a quarter of that came from
+  vectorising the pure‑Python sweep, which speeds up uncovered configs too.
 - **Coverage today:** impinging injector + ablative cooling + advanced efficiency.
-  Pintle/coaxial, film/regen‑coupled cooling, and the nozzle/thrust step still run
-  in Python (the native path falls back automatically for those).
+  Pintle/coaxial and film/regen‑coupled cooling still run in Python (the
+  accelerator returns `None` and the caller falls back automatically).
 
-See `engine/native/README.md` for build details, the staged port plan, and the
-parity/benchmark methodology.
+This replaced a hand‑written C11 port that lived at `engine/native/`. The Numba
+path reached numeric parity with it, then measured faster (the C build, its
+ctypes marshalling and golden‑vector suite are gone with it).
 
 ## Architecture
 
@@ -162,7 +167,7 @@ EngineDesign/
 │   │       ├── analysis.py
 │   │       └── coupling.py
 │   │
-│   ├── native/                  # Native C physics kernel (opt-in accelerator)
+│   ├── accel/                   # Numba physics accelerator (JIT hot path)
 │   │   ├── README.md            # Build, staged port plan, parity/benchmarks
 │   │   ├── CMakeLists.txt       # C11 build (auto-built on first use)
 │   │   ├── include/             # Public headers (ed_*.h)
@@ -485,7 +490,6 @@ See the `docs/` folder for additional documentation:
 - `docs/CONFIG_SYSTEM.md` - Config model: two canonical configs, propellant presets, in-memory switch, burn-time sync
 - `docs/flight_simulation.md` - `/simulate` endpoint, tank-capacity resolution, and propellant regimes
 - `docs/flight_altitude_optimization.md` - Minimum-fuel burn-time optimization for a target apogee
-- `engine/native/README.md` - Native C physics kernel: build, staged port plan, and parity/benchmark methodology
 
 **Control System Documentation:**
 - `docs/control/README.md` - Control system overview

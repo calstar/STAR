@@ -1,0 +1,50 @@
+name: Landing CI
+
+# landing/ had no CI at all: publish-apps.yml built its image only on push to
+# main, so a broken Dockerfile or a build error surfaced as a failed deploy
+# rather than a failed PR. The image build IS the build check here -- the
+# Dockerfile runs `npm ci` and `npm run build` (tsc + vite) internally, so a
+# type error or a missing dependency fails this job.
+
+# Quoted `on` — YAML 1.1 treats bare `on` as boolean true (matches the repo's
+# other workflows).
+'on':
+  push:
+    paths:
+      - 'landing/**'
+      - '.github/workflows/landing-ci.yml'
+  pull_request:
+    paths:
+      - 'landing/**'
+      - '.github/workflows/landing-ci.yml'
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: landing-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Same Dockerfile and context as publish-apps.yml, but push: false: this
+  # proves the image builds, publishes nothing, and needs no GHCR login.
+  # cache-from points at the publisher's cache scope so PRs reuse main's layers;
+  # nothing is written back (GitHub isolates a branch's cache from the default
+  # branch's anyway, so a PR could not poison them even if it tried).
+  docker-image:
+    name: Docker image (landing)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./landing
+          file: ./landing/Dockerfile
+          push: false
+          cache-from: type=gha,scope=landing

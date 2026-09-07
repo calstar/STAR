@@ -34,6 +34,8 @@ export function BlockerEditor({
 
   return (
     <div>
+      {/* flex-wrap: in the modal's two-column layout this row can be narrower
+          than its three controls, so let them wrap instead of overflowing. */}
       <form action={formAction} className="flex flex-wrap items-center gap-2">
         <input type="hidden" name="taskId" value={taskId} />
         <FieldSelect
@@ -53,7 +55,7 @@ export function BlockerEditor({
           maxLength={300}
           disabled={candidates.length === 0}
           aria-label="Blocker note"
-          className="min-h-11 w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm disabled:opacity-50 sm:min-h-0 sm:w-auto sm:min-w-40 sm:flex-1"
+          className="min-h-11 w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm disabled:opacity-50 sm:min-h-0 sm:w-auto sm:min-w-28 sm:flex-1"
         />
         <button
           disabled={pending || candidates.length === 0}

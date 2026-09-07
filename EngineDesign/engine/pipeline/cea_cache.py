@@ -291,6 +291,38 @@ def _compute_cea_point_chunk(
     return results
 
 
+# Decompressed CEA tables, keyed by (path, mtime, size). np.load returns a lazy
+# NpzFile: every table access re-inflates that member from the zip, and a fresh
+# CEACache is built for every PintleEngineRunner. Layer 1 builds a runner per parent
+# objective() call, so one short run re-read this file 73 times -- 0.80 s of a 3.22 s
+# parent, against 0.11 s for all the interpolation it actually fed. The tables are
+# written only in _load_cache/_build_cache and never mutated afterwards (no caller
+# assigns to a cache's attributes), so the arrays are safe to share by reference.
+# Keying on mtime+size means a regenerated .npz is picked up rather than served stale.
+_NPZ_TABLE_MEMO: Dict[Tuple[str, int, int], Dict[str, np.ndarray]] = {}
+
+
+def _load_npz_tables(path: str) -> Dict[str, np.ndarray]:
+    """Return the fully-materialised contents of a cache .npz, memoised per file version."""
+    try:
+        st = os.stat(path)
+        key = (os.path.abspath(path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if key is not None:
+        hit = _NPZ_TABLE_MEMO.get(key)
+        if hit is not None:
+            return hit
+    with np.load(path) as z:
+        tables = {name: z[name] for name in z.files}
+    if key is not None:
+        # Bounded: one entry per propellant cache file, and they are a few hundred KB each.
+        if len(_NPZ_TABLE_MEMO) > 8:
+            _NPZ_TABLE_MEMO.clear()
+        _NPZ_TABLE_MEMO[key] = tables
+    return tables
+
+
 class CEACache:
     """CEA cache with bilinear interpolation"""
     
@@ -355,7 +387,7 @@ class CEACache:
     def _load_cache(self):
         """Load CEA data from cache file"""
         # print(f"[OK] Loading CEA cache from {self.cache_file}")
-        data = np.load(self.cache_file)
+        data = _load_npz_tables(self.cache_file)
 
         meta_expected = {
             "table_schema": CEA_TABLE_SCHEMA_VERSION,
@@ -446,7 +478,7 @@ class CEACache:
         self.Cf_table = data["Cf"]
         # Cf_vac added later; old caches lack it -> None triggers an isentropic
         # fallback in eval() until the cache is regenerated.
-        self.Cf_vac_table = data["Cf_vac"] if "Cf_vac" in data.files else None
+        self.Cf_vac_table = data["Cf_vac"] if "Cf_vac" in data else None
         self.Tc_table = data["Tc"]
         self.gamma_table = data["gamma"]
         self.R_table = data["R"]

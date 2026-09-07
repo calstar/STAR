@@ -11,6 +11,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+import { AssigneeAvatar, AssigneeChip } from "@/components/AssigneeChip";
 import { updateField } from "@/lib/fieldUpdate";
 import { displayNameOf } from "@/lib/names";
 
@@ -69,13 +70,11 @@ export function AssigneeSelect({
     ? users.filter((u) => displayNameOf(u).toLowerCase().includes(q))
     : users;
 
+  const selectedUsers = users.filter((u) => selectedSet.has(u.id));
   const label =
     selected.length === 0
       ? "Unassigned"
-      : users
-          .filter((u) => selectedSet.has(u.id))
-          .map((u) => displayNameOf(u))
-          .join(", ");
+      : selectedUsers.map((u) => displayNameOf(u)).join(", ");
 
   const commit = (next: string[]) => {
     if (onChange) onChange(next);
@@ -178,11 +177,20 @@ export function AssigneeSelect({
             close();
           }
         }}
-        className={`inline-flex max-w-full items-center gap-1 rounded border border-neutral-300 dark:border-neutral-700 py-1 pl-2 pr-1.5 text-sm cursor-pointer bg-white dark:bg-neutral-900${
+        title={label}
+        className={`inline-flex max-w-full items-center gap-1 rounded border border-neutral-300 dark:border-neutral-700 py-1 pl-1.5 pr-1.5 text-sm cursor-pointer bg-white dark:bg-neutral-900${
           selected.length === 0 ? " text-neutral-500 dark:text-neutral-400" : ""
         }`}
       >
-        <span className="truncate">{label}</span>
+        {selectedUsers.length === 0 ? (
+          <span className="truncate pl-0.5">Unassigned</span>
+        ) : (
+          <span className="flex min-w-0 flex-wrap items-center gap-1">
+            {selectedUsers.map((u) => (
+              <AssigneeChip key={u.id} user={u} />
+            ))}
+          </span>
+        )}
         <svg
           aria-hidden="true"
           viewBox="0 0 20 20"
@@ -252,7 +260,10 @@ export function AssigneeSelect({
                       onClick={() => toggle(u.id)}
                       className={`flex min-h-11 cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm sm:min-h-0 sm:px-2 sm:py-1.5 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800`}
                     >
-                      <span className="truncate">{displayNameOf(u)}</span>
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <AssigneeAvatar user={u} />
+                        <span className="truncate">{displayNameOf(u)}</span>
+                      </span>
                       {isSelected && (
                         <span aria-hidden="true" className="text-xs opacity-70">
                           ✓
