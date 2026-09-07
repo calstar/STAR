@@ -2,6 +2,7 @@ import type { User } from "@prisma/client";
 import Link from "next/link";
 
 import { BoardWithSort } from "@/components/BoardWithSort";
+import { PAGE_CONTAINER } from "@/components/EntityRow";
 import { GanttChart } from "@/components/GanttChart";
 import { TaskTable } from "@/components/TaskTable";
 import { type WorkspaceTask, toRowData } from "@/lib/board";
@@ -37,17 +38,17 @@ export function DetailView({
   showSubteam?: boolean;
 }) {
   const tab = (active: boolean) =>
-    `rounded px-3 py-1 text-sm ${
+    `inline-flex min-h-11 shrink-0 items-center rounded px-4 text-sm sm:min-h-0 sm:px-3 sm:py-1 ${
       active
         ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
         : "text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
     }`;
 
   return (
-    <div className="mx-auto max-w-[88rem] px-6 py-8">
+    <div className={PAGE_CONTAINER}>
       {header}
 
-      <div className="mt-6 flex items-center gap-1">
+      <div className="mt-6 flex items-center gap-1 overflow-x-auto sm:overflow-visible">
         <Link href={basePath} className={tab(view === "list")}>
           List
         </Link>

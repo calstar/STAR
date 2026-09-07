@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { BlockedBadge } from "@/components/BlockedBadge";
+import { PAGE_CONTAINER } from "@/components/EntityRow";
 import { TaskLink } from "@/components/TaskLink";
 import { prisma } from "@/lib/db";
 import { projectTaskTotal } from "@/lib/projects";
@@ -42,18 +43,18 @@ export default async function Home() {
   const tile =
     "rounded-xl border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900";
   const rowLink =
-    "flex items-center justify-between gap-3 rounded-lg px-2 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-800";
+    "flex min-h-11 items-center justify-between gap-3 rounded-lg px-2 py-2 sm:min-h-0 hover:bg-neutral-100 dark:hover:bg-neutral-800";
   const seeAll =
-    "text-xs text-neutral-500 hover:underline dark:text-neutral-400";
+    "inline-flex min-h-11 items-center text-xs text-neutral-500 hover:underline dark:text-neutral-400 sm:min-h-0";
   const count = "shrink-0 text-xs text-neutral-500 dark:text-neutral-400";
   const dot = "inline-block h-3 w-3 shrink-0 rounded-full";
 
   return (
-    <div className="mx-auto max-w-[88rem] px-6 py-8">
+    <div className={PAGE_CONTAINER}>
       <h1 className="text-2xl font-semibold">Home</h1>
 
-      <div className="mt-6 grid items-start gap-4 md:grid-cols-4">
-        {/* Projects — 1/4 */}
+      <div className="mt-6 grid items-start gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {/* Projects — 1/2 at md, 1/4 at lg */}
         <section className={tile}>
           <div className="flex items-center justify-between">
             <h2 className="font-medium">Projects</h2>
@@ -82,7 +83,7 @@ export default async function Home() {
           </div>
         </section>
 
-        {/* Subteams — 1/4 */}
+        {/* Subteams — 1/2 at md, 1/4 at lg */}
         <section className={tile}>
           <div className="flex items-center justify-between">
             <h2 className="font-medium">Subteams</h2>
@@ -111,7 +112,7 @@ export default async function Home() {
           </div>
         </section>
 
-        {/* My tasks — 1/2 */}
+        {/* My tasks — full width at md, 1/2 at lg */}
         <section className={`${tile} md:col-span-2`}>
           <div className="flex items-center justify-between">
             <h2 className="font-medium">My tasks</h2>
