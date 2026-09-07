@@ -9,13 +9,45 @@
  * design appears to lose their work.
  *
  * A source audit rather than a rendering test. It cannot know what a control
- * *means*, so it enforces the one thing it can check mechanically: inside the
- * viewer components, every raw interactive element carries a `disabled`.
+ * *means*, so it enforces the one thing it can check mechanically: every raw
+ * interactive element carries a `disabled` that consults the read-only state.
  * Anything genuinely view-only is listed below with a reason, which keeps the
  * exceptions honest and visible.
+ *
+ * The file list is a DENY-list. It used to glob `components/{viewer,environment}`,
+ * which is an allow-list wearing a glob: it audited eighteen of the twenty-one
+ * components and nothing said so, so `ui.tsx`, `UnitsPanel.tsx` and the designs
+ * bar were unchecked by accident rather than by decision, and a new directory
+ * of design-editing controls would have been unchecked the same way. Everything
+ * under components/ is audited now unless NOT_EDITING names it with a reason --
+ * the same correction the engine-design and pid-designer audits took.
  */
 
 import { describe, expect, it } from 'vitest'
+
+/**
+ * Whole files exempt from the control audit, with a reason each.
+ *
+ * A file belongs here only when *nothing* in it edits the design. If one
+ * control in an otherwise view-only file does write the design, it does not go
+ * here -- gate that control and leave the file audited.
+ */
+const NOT_EDITING: Record<string, string> = {
+  'ui.tsx':
+    'the gated primitives themselves; Button/NumberInput/Select consult ' +
+    'useDisabled, which is what gates their consumers',
+  'ConfigVersions.tsx':
+    'the designs bar -- Take, Release, History and the picker are how you get ' +
+    'the checkout, so they must stay live precisely when you do not hold it',
+  'UnitsPanel.tsx':
+    'which units you read in is a per-browser preference (lib/units/unitsContext ' +
+    'over localStorage), not part of OrkConfig -- see lib/uiPrefs.ts on why that ' +
+    'class of state deliberately never enters a shared design',
+  'App.tsx':
+    'the tab bar and the design bar it renders; both must stay live without a ' +
+    'checkout. Listed rather than left outside the glob so the exclusion is a ' +
+    'decision on the record instead of an accident of which directories match',
+}
 
 /**
  * Raw controls that are deliberately live while read-only, because they change
@@ -52,17 +84,20 @@ const VIEW_ONLY: Record<string, string> = {
   'FlightProfileModal.tsx:onClose': 'closes the popup',
 }
 
-/**
- * The viewer components. `App.tsx` is excluded: its own controls are the tab
- * bar and two display toggles (part opacity, the Onshape-CM marker), none of
- * which is saved in the design, and the design bar it renders must stay live so
- * you can take the checkout in the first place.
- */
-const files = import.meta.glob('../components/{viewer,environment}/**/*.tsx', {
-  eager: true,
-  query: '?raw',
-  import: 'default',
-}) as Record<string, string>
+/** Every component, plus App.tsx -- which carries controls of its own, so
+ *  leaving it out of the glob would be an unrecorded exemption. */
+const files = {
+  ...import.meta.glob('../components/**/*.tsx', {
+    eager: true,
+    query: '?raw',
+    import: 'default',
+  }),
+  ...import.meta.glob('../App.tsx', {
+    eager: true,
+    query: '?raw',
+    import: 'default',
+  }),
+} as Record<string, string>
 
 /** The full opening tag, not just up to the first `>` -- an arrow function in an
  *  onClick contains one and would truncate it. */
@@ -85,17 +120,25 @@ function openingTags(src: string, tag: string): string[] {
   return out
 }
 
-describe('checkout gating (viewer)', () => {
+describe('checkout gating (CAD half)', () => {
   it('audits a non-empty set of files', () => {
     // A glob that silently matches nothing would make every assertion below
     // pass while checking nothing at all.
+    //
+    // Narrowing it is caught by the deny-list rather than by a number here:
+    // `ui.tsx`, `UnitsPanel.tsx`, `ConfigVersions.tsx` and `App.tsx` are only
+    // reachable through the wide glob, so any attempt to scope this back to a
+    // few directories drops them out of `files` and fails the "every whole-file
+    // exemption points at a real file" test below. The exemptions hold the
+    // coverage open.
     expect(Object.keys(files).length).toBeGreaterThan(5)
   })
 
-  it('leaves no ungated raw control in the viewer', () => {
+  it('leaves no ungated raw control', () => {
     const offenders: string[] = []
     for (const [path, src] of Object.entries(files)) {
       const name = path.split('/').pop() as string
+      if (name in NOT_EDITING) continue
       for (const tag of ['button', 'input', 'select', 'textarea']) {
         for (const open of openingTags(src, tag)) {
           // A bare `disabled={busy}` is NOT enough. Recompute carried exactly
@@ -122,6 +165,15 @@ describe('checkout gating (viewer)', () => {
       }
     }
     expect(offenders).toEqual([])
+  })
+
+  it('keeps every whole-file exemption pointing at a real file', () => {
+    // An exemption for a file that no longer exists is how a rename quietly
+    // drops a component out of the audit while the list still looks tended.
+    const stale = Object.keys(NOT_EDITING).filter(
+      (name) => !Object.keys(files).some((p) => p.endsWith(`/${name}`)),
+    )
+    expect(stale, `NOT_EDITING names files that no longer exist: ${stale.join(', ')}`).toEqual([])
   })
 
   it('keeps the view-only exception list honest', () => {

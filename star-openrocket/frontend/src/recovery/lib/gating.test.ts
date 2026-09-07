@@ -34,6 +34,9 @@ import { describe, expect, it } from 'vitest'
  * is audited now unless it is named here.
  */
 const NOT_EDITING: Record<string, string> = {
+  'RecoveryTab.tsx':
+    'the recovery subtab bar; switching tabs is navigation, and the tabs it ' +
+    'renders are each audited in their own right',
   'ui.tsx':
     'the gated primitives themselves; Button/NumberInput/Select consult ' +
     'useDisabled, which is what the last test below pins',
@@ -56,11 +59,21 @@ const VIEW_ONLY: Record<string, string> = {
   'StudyTable.tsx:onToggle(p.id)': 'chart series visibility, local state',
 }
 
-const files = import.meta.glob('../components/**/*.tsx', {
-  eager: true,
-  query: '?raw',
-  import: 'default',
-}) as Record<string, string>
+/** Every recovery component, plus RecoveryTab.tsx -- it sits a level above
+ *  components/ and carries a control of its own, so leaving it out of the glob
+ *  would be an exemption nobody wrote down. */
+const files = {
+  ...import.meta.glob('../components/**/*.tsx', {
+    eager: true,
+    query: '?raw',
+    import: 'default',
+  }),
+  ...import.meta.glob('../RecoveryTab.tsx', {
+    eager: true,
+    query: '?raw',
+    import: 'default',
+  }),
+} as Record<string, string>
 
 /** The full opening tag, not just up to the first `>` -- an arrow function in an
  *  onClick contains one and would truncate it. */
