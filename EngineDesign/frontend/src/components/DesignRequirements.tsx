@@ -15,6 +15,7 @@ export const DEFAULT_DESIGN_REQUIREMENTS: DesignRequirementsType = {
   W_TANK_EQUAL: 0.0,
   max_engine_length: 0.4,
   max_chamber_outer_diameter: 0.2032,
+  layer1_chamber_od_increment_in: 0,
   max_nozzle_exit_diameter: 0.2032,
   min_Lstar: 0.76,
   max_Lstar: 1.5,
@@ -74,7 +75,7 @@ export function DesignRequirements({
     onSave();
   };
 
-  const updateField = (field: keyof DesignRequirementsType, value: number | boolean | null) => {
+  const updateField = (field: keyof DesignRequirementsType, value: number | boolean | string | null) => {
     // Pass `null` (not `undefined`) to clear an optional target — `undefined` is dropped by
     // JSON.stringify so the backend would never see the cleared key (same reasoning as
     // updateFrozenParam below).
@@ -284,6 +285,92 @@ export function DesignRequirements({
       {/* Geometry Constraints */}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
         <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">📏 Geometry Constraints</h3>
+        {/* Stock-size snapping. Ablative sleeve / chamber tube / case come in fixed sizes, so a
+            continuous optimum like 4.2" is not purchasable. Snapping INSIDE the search means the
+            returned design is already buildable, instead of being rounded afterwards (which moves
+            contraction ratio, L* and wall thickness off the optimum). */}
+        <div className="mb-4 flex items-center gap-3">
+          <input
+            type="checkbox"
+            id="chamber_od_stock_increments"
+            checked={!!requirements.layer1_chamber_od_increment_in}
+            onChange={(e) =>
+              updateField('layer1_chamber_od_increment_in', e.target.checked ? 0.5 : 0)
+            }
+            className="w-4 h-4 accent-blue-500"
+          />
+          <label htmlFor="chamber_od_stock_increments" className="text-sm font-medium text-[var(--color-text-primary)] cursor-pointer">
+            Chamber OD in stock sizes only
+          </label>
+          <span className="text-xs text-[var(--color-text-secondary)]">Search in 0.5&quot; steps.</span>
+        </div>
+
+        <div className="mb-4 flex items-center gap-3">
+          <label htmlFor="imp_ld_target" className="text-sm font-medium text-[var(--color-text-primary)]">
+            Jets meet at
+          </label>
+          <input
+            id="imp_ld_target"
+            type="number"
+            value={requirements.layer1_impingement_Ld_target ?? 4}
+            onChange={(e) => updateField('layer1_impingement_Ld_target', parseFloat(e.target.value))}
+            className="w-24 px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
+            min="1"
+            max="15"
+            step="0.5"
+          />
+          <span className="text-sm text-[var(--color-text-secondary)]">jet diameters from the injector face</span>
+        </div>
+
+        <div className="mb-4 flex items-center gap-3">
+          <input
+            type="checkbox"
+            id="integer_jet_angles"
+            checked={requirements.layer1_integer_jet_angles !== false}
+            onChange={(e) => updateField('layer1_integer_jet_angles', e.target.checked)}
+            className="w-4 h-4 accent-blue-500"
+          />
+          <label htmlFor="integer_jet_angles" className="text-sm font-medium text-[var(--color-text-primary)] cursor-pointer">
+            Whole-degree jet angles (doublet injectors)
+          </label>
+
+        </div>
+
+        {/* Derived (solved) design variables. Both default ON: they are determined by
+            requirements the user already gave, so solving them is exact and frees the
+            optimizer to spend its effort on the choices that are genuinely free. They stay
+            switchable because a fixed-hardware or off-design study needs to search them. */}
+        <div className="mb-4 rounded-lg border border-[var(--color-border)] p-3">
+          <div className="text-sm font-medium text-[var(--color-text-primary)] mb-2">
+            Solve instead of search
+          </div>
+          <div className="flex items-center gap-3 mb-2">
+            <input
+              type="checkbox"
+              id="derive_expansion_ratio"
+              checked={requirements.layer1_derive_expansion_ratio !== false}
+              onChange={(e) => updateField('layer1_derive_expansion_ratio', e.target.checked)}
+              className="w-4 h-4 accent-blue-500"
+            />
+            <label htmlFor="derive_expansion_ratio" className="text-sm text-[var(--color-text-primary)] cursor-pointer">
+              Expansion ratio — expand exactly to ambient
+            </label>
+
+          </div>
+          <div className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              id="derive_throat_from_thrust"
+              checked={requirements.layer1_derive_throat_from_thrust !== false}
+              onChange={(e) => updateField('layer1_derive_throat_from_thrust', e.target.checked)}
+              className="w-4 h-4 accent-blue-500"
+            />
+            <label htmlFor="derive_throat_from_thrust" className="text-sm text-[var(--color-text-primary)] cursor-pointer">
+              Throat area — size it to hit the thrust target exactly
+            </label>
+
+          </div>
+        </div>
         <div className="grid grid-cols-3 gap-4">
           <div>
             <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">

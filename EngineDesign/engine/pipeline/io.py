@@ -68,6 +68,81 @@ def _check_preset_coherence(name: str, preset: Dict[str, Any], merged: Dict[str,
             )
 
 
+
+# Fluid names as they appear in ``fluids.*.name`` vs ``combustion.cea.*_name``. The two fields
+# come from different worlds -- one is a human label, one is a rocketcea card -- so they are
+# spelled differently for the same substance.
+_FLUID_ALIASES = {
+    "lox": {"lox", "o2(l)", "oxygen", "loxygen", "lo2"},
+    "methane": {"methane", "ch4", "lch4", "ch4(l)"},
+    "ethanol": {"ethanol", "c2h5oh", "etoh", "c2h5oh(l)"},
+    "rp1": {"rp1", "rp-1", "kerosene", "jet-a", "jeta"},
+    "nitrousoxide": {"n2o", "nitrousoxide", "nitrous oxide"},
+    "ipa": {"ipa", "isopropanol", "isopropyl alcohol", "c3h8o"},
+}
+
+
+def _canon_fluid(name) -> str:
+    """Canonical key for a fluid name, or the lowercased name when unrecognised."""
+    if not name:
+        return ""
+    n = str(name).strip().lower().replace("_", "").replace(" ", "").replace("-", "")
+    for canon, aliases in _FLUID_ALIASES.items():
+        if n in {a.replace(" ", "").replace("-", "").replace("_", "") for a in aliases}:
+            return canon
+    return n
+
+
+def _check_fluid_cea_coherence(data: Dict[str, Any]) -> None:
+    """Fail when ``fluids`` and ``combustion.cea`` describe DIFFERENT propellants.
+
+    This used to live inside _check_preset_coherence, which only runs when a config names a
+    ``propellant_preset``. Leave the preset unset -- which is exactly what the UI does when no
+    propellant is picked -- and the guard was skipped entirely: a config could carry methane
+    fluid properties while the chemistry came from the LOX/Ethanol CEA table, and it loaded
+    without a word. The injector would flow one propellant's density and the chamber would burn
+    another's thermochemistry, and every number downstream would look completely plausible.
+
+    The physics does not care whether a preset was named, so neither does this check.
+    """
+    fluids = (data.get("fluids") or {})
+    cea = ((data.get("combustion") or {}).get("cea") or {})
+    if not fluids or not cea:
+        return
+    pairs = (
+        ("fuel", (fluids.get("fuel") or {}).get("name"), cea.get("fuel_name")),
+        ("oxidizer", (fluids.get("oxidizer") or {}).get("name"), cea.get("ox_name")),
+    )
+    for side, fluid_name, cea_name in pairs:
+        if not fluid_name or not cea_name:
+            continue
+        a, b = _canon_fluid(fluid_name), _canon_fluid(cea_name)
+        if a and b and a != b:
+            raise ValueError(
+                f"Propellant mismatch on the {side} side: fluids.{side}.name = {fluid_name!r} "
+                f"but combustion.cea.{'fuel_name' if side == 'fuel' else 'ox_name'} = "
+                f"{cea_name!r}. The injector would flow one propellant while the chamber burns "
+                f"another's chemistry. Fix the config, or set propellant_preset to a preset that "
+                f"defines both consistently."
+            )
+    # The CEA cache file is named after the propellants it was built for; a stale one is the
+    # same failure wearing a different hat.
+    cache = str(cea.get("cache_file") or "")
+    if cache:
+        stem = cache.rsplit("/", 1)[-1].lower()
+        for side, _fl, cea_name in pairs:
+            c = _canon_fluid(cea_name)
+            if not c:
+                continue
+            known = {"lox": "lox", "methane": "ch4", "ethanol": "ethanol", "rp1": "rp1"}
+            tag = known.get(c)
+            if tag and tag not in stem.replace("-", "_").replace(".", "_"):
+                _log.warning(
+                    "CEA cache %r does not mention the %s propellant %r — check it is not stale.",
+                    cache, side, cea_name,
+                )
+
+
 def _apply_propellant_preset(data: Dict[str, Any], config_dir: Path) -> Dict[str, Any]:
     """If ``propellant_preset`` is set, merge the preset under explicit-YAML-wins semantics."""
     name = data.get("propellant_preset")
@@ -117,6 +192,9 @@ def load_config(config_path: Union[str, Path]) -> PintleEngineConfig:
         data = yaml.safe_load(f)
 
     data = _apply_propellant_preset(data, path.resolve().parent)
+
+    # ALWAYS, not just when a preset is named -- see _check_fluid_cea_coherence.
+    _check_fluid_cea_coherence(data)
 
     # Re-stamp spray/discharge bindings for the declared injector type (fixes stale pintle-era
     # lefebvre SMD + fixed Cd left on impinging YAMLs — bogus ~1 µm D32 and supply-starved Pc).

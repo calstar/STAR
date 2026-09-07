@@ -180,6 +180,7 @@ def calculate_chamber_intrinsics(
     Lstar: float,
     MR: float,
     P_back: Optional[float] = None,
+    A_chamber: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Calculate chamber intrinsic properties.
@@ -231,13 +232,23 @@ def calculate_chamber_intrinsics(
     if not sound_valid.passed:
         sound_speed = 1000.0  # Fallback
     
-    # Mean velocity (from mass flow and density)
-    # Physics: u = mdot / (rho * A)
-    # For cylindrical chamber: A_avg = V_chamber / Lstar (exact for constant area)
-    # For converging chamber: A_avg ≈ V_chamber / Lstar (approximation)
-    A_avg, A_valid = NumericalStability.safe_divide(V_chamber, Lstar, A_throat, "A_avg")
-    if not A_valid.passed:
-        # Fallback: assume chamber area is ~3x throat area (typical contraction ratio)
+    # Mean gas velocity: u = mdot / (rho * A_chamber).
+    #
+    # This used to compute A_avg = V_chamber / Lstar, with a comment claiming that is "exact for
+    # constant area". It is not: L* is DEFINED as V_chamber / A_throat, so that expression
+    # collapses identically to A_throat for every geometry --
+    #     A_avg = V / L* = V / (V/At) = At
+    # -- and the "mean chamber velocity" was really the throat velocity. On the methalox anchor
+    # (contraction ratio 12.9) it reported 767.5 m/s and a chamber Mach of 0.62, i.e. a nearly
+    # choked chamber; the true values are 59.5 m/s and M = 0.048. The thrust path was never
+    # affected (combustion_physics and the accel kernel both use the real Ac), but this fed the
+    # reported Mach and Reynolds number, and tripped the "velocity unusually high" diagnostic on
+    # literally every design, which is how a real warning gets trained into noise.
+    if A_chamber is not None and np.isfinite(A_chamber) and A_chamber > 0:
+        A_avg = float(A_chamber)
+    else:
+        # No chamber area supplied: fall back to a typical contraction ratio rather than to
+        # A_throat, which would silently reproduce the old bug.
         A_avg = A_throat * 3.0
     
     velocity_mean, v_valid = NumericalStability.safe_divide(

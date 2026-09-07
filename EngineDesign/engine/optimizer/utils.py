@@ -86,6 +86,26 @@ def extract_all_parameters(config: PintleEngineConfig) -> Dict[str, Any]:
         params["d_jet_F"] = g.fuel.d_jet
         params["imp_angle_F"] = g.fuel.impingement_angle
         params["spacing_F"] = g.fuel.spacing
+        # Axial standoff from the injector face to where each doublet's jets collide.
+        # Purely geometric (spacings + angles), but it is the number that says whether the
+        # collision is far enough off the plate not to erode it, so it belongs in the
+        # reported geometry rather than only in the spray diagnostics.
+        from engine.core.injectors.impinging import impingement_standoff_m
+        params["L_imp"] = impingement_standoff_m(
+            nd, g.oxidizer.spacing, g.fuel.spacing,
+            g.oxidizer.impingement_angle, g.fuel.impingement_angle,
+        )
+        # Pitch-circle diameters: the circles the jet CENTRES lie on. ``spacing`` is the arc
+        # between adjacent holes on one ring, which reads as a tiny number and is routinely
+        # mistaken for the ring size -- report both so there is nothing to misread.
+        import math as _math
+        params["D_pitch_O"] = nd * g.oxidizer.spacing / _math.pi
+        params["D_pitch_F"] = nd * g.fuel.spacing / _math.pi
+        params["ring_radial_offset"] = 0.5 * abs(params["D_pitch_O"] - params["D_pitch_F"])
+        # Included angle between the two jet centrelines (what a drawing dimensions).
+        params["included_angle_deg"] = float(g.oxidizer.impingement_angle) + float(g.fuel.impingement_angle)
+        params["jet_angle_asymmetry_deg"] = abs(
+            float(g.fuel.impingement_angle) - float(g.oxidizer.impingement_angle))
         # Backward-compatible aliases used by older views/scripts.
         params["d_jet_oxidizer"] = g.oxidizer.d_jet
         params["impingement_angle_oxidizer"] = g.oxidizer.impingement_angle

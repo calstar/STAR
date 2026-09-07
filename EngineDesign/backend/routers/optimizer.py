@@ -14,6 +14,33 @@ import yaml
 
 from backend.session import UserSession, get_session, JOB_SEMAPHORE
 from backend.routers.config import config_to_dict
+
+
+def layer1_design_is_valid(results: Dict[str, Any]) -> tuple[bool, list]:
+    """Did Layer 1 produce a design that passed its own validation gates?
+
+    Returns ``(is_valid, reasons)``. A design is valid only when it reports NO failure
+    reasons and no ``*_check_passed`` / ``*_gate_passed`` flag is False.
+
+    Why this exists: the optimized geometry used to be written back into the live config
+    unconditionally, INCLUDING when validation failed. A failed run then became the seed for
+    the next run, which started from a wrecked geometry, failed worse, and saved something
+    worse again -- a death spiral that bricked a working design (observed live: expansion_ratio
+    4.91 -> 9.74, oxidizer d_jet 2.33 -> 4.35 mm, and every subsequent run infeasible with the
+    UI giving no indication the seed was the problem). Combined with the known run-to-run
+    spread, one unlucky run in three could permanently destroy a design the user had converged.
+    """
+    perf = (results or {}).get("performance") or {}
+    if not perf:
+        # No performance payload at all -> we cannot show it passed, so treat it as failed.
+        # Fail-safe matters here: the consequence of a wrong "valid" is overwriting a working
+        # design, while the consequence of a wrong "invalid" is merely not saving one.
+        return False, ["no performance data returned"]
+    reasons = list(perf.get("failure_reasons") or [])
+    for key, passed in perf.items():
+        if (key.endswith("_check_passed") or key.endswith("_gate_passed")) and passed is False:
+            reasons.append(f"{key} = False")
+    return (not reasons), reasons
 from engine.pipeline.config_schemas import DesignRequirementsConfig
 from engine.optimizer.layers.layer1_static_optimization import run_layer1_optimization
 from engine.optimizer.layers.layer2_pressure import run_layer2_pressure
@@ -438,9 +465,22 @@ async def run_layer1(
                                 return
                         raise
             
-            # Update config and recreate runner with new config
-            session.app_state.set_config(optimized_config)
-            
+            # Update config and recreate runner with new config -- ONLY if the design actually
+            # validated. An INVALID result must never become the seed for the next run: it is
+            # what turns one unlucky run into a permanently bricked design (see
+            # layer1_design_is_valid). The bad result is still reported below so the user can
+            # see what failed; it just does not get to overwrite a working geometry.
+            design_valid, invalid_reasons = layer1_design_is_valid(results)
+            if design_valid:
+                session.app_state.set_config(optimized_config)
+                persisted_config = optimized_config
+            else:
+                persisted_config = session.app_state.config
+                print(
+                    "⚠ Layer 1 result did NOT validate — keeping the previous geometry as the "
+                    f"seed rather than saving it. Reasons: {invalid_reasons}"
+                )
+
             # Store results (convert numpy types for JSON serialization)
             performance = results.get("performance", {})
             # Add target exit pressure to performance for easy access
@@ -448,15 +488,24 @@ async def run_layer1(
             if exit_pressure_targeting.get("target_P_exit") is not None:
                 performance["target_P_exit"] = exit_pressure_targeting["target_P_exit"]
             
+            # ``config`` is what the frontend autosaves into the working copy, so it must be the
+            # config we actually kept -- not the rejected one. Otherwise the guard above is
+            # pointless: the invalid geometry would still reach current.json via autosave.
             results_dict = convert_numpy({
                 "performance": performance,
-                "validation": results.get("validation", {}),
+                # Layer 1 does not emit a "validation" key, so this was always {} and the UI's
+                # validation panel got nothing. Report the real gate outcome instead.
+                "validation": results.get("validation") or {
+                    "valid": design_valid,
+                    "failure_reasons": invalid_reasons,
+                },
+                "design_saved": design_valid,
                 "geometry": results.get("optimized_parameters", {}),
                 "objective_history": objective_history,
                 "iteration_history": results.get("iteration_history", []),
                 "convergence_info": results.get("convergence_info", {}),
-                "config": config_to_dict(optimized_config),
-                "config_yaml": yaml.dump(config_to_dict(optimized_config), default_flow_style=False),
+                "config": config_to_dict(persisted_config),
+                "config_yaml": yaml.dump(config_to_dict(persisted_config), default_flow_style=False),
             })
             session.optimizer.optimization_status["results"] = results_dict
             session.optimizer.optimization_status["progress"] = 1.0

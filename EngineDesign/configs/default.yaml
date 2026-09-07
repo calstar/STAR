@@ -38,15 +38,18 @@ injector:
       impingement_angle: 60.0
       spacing: 0.006
 feed_system:
+  # 3/8" NPT on BOTH branches. `line_size` names the fitting; d_inlet and A_hydraulic are
+  # derived from it (FEED_LINE_SIZES in config_schemas.py), so bore and area cannot drift
+  # apart. Previously: fuel 0.009525 m = 0.375", which is the THREAD nominal and not a bore;
+  # oxidizer 0.01347 m = 0.530", a 15-significant-figure value with no stated basis that
+  # under-predicted LOX feed loss by ~3.8x (dP ~ 1/A^2).
   fuel:
-    d_inlet: 0.009525
-    A_hydraulic: 7.13e-05
+    line_size: 3/8_NPT
     K0: 2.0
     K1: 0.0
     phi_type: none
   oxidizer:
-    d_inlet: 0.013470353244117012
-    A_hydraulic: 0.00014251150082346222
+    line_size: 3/8_NPT
     K0: 2.0
     K1: 0.0
     phi_type: none
@@ -446,7 +449,14 @@ design_requirements:
   # `spacing` variable a real job; zero when the layout is comfortable.
   W_IMP_GEOM: 1500.0
   layer1_impinging_angle_deg_min: 55.0
-  layer1_impinging_angle_deg_max: 90.0
+  # 100, not 90: at 90 this band acts as a near-hard constraint that outranks the O/F target.
+  # Reaching a lower O/F needs a bigger fuel jet, which rebalances the spray resultant to ~92 deg
+  # included -- costing 400*(92-90.5)^2 = 900 objective points against only ~102 for simply
+  # landing at the wrong O/F. Measured on the ethalox doublet: raising 90 -> 100 took the residual
+  # from 75-133 to 0.5-2.0, moved O/F from +5.1% to +2.3% off target, and LOWERED both dP/Pc
+  # (0.29 -> 0.26) and tank pressure (557 -> 543 psi). The optimizer picks 100-104 deg unaided
+  # when allowed, and the pintle->impinging seed geometry already starts at 110 deg included.
+  layer1_impinging_angle_deg_max: 100.0
   W_IMPINGING_ANGLE: 400.0
   W_IMPINGING_JET_ASYM: 180.0
   layer1_impinging_jet_angle_max_asym_deg: 26.0
@@ -474,8 +484,12 @@ design_requirements:
   layer1_chamber_dt_ratio_max: 3.2
   layer1_chamber_ld_ratio_min: 1.0
   layer1_chamber_ld_ratio_max: 3.2
-  layer1_stagnation_pressure_frac_min: 0.65
-  layer1_stagnation_pressure_frac_max: 0.95
+  # Tank stagnation search box as a fraction of the pressure cap. Was [0.65, 0.95], which
+  # made the top 5-35%% of the user's own cap unreachable -- a 600 psi cap could only be
+  # searched to 570 psi, and at the old code default (0.85) only to 510 psi. The cap IS the
+  # limit; the search must be able to reach it.
+  layer1_stagnation_pressure_frac_min: 0.35
+  layer1_stagnation_pressure_frac_max: 1.0
   layer1_expansion_ratio_min: 3.0
   layer1_expansion_ratio_max: 14.0
   layer1_P_O_start_psi_min: null

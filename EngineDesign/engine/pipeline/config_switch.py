@@ -159,8 +159,25 @@ def apply_propellant(config: Dict[str, Any], preset_name: str) -> Dict[str, Any]
                 cea[identity_key] = preset_cea[identity_key]
         comb["cea"] = cea
         cfg["combustion"] = comb
+
+    # spray.smd: the chamber-gas pair (rho_g = Pc/(R*T) for the Ingebo aerodynamic Weber number)
+    # is a property of the PROPELLANT, so it must follow the switch. Without this the toggle left
+    # every propellant on the SMDConfig defaults (R=360, T=3500) -- one hardcoded chamber applied
+    # to all three, which is wrong for each of them at its own mixture ratio.
+    # Deliberately narrow: the correlation tuning next to it (model, C_ingebo, C/m/p, we_corr_max)
+    # is injector- and design-owned and must NOT be clobbered by a propellant change.
+    preset_smd = (preset.get("spray") or {}).get("smd") or {}
+    gas_keys = [k for k in ("chamber_gas_R", "chamber_gas_T") if k in preset_smd]
+    if gas_keys:
+        spray = dict(cfg.get("spray") or {})
+        smd = dict(spray.get("smd") or {})
+        for k in gas_keys:
+            smd[k] = preset_smd[k]
+        spray["smd"] = smd
+        cfg["spray"] = spray
+
     _stamp_propellant_change(cfg, old_preset, name, inj_type)
-    _log.info("switched propellant -> %s (fluids+CEA identity overlaid)", name)
+    _log.info("switched propellant -> %s (fluids+CEA identity+chamber gas overlaid)", name)
     return cfg
 
 

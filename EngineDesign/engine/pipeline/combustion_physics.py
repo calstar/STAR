@@ -32,6 +32,7 @@ def compute_combustion_state(
     C_L: float = 0.1,
     C_u: float = 0.5,
     U_rms_cap: float = 200.0,
+    spray_length_frac: Optional[float] = None,
 ) -> Dict[str, float]:
     """
     Compute consistent combustion state for all sub-models.
@@ -75,7 +76,9 @@ def compute_combustion_state(
         - rho_ch: Gas density [kg/m³]
         - U_bulk: Bulk chamber velocity [m/s]
         - G_throat: Throat mass flux [kg/(m²·s)]
-        - tau_res: Geometric residence time [s] (NEVER scale by efficiency)
+        - tau_res: EFFECTIVE residence time [s] -- geometric, minus the spray zone
+        - tau_res_geometric: whole-chamber residence time [s] (what tau_res used to be)
+        - spray_length_frac: fraction of the chamber that is spray, not burning gas
         - L_mix: Near-field mixing length scale [m]
         - U_rms: RMS injection velocity [m/s]
         - U_rms_eff: Capped RMS velocity [m/s]
@@ -113,8 +116,26 @@ def compute_combustion_state(
     # Throat mass flux
     G_throat = m_dot_total / At
     
-    # Residence time - PURELY GEOMETRIC, never scale by efficiency
-    tau_res = (Lstar * rho_ch) / G_throat
+    # Residence time - PURELY GEOMETRIC, never scale by efficiency.
+    #
+    # EFFECTIVE, not total. The first stretch of the chamber downstream of the injector face is
+    # spray, not burning gas: the jets fly free to the impingement point (L_imp), the sheet
+    # breaks up (L_b), and the droplets then travel while evaporating (x*). Only what is left
+    # after that is combustion volume. Crediting the whole L* over-predicted residence time by
+    # >2x on a measured design (spray zone was 31-56% of the chamber), which in turn made every
+    # combustion-efficiency number optimistic and pushed the optimizer to keep raising L* to buy
+    # residence time the model was already double-counting.
+    #
+    # ``spray_length_frac`` is (L_imp + L_b + x*) / L_chamber, supplied by the caller when the
+    # injector can report it. Clamped so a pathological spray length cannot drive tau_res to
+    # zero (or negative) and blow up every downstream efficiency term.
+    tau_res_total = (Lstar * rho_ch) / G_throat
+    _spray_frac = float(spray_length_frac) if spray_length_frac is not None else 0.0
+    if not np.isfinite(_spray_frac) or _spray_frac < 0.0:
+        _spray_frac = 0.0
+    _spray_frac = min(_spray_frac, 0.90)      # never claim less than 10% of the chamber burns
+    tau_res = tau_res_total * (1.0 - _spray_frac)
+    tau_res_geometric = tau_res_total   # reported for comparison/diagnostics
     
     # Near-field mixing length scale (~1mm for typical 10mm injector)
     L_mix = C_L * Dinj
@@ -167,6 +188,10 @@ def compute_combustion_state(
         "U_bulk": float(U_bulk),
         "G_throat": float(G_throat),
         "tau_res": float(tau_res),
+        # Both reported so the split is visible: tau_res is the EFFECTIVE (combustion) time,
+        # tau_res_geometric is the old whole-chamber number, spray_length_frac is what was removed.
+        "tau_res_geometric": float(tau_res_geometric),
+        "spray_length_frac": float(_spray_frac),
         "L_mix": float(L_mix),
         "U_rms": float(U_rms),
         "U_rms_eff": float(U_rms_eff),
@@ -194,6 +219,7 @@ def calculate_eta_Lstar(
     fuel_props: dict = None,
     u_fuel: Optional[float] = None,
     u_lox: Optional[float] = None,
+    spray_length_frac: Optional[float] = None,
     debug: bool = False,
 ) -> Tuple[float, float]:
     """
@@ -260,7 +286,8 @@ def calculate_eta_Lstar(
     state = compute_combustion_state(
         Pc=Pc, Tc=Tc, R=R, Ac=Ac, At=At, Lstar=L_star,
         m_dot_total=m_dot_total, Dinj=Dinj,
-        u_fuel=u_fuel, u_lox=u_lox
+        u_fuel=u_fuel, u_lox=u_lox,
+        spray_length_frac=spray_length_frac,
     )
     
     rho_g = state["rho_ch"]
@@ -1110,11 +1137,37 @@ def calculate_combustion_efficiency_advanced(
         SMD = _mass_flux_weighted_d32_um(d32_o, d32_f, MR_of=float(MR))
 
         
+        # Fraction of the chamber that is SPRAY rather than burning gas. The injector reports
+        # vaporization_length_total = L_imp + L_b + x*, i.e. the distance from the face at which
+        # the propellant is finally gaseous; only what is left downstream is combustion volume.
+        # Chamber length is L* * At / Ac (V = L*·At, and L_ch = V/Ac).
+        # Gated OFF by default, matching the accelerated path. Shrinking tau_res feeds back into
+        # the chamber solve (lower tau_res -> lower eta -> lower c* -> higher demanded flow), and
+        # the spray fraction itself grows with Pc, so the supply/demand root can vanish. Measured
+        # live: every candidate infeasible, "Supply < Demand at all Pc" with a -334 kg/s residual,
+        # and the optimizer returning nothing after ~1000 evaluations. Enable per-config with
+        # spray.evaporation.apply_tau_res_correction once the feedback is handled -- probably by
+        # evaluating the spray length at a fixed reference state rather than at every trial Pc.
+        _apply_taures = False
+        try:
+            _apply_taures = bool(getattr(config, "apply_tau_res_correction", False))
+        except Exception:
+            _apply_taures = False
+        _spray_frac = None
+        _vap_len = (spray_diagnostics.get("vaporization_length_total")
+                    if (_apply_taures and isinstance(spray_diagnostics, dict)) else None)
+        try:
+            _L_ch = float(Lstar) * float(At) / float(Ac) if Ac > 0 else 0.0
+            if _vap_len is not None and np.isfinite(float(_vap_len)) and _L_ch > 0:
+                _spray_frac = max(0.0, min(0.90, float(_vap_len) / _L_ch))
+        except (TypeError, ValueError, ZeroDivisionError):
+            _spray_frac = None
+
         # Use Tc (Ideal) for residence time, call with new signature
         eta_Lstar, Da_L = calculate_eta_Lstar(
             Tc=Tc, Pc=Pc, R=R, m_dot_total=m_dot_total, Ac=Ac, At=At,
             SMD=SMD, L_star=Lstar, Dinj=Dinj, gamma=gamma, fuel_props=fuel_props,
-            u_fuel=u_fuel, u_lox=u_lox, debug=debug
+            u_fuel=u_fuel, u_lox=u_lox, spray_length_frac=_spray_frac, debug=debug
         )
 
     if config.model != "exponential":

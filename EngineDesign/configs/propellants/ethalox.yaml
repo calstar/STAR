@@ -30,6 +30,23 @@ fluids:
     boiling_point: 90.2
     molecular_weight: 32.0
     bulk_modulus_pa: 1500000000.0    # order-of-magnitude LOX; refine via test T5
+# Chamber-gas properties for the Ingebo aerodynamic Weber number (rho_g = Pc/(R*T)).
+#
+# These are NOT free constants: the schema defaults (R=360, T=3500) are LOX/CH4 values, and
+# were being applied verbatim to ethalox. Read off cea_cache_LOX_Ethanol_3D.npz at the design
+# point (MR 1.35, averaged over Pc 300-600 psi), where the truth is Tc=3094 K and R=389 J/kgK
+# -- i.e. the methalox default overstated Tc by 13% and understated R by 8%.
+#
+# The injector solve runs before CEA chamber state exists, so a representative value is the
+# design (see SMDConfig). Representative for THIS propellant, at ITS mixture ratio.
+spray:
+  smd:
+    chamber_gas_R: 389.0    # J/(kg*K), LOX/Ethanol @ MR 1.35
+    chamber_gas_T: 3094.0   # K,        LOX/Ethanol @ MR 1.35
+
+# NOTE: no feed_system here on purpose. The feed lines are VEHICLE PLUMBING, not a property
+# of the propellant -- switching ethalox <-> methalox must not silently resize your tubing.
+# Line sizes live in the engine config's own feed_system block as `line_size: 3/8_NPT`.
 combustion:
   cea:
     ox_name: LOX

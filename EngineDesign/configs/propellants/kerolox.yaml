@@ -31,6 +31,15 @@ fluids:
     boiling_point: 90.2
     molecular_weight: 32.0
     bulk_modulus_pa: 1500000000.0
+# Chamber-gas properties for the Ingebo aerodynamic Weber number (rho_g = Pc/(R*T)).
+# Every preset states these explicitly: the SMDConfig schema defaults (R=360, T=3500) are a
+# single hardcoded pair that cannot be right for three different propellants, and leaving a
+# preset silent meant inheriting another propellant's chamber. Read off
+# cea_cache_LOX_RP1_3D.npz at the design point (MR 2.3, averaged over Pc 300-600 psi).
+spray:
+  smd:
+    chamber_gas_R: 377.5    # J/(kg*K), LOX/RP-1 @ MR 2.3
+    chamber_gas_T: 3473.0   # K,        LOX/RP-1 @ MR 2.3
 combustion:
   cea:
     ox_name: LOX

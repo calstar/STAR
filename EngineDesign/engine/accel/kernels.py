@@ -339,14 +339,116 @@ def _gasification(Tc, Pc, tau_res, SMD, L_eff, cp_g, rho_g, U_slip, T_star_cap):
     return 1.0 - np.exp(-tau_res/tau_vap)
 
 @njit(cache=True)
+def _spray_length_frac(P, Pc, Tc, rho_ch, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, Ac, At, Lstar):
+    """Fraction of the chamber that is spray rather than burning gas (0 when unavailable).
+
+    Mirrors the Python path: the propellant is not gaseous until it has flown to the
+    impingement point, the sheet has broken up, and the droplets have evaporated:
+
+        L_imp = |D_pitch_O - D_pitch_F|/2 / (tan th_O + tan th_F),  D_pitch = n*spacing/pi
+        L_b   = (d^2/(4 L_imp)) * sqrt(rho_l/rho_g)                 (KH on a thin sheet)
+        x*    = u_axial * D32^2 / k_evap                            (d^2-law)
+        u_axial = momentum-weighted axial resultant of the collision
+
+    Only what remains downstream of that is combustion volume. Returns 0.0 whenever any input
+    is missing so the caller keeps the old whole-chamber behaviour rather than guessing.
+    """
+    spo = P[SPO]; spf = P[SPF]
+    nO = P[NO]; nF = P[NF]
+    if spo <= 0.0 or spf <= 0.0 or nO <= 0.0 or nF <= 0.0 or Ac <= 0.0 or Lstar <= 0.0:
+        return 0.0
+    aO = P[ANG_O]; aF = P[ANG_F]
+    tan_sum = np.tan(np.deg2rad(aO)) + np.tan(np.deg2rad(aF))
+    if tan_sum <= 1e-9:
+        return 0.0
+    DpO = nO*spo/np.pi
+    DpF = nF*spf/np.pi
+    dr = 0.5*abs(DpO - DpF)
+    L_imp = dr/tan_sum
+    if L_imp <= 0.0 or not np.isfinite(L_imp):
+        return 0.0
+
+    d_avg = 0.5*(P[DJO] + P[DJF])
+    rho_l_avg = 0.5*(P[RHO_O] + P[RHO_F])
+    L_b = 0.0
+    if d_avg > 0.0 and rho_ch > 1e-4:
+        h = (d_avg*d_avg)/(4.0*L_imp)
+        L_b = h*np.sqrt(rho_l_avg/rho_ch)
+        if L_b > 20.0*d_avg:
+            L_b = 20.0*d_avg
+
+    mt = mdot_O + mdot_F
+    if mt <= 0.0:
+        return 0.0
+    u_ax = (mdot_O*u_O*np.cos(np.deg2rad(aO)) + mdot_F*u_F*np.cos(np.deg2rad(aF)))/mt
+    if u_ax <= 0.0 or not np.isfinite(u_ax):
+        return 0.0
+
+    # evaporation constant: derived when the propellant data is there, else legacy fixed K
+    cp_g = P[EV_CPGAS]; C_ev = P[EV_CEVAP]
+    D_v = 2.0e-5*(Tc/300.0)**1.75*(101325.0/Pc) if Pc > 0.0 else 0.0
+    x_star = 0.0
+    for i in range(2):
+        if i == 0:
+            D32 = D32_O; rho_l = P[RHO_O]; Lv = P[LAT_O]; Tb = P[RHO_O_BOIL]
+        else:
+            D32 = D32_F; rho_l = P[RHO_F]; Lv = P[LAT_F]; Tb = P[RHO_F_BOIL]
+        if D32 <= 0.0:
+            continue
+        k_ev = 0.0
+        if P[EV_MODEL] > 0.5 and Lv > 0.0 and Tb > 0.0 and rho_l > 0.0 and D_v > 0.0:
+            B_M = cp_g*max(0.0, Tc - Tb)/Lv
+            k_ev = C_ev*(8.0*rho_ch*D_v/rho_l)*np.log1p(B_M)
+        if k_ev > 0.0:
+            tau_ev = (D32*D32)/k_ev
+        else:
+            tau_ev = P[SP_EVAPK]*D32*D32      # legacy tau = K*D32^2
+        xs = u_ax*tau_ev
+        if xs > x_star:
+            x_star = xs
+
+    L_ch = Lstar*At/Ac
+    if L_ch <= 0.0:
+        return 0.0
+    f = (L_imp + L_b + x_star)/L_ch
+    if f < 0.0:
+        f = 0.0
+    if f > 0.90:
+        f = 0.90
+    return f
+
+
+@njit(cache=True)
 def _eta_advanced(P, Lstar, Pc, Tc, gamma, R, MR, Ac, At, Dinj, mdot_total,
-                  u_F, u_O, D32_O, D32_F, mom_R, R_opt, use_mom_penalty):
+                  u_F, u_O, D32_O, D32_F, mom_R, R_opt, use_mom_penalty,
+                  mdot_O_in, mdot_F_in):
     if R <= 0 or Tc <= 0 or Ac <= 0 or At <= 0 or Dinj <= 0 or Lstar <= 0 or mdot_total <= 0:
         return -1.0
     rho_ch = Pc/(R*Tc)
     U_bulk = mdot_total/(rho_ch*Ac)
     G_throat = mdot_total/At
+    # EFFECTIVE residence time: the spray zone downstream of the face is not combustion volume.
+    # Matches compute_combustion_state() on the Python path. Without this the optimizer sees a
+    # residence time that credits the whole chamber, which over-predicts combustion efficiency
+    # and rewards growing L* to buy time the model was already double-counting.
     tau_res = (Lstar*rho_ch)/G_throat
+    # SPRAY-ZONE CORRECTION -- computed, but NOT applied inside the chamber solve. Enable with
+    # EV_APPLY_TAURES > 0 once the feedback below is handled.
+    #
+    # _eta_advanced runs inside the Pc bracketing, so shrinking tau_res here shrinks eta, which
+    # shrinks c*, which raises the demanded mass flow -- and the spray fraction itself grows with
+    # Pc (k_evap ~ D_v ~ 1/Pc), so the loop is self-reinforcing. Measured: accelerator fallback
+    # to the Python path went 35% -> 91% of candidates (68% even clamped at 0.5), because the
+    # supply/demand root stops existing. That is a ~3x slowdown of every optimisation for a
+    # correction the solver cannot digest in this position.
+    #
+    # The correction IS applied on the Python path, at the outer efficiency call rather than
+    # inside the bracketing, where it does not feed back. Making it work here needs the spray
+    # length evaluated at a fixed reference state (or the solve reformulated), not a clamp.
+    _sf = _spray_length_frac(P, Pc, Tc, rho_ch, mdot_O_in, mdot_F_in, u_O, u_F,
+                             D32_O, D32_F, Ac, At, Lstar)
+    if P[EV_APPLY_TAURES] > 0.5:
+        tau_res = tau_res*(1.0 - _sf)
     U_rms = np.sqrt(0.5*(u_F*u_F + u_O*u_O))
     if not np.isfinite(U_rms) or U_rms < 0 or U_rms > CS_U_RMS_CAP:
         return -1.0
@@ -723,7 +825,7 @@ def _residual(Pc, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F
     else:
         sO = np.sin(P[ANG_O]*PI/180.0); sF = np.sin(P[ANG_F]*PI/180.0)
         R_opt = np.sqrt(sF/sO) if (sO > 0 and sF > 0) else 1.0
-    eta_total = _eta_advanced(P, Lstar, Pc, tc, gm, Rg, MR, Ac, P[G_AT], Dinj, mdot_supply, uF, uO, D32O, D32F, momR, R_opt, 1.0 if P[INJ_TYPE] != 0.0 else 0.0)
+    eta_total = _eta_advanced(P, Lstar, Pc, tc, gm, Rg, MR, Ac, P[G_AT], Dinj, mdot_supply, uF, uO, D32O, D32F, momR, R_opt, 1.0 if P[INJ_TYPE] != 0.0 else 0.0, mO, mF)
     if eta_total < 0:
         return np.nan
     cok, cooling_eff, _tc_eff = _cooling_evaluate(P, Pc, mdot_supply, tc, gm, Rg, Mg)
@@ -853,7 +955,7 @@ def evaluate_core(P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F
     else:
         sO = np.sin(P[ANG_O]*PI/180.0); sF = np.sin(P[ANG_F]*PI/180.0)
         R_opt = np.sqrt(sF/sO) if (sO > 0 and sF > 0) else 1.0
-    eta_total = _eta_advanced(P, Lstar, Pc, tc, gm, Rg, MR, Ac, P[G_AT], Dinj, mdot_total, uF, uO, D32O, D32F, momR, R_opt, 1.0 if P[INJ_TYPE] != 0.0 else 0.0)
+    eta_total = _eta_advanced(P, Lstar, Pc, tc, gm, Rg, MR, Ac, P[G_AT], Dinj, mdot_total, uF, uO, D32O, D32F, momR, R_opt, 1.0 if P[INJ_TYPE] != 0.0 else 0.0, mO, mF)
     # Cooling at the converged point, matching the residual. C reports
     # eta_cstar = eta_total*cooling_eff and derives cstar_actual from THAT
     # (ed_chamber.c:91-92), so report eta_final here, not eta_total.
