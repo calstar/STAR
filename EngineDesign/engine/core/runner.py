@@ -1,5 +1,6 @@
 """Main pipeline orchestrator - runs full tank pressure to thrust pipeline"""
 
+import math
 import numpy as np
 import logging
 import os
@@ -439,6 +440,10 @@ class PintleEngineRunner:
                 Lstar=current_Lstar,
                 MR=MR,
                 P_back=Pa,  # Pass ambient pressure for choking verification
+                # Real chamber cross-section, so "mean chamber velocity" is the CHAMBER
+                # velocity and not the throat velocity (see calculate_chamber_intrinsics).
+                A_chamber=(math.pi / 4.0 * float(cg.chamber_diameter) ** 2
+                           if getattr(cg, "chamber_diameter", None) else None),
             )
         except Exception as e:
             import traceback

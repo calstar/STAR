@@ -68,7 +68,9 @@ const IMPINGING_BASELINE_DEFAULTS: Record<string, unknown> = {
   W_DP_HIGH: 25000.0,
   W_IMPINGING_ANGLE: 400.0,
   layer1_impinging_angle_deg_min: 55.0,
-  layer1_impinging_angle_deg_max: 90.0,
+  // Keep in sync with configs/default.yaml. 90 made this band outrank the O/F target, and
+  // contradicted the 50/60 deg seed below (110 deg included) that this same function installs.
+  layer1_impinging_angle_deg_max: 100.0,
   W_IMPINGING_JET_ASYM: 180.0,
   layer1_impinging_jet_angle_max_asym_deg: 26.0,
   layer1_exit_pressure_inside_quad_scale: 0.38,
@@ -361,35 +363,65 @@ function ValidationCard({ label, passed }: { label: string; passed: boolean | un
 }
 
 // Helper component for geometry results table
+// Unit systems for the geometry table. `kind` says what a row measures, so one toggle can
+// convert every length and area consistently instead of each row carrying a hard-coded
+// scale. Angles and counts are unitless in both systems and pass through untouched.
+type GeomKind = 'length' | 'area' | 'angle' | 'count' | 'ratio';
+
+const GEOM_UNITS: Record<'metric' | 'imperial', Record<GeomKind, { unit: string; scale: number; decimals: number }>> = {
+  metric: {
+    length: { unit: 'mm', scale: 1000, decimals: 2 },
+    area: { unit: 'mm²', scale: 1e6, decimals: 2 },
+    angle: { unit: 'deg', scale: 1, decimals: 1 },
+    count: { unit: '', scale: 1, decimals: 0 },
+    ratio: { unit: '', scale: 1, decimals: 2 },
+  },
+  imperial: {
+    length: { unit: 'in', scale: 1 / 0.0254, decimals: 3 },
+    area: { unit: 'in²', scale: 1 / (0.0254 * 0.0254), decimals: 4 },
+    angle: { unit: 'deg', scale: 1, decimals: 1 },
+    count: { unit: '', scale: 1, decimals: 0 },
+    ratio: { unit: '', scale: 1, decimals: 2 },
+  },
+};
+
 function GeometryTable({ geometry }: { geometry: Record<string, any> }) {
+  const [units, setUnits] = useState<'metric' | 'imperial'>('metric');
+  const u = GEOM_UNITS[units];
   const injectorType =
     typeof geometry.injector_type === 'string' ? String(geometry.injector_type).toLowerCase() : '';
-  const baseParams = [
-    { key: 'A_throat', label: 'Throat Area', unit: 'mm²', scale: 1e6, decimals: 2 },
-    { key: 'Lstar', label: 'Characteristic Length (L*)', unit: 'mm', scale: 1000, decimals: 1 },
-    { key: 'chamber_length', label: 'Chamber Length', unit: 'mm', scale: 1000, decimals: 1 },
-    { key: 'chamber_diameter', label: 'Chamber Inner Diameter', unit: 'mm', scale: 1000, decimals: 1 },
-    { key: 'A_exit', label: 'Exit Area', unit: 'mm²', scale: 1e6, decimals: 2 },
-    { key: 'expansion_ratio', label: 'Expansion Ratio', unit: '', scale: 1, decimals: 2 },
+  const baseParams: Array<{ key: string; label: string; kind: GeomKind }> = [
+    { key: 'A_throat', label: 'Throat Area', kind: 'area' },
+    { key: 'Lstar', label: 'Characteristic Length (L*)', kind: 'length' },
+    { key: 'chamber_length', label: 'Chamber Length', kind: 'length' },
+    { key: 'chamber_diameter', label: 'Chamber Inner Diameter', kind: 'length' },
+    { key: 'A_exit', label: 'Exit Area', kind: 'area' },
+    { key: 'expansion_ratio', label: 'Expansion Ratio', kind: 'ratio' },
   ];
 
-  const pintleParams = [
-    { key: 'd_pintle_tip', label: 'Pintle Tip Diameter', unit: 'mm', scale: 1000, decimals: 2 },
-    { key: 'h_gap', label: 'Pintle Gap Height', unit: 'mm', scale: 1000, decimals: 3 },
-    { key: 'n_orifices', label: 'Number of Orifices', unit: '', scale: 1, decimals: 0 },
-    { key: 'd_orifice', label: 'Orifice Diameter', unit: 'mm', scale: 1000, decimals: 3 },
+  const pintleParams: Array<{ key: string; label: string; kind: GeomKind }> = [
+    { key: 'd_pintle_tip', label: 'Pintle Tip Diameter', kind: 'length' },
+    { key: 'h_gap', label: 'Pintle Gap Height', kind: 'length' },
+    { key: 'n_orifices', label: 'Number of Orifices', kind: 'count' },
+    { key: 'd_orifice', label: 'Orifice Diameter', kind: 'length' },
   ];
 
-  const impingingParams = [
-    { key: 'n_doublets', label: 'Doublet Count (paired O=F)', unit: '', scale: 1, decimals: 0 },
-    { key: 'n_elements_O', label: 'LOX Elements', unit: '', scale: 1, decimals: 0 },
-    { key: 'd_jet_O', label: 'LOX Jet Diameter', unit: 'mm', scale: 1000, decimals: 3 },
-    { key: 'imp_angle_O', label: 'LOX Jet Angle', unit: 'deg', scale: 1, decimals: 2 },
-    { key: 'spacing_O', label: 'LOX Element Spacing', unit: 'mm', scale: 1000, decimals: 3 },
-    { key: 'n_elements_F', label: 'Fuel Elements', unit: '', scale: 1, decimals: 0 },
-    { key: 'd_jet_F', label: 'Fuel Jet Diameter', unit: 'mm', scale: 1000, decimals: 3 },
-    { key: 'imp_angle_F', label: 'Fuel Jet Angle', unit: 'deg', scale: 1, decimals: 2 },
-    { key: 'spacing_F', label: 'Fuel Element Spacing', unit: 'mm', scale: 1000, decimals: 3 },
+  // n_elements_O / n_elements_F are deliberately NOT listed: a doublet pairs one LOX jet
+  // with one fuel jet, so both are equal to the doublet count by construction and showing
+  // all three invites the reader to wonder which one differs.
+  const impingingParams: Array<{ key: string; label: string; kind: GeomKind }> = [
+    { key: 'n_doublets', label: 'Doublet Count', kind: 'count' },
+    { key: 'L_imp', label: 'Impingement Standoff', kind: 'length' },
+    { key: 'D_pitch_O', label: 'LOX Ring Diameter', kind: 'length' },
+    { key: 'D_pitch_F', label: 'Fuel Ring Diameter', kind: 'length' },
+    { key: 'ring_radial_offset', label: 'Ring Radial Offset', kind: 'length' },
+    { key: 'd_jet_O', label: 'LOX Jet Diameter', kind: 'length' },
+    { key: 'imp_angle_O', label: 'LOX Jet Angle', kind: 'angle' },
+    { key: 'd_jet_F', label: 'Fuel Jet Diameter', kind: 'length' },
+    { key: 'imp_angle_F', label: 'Fuel Jet Angle', kind: 'angle' },
+    { key: 'included_angle_deg', label: 'Included Angle', kind: 'angle' },
+    { key: 'jet_angle_asymmetry_deg', label: 'Jet Angle Asymmetry', kind: 'angle' },
+    // Hole pitch is not shown: it is not a CAD dimension, the pitch circles are.
   ];
 
   // The backend tags results with injector_type (INJECTOR_PARITY_PLAN W4) — make it authoritative,
@@ -406,6 +438,25 @@ function GeometryTable({ geometry }: { geometry: Record<string, any> }) {
 
   return (
     <div className="bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg overflow-hidden">
+      <div className="flex items-center justify-end gap-2 px-4 py-2 bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)]">
+        <span className="text-xs text-[var(--color-text-secondary)]">Units</span>
+        <div className="inline-flex rounded-md border border-[var(--color-border)] overflow-hidden">
+          {(['metric', 'imperial'] as const).map((sys) => (
+            <button
+              key={sys}
+              type="button"
+              onClick={() => setUnits(sys)}
+              className={`px-3 py-1 text-xs font-medium transition-colors ${
+                units === sys
+                  ? 'bg-blue-500/20 text-blue-300'
+                  : 'text-[var(--color-text-secondary)] hover:bg-blue-500/5'
+              }`}
+            >
+              {sys === 'metric' ? 'mm' : 'in'}
+            </button>
+          ))}
+        </div>
+      </div>
       <table className="w-full text-sm text-left text-[var(--color-text-primary)]">
         <thead className="text-xs text-[var(--color-text-secondary)] uppercase bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)]">
           <tr>
@@ -435,12 +486,14 @@ function GeometryTable({ geometry }: { geometry: Record<string, any> }) {
             }
             if (val === undefined || val === null) return null;
             if (typeof val === 'number' && !Number.isFinite(val)) return null;
-            const displayVal = typeof val === 'number' ? (val * p.scale).toFixed(p.decimals) : val;
+            const fmt = u[p.kind];
+            const displayVal =
+              typeof val === 'number' ? (val * fmt.scale).toFixed(fmt.decimals) : val;
             return (
               <tr key={p.key} className="hover:bg-blue-500/5 transition-colors">
                 <td className="px-4 py-2.5 text-[var(--color-text-secondary)]">{p.label}</td>
                 <td className="px-4 py-2.5 text-right font-mono font-medium text-blue-400">{displayVal}</td>
-                <td className="px-4 py-2.5 text-xs text-[var(--color-text-secondary)]">{p.unit}</td>
+                <td className="px-4 py-2.5 text-xs text-[var(--color-text-secondary)]">{fmt.unit}</td>
               </tr>
             );
           })}
@@ -1138,6 +1191,11 @@ export function Layer1Optimization({
     }
   };
 
+  // Throat area solved from the thrust target => the target is met by construction and a
+  // tolerance is meaningless. Unset means the default (on), so only an explicit false
+  // re-enables the field.
+  const thrustToleranceDisabled = requirements.layer1_derive_throat_from_thrust !== false;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -1185,21 +1243,36 @@ export function Layer1Optimization({
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
         <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">⚙️ Optimization Settings</h3>
         <div className="grid grid-cols-1 gap-4">
+          {/* When the throat is solved from the thrust target the engine lands on that
+              target by construction, so a tolerance has nothing to authorise -- showing an
+              editable one implies slack the optimizer will never spend. */}
           <div>
-            <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
+            <label
+              className={`block text-sm font-medium mb-1 ${
+                thrustToleranceDisabled
+                  ? 'text-[var(--color-text-secondary)] opacity-50'
+                  : 'text-[var(--color-text-secondary)]'
+              }`}
+            >
               Thrust Tolerance [%]
             </label>
             <input
               type="number"
               value={settings.thrust_tolerance * 100}
               onChange={(e) => setSettings(prev => ({ ...prev, thrust_tolerance: parseFloat(e.target.value) / 100 }))}
-              className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className={`w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                thrustToleranceDisabled ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
               min="1"
               max="20"
               step="1"
-              disabled={isRunning || readOnly}
+              disabled={isRunning || thrustToleranceDisabled || readOnly}
             />
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">Acceptable deviation from target thrust</p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+              {thrustToleranceDisabled
+                ? 'Not used — throat area is solved to hit the target exactly.'
+                : 'Acceptable deviation from target thrust'}
+            </p>
           </div>
         </div>
       </div>
@@ -1911,7 +1984,7 @@ export function Layer1Optimization({
                 <div
                   className={`grid gap-4 ${
                     isImpingingResults
-                      ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-6'
+                      ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-7'
                       : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5'
                   }`}
                 >
@@ -1935,6 +2008,12 @@ export function Layer1Optimization({
                     <ValidationCard
                       label="Momentum Check"
                       passed={results.performance.momentum_gate_passed}
+                    />
+                  )}
+                  {isImpingingResults && (
+                    <ValidationCard
+                      label="Spray Aim (liner)"
+                      passed={results.performance.resultant_tilt_gate_passed}
                     />
                   )}
                   <ValidationCard

@@ -865,6 +865,38 @@ export interface DesignRequirements {
   // Geometry constraints
   max_engine_length: number;
   max_chamber_outer_diameter: number;
+  /** Snap chamber OUTER diameter to this increment in INCHES (0.5 = half-inch stock).
+   *  0 / undefined = continuous search. Applied inside the optimizer's evaluation, so the
+   *  returned optimum is already a purchasable size rather than something rounded after. */
+  layer1_chamber_od_increment_in?: number;
+  layer1_chamber_od_snap_target?: string;
+  layer1_integer_jet_angles?: boolean;
+  layer1_ring_order_fuel_outboard?: boolean;
+  layer1_Lstar_from_smd?: boolean;
+  layer1_Lstar_smd_ref_um?: number;
+  layer1_Lstar_ref_m?: number;
+  layer1_Lstar_smd_exponent?: number;
+  layer1_Lstar_deadband_m?: number;
+  layer1_impingement_Ld_target?: number;
+  layer1_impingement_Ld_tol?: number;
+  layer1_derive_impingement_spacing?: boolean;
+  layer1_resultant_tilt_max_deg?: number;
+  layer1_resultant_tilt_scale_deg?: number;
+  layer1_resultant_tilt_gate_tol_deg?: number;
+  layer1_momentum_wall_side_multiplier?: number;
+  layer1_momentum_scale?: number;
+  layer1_momentum_gate_safe_slack?: number;
+  layer1_enforce_ring_geometry?: boolean;
+  layer1_tank_equal_inband_frac?: number;
+  layer1_lock_tank_pressures?: boolean;
+  layer1_thrust_deadband_rel?: number;
+  layer1_derive_tank_from_dp_ratio?: boolean;
+  layer1_dp_ratio_target?: number;
+  layer1_derive_fuel_jet_from_of?: boolean;
+  layer1_derive_expansion_ratio?: boolean;
+  layer1_derive_throat_from_thrust?: boolean;
+  layer1_derive_max_iters?: number;
+  layer1_derive_thrust_tol_rel?: number;
   max_nozzle_exit_diameter: number;
 
   // L* constraints
@@ -1014,6 +1046,8 @@ export interface Layer1Results {
     momentum_ratio_R?: number;
     momentum_balance_penalty?: number;
     momentum_gate_passed?: boolean;
+  resultant_tilt_gate_passed?: boolean;
+  resultant_tilt_deg?: number;
     v_O_bulk?: number;
     v_F_bulk?: number;
     A_jet_O?: number;

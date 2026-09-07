@@ -166,17 +166,20 @@ environment:
   latitude: 35.34722
   longitude: -117.8099547
 feed_system:
+  # 3/8" NPT on BOTH branches. `line_size` names the fitting; d_inlet and A_hydraulic are
+  # derived from it (FEED_LINE_SIZES in config_schemas.py), so bore and area cannot drift
+  # apart. Previously: fuel 0.009525 m = 0.375", which is the THREAD nominal and not a bore;
+  # oxidizer 0.01347 m = 0.530", a 15-significant-figure value with no stated basis that
+  # under-predicted LOX feed loss by ~3.8x (dP ~ 1/A^2).
   fuel:
-    A_hydraulic: 7.13e-05
+    line_size: 3/8_NPT
     K0: 2.0
     K1: 0.0
-    d_inlet: 0.009525
     phi_type: none
   oxidizer:
-    A_hydraulic: 7.13e-05
+    line_size: 3/8_NPT
     K0: 2.0
     K1: 0.0
-    d_inlet: 0.009525
     phi_type: none
 film_cooling:
   apply_to_fraction_of_length: 0.6

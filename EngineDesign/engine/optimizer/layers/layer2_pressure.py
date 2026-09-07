@@ -11,6 +11,19 @@ Each segment has:
 - k-variable for blowdown profile between those 2 points
 
 Pressure curves are always decreasing.
+
+NOTE (not addressed here -- recorded for whoever picks this up):
+This layer assumes a BLOWDOWN system. A regulated / flat-pressure engine is only
+representable as a degenerate case: ``end_pressure_ratio = 1.0``, which is the exact
+UPPER BOUND of that search variable, and ``generate_pressure_curve_from_segments``
+force-clamps ``P_end = 0.95 * P_start`` if a segment ever tries to rise. So a constant
+600 psi design is reachable in principle but sits on a bound, which this optimizer has a
+documented history of handling badly (penalties with ~0 gradient at a band edge park
+candidates just outside it). Layer 1 is unaffected -- it is time-independent by contract
+and optimizes a single operating point, so a flat-pressure design is exactly what its
+static solution already represents. If flat/regulated feed becomes a supported mode
+rather than an edge case, this layer needs an explicit constant-pressure segment type
+instead of a boundary value.
 """
 
 from __future__ import annotations

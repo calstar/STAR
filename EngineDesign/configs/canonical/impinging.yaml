@@ -6,22 +6,33 @@ injector:
       n_elements: 20
       d_jet: 0.002
       impingement_angle: 50.0
-      spacing: 0.006
+      # Hole pitch = ARC between adjacent holes on this ring, NOT the ring diameter
+      # (D_pitch = n*spacing/pi = 25.5 mm here). LOX is the INNER ring: 2 x d_jet of pitch
+      # leaves one jet-diameter of clear metal between holes, the tightest sensible packing.
+      spacing: 0.004
     fuel:
       n_elements: 20
       d_jet: 0.002
       impingement_angle: 60.0
-      spacing: 0.006
+      # Fuel is the OUTER ring (D_pitch = 83.9 mm): whatever passes the impingement point on
+      # the outer ring reaches the wall, and a fuel-rich film is what the ablative wants.
+      # The 25.5 -> 83.9 mm ring offset is what makes the jets meet 10 mm off the face
+      # (L/d = 5, mid-band). Both rings previously sat on the SAME 38.2 mm circle, which
+      # gives a radial offset of zero -- the two jets of a doublet never converge at all.
+      spacing: 0.013191
 feed_system:
+  # 3/8" NPT on BOTH branches. `line_size` names the fitting; d_inlet and A_hydraulic are
+  # derived from it (FEED_LINE_SIZES in config_schemas.py), so bore and area cannot drift
+  # apart. Previously: fuel 0.009525 m = 0.375", which is the THREAD nominal and not a bore;
+  # oxidizer 0.01347 m = 0.530", a 15-significant-figure value with no stated basis that
+  # under-predicted LOX feed loss by ~3.8x (dP ~ 1/A^2).
   fuel:
-    d_inlet: 0.009525
-    A_hydraulic: 7.13e-05
+    line_size: 3/8_NPT
     K0: 2.0
     K1: 0.0
     phi_type: none
   oxidizer:
-    d_inlet: 0.013470353244117012
-    A_hydraulic: 0.00014251150082346222
+    line_size: 3/8_NPT
     K0: 2.0
     K1: 0.0
     phi_type: none
@@ -188,8 +199,9 @@ spray:
     m: 0.6
     p: 0.0
     C_ingebo: 3.9
-    chamber_gas_R: 360.0
-    chamber_gas_T: 3500.0
+    # chamber_gas_R/T deliberately absent: the PROPELLANT PRESET supplies them
+    # (configs/propellants/*.yaml). Stale explicit values here silently beat the
+    # preset and applied one propellant's chamber to another.
     we_corr_max: null
   pintle:
     C: 15.0
@@ -405,7 +417,15 @@ design_requirements:
   W_IMPINGING_ANGLE: 400.0
   W_IMPINGING_JET_ASYM: 180.0
   layer1_impinging_jet_angle_max_asym_deg: 26.0
-  W_SMD: 200.0  # lowered 2000->200 so SMD/atomization doesn't dominate & push designs to high Pc (low-pressure 400psi designs converge)
+  # SMD shaping penalty OFF. target_smd_microns=50 is not reachable by an impinging doublet at
+  # this scale: measured effective SMD runs 108-126 um across the whole feasible envelope, and
+  # published like-doublet rocket injectors sit at 116-180 um. A target nothing can reach is a
+  # constant added to the objective -- it never changes the ranking between candidates, it just
+  # sets a floor (~300 at W_SMD=200) that reads as "the optimizer won't converge".
+  # Re-enable only with a target derived from the vaporisation criterion (tau_vap <= tau_res),
+  # not a round number. See also default.yaml (0) and latest.yaml (2000) -- three configs, three
+  # different values for the same unreachable target.
+  W_SMD: 0.0
   target_smd_microns: 50.0
   layer1_smd_rel_tol: 0.2
   W_TANK_EQUAL: 0.0
@@ -425,7 +445,13 @@ design_requirements:
   W_DP_HIGH: 25000.0
   layer1_infeasibility_gate_eps: 0.002
   layer1_W_THRUST: 60000.0
-  layer1_W_OF: 20000.0
+  # Parity with thrust, deliberately. At 20000 vs 60000 the thrust term outweighed O/F 3:1, and
+  # since c* (hence thrust) peaks at its own mixture ratio -- MR 1.545 for LOX/ethanol -- the
+  # optimizer was dragged to the c* peak and the user's typed O/F only pulled it partway back.
+  # Measured: asking for O/F 1.20 returned 1.494; asking for 1.35 returned 1.499. The SAME answer
+  # either way, because the typed target was competing with a 3x-heavier objective pulling to 1.545.
+  # O/F is a specification the user states, not a preference to be outvoted by thrust.
+  layer1_W_OF: 60000.0
   layer1_W_OF_low_MR_scale: 1.0
   layer1_W_OF_high_MR_scale: 1.0
   layer1_of_validation_tol: null
@@ -435,8 +461,12 @@ design_requirements:
   layer1_chamber_dt_ratio_max: 3.2
   layer1_chamber_ld_ratio_min: 1.0
   layer1_chamber_ld_ratio_max: 3.2
-  layer1_stagnation_pressure_frac_min: 0.65
-  layer1_stagnation_pressure_frac_max: 0.95
+  # Tank stagnation search box as a fraction of the pressure cap. Was [0.65, 0.95], which
+  # made the top 5-35%% of the user's own cap unreachable -- a 600 psi cap could only be
+  # searched to 570 psi, and at the old code default (0.85) only to 510 psi. The cap IS the
+  # limit; the search must be able to reach it.
+  layer1_stagnation_pressure_frac_min: 0.35
+  layer1_stagnation_pressure_frac_max: 1.0
   layer1_expansion_ratio_min: 3.0
   layer1_expansion_ratio_max: 14.0
   layer1_P_O_start_psi_min: null

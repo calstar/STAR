@@ -105,16 +105,111 @@ class ImpingingInjectorConfig(InjectorBaseConfig):
     geometry: ImpingingInjectorGeometry
 
 
+#: Named feed-line sizes -> flow bore [m]. A line size is a NAME, not a diameter: "3/8 NPT"
+#: names a *thread*, and its flow area is set by the fitting's through-bore (~0.380"), not by
+#: the 0.375" thread nominal. Those two differ by only 1.3% in diameter but the pair is exactly
+#: the kind of near-miss that looks right forever -- so the mapping lives here, once, by name.
+FEED_LINE_SIZES: Dict[str, float] = {
+    # NPT fittings — keyed on the thread callout the user actually buys, valued at the bore.
+    "1/4_NPT": 0.00635,      # 0.250" through-bore
+    "3/8_NPT": 0.0096520,    # 0.380" through-bore  (NOT 0.375" — that is the thread nominal)
+    "1/2_NPT": 0.0127000,    # 0.500" through-bore
+    "3/4_NPT": 0.0190500,    # 0.750" through-bore
+    # Tube ODs quote a wall, so the bore depends on it; these assume 0.035" wall.
+    "3/8_TUBE_035": 0.0078740,   # 0.375" OD - 2(0.035") = 0.305"
+    "1/2_TUBE_035": 0.0110490,   # 0.500" OD - 2(0.035") = 0.435"
+}
+
+
 class FeedSystemConfig(BaseModel):
-    """Feed system configuration for one branch (O or F)"""
-    d_inlet: float = Field(gt=0, description="Inlet pipe diameter [m] (e.g., 3/8\" = 0.009525 m)")
-    A_hydraulic: float = Field(gt=0, description="Hydraulic area of feed line [m²] (calculated from d_inlet if not specified)")
+    """Feed system configuration for one branch (O or F).
+
+    The feed system is the PLUMBING between tank and injector — line bore plus lumped loss
+    coefficients. It sets how much tank pressure is spent getting propellant to the injector
+    face, so it directly moves the required tank pressure. It is vehicle hardware and is
+    deliberately independent of which propellant flows through it.
+
+    Give ``line_size`` (preferred — a name from FEED_LINE_SIZES) and the bore and area are
+    derived for you. ``d_inlet``/``A_hydraulic`` remain available for a non-standard passage,
+    and an explicitly-given area always wins over the derived one.
+    """
+    line_size: Optional[str] = Field(
+        default=None,
+        description=(
+            "Named feed-line size, e.g. '3/8_NPT'. Sets d_inlet (and hence A_hydraulic) from "
+            f"the standard bore table. Valid: {', '.join(sorted(FEED_LINE_SIZES))}."
+        ),
+    )
+    d_inlet: float = Field(
+        gt=0,
+        description=(
+            "Inlet flow-path diameter [m] — the actual bore, not a thread size. Normally derived "
+            "from line_size; set directly only for a non-standard passage."
+        ),
+    )
+    A_hydraulic: float = Field(
+        gt=0,
+        description="Flow area of the feed line [m²]. Derived as πd²/4 from d_inlet when omitted.",
+    )
     K0: float = Field(ge=0, description="Base loss coefficient")
     K1: float = Field(ge=0, description="Pressure dependence coefficient")
     phi_type: Literal["none", "sqrtP", "logP"] = Field(
         default="none",
         description="Pressure function type"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_line_size(cls, data):
+        """Fill d_inlet from line_size, and A_hydraulic from d_inlet, before validation.
+
+        d_inlet and A_hydraulic describe ONE passage two ways, and both used to be required and
+        independently editable, so nothing stopped them from disagreeing -- a stale area silently
+        outlived the diameter next to it. Deriving here means the pair cannot drift, while an
+        explicit A_hydraulic still wins for a genuinely non-circular passage.
+        """
+        if not isinstance(data, dict):
+            return data
+        d = dict(data)
+
+        size = d.get("line_size")
+        if size is not None:
+            key = str(size).strip().replace(" ", "_").replace("-", "_").upper()
+            bore = FEED_LINE_SIZES.get(key)
+            if bore is None:
+                raise ValueError(
+                    f"Unknown feed line_size {size!r}. Valid sizes: {', '.join(sorted(FEED_LINE_SIZES))}. "
+                    f"For a non-standard passage give d_inlet directly instead."
+                )
+            d["line_size"] = key
+            if d.get("d_inlet") is None:
+                d["d_inlet"] = bore
+            elif abs(float(d["d_inlet"]) - bore) > 1e-9:
+                raise ValueError(
+                    f"feed line_size={key} implies d_inlet={bore:.7f} m but d_inlet="
+                    f"{float(d['d_inlet']):.7f} m was also given. Drop one -- a named size and a "
+                    f"contradicting bore is exactly the drift this field exists to prevent."
+                )
+
+        di = d.get("d_inlet")
+        if di is not None and d.get("A_hydraulic") is None:
+            d["A_hydraulic"] = float(np.pi) / 4.0 * float(di) ** 2
+        return d
+
+    @model_validator(mode="after")
+    def _warn_area_diameter_mismatch(self):
+        """Flag an A_hydraulic that does not match its own d_inlet (>1% off)."""
+        implied = float(np.pi) / 4.0 * self.d_inlet ** 2
+        if implied > 0 and abs(self.A_hydraulic - implied) / implied > 0.01:
+            import logging
+            logging.getLogger(__name__).warning(
+                "feed_system: A_hydraulic=%.6e m2 disagrees with pi/4*d_inlet^2=%.6e m2 "
+                "(d_inlet=%.6f m, %.1f%% off). Intentional only for a non-circular passage; "
+                "otherwise omit A_hydraulic and let it derive.",
+                self.A_hydraulic, implied, self.d_inlet,
+                100.0 * (self.A_hydraulic - implied) / implied,
+            )
+        return self
 
 
 class RegenCoolingConfig(BaseModel):
@@ -191,7 +286,38 @@ class GraphiteInsertConfig(BaseModel):
     oxidation_reference_pressure: float = Field(default=1.0e6, gt=0, description="Reference pressure where oxidation_rate is defined [Pa]. Typical: 1 MPa")
     recession_multiplier: Optional[float] = Field(default=None, gt=0, description="Recession multiplier vs chamber (if None, calculated from flow conditions). Typically 1.3-2.5")
     sizing_only_mode: bool = Field(default=False, description="If True, suppress recession for sizing iterations. Graphite does recede in reality; use only for design phase.")
-    simplified_graphite_oxidation: bool = Field(default=False, description="If True, use a constant 0.01 mm/s radial oxidation recession rate instead of the physics-based model.")
+    simplified_graphite_oxidation: bool = Field(default=False, description="If True, use the constant `simplified_oxidation_rate` instead of instead of the physics-based model.")
+    simplified_oxidation_rate: float = Field(
+        default=1.0e-5,
+        ge=0.0,
+        description=(
+            "Radial recession rate used when `simplified_graphite_oxidation` is true [m/s]. "
+            "Default 1e-5 m/s = 0.01 mm/s, which was hardcoded. Measure your own stock and set "
+            "it here rather than inheriting a number from someone else's graphite."
+        ),
+    )
+    sizing_recession_rate: float = Field(
+        default=1.0e-8,
+        ge=0.0,
+        description=(
+            "Recession rate assumed while SIZING the chamber [m/s]. Default 1e-8 is effectively "
+            "zero -- the sizing pass has always treated graphite as non-eroding. Raise it if your "
+            "insert measurably recedes over a burn and you want the bore sized for it."
+        ),
+    )
+    axial_half_length_ratio: float = Field(
+        default=0.75,
+        gt=0.0,
+        description=(
+            "Graphite insert axial half-length as a multiple of throat DIAMETER, used when "
+            "`axial_half_length` is unset. 0.75 was hardcoded in three geometry modules."
+        ),
+    )
+    axial_half_length: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Explicit graphite insert axial half-length [m]. Overrides axial_half_length_ratio.",
+    )
     char_layer_conductivity: float = Field(default=5.0, gt=0, description="Thermal conductivity of protective layer [W/(m·K)]")
     char_layer_thickness: float = Field(default=0.0005, gt=0, description="Thickness of protective layer [m]")
     coverage_fraction: float = Field(default=1.0, gt=0, le=1.0, description="Fraction of throat/nozzle with graphite insert")
@@ -393,7 +519,49 @@ class SMDConfig(BaseModel):
 
 class EvaporationConfig(BaseModel):
     """Evaporation model configuration"""
-    K: float = Field(default=3e5, gt=0, description="Evaporation constant [s/m²]")
+    model: Literal["derived", "constant"] = Field(
+        default="derived",
+        description=(
+            "'derived' computes the d²-law constant from propellant properties and chamber "
+            "state: k_evap = C·(8·ρ_g·D_v/ρ_l)·ln(1+B_M), so it responds to fuel volatility, "
+            "chamber temperature and pressure. 'constant' uses the legacy fixed K, which was "
+            "identical for ethanol, methane and RP-1 and did not move with Pc or Tc at all."
+        ),
+    )
+    C_evap: float = Field(
+        default=1.562,
+        gt=0,
+        description=(
+            "Calibration constant for the derived evaporation model. Anchored so ethanol at "
+            "3094 K / 450 psi reproduces k_evap = 3.33e-6 m²/s — the value the legacy fixed K "
+            "implied, and within 10% of a T² extrapolation of measured ethanol droplet data."
+        ),
+    )
+    cp_gas: float = Field(
+        default=2200.0,
+        gt=0,
+        description="Representative combustion-gas cp [J/(kg·K)] for the Spalding number B_M.",
+    )
+    apply_tau_res_correction: bool = Field(
+        default=False,
+        description=(
+            "Apply the spray-zone residence-time correction inside the ACCELERATED chamber "
+            "solve. Off by default: shrinking tau_res inside the Pc bracketing shrinks eta, "
+            "which shrinks c*, which raises demanded flow — and the spray fraction grows with "
+            "Pc — so the supply/demand root can vanish. Measured effect: accelerator fallback "
+            "35% → 91% of candidates, roughly a 3x slowdown. The correction is always applied "
+            "on the Python path, where it sits outside the bracketing."
+        ),
+    )
+    K: float = Field(
+        default=3e5,
+        gt=0,
+        description=(
+            "LEGACY fixed evaporation constant [s/m²] — note this is the RECIPROCAL of the "
+            "textbook d²-law constant (k_evap = 1/K, so 3e5 ⇒ 3.33e-6 m²/s). Used only when "
+            "model='constant', or as a fallback when a fluid lacks latent_heat/boiling_point."
+        ),
+    )
     x_star_limit: float = Field(default=0.05, gt=0, description="Max evaporation length [m]")
     use_constraint: bool = Field(default=True, description="Enable x* constraint")
 
@@ -1087,6 +1255,315 @@ class DesignRequirementsConfig(BaseModel):
         default=None,
         gt=0.0,
         description="Normalizing scale [psi] for the equal-tank-pressure penalty. Unset ⇒ 100 psi.",
+    )
+    layer1_chamber_od_increment_in: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Snap the chamber OUTER diameter to this increment in INCHES (e.g. 0.5 for "
+            "half-inch stock). Ablative sleeve, chamber tube and case are bought in fixed "
+            "sizes, so a continuous optimum like 4.2 in is not purchasable — you build 4.0 or "
+            "4.5 and the engine you build is not the one that was optimised. Snapping inside "
+            "the evaluation means every candidate scored is one you can order, instead of "
+            "rounding afterwards and silently moving contraction ratio, L* and wall thickness "
+            "off the optimum. Unset/0 ⇒ continuous search."
+        ),
+    )
+    layer1_lock_tank_pressures: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Treat the two tank pressures as ONE optimizer variable — the fuel tank follows "
+            "the LOX tank exactly. 'Match tank pressures' says they are one quantity, so "
+            "searching them separately and penalizing the gap makes the optimizer pay forever "
+            "for a degree of freedom it was told not to use. Unset ⇒ follows the match-tanks "
+            "checkbox (W_TANK_EQUAL > 0)."
+        ),
+    )
+    layer1_thrust_deadband_rel: Optional[float] = Field(
+        default=None, ge=0.0,
+        description=(
+            "Relative thrust deadband in the objective. Unset ⇒ 0.1% when the throat is solved "
+            "from thrust (the derivation lands on target; a wide band only lets edge-sitting "
+            "designs through 2-3% off), 2% when the throat is searched."
+        ),
+    )
+    layer1_derive_tank_from_dp_ratio: Optional[bool] = Field(
+        default=None,
+        description=(
+            "With tanks locked, solve the single tank pressure from the injector ΔP/Pc target "
+            "(P_tank = Pc·(1+r) + ΔP_feed) instead of searching it. Makes the ΔP/Pc band exact "
+            "but removes the pressure's Isp anchor, so Pc and Isp fall. Unset ⇒ OFF."
+        ),
+    )
+    layer1_dp_ratio_target: Optional[float] = Field(
+        default=None, gt=0.0,
+        description="ΔP/Pc target for the tank-pressure derivation. Unset ⇒ mid-band.",
+    )
+    layer1_derive_fuel_jet_from_of: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Solve the fuel jet diameter from the O/F target (equal-ΔP area ratio). "
+            "Experimental — the one-step secant overshoots when Pc moves with it. Unset ⇒ OFF."
+        ),
+    )
+    layer1_tank_equal_inband_frac: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Weak always-on pull toward equal tank pressures INSIDE the match tolerance, as a "
+            "fraction of the out-of-band weight. A pure deadband is flat inside the band, so "
+            "nothing separates 1 psi from 9.9 psi and the optimizer parks on the edge — which "
+            "is how a 10 psi requirement comes back at 10.1 psi. Unset ⇒ 0.05; 0 restores the "
+            "flat deadband."
+        ),
+    )
+    layer1_chamber_od_snap_target: Optional[str] = Field(
+        default=None,
+        description=(
+            "Which diameter the stock increment applies to: 'outer' (the tube you buy) or "
+            "'bore' (the gas-side diameter). Only one can land on the increment, because "
+            "bore = OD - wall and the wall is rarely a whole increment — a 1.13 in wall "
+            "turns a 6.00 in OD into a 4.87 in bore. Unset ⇒ 'outer'."
+        ),
+    )
+    layer1_Lstar_from_smd: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Derive the L* target from the spray SMD instead of using a fixed number. L* buys "
+            "residence time and the residence time you NEED is set by how long the droplets "
+            "take to evaporate (d²-law: τ_vap ∝ SMD²), so L*_target ∝ SMD². Treating them as "
+            "independent knobs is what makes a good design look like a failed one. Unset ⇒ ON."
+        ),
+    )
+    layer1_Lstar_smd_ref_um: Optional[float] = Field(
+        default=None, gt=0.0,
+        description="SMD anchor for the L* correlation [µm]. Unset ⇒ 99.",
+    )
+    layer1_Lstar_ref_m: Optional[float] = Field(
+        default=None, gt=0.0,
+        description="L* target at the SMD anchor [m]. Unset ⇒ 1.10 (i.e. 99 µm ⇒ 1.05–1.15).",
+    )
+    layer1_Lstar_smd_exponent: Optional[float] = Field(
+        default=None,
+        description=(
+            "Exponent in L*_target ∝ SMD^n. Unset ⇒ 2.0, which is the d²-law, not a fit — "
+            "change it only to model a different evaporation regime."
+        ),
+    )
+    layer1_Lstar_deadband_m: Optional[float] = Field(
+        default=None, ge=0.0,
+        description=(
+            "Total width of the free window around the L* target [m]. Unset ⇒ 0.1 (±0.05), "
+            "which is finer than the correlation's own accuracy."
+        ),
+    )
+    layer1_impingement_Ld_target: Optional[float] = Field(
+        default=None, gt=0.0,
+        description=(
+            "Where the jets of a doublet should meet, in JET DIAMETERS from the injector face. "
+            "Too close and the collision erodes the injector plate; too far and the sheet "
+            "spreads before it breaks up. Published practice for unlike doublets is 3–7. "
+            "Unset ⇒ 4."
+        ),
+    )
+    layer1_resultant_tilt_max_deg: Optional[float] = Field(
+        default=None,
+        description=(
+            "Largest OUTWARD tilt of the doublet's spray resultant, in degrees from the "
+            "chamber axis, before the design is treated as infeasible. This is the real "
+            "ablative guard: the fan follows the vector sum of the two streams, and a fan "
+            "aimed at the liner erodes it. Positive is toward the wall. Unset ⇒ 0 (never "
+            "outward). The momentum-flux ratio R is NOT this quantity — p_O/p_F = R²·A_O/A_F, "
+            "so R = 1 is not balance."
+        ),
+    )
+    layer1_resultant_tilt_gate_tol_deg: Optional[float] = Field(
+        default=None, ge=0.0,
+        description=(
+            "Tolerance added to the outward-tilt limit for the VALIDATION gate only, so "
+            "whole-degree jet angles cannot fail a design by rounding. Unset ⇒ 1°."
+        ),
+    )
+    layer1_resultant_tilt_scale_deg: Optional[float] = Field(
+        default=None, gt=0.0,
+        description="Normalizing scale [deg] for the resultant-tilt violation. Unset ⇒ 2.",
+    )
+    layer1_momentum_wall_side_multiplier: Optional[float] = Field(
+        default=None, ge=1.0,
+        description=(
+            "How much more a momentum-ratio miss costs when it throws the spray toward the "
+            "chamber WALL than toward the core. With LOX inboard, R > 1 means the LOX stream "
+            "wins the collision and the fan deflects outward onto the ablative; R < 1 sends "
+            "it into the core, which only costs mixing. Unset ⇒ 10."
+        ),
+    )
+    layer1_momentum_scale: Optional[float] = Field(
+        default=None, gt=0.0,
+        description="Normalizing scale for the momentum-ratio deviation (in log R). Unset ⇒ 0.10.",
+    )
+    layer1_momentum_gate_safe_slack: Optional[float] = Field(
+        default=None, ge=1.0,
+        description=(
+            "Widens the momentum validation band on the safe (core-ward) side only, as a "
+            "multiple of the configured half-width. Unset ⇒ 3."
+        ),
+    )
+    layer1_derive_impingement_spacing: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Solve the fuel-ring hole pitch so the doublet meets at exactly "
+            "layer1_impingement_Ld_target jet diameters, instead of searching it. One "
+            "equation, one unknown: |s_F − s_O| = 2π·k·d_avg·(tanθ_O + tanθ_F)/n. Removes an "
+            "optimizer dimension and makes the standoff exact rather than a penalty the "
+            "search negotiates with. Turn OFF to search the fuel pitch freely. Unset ⇒ ON."
+        ),
+    )
+    layer1_impingement_Ld_tol: Optional[float] = Field(
+        default=None, ge=0.0,
+        description=(
+            "Free window around the impingement target, in jet diameters. Only meaningful "
+            "when the spacing derivation is OFF — when it is on the target is hit exactly. "
+            "Unset ⇒ 0 with the derivation on, 1.0 with it off."
+        ),
+    )
+    layer1_ring_order_fuel_outboard: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Put the FUEL ring outboard of the LOX ring on the injector face. Whatever passes "
+            "the impingement point on the outer ring is what reaches the chamber wall, and a "
+            "fuel-rich wall film is what an ablative liner wants — an oxidizer-rich one attacks "
+            "it. The impingement physics uses |ΔD_pitch| and is indifferent to the order, so "
+            "this costs nothing. Unset ⇒ ON."
+        ),
+    )
+    layer1_integer_jet_angles: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Snap impinging-doublet jet angles to whole degrees. A drill jig is indexed in "
+            "whole degrees, so a 43.7° optimum is not machinable, and rounding it afterwards "
+            "moves impingement distance, momentum ratio and SMD off the scored point. "
+            "Impinging injectors only (pintle has no angle DOF). Unset ⇒ ON."
+        ),
+    )
+    layer1_derive_expansion_ratio: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Solve the expansion ratio for a perfectly expanded exit (Pe = ambient) instead "
+            "of searching it. Closed-form isentropic inversion of Pc/Pe, so the exit plane "
+            "lands on ambient exactly and one optimizer dimension disappears. Turn OFF only "
+            "to size deliberately over/under-expanded nozzles, or to explore a range of "
+            "expansion ratios against fixed hardware. Unset ⇒ ON."
+        ),
+    )
+    layer1_derive_throat_from_thrust: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Solve the throat area from the thrust requirement instead of searching it. "
+            "Thrust is monotonic in throat area, so a short root-find lands the target "
+            "exactly and removes an optimizer dimension. Turn OFF when the throat is fixed "
+            "hardware (an existing graphite insert) and thrust is an output rather than a "
+            "requirement. Unset ⇒ ON."
+        ),
+    )
+    layer1_derive_max_iters: Optional[float] = Field(
+        default=None,
+        ge=1.0,
+        description=(
+            "Root-find iterations allowed per candidate when solving the derived DOFs. Each "
+            "costs a full extra evaluate() for every candidate. Unset ⇒ 2, which still lands "
+            "thrust exactly; 4 nearly doubles run time for no measurable gain."
+        ),
+    )
+    layer1_derive_thrust_tol_rel: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "Relative thrust tolerance for the derived-throat solve; iteration stops inside "
+            "this band. Unset ⇒ 1e-3 (0.1%)."
+        ),
+    )
+    layer1_tank_equal_tol_psi: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Tank-pressure delta [psi] that costs nothing — set it to your PT margin of error. "
+            "Without it any nonzero delta is squared, so matching to 1.93 psi (a success against "
+            "a 10 psi spec) still carried 11 objective points and read as non-convergence. "
+            "Unset ⇒ 0 (no deadband, historical behaviour)."
+        ),
+    )
+    layer1_of_deadband_rel: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Relative O/F error that costs nothing, e.g. 0.02 for ±2%. Without it, landing at "
+            "1.6646 against a 1.65 target (+0.9%, far inside the 15% validation gate) still "
+            "carried 4.7 objective points. Unset ⇒ 0."
+        ),
+    )
+    layer1_exit_pressure_deadband_rel: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "Relative deadband around ambient inside which exit-pressure error is free. Was "
+            "hardcoded at 0.05 — for a 13.64 psi target that made 12.96–14.33 psi cost nothing, "
+            "so runs settled at 14.6 psi and still reported converged. Tighten (e.g. 0.005) when "
+            "exit pressure is a real requirement. Unset ⇒ 0.05."
+        ),
+    )
+    layer1_W_LSTAR: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Layer 1 weight on L* ABOVE layer1_Lstar_target_m: ((L*-target)/target)², one-sided. "
+            "L* is the only design variable with no opposing force in the objective — more "
+            "residence time is pure reward — so it pinned to its max bound in every run. A chamber "
+            "mass penalty does NOT substitute: wall mass scales as D·L while volume scales as D²·L, "
+            "so charging for mass buys a fatter chamber at the same L*. Unset/0 ⇒ disabled."
+        ),
+    )
+    layer1_Lstar_target_m: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "L* [m] above which layer1_W_LSTAR starts charging. At or below it is free. "
+            "Unset ⇒ 1.0 m."
+        ),
+    )
+    layer1_W_MASS: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Layer 1 weight on chamber dry mass, (m/layer1_chamber_mass_ref_kg)². L* otherwise "
+            "carries NO cost anywhere in the objective — more volume is pure reward (residence "
+            "time → vaporisation → c*) — so every run pinned L* to its configured maximum. "
+            "Unset/0 ⇒ disabled (metal is free, historical behaviour)."
+        ),
+    )
+    layer1_chamber_wall_density_kg_m3: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "Effective density of the chamber wall stack (metal + ablative + graphite) for the "
+            "layer1_W_MASS proxy. Unset ⇒ 2000 kg/m³."
+        ),
+    )
+    layer1_chamber_mass_ref_kg: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "Normalising chamber mass [kg] for the layer1_W_MASS penalty — the mass at which the "
+            "term equals 1.0. Unset ⇒ 5 kg."
+        ),
+    )
+    layer1_W_EXIT: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Layer 1 weight on the nozzle exit-pressure term (P_exit vs ambient). Was hardcoded "
+            "at 2e2 in two places, i.e. ~300x weaker than layer1_W_THRUST (6e4), so exit pressure "
+            "never bound. Unset ⇒ optimizer default (2e2)."
+        ),
     )
     # Layer 1 impinging-only: injector geometry / vaporization-fit objective. Couples the impingement
     # standoff (where the streams meet) and the droplet vaporization length to the available chamber

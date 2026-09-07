@@ -161,7 +161,11 @@ def calculate_chamber_geometry_clear_OLD(
         # Get graphite axial length
         graphite_axial_half_length = getattr(graphite_config, 'axial_half_length', None)
         if graphite_axial_half_length is None or graphite_axial_half_length <= 0:
-            graphite_axial_half_length = 0.75 * D_throat  # Default: 0.75 * D_throat on each side
+            # Ratio is configurable (graphite_insert.axial_half_length_ratio, default 0.75);
+            # 0.75 was hardcoded here. An explicit axial_half_length overrides it upstream.
+            _gr = locals().get('graphite_config') or locals().get('config')
+            _ratio = float(getattr(getattr(_gr, 'graphite_insert', _gr), 'axial_half_length_ratio', 0.75) or 0.75)
+            graphite_axial_half_length = _ratio * D_throat
         
         graphite_start = max(throat_pos - graphite_axial_half_length, 0.0)
         graphite_end = min(throat_pos + graphite_axial_half_length, L_total)
