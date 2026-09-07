@@ -82,8 +82,31 @@ flock -n 9 || skip "another run holds $LOCK_FILE"
 
 command -v docker >/dev/null || die "docker not found"
 docker compose version >/dev/null 2>&1 || die "the docker compose plugin is not installed"
+
+# ── every git call goes through this ─────────────────────────────────────────
+# The units run as root (they need the docker socket) but the checkout belongs
+# to the box's login user (ec2-user / ubuntu), and git's dubious-ownership guard
+# refuses to touch a repo it doesn't own:
+#
+#   fatal: detected dubious ownership in repository at '/home/ec2-user/STAR'
+#
+# Running the script by hand never shows this — sudo exports SUDO_UID and git
+# honours that as an implicit exception — so it only appears once systemd, which
+# sets no SUDO_UID, runs the real service. Marking the path safe for the
+# duration of one invocation fixes both boxes without running the unit as an
+# unprivileged user (it would lose the docker socket and $STATE_DIR) and without
+# writing anything into root's global gitconfig.
+git_repo() { git -c safe.directory="$REPO_DIR" -C "$REPO_DIR" "$@"; }
+
 # `.git` is a directory in a normal clone but a file in a worktree, so ask git.
-git -C "$REPO_DIR" rev-parse --git-dir >/dev/null 2>&1 || die "$REPO_DIR is not a git checkout"
+# Show what git actually said: "not a git checkout" is the same message for a
+# wrong path, a broken clone and the ownership guard above, and guessing between
+# them costs an afternoon.
+if ! git_err="$(git_repo rev-parse --git-dir 2>&1 >/dev/null)"; then
+  log "ERROR: cannot read a git checkout at $REPO_DIR — git said:"
+  printf '%s\n' "$git_err" | sed 's/^/    /' >&2
+  exit 1
+fi
 [[ -f "$COMPOSE_DIR/docker-compose.yml" ]] || die "no docker-compose.yml in $COMPOSE_DIR"
 
 compose() {
@@ -151,12 +174,12 @@ fi
 # Shallow clones (the apps box is one) must keep fetching shallow; a full clone
 # must not be silently converted into one.
 fetch_args=(fetch --quiet origin "$BRANCH")
-[[ "$(git -C "$REPO_DIR" rev-parse --is-shallow-repository)" == "true" ]] && fetch_args+=(--depth 1)
-git -C "$REPO_DIR" "${fetch_args[@]}" || die "git fetch failed"
+[[ "$(git_repo rev-parse --is-shallow-repository)" == "true" ]] && fetch_args+=(--depth 1)
+git_repo "${fetch_args[@]}" || die "git fetch failed"
 
-target="$(git -C "$REPO_DIR" rev-parse FETCH_HEAD)"
-current="$(git -C "$REPO_DIR" rev-parse HEAD)"
-commit_ts="$(git -C "$REPO_DIR" show -s --format=%ct "$target")"
+target="$(git_repo rev-parse FETCH_HEAD)"
+current="$(git_repo rev-parse HEAD)"
+commit_ts="$(git_repo show -s --format=%ct "$target")"
 age=$(( $(date +%s) - commit_ts ))
 if [[ "$target" != "$current" && "$age" -lt "$SETTLE_SECONDS" ]]; then
   skip "${target:0:7} is only ${age}s old; letting CI register its runs first"
@@ -165,19 +188,19 @@ fi
 git_moved=0
 if [[ "$target" == "$current" ]]; then
   :
-elif [[ -n "$(git -C "$REPO_DIR" status --porcelain --untracked-files=no)" && "$ALLOW_DIRTY" == "0" ]]; then
+elif [[ -n "$(git_repo status --porcelain --untracked-files=no)" && "$ALLOW_DIRTY" == "0" ]]; then
   # Someone hand-edited a tracked file on the box (the apps README used to
   # suggest deleting caddy's 80/443 port lines here). Clobbering that silently
   # would quietly undo it, so leave the checkout alone and still ship the images.
   log "warn: tracked files are modified in $REPO_DIR — NOT syncing the checkout."
   log "warn:   move the edit into .env, or re-run with --allow-dirty to discard it:"
-  git -C "$REPO_DIR" status --porcelain --untracked-files=no | sed 's/^/warn:   /' >&2
+  git_repo status --porcelain --untracked-files=no | sed 's/^/warn:   /' >&2
 elif [[ "$DRY_RUN" == "1" ]]; then
   log "dry-run: would reset $REPO_DIR to ${target:0:7}"
   git_moved=1
 else
   log "syncing $REPO_DIR: ${current:0:7} -> ${target:0:7}"
-  git -C "$REPO_DIR" reset --hard --quiet "$target" || die "git reset failed"
+  git_repo reset --hard --quiet "$target" || die "git reset failed"
   git_moved=1
 fi
 
