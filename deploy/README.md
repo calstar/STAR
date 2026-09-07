@@ -112,6 +112,17 @@ Forgetting step 2's import is the mistake to watch for. The two FastAPI
 backends also verify the cookie themselves (`AUTH_ENABLED=true`) as a second
 line of defence, but that is belt-and-braces, not the gate.
 
+## Shipping a merge
+
+Both container boxes deploy themselves. A systemd timer on each runs
+[`auto-update.sh`](auto-update.sh), which waits for the publish workflows to
+finish, syncs the checkout to `origin/main`, and pulls + `up -d`s — so merging a
+PR is the whole deploy. Setup and the per-box details are in
+[`apps/README.md`](apps/README.md#auto-deploy-on-merge-to-main) and
+[`ec2/README.md`](ec2/README.md#auto-deploy-on-merge-to-main).
+
+The DAQ server is excluded: it has no container (see Known gaps).
+
 ## Verifying a deploy
 
 ```bash
@@ -136,4 +147,7 @@ docker run --rm -v "$PWD/deploy/caddy:/etc/caddy:ro" \
   the checkpoint/history endpoints return 503 with an explanation. Mounting the
   repo plus a deploy key would enable it.
 - **DAQ has no container.** Deploying it is still the systemd/tmux flow in
-  `daq-server/deploy/`.
+  `daq-server/deploy/` — auto-deploy covers the compose stacks only.
+- **No automatic rollback.** Compose pins `:latest`, so a bad merge is rolled
+  back by hand: pause the timer, then pin the previous `sha-<short>` tag (every
+  image carries one) or revert on `main` and let the next tick ship it.
