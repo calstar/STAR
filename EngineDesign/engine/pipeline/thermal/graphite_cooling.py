@@ -173,16 +173,17 @@ def compute_graphite_recession(
     # Simplified oxidation mode: constant 0.01 mm/s radial recession
     simplified_mode = getattr(graphite_config, "simplified_graphite_oxidation", False)
     if simplified_mode:
-        # Constant 0.01 mm/s = 1e-5 m/s
-        m_dot_ox_simple = 1e-5 * graphite_config.material_density
+        # Configured constant rate (default 1e-5 m/s = 0.01 mm/s, previously hardcoded here).
+        _simp_rate = float(getattr(graphite_config, "simplified_oxidation_rate", 1.0e-5))
+        m_dot_ox_simple = _simp_rate * graphite_config.material_density
         
         # Return simplified metrics immediately
         # Still calculate basic thermal metrics if needed, but for simplified mode we skip the complex loop
-        recession_rate_report = 0.0 if sizing_only_mode else 1e-5
+        recession_rate_report = 0.0 if sizing_only_mode else _simp_rate
         return {
             "enabled": True,
             "recession_rate": float(recession_rate_report),
-            "recession_rate_calculated": 1e-5,
+            "recession_rate_calculated": _simp_rate,
             "mass_flux": float(0.0 if sizing_only_mode else m_dot_ox_simple),
             "mass_flux_calculated": float(m_dot_ox_simple),
             "surface_temperature": float(throat_temperature),

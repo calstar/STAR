@@ -286,7 +286,38 @@ class GraphiteInsertConfig(BaseModel):
     oxidation_reference_pressure: float = Field(default=1.0e6, gt=0, description="Reference pressure where oxidation_rate is defined [Pa]. Typical: 1 MPa")
     recession_multiplier: Optional[float] = Field(default=None, gt=0, description="Recession multiplier vs chamber (if None, calculated from flow conditions). Typically 1.3-2.5")
     sizing_only_mode: bool = Field(default=False, description="If True, suppress recession for sizing iterations. Graphite does recede in reality; use only for design phase.")
-    simplified_graphite_oxidation: bool = Field(default=False, description="If True, use a constant 0.01 mm/s radial oxidation recession rate instead of the physics-based model.")
+    simplified_graphite_oxidation: bool = Field(default=False, description="If True, use the constant `simplified_oxidation_rate` instead of instead of the physics-based model.")
+    simplified_oxidation_rate: float = Field(
+        default=1.0e-5,
+        ge=0.0,
+        description=(
+            "Radial recession rate used when `simplified_graphite_oxidation` is true [m/s]. "
+            "Default 1e-5 m/s = 0.01 mm/s, which was hardcoded. Measure your own stock and set "
+            "it here rather than inheriting a number from someone else's graphite."
+        ),
+    )
+    sizing_recession_rate: float = Field(
+        default=1.0e-8,
+        ge=0.0,
+        description=(
+            "Recession rate assumed while SIZING the chamber [m/s]. Default 1e-8 is effectively "
+            "zero -- the sizing pass has always treated graphite as non-eroding. Raise it if your "
+            "insert measurably recedes over a burn and you want the bore sized for it."
+        ),
+    )
+    axial_half_length_ratio: float = Field(
+        default=0.75,
+        gt=0.0,
+        description=(
+            "Graphite insert axial half-length as a multiple of throat DIAMETER, used when "
+            "`axial_half_length` is unset. 0.75 was hardcoded in three geometry modules."
+        ),
+    )
+    axial_half_length: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Explicit graphite insert axial half-length [m]. Overrides axial_half_length_ratio.",
+    )
     char_layer_conductivity: float = Field(default=5.0, gt=0, description="Thermal conductivity of protective layer [W/(m·K)]")
     char_layer_thickness: float = Field(default=0.0005, gt=0, description="Thickness of protective layer [m]")
     coverage_fraction: float = Field(default=1.0, gt=0, le=1.0, description="Fraction of throat/nozzle with graphite insert")

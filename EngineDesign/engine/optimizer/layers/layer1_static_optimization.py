@@ -5661,12 +5661,15 @@ def run_layer1_optimization(
                     use_cached = False
             
             if not use_cached:
-                # Disable thermal protection for evaluation (for speed + avoid unrelated failures)
+                # Thermal protection stays as the config declares it, so this path scores the
+                # same bore as the worker pool. It used to be forced off "for speed", which made
+                # the inline objective and the pool disagree by the liner thickness.
                 config_runner = copy.deepcopy(config)
-                if hasattr(config_runner, "ablative_cooling") and config_runner.ablative_cooling:
-                    config_runner.ablative_cooling.enabled = False
-                if hasattr(config_runner, "graphite_insert") and config_runner.graphite_insert:
-                    config_runner.graphite_insert.enabled = False
+                if os.environ.get("ED_L1_INLINE_THERMAL_OFF", "0") == "1":
+                    if hasattr(config_runner, "ablative_cooling") and config_runner.ablative_cooling:
+                        config_runner.ablative_cooling.enabled = False
+                    if hasattr(config_runner, "graphite_insert") and config_runner.graphite_insert:
+                        config_runner.graphite_insert.enabled = False
                 
                 test_runner = PintleEngineRunner(config_runner)
 
@@ -6728,7 +6731,11 @@ def run_layer1_optimization(
     # failed"; validation: 3-14% tank boost), and which seeds hit this depended on pool
     # ordering -- the run-to-run nondeterminism.
     _worker_cfg_src = copy.deepcopy(config_base)
-    if os.environ.get("ED_L1_WORKER_THERMAL_OFF", "1") == "1":  # env is an A/B hook only
+    # Thermal protection stays ON in the pool by DEFAULT. Disabling ablative_cooling also drops
+    # the liner from total_wall_thickness_m -- at 0.5 in per side that is a full inch of bore --
+    # so scoring with it off sizes a chamber the real engine does not have. Set
+    # ED_L1_WORKER_THERMAL_OFF=1 to restore the old faster/no-liner behaviour for an A/B.
+    if os.environ.get("ED_L1_WORKER_THERMAL_OFF", "0") == "1":
         if getattr(_worker_cfg_src, "ablative_cooling", None):
             _worker_cfg_src.ablative_cooling.enabled = False
         if getattr(_worker_cfg_src, "graphite_insert", None):

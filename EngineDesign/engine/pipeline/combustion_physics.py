@@ -1184,11 +1184,13 @@ def calculate_combustion_efficiency_advanced(
         # and the optimizer returning nothing after ~1000 evaluations. Enable per-config with
         # spray.evaporation.apply_tau_res_correction once the feedback is handled -- probably by
         # evaluating the spray length at a fixed reference state rather than at every trial Pc.
+        # Read from the spray diagnostics: `config` here is a CombustionEfficiencyConfig and
+        # never carried this field, so `getattr(config, ...)` was always False and the switch
+        # could not be enabled from any YAML. Declared on EvaporationConfig, published by the
+        # impinging injector alongside vaporization_length_total.
         _apply_taures = False
-        try:
-            _apply_taures = bool(getattr(config, "apply_tau_res_correction", False))
-        except Exception:
-            _apply_taures = False
+        if isinstance(spray_diagnostics, dict):
+            _apply_taures = bool(spray_diagnostics.get("apply_tau_res_correction", False))
         _spray_frac = None
         _vap_len = (spray_diagnostics.get("vaporization_length_total")
                     if (_apply_taures and isinstance(spray_diagnostics, dict)) else None)

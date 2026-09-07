@@ -679,6 +679,14 @@ class ImpingingInjector(InjectorModel):
                     "element_gap_O": gap_O,
                     "element_gap_F": gap_F,
                     "vaporization_length_total": vaporization_length_total,
+                    # The spray-zone tau_res switch travels WITH the spray diagnostics.
+                    # calculate_combustion_efficiency_advanced() only receives a
+                    # CombustionEfficiencyConfig, so it used to read this off that object --
+                    # where the field does not exist -- and a bare except swallowed the
+                    # mismatch, making the switch permanently False and unreachable.
+                    "apply_tau_res_correction": bool(
+                        getattr(spray_cfg.evaporation, "apply_tau_res_correction", False)
+                    ),
                     "impingement_angle_deg": np.rad2deg(imp_angle_rad),
                     "V_rel": float(u_rel),
                     "breakup_multiplier": 1.0,
