@@ -107,6 +107,47 @@ target_include_directories(test_sequencer_elodin PRIVATE
 target_link_libraries(test_sequencer_elodin
     fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
 
+# test_robust_ddp has been built on every configure since it was added but was never registered
+# with CTest and is not invoked by CI either, so its assertions have never gated anything.
+add_test(NAME robust_ddp COMMAND test_robust_ddp)
+
+# Concurrency + abort ordering. Both drive a real SequencerService, so they need the same sources
+# test_sequencer_elodin links. They resolve config/ and the state CSVs relative to the working
+# directory (cwd, ../, ../../), which is why they run from the build dir under CTest.
+foreach(seq_test test_sequencer_concurrency test_abort_ordering)
+    add_executable(${seq_test}
+        test/${seq_test}.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/FireManager.cpp
+    )
+    target_include_directories(${seq_test} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+    )
+    target_link_libraries(${seq_test}
+        fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+endforeach()
+
+# WORKING_DIRECTORY matters here. Both tests build a real SequencerService, which resolves
+# config/config.toml and the state CSVs by trying "", "../" and "../../" from the cwd. CTest
+# otherwise runs a test from the build directory of the CMakeLists that declared it
+# (build/diablo_server/lib), which is three levels down — none of the three prefixes reach
+# daq-server/config from there, and init() fails. From the top of the build tree "../config/..."
+# resolves, which is also how CI invokes the other sequencer binaries.
+add_test(NAME sequencer_concurrency COMMAND test_sequencer_concurrency
+         WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME abort_ordering COMMAND test_abort_ordering
+         WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# The concurrency test deliberately runs a storm for ~8 s and the abort test waits on a blackholed
+# connect; neither should be strangled by CTest's default timeout on a loaded runner.
+set_tests_properties(sequencer_concurrency abort_ordering PROPERTIES TIMEOUT 120)
+# They bind fixed resources (the abort broadcast port) and saturate the box, so keep them off each
+# other when ctest runs in parallel.
+set_tests_properties(sequencer_concurrency abort_ordering PROPERTIES RUN_SERIAL TRUE)
+
 install(TARGETS fsw_daq_lib
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib

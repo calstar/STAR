@@ -412,6 +412,66 @@ jobs:
         fi
 
   # Run tests
+  # ThreadSanitizer over the sequencer's concurrency tests.
+  #
+  # This exists because the bug it guards is invisible to every other job here. The sequencer had
+  # two threads running the same multi-step transition sequence (a TCP client thread and
+  # FireManager's expiry thread), which double-joined the actuator republish thread. A plain -O2
+  # build does NOT reliably crash on that — a pre-fix binary survived 1016 commands over 65 s,
+  # because glibc tolerates a double pthread_join often enough to hide it. Under TSan the same
+  # code dies in 0.2 s at ~50 commands with a CHECK failure inside pthread_join.
+  #
+  # Neither the Release ctest job nor cppcheck/clang-tidy can see this. Without this job the fix
+  # is unverified against regression.
+  thread-sanitizer:
+    name: ThreadSanitizer (sequencer)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential cmake ninja-build libeigen3-dev pkg-config gcc-12 g++-12 util-linux
+
+    - name: Build with -fsanitize=thread
+      env:
+        CC: gcc-12
+        CXX: g++-12
+      run: |
+        cmake -S . -B build-tsan \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_C_COMPILER=gcc-12 \
+          -DCMAKE_CXX_COMPILER=g++-12 \
+          -DCMAKE_CXX_STANDARD=${{ env.CXX_STANDARD }} \
+          -DCMAKE_CXX_FLAGS="-fsanitize=thread -g -O1" \
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
+          -G Ninja
+        cmake --build build-tsan --parallel $(nproc) \
+          --target test_sequencer_concurrency test_abort_ordering
+
+    # Two things that will waste an afternoon if they are not spelled out:
+    #
+    #  1. `setarch -R` disables ASLR. Without it TSan aborts at startup on modern kernels with
+    #     "FATAL: ThreadSanitizer: unexpected memory mapping" before running a single line.
+    #
+    #  2. The failure mode is a sanitizer CHECK abort (a non-zero exit), NOT a
+    #     "WARNING: ThreadSanitizer" data-race report. Gate on the exit code. Grepping the log for
+    #     "WARNING" would pass straight over the exact regression this job exists to catch.
+    - name: Run concurrency tests under TSan
+      working-directory: build-tsan
+      env:
+        TSAN_OPTIONS: halt_on_error=1 history_size=7
+      run: |
+        setarch -R ./bin/test_sequencer_concurrency
+        setarch -R ./bin/test_abort_ordering
+
   test:
     name: Run Tests
     runs-on: ubuntu-latest
@@ -877,6 +937,7 @@ jobs:
       - static-analysis
       - code-quality
       - security-scan
+      - thread-sanitizer
       - test
       - integration-test
       - playwright-guitest-e2e
@@ -901,6 +962,7 @@ jobs:
         echo "| Static Analysis | ${{ needs.static-analysis.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Code Quality | ${{ needs.code-quality.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Security Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| ThreadSanitizer (sequencer) | ${{ needs.thread-sanitizer.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Tests | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Integration Test | ${{ needs.integration-test.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Playwright E2E (guitest) | ${{ needs.playwright-guitest-e2e.result }} |" >> $GITHUB_STEP_SUMMARY

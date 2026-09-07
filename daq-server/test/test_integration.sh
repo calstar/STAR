@@ -393,6 +393,12 @@ sedi 's/^duration_ms = .*/duration_ms = 1500/' "$TEST_CONFIG"
 sedi 's/^extended_ms = .*/extended_ms = 3000/' "$TEST_CONFIG"
 # Align SERVER_HEARTBEAT UDP with the same port as udp_listener (actuator/control path in CI)
 sedi "s/^broadcast_port = 5005/broadcast_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
+# controller_service is launched with --control-port $TEST_CONTROLLER_PORT, but the sequencer
+# reads [controller_service].port from the config to decide where to send FIRE_START/FIRE_STOP.
+# Without this rewrite it dialled the base config's 9999 while the controller listened on 9997,
+# so the fire gate was never actually delivered during an integration run — and nothing asserted
+# it, so the suite passed with that leg entirely untested.
+sedi "/^\[controller_service\]/,/^\[/ s/^port = .*/port = $TEST_CONTROLLER_PORT/" "$TEST_CONFIG"
 # NOTE: Do NOT replace board IPs — the DAQ bridge routes by source IP.
 # The board_simulator falls back to 127.0.0.{2+index} when config IPs
 # (192.168.2.x) aren't bindable, and the DAQ bridge has matching fallback

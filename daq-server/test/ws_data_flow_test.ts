@@ -1429,6 +1429,25 @@ async function testStateTransitionDebugMode(ws: WebSocket): Promise<void> {
           assert(false, `[Fire] no auto-transition out of fire: ${err.message}`);
         }
 
+        // The burn gate must actually reach controller_service. This went unasserted for a long
+        // time, and it was wrong the whole while: the harness starts controller_service with
+        // --control-port $TEST_CONTROLLER_PORT but never rewrote [controller_service].port in the
+        // generated config, so the sequencer dialled the base config's 9999 while the controller
+        // listened on 9997. FIRE_START/FIRE_STOP were silently dropped on every run and the suite
+        // still reported green. The config rewrite is fixed in test_integration.sh; this assertion
+        // is what stops it regressing back to vacuous.
+        if (CONTROLLER_LOG_FILE) {
+          try {
+            const ctrlLog = fs.readFileSync(CONTROLLER_LOG_FILE, 'utf-8');
+            assert(ctrlLog.includes('FIRE_START received'),
+              '[Fire] controller_service received FIRE_START (PWM gate opened)');
+            assert(ctrlLog.includes('FIRE_STOP received'),
+              '[Fire] controller_service received FIRE_STOP (PWM gate closed)');
+          } catch (err: any) {
+            assert(false, `[Fire] could not read controller log: ${err.message}`);
+          }
+        }
+
         // The PWM handoff (sequencer stops commanding PWM roles during a burn so
         // controller_service is the only writer) is NOT assertable here. Actuator commands go to
         // each board's own address, which in this harness is the simulator — so a 0.0.0.0 UDP
