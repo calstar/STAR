@@ -12,6 +12,7 @@ import {
   ReferenceLine,
 } from 'recharts';
 import type { ChamberGeometryResponse } from '../api/client';
+import { useViewState } from '../lib/viewState';
 
 interface ChamberThermalGraphicProps {
   geometry: ChamberGeometryResponse | null;
@@ -111,7 +112,7 @@ export function ChamberThermalGraphic({
   className = "",
   title = "Chamber Thermal Structure"
 }: ChamberThermalGraphicProps) {
-  const [showLowerHalfUncontrolled, setShowLowerHalfUncontrolled] = useState(true);
+  const [showLowerHalfUncontrolled, setShowLowerHalfUncontrolled] = useViewState('chamberThermal.lowerHalf', true);
   const [unit, setUnit] = useState<'mm' | 'inch'>('mm');
 
   const showLowerHalf = showLowerHalfProp ?? showLowerHalfUncontrolled;

@@ -9,16 +9,39 @@
  *
  * This is a source audit rather than a rendering test, in the same style as
  * theme.test.ts. It cannot know what a control *means*, so it enforces the one
- * thing it can check mechanically: inside the tabs that edit the design, every
- * raw interactive element carries a `disabled` (or the shared primitives, which
- * consult the read-only context themselves). Anything genuinely view-only is
- * listed below with a reason, which keeps the exceptions honest and visible.
+ * thing it can check mechanically: in every component except the few exempted
+ * below, each raw interactive element carries a `disabled` (or is one of the
+ * shared primitives, which consult the read-only context themselves). Anything
+ * genuinely view-only is listed with a reason, which keeps the exceptions
+ * honest and visible.
+ *
+ * Note the rule here is "carries a `disabled` or `readOnly`", looser than
+ * EngineDesign's equivalent, which demands the word `readOnly` in the tag. The
+ * difference is deliberate: this app gates inside its primitives via
+ * `useDisabled`, so `<NumberInput disabled={busy}>` is already gated and
+ * demanding `readOnly` at the call site would flag every one of them.
  */
 
 import { describe, expect, it } from 'vitest'
 
-/** The three tabs that receive `onChange={setUi}`; nothing else may edit. */
-const EDITABLE = /^\.\.\/components\/(recovery|corners|study)\//
+/**
+ * Files exempt from the audit, with a reason each.
+ *
+ * Deliberately a deny-list. This used to name the three tabs that receive
+ * `onChange={setUi}`, which meant a brand new editing component -- a fourth tab,
+ * a panel split out of an existing one -- was unaudited until somebody
+ * remembered to widen the pattern. Nobody would. Everything under components/
+ * is audited now unless it is named here.
+ */
+const NOT_EDITING: Record<string, string> = {
+  'ui.tsx':
+    'the gated primitives themselves; Button/NumberInput/Select consult ' +
+    'useDisabled, which is what the last test below pins',
+  'ConfigVersions.tsx':
+    'the designs bar -- Take, Release and the picker have to stay live ' +
+    'precisely when you do not hold the design',
+  'TemperatureByMonth.tsx': 'an atmosphere chart; picking a month changes the plot, not the design',
+}
 
 /**
  * Raw controls that are deliberately live while read-only, because they change
@@ -63,8 +86,8 @@ describe('checkout gating', () => {
   it('leaves no ungated raw control in the tabs that edit the design', () => {
     const offenders: string[] = []
     for (const [path, src] of Object.entries(files)) {
-      if (!EDITABLE.test(path)) continue
       const name = path.split('/').pop() as string
+      if (name in NOT_EDITING) continue
       for (const tag of ['button', 'input', 'select']) {
         for (const open of openingTags(src, tag)) {
           if (/\bdisabled\s*=/.test(open) || /readOnly/.test(open)) continue
@@ -78,6 +101,13 @@ describe('checkout gating', () => {
       }
     }
     expect(offenders).toEqual([])
+  })
+
+  it('keeps every exemption pointing at a real file', () => {
+    const stale = Object.keys(NOT_EDITING).filter(
+      (file) => !Object.keys(files).some((p) => p.endsWith(`/${file}`)),
+    )
+    expect(stale).toEqual([])
   })
 
   it('keeps the view-only exception list honest', () => {

@@ -10,6 +10,9 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts';
+import { useDesignSlice } from '../lib/designState';
+import { useReadOnly } from '@stardesign-ui';
+import { useViewState } from '../lib/viewState';
 import type { TimeSeriesData, TimeSeriesSummary } from '../api/client';
 
 // Session storage key (same as TimeSeriesMode)
@@ -122,7 +125,26 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
   const [yAutoRange, setYAutoRange] = useState(false); // Auto-scale Y to data range vs 0-max
   const [y2AutoRange, setY2AutoRange] = useState(false);
   const [showMarkers, setShowMarkers] = useState(false);
-  const [showDataPreview, setShowDataPreview] = useState(false);
+  const [showDataPreview, setShowDataPreview] = useViewState('plotterDataPreview', false);
+
+  // The plot you built is work product: which series, which axes, which scales.
+  // `showDataPreview` is deliberately absent -- that is view state, and belongs
+  // in localStorage rather than in a design everyone shares.
+  const readOnly = useReadOnly();
+  useDesignSlice('plotter', {
+    plotType: [plotType, setPlotType],
+    xAxis: [xAxis, setXAxis],
+    yAxes: [yAxes, setYAxes],
+    useSecondaryAxis: [useSecondaryAxis, setUseSecondaryAxis],
+    primaryYAxes: [primaryYAxes, setPrimaryYAxes],
+    secondaryYAxes: [secondaryYAxes, setSecondaryYAxes],
+    xScale: [xScale, setXScale],
+    yScale: [yScale, setYScale],
+    y2Scale: [y2Scale, setY2Scale],
+    yAutoRange: [yAutoRange, setYAutoRange],
+    y2AutoRange: [y2AutoRange, setY2AutoRange],
+    showMarkers: [showMarkers, setShowMarkers],
+  });
 
   // Transform data for chart
   const chartData = useMemo(() => {
@@ -386,6 +408,7 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
             <label className="block text-sm text-[var(--color-text-secondary)] mb-2">Plot Type</label>
             <div className="flex gap-2">
               <button
+                disabled={readOnly}
                 onClick={() => setPlotType('line')}
                 className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-colors ${plotType === 'line'
                   ? 'bg-emerald-600 border-emerald-600 text-white'
@@ -395,6 +418,7 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
                 Line
               </button>
               <button
+                disabled={readOnly}
                 onClick={() => setPlotType('scatter')}
                 className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-colors ${plotType === 'scatter'
                   ? 'bg-emerald-600 border-emerald-600 text-white'
@@ -410,6 +434,7 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
           <div>
             <label className="block text-sm text-[var(--color-text-secondary)] mb-2">X-Axis</label>
             <select
+              disabled={readOnly}
               value={xAxis}
               onChange={(e) => setXAxis(e.target.value)}
               className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] focus:outline-none focus:border-emerald-500"
@@ -427,6 +452,7 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
             <label className="block text-sm text-[var(--color-text-secondary)] mb-2">X-Axis Scale</label>
             <div className="flex gap-2">
               <button
+                disabled={readOnly}
                 onClick={() => setXScale('linear')}
                 className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-colors ${xScale === 'linear'
                   ? 'bg-blue-600 border-blue-600 text-white'
@@ -436,6 +462,7 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
                 Linear
               </button>
               <button
+                disabled={readOnly}
                 onClick={() => setXScale('log')}
                 className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-colors ${xScale === 'log'
                   ? 'bg-blue-600 border-blue-600 text-white'
@@ -452,6 +479,7 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
             <label className="block text-sm text-[var(--color-text-secondary)] mb-2">Y-Axis Scale</label>
             <div className="flex gap-2">
               <button
+                disabled={readOnly}
                 onClick={() => setYScale('linear')}
                 className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-colors ${yScale === 'linear'
                   ? 'bg-blue-600 border-blue-600 text-white'
@@ -461,6 +489,7 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
                 Linear
               </button>
               <button
+                disabled={readOnly}
                 onClick={() => setYScale('log')}
                 className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-colors ${yScale === 'log'
                   ? 'bg-blue-600 border-blue-600 text-white'
@@ -477,6 +506,7 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
         <div className="mt-4 flex items-center gap-4">
           <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
             <input
+              disabled={readOnly}
               type="checkbox"
               checked={yAutoRange}
               onChange={(e) => setYAutoRange(e.target.checked)}
@@ -494,6 +524,7 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
             <div className="flex items-center gap-4">
               <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
                 <input
+                  disabled={readOnly}
                   type="checkbox"
                   checked={showMarkers}
                   onChange={(e) => setShowMarkers(e.target.checked)}
@@ -504,6 +535,7 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
               {yAxes.length > 1 && (
                 <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
                   <input
+                    disabled={readOnly}
                     type="checkbox"
                     checked={useSecondaryAxis}
                     onChange={(e) => setUseSecondaryAxis(e.target.checked)}
@@ -523,6 +555,7 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
 
               return (
                 <button
+                  disabled={readOnly}
                   key={field}
                   onClick={() => handleYAxisChange(field)}
                   className={`px-3 py-1.5 text-xs rounded-lg border transition-all flex items-center gap-2 ${isSelected
@@ -562,6 +595,7 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
               <label className="block text-sm text-[var(--color-text-secondary)] mb-2">Secondary Y-Axis Scale</label>
               <div className="flex gap-2 w-48">
                 <button
+                  disabled={readOnly}
                   onClick={() => setY2Scale('linear')}
                   className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-colors ${y2Scale === 'linear'
                     ? 'bg-purple-600 border-purple-600 text-white'
@@ -571,6 +605,7 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
                   Linear
                 </button>
                 <button
+                  disabled={readOnly}
                   onClick={() => setY2Scale('log')}
                   className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-colors ${y2Scale === 'log'
                     ? 'bg-purple-600 border-purple-600 text-white'
@@ -583,6 +618,7 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
             </div>
             <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] mt-6">
               <input
+                disabled={readOnly}
                 type="checkbox"
                 checked={y2AutoRange}
                 onChange={(e) => setY2AutoRange(e.target.checked)}
