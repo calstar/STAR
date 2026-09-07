@@ -5,8 +5,8 @@ frontend, and CI. Each item names the affected file(s), what actually goes wrong
 shape of the fix.
 
 **Last audited:** 2026-09-07 against `ab3ce2d2`.
-**Last updated:** 2026-09-07 after `4bcbfb4e` — the sequencer concurrency work landed and its
-items moved to Resolved.
+**Last updated:** 2026-09-07 — the sequencer concurrency work and the config draft-only work both
+landed; their items moved to Resolved.
 
 The revision before this one dated from April 2026 and predated the Vite frontend migration,
 the `smol-toml` config work, and the config-driven `[[states]]` rework. Anything fixed is
@@ -102,7 +102,7 @@ blocking `recv` and no `SO_RCVTIMEO`. There is no per-client thread. A client th
 and sends no newline blocks the accept loop indefinitely — and this loop is the only path
 that opens and closes the PWM gate.
 
-`sequencer_main.cpp:158` sets a 5 s `SO_RCVTIMEO` and gives each client its own thread; the controller,
+`sequencer_main.cpp:154` sets a 5 s `SO_RCVTIMEO` and gives each client its own thread; the controller,
 which gates ignition, does neither.
 
 **Failure scenario:** the backend host is killed or drops off the network mid-connection.
@@ -142,7 +142,7 @@ literals.
 
 ### Backend — WebSocket broadcast has no backpressure and no keepalive
 
-**File:** `diablo_server/backend/src/server.ts:677-690`
+**File:** `diablo_server/backend/src/server.ts:676-690`
 
 `broadcast()` sends to every client whose `readyState === OPEN` and swallows the result.
 Nothing checks `ws.bufferedAmount`, and there is no `ping`/`pong` liveness check anywhere in
@@ -225,11 +225,11 @@ the process exit code rather than grepping the log.
 
 ### Backend — WebSocket commands are still parsed as `any`
 
-**File:** `diablo_server/backend/src/server.ts:892` (`handleMessage(ws, message: any)`)
+**File:** `diablo_server/backend/src/server.ts:891` (`handleMessage(ws, message: any)`)
 
 Real gates have been added since this was first written — `CONTROL_COMMAND_TYPES` requires
-an armed operator connection (`server.ts:935`), and `state_transition` now rejects ids the
-active config doesn't declare (`server.ts:943-970`). Those close the two exploitable holes.
+an armed operator connection (`server.ts:934`), and `state_transition` now rejects ids the
+active config doesn't declare (`server.ts:942-969`). Those close the two exploitable holes.
 
 What remains is shape validation. `handleMessage` still takes `any`, and the command
 handlers still reach through non-null assertions: `command.data.state!`,
@@ -338,9 +338,9 @@ A rig that moves `broadcast_port` gets actuator config broadcasts on the new por
 test the abort broadcast goes somewhere nothing is listening — which is part of why no test has
 ever observed one.
 
-**Fix:** construct the broadcaster from `cfg.<section>.broadcast_port` in `init()`, and re-apply
-it in `applyFireConfig()`/reload alongside the other config-derived values. Same for the
-ABORT_DONE delay if a config key is wanted for it.
+**Fix:** construct the broadcaster from `cfg.<section>.broadcast_port` in `init()`, alongside the
+other config-derived values. Same for the ABORT_DONE delay if a config key is wanted for it.
+(There is no reload path to keep in sync any more — config is read once at startup.)
 
 ---
 
@@ -397,6 +397,21 @@ longer to flush, and on a fast machine it's a second wasted on every run.
 
 Kept so a future audit can distinguish "fixed" from "never checked".
 
+### By the config draft-only work (2026-09-07)
+
+| Item | Resolution |
+|---|---|
+| Sequencer hot-reloads config mid-run (`RELOAD_CONFIG`) | **Removed, not fixed.** The command, `reloadConfig()`/`doReloadConfig()` and the backend's sender are gone. Its only caller fired when the CSV was *deployed*, which only happens with no session active — so it could never reach a running sequencer. Deleting the path is strictly better than making it safe: it also removes the reload half of the work in `0c0dfd6c`. |
+| `reloadConfig()` raced the republish loop / kept stale `[fire]` ids | **Moot.** Both were fixed in `0c0dfd6c`; the function they lived in no longer exists. `applyFireConfig()` stays, called from `init()` only. |
+| Sequencer re-parsed config on every Elodin reconnect | **Fixed.** `tryConnectElodin()` uses an actuator-board snapshot taken at `init()`. A db restart mid-run no longer rebuilds the actuator tables from whatever is on disk at that moment. |
+| Backend re-read config.toml per request / per command / per resubscribe retry | **Fixed.** `readDeployedConfig()` caches the parsed deployed config, invalidated inside `deployActiveProfile()` — the single apply point. Not a boot-time read: the backend is always-on and must still notice a deploy. |
+| A failed deploy at session start only warned | **Fixed.** Session start now aborts with an operator-facing error. Running on stale config behind a green "session active" light was the worst available outcome. |
+| Config editor said "saved" for a draft | **Fixed.** Save / import / CSV upload use the API's own `deployed` flag and message, amber for a draft. A new banner counts un-applied changes (`GET /api/config/profiles` → `undeployed`) with a link to compare against the running config. |
+| `patchBoardField()` silently reverted at the next deploy | **Fixed.** Board log mode stays live (the documented exception) but now writes the active profile too, so it survives a deploy. |
+| Board-config live reload was undocumented | **Documented as the one deliberate exception**, in `config_broadcast_service_main.cpp` and `docs/CONFIGURATION_GUIDE.md` — including that `[abort_pts]` and `boards.*.enabled` reach hardware live. |
+| Sim runs silently ignore config drafts | **Documented.** Kept deliberate — a sim run must behave the same on every box — and the session page now says so when Simulated is selected. |
+| `CONFIGURATION_GUIDE.md` stale; `SENSOR_ASSIGNMENT_SYSTEM.md` describes an unshipped design | **Fixed.** Guide rewritten around profile/deploy/session-start plus the two exceptions; the sensor-assignment doc carries an "aspirational, not shipped" banner. |
+
 ### By the sequencer concurrency work (2026-09-07, `0c0dfd6c` / `4bcbfb4e`)
 
 | Item | Resolution |
@@ -417,9 +432,9 @@ Kept so a future audit can distinguish "fixed" from "never checked".
 | Item | Resolution |
 |---|---|
 | FireManager `extend()` timer data race | **Fixed.** `current_duration_ms_` is `std::atomic<uint32_t>` and `extend()` now writes the duration *before* raising `cancel_` (`FireManager.cpp:66-73`), so the timer thread re-reads the new value. `stop()` also handles the joinable-but-inactive thread that used to `std::terminate` on restart. |
-| Errors to the controller service silently dropped | **Mostly fixed.** Actuator, state-transition, and extend-fire commands now surface `MessageType.ERROR` to the originating client on failure. One `.catch(() => { })` survives on the `debug_mode` path (`server.ts:1001`). |
+| Errors to the controller service silently dropped | **Mostly fixed.** Actuator, state-transition, and extend-fire commands now surface `MessageType.ERROR` to the originating client on failure. One `.catch(() => { })` survives on the `debug_mode` path (`server.ts:1000`). |
 | Fragile regex fallback in TOML `actuator_roles` parsing | **Fixed.** The backend uses `smol-toml`, which handles the mixed-type inline arrays natively; the hand-rolled regex parser is gone. |
 | Catch-all `catch (...)` in `SequencerService` | **Fixed** — those handlers no longer exist. |
 | Integration test: hardcoded ports, no conflict detection | **Fixed.** All ports are `${TEST_*_PORT:-default}` and the script sweeps them before starting. |
 | Frontend API responses typed as `any` | **Largely fixed.** `dashboard-hooks.ts` is clean; roughly twenty `any` occurrences remain across the whole frontend, mostly local. Not worth a backlog entry on its own. |
-| Startup race: "controller never gets service" after reloading the UI during startup | **Superseded, unconfirmed.** The specific hypothesis was about the Next.js SPA's connection lifecycle, which no longer exists after the Vite migration. The Elodin side of the startup race was addressed independently by the retry loop at `SequencerService.cpp:672`. Re-file with fresh evidence if it recurs. |
+| Startup race: "controller never gets service" after reloading the UI during startup | **Superseded, unconfirmed.** The specific hypothesis was about the Next.js SPA's connection lifecycle, which no longer exists after the Vite migration. The Elodin side of the startup race was addressed independently by the retry loop at `SequencerService.cpp:620`. Re-file with fresh evidence if it recurs. |
