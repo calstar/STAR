@@ -37,9 +37,10 @@ const NOT_EDITING: Record<string, string> = {
   'ui.tsx':
     'the gated primitives themselves; Button/NumberInput/Select consult ' +
     'useDisabled, which is what the last test below pins',
-  'ConfigVersions.tsx':
-    'the designs bar -- Take, Release and the picker have to stay live ' +
-    'precisely when you do not hold the design',
+  // The designs bar used to sit in these components and was exempt here. It is
+  // now the single shared header bar (components/versions/ConfigVersions.tsx),
+  // outside this glob, and lib/gating.test.ts audits it in that role -- so an
+  // entry for it here would be an exemption for a file this test never sees.
   'TemperatureByMonth.tsx': 'an atmosphere chart; picking a month changes the plot, not the design',
 }
 
