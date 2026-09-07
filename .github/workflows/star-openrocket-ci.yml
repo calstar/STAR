@@ -193,7 +193,20 @@ jobs:
       working-directory: star-openrocket/frontend
       run: npm run build
 
-  # Aggregate status, mirroring engine-design-ci.yml's summary job.
+    # Source audits over the design contract, and the reason this step exists at
+    # all: the suite was here long before anything ran it, so both gating audits
+    # sat green-by-default while nobody could have known if they broke. The two
+    # things it pins are the two ways a design quietly loses somebody's work --
+    # a control that stays live without the checkout (lib/gating.test.ts, and
+    # recovery/lib/gating.test.ts for the recovery half), and a field that saves
+    # but is never read back (lib/savable.test.ts). Both are invisible from the
+    # UI: nothing errors, and the file on disk looks right. Blocking, unlike
+    # lint, because "it didn't save" is the failure the whole design store is
+    # for. Matches engine-design-ci.yml and pid-designer-ci.yml.
+    - name: Unit tests (design audits + persistence)
+      working-directory: star-openrocket/frontend
+      run: npm test
+
   # Docker image build. This is the gate that was missing: publish-apps.yml (and
   # publish-auth.yml) only trigger on push to main, so a Dockerfile that no
   # longer matches the tree -- a COPY of a directory the branch deleted, say --
@@ -239,6 +252,7 @@ jobs:
           push: false
           cache-from: type=gha,scope=${{ matrix.name }}
 
+  # Aggregate status, mirroring engine-design-ci.yml's summary job.
   star-openrocket-summary:
     name: STAR OpenRocket Summary
     runs-on: ubuntu-latest
