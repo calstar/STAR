@@ -48,10 +48,11 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
 
   const label = "text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400";
   const section = "rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 shadow-sm";
+  const btn = "min-h-11 rounded px-3 py-1.5 text-sm font-medium disabled:opacity-50 sm:min-h-0";
 
   return (
     <div>
-      <div className="flex items-center gap-2 pr-8 text-sm text-neutral-500 dark:text-neutral-400">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pr-8 text-sm text-neutral-500 dark:text-neutral-400">
         <Link href="/projects" className="hover:underline">
           Projects
         </Link>
@@ -60,14 +61,17 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
           <>
             <Link
               href={`/projects/${task.project.parent.id}`}
-              className="hover:underline"
+              className="min-w-0 max-w-full truncate hover:underline"
             >
               {task.project.parent.name}
             </Link>
             <span>›</span>
           </>
         )}
-        <Link href={`/projects/${task.project.id}`} className="hover:underline">
+        <Link
+          href={`/projects/${task.project.id}`}
+          className="min-w-0 max-w-full truncate hover:underline"
+        >
           {task.project.name}
         </Link>
         <span className="ml-auto">
@@ -75,7 +79,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
         </span>
       </div>
 
-      <div className="mt-3 flex items-center gap-3 pr-8">
+      <div className="mt-3 flex flex-wrap items-center gap-3 pr-8">
         <span className="text-2xl font-semibold text-neutral-400 dark:text-neutral-500">
           #{task.number}
         </span>
@@ -89,7 +93,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
         <div className={section}>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <p className={label}>Status</p>
               <div className="mt-1">
@@ -114,7 +118,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
             </div>
             <div>
               <p className={label}>Due</p>
-              <div className="mt-1">
+              <div className="mt-1 [&_input]:min-h-11 [&_input]:w-full sm:[&_input]:min-h-0 sm:[&_input]:w-auto">
                 <DueDateInput taskId={task.id} value={due} />
               </div>
             </div>
@@ -146,11 +150,11 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
               </li>
             )}
             {task.blockedBy.map((b) => (
-              <li key={b.id} className="flex items-center gap-2 text-sm">
+              <li key={b.id} className="flex flex-wrap items-center gap-2 text-sm">
                 <button
                   type="button"
                   onClick={() => openTask(task.projectId, b.blockedByTask.id)}
-                  className="text-left hover:underline"
+                  className="min-h-11 min-w-0 text-left hover:underline sm:min-h-0"
                 >
                   {b.blockedByTask.title}
                 </button>
@@ -174,7 +178,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
                 >
                   <input type="hidden" name="taskId" value={task.id} />
                   <input type="hidden" name="blockedById" value={b.blockedById} />
-                  <button className="text-xs text-red-600 hover:underline">
+                  <button className="min-h-11 rounded px-2 text-xs text-red-600 hover:underline sm:min-h-0 sm:px-0">
                     remove
                   </button>
                 </form>
@@ -197,11 +201,11 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
               </li>
             )}
             {task.blocking.map((b) => (
-              <li key={b.id} className="flex items-center gap-2 text-sm">
+              <li key={b.id} className="flex flex-wrap items-center gap-2 text-sm">
                 <button
                   type="button"
                   onClick={() => openTask(task.projectId, b.task.id)}
-                  className="text-left hover:underline"
+                  className="min-h-11 min-w-0 text-left hover:underline sm:min-h-0"
                 >
                   {b.task.title}
                 </button>
@@ -229,7 +233,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
           type="button"
           onClick={() => setShowHistory((v) => !v)}
           aria-expanded={showHistory}
-          className="flex w-full items-center gap-2 text-left"
+          className="flex min-h-11 w-full items-center gap-2 text-left sm:min-h-0"
         >
           <span className={label}>History</span>
           <span className="text-xs text-neutral-400">
@@ -249,9 +253,9 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
             {task.activities.map((a) => (
               <li
                 key={a.id}
-                className="flex items-start justify-between gap-4 py-1.5 text-sm"
+                className="flex flex-wrap items-start justify-between gap-x-4 gap-y-0.5 py-1.5 text-sm"
               >
-                <span className="text-neutral-700 dark:text-neutral-200">
+                <span className="min-w-0 text-neutral-700 dark:text-neutral-200">
                   {renderActivity(a as ActivityItem, { withTask: false })}
                 </span>
                 <span className="shrink-0 text-xs text-neutral-400">
@@ -263,7 +267,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
         )}
       </div>
 
-      <div className="mt-4 flex items-center justify-between gap-3">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         {task.archived ? (
           <>
             <span className="text-xs text-neutral-500 dark:text-neutral-400">
@@ -273,7 +277,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
               type="button"
               disabled={busy}
               onClick={() => toggleArchive(false)}
-              className="rounded border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
+              className={`${btn} border border-neutral-300 text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800`}
             >
               Unarchive
             </button>
@@ -287,7 +291,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
               type="button"
               disabled={busy}
               onClick={() => toggleArchive(true)}
-              className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
+              className={`${btn} bg-neutral-900 text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300`}
             >
               Archive
             </button>
