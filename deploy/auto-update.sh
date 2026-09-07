@@ -225,7 +225,9 @@ log "pulling images in $COMPOSE_DIR"
 compose pull --quiet || die "docker compose pull failed"
 after="$(digests)"
 
-changed="$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") | grep '^>' | awk '{print $1}' || true)"
+# diff prefixes each added line with "> ", so a row reads `> <image> <digest>`
+# and the image name is $2 — $1 is the "> " marker itself.
+changed="$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") | grep '^>' | awk '{print $2}' || true)"
 if [[ -z "$changed" && "$git_moved" == "0" && "$FORCE" == "0" ]]; then
   log "up to date at ${current:0:7} — nothing to deploy"
   exit 0
