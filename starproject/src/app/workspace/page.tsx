@@ -53,7 +53,7 @@ export default async function WorkspacePage() {
   const heading = "text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400";
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
+    <div className="mx-auto max-w-3xl px-4 sm:px-6 py-6 sm:py-8">
       <h1 className="text-2xl font-semibold">Workspace setup</h1>
       <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
         Create and remove projects and subteams. These actions can delete data,
@@ -108,16 +108,16 @@ export default async function WorkspacePage() {
           name="name"
           required
           placeholder="New subteam name"
-          className="min-w-48 flex-1 rounded border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm"
+          className="min-h-11 sm:min-h-0 basis-full sm:basis-auto sm:min-w-48 flex-1 rounded border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm"
         />
         <input
           type="color"
           name="color"
           defaultValue="#0ea5e9"
           aria-label="Subteam color"
-          className="h-9 w-10 rounded border border-neutral-300 dark:border-neutral-700"
+          className="h-11 w-12 sm:h-9 sm:w-10 rounded border border-neutral-300 dark:border-neutral-700"
         />
-        <button className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300">
+        <button className="min-h-11 sm:min-h-0 rounded bg-neutral-900 px-4 sm:px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300">
           Create
         </button>
       </form>
