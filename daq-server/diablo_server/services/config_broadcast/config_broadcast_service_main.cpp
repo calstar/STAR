@@ -160,6 +160,18 @@ std::map<uint16_t, std::pair<double, uint32_t>> readAbortThresholds() {
 // abort thresholds, enable flags) go live without restarting the service or a session.
 // Returns an empty vector on any failure (missing/truncated file, no designated survivor);
 // the caller keeps the last-good set rather than dropping board config for a cycle.
+//
+// ── THIS IS THE ONE DELIBERATE EXCEPTION to the draft-at-session-start rule ───────────────────
+// Everywhere else, config reaches a running rig at exactly one point: the backend deploys the
+// active profile to config/ at session start, and the pipeline services then read it once at
+// boot. This service does not follow that rule, on purpose. It is always-on rather than
+// session-gated, and board config (including [abort_pts] trip thresholds and boards.*.enabled)
+// is expected to reach hardware without cycling a session.
+//
+// Do not "fix" this into consistency without deciding what should happen to boards between runs
+// — an always-on service that reads once at boot would need a service restart to pick up an
+// edit, which is a third apply point and worse than either option. See
+// docs/CONFIGURATION_GUIDE.md.
 std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
     const fsw::config::Config cfg = fsw::config::load(config_path);
 

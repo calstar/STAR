@@ -7,7 +7,10 @@
  *   ACTUATOR:<role_name>:<0|1>       — manual actuator command (debug mode only)
  *   DEBUG_MODE:<0|1>                 — toggle debug mode
  *   EXTEND_FIRE                      — extend FIRE window
- *   RELOAD_CONFIG                    — hot-reload config.toml and CSVs
+ *
+ * There is deliberately no reload command. Config reaches this process once, at startup: the
+ * backend deploys the active profile to config/ at session start and then the pipeline units are
+ * started, so a running sequencer's config is frozen for the life of the run.
  *
  * Each command gets an immediate reply of "OK\n" or "ERR:<reason>\n".
  * Multiple simultaneous TCP clients are supported (a bounded, joined thread per connection).
@@ -124,13 +127,6 @@ void handleCommandLine(int client_fd, const std::string& raw, sequencer::Sequenc
         else
             sendReply("ERR:not in FIRE state\n");
 
-        // ── RELOAD_CONFIG ────────────────────────────────────────────────────
-    } else if (cmd == "RELOAD_CONFIG") {
-        if (svc.reloadConfig())
-            sendReply("OK\n");
-        else
-            sendReply("ERR:reload failed\n");
-
     } else {
         sendReply("ERR:unknown command\n");
     }
@@ -235,7 +231,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << "[Sequencer] Listening on port " << listen_port << std::endl;
     std::cout << "[Sequencer] Commands: TRANSITION:<state> | ACTUATOR:<name>:<0|1> "
-              << "| DEBUG_MODE:<0|1> | EXTEND_FIRE | RELOAD_CONFIG" << std::endl;
+              << "| DEBUG_MODE:<0|1> | EXTEND_FIRE" << std::endl;
 
     // Connections are tracked rather than detached, so every thread is joined before `svc` — a
     // stack object these threads hold a reference to — goes out of scope at the end of main().

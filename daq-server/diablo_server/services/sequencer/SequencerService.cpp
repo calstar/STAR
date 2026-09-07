@@ -196,12 +196,9 @@ static std::string resolveDataPath(const std::string& rel) {
 /**
  * Resolve everything under [fire] against the currently-adopted state table.
  *
- * Called from init() and from doReloadConfig(). It used to live inline in init() only, which
- * meant a reload re-adopted [[states]] — potentially renumbering every state — while
- * fire_state_ and fire_expiry_state_ kept the ids resolved at startup. After such a reload
- * `to == fire_state_` matched whichever state now occupied the old slot: the burn countdown
- * armed on the wrong state and never on the right one. The configured window was not re-read
- * either, so an edited fire duration silently did not take effect until a restart.
+ * Called from init(). Extracted from it when reload still existed, and kept separate because it
+ * documents one rule in one place: [fire] is resolved against the state table adopted from the
+ * same config, never against the compiled enum.
  *
  * Must run after StateMachine::loadStatesFromConfig() and after state_machine_.load(), since it
  * resolves names through the former and sanity-checks the transition table from the latter.
@@ -304,6 +301,17 @@ bool SequencerService::init(const std::string& config_path) {
         notifyControllerFire(active);
     });
 
+    // Snapshot the actuator board list now, while we are reading config for the first and only
+    // time. tryConnectElodin() re-registers VTables on every reconnect and must not go back to
+    // disk for this (see the comment there).
+    {
+        const auto boards_map = fsw::config::load_active_boards(config_path_);
+        const auto it_act = boards_map.find(fsw::config::ActiveBoardKind::ACTUATOR);
+        actuator_boards_ = (it_act != boards_map.end())
+                               ? it_act->second
+                               : std::vector<fsw::elodin::BoardChannels>{};
+    }
+
     // Elodin — connection is best-effort; service runs without it
     elodin_host_ = "127.0.0.1";
     elodin_port_ = cfg.database.port;
@@ -348,8 +356,7 @@ bool SequencerService::isAbortState(State s) {
 // ─────────────────────────────────────────────────────────────────────────────
 bool SequencerService::transitionTo(const std::string& state_name) {
     // Resolve on the worker, not here. fromName() reads the config-declared state table, which
-    // doReloadConfig() rewrites — resolving on the caller's thread would race a concurrent reload
-    // and could answer from a half-swapped table.
+    // the worker owns — resolving on the caller's thread would read it from an arbitrary thread.
     return enqueueAndWait([this, state_name]() {
         State to = StateMachine::fromName(state_name);
         if (to == State::UNKNOWN) {
@@ -496,67 +503,6 @@ bool SequencerService::doExtendFire() {
     fire_manager_.extend();
     return true;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-bool SequencerService::reloadConfig() {
-    return enqueueAndWait([this]() {
-        return doReloadConfig();
-    });
-}
-
-bool SequencerService::doReloadConfig() {
-    std::cout << "[SequencerService] Reloading config..." << std::endl;
-
-    // Stop the 1 Hz republish loop BEFORE touching the actuator tables.
-    //
-    // ActuatorCommander::load() begins by clearing roles_ and state_actuators_ and then rebuilds
-    // them from CSV. The republish loop walks those same maps once a second. Neither is mutex-
-    // guarded, so a reload issued from the GUI during a fill was clearing and rebuilding a
-    // std::map while another thread iterated it — undefined behaviour, not a stale read.
-    //
-    // Running on the worker fixes the command-vs-command races, but not this one: the republish
-    // loop is its own thread and keeps running regardless of what the worker is doing. It has to
-    // be stopped explicitly.
-    actuator_commander_.stopContinuousLoop();
-
-    loadConfig(config_path_);
-    const fsw::config::Config cfg = fsw::config::load_from_string(config_content_);
-
-    // Same ordering rule as init(), and this path did not adopt [[states]] at all — a reload after
-    // an edit that renamed or renumbered a state re-parsed both CSVs against the previous list.
-    StateMachine::loadStatesFromConfig(config_content_);
-
-    bool ok = true;
-    std::string act_csv = resolveDataPath(cfg.state_machine.actuator_csv);
-    if (!actuator_commander_.load(config_content_, act_csv)) {
-        std::cerr << "[SequencerService] Reload: failed to reload actuator CSV" << std::endl;
-        ok = false;
-    }
-    std::string sm_csv = resolveDataPath(cfg.state_machine.transitions_csv);
-    if (ok && !state_machine_.load(sm_csv)) {
-        std::cerr << "[SequencerService] Reload: failed to reload state transitions CSV"
-                  << std::endl;
-        ok = false;
-    }
-
-    // [fire] must be re-resolved too. fire_state_ / fire_expiry_state_ hold ids resolved once at
-    // init(); loadStatesFromConfig() above may have just renumbered every state, which would leave
-    // both pointing at whatever state now occupies the old slot — arming the burn on the wrong
-    // state and never on the right one. The configured window was not re-read either, so an edited
-    // fire duration silently did not take until a restart.
-    if (ok)
-        applyFireConfig(cfg);
-
-    // Restart the republish loop regardless of outcome — leaving the rig with no actuator
-    // republish is worse than running against the previous tables. Not a state entry, so no delay
-    // schedule: this resends settled positions.
-    actuator_commander_.startContinuousLoop(current_state_.load(), false);
-
-    if (ok)
-        std::cout << "[SequencerService] Config reloaded successfully" << std::endl;
-    return ok;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Elodin publishing
 // ─────────────────────────────────────────────────────────────────────────────
@@ -659,11 +605,13 @@ bool SequencerService::tryConnectElodin() {
               << std::endl;
     // Every one of these must run on a RECONNECT too, not just the first connect — the VTables
     // live in the db process, so a db restart loses them.
-    const auto boards_map = fsw::config::load_active_boards(config_path_);
-    const auto it_act = boards_map.find(fsw::config::ActiveBoardKind::ACTUATOR);
-    const std::vector<fsw::elodin::BoardChannels> act_boards =
-        (it_act != boards_map.end()) ? it_act->second : std::vector<fsw::elodin::BoardChannels>{};
-    fsw::elodin::DatabaseConfig::register_non_sensor_tables(elodin_, act_boards);
+    //
+    // The board list comes from the snapshot taken at init(), NOT from a fresh read of
+    // config_path_. This used to re-parse config.toml on every reconnect, and the retry thread
+    // reconnects on any db restart — so a db blip mid-run would rebuild the actuator tables from
+    // whatever happened to be on disk at that moment. Config is applied once, at session start;
+    // a process that has already booted keeps the config it booted with.
+    fsw::elodin::DatabaseConfig::register_non_sensor_tables(elodin_, actuator_boards_);
     actuator_commander_.setElodinClient(&elodin_);
     actuator_commander_.publishInitialState();
     return true;

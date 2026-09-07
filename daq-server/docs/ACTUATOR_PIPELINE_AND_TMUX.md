@@ -136,7 +136,7 @@ Bug risk: wrong NO/NC mapping flips valve states (e.g. LOX Press).
 4. Backend opens TCP to `127.0.0.1:9998` (the `sequencer_service` command port), sends the line, and reads `OK\n` / `ERR:<reason>\n`.
 5. `sequencer_service` looks up the per-state actuator positions from `config/state_machine_actuators.csv` and sends UDP ACTUATOR_COMMAND packets to each board IP from config.
 
-The sequencer's TCP text protocol verbs are `TRANSITION:<state>`, `ACTUATOR:<role>:<0|1>`, `DEBUG_MODE:<0|1>`, `EXTEND_FIRE`, and `RELOAD_CONFIG` (see `diablo_server/services/sequencer/sequencer_main.cpp`).
+The sequencer's TCP text protocol verbs are `TRANSITION:<state>`, `ACTUATOR:<role>:<0|1>`, `DEBUG_MODE:<0|1>` and `EXTEND_FIRE` (see `diablo_server/services/sequencer/sequencer_main.cpp`). There is deliberately no reload verb: config is applied at session start and frozen for the run.
 
 ## Parse Failures (Messages Not Read)
 

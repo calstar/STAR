@@ -9,12 +9,14 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "config/Config.hpp"
 #include "control/AbortBroadcaster.hpp"
 #include "control/ActuatorCommander.hpp"
 #include "control/FireManager.hpp"
 #include "control/StateMachine.hpp"
+#include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
 
 namespace sequencer {
@@ -91,11 +93,6 @@ public:
      */
     bool extendFire();
 
-    /**
-     * Hot-reload config.toml and CSVs without restarting.
-     */
-    bool reloadConfig();
-
     State currentState() const {
         return current_state_.load();
     }
@@ -137,7 +134,6 @@ private:
     bool doSetDebugMode(bool enabled);
     bool doManualActuator(const std::string& name, int pos);
     bool doExtendFire();
-    bool doReloadConfig();
 
     StateMachine state_machine_;
     ActuatorCommander actuator_commander_;
@@ -150,6 +146,10 @@ private:
 
     std::string config_path_;
     std::string config_content_;
+
+    // Actuator boards as they were at init(). Held so an Elodin reconnect can re-register the
+    // VTables without re-reading config.toml — config is frozen for the life of a run.
+    std::vector<fsw::elodin::BoardChannels> actuator_boards_;
 
     // Elodin connection retry. sensor-actuator.service is started alongside sensor-elodin, so the
     // first connect can lose the race by milliseconds; without this the service runs forever with
@@ -178,8 +178,8 @@ private:
     bool loadConfig(const std::string& path);
 
     /** Resolve [fire] (burn state, expiry target, window) against the state table currently
-     *  adopted by StateMachine. Called from init() and from doReloadConfig() — a reload that
-     *  renumbers states must re-resolve these or they name the wrong states. */
+     *  adopted by StateMachine. Called from init(); the process keeps that resolution for its
+     *  whole life, since config is frozen for the duration of a run. */
     void applyFireConfig(const fsw::config::Config& cfg);
 
     /** Send FIRE_START / FIRE_STOP to controller_service. The single place anything tells the
