@@ -2,6 +2,8 @@ import { useState, useCallback, useEffect } from 'react';
 import { evaluate } from '../api/client';
 import type { RunnerResults, EngineConfig } from '../api/client';
 import { ResultsDisplay } from './ResultsDisplay';
+import { useDesignSlice } from '../lib/designState';
+import { useReadOnly } from '@stardesign-ui';
 import { StabilityPanel } from './stability/StabilityPanel';
 import type { StabilityOverrides } from './stability/types';
 
@@ -24,6 +26,16 @@ export function ForwardMode({ config }: ForwardModeProps) {
   const [error, setError] = useState<string | null>(null);
   const [designWarning, setDesignWarning] = useState<string | null>(null);
   const [stabilityOverrides, setStabilityOverrides] = useState<StabilityOverrides>({});
+
+  // Part of the design: the tank pressures you evaluate at, and the four
+  // stability sensitivity knobs. Running evaluate() is still a read, so only
+  // the inputs are gated -- the Run button below stays live.
+  const readOnly = useReadOnly();
+  useDesignSlice('forward', {
+    loxPressure: [loxPressure, setLoxPressure],
+    fuelPressure: [fuelPressure, setFuelPressure],
+    stabilityOverrides: [stabilityOverrides, setStabilityOverrides],
+  });
 
   // Update defaults when config changes
   useEffect(() => {
@@ -114,6 +126,7 @@ export function ForwardMode({ config }: ForwardModeProps) {
             </label>
             <div className="relative">
               <input
+                disabled={readOnly}
                 type="number"
                 value={loxPressure}
                 onChange={(e) => setLoxPressure(e.target.value)}
@@ -134,6 +147,7 @@ export function ForwardMode({ config }: ForwardModeProps) {
             </label>
             <div className="relative">
               <input
+                disabled={readOnly}
                 type="number"
                 value={fuelPressure}
                 onChange={(e) => setFuelPressure(e.target.value)}

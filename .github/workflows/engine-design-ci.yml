@@ -134,6 +134,14 @@ jobs:
       working-directory: EngineDesign/frontend
       run: npm run build
 
+    # Source audit: every control that edits the design must be gated on the
+    # checkout. Blocking, unlike lint -- a control that escapes the gate looks
+    # to the user like the design silently losing their work, which is the
+    # failure this suite exists to prevent. Mirrors recovery-calculator's.
+    - name: Unit tests (checkout gating audit)
+      working-directory: EngineDesign/frontend
+      run: npm test
+
     - name: ESLint (non-blocking — pre-existing backlog)
       working-directory: EngineDesign/frontend
       run: npm run lint

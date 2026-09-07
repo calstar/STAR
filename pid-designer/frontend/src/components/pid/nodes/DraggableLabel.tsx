@@ -108,6 +108,7 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset }: Draggab
       {editing ? (
         <input
           autoFocus
+          readOnly={readOnly}
           value={editVal}
           onChange={e => setEditVal(e.target.value)}
           onBlur={commitLabel}

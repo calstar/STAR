@@ -1,12 +1,19 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { uploadConfig } from '../api/client';
 import type { EngineConfig } from '../api/client';
+import { useReadOnly } from '@stardesign-ui';
 
 interface ConfigUploadProps {
   onConfigLoaded: (config: EngineConfig) => void;
 }
 
 export function ConfigUpload({ onConfigLoaded }: ConfigUploadProps) {
+  // Uploading replaces the whole config (POST /api/config/upload -> set_config),
+  // so it needs the checkout. Note the drop handler is gated separately: a drag
+  // and drop never touches the <input>, so `disabled` there does not stop it.
+  const readOnly = useReadOnly();
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +44,7 @@ export function ConfigUpload({ onConfigLoaded }: ConfigUploadProps) {
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
+    if (readOnlyRef.current) return; // the <input disabled> does not cover drops
 
     const file = e.dataTransfer.files[0];
     if (file) {
@@ -75,7 +83,7 @@ export function ConfigUpload({ onConfigLoaded }: ConfigUploadProps) {
             ? 'border-blue-500 bg-blue-500/10'
             : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:border-blue-500/50 hover:bg-[var(--color-bg-tertiary)]'
           }
-          ${isLoading ? 'opacity-50 pointer-events-none' : ''}
+          ${isLoading || readOnly ? 'opacity-50 pointer-events-none' : ''}
         `}
       >
         <input
@@ -83,7 +91,7 @@ export function ConfigUpload({ onConfigLoaded }: ConfigUploadProps) {
           accept=".yaml,.yml"
           onChange={handleInputChange}
           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-          disabled={isLoading}
+          disabled={isLoading || readOnly}
         />
         
         <div className="flex flex-col items-center gap-2 text-center p-4">

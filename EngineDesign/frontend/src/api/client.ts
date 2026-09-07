@@ -5,6 +5,8 @@
  * from the Python engine - keeping consistency with the Streamlit UI.
  */
 
+import { designHeaders, designParams } from '../lib/activeDesign';
+
 export const API_BASE = '/api';
 
 interface ApiResponse<T> {
@@ -18,11 +20,14 @@ async function request<T>(
 ): Promise<ApiResponse<T>> {
   try {
     const response = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      // After the spread, not before: `...options` carries its own `headers`
+      // key, so putting this first meant any caller that passed headers
+      // silently lost the Content-Type merged in here.
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
       },
-      ...options,
     });
 
     if (!response.ok) {
@@ -245,6 +250,8 @@ export async function uploadConfig(file: File): Promise<ApiResponse<UploadRespon
   try {
     const response = await fetch(`${API_BASE}/config/upload`, {
       method: 'POST',
+      // No Content-Type: the browser sets the multipart boundary itself.
+      headers: designHeaders(),
       body: formData,
     });
 
@@ -267,6 +274,7 @@ export async function getConfig(): Promise<ApiResponse<ConfigResponse>> {
 export async function updateConfig(updates: Partial<EngineConfig>): Promise<ApiResponse<ConfigResponse>> {
   return request<ConfigResponse>('/config', {
     method: 'PUT',
+    headers: designHeaders(),
     body: JSON.stringify(updates),
   });
 }
@@ -346,6 +354,7 @@ export async function switchConfig(
 ): Promise<ApiResponse<SwitchResponse>> {
   return request<SwitchResponse>('/config/switch', {
     method: 'POST',
+    headers: designHeaders(),
     body: JSON.stringify(body),
   });
 }
@@ -1089,6 +1098,7 @@ export async function saveDesignRequirements(
 ): Promise<ApiResponse<SaveDesignRequirementsResponse>> {
   return request<SaveDesignRequirementsResponse>('/optimizer/design-requirements', {
     method: 'POST',
+    headers: designHeaders(),
     body: JSON.stringify({ requirements }),
   });
 }
@@ -1128,6 +1138,9 @@ export function runLayer1Optimization(
     params.append('target_burn_time', settings.target_burn_time.toString());
   }
 
+  // Names the open design so the backend can refuse the run when someone
+  // else holds it: a layer run ends in set_config, so it is an edit.
+  for (const [k, v] of Object.entries(designParams())) params.append(k, v);
   const url = `${API_BASE}/optimizer/layer1?${params.toString()}`;
 
   const eventSource = new EventSource(url);
@@ -1278,6 +1291,9 @@ export function runLayer2Optimization(
     params.append('de_n_time_points', settings.de_n_time_points.toString());
   }
 
+  // Names the open design so the backend can refuse the run when someone
+  // else holds it: a layer run ends in set_config, so it is an edit.
+  for (const [k, v] of Object.entries(designParams())) params.append(k, v);
   const url = `${API_BASE}/optimizer/layer2?${params.toString()}`;
 
   const eventSource = new EventSource(url);
@@ -1673,6 +1689,9 @@ export function runLayer3Optimization(
     optimization_method: settings.optimization_method || 'gradient',
   });
 
+  // Names the open design so the backend can refuse the run when someone
+  // else holds it: a layer run ends in set_config, so it is an edit.
+  for (const [k, v] of Object.entries(designParams())) params.append(k, v);
   const url = `${API_BASE}/optimizer/layer3?${params.toString()}`;
 
   const eventSource = new EventSource(url);

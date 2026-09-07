@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { ProfileParams, ProfileType } from '../api/client';
+import { useReadOnly } from '@stardesign-ui';
 
 interface PressureProfileFormProps {
   duration: number;
@@ -22,6 +23,8 @@ interface ProfileInputProps {
 }
 
 function ProfileInput({ label, profile, onChange, colorClass }: ProfileInputProps) {
+  // Edits the parent's profile, which is part of the design.
+  const readOnly = useReadOnly();
   const profileTypes: ProfileType[] = ['linear', 'exponential', 'power'];
   
   const [startPressureInput, setStartPressureInput] = useState(profile.start_pressure_psi.toString());
@@ -89,6 +92,7 @@ function ProfileInput({ label, profile, onChange, colorClass }: ProfileInputProp
           </label>
           <div className="relative">
             <input
+              disabled={readOnly}
               type="text"
               value={startPressureInput}
               onChange={(e) => setStartPressureInput(e.target.value)}
@@ -111,6 +115,7 @@ function ProfileInput({ label, profile, onChange, colorClass }: ProfileInputProp
           </label>
           <div className="relative">
             <input
+              disabled={readOnly}
               type="text"
               value={endPressureInput}
               onChange={(e) => setEndPressureInput(e.target.value)}
@@ -132,6 +137,7 @@ function ProfileInput({ label, profile, onChange, colorClass }: ProfileInputProp
             Profile Type
           </label>
           <select
+            disabled={readOnly}
             value={profile.profile_type}
             onChange={(e) => onChange({ ...profile, profile_type: e.target.value as ProfileType })}
             className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-blue-500"
@@ -152,6 +158,7 @@ function ProfileInput({ label, profile, onChange, colorClass }: ProfileInputProp
             </label>
             <div className="flex items-center gap-2">
               <input
+                disabled={readOnly}
                 type="range"
                 min="0.1"
                 max="10"
@@ -161,6 +168,7 @@ function ProfileInput({ label, profile, onChange, colorClass }: ProfileInputProp
                 className="flex-1 accent-blue-500"
               />
               <input
+                disabled={readOnly}
                 type="text"
                 value={decayInput}
                 onChange={(e) => setDecayInput(e.target.value)}
@@ -188,6 +196,7 @@ function ProfileInput({ label, profile, onChange, colorClass }: ProfileInputProp
             </label>
             <div className="flex items-center gap-2">
               <input
+                disabled={readOnly}
                 type="range"
                 min="0.1"
                 max="5"
@@ -197,6 +206,7 @@ function ProfileInput({ label, profile, onChange, colorClass }: ProfileInputProp
                 className="flex-1 accent-blue-500"
               />
               <input
+                disabled={readOnly}
                 type="text"
                 value={powerInput}
                 onChange={(e) => setPowerInput(e.target.value)}
@@ -232,6 +242,10 @@ export function PressureProfileForm({
   onSubmit,
   isLoading,
 }: PressureProfileFormProps) {
+  // These commit into TimeSeriesMode's profile state, which is part of the
+  // design, so they need the checkout.
+  const readOnly = useReadOnly();
+
   const [durationInput, setDurationInput] = useState(duration.toString());
   const [nStepsInput, setNStepsInput] = useState(nSteps.toString());
 
@@ -273,6 +287,7 @@ export function PressureProfileForm({
           </label>
           <div className="relative">
             <input
+              disabled={readOnly}
               type="text"
               value={durationInput}
               onChange={(e) => setDurationInput(e.target.value)}
@@ -293,6 +308,7 @@ export function PressureProfileForm({
             Samples
           </label>
           <input
+            disabled={readOnly}
             type="text"
             value={nStepsInput}
             onChange={(e) => setNStepsInput(e.target.value)}

@@ -1,0 +1,22 @@
+[Unit]
+Description=STAR EC2 stack — pull images CI published for main and redeploy
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Adjust the path if the repo lives elsewhere than /home/ec2-user/STAR
+# (matches starproject-backup.service).
+Environment=REPO_DIR=/home/ec2-user/STAR
+Environment=COMPOSE_DIR=/home/ec2-user/STAR/deploy/ec2
+# No profiles: `legacy` (retired OpenProject) must stay off. REMOVE_ORPHANS is
+# off by default in the script for the same reason — compose counts a disabled
+# profile's containers as orphans and would delete a rollback OpenProject.
+Environment=COMPOSE_PROFILES_LIST=
+EnvironmentFile=-/etc/star-auto-update.conf
+ExecStart=/home/ec2-user/STAR/deploy/auto-update.sh
+TimeoutStartSec=30min
+
+[Install]
+WantedBy=multi-user.target

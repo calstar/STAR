@@ -8,6 +8,7 @@ from pydantic import ValidationError
 import yaml
 
 from engine.pipeline.config_schemas import PintleEngineConfig
+from backend.checkout import DesignCheckout
 from backend.session import UserSession, get_session
 
 router = APIRouter(prefix="/api/config", tags=["config"])
@@ -22,6 +23,7 @@ def config_to_dict(config: PintleEngineConfig) -> dict:
 async def upload_config(
     file: UploadFile = File(...),
     session: UserSession = Depends(get_session),
+    _: None = DesignCheckout,
 ):
     """Upload a YAML config file and parse it."""
     if not file.filename or not file.filename.endswith((".yaml", ".yml")):
@@ -72,6 +74,12 @@ async def get_config(session: UserSession = Depends(get_session)):
 @router.post("/load")
 async def load_config_json(body: dict, session: UserSession = Depends(get_session)):
     """Replace the current config with a full config dict (not a merge).
+
+    Deliberately NOT behind the checkout, unlike the other write routes here.
+    This is how the design bar loads a design into your session when you open
+    it -- including read only -- so gating it would make a design you may only
+    view impossible to open at all. It writes your own session, never the
+    stored design; saving that back is /autosave's job, and that is gated.
 
     The per-user saved-config library (/api/configs) stores a complete config;
     loading it must replace app_state wholesale. PUT deep-merges partial updates,
@@ -130,7 +138,11 @@ async def get_injector_schema(
 
 
 @router.post("/switch")
-async def switch_config_endpoint(body: dict, session: UserSession = Depends(get_session)):
+async def switch_config_endpoint(
+    body: dict,
+    session: UserSession = Depends(get_session),
+    _: None = DesignCheckout,
+):
     """Switch injector type and/or propellant, auto-reconciling the config to the right physics.
 
     Body: {"injector_type": "pintle"|"impinging"|null, "propellant_preset": "methalox"|...|null}.
@@ -176,7 +188,11 @@ async def switch_config_endpoint(body: dict, session: UserSession = Depends(get_
 
 
 @router.put("")
-async def update_config(updates: dict, session: UserSession = Depends(get_session)):
+async def update_config(
+    updates: dict,
+    session: UserSession = Depends(get_session),
+    _: None = DesignCheckout,
+):
     """Update the current config with partial updates.
 
     Accepts a nested dict of updates that will be merged with the current config.

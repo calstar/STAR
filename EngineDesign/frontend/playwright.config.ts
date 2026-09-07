@@ -1,4 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
+import os from 'node:os';
+import path from 'node:path';
 
 /**
  * E2E for the engine-design GUI. Unlike daq-server (whose stack is booted by a
@@ -12,6 +14,16 @@ import { defineConfig, devices } from '@playwright/test';
  */
 const UI_PORT = 5173;
 const API_PORT = 8000;
+
+/**
+ * A throwaway data root for the backend, fresh on every run.
+ *
+ * The design tests are about stored state -- what a design holds after a
+ * reload -- so they must not inherit it. Against a persistent USERDATA_DIR the
+ * suite accumulates designs and a live checkout from the previous run, and the
+ * tests pass or fail depending on what the last run left behind.
+ */
+const USERDATA_DIR = path.join(os.tmpdir(), `engine-design-e2e-${process.pid}-${Date.now()}`);
 
 export default defineConfig({
   testDir: 'e2e',
@@ -33,7 +45,7 @@ export default defineConfig({
       command: `python -m uvicorn backend.main:app --port ${API_PORT}`,
       cwd: '..',
       url: `http://127.0.0.1:${API_PORT}/api/health`,
-      env: { ED_USE_NATIVE: '0' },
+      env: { ED_USE_NATIVE: '0', USERDATA_DIR },
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
       stdout: 'pipe',
