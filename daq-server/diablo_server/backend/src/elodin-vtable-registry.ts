@@ -7,7 +7,7 @@
  */
 
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
-import { readConfig } from './routes/config.js';
+import { readDeployedConfig } from './routes/config.js';
 
 // ── FNV-1a hash (matching db.hpp msg_id) ────────────────────────────────────
 
@@ -114,7 +114,10 @@ function buildVTableStreamSubscriptionList(): Array<[number, number]> {
     };
 
     try {
-        const cfg = readConfig();
+        // Cached: this runs on every Elodin connect and on up to 24 resubscribe retries per
+        // connection, so a plain readConfig() here was a repeated file read + TOML parse on a
+        // reconnect storm. Invalidated at deploy.
+        const cfg = readDeployedConfig();
         const boards = (cfg.boards || {}) as Record<string, unknown>;
         for (const [, raw] of Object.entries(boards)) {
             const b = raw as Record<string, unknown>;

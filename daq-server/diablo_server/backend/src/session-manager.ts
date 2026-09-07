@@ -223,9 +223,24 @@ class SessionManager {
     // Deploy the selected profile into config.toml right before the (live) run starts, then it's
     // frozen for the session. Simulated runs use the committed frozen sim overlay (config_base →
     // sim_config.toml) instead, so we don't touch config.toml for them.
+    //
+    // A failure here aborts the session. This used to warn and carry on, which is the worst
+    // outcome available: session start is the ONE point at which config is applied, so a failed
+    // deploy means the run silently uses whatever stale config.toml was left on disk — while the
+    // operator sees a perfectly normal active session and believes their edits are in effect.
+    // Refusing to start is recoverable; running the wrong config is not.
     if (!this.simulated) {
-      try { deployActiveProfile(); }
-      catch (e) { console.warn('⚠️ Failed to deploy active profile at session start:', e); }
+      try {
+        deployActiveProfile();
+      } catch (e) {
+        const detail = (e as Error)?.message ?? String(e);
+        console.error('❌ Failed to deploy active profile at session start:', detail);
+        throw new Error(
+          `Cannot start session: the active config profile failed to deploy (${detail}). ` +
+          'Fix the profile in the config editor, then start the session again. ' +
+          'Nothing was started and config.toml is unchanged.',
+        );
+      }
     }
     await this.controller.start(this.dbDir, this.simulated);
     this.active = true;

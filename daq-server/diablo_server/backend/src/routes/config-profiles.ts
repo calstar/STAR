@@ -21,7 +21,7 @@
  */
 import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'fs';
 import { join, dirname } from 'path';
-import { getConfigPath, readConfig, writeConfig } from './config.js';
+import { getConfigPath, readConfig, writeConfig, invalidateDeployedConfigCache } from './config.js';
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const DEFAULT_PROFILE = 'default';
@@ -62,6 +62,33 @@ function profileAssets(name: string): string[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Files in the active profile that differ from what is deployed in config/.
+ *
+ * The editor writes the profile; config.toml is the deployed artifact. During a session the two
+ * diverge by design, and there was no way to see that other than eyeballing the raw "running
+ * config.toml" pane — so an operator could not tell whether they had one un-applied change or
+ * twenty. Byte comparison rather than a semantic diff: the deploy is a file copy, so "differs as
+ * bytes" is exactly "would change on deploy".
+ */
+export function undeployedChanges(): string[] {
+  const name = getActiveProfileName();
+  const configDir = getConfigDir();
+  const out: string[] = [];
+  const differs = (a: string, b: string): boolean => {
+    let left: string | null = null;
+    let right: string | null = null;
+    try { left = readFileSync(a, 'utf-8'); } catch { left = null; }
+    try { right = readFileSync(b, 'utf-8'); } catch { right = null; }
+    return left !== right;
+  };
+  if (differs(getActiveProfilePath(), getConfigPath())) out.push('config.toml');
+  for (const f of profileAssets(name)) {
+    if (differs(join(profileDir(name), f), join(configDir, f))) out.push(f);
+  }
+  return out;
 }
 
 export function getActiveProfileName(): string {
@@ -200,6 +227,9 @@ export function deployActiveProfile(): void {
   try {
     copyFileSync(src, configPath);
     for (const f of assets) copyFileSync(join(profileDir(name), f), join(configDir, f));
+    // Drop the cache before the parse below, so the parse itself repopulates it from the file we
+    // just wrote rather than handing back the previous deploy's object.
+    invalidateDeployedConfigCache();
     readConfig(); // parse the freshly-deployed config.toml
   } catch (e) {
     for (const t of targets) {
@@ -208,6 +238,9 @@ export function deployActiveProfile(): void {
         else rmSync(t.path, { force: true });
       } catch { /* best-effort rollback */ }
     }
+    // The rollback put the previous config.toml back, so anything cached from the failed deploy
+    // is wrong too.
+    invalidateDeployedConfigCache();
     throw new Error(`Active profile is not valid config: ${(e as Error)?.message ?? e}`);
   }
 }

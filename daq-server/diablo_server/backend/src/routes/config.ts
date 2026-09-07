@@ -126,6 +126,33 @@ export function readConfig(path: string = getConfigPath()): any {
   }
 }
 
+// ── Deployed-config cache ─────────────────────────────────────────────────────
+// readConfig() had no cache, so every caller was a fresh readFileSync + TOML parse. Several are
+// on hot paths: /api/gui-config, /api/pressure-limits and /api/sensor-config re-read per HTTP
+// request, configStateName() re-read per operator command, and the Elodin VTable registry
+// re-read on every connect plus 24 resubscribe retries.
+//
+// The cache is NOT "read once at boot". The backend is always-on — it is not one of the
+// session-gated pipeline units — so it has to notice a deploy without restarting. But a deploy
+// happens in exactly one function, deployActiveProfile(), which is also the only writer of
+// config.toml on the normal path. So: cache freely, and invalidate there. Within a session no
+// deploy can occur, which is precisely why the cached value is safe for the length of a run.
+let deployedConfigCache: any = null;
+
+/** The deployed config.toml, parsed once and reused until the next deploy. Callers must not
+ *  mutate the returned object — it is shared. Use readConfig() for a private copy or for a
+ *  path other than the deployed config. */
+export function readDeployedConfig(): any {
+  if (deployedConfigCache === null) deployedConfigCache = readConfig();
+  return deployedConfigCache;
+}
+
+/** Drop the cached deployed config. Called from deployActiveProfile() — the single apply point —
+ *  so any path that changes config.toml invalidates, without each call site having to remember. */
+export function invalidateDeployedConfigCache(): void {
+  deployedConfigCache = null;
+}
+
 /** Serialize + write a config object as TOML. Defaults to the deployed config.toml, but any path
  *  can be given — the config-profiles editor writes the active profile file this way. */
 export function writeConfig(config: any, configPath: string = getConfigPath()): void {
@@ -169,8 +196,36 @@ export function writeConfig(config: any, configPath: string = getConfigPath()): 
  * rest of the file — comments included — byte-for-byte unchanged. Used by the
  * Boards-tab logging-mode dropdown; config_broadcast_service re-reads the file.
  */
-export function patchBoardField(boardId: number, field: string, value: number): void {
-  const configPath = getConfigPath();
+/**
+ * Path to the active profile's config.toml.
+ *
+ * Deliberately computed here rather than imported from config-profiles.ts: that module already
+ * imports this one, and a cycle between them is not worth introducing for one path. The pointer
+ * format (config/.active_profile, one bare name) is the same one getConfigPath() reads below.
+ */
+function getActiveProfileConfigPath(): string {
+  const dir = dirname(getConfigPath());
+  let name = 'default';
+  try {
+    const a = readFileSync(join(dir, '.active_profile'), 'utf-8').trim();
+    if (/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(a)) name = a;
+  } catch { /* no pointer → default */ }
+  return join(dir, 'profiles', name, 'config.toml');
+}
+
+/**
+ * Surgically set one `[boards.<key>].<field>` in a TOML file, preserving comments and layout.
+ *
+ * Split out so the same edit can be applied to both the deployed config.toml and the active
+ * profile — see patchBoardField().
+ */
+function patchBoardFieldInFile(
+  path: string,
+  boardId: number,
+  field: string,
+  value: number,
+): void {
+  const configPath = path;
   const raw = readFileSync(configPath, 'utf-8');
 
   // Map board_id → section key (e.g. "pt_board") via the parsed config.
@@ -210,4 +265,30 @@ export function patchBoardField(boardId: number, field: string, value: number): 
   if (!replaced) lines.splice(start + 1, 0, `${field} = ${value}`);
 
   writeFileSync(configPath, lines.join('\n'), { encoding: 'utf-8', flag: 'w' });
+}
+
+/**
+ * Set one board field live, and record it in the active profile so it survives.
+ *
+ * This is the one config write that deliberately bypasses the draft-at-session-start rule:
+ * board log/serial-print verbosity is turned up *because* something is misbehaving during a run,
+ * and config_broadcast re-reads config.toml every cycle, so the byte reaches the board within a
+ * second. That exception is intentional (see docs/CONFIGURATION_GUIDE.md).
+ *
+ * What was NOT intentional: it wrote only config.toml and never the profile, so the setting was
+ * silently reverted by the next deployActiveProfile() — including the one at the very next
+ * session start. Write both. The profile write is best-effort: failing to persist a debug setting
+ * must not fail the live change the operator actually asked for.
+ */
+export function patchBoardField(boardId: number, field: string, value: number): void {
+  patchBoardFieldInFile(getConfigPath(), boardId, field, value);
+  invalidateDeployedConfigCache();
+  try {
+    patchBoardFieldInFile(getActiveProfileConfigPath(), boardId, field, value);
+  } catch (e) {
+    console.warn(
+      `[config] board ${boardId} ${field}=${value} applied live but not persisted to the active ` +
+      `profile — it will revert at the next deploy: ${(e as Error)?.message ?? e}`,
+    );
+  }
 }

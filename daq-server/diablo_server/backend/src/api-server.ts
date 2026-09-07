@@ -12,11 +12,12 @@ import { IncomingMessage, ServerResponse } from 'http';
 // ESM has no __dirname global. tsx injects one in dev, but `node dist/server.js` (the systemd sim)
 // does not — so the __dirname candidates below would throw ReferenceError. Define it explicitly.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-import { readConfig, writeConfig, getConfigPath, patchBoardField } from './routes/config.js';
+import { readConfig, readDeployedConfig, writeConfig, getConfigPath, patchBoardField } from './routes/config.js';
 import {
   listProfiles, switchProfile, createProfile, renameProfile, deleteProfile,
   getActiveProfileName, ensureSeeded, readActiveProfile, writeActiveProfile, deployActiveProfile,
   getActiveProfilePath, readStateCsv, writeStateCsv, isStateCsvName, STATE_CSVS,
+  undeployedChanges,
 } from './routes/config-profiles.js';
 import {
   listCalibrationProfiles,
@@ -266,8 +267,9 @@ export interface APIHandlerOptions {
   getQueryClient?: () => ElodinQueryClient | null;
   getDebugInfo?: () => DebugInfo | null;
   onConfigUpdated?: () => void;
-  /** A state-machine CSV was saved and deployed: rebuild derived maps and tell the sequencer to
-   *  re-read (it exposes RELOAD_CONFIG, which re-loads both CSVs without a restart). */
+  /** A state-machine CSV was saved and deployed: rebuild the maps the always-on backend derives
+   *  from it and tell browsers to refetch. Nothing is pushed to the run pipeline — it picks the
+   *  CSVs up at the next session start, which is the only point config is applied. */
   onStateCsvUpdated?: () => void;
   getEngineState?: () => number;
   getCalibrationStatus?: () => Promise<any>;
@@ -509,6 +511,9 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
           profiles: listProfiles(),
           active: getActiveProfileName(),
           sessionActive: sessionManager.getStatus().active,
+          // Which profile files differ from what is deployed, so the editor can say how much is
+          // waiting rather than just that the config is frozen.
+          undeployed: undeployedChanges(),
         }));
       } else if (url.pathname === '/api/config/profiles/switch' && req.method === 'POST') {
         // Switch the active profile and deploy it. Operators only; blocked while a session runs.
@@ -609,17 +614,21 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
             res.end(JSON.stringify({ error: error.message }));
           });
       } else if (url.pathname === '/api/pressure-limits' && req.method === 'GET') {
-        // Return pressure limits from config.toml (NOP, MEOP, POP per fluid system)
-        const config = readConfig();
+        // Return pressure limits from config.toml (NOP, MEOP, POP per fluid system).
+        // Cached until the next deploy — config cannot change during a session.
+        const config = readDeployedConfig();
         const limits = config.pressure_limits || {};
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ pressure_limits: limits }));
       } else if (url.pathname === '/api/gui-config' && req.method === 'GET') {
-        // GUI-driven config lists from config.toml [gui]: the ordered top-bar
-        // pressure gauges ([[gui.pressure_bars]]) and the tab-bar tabs+order
-        // (gui.tabs). Fresh per request → reflects edits live. Bar NOP/MEOP come
-        // from [pressure_limits]; tab ids index the frontend view catalog.
-        const config = readConfig();
+        // GUI-driven config lists from config.toml [gui]: the ordered top-bar pressure gauges
+        // ([[gui.pressure_bars]]) and the tab-bar tabs+order (gui.tabs). Bar NOP/MEOP come from
+        // [pressure_limits]; tab ids index the frontend view catalog.
+        //
+        // Served from the deployed-config cache, not re-read per request. GUI config is frozen
+        // during a session like everything else; the browser is told to refetch by the
+        // CONFIG_UPDATED broadcast when a deploy actually happens.
+        const config = readDeployedConfig();
         const gui = config.gui ?? {};
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
@@ -681,9 +690,13 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ stats: getBoardLogStats() }));
       } else if (url.pathname === '/api/board-log-mode' && req.method === 'POST') {
-        // Set one board's logging/serial-print mode byte (0..3) via a surgical
-        // single-field edit of config.toml. Operators only. config_broadcast_service
-        // re-reads config.toml and sends the board the new byte on its next cycle.
+        // Set one board's logging/serial-print mode byte (0..3) via a surgical single-field edit.
+        // Operators only. config_broadcast_service re-reads config.toml and sends the board the
+        // new byte on its next cycle.
+        //
+        // This is the deliberate exception to "config applies at session start": verbosity is
+        // turned up because something is misbehaving *now*. patchBoardField also writes the active
+        // profile so the setting is not reverted by the next deploy.
         if (!isConfigWriteAuthorized(req)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Not an approved operator' }));

@@ -31,7 +31,7 @@ import { registerVTables, clearSubscriptionState } from './elodin-vtable-registr
 import { registerControllerVTables } from './legacy/elodin-vtable-controller.js';
 import { createAPIHandler } from './api-server.js';
 import { startBoardLogReceiver } from './board-logs.js';
-import { readConfig } from './routes/config.js';
+import { readConfig, readDeployedConfig } from './routes/config.js';
 import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } from './legacy/state-actuators.js';
 import type { StateActuatorMap } from './legacy/state-actuators.js';
 import { getStateTransitions } from './legacy/state-transitions.js';
@@ -110,13 +110,16 @@ function safeReadConfigForGui(): unknown {
 
 /**
  * Name of a state id as the ACTIVE config declares it, or null if the config declares no [[states]]
- * (or not this id). Read per command rather than cached: transitions are operator-paced, and a
- * profile can be redeployed under a running backend, in which case a cache would keep commanding
- * the previous rig's names.
+ * (or not this id).
+ *
+ * Served from the deployed-config cache. A profile CAN be redeployed under a running backend —
+ * the backend is always-on, not one of the session-gated pipeline units — which is why this is a
+ * cache with invalidation rather than a boot-time read. deployActiveProfile() drops it, so the
+ * next command after a deploy resolves against the new rig's names.
  */
 function configStateName(id: number): string | null {
   try {
-    const raw = (readConfig() as any)?.states;
+    const raw = (readDeployedConfig() as any)?.states;
     if (!Array.isArray(raw)) return null;
     const hit = raw.find((e: any) => e?.id === id && typeof e?.name === 'string');
     return hit ? (hit.name as string) : null;
@@ -607,24 +610,20 @@ const apiHandler = createAPIHandler({
     boardScanRateHz: getBoardScanRateHz(),
   }),
   onStateCsvUpdated: () => {
-    // The CSV on disk changed and was deployed. Rebuild what we derive from it, then tell the
-    // sequencer to re-read — it already exposes RELOAD_CONFIG (sequencer_main.cpp), which re-loads
-    // the actuator table and the transition table without restarting the pipeline.
+    // The CSV on disk changed and was deployed. Rebuild what the always-on backend derives from
+    // it, and tell browsers to refetch.
+    //
+    // Nothing is pushed to the run pipeline. Config reaches it at exactly one point --
+    // deployActiveProfile() at session start -- and the services read it once at boot. This used
+    // to send RELOAD_CONFIG to hot-reload the actuator and transition tables into a running
+    // sequencer, which was dead weight in the safety-critical path: this callback only fires when
+    // the CSV was actually *deployed*, and a deploy only happens when no session is active, so
+    // there was never a running sequencer for it to reach.
     try {
       STATE_ACTUATOR_MAP = getStateActuatorMap();
     } catch (e) {
       console.warn('\u26a0\ufe0f Failed to rebuild STATE_ACTUATOR_MAP:', e);
     }
-    // Best-effort: only the tmux stack keeps the sequencer up between runs. Under systemd the
-    // pipeline is session-gated, so while idle there is nothing listening — which is fine, because
-    // the CSV is already deployed to config/ and the sequencer reads it when the session starts.
-    sendToActuatorService('RELOAD_CONFIG\n')
-      .then(({ ok, reply }) => console.log(
-        ok
-          ? '[ThinServer] sequencer reloaded the state CSVs'
-          : `[ThinServer] sequencer not running (${reply || 'no reply'}) — CSVs apply at next session start`,
-      ))
-      .catch(() => console.log('[ThinServer] sequencer not running — CSVs apply at next session start'));
     broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
   },
   onCalibrationReload: () => {
