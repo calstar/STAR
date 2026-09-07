@@ -257,11 +257,22 @@ function PIDCanvas({
     return () => window.removeEventListener('keydown', handler);
   }, [setNodes]);
 
+  // Each of these rewrites the diagram, and each is reached from the toolbar.
+  // The toolbar buttons are disabled without the checkout; these guards are the
+  // belt to that pair of braces, and they also cover the keyboard shortcuts.
   getRef.current   = useCallback(() => ({ nodes, edges }), [nodes, edges]);
-  loadRef.current  = useCallback((d) => { setNodes(d.nodes); setEdges(d.edges); }, [setNodes, setEdges]);
-  clearRef.current = useCallback(() => { setNodes([]); setEdges([]); }, [setNodes, setEdges]);
-  undoRef.current  = undo;
-  redoRef.current  = redo;
+  loadRef.current  = useCallback((d) => {
+    if (readOnly) return;
+    setNodes(d.nodes);
+    setEdges(d.edges);
+  }, [readOnly, setNodes, setEdges]);
+  clearRef.current = useCallback(() => {
+    if (readOnly) return;
+    setNodes([]);
+    setEdges([]);
+  }, [readOnly, setNodes, setEdges]);
+  undoRef.current  = useCallback(() => { if (!readOnly) undo(); }, [readOnly, undo]);
+  redoRef.current  = useCallback(() => { if (!readOnly) redo(); }, [readOnly, redo]);
 
   releaseRef.current = useCallback(
     (label: string) => api.createRelease(diagramRef, label, { nodes, edges }),
@@ -279,16 +290,18 @@ function PIDCanvas({
   );
 
   restoreMicroRef.current = useCallback(async (versionId: string) => {
+    if (readOnly) return;
     const data = await api.getVersion(diagramRef, versionId);
     setNodes(data.nodes);
     setEdges(data.edges);
-  }, [diagramKey, setNodes, setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [readOnly, diagramKey, setNodes, setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
 
   restoreReleaseRef.current = useCallback(async (label: string) => {
+    if (readOnly) return;
     const data = await api.getRelease(diagramRef, label);
     setNodes(data.nodes);
     setEdges(data.edges);
-  }, [diagramKey, setNodes, setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [readOnly, diagramKey, setNodes, setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onInit = useCallback((inst: ReactFlowInstance) => {
     setRfInst(inst);
@@ -341,13 +354,14 @@ function PIDCanvas({
   }, []);
 
   const setEdgeFluid = useCallback((edgeId: string, fluid: FluidType) => {
+    if (readOnly) return; // recolouring an edge is an edit to the diagram
     setEdges(eds => eds.map(e =>
       e.id === edgeId
         ? { ...e, style: { ...e.style, stroke: FLUID_COLORS[fluid], strokeWidth: 2 }, data: { ...e.data, fluidType: fluid } }
         : e,
     ));
     setEdgeMenu(null);
-  }, [setEdges]);
+  }, [readOnly, setEdges]);
 
   // Suppress unused warning — rfInst used for onInit side-effect
   void rfInst;
@@ -395,7 +409,7 @@ function PIDCanvas({
         >
           <p className="text-[10px] text-slate-500 px-3 py-1 uppercase tracking-wider">Fluid type</p>
           {(['fuel', 'lox', 'pressurant', 'default'] as FluidType[]).map(f => (
-            <button key={f} onClick={() => setEdgeFluid(edgeMenu.id, f)}
+            <button key={f} disabled={readOnly} onClick={() => setEdgeFluid(edgeMenu.id, f)}
               className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-slate-300 hover:bg-[#0f172a] transition-colors">
               <span className="inline-block w-3 h-3 rounded-full" style={{ background: FLUID_COLORS[f] }} />
               {f.charAt(0).toUpperCase() + f.slice(1)}
@@ -524,6 +538,13 @@ export function PIDDesigner() {
   }, [diagrams, activeKey, reloadAndFallBack]);
 
   return (
+    // Wraps the toolbar too, not just the canvas. Clear, Undo, Redo, Import and
+    // the two Restores all rewrite the diagram, and with the provider around
+    // only <PIDCanvas> they stayed live for someone who does not hold it -- a
+    // viewer could wipe the canvas they were looking at. The diagram bar inside
+    // is unaffected: gating is opt-in, and Take / Release must stay live
+    // exactly when you do not hold the diagram.
+    <ReadOnlyProvider readOnly={!checkout.held}>
     <div className="flex flex-col h-[calc(100vh-56px)] min-h-[600px] rounded-xl overflow-hidden border border-[var(--color-border)]">
       <DiagramBar
         diagrams={diagrams}
@@ -584,7 +605,6 @@ export function PIDDesigner() {
         <ComponentPalette />
         <ReactFlowProvider>
           {ready && activeRef ? (
-            <ReadOnlyProvider readOnly={!checkout.held}>
             <PIDCanvas
               // Remount on a diagram switch. Keyed on (owner, id), not id alone:
               // two people can own diagrams with the same id, so switching
@@ -606,7 +626,6 @@ export function PIDDesigner() {
               onForbidden={onForbidden}
               onLockLost={checkout.lost}
             />
-            </ReadOnlyProvider>
           ) : (
             <div className="flex-1 flex items-center justify-center text-sm text-slate-600">
               {ready ? 'Create a diagram to begin.' : 'Loading…'}
@@ -615,5 +634,6 @@ export function PIDDesigner() {
         </ReactFlowProvider>
       </div>
     </div>
+    </ReadOnlyProvider>
   );
 }

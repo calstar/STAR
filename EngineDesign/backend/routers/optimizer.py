@@ -12,6 +12,7 @@ import threading
 import math
 import yaml
 
+from backend.checkout import DesignCheckout
 from backend.session import UserSession, get_session, JOB_SEMAPHORE
 from backend.routers.config import config_to_dict
 from engine.pipeline.config_schemas import DesignRequirementsConfig
@@ -91,7 +92,11 @@ class Layer2Request(BaseModel):
 
 
 @router.post("/design-requirements")
-async def save_design_requirements(request: DesignRequirementsRequest, session: UserSession = Depends(get_session)):
+async def save_design_requirements(
+    request: DesignRequirementsRequest,
+    session: UserSession = Depends(get_session),
+    _: None = DesignCheckout,
+):
     """Save design requirements to config."""
     if not session.app_state.has_config():
         raise HTTPException(
@@ -268,6 +273,7 @@ async def run_layer1(
     target_burn_time: float | None = None,
     report_every_n: int = 1,
     session: UserSession = Depends(get_session),
+    _: None = DesignCheckout,
 ):
     """Run Layer 1 optimization with Server-Sent Events for progress updates.
     
@@ -509,6 +515,7 @@ async def run_layer2(
     de_popsize: int = 2,
     de_n_time_points: int = 25,
     session: UserSession = Depends(get_session),
+    _: None = DesignCheckout,
 ):
     """Run Layer 2 optimization with Server-Sent Events for progress updates."""
     if not session.app_state.has_config():
@@ -870,6 +877,7 @@ async def run_layer3(
     save_plots: bool = False,
     optimization_method: str = "gradient",
     session: UserSession = Depends(get_session),
+    _: None = DesignCheckout,
 ):
     """Run Layer 3 thermal protection optimization with Server-Sent Events for progress updates.
     

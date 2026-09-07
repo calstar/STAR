@@ -6,9 +6,12 @@
  * passing `readOnly` down through its whole component tree, the bar publishes it
  * once here and the shared inputs consult it.
  *
- * Scope note: this disables *inputs*, not actions. Running a simulation or
- * opening history while read-only is fine -- neither changes the design -- so
- * those buttons deliberately do not consult this.
+ * Scope note: this disables *inputs*, not actions -- but "action" is decided per
+ * app, by what the endpoint actually does, not by what the button is called.
+ * Opening history or exporting a file is always safe. A "run" is not
+ * automatically safe: EngineDesign's optimizer layers write their result back
+ * into the live config (backend/routers/optimizer.py), so there the Run buttons
+ * are gated along with the inputs. Check the route before leaving one live.
  */
 
 import { createContext, useContext } from 'react';

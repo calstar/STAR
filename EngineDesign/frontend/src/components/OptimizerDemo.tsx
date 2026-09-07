@@ -33,7 +33,9 @@ import {
   type FlightSimResponse,
   type ChamberGeometryResponse,
 } from '../api/client';
+import { useReadOnly } from '@stardesign-ui';
 import { ChamberContourPlot } from './ChamberContourPlot';
+import { useViewState } from '../lib/viewState';
 
 interface OptimizerDemoProps {
   config: EngineConfig | null;
@@ -126,6 +128,10 @@ type DemoState =
 const TIMESERIES_RESULTS_KEY = 'timeseries_results';
 
 export function OptimizerDemo({ config }: OptimizerDemoProps) {
+  // This tab keeps its own copy of the design requirements and saves it with
+  // saveDesignRequirements, then runs layers 1-3 -- all of which write the
+  // config. Both the form and Run Optimizer therefore need the checkout.
+  const readOnly = useReadOnly();
   // Demo state machine
   const [demoState, setDemoState] = useState<DemoState>('idle');
   
@@ -152,7 +158,7 @@ export function OptimizerDemo({ config }: OptimizerDemoProps) {
     copv_free_volume_L: 4.5,
   });
   const [requirementsSaved, setRequirementsSaved] = useState(false);
-  const [showRequirementsForm, setShowRequirementsForm] = useState(true);
+  const [showRequirementsForm, setShowRequirementsForm] = useViewState('demo.requirementsForm', true);
 
   // Layer progress and results
   const [layer1Progress, setLayer1Progress] = useState(0);
@@ -756,7 +762,7 @@ export function OptimizerDemo({ config }: OptimizerDemoProps) {
         </button>
 
         {showRequirementsForm && (
-          <div className="px-6 pb-6 border-t border-[var(--color-border)]">
+          <fieldset disabled={readOnly} className="px-6 pb-6 border-t border-[var(--color-border)] min-w-0">
             <div className="pt-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
               {/* Performance Targets */}
               <div>
@@ -856,7 +862,7 @@ export function OptimizerDemo({ config }: OptimizerDemoProps) {
                 {requirementsSaved ? 'Saved' : 'Save Requirements'}
               </button>
             </div>
-          </div>
+          </fieldset>
         )}
       </div>
 
@@ -1294,7 +1300,7 @@ export function OptimizerDemo({ config }: OptimizerDemoProps) {
         {demoState === 'idle' && (
           <button
             onClick={handleStartOptimizer}
-            disabled={!config}
+            disabled={!config || readOnly}
             className="px-8 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-all shadow-lg hover:shadow-xl"
           >
             Run Optimizer
@@ -1313,6 +1319,7 @@ export function OptimizerDemo({ config }: OptimizerDemoProps) {
         {demoState === 'waiting_layer1' && !layer1Error && (
           <button
             onClick={handleContinueToLayer2}
+            disabled={readOnly}
             className="px-8 py-3 bg-gradient-to-r from-pink-600 to-orange-600 hover:from-pink-700 hover:to-orange-700 text-white font-semibold rounded-xl transition-all shadow-lg hover:shadow-xl"
           >
             Continue to Layer 2
@@ -1322,6 +1329,7 @@ export function OptimizerDemo({ config }: OptimizerDemoProps) {
         {demoState === 'waiting_layer2' && !layer2Error && (
           <button
             onClick={handleContinueToLayer3}
+            disabled={readOnly}
             className="px-8 py-3 bg-gradient-to-r from-orange-600 to-yellow-600 hover:from-orange-700 hover:to-yellow-700 text-white font-semibold rounded-xl transition-all shadow-lg hover:shadow-xl"
           >
             Continue to Layer 3
