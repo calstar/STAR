@@ -7,6 +7,7 @@ import { Board } from "@/components/Board";
 import { FieldSelect } from "@/components/fields/FieldSelect";
 import { GanttChart } from "@/components/GanttChart";
 import { TaskTable } from "@/components/TaskTable";
+import { ViewDock } from "@/components/ViewDock";
 import { BOARD_SORT_OPTIONS, type BoardSort, type WorkspaceTask, toRowData } from "@/lib/board";
 import { STATUS_LABEL } from "@/lib/tasks";
 
@@ -79,7 +80,7 @@ export function TasksWorkspace({
     !!search || !!status || myOnly || projSel.size > 0 || subSel.size > 0;
 
   const tabBtn = (v: View) =>
-    `min-h-11 flex-1 rounded px-3 py-1 text-sm sm:min-h-0 sm:flex-none ${
+    `rounded px-3 py-1 text-sm ${
       view === v
         ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
         : "text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
@@ -92,10 +93,17 @@ export function TasksWorkspace({
     }`;
 
   return (
-    <div>
+    // pb-20 keeps content clear of the mobile ViewDock (the page container has
+    // no extra bottom padding of its own on mobile).
+    <div className="pb-20 sm:pb-0">
+      <ViewDock
+        active={view === "table" ? "list" : view}
+        onSelect={(v) => setView(v === "list" ? "table" : v)}
+      />
       <div className="flex flex-col gap-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-          <div className="flex items-center gap-1">
+          {/* Desktop tabs; the ViewDock replaces them on mobile. */}
+          <div className="hidden items-center gap-1 sm:flex">
             <button onClick={() => setView("table")} className={tabBtn("table")}>
               List
             </button>

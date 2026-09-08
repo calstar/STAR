@@ -55,14 +55,18 @@ export function NewTaskForm({
 
   return (
     <>
-      {/* Mobile: the form collapses to this single trigger. */}
+      {/* Mobile: the form collapses to a floating + button, positioned above
+          the ViewDock (dock is ~3.5rem tall plus the safe-area inset). */}
       {!open && (
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="min-h-11 w-full rounded-lg bg-neutral-900 px-3 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300 sm:hidden"
+          aria-label="Add task"
+          className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-neutral-900 text-white shadow-lg hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300 sm:hidden"
         >
-          Add task
+          <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden>
+            <path d="M12 5v14M5 12h14" />
+          </svg>
         </button>
       )}
       {open && (

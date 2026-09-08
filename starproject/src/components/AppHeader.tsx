@@ -13,8 +13,10 @@ export async function AppHeader() {
   const user = await getCurrentDbUser();
 
   // `relative` anchors HeaderNav's full-width mobile panel (absolute inset-x-0 top-full).
+  // Sticky so the nav stays docked to the top while the page scrolls; z-40 keeps
+  // it above page content but below dropdowns/modals (z-50+).
   return (
-    <header className="relative border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+    <header className="sticky top-0 z-40 border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
       <div className="mx-auto flex max-w-[88rem] items-center justify-between px-4 py-2 sm:px-6">
         <div className="flex min-w-0 items-center gap-3 sm:gap-6">
           <Link href="/" className="flex items-center gap-2 leading-none">

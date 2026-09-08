@@ -3,6 +3,19 @@
 /* Class-based dark mode: `dark:` variants apply when <html class="dark">. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Slightly reduced type scale (about one point off each step) so dense screens
+   breathe a little more. Only font sizes shrink — spacing and touch-target
+   utilities are untouched. Default line-height ratios still apply, so leading
+   gets proportionally airier. */
+@theme {
+  --text-xs: 0.71875rem; /* 11.5px, was 12px */
+  --text-sm: 0.8125rem; /* 13px, was 14px */
+  --text-base: 0.9375rem; /* 15px, was 16px */
+  --text-lg: 1.0625rem; /* 17px, was 18px */
+  --text-xl: 1.1875rem; /* 19px, was 20px */
+  --text-2xl: 1.375rem; /* 22px, was 24px */
+}
+
 /* Always reserve room for the vertical scrollbar so navigating between a page
    that scrolls and one that doesn't (e.g. Activity) doesn't shift the header. */
 html {
