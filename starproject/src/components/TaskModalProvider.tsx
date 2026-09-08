@@ -125,7 +125,7 @@ export function TaskModalProvider({ children }: { children: React.ReactNode }) {
             <button
               onClick={close}
               aria-label="Close"
-              className="absolute right-1 top-1 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-neutral-100 text-neutral-400 ring-1 ring-neutral-200 dark:bg-neutral-800 dark:ring-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-700 hover:text-neutral-700 dark:hover:text-neutral-200"
+              className="absolute right-3 top-3 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-neutral-100 text-neutral-400 ring-1 ring-neutral-200 dark:bg-neutral-800 dark:ring-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-700 hover:text-neutral-700 dark:hover:text-neutral-200"
             >
               ✕
             </button>

@@ -52,7 +52,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
 
   return (
     <div>
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pr-8 text-sm text-neutral-500 dark:text-neutral-400">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pr-10 text-sm text-neutral-500 dark:text-neutral-400">
         <Link href="/projects" className="hover:underline">
           Projects
         </Link>
@@ -79,7 +79,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
         </span>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-3 pr-8">
+      <div className="mt-3 flex flex-wrap items-center gap-3 pr-10">
         <span className="text-2xl font-semibold text-neutral-400 dark:text-neutral-500">
           #{task.number}
         </span>
