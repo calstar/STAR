@@ -47,34 +47,42 @@ function ChipRow({
         ];
   const hiddenCount = options.length - visible.length;
 
+  // The label sits outside the scroll container so it stays pinned on the
+  // left while the chips carousel past it on mobile.
   return (
-    <div
-      className={`flex items-center gap-1.5 ${
-        expanded
-          ? "flex-wrap"
-          : "flex-nowrap overflow-x-auto sm:flex-wrap sm:overflow-x-visible"
-      }`}
-    >
-      <span className="shrink-0 text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+    <div className={`flex gap-1.5 ${expanded ? "items-start" : "items-center"}`}>
+      <span
+        className={`shrink-0 text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400 ${
+          expanded ? "py-2.5 sm:py-1" : ""
+        }`}
+      >
         {label}
       </span>
-      {visible.map((o) => (
-        <button
-          key={o.id}
-          onClick={() => onToggle(o.id)}
-          className={chip(selected.has(o.id))}
-        >
-          {o.label}
-        </button>
-      ))}
-      {collapsible && (
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          className={`${chip(false)} font-medium`}
-        >
-          {expanded ? "Show less" : `+${hiddenCount} more`}
-        </button>
-      )}
+      <div
+        className={`flex min-w-0 flex-1 items-center gap-1.5 ${
+          expanded
+            ? "flex-wrap"
+            : "flex-nowrap overflow-x-auto sm:flex-wrap sm:overflow-x-visible"
+        }`}
+      >
+        {visible.map((o) => (
+          <button
+            key={o.id}
+            onClick={() => onToggle(o.id)}
+            className={chip(selected.has(o.id))}
+          >
+            {o.label}
+          </button>
+        ))}
+        {collapsible && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className={`${chip(false)} font-medium`}
+          >
+            {expanded ? "Show less" : `+${hiddenCount} more`}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
