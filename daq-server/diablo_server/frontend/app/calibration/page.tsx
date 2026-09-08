@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { useSensorStore, useGetSensorValue, useSensorDataVersion, useLoadCellForceLbf } from '@/lib/store';
+import { useGetSensorValue, useSensorDataVersion } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import {
   MessageType,
@@ -12,9 +12,10 @@ import {
 } from '@/lib/types';
 import { useSensorConfig, SensorConfig } from '@/lib/sensor-config';
 import { getApiBaseUrl } from '@/lib/websocket';
-import { CalibrationChart, PhysicsParams, CURVE_COLORS } from '@/components/calibration/CalibrationChart';
+import { CalibrationChart, PhysicsParams, LcPhysicsParams, CURVE_COLORS } from '@/components/calibration/CalibrationChart';
 
 type Model = 'cubic' | 'robust' | 'physics';
+type Kind = 'PT' | 'LC';
 
 // Per-model badge styling — the whole point is that a sensor's selected model reads at a glance.
 const MODEL_BADGE: Record<Model, string> = {
@@ -22,11 +23,15 @@ const MODEL_BADGE: Record<Model, string> = {
   robust: 'text-violet-300 border-violet-600/60 bg-violet-900/40',
   physics: 'text-orange-300 border-orange-600/60 bg-orange-900/40',
 };
-const MODEL_DESC: Record<Model, string> = {
-  cubic: 'Cubic fit from captured points.',
-  robust: 'Adaptive fit; learns from points, corrects drift.',
-  physics: 'Datasheet conversion (ratiometric / 4-20 mA).',
-};
+// physics reads differently per kind (PT: ratiometric/4-20mA; LC: sensitivity/PGA-gain) — the rest
+// of the vocabulary (cubic/robust) means the same thing for either.
+function modelDesc(model: Model, kind: Kind): string {
+  if (model === 'cubic') return 'Cubic fit from captured points.';
+  if (model === 'robust') return 'Adaptive fit; learns from points, corrects drift.';
+  return kind === 'LC'
+    ? 'Datasheet conversion (sensitivity / PGA gain).'
+    : 'Datasheet conversion (ratiometric / 4-20 mA).';
+}
 
 function fmtPsi(v: number | null | undefined): string {
   if (v === null || v === undefined || !isFinite(v)) return '---';
@@ -36,25 +41,6 @@ function fmtPsi(v: number | null | undefined): string {
 function fmtAdc(v: number | null | undefined): string {
   if (v === null || v === undefined || !isFinite(v)) return '---';
   return v.toLocaleString();
-}
-
-const LBF_TO_KG = 0.453592;
-
-// ── Load cell 0-point card (separate concern; kept until LC calibration gets its own home) ──────
-function LoadCellZeroCard({ calEntity, label, onZero }: { calEntity: string; label: string; onZero: () => void }) {
-  const forceLbf = useLoadCellForceLbf(calEntity);
-  const kg = forceLbf != null && Number.isFinite(forceLbf) ? forceLbf * LBF_TO_KG : null;
-  const display = kg != null ? kg.toFixed(2) : '—';
-  return (
-    <div className="flex items-center gap-2 rounded-lg border border-gray-700 bg-black/20 px-3 py-2">
-      <span className="text-xs font-bold text-text-muted w-16 truncate">{label}</span>
-      <span className="text-sm font-mono text-green-400 tabular-nums flex-1 text-right">{display} kg</span>
-      <button type="button" onClick={onZero}
-        className="px-2.5 py-1 text-xs font-bold rounded-md border border-amber-600 bg-amber-900/30 text-amber-300 hover:bg-amber-800/50">
-        Zero
-      </button>
-    </div>
-  );
 }
 
 // ── Sidebar sensor row ──────────────────────────────────────────────────────────
@@ -113,7 +99,9 @@ export default function CalibrationPage() {
   useSensorDataVersion();
   const getSensorValue = useGetSensorValue();
   const ws = getWebSocketClient();
-  const ptChannels = useSensorConfig();
+  const allSensors = useSensorConfig();
+  const ptChannels = useMemo(() => allSensors.filter((c) => c.type === 'PT'), [allSensors]);
+  const lcChannels = useMemo(() => allSensors.filter((c) => c.type === 'LC'), [allSensors]);
 
   const [calStatus, setCalStatus] = useState<CalibrationStatusPayload | null>(null);
   const [selectedBoardId, setSelectedBoardId] = useState<number | 'all'>('all');
@@ -121,7 +109,7 @@ export default function CalibrationPage() {
   const [selectedUid, setSelectedUid] = useState<number | null>(null);
   const [overlay, setOverlay] = useState<{ cubic: boolean; robust: boolean; physics: boolean }>({ cubic: true, robust: true, physics: true });
   const [refInput, setRefInput] = useState('');
-  const [showLoadCells, setShowLoadCells] = useState(false);
+  const [showLoadCells, setShowLoadCells] = useState(true);
   // Captures write into the live ADC stream, which only exists while a session runs; with it off the
   // calibration service is down and a capture/zero is silently dropped. Gate the controls on it.
   const [sessionActive, setSessionActive] = useState(false);
@@ -154,19 +142,21 @@ export default function CalibrationPage() {
     window.addEventListener('mouseup', onUp);
   }, [sidebarWidth]);
 
-  // Full config (for physics params + LC list). Boards keyed by config key (e.g. "pt_board").
+  // Full config (for physics params). Boards keyed by config key (e.g. "pt_board").
   const [cfgBoards, setCfgBoards] = useState<Record<string, any>>({});
   const [cfgRoot, setCfgRoot] = useState<Record<string, any>>({});
-  const [lcChannels, setLcChannels] = useState<{ calEntity: string; label: string }[]>([]);
-  const setLoadCellZeroOffset = useSensorStore((s) => s.setLoadCellZeroOffset);
 
-  // Each sensor's streaming model (service truth); default by interface when the record is absent.
+  // Each sensor's streaming model (service truth); default by interface/kind when the record is
+  // absent (PT: 4-20 mA -> physics else cubic; LC: physics — cubic is opt-in per role).
   const modelOf = useCallback((uid: number): Model => {
     const rec = cubicState[String(uid)];
     if (rec?.active_model) return rec.active_model as Model;
-    const ch = ptChannels.find((c) => c.boardId * 100 + c.id === uid);
-    return ch?.isHpPt ? 'physics' : 'cubic';
-  }, [cubicState, ptChannels]);
+    const pt = ptChannels.find((c) => c.boardId * 100 + c.id === uid);
+    if (pt) return pt.isHpPt ? 'physics' : 'cubic';
+    const lc = lcChannels.find((c) => c.boardId * 100 + c.id === uid);
+    if (lc) return 'physics';
+    return 'cubic';
+  }, [cubicState, ptChannels, lcChannels]);
 
   // board_id → { key, board } so we can resolve per-sensor physics params from config.
   const boardById = useMemo(() => {
@@ -191,6 +181,23 @@ export default function CalibrationPage() {
     return { fullScale, isLoop, senseResistor, adcRefVoltage: board.adc_ref_voltage ?? 2.5 };
   }, [ptChannels, boardById, cfgRoot]);
 
+  // LC physics params mirror physicsParamsOf: per-role override from config, else the
+  // [calibration.lc] global (matches convert_lc_adc_to_force's fallback in calibration_main.cpp).
+  const lcPhysicsParamsOf = useCallback((uid: number): LcPhysicsParams | undefined => {
+    const ch = lcChannels.find((c) => c.boardId * 100 + c.id === uid);
+    if (!ch) return undefined;
+    const entry = boardById.get(ch.boardId);
+    const key = entry?.key;
+    const lcGlobal = (cfgRoot.calibration?.lc ?? {}) as Record<string, number>;
+    const fsMap = key ? (cfgRoot[`calibration_full_scale_${key}`] as Record<string, number> | undefined) : undefined;
+    const sensMap = key ? (cfgRoot[`calibration_sensitivity_${key}`] as Record<string, number> | undefined) : undefined;
+    const pgaMap = key ? (cfgRoot[`calibration_pga_${key}`] as Record<string, number> | undefined) : undefined;
+    const fullScale = (ch.role && fsMap?.[ch.role] != null) ? fsMap[ch.role] : (lcGlobal.full_scale_value ?? 300);
+    const sensitivityMvPerV = (ch.role && sensMap?.[ch.role] != null) ? sensMap[ch.role] : (lcGlobal.sensitivity_mv_per_v ?? 2);
+    const pgaGain = (ch.role && pgaMap?.[ch.role] != null) ? pgaMap[ch.role] : (lcGlobal.pga_gain ?? 32);
+    return { fullScale, sensitivityMvPerV, pgaGain };
+  }, [lcChannels, boardById, cfgRoot]);
+
   // Every PT sensor appears here; the model badge says which calibration each uses.
   const availableBoards = Array.from(new Set(ptChannels.map((c) => c.boardId))).sort((a, b) => a - b);
   const visibleChannels = useMemo(
@@ -198,10 +205,14 @@ export default function CalibrationPage() {
     [ptChannels, selectedBoardId],
   );
   const selectedState = selectedUid != null ? cubicState[String(selectedUid)] : undefined;
-  const selectedChannel = selectedUid != null ? ptChannels.find((c) => c.boardId * 100 + c.id === selectedUid) : undefined;
+  const selectedChannel = useMemo(
+    () => (selectedUid != null ? [...ptChannels, ...lcChannels].find((c) => c.boardId * 100 + c.id === selectedUid) : undefined),
+    [ptChannels, lcChannels, selectedUid],
+  );
+  const selectedKind: Kind | undefined = selectedChannel?.type as Kind | undefined;
   const selectedModel = selectedUid != null ? modelOf(selectedUid) : undefined;
 
-  // Load full config once (physics params + LC channels).
+  // Load full config once (physics params).
   useEffect(() => {
     fetch(`${getApiBaseUrl()}/api/config`)
       .then((r) => (r.ok ? r.json() : null))
@@ -209,17 +220,7 @@ export default function CalibrationPage() {
         const cfg = data?.config;
         if (!cfg) return;
         setCfgRoot(cfg);
-        const boards = (cfg.boards ?? {}) as Record<string, any>;
-        setCfgBoards(boards);
-        const chs: number[] = [];
-        for (const board of Object.values(boards)) {
-          if ((board as any)?.type !== 'LC' || (board as any).enabled === false) continue;
-          const active = Array.isArray((board as any).active_connectors) && (board as any).active_connectors.length > 0
-            ? (board as any).active_connectors
-            : Array.from({ length: (board as any).num_sensors ?? 10 }, (_, i) => i + 1);
-          chs.push(...active);
-        }
-        setLcChannels(chs.map((ch) => ({ calEntity: `LC_Cal.CH${ch}`, label: `LC Ch${ch}` })));
+        setCfgBoards((cfg.boards ?? {}) as Record<string, any>);
       })
       .catch(() => {});
   }, []);
@@ -292,10 +293,10 @@ export default function CalibrationPage() {
   }, [selectedChannel, sendCalCmd]);
 
   const handleZeroAll = useCallback(() => {
-    const n = ptChannels.filter((c) => modelOf(c.boardId * 100 + c.id) !== 'physics').length;
-    if (typeof window !== 'undefined' && !window.confirm(`Capture a 0 psi reference point on all ${n} cubic/robust PT sensor${n === 1 ? '' : 's'}? Vent them to atmosphere first — this adds a real point to each sensor's shared fit.`)) return;
+    const n = [...ptChannels, ...lcChannels].filter((c) => modelOf(c.boardId * 100 + c.id) !== 'physics').length;
+    if (typeof window !== 'undefined' && !window.confirm(`Capture a 0 reference point on all ${n} cubic/robust PT + LC sensor${n === 1 ? '' : 's'}? Vent PTs to atmosphere and unload load cells first — this adds a real point to each sensor's shared fit.`)) return;
     sendCalCmd({ commandType: 'zero_all' });
-  }, [sendCalCmd, ptChannels, modelOf]);
+  }, [sendCalCmd, ptChannels, lcChannels, modelOf]);
 
   const statusMap = new Map<number, CalibrationChannelStatus>((calStatus?.channels ?? []).map((c) => [c.sensorId, c]));
   const getStatus = (channelId: number, boardId: number) => statusMap.get(boardId * 100 + channelId);
@@ -306,11 +307,23 @@ export default function CalibrationPage() {
     return c;
   }, [ptChannels, modelOf]);
 
+  const lcCounts = useMemo(() => {
+    const c = { cubic: 0, physics: 0 };
+    for (const ch of lcChannels) {
+      const m = modelOf(ch.boardId * 100 + ch.id);
+      if (m === 'cubic') c.cubic++;
+      else c.physics++;
+    }
+    return c;
+  }, [lcChannels, modelOf]);
+
   const selStatus = selectedChannel ? getStatus(selectedChannel.id, selectedChannel.boardId) : undefined;
   const selRawAdc = selectedChannel ? getSensorValue(selectedChannel.calEntity, 'raw_adc_counts') : null;
-  const selPsi = selectedChannel ? getSensorValue(selectedChannel.calEntity, 'pressure_psi') : null;
+  const selValue = selectedChannel ? getSensorValue(selectedChannel.calEntity, selectedKind === 'LC' ? 'force_kg' : 'pressure_psi') : null;
   const selPoints = selectedState?.numPoints ?? 0;
-  const selPhysics = selectedUid != null ? physicsParamsOf(selectedUid) : undefined;
+  const selPhysics: PhysicsParams | LcPhysicsParams | undefined = selectedUid == null ? undefined
+    : selectedKind === 'LC' ? lcPhysicsParamsOf(selectedUid) : physicsParamsOf(selectedUid);
+  const unit: 'psi' | 'kg' = selectedKind === 'LC' ? 'kg' : 'psi';
 
   // Fourth stat tile is model-specific — a plain "OK" told you nothing.
   //  cubic  → whether the fit is live (needs ≥2 points)
@@ -323,7 +336,7 @@ export default function CalibrationPage() {
     healthClass = selStatus?.driftDetected ? 'text-red-400' : 'text-green-400';
   } else if (selectedModel === 'physics') {
     healthLabel = 'Full scale';
-    healthValue = selPhysics ? `${selPhysics.fullScale} psi` : '—';
+    healthValue = selPhysics ? `${selPhysics.fullScale} ${unit}` : '—';
     healthClass = 'text-orange-300';
   } else {
     healthLabel = 'Cubic fit';
@@ -338,8 +351,9 @@ export default function CalibrationPage() {
       <aside style={{ width: sidebarWidth }} className="flex-shrink-0 border-r border-gray-800 bg-black/20 flex flex-col min-h-0">
         {/* Header */}
         <div className="flex-shrink-0 px-4 py-4 border-b border-gray-800">
-          <h1 className="text-2xl font-bold tracking-tight">PT Calibration</h1>
-          <div className="text-base text-text-muted font-mono mt-2 flex gap-3">
+          <h1 className="text-2xl font-bold tracking-tight">Calibration</h1>
+          <div className="text-xs font-bold text-text-muted uppercase tracking-wide mt-3">Pressure transducers</div>
+          <div className="text-base text-text-muted font-mono mt-1 flex gap-3">
             <span className="text-sky-300">{counts.cubic} cubic</span>
             <span className="text-violet-300">{counts.robust} robust</span>
             <span className="text-orange-300">{counts.physics} physics</span>
@@ -384,45 +398,57 @@ export default function CalibrationPage() {
           )}
         </div>
 
-        {/* Global action: Zero all — captures a 0 psi reference point on every cubic/robust sensor.
-            It's a real point (feeds the shared fit + persists), not a tare. */}
-        {(counts.cubic + counts.robust) > 0 && (
+        {/* Load cells — collapsible, same capture/clear/model UI as PT above */}
+        {lcChannels.length > 0 && (
+          <div className="flex-shrink-0 border-t border-gray-800">
+            <button
+              onClick={() => setShowLoadCells((v) => !v)}
+              className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/5"
+            >
+              <div className="text-left">
+                <div className="text-xs font-bold text-text-muted uppercase tracking-wide">Load cells</div>
+                <div className="text-sm text-text-muted font-mono mt-1 flex gap-3">
+                  <span className="text-sky-300">{lcCounts.cubic} cubic</span>
+                  <span className="text-orange-300">{lcCounts.physics} physics</span>
+                </div>
+              </div>
+              <span className="text-gray-600">{showLoadCells ? '▾' : '▸'}</span>
+            </button>
+            {showLoadCells && (
+              <div className="max-h-96 overflow-auto divide-y divide-gray-800/40 border-t border-gray-800/60">
+                {lcChannels.map((ch) => {
+                  const uid = ch.boardId * 100 + ch.id;
+                  return (
+                    <SensorRow
+                      key={`${ch.boardId}-${ch.id}`}
+                      ch={ch}
+                      model={modelOf(uid)}
+                      status={getStatus(ch.id, ch.boardId)}
+                      calPsi={getSensorValue(ch.calEntity, 'force_kg')}
+                      numPoints={cubicState[String(uid)]?.numPoints ?? 0}
+                      selected={uid === selectedUid}
+                      onSelect={() => setSelectedUid(uid)}
+                    />
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Global action: Zero all — captures a 0 reference point on every cubic/robust PT + LC
+            sensor. It's a real point (feeds the shared fit + persists), not a tare. */}
+        {(counts.cubic + counts.robust + lcCounts.cubic) > 0 && (
           <div className="flex-shrink-0 px-4 py-3 border-t border-gray-800">
             <button onClick={handleZeroAll} disabled={!sessionActive}
               title={sessionActive
-                ? "Capture a 0 psi reference point on every cubic/robust PT sensor. Vent to atmosphere first — this adds a real point to each sensor's shared fit (physics sensors are skipped)."
+                ? "Capture a 0 reference point on every cubic/robust PT + LC sensor. Vent PTs to atmosphere and unload load cells first — this adds a real point to each sensor's shared fit (physics sensors are skipped)."
                 : 'Start a session to calibrate — with no live stream there is nothing to capture.'}
               className="w-full px-4 py-2.5 text-sm font-bold rounded-lg border bg-yellow-900/30 border-yellow-600/60 text-yellow-300 hover:bg-yellow-800/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-yellow-900/30">
               Zero all
             </button>
             {!sessionActive && (
               <p className="mt-1 text-[11px] text-text-muted text-center">Start a session to calibrate.</p>
-            )}
-          </div>
-        )}
-
-        {/* Load cells (separate concern) — collapsible */}
-        {lcChannels.length > 0 && (
-          <div className="flex-shrink-0 border-t border-gray-800">
-            <button
-              onClick={() => setShowLoadCells((v) => !v)}
-              className="w-full px-4 py-2.5 flex items-center justify-between text-xs font-bold text-text-muted hover:text-text"
-            >
-              <span>Load cells — 0 point ({lcChannels.length})</span>
-              <span className="text-gray-600">{showLoadCells ? '▾' : '▸'}</span>
-            </button>
-            {showLoadCells && (
-              <div className="px-3 pb-3 space-y-2 max-h-56 overflow-auto">
-                <div className="text-[11px] text-gray-600 px-1">Offset only; separate from PT calibration.</div>
-                {lcChannels.map(({ calEntity, label }) => (
-                  <LoadCellZeroCard key={calEntity} calEntity={calEntity} label={label}
-                    onZero={() => {
-                      const raw = getSensorValue(calEntity, 'force_lbf');
-                      if (raw != null && Number.isFinite(raw)) setLoadCellZeroOffset(calEntity, raw);
-                    }}
-                  />
-                ))}
-              </div>
             )}
           </div>
         )}
@@ -456,7 +482,7 @@ export default function CalibrationPage() {
                   {selectedModel !== 'physics' && ` · ${selectedState?.numPoints ?? 0} captured point${(selectedState?.numPoints ?? 0) === 1 ? '' : 's'}`}
                 </div>
                 <div className="text-sm text-text-muted mt-1.5 max-w-2xl">
-                  {MODEL_DESC[selectedModel]}
+                  {modelDesc(selectedModel, selectedKind ?? 'PT')}
                   {selectedModel !== 'physics' && selPoints === 0 && (
                     <span className="text-amber-400/80"> Reads 0 until you capture points.</span>
                   )}
@@ -474,7 +500,7 @@ export default function CalibrationPage() {
 
             {/* Live readouts */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <Stat label="Pressure" value={`${fmtPsi(selPsi)} psi`} className="text-3xl text-green-400" />
+              <Stat label={selectedKind === 'LC' ? 'Force' : 'Pressure'} value={`${fmtPsi(selValue)} ${unit}`} className="text-3xl text-green-400" />
               <Stat label="Raw ADC" value={fmtAdc(selRawAdc)} className="text-xl text-gray-300" />
               <Stat label={selectedModel === 'robust' ? 'RLS updates' : 'Points'} value={selectedModel === 'robust' ? String(selStatus?.rlsUpdateCount ?? 0) : String(selPoints)} className="text-xl text-gray-300" />
               <Stat label={healthLabel} value={healthValue} className={`text-xl ${healthClass}`} />
@@ -488,7 +514,7 @@ export default function CalibrationPage() {
               ) : (
                 <div className="flex items-center gap-3 flex-wrap">
                   <input
-                    type="number" step="any" placeholder="Reference PSI"
+                    type="number" step="any" placeholder={selectedKind === 'LC' ? 'Reference kg' : 'Reference PSI'}
                     value={refInput}
                     onChange={(e) => setRefInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleCaptureSelected()}
@@ -504,7 +530,7 @@ export default function CalibrationPage() {
                   </button>
                   <span className="text-sm text-text-muted">
                     {sessionActive
-                      ? <>Records the current ADC at this known pressure. Feeds both the cubic &amp; robust fits.</>
+                      ? <>Records the current ADC at this known {selectedKind === 'LC' ? 'weight' : 'pressure'}. Feeds the {selectedKind === 'LC' ? 'cubic' : 'cubic & robust'} fit.</>
                       : <>Start a session to calibrate — there is no live stream to capture.</>}
                   </span>
                 </div>
@@ -516,7 +542,7 @@ export default function CalibrationPage() {
               <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
                 <div className="text-sm font-bold text-text">Curve previews</div>
                 <div className="flex items-center gap-4 text-sm flex-wrap">
-                  {(['cubic', 'robust', 'physics'] as Model[]).map((m) => (
+                  {((selectedKind === 'LC' ? ['cubic', 'physics'] : ['cubic', 'robust', 'physics']) as Model[]).map((m) => (
                     <label key={m} className="flex items-center gap-2 cursor-pointer select-none">
                       <input type="checkbox" checked={overlay[m]} onChange={(e) => setOverlay((o) => ({ ...o, [m]: e.target.checked }))} />
                       <span className="inline-block w-4 rounded" style={{ background: CURVE_COLORS[m], height: m === selectedModel ? 4 : 2 }} />
@@ -531,7 +557,9 @@ export default function CalibrationPage() {
                 height={340}
                 activeModel={selectedModel}
                 show={overlay}
-                physics={physicsParamsOf(selectedUid!)}
+                unit={unit}
+                physics={selectedKind === 'PT' ? physicsParamsOf(selectedUid!) : undefined}
+                lcPhysics={selectedKind === 'LC' ? lcPhysicsParamsOf(selectedUid!) : undefined}
               />
             </div>
 
@@ -542,7 +570,7 @@ export default function CalibrationPage() {
                 <div className="max-h-64 overflow-auto border border-gray-800 rounded-lg">
                   <table className="w-full text-sm font-mono">
                     <thead className="sticky top-0 bg-gray-900 text-text-muted">
-                      <tr><th className="text-left px-4 py-2">#</th><th className="text-right px-4 py-2">Reference PSI</th><th className="text-right px-4 py-2">ADC</th></tr>
+                      <tr><th className="text-left px-4 py-2">#</th><th className="text-right px-4 py-2">Reference {unit === 'kg' ? 'kg' : 'PSI'}</th><th className="text-right px-4 py-2">ADC</th></tr>
                     </thead>
                     <tbody>
                       {selectedState.points.map((p, i) => (

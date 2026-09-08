@@ -174,9 +174,14 @@ struct Config {
     // "calibration_model_pt_board" -> {"Ox Upstream": "robust"}. Per-sensor PT streaming model.
     std::map<std::string, std::map<std::string, std::string>> calibration_models;
     // Per-sensor physics-mode parameters, role-keyed, parallel to calibration_models:
-    // [calibration_full_scale_<board>] role->PSI and [calibration_sense_resistor_<board>] role->Ω.
+    // [calibration_full_scale_<board>] role->PSI (PT) or role->kg (LC) and
+    // [calibration_sense_resistor_<board>] role->Ω (PT 4-20 mA only).
     std::map<std::string, std::map<std::string, double>> calibration_full_scale;
     std::map<std::string, std::map<std::string, double>> calibration_sense_resistor;
+    // LC-only physics params, role-keyed, parallel to calibration_full_scale:
+    // [calibration_sensitivity_<board>] role->mV/V and [calibration_pga_<board>] role->gain.
+    std::map<std::string, std::map<std::string, double>> calibration_sensitivity;
+    std::map<std::string, std::map<std::string, double>> calibration_pga_gain;
 
     /** [sensor_roles_<board>] with a legacy [sensor_roles] fallback. */
     const std::map<std::string, int>* sensor_roles_for(const std::string& board_key) const;
@@ -190,6 +195,12 @@ struct Config {
 
     /** [calibration_sense_resistor_<board>] role->Ω map, or nullptr when absent/empty. */
     const std::map<std::string, double>* sense_resistor_for(const std::string& section_key) const;
+
+    /** [calibration_sensitivity_<board>] role->mV/V map, or nullptr when absent/empty. */
+    const std::map<std::string, double>* sensitivity_for(const std::string& section_key) const;
+
+    /** [calibration_pga_<board>] role->gain map, or nullptr when absent/empty. */
+    const std::map<std::string, double>* pga_gain_for(const std::string& section_key) const;
 };
 
 /** Parse config.toml at `path`. On any error, logs and returns a default-constructed Config. */

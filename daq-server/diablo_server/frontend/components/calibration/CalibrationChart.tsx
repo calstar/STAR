@@ -19,6 +19,13 @@ export interface PhysicsParams {
   adcRefVoltage?: number;   // ADC reference volts (loop only; default 2.5)
 }
 
+/** LC datasheet physics params — mirrors convert_lc_adc_to_force in calibration_main.cpp. */
+export interface LcPhysicsParams {
+  fullScale: number;        // kg at full scale
+  sensitivityMvPerV: number;
+  pgaGain: number;
+}
+
 // Datasheet conversion — mirrors convert_ratiometric_pt_to_pressure / convert_hp_pt_to_pressure.
 function physicsPsi(adc: number, p: PhysicsParams): number {
   const frac = adc / ADC_MAX;
@@ -28,6 +35,14 @@ function physicsPsi(adc: number, p: PhysicsParams): number {
     return ((iMa - 4) / 16) * p.fullScale;
   }
   return frac * p.fullScale;
+}
+
+// LC datasheet conversion — mirrors convert_lc_adc_to_force: excitation is the ADC reference, so it
+// cancels; code_fs = (sensitivity_mV/V / 1000) * PGA_gain * ADC_MAX.
+function physicsKg(adc: number, p: LcPhysicsParams): number {
+  const codeFs = (p.sensitivityMvPerV / 1000) * p.pgaGain * ADC_MAX;
+  if (!(codeFs > 0)) return 0;
+  return (adc / codeFs) * p.fullScale;
 }
 
 function evalCubicNorm(adc: number, poly: number[], min: number, scale: number): number {
@@ -56,7 +71,7 @@ const CURVE_COLORS = { cubic: '#38BDF8', robust: '#A78BFA', physics: '#FB923C' }
 // Custom tooltip: recharts' default duplicates the numeric X value on a scatter/number axis, and
 // its label text renders black. We render the ADC once, then one row per present series.
 interface TipItem { name?: string; value?: number; color?: string; dataKey?: string }
-function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: TipItem[]; label?: number }) {
+function ChartTooltip({ active, payload, label, unit = 'psi' }: { active?: boolean; payload?: TipItem[]; label?: number; unit?: string }) {
   if (!active || !payload || payload.length === 0) return null;
   const seen = new Set<string>();
   const rows = payload
@@ -69,7 +84,7 @@ function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: 
       {rows.map((p) => (
         <div key={String(p.dataKey)} style={{ color: p.color ?? '#e2e2e2', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
           <span>{p.name ?? p.dataKey}</span>
-          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Number(p.value).toFixed(2)} psi</span>
+          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Number(p.value).toFixed(2)} {unit}</span>
         </div>
       ))}
     </div>
@@ -82,15 +97,19 @@ export interface CalibrationChartProps {
   activeModel?: 'cubic' | 'robust' | 'physics';
   show?: { cubic?: boolean; robust?: boolean; physics?: boolean };
   physics?: PhysicsParams;
+  /** LC datasheet physics params — mutually exclusive with `physics` (PT). */
+  lcPhysics?: LcPhysicsParams;
+  /** Value unit for axis/tooltip labels. Default 'psi' (PT); pass 'kg' for load cells. */
+  unit?: 'psi' | 'kg';
 }
 
 /**
  * Shared calibration chart for the merged page. Draws the captured points (age-faded) plus up to
  * three model overlays — cubic (from polyCoeffs), robust (service `fitCurve`), physics (closed
- * form) — with the active model emphasized. `show` gates each overlay; `physics` supplies the
- * datasheet params from config.
+ * form) — with the active model emphasized. `show` gates each overlay; `physics`/`lcPhysics`
+ * supplies the datasheet params from config (PT and LC use different physics formulas).
  */
-export function CalibrationChart({ state, height = 420, activeModel, show, physics }: CalibrationChartProps) {
+export function CalibrationChart({ state, height = 420, activeModel, show, physics, lcPhysics, unit = 'psi' }: CalibrationChartProps) {
   const showCubic = show?.cubic ?? true;
   const showRobust = show?.robust ?? true;
   const showPhysics = show?.physics ?? true;
@@ -119,12 +138,13 @@ export function CalibrationChart({ state, height = 420, activeModel, show, physi
     const N = 60;
     const poly = state?.polyCoeffs;
     const cubicOk = showCubic && poly && poly.length >= 2 && n >= 2;
-    if (cubicOk || (showPhysics && physics)) {
+    const hasPhysics = showPhysics && (physics || lcPhysics);
+    if (cubicOk || hasPhysics) {
       for (let i = 0; i <= N; i++) {
         const adc = lo + ((hi - lo) * i) / N;
         const row: Row = { adc };
         if (cubicOk) row.psiCubic = evalCubicNorm(adc, poly!, state!.adcNormMin, state!.adcNormScale);
-        if (showPhysics && physics) row.psiPhysics = physicsPsi(adc, physics);
+        if (hasPhysics) row.psiPhysics = lcPhysics ? physicsKg(adc, lcPhysics) : physicsPsi(adc, physics!);
         rows.push(row);
       }
     }
@@ -132,7 +152,7 @@ export function CalibrationChart({ state, height = 420, activeModel, show, physi
       for (const c of state?.fitCurve ?? []) rows.push({ adc: c.adc, psiRobust: c.psi });
     }
     return rows.sort((a, b) => a.adc - b.adc);
-  }, [state, showCubic, showRobust, showPhysics, physics]);
+  }, [state, showCubic, showRobust, showPhysics, physics, lcPhysics]);
 
   const w = (m: 'cubic' | 'robust' | 'physics') => (activeModel === m ? 3 : 1.5);
   const dash = (m: 'cubic' | 'robust' | 'physics') => (activeModel && activeModel !== m ? '4 3' : undefined);
@@ -148,9 +168,9 @@ export function CalibrationChart({ state, height = 420, activeModel, show, physi
           </XAxis>
           <YAxis type="number" stroke="#888" tick={{ fontSize: 10, fill: '#888' }}
                  tickFormatter={(v) => Number(v).toFixed(0)}>
-            <Label value="Pressure (PSI)" angle={-90} position="insideLeft" fill="#888" fontSize={11} />
+            <Label value={unit === 'kg' ? 'Force (kg)' : 'Pressure (PSI)'} angle={-90} position="insideLeft" fill="#888" fontSize={11} />
           </YAxis>
-          <Tooltip content={<ChartTooltip />} cursor={{ stroke: '#555', strokeDasharray: '3 3' }} />
+          <Tooltip content={<ChartTooltip unit={unit} />} cursor={{ stroke: '#555', strokeDasharray: '3 3' }} />
           {showCubic && (
             <Line type="monotone" dataKey="psiCubic" stroke={CURVE_COLORS.cubic} dot={false}
                   strokeWidth={w('cubic')} strokeDasharray={dash('cubic')} connectNulls

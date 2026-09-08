@@ -37,6 +37,8 @@ import type { SensorUpdate } from './shared-types.js';
 // ── Sensor config helpers ──────────────────────────────────────────────────
 
 export interface SensorConfigEntry {
+  /** Sensor kind — the field buildSensorConfig() previously left the caller to infer (or not). */
+  type: 'PT' | 'TC' | 'RTD' | 'LC';
   /** 1-based channel / connector ID local to the board */
   id: number;
   /** Human-readable role name from config.toml, e.g. "Fuel Upstream" */
@@ -102,6 +104,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
       const boardNumber = elodinSlotFromBoardId(boardId);
 
       sensors.push({
+        type: 'PT',
         id: channelId,
         role: roleName,
         boardId,
@@ -133,6 +136,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
       if (!isFinite(ch)) continue;
 
       sensors.push({
+        type: 'TC',
         id: ch,
         role: roleName,
         boardId,
@@ -165,6 +169,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
         const ch = typeof channelId === 'number' ? channelId : Number(channelId);
         if (!isFinite(ch)) continue;
         sensors.push({
+          type: 'RTD',
           id: ch,
           role: roleName,
           boardId,
@@ -178,6 +183,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
     } else {
       for (const ch of active) {
         sensors.push({
+          type: 'RTD',
           id: ch,
           role: `RTD Ch${ch}`,
           boardId,
@@ -208,12 +214,13 @@ function buildSensorConfig(): SensorConfigEntry[] {
         const ch = typeof channelId === 'number' ? channelId : Number(channelId);
         if (!isFinite(ch)) continue;
         sensors.push({
+          type: 'LC',
           id: ch,
           role: roleName,
           boardId,
           boardIp,
           isHpPt: false,
-          inCalibrationSequence: false,
+          inCalibrationSequence: true,
           entity: `LC${boardNumber}.CH${ch}`,
           calEntity: `LC${boardNumber}_Cal.CH${ch}`,
         });
@@ -224,12 +231,13 @@ function buildSensorConfig(): SensorConfigEntry[] {
         : Array.from({ length: (board.num_sensors ?? 4) }, (_, i) => i + 1);
       for (const ch of active) {
         sensors.push({
+          type: 'LC',
           id: ch,
           role: `LC Ch${ch}`,
           boardId,
           boardIp,
           isHpPt: false,
-          inCalibrationSequence: false,
+          inCalibrationSequence: true,
           entity: `LC${boardNumber}.CH${ch}`,
           calEntity: `LC${boardNumber}_Cal.CH${ch}`,
         });

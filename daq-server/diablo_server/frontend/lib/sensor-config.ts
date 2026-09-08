@@ -14,6 +14,8 @@ import { MessageType } from './types';
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface SensorConfig {
+    /** Sensor kind. */
+    type: 'PT' | 'TC' | 'RTD' | 'LC';
     /** 1-based channel / connector ID local to the board */
     id: number;
     /** Human-readable role name from config.toml, e.g. "Fuel Upstream" */

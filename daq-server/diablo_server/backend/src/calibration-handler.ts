@@ -73,15 +73,17 @@ export function publishCalibrationReload(host: CalibrationHost): void {
 function getActiveChannels(host: CalibrationHost): number[] {
     const channels = new Set<number>();
 
-    // Preferred: derive PT channels directly from config boards (board_id * 100 + channel).
-    // This matches calibration_service unique IDs and avoids mismatches with legacy maps.
+    // Preferred: derive PT + LC channels directly from config boards (board_id * 100 + channel).
+    // This matches calibration_service unique IDs and avoids mismatches with legacy maps. PT and
+    // LC board_ids never collide, so both kinds share this uid space safely — the service routes
+    // captures/clears by uid kind (see calibration_main.cpp g_lc_uids).
     try {
         const config = readConfig() as any;
         const boards = (config?.boards || {}) as Record<string, any>;
         for (const [, boardRaw] of Object.entries(boards)) {
             const board = boardRaw as any;
             if (board?.enabled === false) continue;
-            if (board?.type !== 'PT') continue;
+            if (board?.type !== 'PT' && board?.type !== 'LC') continue;
             const boardId = Number(board?.board_id);
             if (!Number.isFinite(boardId)) continue;
             const activeChannels: number[] =
@@ -142,7 +144,7 @@ export function handleCalibrationCommand(
             if (uniqueId == null || !activeChannels.includes(uniqueId)) {
                 host.send(ws, {
                     type: MessageType.ERROR, timestamp: Date.now(),
-                    payload: { message: `Channel ${sensorId} on Board ${boardId} is not a valid PT channel` }
+                    payload: { message: `Channel ${sensorId} on Board ${boardId} is not a valid PT/LC channel` }
                 });
                 return;
             }
@@ -172,7 +174,7 @@ export function handleCalibrationCommand(
             if (uniqueId == null || !activeChannels.includes(uniqueId)) {
                 host.send(ws, {
                     type: MessageType.ERROR, timestamp: Date.now(),
-                    payload: { message: `Channel ${sensorId} on Board ${boardId} is not a valid PT channel` }
+                    payload: { message: `Channel ${sensorId} on Board ${boardId} is not a valid PT/LC channel` }
                 });
                 return;
             }
@@ -221,7 +223,7 @@ export function handleCalibrationCommand(
             if (uniqueId == null || !activeChannels.includes(uniqueId)) {
                 host.send(ws, {
                     type: MessageType.ERROR, timestamp: Date.now(),
-                    payload: { message: `Channel ${sensorId} on Board ${boardId} is not a valid PT channel` }
+                    payload: { message: `Channel ${sensorId} on Board ${boardId} is not a valid PT/LC channel` }
                 });
                 return;
             }

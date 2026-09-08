@@ -290,6 +290,10 @@ Config from_table(const toml::table& t) {
             target = &c.calibration_full_scale;
         else if (key.rfind("calibration_sense_resistor", 0) == 0)
             target = &c.calibration_sense_resistor;
+        else if (key.rfind("calibration_sensitivity", 0) == 0)
+            target = &c.calibration_sensitivity;
+        else if (key.rfind("calibration_pga", 0) == 0)
+            target = &c.calibration_pga_gain;
         if (target)
             if (auto rt = v.as_table()) {
                 auto& m = (*target)[key];
@@ -336,6 +340,20 @@ const std::map<std::string, double>* Config::sense_resistor_for(
     const std::string& section_key) const {
     auto it = calibration_sense_resistor.find(section_key);
     if (it != calibration_sense_resistor.end() && !it->second.empty())
+        return &it->second;
+    return nullptr;
+}
+
+const std::map<std::string, double>* Config::sensitivity_for(const std::string& section_key) const {
+    auto it = calibration_sensitivity.find(section_key);
+    if (it != calibration_sensitivity.end() && !it->second.empty())
+        return &it->second;
+    return nullptr;
+}
+
+const std::map<std::string, double>* Config::pga_gain_for(const std::string& section_key) const {
+    auto it = calibration_pga_gain.find(section_key);
+    if (it != calibration_pga_gain.end() && !it->second.empty())
         return &it->second;
     return nullptr;
 }

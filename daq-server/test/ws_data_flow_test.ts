@@ -90,7 +90,7 @@ function parseOnlyTests(): Set<string> | null {
   }
   const allowed = new Set([
     'sensor_config', 'sensor_data', 'cal_stability', 'raw_cal_presence',
-    'cal_values', 'cal_model_select', 'cal_robust_learn', 'cal_shared_points', 'cal_clear',
+    'cal_values', 'cal_model_select', 'cal_robust_learn', 'cal_shared_points', 'cal_clear', 'cal_lc_capture',
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
     'controller', 'timestamps', 'conservation', 'board_logs', 'board_log_mode',
@@ -1951,6 +1951,35 @@ async function testClearToNothing(ws: WebSocket): Promise<void> {
   assert(fc.length === 0, `cal_clear: robust preview curve cleared (${fc.length} samples)`);
 }
 
+// ── Test: LC capture builds a cubic fit (mirrors testSharedPoints for a load cell uid). LC has no
+// robust learner (no drift-learning), so unlike a PT capture this must NOT populate fitCurve.
+async function testLcCapture(ws: WebSocket): Promise<void> {
+  console.log('\n🏋️  Test 21: LC capture builds a cubic fit (no robust)');
+  const CH = 2, BOARD = 42, UID = BOARD * 100 + CH, REF = 5;  // lc_board_2 (LC2), active_connectors incl. 2
+  for (let i = 0; i < 10; i++) {
+    send(ws, { type: 'calibration_command', timestamp: Date.now(),
+      payload: { commandType: 'capture_point', sensorId: CH, boardId: BOARD, referencePressure: REF } });
+    await sleep(120);
+  }
+  await sleep(1500);
+  let rec: Record<string, unknown> | null = null;
+  for (let i = 0; i < 8; i++) { rec = readCalRecord(UID); if (rec && (rec.numPoints as number ?? 0) > 0) break; await sleep(400); }
+  if (!rec) { assert(false, `cal_lc_capture: no record for uid ${UID}`); return; }
+  const numPoints = rec.numPoints as number ?? 0;
+  const fc = (Array.isArray(rec.fitCurve) ? rec.fitCurve : []) as unknown[];
+  console.log(`  uid ${UID}: numPoints=${numPoints} fitCurve=${fc.length}`);
+  assert(numPoints >= 1, `cal_lc_capture: cubic store recorded ${numPoints} point(s) for LC uid ${UID}`);
+  assert(fc.length === 0, `cal_lc_capture: LC has no robust preview curve (${fc.length}) — LC doesn't learn drift`);
+
+  // Clear it back to nothing so the shared store doesn't leak state into later runs.
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'new_calibration', sensorId: CH, boardId: BOARD } });
+  await sleep(1500);
+  let cleared: Record<string, unknown> | null = null;
+  for (let i = 0; i < 8; i++) { cleared = readCalRecord(UID); if (cleared && (cleared.numPoints as number ?? -1) === 0) break; await sleep(400); }
+  assert(!!cleared && (cleared.numPoints as number) === 0, `cal_lc_capture: LC clear wiped points (numPoints ${cleared?.numPoints})`);
+}
+
 // ── Test: the robust stack actually learns (and the cubic channel is unaffected) ─
 async function testRobustLearns(ws: WebSocket): Promise<void> {
   console.log('\n🧠 Test 18: robust stack learns an operator offset (cubic channel unchanged)');
@@ -2030,7 +2059,7 @@ async function testElodinStateSync(): Promise<void> {
 
 // ── Test 7: SERVER_HEARTBEAT on control UDP (thin + listener file) ─────────
 
-async function testServerHeartbeatUdp(): Promise<void> {
+async function testServerHeartbeatUdp(ws: WebSocket): Promise<void> {
   if (!IS_THIN || !UDP_COMMANDS_FILE) return;
   console.log('\n📬 Test 7: SERVER_HEARTBEAT UDP (heartbeat_service or daq_bridge → listener)');
   // Wait for listener to bind and create the JSON file (integration starts it just before this test).
@@ -2055,6 +2084,80 @@ async function testServerHeartbeatUdp(): Promise<void> {
   }
   const hb = packets.filter((p) => p.packetType === 2);
   assert(hb.length >= 1, `SERVER_HEARTBEAT: expected ≥1 type-2 packet, got ${hb.length}`);
+
+  await assertHeartbeatTracksSequencerState(ws);
+}
+
+/**
+ * engine_state in SERVER_HEARTBEAT must follow the sequencer.
+ *
+ * It did not. heartbeat_service subscribed to Elodin with subscribe_stream(), which despite its
+ * name sent the calibration service's table list and never included [0x50,0x00] — the one table
+ * heartbeat_service reads. So it blocked in read_packet() forever and broadcast engine_state = 0
+ * through every transition, silently, for the life of the process. Nothing caught it because the
+ * only assertion here counted packets.
+ *
+ * FUEL_FILL is used because stateToEngine() maps it to PRESSURIZING(1) while IDLE and ARMED both
+ * map to SAFE(0) — i.e. it is a state whose engine_state is distinguishable from the resting value.
+ */
+async function assertHeartbeatTracksSequencerState(ws: WebSocket): Promise<void> {
+  const readEngineStates = (): number[] => {
+    try {
+      const raw = JSON.parse(fs.readFileSync(UDP_COMMANDS_FILE!, 'utf-8'));
+      if (!Array.isArray(raw)) return [];
+      return raw.filter((p: any) => p.packetType === 2 && typeof p.engineState === 'number')
+                .map((p: any) => p.engineState as number);
+    } catch { return []; }
+  };
+
+  const before = readEngineStates();
+  const baseline = before.length ? before[before.length - 1] : 0;
+
+  // Debug mode so the transition is accepted regardless of the rig's state_transitions.csv.
+  send(ws, {
+    type: MessageType.SEND_COMMAND,
+    timestamp: Date.now(),
+    payload: { commandType: 'debug_mode', data: { debugMode: true } },
+  });
+  await waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
+    (payload) => payload.debugMode === true).catch(() => {});
+
+  send(ws, {
+    type: MessageType.SEND_COMMAND,
+    timestamp: Date.now(),
+    payload: { commandType: 'state_transition', data: { state: SystemState.FUEL_FILL } },
+  });
+  await waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
+    (payload) => payload.currentState === SystemState.FUEL_FILL).catch(() => {});
+
+  // Poll rather than sleep a fixed amount: the heartbeat interval and the Elodin hop are both
+  // config-dependent, and this should not be the test that goes flaky on a loaded runner.
+  const EXPECTED = 1;  // PRESSURIZING
+  let seen: number[] = [];
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    seen = readEngineStates().slice(before.length);
+    if (seen.includes(EXPECTED)) break;
+  }
+  assert(seen.includes(EXPECTED),
+    `SERVER_HEARTBEAT engine_state follows the sequencer: expected ${EXPECTED} (PRESSURIZING) ` +
+    `after entering FUEL_FILL, saw [${[...new Set(seen)].join(',')}] (baseline ${baseline})`);
+
+  // Put the rig back where the later tests expect it.
+  send(ws, {
+    type: MessageType.SEND_COMMAND,
+    timestamp: Date.now(),
+    payload: { commandType: 'state_transition', data: { state: SystemState.IDLE } },
+  });
+  await waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
+    (payload) => payload.currentState === SystemState.IDLE).catch(() => {});
+  send(ws, {
+    type: MessageType.SEND_COMMAND,
+    timestamp: Date.now(),
+    payload: { commandType: 'debug_mode', data: { debugMode: false } },
+  });
+  await waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
+    (payload) => payload.debugMode === false).catch(() => {});
 }
 
 // ── Test 8: Board status from relay → thin → WS ───────────────────────────
@@ -2809,7 +2912,7 @@ async function main(): Promise<void> {
     if (runTest('cal_values')) await testCalibratedValueCorrectness(ws);
     if (IS_THIN && runTest('cal_model_select')) await testCalibrationModelSelection();
     if (IS_THIN) {
-      if (runTest('heartbeat')) await testServerHeartbeatUdp();
+      if (runTest('heartbeat')) await testServerHeartbeatUdp(ws);
       if (runTest('board_status')) await testBoardStatusToFrontend(ws);
       if (runTest('selftest')) await testBoardStartupSelfTestToFrontend(ws);
       if (runTest('selftest_replay')) await testSelfTestReplayOnLateConnect();
@@ -2843,6 +2946,7 @@ async function main(): Promise<void> {
     // Shared-points then clear run last (they mutate CH3's cubic store + robust state).
     if (IS_THIN && canRunCommandTests && runTest('cal_shared_points')) await testSharedPoints(ws);
     if (IS_THIN && canRunCommandTests && runTest('cal_clear')) await testClearToNothing(ws);
+    if (IS_THIN && canRunCommandTests && runTest('cal_lc_capture')) await testLcCapture(ws);
   } finally {
     ws.close();
   }

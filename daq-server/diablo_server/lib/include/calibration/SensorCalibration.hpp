@@ -92,6 +92,11 @@ public:
         calibrations_[channel_id] = cal;
     }
 
+    /// Remove a channel's calibration so is_calibrated() returns false again.
+    void clear_calibration(uint8_t channel_id) {
+        calibrations_.erase(channel_id);
+    }
+
     // ── Evaluation ─────────────────────────────────────────────────────────
     bool is_calibrated(uint8_t channel_id) const;
     double calculate(uint8_t channel_id, int32_t raw_counts) const;

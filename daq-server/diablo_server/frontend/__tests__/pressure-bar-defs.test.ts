@@ -10,9 +10,9 @@ import type { PressureBarConfig } from '@/lib/gui-config';
 import type { PressureLimitsMap } from '@/lib/pressure-limits';
 
 const sensors: SensorConfig[] = [
-  { id: 6, role: 'GN2 High', boardId: 22, boardIp: '', isHpPt: true, inCalibrationSequence: false, entity: 'PT.GN2_High', calEntity: 'PT_Cal.GN2_High' },
-  { id: 4, role: 'Chamber Mid PT 1', boardId: 21, boardIp: '', isHpPt: false, inCalibrationSequence: true, entity: 'PT.Chamber_Mid_PT_1', calEntity: 'PT_Cal.Chamber_Mid_PT_1' },
-  { id: 8, role: 'Chamber Mid PT 2', boardId: 21, boardIp: '', isHpPt: false, inCalibrationSequence: true, entity: 'PT.Chamber_Mid_PT_2', calEntity: 'PT_Cal.Chamber_Mid_PT_2' },
+  { type: 'PT', id: 6, role: 'GN2 High', boardId: 22, boardIp: '', isHpPt: true, inCalibrationSequence: false, entity: 'PT.GN2_High', calEntity: 'PT_Cal.GN2_High' },
+  { type: 'PT', id: 4, role: 'Chamber Mid PT 1', boardId: 21, boardIp: '', isHpPt: false, inCalibrationSequence: true, entity: 'PT.Chamber_Mid_PT_1', calEntity: 'PT_Cal.Chamber_Mid_PT_1' },
+  { type: 'PT', id: 8, role: 'Chamber Mid PT 2', boardId: 21, boardIp: '', isHpPt: false, inCalibrationSequence: true, entity: 'PT.Chamber_Mid_PT_2', calEntity: 'PT_Cal.Chamber_Mid_PT_2' },
 ];
 
 const limits: PressureLimitsMap = {

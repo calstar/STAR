@@ -367,6 +367,26 @@ active_connectors = [ 1, 2 ]
 # [calibration_full_scale_pt_board]
 # "Fuel Upstream" = 1000
 
+# Load cells support the same per-sensor model selection as PT, minus robust/blend (LC doesn't
+# learn drift): "cubic" (operator-captured fit, built from the calibration GUI) or "physics"
+# (datasheet sensitivity/PGA-gain conversion — [calibration.lc] below, or per-sensor overrides).
+# A role with no entry here defaults to "physics" (today's behavior; unchanged unless you opt a
+# role into "cubic"). Requires a [sensor_roles_<lc_board>] section naming that board's connectors.
+# [sensor_roles_lc_board]
+# "Thrust" = 1
+#
+# [calibration_model_lc_board]
+# "Thrust" = "cubic"
+#
+# Per-sensor physics-mode parameters, role-keyed and parallel to [calibration_model_lc_board].
+# Consulted only when a sensor's model is "physics"; each overrides the [calibration.lc] global.
+#   [calibration_full_scale_lc_board]   role -> full-scale kg (default: calibration.lc.full_scale_value)
+#   [calibration_sensitivity_lc_board]  role -> mV/V         (default: calibration.lc.sensitivity_mv_per_v)
+#   [calibration_pga_lc_board]          role -> PGA gain     (default: calibration.lc.pga_gain)
+# All optional — omit them to keep the [calibration.lc] global. Example:
+# [calibration_full_scale_lc_board]
+# "Thrust" = 500
+
 [abort_pts]
 "Fuel Upstream" = 400
 "Ox Upstream" = 400
