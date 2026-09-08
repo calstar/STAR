@@ -234,3 +234,8 @@ scripts/calibration/calibrations/cubic_calibration.json
 # Raw-ADC abort thresholds the calibration service regenerates from the live cal on every
 # capture/clear/reload (uid target_psi raw_adc), read by config_broadcast. Runtime-derived, per-rig.
 scripts/calibration/calibrations/abort_thresholds.txt
+
+# Which named profile THIS box has loaded. Machine-local: the profiles/*.json snapshots
+# beside it are tracked and shared, but a pull must not tell another rig that a
+# calibration it has never loaded is the active one.
+scripts/calibration/calibrations/profiles/.active
