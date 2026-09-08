@@ -5,7 +5,9 @@ frontend, and CI. Each item names the affected file(s), what actually goes wrong
 shape of the fix.
 
 **Last audited:** 2026-09-08 against `1aeb97bc`.
-**Last updated:** 2026-09-08 — the controller PWM-mapping and FIRE-gate work landed, which
+**Last updated:** 2026-09-08 — the config-gate work landed, which turned the config editor's
+visual-only validation into a refusal at session start (and is recorded under Resolved, having been
+raised directly rather than filed here). Before that, the controller PWM-mapping and FIRE-gate work landed, which
 resolved both controller entries under High (correcting one's scope and the other's severity) and
 turned up the two-writers finding now filed there. Before that, the Elodin subscription work landed (and withdrew this file's
 claim that the heartbeat's 256-byte buffer was the problem); the DAQ-NIC pinning work landed, which merged and resolved the two
@@ -321,6 +323,37 @@ longer to flush, and on a fast machine it's a second wasted on every run.
 ## Resolved
 
 Kept so a future audit can distinguish "fixed" from "never checked".
+
+### By the config-gate work (2026-09-08)
+
+Not filed here — raised directly: the config editor's validation was **visual only**. It found real
+problems (board slot clashes, duplicate state ids, a fire timer expiring into a refused transition,
+an unassigned PWM output) and drew each one in red next to the field it concerned, and an operator
+could read it, navigate away, and start a run on exactly that config. Three of the rules blocked the
+editor's own Save button; none of them blocked **session start**, which is the one point where the
+active profile is copied into `config/config.toml` and the C++ services read it. Config that arrived
+by import, CSV upload or a hand-edited profile never passed the editor's guard at all.
+
+| Item | Resolution |
+|---|---|
+| Rules lived in the editor as JSX, so nothing else could evaluate them | **Fixed.** `shared/config-validation.ts` holds them as pure functions (config + the three state CSVs in, `ConfigIssue[]` out). Both the editor and the backend import it, and the editor's local copies of `parseCsvGrid` / `diffKeys` / `boardSlotIssue` / `boardDisplayName` are deleted — one copy of each rule, not two. |
+| Config errors did not stop a run | **Fixed.** `SessionManager.start()` validates the profile it is about to deploy and refuses. This is the enforcement point and the only one; a browser cannot skip it by not asking. Covered by `backend/src/__tests__/session-config-gate.test.ts` (hermetic: temp `CONFIG_PATH`, stubbed pipeline launcher), which fails 4/6 against the pre-gate code. |
+| A refusal must not half-start a run | **Fixed.** The gate runs before any field of `SessionManager` is assigned, so a refused start leaves `active`, `dbDir` and `deadlineMs` untouched and `config.toml` unchanged. The pre-existing failed-deploy path mutated them first and left a `dbDir` for a run that never began; it is now behind the same guard. |
+| Operators had no way to see the whole picture | **Fixed.** The refusal answers `SESSION_START_BLOCKED` with the issue list, and the session page renders it grouped by the config page that fixes each item, with a link to `/config?tab=<id>`. Pressing Start again sends `force` and runs anyway — the same decision, made deliberately. |
+| Rules and editor tabs could drift | **Fixed.** `CONFIG_PAGE_LABELS` in the shared module is now what builds the editor's tab bar, so an issue's `page` is by construction a tab that exists. |
+
+Two deliberate non-changes. **Warnings block too**, on the first press only: an operator who wanted
+a warning would not have configured it that way, and one press to look is cheap — but a gate that
+only fires on errors would leave "no state is flagged Abort" exactly as advisory as before.
+**Simulated runs are not gated**, for the same reason they skip the deploy: they read the committed
+`config_base → sim_config` overlay and never touch the profile, so gating them would block on config
+that is not in effect, which is precisely how operators learn to press Start twice by reflex.
+
+Turned up on the way, not fixed: the integration harness's own `[boards.integration_startup]` uses
+`board_id = 60`, which maps to Elodin slot 10 — outside the 1-8 a packet id can encode. The board
+works for what the test uses it for (startup self-test), and the editor would already have flagged
+it; `GET /api/config/validate` is just the first thing to say so out loud. Filed nowhere yet
+because it is test-harness config, not shipped config.
 
 ### By the controller PWM-mapping and FIRE-gate work (2026-09-08)
 

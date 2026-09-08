@@ -18,7 +18,7 @@
  * cal_stability, raw_cal_presence, heartbeat, board_status (Boards pane: all enabled boards connected),
  * selftest, state_transition,
  * state_debug, actuator_ws, actuator_udp, elodin_sync, controller, timestamps,
- * conservation — or numbers 1–6, 10–12, 14–15
+ * conservation, config_validate — or numbers 1–6, 10–12, 14–15
  * (same as printed test labels). Env INTEGRATION_ONLY is equivalent to --only.
  * Most IDs still need the full integration stack (Elodin, DAQ, calibration, backend);
  * state/actuator/elodin_sync need sequencer; controller needs controller_service; selftest
@@ -97,6 +97,7 @@ function parseOnlyTests(): Set<string> | null {
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
     'controller', 'timestamps', 'conservation', 'board_logs', 'board_log_mode',
+    'config_validate',
   ]);
   for (const id of out) {
     if (!allowed.has(id)) {
@@ -1977,6 +1978,54 @@ async function testCalibrationModelSelection(): Promise<void> {
   assert(physics === 'physics', `cal_model_select: uid 2102 (GSE Low) active_model=physics (got ${physics})`);
 }
 
+/**
+ * GET /api/config/validate — the config gate's findings, exposed read-only.
+ *
+ * The gate itself lives in SessionManager.start() and is covered hermetically by
+ * backend/src/__tests__/session-config-gate.test.ts. What this pins is the wiring: the endpoint is
+ * mounted, it answers over real HTTP with the shape the session page renders, and its counts agree
+ * with the issues it returned. A `page` that is not one of the editor's tab ids would render as a
+ * blank heading with a dead "Open →" link, so that is checked too.
+ */
+async function testConfigValidateApi(): Promise<void> {
+  console.log('\n🧾 Test: GET /api/config/validate (session-start config gate)');
+  const body = await new Promise<string | null>((resolve) => {
+    // The thin backend serves /api on the WS port (same http server), as /api/debug does above.
+    const req = http.get(`http://127.0.0.1:${WS_PORT}/api/config/validate`, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => resolve(res.statusCode === 200 ? data : null));
+    });
+    req.on('error', () => resolve(null));
+    req.setTimeout(5000, () => { req.destroy(); resolve(null); });
+  });
+  if (body == null) { assert(false, 'config_validate: endpoint did not answer 200'); return; }
+
+  let j: any;
+  try { j = JSON.parse(body); } catch { assert(false, 'config_validate: response was not JSON'); return; }
+
+  assert(typeof j.profile === 'string' && j.profile.length > 0,
+    `config_validate: names the profile it validated (${j.profile})`);
+  assert(Array.isArray(j.issues), 'config_validate: returns an issues array');
+  if (!Array.isArray(j.issues)) return;
+
+  const TAB_IDS = ['boards', 'roles', 'gui', 'controller', 'state', 'calibration', 'system'];
+  const badPage = j.issues.find((i: any) => !TAB_IDS.includes(i.page));
+  assert(!badPage,
+    `config_validate: every issue names a real config tab${badPage ? ` (got "${badPage.page}")` : ''}`);
+  const badLevel = j.issues.find((i: any) => i.level !== 'error' && i.level !== 'warn');
+  assert(!badLevel, 'config_validate: every issue is error or warn');
+  const errors = j.issues.filter((i: any) => i.level === 'error').length;
+  const warnings = j.issues.filter((i: any) => i.level === 'warn').length;
+  assert(j.errors === errors && j.warnings === warnings,
+    `config_validate: counts match the issues (${j.errors}/${j.warnings} vs ${errors}/${warnings})`);
+  if (j.issues.length > 0) {
+    console.log(`     (profile "${j.profile}" reports ${j.issues.length} issue(s):`);
+    for (const i of j.issues) console.log(`      [${i.page}/${i.level}] ${i.message}`);
+    console.log('     — this is reported, not asserted: the gate blocks a first Start on them.)');
+  }
+}
+
 // Read the service's cubic_calibration.json record for a uid (fresh each capture/clear).
 function readCalRecord(uid: number): Record<string, unknown> | null {
   const dir = findCalDir();
@@ -2991,6 +3040,7 @@ async function main(): Promise<void> {
     if (runTest('cal_stability')) await testCalibratedDataStability(ws);
     if (runTest('cal_values')) await testCalibratedValueCorrectness(ws);
     if (IS_THIN && runTest('cal_model_select')) await testCalibrationModelSelection();
+    if (IS_THIN && runTest('config_validate')) await testConfigValidateApi();
     if (IS_THIN) {
       if (runTest('heartbeat')) await testServerHeartbeatUdp(ws);
       if (runTest('board_status')) await testBoardStatusToFrontend(ws);

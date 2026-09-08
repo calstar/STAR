@@ -1,12 +1,30 @@
 'use client'
 
 import { useState, useEffect, useRef, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { MessageType } from '@/lib/types';
 import { useControlMode } from '@/lib/control-mode';
 import { useSensorStore } from '@/lib/store';
 import { NAV_ITEMS, navItemById } from '@/lib/nav-items';
 import { validateControllerPwmActuators, pwmAssignmentMap } from '@/lib/types';
+// The validation rules the backend's session-start gate evaluates. Imported rather than
+// re-implemented here: an issue this page draws in red is exactly an issue that refuses a run.
+import {
+  parseCsvGrid, serializeCsvGrid, diffKeys, boardSlotIssue, boardDisplayName,
+  CONFIG_PAGE_LABELS, type CsvGrid, type ConfigPageId,
+} from '@/lib/config-validation';
+
+/** The editor's tabs, left to right. Also the ids a ConfigIssue names, so the session page can
+ *  link an issue straight to the page that fixes it. Ordered by usefulness and grouped so related
+ *  config lives on one page instead of behind a round trip between tabs:
+ *    Boards  + ADC refs         (a board's voltage_reference indexes them)
+ *    Roles   = sensors + actuators (the same channel -> name map, twice)
+ *    Top Bar + Pressure Limits  (a gauge's `limits` key names a limits entry)
+ *    System  = every read-only page — startup-only binds the C++ services read once, plus config
+ *              managed outside this editor. Last, because you open it to read a port, never to
+ *              edit one. */
+const CONFIG_TAB_IDS = Object.keys(CONFIG_PAGE_LABELS) as ConfigPageId[];
 
 interface ConfigData {
   server_heartbeat?: {
@@ -240,29 +258,7 @@ function CommitOnBlurName({
 // column is the row key. Actuators and delays have identical rows AND columns, so they are edited
 // as ONE grid with two values per cell rather than two spreadsheets kept in sync by hand.
 
-type CsvGrid = { states: string[]; rows: { key: string; cells: string[] }[] };
-
-const parseCsvGrid = (text: string): CsvGrid => {
-  const lines = text.split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l.trim() !== '');
-  if (lines.length === 0) return { states: [], rows: [] };
-  const states = lines[0].split(',').slice(1).map((s) => s.trim());
-  const rows = lines
-    .slice(1)
-    .map((line) => {
-      const cells = line.split(',').map((c) => c.trim());
-      // Pad short rows rather than dropping them — several shipped CSVs are ragged, and silently
-      // losing the row would silently drop an actuator from every state.
-      return { key: cells[0], cells: states.map((_, i) => cells[i + 1] ?? '') };
-    })
-    .filter((r) => r.key !== '');
-  return { states, rows };
-};
-
-const serializeCsvGrid = (g: CsvGrid): string =>
-  [
-    ',' + g.states.join(','),
-    ...g.rows.map((r) => [r.key, ...g.states.map((_, i) => r.cells[i] ?? '')].join(',')),
-  ].join('\n') + '\n';
+// CsvGrid, parseCsvGrid and serializeCsvGrid come from @/lib/config-validation (see imports).
 
 /** A single string that changes whenever any of the three state tables changes — used to detect
  *  unsaved edits without deep-comparing the grids. */
@@ -291,30 +287,6 @@ function sortRolesForSave(cfg: any): any {
   return out;
 }
 
-const diffKeys = (have: string[], want: string[]) => ({
-  orphan: have.filter((k) => !want.includes(k)),
-  missing: want.filter((k) => !have.includes(k)),
-});
-
-/**
- * Friendly board name for display: "PT Board #2" rather than the raw `pt_board_2` config key.
- * Numbered by position among boards of the same type, so it tracks what is actually configured
- * instead of parsing digits out of the key. The key stays the identity everywhere else (it is what
- * `sensor_roles_<key>` binds to), so it is kept in the tooltip.
- */
-const BOARD_TYPE_LABEL: Record<string, string> = {
-  PT: 'PT', ACTUATOR: 'Actuator', LC: 'LC', TC: 'TC', RTD: 'RTD', ENCODER: 'Encoder',
-};
-
-const boardDisplayName = (boards: Record<string, any>, boardKey: string): string => {
-  const type = boards?.[boardKey]?.type;
-  if (typeof type !== 'string' || !type) return boardKey;
-  const sameType = Object.keys(boards).filter((k) => boards[k]?.type === type);
-  const ordinal = sameType.indexOf(boardKey) + 1;
-  const label = BOARD_TYPE_LABEL[type] ?? type;
-  return sameType.length > 1 ? `${label} Board #${ordinal}` : `${label} Board`;
-};
-
 /**
  * A PT board's sensor interface, and therefore its ADC reference. The hardware is identical
  * across PT boards; only the interface differs, so this is a per-board field rather than a
@@ -332,34 +304,6 @@ const ptTypeOf = (board: any): string => {
   const legacy = (Array.isArray(board?.hp_pt_connectors) && board.hp_pt_connectors.length > 0)
     || typeof board?.hp_pt_full_scale_psi === 'number';
   return legacy ? PT_TYPE_CURRENT_LOOP : PT_TYPE_RATIOMETRIC;
-};
-
-/**
- * Every layer maps a board to an Elodin slot as board_id % 10 (0 → 10), and the packet id low
- * byte is (slot-1) * 0x20 + 0x10 + channel — so only 8 slots fit in a byte, and two enabled
- * boards of the same type on one slot merge into a single entity with no error anywhere.
- *
- * Same-type only: the packet id's high byte already separates the types, so a PT and an actuator
- * board sharing a slot is fine. Mirrors check_board_slots() in
- * lib/src/config/LoadActiveBoards.cpp.
- */
-const boardSlotIssue = (boards: Record<string, any>, boardKey: string): string | null => {
-  const board = boards?.[boardKey];
-  if (!board || board.enabled === false || typeof board.board_id !== 'number') return null;
-  const slotOf = (id: number) => (id % 10 === 0 ? 10 : id % 10);
-  const slot = slotOf(board.board_id);
-  if (slot > 8) {
-    return `Board ID ${board.board_id} maps to slot ${slot}, but packet IDs only encode slots 1-8.`;
-  }
-  const clash = Object.keys(boards).find((k) => k !== boardKey
-    && boards[k]?.enabled !== false
-    && boards[k]?.type === board.type
-    && typeof boards[k]?.board_id === 'number'
-    && slotOf(boards[k].board_id) === slot);
-  if (clash) {
-    return `Slot ${slot} is also claimed by ${boardDisplayName(boards, clash)} (ID ${boards[clash].board_id}) — their channels will merge.`;
-  }
-  return null;
 };
 
 /**
@@ -390,7 +334,13 @@ export default function ConfigPage() {
   // and a message). The banner used to ignore both and always say "saved successfully", so an
   // operator saving mid-session was told the change was in effect when it was only a draft.
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState('boards');
+  // ?tab=<id> opens the editor on a specific tab. The session page's config-issue panel links here
+  // that way, so "State Machine: 2 errors" lands on the tables instead of on Boards.
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(() => {
+    const want = searchParams.get('tab');
+    return want && (CONFIG_TAB_IDS as string[]).includes(want) ? want : 'boards';
+  });
   // Config profiles v2: the editor edits the ACTIVE PROFILE; config.toml is the deployed/running file.
   // When idle, a save/switch deploys to config.toml; during a session config.toml is frozen (draft).
   const [profiles, setProfiles] = useState<{ name: string; active: boolean }[]>([]);
@@ -1257,23 +1207,9 @@ export default function ConfigPage() {
     );
   }
 
-  // Ordered by usefulness, left to right, and grouped so related config lives on
-  // one page instead of behind a round trip between tabs:
-  //   Boards      + ADC refs        (a board's voltage_reference indexes them)
-  //   Roles       = sensors + actuators (the same channel -> name map, twice)
-  //   Top Bar     + Pressure Limits (a gauge's `limits` key names a limits entry)
-  //   System      = every read-only page — startup-only binds the C++ services
-  //                 read once, plus config managed outside this editor. Last,
-  //                 because you open it to read a port, never to edit one.
-  const tabs = [
-    { id: 'boards', label: 'Boards' },
-    { id: 'roles', label: 'Roles' },
-    { id: 'gui', label: 'Top Bar & Limits' },
-    { id: 'controller', label: 'Controller' },
-    { id: 'state', label: 'State Machine' },
-    { id: 'calibration', label: 'Calibration' },
-    { id: 'system', label: 'System' },
-  ];
+  // Ids and labels come from CONFIG_PAGE_LABELS so a validation issue can name the tab that fixes
+  // it and the two lists cannot drift.
+  const tabs = CONFIG_TAB_IDS.map((id) => ({ id, label: CONFIG_PAGE_LABELS[id] }));
 
   return (
     <main className="min-h-screen bg-background text-text p-8">

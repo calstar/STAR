@@ -27,6 +27,7 @@ import {
 } from './routes/calibration-profiles.js';
 import { isCurrentLoopBoard } from './sensor-config.js';
 import { sessionManager } from './session-manager.js';
+import { validateActiveProfile } from './config-validation.js';
 import { isOperator } from './operators.js';
 import { discoverProjects, getEnabledBoardsForFlash, getOtaWorkspaceRoot, BOARD_TYPE_TO_PROJECT } from './ota-build.js';
 import { otaBuildFlash, otaFlashFirmwareFile } from './ota-service-cmd.js';
@@ -526,6 +527,12 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
             res.end(JSON.stringify({ error: error.message || 'Invalid CSV' }));
           }
         });
+      } else if (url.pathname === '/api/config/validate' && req.method === 'GET') {
+        // What the session-start gate would find, without attempting a start. Read-only, so no
+        // operator check — this reports on config the caller can already read via GET /api/config.
+        // The gate itself lives in SessionManager.start(); this endpoint never decides anything.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(validateActiveProfile()));
       } else if (url.pathname === '/api/config/profiles' && req.method === 'GET') {
         // List profiles + which is active + whether a session freezes deploys/switching.
         ensureSeeded();

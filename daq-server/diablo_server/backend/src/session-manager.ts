@@ -15,6 +15,7 @@ import { MessageType } from '../../shared/types.js';
 import { ServiceController, getSessionServiceMode } from './service-controller.js';
 import { loadSession, saveSession } from './session-state.js';
 import { deployActiveProfile } from './routes/config-profiles.js';
+import { validateActiveProfile, ConfigIssuesError } from './config-validation.js';
 
 // Warn the operator at each of these leads before auto-stop. Default: 5 min and
 // 1 min. Override with SESSION_WARN_LEADS_MS (comma-separated ms) to exercise the
@@ -209,11 +210,42 @@ class SessionManager {
     });
   }
 
-  async start(keepData: boolean, durationMs: number, simulated = false): Promise<void> {
+  /**
+   * Start a run.
+   *
+   * `force` skips the config gate below. It is the operator's SECOND press of Start, made with the
+   * issue list in front of them — never a default, and never something a client can be in by
+   * accident, because the flag has to be sent explicitly on the command.
+   */
+  async start(keepData: boolean, durationMs: number, simulated = false, force = false): Promise<void> {
     if (!this.enabled) throw new Error('Session control is disabled in this mode.');
     if (this.active) throw new Error('A run is already active.');
     if (!Number.isFinite(durationMs) || durationMs <= 0) {
       throw new Error('durationMs must be a positive number.');
+    }
+    // The config gate, before ANY field is assigned — a refused start must leave this object
+    // exactly as it found it, or getStatus() reports a dbDir for a run that never began.
+    //
+    // Session start is the one point at which the profile is applied, so it is the last point at
+    // which "this config is broken" can still be acted on cheaply; after it the C++ services have
+    // read the file and the operator finds out from behaviour instead.
+    //
+    // Warnings block as well as errors, on the first attempt only. An operator who wanted a
+    // warning would not have configured it that way; making them look once and press again is what
+    // turns a red box nobody reads into a decision somebody made.
+    //
+    // Simulated runs are not gated, for the same reason they skip the deploy below: they read the
+    // committed config_base → sim_config overlay and never touch the profile, so gating them would
+    // be gating on config that is not in effect for the run.
+    if (!simulated && !force) {
+      const { issues, profile } = validateActiveProfile();
+      if (issues.length > 0) {
+        console.warn(
+          `⛔ Session start refused: config profile "${profile}" has ${issues.length} issue(s):\n` +
+          issues.map((i) => `   [${i.page}/${i.level}] ${i.message}`).join('\n'),
+        );
+        throw new ConfigIssuesError(issues, profile);
+      }
     }
     this.dbDir = join(ELODIN_ROOT, timestampName(simulated));
     this.keepData = keepData;

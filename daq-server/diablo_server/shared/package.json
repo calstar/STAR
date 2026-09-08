@@ -5,6 +5,6 @@
   "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json && git diff --exit-code -- types.js types.d.ts types.js.map types.d.ts.map"
+    "check": "tsc -p tsconfig.json && git diff --exit-code -- types.js types.d.ts types.js.map types.d.ts.map config-validation.js config-validation.d.ts config-validation.js.map config-validation.d.ts.map"
   }
 }

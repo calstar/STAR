@@ -28,6 +28,7 @@ export enum MessageType {
   CONFIG_UPDATED = 'config_updated',
   COUNTDOWN_TARGET_UPDATE = 'countdown_target_update',
   SESSION_UPDATE = 'session_update',
+  SESSION_START_BLOCKED = 'session_start_blocked',   // Server → Client: { issues, errors, warnings }
   BOARD_LOG = 'board_log',                           // Server → Client: { boardId, ts, lines, truncated }
 
   // Engine-control authorization (DAQ operator gate)
@@ -171,6 +172,14 @@ export interface CommandPayload {
     simulated?: boolean;
     /** session_extend: milliseconds to push the auto-stop deadline out by. */
     addMs?: number;
+    /**
+     * session_start: run despite config issues. The backend validates the profile it is about to
+     * deploy and refuses the start when anything is wrong, answering with SESSION_START_BLOCKED;
+     * this flag is the operator's second press of Start, saying they have read the list and want
+     * the run anyway. Never set it on the first attempt — that would silently restore the old
+     * behaviour where config errors were advisory.
+     */
+    force?: boolean;
   };
 }
 
@@ -189,6 +198,19 @@ export interface SessionStatus {
   freeDiskBytes: number | null;
   /** True when the active run is fed by the board simulator instead of hardware. */
   simulated: boolean;
+}
+
+/**
+ * Why a run refused to start: the config issues the backend found in the profile it was about to
+ * deploy. Sent only to the client that asked, in place of starting anything. The operator fixes
+ * them in the config editor, or presses Start again (SendCommand data.force) to run regardless.
+ */
+export interface SessionStartBlockedPayload {
+  issues: { page: string; level: 'error' | 'warn'; message: string }[];
+  errors: number;
+  warnings: number;
+  /** The profile that was validated — it is what session start deploys, not the running config. */
+  profile: string;
 }
 
 // Connection status

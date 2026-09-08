@@ -173,6 +173,8 @@ let firstPacketTimeMs: number | null = null;
 import { loadCountdownTargetTimeMs, saveCountdownTargetTimeMs } from './countdown-state.js';
 let countdownTargetMs: number | null = loadCountdownTargetTimeMs();
 import { sessionManager } from './session-manager.js';
+import { ConfigIssuesError } from './config-validation.js';
+import { countByLevel } from '../../shared/config-validation.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -1015,9 +1017,28 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       break;
     case 'session_start':
       sessionManager
-        .start(!!command.data.keepData, command.data.durationMs ?? 0, !!command.data.simulated)
+        .start(
+          !!command.data.keepData,
+          command.data.durationMs ?? 0,
+          !!command.data.simulated,
+          !!command.data.force,
+        )
         .then(() => broadcastConnectionStatus())
-        .catch((err) => send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Session start failed: ${err.message}` } }));
+        .catch((err) => {
+          // A config-gated refusal is not a failure to report as a one-line string: the operator
+          // needs the list, grouped by the page that fixes each item, and the choice to run anyway.
+          // Sent only to the client that asked — another browser did not press this button.
+          if (err instanceof ConfigIssuesError) {
+            const { errors, warnings } = countByLevel(err.issues);
+            send(ws, {
+              type: MessageType.SESSION_START_BLOCKED,
+              timestamp: Date.now(),
+              payload: { issues: err.issues, errors, warnings, profile: err.profile },
+            });
+            return;
+          }
+          send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Session start failed: ${err.message}` } });
+        });
       break;
     case 'session_stop':
       sessionManager
