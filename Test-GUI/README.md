@@ -1,11 +1,12 @@
 # Test-GUI
 
 Standardized, per-board test GUIs for the STAR **Diablo** avionics boards
-(LC, PT, TC, RTD). Each board gets its own small app that runs on a tester's
-laptop, acts as the ground DAQ **server**, and shows — in one window —
+(LC, PT, TC, RTD, Actuator). Each board gets its own small app that runs on a
+tester's laptop, acts as the ground DAQ **server**, and shows — in one window —
 everything the board does: state machine, heartbeats, Ethernet/packet health,
 live per-connector readings, and self-test results, plus controls to send the
-board every packet it understands.
+board every packet it understands (for the actuator board that includes
+per-actuator ON/OFF toggles and PWM commands).
 
 ```
 Test-GUI/
@@ -18,10 +19,15 @@ Test-GUI/
 │   ├── gui.py             # generic monitor window, built from a BoardProfile
 │   ├── logsetup.py        # rotating file + console logging
 │   ├── launch.py          # profile -> running app (args, logging, QApplication)
-│   ├── demo_board.py      # headless fake board for the Ethernet path (no hardware)
+│   ├── demo_board.py      # headless fake sense board for the Ethernet path
+│   ├── demo_actuator_board.py  # headless fake actuator board (no hardware)
 │   └── qt.py              # PyQt6/PyQt5 compatibility shim
-├── LC-GUI/                # Load Cell board  (reference example)
+├── LC-GUI/                # Load Cell board  (reference sensor example)
 │   ├── lc_gui.py          # <- the entire board app: a profile + launch()
+│   ├── requirements.txt
+│   └── README.md
+├── Actuator-GUI/          # Actuator board  (reference actuator example)
+│   ├── actuator_gui.py    # <- profile (kind="actuator") + launch()
 │   ├── requirements.txt
 │   └── README.md
 └── logs/                  # rotating log files, one per board type
@@ -60,12 +66,18 @@ board  --UDP-->  us (server) : BOARD_HEARTBEAT (1 Hz), SENSOR_DATA, SELF_TEST   
 us     --UDP-->  board       : SERVER_HEARTBEAT, SENSOR_CONFIG, ABORT/CLEAR     [port 5005]
 ```
 
-A board boots into *WaitingForServer*, sending heartbeats. Send it a
-`SENSOR_CONFIG` and it self-tests, goes *Active*, and streams `SENSOR_DATA`.
+A board boots into *WaitingForServer*, sending heartbeats. Send a sense board
+a `SENSOR_CONFIG` and it self-tests, goes *Active*, and streams `SENSOR_DATA`
+(signed ADC codes). Send the actuator board an `ACTUATOR_CONFIG` and it goes
+*Active*, streams current-sense `SENSOR_DATA` (float volts), and obeys
+`ACTUATOR_COMMAND` / `PWM_ACTUATOR_COMMAND`.
 
 ## Adding a GUI for another board
 
 1. Copy `LC-GUI/` to e.g. `PT-GUI/` and rename `lc_gui.py` → `pt_gui.py`.
+   (For an actuator-style board start from `Actuator-GUI/` instead — its
+   profile sets `kind="actuator"` and `value_encoding="float"`, which swaps
+   SENSOR_CONFIG for ACTUATOR_CONFIG and adds the actuator/PWM controls.)
 2. Edit the `BoardProfile` — the values come from two places:
    - **firmware** `firmware/Hotfire_Code/<BOARD>_Hotfire/src/main.cpp`
      (which connectors/channels the board reads), and
@@ -96,6 +108,13 @@ python -m boardgui.protocol       # -> "protocol self-test: OK (...)"
 python -m boardgui.serial_parse   # -> "serial_parse self-test: OK"
 ```
 
+Fake boards for GUI testing with no hardware (see each GUI's README):
+
+```bash
+python -m boardgui.demo_board            # fake LC/sense board on localhost
+python -m boardgui.demo_actuator_board   # fake actuator board on localhost
+```
+
 ## Reference boards (from `daq-server/config/config.toml`)
 
 | Board | type | id | IP | ref voltage | notes |
@@ -105,6 +124,8 @@ python -m boardgui.serial_parse   # -> "serial_parse self-test: OK"
 | PT #1 | PT | 21 | 192.168.2.21 | VDD | abort-critical |
 | TC #1 | TC | 51 | 192.168.2.51 | 2.5 V int | |
 | RTD #1| RTD | 31 | 192.168.2.31 | 2.5 V int | |
+| ACT #1| ACTUATOR | 11 | 192.168.2.11 | — | 10 actuators + current sense |
+| ACT #2| ACTUATOR | 12 | 192.168.2.12 | — | designated survivor |
 
 Server (this laptop) is expected at **192.168.2.20**; boards send data to
 `:5006` and listen for control on `:5005`.

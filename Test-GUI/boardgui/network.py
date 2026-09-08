@@ -223,6 +223,22 @@ class UdpLink(QThread):
         )
         return self._send(pkt)
 
+    def send_actuator_config(self, is_abort_controller, abort_actuators,
+                             abort_pts, enable_serial_printing) -> bool:
+        pkt = protocol.build_actuator_config(
+            is_abort_controller=is_abort_controller,
+            abort_actuators=abort_actuators,
+            abort_pts=abort_pts,
+            enable_serial_printing=enable_serial_printing,
+        )
+        return self._send(pkt)
+
+    def send_actuator_command(self, commands) -> bool:
+        return self._send(protocol.build_actuator_command(commands))
+
+    def send_pwm_actuator_command(self, commands) -> bool:
+        return self._send(protocol.build_pwm_actuator_command(commands))
+
     def send_abort(self) -> bool:
         return self._send(protocol.build_header_only(protocol.PacketType.ABORT))
 

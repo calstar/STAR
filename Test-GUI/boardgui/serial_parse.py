@@ -29,11 +29,19 @@ import re
 from typing import Dict, List, Optional
 
 # State names as the firmware prints them -> our board-status text.
+# Covers both the sense boards (SensorHotfireCore.h) and the actuator board
+# (Actuator_Hotfire/src/main.cpp stateName()).
 _STATE_MAP = {
     "WaitingForServer": "Setup (waiting for server)",
     "SelfTest": "Self Test",
     "Active": "Active",
     "StandaloneAbort": "Standalone Abort",
+    "ConnectionLossDetected": "Connection Loss Detected",
+    "NoConnectionAbort": "No-Connection Abort",
+    "NoConnAbortFollower": "No-Conn Abort (follower)",
+    "PTAbort": "PT Abort",
+    "NoPTAbort": "No PT Abort",
+    "AbortFinished": "Abort Finished",
 }
 
 _RE_FW_HASH = re.compile(r"Firmware hash:\s*([0-9A-Fa-f]{64})")
@@ -122,6 +130,9 @@ def _self_test() -> None:
 
     e = p.feed("State -> WaitingForServer")
     assert e["value"] == "Setup (waiting for server)"
+
+    e = p.feed("State -> NoConnAbortFollower")   # actuator-board state
+    assert e["value"] == "No-Conn Abort (follower)"
 
     e = p.feed("Firmware hash: " + "ab" * 32)
     assert e["kind"] == "fw_hash" and len(e["value"]) == 64

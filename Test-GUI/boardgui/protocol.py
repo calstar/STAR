@@ -50,6 +50,20 @@ SENSOR_DATA_CHUNK_SIZE = 4
 SENSOR_DATAPOINT_FORMAT = "<BI"        # sensor_id, raw u32 value
 SENSOR_DATAPOINT_SIZE = 5
 
+# Actuator command / PWM command (DiabloPackets.h, packed little-endian)
+ACTUATOR_COMMAND_FORMAT = "<BB"        # actuator_id, actuator_state
+ACTUATOR_COMMAND_SIZE = 2
+PWM_ACTUATOR_COMMAND_FORMAT = "<BIff"  # actuator_id, duration_ms, duty, freq
+PWM_ACTUATOR_COMMAND_SIZE = 13
+
+# Actuator config (abort) — see ActuatorConfigPacket in DiabloPackets.h.
+# The u32 IPs are the firmware's "logical" big-endian value (a<<24|b<<16|c<<8|d)
+# stored little-endian on the wire, i.e. wire bytes are [d, c, b, a].
+ABORT_ACTUATOR_LOCATION_FORMAT = "<IBBB"  # ip, actuator_id, vent, abort
+ABORT_ACTUATOR_LOCATION_SIZE = 7
+ABORT_PT_LOCATION_FORMAT = "<IBI"         # ip, sensor_id, threshold_adc
+ABORT_PT_LOCATION_SIZE = 9
+
 
 class PacketType:
     """PacketType enum (DiabloEnums.h). board <-> server."""
@@ -217,6 +231,34 @@ def raw_to_voltage(raw_u32: int, ref_voltage: float) -> float:
     return (raw_to_signed(raw_u32) * ref_voltage) / 2147483648.0
 
 
+def raw_to_float(raw_u32: int) -> float:
+    """Reinterpret a u32 as an IEEE-754 float (actuator current-sense volts).
+
+    The actuator board memcpy()s a float voltage into the u32 datapoint field
+    (see Actuator_Hotfire readCurrentSensePinsAndSend), unlike the sense
+    boards which send signed ADC codes.
+    """
+    return struct.unpack("<f", struct.pack("<I", raw_u32 & 0xFFFFFFFF))[0]
+
+
+def float_to_raw(value: float) -> int:
+    """Inverse of raw_to_float (used by the demo actuator board)."""
+    return struct.unpack("<I", struct.pack("<f", value))[0]
+
+
+def ip_str_to_u32(ip: str) -> int:
+    """Dotted-quad -> the firmware's logical big-endian u32 (a<<24|b<<16|c<<8|d)."""
+    parts = [int(x) for x in ip.strip().split(".")]
+    if len(parts) != 4 or not all(0 <= p <= 255 for p in parts):
+        raise ValueError(f"invalid IPv4 address: {ip!r}")
+    return (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]
+
+
+def u32_to_ip_str(ip: int) -> str:
+    """Inverse of ip_str_to_u32."""
+    return f"{(ip >> 24) & 0xFF}.{(ip >> 16) & 0xFF}.{(ip >> 8) & 0xFF}.{ip & 0xFF}"
+
+
 # -----------------------------------------------------------------------------
 # Encode  (server -> board control packets)
 # -----------------------------------------------------------------------------
@@ -308,6 +350,174 @@ def parse_sensor_config(data: bytes) -> Optional[SensorConfig]:
         return None
     enable_serial = data[off] != 0
     return SensorConfig(header, ids, ref, necessary, controller_ip, enable_serial)
+
+
+# -----------------------------------------------------------------------------
+# Actuator packets (server -> actuator board), mirroring DiabloPacketUtils.cpp
+# -----------------------------------------------------------------------------
+@dataclass
+class ActuatorCommand:
+    actuator_id: int
+    actuator_state: int  # 1 = on, 0 = off
+
+
+@dataclass
+class PWMActuatorCommand:
+    actuator_id: int
+    duration_ms: int
+    duty_cycle: float  # 0.0 - 1.0
+    frequency_hz: float
+
+
+@dataclass
+class AbortActuatorLocation:
+    ip: str            # dotted quad of the board this actuator lives on
+    actuator_id: int
+    vent_state: int    # 1 = on, 0 = off
+    abort_state: int   # 1 = on, 0 = off
+
+
+@dataclass
+class AbortPTLocation:
+    ip: str
+    sensor_id: int
+    pressure_threshold_adc: int
+
+
+@dataclass
+class ActuatorConfig:
+    header: PacketHeader
+    is_abort_controller: bool
+    abort_actuators: List[AbortActuatorLocation]
+    abort_pts: List[AbortPTLocation]
+    enable_serial_printing: bool
+
+
+def build_actuator_command(commands: List[ActuatorCommand],
+                           timestamp_ms: Optional[int] = None) -> bytes:
+    """ACTUATOR_COMMAND (type 4): header + u8 num_commands + N x (id, state)."""
+    if not 1 <= len(commands) <= 255:
+        raise ValueError("num_commands must be between 1 and 255")
+    body = bytearray([len(commands)])
+    for cmd in commands:
+        body += struct.pack(ACTUATOR_COMMAND_FORMAT,
+                            cmd.actuator_id & 0xFF, 1 if cmd.actuator_state else 0)
+    return _make_header(PacketType.ACTUATOR_COMMAND, timestamp_ms) + bytes(body)
+
+
+def parse_actuator_command(data: bytes) -> Optional[List[ActuatorCommand]]:
+    header = parse_header(data)
+    if header is None or header.packet_type != PacketType.ACTUATOR_COMMAND:
+        return None
+    if len(data) < PACKET_HEADER_SIZE + 1:
+        return None
+    n = data[PACKET_HEADER_SIZE]
+    off = PACKET_HEADER_SIZE + 1
+    if len(data) < off + n * ACTUATOR_COMMAND_SIZE:
+        return None
+    out: List[ActuatorCommand] = []
+    for _ in range(n):
+        aid, state = struct.unpack(ACTUATOR_COMMAND_FORMAT,
+                                   data[off:off + ACTUATOR_COMMAND_SIZE])
+        out.append(ActuatorCommand(aid, state))
+        off += ACTUATOR_COMMAND_SIZE
+    return out
+
+
+def build_pwm_actuator_command(commands: List[PWMActuatorCommand],
+                               timestamp_ms: Optional[int] = None) -> bytes:
+    """PWM_ACTUATOR_COMMAND (type 10): header + u8 num + N x (id, dur, duty, freq)."""
+    if not 1 <= len(commands) <= 255:
+        raise ValueError("num_commands must be between 1 and 255")
+    body = bytearray([len(commands)])
+    for cmd in commands:
+        body += struct.pack(PWM_ACTUATOR_COMMAND_FORMAT,
+                            cmd.actuator_id & 0xFF, cmd.duration_ms & 0xFFFFFFFF,
+                            float(cmd.duty_cycle), float(cmd.frequency_hz))
+    return _make_header(PacketType.PWM_ACTUATOR_COMMAND, timestamp_ms) + bytes(body)
+
+
+def parse_pwm_actuator_command(data: bytes) -> Optional[List[PWMActuatorCommand]]:
+    header = parse_header(data)
+    if header is None or header.packet_type != PacketType.PWM_ACTUATOR_COMMAND:
+        return None
+    if len(data) < PACKET_HEADER_SIZE + 1:
+        return None
+    n = data[PACKET_HEADER_SIZE]
+    off = PACKET_HEADER_SIZE + 1
+    if len(data) < off + n * PWM_ACTUATOR_COMMAND_SIZE:
+        return None
+    out: List[PWMActuatorCommand] = []
+    for _ in range(n):
+        aid, dur, duty, freq = struct.unpack(
+            PWM_ACTUATOR_COMMAND_FORMAT, data[off:off + PWM_ACTUATOR_COMMAND_SIZE])
+        out.append(PWMActuatorCommand(aid, dur, duty, freq))
+        off += PWM_ACTUATOR_COMMAND_SIZE
+    return out
+
+
+def build_actuator_config(is_abort_controller: bool,
+                          abort_actuators: List[AbortActuatorLocation],
+                          abort_pts: List[AbortPTLocation],
+                          enable_serial_printing: bool = True,
+                          timestamp_ms: Optional[int] = None) -> bytes:
+    """
+    ACTUATOR_CONFIG (type 6) — activates an actuator board. Wire layout after
+    the 6-byte header (all little-endian, packed):
+
+        u8   is_abort_controller (0/1)
+        u8   num_abort_actuators (N)
+        N x  { u32 ip, u8 actuator_id, u8 vent_state, u8 abort_state }
+        u8   num_abort_pts (X)
+        X x  { u32 ip, u8 sensor_id, u32 pressure_threshold_adc }
+        u8   enable_serial_printing (0/1)
+    """
+    body = bytearray([1 if is_abort_controller else 0, len(abort_actuators) & 0xFF])
+    for loc in abort_actuators:
+        body += struct.pack(ABORT_ACTUATOR_LOCATION_FORMAT, ip_str_to_u32(loc.ip),
+                            loc.actuator_id & 0xFF, 1 if loc.vent_state else 0,
+                            1 if loc.abort_state else 0)
+    body.append(len(abort_pts) & 0xFF)
+    for pt in abort_pts:
+        body += struct.pack(ABORT_PT_LOCATION_FORMAT, ip_str_to_u32(pt.ip),
+                            pt.sensor_id & 0xFF, pt.pressure_threshold_adc & 0xFFFFFFFF)
+    body.append(1 if enable_serial_printing else 0)
+    pkt = _make_header(PacketType.ACTUATOR_CONFIG, timestamp_ms) + bytes(body)
+    return pkt[:MAX_PACKET_SIZE]
+
+
+def parse_actuator_config(data: bytes) -> Optional[ActuatorConfig]:
+    """Inverse of build_actuator_config (used by the demo board / tests)."""
+    header = parse_header(data)
+    if header is None or header.packet_type != PacketType.ACTUATOR_CONFIG:
+        return None
+    if len(data) < PACKET_HEADER_SIZE + 4:
+        return None
+    off = PACKET_HEADER_SIZE
+    is_controller = data[off] != 0
+    n = data[off + 1]
+    off += 2
+    if len(data) < off + n * ABORT_ACTUATOR_LOCATION_SIZE + 2:
+        return None
+    actuators: List[AbortActuatorLocation] = []
+    for _ in range(n):
+        ip, aid, vent, abort = struct.unpack(
+            ABORT_ACTUATOR_LOCATION_FORMAT,
+            data[off:off + ABORT_ACTUATOR_LOCATION_SIZE])
+        actuators.append(AbortActuatorLocation(u32_to_ip_str(ip), aid, vent, abort))
+        off += ABORT_ACTUATOR_LOCATION_SIZE
+    x = data[off]
+    off += 1
+    if len(data) < off + x * ABORT_PT_LOCATION_SIZE + 1:
+        return None
+    pts: List[AbortPTLocation] = []
+    for _ in range(x):
+        ip, sid, threshold = struct.unpack(
+            ABORT_PT_LOCATION_FORMAT, data[off:off + ABORT_PT_LOCATION_SIZE])
+        pts.append(AbortPTLocation(u32_to_ip_str(ip), sid, threshold))
+        off += ABORT_PT_LOCATION_SIZE
+    enable_serial = data[off] != 0
+    return ActuatorConfig(header, is_controller, actuators, pts, enable_serial)
 
 
 # -----------------------------------------------------------------------------
@@ -464,6 +674,50 @@ def _self_test() -> None:
     assert sc2 is not None and sc2.necessary_for_abort is True
     assert sc2.controller_ip == ((192 << 24) | (168 << 16) | (2 << 8) | 20)
     assert sc2.enable_serial_printing is False
+
+    # --- ACTUATOR_COMMAND build -> parse round-trip -----------------------
+    ac = build_actuator_command([ActuatorCommand(1, 1), ActuatorCommand(7, 0)])
+    assert ac[0] == PacketType.ACTUATOR_COMMAND
+    assert ac[PACKET_HEADER_SIZE] == 2                       # num_commands
+    cmds = parse_actuator_command(ac)
+    assert cmds is not None and len(cmds) == 2
+    assert cmds[0].actuator_id == 1 and cmds[0].actuator_state == 1
+    assert cmds[1].actuator_id == 7 and cmds[1].actuator_state == 0
+
+    # --- PWM_ACTUATOR_COMMAND build -> parse round-trip -------------------
+    pwm = build_pwm_actuator_command(
+        [PWMActuatorCommand(3, duration_ms=2000, duty_cycle=0.5, frequency_hz=10.0)])
+    assert pwm[0] == PacketType.PWM_ACTUATOR_COMMAND
+    assert len(pwm) == PACKET_HEADER_SIZE + 1 + PWM_ACTUATOR_COMMAND_SIZE
+    pcmds = parse_pwm_actuator_command(pwm)
+    assert pcmds is not None and pcmds[0].actuator_id == 3
+    assert pcmds[0].duration_ms == 2000
+    assert abs(pcmds[0].duty_cycle - 0.5) < 1e-9
+    assert abs(pcmds[0].frequency_hz - 10.0) < 1e-9
+
+    # --- ACTUATOR_CONFIG build -> parse round-trip ------------------------
+    acfg = build_actuator_config(
+        is_abort_controller=True,
+        abort_actuators=[AbortActuatorLocation("192.168.2.11", 2, 1, 0)],
+        abort_pts=[AbortPTLocation("192.168.2.21", 5, 123456)],
+        enable_serial_printing=True)
+    assert acfg[0] == PacketType.ACTUATOR_CONFIG
+    # The u32 IP must land little-endian on the wire ([d,c,b,a]) so the
+    # firmware's memcpy'd uint32_t equals its logical a<<24|b<<16|c<<8|d.
+    assert list(acfg[PACKET_HEADER_SIZE + 2:PACKET_HEADER_SIZE + 6]) == [11, 2, 168, 192]
+    pc = parse_actuator_config(acfg)
+    assert pc is not None and pc.is_abort_controller is True
+    assert pc.abort_actuators[0].ip == "192.168.2.11"
+    assert pc.abort_actuators[0].actuator_id == 2
+    assert pc.abort_actuators[0].vent_state == 1 and pc.abort_actuators[0].abort_state == 0
+    assert pc.abort_pts[0].ip == "192.168.2.21" and pc.abort_pts[0].sensor_id == 5
+    assert pc.abort_pts[0].pressure_threshold_adc == 123456
+    assert pc.enable_serial_printing is True
+
+    # --- float-encoded datapoints (actuator current sense) ----------------
+    assert abs(raw_to_float(float_to_raw(1.234)) - 1.234) < 1e-6
+    assert ip_str_to_u32("192.168.2.20") == ((192 << 24) | (168 << 16) | (2 << 8) | 20)
+    assert u32_to_ip_str(ip_str_to_u32("10.0.0.1")) == "10.0.0.1"
 
     print("protocol self-test: OK (all round-trips passed)")
 

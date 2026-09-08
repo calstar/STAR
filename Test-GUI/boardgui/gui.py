@@ -2,8 +2,10 @@
 Generic board monitor window.
 
 ``BoardMonitorWindow`` is built entirely from a :class:`BoardProfile`, so the
-same UI serves every board — LC, PT, TC, RTD. It shows, in one place,
-everything the board does:
+same UI serves every board — LC, PT, TC, RTD, and the actuator board (profile
+``kind="actuator"`` swaps SENSOR_CONFIG for ACTUATOR_CONFIG and adds
+per-actuator ON/OFF toggles + a PWM row). It shows, in one place, everything
+the board does:
 
   * top-left connection panel: listen port, board IP:port, and a Connected light
   * board status  : state-machine state, engine state, firmware hash, heartbeat rate
@@ -11,8 +13,9 @@ everything the board does:
                       the Ethernet path end-to-end)
   * self-test     : ADC + per-connector continuity results
   * live readings : per-connector raw ADC code + voltage, with a rolling plot
-  * controls      : send SERVER_HEARTBEAT (auto/manual), SENSOR_CONFIG (activate),
-                    ABORT / CLEAR_ABORT / NO_CONNECTION_ABORT
+  * controls      : send SERVER_HEARTBEAT (auto/manual), the board's CONFIG
+                    packet (activate), ABORT / CLEAR_ABORT / NO_CONNECTION_ABORT,
+                    and for actuator boards ACTUATOR_COMMAND / PWM commands
   * log console   : mirrored to a rotating file (see logsetup)
 """
 
@@ -126,8 +129,8 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         self.last_sensor_data_time: Optional[float] = None
         self.sensor_packet_count = 0
         self.start_time = time.time()
-        self.ref_voltage_index = profile.reference_voltage
         self._last_eth_data_log = 0.0  # throttle for echoing sensor-data packets
+        self.actuator_buttons: Dict[int, QtWidgets.QPushButton] = {}
 
         # per-connector rolling data: connector_id -> (deque[t], deque[volt], last_raw)
         self.readings: Dict[int, Tuple[Deque[float], Deque[float]]] = {}
@@ -144,6 +147,11 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         self.ui_timer = QTimer(self)
         self.ui_timer.timeout.connect(self._refresh)
         self.ui_timer.start(UI_REFRESH_MS)
+
+        # auto SERVER_HEARTBEAT (matches the production server's cadence)
+        self.hb_timer = QTimer(self)
+        self.hb_timer.timeout.connect(self._auto_heartbeat_tick)
+        self.hb_timer.start(profile.server_heartbeat_interval_ms)
 
         self.log.info("GUI started for %s (board id %d, %s). Log file: %s",
                       profile.board_type, profile.board_id, profile.board_ip, self.log_path)
@@ -175,6 +183,7 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         left.setSpacing(8)
         left.addWidget(self._build_status_group())
         left.addWidget(self._build_packets_group())
+        left.addWidget(self._build_controls_group())
         left.addStretch(1)
         left_container = QtWidgets.QWidget()
         left_container.setLayout(left)
@@ -300,11 +309,12 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         g = QtWidgets.QGroupBox("Board Status")
         grid = QtWidgets.QGridLayout(g)
         grid.setColumnStretch(1, 1)
-        self._kv_row(grid, 0, "Board ID (reported)", "reported_id")
-        self._kv_row(grid, 1, "Firmware hash", "fw_hash")
-        self._kv_row(grid, 2, "Last heartbeat", "hb_age")
-        self._kv_row(grid, 3, "Heartbeat rate", "hb_rate")
-        self._kv_row(grid, 4, "Heartbeats", "hb_count")
+        self._kv_row(grid, 0, "Board state", "board_state")
+        self._kv_row(grid, 1, "Board ID (reported)", "reported_id")
+        self._kv_row(grid, 2, "Firmware hash", "fw_hash")
+        self._kv_row(grid, 3, "Last heartbeat", "hb_age")
+        self._kv_row(grid, 4, "Heartbeat rate", "hb_rate")
+        self._kv_row(grid, 5, "Heartbeats", "hb_count")
         return g
 
     def _build_packets_group(self) -> QtWidgets.QGroupBox:
@@ -319,6 +329,237 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         self._kv_row(grid, 5, "Throughput", "bytes_rate")
         self._kv_row(grid, 6, "Heartbeat pkts", "cnt_hb")
         return g
+
+    def _build_controls_group(self) -> QtWidgets.QGroupBox:
+        """Send-side controls: every packet the board understands.
+
+        Sending needs the Ethernet path — start it with 'Start Ethernet UDP'.
+        The set of controls adapts to the profile kind (sensor vs actuator).
+        """
+        g = QtWidgets.QGroupBox("Controls  (needs Ethernet UDP)")
+        lay = QtWidgets.QVBoxLayout(g)
+        lay.setSpacing(6)
+
+        # SERVER_HEARTBEAT: auto at the production cadence, or one-shot
+        hb_row = QtWidgets.QHBoxLayout()
+        hb_row.setSpacing(6)
+        self.auto_hb_cb = QtWidgets.QCheckBox("Auto SERVER_HEARTBEAT")
+        self.auto_hb_cb.setToolTip(
+            f"Send SERVER_HEARTBEAT every {self.profile.server_heartbeat_interval_ms} ms "
+            "(what the production DAQ server does)")
+        hb_row.addWidget(self.auto_hb_cb)
+        self.engine_combo = QtWidgets.QComboBox()
+        for val in sorted(protocol.ENGINE_STATE_NAMES):
+            self.engine_combo.addItem(protocol.ENGINE_STATE_NAMES[val], val)
+        self.engine_combo.setToolTip("Engine state carried in the heartbeat")
+        hb_row.addWidget(self.engine_combo)
+        hb_btn = QtWidgets.QPushButton("Send")
+        hb_btn.setFixedWidth(52)
+        hb_btn.clicked.connect(self._send_heartbeat_now)
+        hb_row.addWidget(hb_btn)
+        hb_row.addStretch(1)
+        lay.addLayout(hb_row)
+
+        # CONFIG (activates the board's state machine) — full-width row so the
+        # label never truncates in the fixed-width left column
+        if self.profile.kind == "actuator":
+            self.config_btn = QtWidgets.QPushButton("Send ACTUATOR_CONFIG (activate)")
+            self.config_btn.setToolTip(
+                "WaitingForServer -> Active; locations = the displayed actuators "
+                "on this board, vent/abort states from the profile")
+            self.abort_controller_cb = QtWidgets.QCheckBox("abort controller")
+            self.abort_controller_cb.setChecked(self.profile.is_abort_controller)
+            self.abort_controller_cb.setToolTip(
+                "Mark this board as the designated survivor / abort controller")
+            lay.addWidget(self.config_btn)
+            lay.addWidget(self.abort_controller_cb)
+        else:
+            self.config_btn = QtWidgets.QPushButton("Send SENSOR_CONFIG (activate)")
+            self.config_btn.setToolTip(
+                "WaitingForServer -> SelfTest -> Active; sensor ids = the "
+                "displayed connectors")
+            lay.addWidget(self.config_btn)
+        self.config_btn.clicked.connect(self._send_config)
+
+        # Abort path
+        abort_row = QtWidgets.QHBoxLayout()
+        abort_row.setSpacing(6)
+        abort_btn = QtWidgets.QPushButton("ABORT")
+        abort_btn.setStyleSheet("color: #d33;")
+        abort_btn.clicked.connect(self._send_abort)
+        clear_btn = QtWidgets.QPushButton("Clear Abort")
+        clear_btn.clicked.connect(self._send_clear_abort)
+        noconn_btn = QtWidgets.QPushButton("No-Conn Abort")
+        noconn_btn.clicked.connect(self._send_no_conn_abort)
+        abort_row.addWidget(abort_btn)
+        abort_row.addWidget(clear_btn)
+        abort_row.addWidget(noconn_btn)
+        abort_row.addStretch(1)
+        lay.addLayout(abort_row)
+
+        if self.profile.kind == "actuator":
+            lay.addWidget(self._muted("Actuators — toggle sends ACTUATOR_COMMAND:"))
+            act_grid = QtWidgets.QGridLayout()
+            act_grid.setSpacing(4)
+            ids = self.profile.display_connectors()
+            for i, cid in enumerate(ids):
+                btn = QtWidgets.QPushButton(str(cid))
+                btn.setCheckable(True)
+                btn.setFixedWidth(48)
+                btn.setToolTip(self.profile.connector_label(cid))
+                btn.setStyleSheet(
+                    "QPushButton:checked { background-color: #2e7d32; color: white; }")
+                btn.toggled.connect(lambda on, c=cid: self._on_actuator_toggle(c, on))
+                self.actuator_buttons[cid] = btn
+                act_grid.addWidget(btn, i // 5, i % 5)
+            lay.addLayout(act_grid)
+
+            off_row = QtWidgets.QHBoxLayout()
+            all_off_btn = QtWidgets.QPushButton("All OFF")
+            all_off_btn.clicked.connect(self._all_actuators_off)
+            off_row.addWidget(all_off_btn)
+            off_row.addStretch(1)
+            lay.addLayout(off_row)
+
+            # PWM command row
+            lay.addWidget(self._muted("PWM — id / duration ms / duty / Hz:"))
+            pwm_row = QtWidgets.QHBoxLayout()
+            pwm_row.setSpacing(4)
+            self.pwm_id_combo = QtWidgets.QComboBox()
+            for cid in ids:
+                self.pwm_id_combo.addItem(str(cid), cid)
+            self.pwm_duration_spin = QtWidgets.QSpinBox()
+            self.pwm_duration_spin.setRange(1, 600000)
+            self.pwm_duration_spin.setValue(self.profile.pwm_duration_ms)
+            self.pwm_duty_spin = QtWidgets.QDoubleSpinBox()
+            self.pwm_duty_spin.setRange(0.0, 1.0)
+            self.pwm_duty_spin.setSingleStep(0.05)
+            self.pwm_duty_spin.setDecimals(2)
+            self.pwm_duty_spin.setValue(self.profile.pwm_duty_cycle)
+            self.pwm_freq_spin = QtWidgets.QDoubleSpinBox()
+            self.pwm_freq_spin.setRange(0.1, 1000.0)
+            self.pwm_freq_spin.setDecimals(1)
+            self.pwm_freq_spin.setValue(self.profile.pwm_frequency_hz)
+            pwm_btn = QtWidgets.QPushButton("Send PWM")
+            pwm_btn.clicked.connect(self._send_pwm)
+            for w in (self.pwm_id_combo, self.pwm_duration_spin,
+                      self.pwm_duty_spin, self.pwm_freq_spin, pwm_btn):
+                pwm_row.addWidget(w)
+            pwm_row.addStretch(1)
+            lay.addLayout(pwm_row)
+
+        return g
+
+    # -- send-side control handlers ------------------------------------------
+    def _link_or_warn(self) -> Optional[UdpLink]:
+        if self.link is None:
+            self.log.warning("Cannot send — start the Ethernet UDP listener first")
+            return None
+        return self.link
+
+    def _auto_heartbeat_tick(self) -> None:
+        # silent (200 ms cadence would swamp the log); errors surface via status
+        if self.link is not None and self.auto_hb_cb.isChecked():
+            self.link.send_server_heartbeat(self.engine_combo.currentData())
+
+    def _send_heartbeat_now(self) -> None:
+        link = self._link_or_warn()
+        if link and link.send_server_heartbeat(self.engine_combo.currentData()):
+            self.log.info("Sent SERVER_HEARTBEAT (engine=%s) -> %s:%d",
+                          self.engine_combo.currentText(), link.target_ip,
+                          self.profile.control_port)
+
+    def _send_config(self) -> None:
+        link = self._link_or_warn()
+        if link is None:
+            return
+        ids = self.profile.display_connectors()
+        if self.profile.kind == "actuator":
+            board_ip = link.target_ip
+            locations = [
+                protocol.AbortActuatorLocation(
+                    board_ip, cid,
+                    self.profile.abort_vent_states.get(cid, 0),
+                    self.profile.abort_abort_states.get(cid, 0))
+                for cid in ids
+            ]
+            ok = link.send_actuator_config(
+                is_abort_controller=self.abort_controller_cb.isChecked(),
+                abort_actuators=locations,
+                abort_pts=[],
+                enable_serial_printing=self.profile.enable_serial_printing)
+            if ok:
+                self.log.info(
+                    "Sent ACTUATOR_CONFIG (controller=%d, %d actuators @ %s) -> %s:%d",
+                    self.abort_controller_cb.isChecked(), len(locations), board_ip,
+                    link.target_ip, self.profile.control_port)
+        else:
+            ok = link.send_sensor_config(
+                sensor_ids=ids,
+                reference_voltage=self.profile.reference_voltage,
+                necessary_for_abort=self.profile.necessary_for_abort,
+                controller_ip="0.0.0.0" if self.profile.necessary_for_abort else None,
+                enable_serial_printing=self.profile.enable_serial_printing)
+            if ok:
+                self.log.info("Sent SENSOR_CONFIG (ids=%s, ref=%d) -> %s:%d",
+                              ids, self.profile.reference_voltage,
+                              link.target_ip, self.profile.control_port)
+
+    def _send_abort(self) -> None:
+        link = self._link_or_warn()
+        if link and link.send_abort():
+            self.log.info("Sent ABORT -> %s:%d", link.target_ip, self.profile.control_port)
+
+    def _send_clear_abort(self) -> None:
+        link = self._link_or_warn()
+        if link and link.send_clear_abort():
+            self.log.info("Sent CLEAR_ABORT -> %s:%d", link.target_ip, self.profile.control_port)
+
+    def _send_no_conn_abort(self) -> None:
+        link = self._link_or_warn()
+        if link and link.send_no_connection_abort():
+            self.log.info("Sent NO_CONNECTION_ABORT -> %s:%d",
+                          link.target_ip, self.profile.control_port)
+
+    def _on_actuator_toggle(self, cid: int, on: bool) -> None:
+        if self.link is None:
+            self.log.warning("Cannot send — start the Ethernet UDP listener first")
+            btn = self.actuator_buttons[cid]
+            btn.blockSignals(True)
+            btn.setChecked(not on)
+            btn.blockSignals(False)
+            return
+        if self.link.send_actuator_command(
+                [protocol.ActuatorCommand(cid, 1 if on else 0)]):
+            self.log.info("Sent ACTUATOR_COMMAND: actuator %d -> %s", cid,
+                          "ON" if on else "OFF")
+
+    def _all_actuators_off(self) -> None:
+        link = self._link_or_warn()
+        if link is None:
+            return
+        ids = self.profile.display_connectors()
+        if link.send_actuator_command(
+                [protocol.ActuatorCommand(cid, 0) for cid in ids]):
+            self.log.info("Sent ACTUATOR_COMMAND: all OFF (%s)", ids)
+        for btn in self.actuator_buttons.values():
+            btn.blockSignals(True)
+            btn.setChecked(False)
+            btn.blockSignals(False)
+
+    def _send_pwm(self) -> None:
+        link = self._link_or_warn()
+        if link is None:
+            return
+        cmd = protocol.PWMActuatorCommand(
+            actuator_id=self.pwm_id_combo.currentData(),
+            duration_ms=self.pwm_duration_spin.value(),
+            duty_cycle=self.pwm_duty_spin.value(),
+            frequency_hz=self.pwm_freq_spin.value())
+        if link.send_pwm_actuator_command([cmd]):
+            self.log.info("Sent PWM_ACTUATOR_COMMAND: id=%d %dms duty=%.2f %.1fHz",
+                          cmd.actuator_id, cmd.duration_ms, cmd.duty_cycle,
+                          cmd.frequency_hz)
 
     def _build_readings_group(self) -> QtWidgets.QGroupBox:
         g = QtWidgets.QGroupBox(f"Live {self.profile.reading_name} — per connector")
@@ -546,6 +787,7 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
             if e["value"] != self.serial_state_text:
                 self.log.info("Board state -> %s", e["value"])
             self.serial_state_text = e["value"]
+            self.value_labels["board_state"].setText(e["value"])
         elif kind == "fw_hash":
             self.value_labels["fw_hash"].setText(e["value"][:16] + "…")
         elif kind == "identity":
@@ -565,14 +807,13 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         elif kind == "packet_rx":
             self.log.info("Board received %s from %s", e["name"], e["src"])
         elif kind == "readings":
-            ref = self._ref_volts()
             base_t = now - self.start_time
             for cid, raw in e["values"].items():
                 if cid not in self.readings:
                     continue
                 ts, vs = self.readings[cid]
                 ts.append(base_t)
-                vs.append(protocol.raw_to_voltage(raw, ref))
+                vs.append(self.profile.decode_value(raw))
                 self.last_raw[cid] = raw
             self.last_sensor_data_time = now
 
@@ -584,6 +825,7 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         self.last_heartbeat_time = now
         self.heartbeat_times.append(now)
         self.heartbeat_count += 1
+        self.value_labels["board_state"].setText(protocol.board_state_name(hb.board_state))
         if first:
             self.log.info("Board online: id=%d state=%s engine=%s fw=%s… from %s",
                           hb.board_id, protocol.board_state_name(hb.board_state),
@@ -593,14 +835,13 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
     def _on_sensor_data(self, sd: protocol.SensorData, src_ip: str) -> None:
         self.last_sensor_data_time = time.time()
         self.sensor_packet_count += 1
-        ref = self._ref_volts()
         # Use the newest chunk for the "current value"; push every chunk to plot.
         base_t = self.last_sensor_data_time - self.start_time
         for chunk in sd.chunks:
             for dp in chunk.datapoints:
                 if dp.sensor_id not in self.readings:
                     continue
-                volt = protocol.raw_to_voltage(dp.raw, ref)
+                volt = self.profile.decode_value(dp.raw)
                 ts, vs = self.readings[dp.sensor_id]
                 ts.append(base_t)
                 vs.append(volt)
@@ -678,11 +919,6 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         self.conn_detail_label.setText(
             f"control {effective_ip}:{self.profile.control_port}{note}"
             f"  ·  listen UDP :{self.profile.listen_port}")
-
-    # -- helpers -------------------------------------------------------------
-    def _ref_volts(self) -> float:
-        from .profile import REFERENCE_VOLTAGE_VOLTS
-        return REFERENCE_VOLTAGE_VOLTS.get(self.ref_voltage_index, 2.5)
 
     # -- periodic refresh ----------------------------------------------------
     def _refresh(self) -> None:
