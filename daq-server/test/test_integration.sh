@@ -623,6 +623,72 @@ else
   echo "  ⚠️  calibration_service not found — calibrated data tests will show 0 entities"
 fi
 
+# ── Controller refuses a dangling PWM actuator, and drives nothing ───────────
+# [controller].pwm_fuel_actuator / pwm_ox_actuator name [actuator_roles] entries. The controller
+# has no independent notion of which valve is "the fuel press" and used to fall back to CH3/CH8 on
+# board 12 when the name was missing — driving PWM at whatever hardware sat on those channels.
+#
+# The resolution rules themselves are covered exhaustively and cheaply by test_controller_pwm_roles
+# (ctest). What only the real binary can show is the consequence: that a controller which cannot
+# resolve its actuators emits no PWM at all. "It logged a warning" is a much weaker claim than
+# "it sent nothing", and it is the second one that keeps a mis-typed role off the hardware.
+if [ -n "$CONTROLLER_SVC" ]; then
+  echo "🚫 Checking controller refuses an unassigned PWM output..."
+  BAD_CFG="$REPO_ROOT/.tmp/integration_badpwm_$$.toml"
+  BAD_LOG="$REPO_ROOT/.tmp/integration_badpwm_$$.log"
+  BAD_UDP="$REPO_ROOT/.tmp/integration_badpwm_udp_$$.txt"
+  # Strip the "pwm_fuel" assignment, leaving that output with no actuator.
+  sed 's/^\("Fuel Press" = \[[^]]*\), *"pwm_fuel"\]/\1]/' "$TEST_CONFIG" > "$BAD_CFG"
+  if command grep -aq '"pwm_fuel"' "$BAD_CFG"; then
+    echo "  ❌ test setup: could not remove the pwm_fuel assignment from $TEST_CONFIG"
+    UDP_CHECK_FAILED=1
+  fi
+  # Listen where PWM would land, so "nothing was sent" is observed rather than assumed.
+  timeout 8 python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1', $TEST_ACTUATOR_UDP_PORT))
+s.settimeout(6)
+n = 0
+try:
+    while True:
+        s.recvfrom(2048); n += 1
+except Exception:
+    pass
+open('$BAD_UDP','w').write(str(n))
+" &
+  BAD_LISTENER=$!
+  sleep 0.5
+  "$CONTROLLER_SVC" --config "$BAD_CFG" \
+    --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
+    --control-port "$((TEST_CONTROLLER_PORT + 20))" \
+    > "$BAD_LOG" 2>&1 &
+  BAD_PID=$!
+  sleep 2
+  # Ask it to fire. A controller that resolved its actuators would start PWM here.
+  printf 'FIRE_START\n' | timeout 2 nc 127.0.0.1 "$((TEST_CONTROLLER_PORT + 20))" >/dev/null 2>&1 || true
+  sleep 2
+  kill "$BAD_PID" 2>/dev/null || true
+  wait "$BAD_LISTENER" 2>/dev/null || true
+  BAD_PWM_COUNT="$(cat "$BAD_UDP" 2>/dev/null || echo 0)"
+  if command grep -aq 'no \[actuator_roles\] entry is assigned "pwm_fuel"' "$BAD_LOG" &&
+     command grep -aq "PWM fire gate DISABLED" "$BAD_LOG"; then
+    echo "  ✅ unassigned PWM output refused with a reason"
+  else
+    echo "  ❌ controller did not refuse an unassigned PWM output. Log:"
+    tail -20 "$BAD_LOG"
+    UDP_CHECK_FAILED=1
+  fi
+  if [ "$BAD_PWM_COUNT" = "0" ]; then
+    echo "  ✅ no PWM emitted while unresolved"
+  else
+    echo "  ❌ controller emitted $BAD_PWM_COUNT PWM packet(s) despite an unassigned output"
+    UDP_CHECK_FAILED=1
+  fi
+  rm -f "$BAD_CFG" "$BAD_UDP"
+fi
+
 # ── Start Controller Service ─────────────────────────────────────────────────
 if [ -n "$CONTROLLER_SVC" ]; then
   echo "🎛️  Starting controller_service..."
@@ -740,6 +806,7 @@ export INTEGRATION_SKIP_STARTUP_E2E
   --seq-log "$REPO_ROOT/.tmp/integration_sequencer_$$.log" \
   --backend-log "$REPO_ROOT/.tmp/integration_backend_$$.log" \
   --controller-log "$REPO_ROOT/.tmp/integration_controller_$$.log" \
+  --controller-port "$TEST_CONTROLLER_PORT" \
   --backend="$BACKEND" $SEQ_FLAG $CTRL_FLAG $VERBOSE_FLAG $ONLY_FLAG)
 WS_TEST_EXIT=$?
 

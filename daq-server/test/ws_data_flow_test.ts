@@ -31,6 +31,7 @@ import WebSocket from 'ws';
 import * as fs from 'fs';
 import * as http from 'http';
 import { spawnSync } from 'child_process';
+import * as net from 'net';
 
 const WS_PORT = parseInt(process.argv[2] || '8081', 10);
 const API_PORT = parseInt(process.argv[3] || '8082', 10);
@@ -39,6 +40,8 @@ const VERBOSE = process.argv.includes('--verbose');
 const BACKEND = process.argv.find(a => a.startsWith('--backend='))?.split('=')[1] ?? 'legacy';
 const HAS_SEQUENCER = process.argv.includes('--has-sequencer');
 const HAS_CONTROLLER = process.argv.includes('--has-controller');
+const ctrlPortIdx = process.argv.indexOf('--controller-port');
+const CONTROLLER_PORT = ctrlPortIdx >= 0 ? Number(process.argv[ctrlPortIdx + 1]) : 0;
 const IS_THIN = BACKEND === 'thin';
 
 // --received-stats <path>: write received update counts per entity to this file
@@ -105,6 +108,25 @@ function parseOnlyTests(): Set<string> | null {
 }
 
 const ONLY_TESTS = parseOnlyTests();
+
+/**
+ * Read a log file until it contains every needle, or the timeout expires; returns whatever it
+ * last read either way, so the caller's assertions report the real content on failure.
+ *
+ * Log assertions across processes are inherently racy — the writer is a separate process and the
+ * event the test synchronised on (a WS state update, another service's log line) can arrive
+ * before the line it wants is flushed. Polling turns "usually passes" into "passes".
+ */
+async function waitForLogLines(file: string, needles: string[], timeoutMs: number): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let content = '';
+  for (;;) {
+    content = fs.readFileSync(file, 'utf-8');
+    if (needles.every((n) => content.includes(n))) return content;
+    if (Date.now() >= deadline) return content;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
 
 function runTest(id: string): boolean {
   return ONLY_TESTS === null || ONLY_TESTS.has(id);
@@ -1375,6 +1397,27 @@ async function testStateTransitionDebugMode(ws: WebSocket): Promise<void> {
       const { durationMs, expiryState, fireState } = fireCfg;
       console.log(`  [Fire] configured: ${durationMs} ms → ${SystemState[expiryState] ?? expiryState}`);
 
+      // A client that connects to the controller's command port and never sends a newline, held
+      // open across the whole burn. This used to park controller_service permanently: it read the
+      // command inline with a blocking recv() and no timeout, so it never returned to accept()
+      // and every later FIRE_START/FIRE_STOP went unread — silently, because the kernel still
+      // completes the handshake and buffers, so the sequencer's send() succeeded either way.
+      //
+      // Only two real processes can show this. From the sequencer alone the send looks identical;
+      // from the controller alone there is no one to be starved. So the assertions below (the
+      // controller still logs both commands, and the sequencer still gets its ACK) are the
+      // regression test for the recv timeout, the per-client thread, and the ACK check together.
+      let wedge: net.Socket | null = null;
+      if (HAS_CONTROLLER && CONTROLLER_PORT > 0) {
+        wedge = net.connect({ host: '127.0.0.1', port: CONTROLLER_PORT });
+        wedge.on('error', () => { /* the point is that this connection is useless, not healthy */ });
+        await new Promise<void>((resolve) => {
+          wedge!.once('connect', () => resolve());
+          setTimeout(resolve, 1000);
+        });
+        console.log('  [Fire] holding a silent connection open on the controller command port');
+      }
+
       const enteredFire = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
         (payload) => payload.currentState === fireState);
       const firedAt = Date.now();
@@ -1439,13 +1482,50 @@ async function testStateTransitionDebugMode(ws: WebSocket): Promise<void> {
         if (CONTROLLER_LOG_FILE) {
           try {
             const ctrlLog = fs.readFileSync(CONTROLLER_LOG_FILE, 'utf-8');
+            // Both of these were delivered while the silent connection opened above was held
+            // open, which is the whole point — say so in the label rather than in a separate
+            // assert(true), which would print green even in the run where they failed.
+            const withWedge = wedge ? ' with a wedging client on the port' : '';
             assert(ctrlLog.includes('FIRE_START received'),
-              '[Fire] controller_service received FIRE_START (PWM gate opened)');
+              `[Fire] controller_service received FIRE_START${withWedge}`);
             assert(ctrlLog.includes('FIRE_STOP received'),
-              '[Fire] controller_service received FIRE_STOP (PWM gate closed)');
+              `[Fire] controller_service received FIRE_STOP${withWedge}`);
+            // The controller must have resolved real hardware for both PWM outputs. A config
+            // whose [controller].pwm_*_actuator names an undeclared role disables the gate, and
+            // the burn would then "work" here purely by the sequencer's own actuator table.
+            assert(!ctrlLog.includes('PWM fire gate DISABLED'),
+              '[Fire] controller resolved both PWM actuators (fire gate not disabled)');
           } catch (err: any) {
             assert(false, `[Fire] could not read controller log: ${err.message}`);
           }
+        }
+
+        // The sequencer must have *evidence* the commands landed, not just a successful send().
+        // Before the ACK check it logged "→ controller: FIRE_STOP" unconditionally, which is what
+        // made a wedged controller invisible from this side.
+        if (SEQ_LOG_FILE) {
+          try {
+            // Wait for the line rather than reading once. The sequencer writes its ACK *after*
+            // the controller has logged the command and replied, so the controller-log check
+            // above can win the race by a few ms — a plain read made this assertion flaky, which
+            // is worse than not having it.
+            const seqLog = await waitForLogLines(SEQ_LOG_FILE, [
+              '→ controller: FIRE_START (acked)',
+              '→ controller: FIRE_STOP (acked)',
+            ], 5000);
+            assert(seqLog.includes('→ controller: FIRE_START (acked)'),
+              '[Fire] sequencer got an ACK for FIRE_START');
+            assert(seqLog.includes('→ controller: FIRE_STOP (acked)'),
+              '[Fire] sequencer got an ACK for FIRE_STOP');
+            assert(!seqLog.includes('did not acknowledge'),
+              '[Fire] no unacknowledged fire commands');
+          } catch (err: any) {
+            assert(false, `[Fire] could not read sequencer log: ${err.message}`);
+          }
+        }
+        if (wedge) {
+          wedge.destroy();
+          wedge = null;
         }
 
         // The PWM handoff (sequencer stops commanding PWM roles during a burn so

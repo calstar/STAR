@@ -4,8 +4,10 @@ Known defects and improvement work across the C++ services, the TypeScript backe
 frontend, and CI. Each item names the affected file(s), what actually goes wrong, and the
 shape of the fix.
 
-**Last audited:** 2026-09-07 against `ab3ce2d2`.
-**Last updated:** 2026-09-07 — the Elodin subscription work landed (and withdrew this file's
+**Last audited:** 2026-09-08 against `1aeb97bc`.
+**Last updated:** 2026-09-08 — the controller PWM-mapping and FIRE-gate work landed, which
+resolved both controller entries under High (correcting one's scope and the other's severity) and
+turned up the two-writers finding now filed there. Before that, the Elodin subscription work landed (and withdrew this file's
 claim that the heartbeat's 256-byte buffer was the problem); the DAQ-NIC pinning work landed, which merged and resolved the two
 abort-broadcast entries and turned up the firmware finding now filed under Critical. The sequencer
 concurrency and config draft-only work landed earlier the same day.
@@ -83,53 +85,6 @@ states it maps.
 ---
 
 ## High
-
-### C++ — The controller's FIRE gate is a single-threaded accept loop with no receive timeout
-
-**File:** `diablo_server/services/controller/controller_main.cpp:60-123`
-
-`runControlServer` accepts a connection and then reads it **inline**, byte by byte, with a
-blocking `recv` and no `SO_RCVTIMEO`. There is no per-client thread. A client that connects
-and sends no newline blocks the accept loop indefinitely — and this loop is the only path
-that opens and closes the PWM gate.
-
-`sequencer_main.cpp:154` sets a 5 s `SO_RCVTIMEO` and gives each client its own thread; the controller,
-which gates ignition, does neither.
-
-**Failure scenario:** the backend host is killed or drops off the network mid-connection.
-The controller sits in `recv`. The next FIRE_STOP is never accepted, and the PWM gate stays
-open until the process is killed.
-
-**Fix:** set `SO_RCVTIMEO` on the accepted socket and handle the client on a short-lived
-thread, mirroring `sequencer_main`. A cap on concurrent clients is worth having too.
-
----
-
-### C++ — The controller falls back to hardcoded actuator channels when role names don't match
-
-**File:** `diablo_server/services/controller/controller_main.cpp:236-279`
-
-The controller looks up the literal role names `"Fuel Press"` and `"LOX Press"` in
-`[actuator_roles]`. If either is missing it prints a warning and **proceeds** with
-`CH3/board 12` and `CH8/board 12`.
-
-The config editor lets roles be renamed. A rename means the controller drives PWM on
-whatever hardware happens to sit on those channels of board 12.
-
-This is the same hazard as the state-id bugs, and the fix pattern is already in this very
-file: the fire-state gate a few lines down (`controller_main.cpp:341-363`) deliberately
-*disables itself* rather than fall back to a compiled id, with the comment "fail safe and
-loud, not silent-wrong". The actuator lookup should follow the same rule.
-
-Related, same block: `pwm.actuator_board_ip` holds **one** IP. If Fuel Press and LOX Press
-resolve to different boards, the code warns and uses the fuel board's IP for both — so LOX
-PWM commands are addressed to the wrong board. `PWMConfig` needs a per-channel IP.
-
-**Fix:** if either role is absent, refuse to open the PWM gate (the `setFireStateId(255)`
-pattern) instead of substituting defaults. Make the role names config keys rather than
-literals.
-
----
 
 ### Backend — WebSocket broadcast has no backpressure and no keepalive
 
@@ -366,6 +321,33 @@ longer to flush, and on a fast machine it's a second wasted on every run.
 ## Resolved
 
 Kept so a future audit can distinguish "fixed" from "never checked".
+
+### By the controller PWM-mapping and FIRE-gate work (2026-09-08)
+
+Filed as two entries — *"the controller falls back to hardcoded actuator channels when role names
+don't match"* and *"the FIRE gate is a single-threaded accept loop with no receive timeout"*. The
+first understated the scope; the second overstated the severity. Both are recorded here as found,
+not as filed.
+
+| Item | Resolution |
+|---|---|
+| Controller substituted `CH3`/`CH8` on board 12 for a missing role | **Fixed, and there were five fallbacks, not one.** Also removed: `PWMConfig`'s own member defaults (`192.168.2.201`, CH3, CH8) which gave the others something to land on; a synthesized boards 11-14 table when config declared none; `"192.168.2." + board_id` for a board with no declared IP; and two roles on two boards silently sharing the first one's IP. Every one was this process asserting a rig layout only config knows. |
+| The role names were C++ string literals while the editor can rename roles | **Fixed.** The assignment lives on the `[actuator_roles]` entry, so a rename carries it along and cannot orphan it. Resolution moved to `lib/include/control/PWMTargets.hpp` so it is testable without a service; the controller refuses via the `setFireStateId(255)` pattern already in that file, naming which output has no actuator and why. In the editor the assignment is a per-actuator dropdown on the Actuators tab — you assign it where you define the actuator — and the Controller tab shows the resulting mapping. |
+| Two roles on two boards was a warning and a wrong destination | **Supported, not refused.** `PWMConfig` carries an IP + channel per target; `sendActuationPWM` keeps the single batched datagram when both share a board and splits into two when they do not. That was never a policy question — the struct simply could not represent what config said. |
+| Nothing tested the mapping | **Fixed.** `test_controller_pwm_roles` (ctest) covers 9 cases / 26 assertions, all pure resolution, including that polarity and assignment stay independent. `validateControllerPwmActuators` in `shared/types.ts` gives the config editor and the API one rule (11 vitest cases), and the editor blocks the save on it — the same posture as the existing duplicate-role and state-machine guards. `test_fire_lifecycle` section 6 now uses a normally-open assigned actuator, so it would catch a regression that re-merged polarity and assignment. |
+| The accept loop wedged on a peer that sent no newline | **Fixed.** `SO_RCVTIMEO` on the accepted socket plus a thread per client, mirroring `sequencer_main.cpp` (64-client cap, `ERR:too many connections`, threads joined). `g_running` is now checked inside the read, so SIGTERM stops the process instead of needing SIGKILL. |
+| "The PWM gate stays open until the process is killed" | **Withdrawn.** The controller's Elodin parity path (`ControllerService.cpp:782`) drives the same gate from the sequencer's published state, on its own thread, and closes it at burn end — as does the sequencer's own 1 Hz actuator republish. A wedge degrades the primary path; it does not strand the gate. |
+| The real defect: the wedge was silent at both ends | **Fixed.** `notifyControllerFire` discarded the send result (`(void)n`) and logged `→ controller: FIRE_STOP` unconditionally — but a successful `send()` proves nothing, because the kernel completes the handshake and buffers for an application that may never read. It now reads the `OK\n` the controller already sends, retries once on failure, and logs an operator-facing error naming the endpoint. |
+| The parity fallback never reconnected | **Fixed.** `elodinSubscriberLoop()` exited the moment `is_connected()` went false and was never restarted, so one db blip left the controller deaf to sequencer state for the life of the process. It now reconnects and *re-subscribes* (the VTables live in the db process), matching `heartbeat_service_main.cpp:103-120`, and the thread starts whenever a db is configured rather than only when the first connect happened to succeed. |
+| Nothing tested any of it end to end | **Fixed, and it has teeth.** `ws_data_flow_test.ts` now holds a silent connection open on the controller's command port across the whole burn and asserts both commands still land *and* that the sequencer got an ACK for each; `test_integration.sh` starts a controller with a dangling actuator and asserts it refuses **and emits zero PWM datagrams** — "it logged a warning" being a much weaker claim than "it sent nothing". Verified against the pre-fix binary: 5 assertions fail and the run exits 1. |
+| Dropped from the plan | A 1 Hz republish of sequencer state and a packet-rate watchdog on `fire_active_`: a clumsy instrument on a 6 s burn, and redundant once the ACK detects failure. Repeating FIRE_STOP was considered and rejected — the ACK tells you whether it landed instead of assuming volume fixes it. |
+
+| The fire-state PWM handoff never engaged on a real rig | **Fixed, and it was the actual defect here.** `ActuatorCommander` skips controller-owned actuators during a burn so there is one writer — the mechanism was wired and `test_fire_lifecycle` section 6 tested it, but it keyed on `kind == "PWM"`, and `kind` is also where NC/NO polarity lives. No shipped config could mark anything `"PWM"` without losing its polarity, so nothing ever was, and the skip never fired. Found by the user; first filed by this work as "two writers on one channel", which named the symptom and the wrong cause. |
+| Two independent declarations of which actuators the controller owns | **Collapsed into one.** This change first added `[controller].pwm_fuel_actuator` / `pwm_ox_actuator` beside the existing `kind = "PWM"` — the same duplication it set out to remove. Both are gone. An `[actuator_roles]` entry's optional 4th element (`"pwm_fuel"` / `"pwm_ox"`) is now the single statement: the controller resolves its targets from it and the sequencer's handoff reads the same field, so they cannot disagree. `kind` means polarity and nothing else, so `"LOX Press" = ["NO", 8, 12, "pwm_ox"]` is expressible — it was not before. |
+| Duplicate assignment was not expressible, let alone caught | **Now an error.** Two actuators claiming one output is reported by name rather than silently resolved to the first; `validateControllerPwmActuators` blocks the save and the controller refuses the gate. Both outputs unassigned stays valid — that is a rig which does not use the PWM controller (digital-twin), and the editor must not make it unsaveable. |
+
+**Corrected in passing:** `SequencerService.cpp:321` claimed the controller endpoint
+"defaults to 127.0.0.1:8000"; it is `9999`.
 
 ### By the Elodin subscription work (2026-09-07)
 

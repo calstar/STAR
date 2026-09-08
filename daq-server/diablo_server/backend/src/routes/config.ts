@@ -109,6 +109,9 @@ export function applyCalibrationModelDefaults(config: any): void {
   }
 }
 
+/** Re-exported from shared/types so the API and the config editor enforce one rule. */
+export { validateControllerPwmActuators as validateControllerActuators } from '../../../shared/types.js';
+
 /** Read + parse a config TOML. Defaults to the deployed config.toml (getConfigPath), but any
  *  path can be given — the config-profiles editor reads the active profile file this way.
  *  smol-toml is a strict TOML 1.0 parser, so actuator_roles' mixed-type inline arrays

@@ -98,4 +98,55 @@ export function engineStateCodeToLabel(code) {
     }
     return 'UNKNOWN';
 }
+// ── Controller PWM actuator assignment ───────────────────────────────────────
+/** The two controller_service PWM outputs, as they appear in the 4th element of an
+ *  [actuator_roles] entry. Absent from an entry means the sequencer owns that actuator. */
+export const PWM_ASSIGNMENTS = ['pwm_fuel', 'pwm_ox'];
+/** Which actuator serves each PWM output, from `[actuator_roles]`. */
+export function pwmAssignmentMap(config) {
+    const out = { pwm_fuel: [], pwm_ox: [] };
+    const roles = config?.actuator_roles;
+    if (!roles || typeof roles !== 'object')
+        return out;
+    for (const [name, value] of Object.entries(roles)) {
+        const assignment = Array.isArray(value) && typeof value[3] === 'string' ? value[3].trim() : '';
+        if (assignment && out[assignment])
+            out[assignment].push(name);
+    }
+    return out;
+}
+/**
+ * Whether the controller's PWM outputs are assigned exactly once each.
+ *
+ * An [actuator_roles] entry's optional 4th element ("pwm_fuel" / "pwm_ox") is the single statement
+ * of which hardware controller_service drives. The same fact makes the sequencer stop commanding
+ * that actuator during a burn, so exactly one writer drives it — which is why a duplicate or a
+ * missing assignment is worth blocking rather than warning about. The C++ side enforces the same
+ * rule in PWMTargets.hpp and refuses to open the PWM fire gate without it.
+ *
+ * Both outputs unassigned is allowed and means "this rig does not use the PWM controller" — the
+ * digital-twin profile is exactly that. Assigning one but not the other is not.
+ *
+ * Returns one human-readable problem per bad output; empty means valid.
+ */
+export function validateControllerPwmActuators(config) {
+    const roles = config?.actuator_roles;
+    // No [actuator_roles] at all is a different (and much louder) misconfiguration; don't pile on.
+    if (!roles || typeof roles !== 'object')
+        return [];
+    const assigned = pwmAssignmentMap(config);
+    if (assigned.pwm_fuel.length === 0 && assigned.pwm_ox.length === 0)
+        return [];
+    const issues = [];
+    for (const [key, label] of [['pwm_fuel', 'fuel'], ['pwm_ox', 'ox']]) {
+        const names = assigned[key];
+        if (names.length === 0) {
+            issues.push(`No actuator is assigned "${key}" — the controller has no ${label} PWM output. Assign one, or clear the other assignment if this rig does not use the PWM controller.`);
+        }
+        else if (names.length > 1) {
+            issues.push(`${names.length} actuators are assigned "${key}" (${names.join(', ')}) — exactly one must be.`);
+        }
+    }
+    return issues;
+}
 //# sourceMappingURL=types.js.map

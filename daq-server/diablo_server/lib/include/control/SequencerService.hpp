@@ -191,8 +191,13 @@ private:
     void applyFireConfig(const fsw::config::Config& cfg);
 
     /** Send FIRE_START / FIRE_STOP to controller_service. The single place anything tells the
-     *  controller the burn gate changed. */
+     *  controller the burn gate changed. Retries once if the first attempt is not acknowledged. */
     void notifyControllerFire(bool active);
+
+    /** One attempt: connect, send, wait for the controller's "OK". Returns whether it was
+     *  acknowledged — a successful send() is not evidence of delivery, since the kernel buffers
+     *  for an application that may never read. */
+    bool notifyControllerFireOnce(bool active);
 
     // ── Fire semantics, from config ───────────────────────────────────────────
     // Which state fires, and where the timer lands when it expires, are config rather than

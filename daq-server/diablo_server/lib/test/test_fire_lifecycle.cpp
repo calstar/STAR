@@ -211,8 +211,13 @@ int main() {
             "\n\n[actuator_service]\nbind_address = \"0.0.0.0\"\n\n"
             "[boards.act_board]\ntype = \"ACTUATOR\"\nip = \"127.0.0.1\"\nboard_id = 12\n"
             "enabled = true\nnum_actuators = 10\n\n"
+            // The 4th element is what assigns an actuator to controller_service. It used to be a
+            // third `kind` value ("PWM"), but kind also carries NC/NO polarity, so an actuator
+            // could not be both PWM-driven and normally open — and since every shipped config
+            // needed NC/NO, nothing was ever marked "PWM" and this skip never engaged on a real
+            // rig. Note Throttle is "NO" here precisely to pin that the two are independent.
             "[actuator_roles]\n\"Plain Valve\" = [\"NC\", 1, 12]\n"
-            "\"Throttle\" = [\"PWM\", 2, 12]\n";
+            "\"Throttle\" = [\"NO\", 2, 12, \"pwm_fuel\"]\n";
 
         int sock = socket(AF_INET, SOCK_DGRAM, 0);
         int reuse = 1;
@@ -247,13 +252,13 @@ int main() {
 
         const auto idle = channelsFor(State::IDLE);
         check(idle.count(1) && idle.count(2),
-              "outside fire the sequencer commands BOTH the plain valve and the PWM one");
+              "outside fire the sequencer commands BOTH the plain valve and the assigned one");
 
         const auto fire = channelsFor(State::FIRE);
-        check(fire.count(1), "in fire the sequencer still commands non-PWM valves");
+        check(fire.count(1), "in fire the sequencer still commands its own valves");
         check(!fire.count(2),
-              "in fire the sequencer stops commanding the PWM valve — control handed to the "
-              "controller, so only one writer drives it during a burn");
+              "in fire the sequencer stops commanding the controller-assigned valve — one "
+              "writer drives it during a burn");
 
         close(sock);
         fs_alias::remove_all(dir);

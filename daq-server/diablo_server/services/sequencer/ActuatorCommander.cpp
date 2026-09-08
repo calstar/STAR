@@ -91,7 +91,12 @@ bool ActuatorCommander::load(const std::string& config_content, const std::strin
             continue;
         ActuatorRole role;
         role.is_no = r.is_no;
-        role.is_pwm = (r.kind == "PWM" || r.kind == "pwm");
+        // Assigned to controller_service via the 4th element of the [actuator_roles] entry.
+        // This used to read `kind == "PWM"`, but kind is also where NC/NO polarity lives, so
+        // an actuator could not be both PWM-driven and normally open — and since the shipped
+        // configs needed NC/NO, nothing was ever marked "PWM" and this handoff never engaged
+        // on a real rig. Same field the controller resolves its targets from (PWMTargets.hpp).
+        role.is_pwm = !r.controller_role.empty();
         role.channel = r.channel;
         role.board_id = r.board_id;
         auto it = board_id_to_ip.find(r.board_id);

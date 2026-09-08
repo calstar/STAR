@@ -329,4 +329,25 @@ export declare function isNotificationOngoing(p: NotificationPayload): p is Noti
  * label. Falls back to 'UNKNOWN' if the code is not recognized.
  */
 export declare function engineStateCodeToLabel(code: number | null | undefined): string;
+/** The two controller_service PWM outputs, as they appear in the 4th element of an
+ *  [actuator_roles] entry. Absent from an entry means the sequencer owns that actuator. */
+export declare const PWM_ASSIGNMENTS: readonly ["pwm_fuel", "pwm_ox"];
+export type PwmAssignment = typeof PWM_ASSIGNMENTS[number];
+/** Which actuator serves each PWM output, from `[actuator_roles]`. */
+export declare function pwmAssignmentMap(config: any): Record<string, string[]>;
+/**
+ * Whether the controller's PWM outputs are assigned exactly once each.
+ *
+ * An [actuator_roles] entry's optional 4th element ("pwm_fuel" / "pwm_ox") is the single statement
+ * of which hardware controller_service drives. The same fact makes the sequencer stop commanding
+ * that actuator during a burn, so exactly one writer drives it — which is why a duplicate or a
+ * missing assignment is worth blocking rather than warning about. The C++ side enforces the same
+ * rule in PWMTargets.hpp and refuses to open the PWM fire gate without it.
+ *
+ * Both outputs unassigned is allowed and means "this rig does not use the PWM controller" — the
+ * digital-twin profile is exactly that. Assigning one but not the other is not.
+ *
+ * Returns one human-readable problem per bad output; empty means valid.
+ */
+export declare function validateControllerPwmActuators(config: any): string[];
 //# sourceMappingURL=types.d.ts.map

@@ -6,6 +6,7 @@ import { MessageType } from '@/lib/types';
 import { useControlMode } from '@/lib/control-mode';
 import { useSensorStore } from '@/lib/store';
 import { NAV_ITEMS, navItemById } from '@/lib/nav-items';
+import { validateControllerPwmActuators, pwmAssignmentMap } from '@/lib/types';
 
 interface ConfigData {
   server_heartbeat?: {
@@ -83,7 +84,9 @@ interface ConfigData {
     is_abort?: boolean;
     is_boot?: boolean;
   }>;
-  actuator_roles?: Record<string, [string, number] | [string, number, number] | [string, number, string]>;
+  // 4th element assigns the actuator to controller_service ("pwm_fuel" | "pwm_ox"); absent means
+  // the sequencer owns it. See validateControllerPwmActuators.
+  actuator_roles?: Record<string, [string, number] | [string, number, number] | [string, number, string] | [string, number, number, string]>;
   actuator_abbrev?: Record<string, string>;
   actuator_service?: { port?: number; bind_address?: string };
   controller_service?: { port?: number; fire_duration_ms?: number; fire_extended_ms?: number };
@@ -520,6 +523,15 @@ export default function ConfigPage() {
         return;
       }
     }
+    // Same posture again, for the PWM actuator selection: saving a config whose
+    // [controller].pwm_*_actuator names an actuator that doesn't exist means the controller comes
+    // up with its fire gate disabled, and the operator finds out at the next restart rather than
+    // here. Renaming a role in the Actuators tab is the usual way to get here.
+    if (pwmActuatorIssues.length > 0) {
+      setError(`Fix the controller's PWM actuators before saving — ${pwmActuatorIssues.join(' ')}`);
+      setTimeout(() => setError(null), 9000);
+      return;
+    }
     try {
       setSaving(true);
       setError(null);
@@ -860,6 +872,19 @@ export default function ConfigPage() {
   const delayShapeMismatch = !!(csvActuators && csvDelays &&
     (csvDelays.states.length !== csvActuators.states.length ||
       csvDelays.rows.length !== csvActuators.rows.length));
+
+  // ── [controller] PWM actuator selection ────────────────────────────────────
+  // These two keys are the only statement of which hardware the controller drives. The C++ side
+  // refuses to open the PWM fire gate when either is unset or names a role that isn't declared
+  // (it used to fall back to CH3/CH8 on board 12 and drive whatever sat there), so the editor
+  // has to make a dangling reference visible here rather than at the next controller restart.
+  // The rule itself lives in shared/types so the editor, the API and (in spirit) the C++ side
+  // cannot drift apart on what counts as a valid assignment.
+  const pwmActuatorIssues = validateControllerPwmActuators(config);
+  const pwmAssigned = pwmAssignmentMap(config);
+  const pwmAssignmentSummary = (['pwm_fuel', 'pwm_ox'] as const)
+    .map((k) => `${k === 'pwm_fuel' ? 'fuel' : 'ox'} = ${pwmAssigned[k].join(', ') || 'unassigned'}`)
+    .join(', ');
 
   // ── [[states]] editor ──────────────────────────────────────────────────────
   const stateList = (config.states || []) as NonNullable<ConfigData['states']>;
@@ -2001,6 +2026,20 @@ export default function ConfigPage() {
                   const actuatorId = typeof arr[1] === 'number' ? arr[1] : Number(arr[1] || 1);
                   const third = arr.length >= 3 ? arr[2] : undefined;
                   const boardId = typeof third === 'number' ? third : (typeof third === 'string' ? Number(third) : undefined);
+                  // 4th element: which controller_service PWM output this actuator serves. Every
+                  // edit below goes through writeRole so changing a channel or polarity cannot
+                  // silently drop the assignment — which would hand the valve back to the
+                  // sequencer during a burn without anyone touching that field.
+                  const assignment = typeof arr[3] === 'string' ? arr[3] : '';
+                  const writeRole = (t: string, ch: number, b: number | undefined, assign: string) => {
+                    const next: any[] = [t, ch];
+                    if (b !== undefined) next.push(b);
+                    if (assign) {
+                      if (b === undefined) next.push(boardId ?? 0);  // 4th element needs a 3rd
+                      next.push(assign);
+                    }
+                    setConfig({ ...config, actuator_roles: { ...config.actuator_roles, [name]: next as any } });
+                  };
                   return (
                   // Key by index, not name — keying by the changing name remounts the row each
                   // keystroke (focus loss). Rename rebuilds preserving order so the row stays put.
@@ -2021,13 +2060,7 @@ export default function ConfigPage() {
                     <span className="text-text-muted">=</span>
                     <select
                       value={type}
-                      onChange={(e) => {
-                        const updated = { ...config.actuator_roles };
-                        updated[name] = third !== undefined
-                          ? ([e.target.value, actuatorId, third] as any)
-                          : ([e.target.value, actuatorId] as any);
-                        setConfig({ ...config, actuator_roles: updated });
-                      }}
+                      onChange={(e) => writeRole(e.target.value, actuatorId, boardId, assignment)}
                       className="px-3 py-2 bg-background border border-gray-700 rounded text-white"
                     >
                       <option value="NO">NO (Normally Open)</option>
@@ -2035,26 +2068,31 @@ export default function ConfigPage() {
                     </select>
                     <CommitOnBlurNumber
                       value={actuatorId}
-                      onCommit={(n) => {
-                        if (n === undefined) return;
-                        const updated = { ...config.actuator_roles };
-                        updated[name] = third !== undefined ? ([type, n, third] as any) : ([type, n] as any);
-                        setConfig({ ...config, actuator_roles: updated });
-                      }}
+                      onCommit={(n) => { if (n !== undefined) writeRole(type, n, boardId, assignment); }}
                       className="w-24 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                       placeholder="Ch"
                     />
                     <CommitOnBlurNumber
                       value={Number.isFinite(boardId as number) ? (boardId as number) : undefined}
                       allowEmpty
-                      onCommit={(n) => {
-                        const updated = { ...config.actuator_roles };
-                        updated[name] = n === undefined ? ([type, actuatorId] as any) : ([type, actuatorId, n] as any);
-                        setConfig({ ...config, actuator_roles: updated });
-                      }}
+                      onCommit={(n) => writeRole(type, actuatorId, n, assignment)}
                       className="w-32 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                       placeholder="Board ID"
                     />
+                    {/* Assigning an actuator here is what hands it to controller_service: the
+                        controller resolves its PWM output from this, and the sequencer stops
+                        commanding the actuator during a burn so there is one writer. */}
+                    <select
+                      value={assignment}
+                      onChange={(e) => writeRole(type, actuatorId, boardId, e.target.value)}
+                      disabled={!canEdit}
+                      title="Which controller_service PWM output this actuator serves"
+                      className="w-40 px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50"
+                    >
+                      <option value="">Sequencer</option>
+                      <option value="pwm_fuel">Controller: fuel</option>
+                      <option value="pwm_ox">Controller: ox</option>
+                    </select>
                     <button
                       onClick={() => {
                         const updated = { ...config.actuator_roles };
@@ -2222,6 +2260,28 @@ export default function ConfigPage() {
           {activeTab === 'controller' && (
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">Controller</h2>
+
+              {/* Which actuators the controller PWMs. The server has no independent notion of a
+                  "fuel board" — this mapping is the only place it is stated, and pointing it at a
+                  role that does not exist disables the PWM fire gate at controller startup. So the
+                  choice is a list of what [actuator_roles] actually declares, and a dangling one
+                  is an error that blocks the save rather than a warning in a log. */}
+              {pwmActuatorIssues.length > 0 ? (
+                <InlineIssue level="error" className="mb-4">
+                  {pwmActuatorIssues.map((msg) => <p key={msg}>{msg}</p>)}
+                  <p className="opacity-80">
+                    Assign actuators on the <strong>Actuators</strong> tab. Until exactly one is
+                    assigned to each output the controller refuses to open the PWM fire gate.
+                  </p>
+                </InlineIssue>
+              ) : (
+                <p className="mb-4 text-sm text-text-muted">
+                  PWM outputs: {pwmAssignmentSummary}. Assigned on the Actuators tab — the
+                  sequencer stops commanding these during a burn so the controller is the only
+                  writer.
+                </p>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {renderField(
                   'Controller Loop (Hz)',

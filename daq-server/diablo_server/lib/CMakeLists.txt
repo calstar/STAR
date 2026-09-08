@@ -140,6 +140,16 @@ target_include_directories(test_daq_interface PRIVATE
 target_link_libraries(test_daq_interface fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME daq_interface COMMAND test_daq_interface)
 
+# Which actuators the controller PWMs, resolved from config. Pure resolution like the NIC test
+# above — config comes from strings, so no working-directory care is needed.
+add_executable(test_controller_pwm_roles test/test_controller_pwm_roles.cpp)
+target_include_directories(test_controller_pwm_roles PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_controller_pwm_roles fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME controller_pwm_roles COMMAND test_controller_pwm_roles)
+
 # Concurrency + abort ordering. Both drive a real SequencerService, so they need the same sources
 # test_sequencer_elodin links. They resolve config/ and the state CSVs relative to the working
 # directory (cwd, ../, ../../), which is why they run from the build dir under CTest.

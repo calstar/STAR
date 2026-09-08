@@ -59,6 +59,9 @@ struct ControllerServiceConfig {  // [controller_service]
 };
 
 struct ControllerConfig {  // [controller]
+    // Which actuators the controller drives is NOT stated here — it is the 4th element of the
+    // [actuator_roles] entry (see ActuatorRole::controller_role), so the assignment lives with
+    // the actuator and the sequencer's fire-state handoff reads the same fact.
     double pwm_frequency_hz = 10.0;
     uint32_t pwm_duration_ms = 10000;
     double controller_loop_hz = 10.0;
@@ -111,11 +114,23 @@ struct StateDef {  // one per [[states]]
     bool is_boot = false;
 };
 
-struct ActuatorRole {         // [actuator_roles] value ["NC"|"NO"|"PWM", channel, board_id]
-    std::string kind = "NC";  // raw first element (NC/NO/PWM)
+// [actuator_roles] value ["NC"|"NO", channel, board_id, controller_role?]
+//
+// The optional 4th element assigns the actuator to controller_service: "pwm_fuel" or "pwm_ox".
+// It is the single statement of which hardware the controller drives — the sequencer stops
+// commanding an assigned actuator in the fire state (so there is one writer during a burn), and
+// the controller resolves its PWM outputs from the same entries.
+//
+// It is a separate slot from `kind` deliberately. `kind` used to carry a third value "PWM" for
+// this, but it is also where NC/NO polarity lives, so an actuator could not be both PWM-driven
+// and normally open — and since the shipped configs needed NC/NO, nothing was ever marked "PWM"
+// and the fire-state handoff never engaged on a real rig.
+struct ActuatorRole {
+    std::string kind = "NC";  // raw first element; polarity only (NC/NO)
     bool is_no = false;       // kind == "NO"
     int channel = 0;
     int board_id = 0;
+    std::string controller_role;  // "pwm_fuel" | "pwm_ox"; empty = sequencer-owned
 };
 
 // One [boards.*] section. Superset of every reader's keys so a single parse serves all binaries.

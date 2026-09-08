@@ -174,6 +174,10 @@ Config from_table(const toml::table& t) {
                 r.is_no = (r.kind == "NO" || r.kind == "no");
                 r.channel = static_cast<int>((*arr)[1].value<int64_t>().value_or(0));
                 r.board_id = static_cast<int>((*arr)[2].value<int64_t>().value_or(0));
+                // Optional 4th element: which controller_service PWM output this actuator serves
+                // ("pwm_fuel" / "pwm_ox"). Absent means the sequencer owns it.
+                if (arr->size() >= 4)
+                    r.controller_role = (*arr)[3].value<std::string>().value_or("");
                 c.actuator_roles[std::string(k.str())] = r;
             }
 

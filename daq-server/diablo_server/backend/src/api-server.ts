@@ -12,7 +12,7 @@ import { IncomingMessage, ServerResponse } from 'http';
 // ESM has no __dirname global. tsx injects one in dev, but `node dist/server.js` (the systemd sim)
 // does not — so the __dirname candidates below would throw ReferenceError. Define it explicitly.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-import { readConfig, readDeployedConfig, writeConfig, getConfigPath, patchBoardField } from './routes/config.js';
+import { readConfig, readDeployedConfig, writeConfig, getConfigPath, patchBoardField, validateControllerActuators } from './routes/config.js';
 import {
   listProfiles, switchProfile, createProfile, renameProfile, deleteProfile,
   getActiveProfileName, ensureSeeded, readActiveProfile, writeActiveProfile, deployActiveProfile,
@@ -356,6 +356,15 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         req.on('end', () => {
           try {
             const { config } = JSON.parse(body);
+            // The editor refuses to save this, but it is not the only writer — enforce it where
+            // every write passes. A dangling PWM actuator means the controller comes up with its
+            // fire gate disabled, which is far better found here than at the next restart.
+            const pwmIssues = validateControllerActuators(config);
+            if (pwmIssues.length > 0) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: `Invalid controller PWM actuators: ${pwmIssues.join('; ')}` }));
+              return;
+            }
             const sessionActive = sessionManager.getStatus().active;
             console.log(`📝 Config save → active profile "${getActiveProfileName()}"${sessionActive ? ' (draft; config.toml frozen — session active)' : ' (+ deploy to config.toml)'}`);
             writeActiveProfile(config);
@@ -408,7 +417,13 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
             if (!body.trim()) throw new Error('Uploaded config is empty');
             previous = fs.existsSync(target) ? fs.readFileSync(target, 'utf-8') : null;
             fs.writeFileSync(target, body, 'utf-8');
-            readConfig(target); // throws if the uploaded TOML is invalid
+            const imported = readConfig(target); // throws if the uploaded TOML is invalid
+            // Parsing is not the only way an uploaded config can be wrong. Throwing here reuses
+            // the rollback below, so a file naming a PWM actuator that doesn't exist never
+            // becomes the deployed config.
+            const importPwmIssues = validateControllerActuators(imported);
+            if (importPwmIssues.length > 0)
+              throw new Error(`Invalid controller PWM actuators: ${importPwmIssues.join('; ')}`);
             const sessionActive = sessionManager.getStatus().active;
             if (!sessionActive) {
               deployActiveProfile();

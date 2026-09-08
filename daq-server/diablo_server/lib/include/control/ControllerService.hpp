@@ -29,16 +29,27 @@ namespace control {
 class ControllerService {
 public:
     // ── PWM / actuator config ──────────────────────────────────────────
+    /** Where one propellant's PWM commands go. Both fields come from config via
+     *  [controller].pwm_*_actuator → [actuator_roles] → [boards.*]; there are deliberately no
+     *  defaults, because a default is this process inventing a rig layout it cannot know.
+     *  channel == 0 means "config did not say" and the target must never be addressed. */
+    struct PWMTarget {
+        std::string board_ip;
+        uint8_t channel = 0;
+        std::string actuator_name;  // the [actuator_roles] key, for logs an operator can act on
+
+        bool resolved() const { return channel != 0 && !board_ip.empty(); }
+    };
+
     struct PWMConfig {
-        std::string actuator_board_ip = "192.168.2.201";
+        PWMTarget fuel;
+        PWMTarget ox;
         uint16_t actuator_port = 5005;
         /** Local address PWM commands leave from; "0.0.0.0" leaves the NIC to the kernel.
          *  Resolved by the caller (see net/DaqInterface.hpp) — this is the fire path, and it must
          *  not reach the actuator board over whichever interface the route table happened to
          *  prefer. */
         std::string bind_address = "0.0.0.0";
-        uint8_t fuel_channel = 3;  // Fuel Press actuator channel
-        uint8_t lox_channel = 8;   // LOX Press actuator channel
         float frequency_hz = 10.0f;
         uint32_t duration_ms = 1000;  // PWM burst duration per command
     };
@@ -116,13 +127,18 @@ private:
      *   Body    <B>  : num_commands
      *   Per-cmd <BIff>: actuator_id, duration_ms, duty_cycle, frequency
      */
-    bool sendPWMCommand(uint8_t channel, float duty_cycle, float frequency, uint32_t duration_ms);
+    bool sendPWMCommand(const PWMTarget& target, float duty_cycle, float frequency,
+                        uint32_t duration_ms);
 
-    /** Single UDP packet with both channels (fuel + LOX) for fire-state commands. */
-    bool sendPWMCommands(uint8_t channel1, float duty1, uint8_t channel2, float duty2,
+    /** Single UDP packet carrying both channels. Only valid when both targets are on the same
+     *  board — the packet has one destination. sendActuationPWM enforces that. */
+    bool sendPWMCommands(const PWMTarget& t1, float duty1, const PWMTarget& t2, float duty2,
                          float frequency, uint32_t duration_ms);
 
-    /** Send both fuel + LOX PWM commands for a given actuation output (one packet). */
+    /** Send the fuel + ox PWM commands for a given actuation output. One packet when both
+     *  actuators are on the same board (preserving the simultaneity the fire path had when
+     *  PWMConfig could only express one destination), two when config puts them on different
+     *  boards. An unresolved target is never addressed. */
     void sendActuationPWM(const RobustDDPController::ActuationCommand& act);
 
     // ── Elodin DB (optional) ───────────────────────────────────────────
@@ -134,6 +150,15 @@ private:
     // ── Controller loop ────────────────────────────────────────────────
     void controllerLoop();
     void elodinSubscriberLoop();
+
+    /** Connect the subscriber and subscribe to the tables it reads. Both halves run on every
+     *  reconnect — a db restart loses the VTables, so re-connecting without re-subscribing comes
+     *  back silent. Returns false (having dropped the connection) if either half fails. */
+    bool connectSubscriber();
+
+    /** The read half, one connection's worth. Returns when the connection drops or on shutdown;
+     *  elodinSubscriberLoop() decides whether to reconnect. */
+    void subscriberReadLoop(std::vector<uint8_t>& rx_buffer);
 
     // ── State ──────────────────────────────────────────────────────────
     std::atomic<bool> running_{false};
@@ -155,7 +180,6 @@ private:
 
     // Elodin DB — subscriber (read-only; dedicated to receiving calibrated PT data)
     std::unique_ptr<elodin::ElodinClient> elodin_subscriber_;
-    bool elodin_sub_connected_ = false;
     std::string elodin_host_;
     uint16_t elodin_port_ = 2240;
 

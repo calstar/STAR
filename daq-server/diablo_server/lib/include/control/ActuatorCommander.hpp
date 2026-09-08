@@ -19,14 +19,15 @@ namespace sequencer {
  * Format in config.toml:  role_name = ["TYPE", channel, board_id]
  *   TYPE:  "NC"  — normally closed (logical pos = hw state)
  *          "NO"  — normally open   (logical pos inverted for hw: 0→hw1, 1→hw0)
- *          "PWM" — controlled by controller_service, not by sequencer (skipped in FIRE)
+ *          An entry with a 4th element ("pwm_fuel"/"pwm_ox") is controlled by
+ *          controller_service, not by the sequencer, and is skipped in FIRE.
  */
 struct ActuatorRole {
     int channel{0};        // 1-based actuator ID on the board
     int board_id{0};       // Board ID (e.g. 11, 12, 13, 14)
     std::string board_ip;  // IP of the board that owns this actuator
     bool is_no{false};     // Normally Open: invert the logical position
-    bool is_pwm{false};    // PWM type: sequencer skips in FIRE state
+    bool is_pwm{false};    // assigned to controller_service: sequencer skips it in FIRE
 };
 
 /**
