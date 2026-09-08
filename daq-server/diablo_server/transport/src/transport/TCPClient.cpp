@@ -220,13 +220,25 @@ bool TCPClient::read_exact(void* buffer, size_t len) {
                 continue;  // Retry on interrupt
             }
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                last_error_ = "TIMEOUT";
-                return false;
+                // SO_RCVTIMEO fired. Only a caller that has consumed nothing can be told "nothing
+                // arrived" — once part of a packet has been read, returning here would leave the
+                // rest of it in the socket and every later read would parse payload as a header.
+                // Mid-packet, keep waiting: the peer owes us the remainder.
+                if (remaining == len) {
+                    last_error_ = "TIMEOUT";
+                    return false;
+                }
+                continue;
             }
             last_error_ = "Read failed: " + std::string(strerror(errno));
+            connected_ = false;  // Mark dead so the caller can reconnect
             return false;
         } else if (r == 0) {
             last_error_ = "Socket closed unexpectedly";
+            // Only the write path used to do this, so a read-only consumer (heartbeat_service)
+            // saw is_connected() report true forever on a closed socket and its "reconnect on
+            // next iteration" never fired.
+            connected_ = false;
             return false;
         }
         ptr += r;

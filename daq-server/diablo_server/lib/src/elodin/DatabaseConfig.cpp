@@ -131,6 +131,45 @@ static bool register_actuator_state_vtable(ElodinClient& client, uint8_t type_hi
 // PUBLIC API — RAW VTables only (for daq_bridge)
 // ════════════════════════════════════════════════════════════════════════════
 
+namespace {
+/** Append (type_hi, (board_number-1)*0x20 + offset + ch) for every active channel. */
+void appendTables(std::vector<std::pair<uint8_t, uint8_t>>& out,
+                  const std::vector<BoardChannels>& boards, uint8_t type_hi, uint8_t offset) {
+    for (const auto& board : boards)
+        for (uint8_t ch : board.channels)
+            out.push_back(
+                {type_hi, static_cast<uint8_t>((board.board_number - 1) * 0x20 + offset + ch)});
+}
+}  // namespace
+
+std::vector<std::pair<uint8_t, uint8_t>> raw_sensor_tables(
+    const std::vector<BoardChannels>& pt_boards, const std::vector<BoardChannels>& act_boards,
+    const std::vector<BoardChannels>& tc_boards, const std::vector<BoardChannels>& rtd_boards,
+    const std::vector<BoardChannels>& lc_boards, const std::vector<BoardChannels>& enc_boards) {
+    std::vector<std::pair<uint8_t, uint8_t>> t;
+    appendTables(t, pt_boards, 0x20, 0x00);
+    appendTables(t, act_boards, 0x30, 0x00);
+    appendTables(t, tc_boards, 0x21, 0x00);
+    appendTables(t, rtd_boards, 0x22, 0x00);
+    appendTables(t, lc_boards, 0x23, 0x00);
+    appendTables(t, enc_boards, 0x24, 0x00);
+    return t;
+}
+
+std::vector<std::pair<uint8_t, uint8_t>> calibrated_sensor_tables(
+    const std::vector<BoardChannels>& pt_boards, const std::vector<BoardChannels>& tc_boards,
+    const std::vector<BoardChannels>& rtd_boards, const std::vector<BoardChannels>& lc_boards,
+    const std::vector<BoardChannels>& enc_boards, const std::vector<BoardChannels>& act_boards) {
+    std::vector<std::pair<uint8_t, uint8_t>> t;
+    appendTables(t, pt_boards, 0x20, 0x10);
+    appendTables(t, tc_boards, 0x21, 0x10);
+    appendTables(t, rtd_boards, 0x22, 0x10);
+    appendTables(t, lc_boards, 0x23, 0x10);
+    appendTables(t, enc_boards, 0x24, 0x10);
+    appendTables(t, act_boards, 0x31, 0x10);
+    return t;
+}
+
 bool DatabaseConfig::register_tables(ElodinClient& client,
                                      const std::vector<BoardChannels>& pt_boards,
                                      const std::vector<BoardChannels>& act_boards,

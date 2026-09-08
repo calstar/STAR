@@ -323,6 +323,15 @@ If a VTable isn't registered by the DAQ bridge yet when the relay subscribes, th
 
 1. **Forgot to register VTable schema AND/OR subscribe** — Both are required in `elodin-vtable-registry.ts`. If the schema isn't registered, Elodin silently ignores both publishes and subscriptions — no errors logged anywhere. If the schema is registered but you forgot to subscribe, the relay won't receive the data. This is the hardest bug to find because everything appears to work (publisher says OK, no errors) but data never arrives.
 
+   **This applies to the C++ subscribers too, and it has already bitten one.** `heartbeat_service`
+   read `[0x50, 0x00]` and subscribed with a helper called `subscribe_stream()` whose doc comment
+   promised "all stream data" but which actually sent the calibration service's table list. It
+   received 481 tables it discarded, never `[0x50, 0x00]`, and broadcast `engine_state = 0`
+   through every state transition for the life of the process — no error, no CPU, nothing to see.
+   `subscribe_stream()` is gone; use `ElodinClient::subscribe_tables()` with
+   `fsw::elodin::raw_sensor_tables()` / `calibrated_sensor_tables()` / the `kTable*` constants in
+   `DatabaseConfig.hpp`, and name exactly what your service reads.
+
 2. **Entity name mismatch** — The entity string in `parseElodinPacket` must match what the frontend expects. Use `config.toml` sensor roles for consistency.
 
 3. **Wrong payload size check** — Standard sensor messages are 21 bytes. If your message has a different layout, update the size check.

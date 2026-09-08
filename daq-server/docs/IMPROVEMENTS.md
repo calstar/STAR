@@ -5,7 +5,8 @@ frontend, and CI. Each item names the affected file(s), what actually goes wrong
 shape of the fix.
 
 **Last audited:** 2026-09-07 against `ab3ce2d2`.
-**Last updated:** 2026-09-07 — the DAQ-NIC pinning work landed, which merged and resolved the two
+**Last updated:** 2026-09-07 — the Elodin subscription work landed (and withdrew this file's
+claim that the heartbeat's 256-byte buffer was the problem); the DAQ-NIC pinning work landed, which merged and resolved the two
 abort-broadcast entries and turned up the firmware finding now filed under Critical. The sequencer
 concurrency and config draft-only work landed earlier the same day.
 
@@ -50,34 +51,12 @@ of a packet with no consumer.
 
 ---
 
-### C++ — `read_packet` desynchronizes the Elodin stream on an oversized packet, and the heartbeat buffer guarantees it
-
-**Files:** `diablo_server/lib/src/elodin/ElodinClient.cpp:236-240`,
-`diablo_server/services/heartbeat/heartbeat_service_main.cpp:105`
-
-`read_packet` reads the 8-byte header, and if `packet_len > max_len` it returns `-1` —
-**without draining the `packet_len - 4` payload bytes it just committed to reading and
-without disconnecting.** The socket is now permanently misaligned: every subsequent read
-interprets payload bytes as a header. The client never recovers, and because the connection
-is still "connected", callers that `continue` on `-1` spin at 100% CPU.
-
-The heartbeat service is the guaranteed trigger. It subscribes to the whole stream
-(`subscribe_stream()`) with a **256-byte** buffer. The calibration service, which learned
-this the hard way, uses 64 KB and says so in a comment
-(`calibration_main.cpp:1022`: *"64 KB — handles large Elodin subscription-ACK bursts"*). The
-heartbeat gets one subscription ACK burst or one large vtable packet and its state tracking
-is dead for the lifetime of the process — while it keeps broadcasting SERVER_HEARTBEAT with
-a frozen `engine_state`.
-
-**Fix:** in `read_packet`, on an oversized packet either drain-and-skip the payload (read it
-in chunks into a scratch buffer and return 0 for "skipped") or mark the connection failed so
-the caller reconnects — never leave a half-read packet on the socket. Raise the heartbeat
-buffer to match calibration's. In `elodinThread`, treat a persistent `-1` as a disconnect
-rather than looping.
-
----
-
 ### C++ — Heartbeat maps sequencer states through a hardcoded enum table
+
+> **Now reachable.** Until 2026-09-07 this was moot: `heartbeat_service` never received a
+> `[0x50,0x00]` packet at all, so `stateToEngine()` never ran and `engine_state` was always 0.
+> That is fixed (see Resolved), so the table below is live code for the first time.
+
 
 **File:** `diablo_server/services/heartbeat/heartbeat_service_main.cpp:54-87`
 
@@ -387,6 +366,24 @@ longer to flush, and on a fast machine it's a second wasted on every run.
 ## Resolved
 
 Kept so a future audit can distinguish "fixed" from "never checked".
+
+### By the Elodin subscription work (2026-09-07)
+
+Filed as *"`read_packet` desynchronizes the Elodin stream on an oversized packet, and the heartbeat
+buffer guarantees it"*. The named function was right and the reason was wrong, which is what
+happens when an entry is written from reading code rather than running it.
+
+| Item | Resolution |
+|---|---|
+| `heartbeat_service` broadcast `engine_state = 0` forever | **Fixed — and this, not the buffer, was the live defect.** It reads one table, `[0x50,0x00]`, and subscribed with `subscribe_stream()`, which never included it. Measured with the real binaries against a real elodin-db: four sequencer transitions, 101 heartbeats, every one carrying 0; 0% CPU with the Elodin thread parked in `recv()`, no error logged. After: `{0, 1}` tracking the sequencer. |
+| `subscribe_stream()` promised "all stream data" and delivered calibration's list | **Deleted.** It sent 480 raw sensor ids (a hardcoded boards 1-8 × channels 1-10 guess) plus the calibration command table — 481 messages on every call, and calibration re-called it every 5 s of silence. Replaced by `raw_sensor_tables()` / `calibrated_sensor_tables()` in `DatabaseConfig.hpp`, built from the boards actually in config, so every consumer now names what it reads. `ControllerService` already did this and was left alone. |
+| The buffer claim itself | **Withdrawn.** Nothing overflows 256 today: the largest packet observable anywhere is 179 bytes (a VTable definition); ACKs are 19-23 and state updates 25. The "large subscription-ACK burst" the calibration comment blames is 481 *small* packets, and `read_packet` handles one packet per call — the aggregate never touches the bound. calibration's 64 KB was avoidance, not a fix. |
+| `read_packet` abandoned the payload on an oversized packet | **Fixed** — drains and skips, returning 0, which every caller already handles. The desync was real, just not firing: reproduced against a live db with a 160-byte buffer against 179-byte packets, after which every read returned garbage lengths (`1638688`, `134742016`, …) indefinitely while `is_connected()` stayed true. |
+| `read_packet` wrote 4 bytes past the caller's buffer | **Fixed.** The bound was `packet_len > max_len` but the function writes `packet_len + 4`. Proven with a guard page: `EFAULT` at exactly `packet_len == max_len`, clean at `max_len - 4`. Not in the original entry. |
+| `read_exact` returned `TIMEOUT` after a partial read | **Fixed** — it now only reports a timeout when nothing has been consumed. Mid-packet it keeps waiting, because returning there leaves the remainder in the socket and desyncs the stream exactly like the oversize path. This one *could* fire, for calibration's 3 s timeout. Not in the original entry. |
+| The read path never marked a dead socket dead | **Fixed.** Only `_write_all` cleared `connected_`, so a read-only consumer saw `is_connected()` report true forever on a closed socket and `heartbeat_service`'s "reconnect on next iteration" never fired. |
+| Nothing tested the Elodin read path | **Fixed.** `test_elodin_read_path` drives a fake elodin-db it controls, since nothing a real db emits is large enough to reach these paths. Verified to have teeth: 5 of its 9 assertions fail against the pre-fix client. `test_sequencer_elodin` — built since it was added but never registered with CTest, the same problem already fixed for `test_robust_ddp` — is now registered. |
+| Nothing tested `engine_state` end to end | **Fixed.** `ws_data_flow_test.ts` Test 7 counted heartbeat packets and asserted nothing about their contents. It now drives a transition to FUEL_FILL and asserts `engine_state` follows. Verified to have teeth: with the subscription reverted the run reports `92 passed, 1 failed` and exits 1. |
 
 ### By the DAQ-NIC pinning work (2026-09-07)
 

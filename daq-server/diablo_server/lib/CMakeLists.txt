@@ -112,6 +112,24 @@ target_link_libraries(test_sequencer_elodin
 # with CTest and is not invoked by CI either, so its assertions have never gated anything.
 add_test(NAME robust_ddp COMMAND test_robust_ddp)
 
+# ElodinClient framing, against a fake elodin-db it drives itself (nothing a real db emits today
+# is large enough to reach the oversize path, which is why the bug went unnoticed).
+add_executable(test_elodin_read_path test/test_elodin_read_path.cpp)
+target_include_directories(test_elodin_read_path PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_elodin_read_path
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME elodin_read_path COMMAND test_elodin_read_path)
+
+# test_sequencer_elodin has been built on every configure since it was added but was never
+# registered with CTest, so like test_robust_ddp before it, its assertions have never gated
+# anything. It drives a real SequencerService against a throwaway TCP server, so it needs the
+# build-tree root as its cwd to resolve config/.
+add_test(NAME sequencer_elodin COMMAND test_sequencer_elodin
+         WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
 # The DAQ NIC resolver. Pure library code — no sockets to a peer, no config files on disk — so it
 # needs none of the working-directory or serialization care the sequencer tests below do.
 add_executable(test_daq_interface test/test_daq_interface.cpp)

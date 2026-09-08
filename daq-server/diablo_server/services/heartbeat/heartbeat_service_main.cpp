@@ -29,12 +29,16 @@
 #include <vector>
 
 #include "config/Config.hpp"
+#include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
 #include "net/DaqInterface.hpp"
 
 namespace {
 std::atomic<bool> g_running{true};
 std::atomic<uint8_t> g_engine_state{0};
+
+// How long read_packet() waits before yielding so the loop can re-check g_running.
+constexpr int kElodinRecvTimeoutMs = 3000;
 
 void signalHandler(int /*sig*/) {
     std::cout << "\n[HeartbeatService] Shutting down..." << std::endl;
@@ -88,8 +92,14 @@ static constexpr uint8_t stateToEngine(uint8_t s) {
 }
 
 // ── Elodin subscriber thread ──────────────────────────────────────────────────
-// Subscribes to all VTables, filters for [0x50, 0x00] (SequencerState),
-// extracts current_state and updates g_engine_state.
+// Subscribes to [0x50,0x00] (SequencerState) — the only table this service reads — extracts
+// current_state and updates g_engine_state.
+//
+// This used to call subscribe_stream(), whose name and doc comment promised "all stream data" but
+// which actually sent the calibration service's list: 480 raw sensor tables plus the calibration
+// command table, and not [0x50,0x00]. The effect was silent and total — 481 ACKs for tables this
+// thread discards, then a permanent block in read_packet() waiting for a table nobody was sending,
+// with engine_state pinned at 0 through every state transition for the life of the process.
 void elodinThread(std::string host, uint16_t port) {
     fsw::elodin::ElodinClient client;
 
@@ -99,23 +109,42 @@ void elodinThread(std::string host, uint16_t port) {
                 std::this_thread::sleep_for(std::chrono::seconds(2));
                 continue;
             }
-            client.subscribe_stream();
-            std::cout << "[HeartbeatService] Elodin connected, subscribed" << std::endl;
+            if (!client.subscribe_tables({fsw::elodin::kTableSequencerState})) {
+                std::cerr << "[HeartbeatService] Failed to subscribe to SequencerState "
+                             "[0x50,0x00] — engine_state will not track the sequencer"
+                          << std::endl;
+                client.disconnect();
+                continue;
+            }
+            // Without a receive timeout read_packet() blocks forever, so the g_running check
+            // above can never run and the thread cannot be shut down or re-subscribed.
+            client.set_recv_timeout_ms(kElodinRecvTimeoutMs);
+            std::cout << "[HeartbeatService] Elodin connected, subscribed to SequencerState"
+                      << std::endl;
         }
 
-        uint8_t buf[256];
+        // Only [0x50,0x00] is subscribed, so the traffic here is one ~149-byte VTable definition
+        // and 25-byte state updates. Sized well clear of both: read_packet() skips a packet that
+        // does not fit rather than corrupting the stream, but a skipped state update is a stale
+        // engine_state until the next one.
+        uint8_t buf[4096];
         ssize_t n = client.read_packet(buf, sizeof(buf));
         if (n < 0) {
-            // Connection lost — reconnect on next iteration
+            // A read error leaves nothing useful on this socket. Drop it explicitly rather than
+            // trusting is_connected(), which the read path does not always clear.
+            std::cerr << "[HeartbeatService] Elodin read failed (" << client.last_error()
+                      << ") — reconnecting" << std::endl;
+            client.disconnect();
             continue;
         }
         if (n < 8)
-            continue;
+            continue;  // 0 = receive timeout, nothing to do this round
 
-        // SequencerState VTable: [0x50, 0x00]
+        // SequencerState VTable: [0x50, 0x00]  (fsw::elodin::kTableSequencerState)
         // Payload: u64[0] ts | u8[8] current_state | pad[9..11] | u32[12] bitmask | u8[16]
         // debug_mode
-        if (buf[5] == 0x50 && buf[6] == 0x00 && n >= 8 + 9) {
+        if (buf[5] == fsw::elodin::kTableSequencerState.first &&
+            buf[6] == fsw::elodin::kTableSequencerState.second && n >= 8 + 9) {
             const uint8_t seq_state = buf[8 + 8];  // header(8) + payload[8]
             g_engine_state.store(stateToEngine(seq_state));
         }
