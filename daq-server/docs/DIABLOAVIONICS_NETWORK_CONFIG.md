@@ -51,9 +51,14 @@ overridden positionally:
 ./build/bin/daq_bridge config/config.toml 0.0.0.0 5006
 ```
 
-The interface is auto-detected: `network_interface = "auto"` in `config.toml`
-selects the interface holding a `192.168.2.x` address, so it no longer matters
-whether the NIC is `eth0`, `enxXXXXXXXX`, etc.
+The interface is auto-detected — but **not** by `[discovery].network_interface`,
+which `BoardDiscovery` stores and only prints. The live mechanism is
+`fsw::net::resolveDaqBindAddress()` (`lib/include/net/DaqInterface.hpp`): every
+board-facing socket binds its local address to the interface whose subnet holds
+the configured `[boards.*].ip` addresses, so it does not matter whether the NIC
+is `eth0`, `enxXXXXXXXX`, etc. Set `[network].bind_ip` to override; the service
+refuses to start if that address is not on the host, or if two interfaces can
+reach the board subnet. See `docs/CONFIGURATION_GUIDE.md`.
 
 To talk to boards, the host must have an address on the board subnet:
 

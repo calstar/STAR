@@ -47,6 +47,16 @@ public:
     bool load(const std::string& config_content, const std::string& csv_path);
 
     /**
+     * Pin outgoing actuator commands to a NIC, unless [actuator_service].bind_address already
+     * named one explicitly. Call after load().
+     *
+     * bind_address defaulted to 0.0.0.0 in every shipped profile, so the bind() at the bottom of
+     * sendBatch() constrained nothing and the kernel chose the egress interface. That was
+     * harmless while the DAQ owned its machine and is not now that it shares the apps box.
+     */
+    void setDefaultBindAddress(const std::string& address);
+
+    /**
      * Send actuator commands for the given state (one shot).
      * Groups commands by board IP, sends one UDP packet per board.
      * PWM actuators are skipped in FIRE state.
@@ -128,6 +138,7 @@ private:
     State loop_state_{State::IDLE};
 
     std::string bind_addr_{"0.0.0.0"};
+    bool bind_addr_explicit_{false};
     uint16_t actuator_port_{5005};
     bool loaded_{false};
     fsw::elodin::ElodinClient* elodin_{nullptr};

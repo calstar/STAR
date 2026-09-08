@@ -59,6 +59,13 @@ bool PressureStateMachine::initialize(std::shared_ptr<elodin::ElodinClient> elod
     actuator_board_port_ = board_port;
 
     // Create UDP socket for sending commands (reused, like DiabloAvionics GUI)
+    //
+    // This is the one board-facing sender left unpinned to a NIC, because nothing constructs a
+    // PressureStateMachine — it is dead code, and pinning a socket that never opens is churn. If
+    // this class is ever revived, pass a bind address here: UDPSocket's sender ctor takes one, and
+    // fsw::net::resolveDaqBindAddress() (lib/include/net/DaqInterface.hpp) supplies it. Without
+    // that, commands leave on whatever interface the route table prefers, which on the shared apps
+    // box is not necessarily the board LAN.
     command_socket_ = std::make_unique<daq_comms::transport::UDPSocket>(actuator_board_ip_,
                                                                         actuator_board_port_, true);
     if (!command_socket_->is_valid()) {

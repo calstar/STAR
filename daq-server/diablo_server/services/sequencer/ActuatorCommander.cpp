@@ -55,6 +55,12 @@ static std::string toLower(std::string s) {
 // ─────────────────────────────────────────────────────────────────────────────
 // load()
 // ─────────────────────────────────────────────────────────────────────────────
+void ActuatorCommander::setDefaultBindAddress(const std::string& address) {
+    if (bind_addr_explicit_)
+        return;
+    bind_addr_ = address.empty() ? "0.0.0.0" : address;
+}
+
 bool ActuatorCommander::load(const std::string& config_content, const std::string& csv_path) {
     roles_.clear();
     state_actuators_.clear();
@@ -62,9 +68,12 @@ bool ActuatorCommander::load(const std::string& config_content, const std::strin
     const fsw::config::Config cfg = fsw::config::load_from_string(config_content);
 
     // -- Config: bind address and actuator port --
+    // An explicit [actuator_service].bind_address wins; 0.0.0.0 (the shipped value everywhere)
+    // means "not specified", and setDefaultBindAddress() fills it from the resolved DAQ NIC.
     bind_addr_ = cfg.actuator_service.bind_address;
     if (bind_addr_.empty())
         bind_addr_ = "0.0.0.0";
+    bind_addr_explicit_ = bind_addr_ != "0.0.0.0";
     actuator_port_ = cfg.network.actuator_cmd_port;
 
     // -- Board IP map: board_id → IP (from [boards.*]); canonical 192.168.2.N fallback --

@@ -75,11 +75,18 @@ broadcast cycle** (~1 Hz). Board-level settings therefore reach hardware without
 - `[boards.*]` — `enabled`, `active_connectors`, `voltage_reference`, `necessary_for_abort`,
   `designated_survivor`, `enable_serial_printing`
 - `[actuator_roles]` and the Vent / Engine-Abort columns of `state_machine_actuators.csv`
-- **`[abort_pts]` — the autonomous overpressure trip thresholds the boards act on**
+- **`[abort_pts]` — the autonomous overpressure trip thresholds**
 
 This is intentional. It is also worth understanding rather than assuming: the session freeze is
 the only thing that currently stops someone changing an abort trip mid-run, and that is a
 property of the freeze, not a decision the broadcaster makes.
+
+One correction to an earlier version of this page, which said the boards *act on* `[abort_pts]`
+live. They do not, today. `abort_pt_locations` is only read in the actuator board's
+`NoConnectionAbort` and `PTAbort` states (`Actuator_Hotfire/src/main.cpp:541-571`), and the only
+entry to that chain is heartbeat-loss detection at `:838`, gated on `ENABLE_ALL_STATE_TRANSITIONS`
+— which is `false` in `hotfire_config.h:33-34` with no override anywhere in `firmware/`. The
+thresholds reach the boards; nothing consumes them. See `docs/IMPROVEMENTS.md`.
 
 The related endpoint `POST /api/board-log-mode` rides this exception — it surgically edits one
 field so verbosity can be raised *during* the misbehaviour it is meant to diagnose. It writes both
@@ -101,6 +108,38 @@ The config.toml keys calibration *does* read (`calibration_model_<board>`,
 `[calibration.*]`) are ordinary boot-time config and follow the normal rule.
 
 ---
+
+## Which NIC board traffic uses
+
+The DAQ shares the apps box with the Docker stack and the site LAN, so "the interface the kernel
+picks" is no longer the same thing as "the board LAN". Every board-facing socket therefore binds
+its **local address** to the NIC holding the board subnet, resolved once at startup by
+`fsw::net::resolveDaqBindAddress()` (`lib/include/net/DaqInterface.hpp`). Each service logs the
+result in one line — `board traffic pinned to eth2 192.168.2.20 (auto)`.
+
+Resolution order:
+
+1. **`[network].bind_ip`**, if set to anything other than `0.0.0.0`. If that address is not on the
+   host, **the service refuses to start** — an explicit pin that silently degraded to `0.0.0.0`
+   would be the original bug wearing a config key.
+2. Otherwise the interface whose subnet contains the configured `[boards.*].ip` addresses. This is
+   the normal path: no config change is needed on the rig, and it is how a sim run resolves too
+   (its boards are `127.0.0.x`, matched by loopback).
+3. If **more than one** interface can reach the board subnet, the service refuses to start and
+   names the candidates. Ambiguity is the defect; picking one is how this went wrong before.
+4. If **none** can, it binds `0.0.0.0` with a warning. That is a dev laptop or CI, where the board
+   subnet does not exist and hard-failing would break `./dev.sh`.
+
+Note the mechanism is a source-address bind, not `SO_BINDTODEVICE` — the services run as
+unprivileged `systemd --user` units and `SO_BINDTODEVICE` needs `CAP_NET_RAW`.
+
+Broadcast destinations are subnet-directed (`[server_heartbeat].broadcast_ip`, shipped as
+`192.168.2.255`) rather than the limited `255.255.255.255`, for the same reason: a limited
+broadcast is the one destination that does not resolve to a single route. The sequencer's ABORT
+broadcast reads that key too, so a rig that moves the broadcast address moves the abort with it.
+
+`[discovery].network_interface` is **not** this knob — `BoardDiscovery` prints it and never
+applies it to a socket.
 
 ## What is not config
 

@@ -15,6 +15,7 @@ FSWConfigManager::FSWConfigManager() : current_state_(config::SystemState::GSE) 
 }
 
 bool FSWConfigManager::initialize(const std::string& bind_address, uint16_t bind_port) {
+    bind_address_ = bind_address;
     config_socket_ = std::make_unique<daq_comms::transport::UDPSocket>(bind_address, bind_port);
 
     if (!config_socket_->is_valid()) {
@@ -147,9 +148,10 @@ bool FSWConfigManager::send_config_to_board(uint8_t board_id) {
     std::cout.flags(f);
     std::cout << std::dec << std::setfill(' ') << std::endl;
 
-    // Create UDP socket for sending to board
+    // Create UDP socket for sending to board, pinned to the same NIC we listen on so the config
+    // packet cannot leave via the site LAN or the Docker bridge on a multi-homed host.
     daq_comms::transport::UDPSocket board_socket(board_config->board_ip, board_config->board_port,
-                                                 true);
+                                                 true, bind_address_);
 
     // Send packet to board
     ssize_t sent = board_socket.send(packet.data(), packet.size());

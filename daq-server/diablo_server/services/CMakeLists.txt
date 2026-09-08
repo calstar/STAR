@@ -63,7 +63,7 @@ target_link_libraries(config_broadcast_service fsw_daq_lib pthread ${RT_LIBRARY}
 # Ethernet firmware flash for ESP32-S3 boards over TCP:3232
 add_executable(ota_service ota/ota_service_main.cpp)
 target_include_directories(ota_service PRIVATE ${COMMON_INCLUDES})
-target_link_libraries(ota_service Threads::Threads pthread ${RT_LIBRARY})
+target_link_libraries(ota_service fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
 
 # ── Data Logger Service ───────────────────────────────────────────────────────
 

@@ -95,6 +95,7 @@ private:
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
 #include "fsw/FSWConfigManager.hpp"
+#include "net/DaqInterface.hpp"
 #include "routing/HeartbeatRouter.hpp"
 #include "routing/SensorRouter.hpp"
 #include "streams/SensorFramePipeline.hpp"
@@ -344,6 +345,16 @@ int main(int argc, char* argv[]) {
     if (!config_bind_ip.empty())
         bind_address = config_bind_ip;
 
+    // Nothing named a NIC explicitly — find the one holding the board subnet. Without this the
+    // sensor listener accepts board traffic on every interface of the shared apps box, and every
+    // reply leaves on whichever one the route table prefers.
+    if (bind_address.empty() || bind_address == "0.0.0.0") {
+        const auto nic = fsw::net::resolveDaqBindAddress(fsw::config::load(config_path), "DAQ");
+        if (!nic.ok)
+            return 1;
+        bind_address = nic.address;
+    }
+
     std::cout << "[Config] Loopback fallback (127.0.0.<host-octet>): " << board_by_octet.size()
               << " enabled boards" << std::endl;
     std::cout << "[Config] Board routing table (from " << config_path << "):" << std::endl;
@@ -384,7 +395,10 @@ int main(int argc, char* argv[]) {
     // ── FSW Config Manager ──
     std::cout << "[FSW] Initializing configuration manager..." << std::endl;
     auto fsw_config = std::make_unique<fsw::fsw::FSWConfigManager>();
-    if (!fsw_config->initialize("0.0.0.0", 5008)) {
+    // Same NIC the sensor pipeline uses. This used to be a hardcoded "0.0.0.0" two lines from
+    // where [network].bind_ip was already parsed, so the FSW config port accepted traffic from —
+    // and replied on — any interface on the box.
+    if (!fsw_config->initialize(bind_address, 5008)) {
         std::cerr << "❌ Failed to initialize FSW config manager" << std::endl;
         return 1;
     }

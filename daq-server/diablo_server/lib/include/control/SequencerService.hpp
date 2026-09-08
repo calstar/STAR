@@ -147,6 +147,14 @@ private:
     std::string config_path_;
     std::string config_content_;
 
+    /** Local address board-facing UDP leaves from, resolved once in init(). "0.0.0.0" means the
+     *  host has no NIC on the board subnet (a dev box) and traffic stays unpinned. */
+    std::string daq_bind_address_{"0.0.0.0"};
+
+    /** Delay between ABORT and ABORT_DONE. Was an AbortBroadcaster ctor default; kept here beside
+     *  the other fire/abort timings until a config key is wanted for it. */
+    static constexpr uint32_t kAbortDoneDelayMs = 3000;
+
     // Actuator boards as they were at init(). Held so an Elodin reconnect can re-register the
     // VTables without re-reading config.toml — config is frozen for the life of a run.
     std::vector<fsw::elodin::BoardChannels> actuator_boards_;

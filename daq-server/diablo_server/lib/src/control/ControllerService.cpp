@@ -30,6 +30,7 @@
 #include "control/RobustDDPController.hpp"
 #include "db.hpp"
 #include "elodin/ElodinClient.hpp"
+#include "net/DaqInterface.hpp"
 
 using namespace vtable;
 using namespace vtable::builder;
@@ -94,8 +95,18 @@ bool ControllerService::initialize(const PWMConfig& pwm_config,
                   << std::endl;
         return false;
     }
+    if (!fsw::net::bindToDaqInterface(udp_socket_fd_, pwm_config_.bind_address,
+                                      "ControllerService")) {
+        ::close(udp_socket_fd_);
+        udp_socket_fd_ = -1;
+        return false;
+    }
     std::cout << "[ControllerService] ✅ UDP socket created for PWM output → "
-              << pwm_config_.actuator_board_ip << ":" << pwm_config_.actuator_port << std::endl;
+              << pwm_config_.actuator_board_ip << ":" << pwm_config_.actuator_port
+              << (pwm_config_.bind_address == "0.0.0.0"
+                      ? std::string()
+                      : " (from " + pwm_config_.bind_address + ")")
+              << std::endl;
     std::cout << "[ControllerService]    Fuel CH" << (int)pwm_config_.fuel_channel << "  LOX CH"
               << (int)pwm_config_.lox_channel << "  freq=" << pwm_config_.frequency_hz << "Hz"
               << "  duration=" << pwm_config_.duration_ms << "ms" << std::endl;

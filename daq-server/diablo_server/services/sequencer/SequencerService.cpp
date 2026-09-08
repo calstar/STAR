@@ -20,6 +20,7 @@
 #include "config/Config.hpp"
 #include "config/LoadActiveBoards.hpp"
 #include "elodin/DatabaseConfig.hpp"
+#include "net/DaqInterface.hpp"
 
 namespace sequencer {
 
@@ -291,6 +292,29 @@ bool SequencerService::init(const std::string& config_path) {
         return false;
     }
 
+    // Which NIC board traffic leaves from. Resolved once, here, and handed to both UDP senders:
+    // the actuator commander and the abort broadcaster. See net/DaqInterface.hpp for why the
+    // sequencer cannot simply let the kernel choose.
+    {
+        const auto nic = fsw::net::resolveDaqBindAddress(cfg, "Sequencer");
+        if (!nic.ok)
+            return false;
+        daq_bind_address_ = nic.address;
+        actuator_commander_.setDefaultBindAddress(daq_bind_address_);
+    }
+
+    // Abort destination and port from config. Previously the broadcaster was default-constructed
+    // and never told anything, so it sent to 255.255.255.255:5005 regardless of what the rig was
+    // configured for. [server_heartbeat] is the section that already names where board broadcasts
+    // go, and every shipped profile sets it.
+    if (!abort_broadcaster_.configure(cfg.server_heartbeat.broadcast_ip,
+                                      cfg.server_heartbeat.broadcast_port, kAbortDoneDelayMs,
+                                      daq_bind_address_)) {
+        std::cerr << "[SequencerService] [server_heartbeat].broadcast_ip is not a valid address"
+                  << std::endl;
+        return false;
+    }
+
     applyFireConfig(cfg);
 
     // Controller service endpoint for FIRE_START / FIRE_STOP
@@ -307,9 +331,8 @@ bool SequencerService::init(const std::string& config_path) {
     {
         const auto boards_map = fsw::config::load_active_boards(config_path_);
         const auto it_act = boards_map.find(fsw::config::ActiveBoardKind::ACTUATOR);
-        actuator_boards_ = (it_act != boards_map.end())
-                               ? it_act->second
-                               : std::vector<fsw::elodin::BoardChannels>{};
+        actuator_boards_ = (it_act != boards_map.end()) ? it_act->second
+                                                        : std::vector<fsw::elodin::BoardChannels>{};
     }
 
     // Elodin — connection is best-effort; service runs without it

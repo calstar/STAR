@@ -219,7 +219,7 @@ fi
 
 if [ -x "$OTA_BIN" ]; then
   CMD_LOG_OTA="/tmp/gui_logs/ota.log"
-  CMD_OTA='printf "\n  ══ ETHERNET OTA SERVICE — TCP :'"${OTA_CMD_PORT}"' (pio build+flash here) ══\n\n" && exec '"$OTA_BIN"' --port '"$OTA_CMD_PORT"' 2>&1 | tee '"$CMD_LOG_OTA"
+  CMD_OTA='printf "\n  ══ ETHERNET OTA SERVICE — TCP :'"${OTA_CMD_PORT}"' (pio build+flash here) ══\n\n" && cd '"$PROJECT"' && exec '"$OTA_BIN"' --port '"$OTA_CMD_PORT"' --config '"$CONFIG_FILE"' 2>&1 | tee '"$CMD_LOG_OTA"
 else
   CMD_OTA='printf "\n  ❌ ota_service not built — cd build && cmake .. && make ota_service\n\n" && sleep infinity'
 fi

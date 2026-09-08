@@ -34,6 +34,7 @@
 #include "control/ControllerService.hpp"
 #include "control/RobustDDPController.hpp"
 #include "control/StateMachine.hpp"
+#include "net/DaqInterface.hpp"
 
 /** Resolve path relative to config: paths like output/lut/... are relative to project root. */
 static std::string resolveConfigPath(const std::string& config_path, const std::string& path) {
@@ -276,6 +277,15 @@ int main(int argc, char* argv[]) {
             std::cerr << "⚠️  [controller] Fuel Press (" << fuel_ip << ") and LOX Press (" << lox_ip
                       << ") on different boards — using fuel board IP for both" << std::endl;
         pwm.actuator_board_ip = fuel_ip;
+    }
+
+    // Which NIC PWM commands leave from. The controller shares the apps box with the Docker
+    // stack and the site LAN, so "the route to the actuator board" is no longer a single answer.
+    {
+        const auto nic = fsw::net::resolveDaqBindAddress(cfg, "controller");
+        if (!nic.ok)
+            return 1;
+        pwm.bind_address = nic.address;
     }
 
     // Controller loop / PWM settings from [controller].

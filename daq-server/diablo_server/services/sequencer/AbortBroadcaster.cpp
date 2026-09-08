@@ -15,6 +15,7 @@
 // daqv2comms — PacketHeader + PacketType
 #include "DiabloEnums.h"
 #include "DiabloPackets.h"
+#include "net/DaqInterface.hpp"
 
 namespace sequencer {
 
@@ -29,6 +30,37 @@ uint32_t host_timestamp_ms() {
 
 AbortBroadcaster::AbortBroadcaster(uint16_t port, uint32_t abort_done_delay_ms)
     : port_(port), abort_done_delay_ms_(abort_done_delay_ms) {
+    dest_addr_.s_addr = INADDR_BROADCAST;
+}
+
+bool AbortBroadcaster::configure(const std::string& broadcast_ip, uint16_t port,
+                                 uint32_t done_delay_ms, const std::string& bind_address) {
+    struct in_addr parsed{};
+    if (inet_pton(AF_INET, broadcast_ip.c_str(), &parsed) != 1) {
+        std::cerr << "[AbortBroadcaster] invalid broadcast address '" << broadcast_ip << "'"
+                  << std::endl;
+        return false;
+    }
+    dest_addr_ = parsed;
+    dest_ip_ = broadcast_ip;
+    port_ = port;
+    abort_done_delay_ms_ = done_delay_ms;
+    bind_address_ = bind_address;
+    // The limited broadcast is the one destination that does not resolve to a single route, so a
+    // config that omits the key keeps the defect this class was fixed for. Do not silently
+    // upgrade it to a subnet-directed guess — [server_heartbeat].broadcast_ip is also what
+    // daq_bridge sends SERVER_HEARTBEAT to, and inventing a subnet here would move that too.
+    if (dest_addr_.s_addr == INADDR_BROADCAST)
+        std::cerr << "[AbortBroadcaster] WARNING: aborting to the limited broadcast "
+                     "255.255.255.255 — set [server_heartbeat].broadcast_ip to the board subnet "
+                     "(e.g. 192.168.2.255) or the kernel picks the egress interface"
+                  << std::endl;
+
+    std::cout << "[AbortBroadcaster] ABORT/ABORT_DONE/CLEAR_ABORT -> " << dest_ip_ << ":" << port_
+              << " (from "
+              << (bind_address_ == "0.0.0.0" ? std::string("any interface") : bind_address_)
+              << ", ABORT_DONE after " << abort_done_delay_ms_ << " ms)" << std::endl;
+    return true;
 }
 
 AbortBroadcaster::~AbortBroadcaster() {
@@ -54,6 +86,13 @@ void AbortBroadcaster::sendPacket(uint8_t packet_type_byte) {
     int broadcast = 1;
     setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast));
 
+    // Pin the egress NIC. A failure here is not fatal — an abort that leaves on an unknown
+    // interface still beats no abort at all — but it must be visible.
+    if (!fsw::net::bindToDaqInterface(sock, bind_address_, "AbortBroadcaster"))
+        std::cerr << "[AbortBroadcaster] continuing unpinned — the broadcast may leave on the "
+                     "wrong interface"
+                  << std::endl;
+
     // A blocked sendto here would stall the abort itself. Bound it: a broadcast that cannot be
     // queued within 100 ms is a lost repeat, not a reason to stop sending the others.
     struct timeval tv{.tv_sec = 0, .tv_usec = 100000};
@@ -62,7 +101,7 @@ void AbortBroadcaster::sendPacket(uint8_t packet_type_byte) {
     struct sockaddr_in dest{};
     dest.sin_family = AF_INET;
     dest.sin_port = htons(port_);
-    dest.sin_addr.s_addr = INADDR_BROADCAST;
+    dest.sin_addr = dest_addr_;
 
     const char* type_name = (packet_type_byte == 7)   ? "ABORT"
                             : (packet_type_byte == 8) ? "ABORT_DONE"
@@ -86,8 +125,9 @@ void AbortBroadcaster::sendPacket(uint8_t packet_type_byte) {
     close(sock);
 
     if (delivered > 0)
-        std::cout << "[AbortBroadcaster] Sent " << type_name << " broadcast (port " << port_ << ", "
-                  << delivered << "/" << kBroadcastRepeats << " repeats)" << std::endl;
+        std::cout << "[AbortBroadcaster] Sent " << type_name << " broadcast (" << dest_ip_ << ":"
+                  << port_ << ", " << delivered << "/" << kBroadcastRepeats << " repeats)"
+                  << std::endl;
     else
         std::cerr << "[AbortBroadcaster] " << type_name << " broadcast FAILED — no repeat left the "
                   << "host" << std::endl;

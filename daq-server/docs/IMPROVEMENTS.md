@@ -5,8 +5,9 @@ frontend, and CI. Each item names the affected file(s), what actually goes wrong
 shape of the fix.
 
 **Last audited:** 2026-09-07 against `ab3ce2d2`.
-**Last updated:** 2026-09-07 — the sequencer concurrency work and the config draft-only work both
-landed; their items moved to Resolved.
+**Last updated:** 2026-09-07 — the DAQ-NIC pinning work landed, which merged and resolved the two
+abort-broadcast entries and turned up the firmware finding now filed under Critical. The sequencer
+concurrency and config draft-only work landed earlier the same day.
 
 The revision before this one dated from April 2026 and predated the Vite frontend migration,
 the `smol-toml` config work, and the config-driven `[[states]]` rework. Anything fixed is
@@ -17,24 +18,35 @@ recorded at the bottom with *how*, rather than silently dropped, so a future aud
 
 ## Critical
 
-### C++ — The ABORT broadcast can leave on the wrong interface
+### Firmware — the server sends the abort packet nothing consumes, and withholds the one that is
 
-**File:** `diablo_server/services/sequencer/AbortBroadcaster.cpp`
+**Files:** `firmware/Hotfire_Code/common/hotfire_config.h:33-34`,
+`firmware/Hotfire_Code/Actuator_Hotfire/src/main.cpp:838,959,975-978`,
+`firmware/Hotfire_Code/common/SensorHotfireCore.h:251-258`,
+`diablo_server/services/sequencer/AbortBroadcaster.cpp:165`
 
-*Partly addressed.* The abort is no longer a single datagram — it is sent 4× at 2 ms spacing
-with a send timeout and per-repeat `errno` logging, matching the redundancy
-`ActuatorCommander::sendBatch` already had for ordinary state changes.
+**No board acts on `ABORT` (packet type 7).** Sensor boards do not decode it at all — their
+handler covers only `CLEAR_ABORT` (9) and `NO_CONNECTION_ABORT` (11). The actuator board decodes
+it, but the only transition consuming it is behind `if (ENABLE_ALL_STATE_TRANSITIONS)`, which is
+`false` in `hotfire_config.h` with no override anywhere in `firmware/`. The same flag gates
+heartbeat-loss detection at `:838`, the sole entry to `ConnectionLossDetected → NoConnectionAbort
+→ PTAbort` — so the `[abort_pts]` overpressure trips are unreachable for the same reason, despite
+being broadcast to the boards every second.
 
-What remains is routing. `dest.sin_addr.s_addr = INADDR_BROADCAST` (255.255.255.255) with no
-`SO_BINDTODEVICE` and no bind to the DAQ NIC. On the apps box, which has more than one
-interface, the kernel picks the egress interface by route. If the DAQ NIC is not the one
-chosen, all four repeats leave on the wrong wire together — redundancy does not help when the
-failure is common-mode.
+The mirror image: `CLEAR_ABORT` **is** consumed unconditionally (`main.cpp:959`,
+`SensorHotfireCore.h:251`), and the server never sends it — `AbortBroadcaster::sendClearAbort()`
+has zero callers repo-wide. Its own doc comment says "called when leaving abort states"; nothing
+does.
 
-**Fix:** bind the socket to the configured DAQ interface address, or send to the
-subnet-directed broadcast address (`192.168.2.255`) rather than the limited broadcast address,
-so it cannot take the wrong route. See also the entry below on the hardcoded abort port — both
-are the same underlying gap, that the broadcaster is constructed with no knowledge of config.
+So the whole board-side autonomous abort chain is compiled out, and the one packet the boards do
+listen for is one the server does not produce. This is a firmware and rig-safety decision, not a
+server fix: someone has to say whether `ENABLE_ALL_STATE_TRANSITIONS` was ever meant to ship
+`true`, and what "leaving abort" should mean before `sendClearAbort()` is wired to anything.
+
+**Worth being explicit:** this is why the abort routing work below was *not* the emergency the
+previous revision of this file graded it. Getting the datagram onto the right wire is still
+correct — it is a precondition for any of the above ever working — but it was fixing the delivery
+of a packet with no consumer.
 
 ---
 
@@ -323,27 +335,6 @@ file, because it reads like coverage.
 
 ---
 
-### C++ — the abort broadcast port ignores config
-
-**Files:** `diablo_server/lib/include/control/SequencerService.hpp:144`,
-`diablo_server/lib/include/control/AbortBroadcaster.hpp:22`, `config/config.toml:8,16`
-
-`AbortBroadcaster abort_broadcaster_;` is default-constructed — port 5005, ABORT_DONE delay
-3000 ms — and nothing in `SequencerService::init()` or `reloadConfig()` ever configures it.
-`broadcast_port` exists in config (two sections, both defaulting to 5005) and
-`fsw::config::Config` parses it, but the sequencer's abort path never reads it.
-
-A rig that moves `broadcast_port` gets actuator config broadcasts on the new port and aborts on
-5005. `test/test_integration.sh:395` already remaps `broadcast_port` to the test port, so under
-test the abort broadcast goes somewhere nothing is listening — which is part of why no test has
-ever observed one.
-
-**Fix:** construct the broadcaster from `cfg.<section>.broadcast_port` in `init()`, alongside the
-other config-derived values. Same for the ABORT_DONE delay if a config key is wanted for it.
-(There is no reload path to keep in sync any more — config is read once at startup.)
-
----
-
 ## Low / Housekeeping
 
 ### Sensor Info — dual ADC columns (cal + raw) for debugging
@@ -397,6 +388,31 @@ longer to flush, and on a fast machine it's a second wasted on every run.
 
 Kept so a future audit can distinguish "fixed" from "never checked".
 
+### By the DAQ-NIC pinning work (2026-09-07)
+
+Filed as two entries — "the ABORT broadcast can leave on the wrong interface" and "the abort
+broadcast port ignores config". Both were symptoms of one thing, and the scope was wrong: the
+defect was never abort-specific. **No socket in the DAQ path pinned its egress interface.** That
+was invisible while the DAQ owned its machine and became real when it moved onto the shared apps
+box (`04709920`), which now carries the board LAN, the site LAN and a Docker bridge.
+
+| Item | Resolution |
+|---|---|
+| No board-facing socket bound a local address | **Fixed.** New `fsw::net::resolveDaqBindAddress()` (`lib/include/net/DaqInterface.hpp`) picks the interface whose subnet holds the configured boards, mirroring the rule `deploy/bootstrap_daq.sh:149` already used in shell. Applied to the sequencer's actuator + abort sockets, `heartbeat_service`, `config_broadcast_service`, the controller's PWM output, `FSWConfigManager` (send and receive), `daq_bridge`'s sensor listener and the OTA TCP client. Each service logs the address it pinned. |
+| `[network].bind_ip` existed but only one socket honoured it | **Fixed.** It is now *the* override, consulted by every board-facing socket, and a value that is not an address on the host fails startup rather than degrading to `0.0.0.0`. Two interfaces on the board subnet also fails, naming both — guessing between them is the original defect. |
+| `[actuator_service].bind_address` shipped as `0.0.0.0`, so `ActuatorCommander`'s `bind()` constrained nothing | **Fixed.** Kept as an explicit per-service override; when unset it takes the resolved NIC. |
+| `FSWConfigManager` hardcoded `"0.0.0.0", 5008` two lines from where `bind_ip` was parsed | **Fixed.** Uses the same address as the sensor pipeline. |
+| ABORT sent to the limited broadcast `255.255.255.255` | **Fixed.** Destination comes from `[server_heartbeat].broadcast_ip`, already `192.168.2.255` in every shipped profile and `127.0.0.255` in sim — no config file needed changing. Subnet-directed resolves to exactly one route; limited broadcast does not. Confirmed safe on hardware in principle: the boards program `subnet(255,255,255,0)` into the W5500 and `SERVER_HEARTBEAT` already flows to `192.168.2.255` and is acted on. **Still wants one bench observation before the rig relies on it.** |
+| Abort broadcast port and ABORT_DONE delay were ctor defaults | **Fixed.** `AbortBroadcaster::configure()` is called from `SequencerService::init()` beside `fire_manager_.configure()`. The address is resolved once there, not inside the abort path. |
+| No test observed an abort broadcast | **Fixed, and it has teeth.** `test_abort_ordering` now writes `[server_heartbeat]` into its config and binds what it wrote, so it covers routing as well as ordering — verified by disabling `configure()`, which sends to `255.255.255.255:5005` and fails the test. The integration run confirms all five services pin to `lo` and the abort reaches `127.0.0.1:5015`. |
+| The resolver itself was untested | **Fixed.** `test_daq_interface` pins all four outcomes using RFC 5737 addresses so results do not depend on the host. The ambiguous case is deliberately not tested — producing it means assigning an address to the machine. |
+| `fix_ethernet_interface.sh` printed `.20` and assigned `.201` | **Fixed.** It assigns `192.168.2.20` (what the firmware targets) and its verification is anchored, so `.201` can no longer pass as `.20`. |
+| `[discovery].network_interface = "auto"` documented as selecting the board NIC | **Corrected.** `BoardDiscovery` stores it and only prints it; the docs now point at the resolver instead. |
+
+Not fixed, deliberately: `PressureStateMachine`'s command socket. Nothing constructs that class —
+pinning a socket that never opens is churn — so it carries a comment pointing at the resolver
+instead.
+
 ### By the config draft-only work (2026-09-07)
 
 | Item | Resolution |
@@ -420,7 +436,7 @@ Kept so a future audit can distinguish "fixed" from "never checked".
 | `reloadConfig()` rewrites the actuator tables while the 1 Hz loop reads them | **Fixed.** The republish loop is stopped before `ActuatorCommander::load()` and restarted after. |
 | `reloadConfig()` keeps stale `[fire]` ids after re-adopting `[[states]]` | **Fixed.** The `[fire]` resolution was extracted to `applyFireConfig()` and is now called from both `init()` and reload, so a renumbering reload re-resolves the burn state, the expiry target and the window. |
 | ABORT queued behind the sequencer's own housekeeping | **Fixed.** `triggerAbort()` is now the first thing `transitionTo()` does, ahead of the republish-thread join, the controller notification and the actuator batch. Measured 453 ms → 0 ms with an unreachable controller; `test_abort_ordering` pins it. |
-| ABORT sent as a single unacknowledged datagram | **Fixed.** Sent 4× at 2 ms spacing with a send timeout and per-repeat `errno` logging. The *routing* half of that entry is still open — see "The ABORT broadcast can leave on the wrong interface". |
+| ABORT sent as a single unacknowledged datagram | **Fixed.** Sent 4× at 2 ms spacing with a send timeout and per-repeat `errno` logging. The *routing* half is resolved separately below. |
 | `notifyControllerFire` has no connect timeout | **Fixed.** Non-blocking connect with a 300 ms deadline, consulting `SO_ERROR` on any poll readiness so a refused connection is not mislabelled a timeout. Measured on this box: blocking connect to a blackholed host took **133,348 ms**; bounded version returns in **301 ms**. |
 | Actuator UDP sends have no timeout and log nothing | **Fixed.** `SO_SNDTIMEO` of 100 ms on the batch socket, and a short send now names the board IP and `strerror(errno)` instead of only flipping a boolean. |
 | Detached threads outlive the objects they reference | **Fixed.** Client threads are bounded (64) and joined before `svc` goes out of scope; the accept loop reaps finished ones and refuses over-limit connections with `ERR:too many connections` rather than a bare close, which reached the client as a TCP reset. |

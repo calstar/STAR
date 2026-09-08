@@ -32,6 +32,11 @@ public:
     struct PWMConfig {
         std::string actuator_board_ip = "192.168.2.201";
         uint16_t actuator_port = 5005;
+        /** Local address PWM commands leave from; "0.0.0.0" leaves the NIC to the kernel.
+         *  Resolved by the caller (see net/DaqInterface.hpp) — this is the fire path, and it must
+         *  not reach the actuator board over whichever interface the route table happened to
+         *  prefer. */
+        std::string bind_address = "0.0.0.0";
         uint8_t fuel_channel = 3;  // Fuel Press actuator channel
         uint8_t lox_channel = 8;   // LOX Press actuator channel
         float frequency_hz = 10.0f;

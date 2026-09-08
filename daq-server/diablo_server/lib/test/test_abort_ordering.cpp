@@ -18,10 +18,15 @@
  * refused. A closed port on localhost is NOT a substitute: it answers RST immediately, so
  * connect() fails fast and the regression is invisible.
  *
- * ── A note on the port ─────────────────────────────────────────────────────────────────────────
- * SequencerService default-constructs AbortBroadcaster, so the abort port is hardcoded to 5005 and
- * config's broadcast_port is ignored (tracked in docs/IMPROVEMENTS.md). This test therefore binds
- * 5005. If that is ever wired to config, this test should take the port from config too.
+ * ── Destination, not just ordering ─────────────────────────────────────────────────────────────
+ * The broadcaster now takes its destination and port from [server_heartbeat] rather than sending
+ * to the limited broadcast 255.255.255.255 on a hardcoded 5005. This test writes those keys and
+ * binds what it wrote, so it also covers the routing: if configure() were skipped, or the address
+ * plumbed through wrongly, the datagram would go to the shipped default 192.168.2.255 and never
+ * arrive here.
+ *
+ * A high port is used rather than 5005 so the test does not collide with a real board stack (or
+ * another service) on the developer's machine.
  */
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -54,12 +59,16 @@ static void check(bool ok, const std::string& what) {
 
 // PacketType::ABORT — the first header byte of the broadcast.
 static constexpr uint8_t kAbortPacketType = 7;
-static constexpr uint16_t kAbortPort = 5005;
+static constexpr uint16_t kAbortPort = 15005;
+// Loopback, so the packet is observable on a box with no board LAN — which is every dev box and
+// every CI runner.
+static constexpr const char* kAbortIp = "127.0.0.1";
 
 int main() {
     std::cout << "=== Abort ordering (abort must not wait on controller_service) ===" << std::endl;
 
-    // Listener for the abort broadcast. Bound to 0.0.0.0 so the limited broadcast reaches it.
+    // Listener for the abort broadcast, on the address the config below tells the sequencer to
+    // send to.
     int udp = socket(AF_INET, SOCK_DGRAM, 0);
     int opt = 1;
     setsockopt(udp, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -98,6 +107,8 @@ int main() {
     {
         std::ofstream f(cfg_path);
         f << "[database]\nhost=\"127.0.0.1\"\nport=1\n\n"
+          << "[server_heartbeat]\nbroadcast_ip=\"" << kAbortIp
+          << "\"\nbroadcast_port=" << kAbortPort << "\n\n"
           << "[controller_service]\nhost=\"192.0.2.1\"\nport=8000\n\n"
           << "[fire]\nstate=\"Fire\"\nexpiry_target=\"Armed\"\n"
           << "duration_ms=30000\nextended_ms=60000\n";

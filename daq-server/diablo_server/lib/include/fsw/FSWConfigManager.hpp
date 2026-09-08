@@ -36,6 +36,12 @@ public:
      */
     bool initialize(const std::string& bind_address, uint16_t bind_port);
 
+private:
+    /** Local address board config packets are sent from — the same NIC this manager listens on.
+     *  Empty/"0.0.0.0" leaves the egress interface to the kernel. */
+    std::string bind_address_;
+
+public:
     /**
      * @brief Process board heartbeat and assign IP if needed
      * @param heartbeat Parsed heartbeat packet

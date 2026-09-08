@@ -30,6 +30,7 @@
 
 #include "config/Config.hpp"
 #include "elodin/ElodinClient.hpp"
+#include "net/DaqInterface.hpp"
 
 namespace {
 std::atomic<bool> g_running{true};
@@ -207,6 +208,19 @@ int main(int argc, char* argv[]) {
     {
         int opt = 1;
         setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
+    }
+
+    // Pin the egress NIC. The destination is already subnet-directed, so this is belt-and-braces
+    // against a host where the board subnet is reachable more than one way — but it also fixes
+    // the source address the boards see. Not fatal: a heartbeat on an unknown interface beats
+    // none.
+    {
+        const auto nic = fsw::net::resolveDaqBindAddress(cfg, "HeartbeatService");
+        if (!nic.ok) {
+            close(sock);
+            return 1;
+        }
+        fsw::net::bindToDaqInterface(sock, nic.address, "HeartbeatService");
     }
 
     struct sockaddr_in dest;

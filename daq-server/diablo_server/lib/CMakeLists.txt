@@ -3,6 +3,7 @@
 
 set(FSW_SOURCES
     src/util/IpFromMac.cpp
+    src/net/DaqInterface.cpp
     src/config/BoardDiscovery.cpp
     src/config/DynamicConfigManager.cpp
     src/config/SensorAssignment.cpp
@@ -110,6 +111,16 @@ target_link_libraries(test_sequencer_elodin
 # test_robust_ddp has been built on every configure since it was added but was never registered
 # with CTest and is not invoked by CI either, so its assertions have never gated anything.
 add_test(NAME robust_ddp COMMAND test_robust_ddp)
+
+# The DAQ NIC resolver. Pure library code — no sockets to a peer, no config files on disk — so it
+# needs none of the working-directory or serialization care the sequencer tests below do.
+add_executable(test_daq_interface test/test_daq_interface.cpp)
+target_include_directories(test_daq_interface PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_daq_interface fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME daq_interface COMMAND test_daq_interface)
 
 # Concurrency + abort ordering. Both drive a real SequencerService, so they need the same sources
 # test_sequencer_elodin links. They resolve config/ and the state CSVs relative to the working

@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "config/Config.hpp"
+#include "net/DaqInterface.hpp"
 
 namespace {
 std::atomic<bool> g_running{true};
@@ -492,6 +493,20 @@ int main(int argc, char* argv[]) {
     if (sock < 0) {
         std::cerr << "[ConfigBroadcast] socket() failed" << std::endl;
         return 1;
+    }
+
+    // Pin the egress NIC. This service unicasts to each board, so the destination already names
+    // one subnet — but nothing stopped the kernel choosing a different interface to reach it on a
+    // host with several. Resolved from the config as loaded at startup: the send loop re-reads
+    // config.toml every cycle for board edits, and a NIC change mid-run is not a board edit.
+    {
+        const auto nic =
+            fsw::net::resolveDaqBindAddress(fsw::config::load(config_path), "ConfigBroadcast");
+        if (!nic.ok) {
+            close(sock);
+            return 1;
+        }
+        fsw::net::bindToDaqInterface(sock, nic.address, "ConfigBroadcast");
     }
 
     struct sockaddr_in dest;
