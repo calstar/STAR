@@ -29,7 +29,7 @@ REFERENCE_VOLTAGE_LABELS: Dict[int, str] = {
 @dataclass
 class BoardProfile:
     # --- identity -------------------------------------------------------------
-    board_type: str                 # "LC", "PT", "TC", "RTD"
+    board_type: str                 # "LC", "PT", "TC", "RTD", "ACT"
     title: str                      # window title, e.g. "LC Load Cell Board"
     board_id: int                   # label on the board; also low octet of its IP
     board_ip: str                   # static IP the firmware assigns itself
@@ -39,7 +39,16 @@ class BoardProfile:
     listen_port: int = 5006         # we (the "server") bind this to receive
     control_port: int = 5005        # board listens here for our control packets
 
+    # --- board kind -----------------------------------------------------------
+    # "sensor" boards (LC/PT/TC/RTD) are configured with SENSOR_CONFIG and
+    # stream signed ADC codes; "actuator" boards are configured with
+    # ACTUATOR_CONFIG, take ACTUATOR_COMMAND / PWM_ACTUATOR_COMMAND, and
+    # stream IEEE-754 float current-sense volts in the datapoint field.
+    kind: str = "sensor"            # "sensor" | "actuator"
+    value_encoding: str = "adc"     # "adc" (signed code -> volts) | "float"
+
     # --- sensors / channels ---------------------------------------------------
+    # For actuator boards these are the actuator/current-sense channel IDs.
     all_connectors: List[int] = field(default_factory=list)   # physically wired
     active_connectors: List[int] = field(default_factory=list)  # plugged-in now
     connector_labels: Dict[int, str] = field(default_factory=dict)
@@ -50,6 +59,17 @@ class BoardProfile:
     reference_voltage: int = 0      # 0/1/2 (see REFERENCE_VOLTAGE_* above)
     necessary_for_abort: bool = False
     enable_serial_printing: bool = True
+
+    # --- actuator boards only (sent in ACTUATOR_CONFIG) -----------------------
+    is_abort_controller: bool = False
+    # Per-actuator vent/abort states for the abort config; anything missing
+    # defaults to 0 (off) — the safe choice for a bench test.
+    abort_vent_states: Dict[int, int] = field(default_factory=dict)
+    abort_abort_states: Dict[int, int] = field(default_factory=dict)
+    # PWM control defaults shown in the GUI's PWM row
+    pwm_duration_ms: int = 1000
+    pwm_duty_cycle: float = 0.5
+    pwm_frequency_hz: float = 10.0
 
     # --- server-side cadence --------------------------------------------------
     server_heartbeat_interval_ms: int = 200  # matches config.toml server_heartbeat
@@ -68,3 +88,10 @@ class BoardProfile:
     def display_connectors(self) -> List[int]:
         """Connectors to show: active ones if given, else all wired ones."""
         return list(self.active_connectors) if self.active_connectors else list(self.all_connectors)
+
+    def decode_value(self, raw_u32: int) -> float:
+        """Wire u32 datapoint -> volts, per this board's encoding."""
+        from . import protocol
+        if self.value_encoding == "float":
+            return protocol.raw_to_float(raw_u32)
+        return protocol.raw_to_voltage(raw_u32, self.ref_voltage_volts())
