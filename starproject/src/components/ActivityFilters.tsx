@@ -47,7 +47,7 @@ export function ActivityFilters({
   };
 
   return (
-    <div className="mt-4 flex flex-col items-start gap-2 sm:flex-row sm:flex-wrap sm:items-center [&_button]:min-h-11 sm:[&_button]:min-h-0">
+    <div className="mt-4 flex flex-wrap items-center gap-2 [&_button]:min-h-11 sm:[&_button]:min-h-0">
       <FieldSelect
         ariaLabel="Filter by type"
         value={kind}

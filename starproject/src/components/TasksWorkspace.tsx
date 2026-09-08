@@ -15,6 +15,70 @@ export type { WorkspaceTask } from "@/lib/board";
 
 type View = "table" | "board" | "gantt";
 
+// How many filter chips a row shows before collapsing behind "+N more".
+const CHIP_LIMIT = 8;
+
+// A capped filter-chip row: shows the first CHIP_LIMIT options (plus any
+// selected ones beyond the cap, so an active filter is never hidden) with a
+// "+N more" chip to expand. Collapsed on mobile it stays a single
+// horizontally-scrollable line; expanded it wraps at every width.
+function ChipRow({
+  label,
+  options,
+  selected,
+  onToggle,
+  chip,
+}: {
+  label: string;
+  options: { id: string; label: string }[];
+  selected: Set<string>;
+  onToggle: (id: string) => void;
+  chip: (active: boolean) => string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  // No point hiding a single option behind a "+1 more" chip of the same size.
+  const collapsible = options.length > CHIP_LIMIT + 1;
+  const visible =
+    expanded || !collapsible
+      ? options
+      : [
+          ...options.slice(0, CHIP_LIMIT),
+          ...options.slice(CHIP_LIMIT).filter((o) => selected.has(o.id)),
+        ];
+  const hiddenCount = options.length - visible.length;
+
+  return (
+    <div
+      className={`flex items-center gap-1.5 ${
+        expanded
+          ? "flex-wrap"
+          : "flex-nowrap overflow-x-auto sm:flex-wrap sm:overflow-x-visible"
+      }`}
+    >
+      <span className="shrink-0 text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+        {label}
+      </span>
+      {visible.map((o) => (
+        <button
+          key={o.id}
+          onClick={() => onToggle(o.id)}
+          className={chip(selected.has(o.id))}
+        >
+          {o.label}
+        </button>
+      ))}
+      {collapsible && (
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className={`${chip(false)} font-medium`}
+        >
+          {expanded ? "Show less" : `+${hiddenCount} more`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function TasksWorkspace({
   tasks,
   projects,
@@ -168,36 +232,22 @@ export function TasksWorkspace({
           </div>
         </div>
 
-        <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto sm:flex-wrap sm:overflow-x-visible">
-          <span className="shrink-0 text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-            Projects
-          </span>
-          {projects.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => setProjSel((s) => toggle(s, p.id))}
-              className={chip(projSel.has(p.id))}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
+        <ChipRow
+          label="Projects"
+          options={projects.map((p) => ({ id: p.id, label: p.label }))}
+          selected={projSel}
+          onToggle={(id) => setProjSel((s) => toggle(s, id))}
+          chip={chip}
+        />
 
         {subteams.length > 0 && (
-          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto sm:flex-wrap sm:overflow-x-visible">
-            <span className="shrink-0 text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-              Subteams
-            </span>
-            {subteams.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => setSubSel((sel) => toggle(sel, s.id))}
-                className={chip(subSel.has(s.id))}
-              >
-                {s.name}
-              </button>
-            ))}
-          </div>
+          <ChipRow
+            label="Subteams"
+            options={subteams.map((s) => ({ id: s.id, label: s.name }))}
+            selected={subSel}
+            onToggle={(id) => setSubSel((sel) => toggle(sel, id))}
+            chip={chip}
+          />
         )}
       </div>
 
