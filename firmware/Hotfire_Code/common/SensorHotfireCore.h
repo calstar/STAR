@@ -132,6 +132,14 @@ struct CoreState {
     int serverPort;
     const int udpListenPort = 5005;
     const int serverPortDefault = 5006;
+    bool usingDhcp = false;  // true if a DHCP lease is active (see setup())
+#ifdef SENSOR_ETH_ZEROCONF
+    bool serverLearned = false;  // server IP adopted from an inbound packet
+    bool addrLocked = false;     // one-way: set on first server contact / OTA
+    bool inLinkLocal = false;    // current phase: static vs 169.254.x.y
+    unsigned long phaseStartMillis = 0;
+    unsigned long lastServerPacketMillis = 0;
+#endif
     EthernetUDP udp;
     State state;
     StoredSensorConfig stored_config;
@@ -184,6 +192,78 @@ inline const char* packetTypeName(uint8_t type) {
     }
 }
 
+//-----------------------------------------------------------------------------
+// Zero-config discovery (see hotfire_config.h). While no server is known the
+// board broadcasts BOARD_HEARTBEAT; the server's IP is learned from inbound
+// server packets; with neither DHCP nor a server on the static subnet, the
+// address alternates between static 192.168.2.<BOARD_ID> and a MAC-derived
+// link-local 169.254.x.y so an unconfigured (self-assigned) laptop can reach
+// it. The first server contact locks the address until reboot.
+//-----------------------------------------------------------------------------
+#ifdef SENSOR_ETH_ZEROCONF
+inline IPAddress zeroconfLinkLocalIP(const byte mac[6]) {
+    // RFC 3927 space minus its reserved first/last /24s; clamping both host
+    // octets to [1,254] also keeps the low octet clear of .0/.255.
+    uint8_t x = mac[4];
+    uint8_t y = mac[5];
+    if (x < 1)
+        x = 1;
+    if (x > 254)
+        x = 254;
+    if (y < 1)
+        y = 1;
+    if (y > 254)
+        y = 254;
+    return IPAddress(169, 254, x, y);
+}
+
+inline void zeroconfSetPhase(CoreState& s, bool toLinkLocal) {
+    IPAddress ip = toLinkLocal ? zeroconfLinkLocalIP(s.mac) : s.staticIP;
+    // Single SIPR register write; the W5500's UDP and OTA sockets are
+    // port-bound and survive it.
+    Ethernet.setLocalIP(ip);
+    s.inLinkLocal = toLinkLocal;
+    s.phaseStartMillis = millis();
+    Serial.print("[ZEROCONF] address phase -> ");
+    Serial.println(ip);
+    Serial.flush();
+}
+
+inline void zeroconfOnServerPacket(CoreState& s, IPAddress remote_ip) {
+    s.lastServerPacketMillis = millis();
+    if (!s.addrLocked) {
+        if (!s.usingDhcp) {
+            // Snap to the server's address family before locking.
+            bool wantLinkLocal = (remote_ip[0] == 169 && remote_ip[1] == 254);
+            if (wantLinkLocal != s.inLinkLocal)
+                zeroconfSetPhase(s, wantLinkLocal);
+        }
+        s.addrLocked = true;  // one-way: never re-address mid-test
+        Serial.println("[ZEROCONF] address locked");
+        Serial.flush();
+    }
+    if (!s.serverLearned || !(remote_ip == s.serverIP)) {
+        s.serverIP = remote_ip;
+        s.serverLearned = true;
+        Serial.print("[ZEROCONF] server learned: ");
+        Serial.println(remote_ip);
+        Serial.flush();
+    }
+}
+#endif  // SENSOR_ETH_ZEROCONF
+
+inline bool zeroconfSkipDefaultUnicast(const CoreState& s) {
+#ifdef SENSOR_ETH_ZEROCONF
+    // In link-local phase with no server known, the unicast to the default
+    // 192.168.2.x server is guaranteed dead and each attempt blocks ~1.8 s
+    // in W5500 ARP retries; the broadcast heartbeat still announces us.
+    return s.inLinkLocal && !s.serverLearned;
+#else
+    (void)s;
+    return false;
+#endif
+}
+
 inline IncomingPacketKind processIncomingPacket(CoreState& s, const Config& cfg,
                                                 const uint8_t* buffer,
                                                 size_t len, IPAddress remote_ip,
@@ -196,7 +276,11 @@ inline IncomingPacketKind processIncomingPacket(CoreState& s, const Config& cfg,
         Diablo::PacketHeader dummy;
         Diablo::ServerHeartbeatPacket data;
         if (Diablo::parse_server_heartbeat_packet(buffer, len, dummy, data)) {
+#ifdef SENSOR_ETH_ZEROCONF
+            zeroconfOnServerPacket(s, remote_ip);
+#else
             // Server IP/port are hardcoded; do not update from packet
+#endif
             return IncomingPacketKind::ServerHeartbeat;
         }
         return IncomingPacketKind::None;
@@ -266,6 +350,9 @@ inline IncomingPacketKind processIncomingPacket(CoreState& s, const Config& cfg,
         Serial.print("  enable_serial_printing=");
         Serial.println(g_sensor_hotfire_serial ? 1 : 0);
         Serial.flush();
+#ifdef SENSOR_ETH_ZEROCONF
+        zeroconfOnServerPacket(s, remote_ip);
+#endif
         return IncomingPacketKind::SensorConfig;
     }
 
@@ -404,7 +491,27 @@ inline void setup(CoreState& s, const Config& cfg) {
     delay(ETHERNET_SPI_DELAY_MS);
     Ethernet.init(Pins.ETH_CS);
     delay(ETHERNET_INIT_DELAY_MS);
+#ifdef SENSOR_ETH_USE_DHCP
+    // Try DHCP first (short timeout), fall back to the deterministic static
+    // address on failure. NOTE: inbound commands and OTA still target the
+    // static 192.168.2.<BOARD_ID>. A successful DHCP lease that differs from
+    // staticIP moves this board off its well-known address, so control/OTA
+    // will not reach it until it falls back or is rediscovered.
+    SENSOR_HOTFIRE_BOOT_PRINTLN("[ETH] Attempting DHCP...");
+    if (Ethernet.begin(s.mac, SENSOR_ETH_DHCP_TIMEOUT_MS,
+                       SENSOR_ETH_DHCP_RESPONSE_TIMEOUT_MS) == 1) {
+        s.usingDhcp = true;
+        SENSOR_HOTFIRE_BOOT_PRINT("[ETH] DHCP lease acquired: ");
+        SENSOR_HOTFIRE_BOOT_PRINTLN(Ethernet.localIP());
+    } else {
+        s.usingDhcp = false;
+        SENSOR_HOTFIRE_BOOT_PRINTLN(
+            "[ETH] DHCP failed — falling back to static IP");
+        Ethernet.begin(s.mac, s.staticIP, s.dns, s.gateway, s.subnet);
+    }
+#else
     Ethernet.begin(s.mac, s.staticIP, s.dns, s.gateway, s.subnet);
+#endif
     delay(ETHERNET_BEGIN_DELAY_MS);
 
     // W5500 / Ethernet status (same pattern as Stream_ADC_Data and other DAQ
@@ -461,6 +568,11 @@ inline void setup(CoreState& s, const Config& cfg) {
     s.serverIP = IPAddress(192, 168, 2, HOTFIRE_SERVER_IP_OCTET_4);
     s.serverPort = HOTFIRE_SERVER_PORT;
     s.lastHeartbeatMillis = 0;
+#ifdef SENSOR_ETH_ZEROCONF
+    s.phaseStartMillis = millis();
+    SENSOR_HOTFIRE_BOOT_PRINTLN(
+        "[ZEROCONF] enabled: broadcast discovery + AutoIP fallback");
+#endif
     Serial.println("State -> WaitingForServer");
     Serial.flush();
     Serial.print("Config target: send SENSOR_CONFIG to 192.168.2.");
@@ -471,10 +583,26 @@ inline void setup(CoreState& s, const Config& cfg) {
 }
 
 inline void loop(CoreState& s, const Config& cfg) {
+#ifdef SENSOR_ETH_USE_DHCP
+    // Renew/rebind the DHCP lease as it expires. No-op on the static path.
+    if (s.usingDhcp)
+        Ethernet.maintain();
+#endif
+#ifdef SENSOR_ETH_ZEROCONF
+    // Address hunting: only before any server contact, and only while still
+    // waiting for configuration -- a locked or configured board never moves.
+    if (!s.usingDhcp && !s.addrLocked && s.state == State::WaitingForServer &&
+        millis() - s.phaseStartMillis >= SENSOR_ZEROCONF_PHASE_MS)
+        zeroconfSetPhase(s, !s.inLinkLocal);
+#endif
     // Non-blocking OTA check — blocks only if a client actually connects
     EthernetClient ota_client = g_ota_server.available();
-    if (ota_client)
+    if (ota_client) {
+#ifdef SENSOR_ETH_ZEROCONF
+        s.addrLocked = true;  // never re-address mid-flash
+#endif
         hotfire_handleOTA(ota_client);
+    }
 
     const size_t maxPacket = SENSOR_HOTFIRE_MAX_PACKET_SIZE;
     static uint32_t s_udp_check_count = 0;
@@ -533,6 +661,19 @@ inline void loop(CoreState& s, const Config& cfg) {
             applyPacketTransition(s, cfg, kind);
         }
     }
+
+#ifdef SENSOR_ETH_ZEROCONF
+    // Server gone quiet: forget it and resume discovery broadcasts so a new
+    // (or restarted) server can find us. The address stays locked -- an
+    // Active board never moves; only the outbound destination resets.
+    if (s.serverLearned && millis() - s.lastServerPacketMillis >=
+                               SENSOR_ZEROCONF_SERVER_SILENCE_MS) {
+        s.serverLearned = false;
+        s.serverIP = IPAddress(192, 168, 2, HOTFIRE_SERVER_IP_OCTET_4);
+        Serial.println("[ZEROCONF] server silent -- resuming discovery");
+        Serial.flush();
+    }
+#endif
 
     if (s.state == State::Active || s.state == State::StandaloneAbort) {
         if (cfg.collect_chunk)
@@ -612,10 +753,12 @@ inline void loop(CoreState& s, const Config& cfg) {
         s.lastHeartbeatMillis = now;
         switch (s.state) {
             case State::WaitingForServer:
-                Serial.println("Setup state: sending heartbeat");
-                Serial.flush();
-                sendBoardHeartbeat(s, cfg, Diablo::BoardState::SETUP,
-                                   s.serverIP, s.serverPort);
+                if (!zeroconfSkipDefaultUnicast(s)) {
+                    Serial.println("Setup state: sending heartbeat");
+                    Serial.flush();
+                    sendBoardHeartbeat(s, cfg, Diablo::BoardState::SETUP,
+                                       s.serverIP, s.serverPort);
+                }
                 break;
             case State::Active:
                 sendBoardHeartbeat(s, cfg, Diablo::BoardState::ACTIVE,
@@ -640,6 +783,21 @@ inline void loop(CoreState& s, const Config& cfg) {
                 }
                 break;
         }
+#ifdef SENSOR_ETH_ZEROCONF
+        // Discovery: announce to everyone on the wire until a server is
+        // learned. Reuses the normal heartbeat packet on the same 1 s tick.
+        if (!s.serverLearned) {
+            Diablo::BoardState bs = Diablo::BoardState::SETUP;
+            if (s.state == State::Active)
+                bs = Diablo::BoardState::ACTIVE;
+            else if (s.state == State::SelfTest)
+                bs = Diablo::BoardState::SELF_TEST;
+            else if (s.state == State::StandaloneAbort)
+                bs = Diablo::BoardState::STANDALONE_ABORT;
+            sendBoardHeartbeat(s, cfg, bs, IPAddress(255, 255, 255, 255),
+                               HOTFIRE_SERVER_PORT);
+        }
+#endif
     }
 
     delay(LOOP_DELAY_MS);

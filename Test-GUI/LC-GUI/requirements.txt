@@ -1,0 +1,13 @@
+# LC-GUI (and every boardgui app) dependencies.
+#
+# Python 3.11 is recommended — PyQt5 wheels are reliable there. On macOS the
+# team prefers PyQt5 (PyQt6 + pyqtgraph can be flaky); on Linux/Windows either
+# binding works. Install exactly ONE Qt binding.
+#
+#   python3.11 -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt
+
+PyQt5>=5.15          # or:  PyQt6>=6.4,<6.5
+pyqtgraph>=0.13.4
+numpy>=1.24
+pyserial>=3.5        # serial (USB) port picker + reader
