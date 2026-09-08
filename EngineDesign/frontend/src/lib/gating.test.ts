@@ -79,6 +79,7 @@ const VIEW_ONLY: Record<string, string> = {
   'ConfigEditor.tsx:setSearchQuery': 'filters which sections are shown',
   'ConfigEditor.tsx:setIsExpanded': 'expand/collapse a section',
   'ConfigUpload.tsx:label': 'the drop zone wrapper, not a control',
+  'ErrorBoundary.tsx:this.reset': 'clears a caught render error; touches no design state',
   'Layer1Optimization.tsx:setShowParameterPlots': 'chart visibility',
   'Layer1Optimization.tsx:setShowInjectorPressures': 'chart visibility',
   'Layer1Optimization.tsx:setShowSolverInputsEcho': 'diagnostics visibility',
