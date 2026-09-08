@@ -112,8 +112,9 @@ export default async function Home() {
           </div>
         </section>
 
-        {/* My tasks — full width at md, 1/2 at lg */}
-        <section className={`${tile} md:col-span-2`}>
+        {/* My tasks — full width at md, 1/2 at lg. First in the single-column
+            stack on mobile (order-first), source order at md+. */}
+        <section className={`${tile} order-first md:order-none md:col-span-2`}>
           <div className="flex items-center justify-between">
             <h2 className="font-medium">My tasks</h2>
             <Link href="/tasks?mine=1" className={seeAll}>
