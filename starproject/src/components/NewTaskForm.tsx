@@ -76,8 +76,9 @@ export function NewTaskForm({
           className="fixed inset-0 z-[60] bg-black/40 sm:hidden"
         />
       )}
-      {/* One form for both presentations: bottom sheet below `sm` when open,
-          the usual inline card at sm+ (the sm: variants undo the sheet). */}
+      {/* One form for both presentations: top sheet below `sm` when open (top,
+          not bottom, so the on-screen keyboard can't cover the fields), the
+          usual inline card at sm+ (the sm: variants undo the sheet). */}
       <form
         ref={formRef}
         {...(open ? { role: "dialog", "aria-modal": true, "aria-label": "New task" } : {})}
@@ -101,7 +102,7 @@ export function NewTaskForm({
         }}
         className={`flex-col gap-2 border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 sm:static sm:z-auto sm:flex sm:max-h-none sm:flex-row sm:flex-wrap sm:items-center sm:overflow-visible sm:rounded-lg sm:border sm:p-3 sm:shadow-none ${
           open
-            ? "fixed inset-x-0 bottom-0 z-[70] flex max-h-[85dvh] overflow-y-auto rounded-t-xl border-t p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl"
+            ? "fixed inset-x-0 top-0 z-[70] flex max-h-[85dvh] overflow-y-auto rounded-b-xl border-b p-4 max-sm:pt-[max(1rem,env(safe-area-inset-top))] shadow-xl"
             : "hidden"
         }`}
       >
