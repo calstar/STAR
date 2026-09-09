@@ -150,6 +150,7 @@ interface CanvasProps {
   getRef:             React.MutableRefObject<() => Snapshot>;
   loadRef:            React.MutableRefObject<(d: Snapshot) => void>;
   clearRef:           React.MutableRefObject<() => void>;
+  clearCountRef:      React.MutableRefObject<() => { page: string; nodes: number; edges: number }>;
   undoRef:            React.MutableRefObject<() => void>;
   redoRef:            React.MutableRefObject<() => void>;
   releaseRef:         React.MutableRefObject<(label: string) => Promise<{ label: string; savedAt: string }>>;
@@ -165,7 +166,7 @@ interface CanvasProps {
 }
 
 function PIDCanvas({
-  diagramRef, onInstance, getRef, loadRef, clearRef, undoRef, redoRef,
+  diagramRef, onInstance, getRef, loadRef, clearRef, clearCountRef, undoRef, redoRef,
   releaseRef, getHistoryRef, getReleasesRef, restoreMicroRef, restoreReleaseRef, onForbidden, onLockLost,
   mode,
 }: CanvasProps) {
@@ -184,6 +185,10 @@ function PIDCanvas({
   toolRef.current = tool;
 
   const [page, setPage] = useState<string>(DEFAULT_PAGE);
+  // Read inside `clearRef`, which is called through a ref from the toolbar and
+  // would otherwise close over whichever page was current when it was built.
+  const pageRef = useRef(page);
+  pageRef.current = page;
   // Pages people made but have not drawn on yet. Everything else is derived
   // from where the components actually are, so the two cannot disagree.
   const [declaredPages, setDeclaredPages] = useState<string[]>([]);
@@ -315,11 +320,43 @@ function PIDCanvas({
     setNodes(d.nodes);
     setEdges(d.edges);
   }, [setNodes, setEdges]);
+  /**
+   * Empty the page you are looking at, and only that page.
+   *
+   * It used to empty the whole diagram. With the rocket side and the GSE side
+   * living in one document, that turned "start this page over" into losing the
+   * other one -- and the only way back was the version history, which somebody
+   * has to know exists. What a page shows is what Clear takes.
+   *
+   * Lines go when either end goes, including a line that reached across to
+   * another page: half a pipe is worse than none, and the checks panel already
+   * says a cross-page line should not be there.
+   */
   clearRef.current = useCallback(() => {
     if (readOnlyRef.current) return;
-    setNodes([]);
-    setEdges([]);
+    const here = pageRef.current;
+    setNodes(nds => {
+      const doomed = new Set(
+        nds.filter(n => pageOf(n.data as unknown as PIDNodeData) === here).map(n => n.id));
+      setEdges(eds => eds.filter(e => !doomed.has(e.source) && !doomed.has(e.target)));
+      return nds.filter(n => !doomed.has(n.id));
+    });
   }, [setNodes, setEdges]);
+
+  /** What Clear would take, so the confirmation can say. */
+  const clearCount = useCallback(() => {
+    const here = pageRef.current;
+    const doomed = new Set(
+      snapshot.current.nodes
+        .filter(n => pageOf(n.data as unknown as PIDNodeData) === here).map(n => n.id));
+    return {
+      page: here,
+      nodes: doomed.size,
+      edges: snapshot.current.edges
+        .filter(e => doomed.has(e.source) || doomed.has(e.target)).length,
+    };
+  }, []);
+  clearCountRef.current = clearCount;
   undoRef.current  = useCallback(() => { if (!readOnlyRef.current) undo(); }, [undo]);
   redoRef.current  = useCallback(() => { if (!readOnlyRef.current) redo(); }, [redo]);
 
@@ -818,6 +855,8 @@ export function PIDDesigner() {
   const getRef            = useRef<() => Snapshot>(() => ({ nodes: [], edges: [] }));
   const loadRef           = useRef<(d: Snapshot) => void>(() => {});
   const clearRef          = useRef<() => void>(() => {});
+  const clearCountRef     = useRef<() => { page: string; nodes: number; edges: number }>(
+    () => ({ page: '', nodes: 0, edges: 0 }));
   const undoRef           = useRef<() => void>(() => {});
   const redoRef           = useRef<() => void>(() => {});
   const releaseRef        = useRef<(label: string) => Promise<{ label: string; savedAt: string }>>(() => Promise.resolve({ label: '', savedAt: '' }));
@@ -971,6 +1010,7 @@ export function PIDDesigner() {
         getSnapshot={() => getRef.current()}
         loadSnapshot={d => loadRef.current(d)}
         onClear={() => clearRef.current()}
+        clearSummary={() => clearCountRef.current()}
         onUndo={() => undoRef.current()}
         onRedo={() => redoRef.current()}
         onRelease={label => releaseRef.current(label)}
@@ -996,6 +1036,7 @@ export function PIDDesigner() {
               getRef={getRef}
               loadRef={loadRef}
               clearRef={clearRef}
+              clearCountRef={clearCountRef}
               undoRef={undoRef}
               redoRef={redoRef}
               releaseRef={releaseRef}

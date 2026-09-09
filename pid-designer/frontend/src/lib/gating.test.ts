@@ -54,6 +54,7 @@ const VIEW_ONLY: Record<string, string> = {
   'PIDToolbar.tsx:onClick={openHistory}': 'opens the history panel',
   'PIDToolbar.tsx:setShowHistory(false)': 'closes the history panel',
   'PIDToolbar.tsx:setShowRelease(false)': 'closes the release dialog',
+  'PIDToolbar.tsx:setConfirmClear(null)': 'cancels the clear confirmation; the Clear button itself is gated',
   'PIDToolbar.tsx:setRelLabel': 'the label field inside the release dialog, which Release already gates',
   'PIDToolbar.tsx:onClick={submitRelease}': 'inside the release dialog, which Release already gates',
   'PIDDesigner.tsx:setUnshared(null)': 'dismisses the "no longer shared" notice',

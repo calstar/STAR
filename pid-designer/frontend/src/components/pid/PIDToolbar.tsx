@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react';
 import type { ReactFlowInstance, Node, Edge } from '@xyflow/react';
 import type { InteractionMode, MicroVersion, ReleaseVersion } from './PIDDesigner';
 import { useReadOnly } from '@stardesign-ui';
+import { Modal } from '../ui';
 
 interface PIDToolbarProps {
   rfInstance:        ReactFlowInstance | null;
   getSnapshot:       () => { nodes: Node[]; edges: Edge[] };
   loadSnapshot:      (data: { nodes: Node[]; edges: Edge[] }) => void;
   onClear:           () => void;
+  /** What Clear would take, for the confirmation. */
+  clearSummary:      () => { page: string; nodes: number; edges: number };
   onUndo:            () => void;
   onRedo:            () => void;
   onRelease:         (label: string) => Promise<{ label: string; savedAt: string }>;
@@ -31,7 +34,7 @@ function relativeTime(iso: string): string {
 }
 
 export function PIDToolbar({
-  rfInstance, getSnapshot, loadSnapshot, onClear, onUndo, onRedo,
+  rfInstance, getSnapshot, loadSnapshot, onClear, clearSummary, onUndo, onRedo,
   onRelease, onGetHistory, onGetReleases, onRestoreMicro, onRestoreRelease,
   canVersion, mode, onModeChange,
 }: PIDToolbarProps) {
@@ -45,6 +48,11 @@ export function PIDToolbar({
   const [relLabel, setRelLabel]       = useState('');
   const [relStatus, setRelStatus]     = useState<'idle' | 'saving' | 'ok' | 'err'>('idle');
   const [relError, setRelError]       = useState('');
+
+  // Clear is the one button here that destroys work and cannot be reached by
+  // accident afterwards -- undo covers it, but only if somebody realises in
+  // time. It asks, and it says exactly what it is about to take.
+  const [confirmClear, setConfirmClear] = useState<{ page: string; nodes: number; edges: number } | null>(null);
 
   const [showHistory, setShowHistory]     = useState(false);
   const [micro, setMicro]                 = useState<MicroVersion[]>([]);
@@ -238,7 +246,11 @@ export function PIDToolbar({
         </button>
 
         <div className="ml-auto" />
-        <button onClick={onClear} disabled={readOnly} className={`${danger} disabled:opacity-40`}>
+        <button
+          onClick={() => setConfirmClear(clearSummary())}
+          disabled={readOnly}
+          className={`${danger} disabled:opacity-40`}
+        >
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -298,6 +310,36 @@ export function PIDToolbar({
           )}
         </div>
       )}
+
+      <Modal
+        open={confirmClear !== null}
+        onClose={() => setConfirmClear(null)}
+        title={`Clear ${confirmClear?.page ?? ''}?`}
+        footer={
+          <div className="flex gap-2">
+            <button onClick={() => setConfirmClear(null)} className={btn}>Cancel</button>
+            <button
+              disabled={readOnly}
+              onClick={() => { onClear(); setConfirmClear(null); }}
+              className={danger}
+            >
+              Clear this page
+            </button>
+          </div>
+        }
+      >
+        <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
+          {confirmClear?.nodes === 0 ? (
+            <>There is nothing on this page.</>
+          ) : (
+            <>
+              This removes <b>{confirmClear?.nodes} component{confirmClear?.nodes === 1 ? '' : 's'}</b>
+              {confirmClear?.edges ? <> and <b>{confirmClear.edges} line{confirmClear.edges === 1 ? '' : 's'}</b></> : null}
+              {' '}from <b>{confirmClear?.page}</b>. Other pages are untouched.
+            </>
+          )}
+        </p>
+      </Modal>
 
       {showRelease && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => relStatus !== 'saving' && setShowRelease(false)}>
