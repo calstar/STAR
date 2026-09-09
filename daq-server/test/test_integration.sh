@@ -386,6 +386,13 @@ sedi "s/^downsample_mode = .*/downsample_mode = \"$INTEGRATION_GUI_MODE\"/" "$TE
 sedi 's/^points_per_second = .*/points_per_second = 4/' "$TEST_CONFIG"
 # Point heartbeat broadcast to localhost to avoid sending to the real subnet
 sedi 's/^broadcast_ip = .*/broadcast_ip = "127.0.0.1"/' "$TEST_CONFIG"
+# Same reasoning for the egress bind: everything here talks to a simulator on
+# loopback, so say so. Left as 0.0.0.0 the services auto-resolve the interface
+# holding the board subnet and refuse to start when it is ambiguous — which it
+# now is on any machine that actually has the DAQ NIC (lo 127.0.0.1 plus
+# eth2 192.168.2.20 both match), i.e. the apps box and any dev box configured
+# like it. The refusal is correct; the harness just has to declare its intent.
+sedi 's/^bind_ip = .*/bind_ip = "127.0.0.1"/' "$TEST_CONFIG"
 # Short burn: the fire lifecycle check asserts the configured duration is honoured, so the value
 # just has to be distinguishable from FireManager's 6000 ms default — no need to sit through a
 # realistic burn on every CI run.
