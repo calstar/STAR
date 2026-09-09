@@ -29,16 +29,22 @@ export function Port({
   id,
   position,
   style,
+  kind = 'flow',
   ...rest
-}: { id: string; position: Position } & Omit<HandleProps, 'type' | 'position' | 'id'> & {
+}: { id: string; position: Position; kind?: 'flow' | 'instrument' } & Omit<HandleProps, 'type' | 'position' | 'id'> & {
   style?: React.CSSProperties;
 }) {
+  // An instrument tapping is drawn hollow and small: it is real hardware, but
+  // it carries no flow, and a reader should not mistake it for a feed.
+  const look = kind === 'instrument'
+    ? { background: 'transparent', border: '1.5px solid #64748b', width: 5, height: 5 }
+    : { background: '#94a3b8' };
   return (
     <Handle
       type="source"
       id={id}
       position={position}
-      style={{ background: '#94a3b8', ...style }}
+      style={{ ...look, ...style }}
       {...rest}
     />
   );

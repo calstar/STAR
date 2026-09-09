@@ -46,11 +46,26 @@ export interface OptionSpec {
   description?: string;
 }
 
+/**
+ * A run of ports whose number is set by an option, and whose individual ports
+ * can then be named and given a kind. A manifold's outlets; a tank's two ends.
+ */
+export interface PortGroupSpec {
+  /** The option holding how many there are. */
+  countOption: string;
+  /** Id prefix — see `portId` for how index maps to id. */
+  prefix: string;
+  label: string;
+  /** Ports outside the group, listed alongside so the dialog shows them too. */
+  fixed?: { id: string; label: string }[];
+}
+
 export interface ComponentSpec {
   /** Shown at the top of the dialog. */
   summary?: string;
   params: ParamSpec[];
   options?: OptionSpec[];
+  portGroups?: PortGroupSpec[];
 }
 
 const P = (key: string, label: string, dimension: Dimension,
@@ -75,6 +90,10 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
         description: 'Pressurant in, vent, burst disc, instrumentation — a real tank lid has several, and one port forces them all onto one line.' },
       { key: 'portsBottom', label: 'Ports on the bottom end', default: '1',
         choices: ['1','2','3','4'].map(n => ({ value: n, label: n })) },
+    ],
+    portGroups: [
+      { countOption: 'portsTop', prefix: 't', label: 'Top ports' },
+      { countOption: 'portsBottom', prefix: 'b', label: 'Bottom ports' },
     ],
   },
 
@@ -219,6 +238,10 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
           { value: 'horizontal', label: 'Horizontal — feed enters at the left' },
           { value: 'vertical',   label: 'Vertical — feed enters at the top' },
         ] },
+    ],
+    portGroups: [
+      { countOption: 'outlets', prefix: 'p', label: 'Outlet ports',
+        fixed: [{ id: 'in', label: 'Feed in' }] },
     ],
   },
 

@@ -3,6 +3,7 @@ import { Port } from './Port';
 import type { PIDNodeData } from '../types';
 import { FLUID_COLORS } from '../types';
 import { DraggableLabel } from './DraggableLabel';
+import { portId, portKind } from '../ports';
 
 /**
  * A manifold: one feed in, several out.
@@ -47,15 +48,23 @@ export function ManifoldNode({ id, data, selected }: NodeProps) {
       {/* The feed in, at the near end. */}
       <Port position={vertical ? Position.Top : Position.Left} id="in" />
 
-      {/* One tapped port per outlet, down the long side. */}
-      {portOffsets(outlets).map((off, i) => (
-        <Port
-          key={i}
-          id={`p${i + 1}`}
-          position={vertical ? Position.Right : Position.Bottom}
-          style={vertical ? { top: off } : { left: off }}
-        />
-      ))}
+      {/* One tapping per outlet, down the long side. A plugged one is not
+          drawn at all -- a P&ID does not draw plugs, and a port nothing can
+          attach to is exactly what a plug is. */}
+      {portOffsets(outlets).map((off, i) => {
+        const pid = portId('p', i);
+        const kind = portKind(data as unknown as PIDNodeData, pid);
+        if (kind === 'plug') return null;
+        return (
+          <Port
+            key={pid}
+            id={pid}
+            kind={kind}
+            position={vertical ? Position.Right : Position.Bottom}
+            style={vertical ? { top: off } : { left: off }}
+          />
+        );
+      })}
 
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
         <rect x="1" y="1" width={W - 2} height={H - 2} rx="3"

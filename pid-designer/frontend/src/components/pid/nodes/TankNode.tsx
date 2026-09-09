@@ -4,6 +4,7 @@ import type { PIDNodeData } from '../types';
 import { speciesById, colorForSpecies, UNSET_COLOR } from '../fluids';
 import { useNodeFluid } from '../FluidContext';
 import { DraggableLabel } from './DraggableLabel';
+import { portId, portKind } from '../ports';
 
 const TANK_W = 60, TANK_H = 100;
 const INJ_W = 60, INJ_H = 100;
@@ -18,16 +19,24 @@ const INJ_W = 60, INJ_H = 100;
  * reducing the count and putting it back does not orphan the edges that were
  * already drawn to the ports that remain.
  */
-function endPorts(n: number, prefix: 't' | 'b', position: Position, width: number) {
+function endPorts(
+  n: number, prefix: 't' | 'b', position: Position, width: number, data: PIDNodeData,
+) {
   const count = Math.max(1, Math.min(4, n));
-  return Array.from({ length: count }, (_, i) => (
-    <Port
-      key={`${prefix}${i + 1}`}
-      id={count === 1 ? prefix : `${prefix}${i + 1}`}
-      position={position}
-      style={{ left: (width * (i + 1)) / (count + 1) }}
-    />
-  ));
+  return Array.from({ length: count }, (_, i) => {
+    const pid = portId(prefix, i);
+    const kind = portKind(data, pid);
+    if (kind === 'plug') return null;
+    return (
+      <Port
+        key={pid}
+        id={pid}
+        kind={kind}
+        position={position}
+        style={{ left: (width * (i + 1)) / (count + 1) }}
+      />
+    );
+  });
 }
 
 export function TankNode({ id, data, selected }: NodeProps) {
@@ -63,8 +72,8 @@ export function TankNode({ id, data, selected }: NodeProps) {
 
   return (
     <div style={{ position: 'relative', width: TANK_W, height: TANK_H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
-      {endPorts(Number(options?.portsTop ?? 1), 't', Position.Top, TANK_W)}
-      {endPorts(Number(options?.portsBottom ?? 1), 'b', Position.Bottom, TANK_W)}
+      {endPorts(Number(options?.portsTop ?? 1), 't', Position.Top, TANK_W, data as unknown as PIDNodeData)}
+      {endPorts(Number(options?.portsBottom ?? 1), 'b', Position.Bottom, TANK_W, data as unknown as PIDNodeData)}
 
       <svg width={TANK_W} height={TANK_H} viewBox={`0 0 ${TANK_W} ${TANK_H}`}>
         <ellipse cx="30" cy="14" rx="24" ry="9"

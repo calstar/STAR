@@ -41,6 +41,12 @@ export interface PIDNodeData {
   page?: string;
   /** For a sensor: the id of the component or line it is clipped to. */
   attachedTo?: string;
+  /**
+   * Per-port detail, keyed by port id: what a port is called and what it is
+   * for. Only ports that differ from the default appear — a manifold with four
+   * plain outlets stores nothing. See `ports.ts`.
+   */
+  ports?: Record<string, { label?: string; kind?: 'flow' | 'instrument' | 'plug' }>;
   notes?: string;
   labelOffset?: { x: number; y: number };
   rotation?: number;

@@ -9,6 +9,7 @@ import {
   useNodesState,
   useEdgesState,
   useReactFlow,
+  applyNodeChanges,
   BackgroundVariant,
   SelectionMode,
   ConnectionMode,
@@ -165,7 +166,9 @@ function PIDCanvas({
   releaseRef, getHistoryRef, getReleasesRef, restoreMicroRef, restoreReleaseRef, onForbidden, onLockLost,
   mode,
 }: CanvasProps) {
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  // `onNodesChange` is deliberately unused: `handleNodesChange` below applies
+  // the changes itself so it can move clipped instruments in the same update.
+  const [nodes, setNodes] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [page, setPage] = useState<string>(DEFAULT_PAGE);
   // Pages people made but have not drawn on yet. Everything else is derived
@@ -402,19 +405,24 @@ function PIDCanvas({
    * which would change what a saved position *means*. See attach.ts.
    */
   const handleNodesChange = useCallback((changes: NodeChange<Node>[]) => {
-    const moves: { id: string; delta: { x: number; y: number } }[] = [];
-    for (const c of changes) {
-      if (c.type !== 'position' || !c.position) continue;
-      const before = snapshot.current.nodes.find(n => n.id === c.id);
-      if (!before) continue;
-      const delta = { x: c.position.x - before.position.x, y: c.position.y - before.position.y };
-      if (delta.x || delta.y) moves.push({ id: c.id, delta });
-    }
-    onNodesChange(changes);
-    if (moves.length) {
-      setNodes(nds => moves.reduce((acc, m) => dragAttached(acc, m.id, m.delta), nds));
-    }
-  }, [onNodesChange, setNodes]);
+    // One updater, computing the deltas against the array it is about to
+    // change. Reading them from the last rendered snapshot instead was a race:
+    // React Flow emits position changes faster than React re-renders during a
+    // drag, so several arrive against the same stale base and the instruments
+    // clipped to a component lag behind it and then jump.
+    setNodes(current => {
+      const before = new Map(current.map(n => [n.id, n.position]));
+      let next = applyNodeChanges(changes, current);
+      for (const c of changes) {
+        if (c.type !== 'position' || !c.position) continue;
+        const from = before.get(c.id);
+        if (!from) continue;
+        const delta = { x: c.position.x - from.x, y: c.position.y - from.y };
+        if (delta.x || delta.y) next = dragAttached(next, c.id, delta);
+      }
+      return next;
+    });
+  }, [setNodes]);
 
   /** Bring one component into view without changing the zoom people chose. */
   const fitViewTo = useCallback(async (node: Node) => {
@@ -518,6 +526,7 @@ function PIDCanvas({
       params: patch.params,
       options: patch.options,
       partNumber: patch.partNumber,
+      ...(patch.ports ? { ports: patch.ports } : {}),
     };
     if (subject.kind === 'node') {
       setNodes(nds => nds.map(n => (

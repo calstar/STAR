@@ -3,6 +3,7 @@ import { propagateFluids, speciesById } from './fluids';
 import { isInstrument } from './attach';
 import { crossPageEdges, listPages, pageOf } from './pages';
 import { findVents } from './vents';
+import { portsOf, portIsDrawn } from './ports';
 import type { PIDNodeData, PIDEdgeData } from './types';
 
 /**
@@ -208,6 +209,33 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
       title: `${bare.length} line${bare.length === 1 ? '' : 's'} with no length or bore`,
       detail: 'Most of the pressure drop in a feed system is in the pipe. Double-click a line to set what it is, or name a catalogue part.',
       edgeIds: bare.map(e => e.id),
+    });
+  }
+
+  // A line attached to a port that no longer exists is the invisible-edge
+  // failure again: React Flow cannot place it, so it is saved and never drawn.
+  // It happens by reducing a port count, or by plugging a port that had a line
+  // on it -- both of which look harmless at the time.
+  const orphaned: Edge[] = [];
+  for (const e of edges) {
+    for (const [nodeId, handle] of [[e.source, e.sourceHandle], [e.target, e.targetHandle]] as const) {
+      const n = nodeId ? byId.get(nodeId) : undefined;
+      if (!n || !handle) continue;
+      const available = portsOf(n);
+      if (available.length === 0) continue;      // nothing declared; nothing to check
+      if (!available.includes(handle) || !portIsDrawn(dataOf(n), handle)) {
+        orphaned.push(e);
+        break;
+      }
+    }
+  }
+  if (orphaned.length) {
+    push({
+      id: 'lines-orphaned-port',
+      severity: 'error',
+      title: `${orphaned.length} line${orphaned.length === 1 ? '' : 's'} attached to a port that is gone`,
+      detail: 'The port was removed or plugged after the line was drawn, so the line is saved but cannot be drawn. Re-attach it, or put the port back.',
+      edgeIds: orphaned.map(e => e.id),
     });
   }
 

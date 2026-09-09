@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { Modal } from '../ui';
 import { btn, primaryBtn } from '../../lib/ui';
 import { COMPONENT_SPECS, LINE_SPECS, LINE_TYPE_LABELS, PEER_CHOICES } from './spec';
-import type { ComponentSpec, OptionSpec, ParamSpec } from './spec';
+import type { ComponentSpec, OptionSpec, ParamSpec, PortGroupSpec } from './spec';
+import { portIds } from './ports';
+import type { PortInfo, PortKind } from './ports';
 import { SPECIES } from './fluids';
 import { PROVENANCE_LABELS, UNITS, ABSOLUTE_NOTE } from './params';
 import type { ParamValue, Provenance } from './params';
@@ -38,6 +40,7 @@ export interface ConfigPatch {
   fluid?: string;
   partNumber?: string;
   lineType?: string;
+  ports?: Record<string, PortInfo>;
 }
 
 interface Props {
@@ -83,6 +86,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   const [partNumber, setPartNumber] = useState(data.partNumber ?? '');
   // A line picks what it is inside the dialog: a hose is not a rougher pipe.
   const [lineType, setLineType] = useState(data.lineType ?? 'pipe');
+  const [ports, setPorts] = useState<Record<string, PortInfo>>({});
 
   const spec: ComponentSpec | undefined =
     kind === 'edge' ? LINE_SPECS[lineType] : COMPONENT_SPECS[type];
@@ -95,6 +99,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
     setFluid(data.fluid ?? '');
     setPartNumber(data.partNumber ?? '');
     setLineType(data.lineType ?? 'pipe');
+    setPorts({ ...(data.ports ?? {}) });
   }, [open, data]);
 
   // Drafts follow the spec, which for a line changes when its kind does.
@@ -125,9 +130,21 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
         ...(d.reference.trim() ? { reference: d.reference.trim() } : {}),
       };
     }
+    // Only ports that differ from the default are kept: a manifold with four
+    // plain outlets should store nothing, so a drawing does not fill up with
+    // records saying "this port is ordinary".
+    const keptPorts: Record<string, PortInfo> = {};
+    for (const [id, info] of Object.entries(ports)) {
+      const label = info.label?.trim();
+      const kind = info.kind ?? 'flow';
+      if (!label && kind === 'flow') continue;
+      keptPorts[id] = { ...(label ? { label } : {}), ...(kind !== 'flow' ? { kind } : {}) };
+    }
+
     onSave({
       params,
       options,
+      ports: keptPorts,
       label: label.trim() || data.label,
       fluid: fluid || undefined,
       partNumber: partNumber.trim() || undefined,
@@ -232,6 +249,27 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
             onChange={v => setOptions(s2 => ({ ...s2, [o.key]: v }))}
           />
         ))}
+
+        {(spec.portGroups ?? []).length > 0 && (
+          <div className="space-y-3 border-t border-[var(--color-border)] pt-3">
+            <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Ports</p>
+            <p className="-mt-1 leading-relaxed text-[10px] text-[var(--color-text-muted)]">
+              Name each port for what it feeds, so a line arriving at this symbol says where
+              it goes. A plugged port is not drawn — that is what a plug is on a P&amp;ID.
+            </p>
+            {(spec.portGroups ?? []).map(group => (
+              <PortGroup
+                key={group.prefix}
+                group={group}
+                count={Number(options[group.countOption] ?? 1)}
+                ports={ports}
+                readOnly={readOnly}
+                onChange={(id, patch) =>
+                  setPorts(ps => ({ ...ps, [id]: { ...ps[id], ...patch } }))}
+              />
+            ))}
+          </div>
+        )}
 
         {spec.params.length > 0 && (
           <div className="space-y-3 border-t border-[var(--color-border)] pt-3">
@@ -365,6 +403,51 @@ function ParamField({ spec, draft, readOnly, onChange }: {
       {spec.description && (
         <p className="mt-1 leading-relaxed text-[10px] text-[var(--color-text-muted)]">{spec.description}</p>
       )}
+    </div>
+  );
+}
+
+function PortGroup({ group, count, ports, readOnly, onChange }: {
+  group: PortGroupSpec;
+  count: number;
+  ports: Record<string, PortInfo>;
+  readOnly: boolean;
+  onChange: (id: string, patch: Partial<PortInfo>) => void;
+}) {
+  const ids = [
+    ...(group.fixed ?? []).map(f => ({ id: f.id, hint: f.label })),
+    ...portIds(group.prefix, Number.isFinite(count) ? count : 1)
+      .map((id, i) => ({ id, hint: `${group.label.replace(/s$/, '')} ${i + 1}` })),
+  ];
+
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[10px] text-[var(--color-text-secondary)]">{group.label}</p>
+      {ids.map(({ id, hint }) => {
+        const info = ports[id] ?? {};
+        return (
+          <div key={id} className="flex items-center gap-1.5">
+            <span className="w-9 shrink-0 font-mono text-[10px] text-[var(--color-text-muted)]">{id}</span>
+            <input
+              value={info.label ?? ''}
+              placeholder={hint}
+              readOnly={readOnly}
+              onChange={e => onChange(id, { label: e.target.value })}
+              className="min-w-0 flex-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1 text-[11px] outline-none focus:border-[var(--color-accent)]"
+            />
+            <select
+              value={info.kind ?? 'flow'}
+              disabled={readOnly}
+              onChange={e => onChange(id, { kind: e.target.value as PortKind })}
+              className="w-28 shrink-0 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-1 py-1 text-[11px] outline-none focus:border-[var(--color-accent)]"
+            >
+              <option value="flow">Flow</option>
+              <option value="instrument">Instrument</option>
+              <option value="plug">Plugged</option>
+            </select>
+          </div>
+        );
+      })}
     </div>
   );
 }
