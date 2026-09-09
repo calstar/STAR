@@ -121,7 +121,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
       id: `tag-duplicate-${tag}`,
       severity: 'warning',
       title: `${sharing.length} components are all tagged ${tag}`,
-      detail: 'A tag is the name one piece of hardware answers to on the drawing, in a run report and in a procedure. Two sharing it is two things nobody can tell apart.',
+      detail: 'Rename one. A solve, a report and a procedure all key on the tag.',
       nodeIds: sharing.map(n => n.id),
     });
   }
@@ -169,7 +169,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
       id: 'fluid-unassigned',
       severity: 'info',
       title: `${noFluid.length} component${noFluid.length === 1 ? '' : 's'} with no fluid`,
-      detail: 'Nothing that declares a fluid reaches these, so they are not downstream of any tank yet. Set the fluid on the tanks that feed them, or join them up.',
+      detail: 'Nothing that declares a fluid reaches them. Set it on the tank that feeds them, or join them up.',
       nodeIds: noFluid.map(n => n.id),
     });
   }
@@ -180,15 +180,15 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
     const t = d?.componentType;
     if (t === 'TANK') {
       if (!d.params?.pressure) missing(push, n, 'an operating pressure',
-        'A tank is where a feed solve starts: its pressure is the boundary condition everything downstream is measured against.');
+        'A solve starts here; without it there is no boundary condition.');
       if (!d.params?.temperature) missing(push, n, 'a propellant temperature',
-        'Fluid properties are read at a temperature. Without one there is no density, and without density there is no flow.');
+        'No temperature, no density, no flow.');
       if (!speciesById(d.fluid)) missing(push, n, 'a fluid',
-        'Set what is in this tank and every line downstream of it inherits it.');
+        'Set it here and every line downstream inherits it.');
     }
     if (t === 'ENGINE') {
       if (!d.params?.chamber_pressure) missing(push, n, 'a chamber pressure',
-        'Chamber pressure is the back pressure the whole feed system works against — the other end of the solve.');
+        'It is the back pressure the whole feed works against.');
     }
   }
 
@@ -202,7 +202,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
       id: 'lines-unsized',
       severity: 'info',
       title: `${bare.length} line${bare.length === 1 ? '' : 's'} with no length or bore`,
-      detail: 'Most of the pressure drop in a feed system is in the pipe. Double-click a line to set what it is, or name a catalogue part.',
+      detail: 'Double-click a line to set what it is. Most of a feed system’s pressure drop is in the pipe.',
       edgeIds: bare.map(e => e.id),
     });
   }
@@ -229,7 +229,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
       id: 'lines-orphaned-port',
       severity: 'error',
       title: `${orphaned.length} line${orphaned.length === 1 ? '' : 's'} attached to a port that is gone`,
-      detail: 'The port was removed or plugged after the line was drawn, so the line is saved but cannot be drawn. Re-attach it, or put the port back.',
+      detail: 'Saved but not drawable: the port went away after the line did. Re-attach it, or put the port back.',
       edgeIds: orphaned.map(e => e.id),
     });
   }
@@ -253,7 +253,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
       id: 'lines-cross-pages',
       severity: 'warning',
       title: `${crossing.length} line${crossing.length === 1 ? '' : 's'} run between pages`,
-      detail: 'A line between pages is not drawn on either, because a reader cannot follow it. What crosses the umbilical is a disconnect pair — put a QD on each side and pair them instead.',
+      detail: 'Neither page draws it. Put a QD on each side and pair them — that is what crosses an umbilical.',
       edgeIds: crossing.map(e => e.id),
     });
   }
@@ -269,7 +269,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
           id: `qd-samepage-${qd.id}`,
           severity: 'info',
           title: `${nameOf(qd)} and ${nameOf(other)} are on the same page`,
-          detail: 'A disconnect pair is the boundary between the vehicle and the ground, so its two halves usually live on different pages. Worth a look if that is not what you meant.',
+          detail: 'Usually right — a pair is the vehicle/ground boundary. Worth a look if it is not what you meant.',
           nodeIds: [qd.id, other.id],
         });
       }
@@ -303,7 +303,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
       id: 'lines-crossing',
       severity: 'info',
       title: `${crossings} place${crossings === 1 ? '' : 's'} where lines cross`,
-      detail: 'Crossing lines are not joined. Where two are meant to meet, click the line to drop a junction on it; where they are not, drag a line’s middle segment to route around.',
+      detail: 'Crossing is not joining. To join them, drag one onto the other; to keep them apart, drag a line’s middle segment.',
     });
   }
 
@@ -318,7 +318,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
       id: 'instruments-wired',
       severity: 'warning',
       title: `${wired.length} instrument${wired.length === 1 ? '' : 's'} wired into the flow path`,
-      detail: 'A probe carries no flow, so a solver treats it as a dead end and it makes the drawing harder to read. Delete the lines and drop it straight onto what it measures instead.',
+      detail: 'Delete the lines and drop it straight onto what it measures — a probe carries no flow.',
       nodeIds: wired.map(n => n.id),
     });
   }
@@ -352,7 +352,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
       id: 'params-assumed',
       severity: 'info',
       title: `${assumed.length} value${assumed.length === 1 ? '' : 's'} nobody has established`,
-      detail: `Recorded as estimated or unchecked: ${assumed.slice(0, 8).join(', ')}${assumed.length > 8 ? `, and ${assumed.length - 8} more` : ''}. Not a fault — it is the list a design review should be looking at.`,
+      detail: `${assumed.slice(0, 8).join(', ')}${assumed.length > 8 ? `, and ${assumed.length - 8} more` : ''} — the list a design review should be looking at.`,
     });
   }
 
@@ -366,12 +366,13 @@ function missing(push: (f: Finding) => void, n: Node, what: string, why: string)
     id: `missing-${n.id}-${what.replace(/\s+/g, '-')}`,
     severity: 'warning',
     title: `${nameOf(n)} has no ${what.replace(/^an? /, '')}`,
-    detail: `${capitalise(what)} is not set. ${why}`,
+    // Just the reason. It used to open with "<what> is not set", which is
+    // what the title above it already says -- and a panel that says everything
+    // twice is one people stop reading.
+    detail: why,
     nodeIds: [n.id],
   });
 }
-
-const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** What the badge shows: things that are actually wrong. */
 export const countProblems = (findings: Finding[]) =>

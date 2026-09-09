@@ -144,8 +144,11 @@ export function BranchableEdge(props: EdgeProps) {
     // splitEdge.ts. This used to be a second copy of it here, and the two had
     // already drifted: one stamped a junction the delete-rejoin could
     // recognise and the other did not.
+    // No page argument: a junction belongs on the page its own pipe is drawn
+    // on, and `splitEdgeAt` reads that off the line's upstream end. Pages live
+    // on components, so asking the edge would be asking the wrong thing.
     const split = splitEdgeAt(
-      getNodes(), getEdges(), id, hoverAt, (data as { page?: string })?.page,
+      getNodes(), getEdges(), id, hoverAt, undefined,
       // The exact handle positions, which this edge knows and a caller working
       // from the node boxes does not.
       { from: { x: sourceX, y: sourceY }, to: { x: targetX, y: targetY } },
@@ -156,7 +159,7 @@ export function BranchableEdge(props: EdgeProps) {
       setNodes(split.nodes);
       setEdges(split.edges);
     });
-  }, [armed, hoverAt, dragging, id, data, getNodes, getEdges, setNodes, setEdges,
+  }, [armed, hoverAt, dragging, id, getNodes, getEdges, setNodes, setEdges,
       sourceX, sourceY, targetX, targetY]);
 
   return (
@@ -226,7 +229,7 @@ function pointsOf(d: string): { x: number; y: number }[] {
  * the pipe -- including exactly on a corner, which is where people aim when
  * they want to branch at a bend.
  */
-function nearestOnPath(d: string, p: { x: number; y: number }): { x: number; y: number } {
+export function nearestOnPath(d: string, p: { x: number; y: number }): { x: number; y: number } {
   const pts = pointsOf(d);
   let best = pts[0] ?? p;
   let bestDist = Infinity;

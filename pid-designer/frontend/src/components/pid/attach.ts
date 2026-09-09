@@ -1,5 +1,6 @@
 import type { Edge, Node, XYPosition } from '@xyflow/react';
 import type { PIDNodeData } from './types';
+import { pageOf } from './pages';
 
 /**
  * Instruments clip to what they are measuring.
@@ -49,12 +50,25 @@ export function targetAt(
   nodes: Node[],
   edges: Edge[],
   selfId?: string,
+  /**
+   * The page being looked at.
+   *
+   * Without it this hit-tests the whole document, and the graph is whole on
+   * purpose -- so a drop on empty canvas could clip a probe to, or put a
+   * junction in, something on a page that is not even on screen. The caller
+   * passes the state before `applyPage`, so `hidden` is not set on it yet and
+   * the page has to be asked for directly.
+   */
+  page?: string,
 ): AttachTarget | null {
+  const here = (n: Node) =>
+    !page || pageOf(n.data as unknown as PIDNodeData) === page;
+
   // Components first: dropping a probe on a valve that happens to sit on a
   // line means the valve, which is the more specific of the two.
   for (let i = nodes.length - 1; i >= 0; i--) {
     const n = nodes[i];
-    if (n.id === selfId) continue;
+    if (n.id === selfId || !here(n)) continue;
     const t2 = (n.data as unknown as PIDNodeData)?.componentType;
     // Never clip a probe to another probe, and never to a section box: a
     // region is scenery drawn over half the diagram, so it would swallow
@@ -81,6 +95,7 @@ export function targetAt(
     const a = nodes.find(n => n.id === e.source);
     const b = nodes.find(n => n.id === e.target);
     if (!a || !b) continue;
+    if (!here(a) || !here(b)) continue;
     if (distanceToSegment(point, centre(a), centre(b)) <= TOLERANCE) {
       return { id: e.id, kind: 'edge' };
     }

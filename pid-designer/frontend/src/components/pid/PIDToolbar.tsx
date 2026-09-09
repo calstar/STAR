@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import type { ReactFlowInstance, Node, Edge } from '@xyflow/react';
+import type { Node, Edge } from '@xyflow/react';
 import type { InteractionMode, MicroVersion, ReleaseVersion } from './PIDDesigner';
 import { useReadOnly } from '@stardesign-ui';
 import { Modal } from '../ui';
 
 interface PIDToolbarProps {
-  rfInstance:        ReactFlowInstance | null;
+  onFitView:         () => void;
   getSnapshot:       () => { nodes: Node[]; edges: Edge[] };
   loadSnapshot:      (data: { nodes: Node[]; edges: Edge[] }) => void;
   onClear:           () => void;
@@ -34,7 +34,7 @@ function relativeTime(iso: string): string {
 }
 
 export function PIDToolbar({
-  rfInstance, getSnapshot, loadSnapshot, onClear, clearSummary, onUndo, onRedo,
+  onFitView, getSnapshot, loadSnapshot, onClear, clearSummary, onUndo, onRedo,
   onRelease, onGetHistory, onGetReleases, onRestoreMicro, onRestoreRelease,
   canVersion, mode, onModeChange,
 }: PIDToolbarProps) {
@@ -42,7 +42,7 @@ export function PIDToolbar({
   // need the checkout. Pan / Select / Fit View / Export / History only change
   // what you are looking at, and stay live.
   const readOnly = useReadOnly();
-  const fitView = () => rfInstance?.fitView({ padding: 0.1 });
+  const fitView = () => onFitView();
 
   const [showRelease, setShowRelease] = useState(false);
   const [relLabel, setRelLabel]       = useState('');
@@ -154,7 +154,7 @@ export function PIDToolbar({
         const data = JSON.parse(await file.text()) as { nodes: Node[]; edges: Edge[] };
         if (Array.isArray(data.nodes) && Array.isArray(data.edges)) {
           loadSnapshot(data);
-          setTimeout(() => rfInstance?.fitView({ padding: 0.1 }), 100);
+          setTimeout(() => onFitView(), 100);
         }
       } catch { alert('Invalid P&ID JSON file.'); }
     };

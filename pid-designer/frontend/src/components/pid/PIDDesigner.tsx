@@ -9,11 +9,12 @@ import {
   useNodesState,
   useEdgesState,
   useReactFlow,
+  useNodesInitialized,
+  type Viewport,
   applyNodeChanges,
   BackgroundVariant,
   SelectionMode,
   ConnectionMode,
-  type ReactFlowInstance,
   type Connection,
   type Node,
   type NodeChange,
@@ -49,6 +50,7 @@ import { PageBar } from './PageBar';
 import { DEFAULT_PAGE, applyPage, listPages, moveToPage, pageOf } from './pages';
 import { clearOfHost, dragAttached, isInstrument, targetAt } from './attach';
 import { rejoinAfterDelete, splitEdgeAt } from './splitEdge';
+import { nearestOnPath } from './BranchableEdge';
 import { COMPONENT_SPECS } from './spec';
 
 export type InteractionMode = 'pan' | 'select';
@@ -147,7 +149,21 @@ function useHistory(
 // ── Inner canvas ─────────────────────────────────────────────────────────────
 interface CanvasProps {
   diagramRef:         DocRef;
-  onInstance:         (inst: ReactFlowInstance) => void;
+  fitRef:             React.MutableRefObject<() => void>;
+  /**
+   * Where the reader was looking, per diagram and page.
+   *
+   * Lives above the canvas because the canvas remounts whenever the checkout
+   * changes: without it, the gesture that means "I would like to edit this"
+   * dropped them back at the origin at 1:1, moving the drawing out from under
+   * the thing they were about to edit.
+   *
+   * Per *page* because pages are separate sheets. A page nobody has looked at
+   * yet has no entry, and that absence is what asks for it to be framed --
+   * which is also how a freshly opened diagram gets framed, with no special
+   * case for it.
+   */
+  viewportsRef:       React.MutableRefObject<Map<string, Viewport>>;
   getRef:             React.MutableRefObject<() => Snapshot>;
   loadRef:            React.MutableRefObject<(d: Snapshot) => void>;
   clearRef:           React.MutableRefObject<() => void>;
@@ -167,7 +183,7 @@ interface CanvasProps {
 }
 
 function PIDCanvas({
-  diagramRef, onInstance, getRef, loadRef, clearRef, clearCountRef, undoRef, redoRef,
+  diagramRef, fitRef, viewportsRef, getRef, loadRef, clearRef, clearCountRef, undoRef, redoRef,
   releaseRef, getHistoryRef, getReleasesRef, restoreMicroRef, restoreReleaseRef, onForbidden, onLockLost,
   mode,
 }: CanvasProps) {
@@ -199,7 +215,7 @@ function PIDCanvas({
   // object, so the dialog reads live data and a save is never applied to a
   // stale copy.
   const [configFor, setConfigFor] = useState<{ kind: 'node' | 'edge'; id: string } | null>(null);
-  const { screenToFlowPosition, setCenter, getZoom } = useReactFlow();
+  const { screenToFlowPosition, setCenter, getZoom, fitView, setViewport } = useReactFlow();
 
   const { undo, redo } = useHistory(nodes, edges, setNodes, setEdges);
 
@@ -392,9 +408,46 @@ function PIDCanvas({
     setEdges(data.edges);
   }, [diagramKey, setNodes, setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Handed up so the toolbar can fitView and export. Nothing in this component
-  // needs it -- see `screenToFlowPosition` above.
-  const onInit = useCallback((inst: ReactFlowInstance) => onInstance(inst), [onInstance]);
+  /**
+   * Framing the drawing, from the live store rather than a captured instance.
+   *
+   * `fitView` used to be called on the ReactFlow instance `onInit` handed up,
+   * and that instance belongs to one mount -- so the press right after taking
+   * the checkout went to the canvas that had just been replaced and did
+   * nothing, and it took a second press to work. Same root cause as the
+   * palette dropping nothing right after Take, fixed the same way.
+   */
+  fitRef.current = useCallback(() => { void fitView({ padding: 0.1 }); }, [fitView]);
+
+  /**
+   * Show a page when you arrive on it, and leave it where you left it.
+   *
+   * Two things that used to be wrong, and are one thing. The `fitView` prop
+   * only fits the nodes present at the *first* render and a diagram arrives
+   * from the server a moment later, so opening one left the reader at 1:1 on
+   * the origin looking at empty canvas. And switching to a page whose contents
+   * are drawn somewhere else did the same, which is worse, because a page bar
+   * that appears to do nothing reads as broken.
+   *
+   * Both are "nobody has been here yet": no remembered viewport for this
+   * (diagram, page) means frame it, and one means put it back. Waits for
+   * `useNodesInitialized`, because fitting before anything is measured frames
+   * nothing.
+   */
+  const nodesReady = useNodesInitialized();
+  const viewKey = `${diagramKey}::${page}`;
+  useEffect(() => {
+    if (!nodesReady) return;
+    const seen = viewportsRef.current.get(viewKey);
+    if (seen) { setViewport(seen); return; }
+    if (!nodes.some(n => pageOf(n.data as unknown as PIDNodeData) === page)) return;
+    void fitView({ padding: 0.1 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewKey, nodesReady]);
+
+  const rememberViewport = useCallback(
+    (_: unknown, vp: Viewport) => { viewportsRef.current.set(viewKey, vp); },
+    [viewportsRef, viewKey]);
 
   const edgeTypes = useMemo(() => ({ smoothstep: BranchableEdge, default: BranchableEdge }), []);
 
@@ -549,10 +602,21 @@ function PIDCanvas({
     const { nodes: ns, edges: es } = snapshot.current;
     // Only when it landed on a line and not on a component -- React Flow has
     // already made the connection in that case.
-    const hit = targetAt(flow, ns, es, from.nodeId);
+    const hit = targetAt(flow, ns, es, from.nodeId, pageRef.current);
     if (!hit || hit.kind !== 'edge') return;
 
-    const split = splitEdgeAt(ns, es, hit.id, flow, pageRef.current);
+    // Not onto a line this component is already an end of. That would be two
+    // lines from the same port to the same junction, which is a parallel path
+    // and not what anybody dragging there meant.
+    const line = es.find(e => e.id === hit.id);
+    if (!line || line.source === from.nodeId || line.target === from.nodeId) return;
+
+    // Onto the pipe as drawn, not where the pointer happened to be. The hit
+    // test measures against the straight line between the two ends, and the
+    // run is drawn orthogonally, so those differ by the whole depth of a bend.
+    const at = onDrawnPath(hit.id, flow);
+
+    const split = splitEdgeAt(ns, es, hit.id, at, pageRef.current);
     if (!split) return;
 
     setNodes(split.nodes);
@@ -593,7 +657,7 @@ function PIDCanvas({
     // An instrument dropped on top of a component or a line measures *that*.
     // No edge, because a probe carries no flow -- see attach.ts.
     const host = isInstrument(type)
-      ? targetAt(flowPos, snapshot.current.nodes, snapshot.current.edges)
+      ? targetAt(flowPos, snapshot.current.nodes, snapshot.current.edges, undefined, pageRef.current)
       : null;
     // Stand the probe clear of what it is measuring. Dropped exactly where the
     // pointer was, it covers the symbol it is attached to -- and the whole
@@ -672,6 +736,7 @@ function PIDCanvas({
    * ordinary behaviour stands and everything attached goes with it.
    */
   const onDelete = useCallback(({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) => {
+    if (readOnlyRef.current) return;
     const rejoined = rejoinAfterDelete(nodes, edges);
     if (rejoined.length) setEdges(eds => [...eds, ...rejoined]);
   }, [setEdges]);
@@ -775,7 +840,7 @@ function PIDCanvas({
       <ReactFlow
         nodes={view.nodes} edges={view.edges}
         onNodesChange={handleNodesChange} onEdgesChange={onEdgesChange}
-        onConnect={onConnect} onInit={onInit}
+        onConnect={onConnect}
         onConnectStart={onConnectStart} onConnectEnd={onConnectEnd}
         onDrop={onDrop} onDragOver={onDragOver}
         onEdgeContextMenu={onEdgeContextMenu}
@@ -799,7 +864,8 @@ function PIDCanvas({
         multiSelectionKeyCode="Meta"
         snapToGrid
         snapGrid={[20, 20]}
-        fitView
+        onMove={rememberViewport}
+        defaultViewport={viewportsRef.current.get(viewKey) ?? { x: 0, y: 0, zoom: 1 }}
         colorMode="dark"
         defaultEdgeOptions={{ type: 'smoothstep' }}
       >
@@ -919,7 +985,6 @@ function PIDCanvas({
 
 // ── Top-level designer ────────────────────────────────────────────────────────
 export function PIDDesigner() {
-  const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
   const [mode, setMode] = useState<InteractionMode>('pan');
 
   const [diagrams, setDiagrams] = useState<DiagramMeta[]>([]);
@@ -935,6 +1000,8 @@ export function PIDDesigner() {
   const clearRef          = useRef<() => void>(() => {});
   const clearCountRef     = useRef<() => { page: string; nodes: number; edges: number }>(
     () => ({ page: '', nodes: 0, edges: 0 }));
+  const fitRef            = useRef<() => void>(() => {});
+  const viewportsRef      = useRef<Map<string, Viewport>>(new Map());
   const undoRef           = useRef<() => void>(() => {});
   const redoRef           = useRef<() => void>(() => {});
   const releaseRef        = useRef<(label: string) => Promise<{ label: string; savedAt: string }>>(() => Promise.resolve({ label: '', savedAt: '' }));
@@ -943,7 +1010,6 @@ export function PIDDesigner() {
   const restoreMicroRef   = useRef<(versionId: string) => Promise<void>>(() => Promise.resolve());
   const restoreReleaseRef = useRef<(label: string) => Promise<void>>(() => Promise.resolve());
 
-  const handleInstance = useCallback((inst: ReactFlowInstance) => setRfInstance(inst), []);
 
   // Load the user's diagram list once; create a first one if they have none.
   useEffect(() => {
@@ -1084,7 +1150,7 @@ export function PIDDesigner() {
         </p>
       </Modal>
       <PIDToolbar
-        rfInstance={rfInstance}
+        onFitView={() => fitRef.current()}
         getSnapshot={() => getRef.current()}
         loadSnapshot={d => loadRef.current(d)}
         onClear={() => clearRef.current()}
@@ -1110,7 +1176,8 @@ export function PIDDesigner() {
               // between them would otherwise reuse one canvas's state.
               key={`${activeKey}:${reloadKey}`}
               diagramRef={activeRef}
-              onInstance={handleInstance}
+              fitRef={fitRef}
+              viewportsRef={viewportsRef}
               getRef={getRef}
               loadRef={loadRef}
               clearRef={clearRef}
@@ -1136,4 +1203,22 @@ export function PIDDesigner() {
     </div>
     </ReadOnlyProvider>
   );
+}
+
+/**
+ * A point moved onto the line as it is actually drawn.
+ *
+ * The rendered path is the same one the reader clicked on and the same one the
+ * Junction tool snaps to, so it is read back rather than recomputed -- the edge
+ * owns its routing, including a crossbar somebody has dragged, and duplicating
+ * that here would be a second version of it to keep in step.
+ *
+ * Falls back to the point given. A junction a few pixels off a pipe is worse
+ * than one exactly where somebody let go, but both beat not making one.
+ */
+function onDrawnPath(edgeId: string, at: { x: number; y: number }): { x: number; y: number } {
+  const el = document.querySelector(
+    `.react-flow__edge[data-id="${CSS.escape(edgeId)}"] .react-flow__edge-path`);
+  const d = el?.getAttribute('d');
+  return d ? nearestOnPath(d, at) : at;
 }

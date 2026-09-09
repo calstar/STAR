@@ -74,3 +74,33 @@ describe('which components attach rather than connect', () => {
     expect(['PT', 'PG', 'TANK', 'SOL', 'PR', 'QD', 'ENGINE'].some(isInstrument)).toBe(false);
   });
 });
+
+describe('the page you are looking at', () => {
+  const gse: Node[] = [
+    { id: 'TANK', type: 'TANK', position: { x: 0, y: 0 },
+      measured: { width: 60, height: 100 },
+      data: { componentType: 'TANK', label: 'TANK', page: 'GSE' } },
+    { id: 'SOL', type: 'SOL', position: { x: 300, y: 20 },
+      measured: { width: 60, height: 60 },
+      data: { componentType: 'SOL', label: 'SOL', page: 'GSE' } },
+  ];
+  const wire: Edge[] = [{ id: 'e1', source: 'TANK', target: 'SOL' }];
+
+  it('is the only page a drop can land on', () => {
+    // The graph is whole so fluid and checks span pages -- which means an
+    // unscoped hit test would clip a probe to a tank that is not on screen.
+    expect(targetAt({ x: 30, y: 50 }, gse, wire, undefined, 'GSE'))
+      .toEqual({ id: 'TANK', kind: 'node' });
+    expect(targetAt({ x: 30, y: 50 }, gse, wire, undefined, 'Main')).toBeNull();
+  });
+
+  it('hides the lines on it too', () => {
+    expect(targetAt({ x: 180, y: 54 }, gse, wire, undefined, 'GSE'))
+      .toEqual({ id: 'e1', kind: 'edge' });
+    expect(targetAt({ x: 180, y: 54 }, gse, wire, undefined, 'Main')).toBeNull();
+  });
+
+  it('hits everything when no page is named', () => {
+    expect(targetAt({ x: 30, y: 50 }, gse, wire)).toEqual({ id: 'TANK', kind: 'node' });
+  });
+});

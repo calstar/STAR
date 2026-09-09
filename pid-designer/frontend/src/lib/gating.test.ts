@@ -77,6 +77,11 @@ const MUST_DERIVE_FROM_READONLY = [
   'elementsSelectable',
   'edgesReconnectable',
   'deleteKeyCode',
+  // Both rewrite the graph without going through a control: dropping a
+  // connection on a line branches it, and deleting a junction puts the run
+  // back. Neither is a button an audit of controls would ever see.
+  'const onConnectEnd',
+  'const onDelete',
   'loadRef.current',
   'clearRef.current',
   'undoRef.current',
