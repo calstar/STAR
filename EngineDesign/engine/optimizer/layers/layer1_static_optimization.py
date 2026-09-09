@@ -1803,6 +1803,51 @@ def _layer1_stamp_design_point(config, performance, logger=None) -> None:
 
 
 
+def _layer1_warn_stale_pressure_curves(config, logger=None, tol_psi: float = 1.0) -> None:
+    """Flag Layer-2 pressure curves that no longer match the tank pressures Layer 1 just set.
+
+    The initial tank pressure exists twice, owned by different layers and never reconciled:
+    Layer 1 writes ``lox_tank/fuel_tank.initial_pressure_psi``; Layer 2 writes
+    ``pressure_curves.initial_lox/fuel_pressure_pa``. Re-running Layer 1 moves the tanks and
+    silently leaves the curves describing the previous design -- observed 11.3 psi out on the
+    LOX side and 24.9 psi on the fuel side of a real emitted config.
+
+    This matters beyond EngineDesign. Tank pressure is the UPSTREAM BOUNDARY CONDITION for the
+    feed-system twin (docs/adr/0001), which EngineDesign's optimizer will import directly for
+    Layer X. Two disagreeing values for one boundary condition is exactly the kind of thing that
+    silently poisons a twin, so say so loudly rather than letting it cross the boundary.
+
+    Detection only -- which layer should win is a design call, not something to guess here.
+    """
+    if logger is None:
+        return
+    curves = getattr(config, "pressure_curves", None)
+    if curves is None:
+        return
+    PSI = 6894.76
+    for tank_attr, curve_attr, label in (
+        ("lox_tank", "initial_lox_pressure_pa", "LOX"),
+        ("fuel_tank", "initial_fuel_pressure_pa", "fuel"),
+    ):
+        tank = getattr(config, tank_attr, None)
+        if tank is None:
+            continue
+        try:
+            tank_psi = float(getattr(tank, "initial_pressure_psi", float("nan")))
+            curve_psi = float(getattr(curves, curve_attr, float("nan"))) / PSI
+        except (TypeError, ValueError):
+            continue
+        if not (np.isfinite(tank_psi) and np.isfinite(curve_psi)):
+            continue
+        if abs(tank_psi - curve_psi) > tol_psi:
+            logger.warning(
+                "%s tank pressure disagrees with the Layer-2 pressure curve: tank %.1f psi vs "
+                "curve start %.1f psi (%.1f psi apart). The curves predate this Layer 1 run; "
+                "re-run Layer 2 before trusting them or anything downstream of them.",
+                label, tank_psi, curve_psi, abs(tank_psi - curve_psi),
+            )
+
+
 def _layer1_eps_for_exit_pressure(Pc_Pa: float, gamma: float, Pe_Pa: float):
     """Expansion ratio that puts the exit plane exactly at ``Pe_Pa``.
 
@@ -8631,6 +8676,7 @@ def run_layer1_optimization(
     # Stamp the ACHIEVED operating point onto the config we are about to hand back, so
     # chamber_geometry.design_* describes this engine rather than whatever template it came from.
     _layer1_stamp_design_point(optimized_config, final_performance, layer1_logger)
+    _layer1_warn_stale_pressure_curves(optimized_config, layer1_logger)
 
     return optimized_config, results
 
