@@ -34,9 +34,11 @@ async function freshModules() {
   const dataCache = await import('@/lib/data-cache');
   const sensorRate = await import('@/lib/sensor-rate');
   // getAlignedHistory masks stale streams as NaN; mark streams fresh the same
-  // way the live path does (store.updateSensor → recordSensorUpdate).
-  const markFresh = (entity: string, component: string) =>
-    sensorRate.recordSensorUpdate(entity, component);
+  // way the live path does (store.updateSensor → recordSensorUpdate), which
+  // passes the sample's own server timestamp — freshness is measured on the
+  // server timeline, not on local arrival time.
+  const markFresh = (entity: string, component: string, sampleTsMs: number) =>
+    sensorRate.recordSensorUpdate(entity, component, sampleTsMs);
   return { plotTime, dataCache, markFresh };
 }
 
@@ -84,7 +86,7 @@ describe('data-cache (server-timestamp keyed)', () => {
   it('addDataPoint stores points at their server timestamps; live window reads them back', async () => {
     const { dataCache, markFresh } = await freshModules();
     const cache = dataCache.getDataCache();
-    markFresh('PT1_Cal.CH1', 'pressure_psi');
+    markFresh('PT1_Cal.CH1', 'pressure_psi', T0 + 450);
     for (let i = 0; i < 10; i++) {
       cache.addDataPoint('PT1_Cal.CH1', 'pressure_psi', 100 + i, T0 + i * 50);
     }
@@ -99,7 +101,7 @@ describe('data-cache (server-timestamp keyed)', () => {
   it('drops strictly-older points and overwrites same-instant points', async () => {
     const { dataCache, markFresh } = await freshModules();
     const cache = dataCache.getDataCache();
-    markFresh('e', 'c');
+    markFresh('e', 'c', T0 + 100);
     cache.addDataPoint('e', 'c', 1, T0 + 100);
     cache.addDataPoint('e', 'c', 2, T0 + 50);   // older → dropped
     cache.addDataPoint('e', 'c', 3, T0 + 100);  // same instant → overwrite
@@ -111,7 +113,7 @@ describe('data-cache (server-timestamp keyed)', () => {
   it('HISTORICAL_DATA merges by timestamp — never wipes live data (the reset bug)', async () => {
     const { dataCache, markFresh } = await freshModules();
     const cache = dataCache.getDataCache();
-    markFresh('e', 'c');
+    markFresh('e', 'c', T0 + 4000);
     cache.start();
     const historical = listeners.get('historical_data');
     expect(historical).toBeTypeOf('function');

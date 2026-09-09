@@ -1,5 +1,6 @@
 'use client'
 
+import { connectionBadge } from '@/lib/connection-badge';
 import { useNavigate } from 'react-router-dom';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
@@ -220,6 +221,16 @@ export default function TopBar() {
   // Session-enabled deployment with no active run: the pipeline is intentionally
   // down, so show "Session Stopped" rather than a "Data Pipeline Down" alarm.
   const sessionStopped = !!(session?.enabled && !session.active);
+  // Dot + label + tooltip, shared with MobileDashboard so the two cannot drift.
+  const badge = connectionBadge({
+    connected: isConnected,
+    sessionStopped,
+    dataFresh,
+    simulated: isSimulated,
+    throttled: connectionStatus.throttled,
+    resolutionPct: connectionStatus.resolutionPct,
+    lagMs: connectionStatus.lagMs,
+  });
 
   const effectivePressureBars = useMemo(() => {
     if (pressureBars.length > 0) return pressureBars;
@@ -293,9 +304,9 @@ export default function TopBar() {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${!isConnected ? 'bg-red-500' : sessionStopped ? 'bg-gray-500' : dataFresh ? (isSimulated ? 'bg-purple-500' : 'bg-green-500') : 'bg-yellow-500'}`} />
-            <span className="text-sm text-gray-300 font-semibold">
-              {!isConnected ? 'Disconnected' : sessionStopped ? 'Session Stopped' : dataFresh ? (isSimulated ? 'Simulated Data' : 'Connected') : 'Data Pipeline Down'}
+            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${badge.dotClass}`} title={badge.title} />
+            <span className="text-sm text-gray-300 font-semibold" title={badge.title}>
+              {badge.label}
             </span>
           </div>
           {session?.enabled && (

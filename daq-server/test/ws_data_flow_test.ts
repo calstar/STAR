@@ -176,7 +176,6 @@ function boardStatusSkipIds(): Set<number> {
 
 // Shared types (inline to avoid import issues)
 enum MessageType {
-  SUBSCRIBE_SENSOR = 'subscribe_sensor',
   SEND_COMMAND = 'send_command',
   SENSOR_UPDATE = 'sensor_update',
   ACTUATOR_UPDATE = 'actuator_update',
@@ -642,6 +641,10 @@ async function testBackendDebugApi(): Promise<void> {
     ingestPacketsReceived?: number;
     boardScanRateHz?: Record<string, number>;
     ingestConnected?: boolean;
+    wsClients?: number;
+    wsBufferedBytes?: number;
+    outboxWindowsHeld?: number;
+    heapUsedMb?: number;
   }
 
   const result = await new Promise<DebugApiResponse | null>((resolve) => {
@@ -663,6 +666,22 @@ async function testBackendDebugApi(): Promise<void> {
     typeof result.ingestPacketsReceived === 'number' && result.ingestPacketsReceived > 0,
     `ingestPacketsReceived > 0 (got ${result.ingestPacketsReceived ?? 'missing'}) — "Ingest Rate" card would show "---"`,
   );
+
+  // WS backpressure diagnostics. These exist so "the dashboards are stuck" can
+  // be diagnosed with one curl instead of a backend restart: a large
+  // wsBufferedBytes against a small wsClients is the per-client outbox failing
+  // to drain (see backend client-outbox.ts).
+  assert(typeof result.wsBufferedBytes === 'number', '/api/debug reports wsBufferedBytes');
+  assert(typeof result.outboxWindowsHeld === 'number', '/api/debug reports outboxWindowsHeld');
+  assert(typeof result.heapUsedMb === 'number' && (result.heapUsedMb ?? 0) > 0,
+    `/api/debug reports heapUsedMb (got ${result.heapUsedMb ?? 'missing'})`);
+
+  // A healthy local client drains every tick, so nothing should be piling up.
+  // If this trips on a loopback connection, the flush loop is not running.
+  assert((result.wsBufferedBytes ?? 0) < 1_000_000,
+    `wsBufferedBytes stays small on a healthy local client (got ${result.wsBufferedBytes})`);
+  assert((result.outboxWindowsHeld ?? 0) < 5000,
+    `outboxWindowsHeld stays bounded (got ${result.outboxWindowsHeld})`);
 
   const bsr = result.boardScanRateHz;
   assert(bsr !== null && typeof bsr === 'object', '/api/debug includes boardScanRateHz object');
@@ -1010,15 +1029,10 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     'ENC1.CH', 'ENC1_Cal.CH',
     'ACT2.CH', 'ACT4.CH', 'ACT2_Cal.CH', 'ACT4_Cal.CH',
   ];
-  for (const prefix of sensorPrefixes) {
-    for (let i = 1; i <= 20; i++) {
-      send(ws, {
-        type: MessageType.SUBSCRIBE_SENSOR,
-        timestamp: Date.now(),
-        payload: { entity: `${prefix}${i}` },
-      });
-    }
-  }
+  // No subscribe step: the backend sends every stream to every client, and a
+  // slow client is handled by shedding resolution server-side (client-outbox.ts)
+  // rather than by filtering streams. sensorPrefixes below is what we EXPECT to
+  // see arrive, not what we asked for.
 
   // Snapshot backend stats before the window so we can compute a delta.
   const statsAtWindowStart = IS_THIN ? await fetchBackendStats() : null;
@@ -2606,15 +2620,7 @@ async function testRawAndCalibratedPresence(ws: WebSocket): Promise<void> {
     'TC1.CH', 'TC1_Cal.CH', 'RTD1.CH', 'RTD1_Cal.CH',
     'LC2.CH', 'LC2_Cal.CH',
   ];
-  for (const prefix of prefixes) {
-    for (let i = 1; i <= 20; i++) {
-      send(ws, {
-        type: MessageType.SUBSCRIBE_SENSOR,
-        timestamp: Date.now(),
-        payload: { entity: `${prefix}${i}` },
-      });
-    }
-  }
+  // No subscribe step — every client receives every stream (see above).
 
   const COLLECT_MS = 8000;
   console.log(`  Collecting sensor updates for ${COLLECT_MS / 1000}s...`);

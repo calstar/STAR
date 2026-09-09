@@ -5,7 +5,12 @@ frontend, and CI. Each item names the affected file(s), what actually goes wrong
 shape of the fix.
 
 **Last audited:** 2026-09-08 against `1aeb97bc`.
-**Last updated:** 2026-09-08 — the config-gate work landed, which turned the config editor's
+**Last updated:** 2026-09-08 — the WebSocket backpressure work landed, resolving this file's
+backpressure/keepalive entry under High: sensor data now stages in a per-client outbox that sheds
+*resolution* rather than falling behind, squeezed to a measured-throughput latency budget, with the
+30 s ping reaper and a `Throttled · N%` badge so no operator reads a decimated trace unknowingly. It
+also capped encoders (their own budget, so the scope view's valve timing survives) and deleted the
+dead `SUBSCRIBE_SENSOR` protocol. Before that, the config-gate work landed, which turned the config editor's
 visual-only validation into a refusal at session start (and is recorded under Resolved, having been
 raised directly rather than filed here). Before that, the controller PWM-mapping and FIRE-gate work landed, which
 resolved both controller entries under High (correcting one's scope and the other's severity) and
@@ -87,33 +92,6 @@ states it maps.
 ---
 
 ## High
-
-### Backend — WebSocket broadcast has no backpressure and no keepalive
-
-**File:** `diablo_server/backend/src/server.ts:676-690`
-
-`broadcast()` sends to every client whose `readyState === OPEN` and swallows the result.
-Nothing checks `ws.bufferedAmount`, and there is no `ping`/`pong` liveness check anywhere in
-the server (`grep bufferedAmount` and `grep ping(` both come back empty).
-
-Two consequences, both routine in the field:
-
-1. A client on a degraded link (a tablet at the pad) stops draining. `ws` queues every
-   broadcast in the backend's heap. At 10 Hz across every sensor series, that grows without
-   bound.
-2. A client whose network vanishes without a TCP FIN — a Wi-Fi drop, a closed laptop —
-   stays `OPEN` in `wss.clients` indefinitely and keeps accruing that queue, because
-   nothing ever probes it.
-
-The backend is the single process feeding every dashboard; when it OOMs, everyone loses
-telemetry at once.
-
-**Fix:** skip clients over a `bufferedAmount` threshold (drop frames for that client rather
-than the whole server — sensor data is idempotent, the next frame supersedes it), and
-`terminate()` a client that stays over the threshold for several seconds. Add the standard
-30 s `ping` with an `isAlive` flag cleared on `pong` to reap dead sockets.
-
----
 
 ### CI — The static-analysis job cannot fail
 
@@ -323,6 +301,71 @@ longer to flush, and on a fast machine it's a second wasted on every run.
 ## Resolved
 
 Kept so a future audit can distinguish "fixed" from "never checked".
+
+### By the WebSocket backpressure work (2026-09-08)
+
+- **Backend — WebSocket broadcast has no backpressure and no keepalive.** `broadcast()` handed
+  every message to `ws.send()` and never read `ws.bufferedAmount`, so a client that stopped
+  draining had every subsequent frame queued in the backend's heap without limit — ~47 live
+  streams at 20 pts/s is ~124 KB/s per stalled client, ~460 MB/hour, and the backend is the one
+  process feeding every dashboard. The team had hit this; the standing workaround was to restart
+  the backend.
+
+  The memory was the lesser half. A FIFO queue guarantees *completeness* and therefore gives up
+  *currency* without bound: the tablet renders a smooth, plausible, coherent plot that is minutes
+  old, with no gap, no stale badge, and `readyState` still `OPEN`. On a test stand that is worse
+  than a blank screen. Measured against a 50 KB/s link, the old path never recovers — lag grows
+  linearly (60 s at t=60, 96 s at t=120, 203 s at t=300) because drain rate is permanently below
+  production rate.
+
+  Sensor samples now stage in a per-client outbox (`backend/src/client-outbox.ts`) as min/max
+  windows in a tiered ladder: a level that overflows merges its two *oldest* windows into one
+  promoted a level up, so a window only ever merges with a same-resolution neighbour and old data
+  cannot collapse. Merging keeps each extreme **with its original timestamp**, so a 620 psi
+  ignition spike survives any number of compactions at its true time — verified in tests, and the
+  reason this is min/max decimation rather than last-value conflation.
+
+  Before each flush the ladder is squeezed to a latency budget derived from the client's *measured*
+  drain rate (bytes handed to the socket ÷ time the socket took to empty), so what does not fit is
+  compacted away rather than delayed. That inverts the control law from *fixed buffer, variable
+  lag* to *fixed lag, variable resolution*: simulated at a 1.5 s budget, lag holds at ≤1.6 s across
+  2000 → 20 KB/s while resolution degrades 100% → 16%. A healthy client is untouched — its outbox
+  holds one window and the compaction path never executes.
+
+  Two things had to be right for it to be safe. The flush fires only when the socket has actually
+  **drained**, not merely dropped below a low-water mark — simulated with a 32 KB mark the socket
+  queue climbed 42 → 93 → 152 KB, reintroducing the same unbounded queue one layer down. And only
+  `SENSOR_UPDATE` passes through the outbox: control and event messages (`NOTIFICATION`,
+  `STATE_UPDATE`, `SESSION_UPDATE`, `ACTUATOR_UPDATE`, …) still go out directly, because sensor
+  samples are idempotent and the next supersedes the last, while a state transition or an abort
+  notification is not.
+
+  Also fixed alongside: the 30 s `ping`/`pong` reaper, so a socket whose peer vanished without a
+  FIN is terminated instead of living in `wss.clients` forever; `SENSOR_DATA_STALE_MS` now measures
+  age on the **server** timeline, so a throttled client reading current-but-coarse data does not
+  blink "Data Pipeline Down" between batches; and the badge gained a `Throttled · N%` state
+  (`frontend/lib/connection-badge.ts`, extracted from the nested ternary that was duplicated
+  verbatim in `TopBar` and `MobileDashboard`) so no operator reads a decimated trace without being
+  told — ranked below `Disconnected`/`Data Pipeline Down` so it can never mask an outage, and
+  orange because yellow already means the pipeline is down. Every value on it is computed in the
+  backend: `resolutionPct` needs a produced-count the browser never receives and `lagMs` needs the
+  server clock. `/api/debug` reports `wsBufferedBytes`, `outboxWindowsHeld` and `heapUsedMb`, so
+  "the dashboards are stuck" is now one curl rather than a restart.
+
+- **Encoders were exempt from every rate cap.** `shouldThrottleSensorStreamPacket` covered
+  `[0x20]`–`[0x23]` and `[0x30]`–`[0x31]`; encoder `[0x24]` fell through and emitted every packet
+  uncapped. Folding it into the 20 pts/s GUI budget would have been wrong — `OscopeTriggerPlot`
+  measures valve actuation timing from those samples (inter-encoder skew, plateau detection) and
+  100 ms windows would quantize the measurement away — so encoders get their own
+  `[gui] encoder_points_per_second` (default 100). At the boards' ~48 Hz that is one sample per
+  window, `min == max`, and points pass through unchanged: a ceiling against a faster board being
+  fitted, not a downsample of the current one.
+
+- **`SUBSCRIBE_SENSOR` / `UNSUBSCRIBE_SENSOR` were dead protocol.** Two senders
+  (`websocket.ts subscribeToAllSensors()`, `controller/page.tsx`), zero consumers — the backend
+  fell through to `break`. Honoring them would have changed nothing either: the client asked for
+  every channel at connect and never revised it. Deleted rather than implemented; there is no case
+  where a dashboard wants a subset, and a slow link is now handled by shedding resolution instead.
 
 ### By the config-gate work (2026-09-08)
 

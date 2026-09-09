@@ -5,8 +5,6 @@
 export var MessageType;
 (function (MessageType) {
     // Client → Server
-    MessageType["SUBSCRIBE_SENSOR"] = "subscribe_sensor";
-    MessageType["UNSUBSCRIBE_SENSOR"] = "unsubscribe_sensor";
     MessageType["SEND_COMMAND"] = "send_command";
     MessageType["QUERY_HISTORICAL"] = "query_historical";
     MessageType["CALIBRATION_COMMAND"] = "calibration_command";

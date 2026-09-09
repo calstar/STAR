@@ -40,6 +40,11 @@ connection_retry_delay_ms = 1000
 [gui]
 downsample_mode = "envelope"
 points_per_second = 20
+# Encoders ([0x24]) get their own, much higher budget: they feed the scope
+# view's valve-actuation timing (inter-encoder skew, plateau detection), which
+# the 20 pts/s GUI budget would quantize away. At the boards' ~48 Hz this is a
+# no-op -- it bounds a faster encoder board, it does not downsample this one.
+encoder_points_per_second = 100
 tabs = [ "unified", "boards", "config", "session" ]
 
 # Explicit sensor→page membership (replaces role-name substring parsing in the plot pages).

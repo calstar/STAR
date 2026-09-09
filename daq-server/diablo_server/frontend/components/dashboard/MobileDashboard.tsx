@@ -1,5 +1,6 @@
 'use client'
 
+import { connectionBadge } from '@/lib/connection-badge';
 import { useEffect, useMemo, useState } from 'react';
 import { useSensorStore, useSensorValue, usePressureHistoryPlotSeries } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
@@ -76,6 +77,16 @@ export default function MobileDashboard() {
   const dataFresh = !!connectionStatus.dataFresh; // backend-authoritative data-flowing signal
   // Session-enabled deployment with no active run: pipeline is intentionally down.
   const sessionStopped = !!(session?.enabled && !session.active);
+  // Dot + label + tooltip, shared with TopBar so the two cannot drift.
+  const badge = connectionBadge({
+    connected,
+    sessionStopped,
+    dataFresh,
+    simulated: isSimulated,
+    throttled: connectionStatus.throttled,
+    resolutionPct: connectionStatus.resolutionPct,
+    lagMs: connectionStatus.lagMs,
+  });
 
   const [clock, setClock] = useState('');
   const [timeWindow, setTimeWindow] = useState(60);
@@ -155,10 +166,8 @@ export default function MobileDashboard() {
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <span className="text-base font-bold tracking-widest text-blue-400 uppercase">DIABLO DAQ</span>
-            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-              !connected ? 'bg-red-500' : sessionStopped ? 'bg-gray-500' : dataFresh ? (isSimulated ? 'bg-purple-500' : 'bg-green-500') : 'bg-yellow-500'
-            }`} />
-            <span className="text-xs text-gray-400">{!connected ? 'Disconnected' : sessionStopped ? 'Session Stopped' : dataFresh ? (isSimulated ? 'Simulated Data' : 'Connected') : 'Data Pipeline Down'}</span>
+            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${badge.dotClass}`} title={badge.title} />
+            <span className="text-xs text-gray-400" title={badge.title}>{badge.label}</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-xs font-mono text-gray-400 tabular-nums">{clock}</span>

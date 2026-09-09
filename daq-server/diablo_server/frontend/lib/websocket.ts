@@ -180,12 +180,18 @@ export class WebSocketClient {
     }
   }
 
-  /** (Re)establish the data view: re-subscribe and request historical backfill.
-   *  Runs on socket open AND on an elodin reconnect (session Start/Stop run),
-   *  since the backend socket is not restarted by a session change. */
+  /** (Re)establish the data view: rebuild entity aliases and request historical
+   *  backfill. Runs on socket open AND on an elodin reconnect (session
+   *  Start/Stop run), since the backend socket is not restarted by a session
+   *  change.
+   *
+   *  There is no subscribe step: the backend sends every stream to every
+   *  client. A dashboard never has to ask for a subset, and a slow link is
+   *  handled by shedding resolution server-side (backend client-outbox.ts)
+   *  rather than by dropping streams. */
   private initDataStreams(reason: string): void {
     this.log('init_data_streams', { reason });
-    this.subscribeToAllSensors();
+    this.refreshEntityAliases();
     this.send({
       type: MessageType.QUERY_HISTORICAL,
       timestamp: Date.now(),
@@ -193,51 +199,18 @@ export class WebSocketClient {
     });
   }
 
-  private async subscribeToAllSensors(): Promise<void> {
-    const sensors = new Set<string>();
-
-    // Core channels up to 32 to be safe
-    for (let i = 1; i <= 32; i++) {
-      sensors.add(`PT_Cal.CH${i}`);
-      sensors.add(`PT.CH${i}`);
-      sensors.add(`ACT.CH${i}`);
-    }
-
+  /** Rebuild the config-driven entity aliases so named entities (e.g. a role
+   *  name) resolve to the generic CH<n> keys the streams actually use. */
+  private async refreshEntityAliases(): Promise<void> {
     try {
-      const res = await fetch(`${getApiBaseUrl()}/api/sensor-config`);
-      if (res.ok) {
-        const data = await res.json();
-        data.sensors?.forEach((s: any) => {
-          if (s.entity) sensors.add(s.entity);
-          if (s.calEntity) sensors.add(s.calEntity);
-        });
-      }
-
       const cfgRes = await fetch(`${getApiBaseUrl()}/api/config`);
       if (cfgRes.ok) {
         const cfgData = await cfgRes.json();
-        // Build dynamic aliases from config so named entities resolve to generic CH<n> keys
-        if (cfgData.config) {
-          buildAliasesFromConfig(cfgData.config);
-        }
-        const actRoles = cfgData.config?.actuator_roles || {};
-        Object.keys(actRoles).forEach(role => {
-          sensors.add(`ACT.${role.replace(/\\s+/g, '_')}`);
-        });
+        if (cfgData.config) buildAliasesFromConfig(cfgData.config);
       }
     } catch (e) {
-      console.warn("Could not fetch dynamic sensors, falling back to basic array:", e);
+      console.warn('Could not fetch config for entity aliases:', e);
     }
-
-    console.log(`📋 Subscribing to ${sensors.size} sensor entities`);
-    sensors.forEach((entity) => {
-      this.send({
-        type: MessageType.SUBSCRIBE_SENSOR,
-        timestamp: Date.now(),
-        payload: { entity },
-      });
-    });
-    console.log('✅ All subscription requests sent');
   }
 
   private handleMessage(message: WSMessage): void {

@@ -36,7 +36,11 @@ import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity, 
 import type { StateActuatorMap } from './legacy/state-actuators.js';
 import { getStateTransitions } from './legacy/state-transitions.js';
 import { recordBoardScanIngest, getBoardScanRateHz, isPrimaryPhysicalStream, mapEntityToGroup } from './board-scan-rate.js';
-import { EnvelopeAccumulator, parseGuiStreamConfig, envelopeWindowMs, type GuiStreamConfig } from './gui-stream.js';
+import {
+  EnvelopeAccumulator, parseGuiStreamConfig, envelopeWindowMs, encoderWindowMs,
+  type GuiStreamConfig, type EnvelopePoint,
+} from './gui-stream.js';
+import { ClientOutbox, FlushPacer } from './client-outbox.js';
 import { HistoryCache } from './history-cache.js';
 import { startGuiStaticServer } from './static-gui.js';
 import { handleCalibrationCommand, publishCalibrationReload, type CalibrationHost } from './calibration-handler.js';
@@ -53,7 +57,13 @@ const WS_PORT = parseInt(process.env.WS_PORT ?? '8081', 10);
 // unlock. Read-only queries and countdown display are not.
 const CONTROL_COMMAND_TYPES = new Set(['state_transition', 'actuator', 'extend_fire', 'debug_mode', 'session_start', 'session_stop', 'session_extend']);
 // Per-connection control-auth state, stashed on the WebSocket.
-type WsWithControl = WebSocket & { __daqOperator?: boolean; __daqControlAuthorized?: boolean };
+type WsWithControl = WebSocket & {
+  __daqOperator?: boolean;
+  __daqControlAuthorized?: boolean;
+  /** Cleared each keepalive sweep, set again on pong. A socket that misses a
+   *  sweep is gone in a way TCP never reported (Wi-Fi drop, closed lid). */
+  __daqAlive?: boolean;
+};
 const ELODIN_HOST = process.env.ELODIN_HOST ?? '127.0.0.1';
 const ELODIN_PORT = parseInt(process.env.ELODIN_PORT ?? '2240', 10);
 const ACT_SVC_PORT = parseInt(process.env.ACTUATOR_SERVICE_PORT ?? '9998', 10);
@@ -76,15 +86,27 @@ const BOARD_HEARTBEAT_STALE_MS = 5000;
  *  network jitter and Date.now() quantization. */
 const BROADCAST_MIN_MS = 50;
 
-/**
- * True for PT/TC/RTD/LC raw+cal and actuator raw+state ([0x20]–[0x23], [0x30]–[0x31]).
- * Encoder ([0x24]), heartbeats ([0x10]), self-test ([0x60]), controller ([0x40]–[0x44]),
- * sequencer/PSM ([0x50]), etc. are not throttled.
+/** Which rate budget a stream is downsampled against, or null to pass through.
+ *
+ *  'gui'     — PT/TC/RTD/LC raw+cal and actuator raw+state ([0x20]–[0x23],
+ *              [0x30]–[0x31]), the bulk of the traffic.
+ *  'encoder' — encoder ([0x24]). Given its OWN, much higher budget rather than
+ *              the GUI one: OscopeTriggerPlot measures valve actuation timing
+ *              from these (inter-encoder skew, plateau detection), and a 100 ms
+ *              GUI window would quantize that measurement away. At the boards'
+ *              ~48 Hz the encoder window holds ~1 sample, so min == max and
+ *              points pass through untouched — this is a ceiling against a
+ *              faster board being fitted later, not a downsample of today.
+ *  null      — heartbeats ([0x10]), self-test ([0x60]), controller
+ *              ([0x40]–[0x44]), sequencer/PSM ([0x50]): event-like, low-rate,
+ *              every update goes out immediately.
  */
-function shouldThrottleSensorStreamPacket(high: number, _low: number): boolean {
-  if (high === 0x20 || high === 0x21 || high === 0x22 || high === 0x23) return true;
-  if (high === 0x30 || high === 0x31) return true;
-  return false;
+type StreamBudget = 'gui' | 'encoder' | null;
+function streamBudgetFor(high: number, _low: number): StreamBudget {
+  if (high === 0x20 || high === 0x21 || high === 0x22 || high === 0x23) return 'gui';
+  if (high === 0x30 || high === 0x31) return 'gui';
+  if (high === 0x24) return 'encoder';
+  return null;
 }
 
 // ── History cache (epoch-ms timestamps; see history-cache.ts) ────────────────
@@ -102,7 +124,9 @@ setInterval(() => history.prune(), 60_000);
 
 let guiStreamConfig: GuiStreamConfig = parseGuiStreamConfig(safeReadConfigForGui());
 const envelope = new EnvelopeAccumulator(envelopeWindowMs(guiStreamConfig));
-console.log(`[ThinServer] GUI downsampling: ${guiStreamConfig.mode} @ ${guiStreamConfig.pointsPerSecond} pts/s per stream`);
+const encoderEnvelope = new EnvelopeAccumulator(encoderWindowMs(guiStreamConfig));
+console.log(`[ThinServer] GUI downsampling: ${guiStreamConfig.mode} @ ${guiStreamConfig.pointsPerSecond} pts/s per stream`
+  + ` (encoders @ ${guiStreamConfig.encoderPointsPerSecond} pts/s)`);
 
 function safeReadConfigForGui(): unknown {
   try { return readConfig(); } catch { return null; }
@@ -131,11 +155,15 @@ function configStateName(id: number): string | null {
 /** Re-read [gui] settings after a config save (wired via onConfigUpdated). */
 function reloadGuiStreamConfig(): void {
   const next = parseGuiStreamConfig(safeReadConfigForGui());
-  if (next.mode !== guiStreamConfig.mode || next.pointsPerSecond !== guiStreamConfig.pointsPerSecond) {
-    console.log(`[ThinServer] GUI downsampling changed: ${next.mode} @ ${next.pointsPerSecond} pts/s per stream`);
+  if (next.mode !== guiStreamConfig.mode
+      || next.pointsPerSecond !== guiStreamConfig.pointsPerSecond
+      || next.encoderPointsPerSecond !== guiStreamConfig.encoderPointsPerSecond) {
+    console.log(`[ThinServer] GUI downsampling changed: ${next.mode} @ ${next.pointsPerSecond} pts/s per stream`
+      + ` (encoders @ ${next.encoderPointsPerSecond} pts/s)`);
   }
   guiStreamConfig = next;
   envelope.setWindowMs(envelopeWindowMs(next));
+  encoderEnvelope.setWindowMs(encoderWindowMs(next));
 }
 
 /** Sample timestamps are forwarded from Elodin (bridge receipt, epoch ms). A
@@ -148,7 +176,28 @@ function saneSampleTimeMs(tsMs: number, fallbackMs: number): number {
     ? tsMs : fallbackMs;
 }
 
-/** Single exit point for downsampled sensor streams: history + stats + WS. */
+/**
+ * Per-client sensor staging. Sensor samples go here rather than straight to
+ * ws.send(), so a client that cannot keep up loses resolution instead of
+ * falling further and further behind (see client-outbox.ts).
+ *
+ * Control and event messages deliberately do NOT pass through this — they keep
+ * using send()/broadcast() directly. Sensor samples are idempotent and the next
+ * supersedes the last, which is what makes them safe to compact; a state
+ * transition or an abort notification is not.
+ */
+interface ClientStream {
+  outbox: ClientOutbox;
+  pacer: FlushPacer;
+  /** Last flush's observations, surfaced to the operator via CONNECTION_STATUS. */
+  throttled: boolean;
+  lagMs: number;
+  resolutionPct: number;
+}
+const clientStreams = new Map<WebSocket, ClientStream>();
+
+/** Single exit point for streams that bypass downsampling (event-like: state,
+ *  self-test, controller, sequencer). Broadcast immediately, never staged. */
 function emitSensorPoint(key: string, entity: string, component: string, value: number, tMs: number): void {
   history.record(key, tMs, value);
   stats.sensorUpdatesBroadcast++;
@@ -156,14 +205,64 @@ function emitSensorPoint(key: string, entity: string, component: string, value: 
   broadcast({ type: MessageType.SENSOR_UPDATE, timestamp: Date.now(), payload: update });
 }
 
+/** Single exit point for downsampled sensor streams: history, then per-client
+ *  staging. One call per closed envelope window (1–2 points, chronological). */
+function emitSensorWindow(key: string, entity: string, component: string, points: EnvelopePoint[]): void {
+  if (points.length === 0) return;
+  for (const p of points) history.record(key, p.tMs, p.value);
+  stats.sensorUpdatesBroadcast += points.length;
+  for (const cs of clientStreams.values()) cs.outbox.push(key, entity, component, points);
+}
+
+// Drain each client's outbox as fast as its own socket allows. The interval
+// between a client's flushes is set by how long its socket took to clear the
+// last dump — that measurement is also what sizes the next one, so resolution
+// (not currency) absorbs a slow link.
+setInterval(() => {
+  const now = Date.now();
+  for (const [ws, cs] of clientStreams) {
+    if (ws.readyState !== WebSocket.OPEN) continue;
+    if (!cs.pacer.shouldFlush(ws.bufferedAmount, now)) continue;
+
+    const newest = cs.outbox.newestTimestamp();
+    cs.outbox.squeeze(cs.pacer.budgetBytes);
+    const flushed = cs.outbox.drain();
+    if (flushed.length === 0) continue;
+
+    let bytes = 0;
+    for (const series of flushed) {
+      for (const p of series.points) {
+        const update: SensorUpdate = {
+          entity: series.entity, component: series.component, value: p.value, timestamp: p.tMs,
+        };
+        const data = JSON.stringify({ type: MessageType.SENSOR_UPDATE, timestamp: now, payload: update });
+        bytes += data.length;
+        try { ws.send(data); } catch { /* closing; the reaper will collect it */ }
+      }
+    }
+    cs.pacer.noteFlush(bytes, now);
+    cs.throttled = cs.outbox.squeezeDroppedLast;
+    cs.lagMs = newest === null ? 0 : Math.max(0, now - newest);
+    cs.resolutionPct = Math.round(cs.outbox.resolutionRatio() * 100);
+  }
+}, 100);
+
+// Reset the resolution window periodically so the reported percentage tracks
+// the link's recent behavior rather than averaging over the whole session.
+setInterval(() => {
+  for (const cs of clientStreams.values()) cs.outbox.resetStats();
+}, 10_000);
+
 // Timer flush so trickling/stopped streams don't hold their last window open.
 // Runs regardless of mode so a runtime envelope→throttle switch drains any
 // still-open windows instead of dropping them (map is empty in throttle mode).
 setInterval(() => {
-  for (const closed of envelope.flushOlderThan(Date.now())) {
-    for (const p of closed.points) {
-      emitSensorPoint(closed.key, closed.entity, closed.component, p.value, p.tMs);
-    }
+  const nowMs = Date.now();
+  for (const closed of envelope.flushOlderThan(nowMs)) {
+    emitSensorWindow(closed.key, closed.entity, closed.component, closed.points);
+  }
+  for (const closed of encoderEnvelope.flushOlderThan(nowMs)) {
+    emitSensorWindow(closed.key, closed.entity, closed.component, closed.points);
   }
 }, 50);
 
@@ -603,14 +702,25 @@ let debugMode = false;
 
 const apiHandler = createAPIHandler({
   getEngineState: () => currentState,
-  getDebugInfo: () => ({
-    ingestConnected: elodin.isConnected(),
-    ingestPacketsReceived: stats.ingestEntityUpdatesReceived,
-    wsClients: wss.clients.size,
-    sensorCacheSize: history.size,
-    useRelay: false,
-    boardScanRateHz: getBoardScanRateHz(),
-  }),
+  getDebugInfo: () => {
+    // Turns "the dashboards are stuck, restart the backend" into a diagnosis:
+    // a large wsBufferedBytes against a small wsClients is this exact bug.
+    let buffered = 0;
+    for (const ws of wss.clients) buffered += ws.bufferedAmount;
+    let windows = 0;
+    for (const cs of clientStreams.values()) windows += cs.outbox.windowsHeld;
+    return {
+      ingestConnected: elodin.isConnected(),
+      ingestPacketsReceived: stats.ingestEntityUpdatesReceived,
+      wsClients: wss.clients.size,
+      sensorCacheSize: history.size,
+      useRelay: false,
+      boardScanRateHz: getBoardScanRateHz(),
+      wsBufferedBytes: buffered,
+      outboxWindowsHeld: windows,
+      heapUsedMb: Math.round(process.memoryUsage().heapUsed / 1048576),
+    };
+  },
   onStateCsvUpdated: () => {
     // The CSV on disk changed and was deployed. Rebuild what the always-on backend derives from
     // it, and tell browsers to refetch.
@@ -710,6 +820,27 @@ function broadcastBoardStatus(): void {
 
 setInterval(broadcastBoardStatus, 1000 / BOARD_STATUS_HZ);
 
+// ── Keepalive ────────────────────────────────────────────────────────────────
+//
+// TCP does not reliably report a peer that vanished without a FIN — a closed
+// laptop lid or a walk out of Wi-Fi range leaves the socket readyState OPEN
+// forever, and it keeps being fed. The outbox bounds what such a client costs,
+// but nothing else ever removes it from wss.clients, so probe and reap.
+const KEEPALIVE_MS = 30_000;
+setInterval(() => {
+  for (const ws of wss.clients) {
+    const w = ws as WsWithControl;
+    if (w.__daqAlive === false) {
+      console.warn('[ThinServer] Reaping unresponsive WS client (missed keepalive)');
+      clientStreams.delete(ws);
+      ws.terminate();
+      continue;
+    }
+    w.__daqAlive = false;
+    try { ws.ping(); } catch { /* already closing */ }
+  }
+}, KEEPALIVE_MS);
+
 // ── Client connection ─────────────────────────────────────────────────────────
 
 wss.on('connection', (ws: WebSocket, req) => {
@@ -729,6 +860,18 @@ wss.on('connection', (ws: WebSocket, req) => {
   const authEmail = ((req.headers['x-auth-email'] as string | undefined) || '').trim();
   const isOp = authEmail === '' ? true : isOperator(authEmail);
   (ws as WsWithControl).__daqOperator = isOp;
+
+  // Sensor staging for this client (see client-outbox.ts). Registered before
+  // any send so the first window produced after connect is already captured.
+  clientStreams.set(ws, {
+    outbox: new ClientOutbox(),
+    pacer: new FlushPacer(),
+    throttled: false,
+    lagMs: 0,
+    resolutionPct: 100,
+  });
+  (ws as WsWithControl).__daqAlive = true;
+  ws.on('pong', () => { (ws as WsWithControl).__daqAlive = true; });
   (ws as WsWithControl).__daqControlAuthorized = false;
 
   let inboundMessages = 0;
@@ -740,7 +883,7 @@ wss.on('connection', (ws: WebSocket, req) => {
   // Connection status
   send(ws, {
     type: MessageType.CONNECTION_STATUS, timestamp: Date.now(),
-    payload: connectionStatusPayload({ connId }),
+    payload: connectionStatusPayload({ connId, ...clientStreamStatus(ws) }),
   });
   outboundMessages++;
   lastOutboundAt = Date.now();
@@ -852,6 +995,7 @@ wss.on('connection', (ws: WebSocket, req) => {
   });
 
   ws.on('close', (code, reasonBuffer) => {
+    clientStreams.delete(ws);
     const reason = reasonBuffer?.toString() ?? '';
     console.log(`[WS_BACKEND] ${JSON.stringify({
       event: 'conn_close',
@@ -910,10 +1054,6 @@ function handleMessage(ws: WebSocket, message: any): void {
       break;
     case MessageType.CALIBRATION_COMMAND:
       handleCalibrationCommand(calibrationHost, ws, message.payload);
-      break;
-    case MessageType.SUBSCRIBE_SENSOR:
-    case MessageType.UNSUBSCRIBE_SENSOR:
-      // Thin backend broadcasts all updates to all clients, ignore filter requests safely.
       break;
     case 'get_state_transitions':
       send(ws, { type: 'state_transitions', timestamp: Date.now(), payload: { transitions: getStateTransitions() } });
@@ -1172,20 +1312,43 @@ function isSimulated(): boolean {
 // no frontend guessing: connected (this socket), elodinConnected (backend↔Elodin
 // link), simulated (active simulated run), and dataFresh (we actually ingested a
 // row from Elodin within DATA_FRESH_MS — i.e. the pipeline is really delivering).
+//
+// throttled/resolutionPct/lagMs describe ONE client's link and so must be passed
+// per socket. They cannot be derived in the browser: resolutionPct needs the
+// produced-point count the client never receives, and lagMs needs the server
+// clock. An operator must never be looking at decimated data without being told.
 function connectionStatusPayload(extra: Record<string, unknown> = {}) {
   return {
     connected: true,
     elodinConnected: elodin.isConnected(),
     simulated: isSimulated(),
     dataFresh: Date.now() - lastIngestMs < DATA_FRESH_MS,
+    throttled: false,
+    resolutionPct: 100,
+    lagMs: 0,
     ...extra,
   };
 }
 
-// Re-broadcast connection status (used when the simulated state flips on session
-// start/stop so the badge updates without waiting for an Elodin reconnect).
+/** This client's own outbox observations, for connectionStatusPayload(). */
+function clientStreamStatus(ws: WebSocket): Record<string, unknown> {
+  const cs = clientStreams.get(ws);
+  if (!cs) return {};
+  return { throttled: cs.throttled, resolutionPct: cs.resolutionPct, lagMs: cs.lagMs };
+}
+
+// Re-send connection status. Per-client rather than a single broadcast: each
+// dashboard must report the state of ITS link, not whichever one is worst.
 function broadcastConnectionStatus(): void {
-  broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: connectionStatusPayload() });
+  const ts = Date.now();
+  for (const ws of wss.clients) {
+    if (ws.readyState !== WebSocket.OPEN) continue;
+    send(ws, {
+      type: MessageType.CONNECTION_STATUS,
+      timestamp: ts,
+      payload: connectionStatusPayload(clientStreamStatus(ws)),
+    });
+  }
 }
 
 // Push the authoritative status ~1 Hz so dataFresh (and thus the badge) never goes
@@ -1341,25 +1504,27 @@ elodin.on('packet', (header: any, payload: Buffer) => {
       // guarded against off-clock publishers.
       const tsMs = saneSampleTimeMs(parsed.timestamp, epochNow);
 
-      if (!shouldThrottleSensorStreamPacket(high, low)) {
-        // Event-like streams (state, self-test, encoder, controller): every
-        // update goes out immediately, no downsampling.
+      const budget = streamBudgetFor(high, low);
+      if (budget === null) {
+        // Event-like streams (state, self-test, controller, sequencer): every
+        // update goes out immediately, no downsampling and no staging.
         emitSensorPoint(key, parsed.entity, parsed.component, parsed.value, tsMs);
         continue;
       }
 
-      if (guiStreamConfig.mode === 'throttle') {
+      if (budget === 'gui' && guiStreamConfig.mode === 'throttle') {
         // Legacy drop-throttle (config.toml [gui] downsample_mode = "throttle").
         const lastBcast = broadcastLastTime.get(key) ?? 0;
         if (epochNow - lastBcast < BROADCAST_MIN_MS) continue;
         broadcastLastTime.set(key, epochNow);
-        emitSensorPoint(key, parsed.entity, parsed.component, parsed.value, tsMs);
+        emitSensorWindow(key, parsed.entity, parsed.component, [{ tMs: tsMs, value: parsed.value }]);
       } else {
         // Min/max envelope: extremes of each window survive with their real
         // timestamps, so transients can't hide between broadcast slots.
-        for (const p of envelope.add(key, parsed.entity, parsed.component, tsMs, parsed.value)) {
-          emitSensorPoint(key, parsed.entity, parsed.component, p.value, p.tMs);
-        }
+        // Encoders run on their own, much shorter window (see streamBudgetFor).
+        const acc = budget === 'encoder' ? encoderEnvelope : envelope;
+        const closed = acc.add(key, parsed.entity, parsed.component, tsMs, parsed.value);
+        if (closed.length > 0) emitSensorWindow(key, parsed.entity, parsed.component, closed);
       }
     }
   } catch (err) {

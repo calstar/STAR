@@ -102,29 +102,6 @@ export default function ControllerPage() {
   useEffect(() => {
     const unsub = ws.on(MessageType.CONFIG_UPDATED, loadLcConfig);
 
-    ws.send({
-      type: MessageType.SUBSCRIBE_SENSOR,
-      timestamp: Date.now(),
-      payload: { entity: 'CONTROLLER.Fuel' },
-    });
-    ws.send({
-      type: MessageType.SUBSCRIBE_SENSOR,
-      timestamp: Date.now(),
-      payload: { entity: 'CONTROLLER.Ox' },
-    });
-    ws.send({
-      type: MessageType.SUBSCRIBE_SENSOR,
-      timestamp: Date.now(),
-      payload: { entity: 'CONTROLLER.diagnostics' },
-    });
-    lcChannels.forEach((ch) => {
-      ws.send({
-        type: MessageType.SUBSCRIBE_SENSOR,
-        timestamp: Date.now(),
-        payload: { entity: `LC_Cal.CH${ch}` },
-      });
-    });
-
     return () => { unsub(); };
   }, [ws, loadLcConfig, lcChannels]);
 

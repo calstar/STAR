@@ -5,8 +5,6 @@
 // WebSocket message types
 export enum MessageType {
   // Client → Server
-  SUBSCRIBE_SENSOR = 'subscribe_sensor',
-  UNSUBSCRIBE_SENSOR = 'unsubscribe_sensor',
   SEND_COMMAND = 'send_command',
   QUERY_HISTORICAL = 'query_historical',
   CALIBRATION_COMMAND = 'calibration_command',
@@ -225,6 +223,18 @@ export interface ConnectionStatus {
   /** Backend-authoritative: an Elodin row was ingested within the freshness window,
    *  i.e. the pipeline is actually delivering data right now (not just "run active"). */
   dataFresh?: boolean;
+
+  // ── This client's own link (per-socket; see backend client-outbox.ts) ──────
+  // Computed server-side and sent, never derived in the browser: resolutionPct
+  // needs the produced-point count the client never receives, and lagMs needs
+  // the server clock. An operator must never look at decimated data unknowingly.
+
+  /** The backend is shedding resolution to keep this client current. */
+  throttled?: boolean;
+  /** Percentage of produced sensor points this client actually received (0-100). */
+  resolutionPct?: number;
+  /** Age of the newest delivered sample at the last flush, in ms. */
+  lagMs?: number;
 }
 
 // Mission start time (T+0 from first packet)

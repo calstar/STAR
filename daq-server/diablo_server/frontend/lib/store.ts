@@ -450,7 +450,7 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
       _encoderLastAcceptedTs[key] = update.timestamp;
     }
 
-    recordSensorUpdate(update.entity, update.component);
+    recordSensorUpdate(update.entity, update.component, update.timestamp);
 
     // Track last timestamp for diagnostics only. Do not drop “older” timestamps: Elodin/WebSocket
     // bursts often deliver calibrated PT rows slightly out of order vs raw; rejecting them left
