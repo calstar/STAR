@@ -1,5 +1,5 @@
 import type { Edge, Node } from '@xyflow/react';
-import type { PIDNodeData, PIDEdgeData } from './types';
+import type { PIDNodeData } from './types';
 
 /**
  * Pages within one diagram.
@@ -89,10 +89,4 @@ export function moveToPage(nodes: Node[], ids: Set<string>, page: string): Node[
   return nodes.map(n =>
     withAttached.has(n.id) ? { ...n, data: { ...n.data, page } } : n,
   );
-}
-
-/** Put an edge on a page too, so an export can group by page without the graph. */
-export function edgePage(edge: Edge, nodes: Node[]): string {
-  const a = nodes.find(n => n.id === edge.source);
-  return pageOf(a?.data as unknown as PIDEdgeData);
 }

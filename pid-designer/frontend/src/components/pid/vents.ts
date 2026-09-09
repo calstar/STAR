@@ -70,6 +70,3 @@ export function findVents(nodes: Node[], edges: Edge[]): Vent[] {
   }
   return out;
 }
-
-export const ventsByNode = (vents: Vent[]) =>
-  new Map(vents.map(v => [v.nodeId, v]));

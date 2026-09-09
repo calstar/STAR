@@ -22,11 +22,11 @@ const PITCH = 26;
 const PAD = 14;
 
 /** Evenly spaced port offsets along a run of `n` ports. */
-export function portOffsets(n: number): number[] {
+function portOffsets(n: number): number[] {
   return Array.from({ length: n }, (_, i) => PAD + i * PITCH);
 }
 
-export function manifoldLength(ports: number): number {
+function manifoldLength(ports: number): number {
   return Math.max(2, ports) * PITCH + PAD;
 }
 

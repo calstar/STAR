@@ -38,8 +38,6 @@ export function FluidProvider({ nodes, edges, children }: {
   return <FluidContext.Provider value={value}>{children}</FluidContext.Provider>;
 }
 
-export const useFluidMap = () => useContext(FluidContext);
-
 /** What this component ended up carrying, declared or inherited. */
 export function useNodeFluid(id: string): FluidAssignment | undefined {
   return useContext(FluidContext).byNode.get(id);
