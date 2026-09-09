@@ -256,6 +256,65 @@ class TestDynamics(unittest.TestCase):
                        f"All states should be non-negative, got: {x_next}")
 
 
+class TestPolytropicReferenceStateIsPerConfig(unittest.TestCase):
+    """The polytropic reference state must not leak between configs.
+
+    It used to live on the `step` FUNCTION object, so the first trajectory ever stepped in a
+    process set the reference temperatures/masses/volumes for every later one, across configs.
+    An optimizer evaluating thousands of candidates -- the Layer X access pattern in
+    docs/adr/0001 -- would hand candidates 2..N the reference state of candidate 1.
+    """
+
+    @staticmethod
+    def _params(**over):
+        from engine.control.robust_ddp.dynamics import DynamicsParams
+        base = dict(copv_cF=1.0, copv_cO=1.0, copv_loss=1.0e3, reg_ratio=0.8,
+                    alpha_F=1.0, alpha_O=1.0, rho_F=789.0, rho_O=1140.0,
+                    tau_line_F=0.05, tau_line_O=0.05)
+        base.update(over)
+        return DynamicsParams(**base)
+
+    def test_reference_state_does_not_leak_between_params_objects(self):
+        a = self._params()
+        b = self._params()
+        a._temp_initialized = True
+        a._T_copv_0 = 293.0
+        self.assertFalse(getattr(b, '_temp_initialized', False),
+                         "a second config must start with its own uninitialised reference state")
+
+    def test_no_reference_state_is_stored_on_the_step_function(self):
+        from engine.control.robust_ddp import dynamics as dyn
+        leaked = [n for n in dir(dyn.step)
+                  if n.startswith('_T_') or n.startswith('_m_') or n.startswith('_V_')
+                  or n == '_temp_initialized']
+        self.assertEqual(leaked, [], f"process-global state back on step(): {leaked}")
+
+
+class TestPressurisationHardwareIsConfigurable(unittest.TestCase):
+    """Regulator/valve geometry must be settable, not literals inside step()."""
+
+    def test_defaults_match_the_previously_hardcoded_values(self):
+        from engine.control.robust_ddp.dynamics import DynamicsParams
+        p = DynamicsParams(copv_cF=1.0, copv_cO=1.0, copv_loss=1.0e3, reg_ratio=0.8,
+                           alpha_F=1.0, alpha_O=1.0, rho_F=789.0, rho_O=1140.0,
+                           tau_line_F=0.05, tau_line_O=0.05)
+        self.assertAlmostEqual(p.gamma_gas, 1.4)
+        self.assertAlmostEqual(p.Cd_regulator, 0.7)
+        self.assertAlmostEqual(p.Cd_valve, 0.65)
+        self.assertAlmostEqual(p.A_regulator, 2e-5)
+        self.assertAlmostEqual(p.A_valve_F, 5e-5)
+        self.assertAlmostEqual(p.A_valve_O, 5e-5)
+
+    def test_values_are_overridable(self):
+        from engine.control.robust_ddp.dynamics import DynamicsParams
+        p = DynamicsParams(copv_cF=1.0, copv_cO=1.0, copv_loss=1.0e3, reg_ratio=0.8,
+                           alpha_F=1.0, alpha_O=1.0, rho_F=789.0, rho_O=1140.0,
+                           tau_line_F=0.05, tau_line_O=0.05,
+                           A_valve_F=9.9e-5, Cd_regulator=0.55)
+        self.assertAlmostEqual(p.A_valve_F, 9.9e-5)
+        self.assertAlmostEqual(p.Cd_regulator, 0.55)
+
+
 if __name__ == '__main__':
     unittest.main()
 
