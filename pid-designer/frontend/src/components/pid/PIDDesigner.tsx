@@ -414,11 +414,43 @@ function PIDCanvas({
       const before = new Map(current.map(n => [n.id, n.position]));
       let next = applyNodeChanges(changes, current);
       for (const c of changes) {
-        if (c.type !== 'position' || !c.position) continue;
-        const from = before.get(c.id);
-        if (!from) continue;
-        const delta = { x: c.position.x - from.x, y: c.position.y - from.y };
-        if (delta.x || delta.y) next = dragAttached(next, c.id, delta);
+        if (c.type === 'position' && c.position) {
+          const from = before.get(c.id);
+          if (!from) continue;
+          const delta = { x: c.position.x - from.x, y: c.position.y - from.y };
+          if (delta.x || delta.y) next = dragAttached(next, c.id, delta);
+          continue;
+        }
+        // A resize arrives as a `dimensions` change, and React Flow records it
+        // in `measured` -- which `toStored` strips on the way out, correctly,
+        // since it is a post-layout measurement recomputed on load. A resized
+        // section box therefore looked right until the page was reloaded and
+        // then sprang back. `width`/`height` are the authored size, so the
+        // resize is copied into them here.
+        // A resize arrives as a `dimensions` change, and React Flow records it
+        // in `measured` -- which `toStored` strips on the way out, correctly,
+        // since it is a post-layout measurement recomputed on load. So a
+        // resized section box looked right until the page was reloaded and
+        // then sprang back to the size it was dropped at. `width`/`height` are
+        // the authored size and do persist, so the measurement is copied into
+        // them here.
+        //
+        // Two conditions, and the second is not redundant: `setAttributes` is
+        // React Flow's own marker for "the author resized this", but the last
+        // change of a drag arrives without it, so following that flag alone
+        // stored the size one step behind what was on screen. A node that
+        // already *has* an authored size keeps it in step with every
+        // measurement. A node that never had one -- every ordinary symbol --
+        // never acquires one, which is what stops the whole diagram filling up
+        // with sizes nobody asked for.
+        if (c.type === 'dimensions' && c.dimensions) {
+          const authored = c.setAttributes
+            || next.find(n => n.id === c.id)?.width !== undefined;
+          if (authored) {
+            const { width, height } = c.dimensions;
+            next = next.map(n => (n.id === c.id ? { ...n, width, height } : n));
+          }
+        }
       }
       return next;
     });
@@ -496,9 +528,13 @@ function PIDCanvas({
       position,
       // Behind the components it encloses, so the drawing reads as components
       // in a box rather than a box over components.
-      ...(type === 'REGION'
-        ? { width: 320, height: 220, zIndex: -1, style: { width: 320, height: 220 } }
-        : {}),
+      //
+      // Size goes in `width`/`height` only. Setting `style.width` as well
+      // stored it twice: NodeResizer updates the first pair and leaves the
+      // second at whatever it was dropped as, so a resized box saved 200x70
+      // alongside a style still claiming 320x220. One of the two would
+      // eventually be believed.
+      ...(type === 'REGION' ? { width: 320, height: 220, zIndex: -1 } : {}),
       data: nodeData as unknown as Record<string, unknown>,
     }]);
   }, [screenToFlowPosition, setNodes, page]);
