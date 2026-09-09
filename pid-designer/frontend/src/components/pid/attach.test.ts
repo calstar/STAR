@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Edge, Node } from '@xyflow/react';
-import { targetAt, dragAttached, isInstrument } from './attach';
+import { targetAt, dragAttached, isInstrument, centreOf } from './attach';
 
 const node = (id: string, componentType: string, x: number, y: number,
               w = 60, h = 60, data: Record<string, unknown> = {}): Node =>
@@ -102,5 +102,27 @@ describe('the page you are looking at', () => {
 
   it('hits everything when no page is named', () => {
     expect(targetAt({ x: 30, y: 50 }, gse, wire)).toEqual({ id: 'TANK', kind: 'node' });
+  });
+});
+
+describe('a node nobody has measured yet', () => {
+  it('is its own size, not everything\u2019s size', () => {
+    // A junction is a ten-pixel dot and `measured` arrives a render after the
+    // node does. Falling back to 60 put its centre 25 px off the pipe, so a
+    // second branch made in the same batch missed the line entirely.
+    const junction: Node = { id: 'j', type: 'JUNCTION', position: { x: 100, y: 100 },
+      data: { componentType: 'JUNCTION' } } as unknown as Node;
+    expect(centreOf(junction)).toEqual({ x: 105, y: 105 });
+
+    const valve: Node = { id: 'v', type: 'MAN', position: { x: 100, y: 100 },
+      data: { componentType: 'MAN' } } as unknown as Node;
+    expect(centreOf(valve)).toEqual({ x: 130, y: 130 });
+  });
+
+  it('yields to a real measurement once there is one', () => {
+    const tank: Node = { id: 't', type: 'TANK', position: { x: 0, y: 0 },
+      measured: { width: 60, height: 100 },
+      data: { componentType: 'TANK' } } as unknown as Node;
+    expect(centreOf(tank)).toEqual({ x: 30, y: 50 });
   });
 });

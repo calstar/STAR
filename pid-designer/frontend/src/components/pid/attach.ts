@@ -29,6 +29,42 @@ export const INSTRUMENTS = new Set(['RTD', 'TC', 'LC']);
 
 export const isInstrument = (type?: string) => !!type && INSTRUMENTS.has(type);
 
+/**
+ * Plumbed instruments: they screw into the system rather than clipping to it.
+ *
+ * A transducer and a gauge are fittings -- there is a hole in the pipe and a
+ * thread in the hole -- so they connect, and they have exactly one port to
+ * connect with. That single port is what makes dropping one on a line
+ * unambiguous: there is only one thing it could mean.
+ */
+export const TAPPED = new Set(['PT', 'PG']);
+
+export const isTapped = (type?: string) => !!type && TAPPED.has(type);
+
+/**
+ * How big a node is, before ReactFlow has measured it.
+ *
+ * `measured` arrives a render after a node does, and until then everything
+ * fell back to 60 x 60 -- which is a quarter of the drawing away from the
+ * truth for a junction, a ten-pixel dot. Anything hit-testing or picking a
+ * face against a junction created in the same batch was therefore aiming at a
+ * point 25 px off the pipe.
+ */
+export function nodeSize(n: Node): { w: number; h: number } {
+  const type = (n.data as unknown as PIDNodeData)?.componentType;
+  const fallback = type === 'JUNCTION' ? 10 : 60;
+  return {
+    w: n.measured?.width ?? fallback,
+    h: n.measured?.height ?? fallback,
+  };
+}
+
+/** A node's centre in flow coordinates. */
+export function centreOf(n: Node): XYPosition {
+  const { w, h } = nodeSize(n);
+  return { x: n.position.x + w / 2, y: n.position.y + h / 2 };
+}
+
 export interface AttachTarget {
   id: string;
   kind: 'node' | 'edge';
@@ -74,8 +110,7 @@ export function targetAt(
     // region is scenery drawn over half the diagram, so it would swallow
     // every drop made inside it.
     if (isInstrument(t2) || t2 === 'REGION' || t2 === 'TEXT') continue;
-    const w = n.measured?.width ?? 60;
-    const h = n.measured?.height ?? 60;
+    const { w, h } = nodeSize(n);
     if (point.x >= n.position.x && point.x <= n.position.x + w &&
         point.y >= n.position.y && point.y <= n.position.y + h) {
       return { id: n.id, kind: 'node' };
@@ -86,17 +121,13 @@ export function targetAt(
   // path and this is the straight line between its ends -- close enough to pick
   // a line out at the scale a P&ID is drawn, and it never disagrees about
   // *which* line, only about exactly where along it.
-  const centre = (n: Node) => ({
-    x: n.position.x + (n.measured?.width ?? 60) / 2,
-    y: n.position.y + (n.measured?.height ?? 60) / 2,
-  });
   const TOLERANCE = 14;
   for (const e of edges) {
     const a = nodes.find(n => n.id === e.source);
     const b = nodes.find(n => n.id === e.target);
     if (!a || !b) continue;
     if (!here(a) || !here(b)) continue;
-    if (distanceToSegment(point, centre(a), centre(b)) <= TOLERANCE) {
+    if (distanceToSegment(point, centreOf(a), centreOf(b)) <= TOLERANCE) {
       return { id: e.id, kind: 'edge' };
     }
   }

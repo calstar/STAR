@@ -48,9 +48,9 @@ import { ChecksPanel } from './ChecksPanel';
 import { VentLayer } from './VentLayer';
 import { PageBar } from './PageBar';
 import { DEFAULT_PAGE, applyPage, listPages, moveToPage, pageOf } from './pages';
-import { clearOfHost, dragAttached, isInstrument, targetAt } from './attach';
+import { clearOfHost, dragAttached, isInstrument, isTapped, targetAt } from './attach';
 import { rejoinAfterDelete, splitEdgeAt } from './splitEdge';
-import { nearestOnPath } from './BranchableEdge';
+import { drawnLines, lineAt } from './lineHit';
 import { COMPONENT_SPECS } from './spec';
 
 export type InteractionMode = 'pan' | 'select';
@@ -592,6 +592,22 @@ function PIDCanvas({
    * The Junction tool stays for placing one deliberately, on a line you have
    * not connected anything to yet.
    */
+  /**
+   * Write a whole graph, and tell `snapshot` about it.
+   *
+   * These handlers read `snapshot.current` -- the last *rendered* state -- and
+   * write absolute arrays back. Two of them in one batch therefore both read
+   * the state before either ran, and the second overwrote the first: drop two
+   * transducers on a line without a render in between and only the second one
+   * existed. Updating the snapshot here is what makes the second read see the
+   * first write.
+   */
+  const commitGraph = useCallback((nodes: Node[], edges: Edge[]) => {
+    snapshot.current = { nodes, edges };
+    setNodes(nodes);
+    setEdges(edges);
+  }, [setNodes, setEdges]);
+
   const connectingFrom = useRef<{ nodeId: string; handleId: string | null } | null>(null);
 
   const onConnectStart = useCallback((
@@ -611,10 +627,10 @@ function PIDCanvas({
     const flow = screenToFlowPosition(point);
 
     const { nodes: ns, edges: es } = snapshot.current;
-    // Only when it landed on a line and not on a component -- React Flow has
-    // already made the connection in that case.
-    const hit = targetAt(flow, ns, es, from.nodeId, pageRef.current);
-    if (!hit || hit.kind !== 'edge') return;
+    // Only when it landed on a line. On a component ReactFlow has already made
+    // the connection, and `lineAt` will not claim it.
+    const hit = lineAt(drawnLines(), flow);
+    if (!hit) return;
 
     // Not onto a line this component is already an end of. That would be two
     // lines from the same port to the same junction, which is a parallel path
@@ -622,16 +638,10 @@ function PIDCanvas({
     const line = es.find(e => e.id === hit.id);
     if (!line || line.source === from.nodeId || line.target === from.nodeId) return;
 
-    // Onto the pipe as drawn, not where the pointer happened to be. The hit
-    // test measures against the straight line between the two ends, and the
-    // run is drawn orthogonally, so those differ by the whole depth of a bend.
-    const at = onDrawnPath(hit.id, flow);
-
-    const split = splitEdgeAt(ns, es, hit.id, at, pageRef.current);
+    const split = splitEdgeAt(ns, es, hit.id, hit.at, pageRef.current);
     if (!split) return;
 
-    setNodes(split.nodes);
-    setEdges([
+    commitGraph(split.nodes, [
       ...split.edges,
       {
         id: `${from.nodeId}-${split.junctionId}`,
@@ -643,7 +653,7 @@ function PIDCanvas({
         data: {},
       },
     ]);
-  }, [screenToFlowPosition, setNodes, setEdges]);
+  }, [screenToFlowPosition, commitGraph]);
 
   const onDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -702,7 +712,51 @@ function PIDCanvas({
     // Allocated outside the updater: React invokes updaters twice in
     // development, and an id minted inside one is neither pure nor stable.
     const id = nextNodeId();
-    setNodes(nds => [...nds, {
+
+    /**
+     * A transducer dropped on a line taps that line.
+     *
+     * The same gesture as branching by dropping a connection, from the other
+     * end: a gauge or a transducer has exactly one port, so landing one on a
+     * pipe can only mean "tap here" -- and the topology that means is a
+     * junction with the instrument on its third leg. Making somebody place the
+     * junction, then draw the line, then remember which of four ports to use
+     * is three steps for one intention.
+     */
+    if (isTapped(type)) {
+      const hit = lineAt(drawnLines(), flowPos);
+      if (hit) {
+        const at = hit.at;
+        const split = splitEdgeAt(
+          snapshot.current.nodes, snapshot.current.edges, hit.id, at, pageRef.current);
+        if (split) {
+          // Standing off the pipe, on the side the pointer was, so the symbol
+          // does not sit on top of the line it is reading. Below the line it
+          // is turned over, because its one tapping is on its underside and a
+          // tap has to point at the pipe -- the lettering stays upright.
+          const above = flowPos.y <= at.y;
+          commitGraph(
+            [...split.nodes, {
+              id, type,
+              position: { x: at.x - 30, y: above ? at.y - 90 : at.y + 30 },
+              data: { ...nodeData, ...(above ? {} : { rotation: 180 }) } as unknown as Record<string, unknown>,
+            }],
+            [...split.edges, {
+              id: `${id}-${split.junctionId}`,
+              source: id, sourceHandle: 'b',
+              target: split.junctionId,
+              type: 'smoothstep',
+              data: {},
+            }]);
+          return;
+        }
+      }
+    }
+
+    // Through `commitGraph` like the tap above, not a functional updater:
+    // this handler's two branches have to agree about how they write, or two
+    // drops in one batch see different states and the absolute one wins.
+    commitGraph([...snapshot.current.nodes, {
       id,
       type,
       position,
@@ -716,8 +770,8 @@ function PIDCanvas({
       // eventually be believed.
       ...(type === 'REGION' ? { width: 320, height: 220, zIndex: -1 } : {}),
       data: nodeData as unknown as Record<string, unknown>,
-    }]);
-  }, [screenToFlowPosition, setNodes, page]);
+    }], snapshot.current.edges);
+  }, [screenToFlowPosition, commitGraph, page]);
 
   /** Apply the current paint colour, or fall through to normal selection. */
   const paintIfArmed = useCallback((kind: 'node' | 'edge', id: string): boolean => {
@@ -1222,20 +1276,3 @@ export function PIDDesigner() {
   );
 }
 
-/**
- * A point moved onto the line as it is actually drawn.
- *
- * The rendered path is the same one the reader clicked on and the same one the
- * Junction tool snaps to, so it is read back rather than recomputed -- the edge
- * owns its routing, including a crossbar somebody has dragged, and duplicating
- * that here would be a second version of it to keep in step.
- *
- * Falls back to the point given. A junction a few pixels off a pipe is worse
- * than one exactly where somebody let go, but both beat not making one.
- */
-function onDrawnPath(edgeId: string, at: { x: number; y: number }): { x: number; y: number } {
-  const el = document.querySelector(
-    `.react-flow__edge[data-id="${CSS.escape(edgeId)}"] .react-flow__edge-path`);
-  const d = el?.getAttribute('d');
-  return d ? nearestOnPath(d, at) : at;
-}

@@ -4,6 +4,7 @@ import { faceTowards } from './BranchableEdge';
 import type { PIDNodeData } from './types';
 import type { ParamValue } from './params';
 import type { LineSegment } from './segments';
+import { centreOf } from './attach';
 
 /**
  * Put a junction into a line.
@@ -48,11 +49,6 @@ function intensiveOnly(data: Record<string, unknown>): Record<string, unknown> {
 
 const J_HALF = 5;
 
-const centre = (n: Node): XYPosition => ({
-  x: n.position.x + (n.measured?.width ?? 60) / 2,
-  y: n.position.y + (n.measured?.height ?? 60) / 2,
-});
-
 export interface Split {
   nodes: Node[];
   edges: Edge[];
@@ -82,8 +78,8 @@ export function splitEdgeAt(
   if (!from || !to) return null;
 
   const junctionId = nextJunctionId();
-  const a = ends?.from ?? centre(from);
-  const b = ends?.to ?? centre(to);
+  const a = ends?.from ?? centreOf(from);
+  const b = ends?.to ?? centreOf(to);
 
   const junction: Node = {
     id: junctionId,
