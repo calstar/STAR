@@ -4,6 +4,7 @@ import type { PIDNodeData } from '../types';
 import { speciesById, colorForSpecies, UNSET_COLOR } from '../fluids';
 import { useNodeFluid } from '../FluidContext';
 import { DraggableLabel } from './DraggableLabel';
+import { Upright } from './Upright';
 import { portId, portKind } from '../ports';
 import { useEffect } from 'react';
 
@@ -72,7 +73,9 @@ export function TankNode({ id, data, selected }: NodeProps) {
         <svg width={INJ_W} height={INJ_H} viewBox={`0 0 ${INJ_W} ${INJ_H}`}>
           <rect x="10" y="6" width="40" height="22" rx="2"
             fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
-          <text x="30" y="21" textAnchor="middle" fontSize="8" fill="#e2e8f0" fontFamily="monospace">INJ</text>
+          <Upright rotation={rotation} cx={INJ_W / 2} cy={INJ_H / 2}>
+            <text x="30" y="21" textAnchor="middle" fontSize="8" fill="#e2e8f0" fontFamily="monospace">INJ</text>
+          </Upright>
           <polygon points="10,28 50,28 38,88 22,88"
             fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
           <line x1="22" y1="88" x2="38" y2="88" stroke={stroke} strokeWidth={2} />
@@ -95,10 +98,12 @@ export function TankNode({ id, data, selected }: NodeProps) {
           fill={fluidColor + '22'} stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
         <ellipse cx="30" cy="84" rx="24" ry="9"
           fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
-        <text x="30" y="52" textAnchor="middle" fontSize="10" fill={fluidColor}
-          fontFamily="monospace" fontWeight="bold">
-          {species?.short ?? 'TANK'}
-        </text>
+        <Upright rotation={rotation} cx={TANK_W / 2} cy={TANK_H / 2}>
+          <text x="30" y="52" textAnchor="middle" fontSize="10" fill={fluidColor}
+            fontFamily="monospace" fontWeight="bold">
+            {species?.short ?? 'TANK'}
+          </text>
+        </Upright>
       </svg>
 
       <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: TANK_H + 2 }} />

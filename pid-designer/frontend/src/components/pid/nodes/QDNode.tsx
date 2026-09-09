@@ -2,6 +2,7 @@ import { Position, type NodeProps } from '@xyflow/react';
 import { Port } from './Port';
 import type { PIDNodeData } from '../types';
 import { DraggableLabel } from './DraggableLabel';
+import { Upright } from './Upright';
 
 const W = 60, H = 60;
 
@@ -38,7 +39,9 @@ export function QDNode({ id, data, selected }: NodeProps) {
         <line x1="14" y1="14" x2="46" y2="46" stroke={stroke} strokeWidth={2} />
         <line x1="46" y1="14" x2="14" y2="46" stroke={stroke} strokeWidth={2} />
         {hydraulic && (
-          <text x="30" y="52" textAnchor="middle" fontSize="7" fill="#a78bfa" fontFamily="monospace">HYD</text>
+          <Upright rotation={rotation} cx={W / 2} cy={H / 2}>
+            <text x="30" y="52" textAnchor="middle" fontSize="7" fill="#a78bfa" fontFamily="monospace">HYD</text>
+          </Upright>
         )}
       </svg>
 

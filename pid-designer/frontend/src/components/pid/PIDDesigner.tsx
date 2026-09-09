@@ -48,6 +48,7 @@ import { VentLayer } from './VentLayer';
 import { PageBar } from './PageBar';
 import { DEFAULT_PAGE, applyPage, listPages, moveToPage, pageOf } from './pages';
 import { clearOfHost, dragAttached, isInstrument, targetAt } from './attach';
+import { rejoinAfterDelete, splitEdgeAt } from './splitEdge';
 import { COMPONENT_SPECS } from './spec';
 
 export type InteractionMode = 'pan' | 'select';
@@ -516,6 +517,59 @@ function PIDCanvas({
     );
   }, [setCenter, getZoom]);
 
+  /**
+   * Dropping a connection on a line branches it.
+   *
+   * The answer to "must I place a junction for every tap": no. Drag from the
+   * relief valve, let go on the line, and the junction appears where you let
+   * go. A branch needs a node -- three flows meeting need a mass balance --
+   * but needing one is not a reason to make somebody think about one.
+   *
+   * The Junction tool stays for placing one deliberately, on a line you have
+   * not connected anything to yet.
+   */
+  const connectingFrom = useRef<{ nodeId: string; handleId: string | null } | null>(null);
+
+  const onConnectStart = useCallback((
+    _e: unknown, params: { nodeId: string | null; handleId: string | null },
+  ) => {
+    connectingFrom.current = params.nodeId ? { nodeId: params.nodeId, handleId: params.handleId } : null;
+  }, []);
+
+  const onConnectEnd = useCallback((event: MouseEvent | TouchEvent) => {
+    const from = connectingFrom.current;
+    connectingFrom.current = null;
+    if (!from || readOnlyRef.current) return;
+
+    const point = 'clientX' in event
+      ? { x: event.clientX, y: event.clientY }
+      : { x: event.changedTouches[0]?.clientX ?? 0, y: event.changedTouches[0]?.clientY ?? 0 };
+    const flow = screenToFlowPosition(point);
+
+    const { nodes: ns, edges: es } = snapshot.current;
+    // Only when it landed on a line and not on a component -- React Flow has
+    // already made the connection in that case.
+    const hit = targetAt(flow, ns, es, from.nodeId);
+    if (!hit || hit.kind !== 'edge') return;
+
+    const split = splitEdgeAt(ns, es, hit.id, flow, pageRef.current);
+    if (!split) return;
+
+    setNodes(split.nodes);
+    setEdges([
+      ...split.edges,
+      {
+        id: `${from.nodeId}-${split.junctionId}`,
+        source: from.nodeId,
+        sourceHandle: from.handleId ?? undefined,
+        target: split.junctionId,
+        targetHandle: undefined,
+        type: 'smoothstep',
+        data: {},
+      },
+    ]);
+  }, [screenToFlowPosition, setNodes, setEdges]);
+
   const onDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
@@ -600,6 +654,27 @@ function PIDCanvas({
     else setEdges(eds => eds.map(apply));
     return true;
   }, [setNodes, setEdges]);
+
+  /**
+   * Deleting a junction rejoins the line it was on.
+   *
+   * A junction is a point *in* a run, not a component of its own -- so removing
+   * one should leave the run, exactly as inserting one left it. Letting React
+   * Flow take the two edges with it deleted the pipe as well, which is never
+   * what somebody meant by "take that junction out".
+   *
+   * Built from what React Flow says it deleted rather than from the edges that
+   * are left: by the time this runs the two halves are already gone from state,
+   * so an updater reading the current list finds nothing to rejoin.
+   *
+   * Only for junctions that are genuinely mid-line -- one edge in, one out. A
+   * junction with a third leg on it has no single run to rejoin, so the
+   * ordinary behaviour stands and everything attached goes with it.
+   */
+  const onDelete = useCallback(({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) => {
+    const rejoined = rejoinAfterDelete(nodes, edges);
+    if (rejoined.length) setEdges(eds => [...eds, ...rejoined]);
+  }, [setEdges]);
 
   const onNodeClick = useCallback((e: React.MouseEvent, node: Node) => {
     if (paintIfArmed('node', node.id)) { e.stopPropagation(); e.preventDefault(); }
@@ -701,10 +776,12 @@ function PIDCanvas({
         nodes={view.nodes} edges={view.edges}
         onNodesChange={handleNodesChange} onEdgesChange={onEdgesChange}
         onConnect={onConnect} onInit={onInit}
+        onConnectStart={onConnectStart} onConnectEnd={onConnectEnd}
         onDrop={onDrop} onDragOver={onDragOver}
         onEdgeContextMenu={onEdgeContextMenu}
         onNodeContextMenu={onNodeContextMenu}
         onNodeClick={onNodeClick}
+        onDelete={onDelete}
         onEdgeClick={onEdgeClick}
         onNodeDoubleClick={onNodeDoubleClick}
         onEdgeDoubleClick={onEdgeDoubleClick}

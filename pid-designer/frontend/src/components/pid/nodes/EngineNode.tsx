@@ -2,6 +2,7 @@ import { Position, type NodeProps } from '@xyflow/react';
 import { Port } from './Port';
 import type { PIDNodeData } from '../types';
 import { DraggableLabel } from './DraggableLabel';
+import { Upright } from './Upright';
 
 const W = 72, H = 120;
 
@@ -43,12 +44,14 @@ export function EngineNode({ id, data, selected }: NodeProps) {
           fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
         <path d="M30,84 Q22,100 16,114 L56,114 Q50,100 42,84 Z"
           fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
-        <text x="36" y="24" textAnchor="middle" fontSize="8" fill="#e2e8f0" fontFamily="monospace">INJ</text>
-        {pc && (
-          <text x="36" y="60" textAnchor="middle" fontSize="8" fill="#f97316" fontFamily="monospace">
-            {pc.value}{pc.unit === '-' ? '' : pc.unit}
-          </text>
-        )}
+        <Upright rotation={rotation} cx={W / 2} cy={H / 2}>
+          <text x="36" y="24" textAnchor="middle" fontSize="8" fill="#e2e8f0" fontFamily="monospace">INJ</text>
+          {pc && (
+            <text x="36" y="60" textAnchor="middle" fontSize="8" fill="#f97316" fontFamily="monospace">
+              {pc.value}{pc.unit === '-' ? '' : pc.unit}
+            </text>
+          )}
+        </Upright>
       </svg>
 
       <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: H + 2 }} />

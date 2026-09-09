@@ -5,14 +5,11 @@ import {
   Position,
   useReactFlow,
   type EdgeProps,
-  type Edge,
 } from '@xyflow/react';
-import { nextJunctionId } from './ids';
+import { splitEdgeAt } from './splitEdge';
 import { useEdgeFluidColor } from './FluidContext';
 import { useReadOnly } from '@stardesign-ui';
 import { useTool } from './ToolContext';
-
-const J_HALF = 5;
 
 /**
  * A pipe: orthogonal, with a middle segment you can move, and a junction you
@@ -39,13 +36,13 @@ const J_HALF = 5;
  */
 export function BranchableEdge(props: EdgeProps) {
   const {
-    id, source, target,
+    id,
     sourceX, sourceY, targetX, targetY,
     sourcePosition, targetPosition,
     style, data,
   } = props;
 
-  const { setNodes, setEdges, getZoom } = useReactFlow();
+  const { setNodes, setEdges, getNodes, getEdges, getZoom } = useReactFlow();
   const readOnly = useReadOnly();
   // A junction only goes in while the tool is armed. See ToolContext.
   const armed = useTool() === 'junction' && !readOnly;
@@ -143,33 +140,24 @@ export function BranchableEdge(props: EdgeProps) {
     if (!armed || !hoverAt || dragging) return;
     e.stopPropagation();
 
-    const junctionId = nextJunctionId();
+    // The same operation dropping a connection on a line performs -- see
+    // splitEdge.ts. This used to be a second copy of it here, and the two had
+    // already drifted: one stamped a junction the delete-rejoin could
+    // recognise and the other did not.
+    const split = splitEdgeAt(
+      getNodes(), getEdges(), id, hoverAt, (data as { page?: string })?.page,
+      // The exact handle positions, which this edge knows and a caller working
+      // from the node boxes does not.
+      { from: { x: sourceX, y: sourceY }, to: { x: targetX, y: targetY } },
+    );
+    if (!split) return;
+
     flushSync(() => {
-      setNodes(nds => [...nds, {
-        id: junctionId,
-        type: 'JUNCTION',
-        position: { x: hoverAt.x - J_HALF, y: hoverAt.y - J_HALF },
-        // Junctions inherit the page of the line they are dropped on, so one
-        // never lands on a page its own pipe is not drawn on.
-        data: { page: (data as { page?: string })?.page },
-      }]);
-      setEdges(eds => {
-        const rest = eds.filter(x => x.id !== id);
-        const carried = { ...(data as Record<string, unknown>), offset: 0 };
-        const toJunction: Edge = {
-          id: `${id}-to-${junctionId}`,
-          source, target: junctionId, targetHandle: 't',
-          type: 'smoothstep', data: carried,
-        };
-        const fromJunction: Edge = {
-          id: `${junctionId}-to-${target}`,
-          source: junctionId, sourceHandle: 'b', target,
-          type: 'smoothstep', data: carried,
-        };
-        return [...rest, toJunction, fromJunction];
-      });
+      setNodes(split.nodes);
+      setEdges(split.edges);
     });
-  }, [armed, hoverAt, dragging, id, source, target, data, setNodes, setEdges]);
+  }, [armed, hoverAt, dragging, id, data, getNodes, getEdges, setNodes, setEdges,
+      sourceX, sourceY, targetX, targetY]);
 
   return (
     <g
@@ -254,4 +242,18 @@ function nearestOnPath(d: string, p: { x: number; y: number }): { x: number; y: 
     if (dist < bestDist) { bestDist = dist; best = q; }
   }
   return best;
+}
+
+/**
+ * The face of a junction that points at (fx, fy).
+ *
+ * A junction is a 10 px dot with four ports, and which one a line attaches to
+ * decides which way it leaves. Choosing by direction is what keeps the two
+ * halves of a split line collinear with the run they replaced.
+ */
+export function faceTowards(fx: number, fy: number, jx: number, jy: number): string {
+  const dx = fx - jx;
+  const dy = fy - jy;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 'r' : 'l';
+  return dy >= 0 ? 'b' : 't';
 }

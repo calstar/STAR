@@ -2,7 +2,8 @@ import { Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react'
 import { useEffect } from 'react';
 import { Port } from './Port';
 import type { PIDNodeData } from '../types';
-import { FLUID_COLORS } from '../types';
+import { colorForSpecies, speciesById, UNSET_COLOR } from '../fluids';
+import { useNodeFluid } from '../FluidContext';
 import { DraggableLabel } from './DraggableLabel';
 import { portId, portIds, portKind } from '../ports';
 import { perimeterPoint, defaultPositions } from '../ManifoldEditor';
@@ -34,9 +35,14 @@ function manifoldLength(ports: number): number {
 }
 
 export function ManifoldNode({ id, data, selected }: NodeProps) {
-  const { label, labelOffset, fluidType, rotation, options } = data as unknown as PIDNodeData;
-  const stroke = selected ? '#3b82f6' : '#94a3b8';
-  const fluid = FLUID_COLORS[fluidType ?? 'default'];
+  const { label, labelOffset, rotation, options, color } = data as unknown as PIDNodeData;
+  // Paint beats the inherited fluid colour, and both beat nothing. This read
+  // the old `fluidType` field and never looked at `color` at all, which is why
+  // a manifold was the one symbol the paint bucket appeared to miss.
+  const assigned = useNodeFluid(id);
+  const species = speciesById(assigned?.species ?? undefined);
+  const fluid = color ?? (species ? colorForSpecies(species.id) : UNSET_COLOR);
+  const stroke = selected ? '#3b82f6' : (color ?? '#94a3b8');
 
   const outlets = Math.max(1, Number(options?.outlets ?? 4));
 
@@ -75,10 +81,14 @@ export function ManifoldNode({ id, data, selected }: NodeProps) {
               : pt.side === 'bottom' ? Position.Bottom
               : pt.side === 'left' ? Position.Left
               : Position.Right;
+            // Only the coordinate along the edge. React Flow uses `transform`
+            // to sit a handle *on* its edge, so overriding it pushes the port
+            // off the block by half its own width -- which is what the ports
+            // floating outside the outline were.
             const style: React.CSSProperties =
               pt.side === 'top' || pt.side === 'bottom'
-                ? { left: pt.x, transform: 'translate(-50%, -50%)' }
-                : { top: pt.y, transform: 'translate(-50%, -50%)' };
+                ? { left: pt.x }
+                : { top: pt.y };
             return <Port key={pid} id={pid} kind={kind} position={position} style={style} />;
           });
         })()

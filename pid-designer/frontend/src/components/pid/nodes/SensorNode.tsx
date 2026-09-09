@@ -2,6 +2,7 @@ import { Position, type NodeProps } from '@xyflow/react';
 import { Port } from './Port';
 import type { PIDNodeData } from '../types';
 import { DraggableLabel } from './DraggableLabel';
+import { Upright } from './Upright';
 
 /**
  * An instrument: a circle with its type in it.
@@ -35,10 +36,12 @@ export function SensorNode({ id, data, selected }: NodeProps) {
           stroke={stroke}
           strokeWidth={selected ? 2.5 : 1.5}
         />
-        <text x="30" y="34" textAnchor="middle" fontSize="14" fill="#e2e8f0"
-          fontFamily="monospace" fontWeight="bold">
-          {componentType}
-        </text>
+        <Upright rotation={rotation} cx={30} cy={30}>
+          <text x="30" y="34" textAnchor="middle" fontSize="14" fill="#e2e8f0"
+            fontFamily="monospace" fontWeight="bold">
+            {componentType}
+          </text>
+        </Upright>
       </svg>
 
       <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: S + 2 }} />
