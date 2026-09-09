@@ -115,11 +115,32 @@ describe('instruments', () => {
   });
 });
 
+describe('tags', () => {
+  it('catches two components answering to one tag', () => {
+    // feedtwin.solve.Node calls its id "the tags on the P&ID": a tag is the
+    // name one piece of hardware has in a solve, a report and a procedure.
+    const nodes = [node('a', 'SOL', { label: 'SOL-01' }), node('b', 'SOL', { label: 'SOL-01' })];
+    const f = runChecks(nodes, []).find(x => x.id === 'tag-duplicate-SOL-01')!;
+    expect(f.severity).toBe('warning');
+    expect(f.nodeIds).toEqual(['a', 'b']);
+  });
+
+  it('ignores annotation, which is not hardware', () => {
+    const nodes = [node('a', 'REGION', { label: 'GSE' }), node('b', 'REGION', { label: 'GSE' })];
+    expect(ids(nodes).some(i => i.startsWith('tag-duplicate'))).toBe(false);
+  });
+
+  it('is quiet when tags are distinct', () => {
+    const nodes = [node('a', 'SOL', { label: 'SOL-01' }), node('b', 'SOL', { label: 'SOL-02' })];
+    expect(ids(nodes).some(i => i.startsWith('tag-duplicate'))).toBe(false);
+  });
+});
+
 describe('what the badge counts', () => {
   it('counts errors and checks, but not notes', () => {
     // An unfinished drawing is Tuesday, not a fault; a badge that says 40 on
     // every drawing is a badge nobody reads.
-    const findings = runChecks([node('SOL-1', 'SOL')], []);
+    const findings = runChecks([node('SOL-1', 'SOL', { label: 'SOL-1' })], []);
     expect(findings.every(f => f.severity === 'info')).toBe(true);
     expect(countProblems(findings)).toBe(0);
   });

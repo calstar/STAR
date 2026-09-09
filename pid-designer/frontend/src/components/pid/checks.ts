@@ -102,6 +102,48 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
     }
   }
 
+  // ── Tags ──────────────────────────────────────────────────────────────────
+  // `feedtwin.solve.Node` documents its id as "the tags on the P&ID", so a tag
+  // is not a caption -- it is the name a solver, a run report and a procedure
+  // all use for one piece of hardware. Two components answering to it is two
+  // things a reader cannot tell apart, and the drawing is where that is cheap
+  // to notice.
+  const byTag = new Map<string, Node[]>();
+  for (const n of nodes) {
+    const t = dataOf(n)?.componentType;
+    if (!t || t === 'TEXT' || t === 'REGION' || t === 'JUNCTION') continue;
+    const tag = (dataOf(n)?.label ?? '').trim();
+    if (!tag) continue;
+    const list = byTag.get(tag);
+    if (list) list.push(n);
+    else byTag.set(tag, [n]);
+  }
+  for (const [tag, sharing] of byTag) {
+    if (sharing.length < 2) continue;
+    push({
+      id: `tag-duplicate-${tag}`,
+      severity: 'warning',
+      title: `${sharing.length} components are all tagged ${tag}`,
+      detail: 'A tag is the name one piece of hardware answers to on the drawing, in a run report and in a procedure. Two sharing it is two things nobody can tell apart.',
+      nodeIds: sharing.map(n => n.id),
+    });
+  }
+
+  const untagged = nodes.filter(n => {
+    const t = dataOf(n)?.componentType;
+    if (!t || t === 'TEXT' || t === 'REGION' || t === 'JUNCTION') return false;
+    return !(dataOf(n)?.label ?? '').trim();
+  });
+  if (untagged.length) {
+    push({
+      id: 'tags-missing',
+      severity: 'info',
+      title: `${untagged.length} component${untagged.length === 1 ? '' : 's'} with no tag`,
+      detail: 'Give each one a name. It is what a solve, a report and a procedure will call it.',
+      nodeIds: untagged.map(n => n.id),
+    });
+  }
+
   // ── Fluids ────────────────────────────────────────────────────────────────
   const fluids = propagateFluids(nodes, edges);
 
