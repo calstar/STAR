@@ -862,3 +862,39 @@ def test_design_point_stamp_ignores_non_finite_performance():
     cfg.chamber_geometry.design_MR = 1.65
     _layer1_stamp_design_point(cfg, {"MR": float("nan"), "Pc": 0.0, "F": None}, None)
     assert cfg.chamber_geometry.design_MR == pytest.approx(1.65)
+
+
+def test_stale_pressure_curves_are_flagged():
+    """The initial tank pressure exists twice, owned by different layers, never reconciled.
+
+    Layer 1 writes lox_tank/fuel_tank.initial_pressure_psi; Layer 2 writes
+    pressure_curves.initial_lox/fuel_pressure_pa. Re-running Layer 1 silently leaves the curves
+    describing the previous design (observed 11.3 psi out on LOX, 24.9 psi on fuel). Tank
+    pressure is the upstream boundary condition for the feed-system twin (docs/adr/0001), so a
+    disagreement must not cross that boundary unannounced.
+    """
+    import logging
+    from engine.pipeline.io import load_config
+    from engine.optimizer.layers.layer1_static_optimization import (
+        _layer1_warn_stale_pressure_curves,
+    )
+
+    cfg = load_config("configs/canonical/impinging.yaml")
+    if getattr(cfg, "pressure_curves", None) is None or getattr(cfg, "lox_tank", None) is None:
+        pytest.skip("config has no pressure_curves / lox_tank to compare")
+
+    seen = []
+    logger = logging.getLogger("stale_curves_test")
+    logger.warning = lambda msg, *a, **k: seen.append(msg % a if a else msg)
+
+    PSI = 6894.76
+    cfg.lox_tank.initial_pressure_psi = 548.6
+    cfg.pressure_curves.initial_lox_pressure_pa = 548.6 * PSI       # agrees
+    cfg.fuel_tank.initial_pressure_psi = 548.6
+    cfg.pressure_curves.initial_fuel_pressure_pa = 548.6 * PSI      # agrees
+    _layer1_warn_stale_pressure_curves(cfg, logger)
+    assert not seen, "matching pressures must not warn"
+
+    cfg.pressure_curves.initial_lox_pressure_pa = 537.3 * PSI       # 11.3 psi stale
+    _layer1_warn_stale_pressure_curves(cfg, logger)
+    assert seen and "LOX tank pressure disagrees" in seen[0]
