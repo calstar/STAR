@@ -18,7 +18,7 @@ export function CheckValveNode({ id, data, selected }: NodeProps) {
         <line x1="12" y1="10" x2="30" y2="30" stroke={stroke} strokeWidth={1.5} />
         <line x1="12" y1="50" x2="30" y2="30" stroke={stroke} strokeWidth={1.5} />
       </svg>
-      <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: H + 2 }} />
+      <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: H + 2 }} />
     </div>
   );
 }

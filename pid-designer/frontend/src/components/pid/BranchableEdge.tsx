@@ -116,6 +116,15 @@ export function BranchableEdge(props: EdgeProps) {
   }, [dragging, horizontal, id, getZoom, setEdges]);
 
   // ── Dropping a junction on the run ─────────────────────────────────────────
+  /**
+   * Where a junction would go: the nearest point *on the run*, not the pointer.
+   *
+   * It used to take the pointer position straight, so a junction landed
+   * wherever the cursor happened to be within the twelve-pixel hit area -- up
+   * to six pixels off the pipe. The two new edges then ran to a node beside
+   * the line they replaced, which is the kink that made this look broken. The
+   * path is orthogonal, so snapping to it is a clamp per segment.
+   */
   const onMouseMove = useCallback((e: React.MouseEvent<SVGGElement>) => {
     if (readOnly || dragging) return;
     const svg = (e.currentTarget as SVGElement).closest('svg');
@@ -124,8 +133,8 @@ export function BranchableEdge(props: EdgeProps) {
     pt.x = e.clientX;
     pt.y = e.clientY;
     const p = pt.matrixTransform(svg.getScreenCTM()!.inverse());
-    setHoverAt({ x: p.x, y: p.y });
-  }, [readOnly, dragging]);
+    setHoverAt(nearestOnPath(edgePath, p));
+  }, [readOnly, dragging, edgePath]);
 
   const onClickBranch = useCallback((e: React.MouseEvent<SVGGElement>) => {
     if (readOnly || !hoverAt || dragging) return;
@@ -211,4 +220,35 @@ export function BranchableEdge(props: EdgeProps) {
       )}
     </g>
   );
+}
+
+/** The corners of an orthogonal path, in order. */
+function pointsOf(d: string): { x: number; y: number }[] {
+  return [...d.matchAll(/[ML]\s*(-?[\d.]+),(-?[\d.]+)/g)]
+    .map(m => ({ x: Number(m[1]), y: Number(m[2]) }));
+}
+
+/**
+ * The closest point on a polyline to `p`.
+ *
+ * Clamped to each segment and the best one kept, so a junction always sits on
+ * the pipe -- including exactly on a corner, which is where people aim when
+ * they want to branch at a bend.
+ */
+function nearestOnPath(d: string, p: { x: number; y: number }): { x: number; y: number } {
+  const pts = pointsOf(d);
+  let best = pts[0] ?? p;
+  let bestDist = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i];
+    const b = pts[i + 1];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = dx * dx + dy * dy;
+    const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len));
+    const q = { x: a.x + t * dx, y: a.y + t * dy };
+    const dist = Math.hypot(p.x - q.x, p.y - q.y);
+    if (dist < bestDist) { bestDist = dist; best = q; }
+  }
+  return best;
 }

@@ -238,17 +238,7 @@ function OptionRow({ spec, value, peers, readOnly, onChange }: {
   readOnly: boolean; onChange: (v: string) => void;
 }) {
   if (spec.choices === PEER_CHOICES) {
-    return (
-      <Row label={spec.label}>
-        <select value={value} disabled={readOnly} onChange={e => onChange(e.target.value)} className={wide}>
-          <option value="">—</option>
-          <option value="none">No pair needed</option>
-          {(peers ?? []).map(p => (
-            <option key={p.id} value={p.id}>{p.label}{p.hint ? ` (${p.hint})` : ''}</option>
-          ))}
-        </select>
-      </Row>
-    );
+    return <PeerPicker label={spec.label} value={value} peers={peers ?? []} readOnly={readOnly} onChange={onChange} />;
   }
   return (
     <Row label={spec.label}>
@@ -342,6 +332,74 @@ function PortGroup({ group, count, ports, readOnly, onChange }: {
           </select>
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Pick another component on the drawing, by typing its name.
+ *
+ * A dropdown was fine with three disconnects and useless with thirty. This is a
+ * text box that filters as you type, over an editable field showing whatever is
+ * already chosen -- so the common case (you know the tag) is typing four
+ * characters, and the browsing case still works because an empty box lists
+ * everything.
+ */
+function PeerPicker({ label, value, peers, readOnly, onChange }: {
+  label: string;
+  value: string;
+  peers: { id: string; label: string; hint?: string }[];
+  readOnly: boolean;
+  onChange: (v: string) => void;
+}) {
+  const chosen = peers.find(p => p.id === value);
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+
+  const shown = query.trim()
+    ? peers.filter(p => p.label.toLowerCase().includes(query.trim().toLowerCase()))
+    : peers;
+
+  const display = value === 'none' ? 'No pair needed' : (chosen?.label ?? '');
+
+  return (
+    <div className="grid grid-cols-[104px_1fr] items-start gap-2">
+      <span className={`${rowLabel} pt-1`}>{label}</span>
+      <div className="relative">
+        <input
+          value={open ? query : display}
+          placeholder="type a tag…"
+          readOnly={readOnly}
+          onFocus={() => { if (!readOnly) { setOpen(true); setQuery(''); } }}
+          onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+          onChange={e => setQuery(e.target.value)}
+          className={wide}
+        />
+        {open && (
+          <div className="absolute z-10 mt-1 max-h-40 w-full overflow-y-auto rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] shadow-xl">
+            <button
+              disabled={readOnly}
+              onMouseDown={() => { onChange('none'); setOpen(false); }}
+              className="block w-full px-2 py-1 text-left text-[11px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-primary)]"
+            >
+              No pair needed
+            </button>
+            {shown.map(p => (
+              <button
+                key={p.id}
+                disabled={readOnly}
+                onMouseDown={() => { onChange(p.id); setOpen(false); }}
+                className="block w-full px-2 py-1 text-left text-[11px] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-primary)]"
+              >
+                {p.label}{p.hint ? <span className="text-[var(--color-text-muted)]"> · {p.hint}</span> : null}
+              </button>
+            ))}
+            {shown.length === 0 && (
+              <p className="px-2 py-1 text-[11px] text-[var(--color-text-muted)]">nothing matches</p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

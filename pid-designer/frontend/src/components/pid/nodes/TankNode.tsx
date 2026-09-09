@@ -1,10 +1,11 @@
-import { Position, type NodeProps } from '@xyflow/react';
+import { Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
 import { Port } from './Port';
 import type { PIDNodeData } from '../types';
 import { speciesById, colorForSpecies, UNSET_COLOR } from '../fluids';
 import { useNodeFluid } from '../FluidContext';
 import { DraggableLabel } from './DraggableLabel';
 import { portId, portKind } from '../ports';
+import { useEffect } from 'react';
 
 const TANK_W = 60, TANK_H = 100;
 const INJ_W = 60, INJ_H = 100;
@@ -45,6 +46,18 @@ export function TankNode({ id, data, selected }: NodeProps) {
   // Declared here, or inherited from whatever feeds it. Naming the species on
   // the symbol is the point of picking a real one: "ETH" and "LOX" are what a
   // reader is checking, and "fuel" never told them which fuel.
+  // React Flow measures a node's handles once, when it mounts. Adding a port
+  // afterwards leaves the new one absent from `handleBounds`, and every edge on
+  // this node falls back to the node's own centre -- which is why lines to a
+  // multi-port tank all bundled at the middle of its top instead of landing on
+  // the ports they were drawn to. This is the documented way to tell it to
+  // measure again.
+  const updateNodeInternals = useUpdateNodeInternals();
+  const portSignature = `${options?.portsTop ?? 1}/${options?.portsBottom ?? 1}/` +
+    Object.entries((data as unknown as PIDNodeData).ports ?? {})
+      .map(([k, v]) => `${k}:${v.kind ?? 'flow'}`).sort().join(',');
+  useEffect(() => { updateNodeInternals(id); }, [id, portSignature, updateNodeInternals]);
+
   const assigned = useNodeFluid(id);
   const species = speciesById(assigned?.species ?? undefined);
   const fluidColor = color ?? (species ? colorForSpecies(species.id) : UNSET_COLOR);
@@ -65,7 +78,7 @@ export function TankNode({ id, data, selected }: NodeProps) {
           <line x1="22" y1="88" x2="38" y2="88" stroke={stroke} strokeWidth={2} />
         </svg>
 
-        <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: INJ_H + 2 }} />
+        <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: INJ_H + 2 }} />
       </div>
     );
   }
@@ -88,7 +101,7 @@ export function TankNode({ id, data, selected }: NodeProps) {
         </text>
       </svg>
 
-      <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: TANK_H + 2 }} />
+      <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: TANK_H + 2 }} />
     </div>
   );
 }

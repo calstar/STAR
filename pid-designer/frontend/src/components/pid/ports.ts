@@ -71,9 +71,12 @@ export function portsOf(node: Node): string[] {
   };
 
   switch (t) {
-    // Instruments clip rather than connect, so they have no ports at all.
-    case 'RTD': case 'TC': case 'PT': case 'PG': case 'LC':
+    // Temperature probes and load cells clip rather than connect, so they have
+    // no ports. Gauges and transducers are fittings and do.
+    case 'RTD': case 'TC': case 'LC':
       return [];
+    case 'PT': case 'PG':
+      return ['t', 'b', 'l', 'r'];
     case 'QD': case 'JUNCTION':
       return ['t', 'b', 'l', 'r'];
     case 'MAN': case 'ROT': case 'SOL': case 'RV': case 'CV':

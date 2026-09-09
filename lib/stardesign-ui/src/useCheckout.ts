@@ -124,7 +124,14 @@ export function useCheckout<T>({
     if (!ref || !state.lockedByMe) return;
     const id = setInterval(() => {
       const r = refRef.current;
-      if (r && heldRef.current) api.takeCheckout(r).catch(() => {});
+      if (!r || !heldRef.current) return;
+      // Only a tab somebody is looking at. A background tab renewing is how a
+      // forgotten window keeps a design checked out all afternoon -- and where
+      // every client is the same user (any dev setup, and any one person with
+      // two tabs open) it is worse than that: the idle tab wins the design back
+      // off the tab actually being typed in, seconds after it was taken.
+      if (document.visibilityState !== 'visible') return;
+      api.takeCheckout(r).catch(() => {});
     }, HEARTBEAT_MS);
     return () => clearInterval(id);
   }, [api, key, state.lockedByMe]); // eslint-disable-line react-hooks/exhaustive-deps

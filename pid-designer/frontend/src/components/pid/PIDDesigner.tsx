@@ -39,6 +39,7 @@ import { ConfigDialog } from './ConfigDialog';
 import type { ConfigPatch } from './ConfigDialog';
 import { FluidProvider } from './FluidContext';
 import { ColorMenu } from './ColorMenu';
+import { PaintTool } from './PaintTool';
 import { AttachmentLayer } from './AttachmentLayer';
 import { ChecksPanel } from './ChecksPanel';
 import { VentLayer } from './VentLayer';
@@ -170,6 +171,11 @@ function PIDCanvas({
   // the changes itself so it can move clipped instruments in the same update.
   const [nodes, setNodes] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  // The paint bucket: a colour, and whether clicking applies it.
+  const [paint, setPaint] = useState<{ on: boolean; colour: string | null }>({ on: false, colour: '#22c55e' });
+  const paintRef = useRef(paint);
+  paintRef.current = paint;
+
   const [page, setPage] = useState<string>(DEFAULT_PAGE);
   // Pages people made but have not drawn on yet. Everything else is derived
   // from where the components actually are, so the two cannot disagree.
@@ -373,17 +379,18 @@ function PIDCanvas({
     const me = nodes.find(n => n.id === configFor.id);
     const meData = me?.data as unknown as PIDNodeData | undefined;
     if (meData?.componentType !== 'QD') return undefined;
-    const mySide = meData.options?.side ?? 'ground';
+    // Same service only: a hydraulic half does not mate with a fluid one.
+    const myService = meData.options?.service ?? 'fluid';
     return nodes
-      .filter(n => n.id !== configFor.id
-        && (n.data as unknown as PIDNodeData)?.componentType === 'QD')
+      .filter(n => {
+        if (n.id === configFor.id) return false;
+        const d = n.data as unknown as PIDNodeData;
+        return d?.componentType === 'QD' && (d.options?.service ?? 'fluid') === myService;
+      })
       .map(n => {
         const d = n.data as unknown as PIDNodeData;
-        const side = d.options?.side ?? 'ground';
-        return { id: n.id, label: d.label || n.id, hint: side, opposite: side !== mySide };
-      })
-      .sort((a, b) => Number(b.opposite) - Number(a.opposite))
-      .map(({ id, label, hint }) => ({ id, label, hint: `${hint} half` }));
+        return { id: n.id, label: d.label || n.id, hint: pageOf(d) };
+      });
   }, [configFor, nodes]);
 
   const onConnect = useCallback((params: Connection) => {
@@ -539,6 +546,35 @@ function PIDCanvas({
     }]);
   }, [screenToFlowPosition, setNodes, page]);
 
+  /** Apply the current paint colour, or fall through to normal selection. */
+  const paintIfArmed = useCallback((kind: 'node' | 'edge', id: string): boolean => {
+    const p = paintRef.current;
+    if (!p.on || readOnlyRef.current) return false;
+    const apply = <T extends { id: string; data?: Record<string, unknown> }>(x: T) =>
+      x.id === id ? { ...x, data: { ...x.data, color: p.colour ?? undefined } } : x;
+    if (kind === 'node') setNodes(nds => nds.map(apply));
+    else setEdges(eds => eds.map(apply));
+    return true;
+  }, [setNodes, setEdges]);
+
+  const onNodeClick = useCallback((e: React.MouseEvent, node: Node) => {
+    if (paintIfArmed('node', node.id)) { e.stopPropagation(); e.preventDefault(); }
+  }, [paintIfArmed]);
+
+  const onEdgeClick = useCallback((e: React.MouseEvent, edge: Edge) => {
+    if (paintIfArmed('edge', edge.id)) { e.stopPropagation(); e.preventDefault(); }
+  }, [paintIfArmed]);
+
+  // Escape puts the brush down.
+  useEffect(() => {
+    if (!paint.on) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPaint(p => ({ ...p, on: false }));
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [paint.on]);
+
   const onNodeDoubleClick = useCallback((_e: React.MouseEvent, node: Node) => {
     const type = (node.data as unknown as PIDNodeData)?.componentType;
     // Text and junctions have nothing to configure; opening an empty dialog on
@@ -607,7 +643,11 @@ function PIDCanvas({
     // Column, so the page tabs sit under the canvas rather than over it. The
     // relative is for the checks badge and the colour menu, which are placed
     // against the whole area including the tabs.
-    <div className="relative flex h-full flex-1 flex-col" onClick={() => setColorMenu(null)}>
+    <div
+      className="relative flex h-full flex-1 flex-col"
+      style={paint.on ? { cursor: 'crosshair' } : undefined}
+      onClick={() => setColorMenu(null)}
+    >
       <div className="relative min-h-0 flex-1">
       <FluidProvider nodes={nodes} edges={edges}>
       <ReactFlow
@@ -617,6 +657,8 @@ function PIDCanvas({
         onDrop={onDrop} onDragOver={onDragOver}
         onEdgeContextMenu={onEdgeContextMenu}
         onNodeContextMenu={onNodeContextMenu}
+        onNodeClick={onNodeClick}
+        onEdgeClick={onEdgeClick}
         onNodeDoubleClick={onNodeDoubleClick}
         onEdgeDoubleClick={onEdgeDoubleClick}
         nodeTypes={nodeTypes}
@@ -689,6 +731,15 @@ function PIDCanvas({
 
       {/* Selecting from a finding is how "PT-4 has no range" becomes useful:
           it puts PT-4 in front of you rather than leaving you to find it. */}
+      <div className="absolute left-3 top-3 z-20 flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/90 px-1.5 py-1 shadow-lg backdrop-blur">
+        <PaintTool
+          colour={paint.colour}
+          active={paint.on}
+          onColour={c => setPaint(p => ({ ...p, colour: c }))}
+          onToggle={on => setPaint(p => ({ ...p, on }))}
+        />
+      </div>
+
       <ChecksPanel
         nodes={nodes}
         edges={edges}

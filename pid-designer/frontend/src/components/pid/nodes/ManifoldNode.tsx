@@ -1,4 +1,5 @@
-import { Position, type NodeProps } from '@xyflow/react';
+import { Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
+import { useEffect } from 'react';
 import { Port } from './Port';
 import type { PIDNodeData } from '../types';
 import { FLUID_COLORS } from '../types';
@@ -37,6 +38,14 @@ export function ManifoldNode({ id, data, selected }: NodeProps) {
   const fluid = FLUID_COLORS[fluidType ?? 'default'];
 
   const outlets = Math.max(1, Number(options?.outlets ?? 4));
+
+  // See TankNode: handle bounds are measured once, so a changed port count has
+  // to ask for a re-measure or edges fall back to the node centre.
+  const updateNodeInternals = useUpdateNodeInternals();
+  const portSignature = `${outlets}/${options?.orientation ?? 'horizontal'}/` +
+    Object.entries((data as unknown as PIDNodeData).ports ?? {})
+      .map(([k, v]) => `${k}:${v.kind ?? 'flow'}`).sort().join(',');
+  useEffect(() => { updateNodeInternals(id); }, [id, portSignature, updateNodeInternals]);
   const vertical = (options?.orientation ?? 'horizontal') === 'vertical';
 
   const run = manifoldLength(outlets);
@@ -75,7 +84,7 @@ export function ManifoldNode({ id, data, selected }: NodeProps) {
           : <line x1="4" y1={H / 2} x2={W - 4} y2={H / 2} stroke={stroke} strokeWidth={1} strokeDasharray="3 3" />}
       </svg>
 
-      <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: H + 2 }} />
+      <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: H + 2 }} />
     </div>
   );
 }

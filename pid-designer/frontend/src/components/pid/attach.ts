@@ -17,8 +17,14 @@ import type { PIDNodeData } from './types';
  * when they dropped it there.
  */
 
-/** Component types that attach rather than connect. */
-export const INSTRUMENTS = new Set(['RTD', 'TC', 'PT', 'PG', 'LC']);
+/**
+ * Component types that attach rather than connect.
+ *
+ * Temperature probes and load cells only. A gauge or a transducer is a fitting
+ * -- it screws into a tee or a port and is part of the feed system -- so it
+ * connects like everything else.
+ */
+export const INSTRUMENTS = new Set(['RTD', 'TC', 'LC']);
 
 export const isInstrument = (type?: string) => !!type && INSTRUMENTS.has(type);
 

@@ -5,8 +5,8 @@ import { runChecks, countProblems } from './checks';
 const node = (id: string, componentType: string, data: Record<string, unknown> = {}): Node =>
   ({ id, position: { x: 0, y: 0 }, data: { componentType, label: id, ...data } }) as unknown as Node;
 
-const qd = (id: string, side: string, pairedWith = ''): Node =>
-  node(id, 'QD', { options: { side, service: 'fluid', pairedWith } });
+const qd = (id: string, service: string, pairedWith = ''): Node =>
+  node(id, 'QD', { options: { service, pairedWith } });
 
 const edge = (id: string, source: string, target: string,
               sourceHandle: string | null = null, targetHandle: string | null = null): Edge =>
@@ -16,43 +16,35 @@ const titles = (nodes: Node[], edges: Edge[] = []) => runChecks(nodes, edges).ma
 const ids = (nodes: Node[], edges: Edge[] = []) => runChecks(nodes, edges).map(f => f.id);
 
 describe('quick disconnect pairing', () => {
-  it('is an error when a flight half has nothing to mate with', () => {
-    const found = runChecks([qd('QD-R1', 'rocket')], []);
+  it('notes a disconnect with no mate chosen', () => {
+    const found = runChecks([qd('QD-1', 'fluid')], []);
     const f = found.find(x => x.id.startsWith('qd-unpaired'))!;
-    expect(f.severity).toBe('error');
-    expect(f.title).toContain('QD-R1');
-  });
-
-  it('is only a note when a ground half is unpaired', () => {
-    // A ground half on its own is usually a drawing in progress; a flight half
-    // on its own is a vehicle that cannot be disconnected.
-    const found = runChecks([qd('QD-G1', 'ground')], []);
-    expect(found.find(x => x.id.startsWith('qd-unpaired'))!.severity).toBe('info');
+    expect(f.severity).toBe('info');
+    expect(f.title).toContain('QD-1');
   });
 
   it('says nothing about a half declared to need no pair', () => {
-    const found = runChecks([qd('QD-R1', 'rocket', 'none')], []);
+    const found = runChecks([qd('QD-1', 'fluid', 'none')], []);
     expect(found.some(f => f.id.includes('qd-'))).toBe(false);
   });
 
-  it('catches two halves on the same side of the umbilical', () => {
-    const found = runChecks([qd('A', 'rocket', 'B'), qd('B', 'rocket', 'A')], []);
-    const f = found.find(x => x.id.startsWith('qd-sameside'))!;
-    expect(f.severity).toBe('error');
+  it('catches a hydraulic half mated to a fluid one', () => {
+    const found = runChecks([qd('A', 'fluid', 'B'), qd('B', 'hydraulic', 'A')], []);
+    expect(found.find(x => x.id.startsWith('qd-service'))!.severity).toBe('error');
   });
 
   it('catches a pairing only one of the two agrees with', () => {
-    const nodes = [qd('A', 'rocket', 'B'), qd('B', 'ground', 'C'), qd('C', 'ground', 'B')];
+    const nodes = [qd('A', 'fluid', 'B'), qd('B', 'fluid', 'C'), qd('C', 'fluid', 'B')];
     expect(ids(nodes)).toContain('qd-asym-A');
   });
 
   it('catches a pair whose other half has been deleted', () => {
-    const found = runChecks([qd('A', 'rocket', 'GONE')], []);
+    const found = runChecks([qd('A', 'fluid', 'GONE')], []);
     expect(found.find(x => x.id.startsWith('qd-missing'))!.severity).toBe('error');
   });
 
   it('is quiet about a correct pair', () => {
-    const nodes = [qd('A', 'rocket', 'B'), qd('B', 'ground', 'A')];
+    const nodes = [qd('A', 'fluid', 'B'), qd('B', 'fluid', 'A')];
     expect(ids(nodes).filter(i => i.startsWith('qd-'))).toEqual([]);
   });
 });
@@ -103,14 +95,14 @@ describe('boundary conditions a solve cannot start without', () => {
 
 describe('instruments', () => {
   it('warns about a probe wired into the flow path', () => {
-    const nodes = [node('TK', 'TANK'), node('PT-1', 'PT')];
-    const edges = [edge('a', 'TK', 'PT-1', 'b', 'l')];
+    const nodes = [node('TK', 'TANK'), node('RTD-1', 'RTD')];
+    const edges = [edge('a', 'TK', 'RTD-1', 'b', 'l')];
     const f = runChecks(nodes, edges).find(x => x.id === 'instruments-wired')!;
     expect(f.severity).toBe('warning');
   });
 
   it('says nothing about a probe clipped to what it measures', () => {
-    const nodes = [node('TK', 'TANK'), node('PT-1', 'PT', { attachedTo: 'TK' })];
+    const nodes = [node('TK', 'TANK'), node('RTD-1', 'RTD', { attachedTo: 'TK' })];
     expect(ids(nodes).includes('instruments-wired')).toBe(false);
   });
 });
@@ -146,7 +138,7 @@ describe('what the badge counts', () => {
   });
 
   it('sorts the worst first', () => {
-    const nodes = [qd('QD-R1', 'rocket'), node('TK-1', 'TANK')];
+    const nodes = [qd('QD-1', 'fluid'), node('TK-1', 'TANK')];
     const severities = runChecks(nodes, []).map(f => f.severity);
     expect(severities).toEqual([...severities].sort(
       (a, b) => ({ error: 0, warning: 1, info: 2 })[a] - ({ error: 0, warning: 1, info: 2 })[b]));

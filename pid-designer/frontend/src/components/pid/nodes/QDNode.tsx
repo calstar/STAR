@@ -6,23 +6,16 @@ import { DraggableLabel } from './DraggableLabel';
 const W = 60, H = 60;
 
 /**
- * A quick disconnect.
+ * A quick disconnect: fluid, or hydraulic.
  *
- * Two things are drawn on it rather than left in the config, because both are
- * read at a glance and both are the sort of thing that goes wrong quietly.
- *
- * **Which side of the umbilical it is.** A rocket half leaves with the vehicle
- * and a ground half stays behind, so a pair with two ground halves is a fill
- * line nobody can disconnect. The marking is what makes that visible on the
- * drawing instead of in a dialog.
- *
- * **Fluid or hydraulic.** Functionally the same, and told apart on sight so
- * nobody traces a hydraulic actuation line looking for propellant.
+ * The two are functionally the same and are told apart on sight -- a hydraulic
+ * body is dashed -- so nobody traces an actuation line looking for propellant.
+ * Which half mates with which is named in the config rather than drawn, because
+ * it is a relationship between two symbols and not a property of either.
  */
 export function QDNode({ id, data, selected }: NodeProps) {
   const { label, labelOffset, rotation, options } = data as unknown as PIDNodeData;
   const stroke = selected ? '#3b82f6' : '#94a3b8';
-  const rocket = options?.side === 'rocket';
   const hydraulic = options?.service === 'hydraulic';
 
   return (
@@ -44,18 +37,12 @@ export function QDNode({ id, data, selected }: NodeProps) {
         />
         <line x1="14" y1="14" x2="46" y2="46" stroke={stroke} strokeWidth={2} />
         <line x1="46" y1="14" x2="14" y2="46" stroke={stroke} strokeWidth={2} />
-        <text
-          x="30" y="15" textAnchor="middle" fontSize="8"
-          fill={rocket ? '#f59e0b' : '#64748b'} fontFamily="monospace" fontWeight="bold"
-        >
-          {rocket ? 'R' : 'G'}
-        </text>
         {hydraulic && (
           <text x="30" y="52" textAnchor="middle" fontSize="7" fill="#a78bfa" fontFamily="monospace">HYD</text>
         )}
       </svg>
 
-      <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: H + 2 }} />
+      <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: H + 2 }} />
     </div>
   );
 }

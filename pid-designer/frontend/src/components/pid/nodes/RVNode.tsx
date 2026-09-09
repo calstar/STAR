@@ -22,7 +22,7 @@ export function RVNode({ id, data, selected }: NodeProps) {
         <line x1="30" y1="10" x2="30" y2="18" stroke={stroke} strokeWidth={1.5} />
       </svg>
 
-      <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: H + 2 }} />
+      <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: H + 2 }} />
     </div>
   );
 }

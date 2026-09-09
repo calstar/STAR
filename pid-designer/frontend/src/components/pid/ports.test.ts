@@ -75,7 +75,7 @@ describe('the port table covers what the palette can drop', () => {
     // a component added to the palette without a row here would silently have
     // no ports as far as the checks and the config are concerned.
     // Instruments clip to what they measure; annotation is not plumbing.
-    const noPorts = new Set(['TEXT', 'REGION', 'RTD', 'TC', 'PT', 'PG', 'LC']);
+    const noPorts = new Set(['TEXT', 'REGION', 'RTD', 'TC', 'LC']);
     for (const def of COMPONENT_DEFS) {
       const ports = portsOf(node(def.type, { options: def.preset ?? {} }));
       if (noPorts.has(def.type)) expect(ports).toEqual([]);

@@ -1,4 +1,5 @@
-import { Position, type NodeProps } from '@xyflow/react';
+import { Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
+import { useEffect } from 'react';
 import { Port } from './Port';
 import type { PIDNodeData } from '../types';
 import { DraggableLabel } from './DraggableLabel';
@@ -13,6 +14,8 @@ export function PRNode({ id, data, selected }: NodeProps) {
   // regulator held at whatever that line happens to be. Marked on the symbol
   // rather than left to be inferred from which side a wire arrives on.
   const domeLoaded = options?.domeLoaded === 'yes';
+  const updateNodeInternals = useUpdateNodeInternals();
+  useEffect(() => { updateNodeInternals(id); }, [id, domeLoaded, updateNodeInternals]);
 
   return (
     <div style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
@@ -36,7 +39,7 @@ export function PRNode({ id, data, selected }: NodeProps) {
         )}
       </svg>
 
-      <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: H + 2 }} />
+      <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: H + 2 }} />
     </div>
   );
 }

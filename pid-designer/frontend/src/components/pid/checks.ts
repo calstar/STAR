@@ -47,24 +47,19 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
   // ── Quick disconnects ─────────────────────────────────────────────────────
   const qds = nodes.filter(n => dataOf(n)?.componentType === 'QD');
   const pairOf = (n: Node) => dataOf(n).options?.pairedWith ?? '';
-  const sideOf = (n: Node) => dataOf(n).options?.side ?? 'ground';
+  const serviceOf = (n: Node) => dataOf(n).options?.service ?? 'fluid';
 
   for (const qd of qds) {
     const paired = pairOf(qd);
-    const side = sideOf(qd);
 
     if (paired === 'none') continue;      // declared to stand alone
 
     if (!paired) {
       push({
         id: `qd-unpaired-${qd.id}`,
-        // A flight half with nothing to mate to is the one that strands a
-        // vehicle on the pad; a ground half alone is usually just unfinished.
-        severity: side === 'rocket' ? 'error' : 'info',
+        severity: 'info',
         title: `${nameOf(qd)} has no mating half`,
-        detail: side === 'rocket'
-          ? 'This is a flight half with nothing on the ground to mate with. Pick its ground half, or mark it as needing no pair.'
-          : 'No mating half chosen yet. Pick one, or mark it as needing no pair.',
+        detail: 'Pick the disconnect on the other side, or mark it as needing no pair.',
         nodeIds: [qd.id],
       });
       continue;
@@ -82,12 +77,12 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
       continue;
     }
 
-    if (sideOf(other) === side) {
+    if (serviceOf(other) !== serviceOf(qd)) {
       push({
-        id: `qd-sameside-${qd.id}`,
+        id: `qd-service-${qd.id}`,
         severity: 'error',
-        title: `${nameOf(qd)} and ${nameOf(other)} are both ${side} halves`,
-        detail: 'A pair is one flight half and one ground half. Two of the same side cannot mate, so nothing here comes apart at launch.',
+        title: `${nameOf(qd)} and ${nameOf(other)} are different types`,
+        detail: 'A hydraulic disconnect does not mate with a fluid one.',
         nodeIds: [qd.id, other.id],
       });
     }

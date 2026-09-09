@@ -35,7 +35,7 @@ export function SensorNode({ id, data, selected }: NodeProps) {
         </text>
       </svg>
 
-      <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: S + 2 }} />
+      <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: S + 2 }} />
     </div>
   );
 }

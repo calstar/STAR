@@ -53,7 +53,7 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
           </text>
         </svg>
 
-        <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: DW_H + 2 }} />
+        <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: DW_H + 2 }} />
       </div>
     );
   }
@@ -80,7 +80,7 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
         )}
       </svg>
 
-      <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: KB_H + 2 }} />
+      <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: KB_H + 2 }} />
     </div>
   );
 }

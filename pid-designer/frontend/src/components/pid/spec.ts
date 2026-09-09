@@ -125,10 +125,13 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
     params: [
       P('setpoint', 'Setpoint', 'pressure'),
       P('Cv', 'Cv', 'flow_coefficient'),
-      P('supply_coefficient', 'Supply effect', 'dimensionless'),
-      P('inlet_reference', 'Reference inlet', 'pressure'),
-      P('flow_droop', 'Droop at rated flow', 'pressure'),
-      P('lockup_rise', 'Lockup rise', 'pressure'),
+      P('bore', 'Orifice', 'length'),
+      // Supply-pressure effect as a datasheet states it: outlet rises this
+      // much for that much inlet decay. Two pressures rather than the
+      // dimensionless ratio the physics core wants, because nobody reads
+      // "0.0147" off a spec sheet -- they read "14.7 psi per 1000 psi".
+      P('supply_effect_out', 'Outlet rise', 'pressure'),
+      P('supply_effect_in', '  per inlet drop', 'pressure'),
     ],
     options: [
       { key: 'domeLoaded', label: 'Dome loaded', default: 'no',
@@ -162,16 +165,6 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
       P('bore', 'Bore', 'length'),
     ],
     options: [
-      { key: 'side', label: 'Side', default: 'ground',
-        choices: [
-          { value: 'ground', label: 'Ground' },
-          { value: 'rocket', label: 'Rocket' },
-        ] },
-      { key: 'service', label: 'Service', default: 'fluid',
-        choices: [
-          { value: 'fluid', label: 'Fluid' },
-          { value: 'hydraulic', label: 'Hydraulic' },
-        ] },
       { key: 'pairedWith', label: 'Mates with', default: '', choices: PEER_CHOICES },
     ],
   },
@@ -224,11 +217,28 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
   // Instruments carry a tag and a size and nothing else. They are drawn, not
   // solved: a probe reads whatever it is clipped to, so a range, a fluid and a
   // part number were three questions nobody wanted to answer sixty times.
+  // RTDs and thermocouples clip to what they read. Gauges and transducers do
+  // not: they are fittings, plumbed into the feed system on a tee or a port,
+  // so they connect like anything else and carry the numbers a fitting has.
   RTD: instrumentSpec(),
   TC: instrumentSpec(),
-  PT: instrumentSpec(),
-  PG: instrumentSpec(),
   LC: instrumentSpec(),
+
+  PT: {
+    catalogued: true,
+    params: [
+      P('range_max', 'Range', 'pressure'),
+      P('bore', 'Port bore', 'length'),
+    ],
+  },
+
+  PG: {
+    catalogued: true,
+    params: [
+      P('range_max', 'Range', 'pressure'),
+      P('bore', 'Port bore', 'length'),
+    ],
+  },
 };
 
 function instrumentSpec(): ComponentSpec {

@@ -5,11 +5,22 @@ import { DraggableLabel } from './DraggableLabel';
 
 const W = 60, H = 60;
 
-function BowtieWithActuator({ selected, actuatorLabel }: { selected: boolean; actuatorLabel: string }) {
+/**
+ * The valve body.
+ *
+ * A normally-open valve is drawn hollow, the way an open bore is drawn on a
+ * P&ID; normally closed stays filled. That is the state a procedure review
+ * looks for first, and a two-letter tag in the corner was not enough to see it
+ * across a sheet.
+ */
+function BowtieWithActuator({ selected, actuatorLabel, failOpen }: {
+  selected: boolean; actuatorLabel: string; failOpen: boolean;
+}) {
   const stroke = selected ? '#3b82f6' : '#94a3b8';
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
-      <polygon points="8,10 52,46 52,10 8,46" fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
+      <polygon points="8,10 52,46 52,10 8,46"
+        fill={failOpen ? 'none' : '#1e293b'} stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
       <rect x="22" y="2" width="16" height="10" rx="2" fill="#1e293b" stroke={stroke} strokeWidth={1.2} />
       <text x="30" y="11" textAnchor="middle" fontSize="7" fill="#cbd5e1" fontFamily="monospace">{actuatorLabel}</text>
       <line x1="30" y1="12" x2="30" y2="20" stroke={stroke} strokeWidth={1.5} />
@@ -42,7 +53,7 @@ export function ValveNode({ id, data, selected }: NodeProps) {
       <Port position={Position.Right} id="r" />
       {componentType === 'MAN'
         ? <ManualValve selected={!!selected} />
-        : <BowtieWithActuator selected={!!selected} actuatorLabel={actuator} />}
+        : <BowtieWithActuator selected={!!selected} actuatorLabel={actuator} failOpen={failOpen} />}
       {componentType !== 'MAN' && (
         <span
           title={failOpen ? 'Normally open — passes with no command applied' : 'Normally closed — shuts with no command applied'}
@@ -50,12 +61,15 @@ export function ValveNode({ id, data, selected }: NodeProps) {
             position: 'absolute', right: 2, bottom: 6, fontSize: 8, lineHeight: 1,
             fontFamily: 'monospace', letterSpacing: '0.02em',
             color: failOpen ? '#f59e0b' : '#64748b',
+            // Counter-rotate so the marker stays readable when the valve turns.
+            transform: `rotate(${-(((rotation ?? 0) % 360) + 360) % 360}deg)`,
+            transformOrigin: 'center',
           }}
         >
           {failOpen ? 'NO' : 'NC'}
         </span>
       )}
-      <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: H + 2 }} />
+      <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: H + 2 }} />
     </div>
   );
 }

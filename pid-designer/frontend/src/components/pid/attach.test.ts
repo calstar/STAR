@@ -36,14 +36,14 @@ describe('what an instrument clips to', () => {
     expect(targetAt({ x: 330, y: 50 }, nodes, edges)).toEqual({ id: 'SOL', kind: 'node' });
   });
 
-  it('never clips one instrument to another', () => {
-    const withProbe = [...nodes, node('PT-1', 'PT', 20, 40)];
+  it('never clips one probe to another', () => {
+    const withProbe = [...nodes, node('TC-1', 'TC', 20, 40)];
     expect(targetAt({ x: 30, y: 50 }, withProbe, edges)).toEqual({ id: 'TANK', kind: 'node' });
   });
 
   it('does not clip a probe to itself', () => {
-    const withProbe = [...nodes, node('PT-1', 'PT', 500, 500)];
-    expect(targetAt({ x: 520, y: 520 }, withProbe, edges, 'PT-1')).toBeNull();
+    const withProbe = [...nodes, node('TC-1', 'TC', 500, 500)];
+    expect(targetAt({ x: 520, y: 520 }, withProbe, edges, 'TC-1')).toBeNull();
   });
 });
 
@@ -51,13 +51,13 @@ describe('instruments follow what they measure', () => {
   it('moves everything clipped to a component by the same delta', () => {
     const nodes = [
       node('TANK', 'TANK', 0, 0, 60, 100),
-      node('PT-1', 'PT', 80, -10, 60, 60, { attachedTo: 'TANK' }),
-      node('PT-2', 'PT', 400, 400, 60, 60, { attachedTo: 'SOL' }),
+      node('TC-1', 'TC', 80, -10, 60, 60, { attachedTo: 'TANK' }),
+      node('TC-2', 'TC', 400, 400, 60, 60, { attachedTo: 'SOL' }),
     ];
     const moved = dragAttached(nodes, 'TANK', { x: 25, y: -15 });
-    expect(moved.find(n => n.id === 'PT-1')!.position).toEqual({ x: 105, y: -25 });
+    expect(moved.find(n => n.id === 'TC-1')!.position).toEqual({ x: 105, y: -25 });
     // Clipped to something else, so untouched.
-    expect(moved.find(n => n.id === 'PT-2')!.position).toEqual({ x: 400, y: 400 });
+    expect(moved.find(n => n.id === 'TC-2')!.position).toEqual({ x: 400, y: 400 });
   });
 
   it('leaves the array alone when nothing actually moved', () => {
@@ -67,8 +67,10 @@ describe('instruments follow what they measure', () => {
 });
 
 describe('which components attach rather than connect', () => {
-  it('counts the instruments and nothing else', () => {
-    expect(['RTD', 'TC', 'PT', 'PG', 'LC'].every(isInstrument)).toBe(true);
-    expect(['TANK', 'SOL', 'PR', 'QD', 'ENGINE'].some(isInstrument)).toBe(false);
+  it('counts the probes, and not the fittings', () => {
+    // A gauge or a transducer screws into a tee and is part of the feed
+    // system, so it connects like anything else.
+    expect(['RTD', 'TC', 'LC'].every(isInstrument)).toBe(true);
+    expect(['PT', 'PG', 'TANK', 'SOL', 'PR', 'QD', 'ENGINE'].some(isInstrument)).toBe(false);
   });
 });
