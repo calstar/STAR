@@ -1739,6 +1739,70 @@ _DERIVE_AT_SLOPE_MIN = 0.12
 _DERIVE_AT_SLOPE_MAX = 1.20
 
 
+def _layer1_stamp_design_point(config, performance, logger=None) -> None:
+    """Write the ACHIEVED operating point into ``chamber_geometry.design_*``.
+
+    ``design_MR`` / ``design_pressure`` / ``design_thrust`` are supposed to describe the design
+    the config represents. Nothing ever wrote them: `config_schemas` builds them with
+    ``getattr(chamber, 'design_MR', 2.55)``, so an optimised config carried whatever the template
+    started with. Observed on a real emitted design -- MR 2.55 / 350 psi / 7000 N stamped on an
+    engine actually solved at O/F ~1.68 / 420 psi / 7200 N.
+
+    That is not cosmetic: ``backend/routers/geometry.py`` reads ``design_MR`` and feeds it
+    straight into ``solve_chamber_geometry_with_cea``, so the Chamber Geometry tab drew the
+    contour at the stale mixture ratio -- and 2.55 sits OUTSIDE the shipped CEA cache range
+    (``MR_range: [1.0, 2.5]``), i.e. extrapolating past the table edge.
+
+    Warns rather than raises when the achieved MR falls outside the cache range: the design is
+    still real, but anything reading design_MR against that cache is extrapolating.
+    """
+    cg = getattr(config, "chamber_geometry", None)
+    if cg is None or not isinstance(performance, dict):
+        return
+
+    def _finite_pos(value):
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return None
+        return v if (np.isfinite(v) and v > 0) else None
+
+    mr = _finite_pos(performance.get("MR"))
+    pc = _finite_pos(performance.get("Pc"))
+    thrust = _finite_pos(performance.get("F"))
+
+    if mr is not None:
+        cg.design_MR = mr
+    if pc is not None:
+        cg.design_pressure = pc
+    if thrust is not None:
+        cg.design_thrust = thrust
+
+    # Keep the legacy mirror in step -- some readers still fall back to config.chamber.
+    legacy = getattr(config, "chamber", None)
+    if legacy is not None:
+        if mr is not None and hasattr(legacy, "design_MR"):
+            legacy.design_MR = mr
+        if pc is not None and hasattr(legacy, "design_pressure"):
+            legacy.design_pressure = pc
+        if thrust is not None and hasattr(legacy, "design_thrust"):
+            legacy.design_thrust = thrust
+
+    if mr is None or logger is None:
+        return
+    try:
+        mr_range = config.combustion.cea.MR_range
+        lo, hi = float(mr_range[0]), float(mr_range[1])
+    except (AttributeError, TypeError, ValueError, IndexError):
+        return
+    if not (lo <= mr <= hi):
+        logger.warning(
+            "design_MR %.4f is outside the CEA cache MR_range [%.2f, %.2f]; anything reading "
+            "it against that cache is extrapolating past the table edge.", mr, lo, hi
+        )
+
+
+
 def _layer1_eps_for_exit_pressure(Pc_Pa: float, gamma: float, Pe_Pa: float):
     """Expansion ratio that puts the exit plane exactly at ``Pe_Pa``.
 
@@ -8563,7 +8627,10 @@ def run_layer1_optimization(
     layer1_logger.handlers.clear()
     
     update_progress("Layer 1: Complete", 1.0, "Layer 1 optimization complete!")
-    
+
+    # Stamp the ACHIEVED operating point onto the config we are about to hand back, so
+    # chamber_geometry.design_* describes this engine rather than whatever template it came from.
+    _layer1_stamp_design_point(optimized_config, final_performance, layer1_logger)
 
     return optimized_config, results
 
