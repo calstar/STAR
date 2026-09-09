@@ -152,8 +152,18 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
     : 0;
   const fittings = kind === 'edge' ? segments.reduce((n, s) => n + fittingCount(s), 0) : 0;
 
+  // No ΣK unless there is one. Every fitting here is priced by feed-twin from
+  // geometry, so a zero would be reporting "nothing was stated" as "nothing".
+  const parts = [
+    fittings ? `${fittings} fitting${fittings === 1 ? '' : 's'}` : '',
+    derivedK ? `K ${derivedK.toFixed(2)} at bore changes` : '',
+  ].filter(Boolean);
+  // An itemised run is the whole answer for that line, so the one-number
+  // fields above it are no longer what a solve reads.
+  const superseded = kind === 'edge' && segments.length > 0;
+
   const title = kind === 'edge'
-    ? `Line${segments.length ? ` · ΣK ${derivedK.toFixed(2)} + ${fittings} fitting${fittings === 1 ? '' : 's'}` : ''}`
+    ? `Line${parts.length ? ` · ${parts.join(' · ')}` : ''}`
     : (data.label || type);
 
   return (
@@ -227,7 +237,17 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
         ))}
 
         {spec.params.length > 0 && (
-          <div className="space-y-2 border-t border-[var(--color-border)] pt-2.5">
+          <div className={`space-y-2 border-t border-[var(--color-border)] pt-2.5${
+            superseded ? ' opacity-45' : ''}`}>
+            {/* Two ways to say how long a line is, both editable, with nothing
+                saying which one counts. The plan's own rule for the loss
+                methods -- the panel says which is in force -- applies a level
+                up as well. */}
+            {superseded && (
+              <p className="text-[10px] text-[var(--color-text-muted)]">
+                Superseded by the segments below.
+              </p>
+            )}
             {spec.params.map(p => (
               <ParamRow
                 key={p.key}

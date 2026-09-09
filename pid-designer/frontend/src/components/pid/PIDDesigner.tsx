@@ -150,6 +150,16 @@ function useHistory(
 interface CanvasProps {
   diagramRef:         DocRef;
   fitRef:             React.MutableRefObject<() => void>;
+  /** Which page is being looked at. Above the canvas, because the canvas
+   *  remounts on Take -- and being thrown back to Main by the gesture that
+   *  means "let me edit this" is the same papercut as losing the viewport. */
+  page:               string;
+  setPage:            React.Dispatch<React.SetStateAction<string>>;
+  /** Pages somebody made but has not drawn on yet. Everything else is derived
+   *  from where the components are, so the two cannot disagree. Up here for
+   *  the same reason: an empty page must survive a Take. */
+  declaredPages:      string[];
+  setDeclaredPages:   React.Dispatch<React.SetStateAction<string[]>>;
   /**
    * Where the reader was looking, per diagram and page.
    *
@@ -183,7 +193,7 @@ interface CanvasProps {
 }
 
 function PIDCanvas({
-  diagramRef, fitRef, viewportsRef, getRef, loadRef, clearRef, clearCountRef, undoRef, redoRef,
+  diagramRef, fitRef, viewportsRef, page, setPage, declaredPages, setDeclaredPages, getRef, loadRef, clearRef, clearCountRef, undoRef, redoRef,
   releaseRef, getHistoryRef, getReleasesRef, restoreMicroRef, restoreReleaseRef, onForbidden, onLockLost,
   mode,
 }: CanvasProps) {
@@ -201,14 +211,10 @@ function PIDCanvas({
   const toolRef = useRef(tool);
   toolRef.current = tool;
 
-  const [page, setPage] = useState<string>(DEFAULT_PAGE);
   // Read inside `clearRef`, which is called through a ref from the toolbar and
   // would otherwise close over whichever page was current when it was built.
   const pageRef = useRef(page);
   pageRef.current = page;
-  // Pages people made but have not drawn on yet. Everything else is derived
-  // from where the components actually are, so the two cannot disagree.
-  const [declaredPages, setDeclaredPages] = useState<string[]>([]);
   const [colorMenu, setColorMenu] =
     useState<{ kind: 'node' | 'edge'; id: string; x: number; y: number } | null>(null);
   // Which symbol or line has its config open. Held as an id rather than the
@@ -352,13 +358,18 @@ function PIDCanvas({
   clearRef.current = useCallback(() => {
     if (readOnlyRef.current) return;
     const here = pageRef.current;
+    // A page exists because components are on it, so emptying one used to
+    // delete it and drop the reader on Main -- which is not what "clear this
+    // page" says, and not what somebody starting a page over wants. Declaring
+    // it keeps the empty sheet.
+    setDeclaredPages(ps => ps.includes(here) ? ps : [...ps, here]);
     setNodes(nds => {
       const doomed = new Set(
         nds.filter(n => pageOf(n.data as unknown as PIDNodeData) === here).map(n => n.id));
       setEdges(eds => eds.filter(e => !doomed.has(e.source) && !doomed.has(e.target)));
       return nds.filter(n => !doomed.has(n.id));
     });
-  }, [setNodes, setEdges]);
+  }, [setNodes, setEdges, setDeclaredPages]);
 
   /** What Clear would take, so the confirmation can say. */
   const clearCount = useCallback(() => {
@@ -1002,6 +1013,8 @@ export function PIDDesigner() {
     () => ({ page: '', nodes: 0, edges: 0 }));
   const fitRef            = useRef<() => void>(() => {});
   const viewportsRef      = useRef<Map<string, Viewport>>(new Map());
+  const [page, setPage]   = useState<string>(DEFAULT_PAGE);
+  const [declaredPages, setDeclaredPages] = useState<string[]>([]);
   const undoRef           = useRef<() => void>(() => {});
   const redoRef           = useRef<() => void>(() => {});
   const releaseRef        = useRef<(label: string) => Promise<{ label: string; savedAt: string }>>(() => Promise.resolve({ label: '', savedAt: '' }));
@@ -1178,6 +1191,10 @@ export function PIDDesigner() {
               diagramRef={activeRef}
               fitRef={fitRef}
               viewportsRef={viewportsRef}
+              page={page}
+              setPage={setPage}
+              declaredPages={declaredPages}
+              setDeclaredPages={setDeclaredPages}
               getRef={getRef}
               loadRef={loadRef}
               clearRef={clearRef}

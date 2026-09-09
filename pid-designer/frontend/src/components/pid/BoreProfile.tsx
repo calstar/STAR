@@ -43,6 +43,9 @@ export function BoreProfile({ segments }: { segments: LineSegment[] }) {
     );
   }
 
+  // Every segment has to say how long it is before the total means anything.
+  const lengthStated = segments.every(s => s.length?.value !== undefined && s.length.value !== null);
+
   const W = 300, H = 260, PAD = 18;
 
   // Independent scales: at true scale a 1.6 m run at 10 mm bore is 160:1 and
@@ -82,8 +85,12 @@ export function BoreProfile({ segments }: { segments: LineSegment[] }) {
         <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
           Flow path
         </span>
-        <span className="font-mono text-[10px] text-[var(--color-text-muted)]">
-          {(walls.length / 1000).toFixed(3)} m
+        {/* A drawn length is not a stated one. Without a length on every
+            segment this figure is whatever the picture needed to be drawn at,
+            and printing it as metres claimed a number nobody typed. */}
+        <span className="font-mono text-[10px]"
+              style={{ color: lengthStated ? 'var(--color-text-muted)' : ASSUMED }}>
+          {lengthStated ? `${(walls.length / 1000).toFixed(3)} m` : 'length not stated'}
         </span>
       </div>
 
@@ -125,7 +132,9 @@ export function BoreProfile({ segments }: { segments: LineSegment[] }) {
       </svg>
 
       <p className="font-mono text-[9px] leading-relaxed text-[var(--color-text-muted)]">
-        radius ×{rScale.toFixed(1)} · widest bore {(maxR * 2).toFixed(2)} mm
+        {/* "radius ×11.2" read as a bend radius. It is the exaggeration: at
+            true scale a metre of 10 mm tube is a hairline. */}
+        bore drawn ×{rScale.toFixed(1)} · widest {(maxR * 2).toFixed(2)} mm
         {anyAssumed && <span className="text-amber-500"> · amber = assumed</span>}
       </p>
 

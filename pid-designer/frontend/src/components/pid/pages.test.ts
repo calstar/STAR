@@ -15,9 +15,24 @@ describe('which page a component is on', () => {
     expect(pageOf({ page: '' })).toBe(DEFAULT_PAGE);
   });
 
-  it('lists declared pages first, then any others in use', () => {
+  it('lists pages in use first, then any declared and still empty', () => {
     const nodes = [node('a', 'GSE'), node('b', 'Rocket')];
-    expect(listPages(nodes, ['Rocket'])).toEqual(['Rocket', 'GSE']);
+    expect(listPages(nodes, ['Rocket'])).toEqual(['GSE', 'Rocket']);
+    expect(listPages(nodes, ['Stand'])).toEqual(['GSE', 'Rocket', 'Stand']);
+  });
+
+  it('leaves a page where it was when it empties', () => {
+    // Clear declares the page it emptied, so the sheet survives -- and the
+    // tab must not jump to the front the moment it does.
+    const nodes = [node('a', 'Main'), node('b', 'GSE')];
+    expect(listPages(nodes, [])).toEqual(['Main', 'GSE']);
+    expect(listPages([nodes[0]], ['GSE'])).toEqual(['Main', 'GSE']);
+  });
+
+  it('leaves a page where it was when somebody draws on it', () => {
+    expect(listPages([node('a', 'Main')], ['GSE'])).toEqual(['Main', 'GSE']);
+    expect(listPages([node('a', 'Main'), node('b', 'GSE')], ['GSE']))
+      .toEqual(['Main', 'GSE']);
   });
 
   it('always offers at least one page', () => {

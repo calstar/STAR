@@ -27,14 +27,24 @@ export const DEFAULT_PAGE = 'Main';
 export const pageOf = (data: { page?: string } | undefined) => data?.page || DEFAULT_PAGE;
 
 /**
- * Every page in the diagram: the ones components sit on, plus any declared
- * empty. Declared ones come first and in order, so adding a page and then
- * drawing on it does not make it jump.
+ * Every page in the diagram: the ones components sit on, in the order those
+ * components were drawn, then any declared and still empty.
+ *
+ * The order matters more than it looks. A page tab that moves when you touch
+ * it is a page tab you stop trusting, and a page can cross between the two
+ * lists in both directions -- draw on an empty one and it becomes used;
+ * clear a used one and Clear declares it so the empty sheet survives. Putting
+ * used first and empty after keeps a page where it was through both, because
+ * a newly used page is last in node order and a newly emptied one is last
+ * among the declared.
  */
 export function listPages(nodes: Node[], declared: string[] = []): string[] {
-  const used = new Set(nodes.map(n => pageOf(n.data as unknown as PIDNodeData)));
-  const out = [...declared];
-  for (const p of used) if (!out.includes(p)) out.push(p);
+  const out: string[] = [];
+  for (const n of nodes) {
+    const p = pageOf(n.data as unknown as PIDNodeData);
+    if (!out.includes(p)) out.push(p);
+  }
+  for (const p of declared) if (!out.includes(p)) out.push(p);
   if (out.length === 0) out.push(DEFAULT_PAGE);
   return out;
 }
