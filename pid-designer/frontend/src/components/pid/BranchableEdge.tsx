@@ -10,6 +10,7 @@ import {
 import { nextJunctionId } from './ids';
 import { useEdgeFluidColor } from './FluidContext';
 import { useReadOnly } from '@stardesign-ui';
+import { useTool } from './ToolContext';
 
 const J_HALF = 5;
 
@@ -46,6 +47,8 @@ export function BranchableEdge(props: EdgeProps) {
 
   const { setNodes, setEdges, getZoom } = useReactFlow();
   const readOnly = useReadOnly();
+  // A junction only goes in while the tool is armed. See ToolContext.
+  const armed = useTool() === 'junction' && !readOnly;
   const [hoverAt, setHoverAt] = useState<{ x: number; y: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragFrom = useRef<{ pointer: number; offset: number } | null>(null);
@@ -126,7 +129,7 @@ export function BranchableEdge(props: EdgeProps) {
    * path is orthogonal, so snapping to it is a clamp per segment.
    */
   const onMouseMove = useCallback((e: React.MouseEvent<SVGGElement>) => {
-    if (readOnly || dragging) return;
+    if (!armed || dragging) return;
     const svg = (e.currentTarget as SVGElement).closest('svg');
     if (!svg) return;
     const pt = svg.createSVGPoint();
@@ -134,10 +137,10 @@ export function BranchableEdge(props: EdgeProps) {
     pt.y = e.clientY;
     const p = pt.matrixTransform(svg.getScreenCTM()!.inverse());
     setHoverAt(nearestOnPath(edgePath, p));
-  }, [readOnly, dragging, edgePath]);
+  }, [armed, dragging, edgePath]);
 
   const onClickBranch = useCallback((e: React.MouseEvent<SVGGElement>) => {
-    if (readOnly || !hoverAt || dragging) return;
+    if (!armed || !hoverAt || dragging) return;
     e.stopPropagation();
 
     const junctionId = nextJunctionId();
@@ -166,20 +169,20 @@ export function BranchableEdge(props: EdgeProps) {
         return [...rest, toJunction, fromJunction];
       });
     });
-  }, [readOnly, hoverAt, dragging, id, source, target, data, setNodes, setEdges]);
+  }, [armed, hoverAt, dragging, id, source, target, data, setNodes, setEdges]);
 
   return (
     <g
       onMouseMove={onMouseMove}
       onMouseLeave={() => setHoverAt(null)}
       onClick={onClickBranch}
-      style={{ cursor: hoverAt ? 'crosshair' : 'pointer' }}
+      style={{ cursor: armed ? 'crosshair' : 'pointer' }}
     >
       {/* Invisible fat hit area, so a 2 px line can be clicked at all. */}
       <path d={edgePath} fill="none" stroke="transparent" strokeWidth={12} />
       <BaseEdge path={edgePath} style={{ stroke: strokeColor, strokeWidth: 2, ...style }} />
 
-      {hoverAt && !dragging && (
+      {armed && hoverAt && !dragging && (
         <circle
           cx={hoverAt.x} cy={hoverAt.y} r={5}
           fill={strokeColor} stroke="#0f172a" strokeWidth={2}

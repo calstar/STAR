@@ -40,6 +40,8 @@ import type { ConfigPatch } from './ConfigDialog';
 import { FluidProvider } from './FluidContext';
 import { ColorMenu } from './ColorMenu';
 import { PaintTool } from './PaintTool';
+import { ToolProvider } from './ToolContext';
+import type { Tool } from './ToolContext';
 import { AttachmentLayer } from './AttachmentLayer';
 import { ChecksPanel } from './ChecksPanel';
 import { VentLayer } from './VentLayer';
@@ -171,10 +173,15 @@ function PIDCanvas({
   // the changes itself so it can move clipped instruments in the same update.
   const [nodes, setNodes] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  // The paint bucket: a colour, and whether clicking applies it.
-  const [paint, setPaint] = useState<{ on: boolean; colour: string | null }>({ on: false, colour: '#22c55e' });
-  const paintRef = useRef(paint);
-  paintRef.current = paint;
+  // Which tool is armed, and the paint colour it uses. One at a time: two
+  // tools both claiming a click is how junctions ended up scattered across
+  // drawings in the first place.
+  const [tool, setTool] = useState<Tool>('none');
+  const [colour, setColour] = useState<string | null>('#22c55e');
+  const paintRef = useRef({ on: false, colour });
+  paintRef.current = { on: tool === 'paint', colour };
+  const toolRef = useRef(tool);
+  toolRef.current = tool;
 
   const [page, setPage] = useState<string>(DEFAULT_PAGE);
   // Pages people made but have not drawn on yet. Everything else is derived
@@ -565,21 +572,19 @@ function PIDCanvas({
     if (paintIfArmed('edge', edge.id)) { e.stopPropagation(); e.preventDefault(); }
   }, [paintIfArmed]);
 
-  // Escape puts the brush down.
+  // Escape puts any tool down.
   useEffect(() => {
-    if (!paint.on) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPaint(p => ({ ...p, on: false }));
-    };
+    if (tool === 'none') return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setTool('none'); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [paint.on]);
+  }, [tool]);
 
   const onNodeDoubleClick = useCallback((_e: React.MouseEvent, node: Node) => {
     const type = (node.data as unknown as PIDNodeData)?.componentType;
     // Text and junctions have nothing to configure; opening an empty dialog on
     // them would only teach people that double-click does nothing.
-    if (!type || !COMPONENT_SPECS[type]) return;
+    if (!type || !COMPONENT_SPECS[type] || toolRef.current !== 'none') return;
     setConfigFor({ kind: 'node', id: node.id });
   }, []);
 
@@ -587,6 +592,7 @@ function PIDCanvas({
   // edge carried a colour and nothing else, so its length, bore and roughness
   // -- where most of the pressure drop actually is -- had nowhere to live.
   const onEdgeDoubleClick = useCallback((_e: React.MouseEvent, edge: Edge) => {
+    if (toolRef.current !== 'none') return;
     setConfigFor({ kind: 'edge', id: edge.id });
   }, []);
 
@@ -647,10 +653,11 @@ function PIDCanvas({
     // against the whole area including the tabs.
     <div
       className="relative flex h-full flex-1 flex-col"
-      style={paint.on ? { cursor: 'crosshair' } : undefined}
+      style={tool !== 'none' ? { cursor: 'crosshair' } : undefined}
       onClick={() => setColorMenu(null)}
     >
       <div className="relative min-h-0 flex-1">
+      <ToolProvider tool={tool}>
       <FluidProvider nodes={nodes} edges={edges}>
       <ReactFlow
         nodes={view.nodes} edges={view.edges}
@@ -687,11 +694,12 @@ function PIDCanvas({
         <Controls />
         <Panel position="bottom-center">
           <span className="text-[10px] text-slate-600 select-none">
-            Drag from sidebar · Connect handles · V=Pan  B=Box select · Cmd+click to multi-select · R=Rotate · Double-click to configure · Right-click to colour · Delete removes selection
+            Drag from sidebar · Connect handles · V=Pan  B=Box select · Cmd+click to multi-select · R=Rotate · Double-click to configure · Right-click to colour · Junction tool branches a line · Delete removes selection
           </span>
         </Panel>
       </ReactFlow>
       </FluidProvider>
+      </ToolProvider>
       </div>
 
       <PageBar
@@ -735,11 +743,30 @@ function PIDCanvas({
           it puts PT-4 in front of you rather than leaving you to find it. */}
       <div className="absolute left-3 top-3 z-20 flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/90 px-1.5 py-1 shadow-lg backdrop-blur">
         <PaintTool
-          colour={paint.colour}
-          active={paint.on}
-          onColour={c => setPaint(p => ({ ...p, colour: c }))}
-          onToggle={on => setPaint(p => ({ ...p, on }))}
+          colour={colour}
+          active={tool === 'paint'}
+          onColour={setColour}
+          onToggle={on => setTool(on ? 'paint' : 'none')}
         />
+        <span className="h-4 w-px bg-[var(--color-border)]" />
+        <button
+          disabled={readOnly}
+          onClick={() => setTool(t => (t === 'junction' ? 'none' : 'junction'))}
+          title={tool === 'junction'
+            ? 'Junction on — click a line to branch it, or press Escape'
+            : 'Junction: click a line to put a branch point on it'}
+          className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+            tool === 'junction'
+              ? 'bg-[var(--color-accent)] text-white'
+              : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)]'
+          }`}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M3 12h7" /><path d="M14 12h7" /><path d="M12 14v7" />
+            <circle cx="12" cy="12" r="2.5" fill="currentColor" />
+          </svg>
+          Junction
+        </button>
       </div>
 
       <ChecksPanel

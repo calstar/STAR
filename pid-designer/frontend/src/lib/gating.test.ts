@@ -184,6 +184,23 @@ describe('every diagram-editing control is gated on the checkout', () => {
     ).toEqual([])
   })
 
+  it('never puts a destructive edit on a bare click', () => {
+    // Junction insertion used to be the plain click handler on a line, so a
+    // double-click -- which is two clicks -- inserted two junctions and then
+    // opened a dialog for an edge that no longer existed, and clicking around
+    // scattered them across the drawing. A gesture that rewrites the graph has
+    // to be armed first.
+    const src = Object.entries(files).find(([p]) => p.endsWith('/BranchableEdge.tsx'))?.[1]
+    expect(src, 'BranchableEdge.tsx not found').toBeTruthy()
+
+    const handler = src!.slice(src!.indexOf('const onClickBranch'))
+    const guard = handler.slice(0, handler.indexOf('\n  }'))
+    expect(
+      /if \(!armed/.test(guard),
+      'onClickBranch must return early unless the junction tool is armed',
+    ).toBe(true)
+  })
+
   it('keeps every exemption pointing at a real file', () => {
     const stale = Object.keys(NOT_EDITING).filter(
       (file) => !Object.keys(files).some((p) => p.endsWith(`/${file}`)),
