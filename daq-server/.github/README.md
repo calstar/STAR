@@ -16,12 +16,15 @@ Runs on push / PR / manual dispatch. Jobs include:
 3. **Build** — GCC 12 and Clang 18, **Release** only; Clang is pinned to GCC
    12's libstdc++ (`--gcc-install-dir`) to avoid libstdc++ 14 + C++20
    `<format>`/`<chrono>` breakage.
-4. **Static Analysis** — cppcheck and clang-tidy.
-5. **Code Quality** — TODOs, large files, etc.
-6. **Security Scan** — semgrep, secret patterns, unsafe C APIs.
-7. **Tests** — CTest, sequencer test, Python tests.
-8. **Integration Test** — scripted integration (Rust elodin-db, backend, etc.).
-9. **Build Summary** — table of all job results.
+4. **Code Quality** — TODOs, large files, etc.
+5. **Security Scan** — semgrep, secret patterns, unsafe C APIs.
+6. **Tests** — CTest, sequencer test, Python tests.
+7. **Integration Test** — scripted integration (Rust elodin-db, backend, etc.).
+8. **Build Summary** — table of all job results.
+
+There is no static-analysis job: cppcheck could not fail and clang-tidy had no
+compilation database, so both were removed rather than left decorative. See
+`docs/IMPROVEMENTS.md` for the measurement and what reinstating them would take.
 
 Optional locally: [pre-commit](https://pre-commit.com/)
 (`daq-server/.pre-commit-config.yaml`) — not run in CI.

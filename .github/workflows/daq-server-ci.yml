@@ -240,57 +240,6 @@ jobs:
           daq-server/${{ env.BUILD_DIR }}/lib/
         retention-days: 7
 
-  # Static analysis
-  static-analysis:
-    name: Static Analysis
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          cmake \
-          libeigen3-dev \
-          cppcheck \
-          clang-tidy-17 || sudo apt-get install -y clang-tidy
-
-    - name: Run cppcheck
-      run: |
-        cppcheck \
-          --enable=all \
-          --inconclusive \
-          --std=c++${{ env.CXX_STANDARD }} \
-          --suppress=missingIncludeSystem \
-          --suppress=unusedFunction \
-          --suppress=noExplicitConstructor \
-          --suppress=unmatchedSuppression \
-          --error-exitcode=1 \
-          --xml --xml-version=2 \
-          --output-file=cppcheck-report.xml \
-          diablo_server/ archive/legacy/utl/ || true
-
-    - name: Upload cppcheck results
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: cppcheck-report
-        path: daq-server/cppcheck-report.xml
-
-    - name: Run clang-tidy
-      run: |
-        # Only run on a subset to avoid timeout
-        find diablo_server archive/legacy/utl -name "*.cpp" -o -name "*.hpp" | head -20 | \
-        xargs -I {} clang-tidy {} \
-          -p ${{ env.BUILD_DIR }} \
-          -- -std=c++${{ env.CXX_STANDARD }} || true
-      continue-on-error: true
-
   # Code quality checks
   code-quality:
     name: Code Quality Checks
@@ -421,8 +370,8 @@ jobs:
   # because glibc tolerates a double pthread_join often enough to hide it. Under TSan the same
   # code dies in 0.2 s at ~50 commands with a CHECK failure inside pthread_join.
   #
-  # Neither the Release ctest job nor cppcheck/clang-tidy can see this. Without this job the fix
-  # is unverified against regression.
+  # The Release ctest job cannot see this, and no static analyser runs here any more.
+  # Without this job the fix is unverified against regression.
   thread-sanitizer:
     name: ThreadSanitizer (sequencer)
     runs-on: ubuntu-latest
@@ -934,7 +883,6 @@ jobs:
       - format-check
       - web-gui
       - build
-      - static-analysis
       - code-quality
       - security-scan
       - thread-sanitizer
@@ -959,7 +907,6 @@ jobs:
         echo "| Format Check | ${{ needs.format-check.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Web GUI | ${{ needs.web-gui.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Static Analysis | ${{ needs.static-analysis.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Code Quality | ${{ needs.code-quality.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Security Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| ThreadSanitizer (sequencer) | ${{ needs.thread-sanitizer.result }} |" >> $GITHUB_STEP_SUMMARY

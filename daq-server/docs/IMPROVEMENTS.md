@@ -5,7 +5,10 @@ frontend, and CI. Each item names the affected file(s), what actually goes wrong
 shape of the fix.
 
 **Last audited:** 2026-09-08 against `1aeb97bc`.
-**Last updated:** 2026-09-08 — the WebSocket backpressure work landed, resolving this file's
+**Last updated:** 2026-09-08 — the `static-analysis` job was deleted rather than repaired. cppcheck
+was measured first (199 messages, zero of them `error` or `warning`) and clang-tidy turned out never
+to have analyzed a file at all, having no compilation database to work from; three cppcheck findings
+worth keeping are refiled under Low. Before that, the WebSocket backpressure work landed, resolving this file's
 backpressure/keepalive entry under High: sensor data now stages in a per-client outbox that sheds
 *resolution* rather than falling behind, squeezed to a measured-throughput latency budget, with the
 30 s ping reaper and a `Throttled · N%` badge so no operator reads a decimated trace unknowingly. It
@@ -93,38 +96,14 @@ states it maps.
 
 ## High
 
-### CI — The static-analysis job cannot fail
-
-**File:** `.github/workflows/daq-server-ci.yml:263-292`
-
-```yaml
-cppcheck --enable=all ... --error-exitcode=1 ... diablo_server/ archive/legacy/utl/ || true
-```
-
-The `|| true` cancels the `--error-exitcode=1` — the job reports green no matter what
-cppcheck finds. The report is uploaded as an artifact nobody is required to read.
-
-clang-tidy is weaker still: `|| true` **and** `continue-on-error: true`, and it runs on
-`find ... | head -20` — the first twenty files in directory order, which does not include
-the sequencer services where the races in this document live.
-
-The rest of the workflow is genuinely strict (format-check, ctest, integration, Playwright),
-which makes this job's decorative status easy to miss.
-
-**Fix:** drop the `|| true` from cppcheck and let it gate, with an explicit suppression list
-for whatever it currently flags (check the last uploaded artifact for the size of that job).
-Run clang-tidy over the whole `diablo_server/services` and `diablo_server/lib/src` trees with
-a checked-in `.clang-tidy` rather than an arbitrary 20-file slice.
-
----
-
 ### CI — No ASan/UBSan build, and CMake sets no warning flags
 
 **Files:** `CMakeLists.txt`, `.github/workflows/daq-server-ci.yml`
 
 *Partly addressed.* A `thread-sanitizer` job now builds the sequencer concurrency tests with
 `-fsanitize=thread` and runs them, which is what proves the command-queue work stays fixed —
-the races it guards are invisible to the Release `ctest` job, to cppcheck and to clang-tidy.
+the races it guards are invisible to the Release `ctest` job, and no static analyser runs in CI
+any more.
 
 Two things still missing:
 
@@ -272,6 +251,27 @@ should be identical integers).
 
 ---
 
+### C++ — three findings inherited from the deleted cppcheck job
+
+**Files:** `diablo_server/lib/src/elodin/ElodinClient.cpp:197-199`,
+`diablo_server/lib/src/control/ControllerLUT.cpp:133`,
+`diablo_server/services/calibration/calibration_main.cpp:1336`
+
+The only tool that reported these was removed (see Resolved), so they are filed here rather
+than lost with it. None is known to misbehave today; each is the shape of thing that starts
+misbehaving after an unrelated edit.
+
+1. `ElodinClient.cpp:197-199` decodes `packet_type`, `packet_id` and `request_id` from the
+   response header and reads none of them. Either the reply is not being validated against the
+   request it answers, or the three locals are dead and should go.
+2. `ControllerLUT.cpp:133` tests an unsigned expression for `< 0` — a bounds check that cannot
+   fire. Worth confirming the guard it was meant to be.
+3. `calibration_main.cpp:1336` casts `const unsigned char*` to `const float*`. Same unaligned-
+   access class as the `config_broadcast` stores named in the ASan/UBSan entry under High, and
+   it would be caught by the same UBSan build.
+
+---
+
 ### C++ — `ElodinClient::send_msg` logs on every send
 
 **File:** `diablo_server/lib/src/elodin/ElodinClient.cpp:275`
@@ -301,6 +301,42 @@ longer to flush, and on a fast machine it's a second wasted on every run.
 ## Resolved
 
 Kept so a future audit can distinguish "fixed" from "never checked".
+
+### By the CI static-analysis trim (2026-09-08)
+
+- **cppcheck was removed from the `static-analysis` job rather than made to gate.** It ran as
+  `--error-exitcode=1 ... || true`, so it could not fail, and wrote XML to an artifact nobody is
+  required to read. Measured before deleting it, using the same cppcheck 2.13.0 that
+  `ubuntu-latest` ships: 199 messages, **zero `error` and zero `warning`**. 146 were
+  `missingInclude` — information-severity noise from running with no `-I` — leaving 47 style, 3
+  performance and 1 portability across 28 files. Gating meant suppressing `missingInclude`,
+  `useStlAlgorithm` (15, taste) and `constParameter` (9, every one of them `char* argv[]` on
+  `main`), then triaging the ~20 left; and the two most bug-shaped of those are false positives —
+  `CubicCalibrationStore.cpp:57` is a deliberate `amin = amax = pts[0].adc` init, and
+  `daq_bridge_main.cpp:345`'s "condition is always false" holds only because cppcheck cannot see
+  through `load_board_map_from_config` without include paths. A gate whose entire output is a
+  suppression list is the same decoration in a different shape.
+- Three findings did look worth keeping and are refiled under Low / Housekeeping so they do not
+  disappear with the tool that reported them.
+- **clang-tidy was removed with it, and the `static-analysis` job deleted entirely.** It was worse
+  than ungated: the step ran `clang-tidy {} -p build -- -std=c++20`, but that job never built
+  anything (checkout, apt install, clang-tidy) and nothing in the repo emits a compilation database
+  at all — `CMAKE_EXPORT_COMPILE_COMMANDS` is set in neither `CMakeLists.txt` nor the workflow, and
+  the build job uploads only `bin/` and `lib/`. So `-p` named a directory that did not exist,
+  clang-tidy fell back to the bare `-std=c++20`, and every file died on its first `#include`. The
+  `|| true` **and** `continue-on-error: true` were not suppressing findings; they were hiding a step
+  that had never produced one. It also ran over `find ... | head -20` — an arbitrary slice in
+  on-disk directory order, which (contrary to the entry that described it) does include six
+  sequencer files locally; the slice was unreliable, not systematically wrong.
+- `build-summary` drops the `static-analysis` dependency and its row.
+- **Reinstating either is a real piece of work, not a revert.** clang-tidy needs
+  `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` on the configure step, `compile_commands.json` shipped with
+  the build artifacts (or the step moved into the build job), a checked-in `.clang-tidy`, and a full
+  run over `diablo_server/services` and `diablo_server/lib/src` before anyone knows what gating
+  costs. The ASan/UBSan entry under High is the better place to spend that effort: it catches things
+  no linter can, and the TSan job is already the template.
+
+---
 
 ### By the WebSocket backpressure work (2026-09-08)
 
