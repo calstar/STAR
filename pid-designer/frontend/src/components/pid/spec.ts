@@ -221,6 +221,34 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
         ] },
     ],
   },
+
+  KBOTTLE: {
+    summary: 'A K-bottle of pressurant. The supply boundary: a solve starts at this pressure.',
+    params: [
+      P('pressure', 'Supply pressure', 'pressure',
+        'Bottle pressure as delivered. Ours come at 2000 psi for the low-press system and 6000 psi for the high-press one — absolute, so a 2000 psig fill is about 2015 psi here.',
+        { value: 2000, unit: 'psi' }),
+      P('temperature', 'Gas temperature', 'temperature',
+        'Ambient unless it has just been filled or drawn down hard.', { value: 293, unit: 'K' }),
+      P('volume', 'Water volume', 'volume',
+        'Internal volume of the bottle, which with the pressure is how much gas you actually have.', { value: 49, unit: 'L' }),
+      P('count', 'Bottles on the rack', 'dimensionless',
+        'A rack manifolded together behaves as one bottle of the combined volume.', { value: 1, unit: '-' }),
+    ],
+  },
+
+  DEWAR: {
+    summary: 'A cryogenic dewar — LN2 for cold flow, LOX for a hotfire. The supply boundary on the cold side.',
+    params: [
+      P('pressure', 'Delivery pressure', 'pressure',
+        'What the dewar holds at its outlet. A self-pressurising dewar sits near its relief setting rather than at ambient.',
+        { value: 35, unit: 'psi' }),
+      P('temperature', 'Liquid temperature', 'temperature',
+        'Saturation temperature at the delivery pressure unless it has been subcooled. LN2 at 1 atm is 77 K, LOX 90 K.'),
+      P('volume', 'Capacity', 'volume'),
+    ],
+  },
+
 };
 
 function valveSpec(summary: string): ComponentSpec {

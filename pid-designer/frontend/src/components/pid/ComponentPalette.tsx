@@ -1,6 +1,6 @@
 import { COMPONENT_DEFS, type ComponentType } from './types';
 
-const GROUP_ORDER = ['Sensors', 'Valves', 'Flow Control', 'Hardware', 'Annotation'] as const;
+const GROUP_ORDER = ['Sensors', 'Valves', 'Flow Control', 'Hardware', 'Supplies', 'Annotation'] as const;
 
 function PaletteSymbol({ type }: { type: ComponentType }) {
   switch (type) {
@@ -93,6 +93,22 @@ function PaletteSymbol({ type }: { type: ComponentType }) {
       return (
         <svg width="20" height="20" viewBox="0 0 20 20">
           <circle cx="10" cy="10" r="6" fill="#94a3b8" stroke="#94a3b8" strokeWidth="1" />
+        </svg>
+      );
+    case 'KBOTTLE':
+      return (
+        <svg width="22" height="44" viewBox="0 0 22 44">
+          <rect x="8" y="1" width="6" height="5" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.1" />
+          <path d="M3,14 Q3,7 11,6 Q19,7 19,14 L19,41 Q19,43 17,43 L5,43 Q3,43 3,41 Z"
+            fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
+        </svg>
+      );
+    case 'DEWAR':
+      return (
+        <svg width="30" height="40" viewBox="0 0 30 40">
+          <rect x="12" y="1" width="6" height="4" fill="#1e293b" stroke="#94a3b8" strokeWidth="1" />
+          <rect x="2" y="5" width="26" height="33" rx="7" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
+          <rect x="6" y="9" width="18" height="25" rx="5" fill="none" stroke="#94a3b8" strokeWidth="0.9" strokeDasharray="2 2" />
         </svg>
       );
     case 'REGION':

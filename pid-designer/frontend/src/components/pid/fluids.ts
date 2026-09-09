@@ -106,7 +106,9 @@ const MEETING_POINTS = new Set(['ENGINE', 'INJECTOR']);
  * `TankNode.endPorts`.
  */
 function isUllagePort(type: string | undefined, handle: string | null | undefined): boolean {
-  return type === 'TANK' && !!handle && /^t\d*$/.test(handle);
+  // Dewars too: a self-pressurising dewar has a build coil and a vent at the
+  // top and delivers liquid from the bottom, exactly like a run tank.
+  return (type === 'TANK' || type === 'DEWAR') && !!handle && /^t\d*$/.test(handle);
 }
 
 /**

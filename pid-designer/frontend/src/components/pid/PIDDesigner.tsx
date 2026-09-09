@@ -40,6 +40,7 @@ import { FluidProvider } from './FluidContext';
 import { ColorMenu } from './ColorMenu';
 import { AttachmentLayer } from './AttachmentLayer';
 import { ChecksPanel } from './ChecksPanel';
+import { VentLayer } from './VentLayer';
 import { PageBar } from './PageBar';
 import { DEFAULT_PAGE, applyPage, listPages, moveToPage, pageOf } from './pages';
 import { clearOfHost, dragAttached, isInstrument, targetAt } from './attach';
@@ -473,6 +474,8 @@ function PIDCanvas({
             ...Object.fromEntries((COMPONENT_SPECS[type]?.options ?? []).map(o => [o.key, o.default])),
             ...(def.preset ?? {}),
           },
+          // A supply picked from the palette already knows what is in it.
+          ...(def.fluid ? { fluid: def.fluid } : {}),
           ...(host ? { attachedTo: host.id } : {}),
           page,
         } as PIDNodeData;
@@ -591,6 +594,7 @@ function PIDCanvas({
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#1e293b" />
         <AttachmentLayer nodes={nodes} edges={edges} />
+        <VentLayer nodes={view.nodes} edges={view.edges} />
         <Controls />
         <Panel position="bottom-center">
           <span className="text-[10px] text-slate-600 select-none">

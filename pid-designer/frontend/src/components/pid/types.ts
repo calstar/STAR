@@ -5,6 +5,7 @@ export type ComponentType =
   | 'MAN' | 'ROT' | 'SOL'
   | 'PR' | 'RV' | 'CV' | 'QD'
   | 'TANK' | 'INJECTOR' | 'ENGINE' | 'MANIFOLD'
+  | 'KBOTTLE' | 'DEWAR'
   | 'TEXT' | 'REGION'
   | 'JUNCTION';
 
@@ -78,9 +79,15 @@ export interface ComponentDef {
   type: ComponentType;
   label: string;
   fullName: string;
-  group: 'Sensors' | 'Valves' | 'Flow Control' | 'Hardware' | 'Annotation';
+  group: 'Sensors' | 'Valves' | 'Flow Control' | 'Hardware' | 'Supplies' | 'Annotation';
   /** Options stamped onto the node at drop time. */
   preset?: Record<string, string>;
+  /**
+   * Species stamped on at drop time, for supplies. A K-bottle entry is picked
+   * from the palette already knowing what is in it, and everything downstream
+   * inherits that -- so the common case needs no trip to the config at all.
+   */
+  fluid?: string;
 }
 
 export const COMPONENT_DEFS: ComponentDef[] = [
@@ -113,6 +120,10 @@ export const COMPONENT_DEFS: ComponentDef[] = [
     preset: { side: 'rocket', service: 'hydraulic' } },
 
   { id: 'TANK',     type: 'TANK',     label: 'TANK',  fullName: 'Tank / COPV',                group: 'Hardware' },
+  { id: 'KB_N2',    type: 'KBOTTLE',  label: 'KB-N2_#',  fullName: 'K-bottle — GN2',          group: 'Supplies', fluid: 'nitrogen' },
+  { id: 'KB_HE',    type: 'KBOTTLE',  label: 'KB-He_#',  fullName: 'K-bottle — helium',       group: 'Supplies', fluid: 'helium' },
+  { id: 'DW_LN2',   type: 'DEWAR',    label: 'DW-LN2_#', fullName: 'Dewar — LN2 (cold flow)', group: 'Supplies', fluid: 'nitrogen' },
+  { id: 'DW_LOX',   type: 'DEWAR',    label: 'DW-LOX_#', fullName: 'Dewar — LOX (hotfire)',   group: 'Supplies', fluid: 'oxygen' },
   { id: 'MANIFOLD', type: 'MANIFOLD', label: 'MAN-F', fullName: 'Manifold (splits one feed)', group: 'Hardware' },
   { id: 'ENGINE',   type: 'ENGINE',   label: 'ENG',   fullName: 'Injector + chamber',         group: 'Hardware' },
   { id: 'INJECTOR', type: 'INJECTOR', label: 'INJ',   fullName: 'Injector (alone)',           group: 'Hardware' },

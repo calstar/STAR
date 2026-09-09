@@ -2,6 +2,7 @@ import type { Edge, Node } from '@xyflow/react';
 import { propagateFluids, speciesById } from './fluids';
 import { isInstrument } from './attach';
 import { crossPageEdges, listPages, pageOf } from './pages';
+import { findVents } from './vents';
 import type { PIDNodeData, PIDEdgeData } from './types';
 
 /**
@@ -250,6 +251,21 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
         });
       }
     }
+  }
+
+  // ── Vents ─────────────────────────────────────────────────────────────────
+  // Read off the drawing rather than declared, so this is a note saying what
+  // was inferred -- the point is that it is visible, not that it is a problem.
+  const vents = findVents(nodes, edges);
+  if (vents.length) {
+    const named = vents.map(v => nameOf(byId.get(v.nodeId)!)).slice(0, 8).join(', ');
+    push({
+      id: 'vents-inferred',
+      severity: 'info',
+      title: `${vents.length} valve${vents.length === 1 ? '' : 's'} read as venting to atmosphere`,
+      detail: `${named}${vents.length > 8 ? `, and ${vents.length - 8} more` : ''} — each is connected on one side only, so a solve will treat the open side as ambient. Plumb the far side if that is not what it is.`,
+      nodeIds: vents.map(v => v.nodeId),
+    });
   }
 
   // ── Lines that cross ──────────────────────────────────────────────────────
