@@ -15,6 +15,7 @@ import {
   type ReactFlowInstance,
   type Connection,
   type Node,
+  type NodeChange,
   type Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -37,6 +38,8 @@ import { ConfigDialog } from './ConfigDialog';
 import type { ConfigPatch } from './ConfigDialog';
 import { FluidProvider } from './FluidContext';
 import { ColorMenu } from './ColorMenu';
+import { AttachmentLayer } from './AttachmentLayer';
+import { clearOfHost, dragAttached, isInstrument, targetAt } from './attach';
 import { COMPONENT_SPECS } from './spec';
 
 export type InteractionMode = 'pan' | 'select';
@@ -372,6 +375,28 @@ function PIDCanvas({
     }, eds));
   }, [setEdges]);
 
+  /**
+   * Drag a component and its instruments come with it.
+   *
+   * React Flow reports a position change per node without a delta, so the
+   * delta is taken from where the node was -- the alternative is `parentId`,
+   * which would change what a saved position *means*. See attach.ts.
+   */
+  const handleNodesChange = useCallback((changes: NodeChange<Node>[]) => {
+    const moves: { id: string; delta: { x: number; y: number } }[] = [];
+    for (const c of changes) {
+      if (c.type !== 'position' || !c.position) continue;
+      const before = snapshot.current.nodes.find(n => n.id === c.id);
+      if (!before) continue;
+      const delta = { x: c.position.x - before.position.x, y: c.position.y - before.position.y };
+      if (delta.x || delta.y) moves.push({ id: c.id, delta });
+    }
+    onNodesChange(changes);
+    if (moves.length) {
+      setNodes(nds => moves.reduce((acc, m) => dragAttached(acc, m.id, m.delta), nds));
+    }
+  }, [onNodesChange, setNodes]);
+
   const onDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
@@ -391,7 +416,18 @@ function PIDCanvas({
     // nothing during exactly the moment a user has just enabled editing and is
     // reaching for it. The hook is available from first render.
     const flowPos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-    const position = { x: flowPos.x - 30, y: flowPos.y - nodeH / 2 };
+    let position = { x: flowPos.x - 30, y: flowPos.y - nodeH / 2 };
+    // An instrument dropped on top of a component or a line measures *that*.
+    // No edge, because a probe carries no flow -- see attach.ts.
+    const host = isInstrument(type)
+      ? targetAt(flowPos, snapshot.current.nodes, snapshot.current.edges)
+      : null;
+    // Stand the probe clear of what it is measuring. Dropped exactly where the
+    // pointer was, it covers the symbol it is attached to -- and the whole
+    // point of attaching rather than connecting is that the drawing gets
+    // easier to read, not harder.
+    if (host) position = clearOfHost(host, position, snapshot.current.nodes, snapshot.current.edges);
+
     const nodeData = type === 'TEXT'
       ? { text: 'Text' }
       : type === 'JUNCTION'
@@ -408,6 +444,7 @@ function PIDCanvas({
             ...Object.fromEntries((COMPONENT_SPECS[type]?.options ?? []).map(o => [o.key, o.default])),
             ...(def.preset ?? {}),
           },
+          ...(host ? { attachedTo: host.id } : {}),
         } as PIDNodeData;
     // Allocated outside the updater: React invokes updaters twice in
     // development, and an id minted inside one is neither pure nor stable.
@@ -488,7 +525,7 @@ function PIDCanvas({
       <FluidProvider nodes={nodes} edges={edges}>
       <ReactFlow
         nodes={nodes} edges={edges}
-        onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
+        onNodesChange={handleNodesChange} onEdgesChange={onEdgesChange}
         onConnect={onConnect} onInit={onInit}
         onDrop={onDrop} onDragOver={onDragOver}
         onEdgeContextMenu={onEdgeContextMenu}
@@ -514,6 +551,7 @@ function PIDCanvas({
         defaultEdgeOptions={{ type: 'smoothstep' }}
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#1e293b" />
+        <AttachmentLayer nodes={nodes} edges={edges} />
         <Controls />
         <Panel position="bottom-center">
           <span className="text-[10px] text-slate-600 select-none">
