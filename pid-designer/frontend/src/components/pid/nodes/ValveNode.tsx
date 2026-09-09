@@ -29,8 +29,13 @@ function ManualValve({ selected }: { selected: boolean }) {
 }
 
 export function ValveNode({ id, data, selected }: NodeProps) {
-  const { componentType, label, labelOffset, rotation } = data as unknown as PIDNodeData;
+  const { componentType, label, labelOffset, rotation, options } = data as unknown as PIDNodeData;
   const actuator = componentType === 'SOL' ? 'S' : 'P';
+  // Drawn, not just stored. Which way a valve fails is the difference between
+  // a safe abort and a spill, and it is the first thing anyone reading the
+  // drawing during a procedure review looks for -- so it belongs on the
+  // symbol, not two clicks away inside a dialog.
+  const failOpen = options?.failState === 'open';
   return (
     <div style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
       <Port position={Position.Left}  id="l" />
@@ -38,6 +43,18 @@ export function ValveNode({ id, data, selected }: NodeProps) {
       {componentType === 'MAN'
         ? <ManualValve selected={!!selected} />
         : <BowtieWithActuator selected={!!selected} actuatorLabel={actuator} />}
+      {componentType !== 'MAN' && (
+        <span
+          title={failOpen ? 'Normally open — passes with no command applied' : 'Normally closed — shuts with no command applied'}
+          style={{
+            position: 'absolute', right: 2, bottom: 6, fontSize: 8, lineHeight: 1,
+            fontFamily: 'monospace', letterSpacing: '0.02em',
+            color: failOpen ? '#f59e0b' : '#64748b',
+          }}
+        >
+          {failOpen ? 'NO' : 'NC'}
+        </span>
+      )}
       <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: H + 2 }} />
     </div>
   );

@@ -1,6 +1,6 @@
 import { COMPONENT_DEFS, type ComponentType } from './types';
 
-const GROUP_ORDER = ['Sensors', 'Valves', 'Flow Control', 'Hardware'] as const;
+const GROUP_ORDER = ['Sensors', 'Valves', 'Flow Control', 'Hardware', 'Annotation'] as const;
 
 function PaletteSymbol({ type }: { type: ComponentType }) {
   switch (type) {
@@ -72,6 +72,23 @@ function PaletteSymbol({ type }: { type: ComponentType }) {
           <polygon points="6,12 26,12 20,40 12,40" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
         </svg>
       );
+    case 'ENGINE':
+      return (
+        <svg width="30" height="44" viewBox="0 0 30 44">
+          <rect x="5" y="2" width="20" height="9" rx="1" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
+          <line x1="5" y1="11" x2="25" y2="11" stroke="#94a3b8" strokeWidth="1" />
+          <path d="M7,11 L7,22 Q7,27 13,30 L17,30 Q23,27 23,22 L23,11" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
+          <path d="M13,30 Q10,36 7,42 L23,42 Q20,36 17,30 Z" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
+        </svg>
+      );
+    case 'MANIFOLD':
+      return (
+        <svg width="34" height="20" viewBox="0 0 34 20">
+          <rect x="1" y="4" width="32" height="12" rx="2" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
+          <line x1="3" y1="10" x2="31" y2="10" stroke="#94a3b8" strokeWidth="1" strokeDasharray="2 2" />
+          {[9, 17, 25].map(x => <line key={x} x1={x} y1="16" x2={x} y2="19" stroke="#94a3b8" strokeWidth="1.2" />)}
+        </svg>
+      );
     case 'JUNCTION':
       return (
         <svg width="20" height="20" viewBox="0 0 20 20">
@@ -96,8 +113,11 @@ export function ComponentPalette() {
     items: COMPONENT_DEFS.filter(d => d.group === group),
   }));
 
-  const onDragStart = (e: React.DragEvent, type: ComponentType) => {
-    e.dataTransfer.setData('application/pid-type', type);
+  // The *entry* id travels, not the component type. "PT (high press)" and
+  // "PT (low press)" are one component with different presets, and the drop
+  // handler needs to know which of the two was picked.
+  const onDragStart = (e: React.DragEvent, id: string) => {
+    e.dataTransfer.setData('application/pid-entry', id);
     e.dataTransfer.effectAllowed = 'copy';
   };
 
@@ -111,9 +131,9 @@ export function ComponentPalette() {
           <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1 px-1">{group}</p>
           {items.map(def => (
             <div
-              key={def.type}
+              key={def.id}
               draggable
-              onDragStart={e => onDragStart(e, def.type)}
+              onDragStart={e => onDragStart(e, def.id)}
               title={def.fullName}
               className="flex items-center gap-2 px-2 py-1.5 rounded cursor-grab active:cursor-grabbing hover:bg-[#1e293b] transition-colors"
             >

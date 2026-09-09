@@ -31,8 +31,11 @@ import type { DiagramMeta, DocRef, MicroVersion, ReleaseVersion, Snapshot } from
 import { nodeTypes } from './nodes';
 import { BranchableEdge } from './BranchableEdge';
 import { nextNodeId, seedIdsFrom } from './ids';
-import { FLUID_COLORS, COMPONENT_DEFS } from './types';
-import type { PIDNodeData, ComponentType, FluidType } from './types';
+import { FLUID_COLORS, defFor } from './types';
+import type { PIDNodeData, FluidType } from './types';
+import { ConfigDialog } from './ConfigDialog';
+import { COMPONENT_SPECS } from './spec';
+import type { ParamValue } from './params';
 
 export type InteractionMode = 'pan' | 'select';
 
@@ -73,10 +76,6 @@ function writeActive(ref: DocRef | null): void {
   }
 }
 
-
-function defaultLabel(type: ComponentType) {
-  return COMPONENT_DEFS.find(d => d.type === type)?.label ?? type;
-}
 
 // ── Undo / redo history ──────────────────────────────────────────────────────
 const MAX_HISTORY = 100;
@@ -160,6 +159,9 @@ function PIDCanvas({
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [edgeMenu, setEdgeMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  // Which symbol's config is open. Held as an id rather than the node, so the
+  // dialog reads live data and a save is never applied to a stale copy.
+  const [configFor, setConfigFor] = useState<string | null>(null);
   const { screenToFlowPosition } = useReactFlow();
 
   const { undo, redo } = useHistory(nodes, edges, setNodes, setEdges);
@@ -327,6 +329,8 @@ function PIDCanvas({
 
   const edgeTypes = useMemo(() => ({ smoothstep: BranchableEdge, default: BranchableEdge }), []);
 
+  const configNode = configFor ? nodes.find(n => n.id === configFor) ?? null : null;
+
   const onConnect = useCallback((params: Connection) => {
     if (readOnlyRef.current) return;
     setEdges(eds => addEdge({
@@ -345,9 +349,11 @@ function PIDCanvas({
   const onDrop = useCallback((e: React.DragEvent) => {
     if (readOnlyRef.current) return;
     e.preventDefault();
-    const type = e.dataTransfer.getData('application/pid-type') as ComponentType;
-    if (!type) return;
-    const nodeH = (type === 'TANK' || type === 'INJECTOR') ? 100 : 60;
+    const entry = e.dataTransfer.getData('application/pid-entry');
+    const def = defFor(entry);
+    if (!def) return;
+    const type = def.type;
+    const nodeH = (type === 'TANK' || type === 'INJECTOR' || type === 'ENGINE') ? 100 : 60;
     // From the provider, not from the `onInit` instance in state. Taking the
     // checkout remounts this canvas, and for the frame or two before `onInit`
     // has committed, that state is null -- so the palette silently dropped
@@ -359,7 +365,19 @@ function PIDCanvas({
       ? { text: 'Text' }
       : type === 'JUNCTION'
       ? {}
-      : { componentType: type, label: defaultLabel(type), fluidType: 'default' } as PIDNodeData;
+      : {
+          componentType: type,
+          label: def.label,
+          fluidType: 'default',
+          // The palette entry's preset, plus every option's declared default,
+          // so a symbol is never drawn in a state its own config disagrees
+          // with -- a valve reads NC from the moment it lands, not once
+          // somebody opens the dialog.
+          options: {
+            ...Object.fromEntries((COMPONENT_SPECS[type]?.options ?? []).map(o => [o.key, o.default])),
+            ...(def.preset ?? {}),
+          },
+        } as PIDNodeData;
     // Allocated outside the updater: React invokes updaters twice in
     // development, and an id minted inside one is neither pure nor stable.
     const id = nextNodeId();
@@ -370,6 +388,26 @@ function PIDCanvas({
       data: nodeData as unknown as Record<string, unknown>,
     }]);
   }, [screenToFlowPosition, setNodes]);
+
+  const onNodeDoubleClick = useCallback((_e: React.MouseEvent, node: Node) => {
+    const type = (node.data as unknown as PIDNodeData)?.componentType;
+    // Text and junctions have nothing to configure; opening an empty dialog on
+    // them would only teach people that double-click does nothing.
+    if (!type || !COMPONENT_SPECS[type]) return;
+    setConfigFor(node.id);
+  }, []);
+
+  const saveConfig = useCallback((
+    nodeId: string,
+    patch: { params: Record<string, ParamValue>; options: Record<string, string>; label: string },
+  ) => {
+    if (readOnlyRef.current) return;
+    setNodes(nds => nds.map(n => (
+      n.id === nodeId
+        ? { ...n, data: { ...n.data, label: patch.label, params: patch.params, options: patch.options } }
+        : n
+    )));
+  }, [setNodes]);
 
   const onEdgeContextMenu = useCallback((e: React.MouseEvent, edge: Edge) => {
     if (readOnlyRef.current) return;
@@ -396,6 +434,7 @@ function PIDCanvas({
         onConnect={onConnect} onInit={onInit}
         onDrop={onDrop} onDragOver={onDragOver}
         onEdgeContextMenu={onEdgeContextMenu}
+        onNodeDoubleClick={onNodeDoubleClick}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         nodesDraggable={!readOnly}
@@ -422,6 +461,17 @@ function PIDCanvas({
           </span>
         </Panel>
       </ReactFlow>
+
+      {configNode && (
+        <ConfigDialog
+          open
+          nodeId={configNode.id}
+          data={configNode.data as unknown as PIDNodeData}
+          readOnly={readOnly}
+          onClose={() => setConfigFor(null)}
+          onSave={patch => saveConfig(configNode.id, patch)}
+        />
+      )}
 
       {edgeMenu && (
         <div

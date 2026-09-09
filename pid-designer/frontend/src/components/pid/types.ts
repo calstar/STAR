@@ -1,8 +1,10 @@
+import type { ParamValue } from './params';
+
 export type ComponentType =
   | 'RTD' | 'PT' | 'PG' | 'LC' | 'TC'
   | 'MAN' | 'ROT' | 'SOL'
   | 'PR' | 'RV' | 'CV' | 'QD'
-  | 'TANK' | 'INJECTOR'
+  | 'TANK' | 'INJECTOR' | 'ENGINE' | 'MANIFOLD'
   | 'TEXT'
   | 'JUNCTION';
 
@@ -22,29 +24,66 @@ export interface PIDNodeData {
   notes?: string;
   labelOffset?: { x: number; y: number };
   rotation?: number;
+  /**
+   * Hardware numbers, keyed by the names in `spec.ts`. Each carries its unit
+   * and its provenance -- see `params.ts` -- so a value can cross into
+   * feed-twin without being re-typed or re-guessed.
+   */
+  params?: Record<string, ParamValue>;
+  /**
+   * Categorical choices, keyed by the names in `spec.ts`: a valve's fail
+   * state, which side of the umbilical a QD is on. Strings, because these are
+   * enumerations rather than quantities and carry no unit.
+   */
+  options?: Record<string, string>;
 }
 
 export interface ComponentDef {
+  /** Palette entry id. Usually the component type, but two entries may drop
+   *  the same type with different presets -- see the HP/LP transducers. */
+  id: string;
   type: ComponentType;
   label: string;
   fullName: string;
-  group: 'Sensors' | 'Valves' | 'Flow Control' | 'Hardware';
+  group: 'Sensors' | 'Valves' | 'Flow Control' | 'Hardware' | 'Annotation';
+  /** Options stamped onto the node at drop time. */
+  preset?: Record<string, string>;
 }
 
 export const COMPONENT_DEFS: ComponentDef[] = [
-  { type: 'RTD',      label: 'RTD_#',  fullName: 'Resistance Temperature Detector', group: 'Sensors' },
-  { type: 'PT',       label: 'PT_#',   fullName: 'LOX/Eth Pressure Transducer',     group: 'Sensors' },
-  { type: 'PG',       label: 'PG_#',   fullName: 'Pressure Gauge',                  group: 'Sensors' },
-  { type: 'LC',       label: 'LC_#',   fullName: 'Load Cell',                       group: 'Sensors' },
-  { type: 'TC',       label: 'TC_#',   fullName: 'Thermocouple',                    group: 'Sensors' },
-  { type: 'MAN',      label: 'MAN_#',  fullName: 'Ball Valve (Manual)',              group: 'Valves' },
-  { type: 'ROT',      label: 'ROT_#',  fullName: 'Ball Valve (Rotary)',              group: 'Valves' },
-  { type: 'SOL',      label: 'SOL_#',  fullName: 'Solenoid Valve',                  group: 'Valves' },
-  { type: 'PR',       label: 'PR_#',   fullName: 'Pressure Regulator',              group: 'Flow Control' },
-  { type: 'RV',       label: 'RV_#',   fullName: 'Relief Valve',                    group: 'Flow Control' },
-  { type: 'CV',       label: 'CV_#',   fullName: 'Kero/LOX Check Valve',            group: 'Flow Control' },
-  { type: 'QD',       label: '[F]QD',  fullName: 'Quick Disconnect (Face Seal)',     group: 'Flow Control' },
-  { type: 'TANK',     label: 'TANK',   fullName: 'Tank / COPV',                     group: 'Hardware' },
-  { type: 'INJECTOR', label: 'INJ',    fullName: 'Injector',                        group: 'Hardware' },
-  { type: 'TEXT',     label: 'Text',   fullName: 'Text Annotation',                 group: 'Hardware' },
+  { id: 'RTD',    type: 'RTD', label: 'RTD_#',   fullName: 'Resistance Temperature Detector', group: 'Sensors' },
+  { id: 'TC',     type: 'TC',  label: 'TC_#',    fullName: 'Thermocouple',                    group: 'Sensors' },
+  // Split because a 10 000 psi bottle transducer and a 500 psi tank
+  // transducer are different parts, and a drawing that calls both "PT" hides
+  // the one mistake that matters -- fitting the low one to the high side.
+  { id: 'PT_HP',  type: 'PT',  label: 'PT-HP_#', fullName: 'Pressure Transducer (high press)', group: 'Sensors',
+    preset: { pressureClass: 'high' } },
+  { id: 'PT_LP',  type: 'PT',  label: 'PT-LP_#', fullName: 'Pressure Transducer (low press)',  group: 'Sensors',
+    preset: { pressureClass: 'low' } },
+  { id: 'PG',     type: 'PG',  label: 'PG_#',    fullName: 'Pressure Gauge',                  group: 'Sensors' },
+  { id: 'LC',     type: 'LC',  label: 'LC_#',    fullName: 'Load Cell',                       group: 'Sensors' },
+
+  { id: 'MAN',    type: 'MAN', label: 'MAN_#',   fullName: 'Ball Valve (Manual)',             group: 'Valves' },
+  { id: 'ROT',    type: 'ROT', label: 'ROT_#',   fullName: 'Ball Valve (Rotary)',             group: 'Valves' },
+  { id: 'SOL',    type: 'SOL', label: 'SOL_#',   fullName: 'Solenoid Valve',                  group: 'Valves' },
+
+  { id: 'PR',     type: 'PR',  label: 'PR_#',    fullName: 'Pressure Regulator',              group: 'Flow Control' },
+  { id: 'RV',     type: 'RV',  label: 'RV_#',    fullName: 'Relief Valve',                    group: 'Flow Control' },
+  { id: 'CV',     type: 'CV',  label: 'CV_#',    fullName: 'Check Valve',                     group: 'Flow Control' },
+  { id: 'QD_G',   type: 'QD',  label: 'QD-G_#',  fullName: 'Quick Disconnect (ground half)',  group: 'Flow Control',
+    preset: { side: 'ground' } },
+  { id: 'QD_R',   type: 'QD',  label: 'QD-R_#',  fullName: 'Quick Disconnect (rocket half)',  group: 'Flow Control',
+    preset: { side: 'rocket' } },
+
+  { id: 'TANK',     type: 'TANK',     label: 'TANK',  fullName: 'Tank / COPV',                group: 'Hardware' },
+  { id: 'MANIFOLD', type: 'MANIFOLD', label: 'MAN-F', fullName: 'Manifold (splits one feed)', group: 'Hardware' },
+  { id: 'ENGINE',   type: 'ENGINE',   label: 'ENG',   fullName: 'Injector + chamber',         group: 'Hardware' },
+  { id: 'INJECTOR', type: 'INJECTOR', label: 'INJ',   fullName: 'Injector (alone)',           group: 'Hardware' },
+
+  { id: 'TEXT',   type: 'TEXT', label: 'Text',   fullName: 'Text Annotation',                 group: 'Annotation' },
 ];
+
+/** The palette entry a node was dropped from, for defaulting its label. */
+export function defFor(id: string): ComponentDef | undefined {
+  return COMPONENT_DEFS.find(d => d.id === id);
+}

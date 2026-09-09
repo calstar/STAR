@@ -57,6 +57,7 @@ const VIEW_ONLY: Record<string, string> = {
   'PIDToolbar.tsx:setRelLabel': 'the label field inside the release dialog, which Release already gates',
   'PIDToolbar.tsx:onClick={submitRelease}': 'inside the release dialog, which Release already gates',
   'PIDDesigner.tsx:setUnshared(null)': 'dismisses the "no longer shared" notice',
+  'ConfigDialog.tsx:onClick={onClose}': 'Cancel closes the config dialog; Save is what writes, and Save is gated',
   'PIDDesigner.tsx:setShowChange(true)': 'opens the Change dialog (rename/share/copy are not gated by design)',
 }
 

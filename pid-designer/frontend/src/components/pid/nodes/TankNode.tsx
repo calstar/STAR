@@ -7,8 +7,30 @@ import { DraggableLabel } from './DraggableLabel';
 const TANK_W = 60, TANK_H = 100;
 const INJ_W = 60, INJ_H = 100;
 
+/**
+ * Ports across one end of the tank, evenly spaced.
+ *
+ * A tank lid carries a pressurant inlet, a vent, a burst disc and whatever
+ * instrumentation is tapped into it. Drawing one port forces all of that onto a
+ * single line and a fan of edges leaving the same pixel, which is the mess the
+ * port count exists to undo. Ids are stable per index (`t1`, `t2`, ...), so
+ * reducing the count and putting it back does not orphan the edges that were
+ * already drawn to the ports that remain.
+ */
+function endPorts(n: number, prefix: 't' | 'b', position: Position, width: number) {
+  const count = Math.max(1, Math.min(4, n));
+  return Array.from({ length: count }, (_, i) => (
+    <Port
+      key={`${prefix}${i + 1}`}
+      id={count === 1 ? prefix : `${prefix}${i + 1}`}
+      position={position}
+      style={{ left: (width * (i + 1)) / (count + 1) }}
+    />
+  ));
+}
+
 export function TankNode({ id, data, selected }: NodeProps) {
-  const { componentType, label, labelOffset, fluidType, rotation } = data as unknown as PIDNodeData;
+  const { componentType, label, labelOffset, fluidType, rotation, options } = data as unknown as PIDNodeData;
   const stroke = selected ? '#3b82f6' : '#94a3b8';
   const fluidColor = FLUID_COLORS[fluidType ?? 'default'];
   const isInjector = componentType === 'INJECTOR';
@@ -35,8 +57,8 @@ export function TankNode({ id, data, selected }: NodeProps) {
 
   return (
     <div style={{ position: 'relative', width: TANK_W, height: TANK_H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
-      <Port position={Position.Top}    id="t" />
-      <Port position={Position.Bottom} id="b" />
+      {endPorts(Number(options?.portsTop ?? 1), 't', Position.Top, TANK_W)}
+      {endPorts(Number(options?.portsBottom ?? 1), 'b', Position.Bottom, TANK_W)}
 
       <svg width={TANK_W} height={TANK_H} viewBox={`0 0 ${TANK_W} ${TANK_H}`}>
         <ellipse cx="30" cy="14" rx="24" ry="9"
