@@ -26,8 +26,10 @@ export interface ParamSpec {
 export interface OptionSpec {
   key: string;
   label: string;
+  /** Empty renders a text box; `PEER_CHOICES` renders the component picker. */
   choices: { value: string; label: string }[];
   default: string;
+  placeholder?: string;
 }
 
 /** Ports whose number is an option, and which can then be named. */
@@ -132,6 +134,11 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
       // "0.0147" off a spec sheet -- they read "14.7 psi per 1000 psi".
       P('supply_effect_out', 'Outlet rise', 'pressure'),
       P('supply_effect_in', '  per inlet drop', 'pressure'),
+      // Dome-loaded only. `dome_pressure` is superseded when a loading
+      // regulator is drawn — feed-twin takes that one's setpoint — so it is
+      // for a dome set from a panel that is not on the drawing.
+      P('dome_bias', 'Dome bias', 'pressure'),
+      P('dome_pressure', 'Dome pressure', 'pressure'),
     ],
     options: [
       { key: 'domeLoaded', label: 'Dome loaded', default: 'no',
@@ -174,6 +181,10 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
   SOL: valveSpec(),
 
   ENGINE: {
+    options: [
+      { key: 'engineConfig', label: 'Layer-1 config', default: '',
+        choices: [], placeholder: 'EngineDesign YAML path or id' },
+    ],
     params: [
       P('chamber_pressure', 'Chamber pressure', 'pressure'),
       P('chamber_temperature', 'Chamber temperature', 'temperature'),

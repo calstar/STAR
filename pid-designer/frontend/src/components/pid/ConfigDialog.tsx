@@ -8,6 +8,9 @@ import type { ParamValue, Provenance } from './params';
 import { portIds } from './ports';
 import type { PortInfo, PortKind } from './ports';
 import { speciesById } from './fluids';
+import { SegmentPanel } from './SegmentPanel';
+import { fittingCount, transitionsOf } from './segments';
+import type { LineSegment } from './segments';
 import type { ComponentType, PIDNodeData } from './types';
 
 /**
@@ -34,13 +37,14 @@ export interface ConfigPatch {
   partNumber?: string;
   lineType?: string;
   ports?: Record<string, PortInfo>;
+  segments?: LineSegment[];
 }
 
 interface Props {
   open: boolean;
   onClose: () => void;
   kind: 'node' | 'edge';
-  data: PIDNodeData & { lineType?: string; partNumber?: string; fluid?: string };
+  data: PIDNodeData & { lineType?: string; partNumber?: string; fluid?: string; segments?: LineSegment[] };
   peers?: { id: string; label: string; hint?: string }[];
   readOnly: boolean;
   onSave: (patch: ConfigPatch) => void;
@@ -82,6 +86,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   const [fluid, setFluid] = useState<string>(data.fluid ?? '');
   const [partNumber, setPartNumber] = useState(data.partNumber ?? '');
   const [lineType, setLineType] = useState(data.lineType ?? 'pipe');
+  const [segments, setSegments] = useState<LineSegment[]>([]);
 
   const spec: ComponentSpec | undefined =
     kind === 'edge' ? LINE_SPECS[lineType] : COMPONENT_SPECS[type];
@@ -93,6 +98,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
     setPartNumber(data.partNumber ?? '');
     setLineType(data.lineType ?? 'pipe');
     setPorts({ ...(data.ports ?? {}) });
+    setSegments(data.segments ? structuredClone(data.segments) : []);
   }, [open, data]);
 
   useEffect(() => {
@@ -123,19 +129,29 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
       label: label.trim() || data.label,
       fluid: fluid || undefined,
       partNumber: partNumber.trim() || undefined,
-      ...(kind === 'edge' ? { lineType } : {}),
+      ...(kind === 'edge' ? { lineType, segments: segments.length ? segments : undefined } : {}),
     });
     onClose();
   };
 
-  const title = kind === 'edge' ? 'Line' : (data.label || type);
+  // ΣK, live. Fittings priced by feed-twin's ladder are not known here, so
+  // this is the part that *is* knowable from the drawing alone: the derived
+  // bore transitions, plus a count of the fittings waiting to be priced.
+  const derivedK = kind === 'edge'
+    ? transitionsOf(segments).reduce((n, t2) => n + (t2?.K ?? 0), 0)
+    : 0;
+  const fittings = kind === 'edge' ? segments.reduce((n, s) => n + fittingCount(s), 0) : 0;
+
+  const title = kind === 'edge'
+    ? `Line${segments.length ? ` · ΣK ${derivedK.toFixed(2)} + ${fittings} fitting${fittings === 1 ? '' : 's'}` : ''}`
+    : (data.label || type);
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={title}
-      width="w-[420px]"
+      width={kind === 'edge' ? "w-[560px]" : "w-[420px]"}
       footer={
         <div className="flex gap-2">
           <button onClick={onClose} className={btn}>Cancel</button>
@@ -208,6 +224,10 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
           </div>
         )}
 
+        {kind === 'edge' && (
+          <SegmentPanel segments={segments} onChange={setSegments} />
+        )}
+
         {(spec.portGroups ?? []).map(group => (
           <PortGroup
             key={group.prefix}
@@ -239,6 +259,19 @@ function OptionRow({ spec, value, peers, readOnly, onChange }: {
 }) {
   if (spec.choices === PEER_CHOICES) {
     return <PeerPicker label={spec.label} value={value} peers={peers ?? []} readOnly={readOnly} onChange={onChange} />;
+  }
+  if (spec.choices.length === 0) {
+    return (
+      <Row label={spec.label}>
+        <input
+          value={value}
+          placeholder={spec.placeholder}
+          readOnly={readOnly}
+          onChange={e => onChange(e.target.value)}
+          className={wide}
+        />
+      </Row>
+    );
   }
   return (
     <Row label={spec.label}>

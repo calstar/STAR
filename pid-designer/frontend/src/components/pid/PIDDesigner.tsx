@@ -608,7 +608,9 @@ function PIDCanvas({
       )));
     } else {
       setEdges(eds => eds.map(e => (
-        e.id === subject.id ? { ...e, data: { ...e.data, ...common, lineType: patch.lineType } } : e
+        e.id === subject.id
+          ? { ...e, data: { ...e.data, ...common, lineType: patch.lineType, segments: patch.segments } }
+          : e
       )));
     }
   }, [setNodes, setEdges]);

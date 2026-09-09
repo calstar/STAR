@@ -1,4 +1,5 @@
 import type { ParamValue } from './params';
+import type { LineSegment } from './segments';
 
 export type ComponentType =
   | 'RTD' | 'PT' | 'PG' | 'LC' | 'TC'
@@ -68,6 +69,12 @@ export interface PIDNodeData {
 export interface PIDEdgeData {
   /** Which of feed-twin's branch components this run is. */
   lineType?: 'pipe' | 'flex_hose' | 'bend' | 'fitting';
+  /**
+   * What the run is actually made of: ordered by bore, with an unordered bag
+   * of fittings in each. Optional — a line without them behaves as it always
+   * has. See `segments.ts`.
+   */
+  segments?: LineSegment[];
   params?: Record<string, ParamValue>;
   options?: Record<string, string>;
   partNumber?: string;
