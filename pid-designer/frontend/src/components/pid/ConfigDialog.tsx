@@ -9,6 +9,7 @@ import { portIds } from './ports';
 import type { PortInfo, PortKind } from './ports';
 import { speciesById } from './fluids';
 import { SegmentPanel } from './SegmentPanel';
+import { BoreProfile } from './BoreProfile';
 import { fittingCount, transitionsOf } from './segments';
 import type { LineSegment } from './segments';
 import type { ComponentType, PIDNodeData } from './types';
@@ -151,7 +152,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
       open={open}
       onClose={onClose}
       title={title}
-      width={kind === 'edge' ? "w-[560px]" : "w-[420px]"}
+      width={kind === 'edge' ? "w-[900px]" : "w-[420px]"}
       footer={
         <div className="flex gap-2">
           <button onClick={onClose} className={btn}>Cancel</button>
@@ -159,6 +160,12 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
         </div>
       }
     >
+      <div className={kind === 'edge' ? 'grid grid-cols-[300px_1fr] gap-4' : ''}>
+      {kind === 'edge' && (
+        <div className="sticky top-0 self-start">
+          <BoreProfile segments={segments} />
+        </div>
+      )}
       <div className="max-h-[60vh] space-y-2.5 overflow-y-auto pr-1">
         {kind === 'edge' && (
           <Row label="Type">
@@ -238,6 +245,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
             onChange={(id, patch) => setPorts(ps => ({ ...ps, [id]: { ...ps[id], ...patch } }))}
           />
         ))}
+      </div>
       </div>
     </Modal>
   );
