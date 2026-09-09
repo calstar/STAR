@@ -642,6 +642,7 @@ function PIDCanvas({
       options: patch.options,
       partNumber: patch.partNumber,
       ...(patch.ports ? { ports: patch.ports } : {}),
+      ...(patch.geometry ? { geometry: patch.geometry } : {}),
     };
     if (subject.kind === 'node') {
       setNodes(nds => nds.map(n => (

@@ -48,6 +48,11 @@ export interface PIDNodeData {
    * plain outlets stores nothing. See `ports.ts`.
    */
   ports?: Record<string, { label?: string; kind?: 'flow' | 'instrument' | 'plug' }>;
+  /**
+   * For a manifold: the block's size and where each port sits, as a fraction
+   * of the way round its perimeter. Absent means the even default.
+   */
+  geometry?: { width: number; height: number; positions: Record<string, number> };
   notes?: string;
   labelOffset?: { x: number; y: number };
   rotation?: number;

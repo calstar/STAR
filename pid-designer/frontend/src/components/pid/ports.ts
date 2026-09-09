@@ -75,8 +75,11 @@ export function portsOf(node: Node): string[] {
     // no ports. Gauges and transducers are fittings and do.
     case 'RTD': case 'TC': case 'LC':
       return [];
+    // One port. A transducer or a gauge screws into a single tapping -- it is
+    // a dead end, not something flow passes through, so four connection points
+    // were three invitations to draw a pipe through an instrument.
     case 'PT': case 'PG':
-      return ['t', 'b', 'l', 'r'];
+      return ['b'];
     case 'QD': case 'JUNCTION':
       return ['t', 'b', 'l', 'r'];
     case 'MAN': case 'ROT': case 'SOL': case 'RV': case 'CV':

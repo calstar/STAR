@@ -4,7 +4,8 @@ import { Port } from './Port';
 import type { PIDNodeData } from '../types';
 import { FLUID_COLORS } from '../types';
 import { DraggableLabel } from './DraggableLabel';
-import { portId, portKind } from '../ports';
+import { portId, portIds, portKind } from '../ports';
+import { perimeterPoint, defaultPositions } from '../ManifoldEditor';
 
 /**
  * A manifold: one feed in, several out.
@@ -43,37 +44,67 @@ export function ManifoldNode({ id, data, selected }: NodeProps) {
   // to ask for a re-measure or edges fall back to the node centre.
   const updateNodeInternals = useUpdateNodeInternals();
   const portSignature = `${outlets}/${options?.orientation ?? 'horizontal'}/` +
+    `${JSON.stringify((data as unknown as PIDNodeData).geometry ?? null)}/` +
     Object.entries((data as unknown as PIDNodeData).ports ?? {})
       .map(([k, v]) => `${k}:${v.kind ?? 'flow'}`).sort().join(',');
   useEffect(() => { updateNodeInternals(id); }, [id, portSignature, updateNodeInternals]);
   const vertical = (options?.orientation ?? 'horizontal') === 'vertical';
 
+  // A saved layout wins; without one the block is the even default it always
+  // was, so nothing that exists changes shape.
+  const geom = (data as unknown as PIDNodeData).geometry;
   const run = manifoldLength(outlets);
-  const W = vertical ? BODY : run;
-  const H = vertical ? run : BODY;
+  const W = geom ? geom.width : vertical ? BODY : run;
+  const H = geom ? geom.height : vertical ? run : BODY;
 
   return (
     <div style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
-      {/* The feed in, at the near end. */}
-      <Port position={vertical ? Position.Top : Position.Left} id="in" />
+      {geom ? (
+        // Placed by hand: each port sits where its perimeter fraction puts it.
+        (() => {
+          const ids = ['in', ...portIds('p', outlets)];
+          const spare = defaultPositions(ids);
+          return ids.map(pid => {
+            const kind = portKind(data as unknown as PIDNodeData, pid);
+            if (kind === 'plug') return null;
+            const pt = perimeterPoint(geom.positions[pid] ?? spare[pid], W, H);
+            // The side decides which way React Flow thinks the port faces,
+            // which is what makes a line leave it in a sensible direction.
+            const position =
+              pt.side === 'top' ? Position.Top
+              : pt.side === 'bottom' ? Position.Bottom
+              : pt.side === 'left' ? Position.Left
+              : Position.Right;
+            const style: React.CSSProperties =
+              pt.side === 'top' || pt.side === 'bottom'
+                ? { left: pt.x, transform: 'translate(-50%, -50%)' }
+                : { top: pt.y, transform: 'translate(-50%, -50%)' };
+            return <Port key={pid} id={pid} kind={kind} position={position} style={style} />;
+          });
+        })()
+      ) : (
+        <>
+          {/* The feed in, at the near end. */}
+          <Port position={vertical ? Position.Top : Position.Left} id="in" />
 
-      {/* One tapping per outlet, down the long side. A plugged one is not
-          drawn at all -- a P&ID does not draw plugs, and a port nothing can
-          attach to is exactly what a plug is. */}
-      {portOffsets(outlets).map((off, i) => {
-        const pid = portId('p', i);
-        const kind = portKind(data as unknown as PIDNodeData, pid);
-        if (kind === 'plug') return null;
-        return (
-          <Port
-            key={pid}
-            id={pid}
-            kind={kind}
-            position={vertical ? Position.Right : Position.Bottom}
-            style={vertical ? { top: off } : { left: off }}
-          />
-        );
-      })}
+          {/* One tapping per outlet, down the long side. A plugged one is not
+              drawn at all -- a P&ID does not draw plugs. */}
+          {portOffsets(outlets).map((off, i) => {
+            const pid = portId('p', i);
+            const kind = portKind(data as unknown as PIDNodeData, pid);
+            if (kind === 'plug') return null;
+            return (
+              <Port
+                key={pid}
+                id={pid}
+                kind={kind}
+                position={vertical ? Position.Right : Position.Bottom}
+                style={vertical ? { top: off } : { left: off }}
+              />
+            );
+          })}
+        </>
+      )}
 
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
         <rect x="1" y="1" width={W - 2} height={H - 2} rx="3"

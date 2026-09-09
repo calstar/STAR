@@ -1,4 +1,5 @@
-import { type NodeProps } from '@xyflow/react';
+import { Position, type NodeProps } from '@xyflow/react';
+import { Port } from './Port';
 import type { PIDNodeData } from '../types';
 import { DraggableLabel } from './DraggableLabel';
 
@@ -18,10 +19,15 @@ const SIZES = { small: 36, normal: 60 } as const;
 export function SensorNode({ id, data, selected }: NodeProps) {
   const { componentType, label, labelOffset, rotation, options, color } = data as unknown as PIDNodeData;
   const S = SIZES[(options?.size as keyof typeof SIZES) ?? 'normal'] ?? SIZES.normal;
+  // Gauges and transducers are plumbed; probes and load cells clip.
+  const tapped = componentType === 'PT' || componentType === 'PG';
   const stroke = selected ? '#3b82f6' : (color ?? '#94a3b8');
 
   return (
     <div style={{ position: 'relative', width: S, height: S, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
+      {/* One tapping, at the bottom. Rotate the symbol to point it elsewhere. */}
+      {tapped && <Port position={Position.Bottom} id="b" />}
+
       <svg width={S} height={S} viewBox="0 0 60 60">
         <circle
           cx="30" cy="30" r="26"

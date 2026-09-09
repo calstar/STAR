@@ -58,11 +58,24 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset, rotation 
     const onMove = (e: MouseEvent) => {
       if (!dragStart.current) return;
       const { zoom } = getViewport();
+      const dx = (e.clientX - dragStart.current.mouseX) / zoom;
+      const dy = (e.clientY - dragStart.current.mouseY) / zoom;
+
+      // The offset lives in the symbol's own frame, and the symbol may be
+      // turned. A drag is measured on screen, so it has to be rotated *back*
+      // into that frame before it is added -- otherwise dragging a tag on a
+      // symbol rotated 90 degrees moves it sideways, and on one rotated 180 it
+      // moves the opposite way to the mouse.
+      const a = (spun * Math.PI) / 180;
+      const cos = Math.cos(a), sin = Math.sin(a);
+      const localDx = dx * cos + dy * sin;
+      const localDy = -dx * sin + dy * cos;
+
       setNodes(nds => nds.map(n =>
         n.id === nodeId
           ? { ...n, data: { ...n.data, labelOffset: {
-              x: dragStart.current!.ox + (e.clientX - dragStart.current!.mouseX) / zoom,
-              y: dragStart.current!.oy + (e.clientY - dragStart.current!.mouseY) / zoom,
+              x: dragStart.current!.ox + localDx,
+              y: dragStart.current!.oy + localDy,
             }}}
           : n,
       ));
@@ -76,7 +89,7 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset, rotation 
       window.removeEventListener('mousemove', onMove, true);
       window.removeEventListener('mouseup',   onUp,   true);
     };
-  }, [dragging, nodeId, setNodes, getViewport]);
+  }, [dragging, nodeId, setNodes, getViewport, spun]);
 
   return (
     <div

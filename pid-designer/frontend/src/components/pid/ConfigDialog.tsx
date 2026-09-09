@@ -10,6 +10,8 @@ import type { PortInfo, PortKind } from './ports';
 import { speciesById } from './fluids';
 import { SegmentPanel } from './SegmentPanel';
 import { BoreProfile } from './BoreProfile';
+import { ManifoldEditor } from './ManifoldEditor';
+import type { ManifoldGeometry } from './ManifoldEditor';
 import { fittingCount, transitionsOf } from './segments';
 import type { LineSegment } from './segments';
 import type { ComponentType, PIDNodeData } from './types';
@@ -39,13 +41,17 @@ export interface ConfigPatch {
   lineType?: string;
   ports?: Record<string, PortInfo>;
   segments?: LineSegment[];
+  geometry?: ManifoldGeometry;
 }
 
 interface Props {
   open: boolean;
   onClose: () => void;
   kind: 'node' | 'edge';
-  data: PIDNodeData & { lineType?: string; partNumber?: string; fluid?: string; segments?: LineSegment[] };
+  data: PIDNodeData & {
+    lineType?: string; partNumber?: string; fluid?: string;
+    segments?: LineSegment[]; geometry?: ManifoldGeometry;
+  };
   peers?: { id: string; label: string; hint?: string }[];
   readOnly: boolean;
   onSave: (patch: ConfigPatch) => void;
@@ -88,6 +94,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   const [partNumber, setPartNumber] = useState(data.partNumber ?? '');
   const [lineType, setLineType] = useState(data.lineType ?? 'pipe');
   const [segments, setSegments] = useState<LineSegment[]>([]);
+  const [geometry, setGeometry] = useState<ManifoldGeometry | undefined>(undefined);
 
   const spec: ComponentSpec | undefined =
     kind === 'edge' ? LINE_SPECS[lineType] : COMPONENT_SPECS[type];
@@ -100,6 +107,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
     setLineType(data.lineType ?? 'pipe');
     setPorts({ ...(data.ports ?? {}) });
     setSegments(data.segments ? structuredClone(data.segments) : []);
+    setGeometry(data.geometry ? structuredClone(data.geometry) : undefined);
   }, [open, data]);
 
   useEffect(() => {
@@ -131,6 +139,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
       fluid: fluid || undefined,
       partNumber: partNumber.trim() || undefined,
       ...(kind === 'edge' ? { lineType, segments: segments.length ? segments : undefined } : {}),
+      ...(geometry ? { geometry } : {}),
     });
     onClose();
   };
@@ -233,6 +242,15 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
 
         {kind === 'edge' && (
           <SegmentPanel segments={segments} onChange={setSegments} />
+        )}
+
+        {type === 'MANIFOLD' && (
+          <ManifoldEditor
+            outlets={Number(options.outlets ?? 4)}
+            geometry={geometry}
+            ports={ports}
+            onSave={setGeometry}
+          />
         )}
 
         {(spec.portGroups ?? []).map(group => (

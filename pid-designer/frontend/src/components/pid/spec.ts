@@ -250,6 +250,40 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
       P('bore', 'Port bore', 'length'),
     ],
   },
+
+  /**
+   * A junction is a tee.
+   *
+   * It stops being an anonymous dot the moment something flows out of its third
+   * leg, because then it is a node in the network with a mass balance and a
+   * loss on each path -- and those depend on its bore and which leg is the
+   * branch. What it deliberately does *not* carry is a K: a tee's K is a
+   * function of how the flow splits, and that is solved, not drawn.
+   */
+  JUNCTION: {
+    params: [
+      P('bore', 'Bore', 'length'),
+      P('branch_bore', 'Branch bore', 'length'),
+    ],
+    options: [
+      { key: 'teeKind', label: 'Tee', default: 'equal',
+        choices: [
+          { value: 'equal', label: 'Equal tee' },
+          { value: 'reducing', label: 'Reducing tee' },
+          { value: 'cross', label: 'Cross' },
+          { value: 'weldolet', label: 'Weldolet / branch fitting' },
+        ] },
+      { key: 'branchPort', label: 'Branch leg', default: 'auto',
+        choices: [
+          { value: 'auto', label: 'Work it out from the drawing' },
+          { value: 't', label: 'Top' },
+          { value: 'r', label: 'Right' },
+          { value: 'b', label: 'Bottom' },
+          { value: 'l', label: 'Left' },
+        ] },
+    ],
+  },
+
 };
 
 function instrumentSpec(): ComponentSpec {
