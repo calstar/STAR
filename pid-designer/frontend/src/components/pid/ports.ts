@@ -71,7 +71,9 @@ export function portsOf(node: Node): string[] {
   };
 
   switch (t) {
+    // Instruments clip rather than connect, so they have no ports at all.
     case 'RTD': case 'TC': case 'PT': case 'PG': case 'LC':
+      return [];
     case 'QD': case 'JUNCTION':
       return ['t', 'b', 'l', 'r'];
     case 'MAN': case 'ROT': case 'SOL': case 'RV': case 'CV':

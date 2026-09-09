@@ -1,27 +1,20 @@
-import { NodeResizer, type NodeProps } from '@xyflow/react';
+import { NodeResizer, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useReadOnly } from '@stardesign-ui';
-import { useReactFlow } from '@xyflow/react';
 import { useEffect, useRef, useState } from 'react';
 import type { PIDNodeData } from '../types';
 
 /**
- * A labelled box drawn round a section of the drawing.
+ * A labelled box drawn round part of the diagram.
  *
- * Grouping by hand, for the things a solver has no opinion about: this panel,
- * that skid, everything inside the blast shelter. Purely for the reader, which
- * is why it holds no parameters and contributes nothing to the graph.
+ * The middle takes no clicks -- a region is large and sits over other
+ * components, and a box that swallowed a click on the valve underneath it
+ * would be unusable. Only the title bar is interactive, and it is where the
+ * box is dragged, renamed and right-clicked from.
  *
- * Two details do the work:
- *
- * **The middle does not take clicks.** A region is large and sits over other
- * components, and a box that swallowed a click on the valve underneath it would
- * be unusable within a minute. Only the border and the title are interactive,
- * so the box can be moved and resized by its edge and is otherwise transparent
- * to everything inside it.
- *
- * **It sits behind.** Regions render under the components they enclose rather
- * than over them, so the drawing reads as components with a box around them
- * rather than a box with components on top.
+ * The title used to sit under a separate invisible grab strip, which is why
+ * double-clicking it to rename did nothing: the strip was drawn after the
+ * title and took the event. There is one interactive element now, so there is
+ * nothing to be shadowed by.
  */
 export function RegionNode({ id, data, selected }: NodeProps) {
   const { label, color } = data as unknown as PIDNodeData;
@@ -32,6 +25,7 @@ export function RegionNode({ id, data, selected }: NodeProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { if (!editing) setDraft(label ?? ''); }, [label, editing]);
+  useEffect(() => { if (editing) inputRef.current?.select(); }, [editing]);
 
   const stroke = color ?? '#64748b';
 
@@ -55,9 +49,8 @@ export function RegionNode({ id, data, selected }: NodeProps) {
           width: '100%',
           height: '100%',
           border: `1.5px dashed ${stroke}`,
-          borderRadius: 8,
-          background: `${stroke}0f`,
-          // The fill is inert; the border is not. See the note above.
+          borderRadius: 6,
+          background: `${stroke}0d`,
           pointerEvents: 'none',
           boxSizing: 'border-box',
         }}
@@ -66,20 +59,26 @@ export function RegionNode({ id, data, selected }: NodeProps) {
           className="nodrag"
           style={{
             position: 'absolute',
-            top: -9,
-            left: 10,
+            top: -10,
+            left: 8,
             pointerEvents: 'all',
             background: 'var(--color-bg-primary)',
             padding: '0 6px',
             fontSize: 11,
-            lineHeight: '18px',
+            lineHeight: '20px',
             color: stroke,
             fontFamily: 'monospace',
             letterSpacing: '0.04em',
-            cursor: readOnly ? 'default' : 'text',
+            cursor: readOnly ? 'default' : editing ? 'text' : 'grab',
             userSelect: 'none',
+            whiteSpace: 'nowrap',
           }}
-          onDoubleClick={e => { if (readOnly) return; e.stopPropagation(); setEditing(true); setTimeout(() => inputRef.current?.select(), 0); }}
+          title={readOnly ? undefined : 'Double-click to rename · right-click to colour'}
+          onDoubleClick={e => {
+            if (readOnly) return;
+            e.stopPropagation();
+            setEditing(true);
+          }}
         >
           {editing ? (
             <input
@@ -100,15 +99,6 @@ export function RegionNode({ id, data, selected }: NodeProps) {
             />
           ) : (label || 'Section')}
         </div>
-
-        {/* A grab strip along the top edge, so the box can be moved without
-            having to find its 1.5 px border. */}
-        <div
-          style={{
-            position: 'absolute', left: 0, right: 0, top: -4, height: 10,
-            pointerEvents: 'all', cursor: readOnly ? 'default' : 'grab',
-          }}
-        />
       </div>
     </>
   );

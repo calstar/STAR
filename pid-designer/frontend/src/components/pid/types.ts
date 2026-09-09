@@ -97,45 +97,38 @@ export interface ComponentDef {
 }
 
 export const COMPONENT_DEFS: ComponentDef[] = [
-  { id: 'RTD',    type: 'RTD', label: 'RTD_#',   fullName: 'Resistance Temperature Detector', group: 'Sensors' },
+  { id: 'RTD',    type: 'RTD', label: 'RTD_#',   fullName: 'RTD', group: 'Sensors' },
   { id: 'TC',     type: 'TC',  label: 'TC_#',    fullName: 'Thermocouple',                    group: 'Sensors' },
-  // Split because a 10 000 psi bottle transducer and a 500 psi tank
-  // transducer are different parts, and a drawing that calls both "PT" hides
-  // the one mistake that matters -- fitting the low one to the high side.
-  { id: 'PT_HP',  type: 'PT',  label: 'PT-HP_#', fullName: 'Pressure Transducer (high press)', group: 'Sensors',
-    preset: { pressureClass: 'high' } },
-  { id: 'PT_LP',  type: 'PT',  label: 'PT-LP_#', fullName: 'Pressure Transducer (low press)',  group: 'Sensors',
-    preset: { pressureClass: 'low' } },
-  { id: 'PG',     type: 'PG',  label: 'PG_#',    fullName: 'Pressure Gauge',                  group: 'Sensors' },
-  { id: 'LC',     type: 'LC',  label: 'LC_#',    fullName: 'Load Cell',                       group: 'Sensors' },
+  { id: 'PT_HP',  type: 'PT',  label: 'PT-HP_#', fullName: 'Transducer (high press)',        group: 'Sensors' },
+  { id: 'PT_LP',  type: 'PT',  label: 'PT-LP_#', fullName: 'Transducer (low press)',          group: 'Sensors' },
+  { id: 'PG',     type: 'PG',  label: 'PG_#',    fullName: 'Gauge',                  group: 'Sensors' },
+  { id: 'LC',     type: 'LC',  label: 'LC_#',    fullName: 'Load cell',                       group: 'Sensors' },
 
-  { id: 'MAN',    type: 'MAN', label: 'MAN_#',   fullName: 'Ball Valve (Manual)',             group: 'Valves' },
-  { id: 'ROT',    type: 'ROT', label: 'ROT_#',   fullName: 'Ball Valve (Rotary)',             group: 'Valves' },
-  { id: 'SOL',    type: 'SOL', label: 'SOL_#',   fullName: 'Solenoid Valve',                  group: 'Valves' },
+  { id: 'MAN',    type: 'MAN', label: 'MAN_#',   fullName: 'Ball valve, manual',             group: 'Valves' },
+  { id: 'ROT',    type: 'ROT', label: 'ROT_#',   fullName: 'Ball valve, rotary',             group: 'Valves' },
+  { id: 'SOL',    type: 'SOL', label: 'SOL_#',   fullName: 'Solenoid valve',                  group: 'Valves' },
 
-  { id: 'PR',     type: 'PR',  label: 'PR_#',    fullName: 'Pressure Regulator',              group: 'Flow Control' },
-  { id: 'RV',     type: 'RV',  label: 'RV_#',    fullName: 'Relief Valve',                    group: 'Flow Control' },
-  { id: 'CV',     type: 'CV',  label: 'CV_#',    fullName: 'Check Valve',                     group: 'Flow Control' },
-  { id: 'QD_G',   type: 'QD',  label: 'QD-G_#',  fullName: 'Quick Disconnect — ground half',   group: 'Flow Control',
+  { id: 'PR',     type: 'PR',  label: 'PR_#',    fullName: 'Regulator',              group: 'Flow Control' },
+  { id: 'RV',     type: 'RV',  label: 'RV_#',    fullName: 'Relief valve',                    group: 'Flow Control' },
+  { id: 'CV',     type: 'CV',  label: 'CV_#',    fullName: 'Check valve',                     group: 'Flow Control' },
+  { id: 'QD_G',   type: 'QD',  label: 'QD-G_#',  fullName: 'QD, ground half',   group: 'Flow Control',
     preset: { side: 'ground', service: 'fluid' } },
-  { id: 'QD_R',   type: 'QD',  label: 'QD-R_#',  fullName: 'Quick Disconnect — rocket half',   group: 'Flow Control',
+  { id: 'QD_R',   type: 'QD',  label: 'QD-R_#',  fullName: 'QD, rocket half',   group: 'Flow Control',
     preset: { side: 'rocket', service: 'fluid' } },
-  { id: 'QDH_G',  type: 'QD',  label: 'HQD-G_#', fullName: 'Hydraulic QD — ground half',       group: 'Flow Control',
+  { id: 'QDH_G',  type: 'QD',  label: 'HQD-G_#', fullName: 'Hydraulic QD, ground',       group: 'Flow Control',
     preset: { side: 'ground', service: 'hydraulic' } },
-  { id: 'QDH_R',  type: 'QD',  label: 'HQD-R_#', fullName: 'Hydraulic QD — rocket half',       group: 'Flow Control',
+  { id: 'QDH_R',  type: 'QD',  label: 'HQD-R_#', fullName: 'Hydraulic QD, rocket',       group: 'Flow Control',
     preset: { side: 'rocket', service: 'hydraulic' } },
 
-  { id: 'TANK',     type: 'TANK',     label: 'TANK',  fullName: 'Tank / COPV',                group: 'Hardware' },
-  { id: 'KB_N2',    type: 'KBOTTLE',  label: 'KB-N2_#',  fullName: 'K-bottle — GN2',          group: 'Supplies', fluid: 'nitrogen' },
-  { id: 'KB_HE',    type: 'KBOTTLE',  label: 'KB-He_#',  fullName: 'K-bottle — helium',       group: 'Supplies', fluid: 'helium' },
-  { id: 'DW_LN2',   type: 'DEWAR',    label: 'DW-LN2_#', fullName: 'Dewar — LN2 (cold flow)', group: 'Supplies', fluid: 'nitrogen' },
-  { id: 'DW_LOX',   type: 'DEWAR',    label: 'DW-LOX_#', fullName: 'Dewar — LOX (hotfire)',   group: 'Supplies', fluid: 'oxygen' },
-  { id: 'MANIFOLD', type: 'MANIFOLD', label: 'MAN-F', fullName: 'Manifold (splits one feed)', group: 'Hardware' },
+  { id: 'TANK',     type: 'TANK',     label: 'TANK',  fullName: 'Tank',                group: 'Hardware' },
+  { id: 'KBOTTLE',  type: 'KBOTTLE',  label: 'KB_#',  fullName: 'Pressurant bottle',          group: 'Supplies', fluid: 'nitrogen' },
+  { id: 'DEWAR',    type: 'DEWAR',    label: 'DW_#',  fullName: 'Dewar',                      group: 'Supplies', fluid: 'nitrogen' },
+  { id: 'MANIFOLD', type: 'MANIFOLD', label: 'MAN-F', fullName: 'Manifold',                   group: 'Hardware' },
   { id: 'ENGINE',   type: 'ENGINE',   label: 'ENG',   fullName: 'Injector + chamber',         group: 'Hardware' },
-  { id: 'INJECTOR', type: 'INJECTOR', label: 'INJ',   fullName: 'Injector (alone)',           group: 'Hardware' },
+  { id: 'INJECTOR', type: 'INJECTOR', label: 'INJ',   fullName: 'Injector only',           group: 'Hardware' },
 
-  { id: 'REGION', type: 'REGION', label: 'Section', fullName: 'Section box — group a skid or a panel', group: 'Annotation' },
-  { id: 'TEXT',   type: 'TEXT',   label: 'Text',    fullName: 'Text Annotation',                       group: 'Annotation' },
+  { id: 'REGION', type: 'REGION', label: 'Section', fullName: 'Section box', group: 'Annotation' },
+  { id: 'TEXT',   type: 'TEXT',   label: 'Text',    fullName: 'Text',                       group: 'Annotation' },
 ];
 
 /** The palette entry a node was dropped from, for defaulting its label. */

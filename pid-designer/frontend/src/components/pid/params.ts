@@ -26,12 +26,27 @@
 
 export type Provenance = 'measured' | 'manufacturer' | 'estimated' | 'default';
 
+/**
+ * Two choices, not four.
+ *
+ * `feedtwin.model.Param` distinguishes measured / manufacturer / estimated /
+ * default, and a run report cares about all four. Nobody filling in a valve Cv
+ * does. What a person actually knows is whether the number is real or a guess,
+ * so that is the question -- and the wider vocabulary stays underneath for
+ * anything that wants it.
+ */
 export const PROVENANCE_LABELS: Record<Provenance, string> = {
-  measured:     'Measured — on our own hardware',
-  manufacturer: 'Datasheet — cite document and revision',
-  estimated:    'Estimated — judgement, correlation, similar part',
-  default:      'Unchecked — nobody has looked at this yet',
+  measured:     'Verified',
+  manufacturer: 'Verified',
+  estimated:    'Estimate',
+  default:      'Estimate',
 };
+
+/** What the dropdown offers. */
+export const PROVENANCE_CHOICES: { value: Provenance; label: string }[] = [
+  { value: 'estimated', label: 'Estimate' },
+  { value: 'measured',  label: 'Verified' },
+];
 
 /** A number, with where it came from. Mirrors `feedtwin.model.Param`. */
 export interface ParamValue {

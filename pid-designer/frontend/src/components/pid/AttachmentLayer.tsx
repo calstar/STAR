@@ -5,13 +5,14 @@ import type { PIDNodeData } from './types';
 /**
  * The leaders from instruments to what they measure.
  *
- * Drawn in one SVG in viewport space rather than as part of each sensor,
- * because a leader spans two elements and belongs to neither: an instrument
- * clipped to a line has no idea where that line is, and the line has no idea
- * anything is watching it.
+ * Drawn in one SVG in viewport space rather than inside each sensor, because a
+ * leader spans two elements and belongs to neither.
  *
- * Deliberately faint and behind everything. It is a reminder of what a probe
- * is attached to, not a pipe, and a reader should never mistake one for flow.
+ * It starts at the *edge* of the instrument nearest its host, not at the
+ * centre: a line drawn from the middle crosses the symbol and its text, which
+ * looked like a pipe running through the probe.
+ *
+ * Faint and behind everything, so it never reads as flow.
  */
 export function AttachmentLayer({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) {
   const leaders: { id: string; x1: number; y1: number; x2: number; y2: number }[] = [];
@@ -21,10 +22,21 @@ export function AttachmentLayer({ nodes, edges }: { nodes: Node[]; edges: Edge[]
     if (!host) continue;
     const to = leaderTarget(host, nodes, edges);
     if (!to) continue;
+    const w = n.measured?.width ?? 60;
+    const h = n.measured?.height ?? 60;
+    const cx = n.position.x + w / 2;
+    const cy = n.position.y + h / 2;
+    // Step out from the centre along the line to the host, by the symbol's
+    // radius, so the leader begins where the circle ends.
+    const dx = to.x - cx;
+    const dy = to.y - cy;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1) continue;
+    const r = Math.min(w, h) / 2;
     leaders.push({
       id: n.id,
-      x1: n.position.x + (n.measured?.width ?? 60) / 2,
-      y1: n.position.y + (n.measured?.height ?? 60) / 2,
+      x1: cx + (dx / dist) * r,
+      y1: cy + (dy / dist) * r,
       x2: to.x,
       y2: to.y,
     });
