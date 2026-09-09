@@ -71,6 +71,18 @@ blended — on a drawing that is a line run to the wrong port. A tank is a sourc
 rather than a junction, and its top ports are its ullage side, so pressurising a
 LOX tank with nitrogen is not mistaken for a fault.
 
+**Ports have an identity, not just a count.** A manifold is one symbol here and
+a plenum plus one branch per port in a solve, so each port on a manifold or a
+tank takes a name and a kind: *flow* (carries fluid), *instrument* (a real
+tapping that carries none, drawn hollow), or *plug* — which is **not drawn at
+all**, because a P&ID does not draw plugs. Only ports that differ from the
+default are stored.
+
+Port ids keep the bare prefix at index zero (`t`, not `t1`), so raising a port
+count never renames the port existing lines are attached to. A line attached to
+a port that has been removed or plugged is an error in the checks panel: React
+Flow cannot place it, so it would otherwise be saved and never drawn.
+
 **Instruments clip to what they measure.** Drop an RTD on a tank or a line and
 it attaches, with a leader and no pipe. A probe carries no flow, so wiring one
 into the flow path makes it a dead end in a solve and a detour on the drawing.
@@ -85,6 +97,12 @@ not, a tank with no pressure or temperature, probes wired into the flow path,
 and every value nobody has established. Severities are chosen so an unfinished
 drawing is quiet — a check that fires on correct work is one people learn to
 dismiss.
+
+**Vents are read off the drawing.** A valve connected on one side only is a vent
+to atmosphere, drawn with the open-to-atmosphere mark. Valves only, and only
+with exactly one connection: a spare port elsewhere is a plug, and a valve with
+no connections is simply undrawn. Supplies are symbols (K-bottle, dewar), so a
+fill valve has something on both sides and is never mistaken for a vent.
 
 ## Directory structure
 
@@ -105,6 +123,8 @@ pid-designer/
         ├── checks.ts       #   what is wrong with this feed system
         ├── pages.ts        #   rocket side / GSE side, one diagram
         ├── attach.ts       #   instruments clip rather than connect
+        ├── ports.ts        #   what a component's ports are, and what for
+        ├── vents.ts        #   a valve open on one side vents to atmosphere
         └── nodes/          #   one file per symbol
 ```
 
