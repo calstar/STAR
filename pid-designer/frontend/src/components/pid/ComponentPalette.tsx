@@ -95,6 +95,14 @@ function PaletteSymbol({ type }: { type: ComponentType }) {
           <circle cx="10" cy="10" r="6" fill="#94a3b8" stroke="#94a3b8" strokeWidth="1" />
         </svg>
       );
+    case 'REGION':
+      return (
+        <svg width="34" height="26" viewBox="0 0 34 26">
+          <rect x="2" y="5" width="30" height="19" rx="3" fill="#64748b14" stroke="#64748b" strokeWidth="1.2" strokeDasharray="4 2.5" />
+          <rect x="5" y="1" width="16" height="8" rx="1" fill="#0f172a" />
+          <text x="7" y="7.5" fontSize="6" fill="#94a3b8" fontFamily="monospace">GSE</text>
+        </svg>
+      );
     case 'TEXT':
       return (
         <svg width="32" height="24" viewBox="0 0 32 24">

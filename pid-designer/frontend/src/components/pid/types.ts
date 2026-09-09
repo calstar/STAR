@@ -5,7 +5,7 @@ export type ComponentType =
   | 'MAN' | 'ROT' | 'SOL'
   | 'PR' | 'RV' | 'CV' | 'QD'
   | 'TANK' | 'INJECTOR' | 'ENGINE' | 'MANIFOLD'
-  | 'TEXT'
+  | 'TEXT' | 'REGION'
   | 'JUNCTION';
 
 export type FluidType = 'fuel' | 'lox' | 'pressurant' | 'default';
@@ -117,7 +117,8 @@ export const COMPONENT_DEFS: ComponentDef[] = [
   { id: 'ENGINE',   type: 'ENGINE',   label: 'ENG',   fullName: 'Injector + chamber',         group: 'Hardware' },
   { id: 'INJECTOR', type: 'INJECTOR', label: 'INJ',   fullName: 'Injector (alone)',           group: 'Hardware' },
 
-  { id: 'TEXT',   type: 'TEXT', label: 'Text',   fullName: 'Text Annotation',                 group: 'Annotation' },
+  { id: 'REGION', type: 'REGION', label: 'Section', fullName: 'Section box — group a skid or a panel', group: 'Annotation' },
+  { id: 'TEXT',   type: 'TEXT',   label: 'Text',    fullName: 'Text Annotation',                       group: 'Annotation' },
 ];
 
 /** The palette entry a node was dropped from, for defaulting its label. */

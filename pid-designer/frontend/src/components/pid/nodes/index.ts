@@ -10,6 +10,7 @@ import { TextNode }        from './TextNode';
 import { JunctionNode }    from './JunctionNode';
 import { EngineNode }      from './EngineNode';
 import { ManifoldNode }    from './ManifoldNode';
+import { RegionNode }      from './RegionNode';
 
 export const nodeTypes: NodeTypes = {
   RTD:      SensorNode,
@@ -28,6 +29,7 @@ export const nodeTypes: NodeTypes = {
   INJECTOR: TankNode,
   ENGINE:   EngineNode,
   MANIFOLD: ManifoldNode,
+  REGION:   RegionNode,
   TEXT:     TextNode,
   JUNCTION: JunctionNode,
 };

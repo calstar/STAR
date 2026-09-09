@@ -455,7 +455,9 @@ function PIDCanvas({
     // easier to read, not harder.
     if (host) position = clearOfHost(host, position, snapshot.current.nodes, snapshot.current.edges);
 
-    const nodeData = type === 'TEXT'
+    const nodeData = type === 'REGION'
+      ? { componentType: type, label: 'Section', page }
+      : type === 'TEXT'
       ? { text: 'Text', page }
       : type === 'JUNCTION'
       ? { page }
@@ -481,6 +483,11 @@ function PIDCanvas({
       id,
       type,
       position,
+      // Behind the components it encloses, so the drawing reads as components
+      // in a box rather than a box over components.
+      ...(type === 'REGION'
+        ? { width: 320, height: 220, zIndex: -1, style: { width: 320, height: 220 } }
+        : {}),
       data: nodeData as unknown as Record<string, unknown>,
     }]);
   }, [screenToFlowPosition, setNodes, page]);

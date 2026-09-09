@@ -121,7 +121,8 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
 
   const noFluid = nodes.filter(n => {
     const t = dataOf(n)?.componentType;
-    if (!t || t === 'TEXT' || t === 'JUNCTION' || isInstrument(t)) return false;
+    // Annotation is not plumbing: a section box has no fluid in it.
+    if (!t || t === 'TEXT' || t === 'REGION' || t === 'JUNCTION' || isInstrument(t)) return false;
     return !fluids.get(n.id)?.species;
   });
   if (noFluid.length) {

@@ -49,7 +49,11 @@ export function targetAt(
   for (let i = nodes.length - 1; i >= 0; i--) {
     const n = nodes[i];
     if (n.id === selfId) continue;
-    if (isInstrument((n.data as unknown as PIDNodeData)?.componentType)) continue;
+    const t2 = (n.data as unknown as PIDNodeData)?.componentType;
+    // Never clip a probe to another probe, and never to a section box: a
+    // region is scenery drawn over half the diagram, so it would swallow
+    // every drop made inside it.
+    if (isInstrument(t2) || t2 === 'REGION' || t2 === 'TEXT') continue;
     const w = n.measured?.width ?? 60;
     const h = n.measured?.height ?? 60;
     if (point.x >= n.position.x && point.x <= n.position.x + w &&
