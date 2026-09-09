@@ -20,7 +20,26 @@ export const FLUID_COLORS: Record<FluidType, string> = {
 export interface PIDNodeData {
   componentType: ComponentType;
   label: string;
+  /**
+   * The species this component *declares*, for sources. Everything downstream
+   * inherits it -- see `fluids.ts` -- so this is set on tanks and bottles and
+   * left alone everywhere else.
+   */
+  fluid?: string;
+  /** Superseded by `fluid`. Read for migration only; see `declaredFluid`. */
   fluidType?: FluidType;
+  /**
+   * Catalogue part number. When set, the numbers below are overrides on top of
+   * what the part already says -- the drawing should not be where a datasheet
+   * lives.
+   */
+  partNumber?: string;
+  /** Explicit colour override, `#rrggbb`. Beats the fluid colour when set. */
+  color?: string;
+  /** Which page of the diagram this lives on. */
+  page?: string;
+  /** For a sensor: the id of the component or line it is clipped to. */
+  attachedTo?: string;
   notes?: string;
   labelOffset?: { x: number; y: number };
   rotation?: number;
@@ -36,6 +55,20 @@ export interface PIDNodeData {
    * enumerations rather than quantities and carry no unit.
    */
   options?: Record<string, string>;
+}
+
+/** A line: what the pipe between two components actually is. */
+export interface PIDEdgeData {
+  /** Which of feed-twin's branch components this run is. */
+  lineType?: 'pipe' | 'flex_hose' | 'bend' | 'fitting';
+  params?: Record<string, ParamValue>;
+  options?: Record<string, string>;
+  partNumber?: string;
+  color?: string;
+  page?: string;
+  /** Superseded by fluid propagation; kept so old diagrams still draw. */
+  fluidType?: FluidType;
+  [key: string]: unknown;
 }
 
 export interface ComponentDef {
@@ -70,10 +103,14 @@ export const COMPONENT_DEFS: ComponentDef[] = [
   { id: 'PR',     type: 'PR',  label: 'PR_#',    fullName: 'Pressure Regulator',              group: 'Flow Control' },
   { id: 'RV',     type: 'RV',  label: 'RV_#',    fullName: 'Relief Valve',                    group: 'Flow Control' },
   { id: 'CV',     type: 'CV',  label: 'CV_#',    fullName: 'Check Valve',                     group: 'Flow Control' },
-  { id: 'QD_G',   type: 'QD',  label: 'QD-G_#',  fullName: 'Quick Disconnect (ground half)',  group: 'Flow Control',
-    preset: { side: 'ground' } },
-  { id: 'QD_R',   type: 'QD',  label: 'QD-R_#',  fullName: 'Quick Disconnect (rocket half)',  group: 'Flow Control',
-    preset: { side: 'rocket' } },
+  { id: 'QD_G',   type: 'QD',  label: 'QD-G_#',  fullName: 'Quick Disconnect — ground half',   group: 'Flow Control',
+    preset: { side: 'ground', service: 'fluid' } },
+  { id: 'QD_R',   type: 'QD',  label: 'QD-R_#',  fullName: 'Quick Disconnect — rocket half',   group: 'Flow Control',
+    preset: { side: 'rocket', service: 'fluid' } },
+  { id: 'QDH_G',  type: 'QD',  label: 'HQD-G_#', fullName: 'Hydraulic QD — ground half',       group: 'Flow Control',
+    preset: { side: 'ground', service: 'hydraulic' } },
+  { id: 'QDH_R',  type: 'QD',  label: 'HQD-R_#', fullName: 'Hydraulic QD — rocket half',       group: 'Flow Control',
+    preset: { side: 'rocket', service: 'hydraulic' } },
 
   { id: 'TANK',     type: 'TANK',     label: 'TANK',  fullName: 'Tank / COPV',                group: 'Hardware' },
   { id: 'MANIFOLD', type: 'MANIFOLD', label: 'MAN-F', fullName: 'Manifold (splits one feed)', group: 'Hardware' },

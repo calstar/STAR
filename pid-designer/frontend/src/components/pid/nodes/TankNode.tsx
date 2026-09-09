@@ -1,7 +1,8 @@
 import { Position, type NodeProps } from '@xyflow/react';
 import { Port } from './Port';
 import type { PIDNodeData } from '../types';
-import { FLUID_COLORS } from '../types';
+import { speciesById, colorForSpecies, UNSET_COLOR } from '../fluids';
+import { useNodeFluid } from '../FluidContext';
 import { DraggableLabel } from './DraggableLabel';
 
 const TANK_W = 60, TANK_H = 100;
@@ -30,9 +31,14 @@ function endPorts(n: number, prefix: 't' | 'b', position: Position, width: numbe
 }
 
 export function TankNode({ id, data, selected }: NodeProps) {
-  const { componentType, label, labelOffset, fluidType, rotation, options } = data as unknown as PIDNodeData;
+  const { componentType, label, labelOffset, rotation, options, color } = data as unknown as PIDNodeData;
   const stroke = selected ? '#3b82f6' : '#94a3b8';
-  const fluidColor = FLUID_COLORS[fluidType ?? 'default'];
+  // Declared here, or inherited from whatever feeds it. Naming the species on
+  // the symbol is the point of picking a real one: "ETH" and "LOX" are what a
+  // reader is checking, and "fuel" never told them which fuel.
+  const assigned = useNodeFluid(id);
+  const species = speciesById(assigned?.species ?? undefined);
+  const fluidColor = color ?? (species ? colorForSpecies(species.id) : UNSET_COLOR);
   const isInjector = componentType === 'INJECTOR';
 
   if (isInjector) {
@@ -69,7 +75,7 @@ export function TankNode({ id, data, selected }: NodeProps) {
           fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
         <text x="30" y="52" textAnchor="middle" fontSize="10" fill={fluidColor}
           fontFamily="monospace" fontWeight="bold">
-          {fluidType?.toUpperCase() ?? 'TANK'}
+          {species?.short ?? 'TANK'}
         </text>
       </svg>
 

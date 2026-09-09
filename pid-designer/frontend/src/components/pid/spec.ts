@@ -30,6 +30,14 @@ export interface ParamSpec {
   suggested?: { value: number; unit: string };
 }
 
+/**
+ * Sentinel for an option whose choices are *other components on this drawing*.
+ *
+ * The spec cannot list them -- it does not know what anybody has drawn -- so
+ * the dialog fills them in at render time and matches on this identity.
+ */
+export const PEER_CHOICES: { value: string; label: string }[] = [];
+
 export interface OptionSpec {
   key: string;
   label: string;
@@ -118,7 +126,7 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
   },
 
   QD: {
-    summary: 'Quick disconnect. Every rocket-side half needs a ground-side half to mate with — the checks panel watches for that.',
+    summary: 'Quick disconnect. A flight half and a ground half that mate; the checks panel watches that every rocket-side half has one.',
     params: [
       P('Cv', 'Cv when mated', 'flow_coefficient'),
       P('bore', 'Internal bore', 'length'),
@@ -129,10 +137,16 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
           { value: 'ground', label: 'Ground / GSE half' },
           { value: 'rocket', label: 'Rocket / flight half' },
         ],
-        description: 'Which half of the pair this symbol is. Pairing is checked on the mate group below.' },
-      { key: 'mateGroup', label: 'Mate group', default: '',
-        choices: [], // free text; see ConfigDialog
-        description: 'A name shared by the two halves that mate — "LOX fill", "Eth vent". Halves with the same group are treated as a pair.' },
+        description: 'Which half this symbol is. A rocket half leaves with the vehicle; a ground half stays behind.' },
+      { key: 'service', label: 'Service', default: 'fluid',
+        choices: [
+          { value: 'fluid',     label: 'Fluid — propellant or pressurant' },
+          { value: 'hydraulic', label: 'Hydraulic' },
+        ],
+        description: 'Drawn differently so the two are told apart at a glance. Both behave the same in a solve.' },
+      { key: 'pairedWith', label: 'Mates with', default: '',
+        choices: PEER_CHOICES,
+        description: 'The disconnect on the other side of the umbilical. Pick "no pair needed" for a half that genuinely stands alone — a capped test port, or a fill point with nothing flying away from it — and the checks panel will stop asking.' },
     ],
   },
 
@@ -239,3 +253,88 @@ function sensorSpec(summary: string): ComponentSpec {
     ],
   };
 }
+
+/**
+ * What a line is.
+ *
+ * The gap this closes is the one that mattered most: an edge carried a colour
+ * and nothing else, so a reader could import the topology and still not
+ * compute a single pressure. Most of the drop in a feed system is in the pipe
+ * -- length, bore, roughness, and whatever fittings are lumped into the run --
+ * and none of it was anywhere.
+ *
+ * Four kinds, matching `components.toml` rather than inventing a vocabulary:
+ * hardline, flex hose, a discrete bend, and a single fitting. A hose is not a
+ * rougher pipe; its ends are crimped fittings with their own loss and it has a
+ * bend radius that is usually what actually constrains a routing.
+ */
+export const LINE_SPECS: Record<string, ComponentSpec> = {
+  pipe: {
+    summary: 'Hardline — a straight run of tube.',
+    params: [
+      P('length', 'Developed length', 'length', 'Along the centreline, end to end.'),
+      P('bore', 'Internal diameter', 'length',
+        'The actual bore, not the nominal tube size: 3/8 x 0.035 tube bores 0.305 in, and using 0.375 under-predicts the loss.'),
+      P('roughness', 'Wall roughness', 'length',
+        'Absolute. Clean drawn stainless is about 1.5 microns; increase it for used or welded line.',
+        { value: 1.5e-3, unit: 'mm' }),
+      P('K_minor', 'Lumped fitting K', 'dimensionless',
+        'A shortcut for fittings in this run that are not drawn. It costs the per-fitting provenance a drawn fitting would keep, so prefer drawing them where you know them.',
+        { value: 0, unit: '-' }),
+    ],
+  },
+
+  flex_hose: {
+    summary: 'Flex hose. Rougher than hardline, with crimped ends that dominate the loss on a short run.',
+    params: [
+      P('length', 'Developed length', 'length', 'End fitting to end fitting.'),
+      P('bore', 'Liner internal diameter', 'length'),
+      P('installed_bend_radius', 'Installed bend radius', 'length',
+        'The radius it is actually routed to. Leave blank for a straight run; when set, friction is computed for curved flow, which is materially higher.'),
+      P('min_bend_radius', 'Minimum bend radius (static)', 'length',
+        'Manufacturer figure. Bending tighter collapses a smooth-bore liner or fatigues a convoluted one — usually the real constraint on a routing.'),
+      P('end_fitting_K', 'Both end fittings, K', 'dimensionless', undefined, { value: 0.5, unit: '-' }),
+    ],
+    options: [
+      { key: 'construction', label: 'Construction', default: 'smooth_bore',
+        choices: [
+          { value: 'smooth_bore', label: 'Smooth bore (PTFE / elastomer liner)' },
+          { value: 'convoluted',  label: 'Convoluted metal' },
+        ],
+        description: 'Convoluted hose is far rougher — the convolutions are in the flow path, not just the braid — and loses several times what a smooth bore of the same size does.' },
+    ],
+  },
+
+  bend: {
+    summary: 'A discrete bend in hardline — an elbow, or tube bent on a former.',
+    params: [
+      P('bore', 'Internal diameter', 'length'),
+      P('bend_radius', 'Centreline radius', 'length',
+        'The number that matters: at r/D = 1 a bend carries about three times the friction of a straight run, and at r/D = 3 still nearly twice.'),
+      P('angle', 'Turn angle', 'angle', undefined, { value: 90, unit: 'deg' }),
+    ],
+  },
+
+  fitting: {
+    summary: 'One fitting, with its own K and its own provenance.',
+    params: [
+      P('bore', 'Bore of the run it sits in', 'length', 'The resistance coefficient is referred to this diameter.'),
+    ],
+    options: [
+      { key: 'kind', label: 'Which fitting', default: 'elbow_90',
+        choices: [
+          'elbow_90', 'elbow_45', 'bend', 'contraction', 'expansion',
+          'entrance_sharp', 'exit', 'tee_run', 'tee_branch',
+          'ball_valve_full', 'gate_valve_full', 'globe_valve', 'swing_check',
+        ].map(k => ({ value: k, label: k.replace(/_/g, ' ') })),
+        description: 'Each maps to a correlation, most of them from Crane TP-410.' },
+    ],
+  },
+};
+
+export const LINE_TYPE_LABELS: Record<string, string> = {
+  pipe: 'Hardline',
+  flex_hose: 'Flex hose',
+  bend: 'Bend',
+  fitting: 'Fitting',
+};

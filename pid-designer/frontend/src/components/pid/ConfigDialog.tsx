@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Modal } from '../ui';
 import { btn, primaryBtn } from '../../lib/ui';
-import { COMPONENT_SPECS } from './spec';
-import type { OptionSpec, ParamSpec } from './spec';
+import { COMPONENT_SPECS, LINE_SPECS, LINE_TYPE_LABELS, PEER_CHOICES } from './spec';
+import type { ComponentSpec, OptionSpec, ParamSpec } from './spec';
+import { SPECIES } from './fluids';
 import { PROVENANCE_LABELS, UNITS, ABSOLUTE_NOTE } from './params';
 import type { ParamValue, Provenance } from './params';
 import type { ComponentType, PIDNodeData } from './types';
@@ -30,13 +31,25 @@ import type { ComponentType, PIDNodeData } from './types';
  * field never masquerades as a measured nought.
  */
 
+export interface ConfigPatch {
+  params: Record<string, ParamValue>;
+  options: Record<string, string>;
+  label: string;
+  fluid?: string;
+  partNumber?: string;
+  lineType?: string;
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
-  nodeId: string;
-  data: PIDNodeData;
+  /** A component, or a line. Lines pick their kind inside the dialog. */
+  kind: 'node' | 'edge';
+  data: PIDNodeData & { lineType?: string; partNumber?: string; fluid?: string };
+  /** Other components this one could reference — used by the QD pair picker. */
+  peers?: { id: string; label: string; hint?: string }[];
   readOnly: boolean;
-  onSave: (patch: { params: Record<string, ParamValue>; options: Record<string, string>; label: string }) => void;
+  onSave: (patch: ConfigPatch) => void;
 }
 
 type Draft = { value: string; unit: string; source: Provenance; reference: string };
@@ -60,19 +73,33 @@ function toDraft(spec: ParamSpec, existing?: ParamValue): Draft {
   };
 }
 
-export function ConfigDialog({ open, onClose, data, readOnly, onSave }: Props) {
+export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSave }: Props) {
   const type = data.componentType as ComponentType;
-  const spec = COMPONENT_SPECS[type];
 
   const [label, setLabel] = useState(data.label ?? '');
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [options, setOptions] = useState<Record<string, string>>({});
+  const [fluid, setFluid] = useState<string>(data.fluid ?? '');
+  const [partNumber, setPartNumber] = useState(data.partNumber ?? '');
+  // A line picks what it is inside the dialog: a hose is not a rougher pipe.
+  const [lineType, setLineType] = useState(data.lineType ?? 'pipe');
 
-  // Reset whenever a different symbol is opened, so a dialog never shows the
+  const spec: ComponentSpec | undefined =
+    kind === 'edge' ? LINE_SPECS[lineType] : COMPONENT_SPECS[type];
+
+  // Reset whenever a different subject is opened, so a dialog never shows the
   // last one's numbers under this one's name.
   useEffect(() => {
-    if (!open || !spec) return;
+    if (!open) return;
     setLabel(data.label ?? '');
+    setFluid(data.fluid ?? '');
+    setPartNumber(data.partNumber ?? '');
+    setLineType(data.lineType ?? 'pipe');
+  }, [open, data]);
+
+  // Drafts follow the spec, which for a line changes when its kind does.
+  useEffect(() => {
+    if (!open || !spec) return;
     setDrafts(Object.fromEntries(spec.params.map(p => [p.key, toDraft(p, data.params?.[p.key])])));
     setOptions(Object.fromEntries(
       (spec.options ?? []).map(o => [o.key, data.options?.[o.key] ?? o.default]),
@@ -98,15 +125,26 @@ export function ConfigDialog({ open, onClose, data, readOnly, onSave }: Props) {
         ...(d.reference.trim() ? { reference: d.reference.trim() } : {}),
       };
     }
-    onSave({ params, options, label: label.trim() || data.label });
+    onSave({
+      params,
+      options,
+      label: label.trim() || data.label,
+      fluid: fluid || undefined,
+      partNumber: partNumber.trim() || undefined,
+      ...(kind === 'edge' ? { lineType } : {}),
+    });
     onClose();
   };
+
+  const title = kind === 'edge'
+    ? `Line — ${LINE_TYPE_LABELS[lineType] ?? lineType}`
+    : `${data.label || type} — configuration`;
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title={`${data.label || type} — configuration`}
+      title={title}
       width="w-[540px]"
       footer={
         <div className="flex gap-2">
@@ -122,16 +160,65 @@ export function ConfigDialog({ open, onClose, data, readOnly, onSave }: Props) {
           <p className="leading-relaxed text-[var(--color-text-secondary)]">{spec.summary}</p>
         )}
 
+        {kind === 'edge' && (
+          <label className="block">
+            <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">What this run is</span>
+            <select
+              value={lineType}
+              disabled={readOnly}
+              onChange={e => setLineType(e.target.value)}
+              className={selectCls}
+            >
+              {Object.keys(LINE_SPECS).map(k => (
+                <option key={k} value={k}>{LINE_TYPE_LABELS[k] ?? k}</option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {kind === 'node' && (
+          <label className="block">
+            <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Tag</span>
+            <input
+              value={label}
+              readOnly={readOnly}
+              onChange={e => setLabel(e.target.value)}
+              className={inputCls}
+            />
+            <span className="mt-1 block text-[10px] text-[var(--color-text-muted)]">
+              The name this component is known by, on the drawing and in a solve.
+            </span>
+          </label>
+        )}
+
+        {kind === 'node' && (
+          <label className="block">
+            <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Fluid</span>
+            <select value={fluid} disabled={readOnly} onChange={e => setFluid(e.target.value)} className={selectCls}>
+              <option value="">Inherit from what feeds it</option>
+              {SPECIES.map(sp => <option key={sp.id} value={sp.id}>{sp.label}</option>)}
+            </select>
+            <span className="mt-1 block leading-relaxed text-[10px] text-[var(--color-text-muted)]">
+              Set this on tanks and bottles. Everything downstream inherits it, so a line
+              is coloured and named by whatever reaches it — and two fluids arriving at one
+              component is reported rather than blended.
+            </span>
+          </label>
+        )}
+
         <label className="block">
-          <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Tag</span>
+          <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Part number</span>
           <input
-            value={label}
+            value={partNumber}
             readOnly={readOnly}
-            onChange={e => setLabel(e.target.value)}
-            className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1 text-xs outline-none focus:border-[var(--color-accent)]"
+            placeholder="e.g. swagelok-ss-8bk-v51"
+            onChange={e => setPartNumber(e.target.value)}
+            className={inputCls}
           />
-          <span className="mt-1 block text-[10px] text-[var(--color-text-muted)]">
-            The name this component is known by, on the drawing and in a solve.
+          <span className="mt-1 block leading-relaxed text-[10px] text-[var(--color-text-muted)]">
+            If this is a catalogued part, name it and leave the fields below blank — the
+            catalogue already holds its datasheet and whatever the bench measured. Fill a
+            field only to override the part for this one installation.
           </span>
         </label>
 
@@ -140,8 +227,9 @@ export function ConfigDialog({ open, onClose, data, readOnly, onSave }: Props) {
             key={o.key}
             spec={o}
             value={options[o.key] ?? o.default}
+            peers={peers}
             readOnly={readOnly}
-            onChange={v => setOptions(s => ({ ...s, [o.key]: v }))}
+            onChange={v => setOptions(s2 => ({ ...s2, [o.key]: v }))}
           />
         ))}
 
@@ -163,9 +251,35 @@ export function ConfigDialog({ open, onClose, data, readOnly, onSave }: Props) {
   );
 }
 
-function OptionField({ spec, value, readOnly, onChange }: {
-  spec: OptionSpec; value: string; readOnly: boolean; onChange: (v: string) => void;
+const inputCls =
+  'mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1 text-xs outline-none focus:border-[var(--color-accent)]';
+const selectCls = inputCls;
+
+function OptionField({ spec, value, peers, readOnly, onChange }: {
+  spec: OptionSpec; value: string; peers?: { id: string; label: string; hint?: string }[];
+  readOnly: boolean; onChange: (v: string) => void;
 }) {
+  // An option whose choices are other components on the drawing, resolved at
+  // render time rather than declared in the spec -- the spec cannot know what
+  // else somebody has drawn.
+  if (spec.choices === PEER_CHOICES) {
+    return (
+      <label className="block">
+        <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">{spec.label}</span>
+        <select value={value} disabled={readOnly} onChange={e => onChange(e.target.value)} className={selectCls}>
+          <option value="">Not chosen yet</option>
+          <option value="none">No pair needed — this half stands alone</option>
+          {(peers ?? []).map(p => (
+            <option key={p.id} value={p.id}>{p.label}{p.hint ? ` — ${p.hint}` : ''}</option>
+          ))}
+        </select>
+        {spec.description && (
+          <span className="mt-1 block leading-relaxed text-[10px] text-[var(--color-text-muted)]">{spec.description}</span>
+        )}
+      </label>
+    );
+  }
+
   const free = spec.choices.length === 0;
   return (
     <label className="block">

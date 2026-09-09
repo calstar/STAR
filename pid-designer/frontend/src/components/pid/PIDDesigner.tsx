@@ -31,11 +31,13 @@ import type { DiagramMeta, DocRef, MicroVersion, ReleaseVersion, Snapshot } from
 import { nodeTypes } from './nodes';
 import { BranchableEdge } from './BranchableEdge';
 import { nextNodeId, seedIdsFrom } from './ids';
-import { FLUID_COLORS, defFor } from './types';
-import type { PIDNodeData, FluidType } from './types';
+import { defFor } from './types';
+import type { PIDNodeData } from './types';
 import { ConfigDialog } from './ConfigDialog';
+import type { ConfigPatch } from './ConfigDialog';
+import { FluidProvider } from './FluidContext';
+import { ColorMenu } from './ColorMenu';
 import { COMPONENT_SPECS } from './spec';
-import type { ParamValue } from './params';
 
 export type InteractionMode = 'pan' | 'select';
 
@@ -158,10 +160,12 @@ function PIDCanvas({
 }: CanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const [edgeMenu, setEdgeMenu] = useState<{ id: string; x: number; y: number } | null>(null);
-  // Which symbol's config is open. Held as an id rather than the node, so the
-  // dialog reads live data and a save is never applied to a stale copy.
-  const [configFor, setConfigFor] = useState<string | null>(null);
+  const [colorMenu, setColorMenu] =
+    useState<{ kind: 'node' | 'edge'; id: string; x: number; y: number } | null>(null);
+  // Which symbol or line has its config open. Held as an id rather than the
+  // object, so the dialog reads live data and a save is never applied to a
+  // stale copy.
+  const [configFor, setConfigFor] = useState<{ kind: 'node' | 'edge'; id: string } | null>(null);
   const { screenToFlowPosition } = useReactFlow();
 
   const { undo, redo } = useHistory(nodes, edges, setNodes, setEdges);
@@ -329,15 +333,42 @@ function PIDCanvas({
 
   const edgeTypes = useMemo(() => ({ smoothstep: BranchableEdge, default: BranchableEdge }), []);
 
-  const configNode = configFor ? nodes.find(n => n.id === configFor) ?? null : null;
+  const configSubject = configFor
+    ? configFor.kind === 'node'
+      ? nodes.find(n => n.id === configFor.id) ?? null
+      : edges.find(e => e.id === configFor.id) ?? null
+    : null;
+
+  /**
+   * The disconnects this one could mate with: every other QD on the drawing,
+   * with the opposite half listed first because that is what a pair is.
+   */
+  const pairPeers = useMemo(() => {
+    if (configFor?.kind !== 'node') return undefined;
+    const me = nodes.find(n => n.id === configFor.id);
+    const meData = me?.data as unknown as PIDNodeData | undefined;
+    if (meData?.componentType !== 'QD') return undefined;
+    const mySide = meData.options?.side ?? 'ground';
+    return nodes
+      .filter(n => n.id !== configFor.id
+        && (n.data as unknown as PIDNodeData)?.componentType === 'QD')
+      .map(n => {
+        const d = n.data as unknown as PIDNodeData;
+        const side = d.options?.side ?? 'ground';
+        return { id: n.id, label: d.label || n.id, hint: side, opposite: side !== mySide };
+      })
+      .sort((a, b) => Number(b.opposite) - Number(a.opposite))
+      .map(({ id, label, hint }) => ({ id, label, hint: `${hint} half` }));
+  }, [configFor, nodes]);
 
   const onConnect = useCallback((params: Connection) => {
     if (readOnlyRef.current) return;
     setEdges(eds => addEdge({
       ...params,
       type: 'smoothstep',
-      style: { stroke: FLUID_COLORS.default, strokeWidth: 2 },
-      data: { fluidType: 'default' as FluidType },
+      // No fluid and no colour: both are inherited from whatever ends up
+      // feeding this line, and the edge renderer reads them from context.
+      data: {},
     }, eds));
   }, [setEdges]);
 
@@ -394,47 +425,76 @@ function PIDCanvas({
     // Text and junctions have nothing to configure; opening an empty dialog on
     // them would only teach people that double-click does nothing.
     if (!type || !COMPONENT_SPECS[type]) return;
-    setConfigFor(node.id);
+    setConfigFor({ kind: 'node', id: node.id });
   }, []);
 
-  const saveConfig = useCallback((
-    nodeId: string,
-    patch: { params: Record<string, ParamValue>; options: Record<string, string>; label: string },
-  ) => {
+  // A line is configurable too, and that is the gap that mattered most: an
+  // edge carried a colour and nothing else, so its length, bore and roughness
+  // -- where most of the pressure drop actually is -- had nowhere to live.
+  const onEdgeDoubleClick = useCallback((_e: React.MouseEvent, edge: Edge) => {
+    setConfigFor({ kind: 'edge', id: edge.id });
+  }, []);
+
+  const saveConfig = useCallback((subject: { kind: 'node' | 'edge'; id: string }, patch: ConfigPatch) => {
     if (readOnlyRef.current) return;
-    setNodes(nds => nds.map(n => (
-      n.id === nodeId
-        ? { ...n, data: { ...n.data, label: patch.label, params: patch.params, options: patch.options } }
-        : n
-    )));
-  }, [setNodes]);
+    // `undefined` clears rather than writes: a part number emptied out should
+    // leave, not persist as an empty string somebody later has to explain.
+    const common = {
+      params: patch.params,
+      options: patch.options,
+      partNumber: patch.partNumber,
+    };
+    if (subject.kind === 'node') {
+      setNodes(nds => nds.map(n => (
+        n.id === subject.id
+          ? { ...n, data: { ...n.data, ...common, label: patch.label, fluid: patch.fluid } }
+          : n
+      )));
+    } else {
+      setEdges(eds => eds.map(e => (
+        e.id === subject.id ? { ...e, data: { ...e.data, ...common, lineType: patch.lineType } } : e
+      )));
+    }
+  }, [setNodes, setEdges]);
 
   const onEdgeContextMenu = useCallback((e: React.MouseEvent, edge: Edge) => {
     if (readOnlyRef.current) return;
     e.preventDefault();
     e.stopPropagation();
-    setEdgeMenu({ id: edge.id, x: e.clientX, y: e.clientY });
+    setColorMenu({ kind: 'edge', id: edge.id, x: e.clientX, y: e.clientY });
   }, []);
 
-  const setEdgeFluid = useCallback((edgeId: string, fluid: FluidType) => {
-    if (readOnlyRef.current) return; // recolouring an edge is an edit to the diagram
-    setEdges(eds => eds.map(e =>
-      e.id === edgeId
-        ? { ...e, style: { ...e.style, stroke: FLUID_COLORS[fluid], strokeWidth: 2 }, data: { ...e.data, fluidType: fluid } }
-        : e,
-    ));
-    setEdgeMenu(null);
-  }, [setEdges]);
+  const onNodeContextMenu = useCallback((e: React.MouseEvent, node: Node) => {
+    if (readOnlyRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setColorMenu({ kind: 'node', id: node.id, x: e.clientX, y: e.clientY });
+  }, []);
+
+  const setColor = useCallback((
+    subject: { kind: 'node' | 'edge'; id: string },
+    color: string | undefined,
+  ) => {
+    if (readOnlyRef.current) return;
+    const apply = <T extends { id: string; data?: Record<string, unknown> }>(x: T) =>
+      x.id === subject.id ? { ...x, data: { ...x.data, color } } : x;
+    if (subject.kind === 'node') setNodes(nds => nds.map(apply));
+    else setEdges(eds => eds.map(apply));
+  }, [setNodes, setEdges]);
+
 
   return (
-    <div className="flex-1 h-full relative" onClick={() => setEdgeMenu(null)}>
+    <div className="flex-1 h-full relative" onClick={() => setColorMenu(null)}>
+      <FluidProvider nodes={nodes} edges={edges}>
       <ReactFlow
         nodes={nodes} edges={edges}
         onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
         onConnect={onConnect} onInit={onInit}
         onDrop={onDrop} onDragOver={onDragOver}
         onEdgeContextMenu={onEdgeContextMenu}
+        onNodeContextMenu={onNodeContextMenu}
         onNodeDoubleClick={onNodeDoubleClick}
+        onEdgeDoubleClick={onEdgeDoubleClick}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         nodesDraggable={!readOnly}
@@ -451,7 +511,7 @@ function PIDCanvas({
         snapGrid={[20, 20]}
         fitView
         colorMode="dark"
-        defaultEdgeOptions={{ type: 'smoothstep', style: { stroke: FLUID_COLORS.default, strokeWidth: 2 } }}
+        defaultEdgeOptions={{ type: 'smoothstep' }}
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#1e293b" />
         <Controls />
@@ -461,34 +521,36 @@ function PIDCanvas({
           </span>
         </Panel>
       </ReactFlow>
+      </FluidProvider>
 
-      {configNode && (
+      {configSubject && configFor && (
         <ConfigDialog
           open
-          nodeId={configNode.id}
-          data={configNode.data as unknown as PIDNodeData}
+          kind={configFor.kind}
+          data={configSubject.data as unknown as PIDNodeData}
+          peers={pairPeers}
           readOnly={readOnly}
           onClose={() => setConfigFor(null)}
-          onSave={patch => saveConfig(configNode.id, patch)}
+          onSave={patch => saveConfig(configFor, patch)}
         />
       )}
 
-      {edgeMenu && (
-        <div
-          style={{ position: 'fixed', left: edgeMenu.x, top: edgeMenu.y, zIndex: 9999 }}
-          className="bg-[#1e293b] border border-[#334155] rounded-lg shadow-xl py-1 min-w-[140px]"
-          onClick={e => e.stopPropagation()}
-        >
-          <p className="text-[10px] text-slate-500 px-3 py-1 uppercase tracking-wider">Fluid type</p>
-          {(['fuel', 'lox', 'pressurant', 'default'] as FluidType[]).map(f => (
-            <button key={f} disabled={readOnly} onClick={() => setEdgeFluid(edgeMenu.id, f)}
-              className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-slate-300 hover:bg-[#0f172a] transition-colors">
-              <span className="inline-block w-3 h-3 rounded-full" style={{ background: FLUID_COLORS[f] }} />
-              {f.charAt(0).toUpperCase() + f.slice(1)}
-            </button>
-          ))}
-        </div>
+      {colorMenu && (
+        <ColorMenu
+          x={colorMenu.x}
+          y={colorMenu.y}
+          current={
+            (colorMenu.kind === 'node'
+              ? nodes.find(n => n.id === colorMenu.id)?.data
+              : edges.find(e => e.id === colorMenu.id)?.data
+            )?.color as string | undefined
+          }
+          onPick={hex => setColor(colorMenu, hex)}
+          onClear={() => setColor(colorMenu, undefined)}
+          onClose={() => setColorMenu(null)}
+        />
       )}
+
     </div>
   );
 }

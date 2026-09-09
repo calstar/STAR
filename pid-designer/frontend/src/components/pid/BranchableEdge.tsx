@@ -8,8 +8,8 @@ import {
   type EdgeProps,
   type Edge,
 } from '@xyflow/react';
-import { FLUID_COLORS, type FluidType } from './types';
 import { nextJunctionId } from './ids';
+import { useEdgeFluidColor } from './FluidContext';
 
 const J_HALF = 5;
 
@@ -44,8 +44,9 @@ export function BranchableEdge(props: EdgeProps) {
     });
   }
 
-  const fluidType = (data as { fluidType?: FluidType })?.fluidType ?? 'default';
-  const strokeColor = FLUID_COLORS[fluidType];
+  // Inherited from the tanks that feed this line, unless somebody has marked
+  // it up by hand. Neither is stored on the edge -- see FluidContext.
+  const strokeColor = useEdgeFluidColor(id, (data as { color?: string })?.color);
 
   const onMouseMove = useCallback((e: React.MouseEvent<SVGGElement>) => {
     const svg = (e.currentTarget as SVGElement).closest('svg');
@@ -82,7 +83,7 @@ export function BranchableEdge(props: EdgeProps) {
           targetHandle: 't',
           type: 'smoothstep',
           style: { stroke: strokeColor, strokeWidth: 2 },
-          data: { fluidType, sourcePosition: overrideSourcePos ?? sourcePosition, targetPosition: Position.Top },
+          data: { ...data, sourcePosition: overrideSourcePos ?? sourcePosition, targetPosition: Position.Top },
         };
         const fromJunction: Edge = {
           id: `${junctionId}-to-${target}`,
@@ -91,12 +92,12 @@ export function BranchableEdge(props: EdgeProps) {
           target,
           type: 'smoothstep',
           style: { stroke: strokeColor, strokeWidth: 2 },
-          data: { fluidType, sourcePosition: Position.Bottom, targetPosition: overrideTargetPos ?? targetPosition },
+          data: { ...data, sourcePosition: Position.Bottom, targetPosition: overrideTargetPos ?? targetPosition },
         };
         return [...filtered, toJunction, fromJunction];
       });
     });
-  }, [dot, id, source, target, strokeColor, fluidType,
+  }, [dot, id, source, target, strokeColor, data,
       overrideSourcePos, overrideTargetPos, sourcePosition, targetPosition,
       setNodes, setEdges]);
 
