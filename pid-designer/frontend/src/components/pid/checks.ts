@@ -210,6 +210,22 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
     }
   }
 
+  // ── Lines that cross ──────────────────────────────────────────────────────
+  // Two paths overlapping is not a connection, and nothing in this tool infers
+  // one -- a crossing is usually one line passing over another, and guessing
+  // wrong either invents a leak path or hides a real one. Saying how many there
+  // are makes the distinction visible instead of leaving people to assume it
+  // one way or the other.
+  const crossings = countCrossings(nodes, edges);
+  if (crossings > 0) {
+    push({
+      id: 'lines-crossing',
+      severity: 'info',
+      title: `${crossings} place${crossings === 1 ? '' : 's'} where lines cross`,
+      detail: 'Crossing lines are not joined. Where two are meant to meet, click the line to drop a junction on it; where they are not, drag a line’s middle segment to route around.',
+    });
+  }
+
   // ── Instruments ───────────────────────────────────────────────────────────
   const wired = nodes.filter(n => {
     if (!isInstrument(dataOf(n)?.componentType)) return false;
@@ -279,3 +295,52 @@ const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 /** What the badge shows: things that are actually wrong. */
 export const countProblems = (findings: Finding[]) =>
   findings.filter(f => f.severity !== 'info').length;
+
+/**
+ * How many pairs of lines cross without sharing a component.
+ *
+ * Straight segments between component centres, which is not the drawn
+ * orthogonal path -- so this is an indication, not a survey. It answers "does
+ * this drawing have crossings in it", which is the question, and it never
+ * claims two lines are joined.
+ */
+function countCrossings(nodes: Node[], edges: Edge[]): number {
+  const centre = (id: string) => {
+    const n = nodes.find(x => x.id === id);
+    if (!n) return null;
+    return {
+      x: n.position.x + (n.measured?.width ?? 60) / 2,
+      y: n.position.y + (n.measured?.height ?? 60) / 2,
+    };
+  };
+  const segments = edges
+    .map(e => ({ e, a: centre(e.source), b: centre(e.target) }))
+    .filter((s): s is { e: Edge; a: { x: number; y: number }; b: { x: number; y: number } } =>
+      !!s.a && !!s.b);
+
+  let n = 0;
+  for (let i = 0; i < segments.length; i++) {
+    for (let j = i + 1; j < segments.length; j++) {
+      const p = segments[i];
+      const q = segments[j];
+      // Lines meeting at a shared component are joined, not crossing.
+      const shared = new Set([p.e.source, p.e.target]);
+      if (shared.has(q.e.source) || shared.has(q.e.target)) continue;
+      if (segmentsCross(p.a, p.b, q.a, q.b)) n++;
+    }
+  }
+  return n;
+}
+
+type Pt = { x: number; y: number };
+const side = (a: Pt, b: Pt, c: Pt) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+
+function segmentsCross(a: Pt, b: Pt, c: Pt, d: Pt): boolean {
+  const d1 = side(a, b, c);
+  const d2 = side(a, b, d);
+  const d3 = side(c, d, a);
+  const d4 = side(c, d, b);
+  // Strict: touching endpoints are not a crossing.
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+         ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
