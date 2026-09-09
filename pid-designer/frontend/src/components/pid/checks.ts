@@ -1,6 +1,7 @@
 import type { Edge, Node } from '@xyflow/react';
 import { propagateFluids, speciesById } from './fluids';
 import { isInstrument } from './attach';
+import { crossPageEdges, listPages, pageOf } from './pages';
 import type { PIDNodeData, PIDEdgeData } from './types';
 
 /**
@@ -175,6 +176,36 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
         detail: 'One end of this line points at a component that is no longer on the drawing.',
         edgeIds: [e.id],
       });
+    }
+  }
+
+  // ── Pages ─────────────────────────────────────────────────────────────────
+  const crossing = crossPageEdges(nodes, edges);
+  if (crossing.length) {
+    push({
+      id: 'lines-cross-pages',
+      severity: 'warning',
+      title: `${crossing.length} line${crossing.length === 1 ? '' : 's'} run between pages`,
+      detail: 'A line between pages is not drawn on either, because a reader cannot follow it. What crosses the umbilical is a disconnect pair — put a QD on each side and pair them instead.',
+      edgeIds: crossing.map(e => e.id),
+    });
+  }
+
+  const pages = listPages(nodes);
+  if (pages.length > 1) {
+    for (const qd of qds) {
+      const paired = pairOf(qd);
+      const other = paired && paired !== 'none' ? byId.get(paired) : undefined;
+      if (!other) continue;
+      if (pageOf(dataOf(qd)) === pageOf(dataOf(other))) {
+        push({
+          id: `qd-samepage-${qd.id}`,
+          severity: 'info',
+          title: `${nameOf(qd)} and ${nameOf(other)} are on the same page`,
+          detail: 'A disconnect pair is the boundary between the vehicle and the ground, so its two halves usually live on different pages. Worth a look if that is not what you meant.',
+          nodeIds: [qd.id, other.id],
+        });
+      }
     }
   }
 

@@ -40,6 +40,8 @@ import { FluidProvider } from './FluidContext';
 import { ColorMenu } from './ColorMenu';
 import { AttachmentLayer } from './AttachmentLayer';
 import { ChecksPanel } from './ChecksPanel';
+import { PageBar } from './PageBar';
+import { DEFAULT_PAGE, applyPage, listPages, moveToPage, pageOf } from './pages';
 import { clearOfHost, dragAttached, isInstrument, targetAt } from './attach';
 import { COMPONENT_SPECS } from './spec';
 
@@ -164,6 +166,10 @@ function PIDCanvas({
 }: CanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [page, setPage] = useState<string>(DEFAULT_PAGE);
+  // Pages people made but have not drawn on yet. Everything else is derived
+  // from where the components actually are, so the two cannot disagree.
+  const [declaredPages, setDeclaredPages] = useState<string[]>([]);
   const [colorMenu, setColorMenu] =
     useState<{ kind: 'node' | 'edge'; id: string; x: number; y: number } | null>(null);
   // Which symbol or line has its config open. Held as an id rather than the
@@ -337,6 +343,17 @@ function PIDCanvas({
 
   const edgeTypes = useMemo(() => ({ smoothstep: BranchableEdge, default: BranchableEdge }), []);
 
+  const pages = useMemo(() => listPages(nodes, declaredPages), [nodes, declaredPages]);
+  // What React Flow renders. `nodes`/`edges` stay the whole diagram, so the
+  // checks panel and the fluid walk below see both sides of the umbilical --
+  // a pairing check that only looked at the current page would report every
+  // correct pair as broken.
+  const view = useMemo(() => applyPage(nodes, edges, page), [nodes, edges, page]);
+  const selectedHere = useMemo(
+    () => nodes.filter(n => n.selected && pageOf(n.data as unknown as PIDNodeData) === page),
+    [nodes, page],
+  );
+
   const configSubject = configFor
     ? configFor.kind === 'node'
       ? nodes.find(n => n.id === configFor.id) ?? null
@@ -439,9 +456,9 @@ function PIDCanvas({
     if (host) position = clearOfHost(host, position, snapshot.current.nodes, snapshot.current.edges);
 
     const nodeData = type === 'TEXT'
-      ? { text: 'Text' }
+      ? { text: 'Text', page }
       : type === 'JUNCTION'
-      ? {}
+      ? { page }
       : {
           componentType: type,
           label: def.label,
@@ -455,6 +472,7 @@ function PIDCanvas({
             ...(def.preset ?? {}),
           },
           ...(host ? { attachedTo: host.id } : {}),
+          page,
         } as PIDNodeData;
     // Allocated outside the updater: React invokes updaters twice in
     // development, and an id minted inside one is neither pure nor stable.
@@ -465,7 +483,7 @@ function PIDCanvas({
       position,
       data: nodeData as unknown as Record<string, unknown>,
     }]);
-  }, [screenToFlowPosition, setNodes]);
+  }, [screenToFlowPosition, setNodes, page]);
 
   const onNodeDoubleClick = useCallback((_e: React.MouseEvent, node: Node) => {
     const type = (node.data as unknown as PIDNodeData)?.componentType;
@@ -531,10 +549,14 @@ function PIDCanvas({
 
 
   return (
-    <div className="flex-1 h-full relative" onClick={() => setColorMenu(null)}>
+    // Column, so the page tabs sit under the canvas rather than over it. The
+    // relative is for the checks badge and the colour menu, which are placed
+    // against the whole area including the tabs.
+    <div className="relative flex h-full flex-1 flex-col" onClick={() => setColorMenu(null)}>
+      <div className="relative min-h-0 flex-1">
       <FluidProvider nodes={nodes} edges={edges}>
       <ReactFlow
-        nodes={nodes} edges={edges}
+        nodes={view.nodes} edges={view.edges}
         onNodesChange={handleNodesChange} onEdgesChange={onEdgesChange}
         onConnect={onConnect} onInit={onInit}
         onDrop={onDrop} onDragOver={onDragOver}
@@ -565,11 +587,37 @@ function PIDCanvas({
         <Controls />
         <Panel position="bottom-center">
           <span className="text-[10px] text-slate-600 select-none">
-            Drag from sidebar · Connect handles · V=Pan  B=Box select · Cmd+click to multi-select · R=Rotate · Right-click pipe for fluid · Delete removes selection
+            Drag from sidebar · Connect handles · V=Pan  B=Box select · Cmd+click to multi-select · R=Rotate · Double-click to configure · Right-click to colour · Delete removes selection
           </span>
         </Panel>
       </ReactFlow>
       </FluidProvider>
+      </div>
+
+      <PageBar
+        pages={pages}
+        current={page}
+        count={(p) => nodes.filter(n => pageOf(n.data as unknown as PIDNodeData) === p).length}
+        onSelect={setPage}
+        // Scoped by page, not by the `hidden` flag: that flag lives on the
+        // rendered view, so counting it here would offer to move a selection
+        // made on a page you have since left.
+        selectedCount={selectedHere.length}
+        onMoveSelection={(to) => {
+          if (readOnlyRef.current || selectedHere.length === 0) return;
+          const ids = new Set(selectedHere.map(n => n.id));
+          setNodes(nds => moveToPage(nds, ids, to));
+        }}
+        onAdd={(name) => { setDeclaredPages(ps => [...ps, name]); setPage(name); }}
+        onRename={(from, to) => {
+          if (readOnlyRef.current || pages.includes(to)) return;
+          setNodes(nds => nds.map(n =>
+            pageOf(n.data as unknown as PIDNodeData) === from
+              ? { ...n, data: { ...n.data, page: to } } : n));
+          setDeclaredPages(ps => ps.map(x => (x === from ? to : x)));
+          setPage(cur => (cur === from ? to : cur));
+        }}
+      />
 
       {configSubject && configFor && (
         <ConfigDialog
@@ -742,7 +790,7 @@ export function PIDDesigner() {
     // is unaffected: gating is opt-in, and Take / Release must stay live
     // exactly when you do not hold the diagram.
     <ReadOnlyProvider readOnly={!checkout.held}>
-    <div className="flex flex-col h-[calc(100vh-56px)] min-h-[600px] rounded-xl overflow-hidden border border-[var(--color-border)]">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)]">
       <DiagramBar
         diagrams={diagrams}
         activeKey={activeKey}
