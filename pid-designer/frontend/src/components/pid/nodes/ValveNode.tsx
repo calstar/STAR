@@ -1,4 +1,5 @@
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { Position, type NodeProps } from '@xyflow/react';
+import { Port } from './Port';
 import type { PIDNodeData } from '../types';
 import { DraggableLabel } from './DraggableLabel';
 
@@ -32,8 +33,8 @@ export function ValveNode({ id, data, selected }: NodeProps) {
   const actuator = componentType === 'SOL' ? 'S' : 'P';
   return (
     <div style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
-      <Handle type="target" position={Position.Left}  id="l" style={{ background: '#94a3b8' }} />
-      <Handle type="source" position={Position.Right} id="r" style={{ background: '#94a3b8' }} />
+      <Port position={Position.Left}  id="l" />
+      <Port position={Position.Right} id="r" />
       {componentType === 'MAN'
         ? <ManualValve selected={!!selected} />
         : <BowtieWithActuator selected={!!selected} actuatorLabel={actuator} />}

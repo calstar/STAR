@@ -16,6 +16,13 @@
  *   2. The ReactFlow props that make the canvas interactive, and the handlers
  *      that rewrite the diagram, are all derived from `readOnly` -- because
  *      those are not controls at all and no `disabled` audit would see them.
+ *   3. Those handlers read it through `readOnlyRef`, not through the closure.
+ *
+ * (3) is not style. Taking the checkout remounts the canvas *before* `held`
+ * flips, so a handler that captured `readOnly` captured `true` and kept it:
+ * the palette dropped nothing, and the advice going round the team was to take
+ * the diagram, release it, and take it again. A guard on a ref cannot be one
+ * render behind the chip that claims you are editing.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -131,7 +138,7 @@ describe('every diagram-editing control is gated on the checkout', () => {
       if (name in NOT_EDITING) continue
       for (const tag of ['button', 'input', 'select', 'textarea']) {
         for (const text of openingTags(src, tag)) {
-          if (/\breadOnly\b/.test(text)) continue
+          if (/\breadOnly(Ref\.current)?\b/.test(text)) continue
           if (excuseFor(name, text)) continue
           offenders.push(`${name}  ${text.replace(/\s+/g, ' ').slice(0, 100)}`)
         }
@@ -150,11 +157,25 @@ describe('every diagram-editing control is gated on the checkout', () => {
       const at = src!.indexOf(name)
       if (at === -1) return true
       const window = src!.slice(at, at + 400)
-      return !/\breadOnly\b/.test(window)
+      return !/\breadOnly(Ref\.current)?\b/.test(window)
     })
     expect(
       ungated,
       `not derived from readOnly (a viewer could still change the diagram):\n${ungated.join('\n')}`,
+    ).toEqual([])
+  })
+
+  it('guards handlers on the ref, so none can be a render behind the chip', () => {
+    const src = Object.entries(files).find(([p]) => p.endsWith('/PIDDesigner.tsx'))?.[1]
+    expect(src, 'PIDDesigner.tsx not found').toBeTruthy()
+
+    // `if (readOnly)` / `if (!readOnly)` / `|| readOnly` inside a handler body.
+    // The bare value is correct in JSX props, which re-read it every render;
+    // it is wrong in anything that outlives one.
+    const stale = [...src!.matchAll(/if\s*\([^)]*\breadOnly\b(?!Ref)[^)]*\)/g)].map((m) => m[0])
+    expect(
+      stale,
+      `guarded on the closure instead of readOnlyRef.current:\n${stale.join('\n')}`,
     ).toEqual([])
   })
 

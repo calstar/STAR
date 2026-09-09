@@ -1,4 +1,5 @@
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { Position, type NodeProps } from '@xyflow/react';
+import { Port } from './Port';
 
 export function JunctionNode(_props: NodeProps) {
   const handleStyle = {
@@ -21,10 +22,10 @@ export function JunctionNode(_props: NodeProps) {
       }}
       className="nodrag"
     >
-      <Handle type="target" position={Position.Top}   id="t" style={handleStyle} />
-      <Handle type="target" position={Position.Left}  id="l" style={handleStyle} />
-      <Handle type="source" position={Position.Bottom} id="b" style={handleStyle} />
-      <Handle type="source" position={Position.Right}  id="r" style={handleStyle} />
+      <Port position={Position.Top}   id="t" style={handleStyle} />
+      <Port position={Position.Left}  id="l" style={handleStyle} />
+      <Port position={Position.Bottom} id="b" style={handleStyle} />
+      <Port position={Position.Right}  id="r" style={handleStyle} />
     </div>
   );
 }

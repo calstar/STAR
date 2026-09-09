@@ -8,6 +8,7 @@ import {
   addEdge,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   BackgroundVariant,
   SelectionMode,
   ConnectionMode,
@@ -29,6 +30,7 @@ import { designApi, keyOf, refOf } from '../../api/diagrams';
 import type { DiagramMeta, DocRef, MicroVersion, ReleaseVersion, Snapshot } from '../../api/diagrams';
 import { nodeTypes } from './nodes';
 import { BranchableEdge } from './BranchableEdge';
+import { nextNodeId, seedIdsFrom } from './ids';
 import { FLUID_COLORS, COMPONENT_DEFS } from './types';
 import type { PIDNodeData, ComponentType, FluidType } from './types';
 
@@ -71,8 +73,6 @@ function writeActive(ref: DocRef | null): void {
   }
 }
 
-let _idCounter = 1;
-const genId = () => `node_${_idCounter++}`;
 
 function defaultLabel(type: ComponentType) {
   return COMPONENT_DEFS.find(d => d.type === type)?.label ?? type;
@@ -160,7 +160,7 @@ function PIDCanvas({
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [edgeMenu, setEdgeMenu] = useState<{ id: string; x: number; y: number } | null>(null);
-  const [rfInst, setRfInst] = useState<ReactFlowInstance | null>(null);
+  const { screenToFlowPosition } = useReactFlow();
 
   const { undo, redo } = useHistory(nodes, edges, setNodes, setEdges);
 
@@ -176,6 +176,20 @@ function PIDCanvas({
   // read the same flag through context, because TextNode and DraggableLabel
   // edit via useReactFlow().setNodes and never touch these props.
   const readOnly = useReadOnly();
+  // Every *guard* below reads the flag through this ref, never through the
+  // closure. Taking the checkout used to be a coin flip because of that
+  // difference: `take()` reloads the canvas before it flips `held`, so this
+  // component remounts while it is still read-only, and each handler captured
+  // `readOnly === true` at that moment. Whether it ever got a corrected copy
+  // depended on whether an unrelated dependency happened to change afterwards
+  // -- `onDrop` was rebuilt when `onInit` set the ReactFlow instance, and won
+  // or lost the race against the state commit. Hence "you have to take, release,
+  // then take again", and a palette that dropped nothing on a fresh page.
+  //
+  // A ref cannot go stale, so the guards cannot disagree with the chip in the
+  // diagram bar, and a handler added later inherits that for free.
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
   // JSON of the last payload actually sent, so a change that survives neither
   // `toStored` nor a content comparison never reaches the server. Without it the
   // debounce fires on every ReactFlow state identity change -- including pure
@@ -190,6 +204,7 @@ function PIDCanvas({
       .then(data => {
         if (cancelled) return;
         const loaded = { nodes: data?.nodes ?? [], edges: data?.edges ?? [] };
+        seedIdsFrom(loaded.nodes);
         setNodes(loaded.nodes);
         setEdges(loaded.edges);
         // Seed the guard with what we just loaded, so opening a diagram does not
@@ -206,7 +221,7 @@ function PIDCanvas({
   useEffect(() => {
     // No checkout, no autosave. The canvas is inert in that state anyway;
     // this is the belt to that pair of braces.
-    if (loadedId.current !== diagramKey || readOnly) return;
+    if (loadedId.current !== diagramKey || readOnlyRef.current) return;
     const serialized = JSON.stringify(api.toStored({ nodes, edges }));
     if (serialized === lastSaved.current) return;
     const t = setTimeout(() => {
@@ -230,7 +245,7 @@ function PIDCanvas({
   useEffect(() => {
     const flush = () => {
       // A beacon cannot read a rejection, so gate it here instead.
-      if (loadedId.current !== diagramKey || readOnly) return;
+      if (loadedId.current !== diagramKey || readOnlyRef.current) return;
       api.flushDiagram(diagramRef, snapshot.current);
     };
     const onVisibility = () => { if (document.visibilityState === 'hidden') flush(); };
@@ -244,7 +259,7 @@ function PIDCanvas({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (readOnly) return;
+      if (readOnlyRef.current) return;
       if (e.key.toLowerCase() === 'r' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
         setNodes(nds => nds.map(n =>
           n.selected
@@ -262,17 +277,18 @@ function PIDCanvas({
   // belt to that pair of braces, and they also cover the keyboard shortcuts.
   getRef.current   = useCallback(() => ({ nodes, edges }), [nodes, edges]);
   loadRef.current  = useCallback((d) => {
-    if (readOnly) return;
+    if (readOnlyRef.current) return;
+    seedIdsFrom(d.nodes);
     setNodes(d.nodes);
     setEdges(d.edges);
-  }, [readOnly, setNodes, setEdges]);
+  }, [setNodes, setEdges]);
   clearRef.current = useCallback(() => {
-    if (readOnly) return;
+    if (readOnlyRef.current) return;
     setNodes([]);
     setEdges([]);
-  }, [readOnly, setNodes, setEdges]);
-  undoRef.current  = useCallback(() => { if (!readOnly) undo(); }, [readOnly, undo]);
-  redoRef.current  = useCallback(() => { if (!readOnly) redo(); }, [readOnly, redo]);
+  }, [setNodes, setEdges]);
+  undoRef.current  = useCallback(() => { if (!readOnlyRef.current) undo(); }, [undo]);
+  redoRef.current  = useCallback(() => { if (!readOnlyRef.current) redo(); }, [redo]);
 
   releaseRef.current = useCallback(
     (label: string) => api.createRelease(diagramRef, label, { nodes, edges }),
@@ -290,28 +306,29 @@ function PIDCanvas({
   );
 
   restoreMicroRef.current = useCallback(async (versionId: string) => {
-    if (readOnly) return;
+    if (readOnlyRef.current) return;
     const data = await api.getVersion(diagramRef, versionId);
+    seedIdsFrom(data.nodes);
     setNodes(data.nodes);
     setEdges(data.edges);
-  }, [readOnly, diagramKey, setNodes, setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [diagramKey, setNodes, setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
 
   restoreReleaseRef.current = useCallback(async (label: string) => {
-    if (readOnly) return;
+    if (readOnlyRef.current) return;
     const data = await api.getRelease(diagramRef, label);
+    seedIdsFrom(data.nodes);
     setNodes(data.nodes);
     setEdges(data.edges);
-  }, [readOnly, diagramKey, setNodes, setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [diagramKey, setNodes, setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const onInit = useCallback((inst: ReactFlowInstance) => {
-    setRfInst(inst);
-    onInstance(inst);
-  }, [onInstance]);
+  // Handed up so the toolbar can fitView and export. Nothing in this component
+  // needs it -- see `screenToFlowPosition` above.
+  const onInit = useCallback((inst: ReactFlowInstance) => onInstance(inst), [onInstance]);
 
   const edgeTypes = useMemo(() => ({ smoothstep: BranchableEdge, default: BranchableEdge }), []);
 
   const onConnect = useCallback((params: Connection) => {
-    if (readOnly) return;
+    if (readOnlyRef.current) return;
     setEdges(eds => addEdge({
       ...params,
       type: 'smoothstep',
@@ -326,45 +343,50 @@ function PIDCanvas({
   };
 
   const onDrop = useCallback((e: React.DragEvent) => {
-    if (readOnly) return;
+    if (readOnlyRef.current) return;
     e.preventDefault();
     const type = e.dataTransfer.getData('application/pid-type') as ComponentType;
-    if (!type || !rfInst) return;
+    if (!type) return;
     const nodeH = (type === 'TANK' || type === 'INJECTOR') ? 100 : 60;
-    const flowPos = rfInst.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    // From the provider, not from the `onInit` instance in state. Taking the
+    // checkout remounts this canvas, and for the frame or two before `onInit`
+    // has committed, that state is null -- so the palette silently dropped
+    // nothing during exactly the moment a user has just enabled editing and is
+    // reaching for it. The hook is available from first render.
+    const flowPos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
     const position = { x: flowPos.x - 30, y: flowPos.y - nodeH / 2 };
     const nodeData = type === 'TEXT'
       ? { text: 'Text' }
       : type === 'JUNCTION'
       ? {}
       : { componentType: type, label: defaultLabel(type), fluidType: 'default' } as PIDNodeData;
+    // Allocated outside the updater: React invokes updaters twice in
+    // development, and an id minted inside one is neither pure nor stable.
+    const id = nextNodeId();
     setNodes(nds => [...nds, {
-      id: genId(),
+      id,
       type,
       position,
       data: nodeData as unknown as Record<string, unknown>,
     }]);
-  }, [rfInst, setNodes]);
+  }, [screenToFlowPosition, setNodes]);
 
   const onEdgeContextMenu = useCallback((e: React.MouseEvent, edge: Edge) => {
-    if (readOnly) return;
+    if (readOnlyRef.current) return;
     e.preventDefault();
     e.stopPropagation();
     setEdgeMenu({ id: edge.id, x: e.clientX, y: e.clientY });
   }, []);
 
   const setEdgeFluid = useCallback((edgeId: string, fluid: FluidType) => {
-    if (readOnly) return; // recolouring an edge is an edit to the diagram
+    if (readOnlyRef.current) return; // recolouring an edge is an edit to the diagram
     setEdges(eds => eds.map(e =>
       e.id === edgeId
         ? { ...e, style: { ...e.style, stroke: FLUID_COLORS[fluid], strokeWidth: 2 }, data: { ...e.data, fluidType: fluid } }
         : e,
     ));
     setEdgeMenu(null);
-  }, [readOnly, setEdges]);
-
-  // Suppress unused warning — rfInst used for onInit side-effect
-  void rfInst;
+  }, [setEdges]);
 
   return (
     <div className="flex-1 h-full relative" onClick={() => setEdgeMenu(null)}>

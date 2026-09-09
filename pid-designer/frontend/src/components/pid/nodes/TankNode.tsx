@@ -1,4 +1,5 @@
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { Position, type NodeProps } from '@xyflow/react';
+import { Port } from './Port';
 import type { PIDNodeData } from '../types';
 import { FLUID_COLORS } from '../types';
 import { DraggableLabel } from './DraggableLabel';
@@ -15,8 +16,8 @@ export function TankNode({ id, data, selected }: NodeProps) {
   if (isInjector) {
     return (
       <div style={{ position: 'relative', width: INJ_W, height: INJ_H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
-        <Handle type="target" position={Position.Top}    id="t" style={{ background: '#94a3b8' }} />
-        <Handle type="source" position={Position.Bottom} id="b" style={{ background: '#94a3b8' }} />
+        <Port position={Position.Top}    id="t" />
+        <Port position={Position.Bottom} id="b" />
 
         <svg width={INJ_W} height={INJ_H} viewBox={`0 0 ${INJ_W} ${INJ_H}`}>
           <rect x="10" y="6" width="40" height="22" rx="2"
@@ -34,8 +35,8 @@ export function TankNode({ id, data, selected }: NodeProps) {
 
   return (
     <div style={{ position: 'relative', width: TANK_W, height: TANK_H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
-      <Handle type="target" position={Position.Top}    id="t" style={{ background: '#94a3b8' }} />
-      <Handle type="source" position={Position.Bottom} id="b" style={{ background: '#94a3b8' }} />
+      <Port position={Position.Top}    id="t" />
+      <Port position={Position.Bottom} id="b" />
 
       <svg width={TANK_W} height={TANK_H} viewBox={`0 0 ${TANK_W} ${TANK_H}`}>
         <ellipse cx="30" cy="14" rx="24" ry="9"

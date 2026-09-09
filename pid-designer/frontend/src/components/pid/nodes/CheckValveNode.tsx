@@ -1,4 +1,5 @@
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { Position, type NodeProps } from '@xyflow/react';
+import { Port } from './Port';
 import type { PIDNodeData } from '../types';
 import { DraggableLabel } from './DraggableLabel';
 
@@ -9,8 +10,8 @@ export function CheckValveNode({ id, data, selected }: NodeProps) {
   const stroke = selected ? '#3b82f6' : '#94a3b8';
   return (
     <div style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
-      <Handle type="target" position={Position.Left}  id="l" style={{ background: '#94a3b8' }} />
-      <Handle type="source" position={Position.Right} id="r" style={{ background: '#94a3b8' }} />
+      <Port position={Position.Left}  id="l" />
+      <Port position={Position.Right} id="r" />
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
         <line x1="30" y1="10" x2="30" y2="50" stroke={stroke} strokeWidth={1.5} />
         <polygon points="30,30 52,16 52,44" fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2 : 1.5} />

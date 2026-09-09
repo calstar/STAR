@@ -9,9 +9,7 @@ import {
   type Edge,
 } from '@xyflow/react';
 import { FLUID_COLORS, type FluidType } from './types';
-
-let _jid = 1;
-const jid = () => `junc_${_jid++}`;
+import { nextJunctionId } from './ids';
 
 const J_HALF = 5;
 
@@ -65,7 +63,7 @@ export function BranchableEdge(props: EdgeProps) {
     if (!dot) return;
     e.stopPropagation();
 
-    const junctionId = jid();
+    const junctionId = nextJunctionId();
     const junctionNode = {
       id: junctionId,
       type: 'JUNCTION',
