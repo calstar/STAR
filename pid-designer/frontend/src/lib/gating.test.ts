@@ -60,6 +60,7 @@ const VIEW_ONLY: Record<string, string> = {
   'ChecksPanel.tsx:onClick={() => setOpen(o => !o)}': 'opens the checks panel; it reads the diagram and writes nothing',
   'ChecksPanel.tsx:onClick={() => setOpen(false)}': 'closes the checks panel',
   'ChecksPanel.tsx:onSelect(finding.nodeIds': 'selects what a finding is about — selection is view state, stripped by toStored',
+  'SegmentPanel.tsx:setOpenRow(openRow === r.id': 'expands a fitting row to show its fields; the fields themselves are gated',
   'ConfigDialog.tsx:onClick={onClose}': 'Cancel closes the config dialog; Save is what writes, and Save is gated',
   'PIDDesigner.tsx:setShowChange(true)': 'opens the Change dialog (rename/share/copy are not gated by design)',
 }

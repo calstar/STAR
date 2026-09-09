@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { transitionBetween, transitionsOf, fittingCount, FITTING_KINDS, FITTING_LABELS } from './segments';
+import { transitionBetween, transitionsOf, fittingCount, knownK, methodOf, FITTING_KINDS, FITTING_LABELS } from './segments';
 import type { LineSegment } from './segments';
-import { boreForTube, suggestBore, THROUGH_BORE, tubeBoreMm } from './tubing';
+import { boreForTube, cutLength, suggestBore, tubeBoreMm, dashToTubeOdIn } from './catalog';
 import type { ParamValue } from './params';
 
 const mm = (v: number): ParamValue => ({ value: v, unit: 'mm', source: 'measured' });
-const seg = (id: string, bore?: ParamValue, fittings = {}): LineSegment =>
-  ({ id, bore, fittings });
+const seg = (id: string, bore?: ParamValue): LineSegment => ({ id, bore, fittings: [] });
 
 describe('tube bore is arithmetic', () => {
   it('is OD minus two walls', () => {
@@ -17,7 +16,7 @@ describe('tube bore is arithmetic', () => {
   });
 
   it('carries where it came from, so a report can trace it', () => {
-    expect(suggestBore('tube', '1/2 × 0.035')!.reference).toContain('OD − 2 × wall');
+    expect(suggestBore('tube', '1/2 × 0.035', [])!.reference).toContain('OD − 2 × wall');
   });
 
   it('says nothing for a size it does not know', () => {
@@ -25,17 +24,55 @@ describe('tube bore is arithmetic', () => {
   });
 });
 
-describe('fitting standards are catalogue data, not memory', () => {
-  it('ships empty rather than guessing', () => {
-    // A number invented here would reach feed-twin wearing a source and a
-    // reference, looking checked, and be wrong.
-    for (const std of Object.keys(THROUGH_BORE) as (keyof typeof THROUGH_BORE)[]) {
-      expect(Object.keys(THROUGH_BORE[std])).toEqual([]);
-    }
+describe('what is standard, and what is catalogue', () => {
+  it('knows a dash size is sixteenths of an inch of tube OD', () => {
+    expect(dashToTubeOdIn(8)).toBeCloseTo(0.5, 6);
+    expect(dashToTubeOdIn(4)).toBeCloseTo(0.25, 6);
   });
 
-  it('returns null so the dialog asks instead of guessing', () => {
-    expect(suggestBore('JIC', '-8')).toBeNull();
+  it('will not invent a through-bore for a fitting standard', () => {
+    // A number made up here would reach feed-twin wearing a source and a
+    // reference, looking checked, and be wrong. Null makes the dialog ask.
+    expect(suggestBore('JIC', '-8', [])).toBeNull();
+    expect(suggestBore('NPT', '3/8', [])).toBeNull();
+  });
+
+  it('uses a catalogued part once the team has entered one', () => {
+    const hit = suggestBore('JIC', '-8', [{
+      id: 'p1', label: 'JIC -8', standard: 'JIC', size: '-8',
+      boreMm: 9.4, source: 'Parker cat. 4300, p.12',
+    }])!;
+    expect(hit.mm).toBe(9.4);
+    expect(hit.basis).toBe('catalog');
+    expect(hit.reference).toContain('Parker');
+  });
+
+  it('marks tube arithmetic as arithmetic, not catalogue', () => {
+    expect(suggestBore('tube', '1/2 × 0.035', [])!.basis).toBe('arithmetic');
+  });
+});
+
+describe('the cut list', () => {
+  it('takes the fittings out of an end-to-end measurement', () => {
+    // 1000 mm overall, two fittings 30 long that each swallow 10 of tube.
+    expect(cutLength(1000, [
+      { lengthMm: 30, engagementMm: 10 },
+      { lengthMm: 30, engagementMm: 10 },
+    ])).toBeCloseTo(960, 6);
+  });
+
+  it('refuses when a fitting has no length — a partial answer is a mis-cut part', () => {
+    expect(cutLength(1000, [{ lengthMm: 30 }, {}])).toBeNull();
+  });
+});
+
+describe('how a segment says its loss is known', () => {
+  it('defaults to itemised', () => {
+    expect(methodOf({ id: 'a' })).toBe('itemised');
+  });
+
+  it('takes the stated method when there is one', () => {
+    expect(methodOf({ id: 'a', method: 'measured_K' })).toBe('measured_K');
   });
 });
 
@@ -75,13 +112,27 @@ describe('a change of bore is a derived transition', () => {
 });
 
 describe('the fitting tally', () => {
-  it('counts the bag and the detailed ones together', () => {
+  it('counts every row by how many of it there are', () => {
     const s: LineSegment = {
       id: 'a',
-      fittings: { elbow_90: 3, tee_run: 1 },
-      detailed: [{ kind: 'contraction' }],
+      fittings: [
+        { id: 'r1', kind: 'elbow_90', count: 3 },
+        { id: 'r2', kind: 'tee_run', count: 1 },
+      ],
     };
-    expect(fittingCount(s)).toBe(5);
+    expect(fittingCount(s)).toBe(4);
+  });
+
+  it('sums only the K this drawing actually knows', () => {
+    // Everything else is priced by feed-twin, which has the Reynolds number.
+    const s: LineSegment = {
+      id: 'a',
+      fittings: [
+        { id: 'r1', kind: 'elbow_90', count: 2, K: 0.75 },
+        { id: 'r2', kind: 'tee_run', count: 1 },
+      ],
+    };
+    expect(knownK(s)).toBeCloseTo(1.5, 6);
   });
 
   it('names every kind feed-twin registers, and no others', () => {

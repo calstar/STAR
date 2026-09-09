@@ -58,6 +58,50 @@ export const FITTING_LABELS: Record<FittingKind, string> = {
   elbow_45_crane: 'Elbow 45° (Crane f_T)',
 };
 
+/**
+ * How a segment's loss is known.
+ *
+ * The single most important thing in this file. A feed system gets built and
+ * tested, and the way its resistance is *known* changes as that happens: you
+ * start with an itemised guess, and once you have flowed it you have a number
+ * that beats every correlation. Both have to be first-class, and which one is
+ * in force must never be ambiguous.
+ *
+ * Ordered by authority. Higher wins, and only one applies:
+ *
+ *  1. `curve`     — Δp against ṁ from a cold flow. Supersedes everything, and
+ *                   feed-twin refuses outside the measured range rather than
+ *                   extrapolating.
+ *  2. `measured_K`— one K fitted from a run. Same authority, less data.
+ *  3. `itemised`  — tube size, length, fittings. feed-twin walks the K ladder.
+ *  4. `lumped_K`  — one K somebody estimated.
+ *  5. `unstated`  — nothing said; feed-twin defaults and reports it unchecked.
+ *
+ * This is also the answer to "do I have to itemise every elbow?" — no. Flow the
+ * line and enter the number. The itemised path is for what has not been built
+ * yet, which is most of a design.
+ */
+export type LossMethod = 'curve' | 'measured_K' | 'itemised' | 'lumped_K' | 'unstated';
+
+export const LOSS_METHODS: { id: LossMethod; label: string; note: string }[] = [
+  { id: 'itemised',   label: 'Fittings',      note: 'counted, priced by correlation' },
+  { id: 'measured_K', label: 'Measured K',    note: 'fitted from a flow test' },
+  { id: 'curve',      label: 'Δp vs ṁ curve', note: 'from a flow bench' },
+  { id: 'lumped_K',   label: 'Estimated K',   note: 'one number, a guess' },
+  { id: 'unstated',   label: 'Not stated',    note: 'feed-twin defaults it' },
+];
+
+/** A measured Δp against ṁ table. Mirrors `feedtwin.model.Curve`. */
+export interface DpCurve {
+  /** Mass flow, ascending. */
+  mdot: number[];
+  mdotUnit: string;
+  /** Pressure drop at each flow. */
+  dp: number[];
+  dpUnit: string;
+  reference?: string;
+}
+
 /** A fitting that needs more than a count — its own bore, or a measured K. */
 export interface FittingInstance {
   kind: FittingKind;
@@ -75,6 +119,20 @@ export interface FittingInstance {
 
 export interface LineSegment {
   id: string;
+  /** How this segment's loss is known. Defaults to `itemised`. */
+  method?: LossMethod;
+  /** For `measured_K` / `lumped_K`. */
+  K?: ParamValue;
+  /** For `curve`. */
+  curve?: DpCurve;
+  /**
+   * Whether `length` is the straight tube or the whole assembly.
+   *
+   * It matters because a fitting's K already contains its own friction, so the
+   * friction term must use the *tube* length. Measuring a run end to end is
+   * what people actually do, so both are accepted and the other is derived.
+   */
+  lengthBasis?: 'tube' | 'overall';
   /** The FLOW diameter, not the thread size. */
   bore?: ParamValue;
   /** Developed length along the centreline. */
@@ -82,11 +140,35 @@ export interface LineSegment {
   roughness?: ParamValue;
   /** Signed; up is positive. */
   elevation_change?: ParamValue;
-  /** Unordered: kind → how many. */
-  fittings?: Partial<Record<FittingKind, number>>;
-  detailed?: FittingInstance[];
-  /** What the bore was derived from, when it came from a tube size. */
+  /**
+   * The fittings in this segment, in order.
+   *
+   * Ordered even though same-bore order is worth 0.003%, because a fitting can
+   * carry its own bore and then the order *is* load-bearing -- and because a
+   * list that matches the run as built is what somebody checks against the
+   * hardware. Each row still carries a count: three identical elbows are one
+   * row saying three, not three rows.
+   */
+  fittings?: FittingRow[];
+  /** What the bore was derived from, when it came from a size. */
   tubeSize?: string;
+  standard?: string;
+}
+
+/** One kind of fitting in a segment, and how many of it. */
+export interface FittingRow {
+  id: string;
+  kind: FittingKind;
+  count: number;
+  /** Overrides the segment bore for these. */
+  boreMm?: number;
+  /** Centreline length, for the cut list. Never for the friction term. */
+  lengthMm?: number;
+  engagementMm?: number;
+  /** A measured or published K for this fitting. Beats the correlation. */
+  K?: number;
+  partId?: string;
+  partNumber?: string;
 }
 
 let _seg = 0;
@@ -101,8 +183,23 @@ export function seedSegmentIds(segments: LineSegment[] | undefined): void {
 }
 
 export const fittingCount = (s: LineSegment): number =>
-  Object.values(s.fittings ?? {}).reduce((n, v) => n + (v ?? 0), 0) +
-  (s.detailed?.length ?? 0);
+  (s.fittings ?? []).reduce((n, r) => n + (r.count || 0), 0);
+
+let _row = 0;
+export const nextRowId = () => `fit_${++_row}`;
+
+/** The method actually in force, with the default made explicit. */
+export const methodOf = (s: LineSegment): LossMethod => s.method ?? 'itemised';
+
+/**
+ * Fittings whose K this drawing already knows, summed.
+ *
+ * Only the ones carrying their own measured K -- everything else is priced by
+ * feed-twin, which has the Reynolds number and the correlation ladder. Shown so
+ * the header total is honest about what it does and does not include.
+ */
+export const knownK = (s: LineSegment): number =>
+  (s.fittings ?? []).reduce((n, r) => n + (r.K !== undefined ? r.K * r.count : 0), 0);
 
 /**
  * A change of bore between two segments is a reducer or an expander.
