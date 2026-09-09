@@ -39,6 +39,7 @@ import type { ConfigPatch } from './ConfigDialog';
 import { FluidProvider } from './FluidContext';
 import { ColorMenu } from './ColorMenu';
 import { AttachmentLayer } from './AttachmentLayer';
+import { ChecksPanel } from './ChecksPanel';
 import { clearOfHost, dragAttached, isInstrument, targetAt } from './attach';
 import { COMPONENT_SPECS } from './spec';
 
@@ -169,7 +170,7 @@ function PIDCanvas({
   // object, so the dialog reads live data and a save is never applied to a
   // stale copy.
   const [configFor, setConfigFor] = useState<{ kind: 'node' | 'edge'; id: string } | null>(null);
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, setCenter, getZoom } = useReactFlow();
 
   const { undo, redo } = useHistory(nodes, edges, setNodes, setEdges);
 
@@ -397,6 +398,15 @@ function PIDCanvas({
     }
   }, [onNodesChange, setNodes]);
 
+  /** Bring one component into view without changing the zoom people chose. */
+  const fitViewTo = useCallback(async (node: Node) => {
+    await setCenter(
+      node.position.x + (node.measured?.width ?? 60) / 2,
+      node.position.y + (node.measured?.height ?? 60) / 2,
+      { duration: 300, zoom: getZoom() },
+    );
+  }, [setCenter, getZoom]);
+
   const onDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
@@ -572,6 +582,21 @@ function PIDCanvas({
           onSave={patch => saveConfig(configFor, patch)}
         />
       )}
+
+      {/* Selecting from a finding is how "PT-4 has no range" becomes useful:
+          it puts PT-4 in front of you rather than leaving you to find it. */}
+      <ChecksPanel
+        nodes={nodes}
+        edges={edges}
+        onSelect={(nodeIds, edgeIds) => {
+          const ns = new Set(nodeIds);
+          const es = new Set(edgeIds);
+          setNodes(nds => nds.map(n => ({ ...n, selected: ns.has(n.id) })));
+          setEdges(eds => eds.map(e => ({ ...e, selected: es.has(e.id) })));
+          const first = nodes.find(n => ns.has(n.id));
+          if (first) void fitViewTo(first);
+        }}
+      />
 
       {colorMenu && (
         <ColorMenu

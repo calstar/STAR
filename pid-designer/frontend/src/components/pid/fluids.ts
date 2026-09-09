@@ -166,7 +166,14 @@ export function propagateFluids(
     queue.push({ id: n.id, species: fluid, from: n.id });
   }
 
-  const walk = (adjacency: Map<string, string[]>, work: typeof queue) => {
+  /**
+   * @param fillOnly Assign only where nothing is known yet, and never raise a
+   *   conflict. The ullage pass is a fallback for ports the first pass
+   *   deliberately skipped, not a second opinion about them: without this it
+   *   walks a tank's top port anyway and reports the regulator on its own
+   *   pressurant line as a fluid conflict — undoing the pass's whole purpose.
+   */
+  const walk = (adjacency: Map<string, string[]>, work: typeof queue, fillOnly = false) => {
   while (work.length) {
     const cur = work.shift()!;
     // Nothing continues past a meeting point.
@@ -175,6 +182,7 @@ export function propagateFluids(
     for (const next of adjacency.get(cur.id) ?? []) {
       // A source holds its own fluid. Whatever arrives at it is expected.
       if (declared.has(next)) {
+        if (fillOnly) continue;
         const src = out.get(next)!;
         if (src.species !== cur.species) {
           src.mixing = true;
@@ -189,6 +197,7 @@ export function propagateFluids(
         work.push({ id: next, species: cur.species, from: cur.from });
         continue;
       }
+      if (fillOnly) continue;
       if (seen.species === cur.species) {
         if (!seen.sources.includes(cur.from)) seen.sources.push(cur.from);
         continue;
@@ -204,8 +213,9 @@ export function propagateFluids(
 
   walk(process, [...queue]);
   // Second pass: ullage ports, seeded from the sources again so a bottle
-  // connected only by its top is still the source of its own contents.
-  walk(ullage, [...queue]);
+  // connected only by its top is still the source of its own contents. Fill
+  // only -- see `walk`.
+  walk(ullage, [...queue], true);
 
   return out;
 }

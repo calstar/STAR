@@ -57,6 +57,9 @@ const VIEW_ONLY: Record<string, string> = {
   'PIDToolbar.tsx:setRelLabel': 'the label field inside the release dialog, which Release already gates',
   'PIDToolbar.tsx:onClick={submitRelease}': 'inside the release dialog, which Release already gates',
   'PIDDesigner.tsx:setUnshared(null)': 'dismisses the "no longer shared" notice',
+  'ChecksPanel.tsx:onClick={() => setOpen(o => !o)}': 'opens the checks panel; it reads the diagram and writes nothing',
+  'ChecksPanel.tsx:onClick={() => setOpen(false)}': 'closes the checks panel',
+  'ChecksPanel.tsx:onSelect(finding.nodeIds': 'selects what a finding is about — selection is view state, stripped by toStored',
   'ConfigDialog.tsx:onClick={onClose}': 'Cancel closes the config dialog; Save is what writes, and Save is gated',
   'PIDDesigner.tsx:setShowChange(true)': 'opens the Change dialog (rename/share/copy are not gated by design)',
 }
