@@ -139,3 +139,19 @@ describe('which ports are instrument tappings', () => {
     expect(taps.has('TK-1:t2')).toBe(true);
   });
 });
+
+describe('what a disconnect has', () => {
+  const node = (componentType: string): Node =>
+    ({ id: 'x', position: { x: 0, y: 0 }, data: { componentType } }) as unknown as Node;
+
+  it('has one port on each side, not four', () => {
+    // A disconnect is inline hardware: a half on each end of a break in one
+    // run. Four ports invited a line into the top of something that
+    // physically has two ends.
+    expect(portsOf(node('QD'))).toEqual(['l', 'r']);
+  });
+
+  it('leaves a junction with four, because a tee branches', () => {
+    expect(portsOf(node('JUNCTION'))).toEqual(['t', 'b', 'l', 'r']);
+  });
+});

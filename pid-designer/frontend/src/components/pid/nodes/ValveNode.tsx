@@ -25,8 +25,13 @@ function BowtieWithActuator({ selected, actuatorLabel, failOpen, rotation }: {
       <polygon points="8,10 52,46 52,10 8,46"
         fill={failOpen ? 'none' : '#1e293b'} stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
       <rect x="22" y="2" width="16" height="10" rx="2" fill="#1e293b" stroke={stroke} strokeWidth={1.2} />
-      <Upright rotation={rotation} x={30} y={11}>
-        <text x="30" y="11" textAnchor="middle" fontSize="7" fill="#cbd5e1" fontFamily="monospace">{actuatorLabel}</text>
+      {/* Anchored on the box's true centre, and centred on it in both
+          directions. It used to sit on a baseline at the box's bottom edge,
+          which reads as low unturned and lands off the box entirely once the
+          letter is spun about that anchor. */}
+      <Upright rotation={rotation} x={30} y={7}>
+        <text x="30" y="7" textAnchor="middle" dominantBaseline="central"
+          fontSize="7" fill="#cbd5e1" fontFamily="monospace">{actuatorLabel}</text>
       </Upright>
       <line x1="30" y1="12" x2="30" y2="20" stroke={stroke} strokeWidth={1.5} />
     </svg>
@@ -52,9 +57,21 @@ export function ValveNode({ id, data, selected }: NodeProps) {
   // drawing during a procedure review looks for -- so it belongs on the
   // symbol, not two clicks away inside a dialog.
   const failOpen = options?.failState === 'open';
-  // The box the symbol occupies once turned, so the tag sits under what the
-  // reader actually sees rather than under where it would have been unturned.
-  const boxH = (rotation ?? 0) % 180 === 90 ? W : H;
+  // Where the writing goes, which is wherever the ports are not.
+  //
+  // A valve's ports are on its left and right, so unturned there is room
+  // underneath. Turn it and they are top and bottom -- and underneath is now
+  // where the outlet is, complete with the vent arrow if that side is open.
+  // So a turned valve carries its marker and its tag off to the side instead.
+  const quarter = (rotation ?? 0) % 180 === 90;
+  const boxW = quarter ? H : W;
+  const boxH = quarter ? W : H;
+  const markStyle: React.CSSProperties = quarter
+    ? { left: boxW + 4, top: 2 }
+    : { left: 0, top: boxH + 2 };
+  const tagOffset = quarter
+    ? { x: boxW + 4, y: 14 }
+    : { x: -4, y: boxH + (componentType === 'MAN' ? 2 : 13) };
   return (
     <Frame
       nodeId={id} w={W} h={H} rotation={rotation}
@@ -65,15 +82,20 @@ export function ValveNode({ id, data, selected }: NodeProps) {
           <span
             title={failOpen ? 'Normally open — passes with no command applied' : 'Normally closed — shuts with no command applied'}
             style={{
-              position: 'absolute', right: 2, bottom: 6, fontSize: 8, lineHeight: 1,
+              // Its own row, with the tag on the next one. Inside the box the
+              // bowtie was drawn across it -- the hourglass reaches all four
+              // corners -- and sharing the tag's row meant a tag of any length
+              // covered it.
+              position: 'absolute', ...markStyle, fontSize: 8, lineHeight: 1,
               fontFamily: 'monospace', letterSpacing: '0.02em',
               color: failOpen ? '#f59e0b' : '#64748b',
+              whiteSpace: 'nowrap', pointerEvents: 'none',
             }}
           >
             {failOpen ? 'NO' : 'NC'}
           </span>
         )}
-        <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: boxH + 2 }} />
+        <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={tagOffset} />
       </>}
     >
       {componentType === 'MAN'

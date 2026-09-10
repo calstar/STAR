@@ -123,8 +123,15 @@ export function portsOf(node: Node): string[] {
     // were three invitations to draw a pipe through an instrument.
     case 'PT': case 'PG':
       return ['b'];
-    case 'QD': case 'JUNCTION':
+    // A junction is a tee, and a tee branches in four directions.
+    case 'JUNCTION':
       return ['t', 'b', 'l', 'r'];
+    // A disconnect is inline hardware -- a half on each end of a break in one
+    // run. Four ports invited a line into the top of something that physically
+    // has two ends, and rotating it to point the pair somewhere else is what
+    // the R key is for.
+    case 'QD':
+      return ['l', 'r'];
     case 'MAN': case 'ROT': case 'SOL': case 'RV': case 'CV':
       return ['l', 'r'];
     case 'PR':

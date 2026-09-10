@@ -25,10 +25,8 @@ export function QDNode({ id, data, selected }: NodeProps) {
   const boxH = (rotation ?? 0) % 180 === 90 ? W : H;
   return (
     <Frame nodeId={id} w={W} h={H} rotation={rotation} extra={<>
-        <Port position={turn(Position.Top, rotation)}    id="t" />
-        <Port position={turn(Position.Bottom, rotation)} id="b" />
-        <Port position={turn(Position.Left, rotation)}   id="l" />
-        <Port position={turn(Position.Right, rotation)}  id="r" />
+        <Port position={turn(Position.Left, rotation)}  id="l" />
+        <Port position={turn(Position.Right, rotation)} id="r" />
         <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: boxH + 2 }} />
       </>}
     >
