@@ -19,6 +19,15 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+
+// These packets are byte-packed: a u32 lands at offset 2, and the actuator entries step by 7, so
+// &buf[off] is routinely not 4-aligned. Writing through a uint32_t* there is undefined behaviour
+// (UBSan: "store to misaligned address ... requires 4 byte alignment", caught on all five call
+// sites during an integration run). memcpy compiles to the same single store on x86-64 and ARM64
+// and is defined everywhere, so this is a correctness fix with no code-generation cost.
+static inline void store_u32(uint8_t* dst, uint32_t v) {
+    std::memcpy(dst, &v, sizeof(v));
+}
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -354,14 +363,14 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
         std::vector<uint8_t> buf(total);
         buf[0] = ACTUATOR_CONFIG;
         buf[1] = 0;
-        *reinterpret_cast<uint32_t*>(&buf[2]) = 0;
+        store_u32(&buf[2], 0);
 
         size_t off = 6;
         buf[off++] = static_cast<uint8_t>(is_abort_controller);
         buf[off++] = static_cast<uint8_t>(N);
         for (size_t i = 0; i < N; ++i) {
             auto [ip, aid, vent, abort] = abort_actuators[i];
-            *reinterpret_cast<uint32_t*>(&buf[off]) = ip;
+            store_u32(&buf[off], ip);
             off += 4;
             buf[off++] = aid;
             buf[off++] = vent;
@@ -370,10 +379,10 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
         buf[off++] = static_cast<uint8_t>(X);
         for (size_t i = 0; i < X; ++i) {
             auto [ip, sid, adc] = abort_pt_list[i];
-            *reinterpret_cast<uint32_t*>(&buf[off]) = ip;
+            store_u32(&buf[off], ip);
             off += 4;
             buf[off++] = sid;
-            *reinterpret_cast<uint32_t*>(&buf[off]) = adc;
+            store_u32(&buf[off], adc);
             off += 4;
         }
         buf[off] = static_cast<uint8_t>(enable_serial);  // mode byte 0..3
@@ -392,7 +401,7 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
         std::vector<uint8_t> buf(total);
         buf[0] = SENSOR_CONFIG;
         buf[1] = 0;
-        *reinterpret_cast<uint32_t*>(&buf[2]) = 0;
+        store_u32(&buf[2], 0);
 
         size_t off = 6;
         buf[off++] = static_cast<uint8_t>(num);

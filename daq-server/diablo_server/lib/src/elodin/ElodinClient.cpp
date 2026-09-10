@@ -192,11 +192,14 @@ ssize_t ElodinClient::read_packet(uint8_t* packet_buffer, size_t max_len) {
         return -1;
     }
 
-    // Parse header: len(4), ty(1), packet_id(2), request_id(1)
-    uint32_t packet_len = *reinterpret_cast<uint32_t*>(packet_buffer);
-    uint8_t packet_type = packet_buffer[4];
-    uint16_t packet_id = (static_cast<uint16_t>(packet_buffer[5]) << 8) | packet_buffer[6];
-    uint8_t request_id = packet_buffer[7];
+    // Header layout: len(4) | ty(1)@4 | packet_id(2 BE)@5 | request_id(1)@7. Only the length is
+    // consumed — nothing here matches a reply to the request that asked for it, and the other three
+    // fields were decoded into locals that were never read (GCC -Wunused-variable, cppcheck
+    // unreadVariable). The layout stays documented above rather than in dead assignments.
+    // memcpy, not a uint32_t* cast: packet_buffer is caller-supplied and carries no alignment
+    // guarantee.
+    uint32_t packet_len;
+    std::memcpy(&packet_len, packet_buffer, sizeof(packet_len));
 
     // A malformed length is unrecoverable — there is no way to know where the next packet starts.
     if (packet_len < 4) {

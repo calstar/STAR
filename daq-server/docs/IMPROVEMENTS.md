@@ -5,7 +5,10 @@ frontend, and CI. Each item names the affected file(s), what actually goes wrong
 shape of the fix.
 
 **Last audited:** 2026-09-08 against `1aeb97bc`.
-**Last updated:** 2026-09-08 — the `static-analysis` job was deleted rather than repaired. cppcheck
+**Last updated:** 2026-09-10 — compiler warnings are on and a `-DSANITIZE=ON` ASan/UBSan job now runs
+over the integration test rather than ctest, which is what found `BoardDiscovery` serialising
+uninitialised `max_sensors`/`active_sensors` into the generated board config; that closes the last
+entry under High, and the section with it. Before that, on 2026-09-08, the `static-analysis` job was deleted rather than repaired. cppcheck
 was measured first (199 messages, zero of them `error` or `warning`) and clang-tidy turned out never
 to have analyzed a file at all, having no compilation database to work from; three cppcheck findings
 worth keeping are refiled under Low. Before that, the WebSocket backpressure work landed, resolving this file's
@@ -91,38 +94,6 @@ board is told `FIRING` while the rig vents; and when the rig actually fires (say
 (`is_abort`, the `[fire] state` name) rather than numeric literals. The cleanest version is
 a declared `engine_state` column in `[[states]]` so the mapping lives in config with the
 states it maps.
-
----
-
-## High
-
-### CI — No ASan/UBSan build, and CMake sets no warning flags
-
-**Files:** `CMakeLists.txt`, `.github/workflows/daq-server-ci.yml`
-
-*Partly addressed.* A `thread-sanitizer` job now builds the sequencer concurrency tests with
-`-fsanitize=thread` and runs them, which is what proves the command-queue work stays fixed —
-the races it guards are invisible to the Release `ctest` job, and no static analyser runs in CI
-any more.
-
-Two things still missing:
-
-1. The top-level `CMakeLists.txt` still sets no `-Wall`/`-Wextra`. Implicit conversions,
-   signed/unsigned mismatches and unused variables pass silently.
-2. No ASan/UBSan build anywhere. A concrete UBSan-visible instance today:
-   `config_broadcast_service_main.cpp:351,360,363` do
-   `*reinterpret_cast<uint32_t*>(&buf[off])` into a `std::vector<uint8_t>` at offsets that step
-   by 7 and 9 — unaligned stores through a `uint32_t*`. It works on x86-64 and ARM64 and is
-   still undefined behaviour; `memcpy` compiles to the same instruction with none of the risk.
-
-**Fix:** `add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter)` with
-`-Werror=return-type` at minimum, and a `-DSANITIZE=ON` option wiring
-`-fsanitize=address,undefined` run over ctest — mirroring how the TSan job is already wired.
-
-**Note for whoever adds it:** the TSan job documents two traps that apply to any sanitizer job
-here — `setarch -R` is required or the sanitizer aborts at startup on modern kernels with
-`unexpected memory mapping`, and a sanitizer CHECK abort is *not* a `WARNING:` line, so gate on
-the process exit code rather than grepping the log.
 
 ---
 
@@ -251,27 +222,6 @@ should be identical integers).
 
 ---
 
-### C++ — three findings inherited from the deleted cppcheck job
-
-**Files:** `diablo_server/lib/src/elodin/ElodinClient.cpp:197-199`,
-`diablo_server/lib/src/control/ControllerLUT.cpp:133`,
-`diablo_server/services/calibration/calibration_main.cpp:1336`
-
-The only tool that reported these was removed (see Resolved), so they are filed here rather
-than lost with it. None is known to misbehave today; each is the shape of thing that starts
-misbehaving after an unrelated edit.
-
-1. `ElodinClient.cpp:197-199` decodes `packet_type`, `packet_id` and `request_id` from the
-   response header and reads none of them. Either the reply is not being validated against the
-   request it answers, or the three locals are dead and should go.
-2. `ControllerLUT.cpp:133` tests an unsigned expression for `< 0` — a bounds check that cannot
-   fire. Worth confirming the guard it was meant to be.
-3. `calibration_main.cpp:1336` casts `const unsigned char*` to `const float*`. Same unaligned-
-   access class as the `config_broadcast` stores named in the ASan/UBSan entry under High, and
-   it would be caught by the same UBSan build.
-
----
-
 ### C++ — `ElodinClient::send_msg` logs on every send
 
 **File:** `diablo_server/lib/src/elodin/ElodinClient.cpp:275`
@@ -301,6 +251,77 @@ longer to flush, and on a fast machine it's a second wasted on every run.
 ## Resolved
 
 Kept so a future audit can distinguish "fixed" from "never checked".
+
+### By the warnings + sanitizer work (2026-09-10)
+
+Closes the `CI — No ASan/UBSan build, and CMake sets no warning flags` entry under High and the
+three cppcheck leftovers under Low. Both tools were measured before being adopted, and the measuring
+is the part worth keeping:
+
+- **Compiler warnings are on** — `-Wall -Wextra -Wpedantic -Wno-unused-parameter` with
+  `-Werror=return-type` as the only error, since a value-returning function that falls off the end
+  leaves the caller reading a register and has no benign form. First run: **40 warnings, build still
+  green**, and they were not noise. `ElodinClient.cpp:197-199` decoded `packet_type`/`packet_id`/
+  `request_id` and read none (the header layout is now a comment, and only the length is consumed);
+  `daq_bridge_main.cpp:581` declared `last_config_save` and never read it, and `FSWConfigManager`
+  exposes no save API at all, so it was leftover rather than a missing feature; `calibration_main.cpp`
+  carried a dead `lp_pt_psi_before_offset`, obsolete since Zero All was reworked to capture a 0
+  reference through the shared fit (`apply_capture(id, adc_avg, 0.0)`) instead of subtracting a tare.
+  The 22 `-Wmissing-field-initializers` in `SensorAssignment.cpp` all traced to
+  `PressureSensorSpec::calibration_file` and `requires_calibration`, which **nothing in the tree
+  reads** — deleted rather than suppressed. Two scoped suppressions remain and are deliberate: the
+  archived Elodin headers are now `SYSTEM` includes (`db.hpp` was the only remaining source of that
+  warning), and `daqv2_comms` carries `-Wno-stringop-overflow` for the GCC 13 false positive on the
+  guarded `vector::resize` calls at `DiabloPacketUtils.cpp:748,769`. The tree builds at **0
+  warnings**.
+
+- **`-DSANITIZE=ON` builds with ASan + UBSan**, and the new `address-sanitizer` CI job points it at
+  `test_integration.sh`, **not** at ctest. That choice was measured, not assumed: all 10 ctest tests
+  pass under the sanitizers with **zero findings**, while a single integration run — which drives
+  real UDP through every service — reported two things ctest, cppcheck and the compiler had all
+  missed between them.
+
+  1. **`BoardDiscovery` copied uninitialised members into the board map.**
+     `process_board_announcement` (`BoardDiscovery.cpp:93-113`) declares `DiscoveredBoard board;`,
+     assigns six of its nine fields, then `add_or_update_board` stores the whole struct
+     (`:315`). `supports_dynamic_config`, `max_sensors` and `active_sensors` were never assigned.
+     UBSan caught it as `load of value 212, which is not a valid value for type 'bool'` — but the
+     bool is the harmless one, since nothing reads it. `max_sensors` and `active_sensors` **are**
+     read, at `BoardDiscovery.cpp:380-381` and `DynamicConfigManager.cpp:107-108`, where they are
+     serialised into the generated board config. Both routes to that serialisation —
+     `BoardDiscovery::generate_config()` and `DynamicConfigManager::update_from_discovery()` — turn
+     out to have no callers at all, so nothing shipped the garbage: this is a landmine, not a live
+     fault. The uninitialised read itself *is* live on every board announcement, and wiring up
+     either config path would have published a stack byte as a board's sensor count. Fixed with
+     default member initialisers on `BoardSignature`, `SensorInfo` and `DiscoveredBoard`, so a
+     future construction site cannot reintroduce it.
+  2. **The misaligned stores this entry originally named** — five sites, not the three recorded
+     (the line numbers had drifted to `:357,364,373,376,395`), plus the same class at
+     `calibration_main.cpp:1336` and an unaligned *load* at `ElodinClient.cpp:196` that the entry
+     never mentioned. All now `memcpy`.
+
+  Also `ControllerLUT.cpp:133`'s `hi <= 0` on a `size_t` is written `hi == 0`.
+
+**Three things the job comment spells out, because each one costs an afternoon:**
+
+- `setarch -R` is required, same as the TSan job.
+- **UBSan's non-fatal diagnostics never reach the job's stdout.** They go to each service's own
+  stderr, which the harness redirects into `.tmp/integration_*.log`, and `log_path` does not capture
+  them either. The script exiting 0 proves nothing — the grep over those logs is the actual gate.
+  This was nearly filed as "zero findings" off exactly that mistake.
+- `SANITIZE=ON` forces `CMAKE_POSITION_INDEPENDENT_CODE`. `daqv2_comms` is a static library linked
+  into a shared one, and ASan's `__asan_option_detect_stack_use_after_return` reference fails to
+  relocate without PIC — a hard link error, not a warning.
+
+`INTEGRATION_SENSOR_HZ` is pinned to 5 in that job and is boxed in from both sides: at full rate
+under ASan a local run measured 96.8% frontend broadcast delivery against the harness's ≥97%
+assertion, and at 3 Hz the harness fails the opposite check (median stream spacing 1005 ms against
+its 5-1000 ms window).
+
+Verified: 0 warnings, ctest 10/10 under sanitizers, and `test_integration.sh` passing both
+sanitized (zero reports across every service log) and unsanitized (246 checks).
+
+---
 
 ### By the CI static-analysis trim (2026-09-08)
 
@@ -333,8 +354,9 @@ Kept so a future audit can distinguish "fixed" from "never checked".
   `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` on the configure step, `compile_commands.json` shipped with
   the build artifacts (or the step moved into the build job), a checked-in `.clang-tidy`, and a full
   run over `diablo_server/services` and `diablo_server/lib/src` before anyone knows what gating
-  costs. The ASan/UBSan entry under High is the better place to spend that effort: it catches things
-  no linter can, and the TSan job is already the template.
+  costs. The ASan/UBSan entry then under High was the better place to spend that effort, and two days
+  later it was — see the entry above; it catches things no linter can, and the TSan job was already
+  the template.
 
 ---
 

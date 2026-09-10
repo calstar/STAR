@@ -41,10 +41,6 @@ struct PressureSensorSpec {
     SystemState system_state;   // GSE or FLIGHT
     std::string location;       // Physical location
     std::string purpose;        // Purpose (e.g., "High pressure", "Fuel upstream")
-
-    // Calibration info
-    std::string calibration_file;  // Path to calibration data
-    bool requires_calibration;
 };
 
 /**

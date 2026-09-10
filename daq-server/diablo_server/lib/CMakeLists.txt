@@ -37,6 +37,13 @@ target_include_directories(fsw_daq_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+
+# SYSTEM so the archived Elodin headers do not report warnings we are not going to act on — db.hpp
+# alone accounts for every -Wmissing-field-initializers left in the tree. Suppressing the warning
+# itself would have hidden the 22 live ones in SensorAssignment.cpp that turned out to be two
+# struct fields nothing reads; scoping it to the vendored header keeps the warning useful.
+target_include_directories(fsw_daq_lib SYSTEM PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../../archive/legacy/utl
 )
 

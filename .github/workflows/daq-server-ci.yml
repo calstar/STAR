@@ -528,6 +528,127 @@ jobs:
         fi
       continue-on-error: true
 
+  # ASan + UBSan over the full stack.
+  #
+  # Sanitizers only report on code that actually executes, which is why this job runs
+  # test_integration.sh rather than ctest. Measured both ways before adding it: all 10 ctest tests
+  # pass under ASan/UBSan with zero findings, while one integration run — which drives real UDP
+  # through every service — reported five misaligned u32 stores in config_broadcast and, in
+  # daq_bridge, a bool loaded as 212 out of a DiscoveredBoard whose max_sensors/active_sensors were
+  # equally uninitialised and get serialised straight into the generated board config. A
+  # ctest-only sanitizer job would have found none of that.
+  #
+  # Three things that will waste an afternoon if they are not spelled out:
+  #
+  #  1. `setarch -R` disables ASLR. Without it the sanitizer aborts at startup on modern kernels
+  #     with "unexpected memory mapping" before running a line. Same trap as the TSan job.
+  #
+  #  2. UBSan's non-fatal diagnostics go to each service's OWN stderr, which the harness redirects
+  #     into .tmp/integration_*.log. They do NOT reach this job's stdout, and `log_path` does not
+  #     capture them either. So the script exiting 0 proves nothing — the logs are the result, and
+  #     the grep below is what actually gates the job.
+  #
+  #  3. detect_leaks=0 on purpose: these are long-running services killed at teardown, so LSan
+  #     reports at exit would bury the memory-error signal this job exists for.
+  #
+  # The sensor rate is pinned to 5 Hz for the same reason the integration job pins it, only harder:
+  # ASan roughly halves throughput and the harness asserts >=97% frontend broadcast delivery, and at
+  # full rate under ASan a local run measured 96.8% and failed on that alone. Do not lower it
+  # further to buy headroom — 3 Hz was tried and the harness then failed the opposite assertion,
+  # median stream spacing 1005 ms against its 5-1000 ms window. 5 is the floor that satisfies both.
+  address-sanitizer:
+    name: ASan + UBSan (full stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    env:
+      INTEGRATION_SENSOR_HZ: '5'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential cmake ninja-build libeigen3-dev pkg-config \
+          gcc-12 g++-12 python3 python3-pip util-linux
+
+    - name: Install elodin-db
+      run: |
+        ELODIN_VERSION="v0.16.1"
+        ELODIN_DB_INSTALLER_URL="https://github.com/elodin-sys/elodin/releases/download/${ELODIN_VERSION}/elodin-db-installer.sh"
+        mkdir -p "$HOME/.cargo/bin"
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        export PATH="$HOME/.cargo/bin:$PATH"
+        curl --proto '=https' --tlsv1.2 -LsSf "$ELODIN_DB_INSTALLER_URL" | sh
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+
+    # -DSANITIZE=ON also forces CMAKE_POSITION_INDEPENDENT_CODE: daqv2_comms is a static library
+    # linked into a shared one, and ASan's __asan_option_detect_stack_use_after_return reference
+    # fails to relocate without PIC (a hard link error, not a warning).
+    - name: Build with -fsanitize=address,undefined
+      env:
+        CC: gcc-12
+        CXX: g++-12
+      run: |
+        cmake -S . -B ${{ env.BUILD_DIR }} \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          -DCMAKE_C_COMPILER=gcc-12 \
+          -DCMAKE_CXX_COMPILER=g++-12 \
+          -DCMAKE_CXX_STANDARD=${{ env.CXX_STANDARD }} \
+          -DSANITIZE=ON \
+          -G Ninja
+        cmake --build ${{ env.BUILD_DIR }} --parallel $(nproc)
+
+    - name: Install backend dependencies
+      run: cd diablo_server/backend && npm install
+
+    - name: Install Python dependencies
+      run: pip3 install tomli || true
+
+    - name: Run integration test under ASan/UBSan
+      env:
+        SKIP_CPP_BUILD: '1'
+        ASAN_OPTIONS: detect_leaks=0:abort_on_error=0:halt_on_error=0
+        UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=0
+      run: setarch -R bash test/test_integration.sh
+
+    # This step, not the one above, is the gate. See note 2 in the job comment.
+    - name: Fail on any sanitizer report
+      if: always()
+      run: |
+        shopt -s nullglob
+        hits=0
+        for f in .tmp/integration_*.log; do
+          if grep -qE "runtime error:|ERROR: AddressSanitizer|ERROR: LeakSanitizer" "$f"; then
+            echo "::error::sanitizer report in $(basename "$f")"
+            grep -nE "runtime error:|ERROR: AddressSanitizer|ERROR: LeakSanitizer" "$f" | head -40
+            hits=1
+          fi
+        done
+        if [ "$hits" != "0" ]; then
+          echo "Sanitizer findings above. Full logs are in the uploaded artifact."
+          exit 1
+        fi
+        echo "✅ no sanitizer reports across $(ls .tmp/integration_*.log 2>/dev/null | wc -l) service log(s)"
+
+    - name: Upload service logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: asan-service-logs
+        path: daq-server/.tmp/integration_*.log
+        retention-days: 7
+        if-no-files-found: warn
+
   # Full-stack integration test
   integration-test:
     name: Integration Test
@@ -887,6 +1008,7 @@ jobs:
       - security-scan
       - thread-sanitizer
       - test
+      - address-sanitizer
       - integration-test
       - playwright-guitest-e2e
       - session-systemd-e2e
@@ -911,6 +1033,7 @@ jobs:
         echo "| Security Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| ThreadSanitizer (sequencer) | ${{ needs.thread-sanitizer.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Tests | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| ASan + UBSan (full stack) | ${{ needs.address-sanitizer.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Integration Test | ${{ needs.integration-test.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Playwright E2E (guitest) | ${{ needs.playwright-guitest-e2e.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Session Control E2E (systemd) | ${{ needs.session-systemd-e2e.result }} |" >> $GITHUB_STEP_SUMMARY

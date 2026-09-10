@@ -578,7 +578,6 @@ int main(int argc, char* argv[]) {
     auto last_stats_time = std::chrono::steady_clock::now();
     auto last_reconnect_time = std::chrono::steady_clock::now();
     auto last_heartbeat_send = std::chrono::steady_clock::now();
-    auto last_config_save = std::chrono::steady_clock::now();
 
     // Per-board clock sync: reconstructs true sample times from chunk board
     // millis (spreading + offset estimation + wrap/reboot handling). Keyed by

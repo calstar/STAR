@@ -21,7 +21,7 @@
  * adjustments.json; streaming uses factory unless you opt into robust below. CAL_USE_ROBUST_PT=1 —
  * 100% robust mean for streaming (when sensor initialized) CAL_USE_ROBUST_BLEND=1 — 75% robust +
  * 25% factory CAL_USE_FACTORY_PT=1 — force factory cubic (same as default; explicit)
- *   CAL_BACKUP_PATH — override robust prior JSON (else latest calibration_backups/*.json)
+ *   CAL_BACKUP_PATH — override robust prior JSON (else the latest calibration_backups/ JSON)
  */
 
 #include <algorithm>
@@ -31,6 +31,7 @@
 #include <cmath>
 #include <csignal>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -501,25 +502,6 @@ static uint16_t resolve_lc_sensor_uid(uint8_t type_lo, uint8_t ch,
             return static_cast<uint16_t>(bc.board_id) * 100u + ch;
     }
     return static_cast<uint16_t>(100u + ch);
-}
-
-/**
- * LP PT pressure exactly as published before zero offset and EMA — must match the streaming
- * branch so Zero All reads 0 PSI at the current ADC. (Using only factory psi for the offset while
- * streaming robust caused psi_display ≈ psi_rob - psi_fac, e.g. GN2 / GSE wrong after Zero All.)
- */
-static double lp_pt_psi_before_offset(uint8_t board_number, uint8_t local_ch, uint16_t uid,
-                                      int32_t adc_i32,
-                                      const fsw::calibration::PTCalibrationManager& pt_calibration,
-                                      fsw::calibration::RobustCalibrationManager& robust_manager) {
-    const uint8_t pt_log_ch =
-        fsw::calibration::pt_logical_calibration_channel(board_number, local_ch);
-    const bool fac_ok = pt_calibration.is_calibrated(pt_log_ch);
-    const double psi_fac = fac_ok ? pt_calibration.calculate_pressure(pt_log_ch, adc_i32) : 0.0;
-    const double psi_rob = robust_manager.predict_pressure_psi(uid, adc_i32);
-    // Zero-All only reaches non-loop (0-5 V) sensors, so physics here is the ratiometric value.
-    const double psi_phys = convert_ratiometric_pt_to_pressure(adc_i32, pt_full_scale_for(uid));
-    return select_pt_psi(uid, psi_fac, psi_rob, psi_phys, fac_ok, robust_manager.has_sensor(uid));
 }
 
 /** A sensor needs at least this many captured points before its cubic/robust curve is trusted to
@@ -1333,7 +1315,11 @@ int main(int argc, char* argv[]) {
                 uint8_t cmd_type = p[8];
                 uint16_t sensor_id =
                     static_cast<uint16_t>(p[10]) | (static_cast<uint16_t>(p[11]) << 8);
-                float ref_val = *reinterpret_cast<const float*>(p + 12);
+                // memcpy, not a `const float*` cast: p is pkt_buf + 8, so p + 12 inherits the
+                // buffer's alignment and nothing guarantees it is 4-aligned (cppcheck
+                // invalidPointerCast). Same instruction, defined behaviour.
+                float ref_val;
+                std::memcpy(&ref_val, p + 12, sizeof(ref_val));
 
                 std::cout << "[Cal] Received CalibrationCommand: type=" << (int)cmd_type
                           << " sensor=" << static_cast<int>(sensor_id) << " ref=" << ref_val
