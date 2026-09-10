@@ -27,7 +27,7 @@ export function SensorNode({ id, data, selected }: NodeProps) {
   const stroke = selected ? '#3b82f6' : (color ?? '#94a3b8');
 
   return (
-    <Frame w={S} h={S} rotation={rotation} extra={<>
+    <Frame nodeId={id} w={S} h={S} rotation={rotation} extra={<>
         {tapped && <Port position={turn(Position.Bottom, rotation)} id="b" />}
         <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: S + 2 }} />
       </>}

@@ -108,7 +108,7 @@ export function ManifoldNode({ id, data, selected }: NodeProps) {
 
   return (
     <Frame
-      w={W} h={H} rotation={rotation}
+      nodeId={id} w={W} h={H} rotation={rotation}
       extra={<>
         {ports}
         <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: boxH + 2 }} />

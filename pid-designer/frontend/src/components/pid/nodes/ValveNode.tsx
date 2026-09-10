@@ -57,7 +57,7 @@ export function ValveNode({ id, data, selected }: NodeProps) {
   const boxH = (rotation ?? 0) % 180 === 90 ? W : H;
   return (
     <Frame
-      w={W} h={H} rotation={rotation}
+      nodeId={id} w={W} h={H} rotation={rotation}
       extra={<>
         <Port position={turn(Position.Left, rotation)}  id="l" />
         <Port position={turn(Position.Right, rotation)} id="r" />

@@ -42,7 +42,7 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
   if (componentType === 'DEWAR') {
     return (
       <Frame
-        w={DW_W} h={DW_H} rotation={rotation}
+        nodeId={id} w={DW_W} h={DW_H} rotation={rotation}
         extra={<>
           <TurnedPort nodeId={id} id="t" side={Position.Top}    w={DW_W} h={DW_H} rotation={rotation} />
           <TurnedPort nodeId={id} id="b" side={Position.Bottom} w={DW_W} h={DW_H} rotation={rotation} />
@@ -73,7 +73,7 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
 
   return (
     <Frame
-      w={KB_W} h={KB_H} rotation={rotation}
+      nodeId={id} w={KB_W} h={KB_H} rotation={rotation}
       extra={<>
         <TurnedPort nodeId={id} id="t" side={Position.Top}   w={KB_W} h={KB_H} rotation={rotation} />
         <TurnedPort nodeId={id} id="r" side={Position.Right} along={22} w={KB_W} h={KB_H} rotation={rotation} />

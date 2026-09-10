@@ -75,7 +75,7 @@ export function TankNode({ id, data, selected }: NodeProps) {
   if (isInjector) {
     return (
       <Frame
-        w={INJ_W} h={INJ_H} rotation={rotation}
+        nodeId={id} w={INJ_W} h={INJ_H} rotation={rotation}
         extra={<>
           <TurnedPort nodeId={id} id="t" side={Position.Top}    w={INJ_W} h={INJ_H} rotation={rotation ?? 0} />
           <TurnedPort nodeId={id} id="b" side={Position.Bottom} w={INJ_W} h={INJ_H} rotation={rotation ?? 0} />
@@ -100,7 +100,7 @@ export function TankNode({ id, data, selected }: NodeProps) {
 
   return (
     <Frame
-      w={TANK_W} h={TANK_H} rotation={rotation}
+      nodeId={id} w={TANK_W} h={TANK_H} rotation={rotation}
       extra={<>
         {endPorts(Number(options?.portsTop ?? 1), 't', Position.Top, TANK_W, TANK_H, data as unknown as PIDNodeData, id, rotation ?? 0)}
         {endPorts(Number(options?.portsBottom ?? 1), 'b', Position.Bottom, TANK_W, TANK_H, data as unknown as PIDNodeData, id, rotation ?? 0)}

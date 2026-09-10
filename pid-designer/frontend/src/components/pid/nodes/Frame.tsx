@@ -1,4 +1,5 @@
-import { Position } from '@xyflow/react';
+import { useEffect } from 'react';
+import { Position, useUpdateNodeInternals } from '@xyflow/react';
 import { turnPlacement } from '../route';
 import { Port } from './Port';
 import type { ReactNode } from 'react';
@@ -21,7 +22,9 @@ import type { ReactNode } from 'react';
  * `children`, as a sibling of this component's output, where nothing rotates
  * it in the first place.
  */
-export function Frame({ w, h, rotation = 0, children, extra }: {
+export function Frame({ nodeId, w, h, rotation = 0, children, extra }: {
+  /** The node this is the body of, so a turn can say its ports have moved. */
+  nodeId: string;
   w: number;
   h: number;
   rotation?: number;
@@ -33,6 +36,15 @@ export function Frame({ w, h, rotation = 0, children, extra }: {
   const quarter = Math.round(((rotation % 360) + 360) % 360 / 90) % 2 === 1;
   const bw = quarter ? h : w;
   const bh = quarter ? w : h;
+
+  // Turning a symbol moves its ports, and ReactFlow caches where a node's
+  // handles are. It re-measures when told to and not otherwise -- so without
+  // this, rotating a regulator left every line still attached to the side the
+  // port used to be on, which is worse than the hooks this refactor removed.
+  // Here rather than in each node: it is the one place that always knows a
+  // rotation happened, and a symbol added later cannot forget to do it.
+  const updateNodeInternals = useUpdateNodeInternals();
+  useEffect(() => { updateNodeInternals(nodeId); }, [nodeId, rotation, updateNodeInternals]);
 
   return (
     <div style={{ position: 'relative', width: bw, height: bh }}>

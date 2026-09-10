@@ -27,7 +27,7 @@ export function EngineNode({ id, data, selected }: NodeProps) {
   const boxH = (rotation ?? 0) % 180 === 90 ? W : H;
   return (
     <Frame
-      w={W} h={H} rotation={rotation}
+      nodeId={id} w={W} h={H} rotation={rotation}
       extra={<>
         <TurnedPort nodeId={id} id="fuel" side={Position.Left}  along={18} w={W} h={H} rotation={rotation} />
         <TurnedPort nodeId={id} id="ox"   side={Position.Right} along={18} w={W} h={H} rotation={rotation} />

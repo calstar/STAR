@@ -25,7 +25,7 @@ export function RVNode({ id, data, selected }: NodeProps) {
   // The box once turned, so the tag sits under what is drawn.
   const boxH = (rotation ?? 0) % 180 === 90 ? W : H;
   return (
-    <Frame w={W} h={H} rotation={rotation} extra={<>
+    <Frame nodeId={id} w={W} h={H} rotation={rotation} extra={<>
         <Port position={turn(Position.Left, rotation)}  id="l" style={{ top: '50%' }} />
         <Port position={turn(Position.Right, rotation)} id="r" style={{ top: '50%' }} />
         {(set || reseat) && (
