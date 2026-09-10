@@ -51,6 +51,8 @@ import { DEFAULT_PAGE, applyPage, listPages, moveToPage, pageOf } from './pages'
 import { clearOfHost, dragAttached, isInstrument, isTapped, targetAt } from './attach';
 import { rejoinAfterDelete, splitEdgeAt } from './splitEdge';
 import { drawnLines, lineAt } from './lineHit';
+import { alignmentShift } from './snap';
+import type { PortPositions } from './snap';
 import { COMPONENT_SPECS } from './spec';
 
 export type InteractionMode = 'pan' | 'select';
@@ -232,7 +234,7 @@ function PIDCanvas({
   // object, so the dialog reads live data and a save is never applied to a
   // stale copy.
   const [configFor, setConfigFor] = useState<{ kind: 'node' | 'edge'; id: string } | null>(null);
-  const { screenToFlowPosition, setCenter, getZoom, fitView, setViewport } = useReactFlow();
+  const { screenToFlowPosition, setCenter, getZoom, fitView, setViewport, getInternalNode } = useReactFlow();
 
   const { undo, redo } = useHistory(nodes, edges, setNodes, setEdges);
 
@@ -817,6 +819,69 @@ function PIDCanvas({
     if (rejoined.length) setEdges(eds => [...eds, ...rejoined]);
   }, [setEdges]);
 
+  /**
+   * Dropping a symbol lines its ports up with what is already there.
+   *
+   * The grid cannot do this and never could: a valve is sixty wide so its
+   * centre port is thirty from the origin, an engine is seventy-two so its top
+   * port is at thirty-six, and both origins snap to ten -- so those two ports
+   * were six apart at every position either could be put in. See `snap.ts`.
+   *
+   * Read off ReactFlow's own measured handle bounds rather than a table of
+   * where each symbol keeps its ports: it already knows, it stays right when a
+   * symbol is turned or its port count changes, and a second copy of that
+   * geometry is a second thing to get wrong.
+   */
+  const onNodeDragStop = useCallback((
+    _e: MouseEvent | TouchEvent, node: Node, dragged: Node[],
+  ) => {
+    if (readOnlyRef.current) return;
+    const portsOf = (n: Node): PortPositions | null => {
+      const handles = getInternalNode(n.id)?.internals.handleBounds?.source;
+      if (!handles?.length) return null;
+      return {
+        id: n.id,
+        xs: handles.map(h => n.position.x + h.x + h.width / 2),
+        ys: handles.map(h => n.position.y + h.y + h.height / 2),
+      };
+    };
+
+    // Everything that moved, against everything that did not -- so a symbol
+    // never lines itself up with one it is being dragged alongside.
+    const moving = new Set((dragged.length ? dragged : [node]).map(n => n.id));
+    const here = pageRef.current;
+    const mine = [...moving].map(id => snapshot.current.nodes.find(n => n.id === id))
+      .filter((n): n is Node => !!n).map(portsOf).filter((p): p is PortPositions => !!p);
+    if (mine.length === 0) return;
+
+    const others = snapshot.current.nodes
+      .filter(n => !moving.has(n.id) && pageOf(n.data as unknown as PIDNodeData) === here)
+      .map(portsOf).filter((p): p is PortPositions => !!p);
+    if (others.length === 0) return;
+
+    // One shift for the whole selection, from whichever of its symbols is
+    // nearest an alignment. Shifting them individually would pull a group
+    // apart to satisfy each member.
+    const shift = mine
+      .map(m => alignmentShift(m, others))
+      .reduce((best, s) => ({
+        dx: best.dx || s.dx,
+        dy: best.dy || s.dy,
+      }), { dx: 0, dy: 0 });
+    if (!shift.dx && !shift.dy) return;
+
+    setNodes(nds => {
+      let next = nds.map(n => moving.has(n.id)
+        ? { ...n, position: { x: n.position.x + shift.dx, y: n.position.y + shift.dy } }
+        : n);
+      // Probes clipped to something that moved go with it, exactly as they do
+      // during the drag itself.
+      const delta = { x: shift.dx, y: shift.dy };
+      for (const id of moving) next = dragAttached(next, id, delta);
+      return next;
+    });
+  }, [getInternalNode, setNodes]);
+
   const onNodeClick = useCallback((e: React.MouseEvent, node: Node) => {
     if (paintIfArmed('node', node.id)) { e.stopPropagation(); e.preventDefault(); }
   }, [paintIfArmed]);
@@ -922,6 +987,7 @@ function PIDCanvas({
         onEdgeContextMenu={onEdgeContextMenu}
         onNodeContextMenu={onNodeContextMenu}
         onNodeClick={onNodeClick}
+        onNodeDragStop={onNodeDragStop}
         onDelete={onDelete}
         onEdgeClick={onEdgeClick}
         onNodeDoubleClick={onNodeDoubleClick}
