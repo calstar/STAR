@@ -25,7 +25,7 @@ function BowtieWithActuator({ selected, actuatorLabel, failOpen, rotation }: {
       <polygon points="8,10 52,46 52,10 8,46"
         fill={failOpen ? 'none' : '#1e293b'} stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
       <rect x="22" y="2" width="16" height="10" rx="2" fill="#1e293b" stroke={stroke} strokeWidth={1.2} />
-      <Upright rotation={rotation} cx={W / 2} cy={H / 2}>
+      <Upright rotation={rotation} x={30} y={11}>
         <text x="30" y="11" textAnchor="middle" fontSize="7" fill="#cbd5e1" fontFamily="monospace">{actuatorLabel}</text>
       </Upright>
       <line x1="30" y1="12" x2="30" y2="20" stroke={stroke} strokeWidth={1.5} />

@@ -59,7 +59,7 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
           {/* the vacuum jacket, which is what makes it a dewar and not a drum */}
           <rect x="12" y="16" width="48" height="48" rx="11"
             fill="none" stroke={stroke} strokeWidth={1} strokeDasharray="3 3" opacity={0.8} />
-          <Upright rotation={rotation} cx={DW_W / 2} cy={DW_H / 2}>
+          <Upright rotation={rotation} x={36} y={43}>
             <text x="36" y="43" textAnchor="middle" fontSize="11" fill={tint}
               fontFamily="monospace" fontWeight="bold">
               {species?.short ?? 'DEWAR'}
@@ -99,7 +99,7 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
         {/* the bottle: domed shoulder, straight body */}
         <path d={`M6,26 Q6,11 22,9 Q38,11 38,26 L38,${KB_H - 5} Q38,${KB_H - 1} 34,${KB_H - 1} L10,${KB_H - 1} Q6,${KB_H - 1} 6,${KB_H - 5} Z`}
           fill={tint + '1f'} stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
-        <Upright rotation={rotation} cx={KB_W / 2} cy={KB_H / 2}>
+        <Upright rotation={rotation} x={22} y={52}>
           <text x="22" y="52" textAnchor="middle" fontSize="10" fill={tint}
             fontFamily="monospace" fontWeight="bold">
             {species?.short ?? 'KB'}

@@ -49,14 +49,19 @@ export function EngineNode({ id, data, selected }: NodeProps) {
           fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
         <path d="M30,84 Q22,100 16,114 L56,114 Q50,100 42,84 Z"
           fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
-        <Upright rotation={rotation} cx={W / 2} cy={H / 2}>
+        {/* One wrapper each: the counter-rotation is about the text's own
+            anchor, so two texts sharing one would spin the second about the
+            first's position and fling it off the symbol. */}
+        <Upright rotation={rotation} x={36} y={24}>
           <text x="36" y="24" textAnchor="middle" fontSize="8" fill="#e2e8f0" fontFamily="monospace">INJ</text>
-          {pc && (
+        </Upright>
+        {pc && (
+          <Upright rotation={rotation} x={36} y={60}>
             <text x="36" y="60" textAnchor="middle" fontSize="8" fill="#f97316" fontFamily="monospace">
               {pc.value}{pc.unit === '-' ? '' : pc.unit}
             </text>
-          )}
-        </Upright>
+          </Upright>
+        )}
       </svg>
     </Frame>
   );

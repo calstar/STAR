@@ -137,7 +137,10 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset }: Draggab
           style={{
             cursor: 'default',
             color:      dragging ? '#3b82f6' : '#cbd5e1',
-            background: dragging ? 'rgba(59,130,246,0.15)' : 'rgba(10,15,26,0.8)',
+            // Opaque, not 80%. A tank's tag sits directly under its bottom
+            // port, so the run leaving that port passes behind the text --
+            // and at 80% it showed through the letters.
+            background: dragging ? 'rgba(59,130,246,0.15)' : 'var(--color-bg-primary)',
             outline:    dragging ? '1px dashed #3b82f6' : 'none',
           }}
         >

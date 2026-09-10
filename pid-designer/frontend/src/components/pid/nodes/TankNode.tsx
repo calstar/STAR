@@ -86,7 +86,7 @@ export function TankNode({ id, data, selected }: NodeProps) {
         <svg width={INJ_W} height={INJ_H} viewBox={`0 0 ${INJ_W} ${INJ_H}`}>
           <rect x="10" y="6" width="40" height="22" rx="2"
             fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
-          <Upright rotation={rotation} cx={INJ_W / 2} cy={INJ_H / 2}>
+          <Upright rotation={rotation} x={30} y={21}>
             <text x="30" y="21" textAnchor="middle" fontSize="8" fill="#e2e8f0" fontFamily="monospace">INJ</text>
           </Upright>
           <polygon points="10,28 50,28 38,88 22,88"
@@ -123,7 +123,7 @@ export function TankNode({ id, data, selected }: NodeProps) {
           strokeWidth={1.1} opacity={0.75} />
         <path d="M6,84 A24,9 0 0 1 54,84" fill="none" stroke={stroke}
           strokeWidth={1.1} opacity={0.75} />
-        <Upright rotation={rotation} cx={TANK_W / 2} cy={TANK_H / 2}>
+        <Upright rotation={rotation} x={30} y={52}>
           <text x="30" y="52" textAnchor="middle" fontSize="10" fill={fluidColor}
             fontFamily="monospace" fontWeight="bold">
             {species?.short ?? 'TANK'}

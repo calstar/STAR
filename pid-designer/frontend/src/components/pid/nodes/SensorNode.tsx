@@ -41,7 +41,7 @@ export function SensorNode({ id, data, selected }: NodeProps) {
           stroke={stroke}
           strokeWidth={selected ? 2.5 : 1.5}
         />
-        <Upright rotation={rotation} cx={30} cy={30}>
+        <Upright rotation={rotation} x={30} y={34}>
           <text x="30" y="34" textAnchor="middle" fontSize="14" fill="#e2e8f0"
             fontFamily="monospace" fontWeight="bold">
             {componentType}
