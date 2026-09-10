@@ -100,6 +100,15 @@ export const LEAD_GROUPS: LeadGroup[] = [
         bio: "Hello! I’m Rohith, the Avionics lead. I have a lot of background in hardware engineering and PCB design, and I'm an intern at a humanoid robotics startup in San Francisco. This is my fourth year on STAR and I’m aiming to organize our team to develop our flight avionics stack and custom electrical systems for the year. Apart from STAR, my interests are playing piano, painting, and reading books.",
       },
       {
+        id: 'software',
+        image: '/img/leads/software.webp',
+        role: 'Software',
+        name: 'Inez Alvarez',
+        year: 4,
+        major: 'EECS',
+        bio: "Hi everyone! I’m Inez and I’m the software lead. Looking forward to working with all of you this year!",
+      },
+      {
         id: 'payload',
         image: '/img/leads/payload.webp',
         role: 'Payload',
