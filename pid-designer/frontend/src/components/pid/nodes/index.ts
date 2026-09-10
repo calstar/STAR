@@ -8,6 +8,10 @@ import { QDNode }          from './QDNode';
 import { TankNode }        from './TankNode';
 import { TextNode }        from './TextNode';
 import { JunctionNode }    from './JunctionNode';
+import { EngineNode }      from './EngineNode';
+import { ManifoldNode }    from './ManifoldNode';
+import { RegionNode }      from './RegionNode';
+import { SupplyNode }      from './SupplyNode';
 
 export const nodeTypes: NodeTypes = {
   RTD:      SensorNode,
@@ -24,6 +28,11 @@ export const nodeTypes: NodeTypes = {
   QD:       QDNode,
   TANK:     TankNode,
   INJECTOR: TankNode,
+  ENGINE:   EngineNode,
+  MANIFOLD: ManifoldNode,
+  KBOTTLE:  SupplyNode,
+  DEWAR:    SupplyNode,
+  REGION:   RegionNode,
   TEXT:     TextNode,
   JUNCTION: JunctionNode,
 };

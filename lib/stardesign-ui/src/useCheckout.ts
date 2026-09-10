@@ -25,6 +25,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CheckoutState, DesignApi, DocRef } from './api';
 import { ApiError, keyOf } from './api';
 
+/** Well inside the server's 5-minute `lock_ttl`, and cheap. */
+const HEARTBEAT_MS = 90_000;
+
 const FREE: CheckoutState = {
   lockedBy: null,
   lockedByName: null,
@@ -108,6 +111,30 @@ export function useCheckout<T>({
       clearInterval(id);
     };
   }, [api, key, state.lockedByMe, pollMs]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep it alive while we hold it.
+  //
+  // The server expires a checkout `lock_ttl` after the last *save*, and a save
+  // only happens when content changes -- so reading, panning or thinking for
+  // five minutes silently dropped the design out from under whoever was
+  // working on it. Re-taking is idempotent for the current holder and sets the
+  // heartbeat, so this is the same request the button makes, on a timer well
+  // inside the timeout.
+  useEffect(() => {
+    if (!ref || !state.lockedByMe) return;
+    const id = setInterval(() => {
+      const r = refRef.current;
+      if (!r || !heldRef.current) return;
+      // Only a tab somebody is looking at. A background tab renewing is how a
+      // forgotten window keeps a design checked out all afternoon -- and where
+      // every client is the same user (any dev setup, and any one person with
+      // two tabs open) it is worse than that: the idle tab wins the design back
+      // off the tab actually being typed in, seconds after it was taken.
+      if (document.visibilityState !== 'visible') return;
+      api.takeCheckout(r).catch(() => {});
+    }, HEARTBEAT_MS);
+    return () => clearInterval(id);
+  }, [api, key, state.lockedByMe]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Give it back when the tab goes away, so a colleague is not left waiting out
   // the inactivity timeout for a design nobody has open.
