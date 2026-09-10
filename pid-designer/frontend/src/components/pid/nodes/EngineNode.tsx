@@ -1,5 +1,5 @@
 import { Position, type NodeProps } from '@xyflow/react';
-import { Port } from './Port';
+import { Frame, TurnedPort } from './Frame';
 import type { PIDNodeData } from '../types';
 import { DraggableLabel } from './DraggableLabel';
 import { Upright } from './Upright';
@@ -24,12 +24,17 @@ export function EngineNode({ id, data, selected }: NodeProps) {
   const stroke = selected ? '#3b82f6' : '#94a3b8';
   const pc = params?.chamber_pressure;
 
+  const boxH = (rotation ?? 0) % 180 === 90 ? W : H;
   return (
-    <div style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
-      <Port position={Position.Left}  id="fuel" style={{ top: 18 }} />
-      <Port position={Position.Right} id="ox"   style={{ top: 18 }} />
-      <Port position={Position.Top}   id="t" />
-
+    <Frame
+      w={W} h={H} rotation={rotation}
+      extra={<>
+        <TurnedPort nodeId={id} id="fuel" side={Position.Left}  along={18} w={W} h={H} rotation={rotation} />
+        <TurnedPort nodeId={id} id="ox"   side={Position.Right} along={18} w={W} h={H} rotation={rotation} />
+        <TurnedPort nodeId={id} id="t"    side={Position.Top}              w={W} h={H} rotation={rotation} />
+        <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: boxH + 2 }} />
+      </>}
+    >
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
         {/* injector manifold block */}
         <rect x="10" y="8" width="52" height="24" rx="2"
@@ -53,8 +58,6 @@ export function EngineNode({ id, data, selected }: NodeProps) {
           )}
         </Upright>
       </svg>
-
-      <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: H + 2 }} />
-    </div>
+    </Frame>
   );
 }

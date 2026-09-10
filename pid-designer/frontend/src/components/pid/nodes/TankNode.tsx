@@ -1,5 +1,5 @@
 import { Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
-import { Port } from './Port';
+import { Frame, TurnedPort } from './Frame';
 import type { PIDNodeData } from '../types';
 import { speciesById, colorForSpecies, UNSET_COLOR } from '../fluids';
 import { useNodeFluid } from '../FluidContext';
@@ -22,8 +22,8 @@ const INJ_W = 60, INJ_H = 100;
  * already drawn to the ports that remain.
  */
 function endPorts(
-  n: number, prefix: 't' | 'b', position: Position, width: number,
-  data: PIDNodeData, nodeId: string,
+  n: number, prefix: 't' | 'b', side: Position, w: number, h: number,
+  data: PIDNodeData, nodeId: string, rotation: number,
 ) {
   const count = Math.max(1, Math.min(4, n));
   return Array.from({ length: count }, (_, i) => {
@@ -32,12 +32,14 @@ function endPorts(
     // something the port works out from what is on it.
     if (portKind(data, pid) === 'plug') return null;
     return (
-      <Port
+      <TurnedPort
         key={pid}
         id={pid}
         nodeId={nodeId}
-        position={position}
-        style={{ left: (width * (i + 1)) / (count + 1) }}
+        side={side}
+        along={(w * (i + 1)) / (count + 1)}
+        w={w} h={h}
+        rotation={rotation}
       />
     );
   });
@@ -65,12 +67,21 @@ export function TankNode({ id, data, selected }: NodeProps) {
   const species = speciesById(assigned?.species ?? undefined);
   const fluidColor = color ?? (species ? colorForSpecies(species.id) : UNSET_COLOR);
   const isInjector = componentType === 'INJECTOR';
+  // The box each symbol occupies once turned, so the tag stays under it.
+  const quarter = (rotation ?? 0) % 180 === 90;
+  const injBoxH = quarter ? INJ_W : INJ_H;
+  const tankBoxH = quarter ? TANK_W : TANK_H;
 
   if (isInjector) {
     return (
-      <div style={{ position: 'relative', width: INJ_W, height: INJ_H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
-        <Port position={Position.Top}    id="t" />
-        <Port position={Position.Bottom} id="b" />
+      <Frame
+        w={INJ_W} h={INJ_H} rotation={rotation}
+        extra={<>
+          <TurnedPort nodeId={id} id="t" side={Position.Top}    w={INJ_W} h={INJ_H} rotation={rotation ?? 0} />
+          <TurnedPort nodeId={id} id="b" side={Position.Bottom} w={INJ_W} h={INJ_H} rotation={rotation ?? 0} />
+          <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: injBoxH + 2 }} />
+        </>}
+      >
 
         <svg width={INJ_W} height={INJ_H} viewBox={`0 0 ${INJ_W} ${INJ_H}`}>
           <rect x="10" y="6" width="40" height="22" rx="2"
@@ -83,15 +94,19 @@ export function TankNode({ id, data, selected }: NodeProps) {
           <line x1="22" y1="88" x2="38" y2="88" stroke={stroke} strokeWidth={2} />
         </svg>
 
-        <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: INJ_H + 2 }} />
-      </div>
+      </Frame>
     );
   }
 
   return (
-    <div style={{ position: 'relative', width: TANK_W, height: TANK_H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
-      {endPorts(Number(options?.portsTop ?? 1), 't', Position.Top, TANK_W, data as unknown as PIDNodeData, id)}
-      {endPorts(Number(options?.portsBottom ?? 1), 'b', Position.Bottom, TANK_W, data as unknown as PIDNodeData, id)}
+    <Frame
+      w={TANK_W} h={TANK_H} rotation={rotation}
+      extra={<>
+        {endPorts(Number(options?.portsTop ?? 1), 't', Position.Top, TANK_W, TANK_H, data as unknown as PIDNodeData, id, rotation ?? 0)}
+        {endPorts(Number(options?.portsBottom ?? 1), 'b', Position.Bottom, TANK_W, TANK_H, data as unknown as PIDNodeData, id, rotation ?? 0)}
+        <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: tankBoxH + 2 }} />
+      </>}
+    >
 
       <svg width={TANK_W} height={TANK_H} viewBox={`0 0 ${TANK_W} ${TANK_H}`}>
         {/* One silhouette, filled once.
@@ -116,7 +131,6 @@ export function TankNode({ id, data, selected }: NodeProps) {
         </Upright>
       </svg>
 
-      <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: TANK_H + 2 }} />
-    </div>
+    </Frame>
   );
 }

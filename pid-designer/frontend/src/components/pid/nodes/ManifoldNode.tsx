@@ -1,6 +1,6 @@
 import { Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
 import { useEffect } from 'react';
-import { Port } from './Port';
+import { Frame, TurnedPort } from './Frame';
 import type { PIDNodeData } from '../types';
 import { colorForSpecies, speciesById, UNSET_COLOR } from '../fluids';
 import { useNodeFluid } from '../FluidContext';
@@ -63,57 +63,57 @@ export function ManifoldNode({ id, data, selected }: NodeProps) {
   const W = geom ? geom.width : vertical ? BODY : run;
   const H = geom ? geom.height : vertical ? run : BODY;
 
+  const quarter = (rotation ?? 0) % 180 === 90;
+  const boxH = quarter ? W : H;
+
+  const ports = geom ? (
+    // Placed by hand: each port sits where its perimeter fraction puts it.
+    (() => {
+      const ids = ['in', ...portIds('p', outlets)];
+      const spare = defaultPositions(ids);
+      return ids.map(pid => {
+        if (portKind(data as unknown as PIDNodeData, pid) === 'plug') return null;
+        const pt = perimeterPoint(geom.positions[pid] ?? spare[pid], W, H);
+        const side =
+          pt.side === 'top' ? Position.Top
+          : pt.side === 'bottom' ? Position.Bottom
+          : pt.side === 'left' ? Position.Left
+          : Position.Right;
+        const along = pt.side === 'top' || pt.side === 'bottom' ? pt.x : pt.y;
+        return (
+          <TurnedPort key={pid} nodeId={id} id={pid} side={side} along={along}
+            w={W} h={H} rotation={rotation ?? 0} />
+        );
+      });
+    })()
+  ) : (
+    <>
+      {/* The feed in, at the near end. */}
+      <TurnedPort nodeId={id} id="in" side={vertical ? Position.Top : Position.Left}
+        w={W} h={H} rotation={rotation ?? 0} />
+
+      {/* One tapping per outlet, down the long side. A plugged one is not
+          drawn at all -- a P&ID does not draw plugs. */}
+      {portOffsets(outlets).map((off, i) => {
+        const pid = portId('p', i);
+        if (portKind(data as unknown as PIDNodeData, pid) === 'plug') return null;
+        return (
+          <TurnedPort key={pid} nodeId={id} id={pid}
+            side={vertical ? Position.Right : Position.Bottom}
+            along={off} w={W} h={H} rotation={rotation ?? 0} />
+        );
+      })}
+    </>
+  );
+
   return (
-    <div style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
-      {geom ? (
-        // Placed by hand: each port sits where its perimeter fraction puts it.
-        (() => {
-          const ids = ['in', ...portIds('p', outlets)];
-          const spare = defaultPositions(ids);
-          return ids.map(pid => {
-            if (portKind(data as unknown as PIDNodeData, pid) === 'plug') return null;
-            const pt = perimeterPoint(geom.positions[pid] ?? spare[pid], W, H);
-            // The side decides which way React Flow thinks the port faces,
-            // which is what makes a line leave it in a sensible direction.
-            const position =
-              pt.side === 'top' ? Position.Top
-              : pt.side === 'bottom' ? Position.Bottom
-              : pt.side === 'left' ? Position.Left
-              : Position.Right;
-            // Only the coordinate along the edge. React Flow uses `transform`
-            // to sit a handle *on* its edge, so overriding it pushes the port
-            // off the block by half its own width -- which is what the ports
-            // floating outside the outline were.
-            const style: React.CSSProperties =
-              pt.side === 'top' || pt.side === 'bottom'
-                ? { left: pt.x }
-                : { top: pt.y };
-            return <Port key={pid} id={pid} nodeId={id} position={position} style={style} />;
-          });
-        })()
-      ) : (
-        <>
-          {/* The feed in, at the near end. */}
-          <Port position={vertical ? Position.Top : Position.Left} id="in" />
-
-          {/* One tapping per outlet, down the long side. A plugged one is not
-              drawn at all -- a P&ID does not draw plugs. */}
-          {portOffsets(outlets).map((off, i) => {
-            const pid = portId('p', i);
-            if (portKind(data as unknown as PIDNodeData, pid) === 'plug') return null;
-            return (
-              <Port
-                key={pid}
-                id={pid}
-                nodeId={id}
-                position={vertical ? Position.Right : Position.Bottom}
-                style={vertical ? { top: off } : { left: off }}
-              />
-            );
-          })}
-        </>
-      )}
-
+    <Frame
+      w={W} h={H} rotation={rotation}
+      extra={<>
+        {ports}
+        <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: boxH + 2 }} />
+      </>}
+    >
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
         <rect x="1" y="1" width={W - 2} height={H - 2} rx="3"
           fill={fluid + '22'} stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
@@ -122,8 +122,6 @@ export function ManifoldNode({ id, data, selected }: NodeProps) {
           ? <line x1={W / 2} y1="4" x2={W / 2} y2={H - 4} stroke={stroke} strokeWidth={1} strokeDasharray="3 3" />
           : <line x1="4" y1={H / 2} x2={W - 4} y2={H / 2} stroke={stroke} strokeWidth={1} strokeDasharray="3 3" />}
       </svg>
-
-      <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: H + 2 }} />
-    </div>
+    </Frame>
   );
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Position } from '@xyflow/react';
-import { routeOrthogonal, facing, isHorizontal } from './route';
+import { routeOrthogonal, facing, isHorizontal, turn, turnPlacement } from './route';
 
 const L = Position.Left, R = Position.Right, T = Position.Top, B = Position.Bottom;
 
@@ -198,5 +198,80 @@ describe('a run that has to double back', () => {
       { x: 400, y: 300, side: T },
     );
     expect(points(d).length).toBeLessThanOrEqual(4);
+  });
+});
+
+describe('turning a symbol turns which way its ports face', () => {
+  it('steps a quarter turn clockwise', () => {
+    expect(turn(L, 90)).toBe(T);
+    expect(turn(T, 90)).toBe(R);
+    expect(turn(R, 90)).toBe(B);
+    expect(turn(B, 90)).toBe(L);
+  });
+
+  it('leaves an unturned symbol alone', () => {
+    for (const s of [L, R, T, B]) expect(turn(s, 0)).toBe(s);
+  });
+
+  it('comes back round after four', () => {
+    for (const s of [L, R, T, B]) {
+      expect(turn(s, 360)).toBe(s);
+      expect(turn(turn(s, 180), 180)).toBe(s);
+      expect(turn(s, 270)).toBe(turn(s, -90));
+    }
+  });
+
+  it('is what makes a turned valve route straight', () => {
+    // A tank above a valve turned ninety degrees. The valve's inlet is drawn
+    // on its left and now sits on top, so the run is a plain vertical drop --
+    // and used to be a hook, because the port still claimed to face left.
+    const inlet = turn(L, 90);
+    expect(inlet).toBe(T);
+    const { d } = routeOrthogonal(
+      { x: 300, y: 100, side: B },
+      { x: 300, y: 260, side: inlet },
+    );
+    expect(points(d)).toEqual([[300, 100], [300, 260]]);
+  });
+});
+
+describe('where a port sits after the symbol is turned', () => {
+  // An engine: 72 across, 120 tall, fuel inlet 18 down its left edge.
+  const W = 72, H = 120;
+
+  it('leaves an unturned symbol alone', () => {
+    expect(turnPlacement(L, 18, W, H, 0)).toEqual({ side: L, along: 18 });
+  });
+
+  it('reverses the direction where a quarter turn reverses the edge', () => {
+    // The left edge's top end becomes the top edge's right end, so a port 18
+    // down the left is 18 in from the right of a box that is now 120 wide.
+    expect(turnPlacement(L, 18, W, H, 90)).toEqual({ side: T, along: H - 18 });
+  });
+
+  it('keeps the direction where the turn preserves it', () => {
+    expect(turnPlacement(T, 20, W, H, 90)).toEqual({ side: R, along: 20 });
+  });
+
+  it('puts a port back where it started after four turns', () => {
+    for (const side of [L, R, T, B]) {
+      expect(turnPlacement(side, 25, W, H, 360)).toEqual({ side, along: 25 });
+    }
+  });
+
+  it('keeps a port on the box it belongs to', () => {
+    // Whatever the turn, the offset is inside the turned box's own extent.
+    for (const rotation of [0, 90, 180, 270]) {
+      const quarter = rotation % 180 === 90;
+      const [bw, bh] = quarter ? [H, W] : [W, H];
+      for (const side of [L, R, T, B]) {
+        for (const along of [0, 18, 40]) {
+          const out = turnPlacement(side, along, W, H, rotation);
+          const extent = out.side === T || out.side === B ? bw : bh;
+          expect(out.along, `${side}@${along} r${rotation}`).toBeGreaterThanOrEqual(0);
+          expect(out.along, `${side}@${along} r${rotation}`).toBeLessThanOrEqual(extent);
+        }
+      }
+    }
   });
 });

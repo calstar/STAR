@@ -2,6 +2,8 @@ import { Position, type NodeProps } from '@xyflow/react';
 import { Port } from './Port';
 import type { PIDNodeData } from '../types';
 import { DraggableLabel } from './DraggableLabel';
+import { Frame } from './Frame';
+import { turn } from '../route';
 import { Upright } from './Upright';
 
 const W = 60, H = 60;
@@ -50,29 +52,34 @@ export function ValveNode({ id, data, selected }: NodeProps) {
   // drawing during a procedure review looks for -- so it belongs on the
   // symbol, not two clicks away inside a dialog.
   const failOpen = options?.failState === 'open';
+  // The box the symbol occupies once turned, so the tag sits under what the
+  // reader actually sees rather than under where it would have been unturned.
+  const boxH = (rotation ?? 0) % 180 === 90 ? W : H;
   return (
-    <div style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
-      <Port position={Position.Left}  id="l" />
-      <Port position={Position.Right} id="r" />
+    <Frame
+      w={W} h={H} rotation={rotation}
+      extra={<>
+        <Port position={turn(Position.Left, rotation)}  id="l" />
+        <Port position={turn(Position.Right, rotation)} id="r" />
+        {componentType !== 'MAN' && (
+          <span
+            title={failOpen ? 'Normally open — passes with no command applied' : 'Normally closed — shuts with no command applied'}
+            style={{
+              position: 'absolute', right: 2, bottom: 6, fontSize: 8, lineHeight: 1,
+              fontFamily: 'monospace', letterSpacing: '0.02em',
+              color: failOpen ? '#f59e0b' : '#64748b',
+            }}
+          >
+            {failOpen ? 'NO' : 'NC'}
+          </span>
+        )}
+        <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: boxH + 2 }} />
+      </>}
+    >
       {componentType === 'MAN'
         ? <ManualValve selected={!!selected} />
         : <BowtieWithActuator selected={!!selected} actuatorLabel={actuator} failOpen={failOpen} rotation={rotation} />}
-      {componentType !== 'MAN' && (
-        <span
-          title={failOpen ? 'Normally open — passes with no command applied' : 'Normally closed — shuts with no command applied'}
-          style={{
-            position: 'absolute', right: 2, bottom: 6, fontSize: 8, lineHeight: 1,
-            fontFamily: 'monospace', letterSpacing: '0.02em',
-            color: failOpen ? '#f59e0b' : '#64748b',
-            // Counter-rotate so the marker stays readable when the valve turns.
-            transform: `rotate(${-(((rotation ?? 0) % 360) + 360) % 360}deg)`,
-            transformOrigin: 'center',
-          }}
-        >
-          {failOpen ? 'NO' : 'NC'}
-        </span>
-      )}
-      <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: H + 2 }} />
-    </div>
+    </Frame>
   );
 }
+

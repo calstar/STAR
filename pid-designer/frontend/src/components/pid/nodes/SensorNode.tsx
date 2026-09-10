@@ -2,6 +2,8 @@ import { Position, type NodeProps } from '@xyflow/react';
 import { Port } from './Port';
 import type { PIDNodeData } from '../types';
 import { DraggableLabel } from './DraggableLabel';
+import { Frame } from './Frame';
+import { turn } from '../route';
 import { Upright } from './Upright';
 
 /**
@@ -25,9 +27,12 @@ export function SensorNode({ id, data, selected }: NodeProps) {
   const stroke = selected ? '#3b82f6' : (color ?? '#94a3b8');
 
   return (
-    <div style={{ position: 'relative', width: S, height: S, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
+    <Frame w={S} h={S} rotation={rotation} extra={<>
+        {tapped && <Port position={turn(Position.Bottom, rotation)} id="b" />}
+        <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: S + 2 }} />
+      </>}
+    >
       {/* One tapping, at the bottom. Rotate the symbol to point it elsewhere. */}
-      {tapped && <Port position={Position.Bottom} id="b" />}
 
       <svg width={S} height={S} viewBox="0 0 60 60">
         <circle
@@ -44,7 +49,6 @@ export function SensorNode({ id, data, selected }: NodeProps) {
         </Upright>
       </svg>
 
-      <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: S + 2 }} />
-    </div>
+    </Frame>
   );
 }

@@ -6,12 +6,13 @@ interface DraggableLabelProps {
   nodeId: string;
   label: string;
   offset?: { x: number; y: number };
+  /** Where the tag sits when nobody has dragged it. Measured from the top-left
+   *  of the symbol's box *as drawn*, so a caller that turns its artwork passes
+   *  the turned box's height and the tag stays underneath it. */
   defaultOffset: { x: number; y: number };
-  /** The symbol's rotation, so the tag can undo it and stay upright. */
-  rotation?: number;
 }
 
-export function DraggableLabel({ nodeId, label, offset, defaultOffset, rotation = 0 }: DraggableLabelProps) {
+export function DraggableLabel({ nodeId, label, offset, defaultOffset }: DraggableLabelProps) {
   const { setNodes, getViewport } = useReactFlow();
   // This edits through useReactFlow rather than the canvas's own handlers,
   // so ReactFlow's interaction props do not reach it. It has to check the
@@ -25,13 +26,11 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset, rotation 
 
   useEffect(() => { if (!editing) setEditVal(label); }, [label, editing]);
 
-  // Rotating a valve rotated its tag with it, and sideways text is not what
-  // anybody wanted from R. The tag counter-rotates so it stays upright, and its
-  // default position swings round to whichever side is now "below" the symbol
-  // -- dragging it still overrides that, and a dragged offset is left alone.
-  const spun = ((rotation % 360) + 360) % 360;
-  const swung = offset ?? rotatedDefault(defaultOffset, spun);
-  const currentOffset = swung;
+  // Nothing here turns any more. A symbol's rotation is applied to its
+  // artwork alone (see `Frame`), so the tag is drawn in the box's own frame:
+  // upright by construction, and below the symbol as it actually appears
+  // rather than below where it would have been unturned.
+  const currentOffset = offset ?? defaultOffset;
 
   const commitLabel = useCallback(() => {
     setNodes(nds => nds.map(n =>
@@ -61,21 +60,11 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset, rotation 
       const dx = (e.clientX - dragStart.current.mouseX) / zoom;
       const dy = (e.clientY - dragStart.current.mouseY) / zoom;
 
-      // The offset lives in the symbol's own frame, and the symbol may be
-      // turned. A drag is measured on screen, so it has to be rotated *back*
-      // into that frame before it is added -- otherwise dragging a tag on a
-      // symbol rotated 90 degrees moves it sideways, and on one rotated 180 it
-      // moves the opposite way to the mouse.
-      const a = (spun * Math.PI) / 180;
-      const cos = Math.cos(a), sin = Math.sin(a);
-      const localDx = dx * cos + dy * sin;
-      const localDy = -dx * sin + dy * cos;
-
       setNodes(nds => nds.map(n =>
         n.id === nodeId
           ? { ...n, data: { ...n.data, labelOffset: {
-              x: dragStart.current!.ox + localDx,
-              y: dragStart.current!.oy + localDy,
+              x: dragStart.current!.ox + dx,
+              y: dragStart.current!.oy + dy,
             }}}
           : n,
       ));
@@ -89,7 +78,7 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset, rotation 
       window.removeEventListener('mousemove', onMove, true);
       window.removeEventListener('mouseup',   onUp,   true);
     };
-  }, [dragging, nodeId, setNodes, getViewport, spun]);
+  }, [dragging, nodeId, setNodes, getViewport]);
 
   return (
     <div
@@ -98,8 +87,7 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset, rotation 
         position: 'absolute',
         left: 0,
         top: 0,
-        transform: `translate(${currentOffset.x}px, ${currentOffset.y}px) rotate(${-spun}deg)`,
-        transformOrigin: 'left center',
+        transform: `translate(${currentOffset.x}px, ${currentOffset.y}px)`,
         userSelect: 'none',
         zIndex: 10,
         whiteSpace: 'nowrap',
@@ -158,20 +146,4 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset, rotation 
       )}
     </div>
   );
-}
-
-/**
- * Where a tag sits once its symbol has been turned.
- *
- * The default puts it under the symbol. Turned ninety degrees that position is
- * off to one side, so it is swung round the symbol's centre to stay under what
- * the reader now sees.
- */
-function rotatedDefault(d: { x: number; y: number }, deg: number): { x: number; y: number } {
-  switch (deg) {
-    case 90:  return { x: d.y, y: -d.x };
-    case 180: return { x: -d.x, y: -d.y };
-    case 270: return { x: -d.y, y: d.x };
-    default:  return d;
-  }
 }

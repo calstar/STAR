@@ -199,3 +199,57 @@ function crossbar(
   // the symbol it came from. The caller routes round instead.
   return null;
 }
+
+/** The four sides, clockwise, so a quarter turn is one step along. */
+const CLOCKWISE = [Position.Top, Position.Right, Position.Bottom, Position.Left];
+
+/**
+ * Which side a port ends up on once its symbol has been turned.
+ *
+ * A rotation moves a port on screen, and until this existed it did not move
+ * the port's *facing*: React Flow still had a rotated valve's inlet down as
+ * left-facing, so the router sent the line off sideways from a port that was
+ * now on the top. The coordinates were right and the direction was not, which
+ * is the whole of why rotated symbols drew hooks.
+ */
+export function turn(side: Position, rotation = 0): Position {
+  const steps = Math.round(((rotation % 360) + 360) % 360 / 90) % 4;
+  return CLOCKWISE[(CLOCKWISE.indexOf(side) + steps) % 4];
+}
+
+/**
+ * Where a port sits after its symbol is turned.
+ *
+ * `turn` says which side a port ends up on; this says whereabouts along that
+ * side. A tank's three bottom ports and an engine's two inlets are placed a
+ * measured distance along their edge, and a quarter turn does not just move
+ * the edge -- it can reverse the direction the distance is measured in. The
+ * left edge's top end becomes the top edge's *right* end.
+ *
+ * `along` is pixels from the box's top-left corner, down or across the edge.
+ * The returned `along` is in the turned box, whose width and height have
+ * swapped for an odd number of quarter turns.
+ */
+export function turnPlacement(
+  side: Position, along: number, w: number, h: number, rotation = 0,
+): { side: Position; along: number } {
+  const steps = Math.round(((rotation % 360) + 360) % 360 / 90) % 4;
+
+  // The port as a point in the unturned box.
+  let x = side === Position.Right ? w : side === Position.Left ? 0 : along;
+  let y = side === Position.Bottom ? h : side === Position.Top ? 0 : along;
+  let bw = w, bh = h;
+
+  // One quarter turn clockwise: (x, y) in a bw x bh box becomes (bh - y, x).
+  for (let i = 0; i < steps; i++) {
+    const nx = bh - y, ny = x;
+    [x, y] = [nx, ny];
+    [bw, bh] = [bh, bw];
+  }
+
+  const turned = turn(side, rotation);
+  return {
+    side: turned,
+    along: turned === Position.Top || turned === Position.Bottom ? x : y,
+  };
+}

@@ -3,6 +3,8 @@ import { useEffect } from 'react';
 import { Port } from './Port';
 import type { PIDNodeData } from '../types';
 import { DraggableLabel } from './DraggableLabel';
+import { Frame } from './Frame';
+import { turn } from '../route';
 import { Upright } from './Upright';
 
 const W = 60, H = 60;
@@ -18,11 +20,16 @@ export function PRNode({ id, data, selected }: NodeProps) {
   const updateNodeInternals = useUpdateNodeInternals();
   useEffect(() => { updateNodeInternals(id); }, [id, domeLoaded, updateNodeInternals]);
 
+  // The box once turned, so the tag sits under what is drawn.
+  const boxH = (rotation ?? 0) % 180 === 90 ? W : H;
   return (
-    <div style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
-      <Port position={Position.Left}  id="l" />
-      <Port position={Position.Right} id="r" />
-      {domeLoaded && <Port position={Position.Top} id="dome" />}
+    <Frame w={W} h={H} rotation={rotation} extra={<>
+        <Port position={turn(Position.Left, rotation)}  id="l" />
+        <Port position={turn(Position.Right, rotation)} id="r" />
+        {domeLoaded && <Port position={turn(Position.Top, rotation)} id="dome" />}
+        <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: boxH + 2 }} />
+      </>}
+    >
 
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
         <rect x="8" y="8" width="44" height="44" rx="3"
@@ -47,7 +54,6 @@ export function PRNode({ id, data, selected }: NodeProps) {
         )}
       </svg>
 
-      <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: H + 2 }} />
-    </div>
+    </Frame>
   );
 }

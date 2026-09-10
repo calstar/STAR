@@ -1,9 +1,9 @@
 import { Position, type NodeProps } from '@xyflow/react';
-import { Port } from './Port';
 import type { PIDNodeData } from '../types';
 import { speciesById, colorForSpecies, UNSET_COLOR } from '../fluids';
 import { useNodeFluid } from '../FluidContext';
 import { DraggableLabel } from './DraggableLabel';
+import { Frame, TurnedPort } from './Frame';
 import { Upright } from './Upright';
 
 /**
@@ -32,13 +32,24 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
   const species = speciesById(assigned?.species ?? undefined);
   const tint = color ?? (species ? colorForSpecies(species.id) : UNSET_COLOR);
   const p = params?.pressure;
+  // The box each symbol occupies once turned, so what sits under it -- the
+  // bottle pressure, the tag -- follows the picture rather than the unturned
+  // dimensions.
+  const quarter = (rotation ?? 0) % 180 === 90;
+  const dewarBoxH = quarter ? DW_W : DW_H;
+  const bottleBoxH = quarter ? KB_W : KB_H;
 
   if (componentType === 'DEWAR') {
     return (
-      <div style={{ position: 'relative', width: DW_W, height: DW_H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
-        <Port position={Position.Top}    id="t" />
-        <Port position={Position.Bottom} id="b" />
-        <Port position={Position.Right}  id="r" />
+      <Frame
+        w={DW_W} h={DW_H} rotation={rotation}
+        extra={<>
+          <TurnedPort nodeId={id} id="t" side={Position.Top}    w={DW_W} h={DW_H} rotation={rotation} />
+          <TurnedPort nodeId={id} id="b" side={Position.Bottom} w={DW_W} h={DW_H} rotation={rotation} />
+          <TurnedPort nodeId={id} id="r" side={Position.Right}  w={DW_W} h={DW_H} rotation={rotation} />
+          <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: dewarBoxH + 2 }} />
+        </>}
+      >
 
         <svg width={DW_W} height={DW_H} viewBox={`0 0 ${DW_W} ${DW_H}`}>
           <rect x="30" y="1" width="12" height="7" rx="1"
@@ -56,15 +67,31 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
           </Upright>
         </svg>
 
-        <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: DW_H + 2 }} />
-      </div>
+      </Frame>
     );
   }
 
   return (
-    <div style={{ position: 'relative', width: KB_W, height: KB_H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
-      <Port position={Position.Top}   id="t" />
-      <Port position={Position.Right} id="r" style={{ top: 22 }} />
+    <Frame
+      w={KB_W} h={KB_H} rotation={rotation}
+      extra={<>
+        <TurnedPort nodeId={id} id="t" side={Position.Top}   w={KB_W} h={KB_H} rotation={rotation} />
+        <TurnedPort nodeId={id} id="r" side={Position.Right} along={22} w={KB_W} h={KB_H} rotation={rotation} />
+        {p && (
+          <span
+            style={{
+              position: 'absolute', left: '50%', top: bottleBoxH + 1,
+              transform: 'translateX(-50%)',
+              fontSize: 9, lineHeight: 1, fontFamily: 'monospace',
+              color: '#94a3b8', whiteSpace: 'nowrap', pointerEvents: 'none',
+            }}
+          >
+            {p.value} {p.unit}
+          </span>
+        )}
+        <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: bottleBoxH + 15 }} />
+      </>}
+    >
 
       <svg width={KB_W} height={KB_H} viewBox={`0 0 ${KB_W} ${KB_H}`}>
         {/* valve stem and cap */}
@@ -80,22 +107,6 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
         </Upright>
       </svg>
 
-      {/* Under the bottle, not inside it: "6000 psi" is wider than the body
-          and was running off both sides of it. */}
-      {p && (
-        <span
-          style={{
-            position: 'absolute', left: '50%', top: KB_H + 1,
-            transform: `translateX(-50%) rotate(${-(((rotation ?? 0) % 360) + 360) % 360}deg)`,
-            fontSize: 9, lineHeight: 1, fontFamily: 'monospace',
-            color: '#94a3b8', whiteSpace: 'nowrap', pointerEvents: 'none',
-          }}
-        >
-          {p.value} {p.unit}
-        </span>
-      )}
-
-      <DraggableLabel nodeId={id} label={label} offset={labelOffset} rotation={rotation} defaultOffset={{ x: -4, y: KB_H + 15 }} />
-    </div>
+    </Frame>
   );
 }
