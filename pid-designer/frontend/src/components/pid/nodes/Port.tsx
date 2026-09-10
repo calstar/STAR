@@ -1,4 +1,5 @@
 import { Handle, Position, type HandleProps } from '@xyflow/react';
+import { useIsTap } from '../FluidContext';
 
 /**
  * A port on a P&ID symbol.
@@ -29,14 +30,23 @@ export function Port({
   id,
   position,
   style,
-  kind = 'flow',
+  nodeId,
   ...rest
-}: { id: string; position: Position; kind?: 'flow' | 'instrument' } & Omit<HandleProps, 'type' | 'position' | 'id'> & {
+}: {
+  id: string;
+  position: Position;
+  /** The symbol this port is on. Given, the port works out for itself whether
+   *  it is an instrument tapping — see `instrumentTaps`. */
+  nodeId?: string;
+} & Omit<HandleProps, 'type' | 'position' | 'id'> & {
   style?: React.CSSProperties;
 }) {
   // An instrument tapping is drawn hollow and small: it is real hardware, but
-  // it carries no flow, and a reader should not mistake it for a feed.
-  const look = kind === 'instrument'
+  // it carries no flow, and a reader should not mistake it for a feed. Asked
+  // of the graph rather than passed in, because what is on a port is not
+  // something the symbol should have to be told.
+  const tap = useIsTap(nodeId ?? '', id);
+  const look = tap
     ? { background: 'transparent', border: '1.5px solid #64748b', width: 5, height: 5 }
     : { background: '#94a3b8' };
   return (

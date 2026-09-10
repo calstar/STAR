@@ -156,14 +156,14 @@ export function ManifoldEditor({ outlets, geometry, ports, onSave }: {
           if (kind === 'plug') return null;
           const cx = ox + p.x, cy = oy + p.y;
           const on = drag === id;
-          const colour = id === 'in' ? '#38bdf8' : kind === 'instrument' ? '#a78bfa' : '#94a3b8';
+          const colour = id === 'in' ? '#38bdf8' : '#94a3b8';
           return (
             <g key={id}
                onPointerDown={e => { if (!readOnly) { e.stopPropagation(); setDrag(id); } }}
                style={{ cursor: readOnly ? 'default' : 'grab' }}>
               <circle cx={cx} cy={cy} r={9} fill="transparent" />
               <circle cx={cx} cy={cy} r={on ? 5 : 3.6}
-                fill={kind === 'instrument' ? 'transparent' : colour}
+                fill={colour}
                 stroke={colour} strokeWidth={1.4} />
               <text
                 x={cx + (p.side === 'right' ? 9 : p.side === 'left' ? -9 : 0)}

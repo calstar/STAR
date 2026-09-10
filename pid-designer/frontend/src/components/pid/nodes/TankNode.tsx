@@ -22,18 +22,20 @@ const INJ_W = 60, INJ_H = 100;
  * already drawn to the ports that remain.
  */
 function endPorts(
-  n: number, prefix: 't' | 'b', position: Position, width: number, data: PIDNodeData,
+  n: number, prefix: 't' | 'b', position: Position, width: number,
+  data: PIDNodeData, nodeId: string,
 ) {
   const count = Math.max(1, Math.min(4, n));
   return Array.from({ length: count }, (_, i) => {
     const pid = portId(prefix, i);
-    const kind = portKind(data, pid);
-    if (kind === 'plug') return null;
+    // Only `plug` is authored. Whether a port is an instrument tapping is
+    // something the port works out from what is on it.
+    if (portKind(data, pid) === 'plug') return null;
     return (
       <Port
         key={pid}
         id={pid}
-        kind={kind}
+        nodeId={nodeId}
         position={position}
         style={{ left: (width * (i + 1)) / (count + 1) }}
       />
@@ -88,16 +90,24 @@ export function TankNode({ id, data, selected }: NodeProps) {
 
   return (
     <div style={{ position: 'relative', width: TANK_W, height: TANK_H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
-      {endPorts(Number(options?.portsTop ?? 1), 't', Position.Top, TANK_W, data as unknown as PIDNodeData)}
-      {endPorts(Number(options?.portsBottom ?? 1), 'b', Position.Bottom, TANK_W, data as unknown as PIDNodeData)}
+      {endPorts(Number(options?.portsTop ?? 1), 't', Position.Top, TANK_W, data as unknown as PIDNodeData, id)}
+      {endPorts(Number(options?.portsBottom ?? 1), 'b', Position.Bottom, TANK_W, data as unknown as PIDNodeData, id)}
 
       <svg width={TANK_W} height={TANK_H} viewBox={`0 0 ${TANK_W} ${TANK_H}`}>
-        <ellipse cx="30" cy="14" rx="24" ry="9"
-          fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
-        <rect x="6" y="14" width="48" height="70"
-          fill={fluidColor + '22'} stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
-        <ellipse cx="30" cy="84" rx="24" ry="9"
-          fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
+        {/* One silhouette, filled once.
+            It used to be three shapes with their own fills -- a tinted barrel
+            between two slate heads -- so a tank read as a striped thing rather
+            than a vessel, and only the middle of it took the fluid colour.
+            Filling all three instead would band at the seams, because the
+            heads overlap the barrel and the tint is translucent. */}
+        <path d="M6,14 A24,9 0 0 1 54,14 L54,84 A24,9 0 0 1 6,84 Z"
+          fill={fluidColor + '22'} stroke={stroke}
+          strokeWidth={selected ? 2.5 : 1.5} strokeLinejoin="round" />
+        {/* Where each dished head meets the barrel. */}
+        <path d="M6,14 A24,9 0 0 0 54,14" fill="none" stroke={stroke}
+          strokeWidth={1.1} opacity={0.75} />
+        <path d="M6,84 A24,9 0 0 1 54,84" fill="none" stroke={stroke}
+          strokeWidth={1.1} opacity={0.75} />
         <Upright rotation={rotation} cx={TANK_W / 2} cy={TANK_H / 2}>
           <text x="30" y="52" textAnchor="middle" fontSize="10" fill={fluidColor}
             fontFamily="monospace" fontWeight="bold">

@@ -1,4 +1,4 @@
-import type { Node } from '@xyflow/react';
+import type { Edge, Node } from '@xyflow/react';
 import type { PIDNodeData } from './types';
 
 /**
@@ -13,13 +13,56 @@ import type { PIDNodeData } from './types';
  *
  * - **flow** — carries fluid. The default, and what a drawn line attaches to.
  * - **instrument** — a tapping for a transducer. Real hardware, no flow; drawn
- *   smaller so it does not read as a feed.
+ *   smaller so it does not read as a feed. **Derived, never authored** — see
+ *   `instrumentTaps` below.
  * - **plug** — blanked off. **Not drawn at all**, because a P&ID does not draw
  *   plugs; the port simply is not there until somebody says it is. That is
  *   also why a plug is a port kind rather than a symbol you place.
  */
 
 export type PortKind = 'flow' | 'instrument' | 'plug';
+
+/**
+ * The ports that are instrument tappings, worked out from what is on them.
+ *
+ * This used to be a third choice in a dropdown, and it was a second way of
+ * saying something the drawing already said: put a transducer on a port and
+ * you have told everyone it is a tapping. Two ways to say one thing is two
+ * ways to disagree, and the one somebody forgot to update is the one a reader
+ * would have believed.
+ *
+ * So a port with a transducer or a gauge on it *is* an instrument port, and
+ * `plug` is the only kind left worth authoring -- because "this one is blanked
+ * off" is a fact about the hardware that nothing else on the drawing states.
+ *
+ * Keys are `"<node>:<port>"`.
+ */
+export function instrumentTaps(nodes: Node[], edges: Edge[]): Set<string> {
+  const typeOf = new Map(
+    nodes.map(n => [n.id, (n.data as unknown as PIDNodeData)?.componentType]));
+  const isTap = (id?: string) => id === 'PT' || id === 'PG';
+
+  // Every edge on a port, by port.
+  const on = new Map<string, string[]>();
+  const add = (node: string, port: string | null | undefined, other: string) => {
+    if (!port) return;
+    const key = `${node}:${port}`;
+    const list = on.get(key);
+    if (list) list.push(other);
+    else on.set(key, [other]);
+  };
+  for (const e of edges) {
+    add(e.source, e.sourceHandle, e.target);
+    add(e.target, e.targetHandle, e.source);
+  }
+
+  const taps = new Set<string>();
+  for (const [key, others] of on) {
+    // Every line on it goes to an instrument, and there is at least one.
+    if (others.every(id => isTap(typeOf.get(id)))) taps.add(key);
+  }
+  return taps;
+}
 
 export interface PortInfo {
   label?: string;

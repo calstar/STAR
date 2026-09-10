@@ -93,6 +93,17 @@ function writeActive(ref: DocRef | null): void {
 }
 
 
+/**
+ * The placement grid.
+ *
+ * Ten, not twenty. A symbol is 60 wide and its ports sit at 0, 30 and 60
+ * across it, so on a 20 grid a tank's centre port and a valve's side port can
+ * never land on the same line -- the offset between them is always an odd
+ * multiple of ten. Halving it is what makes stacking two symbols and getting a
+ * straight line between them possible at all.
+ */
+const SNAP: [number, number] = [10, 10];
+
 // ── Undo / redo history ──────────────────────────────────────────────────────
 const MAX_HISTORY = 100;
 
@@ -928,7 +939,7 @@ function PIDCanvas({
         connectionMode={ConnectionMode.Loose}
         multiSelectionKeyCode="Meta"
         snapToGrid
-        snapGrid={[20, 20]}
+        snapGrid={SNAP}
         onMove={rememberViewport}
         defaultViewport={viewportsRef.current.get(viewKey) ?? { x: 0, y: 0, zoom: 1 }}
         colorMode="dark"
@@ -938,9 +949,15 @@ function PIDCanvas({
         <AttachmentLayer nodes={nodes} edges={edges} />
         <VentLayer nodes={view.nodes} edges={view.edges} />
         <Controls />
-        <Panel position="bottom-center">
-          <span className="text-[10px] text-slate-600 select-none">
-            Drag from sidebar · Connect handles · V=Pan  B=Box select · Cmd+click to multi-select · R=Rotate · Double-click to configure · Right-click to colour · Junction tool branches a line · Delete removes selection
+        {/* One line, and only the gestures nothing else on screen mentions.
+            It used to list nine, which wrapped to four lines on any canvas
+            narrower than a desktop and climbed up through the middle of the
+            drawing -- printing the instructions over the thing they are about.
+            `nowrap` is what makes that impossible rather than unlikely, and
+            it stopped taking clicks meant for the canvas underneath. */}
+        <Panel position="bottom-center" className="pointer-events-none max-w-full">
+          <span className="block truncate whitespace-nowrap text-[10px] text-slate-600 select-none">
+            Double-click to configure · R rotates · Right-click colours
           </span>
         </Panel>
       </ReactFlow>

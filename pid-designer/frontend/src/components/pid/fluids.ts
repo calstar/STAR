@@ -54,11 +54,20 @@ export const speciesById = (id?: string): Species | undefined =>
 /**
  * Colour by role, not by species: a reader is looking for "is this the ox side"
  * long before they are looking for which oxidiser.
+ *
+ * Blue ox, red-orange fuel, green inert. Pressurant was red, which is the
+ * colour every other drawing in the building uses for danger and the colour a
+ * reader's eye goes to first -- spent on the one fluid in the system that
+ * cannot burn. Green is what an inert gas is marked as on a bottle rack.
+ *
+ * The species name is drawn inside the symbol as well (LOX, ETH, N2, He), so
+ * colour is never the only thing telling the two apart -- worth keeping, since
+ * red-orange against green is the pair a red-green colour deficiency loses.
  */
 export const ROLE_COLORS: Record<FluidRole, string> = {
   oxidizer:   '#60a5fa',
-  fuel:       '#f97316',
-  pressurant: '#ef4444',
+  fuel:       '#f2643f',
+  pressurant: '#34d399',
   unknown:    '#94a3b8',
 };
 
@@ -67,6 +76,35 @@ export const UNSET_COLOR = '#64748b';
 export function colorForSpecies(id?: string): string {
   const s = speciesById(id);
   return s ? ROLE_COLORS[s.role] : UNSET_COLOR;
+}
+
+/** Room temperature, K. What everything on a stand is until it is not. */
+export const AMBIENT_K = 293;
+
+/**
+ * What a vessel of this is at, before anybody says otherwise.
+ *
+ * Asking for a temperature with an empty box is asking the same question
+ * sixty times: nearly everything on a stand sits at ambient, and the
+ * exceptions are exactly the fluids that are only useful as liquids. Filling
+ * it from the fluid means the common case is already right and the unusual
+ * one is a number somebody deliberately changed.
+ *
+ * Normal boiling points, because that is what an unpressurised cryogenic
+ * vessel sits at. Nitrogen is the one that depends on the vessel: a bottle or
+ * a pressurant tank of GN2 is ambient, a dewar of it is LN2.
+ */
+export function defaultTemperatureK(species?: string, cryogenic = false): number | undefined {
+  switch (species) {
+    case 'oxygen':   return 90;    // LOX
+    case 'methane':  return 112;   // LCH4
+    case 'nitrogen': return cryogenic ? 77 : AMBIENT_K;
+    case 'helium':   return AMBIENT_K;
+    case 'ethanol':  return AMBIENT_K;
+    // 'other' is unmodelled on purpose, and guessing its temperature would be
+    // the one place this file invented a number.
+    default:         return undefined;
+  }
 }
 
 /** What the propagation worked out for one component. */
@@ -112,6 +150,32 @@ function isUllagePort(type: string | undefined, handle: string | null | undefine
 }
 
 /**
+ * A dome-loaded regulator's pilot port.
+ *
+ * The gas on the dome sets the setpoint. It never joins the stream being
+ * regulated, and on a real stand it is usually a different gas from it --
+ * helium domed onto a LOX regulator is about as standard as an arrangement
+ * gets. Treating it as process flow made that drawing report a fluid conflict
+ * and paint the line in the fault colour.
+ */
+function isPilotPort(type: string | undefined, handle: string | null | undefined): boolean {
+  return type === 'PR' && handle === 'dome';
+}
+
+/**
+ * A port where a *different* fluid is expected rather than suspicious.
+ *
+ * Both members are the same idea: a connection that reaches a component
+ * without joining what flows through it. Nothing propagates along one on the
+ * first pass, and a fluid arriving down one is never a conflict.
+ */
+export function isOffProcessPort(
+  type: string | undefined, handle: string | null | undefined,
+): boolean {
+  return isUllagePort(type, handle) || isPilotPort(type, handle);
+}
+
+/**
  * Assign a fluid to every component, spreading out from the ones that declare
  * one.
  *
@@ -153,8 +217,14 @@ export function propagateFluids(
     if (!e.source || !e.target) continue;
     // Undirected: a P&ID line has no arrow, and a fluid does not care which
     // end of it somebody happened to start the drag from.
-    link(isUllagePort(typeOf.get(e.source), e.sourceHandle) ? ullage : process, e.source, e.target);
-    link(isUllagePort(typeOf.get(e.target), e.targetHandle) ? ullage : process, e.target, e.source);
+    // Off-process is a property of the *line*, not of the direction you walk
+    // it. Classifying each direction by its own end put the pilot line into
+    // the process adjacency one way round, so helium walked into a LOX
+    // regulator and the regulator reported a conflict with itself.
+    const off = isOffProcessPort(typeOf.get(e.source), e.sourceHandle)
+             || isOffProcessPort(typeOf.get(e.target), e.targetHandle);
+    link(off ? ullage : process, e.source, e.target);
+    link(off ? ullage : process, e.target, e.source);
   }
   const isMeeting = (id: string) => MEETING_POINTS.has(typeOf.get(id) ?? '');
 
@@ -184,9 +254,11 @@ export function propagateFluids(
     for (const next of adjacency.get(cur.id) ?? []) {
       // A source holds its own fluid. Whatever arrives at it is expected.
       if (declared.has(next)) {
-        if (fillOnly) continue;
         const src = out.get(next)!;
         if (src.species !== cur.species) {
+          // Recorded even on the off-process pass: "the ullage is nitrogen and
+          // the outlet is LOX" is a fact about the tank worth keeping, and it
+          // is what tells a line into it that the difference is deliberate.
           src.mixing = true;
           if (!src.sources.includes(cur.from)) src.sources.push(cur.from);
         }
@@ -199,7 +271,16 @@ export function propagateFluids(
         work.push({ id: next, species: cur.species, from: cur.from });
         continue;
       }
-      if (fillOnly) continue;
+      if (fillOnly) {
+        // Same again for an ordinary component the off-process line reaches:
+        // a domed regulator holds what it regulates, and the pilot gas on it
+        // is expected rather than a fault.
+        if (seen.species !== cur.species) {
+          seen.mixing = true;
+          if (!seen.sources.includes(cur.from)) seen.sources.push(cur.from);
+        }
+        continue;
+      }
       if (seen.species === cur.species) {
         if (!seen.sources.includes(cur.from)) seen.sources.push(cur.from);
         continue;
@@ -214,10 +295,17 @@ export function propagateFluids(
   };
 
   walk(process, [...queue]);
-  // Second pass: ullage ports, seeded from the sources again so a bottle
-  // connected only by its top is still the source of its own contents. Fill
-  // only -- see `walk`.
-  walk(ullage, [...queue], true);
+  // Second pass: the off-process lines, now that the process side has settled.
+  //
+  // Seeded from everything the first pass reached, not just the sources. A
+  // pressurant line rarely runs from a bottle straight to an ullage -- it runs
+  // through a regulator and a solenoid first, and it is *those* that deliver.
+  // Seeding only the sources meant the nitrogen never arrived, and the tank
+  // stopped recording that two fluids meet in it.
+  const delivered = [...out.entries()]
+    .filter(([, f]) => f.species)
+    .map(([id, f]) => ({ id, species: f.species!, from: f.sources[0] ?? id }));
+  walk(ullage, delivered, true);
 
   return out;
 }
@@ -231,6 +319,9 @@ export function propagateFluids(
 export function edgeFluid(
   edge: Edge,
   byNode: Map<string, FluidAssignment>,
+  /** Component type by id, so the line can tell a pressurant feed from a
+   *  mistake. Optional only so older callers keep compiling. */
+  typeOf?: Map<string, string | undefined>,
 ): FluidAssignment {
   const a = byNode.get(edge.source);
   const b = byNode.get(edge.target);
@@ -238,6 +329,16 @@ export function edgeFluid(
   if (!a || !b) {
     const one = (a ?? b)!;
     return { ...one, sources: [...one.sources] };
+  }
+  // A line onto an ullage or a dome carries what the *other* end sends down
+  // it, and differing from the vessel is the point of it. Without this, every
+  // pressurant line into a tank drew in the fluid-conflict colour -- which
+  // nobody noticed while pressurant itself was red.
+  const srcOff = isOffProcessPort(typeOf?.get(edge.source), edge.sourceHandle);
+  const tgtOff = isOffProcessPort(typeOf?.get(edge.target), edge.targetHandle);
+  if (srcOff !== tgtOff) {
+    const feeder = srcOff ? b : a;
+    return { ...feeder, sources: [...feeder.sources], conflict: false };
   }
   if (a.species !== b.species) {
     // A line into a meeting point legitimately differs from what is already

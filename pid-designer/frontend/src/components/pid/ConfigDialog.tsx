@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal } from '../ui';
 import { btn, primaryBtn } from '../../lib/ui';
 import { COMPONENT_SPECS, LINE_SPECS, LINE_TYPE_LABELS, PEER_CHOICES } from './spec';
@@ -7,7 +7,7 @@ import { PROVENANCE_CHOICES, UNITS } from './params';
 import type { ParamValue, Provenance } from './params';
 import { portIds } from './ports';
 import type { PortInfo, PortKind } from './ports';
-import { speciesById } from './fluids';
+import { defaultTemperatureK, speciesById } from './fluids';
 import { SegmentPanel } from './SegmentPanel';
 import { BoreProfile } from './BoreProfile';
 import { ManifoldEditor } from './ManifoldEditor';
@@ -115,6 +115,28 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
     setDrafts(Object.fromEntries(spec.params.map(p => [p.key, toDraft(p, data.params?.[p.key])])));
     setOptions(Object.fromEntries((spec.options ?? []).map(o => [o.key, data.options?.[o.key] ?? o.default])));
   }, [open, data, spec]);
+
+  // ── Temperature follows the fluid ──────────────────────────────────────────
+  //
+  // Picking LOX and then being asked, separately, how cold it is, is asking a
+  // question whose answer is in the previous field. Filled on change rather
+  // than on save so the number is visible and can be argued with -- and only
+  // over an empty box or over the *previous* fluid's default, so a temperature
+  // somebody typed is never taken away from them.
+  const lastAutoTemp = useRef<string | null>(null);
+  useEffect(() => {
+    if (!open || !spec?.fluids) return;
+    const k = defaultTemperatureK(fluid, type === 'DEWAR');
+    if (k === undefined) return;
+    setDrafts(d => {
+      const t = d.temperature;
+      if (!t) return d;
+      const untouched = t.value.trim() === '' || t.value === lastAutoTemp.current;
+      if (!untouched) return d;
+      lastAutoTemp.current = String(k);
+      return { ...d, temperature: { ...t, value: String(k), unit: 'K' } };
+    });
+  }, [open, fluid, type, spec]);
 
   if (!spec) return null;
 
@@ -405,8 +427,12 @@ function PortGroup({ group, count, ports, readOnly, onChange }: {
             onChange={e => onChange(id, { kind: e.target.value as PortKind })}
             className={`${field} min-w-0`}
           >
-            <option value="flow">Flow</option>
-            <option value="instrument">Instr.</option>
+            {/* Two states, not three. "Instrument" was a second way of saying
+                what a transducer drawn on the port already says, and the port
+                now works that out for itself. Plugged is the one that has to
+                be authored: nothing else on the drawing says a port is
+                blanked off. */}
+            <option value="flow">Open</option>
             <option value="plug">Plugged</option>
           </select>
         </div>

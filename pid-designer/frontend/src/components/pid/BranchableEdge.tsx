@@ -2,11 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import {
   BaseEdge,
-  Position,
   useReactFlow,
   type EdgeProps,
 } from '@xyflow/react';
 import { splitEdgeAt } from './splitEdge';
+import { isHorizontal, routeOrthogonal } from './route';
 import { useEdgeFluidColor } from './FluidContext';
 import { useReadOnly } from '@stardesign-ui';
 import { useTool } from './ToolContext';
@@ -53,38 +53,17 @@ export function BranchableEdge(props: EdgeProps) {
   const strokeColor = useEdgeFluidColor(id, (data as { color?: string })?.color);
   const offset = ((data as { offset?: number })?.offset ?? 0);
 
-  // Which way each end faces decides the shape of the run. Ends that face the
-  // same way give three segments with a crossbar in the middle; ends that face
-  // differently give a plain corner, which has nothing to move and should not
-  // pretend otherwise.
-  const isH = (p?: Position) => p === Position.Left || p === Position.Right;
-  const horizontal = isH(sourcePosition);
-  const sameAxis = isH(sourcePosition) === isH(targetPosition);
-
-  const dx = Math.abs(sourceX - targetX);
-  const dy = Math.abs(sourceY - targetY);
-  const ALIGNED = 12;
-
-  let edgePath: string;
-  let grip: { x: number; y: number } | null = null;
-
-  if ((dx < ALIGNED && dy > dx) || (dy < ALIGNED && dx > dy)) {
-    // Already in line: a straight run, and nothing to move.
-    edgePath = `M ${sourceX},${sourceY} L ${targetX},${targetY}`;
-  } else if (!sameAxis) {
-    // A corner. Leave along the axis the source faces, then turn once.
-    edgePath = horizontal
-      ? `M ${sourceX},${sourceY} L ${targetX},${sourceY} L ${targetX},${targetY}`
-      : `M ${sourceX},${sourceY} L ${sourceX},${targetY} L ${targetX},${targetY}`;
-  } else if (horizontal) {
-    const midX = (sourceX + targetX) / 2 + offset;
-    edgePath = `M ${sourceX},${sourceY} L ${midX},${sourceY} L ${midX},${targetY} L ${targetX},${targetY}`;
-    grip = { x: midX, y: (sourceY + targetY) / 2 };
-  } else {
-    const midY = (sourceY + targetY) / 2 + offset;
-    edgePath = `M ${sourceX},${sourceY} L ${sourceX},${midY} L ${targetX},${midY} L ${targetX},${targetY}`;
-    grip = { x: (sourceX + targetX) / 2, y: midY };
-  }
+  // The shape of the run, and whether it has a crossbar to drag. See route.ts:
+  // the rule is that every segment touching an end leaves that end the way the
+  // end points, which is what stops a line doubling back over its own symbol.
+  const { d: edgePath, grip } = routeOrthogonal(
+    { x: sourceX, y: sourceY, side: sourcePosition },
+    { x: targetX, y: targetY, side: targetPosition },
+    offset,
+  );
+  // Which way a drag on the crossbar moves it: across the run, so along the
+  // axis the two ends leave on.
+  const horizontal = isHorizontal(sourcePosition);
 
   // ── Moving the crossbar ────────────────────────────────────────────────────
   const startDrag = useCallback((e: React.PointerEvent) => {

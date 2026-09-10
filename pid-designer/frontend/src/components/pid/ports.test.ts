@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Node } from '@xyflow/react';
-import { portId, portIds, portsOf, drawnPortsOf, portKind } from './ports';
+import type { Edge, Node } from '@xyflow/react';
+import { portId, portIds, portsOf, drawnPortsOf, portKind, instrumentTaps } from './ports';
 import { COMPONENT_DEFS } from './types';
 import { COMPONENT_SPECS } from './spec';
 
@@ -90,5 +90,52 @@ describe('the port table covers what the palette can drop', () => {
         expect(known, `${type}: portGroup counts ${group.countOption}, which is not an option`).toBe(true);
       }
     }
+  });
+});
+
+describe('which ports are instrument tappings', () => {
+  const n = (id: string, componentType: string): Node =>
+    ({ id, position: { x: 0, y: 0 }, data: { componentType } }) as unknown as Node;
+  const e = (id: string, s: string, sh: string, t: string, th?: string): Edge =>
+    ({ id, source: s, sourceHandle: sh, target: t, targetHandle: th ?? 'b' }) as unknown as Edge;
+
+  it('is a port whose only line goes to a transducer', () => {
+    const taps = instrumentTaps(
+      [n('TK-1', 'TANK'), n('PT-1', 'PT')],
+      [e('a', 'TK-1', 't', 'PT-1')],
+    );
+    expect(taps.has('TK-1:t')).toBe(true);
+  });
+
+  it('is not a port that feeds anything real', () => {
+    const taps = instrumentTaps(
+      [n('TK-1', 'TANK'), n('SOL-1', 'SOL')],
+      [e('a', 'TK-1', 'b', 'SOL-1', 'l')],
+    );
+    expect(taps.has('TK-1:b')).toBe(false);
+  });
+
+  it('is not a port carrying flow as well as a tap', () => {
+    // A tee off a port with both a gauge and a run on it is a run, not a
+    // tapping -- and drawing it small would say the wrong thing.
+    const taps = instrumentTaps(
+      [n('MF-1', 'MANIFOLD'), n('PG-1', 'PG'), n('SOL-1', 'SOL')],
+      [e('a', 'MF-1', 'p', 'PG-1'), e('b', 'MF-1', 'p', 'SOL-1', 'l')],
+    );
+    expect(taps.has('MF-1:p')).toBe(false);
+  });
+
+  it('says nothing about a port with nothing on it', () => {
+    // Empty is empty. It used to be possible to mark one an instrument port
+    // and leave it bare, which drew a tapping that measured nothing.
+    expect(instrumentTaps([n('TK-1', 'TANK')], []).has('TK-1:t')).toBe(false);
+  });
+
+  it('reads both ends of a line', () => {
+    const taps = instrumentTaps(
+      [n('TK-1', 'TANK'), n('PT-1', 'PT')],
+      [e('a', 'PT-1', 'b', 'TK-1', 't2')],
+    );
+    expect(taps.has('TK-1:t2')).toBe(true);
   });
 });

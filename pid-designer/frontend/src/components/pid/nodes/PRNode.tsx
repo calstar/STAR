@@ -37,8 +37,11 @@ export function PRNode({ id, data, selected }: NodeProps) {
             {/* the dome, and the stem tying it to the seat */}
             <path d="M22,8 Q30,0 38,8 Z" fill="#1e293b" stroke={stroke} strokeWidth={1.2} />
             <line x1="30" y1="8" x2="30" y2="14" stroke={stroke} strokeWidth={1.2} />
+            {/* Beside the dome, not under it. Centred at x=30 it sat on the
+                stem and directly under the dome port, so the line feeding the
+                dome ran straight through the word. */}
             <Upright rotation={rotation} cx={W / 2} cy={H / 2}>
-              <text x="30" y="6" textAnchor="middle" fontSize="5.5" fill="#f59e0b" fontFamily="monospace">DOME</text>
+              <text x="46" y="7" textAnchor="middle" fontSize="5.5" fill="#f59e0b" fontFamily="monospace">DOME</text>
             </Upright>
           </>
         )}

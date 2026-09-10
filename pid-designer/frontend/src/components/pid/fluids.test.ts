@@ -128,3 +128,59 @@ describe('the four colour categories that came before species', () => {
     })).toBe('helium');
   });
 });
+
+describe('lines that are meant to carry something else', () => {
+  const typesOf = (nodes: Node[]) => new Map(nodes.map(n =>
+    [n.id, (n.data as { componentType?: string }).componentType]));
+
+  it('does not call a pressurant line into a tank a conflict', () => {
+    // The most-drawn arrangement on any stand: nitrogen onto the ullage of a
+    // LOX tank. The two ends genuinely hold different fluids, and the line
+    // drew in the fault colour for it -- invisible while pressurant was red.
+    const nodes = [
+      node('KB-N2', 'KBOTTLE', { fluid: 'nitrogen' }),
+      node('TK-LOX', 'TANK', { fluid: 'oxygen' }),
+    ];
+    const edges = [edge('u1', 'KB-N2', 'TK-LOX', 'r', 't')];
+    const f = edgeFluid(edges[0], propagateFluids(nodes, edges), typesOf(nodes));
+    expect(f.conflict).toBe(false);
+    expect(f.species).toBe('nitrogen');
+  });
+
+  it('does not call the pilot gas on a dome a conflict', () => {
+    // Helium domed onto a LOX regulator. The dome sets the setpoint; it never
+    // joins the stream being regulated.
+    const nodes = [
+      node('TK-LOX', 'TANK', { fluid: 'oxygen' }),
+      node('PR-1', 'PR'),
+      node('KB-HE', 'KBOTTLE', { fluid: 'helium' }),
+    ];
+    const edges = [
+      edge('p1', 'TK-LOX', 'PR-1', 'b', 'l'),
+      edge('p2', 'KB-HE', 'PR-1', 'r', 'dome'),
+    ];
+    const fluids = propagateFluids(nodes, edges);
+    const dome = edgeFluid(edges[1], fluids, typesOf(nodes));
+    expect(dome.conflict).toBe(false);
+    expect(dome.species).toBe('helium');
+    // ...and the helium has not leaked into the regulator itself.
+    expect(fluids.get('PR-1')?.species).toBe('oxygen');
+    expect(fluids.get('PR-1')?.conflict).toBe(false);
+  });
+
+  it('still reports two fluids meeting on ordinary ports', () => {
+    // The exemption is for the ports where a difference is the point. A LOX
+    // line joined to an ethanol line is still the worst afternoon of your life.
+    const nodes = [
+      node('TK-LOX', 'TANK', { fluid: 'oxygen' }),
+      node('TK-ETH', 'TANK', { fluid: 'ethanol' }),
+      node('V', 'MAN'),
+    ];
+    const edges = [
+      edge('x1', 'TK-LOX', 'V', 'b', 'l'),
+      edge('x2', 'TK-ETH', 'V', 'b', 'r'),
+    ];
+    const fluids = propagateFluids(nodes, edges);
+    expect(fluids.get('V')?.conflict).toBe(true);
+  });
+});

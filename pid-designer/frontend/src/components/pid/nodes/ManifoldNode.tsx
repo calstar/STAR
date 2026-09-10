@@ -71,8 +71,7 @@ export function ManifoldNode({ id, data, selected }: NodeProps) {
           const ids = ['in', ...portIds('p', outlets)];
           const spare = defaultPositions(ids);
           return ids.map(pid => {
-            const kind = portKind(data as unknown as PIDNodeData, pid);
-            if (kind === 'plug') return null;
+            if (portKind(data as unknown as PIDNodeData, pid) === 'plug') return null;
             const pt = perimeterPoint(geom.positions[pid] ?? spare[pid], W, H);
             // The side decides which way React Flow thinks the port faces,
             // which is what makes a line leave it in a sensible direction.
@@ -89,7 +88,7 @@ export function ManifoldNode({ id, data, selected }: NodeProps) {
               pt.side === 'top' || pt.side === 'bottom'
                 ? { left: pt.x }
                 : { top: pt.y };
-            return <Port key={pid} id={pid} kind={kind} position={position} style={style} />;
+            return <Port key={pid} id={pid} nodeId={id} position={position} style={style} />;
           });
         })()
       ) : (
@@ -101,13 +100,12 @@ export function ManifoldNode({ id, data, selected }: NodeProps) {
               drawn at all -- a P&ID does not draw plugs. */}
           {portOffsets(outlets).map((off, i) => {
             const pid = portId('p', i);
-            const kind = portKind(data as unknown as PIDNodeData, pid);
-            if (kind === 'plug') return null;
+            if (portKind(data as unknown as PIDNodeData, pid) === 'plug') return null;
             return (
               <Port
                 key={pid}
                 id={pid}
-                kind={kind}
+                nodeId={id}
                 position={vertical ? Position.Right : Position.Bottom}
                 style={vertical ? { top: off } : { left: off }}
               />

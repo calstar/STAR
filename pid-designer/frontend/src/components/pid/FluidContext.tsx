@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { Edge, Node } from '@xyflow/react';
 import { propagateFluids, edgeFluid, colorForSpecies, UNSET_COLOR } from './fluids';
 import type { FluidAssignment } from './fluids';
+import { instrumentTaps } from './ports';
 
 /**
  * Which fluid is in what, published once for every symbol to read.
@@ -21,9 +22,12 @@ import type { FluidAssignment } from './fluids';
 interface FluidMap {
   byNode: Map<string, FluidAssignment>;
   byEdge: Map<string, FluidAssignment>;
+  /** Ports that are instrument tappings, by `"<node>:<port>"`. Derived from
+   *  what is connected to them -- see `instrumentTaps`. */
+  taps: Set<string>;
 }
 
-const EMPTY: FluidMap = { byNode: new Map(), byEdge: new Map() };
+const EMPTY: FluidMap = { byNode: new Map(), byEdge: new Map(), taps: new Set() };
 const FluidContext = createContext<FluidMap>(EMPTY);
 
 export function FluidProvider({ nodes, edges, children }: {
@@ -31,11 +35,18 @@ export function FluidProvider({ nodes, edges, children }: {
 }) {
   const value = useMemo<FluidMap>(() => {
     const byNode = propagateFluids(nodes, edges);
-    const byEdge = new Map(edges.map(e => [e.id, edgeFluid(e, byNode)]));
-    return { byNode, byEdge };
+    const typeOf = new Map(nodes.map(n =>
+      [n.id, (n.data as { componentType?: string } | undefined)?.componentType]));
+    const byEdge = new Map(edges.map(e => [e.id, edgeFluid(e, byNode, typeOf)]));
+    return { byNode, byEdge, taps: instrumentTaps(nodes, edges) };
   }, [nodes, edges]);
 
   return <FluidContext.Provider value={value}>{children}</FluidContext.Provider>;
+}
+
+/** Is this port an instrument tapping? True when everything on it is one. */
+export function useIsTap(nodeId: string, portId: string): boolean {
+  return useContext(FluidContext).taps.has(`${nodeId}:${portId}`);
 }
 
 /** What this component ended up carrying, declared or inherited. */
