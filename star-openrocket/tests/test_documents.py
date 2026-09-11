@@ -347,6 +347,7 @@ _DOC_SCOPED = {
     "take_checkout": ("POST", "/checkout", None),
     "release_checkout": ("DELETE", "/checkout", None),
     "release_checkout_beacon": ("POST", "/checkout/release", None),
+    "beat_checkout": ("POST", "/checkout/beat", None),
     "get_checkout": ("GET", "/checkout", None),
     "load_document": ("GET", "/load", None),
     "autosave_document": ("POST", "/autosave", {"config": {"x": 1}}),

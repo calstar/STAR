@@ -53,7 +53,11 @@ export function CheckoutControl({
             }
           >
             <span className={`${dot} ${expiringSoon ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-            Editing
+            {/* "Editing" stays its own element so a locator matching that exact
+                text still resolves once the countdown is appended -- the E2E in
+                EngineDesign does precisely that, and a bare text node here made
+                the chip read "Editing · 14:59" and the match fail. */}
+            <span>Editing</span>
             {secondsLeft !== null && (
               <span className="tabular-nums opacity-80">· {mmss(secondsLeft)}</span>
             )}
