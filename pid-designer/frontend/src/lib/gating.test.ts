@@ -63,6 +63,10 @@ const VIEW_ONLY: Record<string, string> = {
   'ChecksPanel.tsx:onSelect(finding.nodeIds': 'selects what a finding is about — selection is view state, stripped by toStored',
   'SegmentPanel.tsx:setOpenRow(openRow === r.id': 'expands a fitting row to show its fields; the fields themselves are gated',
   'ConfigDialog.tsx:onClick={onClose}': 'Cancel closes the config dialog; Save is what writes, and Save is gated',
+  'ConfigDialog.tsx:setShowAdvanced': 'folds the wall/roughness/head params in and out; the fields themselves are gated',
+  'SegmentPanel.tsx:setShowMethod': 'reveals the loss-method selector; the selector itself is gated',
+  'SegmentPanel.tsx:setOpenRow': 'expands a fitting to show its fields; the fields themselves are gated',
+  'SegmentPanel.tsx:setMore': 'shows the rest of the fitting list; adding one is gated',
   'PIDDesigner.tsx:setShowChange(true)': 'opens the Change dialog (rename/share/copy are not gated by design)',
 }
 

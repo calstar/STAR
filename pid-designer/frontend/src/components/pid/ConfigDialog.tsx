@@ -123,6 +123,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   // than on save so the number is visible and can be argued with -- and only
   // over an empty box or over the *previous* fluid's default, so a temperature
   // somebody typed is never taken away from them.
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const lastAutoTemp = useRef<string | null>(null);
   useEffect(() => {
     if (!open || !spec?.fluids) return;
@@ -143,10 +144,20 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   const save = () => {
     const params: Record<string, ParamValue> = {};
     for (const p of spec.params) {
+      if (p.derived) continue;                     // computed below, never typed
       const d = drafts[p.key];
       if (!d || d.value.trim() === '') continue;   // absent, not zero
       const value = Number(d.value);
       if (Number.isFinite(value)) params[p.key] = { value, unit: d.unit, source: d.source };
+    }
+    // Counted, not asked for. Only when there is a list to count: with no
+    // segments the drawing has not said, and a zero would be a claim.
+    if (kind === 'edge' && segments.length) {
+      const n = segments.reduce((sum, s) => sum + fittingCount(s), 0);
+      params.fitting_count = {
+        value: n, unit: '-', source: 'default',
+        reference: 'counted from the fittings on this run',
+      };
     }
     const keptPorts: Record<string, PortInfo> = {};
     for (const [id, info] of Object.entries(ports)) {
@@ -270,7 +281,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
                 Superseded by the segments below.
               </p>
             )}
-            {spec.params.map(p => (
+            {spec.params.filter(p => !p.advanced && !p.derived).map(p => (
               <ParamRow
                 key={p.key}
                 spec={p}
@@ -279,6 +290,31 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
                 onChange={patch => setDrafts(d => ({ ...d, [p.key]: { ...d[p.key], ...patch } }))}
               />
             ))}
+            {/* The rest are real and are not why anyone opened this. A
+                hardline's wall thickness and fitting mass feed a thermal model
+                that is off unless a drawing asks for it; flat alongside length
+                and bore they read as four more things you were supposed to
+                know. See `ParamSpec.advanced`. */}
+            {spec.params.some(p => p.advanced) && (
+              <>
+                <button
+                  onClick={() => setShowAdvanced(v => !v)}
+                  className="text-[10px] text-[var(--color-text-muted)] underline decoration-dotted hover:text-[var(--color-text-primary)]">
+                  {showAdvanced
+                    ? 'fewer'
+                    : `${spec.params.filter(p => p.advanced).length} more (wall, roughness, head)`}
+                </button>
+                {showAdvanced && spec.params.filter(p => p.advanced && !p.derived).map(p => (
+                  <ParamRow
+                    key={p.key}
+                    spec={p}
+                    draft={drafts[p.key] ?? EMPTY}
+                    readOnly={readOnly}
+                    onChange={patch => setDrafts(d => ({ ...d, [p.key]: { ...d[p.key], ...patch } }))}
+                  />
+                ))}
+              </>
+            )}
           </div>
         )}
 

@@ -58,7 +58,8 @@ export interface ParamValue {
 
 export type Dimension =
   | 'pressure' | 'temperature' | 'length' | 'volume'
-  | 'flow_coefficient' | 'dimensionless' | 'time' | 'mass_flow' | 'angle';
+  | 'flow_coefficient' | 'dimensionless' | 'time' | 'mass' | 'mass_flow' | 'angle'
+  | 'specific_heat' | 'thermal_conductance';
 
 /**
  * Units offered per dimension, in the spelling `feedtwin.model.units` uses.
@@ -72,8 +73,11 @@ export const UNITS: Record<Dimension, string[]> = {
   flow_coefficient: ['Cv', 'Kv'],
   dimensionless:    ['-', '%'],
   time:             ['s', 'ms', 'min'],
+  mass:             ['g', 'kg', 'lbm'],
   mass_flow:        ['kg/s', 'g/s', 'lbm/s'],
   angle:            ['deg', 'rad'],
+  specific_heat:    ['J/(kg.K)'],
+  thermal_conductance: ['W/K'],
 };
 
 /** Pressures are absolute. Said in the UI, next to the field. */

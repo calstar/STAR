@@ -21,6 +21,28 @@ export interface ParamSpec {
   dimension: Dimension;
   /** Starting value, in `unit`. */
   suggested?: { value: number; unit: string };
+  /**
+   * Real, and not what somebody opened this dialog for.
+   *
+   * A hardline carries nine numbers, of which two -- how long and how wide --
+   * are why anyone is here; the rest feed a wall-thermal model that is off
+   * unless a drawing asks for it. Shown flat, the nine read as nine equally
+   * expected answers and the two that matter are somewhere in the middle.
+   * These fold away instead.
+   */
+  advanced?: boolean;
+  /**
+   * Real, read by the solver, and never asked for -- because the drawing
+   * already says it somewhere better.
+   *
+   * `fitting_count` is the case this exists for. The line-wall model needs to
+   * know how many fittings' worth of metal is on a run, and the fitting list
+   * two panels down knows exactly. Asking for the number as well is the
+   * two-ways-to-say-one-thing problem in its purest form: the one somebody
+   * forgot to update is the one the solver would have believed. So it is
+   * computed on save and never rendered.
+   */
+  derived?: boolean;
 }
 
 export interface OptionSpec {
@@ -61,6 +83,15 @@ const P = (key: string, label: string, dimension: Dimension,
            suggested?: { value: number; unit: string }): ParamSpec =>
   ({ key, label, dimension, suggested });
 
+/** The same, folded away until asked for. See `ParamSpec.advanced`. */
+const A = (key: string, label: string, dimension: Dimension,
+           suggested?: { value: number; unit: string }): ParamSpec =>
+  ({ key, label, dimension, suggested, advanced: true });
+
+/** Declared and fed, never asked for. See `ParamSpec.derived`. */
+const D = (key: string, label: string, dimension: Dimension): ParamSpec =>
+  ({ key, label, dimension, derived: true });
+
 const ALL_FLUIDS: SpeciesId[] = ['oxygen', 'ethanol', 'nitrogen', 'helium', 'methane', 'other'];
 
 function valveSpec(): ComponentSpec {
@@ -89,6 +120,12 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
       P('temperature', 'Temperature', 'temperature'),
       P('volume', 'Volume', 'volume'),
       P('MAWP', 'MAWP', 'pressure'),
+      // The vessel's own wall, which fights the gas cooling during a blowdown
+      // or a press. Left blank, feed-twin estimates all three from the volume
+      // and says so; a weighed vessel should declare them.
+      P('wall_mass', 'Wall mass', 'mass'),
+      P('wall_capacity', 'Wall specific heat', 'specific_heat', { value: 900, unit: 'J/(kg.K)' }),
+      P('wall_conductance', 'Gas-to-wall hA', 'thermal_conductance'),
     ],
     options: [
       { key: 'portsTop', label: 'Top ports', default: '1',
@@ -110,6 +147,12 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
       P('temperature', 'Temperature', 'temperature', { value: 293, unit: 'K' }),
       P('volume', 'Water volume', 'volume', { value: 49, unit: 'L' }),
       P('count', 'Bottles', 'dimensionless', { value: 1, unit: '-' }),
+      // The vessel's own wall, which fights the gas cooling during a blowdown
+      // or a press. Left blank, feed-twin estimates all three from the volume
+      // and says so; a weighed vessel should declare them.
+      P('wall_mass', 'Wall mass', 'mass'),
+      P('wall_capacity', 'Wall specific heat', 'specific_heat', { value: 500, unit: 'J/(kg.K)' }),
+      P('wall_conductance', 'Gas-to-wall hA', 'thermal_conductance'),
     ],
   },
 
@@ -119,6 +162,12 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
       P('pressure', 'Delivery pressure', 'pressure', { value: 35, unit: 'psi' }),
       P('temperature', 'Temperature', 'temperature'),
       P('volume', 'Capacity', 'volume'),
+      // The vessel's own wall, which fights the gas cooling during a blowdown
+      // or a press. Left blank, feed-twin estimates all three from the volume
+      // and says so; a weighed vessel should declare them.
+      P('wall_mass', 'Wall mass', 'mass'),
+      P('wall_capacity', 'Wall specific heat', 'specific_heat', { value: 500, unit: 'J/(kg.K)' }),
+      P('wall_conductance', 'Gas-to-wall hA', 'thermal_conductance'),
     ],
   },
 
@@ -306,8 +355,18 @@ export const LINE_SPECS: Record<string, ComponentSpec> = {
     params: [
       P('length', 'Length', 'length'),
       P('bore', 'Bore', 'length'),
-      P('roughness', 'Roughness', 'length', { value: 1.5e-3, unit: 'mm' }),
       P('K_minor', 'Lumped fitting K', 'dimensionless', { value: 0, unit: '-' }),
+      A('roughness', 'Roughness', 'length', { value: 1.5e-3, unit: 'mm' }),
+      // Static head. Ten metres of LOX is about 1.6 bar, so a tall stand that
+      // leaves this unset is wrong by more than most of its line losses.
+      A('elevation_change', 'Rise (outlet − inlet)', 'length', { value: 0, unit: 'm' }),
+      // Thermal mass. Both feed the line-wall model in feed-twin, which is off
+      // unless a drawing declares metal for it -- see docs/thermal/line-walls.md.
+      A('wall_thickness', 'Tube wall', 'length', { value: 0.889, unit: 'mm' }),
+      // Counted off the fitting list rather than typed -- see `ParamSpec.derived`.
+      // The solver needs it for the line-wall model; the drawing already knows.
+      D('fitting_count', 'Fittings on this run', 'dimensionless'),
+      A('fitting_mass', 'Fitting mass (weighed)', 'mass'),
     ],
   },
   flex_hose: {
@@ -317,7 +376,9 @@ export const LINE_SPECS: Record<string, ComponentSpec> = {
       P('bore', 'Bore', 'length'),
       P('installed_bend_radius', 'Installed bend radius', 'length'),
       P('min_bend_radius', 'Min bend radius', 'length'),
-      P('end_fitting_K', 'End fittings K', 'dimensionless', { value: 0.5, unit: '-' }),
+      A('end_fitting_K', 'End fittings K', 'dimensionless', { value: 0.5, unit: '-' }),
+      A('min_bend_radius_dynamic', 'Min bend radius (flexing)', 'length'),
+      A('convolution_factor', 'Convolution friction factor', 'dimensionless', { value: 2, unit: '-' }),
     ],
     options: [
       { key: 'construction', label: 'Construction', default: 'smooth_bore',
