@@ -50,7 +50,10 @@ export interface CheckoutState {
   lockedBy: string | null;
   lockedByName: string | null;
   lockedByMe: boolean;
+  /** When the hold lapses -- beat + ttl, in the future. Not the beat itself. */
   lockExpiresAt: string | null;
+  /** The server's inactivity window, so the bar can size its warning. */
+  lockTtlSeconds?: number | null;
 }
 
 export interface MicroVersion {
@@ -218,6 +221,14 @@ export function createDesignApi<T>({ base, usersPath, codec }: DesignApiConfig<T
     /** Who holds it now. Polled while you do not, so Take lights up on its own. */
     getCheckout: (ref: DocRef) =>
       fetch(url(ref, '/checkout')).then((r) => json<CheckoutState>(r)),
+
+    /**
+     * Refresh our own hold without writing anything. Content-free on purpose:
+     * it cannot race an autosave or churn a microversion, so it is safe to send
+     * on plain interaction. 423 means the hold is already gone.
+     */
+    beatCheckout: (ref: DocRef) =>
+      fetch(url(ref, '/checkout/beat'), post({})).then((r) => json<CheckoutState>(r)),
 
     load: (ref: DocRef) =>
       fetch(url(ref, '/load'))

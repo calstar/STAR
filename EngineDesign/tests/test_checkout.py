@@ -12,6 +12,8 @@ if nobody saves for `lock_ttl`, and none of it touches the operations that are
 not concurrent editing (rename, share, copy).
 """
 
+from datetime import datetime, timezone
+
 import fcntl
 import json
 import os
@@ -422,3 +424,52 @@ def test_a_returned_record_says_the_design_is_yours(client):
         body = resp.json()
         assert body["mine"] is True, f"{label} did not report the design as yours"
         assert body["ownerName"], f"{label} returned an empty ownerName"
+
+
+def test_lock_expires_at_is_in_the_future(client):
+    """`lockExpiresAt` is when the hold lapses, not when it was last beaten.
+
+    It used to carry the raw heartbeat -- a time already in the past -- so a bar
+    counting down to it read as expired the moment it rendered, which is why
+    nothing ever showed the user how long they had. Fails against that.
+    """
+    doc_id = _create(client)
+    client.post(f"{BASE}/{doc_id}/checkout", headers=A)
+    state = client.get(f"{BASE}/{doc_id}/checkout", headers=A).json()
+    expires = datetime.fromisoformat(state["lockExpiresAt"])
+    left = (expires - datetime.now(timezone.utc)).total_seconds()
+    assert 0 < left <= documents.store.lock_ttl
+    assert state["lockTtlSeconds"] == documents.store.lock_ttl
+
+
+def test_beat_refreshes_the_hold_without_writing(client):
+    """The fix for "it kicked me out while I was working".
+
+    Before this endpoint the only thing that refreshed a hold was a successful
+    autosave, so panning, measuring or thinking counted as idle. The beat must
+    push the expiry out and must NOT touch the stored payload.
+    """
+    doc_id = _create(client)
+    client.post(f"{BASE}/{doc_id}/checkout", headers=A)
+    _save(client, doc_id, A, config={"v": "original"})
+    before = client.get(f"{BASE}/{doc_id}/checkout", headers=A).json()["lockExpiresAt"]
+
+    r = client.post(f"{BASE}/{doc_id}/checkout/beat", headers=A)
+    assert r.status_code == 200
+    assert r.json()["lockedByMe"] is True
+    assert r.json()["lockExpiresAt"] >= before
+    # content untouched -- a beat that could clobber a payload would be worse
+    # than the bug it fixes
+    assert client.get(f"{BASE}/{doc_id}/load", headers=A).json()["config"] == {"v": "original"}
+
+
+def test_beat_refuses_when_you_do_not_hold_it(client):
+    """423 is the client's cue to stop beating and show the lost dialog.
+
+    Shared with B on purpose: an unshared user is refused at 403 long before the
+    lock is consulted, so it would prove nothing about the beat.
+    """
+    doc_id = _create(client)
+    _share(client, doc_id, [B["X-Auth-Email"]])
+    client.post(f"{BASE}/{doc_id}/checkout", headers=A)
+    assert client.post(f"{BASE}/{doc_id}/checkout/beat", headers=B, params=OWNER_A).status_code == 423

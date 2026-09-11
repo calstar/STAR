@@ -76,7 +76,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
@@ -417,13 +417,31 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         return store.lock_holder(record)
 
     def _lock_state(record: dict, viewer: str, names: dict[str, str]) -> dict:
-        """The checkout, as the design bar wants to render it."""
+        """The checkout, as the design bar wants to render it.
+
+        ``lockExpiresAt`` is the moment the hold lapses -- beat + ``lock_ttl`` --
+        not the beat itself. It used to carry the raw heartbeat, which is a time
+        already in the past, so anything counting down to it read as expired the
+        instant it rendered. That is why the bar never showed the user how long
+        they had.
+        """
         holder = _lock_holder(record)
+        expires = None
+        if holder:
+            beat = record.get("lockHeartbeat") or record.get("lockedAt")
+            if beat:
+                try:
+                    expires = (
+                        datetime.fromisoformat(beat) + timedelta(seconds=store.lock_ttl)
+                    ).isoformat()
+                except (TypeError, ValueError):
+                    expires = None
         return {
             "lockedBy": holder,
             "lockedByName": (names.get(holder) or holder) if holder else None,
             "lockedByMe": holder == viewer,
-            "lockExpiresAt": record.get("lockHeartbeat") if holder else None,
+            "lockExpiresAt": expires,
+            "lockTtlSeconds": store.lock_ttl,
         }
 
     def _take_lock(owner: str, doc_id: str, viewer: str) -> dict:
@@ -767,6 +785,28 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         ref = _resolve_doc(request, owner, doc_id)
         _release_lock(ref.owner, ref.doc_id, ref.viewer)
         return {"ok": True}
+
+    @router.post(f"{sub}/{{doc_id}}/checkout/beat")
+    async def beat_checkout(request: Request, doc_id: str, owner: str | None = None):
+        """Refresh your own hold without writing anything.
+
+        Until this existed the only thing that refreshed a checkout was a
+        successful ``/autosave``, so "inactivity" meant "no change to the saved
+        payload" rather than "not working". Reading a result, panning a canvas,
+        measuring something or thinking about it all counted as idle, and the
+        design was taken out from under you mid-task. The client sends this while
+        you are actually interacting; it is deliberately content-free so it can
+        never race an autosave or churn a microversion.
+
+        423 if you do not hold it -- the client treats that as "you lost it" and
+        stops, rather than beating into a void.
+        """
+        ref = _resolve_doc(request, owner, doc_id)
+        _require_lock(ref)
+        _beat_lock(ref.owner, ref.doc_id, ref.viewer)
+        record = store.find_record(ref.owner, ref.doc_id) or ref.record
+        names = directory.display_names(request, store.ud)
+        return _lock_state(record, ref.viewer, names)
 
     @router.get(f"{sub}/{{doc_id}}/checkout")
     async def get_checkout(request: Request, doc_id: str, owner: str | None = None):

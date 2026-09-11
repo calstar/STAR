@@ -30,7 +30,12 @@ const FREE: CheckoutState = {
   lockedByName: null,
   lockedByMe: false,
   lockExpiresAt: null,
+  lockTtlSeconds: null,
 };
+
+/** Interaction that counts as "still working on this". Deliberately coarse and
+ *  passive: it only stamps a ref, so it costs nothing on a hot canvas. */
+const ACTIVITY_EVENTS = ['pointerdown', 'pointermove', 'keydown', 'wheel'] as const;
 
 export interface Checkout {
   /** Email of whoever holds it, or null when free. */
@@ -47,6 +52,20 @@ export interface Checkout {
   release: () => Promise<void>;
   /** Call when a write comes back 423 -- the token is gone. */
   lost: () => void;
+  /** Refresh the hold now. The "Keep editing" button; also safe to call on
+   *  any deliberate user action an app wants to count. */
+  keepAlive: () => Promise<void>;
+  /** When the hold lapses, or null. Drives the countdown in the bar. */
+  expiresAt: string | null;
+  /** Whole seconds until it lapses, or null when we do not hold it. */
+  secondsLeft: number | null;
+  /**
+   * We held it and no longer do, and we did not choose that. The app shows a
+   * dialog on this -- it is the difference between losing a design quietly and
+   * being told. Cleared by `acknowledgeLost`.
+   */
+  lostUnexpectedly: boolean;
+  acknowledgeLost: () => void;
 }
 
 export interface UseCheckoutOptions<T> {
@@ -60,6 +79,14 @@ export interface UseCheckoutOptions<T> {
   reload?: () => Promise<void> | void;
   /** How often to re-check while somebody else holds it. */
   pollMs?: number;
+  /** How often to beat/re-check while we DO hold it. */
+  heldPollMs?: number;
+  /**
+   * Stop beating once interaction is this old, so a design left open on an
+   * unattended machine still frees itself. Activity inside this window keeps
+   * the hold indefinitely; that is the whole point.
+   */
+  idleCapMs?: number;
 }
 
 export function useCheckout<T>({
@@ -67,10 +94,14 @@ export function useCheckout<T>({
   ref,
   reload,
   pollMs = 10_000,
+  heldPollMs = 15_000,
+  idleCapMs = 15 * 60_000,
 }: UseCheckoutOptions<T>): Checkout {
   const [state, setState] = useState<CheckoutState>(FREE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lostUnexpectedly, setLostUnexpectedly] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
 
   const key = ref ? keyOf(ref) : null;
   // Read inside callbacks and the unload handler, so neither needs `ref` in a
@@ -85,7 +116,70 @@ export function useCheckout<T>({
   useEffect(() => {
     setState(FREE);
     setError(null);
+    setLostUnexpectedly(false);
   }, [key]);
+
+  // Last interaction of any kind. A ref, not state: these fire continuously
+  // while dragging a node and must not re-render anything.
+  const lastActivityRef = useRef(Date.now());
+  useEffect(() => {
+    const mark = () => {
+      lastActivityRef.current = Date.now();
+    };
+    for (const e of ACTIVITY_EVENTS)
+      window.addEventListener(e, mark, { passive: true });
+    return () => {
+      for (const e of ACTIVITY_EVENTS) window.removeEventListener(e, mark);
+    };
+  }, []);
+
+  // While we hold it, beat on recent activity and re-check otherwise.
+  //
+  // Both halves matter. The beat is what fixes "it kicked me out while I was
+  // working": before this, the ONLY thing that refreshed a hold was a
+  // successful autosave, so panning, measuring, reading a result or thinking
+  // all counted as idle. The re-check is what fixes "with no notice": this
+  // hook used to stop polling the moment it held the token, on the reasoning
+  // that our own saves keep it -- so when a hold did lapse the canvas stayed
+  // editable and the user found out only when a save came back 423, having
+  // typed into a void in the meantime.
+  useEffect(() => {
+    if (!ref || !state.lockedByMe) return;
+    let cancelled = false;
+    const tick = () => {
+      const active = Date.now() - lastActivityRef.current < idleCapMs;
+      const call = active ? api.beatCheckout(ref) : api.getCheckout(ref);
+      call
+        .then((s) => {
+          if (cancelled) return;
+          setState(s);
+          if (!s.lockedByMe) setLostUnexpectedly(true);
+        })
+        .catch((e: unknown) => {
+          if (cancelled) return;
+          // 423 is the definitive answer: it is gone and someone else may have
+          // it. Anything else is transient -- keep what we last knew rather
+          // than flapping a live editor to read-only on one dropped request.
+          if (e instanceof ApiError && e.status === 423) {
+            setState((prev) => ({ ...prev, lockedByMe: false }));
+            setLostUnexpectedly(true);
+          }
+        });
+    };
+    const id = setInterval(tick, heldPollMs);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [api, ref, state.lockedByMe, heldPollMs, idleCapMs]);
+
+  // A 1 Hz clock, only while we hold it, so the bar can count down.
+  useEffect(() => {
+    if (!state.lockedByMe || !state.lockExpiresAt) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [state.lockedByMe, state.lockExpiresAt]);
 
   // Poll only while we do NOT hold it. A chip reading "taken" after the holder
   // has released is worse than no chip; this is what makes Take light up on its
@@ -132,6 +226,8 @@ export function useCheckout<T>({
     if (!r) return;
     setBusy(true);
     setError(null);
+    setLostUnexpectedly(false);
+    lastActivityRef.current = Date.now();
     try {
       const s = await api.takeCheckout(r);
       // Reload before going editable. This is the ordering that matters: the
@@ -165,7 +261,31 @@ export function useCheckout<T>({
 
   const lost = useCallback(() => {
     setState((s) => ({ ...s, lockedByMe: false }));
+    setLostUnexpectedly(true);
   }, []);
+
+  const acknowledgeLost = useCallback(() => setLostUnexpectedly(false), []);
+
+  const keepAlive = useCallback(async () => {
+    const r = refRef.current;
+    if (!r || !heldRef.current) return;
+    lastActivityRef.current = Date.now();
+    try {
+      setState(await api.beatCheckout(r));
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 423) {
+        setState((prev) => ({ ...prev, lockedByMe: false }));
+        setLostUnexpectedly(true);
+      }
+      // anything else is transient; the interval will try again
+    }
+  }, [api]);
+
+  // Only meaningful while we hold it: the bar shows a countdown, not a clock.
+  const secondsLeft =
+    state.lockedByMe && state.lockExpiresAt
+      ? Math.max(0, Math.round((Date.parse(state.lockExpiresAt) - now) / 1000))
+      : null;
 
   return {
     holder: state.lockedBy,
@@ -176,5 +296,10 @@ export function useCheckout<T>({
     take,
     release,
     lost,
+    keepAlive,
+    expiresAt: state.lockExpiresAt,
+    secondsLeft: secondsLeft !== null && Number.isFinite(secondsLeft) ? secondsLeft : null,
+    lostUnexpectedly,
+    acknowledgeLost,
   };
 }

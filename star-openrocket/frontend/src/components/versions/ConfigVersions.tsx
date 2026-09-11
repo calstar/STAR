@@ -24,7 +24,7 @@ import { Button, Modal } from '../ui'
 import * as api from '../../api/documents'
 import { designApi, keyOf, refOf } from '../../api/documents'
 import type { DocMeta, DocRef, MicroVersion, ReleaseVersion } from '../../api/documents'
-import { btn, ChangeModal, CheckoutControl, useCheckout } from '@stardesign-ui'
+import { btn, ChangeModal, CheckoutControl, CheckoutLostDialog, useCheckout } from '@stardesign-ui'
 
 // v2 because the remembered design is now (owner, id): a shared design is not
 // identified by its id alone. A v1 value is a bare id, which was always one of
@@ -467,6 +467,7 @@ export function ConfigVersions({ config, onRestore, onEditableChange, inline = f
         </button>
 
         <CheckoutControl checkout={checkout} noun="design" disabled={!activeRef} />
+        <CheckoutLostDialog checkout={checkout} noun="design" />
 
         <div className="mx-1 h-4 w-px bg-[var(--color-border)]" />
 

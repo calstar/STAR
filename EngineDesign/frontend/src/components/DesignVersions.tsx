@@ -31,7 +31,7 @@ import { designApi, keyOf, refOf } from '../api/documents';
 import { btn, dangerBtn, ghostBtn, primaryBtn, relativeTime } from '../lib/ui';
 import { readActive, writeActive } from '../lib/activeDesign';
 import { applyUiState, snapshotUiState } from '../lib/designState';
-import { ChangeModal, CheckoutControl, useCheckout } from '@stardesign-ui';
+import { ChangeModal, CheckoutControl, CheckoutLostDialog, useCheckout } from '@stardesign-ui';
 import { Modal } from './ui';
 
 const AUTOSAVE_POLL_MS = 4000;
@@ -555,6 +555,7 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
         </button>
 
         <CheckoutControl checkout={checkout} noun="design" disabled={!activeRef} />
+        <CheckoutLostDialog checkout={checkout} noun="design" />
 
         <div className="mx-1 h-4 w-px bg-[var(--color-border)]" />
 

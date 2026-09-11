@@ -8,7 +8,12 @@
 
 export { Modal } from './Modal';
 export { ChangeModal } from './ChangeModal';
-export { CheckoutControl, ReadOnlyNotice } from './CheckoutControl';
+export {
+  CheckoutControl,
+  ReadOnlyNotice,
+  CheckoutLostDialog,
+  requestCheckoutNotifications,
+} from './CheckoutControl';
 export { useCheckout } from './useCheckout';
 export { ReadOnlyProvider, useReadOnly, useDisabled } from './readOnly';
 export { btn, primaryBtn, dangerBtn, ghostBtn, relativeTime } from './theme';
