@@ -413,8 +413,13 @@ jobs:
     #  2. The failure mode is a sanitizer CHECK abort (a non-zero exit), NOT a
     #     "WARNING: ThreadSanitizer" data-race report. Gate on the exit code. Grepping the log for
     #     "WARNING" would pass straight over the exact regression this job exists to catch.
+    # daq-server/build-tsan, not build-tsan: a step-level working-directory REPLACES
+    # defaults.run.working-directory rather than nesting under it, so the bare name resolved to
+    # $GITHUB_WORKSPACE/build-tsan while the build step (which used the default) had created
+    # daq-server/build-tsan. The job failed with "No such file or directory" before running a
+    # single test, which means the regression this job exists to catch was never actually guarded.
     - name: Run concurrency tests under TSan
-      working-directory: build-tsan
+      working-directory: daq-server/build-tsan
       env:
         TSAN_OPTIONS: halt_on_error=1 history_size=7
       run: |
@@ -640,12 +645,16 @@ jobs:
         fi
         echo "✅ no sanitizer reports across $(ls .tmp/integration_*.log 2>/dev/null | wc -l) service log(s)"
 
+    # include-hidden-files is required, not optional: .tmp is a dotted directory and
+    # upload-artifact v4 silently excludes hidden paths by default, so the first run of this
+    # job uploaded nothing while the gate above was reading 11 logs from that same path.
     - name: Upload service logs
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: asan-service-logs
         path: daq-server/.tmp/integration_*.log
+        include-hidden-files: true
         retention-days: 7
         if-no-files-found: warn
 

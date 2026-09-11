@@ -37,7 +37,9 @@ struct PWMResolution {
     /** One human-readable line per problem. Empty means both targets are usable. */
     std::vector<std::string> issues;
 
-    bool ok() const { return issues.empty(); }
+    bool ok() const {
+        return issues.empty();
+    }
 };
 
 /** board_id → IP from [boards.*] (non-empty ip, first wins). No synthesized entries: a board this
@@ -74,8 +76,9 @@ inline PWMResolution resolvePWMTargets(const fsw::config::Config& cfg) {
             std::string joined;
             for (size_t i = 0; i < claimants.size(); ++i)
                 joined += (i ? ", " : "") + ("\"" + claimants[i] + "\"");
-            res.issues.push_back(std::string("more than one [actuator_roles] entry is assigned \"") +
-                                 assignment + "\": " + joined);
+            res.issues.push_back(
+                std::string("more than one [actuator_roles] entry is assigned \"") + assignment +
+                "\": " + joined);
             return target;
         }
 

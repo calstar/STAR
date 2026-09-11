@@ -98,11 +98,11 @@ int main() {
     //    did not intend — the same class of failure as the old name-matching fallbacks, so it is
     //    an error rather than a silent pick.
     {
-        const auto r = fsw::control::resolvePWMTargets(
-            makeConfig({{"Fuel Press", "pwm_fuel"}, {"Far Side Press", "pwm_fuel"},
-                        {"LOX Press", "pwm_ox"}}));
+        const auto r = fsw::control::resolvePWMTargets(makeConfig(
+            {{"Fuel Press", "pwm_fuel"}, {"Far Side Press", "pwm_fuel"}, {"LOX Press", "pwm_ox"}}));
         check(!r.ok(), "a duplicate assignment is reported");
-        check(!r.fuel.resolved(), "a duplicated output resolves to nothing rather than picking one");
+        check(!r.fuel.resolved(),
+              "a duplicated output resolves to nothing rather than picking one");
         check(r.issues.size() == 1 && r.issues[0].find("Fuel Press") != std::string::npos &&
                   r.issues[0].find("Far Side Press") != std::string::npos,
               "the reported issue names both claimants");

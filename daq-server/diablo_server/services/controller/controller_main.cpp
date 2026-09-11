@@ -29,8 +29,8 @@
 #include <memory>
 #include <sstream>
 #include <string>
-#include <vector>
 #include <thread>
+#include <vector>
 
 #include "config/Config.hpp"
 #include "control/ControllerService.hpp"

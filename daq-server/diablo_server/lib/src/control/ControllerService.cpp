@@ -508,13 +508,11 @@ void ControllerService::sendActuationPWM(const RobustDDPController::ActuationCom
     const bool same_board = pwm_config_.fuel.resolved() && pwm_config_.ox.resolved() &&
                             pwm_config_.fuel.board_ip == pwm_config_.ox.board_ip;
     if (same_board) {
-        sendPWMCommands(pwm_config_.fuel, duty_F, pwm_config_.ox, duty_O,
-                        pwm_config_.frequency_hz, pwm_config_.duration_ms);
+        sendPWMCommands(pwm_config_.fuel, duty_F, pwm_config_.ox, duty_O, pwm_config_.frequency_hz,
+                        pwm_config_.duration_ms);
     } else {
-        sendPWMCommand(pwm_config_.fuel, duty_F, pwm_config_.frequency_hz,
-                       pwm_config_.duration_ms);
-        sendPWMCommand(pwm_config_.ox, duty_O, pwm_config_.frequency_hz,
-                       pwm_config_.duration_ms);
+        sendPWMCommand(pwm_config_.fuel, duty_F, pwm_config_.frequency_hz, pwm_config_.duration_ms);
+        sendPWMCommand(pwm_config_.ox, duty_O, pwm_config_.frequency_hz, pwm_config_.duration_ms);
     }
 }
 

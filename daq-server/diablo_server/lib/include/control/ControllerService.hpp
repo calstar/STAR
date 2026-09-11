@@ -38,7 +38,9 @@ public:
         uint8_t channel = 0;
         std::string actuator_name;  // the [actuator_roles] key, for logs an operator can act on
 
-        bool resolved() const { return channel != 0 && !board_ip.empty(); }
+        bool resolved() const {
+            return channel != 0 && !board_ip.empty();
+        }
     };
 
     struct PWMConfig {
