@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CheckoutState, DesignApi, DocRef } from './api';
 import { ApiError, keyOf } from './api';
+import { secondsLeft as secondsLeftOf, shouldBeat } from './checkoutPolicy';
 
 const FREE: CheckoutState = {
   lockedBy: null,
@@ -147,7 +148,7 @@ export function useCheckout<T>({
     if (!ref || !state.lockedByMe) return;
     let cancelled = false;
     const tick = () => {
-      const active = Date.now() - lastActivityRef.current < idleCapMs;
+      const active = shouldBeat(lastActivityRef.current, Date.now(), idleCapMs);
       const call = active ? api.beatCheckout(ref) : api.getCheckout(ref);
       call
         .then((s) => {
@@ -282,10 +283,7 @@ export function useCheckout<T>({
   }, [api]);
 
   // Only meaningful while we hold it: the bar shows a countdown, not a clock.
-  const secondsLeft =
-    state.lockedByMe && state.lockExpiresAt
-      ? Math.max(0, Math.round((Date.parse(state.lockExpiresAt) - now) / 1000))
-      : null;
+  const secondsLeft = secondsLeftOf(state, now);
 
   return {
     holder: state.lockedBy,
@@ -298,7 +296,7 @@ export function useCheckout<T>({
     lost,
     keepAlive,
     expiresAt: state.lockExpiresAt,
-    secondsLeft: secondsLeft !== null && Number.isFinite(secondsLeft) ? secondsLeft : null,
+    secondsLeft,
     lostUnexpectedly,
     acknowledgeLost,
   };

@@ -12,14 +12,7 @@ import { useEffect } from 'react';
 import type { Checkout } from './useCheckout';
 import { btn, primaryBtn } from './theme';
 
-/** Below this many seconds the chip turns amber and offers Keep editing. */
-const WARN_AT_S = 120;
-
-function mmss(total: number): string {
-  const m = Math.floor(total / 60);
-  const ss = String(total % 60).padStart(2, '0');
-  return `${m}:${ss}`;
-}
+import { mmss, WARN_AT_S } from './checkoutPolicy';
 
 export function CheckoutControl({
   checkout,

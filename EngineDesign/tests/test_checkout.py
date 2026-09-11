@@ -15,6 +15,7 @@ not concurrent editing (rename, share, copy).
 from datetime import datetime, timezone
 
 import fcntl
+import time
 import json
 import os
 import sys
@@ -451,16 +452,18 @@ def test_beat_refreshes_the_hold_without_writing(client):
     """
     doc_id = _create(client)
     client.post(f"{BASE}/{doc_id}/checkout", headers=A)
-    _save(client, doc_id, A, config={"v": "original"})
+    _save(client, doc_id, A)
+    stored = client.get(f"{BASE}/{doc_id}/load", headers=A).json()
     before = client.get(f"{BASE}/{doc_id}/checkout", headers=A).json()["lockExpiresAt"]
 
     r = client.post(f"{BASE}/{doc_id}/checkout/beat", headers=A)
     assert r.status_code == 200
     assert r.json()["lockedByMe"] is True
     assert r.json()["lockExpiresAt"] >= before
-    # content untouched -- a beat that could clobber a payload would be worse
-    # than the bug it fixes
-    assert client.get(f"{BASE}/{doc_id}/load", headers=A).json()["config"] == {"v": "original"}
+    # Content untouched. Compared against whatever this app's payload shape is
+    # rather than a hardcoded one -- a beat that could clobber a working copy
+    # would be worse than the bug it fixes.
+    assert client.get(f"{BASE}/{doc_id}/load", headers=A).json() == stored
 
 
 def test_beat_refuses_when_you_do_not_hold_it(client):
@@ -473,3 +476,47 @@ def test_beat_refuses_when_you_do_not_hold_it(client):
     _share(client, doc_id, [B["X-Auth-Email"]])
     client.post(f"{BASE}/{doc_id}/checkout", headers=A)
     assert client.post(f"{BASE}/{doc_id}/checkout/beat", headers=B, params=OWNER_A).status_code == 423
+
+
+def test_beat_alone_survives_the_ttl_but_idling_does_not(client, monkeypatch):
+    """The end-to-end claim, both directions.
+
+    Someone interacting without saving must keep the design; someone who has
+    genuinely walked away must lose it, because release is holder-only and the
+    on-close beacon is best-effort, so lapsing is the only thing that recovers a
+    checkout after a crash or a power cut.
+    """
+    doc_id = _create(client)
+    _share(client, doc_id, [B["X-Auth-Email"]])
+    assert client.post(f"{BASE}/{doc_id}/checkout", headers=A).status_code == 200
+
+    monkeypatch.setattr(documents.store, "lock_ttl", 2)
+    # Beat twice, each time before it would have lapsed. Total elapsed exceeds
+    # the TTL, and no save happens anywhere in here -- which is the entire point.
+    for _ in range(2):
+        time.sleep(1.2)
+        assert client.post(f"{BASE}/{doc_id}/checkout/beat", headers=A).status_code == 200
+    assert client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A).status_code == 423
+
+    # stop beating and it lapses on its own -- B gets it
+    time.sleep(2.2)
+    assert client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A).status_code == 200
+
+
+def test_a_lapsed_hold_cannot_be_beaten_back_to_life(client, monkeypatch):
+    """Beating is a refresh, not a resurrection.
+
+    Once the hold has gone the design is free and someone else may already have
+    taken it, so a client that could beat its way back would reintroduce exactly
+    the two-holders case checkouts exist to prevent. 423 here is what makes the
+    lost-checkout dialog offer "Take it back" rather than silently re-beating.
+    """
+    doc_id = _create(client)
+    _share(client, doc_id, [B["X-Auth-Email"]])
+    client.post(f"{BASE}/{doc_id}/checkout", headers=A)
+
+    monkeypatch.setattr(documents.store, "lock_ttl", 1)
+    time.sleep(1.05)
+    assert client.post(f"{BASE}/{doc_id}/checkout/beat", headers=A).status_code == 423
+    # and it really was free, not merely unbeatable
+    assert client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A).status_code == 200
