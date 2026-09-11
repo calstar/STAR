@@ -20,16 +20,41 @@ export const WARN_AT_S = 120;
  * negative countdown reads as a bug, and the server is the authority on whether
  * it has actually gone.
  */
-export function secondsLeft(state: CheckoutState, nowMs: number): number | null {
-  if (!state.lockedByMe || !state.lockExpiresAt) return null;
+export function secondsLeft(
+  state: CheckoutState,
+  nowMs: number,
+  receivedAtMs?: number,
+): number | null {
+  if (!state.lockedByMe) return null;
+
+  // Preferred path: the server told us how long is left, and we subtract only
+  // locally-measured elapsed time. Both numbers come from the same clock, so
+  // any disagreement between our clock and the server's cancels out entirely.
+  //
+  // Differencing `lockExpiresAt` against our own clock does NOT cancel: a
+  // browser 17 hours behind the server showed "1038:44" left on a 15 minute
+  // hold, and one running fast would sit at "0:00" with the warning stuck on.
+  const remaining = state.lockExpiresInSeconds;
+  if (typeof remaining === 'number' && Number.isFinite(remaining) && receivedAtMs !== undefined) {
+    const elapsed = Math.max(0, (nowMs - receivedAtMs) / 1000);
+    return Math.max(0, Math.round(remaining - elapsed));
+  }
+
+  // Fallback for a server that does not send the duration yet. Same skew
+  // exposure as before, which is why it is second.
+  if (!state.lockExpiresAt) return null;
   const at = Date.parse(state.lockExpiresAt);
   if (!Number.isFinite(at)) return null; // unparseable: show no countdown, not NaN
   return Math.max(0, Math.round((at - nowMs) / 1000));
 }
 
 /** Whether the bar should turn amber and offer to keep the hold. */
-export function isExpiringSoon(state: CheckoutState, nowMs: number): boolean {
-  const left = secondsLeft(state, nowMs);
+export function isExpiringSoon(
+  state: CheckoutState,
+  nowMs: number,
+  receivedAtMs?: number,
+): boolean {
+  const left = secondsLeft(state, nowMs, receivedAtMs);
   return left !== null && left <= WARN_AT_S;
 }
 
@@ -46,7 +71,14 @@ export function shouldBeat(
   lastActivityMs: number,
   nowMs: number,
   idleCapMs: number,
+  visible = true,
 ): boolean {
+  // Not while the tab is hidden. A backgrounded tab still runs its timers, so
+  // without this a parked window refreshes the hold forever and nobody else can
+  // ever take the design. Note this only declines to REFRESH -- it must never
+  // release, which is the bug that made a three-second glance at another tab
+  // cost you the design.
+  if (!visible) return false;
   return nowMs - lastActivityMs < idleCapMs;
 }
 

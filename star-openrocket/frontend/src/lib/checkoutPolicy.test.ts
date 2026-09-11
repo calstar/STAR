@@ -34,6 +34,11 @@ const held = (expiresAt: string | null): CheckoutState => ({
   lockExpiresAt: expiresAt,
   lockTtlSeconds: 900,
 });
+/** A hold the server says has `remaining` seconds left on it. */
+const heldFor = (remaining: number | null, expiresAt: string | null = null): CheckoutState => ({
+  ...held(expiresAt),
+  lockExpiresInSeconds: remaining,
+});
 const theirs: CheckoutState = {
   lockedBy: 'them@berkeley.edu',
   lockedByName: 'Them',
@@ -148,5 +153,81 @@ describe('mmss', () => {
   it('never renders a negative or fractional time', () => {
     expect(mmss(-5)).toBe('0:00');
     expect(mmss(30.7)).toBe('0:30');
+  });
+});
+
+
+describe('secondsLeft is immune to clock skew', () => {
+  // The bug: the countdown differenced a server timestamp against the browser's
+  // own clock. A browser 17 hours behind the server showed "1038:44" left on a
+  // 15 minute hold. A browser running fast is worse -- it reads 0:00 and pins
+  // the warning on, which looks exactly like the lapsing bug this work fixes.
+  const SKEW = 17 * 3600 * 1000;
+
+  it('uses the server-measured duration, not the two clocks', () => {
+    // Our clock is 17h behind; the absolute expiry would compute ~17h left.
+    const state = heldFor(900, at(900 + 17 * 3600));
+    expect(secondsLeft(state, NOW, NOW)).toBe(900);
+  });
+
+  it('is unaffected whichever way the skew runs', () => {
+    const slow = heldFor(900, new Date(NOW + 900_000 + SKEW).toISOString());
+    const fast = heldFor(900, new Date(NOW + 900_000 - SKEW).toISOString());
+    expect(secondsLeft(slow, NOW, NOW)).toBe(900);
+    expect(secondsLeft(fast, NOW, NOW)).toBe(900);
+  });
+
+  it('counts down by locally-measured elapsed time', () => {
+    const state = heldFor(900);
+    expect(secondsLeft(state, NOW + 60_000, NOW)).toBe(840);
+    expect(secondsLeft(state, NOW + 900_000, NOW)).toBe(0);
+    expect(secondsLeft(state, NOW + 950_000, NOW)).toBe(0); // clamped
+  });
+
+  it('falls back to the timestamp when the server sends no duration', () => {
+    // An older server, or a response that predates the field.
+    expect(secondsLeft(held(at(300)), NOW, NOW)).toBe(300);
+  });
+
+  it('ignores the duration when we do not hold it', () => {
+    expect(secondsLeft({ ...heldFor(900), lockedByMe: false }, NOW, NOW)).toBeNull();
+  });
+
+  it('drives the warning off the same skew-proof number', () => {
+    const nearly = heldFor(30, at(30 + 17 * 3600));
+    expect(isExpiringSoon(nearly, NOW, NOW)).toBe(true);
+    expect(isExpiringSoon(heldFor(600), NOW, NOW)).toBe(false);
+  });
+});
+
+
+describe('an untouched or backgrounded tab must stop refreshing the hold', () => {
+  const CAP = 15 * 60_000;
+
+  it('never beats when nothing has been touched at all', () => {
+    // The hook seeds lastActivity at 0, not the mount time. Seeding it with
+    // Date.now() meant merely opening the page bought a full idle window, so
+    // the 15 s tick refreshed the lock the whole time and the countdown read a
+    // fresh 15:00 every time the user came back to the tab.
+    expect(shouldBeat(0, NOW, CAP)).toBe(false);
+  });
+
+  it('beats once something actually happens, and stops when it ages out', () => {
+    expect(shouldBeat(NOW, NOW, CAP)).toBe(true);
+    expect(shouldBeat(NOW - CAP - 1, NOW, CAP)).toBe(false);
+  });
+
+  it('does not beat while the tab is hidden, however recent the interaction', () => {
+    // A backgrounded tab still runs its timers, so without this a parked window
+    // holds the design against everybody else forever.
+    expect(shouldBeat(NOW, NOW, CAP, false)).toBe(false);
+  });
+
+  it('declining to refresh is not the same as releasing', () => {
+    // The distinction that matters: hiding the tab must stop the hold being
+    // renewed, never hand it back. Releasing on visibilitychange is what made a
+    // three-second glance at another tab cost someone their design.
+    expect(shouldBeat(NOW, NOW, CAP, true)).toBe(true);
+    expect(shouldBeat(NOW, NOW + 1000, CAP, true)).toBe(true);
   });
 });

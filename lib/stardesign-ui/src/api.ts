@@ -50,8 +50,12 @@ export interface CheckoutState {
   lockedBy: string | null;
   lockedByName: string | null;
   lockedByMe: boolean;
-  /** When the hold lapses -- beat + ttl, in the future. Not the beat itself. */
+  /** When the hold lapses -- beat + ttl, in the future. Not the beat itself.
+   *  Prefer `lockExpiresInSeconds`: this one is only correct if our clock
+   *  agrees with the server's, and nothing guarantees that. */
   lockExpiresAt: string | null;
+  /** Seconds remaining as the SERVER measured them. Clock-skew proof. */
+  lockExpiresInSeconds?: number | null;
   /** The server's inactivity window, so the bar can size its warning. */
   lockTtlSeconds?: number | null;
 }

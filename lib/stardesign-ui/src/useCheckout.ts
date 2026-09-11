@@ -34,9 +34,15 @@ const FREE: CheckoutState = {
   lockTtlSeconds: null,
 };
 
-/** Interaction that counts as "still working on this". Deliberately coarse and
- *  passive: it only stamps a ref, so it costs nothing on a hot canvas. */
-const ACTIVITY_EVENTS = ['pointerdown', 'pointermove', 'keydown', 'wheel'] as const;
+/** Interaction that counts as "still working on this".
+ *
+ * `pointermove` is deliberately NOT here. It fires on incidental cursor travel
+ * across the window, so including it meant a parked tab re-armed another full
+ * idle window every time someone's hand brushed the mouse -- and the idle cap
+ * is the only thing that ever frees a design from someone who walked away,
+ * since release is holder-only and the on-close beacon is best-effort. A drag
+ * always opens with `pointerdown`, so real work is still caught. */
+const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'wheel'] as const;
 
 export interface Checkout {
   /** Email of whoever holds it, or null when free. */
@@ -103,6 +109,15 @@ export function useCheckout<T>({
   const [error, setError] = useState<string | null>(null);
   const [lostUnexpectedly, setLostUnexpectedly] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  // When the current `state` reached us, by OUR clock. The countdown subtracts
+  // locally-measured elapsed time from the server's own "seconds remaining",
+  // so a clock disagreement between browser and server cannot reach the timer.
+  const [receivedAt, setReceivedAt] = useState(() => Date.now());
+
+  const applyState = useCallback((s: CheckoutState) => {
+    setReceivedAt(Date.now());
+    setState(s);
+  }, []);
 
   const key = ref ? keyOf(ref) : null;
   // Read inside callbacks and the unload handler, so neither needs `ref` in a
@@ -122,7 +137,12 @@ export function useCheckout<T>({
 
   // Last interaction of any kind. A ref, not state: these fire continuously
   // while dragging a node and must not re-render anything.
-  const lastActivityRef = useRef(Date.now());
+  //
+  // Starts at 0, NOT `Date.now()`: seeding it with the mount time made merely
+  // opening the page count as interaction, so every tick beat the lock and the
+  // countdown visibly reset to full with nobody touching anything. Taking the
+  // checkout stamps it, because pressing Take *is* the user doing something.
+  const lastActivityRef = useRef(0);
   useEffect(() => {
     const mark = () => {
       lastActivityRef.current = Date.now();
@@ -148,12 +168,14 @@ export function useCheckout<T>({
     if (!ref || !state.lockedByMe) return;
     let cancelled = false;
     const tick = () => {
-      const active = shouldBeat(lastActivityRef.current, Date.now(), idleCapMs);
+      const visible =
+        typeof document === 'undefined' || document.visibilityState === 'visible';
+      const active = shouldBeat(lastActivityRef.current, Date.now(), idleCapMs, visible);
       const call = active ? api.beatCheckout(ref) : api.getCheckout(ref);
       call
         .then((s) => {
           if (cancelled) return;
-          setState(s);
+          applyState(s);
           if (!s.lockedByMe) setLostUnexpectedly(true);
         })
         .catch((e: unknown) => {
@@ -172,15 +194,15 @@ export function useCheckout<T>({
       cancelled = true;
       clearInterval(id);
     };
-  }, [api, ref, state.lockedByMe, heldPollMs, idleCapMs]);
+  }, [api, ref, state.lockedByMe, heldPollMs, idleCapMs, applyState]);
 
   // A 1 Hz clock, only while we hold it, so the bar can count down.
   useEffect(() => {
-    if (!state.lockedByMe || !state.lockExpiresAt) return;
+    if (!state.lockedByMe) return;
     setNow(Date.now());
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [state.lockedByMe, state.lockExpiresAt]);
+  }, [state.lockedByMe, state.lockExpiresAt, receivedAt]);
 
   // Poll only while we do NOT hold it. A chip reading "taken" after the holder
   // has released is worse than no chip; this is what makes Take light up on its
@@ -191,7 +213,7 @@ export function useCheckout<T>({
     const tick = () => {
       api
         .getCheckout(ref)
-        .then((s) => !cancelled && setState(s))
+        .then((s) => !cancelled && applyState(s))
         .catch(() => {
           /* transient: keep what we last knew rather than flapping to free */
         });
@@ -202,7 +224,7 @@ export function useCheckout<T>({
       cancelled = true;
       clearInterval(id);
     };
-  }, [api, key, state.lockedByMe, pollMs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [api, key, state.lockedByMe, pollMs, applyState]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Give it back when the tab actually goes away, so a colleague is not left
   // waiting out the inactivity timeout for a design nobody has open.
@@ -235,30 +257,30 @@ export function useCheckout<T>({
       // view may be stale, and editing a stale view would overwrite whoever
       // just finished.
       await reload?.();
-      setState(s);
+      applyState(s);
     } catch (e) {
       setError(
         e instanceof ApiError ? e.message : 'Could not take it. Try again in a moment.',
       );
       // Refresh so the chip shows who actually has it, not a guess.
-      api.getCheckout(r).then(setState).catch(() => {});
+      api.getCheckout(r).then(applyState).catch(() => {});
     } finally {
       setBusy(false);
     }
-  }, [api, reload]);
+  }, [api, reload, applyState]);
 
   const release = useCallback(async () => {
     const r = refRef.current;
     if (!r) return;
     setBusy(true);
     try {
-      setState(await api.releaseCheckout(r));
+      applyState(await api.releaseCheckout(r));
     } catch {
       setState(FREE); // best effort; the timeout frees it regardless
     } finally {
       setBusy(false);
     }
-  }, [api]);
+  }, [api, applyState]);
 
   const lost = useCallback(() => {
     setState((s) => ({ ...s, lockedByMe: false }));
@@ -272,7 +294,7 @@ export function useCheckout<T>({
     if (!r || !heldRef.current) return;
     lastActivityRef.current = Date.now();
     try {
-      setState(await api.beatCheckout(r));
+      applyState(await api.beatCheckout(r));
     } catch (e) {
       if (e instanceof ApiError && e.status === 423) {
         setState((prev) => ({ ...prev, lockedByMe: false }));
@@ -283,7 +305,7 @@ export function useCheckout<T>({
   }, [api]);
 
   // Only meaningful while we hold it: the bar shows a countdown, not a clock.
-  const secondsLeft = secondsLeftOf(state, now);
+  const secondsLeft = secondsLeftOf(state, now, receivedAt);
 
   return {
     holder: state.lockedBy,

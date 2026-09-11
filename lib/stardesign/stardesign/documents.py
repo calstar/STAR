@@ -436,11 +436,24 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
                     ).isoformat()
                 except (TypeError, ValueError):
                     expires = None
+        # A duration as well as an instant. The instant is only meaningful to a
+        # client whose clock agrees with ours, and nothing makes that true: a
+        # browser on one host talking to a server on another (Windows and WSL,
+        # say) can be hours apart, and the countdown then reads as hours left --
+        # or, when the browser runs fast, as permanently expired. The duration
+        # costs nothing and is immune to it, so it is what the bar counts down.
+        remaining = None
+        if expires is not None:
+            remaining = max(
+                0.0,
+                (datetime.fromisoformat(expires) - datetime.now(timezone.utc)).total_seconds(),
+            )
         return {
             "lockedBy": holder,
             "lockedByName": (names.get(holder) or holder) if holder else None,
             "lockedByMe": holder == viewer,
             "lockExpiresAt": expires,
+            "lockExpiresInSeconds": remaining,
             "lockTtlSeconds": store.lock_ttl,
         }
 
