@@ -6,6 +6,7 @@ import {
   jointFaultsOf, jointsOf, knownK, methodOf, needsOwnSize, needsThreadLength,
   nextRowId, nextSegmentId, overlapOf, transitionsOf,
 } from './segments';
+import type { PartDepths } from './segments';
 import type { FittingRow, LineSegment, LossMethod } from './segments';
 import { FAMILY_LABELS, MAKEUP, THREAD_PROMPT, isMissing } from './terminations';
 import type { Family, Gender, Termination } from './terminations';
@@ -83,6 +84,13 @@ export function SegmentPanel({ segments, onChange }: {
 }) {
   const readOnly = useReadOnly();
   const catalog = useMemo(() => loadCatalog(), []);
+  // A swage insertion depth is the manufacturer's figure for that series, so
+  // it comes from the catalogue entry the fitting was picked from -- not from
+  // the user, and not from a table in this app pretending to know.
+  const depths = useMemo<PartDepths>(() => {
+    const by = new Map(catalog.map(p => [p.id, p.engagementMm]));
+    return (partId: string) => by.get(partId);
+  }, [catalog]);
   const transitions = useMemo(() => transitionsOf(segments), [segments]);
   const [showMethod, setShowMethod] = useState(false);
   /**
@@ -316,11 +324,12 @@ export function SegmentPanel({ segments, onChange }: {
                   readOnly={readOnly}
                   segmentBore={seg.bore?.value}
                   segment={seg}
+                  depths={depths}
                   onChange={rows => patch(i, { fittings: rows })}
                 />
               )}
 
-              <Summary seg={seg} />
+              <Summary seg={seg} depths={depths} />
             </div>
 
             {transitions[i] && (
@@ -354,7 +363,7 @@ export function SegmentPanel({ segments, onChange }: {
  * body length, because a partial subtraction is a mis-cut part rather than an
  * approximate one.
  */
-function Summary({ seg }: { seg: LineSegment }) {
+function Summary({ seg, depths }: { seg: LineSegment; depths: PartDepths }) {
   const bits: string[] = [];
   const lenMm = mmOf(seg.length);
   if (lenMm !== null) {
@@ -372,22 +381,22 @@ function Summary({ seg }: { seg: LineSegment }) {
   // it says nothing. A run that *has* joints but cannot price them says which
   // answer is missing, because silence there reads as "no overlap" and sends
   // somebody to the bandsaw with a figure that is long by every joint.
-  const overlap = overlapOf(seg);
-  const joints = jointsOf(seg);
+  const overlap = overlapOf(seg, depths);
+  const joints = jointsOf(seg, depths);
   if (overlap && overlap.mm > 0) {
     bits.push(`joints overlap ${overlap.mm.toFixed(1)} mm`);
   }
 
   if (seg.lengthBasis === 'overall' && lenMm !== null) {
-    const cut = cutTubeOf(seg, lenMm);
+    const cut = cutTubeOf(seg, lenMm, depths);
     bits.push('needs' in cut
       ? `cut length needs ${cut.needs}`
       : `cut ${(cut.mm / 1000).toFixed(3)} m`);
   }
 
-  const faults = jointFaultsOf(seg);
+  const faults = jointFaultsOf(seg, depths);
   const unpriced = !overlap && faults.length === 0 && joints.length > 0
-    ? jointsOf(seg).map(j => j.engagement).find(isMissing)?.needs ?? null
+    ? joints.map(j => j.engagement).find(isMissing)?.needs ?? null
     : null;
   if (bits.length === 0 && faults.length === 0 && !unpriced) return null;
   return (
@@ -421,11 +430,12 @@ function Summary({ seg }: { seg: LineSegment }) {
 }
 
 /** The fittings in a run: a chip each, with the common ones one click away. */
-function Fittings({ rows, readOnly, segmentBore, segment, onChange }: {
+function Fittings({ rows, readOnly, segmentBore, segment, depths, onChange }: {
   rows: FittingRow[];
   readOnly: boolean;
   segmentBore?: number;
   segment: LineSegment;
+  depths: PartDepths;
   onChange: (rows: FittingRow[]) => void;
 }) {
   const [more, setMore] = useState(false);
@@ -527,7 +537,7 @@ function Fittings({ rows, readOnly, segmentBore, segment, onChange }: {
             {numField(r.K, v => set(r.id, { K: v }), '—',
               "This fitting's own K, if it was measured. Left blank it adds no loss of its own.")}
           </div>
-          <Ends row={r} segment={segment} readOnly={readOnly}
+          <Ends row={r} segment={segment} readOnly={readOnly} depths={depths}
             onChange={ends => set(r.id, { ends })}
             onThread={mm => set(r.id, { threadMm: mm })}
             onSame={() => set(r.id, { ends: undefined })} />
@@ -651,17 +661,18 @@ function JoinBy({ segment, readOnly, onChange, onSize, onThread }: {
  * The joints shown are against the *neighbours*, not between this fitting's
  * own two ends. An elbow's inlet and outlet do not screw into each other.
  */
-function Ends({ row, segment, readOnly, onChange, onThread, onSame }: {
+function Ends({ row, segment, readOnly, depths, onChange, onThread, onSame }: {
   row: FittingRow;
   segment: LineSegment;
   readOnly: boolean;
+  depths: PartDepths;
   onChange: (ends: { a: Termination; b: Termination }) => void;
   onThread: (mm: number | undefined) => void;
   onSame: () => void;
 }) {
   const ends = endsOf(row, segment);
   const custom = row.ends !== undefined;
-  const { inlet, outlet } = jointsForRow(segment, row.id);
+  const { inlet, outlet } = jointsForRow(segment, row.id, depths);
 
   const set = (which: 'a' | 'b', next: Partial<Termination>) =>
     onChange({ ...ends, [which]: { ...ends[which], ...next } });

@@ -414,3 +414,33 @@ describe('ids of things added to a saved drawing', () => {
     expect(segs.some(s => s.id === added)).toBe(false);
   });
 });
+
+describe('a swage depth comes from the catalogue', () => {
+  const swaged = (partId?: string): LineSegment => ({
+    id: 's', standard: 'tube', tubeSize: '1/2 x 0.049', joinBy: 'swage',
+    fittings: [{ id: 'a', kind: 'elbow_90', count: 2, lengthMm: 30, partId }],
+  });
+
+  it('asks for a part rather than inventing an insertion depth', () => {
+    // The number is the manufacturer's for that series. This app does not
+    // know it and must not make one up.
+    const cut = cutTubeOf(swaged(), 1000);
+    if ('needs' in cut) expect(cut.needs).toMatch(/insertion depth/);
+    else throw new Error('an uncatalogued swage joint has no depth');
+  });
+
+  it('uses the depth off the part the fitting was picked from', () => {
+    const depths = (id: string) => (id === 'SS-810-9' ? 11.4 : undefined);
+    expect(overlapOf(swaged('SS-810-9'), depths)).toEqual({ mm: 11.4, unverified: 0 });
+    const cut = cutTubeOf(swaged('SS-810-9'), 1000, depths);
+    if ('needs' in cut) throw new Error('a catalogued depth is an answer');
+    expect(cut.mm).toBeCloseTo(1000 - 60 + 11.4, 3);
+  });
+
+  it('still refuses when the part carries no depth', () => {
+    // A catalogue entry with only a bore is a valid entry, and it is not a
+    // depth. Absent means not stated.
+    const cut = cutTubeOf(swaged('SS-810-9'), 1000, () => undefined);
+    expect('needs' in cut).toBe(true);
+  });
+});

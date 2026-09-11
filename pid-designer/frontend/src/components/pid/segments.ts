@@ -404,7 +404,19 @@ export interface Joint {
  * fitting and subtracted from its own body -- which cannot be right, because
  * the same elbow makes up differently depending on what it is screwed into.
  */
-export function jointsOf(segment: LineSegment): Joint[] {
+/**
+ * How deep a catalogued part's mate inserts, by part id.
+ *
+ * A swage insertion depth is the manufacturer's number for that series, so it
+ * comes from the catalogue entry rather than from this file or from the user.
+ * Passed in rather than read here so the model stays testable and knows
+ * nothing about where the catalogue lives.
+ */
+export type PartDepths = (partId: string) => number | undefined;
+
+const NO_DEPTHS: PartDepths = () => undefined;
+
+export function jointsOf(segment: LineSegment, depths: PartDepths = NO_DEPTHS): Joint[] {
   const flat = (segment.fittings ?? []).flatMap(r =>
     Array.from({ length: Math.max(0, r.count) }, () => r));
   const out: Joint[] = [];
@@ -413,13 +425,16 @@ export function jointsOf(segment: LineSegment): Joint[] {
     const right = endsOf(flat[i + 1], segment);
     const a = left.b;                       // the outlet end of the one before
     const b = right.a;                      // the inlet end of the next
+    // The half that goes in is the half whose figures apply.
+    const male = a.gender === 'male' ? flat[i] : flat[i + 1];
     out.push({
       rowId: flat[i + 1].id,
       a, b,
       engagement: engagementOf(a, b, {
         // The fitting's own figure if it has one, else the run's.
-        maleThreadMm: (a.gender === 'male' ? flat[i] : flat[i + 1]).threadMm
-          ?? segment.joinThreadMm,
+        maleThreadMm: male.threadMm ?? segment.joinThreadMm,
+        // The catalogue's, for the one family whose depth is a part number.
+        insertionMm: male.partId ? depths(male.partId) : undefined,
       }),
       mismatch: whyNotMated(a, b),
       restricting: restrictingEnd(a, b),
@@ -447,11 +462,10 @@ export function jointsOf(segment: LineSegment): Joint[] {
  * A row with a count of three has identical joints between its own instances,
  * so the first of each side is the whole story.
  */
-export function jointsForRow(segment: LineSegment, rowId: string): {
-  inlet: Joint | null;
-  outlet: Joint | null;
-} {
-  const joints = jointsOf(segment);
+export function jointsForRow(
+  segment: LineSegment, rowId: string, depths?: PartDepths,
+): { inlet: Joint | null; outlet: Joint | null } {
+  const joints = jointsOf(segment, depths);
   const flat = (segment.fittings ?? []).flatMap(r =>
     Array.from({ length: Math.max(0, r.count) }, () => r));
   // `jointsOf` indexes a joint by the row on its *right*, so the joint at
@@ -462,10 +476,12 @@ export function jointsForRow(segment: LineSegment, rowId: string): {
   return { inlet, outlet };
 }
 
-export function overlapOf(segment: LineSegment): { mm: number; unverified: number } | null {
+export function overlapOf(
+  segment: LineSegment, depths?: PartDepths,
+): { mm: number; unverified: number } | null {
   let mm = 0;
   let unverified = 0;
-  for (const j of jointsOf(segment)) {
+  for (const j of jointsOf(segment, depths)) {
     // A joint that cannot be made has no overlap to report. `engagementOf`
     // will still answer for one -- it reads the male's size and does the
     // arithmetic -- so without this a 1/4 male in a 1/2 female came back as a
@@ -484,17 +500,19 @@ export function overlapOf(segment: LineSegment): { mm: number; unverified: numbe
  * Distinct because three identical elbows produce the same complaint three
  * times, and a panel that prints it three times reads as three faults.
  */
-export function jointFaultsOf(segment: LineSegment): { why: string; joints: number }[] {
+export function jointFaultsOf(
+  segment: LineSegment, depths?: PartDepths,
+): { why: string; joints: number }[] {
   const seen = new Map<string, number>();
-  for (const j of mismatchesOf(segment)) {
+  for (const j of mismatchesOf(segment, depths)) {
     seen.set(j.mismatch!, (seen.get(j.mismatch!) ?? 0) + 1);
   }
   return [...seen].map(([why, joints]) => ({ why, joints }));
 }
 
 /** Joints the drawing describes but the hardware could not make. */
-export const mismatchesOf = (segment: LineSegment): Joint[] =>
-  jointsOf(segment).filter(j => j.mismatch !== null);
+export const mismatchesOf = (segment: LineSegment, depths?: PartDepths): Joint[] =>
+  jointsOf(segment, depths).filter(j => j.mismatch !== null);
 
 /** Whether a family needs a thread length stating. See `terminations.ts`. */
 export const needsThreadLength = (family: Family): boolean =>
@@ -511,7 +529,7 @@ export const needsThreadLength = (family: Family): boolean =>
  * Refuses rather than approximates. A cut list is a part somebody makes.
  */
 export function cutTubeOf(
-  segment: LineSegment, overallMm: number,
+  segment: LineSegment, overallMm: number, depths?: PartDepths,
 ): { mm: number; unverified: number } | { needs: string } {
   const flat = (segment.fittings ?? []).flatMap(r =>
     Array.from({ length: Math.max(0, r.count) }, () => r));
@@ -520,13 +538,13 @@ export function cutTubeOf(
     if (f.lengthMm === undefined) return { needs: 'a body length on every fitting' };
     bodies += f.lengthMm;
   }
-  const overlap = overlapOf(segment);
+  const overlap = overlapOf(segment, depths);
   if (!overlap) {
     // A joint that cannot be made is the first thing to say; an unanswered one
     // comes next. Either way no length is offered.
-    const broken = mismatchesOf(segment)[0];
+    const broken = mismatchesOf(segment, depths)[0];
     if (broken) return { needs: `a joint that can be made — ${broken.mismatch}` };
-    const first = jointsOf(segment).map(j => j.engagement).find(isMissing);
+    const first = jointsOf(segment, depths).map(j => j.engagement).find(isMissing);
     return { needs: first ? first.needs : 'how the joints make up' };
   }
   return {
