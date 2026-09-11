@@ -2,10 +2,14 @@ import { useMemo, useState } from 'react';
 import { useReadOnly } from '@stardesign-ui';
 import {
   FITTING_KINDS, FITTING_LABELS, LOSS_METHODS,
-  fittingCount, knownK, methodOf, nextRowId, nextSegmentId, transitionsOf,
+  cutTubeOf, endsOf, fittingCount, joinFamilyOf, joinSizeOf, jointsForRow,
+  jointFaultsOf, jointsOf, knownK, methodOf, needsOwnSize, needsThreadLength,
+  nextRowId, nextSegmentId, overlapOf, transitionsOf,
 } from './segments';
 import type { FittingRow, LineSegment, LossMethod } from './segments';
-import { STANDARDS, TUBE_SIZES, DASH_SIZES, NPT_SIZES, cutLength, loadCatalog, suggestBore, tubeOdForSize } from './catalog';
+import { FAMILY_LABELS, MAKEUP, THREAD_PROMPT, isMissing } from './terminations';
+import type { Family, Gender, Termination } from './terminations';
+import { STANDARDS, TUBE_SIZES, DASH_SIZES, NPT_SIZES, loadCatalog, suggestBore, tubeOdForSize } from './catalog';
 import type { Standard } from './catalog';
 import { UNITS } from './params';
 import type { ParamValue } from './params';
@@ -116,7 +120,7 @@ export function SegmentPanel({ segments, onChange }: {
   };
 
   const addSegment = () =>
-    onChange([...segments, { id: nextSegmentId(), method: 'itemised', fittings: [], standard: 'tube' }]);
+    onChange([...segments, { id: nextSegmentId(segments), method: 'itemised', fittings: [], standard: 'tube' }]);
 
   /** Picking a size fills the bore in, and records where it came from. */
   const pickSize = (i: number, standard: Standard, size: string) => {
@@ -224,6 +228,17 @@ export function SegmentPanel({ segments, onChange }: {
                   title={many ? 'Remove this size' : 'Remove'}>×</button>
               </div>
 
+              {/* ── How the fittings join ──────────────────────────────
+                  One answer for the run, because a run is built to one joint
+                  standard. Every fitting inherits it and the overlap at every
+                  joint follows, so nobody types an engagement. Four of the
+                  five line standards *are* joint families, and for those this
+                  is already answered by the size row above. */}
+              <JoinBy segment={seg} readOnly={readOnly}
+                onChange={joinBy => patch(i, { joinBy })}
+                onSize={joinSize => patch(i, { joinSize })}
+                onThread={joinThreadMm => patch(i, { joinThreadMm })} />
+
               {/* The trap: a thread size is not a flow diameter. */}
               {seg.tubeSize && !boreKnown && (
                 <p className={`${muted} text-amber-500/90`}>
@@ -300,6 +315,7 @@ export function SegmentPanel({ segments, onChange }: {
                   rows={seg.fittings ?? []}
                   readOnly={readOnly}
                   segmentBore={seg.bore?.value}
+                  segment={seg}
                   onChange={rows => patch(i, { fittings: rows })}
                 />
               )}
@@ -349,27 +365,67 @@ function Summary({ seg }: { seg: LineSegment }) {
   const k = knownK(seg);
   if (k) bits.push(`K ${k.toFixed(2)}`);
 
-  if (seg.lengthBasis === 'overall' && lenMm !== null) {
-    const flat = (seg.fittings ?? []).flatMap(r => Array.from({ length: r.count }, () => r));
-    const cut = cutLength(lenMm, flat);
-    bits.push(cut === null
-      ? 'cut length needs a body length on every fitting'
-      : `cut ${(cut / 1000).toFixed(3)} m`);
+  // How much the joints take out of the sum of the parts -- worked out from
+  // the standard and the seal, never typed. See `terminations.ts`.
+  //
+  // A run with no joints yet (one fitting, or none) is not missing anything, so
+  // it says nothing. A run that *has* joints but cannot price them says which
+  // answer is missing, because silence there reads as "no overlap" and sends
+  // somebody to the bandsaw with a figure that is long by every joint.
+  const overlap = overlapOf(seg);
+  const joints = jointsOf(seg);
+  if (overlap && overlap.mm > 0) {
+    bits.push(`joints overlap ${overlap.mm.toFixed(1)} mm`);
   }
 
-  if (bits.length === 0) return null;
+  if (seg.lengthBasis === 'overall' && lenMm !== null) {
+    const cut = cutTubeOf(seg, lenMm);
+    bits.push('needs' in cut
+      ? `cut length needs ${cut.needs}`
+      : `cut ${(cut.mm / 1000).toFixed(3)} m`);
+  }
+
+  const faults = jointFaultsOf(seg);
+  const unpriced = !overlap && faults.length === 0 && joints.length > 0
+    ? jointsOf(seg).map(j => j.engagement).find(isMissing)?.needs ?? null
+    : null;
+  if (bits.length === 0 && faults.length === 0 && !unpriced) return null;
   return (
-    <p className="border-t border-[var(--color-border)] pt-1.5 text-[10px] text-[var(--color-text-secondary)]">
-      {bits.join(' · ')}
-    </p>
+    <div className="space-y-0.5 border-t border-[var(--color-border)] pt-1.5">
+      {bits.length > 0 && (
+        <p className="text-[10px] text-[var(--color-text-secondary)]">{bits.join(' · ')}</p>
+      )}
+      {/* A figure nobody has checked against the standard says so. The number
+          is still used -- absent would be worse -- but a cut list built on it
+          should not look like a citation. */}
+      {overlap && overlap.unverified > 0 && (
+        <p className="text-[10px] text-amber-500/90">
+          {overlap.unverified} joint{overlap.unverified === 1 ? '' : 's'} using an
+          unchecked NPT engagement — see terminations.ts
+        </p>
+      )}
+      {unpriced && (
+        <p className="text-[10px] text-amber-500/90">
+          the joints are not accounted for yet — needs {unpriced}
+        </p>
+      )}
+      {/* One line per distinct fault, with how many joints it hits. Three
+          identical elbows used to print the same complaint three times. */}
+      {faults.map(f => (
+        <p key={f.why} className="text-[10px] text-red-400">
+          {f.why}{f.joints > 1 && ` — at ${f.joints} joints`}
+        </p>
+      ))}
+    </div>
   );
 }
 
 /** The fittings in a run: a chip each, with the common ones one click away. */
-function Fittings({ rows, readOnly, segmentBore, onChange }: {
+function Fittings({ rows, readOnly, segmentBore, segment, onChange }: {
   rows: FittingRow[];
   readOnly: boolean;
   segmentBore?: number;
+  segment: LineSegment;
   onChange: (rows: FittingRow[]) => void;
 }) {
   const [more, setMore] = useState(false);
@@ -386,13 +442,18 @@ function Fittings({ rows, readOnly, segmentBore, onChange }: {
   const add = (kind: (typeof FITTING_KINDS)[number]) => {
     const existing = rows.find(r => r.kind === kind);
     if (existing) set(existing.id, { count: existing.count + 1 });
-    else onChange([...rows, { id: nextRowId(), kind, count: 1 }]);
+    else onChange([...rows, { id: nextRowId(rows), kind, count: 1 }]);
   };
 
-  const numField = (v: number | undefined, onSet: (n: number | undefined) => void, ph: string) => (
+  const numField = (
+    v: number | undefined,
+    onSet: (n: number | undefined) => void,
+    ph: string,
+    title?: string,
+  ) => (
     <input
       inputMode="decimal" placeholder={ph} value={v === undefined ? '' : String(v)}
-      readOnly={readOnly}
+      readOnly={readOnly} title={title}
       onChange={e => {
         const t = e.target.value.trim();
         onSet(t === '' ? undefined : Number.isFinite(Number(t)) ? Number(t) : undefined);
@@ -455,16 +516,21 @@ function Fittings({ rows, readOnly, segmentBore, onChange }: {
 
       {rows.map(r => openRow === r.id && (
         <div key={`d-${r.id}`}
-          className="ml-[3.25rem] flex flex-wrap items-center gap-1.5 rounded bg-[var(--color-bg-primary)] p-1.5">
-          <span className={muted}>{FITTING_LABELS[r.kind]}</span>
-          <span className={muted}>· bore</span>
-          {numField(r.boreMm, v => set(r.id, { boreMm: v }), segmentBore ? String(segmentBore.toFixed(2)) : 'mm')}
-          <span className={muted}>mm · body</span>
-          {numField(r.lengthMm, v => set(r.id, { lengthMm: v }), 'mm')}
-          <span className={muted}>mm · engages</span>
-          {numField(r.engagementMm, v => set(r.id, { engagementMm: v }), 'mm')}
-          <span className={muted}>mm · K</span>
-          {numField(r.K, v => set(r.id, { K: v }), 'measured')}
+          className="ml-[3.25rem] space-y-1.5 rounded bg-[var(--color-bg-primary)] p-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] text-[var(--color-text-secondary)]">{FITTING_LABELS[r.kind]}</span>
+            <span className={muted}>· bore</span>
+            {numField(r.boreMm, v => set(r.id, { boreMm: v }), segmentBore ? String(segmentBore.toFixed(2)) : 'mm')}
+            <span className={muted}>mm · body</span>
+            {numField(r.lengthMm, v => set(r.id, { lengthMm: v }), 'mm')}
+            <span className={muted}>mm · K</span>
+            {numField(r.K, v => set(r.id, { K: v }), '—',
+              "This fitting's own K, if it was measured. Left blank it adds no loss of its own.")}
+          </div>
+          <Ends row={r} segment={segment} readOnly={readOnly}
+            onChange={ends => set(r.id, { ends })}
+            onThread={mm => set(r.id, { threadMm: mm })}
+            onSame={() => set(r.id, { ends: undefined })} />
         </div>
       ))}
     </div>
@@ -472,3 +538,237 @@ function Fittings({ rows, readOnly, segmentBore, onChange }: {
 }
 
 export { fittingCount, knownK };
+
+const GENDERS: Gender[] = ['male', 'female'];
+
+/** The families somebody actually builds a run out of, in that order. */
+const JOIN_CHOICES: Family[] = ['NPT', 'JIC', 'AN', 'ORB', 'swage', 'weld'];
+
+/**
+ * How the fittings on this run join, asked once.
+ *
+ * This is the control that makes engagement automatic. Answer it and every
+ * joint on the run has an overlap -- from the standard for NPT, from the seal
+ * for a cone or a boss, zero for a weld -- with nothing typed per fitting.
+ *
+ * When the line standard is itself a joint family there is nothing to ask, so
+ * this states the answer instead of offering it. That is the common case: a
+ * JIC run is JIC throughout.
+ */
+function JoinBy({ segment, readOnly, onChange, onSize, onThread }: {
+  segment: LineSegment;
+  readOnly: boolean;
+  onChange: (family: Family | undefined) => void;
+  onSize: (size: string | undefined) => void;
+  onThread: (mm: number | undefined) => void;
+}) {
+  const implied = joinFamilyOf({ ...segment, joinBy: undefined });
+  const chosen = joinFamilyOf(segment);
+  const size = joinSizeOf(segment);
+
+  // The line standard already named the family, so there is nothing to ask.
+  // An NPT line is NPT throughout at the size in the row above.
+  // The length a cone or a shoulder closes on, asked once for the run. It is
+  // a measurement, not a table lookup, so it has to be asked -- but once.
+  const thread = needsThreadLength(chosen ?? 'unset') && (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className={`${muted} w-12 shrink-0`} />
+      <input inputMode="decimal" placeholder="mm" readOnly={readOnly}
+        value={segment.joinThreadMm === undefined ? '' : String(segment.joinThreadMm)}
+        onChange={e => {
+          const t = e.target.value.trim();
+          onThread(t === '' ? undefined : Number.isFinite(Number(t)) ? Number(t) : undefined);
+        }}
+        className={`${field} w-[58px] shrink-0`}
+        title="The male thread length this family closes on, in mm. Set once for the run." />
+      <span className={muted}>
+        mm {chosen ? THREAD_PROMPT[chosen] ?? 'of engagement' : 'of engagement'}
+      </span>
+    </div>
+  );
+
+  if (implied && !segment.joinBy) {
+    return (
+      <div className="space-y-1">
+        <p className={muted}>
+          joins by <span className="text-[var(--color-text-secondary)]">{FAMILY_LABELS[implied]}</span>
+          {' — '}{MAKEUP[implied].note}
+          {thread ? ', which closes on:' : ', so the overlap at every joint is worked out'}
+        </p>
+        {thread}
+      </div>
+    );
+  }
+
+  // A thread size is not the tube size, and a run of 1/2 tube into 1/4 NPT is
+  // an ordinary thing to build -- so a thread gets asked. A swage fitting
+  // grips the tube and takes the tube's size, so it does not.
+  const threaded = chosen !== undefined && needsOwnSize(chosen);
+
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+      <span className={`${muted} w-12 shrink-0`}>Joins by</span>
+      <select value={segment.joinBy ?? ''} disabled={readOnly}
+        onChange={e => onChange((e.target.value || undefined) as Family | undefined)}
+        className={`${field} w-[148px] shrink-0`}
+        title="How the fittings on this run screw together. Set once; every fitting follows.">
+        <option value="">how do they join?…</option>
+        {JOIN_CHOICES.map(f => <option key={f} value={f}>{FAMILY_LABELS[f]}</option>)}
+      </select>
+      {threaded && (
+        <select value={size} disabled={readOnly}
+          onChange={e => onSize(e.target.value || undefined)}
+          className={`${field} w-[100px] shrink-0`}
+          title="The thread size, which is not the tube size">
+          <option value="">thread size…</option>
+          {(chosen === 'NPT' ? [...NPT_SIZES] : DASH_SIZES.map(d => `-${d}`))
+            .map(z => <option key={z} value={z}>{z}</option>)}
+        </select>
+      )}
+      <span className={muted}>
+        {!chosen ? 'until this is answered the cut tube cannot be worked out'
+          : threaded && !size ? 'the thread size, which is not the tube size'
+          : thread ? `${MAKEUP[chosen].note}, which closes on:`
+          : `${MAKEUP[chosen].note} — the overlap follows from that`}
+      </span>
+      </div>
+      {thread}
+    </div>
+  );
+}
+
+/**
+ * One fitting's two ends, and the joints they make with their neighbours.
+ *
+ * Almost always nothing to do: a fitting is the run's joint family at the
+ * run's size, male into female so the next one screws on, and the engagement
+ * is derived. Saying that per fitting would be sixty entries of the obvious,
+ * so it is stated in one line with a way in for the case it exists for -- an
+ * adapter, where the two ends genuinely differ and the whole question of which
+ * ID to measure from turns on which half is male.
+ *
+ * The joints shown are against the *neighbours*, not between this fitting's
+ * own two ends. An elbow's inlet and outlet do not screw into each other.
+ */
+function Ends({ row, segment, readOnly, onChange, onThread, onSame }: {
+  row: FittingRow;
+  segment: LineSegment;
+  readOnly: boolean;
+  onChange: (ends: { a: Termination; b: Termination }) => void;
+  onThread: (mm: number | undefined) => void;
+  onSame: () => void;
+}) {
+  const ends = endsOf(row, segment);
+  const custom = row.ends !== undefined;
+  const { inlet, outlet } = jointsForRow(segment, row.id);
+
+  const set = (which: 'a' | 'b', next: Partial<Termination>) =>
+    onChange({ ...ends, [which]: { ...ends[which], ...next } });
+
+  const sizesFor = (family: Family) =>
+    family === 'tube' ? TUBE_SIZES.map(t => t.label)
+    : family === 'NPT' ? [...NPT_SIZES]
+    : DASH_SIZES.map(d => `-${d}`);
+
+  // Only a male end can owe a thread length: it is the half that goes in, so
+  // it is the half whose length is the depth. A female's thread is the hole.
+  const wantsThread = [ends.a, ends.b]
+    .some(e => e.gender === 'male' && needsThreadLength(e.family));
+
+  const endRow = (which: 'a' | 'b', label: string) => {
+    const e = ends[which];
+    return (
+      <div className="flex flex-wrap items-center gap-1">
+        <span className={`${muted} w-8 shrink-0`}>{label}</span>
+        <select value={e.family} disabled={readOnly}
+          onChange={ev => set(which, { family: ev.target.value as Family })}
+          className={`${field} w-[92px] shrink-0`}>
+          {JOIN_CHOICES.concat('tube').map(f => (
+            <option key={f} value={f}>{FAMILY_LABELS[f]}</option>
+          ))}
+        </select>
+        <select value={e.size} disabled={readOnly}
+          onChange={ev => set(which, { size: ev.target.value })}
+          className={`${field} w-[96px] shrink-0`}>
+          <option value="">size…</option>
+          {sizesFor(e.family).map(z => <option key={z} value={z}>{z}</option>)}
+        </select>
+        <select value={e.gender} disabled={readOnly}
+          onChange={ev => set(which, { gender: ev.target.value as Gender })}
+          className={`${field} w-[72px] shrink-0`}>
+          {GENDERS.map(g => <option key={g} value={g}>{g}</option>)}
+        </select>
+      </div>
+    );
+  };
+
+  /** A joint, said in one line: what meets what, and how far in it goes. */
+  const jointLine = (label: string, joint: ReturnType<typeof jointsForRow>['inlet']) => {
+    if (!joint) return null;
+    const { engagement, mismatch, restricting } = joint;
+    return (
+      <p className={muted} key={label}>
+        <span className="text-[var(--color-text-secondary)]">{label}</span>{' '}
+        {mismatch
+          ? <span className="text-red-400">{mismatch}</span>
+          : isMissing(engagement)
+            ? <span className="text-amber-500/90">needs {engagement.needs}</span>
+            : <>
+                closes{' '}
+                <span className="font-mono text-[var(--color-text-secondary)]">
+                  {engagement.mm.toFixed(2)}
+                </span> mm
+                {!engagement.verified && <span className="text-amber-500/90"> (unchecked)</span>}
+                {' · '}bore from the {restricting.gender} side
+              </>}
+      </p>
+    );
+  };
+
+  return (
+    <div className="space-y-1 border-t border-[var(--color-border)] pt-1.5">
+      {!custom ? (
+        <p className={muted}>
+          ends: {FAMILY_LABELS[ends.a.family]}{ends.a.size ? ` ${ends.a.size}` : ''}, male
+          into female — same as the run.{' '}
+          <button disabled={readOnly} onClick={() => onChange(ends)}
+            className="underline decoration-dotted hover:text-[var(--color-text-primary)]"
+            title="For an adapter, where the two ends differ">it's an adapter</button>
+        </p>
+      ) : (
+        <>
+          {endRow('a', 'in')}
+          {endRow('b', 'out')}
+          <button disabled={readOnly} onClick={onSame}
+            className={`${muted} underline decoration-dotted hover:text-[var(--color-text-primary)]`}>
+            back to the run's ends
+          </button>
+        </>
+      )}
+
+      {/* Only for a fitting whose ends were overridden -- otherwise the run's
+          own figure covers it, and this would be the same number twice. */}
+      {wantsThread && custom && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className={`${muted} w-8 shrink-0`}>thread</span>
+          <input inputMode="decimal" placeholder="mm" readOnly={readOnly}
+            value={row.threadMm === undefined ? '' : String(row.threadMm)}
+            onChange={ev => {
+              const t = ev.target.value.trim();
+              onThread(t === '' ? undefined : Number.isFinite(Number(t)) ? Number(t) : undefined);
+            }}
+            className={`${field} w-[58px]`} />
+          <span className={muted}>
+            mm {THREAD_PROMPT[ends.a.gender === 'male' ? ends.a.family : ends.b.family]
+              ?? 'of engagement'}
+            {segment.joinThreadMm !== undefined && ' — blank uses the run\u2019s'}
+          </span>
+        </div>
+      )}
+
+      {jointLine('in:', inlet)}
+      {jointLine('out:', outlet)}
+    </div>
+  );
+}
