@@ -25,7 +25,7 @@ function ToolbarButton({
       aria-label={title}
       onMouseDown={(e) => e.preventDefault()}
       onClick={onAction}
-      className="rounded px-1.5 py-0.5 text-xs text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+      className="flex h-11 w-11 items-center justify-center rounded text-sm text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 sm:h-auto sm:w-auto sm:px-1.5 sm:py-0.5 sm:text-xs"
     >
       {children}
     </button>
@@ -176,7 +176,7 @@ export function RichTextEditor({
             setEditing(true);
           }
         }}
-        className="min-h-[2.5rem] cursor-text rounded border border-transparent px-2 py-1 hover:border-neutral-300 dark:hover:border-neutral-700"
+        className="min-h-11 cursor-text rounded border border-neutral-200 dark:border-neutral-800 px-2 py-1 hover:border-neutral-300 dark:hover:border-neutral-700 sm:border-transparent dark:sm:border-transparent"
       >
         {text.trim() ? (
           <Markdown>{text}</Markdown>

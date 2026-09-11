@@ -2,8 +2,10 @@ import type { User } from "@prisma/client";
 import Link from "next/link";
 
 import { BoardWithSort } from "@/components/BoardWithSort";
+import { PAGE_CONTAINER } from "@/components/EntityRow";
 import { GanttChart } from "@/components/GanttChart";
 import { TaskTable } from "@/components/TaskTable";
+import { ViewDock } from "@/components/ViewDock";
 import { type WorkspaceTask, toRowData } from "@/lib/board";
 
 export type DetailViewMode = "board" | "list" | "gantt";
@@ -37,17 +39,20 @@ export function DetailView({
   showSubteam?: boolean;
 }) {
   const tab = (active: boolean) =>
-    `rounded px-3 py-1 text-sm ${
+    `inline-flex items-center rounded px-3 py-1 text-sm ${
       active
         ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
         : "text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
     }`;
 
   return (
-    <div className="mx-auto max-w-[88rem] px-6 py-8">
+    // pb-24 keeps the last rows clear of the mobile ViewDock; sm:pb-8 restores
+    // PAGE_CONTAINER's desktop bottom padding.
+    <div className={`${PAGE_CONTAINER} pb-24 sm:pb-8`}>
       {header}
 
-      <div className="mt-6 flex items-center gap-1">
+      {/* Desktop tabs; on mobile the ViewDock below replaces them. */}
+      <div className="mt-6 hidden items-center gap-1 sm:flex">
         <Link href={basePath} className={tab(view === "list")}>
           List
         </Link>
@@ -58,6 +63,15 @@ export function DetailView({
           Timeline
         </Link>
       </div>
+
+      <ViewDock
+        active={view}
+        hrefs={{
+          list: basePath,
+          board: `${basePath}?view=board`,
+          gantt: `${basePath}?view=gantt`,
+        }}
+      />
 
       {newTaskForm && <div className="mt-4">{newTaskForm}</div>}
 

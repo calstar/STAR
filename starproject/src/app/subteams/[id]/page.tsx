@@ -71,17 +71,19 @@ export default async function SubteamPage({
   }));
 
   const header = (
-    <div className="flex items-start justify-between gap-4">
-      <div className="flex items-center gap-3">
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+      <div className="flex min-w-0 items-center gap-3">
         <span
-          className="inline-block h-4 w-4 rounded-full"
+          className="inline-block h-4 w-4 shrink-0 rounded-full"
           style={{ background: subteam.color ?? "#a3a3a3" }}
         />
-        <h1 className="text-2xl font-semibold">{subteam.name}</h1>
+        <h1 className="min-w-0 break-words text-2xl font-semibold">
+          {subteam.name}
+        </h1>
       </div>
       <Link
         href="/subteams"
-        className="text-sm text-neutral-500 dark:text-neutral-400 hover:underline"
+        className="inline-flex min-h-11 shrink-0 items-center self-start text-sm text-neutral-500 dark:text-neutral-400 hover:underline sm:min-h-0"
       >
         ← All subteams
       </Link>
