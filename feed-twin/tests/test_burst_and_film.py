@@ -31,7 +31,9 @@ def _psi(value: float) -> Param:
 class TestTripLimit:
     def test_burst_over_the_factor_of_safety(self) -> None:
         notes: list[str] = []
-        limit = _trip_limit(_Node("TK", "TK-OX", {"burst_pressure": _psi(1500.0)}), 2.0, notes)
+        limit = _trip_limit(
+            _Node("TK", "TK-OX", {"burst_pressure": _psi(1500.0)}), 2.0, notes
+        )
         assert limit == pytest.approx(750.0 * PSI + ATMOSPHERE)
         assert any("burst pressure / 2" in n for n in notes)
 
@@ -48,23 +50,46 @@ class TestTripLimit:
 
     def test_a_factor_below_one_is_not_honoured(self) -> None:
         # A safety factor under one would trip *above* burst. Clamped.
-        limit = _trip_limit(_Node("TK", params={"burst_pressure": _psi(1000.0)}), 0.5, [])
+        limit = _trip_limit(
+            _Node("TK", params={"burst_pressure": _psi(1000.0)}), 0.5, []
+        )
         assert limit == pytest.approx(1000.0 * PSI + ATMOSPHERE)
 
 
 class TestFilmEstimate:
     def _film(self, hA: float) -> GasFilm:
-        return GasFilm(hA=hA, h=hA / 0.5, area=0.5, grashof=1e8, prandtl=0.7, nusselt=50.0, delta_T=10.0)
+        return GasFilm(
+            hA=hA,
+            h=hA / 0.5,
+            area=0.5,
+            grashof=1e8,
+            prandtl=0.7,
+            nusselt=50.0,
+            delta_T=10.0,
+        )
 
     def test_blank_takes_the_estimate_and_says_so(self) -> None:
         notes: list[str] = []
-        _, _, hA = _vessel_wall(_Node("TK", "TK-1"), 17.5e-3, TANK_WALL, notes, estimate=lambda: self._film(21.5))
+        _, _, hA = _vessel_wall(
+            _Node("TK", "TK-1"),
+            17.5e-3,
+            TANK_WALL,
+            notes,
+            estimate=lambda: self._film(21.5),
+        )
         assert hA == pytest.approx(21.5)
         assert any("estimated from its gas" in n for n in notes)
 
     def test_a_value_on_the_drawing_wins(self) -> None:
-        node = _Node("TK", params={"wall_conductance": Param(9.0, "W/K", Provenance.MEASURED, "bench")})
-        _, _, hA = _vessel_wall(node, 17.5e-3, TANK_WALL, [], estimate=lambda: self._film(21.5))
+        node = _Node(
+            "TK",
+            params={
+                "wall_conductance": Param(9.0, "W/K", Provenance.MEASURED, "bench")
+            },
+        )
+        _, _, hA = _vessel_wall(
+            node, 17.5e-3, TANK_WALL, [], estimate=lambda: self._film(21.5)
+        )
         assert hA == 9.0
 
     def test_no_estimator_is_todays_behaviour(self) -> None:
@@ -79,6 +104,8 @@ class TestFilmEstimate:
         def boom() -> GasFilm:
             raise RuntimeError("no properties")
 
-        _, _, hA = _vessel_wall(_Node("TK", "TK-1"), 17.5e-3, TANK_WALL, notes, estimate=boom)
+        _, _, hA = _vessel_wall(
+            _Node("TK", "TK-1"), 17.5e-3, TANK_WALL, notes, estimate=boom
+        )
         assert hA > 0.0
         assert any("could not be estimated" in n for n in notes)

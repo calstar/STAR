@@ -34,7 +34,14 @@ from feedtwin.engine.balance import MixtureBalance
 from backend.analysis import mixture_balance
 from backend.assembly import Model
 
-PSI = get_unit("psi").factor
+# Annotated, rather than left to inference, because the annotation is doing
+# real work here. feedtwin is installed editable, which mypy cannot follow
+# (a PEP 660 .pth finder shim, not a directory it can import), so despite the
+# package shipping py.typed the app's `--ignore-missing-imports` run resolves
+# `get_unit` to Any. Without this line that Any spread to every pressure the
+# module returns, and `psig()` -- the one place absolute and gauge meet --
+# was unchecked.
+PSI: float = get_unit("psi").factor
 
 #: Standard atmosphere [Pa]. The zero of every gauge on the stand.
 ATMOSPHERE = 101325.0

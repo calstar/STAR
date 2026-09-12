@@ -50,7 +50,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field, replace
-from typing import Deque, Mapping, Callable
+from typing import Any, Callable, Deque, Mapping
 
 from feedtwin.comps.regulator import Regulator
 from feedtwin.engine.balance import MixtureBalance
@@ -616,7 +616,7 @@ def _trip_limit(node: object, safety_factor: float, assumptions: list[str]) -> f
 def _vessel_wall(
     node: object,
     litres: float,
-    defaults: dict,
+    defaults: dict[str, Any],
     assumptions: list[str],
     estimate: Callable[[], GasFilm] | None = None,
 ) -> tuple[float, float, float]:
@@ -1386,7 +1386,9 @@ class Session:
                 target=from_psig(self.setup.copv_target_psi) or rated,
                 fill_seconds=self.setup.copv_fill_s,
                 charged=delivered,
-                mawp=_trip_limit(node, self.setup.burst_safety_factor, self.assumptions),
+                mawp=_trip_limit(
+                    node, self.setup.burst_safety_factor, self.assumptions
+                ),
             )
 
     # ------------------------------------------------------------- commands
@@ -1490,7 +1492,7 @@ class Session:
 
         return estimate
 
-    def _tank_wall_defaults(self) -> dict:
+    def _tank_wall_defaults(self) -> dict[str, Any]:
         return {
             "kg_per_litre": self.setup.tank_wall_kg_per_L,
             "capacity": self.setup.tank_wall_capacity,
@@ -1498,7 +1500,7 @@ class Session:
             "basis": TANK_WALL["basis"],
         }
 
-    def _bottle_wall_defaults(self) -> dict:
+    def _bottle_wall_defaults(self) -> dict[str, Any]:
         return {
             "kg_per_litre": self.setup.bottle_wall_kg_per_L,
             "capacity": BOTTLE_WALL["capacity"],
@@ -2127,6 +2129,10 @@ class Session:
                 self._shown = self._integrate(inner)
                 if self.tripped:
                     break
+        # `steps` is clamped to at least 1, so the loop above always assigned a
+        # frame -- including on the tick that trips the stand, which breaks
+        # after the assignment, not before.
+        assert self._shown is not None
         return self._shown
 
     def precompute(self, horizon: float, dt: float = 0.02) -> int:
