@@ -22,22 +22,30 @@ the board does:
 from __future__ import annotations
 
 import logging
+import socket
 import sys
 import time
 from collections import deque
 from bisect import bisect_left
+from pathlib import Path
 from typing import Deque, Dict, List, Optional, Tuple
 
 import pyqtgraph as pg
 
 from . import protocol
 from . import filters as filt
+from . import ota as ota_client
 from .clocksync import BoardClockSync, TimeSyncConfig
+from .dhcp import (Reservations, ServerConfig, interface_with_address,
+                   parse_mac)
+from .dhcp_task import DhcpWorker
 from .network import UdpLink
+from .ota_task import OtaWorker
 from .profile import REFERENCE_VOLTAGE_LABELS, BoardProfile
 from .serial_link import SerialLink, list_ports, pyserial_error
 from .serial_parse import SerialParser
 from .qt import (ALIGN_CENTER, ALIGN_RIGHT, ALIGN_VCENTER, FONT_BOLD,
+                 MSGBOX_YES, SELECT_ROWS, TEXT_SELECTABLE,
                  FRAME_NOFRAME, FRAME_PANEL, ORIENT_HORIZONTAL, QtCore,
                  QtGui, QtWidgets, QTimer, TEXTCURSOR_END, pyqtSignal)
 
@@ -194,6 +202,19 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         self.conn_checkboxes: Dict[int, QtWidgets.QCheckBox] = {}
         self.plot_curves: Dict[int, pg.PlotDataItem] = {}
 
+        # Addresses: this GUI is the authority on which board gets which IP.
+        self.reservations = Reservations(
+            Path(__file__).resolve().parent.parent / "config" / "reservations.json")
+        self.dhcp_worker = None
+        self.board_mac: Optional[str] = None     # learned over serial
+
+        # OTA: what we last pushed, so an arriving heartbeat can confirm it
+        self.ota_worker = None
+        self.ota_upload_count = 0
+        self.ota_expected_hash: Optional[str] = None
+        self.ota_expected_message: Optional[str] = None
+        self.ota_verified = False
+
         self._build_ui()
         self._wire_logging()
 
@@ -227,6 +248,8 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
 
         tabs = QtWidgets.QTabWidget()
         tabs.addTab(self._build_monitor_tab(), "Monitor")
+        tabs.addTab(self._build_addresses_tab(), "Addresses")
+        tabs.addTab(self._build_ota_tab(), "OTA")
         tabs.addTab(self._build_logs_tab(), "Logs")
         root.addWidget(tabs, stretch=1)
 
@@ -885,6 +908,542 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         lay.addLayout(table)
         return g
 
+    def _build_addresses_tab(self) -> QtWidgets.QWidget:
+        """Who gets which IP — decided here, not by the board.
+
+        The boards ask for an address by DHCP and use whatever they are given.
+        This tab is the table they are answered from: MAC -> IP, one row per
+        board, persisted so a board keeps its address across sessions.
+        """
+        tab = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(tab)
+        lay.setContentsMargins(0, 6, 0, 0)
+        lay.setSpacing(8)
+
+        lay.addWidget(self._muted(
+            "Boards no longer choose their own address. Each one asks by DHCP "
+            "at boot and takes what this table gives it, so a board's IP is "
+            "decided here and is the same every boot."))
+
+        # -- the server ------------------------------------------------------
+        srv = QtWidgets.QGroupBox("Address server (DHCP)")
+        srv_lay = QtWidgets.QVBoxLayout(srv)
+
+        row = QtWidgets.QHBoxLayout()
+        self.dhcp_btn = QtWidgets.QPushButton("Start assigning addresses")
+        self.dhcp_btn.clicked.connect(self._toggle_dhcp)
+        row.addWidget(self.dhcp_btn)
+        self.dhcp_light = StatusLight()
+        row.addWidget(self.dhcp_light)
+        self.dhcp_status_label = QtWidgets.QLabel("Not running.")
+        self.dhcp_status_label.setWordWrap(True)
+        row.addWidget(self.dhcp_status_label, stretch=1)
+        srv_lay.addLayout(row)
+
+        opts = QtWidgets.QHBoxLayout()
+        opts.addWidget(QtWidgets.QLabel("Our IP:"))
+        self.dhcp_server_ip_edit = QtWidgets.QLineEdit(self.profile.server_ip)
+        self.dhcp_server_ip_edit.setFixedWidth(130)
+        self.dhcp_server_ip_edit.setToolTip(
+            "The address boards are told to send data to — this laptop.")
+        opts.addWidget(self.dhcp_server_ip_edit)
+        opts.addSpacing(12)
+        opts.addWidget(QtWidgets.QLabel("Port:"))
+        self.dhcp_port_spin = QtWidgets.QSpinBox()
+        self.dhcp_port_spin.setRange(1, 65535)
+        self.dhcp_port_spin.setValue(67)
+        self.dhcp_port_spin.setToolTip(
+            "67 is the real DHCP port. Change it only for testing against "
+            "something that is not a board.")
+        opts.addWidget(self.dhcp_port_spin)
+        opts.addSpacing(12)
+        opts.addWidget(QtWidgets.QLabel("Interface:"))
+        # Which NIC to answer on. This is not cosmetic: replies go to the
+        # broadcast address 255.255.255.255, which otherwise follows the
+        # default route -- the laptop's Wi-Fi -- and a board on the stand wire
+        # never hears the OFFER. It DISCOVERs, we OFFER, and nothing completes.
+        self.dhcp_iface_edit = QtWidgets.QComboBox()
+        self.dhcp_iface_edit.setEditable(True)
+        try:
+            self.dhcp_iface_edit.addItems(sorted(n for _, n in socket.if_nameindex()))
+        except OSError:
+            pass
+        self.dhcp_iface_edit.setCurrentText(
+            interface_with_address(self.profile.server_ip) or "")
+        self.dhcp_iface_edit.setFixedWidth(110)
+        self.dhcp_iface_edit.setToolTip(
+            "The wire the boards are on -- the NIC holding the address on the "
+            "left. Defaults to whichever interface already has it. Leave it "
+            "blank only if the stand network is your default route.")
+        opts.addWidget(self.dhcp_iface_edit)
+        opts.addStretch(1)
+        srv_lay.addLayout(opts)
+
+        srv_lay.addWidget(self._muted(
+            "Port 67 needs sudo on Linux; on macOS it normally does not. "
+            "Set Interface to the wire the boards "
+            "are on, or replies leave over Wi-Fi and no board ever hears them. "
+            "Only MACs listed below are answered, so this cannot hand "
+            "addresses to anything else on the network."))
+        lay.addWidget(srv)
+
+        # -- the table -------------------------------------------------------
+        table_box = QtWidgets.QGroupBox("Reservations  (MAC \u2192 IP)")
+        tb = QtWidgets.QVBoxLayout(table_box)
+        self.res_table = QtWidgets.QTableWidget(0, 5)
+        self.res_table.setHorizontalHeaderLabels(
+            ["MAC", "IP", "Board ID", "Label", "Last seen"])
+        self.res_table.horizontalHeader().setStretchLastSection(True)
+        self.res_table.verticalHeader().setVisible(False)
+        self.res_table.setSelectionBehavior(SELECT_ROWS)
+        tb.addWidget(self.res_table)
+
+        add_row = QtWidgets.QHBoxLayout()
+        add_row.addWidget(QtWidgets.QLabel("MAC:"))
+        self.res_mac_edit = QtWidgets.QLineEdit()
+        self.res_mac_edit.setPlaceholderText("de:ad:be:ef:2a:3c")
+        self.res_mac_edit.setFixedWidth(150)
+        add_row.addWidget(self.res_mac_edit)
+        add_row.addWidget(QtWidgets.QLabel("IP:"))
+        self.res_ip_edit = QtWidgets.QLineEdit()
+        self.res_ip_edit.setPlaceholderText(f"192.168.2.{self.profile.board_id}")
+        self.res_ip_edit.setFixedWidth(130)
+        add_row.addWidget(self.res_ip_edit)
+        add_row.addWidget(QtWidgets.QLabel("Label:"))
+        self.res_label_edit = QtWidgets.QLineEdit()
+        self.res_label_edit.setPlaceholderText(
+            f"{self.profile.board_type} #{self.profile.board_id}")
+        add_row.addWidget(self.res_label_edit, stretch=1)
+        save_btn = QtWidgets.QPushButton("Save reservation")
+        save_btn.clicked.connect(self._save_reservation)
+        add_row.addWidget(save_btn)
+        remove_btn = QtWidgets.QPushButton("Remove selected")
+        remove_btn.clicked.connect(self._remove_reservation)
+        add_row.addWidget(remove_btn)
+        tb.addLayout(add_row)
+
+        self.res_hint_label = QtWidgets.QLabel(
+            "Connect the board over USB on the Monitor tab and its MAC is "
+            "filled in for you.")
+        self.res_hint_label.setWordWrap(True)
+        self.res_hint_label.setStyleSheet("color: #777;")
+        tb.addWidget(self.res_hint_label)
+        lay.addWidget(table_box, stretch=1)
+
+        self._refresh_reservations()
+        return tab
+
+    # -- address-server helpers ---------------------------------------------
+    def _refresh_reservations(self) -> None:
+        rows = self.reservations.all()
+        self.res_table.setRowCount(len(rows))
+        for i, r in enumerate(rows):
+            seen = ("—" if r.last_seen is None
+                    else time.strftime("%H:%M:%S", time.localtime(r.last_seen)))
+            for col, text in enumerate([r.mac, r.ip,
+                                        "" if r.board_id is None else str(r.board_id),
+                                        r.label, seen]):
+                item = QtWidgets.QTableWidgetItem(text)
+                self.res_table.setItem(i, col, item)
+        self.res_table.resizeColumnsToContents()
+
+    def _save_reservation(self) -> None:
+        mac = self.res_mac_edit.text().strip()
+        ip = self.res_ip_edit.text().strip()
+        try:
+            parse_mac(mac)
+        except ValueError:
+            self.log.warning("'%s' is not a MAC address (want de:ad:be:ef:2a:3c)", mac)
+            return
+        if not self._looks_like_ip(ip):
+            self.log.warning("'%s' is not a valid IPv4 address", ip)
+            return
+        label = self.res_label_edit.text().strip()
+        self.reservations.set(mac, ip, board_id=self.profile.board_id,
+                              label=label)
+        self.log.info("Reservation saved: %s will be assigned %s", mac, ip)
+        self._refresh_reservations()
+
+    def _remove_reservation(self) -> None:
+        row = self.res_table.currentRow()
+        if row < 0:
+            return
+        mac_item = self.res_table.item(row, 0)
+        if mac_item is None:
+            return
+        self.reservations.remove(mac_item.text())
+        self.log.info("Reservation removed for %s", mac_item.text())
+        self._refresh_reservations()
+
+    def _toggle_dhcp(self) -> None:
+        if self.dhcp_worker is None:
+            self._start_dhcp()
+        else:
+            self._stop_dhcp()
+
+    def _start_dhcp(self) -> None:
+        if not self.reservations.all():
+            self.log.warning(
+                "No reservations yet — the server would answer nobody. Add "
+                "one below first (connect the board over USB to get its MAC).")
+        cfg = ServerConfig(
+            server_ip=self.dhcp_server_ip_edit.text().strip() or self.profile.server_ip,
+            port=self.dhcp_port_spin.value(),
+            bind_interface=self.dhcp_iface_edit.currentText().strip() or None,
+        )
+        self.dhcp_worker = DhcpWorker(self.reservations, cfg)
+        self.dhcp_worker.event.connect(lambda m: self.log.info("%s", m))
+        self.dhcp_worker.leased.connect(self._on_dhcp_lease)
+        self.dhcp_worker.unknown_board.connect(self._on_unknown_board)
+        self.dhcp_worker.failed.connect(self._on_dhcp_failed)
+        self.dhcp_worker.started_ok.connect(self._on_dhcp_started)
+        self.dhcp_worker.start()
+        self.dhcp_btn.setText("Stop assigning addresses")
+
+    def _stop_dhcp(self) -> None:
+        if self.dhcp_worker is not None:
+            self.dhcp_worker.stop()
+            self.dhcp_worker.wait(2000)
+            self.dhcp_worker = None
+        self.dhcp_btn.setText("Start assigning addresses")
+        self.dhcp_light.set_state((150, 150, 150), "Off")
+        self.dhcp_status_label.setText("Not running.")
+
+    def _on_dhcp_started(self) -> None:
+        self.dhcp_light.set_state((40, 170, 70), "Serving")
+        self.dhcp_status_label.setText(
+            f"Assigning addresses to {len(self.reservations.all())} "
+            f"registered board(s).")
+
+    def _on_dhcp_failed(self, message: str) -> None:
+        self.dhcp_worker = None
+        self.dhcp_btn.setText("Start assigning addresses")
+        self.dhcp_light.set_state((200, 60, 60), "Failed")
+        self.dhcp_status_label.setText(message)
+        self.log.error("DHCP server could not start: %s", message)
+
+    def _on_dhcp_lease(self, mac: str, ip: str) -> None:
+        self.log.info("Assigned %s to %s", ip, mac)
+        self._refresh_reservations()
+        # The board is now where we put it, so aim control packets there too.
+        if self.link is not None and self.profile.board_id == \
+                (self.reservations.get(mac).board_id if self.reservations.get(mac) else None):
+            self.link.set_board_ip(ip)
+            self._update_conn_detail(ip, discovered=True)
+
+    def _on_unknown_board(self, mac: str) -> None:
+        self.log.warning(
+            "A board at %s asked for an address and has no reservation — "
+            "it got nothing. Add it below to assign it one.", mac)
+        if not self.res_mac_edit.text().strip():
+            self.res_mac_edit.setText(mac)
+        self.res_hint_label.setText(
+            f"{mac} asked for an address and has no reservation. Fill in an "
+            f"IP and save to assign it one.")
+
+    def _on_board_mac(self, mac: str) -> None:
+        """The board printed its MAC over USB serial."""
+        if mac == self.board_mac:
+            return
+        self.board_mac = mac
+        self.res_mac_edit.setText(mac)
+        existing = self.reservations.get(mac)
+        if existing:
+            self.res_ip_edit.setText(existing.ip)
+            self.res_hint_label.setText(
+                f"This board ({mac}) is registered and gets {existing.ip}.")
+        else:
+            suggested = f"192.168.2.{self.profile.board_id}"
+            self.res_ip_edit.setText(suggested)
+            self.res_hint_label.setText(
+                f"This board is {mac} and is not registered yet. "
+                f"{suggested} is suggested from its board ID — save it to "
+                f"make that its address.")
+        self.log.info("Board MAC is %s", mac)
+
+    def _build_ota_tab(self) -> QtWidgets.QWidget:
+        """Push new firmware to the board over Ethernet.
+
+        The board's OTA listener is the same on every STAR board
+        (firmware/libraries/STAR_EthernetOTA), so this tab works for all of
+        them. Two ways to confirm an upload actually landed, both automatic:
+        the firmware hash in the board's next heartbeat, and — if you let the
+        GUI build the image — a test message the board starts printing.
+        """
+        tab = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(tab)
+        lay.setContentsMargins(0, 6, 0, 0)
+        lay.setSpacing(8)
+
+        # -- what to send --------------------------------------------------
+        src = QtWidgets.QGroupBox("Firmware")
+        src_lay = QtWidgets.QVBoxLayout(src)
+
+        self.ota_build_radio = QtWidgets.QRadioButton(
+            "Build it now, with a test message baked in  (needs PlatformIO)")
+        self.ota_build_radio.setChecked(bool(self.profile.firmware_project))
+        self.ota_build_radio.setEnabled(bool(self.profile.firmware_project))
+        self.ota_build_radio.setToolTip(
+            "Compiles the board's PlatformIO project with "
+            "-DSTAR_OTA_TEST_MESSAGE set to the text below, so after the "
+            "update the board prints that message instead of the old one.")
+        src_lay.addWidget(self.ota_build_radio)
+
+        proj_row = QtWidgets.QHBoxLayout()
+        proj_row.addSpacing(22)
+        proj_row.addWidget(QtWidgets.QLabel("Project:"))
+        self.ota_project_edit = QtWidgets.QLineEdit(
+            str(self._repo_path(self.profile.firmware_project))
+            if self.profile.firmware_project else "")
+        self.ota_project_edit.setPlaceholderText(
+            "path to a PlatformIO project (set firmware_project in the profile)")
+        proj_row.addWidget(self.ota_project_edit, stretch=1)
+        src_lay.addLayout(proj_row)
+
+        msg_row = QtWidgets.QHBoxLayout()
+        msg_row.addSpacing(22)
+        msg_row.addWidget(QtWidgets.QLabel("Test message:"))
+        self.ota_message_edit = QtWidgets.QLineEdit(
+            ota_client.default_test_message(1))
+        self.ota_message_edit.setToolTip(
+            "The board prints this as '[OTA-MSG] <text>' every couple of "
+            "seconds. Change it between uploads and you can watch the serial "
+            "output change — the simplest proof the new image is running.")
+        msg_row.addWidget(self.ota_message_edit, stretch=1)
+        new_msg_btn = QtWidgets.QPushButton("New")
+        new_msg_btn.setToolTip("Generate a fresh, obviously-different message")
+        new_msg_btn.clicked.connect(self._ota_new_message)
+        msg_row.addWidget(new_msg_btn)
+        src_lay.addLayout(msg_row)
+
+        self.ota_file_radio = QtWidgets.QRadioButton(
+            "Upload a firmware.bin I already built")
+        self.ota_file_radio.setChecked(not self.profile.firmware_project)
+        src_lay.addWidget(self.ota_file_radio)
+
+        bin_row = QtWidgets.QHBoxLayout()
+        bin_row.addSpacing(22)
+        bin_row.addWidget(QtWidgets.QLabel("Binary:"))
+        self.ota_bin_edit = QtWidgets.QLineEdit()
+        self.ota_bin_edit.setPlaceholderText(
+            ".pio/build/<env>/firmware.bin")
+        bin_row.addWidget(self.ota_bin_edit, stretch=1)
+        browse_btn = QtWidgets.QPushButton("Browse…")
+        browse_btn.clicked.connect(self._ota_browse)
+        bin_row.addWidget(browse_btn)
+        src_lay.addLayout(bin_row)
+        lay.addWidget(src)
+
+        # -- where to send it ----------------------------------------------
+        dest = QtWidgets.QGroupBox("Target")
+        dest_lay = QtWidgets.QHBoxLayout(dest)
+        dest_lay.addWidget(QtWidgets.QLabel("Board IP:"))
+        self.ota_ip_edit = QtWidgets.QLineEdit(self.profile.board_ip)
+        self.ota_ip_edit.setFixedWidth(130)
+        self.ota_ip_edit.setToolTip(
+            "Defaults to wherever the Monitor tab is currently sending "
+            "control packets, which is the address this GUI assigned the "
+            "board.")
+        dest_lay.addWidget(self.ota_ip_edit)
+        sync_btn = QtWidgets.QPushButton("Use discovered")
+        sync_btn.setToolTip("Copy the live Board IP from the Monitor tab")
+        sync_btn.clicked.connect(self._ota_sync_ip)
+        dest_lay.addWidget(sync_btn)
+        dest_lay.addSpacing(16)
+        dest_lay.addWidget(QtWidgets.QLabel("Port:"))
+        self.ota_port_spin = QtWidgets.QSpinBox()
+        self.ota_port_spin.setRange(1, 65535)
+        self.ota_port_spin.setValue(self.profile.ota_port)
+        dest_lay.addWidget(self.ota_port_spin)
+        dest_lay.addStretch(1)
+        lay.addWidget(dest)
+
+        # -- go ------------------------------------------------------------
+        go = QtWidgets.QHBoxLayout()
+        self.ota_upload_btn = QtWidgets.QPushButton("Upload firmware")
+        self.ota_upload_btn.clicked.connect(self._ota_start)
+        go.addWidget(self.ota_upload_btn)
+        self.ota_cancel_btn = QtWidgets.QPushButton("Cancel")
+        self.ota_cancel_btn.setEnabled(False)
+        self.ota_cancel_btn.clicked.connect(self._ota_cancel)
+        go.addWidget(self.ota_cancel_btn)
+        go.addStretch(1)
+        lay.addLayout(go)
+
+        self.ota_progress = QtWidgets.QProgressBar()
+        self.ota_progress.setRange(0, 100)
+        self.ota_progress.setValue(0)
+        lay.addWidget(self.ota_progress)
+
+        self.ota_status_label = QtWidgets.QLabel("Idle.")
+        self.ota_status_label.setWordWrap(True)
+        lay.addWidget(self.ota_status_label)
+
+        # -- did it take? ---------------------------------------------------
+        verify = QtWidgets.QGroupBox("Verification")
+        vgrid = QtWidgets.QGridLayout(verify)
+        vgrid.addWidget(QtWidgets.QLabel("Uploaded image SHA-256:"), 0, 0)
+        self.ota_sent_hash_label = QtWidgets.QLabel("—")
+        self.ota_sent_hash_label.setTextInteractionFlags(TEXT_SELECTABLE)
+        vgrid.addWidget(self.ota_sent_hash_label, 0, 1)
+        vgrid.addWidget(QtWidgets.QLabel("Board reports (heartbeat):"), 1, 0)
+        self.ota_board_hash_label = QtWidgets.QLabel("—")
+        vgrid.addWidget(self.ota_board_hash_label, 1, 1)
+        vgrid.addWidget(QtWidgets.QLabel("Board is printing:"), 2, 0)
+        self.ota_board_msg_label = QtWidgets.QLabel("—")
+        vgrid.addWidget(self.ota_board_msg_label, 2, 1)
+        vgrid.setColumnStretch(1, 1)
+        self.ota_verdict_label = QtWidgets.QLabel(
+            "Upload something to see whether it landed.")
+        self.ota_verdict_label.setWordWrap(True)
+        vgrid.addWidget(self.ota_verdict_label, 3, 0, 1, 2)
+        lay.addWidget(verify)
+
+        lay.addWidget(self._muted(
+            "The board reboots straight after a successful upload, so it goes "
+            "quiet for a few seconds and then comes back with a new firmware "
+            "hash. Connect the USB serial port on the Monitor tab to watch it "
+            "boot and to see the [OTA-MSG] line change."))
+        lay.addStretch(1)
+        return tab
+
+    # -- OTA helpers ---------------------------------------------------------
+    @staticmethod
+    def _repo_path(relative: str) -> Path:
+        """Resolve a repo-relative path (Test-GUI sits one level under root)."""
+        return (Path(__file__).resolve().parents[2] / relative)
+
+    def _ota_new_message(self) -> None:
+        self.ota_message_edit.setText(
+            ota_client.default_test_message(self.ota_upload_count + 1))
+
+    def _ota_browse(self) -> None:
+        start = self.ota_bin_edit.text().strip() or str(
+            self._repo_path(self.profile.firmware_project or ""))
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select firmware.bin", start, "Firmware (*.bin);;All files (*)")
+        if path:
+            self.ota_bin_edit.setText(path)
+            self.ota_file_radio.setChecked(True)
+
+    def _ota_sync_ip(self) -> None:
+        ip = self.link.target_ip if self.link else self.profile.board_ip
+        self.ota_ip_edit.setText(ip)
+        self.log.info("OTA target set to the live Board IP %s", ip)
+
+    def _ota_start(self) -> None:
+        if self.ota_worker is not None:
+            return
+        ip = self.ota_ip_edit.text().strip()
+        if not self._looks_like_ip(ip):
+            self._ota_set_status(f"'{ip}' is not a valid IPv4 address.", bad=True)
+            return
+
+        building = self.ota_build_radio.isChecked()
+        project = bin_path = None
+        message = None
+        if building:
+            project = Path(self.ota_project_edit.text().strip())
+            message = self.ota_message_edit.text().strip() or None
+            if not (project / "platformio.ini").exists():
+                self._ota_set_status(
+                    f"{project} has no platformio.ini — point this at the "
+                    f"board's PlatformIO project, or upload a .bin instead.",
+                    bad=True)
+                return
+        else:
+            bin_path = Path(self.ota_bin_edit.text().strip())
+            if not bin_path.is_file():
+                self._ota_set_status(f"{bin_path} is not a file.", bad=True)
+                return
+
+        # Flashing is not something to do by accident mid-test.
+        confirm = QtWidgets.QMessageBox.question(
+            self, "Upload firmware?",
+            f"Replace the firmware on the {self.profile.board_type} board at "
+            f"{ip}?\n\nThe board reboots as soon as the image is accepted, "
+            f"which interrupts anything it is doing.")
+        if confirm != MSGBOX_YES:
+            return
+
+        self.ota_upload_count += 1
+        self.ota_expected_hash = None
+        self.ota_expected_message = message
+        self.ota_verified = False
+        self.ota_progress.setValue(0)
+        self.ota_board_hash_label.setText("—")
+        self.ota_board_msg_label.setText("—")
+        self.ota_verdict_label.setText("Waiting for the board to come back…")
+        self.ota_upload_btn.setEnabled(False)
+        self.ota_cancel_btn.setEnabled(True)
+
+        self.ota_worker = OtaWorker(
+            ip=ip, port=self.ota_port_spin.value(), bin_path=bin_path,
+            project=project, env=self.profile.firmware_env or None,
+            message=message)
+        self.ota_worker.status.connect(self._ota_set_status)
+        self.ota_worker.progress.connect(self._ota_on_progress)
+        self.ota_worker.image_ready.connect(self._ota_on_image_ready)
+        self.ota_worker.finished_upload.connect(self._ota_on_finished)
+        self.ota_worker.start()
+        self.log.info("OTA: starting upload to %s:%d%s", ip,
+                      self.ota_port_spin.value(),
+                      f" (message {message!r})" if message else "")
+
+    def _ota_cancel(self) -> None:
+        if self.ota_worker is not None:
+            self.ota_worker.cancel()
+            self._ota_set_status("Cancelling…")
+
+    def _ota_set_status(self, text: str, bad: bool = False) -> None:
+        self.ota_status_label.setText(text)
+        self.ota_status_label.setStyleSheet(
+            "color: #c0392b;" if bad else "color: #333;")
+        self.log.info("OTA: %s", text)
+
+    def _ota_on_progress(self, sent: int, total: int) -> None:
+        self.ota_progress.setValue(int(sent * 100 / total) if total else 0)
+
+    def _ota_on_image_ready(self, digest: str, size: int) -> None:
+        self.ota_expected_hash = digest
+        self.ota_sent_hash_label.setText(f"{digest}  ({size} bytes)")
+
+    def _ota_on_finished(self, ok: bool, message: str) -> None:
+        self.ota_upload_btn.setEnabled(True)
+        self.ota_cancel_btn.setEnabled(False)
+        self.ota_worker = None
+        self._ota_set_status(message, bad=not ok)
+        if ok:
+            self.ota_progress.setValue(100)
+            self.ota_verdict_label.setText(
+                "Image accepted. Waiting for the board to reboot and report "
+                "its new firmware hash…")
+        else:
+            self.ota_verdict_label.setText(
+                "Upload did not complete — the board is still running its "
+                "previous firmware.")
+
+    def _ota_note_board_hash(self, board_hash_hex: str) -> None:
+        """A heartbeat arrived. Does the board match what we pushed?"""
+        self.ota_board_hash_label.setText(board_hash_hex)
+        if not self.ota_expected_hash or self.ota_verified:
+            return
+        if board_hash_hex.lower() == self.ota_expected_hash.lower():
+            self.ota_verified = True
+            self.ota_verdict_label.setText(
+                "Verified — the board's firmware hash matches the image we "
+                "uploaded, so it is running exactly that binary.")
+            self.ota_verdict_label.setStyleSheet("color: #1e8449;")
+            self.log.info("OTA verified: board firmware hash matches the "
+                          "uploaded image")
+
+    def _ota_note_board_message(self, text: str) -> None:
+        """The board printed an [OTA-MSG] line on serial."""
+        self.ota_board_msg_label.setText(text)
+        if self.ota_expected_message and text == self.ota_expected_message:
+            self.log.info("OTA: board is printing the new test message %r",
+                          text)
+
     def _build_logs_tab(self) -> QtWidgets.QWidget:
         tab = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(tab)
@@ -1074,6 +1633,7 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         elif kind == "fw_hash":
             self.value_labels["fw_hash"].setText(e["value"][:16] + "…")
             self.value_labels["fw_hash"].setToolTip("SHA-256: " + e["value"])
+            self._ota_note_board_hash(e["value"])
         elif kind == "identity":
             self.value_labels["reported_id"].setText(str(e["board_id"]))
         elif kind == "eth":
@@ -1081,6 +1641,20 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
                 self.value_labels["src_ip"].setText(f"link {e['value']}")
             elif e["field"] == "ip":
                 self._update_conn_detail(e["value"], discovered=True)
+            elif e["field"] == "dhcp":
+                if e["value"] == "attempting":
+                    self.log.info("Board is trying DHCP…")
+                else:
+                    self.log.info("Board got no DHCP lease — falling back to "
+                                  "its static address")
+        elif kind == "zeroconf":
+            self._apply_zeroconf_event(e)
+        elif kind == "mac":
+            self._on_board_mac(e["value"])
+        elif kind == "ota_message":
+            self._ota_note_board_message(e["value"])
+        elif kind == "ota":
+            self._apply_ota_serial_event(e)
         elif kind == "heartbeat_sent":
             self.last_heartbeat_time = now
             self.heartbeat_times.append(now)
@@ -1101,6 +1675,44 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
                 self.last_raw[cid] = raw
             self.last_sensor_data_time = now
 
+    def _apply_ota_serial_event(self, e: dict) -> None:
+        """The board's own [OTA] log lines, seen over USB serial.
+
+        Worth surfacing because they are the only place a *rejected* image
+        explains itself — from this side an upload that the board refuses
+        after transfer looks much like one it accepted.
+        """
+        event = e["event"]
+        if event == "listening":
+            self.log.info("Board's OTA listener is up on port %d", e["port"])
+        elif event == "progress":
+            # Only meaningful while the board is receiving; mirrors our own bar.
+            self.ota_progress.setValue(e["percent"])
+        elif event == "error":
+            self._ota_set_status(f"Board rejected the image: {e['value']}",
+                                 bad=True)
+            self.ota_verdict_label.setText(
+                "The board refused this image and kept its previous firmware.")
+        else:
+            self.log.info("Board OTA: %s", e["value"])
+
+    def _apply_zeroconf_event(self, e: dict) -> None:
+        """Board's zero-config discovery, as reported on its USB serial stream.
+
+        The board reports which server it is talking to (see firmware
+        common/board_net.h). Mirroring that here means the GUI tracks it over
+        serial too, not just once its UDP packets start arriving.
+        """
+        event = e["event"]
+        if event == "enabled":
+            self.log.info("Board takes its address from the server and "
+                          "broadcasts until one is heard")
+        elif event == "server_learned":
+            self.log.info("Board is now talking to a server at %s", e["ip"])
+        elif event == "server_lost":
+            self.log.warning("Board lost its server and resumed discovery "
+                             "broadcasts")
+
     # -- receive slots -------------------------------------------------------
     def _on_heartbeat(self, hb: protocol.BoardHeartbeat, src_ip: str) -> None:
         now = time.time()
@@ -1110,6 +1722,10 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         self.heartbeat_times.append(now)
         self.heartbeat_count += 1
         self.value_labels["board_state"].setText(protocol.board_state_name(hb.board_state))
+        self.value_labels["fw_hash"].setText(hb.firmware_hash_hex[:16] + "…")
+        self.value_labels["fw_hash"].setToolTip("SHA-256: " + hb.firmware_hash_hex)
+        # An OTA is only really done when the board reports the hash we sent.
+        self._ota_note_board_hash(hb.firmware_hash_hex)
         if first:
             self.log.info("Board online: id=%d state=%s engine=%s fw=%s… from %s",
                           hb.board_id, protocol.board_state_name(hb.board_state),
@@ -1185,7 +1801,7 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         self.profile.board_ip = ip
         if self.link is not None:
             # honor the manual override until the board is re-discovered
-            self.link.discovered_ip = None
+            self.link.set_board_ip(ip)
         self.log.info("Board IP set to %s — control packets -> %s:%d",
                       ip, ip, self.profile.control_port)
         self._update_conn_detail(ip, discovered=False)
@@ -1539,6 +2155,7 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
 
     # -- shutdown ------------------------------------------------------------
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        self._stop_dhcp()
         self.log.info("Closing GUI")
         self._stop_serial()
         self._stop_link()
