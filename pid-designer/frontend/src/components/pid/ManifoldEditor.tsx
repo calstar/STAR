@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useReadOnly } from '@stardesign-ui';
 import { portId, portIds } from './ports';
 import type { PortInfo, PortKind } from './ports';
+import { NumberField } from './NumberField';
 
 /**
  * Where a manifold's ports actually are.
@@ -114,15 +115,14 @@ export function ManifoldEditor({ outlets, geometry, ports, onSave }: {
     setDraft(d => ({ ...d, positions: { ...d.positions, [drag]: t } }));
   }, [drag, readOnly, ox, oy, bw, bh]);
 
+  // `NumberField` rather than a bare input for the reason given in that file:
+  // re-deriving the text from the model each keystroke makes the field
+  // unclearable, because the digits on the way to a number are not numbers.
   const size = (key: 'width' | 'height') => (
-    <input
-      inputMode="decimal"
+    <NumberField
       value={String(draft[key])}
       readOnly={readOnly}
-      onChange={e => {
-        const v = Number(e.target.value);
-        if (Number.isFinite(v) && v > 0) setDraft(d => ({ ...d, [key]: v }));
-      }}
+      onCommit={v => setDraft(d => ({ ...d, [key]: v }))}
       className="w-[54px] rounded border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-1.5 py-0.5 text-[11px] outline-none focus:border-[var(--color-accent)]"
     />
   );
