@@ -1,0 +1,150 @@
+@import "tailwindcss";
+
+/* ───────────────────────────────────────────────────────────────────────────
+   The DAQ's design system, not a second one.
+
+   Every value below is taken from daq-server/diablo_server/frontend —
+   globals.css and tailwind.config.ts. That is deliberate and it is the whole
+   point: an operator moves between the real stand software and this in the
+   same session, and a twin that looks like a different product is one more
+   thing to translate under time pressure. Where this app needs something the
+   DAQ has no equivalent for (the P&ID, the mixture split) it extends the same
+   tokens rather than introducing a second palette.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+@theme {
+  /* Sensor system palette — verbatim from the DAQ's tailwind config. */
+  --color-gn2:      #27AE60;
+  --color-fuel:     #3498DB;
+  --color-lox:      #E74C3C;
+  --color-gse-low:  #F39C12;
+  --color-gse-mid:  #9B59B6;
+  --color-background: #141414;
+  --color-card:       #1e1e1e;
+  --color-text:       #e2e2e2;
+  --color-text-muted: #888888;
+
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: Menlo, Consolas, Monaco, monospace;
+}
+
+:root {
+  --background: #141414;
+  --foreground: #e2e2e2;
+
+  /* Fluid roles on the P&ID — verbatim from pid-designer's FLUID_COLORS, so a
+     drawing is the same colour in the editor and here.
+
+     These deliberately disagree with the DAQ's sensor palette above, and the
+     disagreement is correct: the DAQ colours a *measurement channel* and a
+     P&ID colours a *line by what is in it*. Forcing one onto the other would
+     make a drawing unrecognisable next to the editor it was made in, which is
+     the more confusing of the two. src/lib/schematic.ts holds the same values
+     for the SVG. */
+  --fluid-oxidizer:   #60a5fa;
+  --fluid-fuel:       #f97316;
+  --fluid-pressurant: #ef4444;
+  --fluid-unknown:    #94a3b8;
+
+  /* Aliases the shared panels use. Every one resolves to a value above rather
+     than introducing a colour: the panels were written against a palette this
+     app no longer has, and pointing them at the DAQ's is what makes them look
+     like the rest of the product instead of like a different app embedded in
+     it. */
+  --text:        #e2e2e2;
+  --muted:       #a0a0a0;
+  --dim:         #888888;
+  --edge:        rgba(255, 255, 255, 0.06);
+  --edge-strong: #3a3a3a;
+  --lift:        rgba(255, 255, 255, 0.04);
+  --accent:      #3498DB;
+  --accent-dim:  rgba(52, 152, 219, 0.15);
+  --ok:          #27AE60;
+  --warn:        #F39C12;
+  --bad:         #E74C3C;
+
+  color-scheme: dark;
+}
+
+/* The DAQ's reset, in @layer base.
+   Unlayered CSS beats *every* layered rule, so a bare `* { padding: 0 }` here
+   would out-rank Tailwind's own `px-4` and silently flatten the whole app --
+   which is exactly what it did. Layered, it does its job and loses to a
+   utility, which is the order you want. */
+@layer base {
+  * { box-sizing: border-box; padding: 0; margin: 0; }
+
+  html, body, #root { height: 100%; }
+  html { scroll-behavior: smooth; }
+}
+
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 14px;
+  background: radial-gradient(circle at top center, #1a1a24 0%, #0d0d12 60%, #050508 100%);
+  background-attachment: fixed;
+}
+
+/* Glassmorphism for panels — the DAQ's signature surface. */
+.bg-card {
+  background: rgba(22, 22, 28, 0.5) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.05) !important;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2) !important;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.bg-card:hover {
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #1a1a1a; }
+::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #4a4a4a; }
+
+/* ── uPlot overrides ───────────────────────────────────────────────────────── */
+.u-plot-container,
+.u-plot-container .u-wrap { width: 100% !important; height: 100% !important; }
+
+.u-plot-container canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+.u-legend {
+  font-size: 9px !important;
+  color: #a0a0a0 !important;
+  padding: 2px 0 0 !important;
+  font-family: Menlo, Consolas, monospace !important;
+}
+
+.u-legend .u-series { padding: 0 4px 0 0 !important; }
+.u-title { display: none !important; }
+
+/* Digits line up wherever they are compared. */
+.tabular-nums { font-variant-numeric: tabular-nums; }
+
+:focus-visible {
+  outline: 2px solid #3498DB;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

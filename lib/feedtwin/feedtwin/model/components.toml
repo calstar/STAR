@@ -1,0 +1,651 @@
+# Component declarations: what each kind of hardware *has*.
+#
+# Data, not code. A component's schema — its parameters, their meanings, their
+# dimensions, its ports, its categorical options — lives here; only its physics
+# is Python. Adding a component type is an edit to this file; Phase 03 supplies
+# behaviour keyed by (type, model) in feedtwin/comps/elements.py.
+#
+# `dimension` is enforced. A value handed to `bore` in psi is rejected at load
+# with both dimensions named, because unit confusion is the most expensive
+# class of mistake in this field and the cheapest to prevent at a boundary.
+#
+# Defaults carry `source = "default"`, which means the library supplied a number
+# and nobody has checked it. They are meant to be overridden, and a run report
+# lists every one still in use.
+#
+# Every type carries a `measured` model. It reads a `dp_mdot` curve — mass flow
+# against pressure drop, straight off a flow bench — and supersedes the
+# correlation entirely. That is the Phase 12 principle available from the start.
+
+# ---------------------------------------------------------------------------
+
+[pipe]
+description = "A straight run of tube or pipe carrying single-phase flow."
+# `segmented` is a run the drawing itemised: several bores, several lengths and
+# a counted list of fittings, carried on the instance rather than in `params`
+# because it is a sequence of records and not a set of numbers. Its geometry
+# comes from the segments, so none of the `darcy` parameters are required —
+# what is declared here is only what applies to the whole run.
+models = ["darcy", "measured", "segmented"]
+
+[pipe.ports.inlet]
+description = "Upstream connection."
+
+[pipe.ports.outlet]
+description = "Downstream connection."
+
+[pipe.options.friction]
+description = "Which explicit approximation to the Colebrook equation to use. They agree to about the third significant figure; which one you use is a modelling decision, not a fact."
+choices = ["Clamond", "Colebrook", "Churchill_1977", "Haaland", "Serghides_1", "Fang_2011"]
+default = "Clamond"
+models = ["darcy", "segmented"]
+
+[pipe.curves.dp_mdot]
+x_dimension = "mass_flow"
+y_dimension = "pressure"
+description = "Measured pressure drop against mass flow."
+required = true
+models = ["measured"]
+
+[pipe.params.length]
+dimension = "length"
+description = "Developed length along the centreline."
+minimum = 0.0
+models = ["darcy"]
+
+[pipe.params.bore]
+dimension = "length"
+description = "Internal diameter of the flow path. The actual bore, not a nominal thread size — a 3/8 in. NPT fitting does not have a 3/8 in. bore, and using the thread size is a real error that under-predicts loss by several times."
+minimum = 0.0
+models = ["darcy"]
+
+[pipe.params.roughness]
+dimension = "length"
+description = "Absolute wall roughness. Under `segmented` this is the fallback for segments that do not state their own."
+minimum = 0.0
+models = ["darcy", "segmented"]
+default = { value = 1.5e-6, unit = "m", source = "default", reference = "Seamless drawn tube, commercially smooth — lower bound of fluids.friction.HHR_roughness. Clean stainless; increase for used or welded line." }
+
+[pipe.params.K_minor]
+dimension = "dimensionless"
+description = "Lumped resistance coefficient for fittings in this run. A shortcut: it costs the per-fitting provenance a `fitting` component keeps, so prefer explicit fittings where they are known."
+minimum = 0.0
+required = false
+models = ["darcy"]
+default = { value = 0.0, unit = "-", source = "default", reference = "no fittings lumped into this run" }
+
+[pipe.params.elevation_change]
+dimension = "length"
+description = "Outlet height minus inlet height. Positive climbs. Ten metres of LOX is about 1.6 bar, so this is not a detail in a tall vehicle. Under `segmented` it is the whole-run fallback, used only when no segment states its own — never added to them, because a drawing that records the rise per segment has already recorded the total."
+required = false
+models = ["darcy", "segmented"]
+default = { value = 0.0, unit = "m", source = "default", reference = "assumed horizontal" }
+
+[pipe.params.wall_thickness]
+dimension = "length"
+description = "Wall thickness. Sets the tube's own thermal mass, which is what a line gives back to gas flowing through it — see feedtwin.comps.wall. Unset means the tube contributes nothing and only `fitting_mass` counts."
+required = false
+models = ["darcy", "segmented"]
+
+[pipe.params.fitting_count]
+dimension = "dimensionless"
+description = """Steel fittings on this run -- unions, tees, elbows, valve bodies.
+The number a user actually counts, rather than a mass they would have to look up.
+Turned into metal by the bore: a 1/2 in. tube union is about 113 g and a fitting's
+body scales close to the square of its bore, so this is `count * 0.113 *
+(bore/10.92mm)^2`.
+
+That default is a *tube* fitting. It is deliberately wrong for two cases the user has
+to correct with `fitting_mass`, and both of them are about where the line sits in the
+system: a fitting on the high-pressure side of the regulator carries far more metal
+for the same bore, and a valve body is several times a union. Count on the low side
+and override on the high side."""
+minimum = 0.0
+required = false
+models = ["darcy", "segmented"]
+default = { value = 0.0, unit = "-", source = "default", reference = "no fittings counted" }
+
+[pipe.params.line_mass]
+dimension = "mass"
+description = "One weighed figure for the whole run -- tube and fittings together. When given it is the line's thermal mass outright, and wall_thickness, fitting_count and fitting_mass are not consulted. What a person with a scale actually knows."
+minimum = 0.0
+required = false
+models = ["darcy", "segmented"]
+
+[pipe.params.fitting_mass]
+dimension = "mass"
+description = "Metal in the fittings on this run, in thermal contact with the flow. Separate from `wall_thickness` because it dominates: 255 mm of 1/2 in. tube is 67 g while five Swagelok unions on it are around 350 g, so a model that counted only the tube would understate the line's heat by five times."
+minimum = 0.0
+required = false
+models = ["darcy", "segmented"]
+default = { value = 0.0, unit = "kg", source = "default", reference = "no fittings counted; the tube alone" }
+
+# ---------------------------------------------------------------------------
+
+[fitting]
+description = "One fitting — an elbow, tee, contraction, entrance — with its own resistance coefficient and its own provenance."
+models = ["K", "measured"]
+
+[fitting.ports.inlet]
+description = "Upstream connection."
+
+[fitting.ports.outlet]
+description = "Downstream connection."
+
+[fitting.options.kind]
+description = "Which fitting. Each maps to a correlation in fluids, most of them from Crane TP-410."
+choices = ["elbow_90", "elbow_45", "bend", "contraction", "expansion", "entrance_sharp", "exit", "tee_run", "tee_branch", "ball_valve_full", "gate_valve_full", "globe_valve", "swing_check", "elbow_90_crane", "elbow_45_crane"]
+default = "elbow_90"
+models = ["K"]
+
+[fitting.curves.dp_mdot]
+x_dimension = "mass_flow"
+y_dimension = "pressure"
+description = "Measured pressure drop against mass flow."
+required = true
+models = ["measured"]
+
+[fitting.params.bore]
+dimension = "length"
+description = "Bore of the run the fitting sits in. The resistance coefficient is referred to this diameter."
+minimum = 0.0
+models = ["K"]
+
+[fitting.params.roughness]
+dimension = "length"
+description = "Absolute wall roughness of the attached pipe."
+minimum = 0.0
+required = false
+models = ["K"]
+default = { value = 1.5e-6, unit = "m", source = "default", reference = "matches the pipe default" }
+
+[fitting.params.angle]
+dimension = "angle"
+description = "Bend angle, for the 'bend' kind."
+required = false
+models = ["K"]
+
+[fitting.params.bore2]
+dimension = "length"
+description = "The other diameter, for contractions and expansions."
+required = false
+models = ["K"]
+
+[fitting.params.bend_diameters]
+dimension = "dimensionless"
+description = "Bend radius in pipe diameters (r/D). Crane's long-radius elbow is 5."
+required = false
+models = ["K"]
+
+# ---------------------------------------------------------------------------
+
+[orifice]
+description = "A fixed restriction: an orifice plate, a metering jet, or an injector element treated as one."
+models = ["cd", "iso5167", "measured"]
+
+[orifice.ports.inlet]
+description = "Upstream connection."
+
+[orifice.ports.outlet]
+description = "Downstream connection."
+
+[orifice.curves.dp_mdot]
+x_dimension = "mass_flow"
+y_dimension = "pressure"
+description = "Measured pressure drop against mass flow."
+required = true
+models = ["measured"]
+
+[orifice.params.bore]
+dimension = "length"
+description = "Throat diameter."
+minimum = 0.0
+models = ["cd", "iso5167"]
+
+[orifice.params.pipe_bore]
+dimension = "length"
+description = "Bore of the pipe the orifice sits in. Sets the beta ratio."
+minimum = 0.0
+models = ["cd", "iso5167"]
+
+[orifice.params.Cd]
+dimension = "dimensionless"
+description = "Discharge coefficient. Used by the 'cd' model; the 'iso5167' model computes it from geometry and Reynolds number instead."
+models = ["cd"]
+minimum = 0.0
+maximum = 1.0
+default = { value = 0.61, unit = "-", source = "default", reference = "sharp-edged orifice, high Re. A placeholder — measure it, or use the iso5167 model." }
+
+# ---------------------------------------------------------------------------
+
+[valve]
+description = "A valve sized by flow coefficient, per IEC 60534 / ISA-75."
+# `cd` is the same valve given as a discharge coefficient: Cv = 38.0·Cd·A[in²]
+# is computed once from Cd and bore, and everything else is the `cv` model.
+models = ["cv", "cd", "measured"]
+
+[valve.ports.inlet]
+description = "Upstream connection."
+
+[valve.ports.outlet]
+description = "Downstream connection."
+
+[valve.ports.command]
+kind = "signal"
+description = "Commanded position, 0 shut to 1 open. Driven by the scenario timeline."
+
+[valve.options.characteristic]
+description = "Inherent characteristic — how Cv varies with travel. 'tabulated' reads the instance's own cv_position curve, which is what a manufacturer's chart or a bench test gives."
+choices = ["linear", "equal_percentage", "quick_opening", "tabulated"]
+default = "linear"
+models = ["cv"]
+
+[valve.curves.cv_position]
+x_dimension = "dimensionless"
+y_dimension = "flow_coefficient"
+description = "Cv against fractional travel, for the 'tabulated' characteristic."
+models = ["cv"]
+
+[valve.curves.dp_mdot]
+x_dimension = "mass_flow"
+y_dimension = "pressure"
+description = "Measured pressure drop against mass flow."
+required = true
+models = ["measured"]
+
+[valve.params.Cv]
+dimension = "flow_coefficient"
+description = "Flow coefficient at full open."
+minimum = 0.0
+models = ["cv"]
+
+[valve.params.Cd]
+dimension = "dimensionless"
+description = "Discharge coefficient at full open, on the bore area. What a manual valve or a disconnect usually comes with; the Cv it amounts to is derived."
+minimum = 0.0
+maximum = 1.0
+required = true
+models = ["cd"]
+
+[valve.params.bore]
+dimension = "length"
+description = "Internal bore of the valve body."
+minimum = 0.0
+models = ["cv", "cd"]
+
+[valve.params.xT]
+dimension = "dimensionless"
+description = "Pressure-drop ratio factor at choked flow, IEC 60534-2-1. Sets where a gas chokes: x_critical = (gamma/1.40) * xT. Ranges about 0.3 for a butterfly to 0.8 for some globe trims, so a valve whose choke point matters should carry its own rather than take the default."
+minimum = 0.1
+maximum = 1.0
+required = false
+default = { value = 0.7, unit = "-", source = "default", reference = "IEC 60534-2-1 value for a globe or ball valve with a flow-to-open plug" }
+
+[valve.params.FL]
+dimension = "dimensionless"
+description = "Liquid pressure recovery factor, IEC 60534. Sets where the flow chokes."
+minimum = 0.0
+maximum = 1.0
+models = ["cv"]
+default = { value = 0.9, unit = "-", source = "default", reference = "typical globe/ball valve, IEC 60534-2-1 table 2. Manufacturer-specific — look it up." }
+
+[valve.params.leak_closed]
+dimension = "flow_coefficient"
+description = "Flow coefficient when shut. Non-zero keeps a closed valve from making the network singular, and a real seat does leak."
+required = false
+models = ["cv"]
+default = { value = 1e-6, unit = "Cv", source = "default", reference = "numerically small rather than measured; a seat leak spec would be better" }
+
+[valve.params.travel_time]
+dimension = "time"
+description = "Time from shut to full open under command."
+required = false
+default = { value = 0.05, unit = "s", source = "default", reference = "assumed fast solenoid; measure it — actuation time drives startup transients" }
+
+# ---------------------------------------------------------------------------
+
+[check_valve]
+description = "Passes flow one way. Forward through a flow coefficient once cracked, backward through a seat leak."
+models = ["cv", "cd", "measured"]
+
+[check_valve.ports.inlet]
+description = "Upstream connection — the direction it passes."
+
+[check_valve.ports.outlet]
+description = "Downstream connection."
+
+[check_valve.curves.dp_mdot]
+x_dimension = "mass_flow"
+y_dimension = "pressure"
+description = "Measured pressure drop against mass flow, forward direction."
+required = true
+models = ["measured"]
+
+[check_valve.params.Cd]
+dimension = "dimensionless"
+description = "Discharge coefficient forward, on the bore area; Cv = 38.0·Cd·A[in²] is derived."
+minimum = 0.0
+maximum = 1.0
+required = true
+models = ["cd"]
+
+[check_valve.params.Cv]
+dimension = "flow_coefficient"
+description = "Flow coefficient when open."
+minimum = 0.0
+models = ["cv"]
+
+[check_valve.params.bore]
+dimension = "length"
+description = "Internal bore."
+minimum = 0.0
+models = ["cv", "cd"]
+
+[check_valve.params.cracking_pressure]
+dimension = "pressure"
+description = "Differential pressure needed to lift the poppet."
+minimum = 0.0
+models = ["cv", "cd"]
+default = { value = 3.0, unit = "psi", source = "default", reference = "typical light-spring poppet; manufacturer-specific" }
+
+[check_valve.params.leak_reverse]
+dimension = "flow_coefficient"
+description = "Flow coefficient in the reverse direction. Small but not zero: a seat that leaked nothing would make the network singular when it shuts."
+minimum = 0.0
+required = false
+models = ["cv", "cd"]
+default = { value = 1e-6, unit = "Cv", source = "default", reference = "numerically small rather than measured" }
+
+# ---------------------------------------------------------------------------
+
+[bend]
+description = "A discrete bend in hardline — an elbow, or a tube bent on a former. Geometry-aware: the resistance depends on how tight the bend is, and a bend tighter than the tube allows is a fabrication problem, not a modelling detail."
+models = ["rounded", "measured"]
+
+[bend.ports.inlet]
+description = "Upstream connection."
+
+[bend.ports.outlet]
+description = "Downstream connection."
+
+[bend.curves.dp_mdot]
+x_dimension = "mass_flow"
+y_dimension = "pressure"
+description = "Measured pressure drop against mass flow."
+required = true
+models = ["measured"]
+
+[bend.params.bore]
+dimension = "length"
+description = "Internal diameter."
+minimum = 0.0
+models = ["rounded"]
+
+[bend.params.bend_radius]
+dimension = "length"
+description = "Centreline radius of the bend as installed. This is the number that matters: at r/D = 1 a bend carries about three times the friction factor of a straight run, and at r/D = 3 still nearly twice."
+minimum = 0.0
+models = ["rounded"]
+
+[bend.params.angle]
+dimension = "angle"
+description = "Turn angle. 90 degrees for a standard elbow."
+models = ["rounded"]
+default = { value = 90.0, unit = "deg", source = "default", reference = "a standard elbow" }
+
+[bend.params.outer_diameter]
+dimension = "length"
+description = "Tube OD. Minimum bend radius is quoted against OD, not bore, so it is needed to check one."
+required = false
+models = ["rounded"]
+
+[bend.params.min_bend_radius]
+dimension = "length"
+description = "Tightest centreline radius this tube may be bent to. Below it the wall thins and the section ovalises; a mandrel bender goes tighter than a hand bender. Set it from your bender's tooling or the tube spec."
+required = false
+minimum = 0.0
+models = ["rounded"]
+
+[bend.params.roughness]
+dimension = "length"
+description = "Absolute wall roughness."
+required = false
+minimum = 0.0
+models = ["rounded"]
+default = { value = 1.5e-6, unit = "m", source = "default", reference = "matches the pipe default" }
+
+# ---------------------------------------------------------------------------
+
+[flex_hose]
+description = "A flexible hose. Distinct from hardline in three ways that all matter: it is rougher, its ends are crimped fittings with their own loss, and it has a minimum bend radius that is usually the binding constraint on how a bay is routed."
+models = ["darcy", "measured"]
+
+[flex_hose.ports.inlet]
+description = "Upstream connection."
+
+[flex_hose.ports.outlet]
+description = "Downstream connection."
+
+[flex_hose.options.construction]
+description = "Smooth-bore hose (PTFE or elastomer liner) flows close to a smooth tube. Convoluted metal hose is far rougher — the convolutions are in the flow path, not just the braid — and its loss is several times a smooth bore of the same size."
+choices = ["smooth_bore", "convoluted"]
+default = "smooth_bore"
+models = ["darcy"]
+
+[flex_hose.curves.dp_mdot]
+x_dimension = "mass_flow"
+y_dimension = "pressure"
+description = "Measured pressure drop against mass flow. For flex hose this is worth having: published loss data is scarce and construction varies between manufacturers."
+required = true
+models = ["measured"]
+
+[flex_hose.params.bore]
+dimension = "length"
+description = "Internal diameter of the liner."
+minimum = 0.0
+models = ["darcy"]
+
+[flex_hose.params.length]
+dimension = "length"
+description = "Developed length along the centreline, end fitting to end fitting."
+minimum = 0.0
+models = ["darcy"]
+
+[flex_hose.params.installed_bend_radius]
+dimension = "length"
+description = "Centreline radius the hose is actually routed to. Omit for a hose run straight. When set, the friction is computed for curved flow, which is materially higher."
+required = false
+minimum = 0.0
+models = ["darcy"]
+
+[flex_hose.params.min_bend_radius]
+dimension = "length"
+description = "Manufacturer's minimum bend radius, static. Bending tighter collapses a smooth-bore liner or fatigues a convoluted one. This is usually what actually constrains a routing."
+required = false
+minimum = 0.0
+models = ["darcy"]
+
+[flex_hose.params.min_bend_radius_dynamic]
+dimension = "length"
+description = "Minimum bend radius where the hose flexes in service — gimballing, thermal growth, vibration. Always larger than the static limit, and the one that applies to anything that moves."
+required = false
+minimum = 0.0
+models = ["darcy"]
+
+[flex_hose.params.roughness]
+dimension = "length"
+description = "Effective absolute roughness of the liner."
+minimum = 0.0
+models = ["darcy"]
+default = { value = 5.0e-6, unit = "m", source = "default", reference = "smooth-bore PTFE liner, of the order of drawn tube. A placeholder — flex hose loss varies with construction and is worth measuring." }
+
+[flex_hose.params.convolution_factor]
+dimension = "dimensionless"
+description = "Multiplier on friction for convoluted construction, relative to a smooth bore of the same size. Applies only to the 'convoluted' option."
+minimum = 1.0
+required = false
+models = ["darcy"]
+default = { value = 4.0, unit = "-", source = "default", reference = "order-of-magnitude rule of thumb for convoluted metal hose; strongly construction-dependent. Measure it, or use the 'measured' model." }
+
+[flex_hose.params.end_fitting_K]
+dimension = "dimensionless"
+description = "Combined resistance coefficient of both crimped end fittings. On a short hose these dominate the loss."
+minimum = 0.0
+required = false
+models = ["darcy"]
+default = { value = 0.5, unit = "-", source = "default", reference = "two abrupt entry/exit transitions, order of magnitude. Manufacturer data is better." }
+
+# ---------------------------------------------------------------------------
+
+[gas_orifice]
+description = "A restriction in compressible flow. Chokes below a critical pressure ratio, above which mass flow stops depending on downstream pressure at all — which is how a relief orifice and a regulator seat actually behave."
+models = ["isentropic", "measured"]
+
+[gas_orifice.ports.inlet]
+description = "Upstream connection."
+
+[gas_orifice.ports.outlet]
+description = "Downstream connection."
+
+[gas_orifice.curves.dp_mdot]
+x_dimension = "mass_flow"
+y_dimension = "pressure"
+description = "Measured pressure drop against mass flow."
+required = true
+models = ["measured"]
+
+[gas_orifice.params.bore]
+dimension = "length"
+description = "Throat diameter."
+minimum = 0.0
+models = ["isentropic"]
+
+[gas_orifice.params.Cd]
+dimension = "dimensionless"
+description = "Discharge coefficient of the throat."
+minimum = 0.0
+maximum = 1.0
+models = ["isentropic"]
+default = { value = 0.85, unit = "-", source = "default", reference = "rounded-entry gas orifice, high Re. Measure it — a sharp-edged hole is nearer 0.6 and the difference is 40% of the flow." }
+
+# ---------------------------------------------------------------------------
+
+[regulator]
+description = "A pressure regulator defending an outlet setpoint. Not a restriction: the drop across it is whatever the inlet gives it minus the setpoint it holds, which is why it gets its own physics rather than a K."
+models = ["ideal", "droop", "curve", "measured"]
+
+[regulator.ports.inlet]
+description = "High-pressure supply, typically from a COPV."
+
+[regulator.ports.outlet]
+description = "Regulated side, typically a tank ullage."
+
+[regulator.curves.outlet_mdot]
+x_dimension = "mass_flow"
+y_dimension = "pressure"
+description = "Outlet pressure against mass flow, off a datasheet droop curve or a flow bench, measured at `inlet_reference`."
+required = true
+models = ["curve"]
+
+[regulator.curves.dp_mdot]
+x_dimension = "mass_flow"
+y_dimension = "pressure"
+description = "Measured pressure drop against mass flow."
+required = true
+models = ["measured"]
+
+[regulator.params.setpoint]
+dimension = "pressure"
+description = "Outlet pressure the regulator holds at its reference inlet and zero flow. Absolute, not gauge — this library has no psig unit on purpose."
+minimum = 0.0
+models = ["ideal", "droop", "curve"]
+
+[regulator.params.supply_coefficient]
+dimension = "pressure_ratio"
+description = "Supply-pressure effect: outlet rise per unit of inlet DECAY. Write it the way the datasheet writes it — the Aqua Environment 1092-50 is quoted as 17 psi per 1000 psi of inlet, so `{ value = 17, unit = \"psi/1000psi\" }`. Positive means the outlet rises as the bottle empties, which is the usual sign and the one people guess wrong."
+minimum = 0.0
+models = ["droop", "curve"]
+default = { value = 0.0, unit = "psi/psi", source = "default", reference = "no supply-pressure effect. Almost certainly wrong for a real regulator — the datasheet gives this number and it is worth typing in." }
+
+[regulator.params.inlet_reference]
+dimension = "pressure"
+description = "Inlet pressure at which `setpoint` was measured. The datum the supply coefficient is referenced to; without it the supply term has no meaning and is disabled."
+minimum = 0.0
+models = ["droop", "curve"]
+default = { value = 0.0, unit = "Pa", source = "default", reference = "unset — supply-pressure effect disabled until a reference inlet is given." }
+
+[regulator.params.flow_droop]
+dimension = "pressure"
+description = "Outlet DROP at `rated_flow`, relative to the zero-flow setpoint. A separate effect from the supply coefficient and not derivable from Cv: Cv sets where the regulator saturates, while this is the gradual sag before it does."
+minimum = 0.0
+models = ["droop"]
+default = { value = 0.0, unit = "Pa", source = "default", reference = "no flow droop. A real regulator has some; leave it assumed and check() will say so." }
+
+[regulator.params.rated_flow]
+dimension = "mass_flow"
+description = "Flow at which `flow_droop` was measured. Sets the scale of the droop term; zero disables it."
+minimum = 0.0
+models = ["droop"]
+default = { value = 0.0, unit = "kg/s", source = "default", reference = "unset — flow droop disabled until a rated flow is given." }
+
+[regulator.params.lockup_rise]
+dimension = "pressure"
+description = "How far above setpoint the outlet creeps once flow stops and the poppet seals. What a downstream relief valve and burst disc actually see between firings, which is the number that matters for sizing them."
+minimum = 0.0
+models = ["ideal", "droop", "curve"]
+default = { value = 0.0, unit = "Pa", source = "default", reference = "perfect lockup. Optimistic; real seats creep." }
+
+[regulator.params.Cv]
+dimension = "flow_coefficient"
+description = "Flow coefficient of the seat wide open. Sets capacity — where the regulator runs out of authority and stops regulating — not the gradual droop before that."
+minimum = 0.0
+models = ["droop", "curve"]
+
+[regulator.params.bore]
+dimension = "length"
+description = "Flow diameter through the seat, for the dynamic head the Cv is referenced to."
+minimum = 0.0
+models = ["droop", "curve"]
+
+[regulator.params.min_inlet_differential]
+dimension = "pressure"
+description = "Least inlet-to-outlet difference at which the regulator still controls. Below this it is a hole. Reported as a violation at the operating point rather than raised, because running a regulator into its dropout is a real thing people do and the model should show what it costs."
+minimum = 0.0
+models = ["ideal", "droop", "curve"]
+default = { value = 0.0, unit = "Pa", source = "default", reference = "no declared dropout limit." }
+
+# ---------------------------------------------------------------------------
+
+[manifold]
+description = "A block with a bore through it and ports tapped into the side. One symbol on a drawing; a plenum node plus one branch per port in a solve. Port threads carry no information — every port is female, so the fitting screwed into it is the whole story."
+models = ["plenum"]
+
+[manifold.ports.plenum]
+description = "The interior volume. Port connections are declared as ManifoldPort objects, not as schema ports, because their number is a property of the hardware rather than of the type."
+
+[manifold.params.bore]
+dimension = "length"
+description = "Flow diameter of the plenum passage itself. Used to derive port turn losses from the area ratio when none is given, and to warn when a port is bored larger than the plenum feeding it."
+minimum = 0.0
+models = ["plenum"]
+
+[manifold.params.volume]
+dimension = "volume"
+description = "Internal volume. Does nothing in a steady solve and everything in a transient one — a manifold plenum is a gas volume that has to fill before anything downstream sees pressure, which is a real contributor to opening lag."
+minimum = 0.0
+models = ["plenum"]
+default = { value = 0.0, unit = "L", source = "default", reference = "unset — treated as zero volume, which is right for steady state and wrong for lag." }
+
+[regulator.params.dome_pressure]
+dimension = "pressure"
+description = "Pressure loaded into the dome, for a dome-loaded regulator. Absolute. Zero means the unit is not dome-loaded and `setpoint` governs. Overridden at runtime by a `<id>.dome` signal, because on the stand this number is a hand on the control regulator and it moves during a test."
+minimum = 0.0
+models = ["ideal", "droop", "curve"]
+default = { value = 0.0, unit = "Pa", source = "default", reference = "not dome-loaded — `setpoint` governs." }
+
+[regulator.params.dome_bias]
+dimension = "pressure"
+description = "How far the outlet sits ABOVE the dome, by design. The Aqua Environment 1092-50 is +50 psi. Kept separate from the dome pressure because the bias belongs to the regulator and the dome setting belongs to the test — folded together, every scenario has to remember to add it, and one day one of them will not."
+minimum = 0.0
+models = ["ideal", "droop", "curve"]
+default = { value = 0.0, unit = "psi", source = "default", reference = "no bias. Check the datasheet — a dome regulator with an unmodelled bias is wrong by exactly that much, everywhere." }

@@ -22,8 +22,10 @@ top-level directory with its own README. Start with the one you're working on.
 | [`firmware/`](firmware/README.md) | **Board firmware** for every avionics board (PT, TC, RTD, LC, Encoder, Actuator). Reads sensors, talks to the DAQ server over Ethernet, runs the on-board abort logic. Subtree of [`calstar/DiabloAvionics`](https://github.com/calstar/DiabloAvionics). | Arduino / PlatformIO, ESP32-S3, C++ |
 | [`lib/DAQv2-Comms/`](lib/DAQv2-Comms/README.md) | The **wire protocol** shared by the firmware and the DAQ server — packet definitions, enums, and (de)serialization. The single source of truth for what goes over the wire. | C++ (Arduino library) |
 | [`lib/stardesign/`](lib/stardesign/README.md) | The **design core** shared by the three design tools — per-user storage, cross-user sharing (who may edit whose design), and version history. Extracted once all three needed the same permission check. | Python |
+| [`lib/feedtwin/`](lib/feedtwin/README.md) | The **feed system physics core** — real-gas properties, the component library, and the network and transient solvers. A library, not a service, so EngineDesign's optimizer can import it in-process ([ADR-0001](docs/adr/0001-feed-system-physics-is-a-library.md)). | Python, CoolProp, fluids |
 | [`EngineDesign/`](EngineDesign/README.md) | **Engine design & optimization pipeline** — physics simulation of liquid bipropellant engines (propellants and injector type are configurable) plus a multi-layer optimizer, a control system, and a web UI. Solves chamber pressure, thrust, and Isp from tank pressures. | Python, FastAPI, React |
 | [`pid-designer/`](pid-designer/README.md) | Interactive **P&ID (Piping & Instrumentation Diagram) editor** for the propulsion feed system, with git-backed versioning. | FastAPI, React + React Flow |
+| [`feed-twin/`](feed-twin/README.md) | **Feed system simulator** — COPV through regulator, tanks and lines to the injector face, parameterized down to individual fittings. Built on `lib/feedtwin`. Early: the shell is wired, the physics is being built phase by phase. | Python, FastAPI, React |
 | [`onshape-viewer/`](onshape-viewer/README.md) | **Onshape CM viewer** — renders an assembly from CAD and computes its centre of mass, recomputing live as parts are toggled or re-materialled. | FastAPI, React + three.js |
 
 ### How they fit together
@@ -44,8 +46,8 @@ top-level directory with its own README. Start with the one you're working on.
 they speak the protocol defined in `lib/DAQv2-Comms/` (the firmware reaches it
 through a symlink at `firmware/libraries/DAQv2-Comms`).
 
-`EngineDesign/`, `pid-designer/` and `recovery-calculator/` are the design
-tools. They are separate apps with separate UIs, but they store, share and
+`EngineDesign/`, `pid-designer/`, `recovery-calculator/` and `feed-twin/` are
+the design tools. They are separate apps with separate UIs, but they store, share and
 version designs identically, and all three build on `lib/stardesign/` and mount
 one shared `userdata` volume — which is what lets you browse a teammate's
 designs and take a copy, or share one and edit it together.
@@ -100,6 +102,7 @@ it in the terminal instead. `./dev.sh --help` lists everything.
 | --- | --- | --- |
 | `EngineDesign/` | `./dev.sh` | UI 5173, API 8000 |
 | `pid-designer/` | `./dev.sh` | UI 5174, API 8001 |
+| `feed-twin/` | `./dev.sh` | UI 5177, API 8003 |
 | `landing/` | `./dev.sh` | 5175 |
 | `auth/` | `./dev.sh` | 5000 |
 | `daq-server/` | `./dev.sh --sim` | GUI 3000, API+WS 8081 |

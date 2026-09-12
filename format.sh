@@ -39,6 +39,12 @@ TARGETS_ALL=(
 # is already formatted by daq-server/.pre-commit-config.yaml.
 PY_TARGETS=(
     "firmware"
+    # feed-twin and its physics core are here because their CI *enforces* black
+    # (.github/workflows/feed-twin-ci.yml). Without them in this list, running
+    # ./format.sh would report everything formatted and the build would then
+    # fail on style -- the worst version of a formatting gate.
+    "lib/feedtwin"
+    "feed-twin"
 )
 
 print_status()  { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -126,12 +132,20 @@ find_cpp_files() {
 find_py_files() {
     for dir in "${PY_TARGETS[@]}"; do
         if [ -d "$dir" ]; then
+            # .venv / node_modules / *.egg-info are pruned at any depth, not
+            # just "$dir/...", because a Python target usually carries its
+            # virtualenv inside it. Without this, adding an app to PY_TARGETS
+            # would reformat every .py in site-packages -- thousands of files,
+            # none of them ours.
             find "$dir" \
                 \( -path "$dir/external"  -o -path "$dir/external/*" \
                 -o -path "$dir/build"     -o -path "$dir/build/*" \
                 -o -path "$dir/.pio"      -o -path "$dir/.pio/*" \
                 -o -path "$dir/Archive"   -o -path "$dir/Archive/*" \
-                -o -path "$dir/libraries" -o -path "$dir/libraries/*" \) -prune -o \
+                -o -path "$dir/libraries" -o -path "$dir/libraries/*" \
+                -o -name ".venv"          -o -name "venv" \
+                -o -name "node_modules"   -o -name "__pycache__" \
+                -o -name "*.egg-info" \) -prune -o \
                 -type f -name "*.py" -print0
         else
             print_warning "Directory $dir not found, skipping..."

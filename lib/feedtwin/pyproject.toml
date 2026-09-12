@@ -1,0 +1,94 @@
+# The feed-system physics core.
+#
+# This is a library, not an application, and that is the whole architectural
+# point (ADR-0001). The solver has to be importable by two very different
+# callers: the feed-twin web app, and EngineDesign's optimizer once Layer X
+# needs to reason about the feed system while it searches. A physics package
+# that only existed behind an HTTP endpoint could serve the first and never the
+# second -- an optimizer cannot pay a network round trip per candidate.
+#
+# So the physics lives here, with no web framework anywhere in its dependency
+# tree, and both callers install it from a path the way lib/stardesign is
+# installed. Not published: it is repo-internal, versioned with the repo.
+#
+# Installed from a path (see feed-twin/requirements.txt, feed-twin/Dockerfile.api
+# and the CI workflow), because the path that reaches it differs between a
+# checkout and a Docker build context.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "feedtwin"
+# Read from feedtwin/__init__.py rather than declared here, so there is one
+# version in the package and not two that can drift. setuptools reads it out of
+# the AST without importing, so this works before the dependencies are
+# installed. Bump it in __init__.py.
+dynamic = ["version"]
+description = "Propellant feed system physics: network solve, real-gas properties, transient response"
+requires-python = ">=3.11"
+
+# The physics stack. Every one of these is load-bearing and none of it should be
+# reimplemented here -- see lib/feedtwin/README.md for what each one carries.
+#
+# No fastapi, no uvicorn, no pydantic-settings: this package must stay importable
+# from a bare optimizer process with no web stack installed.
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    # Real-gas properties. Helmholtz-energy equations of state; the tabular
+    # backends are what make a transient solve finish this year (Phase 01).
+    "CoolProp>=7.0",
+    # Friction factors, 244 fitting correlations (Crane TP-410, Hooper 2K,
+    # Darby 3K), IEC 60534 valve sizing, ISO 5167 meters, two-phase.
+    "fluids>=1.0",
+    # Heat transfer: convection, boiling, condensation, insulation resistance.
+    # Needed from Phase 05 (tank walls) and Phase 14 (chilldown).
+    "ht>=1.0",
+]
+
+[project.optional-dependencies]
+# Reading EngineDesign's Layer-1 configs (Phase 08). An extra rather than a core
+# dependency on purpose: feed-twin's own configs are TOML, deliberately, because
+# YAML parses `1e-3` as the string '1e-3' (ADR-0001 and model/units.py). YAML
+# here is a *boundary format we read*, never one we write, so a process that
+# only solves networks should not have to carry a YAML parser.
+engine = [
+    "PyYAML>=6.0",
+]
+dev = [
+    "pytest>=8",
+    "black>=24",
+    "mypy>=1.11",
+    "types-PyYAML>=6.0",
+    "PyYAML>=6.0",
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "feedtwin.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["feedtwin*"]
+
+[tool.setuptools.package-data]
+# The .toml files are registries the package reads at import time -- fluids in
+# props/species.toml, component schemas in model/components.toml -- not
+# documentation. Omitting one produces a wheel that imports fine and then
+# reports every fluid, or every component type, as unknown. A glob rather than a
+# list, so the next data file is not a packaging bug waiting to be found.
+feedtwin = ["py.typed", "**/*.toml"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["feedtwin"]
+strict = true
+# CoolProp and ht ship no type information, so mypy cannot see into them.
+# (fluids does ship py.typed and is therefore genuinely checked -- which is why
+# feedtwin.model.units imports Kv_to_Cv from fluids.fittings, where it is
+# defined, rather than through the module that re-exports it.)
+# Their call sites are wrapped in this package precisely so the untyped surface
+# stays small and contained.
+[[tool.mypy.overrides]]
+module = ["CoolProp.*", "fluids.*", "ht.*", "scipy.*"]
+ignore_missing_imports = true

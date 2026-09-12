@@ -1,0 +1,1273 @@
+{
+ "nodes": [
+  {
+   "id": "KBHE",
+   "type": "KBOTTLE",
+   "position": {
+    "x": 60,
+    "y": 60
+   },
+   "data": {
+    "componentType": "KBOTTLE",
+    "label": "KB-HE",
+    "fluid": "helium",
+    "params": {
+     "pressure": {
+      "value": 4500,
+      "unit": "psi",
+      "source": "manufacturer",
+      "reference": "service pressure, SCBA cylinder"
+     },
+     "temperature": {
+      "value": 293.15,
+      "unit": "K",
+      "source": "measured",
+      "reference": ""
+     },
+     "volume": {
+      "value": 4.6871,
+      "unit": "L",
+      "source": "measured",
+      "reference": "45 scf SCBA cylinder: 52.8 mol of free air, Z=1.1145 at 4500 psi -> 4.687 L water volume"
+     }
+    }
+   }
+  },
+  {
+   "id": "PTHI",
+   "type": "PT",
+   "position": {
+    "x": 250,
+    "y": 60
+   },
+   "data": {
+    "componentType": "PT",
+    "label": "PT-COPV",
+    "attachedTo": "KBHE"
+   }
+  },
+  {
+   "id": "PRC",
+   "type": "PR",
+   "position": {
+    "x": 60,
+    "y": 220
+   },
+   "data": {
+    "componentType": "PR",
+    "label": "PR-CTRL",
+    "fluid": "helium",
+    "params": {
+     "setpoint": {
+      "value": 500,
+      "unit": "psi",
+      "source": "estimated",
+      "reference": "dome load for the 1092-50"
+     },
+     "Cv": {
+      "value": 0.4,
+      "unit": "Cv",
+      "source": "manufacturer",
+      "reference": "small control reg"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/4 in."
+     },
+     "flow_droop": {
+      "value": 15,
+      "unit": "psi",
+      "source": "estimated",
+      "reference": "droop at rated flow"
+     },
+     "rated_flow": {
+      "value": 0.05,
+      "unit": "kg/s",
+      "source": "estimated",
+      "reference": ""
+     },
+     "supply_coefficient": {
+      "value": 17,
+      "unit": "psi/1000psi",
+      "source": "manufacturer",
+      "reference": "Aqua Environment 1092-50 datasheet: 17 psi outlet rise per 1000 psi inlet fall"
+     },
+     "inlet_reference": {
+      "value": 4500,
+      "unit": "psi",
+      "source": "manufacturer",
+      "reference": ""
+     }
+    },
+    "options": {
+     "domeLoaded": "no"
+    }
+   }
+  },
+  {
+   "id": "PRD",
+   "type": "PR",
+   "position": {
+    "x": 260,
+    "y": 220
+   },
+   "data": {
+    "componentType": "PR",
+    "label": "PR-DOME",
+    "fluid": "helium",
+    "params": {
+     "setpoint": {
+      "value": 500,
+      "unit": "psi",
+      "source": "estimated",
+      "reference": "dome-loaded from PR-CTRL"
+     },
+     "Cv": {
+      "value": 1.6,
+      "unit": "Cv",
+      "source": "manufacturer",
+      "reference": "Aqua Environment 1092-50"
+     },
+     "bore": {
+      "value": 7.75,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "3/8 in. x 0.035 wall, ID 0.305 in."
+     },
+     "flow_droop": {
+      "value": 20,
+      "unit": "psi",
+      "source": "estimated",
+      "reference": "droop at rated flow"
+     },
+     "rated_flow": {
+      "value": 0.35,
+      "unit": "kg/s",
+      "source": "estimated",
+      "reference": ""
+     },
+     "lockup_rise": {
+      "value": 50,
+      "unit": "psi",
+      "source": "manufacturer",
+      "reference": "1092-50 spring bias above dome"
+     },
+     "supply_coefficient": {
+      "value": 17,
+      "unit": "psi/1000psi",
+      "source": "manufacturer",
+      "reference": "Aqua Environment 1092-50 datasheet"
+     },
+     "inlet_reference": {
+      "value": 4500,
+      "unit": "psi",
+      "source": "manufacturer",
+      "reference": ""
+     }
+    },
+    "options": {
+     "domeLoaded": "yes"
+    }
+   }
+  },
+  {
+   "id": "PTREG",
+   "type": "PT",
+   "position": {
+    "x": 470,
+    "y": 220
+   },
+   "data": {
+    "componentType": "PT",
+    "label": "PT-HE-REG",
+    "attachedTo": "MFP"
+   }
+  },
+  {
+   "id": "MFP",
+   "type": "MANIFOLD",
+   "position": {
+    "x": 260,
+    "y": 330
+   },
+   "data": {
+    "componentType": "MANIFOLD",
+    "label": "MF-PRESS",
+    "fluid": "helium",
+    "params": {
+     "Cv": {
+      "value": 8.0,
+      "unit": "Cv",
+      "source": "estimated",
+      "reference": "short manifold block"
+     },
+     "bore": {
+      "value": 10.92,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/2 in. tube bore"
+     }
+    }
+   }
+  },
+  {
+   "id": "SVOP",
+   "type": "SOL",
+   "position": {
+    "x": 120,
+    "y": 430
+   },
+   "data": {
+    "componentType": "SOL",
+    "label": "SV-LOX-PRESS",
+    "fluid": "helium",
+    "params": {
+     "Cv": {
+      "value": 1.7,
+      "unit": "Cv",
+      "source": "measured",
+      "reference": "1/4 in. solenoid, measured"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/4 in."
+     },
+     "travel_time": {
+      "value": 50,
+      "unit": "ms",
+      "source": "measured",
+      "reference": "fast solenoid"
+     }
+    }
+   }
+  },
+  {
+   "id": "SVFP",
+   "type": "SOL",
+   "position": {
+    "x": 420,
+    "y": 430
+   },
+   "data": {
+    "componentType": "SOL",
+    "label": "SV-FU-PRESS",
+    "fluid": "helium",
+    "params": {
+     "Cv": {
+      "value": 1.7,
+      "unit": "Cv",
+      "source": "measured",
+      "reference": "1/4 in. solenoid, measured"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/4 in."
+     },
+     "travel_time": {
+      "value": 50,
+      "unit": "ms",
+      "source": "measured",
+      "reference": "fast solenoid"
+     }
+    }
+   }
+  },
+  {
+   "id": "OXT",
+   "type": "TANK",
+   "position": {
+    "x": 100,
+    "y": 560
+   },
+   "data": {
+    "componentType": "TANK",
+    "label": "TK-LOX",
+    "fluid": "oxygen",
+    "params": {
+     "volume": {
+      "value": 9.68,
+      "unit": "L",
+      "source": "measured",
+      "reference": "as-built LOX tank"
+     },
+     "pressure": {
+      "value": 550,
+      "unit": "psi",
+      "source": "estimated",
+      "reference": "dome 500 + 50 psi 1092-50 spring bias"
+     },
+     "temperature": {
+      "value": 90.0,
+      "unit": "K",
+      "source": "estimated",
+      "reference": "saturated LOX at 1 atm"
+     },
+     "diameter": {
+      "value": 152.4,
+      "unit": "mm",
+      "source": "measured",
+      "reference": "6 in. OD tube"
+     },
+     "MAWP": {
+      "value": 900,
+      "unit": "psi",
+      "source": "manufacturer",
+      "reference": ""
+     }
+    }
+   }
+  },
+  {
+   "id": "FUT",
+   "type": "TANK",
+   "position": {
+    "x": 440,
+    "y": 560
+   },
+   "data": {
+    "componentType": "TANK",
+    "label": "TK-FU",
+    "fluid": "ethanol",
+    "params": {
+     "volume": {
+      "value": 8.67,
+      "unit": "L",
+      "source": "measured",
+      "reference": "as-built fuel tank"
+     },
+     "pressure": {
+      "value": 550,
+      "unit": "psi",
+      "source": "estimated",
+      "reference": "dome 500 + 50 psi 1092-50 spring bias"
+     },
+     "temperature": {
+      "value": 293.15,
+      "unit": "K",
+      "source": "measured",
+      "reference": ""
+     },
+     "diameter": {
+      "value": 152.4,
+      "unit": "mm",
+      "source": "measured",
+      "reference": "6 in. OD tube"
+     },
+     "MAWP": {
+      "value": 900,
+      "unit": "psi",
+      "source": "manufacturer",
+      "reference": ""
+     }
+    }
+   }
+  },
+  {
+   "id": "PTOXU",
+   "type": "PT",
+   "position": {
+    "x": 20,
+    "y": 560
+   },
+   "data": {
+    "componentType": "PT",
+    "label": "PT-OX-UP",
+    "attachedTo": "OXT"
+   }
+  },
+  {
+   "id": "PTFUU",
+   "type": "PT",
+   "position": {
+    "x": 560,
+    "y": 560
+   },
+   "data": {
+    "componentType": "PT",
+    "label": "PT-FU-UP",
+    "attachedTo": "FUT"
+   }
+  },
+  {
+   "id": "MVO",
+   "type": "SOL",
+   "position": {
+    "x": 100,
+    "y": 700
+   },
+   "data": {
+    "componentType": "SOL",
+    "label": "MV-OX",
+    "fluid": "oxygen",
+    "params": {
+     "Cv": {
+      "value": 26.1,
+      "unit": "Cv",
+      "source": "estimated",
+      "reference": "Crane TP-410 full-bore ball valve, K = 3*fT = 0.0814 at 12.7 mm"
+     },
+     "bore": {
+      "value": 12.7,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/2 in. NPT full-port ball valve"
+     },
+     "travel_time": {
+      "value": 50,
+      "unit": "ms",
+      "source": "measured",
+      "reference": ""
+     }
+    }
+   }
+  },
+  {
+   "id": "MVF",
+   "type": "SOL",
+   "position": {
+    "x": 440,
+    "y": 700
+   },
+   "data": {
+    "componentType": "SOL",
+    "label": "MV-FU",
+    "fluid": "ethanol",
+    "params": {
+     "Cv": {
+      "value": 26.1,
+      "unit": "Cv",
+      "source": "estimated",
+      "reference": "Crane TP-410 full-bore ball valve, K = 3*fT = 0.0814 at 12.7 mm"
+     },
+     "bore": {
+      "value": 12.7,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/2 in. NPT full-port ball valve"
+     },
+     "travel_time": {
+      "value": 50,
+      "unit": "ms",
+      "source": "measured",
+      "reference": ""
+     }
+    }
+   }
+  },
+  {
+   "id": "ENG",
+   "type": "ENGINE",
+   "position": {
+    "x": 270,
+    "y": 830
+   },
+   "data": {
+    "componentType": "ENGINE",
+    "label": "ENG-01",
+    "params": {
+     "pressure": {
+      "value": 420,
+      "unit": "psi",
+      "source": "estimated",
+      "reference": "design chamber pressure"
+     }
+    }
+   }
+  },
+  {
+   "id": "PTOXD",
+   "type": "PT",
+   "position": {
+    "x": 20,
+    "y": 700
+   },
+   "data": {
+    "componentType": "PT",
+    "label": "PT-OX-DN",
+    "attachedTo": "MVO"
+   }
+  },
+  {
+   "id": "PTFUD",
+   "type": "PT",
+   "position": {
+    "x": 560,
+    "y": 700
+   },
+   "data": {
+    "componentType": "PT",
+    "label": "PT-FU-DN",
+    "attachedTo": "MVF"
+   }
+  },
+  {
+   "id": "SVOV",
+   "type": "SOL",
+   "position": {
+    "x": 720,
+    "y": 520
+   },
+   "data": {
+    "componentType": "SOL",
+    "label": "SV-LOX-VENT",
+    "fluid": "oxygen",
+    "params": {
+     "Cv": {
+      "value": 3.8,
+      "unit": "Cv",
+      "source": "estimated",
+      "reference": "3/8 in. solenoid; scaled from the measured 1/4 in. Cv 1.7 by flow area (9.53/6.35)^2 = 2.25"
+     },
+     "bore": {
+      "value": 9.53,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "3/8 in. NPT"
+     },
+     "travel_time": {
+      "value": 50,
+      "unit": "ms",
+      "source": "measured",
+      "reference": ""
+     }
+    }
+   }
+  },
+  {
+   "id": "VNTO",
+   "type": "VENT",
+   "position": {
+    "x": 860,
+    "y": 520
+   },
+   "data": {
+    "componentType": "VENT",
+    "label": "VENT-LOX"
+   }
+  },
+  {
+   "id": "SVFV",
+   "type": "SOL",
+   "position": {
+    "x": 720,
+    "y": 620
+   },
+   "data": {
+    "componentType": "SOL",
+    "label": "SV-FU-VENT",
+    "fluid": "ethanol",
+    "params": {
+     "Cv": {
+      "value": 3.8,
+      "unit": "Cv",
+      "source": "estimated",
+      "reference": "3/8 in. solenoid; scaled from the measured 1/4 in. Cv 1.7 by flow area (9.53/6.35)^2 = 2.25"
+     },
+     "bore": {
+      "value": 9.53,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "3/8 in. NPT"
+     },
+     "travel_time": {
+      "value": 50,
+      "unit": "ms",
+      "source": "measured",
+      "reference": ""
+     }
+    }
+   }
+  },
+  {
+   "id": "VNTF",
+   "type": "VENT",
+   "position": {
+    "x": 860,
+    "y": 620
+   },
+   "data": {
+    "componentType": "VENT",
+    "label": "VENT-FU"
+   }
+  },
+  {
+   "id": "SVHV",
+   "type": "SOL",
+   "position": {
+    "x": 720,
+    "y": 220
+   },
+   "data": {
+    "componentType": "SOL",
+    "label": "SV-HE-VENT",
+    "fluid": "helium",
+    "params": {
+     "Cv": {
+      "value": 3.8,
+      "unit": "Cv",
+      "source": "estimated",
+      "reference": "3/8 in. solenoid; scaled from the measured 1/4 in. Cv 1.7 by flow area"
+     },
+     "bore": {
+      "value": 9.53,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "3/8 in. NPT"
+     },
+     "travel_time": {
+      "value": 50,
+      "unit": "ms",
+      "source": "measured",
+      "reference": ""
+     }
+    }
+   }
+  },
+  {
+   "id": "VNTH",
+   "type": "VENT",
+   "position": {
+    "x": 860,
+    "y": 220
+   },
+   "data": {
+    "componentType": "VENT",
+    "label": "VENT-HE"
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "l_kb",
+   "source": "KBHE",
+   "sourceHandle": "r",
+   "target": "PRC",
+   "targetHandle": "l",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.5,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "bottle to control regulator"
+     },
+     "bore": {
+      "value": 10.92,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/2 in. x 0.035 wall Swagelok tube, ID 0.430 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.5,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "sharp exit from the vessel into the line (Crane A-29 K=0.5); no fittings itemised"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_ctrl",
+   "source": "PRC",
+   "sourceHandle": "r",
+   "target": "PRD",
+   "targetHandle": "dome",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.3,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "control reg to the dome"
+     },
+     "bore": {
+      "value": 10.92,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/2 in. x 0.035 wall Swagelok tube, ID 0.430 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "short stub, no fittings counted"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_reg",
+   "source": "PRD",
+   "sourceHandle": "r",
+   "target": "MFP",
+   "targetHandle": "in",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.3,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "regulator outlet to the press manifold"
+     },
+     "bore": {
+      "value": 10.92,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/2 in. x 0.035 wall Swagelok tube, ID 0.430 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "short stub, no fittings counted"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_hv",
+   "source": "MFP",
+   "sourceHandle": "p",
+   "target": "SVHV",
+   "targetHandle": "l",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.4,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "3/8 in. NPT vent line, stated by the propulsion lead"
+     },
+     "bore": {
+      "value": 9.53,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "3/8 in. NPT, nominal bore 0.375 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.5,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "sharp exit from the vessel into the line (Crane A-29 K=0.5); no fittings itemised"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_hv2",
+   "source": "SVHV",
+   "sourceHandle": "r",
+   "target": "VNTH",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.3,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "3/8 in. NPT vent line, stated by the propulsion lead"
+     },
+     "bore": {
+      "value": 9.53,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "3/8 in. NPT, nominal bore 0.375 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "short stub, no fittings counted"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_oxp_in",
+   "source": "MFP",
+   "sourceHandle": "p2",
+   "target": "SVOP",
+   "targetHandle": "l",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.6,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "manifold to LOX press solenoid"
+     },
+     "bore": {
+      "value": 10.92,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/2 in. x 0.035 wall Swagelok tube, ID 0.430 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.5,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "sharp exit from the vessel into the line (Crane A-29 K=0.5); no fittings itemised"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_fup_in",
+   "source": "MFP",
+   "sourceHandle": "p3",
+   "target": "SVFP",
+   "targetHandle": "l",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.6,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "manifold to fuel press solenoid"
+     },
+     "bore": {
+      "value": 10.92,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/2 in. x 0.035 wall Swagelok tube, ID 0.430 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.5,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "sharp exit from the vessel into the line (Crane A-29 K=0.5); no fittings itemised"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_oxp",
+   "source": "SVOP",
+   "sourceHandle": "r",
+   "target": "OXT",
+   "targetHandle": "t",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.5,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "press solenoid into the LOX ullage"
+     },
+     "bore": {
+      "value": 10.92,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/2 in. x 0.035 wall Swagelok tube, ID 0.430 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "short stub, no fittings counted"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_fup",
+   "source": "SVFP",
+   "sourceHandle": "r",
+   "target": "FUT",
+   "targetHandle": "t",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.5,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "press solenoid into the fuel ullage"
+     },
+     "bore": {
+      "value": 10.92,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/2 in. x 0.035 wall Swagelok tube, ID 0.430 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "short stub, no fittings counted"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_ox1",
+   "source": "OXT",
+   "sourceHandle": "b",
+   "target": "MVO",
+   "targetHandle": "l",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.07,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "LOX main: 1/2 in. valve + line, 8 in. overall, less the valve body"
+     },
+     "bore": {
+      "value": 10.92,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/2 in. x 0.035 wall Swagelok tube, ID 0.430 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.5,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "sharp exit from the vessel into the line (Crane A-29 K=0.5); no fittings itemised"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_ox2",
+   "source": "MVO",
+   "sourceHandle": "r",
+   "target": "ENG",
+   "targetHandle": "ox",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.07,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "LOX main: 8 in. overall, less the valve body"
+     },
+     "bore": {
+      "value": 10.92,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/2 in. x 0.035 wall Swagelok tube, ID 0.430 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "short stub, no fittings counted"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_fu1",
+   "source": "FUT",
+   "sourceHandle": "b",
+   "target": "MVF",
+   "targetHandle": "l",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.9144,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "fuel main: 3 ft of 1/2 in. Swagelok, tank to ball valve"
+     },
+     "bore": {
+      "value": 10.92,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/2 in. x 0.035 wall Swagelok tube, ID 0.430 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.5,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "sharp exit from the vessel into the line (Crane A-29 K=0.5); no fittings itemised"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_fu2",
+   "source": "MVF",
+   "sourceHandle": "r",
+   "target": "ENG",
+   "targetHandle": "fuel",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.05,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "fuel main: ball valve outlet straight into the injector"
+     },
+     "bore": {
+      "value": 10.92,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "1/2 in. x 0.035 wall Swagelok tube, ID 0.430 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "short stub, no fittings counted"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_oxv",
+   "source": "OXT",
+   "sourceHandle": "t",
+   "target": "SVOV",
+   "targetHandle": "l",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.4,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "3/8 in. NPT vent line, stated by the propulsion lead"
+     },
+     "bore": {
+      "value": 9.53,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "3/8 in. NPT, nominal bore 0.375 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.5,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "sharp exit from the vessel into the line (Crane A-29 K=0.5); no fittings itemised"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_oxv2",
+   "source": "SVOV",
+   "sourceHandle": "r",
+   "target": "VNTO",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.3,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "3/8 in. NPT vent line, stated by the propulsion lead"
+     },
+     "bore": {
+      "value": 9.53,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "3/8 in. NPT, nominal bore 0.375 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "short stub, no fittings counted"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_fuv",
+   "source": "FUT",
+   "sourceHandle": "t",
+   "target": "SVFV",
+   "targetHandle": "l",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.4,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "3/8 in. NPT vent line, stated by the propulsion lead"
+     },
+     "bore": {
+      "value": 9.53,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "3/8 in. NPT, nominal bore 0.375 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.5,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "sharp exit from the vessel into the line (Crane A-29 K=0.5); no fittings itemised"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_fuv2",
+   "source": "SVFV",
+   "sourceHandle": "r",
+   "target": "VNTF",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.3,
+      "unit": "m",
+      "source": "estimated",
+      "reference": "3/8 in. NPT vent line, stated by the propulsion lead"
+     },
+     "bore": {
+      "value": 9.53,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "3/8 in. NPT, nominal bore 0.375 in."
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 0.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "short stub, no fittings counted"
+     }
+    }
+   }
+  }
+ ]
+}

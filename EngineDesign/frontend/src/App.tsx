@@ -17,6 +17,11 @@ import { ReadOnlyProvider } from '@stardesign-ui';
 import { getConfig, getHealth } from './api/client';
 import type { EngineConfig } from './api/client';
 
+// Injected by vite.config.ts from ENGINE_DESIGN_API_PORT, so the reconnect
+// hint names the port this build actually proxies to.
+declare const __API_PORT__: string
+const API_PORT = typeof __API_PORT__ === 'undefined' ? '8000' : __API_PORT__
+
 type Tab =
   | 'forward'
   | 'timeseries'
@@ -228,8 +233,8 @@ function App() {
               </svg>
               <div>
                 <p className="font-semibold">Backend not connected</p>
-                <p className="text-sm">Make sure the FastAPI server is running on port 8000</p>
-                <code className="text-xs mt-1 block text-red-300">uvicorn backend.main:app --reload --port 8000</code>
+                <p className="text-sm">Make sure the FastAPI server is running on port {API_PORT}</p>
+                <code className="text-xs mt-1 block text-red-300">uvicorn backend.main:app --reload --port {API_PORT}</code>
               </div>
             </div>
           </div>

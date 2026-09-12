@@ -15,12 +15,20 @@ landing
 docs
 scripts/setup-test
 
-# lib/ is excluded wholesale EXCEPT the two shared cores every design-tool
-# image builds on -- the Python one the APIs install, and the TypeScript one the
-# frontends compile. The negations must come after the exclusion.
+# lib/ is excluded wholesale EXCEPT the shared cores that root-context images
+# install or compile: the Python design core the APIs install, the TypeScript UI
+# the frontends compile, and the feed system physics feed-twin's API is built on.
+# The negations must come after the exclusion.
+#
+# Adding a package under lib/ WITHOUT a negation here is a silent trap: the
+# `COPY lib/<pkg>/ ...` in its Dockerfile fails with "not found", but only
+# inside a real docker build -- every local test passes, because nothing else
+# consults this file. If you add a lib/ package that an image needs, add it here
+# in the same commit.
 lib
 !lib/stardesign
 !lib/stardesign-ui
+!lib/feedtwin
 
 # recovery-calculator and pid-designer now build from the repo root too, so
 # their sources have to reach the context -- but only their own image copies
@@ -35,6 +43,10 @@ venv
 **/__pycache__
 **/*.pyc
 **/.pytest_cache
+# setuptools metadata from a host `pip install -e`. The image regenerates it
+# when it installs the package, so copying the host's in only risks a stale
+# SOURCES.txt shadowing the real one.
+**/*.egg-info
 **/.pio
 **/build
 

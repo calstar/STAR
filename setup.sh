@@ -51,6 +51,7 @@ PROJECTS=(
   "pid-designer|P&ID Designer|pid-designer/setup.sh|FastAPI + React P&ID editor (quick)"
   "recovery-calculator|Recovery Calculator|recovery-calculator/setup.sh|Parachute descent physics + FastAPI + React"
   "onshape-viewer|Onshape CM Viewer|onshape-viewer/setup.sh|FastAPI + React/three.js CAD centre-of-mass viewer (quick)"
+  "feed-twin|Feed System Twin|feed-twin/setup.sh|Feed system physics (CoolProp/fluids) + FastAPI + React"
   "engine-design|Engine Design|EngineDesign/setup.sh|Python physics pipeline + FastAPI + React"
   "firmware|Firmware|firmware/setup.sh|PlatformIO for ESP32 board firmware"
   "daq-server|DAQ Server|daq-server/setup.sh|C++ + Rust + Python + Node — the big one"
@@ -83,6 +84,7 @@ show_help() {
     --pid-designer       Install pid-designer
     --recovery-calculator Install recovery-calculator
     --onshape-viewer     Install onshape-viewer
+    --feed-twin          Install feed-twin
     --list               List projects and exit
     --yes, -y            Accept all prompts (non-interactive)
     --no-hook            Don't offer daq-server pre-push format hook
@@ -113,6 +115,7 @@ while [ $# -gt 0 ]; do
     --pid-designer)        SELECTED+=("pid-designer") ;;
     --recovery-calculator) SELECTED+=("recovery-calculator") ;;
     --onshape-viewer)      SELECTED+=("onshape-viewer") ;;
+    --feed-twin)           SELECTED+=("feed-twin") ;;
     --list)          DID_LIST=1 ;;
     --yes|-y)        export SETUP_YES=1; PASSTHRU+=("--yes") ;;
     --no-hook)       PASSTHRU+=("--no-hook") ;;

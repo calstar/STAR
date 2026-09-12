@@ -60,6 +60,8 @@ services:
       - engine-design-frontend
       - pid-designer-api
       - pid-designer-frontend
+      - feed-twin-api
+      - feed-twin-frontend
       - recovery-calculator-api
       - recovery-calculator-frontend
       - onshape-viewer-api
@@ -219,6 +221,47 @@ services:
       # the design-tool UI shared by all three frontends.
       context: .
       dockerfile: pid-designer/frontend/Dockerfile
+    restart: unless-stopped
+    mem_limit: 512m
+    memswap_limit: 512m   # == mem_limit -> no swap; OOM this container alone
+
+  # ── Feed Twin ────────────────────────────────────────────────────────────
+  # The digital twin of the feed system. Imports a drawing out of pid-designer
+  # and an engine out of EngineDesign and solves the two together, so it is the
+  # one app here that talks to its siblings rather than only to the browser.
+  feed-twin-api:
+    image: ghcr.io/calstar/star-feed-twin-api:latest
+    build:
+      # Repo root, not the subproject: the backend is built on lib/feedtwin,
+      # the physics core it shares with EngineDesign.
+      context: .
+      dockerfile: feed-twin/Dockerfile.api
+    restart: unless-stopped
+    # Larger than the other design tools on purpose: CoolProp's bicubic tables
+    # are built per species on first use and held for the life of the process.
+    mem_limit: 3g
+    memswap_limit: 3g   # == mem_limit -> no swap; OOM this container alone
+    environment:
+      # Imported drawings and engine configs, addressed by the SHA-256 of their
+      # own bytes. On the volume rather than in the image so a redeploy does not
+      # drop what people have imported -- and so a result from last month can
+      # still name the exact artifact it ran on.
+      FEEDTWIN_LIBRARY: /data/feed-twin/library
+      # Where the siblings live inside the compose network. This is the whole
+      # integration: with these set, importing a P&ID is picking one out of a
+      # list rather than exporting a file and uploading it. The caller's
+      # X-Auth-Email is forwarded on each request, so the design tool applies
+      # its own sharing rules -- see feed-twin/backend/designtools.py.
+      PID_DESIGNER_URL: http://pid-designer-api:8001
+      ENGINE_DESIGN_URL: http://engine-design-api:8000
+    volumes:
+      - userdata:/data
+
+  feed-twin-frontend:
+    image: ghcr.io/calstar/star-feed-twin-frontend:latest
+    build:
+      context: .
+      dockerfile: feed-twin/frontend/Dockerfile
     restart: unless-stopped
     mem_limit: 512m
     memswap_limit: 512m   # == mem_limit -> no swap; OOM this container alone

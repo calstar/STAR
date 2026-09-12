@@ -1,0 +1,21 @@
+# Build artifacts from `pip install -e .`.
+#
+# The root .gitignore covers dist/ but not egg-info, and setuptools regenerates
+# this directory on every editable install -- so without this it shows up as a
+# spurious diff whenever anyone re-runs setup.sh, and its SOURCES.txt records
+# whatever files happened to exist on that machine.
+#
+# lib/stardesign has its egg-info committed. That is a mistake, not a
+# convention; do not copy it here.
+*.egg-info/
+build/
+dist/
+
+__pycache__/
+*.pyc
+*.pyo
+
+# Property table caches. CoolProp writes tabular backends to ~/.CoolProp by
+# default, but a pinned local cache directory arrives with Phase 01 and would
+# land here -- tens of MB of regenerable binary, per fluid.
+.proptables/

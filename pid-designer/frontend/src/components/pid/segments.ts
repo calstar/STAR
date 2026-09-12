@@ -202,6 +202,13 @@ export interface FittingRow {
   count: number;
   /** Overrides the segment bore for these. */
   boreMm?: number;
+  /**
+   * A bend's geometry, for `kind: 'bend'`: centerline radius over bore, and
+   * the angle turned. What feed-twin's bend correlation is priced on; both
+   * come off the sketch, never typed.
+   */
+  bendDiameters?: number;
+  angleDeg?: number;
   /** Centreline length, for the cut list. Never for the friction term. */
   lengthMm?: number;
   /**
