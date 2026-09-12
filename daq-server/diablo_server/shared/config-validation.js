@@ -166,8 +166,12 @@ export function validateConfigForRun(config, csv) {
             if (d.orphan.length || d.missing.length)
                 add('state', 'error', 'The Transitions table rows do not match the state list — every state must have a row.');
         }
+        // There is no fallback to the compiled Engine/GSE/Emergency ids once [[states]] is declared —
+        // StateMachine::isAbort() treats "config declares states but flags none is_abort" as "this rig
+        // has no abort states", not as "use 17/18/19". So flagging none does not leave the built-in
+        // aborts standing in; it leaves the rig with none at all.
         if (stateList.every((s) => !s?.is_abort))
-            add('state', 'warn', 'No state is flagged Abort. Aborts are not disabled — the controller falls back to its built-in aborts (Engine / GSE / Emergency), which may not match these states.');
+            add('state', 'warn', 'No state is flagged Abort, so this rig has no abort states. Nothing falls back to the built-in Engine / GSE / Emergency aborts: entering a state never triggers the sequencer\'s abort broadcast, and any abort control the config declares no state for is disabled in the GUI. The boards\' own independent abort logic is unaffected.');
         // The fire timer: on expiry the sequencer commands fire.state → fire.expiry_target. If that
         // move is not allowed, the timer expires into a refused transition and the system stays in fire.
         const fireState = String(config?.fire?.state ?? '');
