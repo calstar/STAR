@@ -29,6 +29,8 @@ __all__ = [
     "n_tau_gain",
     "choked_flow_function",
     "chamber_residence_time",
+    "area_ratio_from_mach",
+    "mach_from_area_ratio_subsonic",
     "spalding_transfer_number_heat",
     "d2_law_evaporation_constant",
     "vaporization_time",
@@ -133,6 +135,35 @@ def chamber_residence_time(Lstar: float, cstar: float, gamma: float) -> float:
     if not np.isfinite(G) or G <= 0 or cstar <= 0 or Lstar <= 0:
         return float("nan")
     return float(Lstar / (G * G * cstar))
+
+
+def area_ratio_from_mach(M: float, gamma: float) -> float:
+    """Isentropic area ratio ``A/A* = (1/M) * [(2/(g+1)) * (1 + (g-1)/2 * M^2)]^((g+1)/(2(g-1)))``."""
+    g = float(gamma)
+    if M <= 0 or g <= 1.0:
+        return float("nan")
+    return float((1.0 / M) * ((2.0 / (g + 1.0)) * (1.0 + 0.5 * (g - 1.0) * M * M)) ** ((g + 1.0) / (2.0 * (g - 1.0))))
+
+
+def mach_from_area_ratio_subsonic(area_ratio: float, gamma: float) -> float:
+    """Subsonic Mach number at a station with ``A/A* = area_ratio`` (isentropic, one-dimensional).
+
+    This is the mean Mach at the nozzle entrance when ``area_ratio`` is the contraction ratio
+    ``A_chamber / A_throat``, which is what sets the convective (nozzle) acoustic damping. Bisection
+    on [1e-6, 1]: A/A* is monotone decreasing in M on the subsonic branch. ``area_ratio <= 1`` -> 1.0.
+    """
+    if not np.isfinite(area_ratio) or gamma <= 1.0:
+        return float("nan")
+    if area_ratio <= 1.0:
+        return 1.0
+    lo, hi = 1e-6, 1.0
+    for _ in range(80):
+        mid = 0.5 * (lo + hi)
+        if area_ratio_from_mach(mid, gamma) > area_ratio:
+            lo = mid          # too subsonic: area ratio still above target -> raise M
+        else:
+            hi = mid
+    return float(0.5 * (lo + hi))
 
 
 # ---------------------------------------------------------------------------

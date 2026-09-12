@@ -10,6 +10,7 @@
  *   its inputs on. Greyed fields, not merely a refused save -- so there is no
  *   state where someone believes they have it and does not.
  * - **It lapses** after inactivity server-side, and is released on tab close.
+ *   While held, a heartbeat re-takes it well inside the server's lock_ttl.
  *
  * Two things in here exist to prevent data loss rather than to be tidy:
  *
@@ -60,6 +61,8 @@ export interface UseCheckoutOptions<T> {
   reload?: () => Promise<void> | void;
   /** How often to re-check while somebody else holds it. */
   pollMs?: number;
+  /** How often to re-stamp the checkout while we hold it (must beat the server's lock_ttl). */
+  heartbeatMs?: number;
 }
 
 export function useCheckout<T>({
@@ -67,6 +70,7 @@ export function useCheckout<T>({
   ref,
   reload,
   pollMs = 10_000,
+  heartbeatMs = 60_000,
 }: UseCheckoutOptions<T>): Checkout {
   const [state, setState] = useState<CheckoutState>(FREE);
   const [busy, setBusy] = useState(false);
@@ -87,9 +91,41 @@ export function useCheckout<T>({
     setError(null);
   }, [key]);
 
+  // Keep it alive while we hold it. The server treats a checkout with no
+  // heartbeat inside lock_ttl (5 min) as free, and autosave only writes when the
+  // design CHANGED -- so a long read, or a long optimizer run, let the token
+  // lapse under the holder and the next write came back 423 ("your checkout
+  // has lapsed"). Re-taking is the heartbeat: for the holder it is idempotent
+  // and re-stamps lockHeartbeat. A 423 here means somebody took it in a gap;
+  // drop to read-only at once instead of finding out on the next save.
+  useEffect(() => {
+    if (!ref || !state.lockedByMe) return;
+    let cancelled = false;
+    const beat = () => {
+      const r = refRef.current;
+      if (!r) return;
+      api
+        .takeCheckout(r)
+        .then((s) => !cancelled && setState(s))
+        .catch((e) => {
+          if (cancelled) return;
+          if (e instanceof ApiError && e.status === 423) {
+            setState((prev) => ({ ...prev, lockedByMe: false }));
+            api.getCheckout(r).then((s) => !cancelled && setState(s)).catch(() => {});
+          }
+          /* anything else is transient (network blip); the next beat retries */
+        });
+    };
+    const id = setInterval(beat, heartbeatMs);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [api, key, state.lockedByMe, heartbeatMs]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Poll only while we do NOT hold it. A chip reading "taken" after the holder
   // has released is worse than no chip; this is what makes Take light up on its
-  // own. Once we hold it there is nothing to learn -- our own saves keep it.
+  // own. While we hold it the heartbeat above is what keeps the state honest.
   useEffect(() => {
     if (!ref || state.lockedByMe) return;
     let cancelled = false;
@@ -110,20 +146,19 @@ export function useCheckout<T>({
   }, [api, key, state.lockedByMe, pollMs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Give it back when the tab goes away, so a colleague is not left waiting out
-  // the inactivity timeout for a design nobody has open.
+  // the inactivity timeout for a design nobody has open. Only on pagehide: this
+  // used to fire on visibilitychange too, which released the checkout the moment
+  // the user looked at another tab -- mid-optimization, that turned the run's
+  // result write into "Take Design 1 before saving". A hidden tab still holds
+  // and heartbeats; a closed one lapses after lock_ttl.
   useEffect(() => {
     const drop = () => {
       const r = refRef.current;
       if (r && heldRef.current) api.releaseCheckoutOnUnload(r);
     };
-    const onHide = () => {
-      if (document.visibilityState === 'hidden') drop();
-    };
     window.addEventListener('pagehide', drop);
-    document.addEventListener('visibilitychange', onHide);
     return () => {
       window.removeEventListener('pagehide', drop);
-      document.removeEventListener('visibilitychange', onHide);
     };
   }, [api]);
 

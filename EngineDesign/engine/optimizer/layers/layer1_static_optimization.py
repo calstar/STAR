@@ -1664,7 +1664,9 @@ def _layer1_apply_chamber_geometry_to_config(
         L_chamber = V_chamber / A_chamber if A_chamber > 0 else 0.2
         L_cylindrical = max(L_chamber * 0.5, 0.05)
 
-    L_chamber = np.clip(L_chamber, 0.005, 1.0)
+    # Positivity guard only. The old clip also capped the chamber at 1.0 m, a size limit no
+    # requirement asked for; engine length is constrained by max_engine_length elsewhere.
+    L_chamber = max(float(L_chamber), 0.005)
 
     if config.chamber_geometry is None:
         cg = ensure_chamber_geometry(config)
@@ -2684,7 +2686,7 @@ def _config_to_dict(config: PintleEngineConfig) -> dict:
     
     Uses pydantic's dict() method if available, otherwise falls back to __dict__.
     """
-    return config.dict() if hasattr(config, 'dict') else config.__dict__
+    return config.model_dump() if hasattr(config, 'model_dump') else config.__dict__
 
 
 def _dict_to_config(config_dict: dict) -> PintleEngineConfig:
@@ -2841,7 +2843,16 @@ def _snap_integer_dims(x: np.ndarray, integer_indices: list) -> np.ndarray:
 
 
 def _get_num_workers(config_obj) -> int:
-    """Get number of workers from config or default to cpu_count - 1."""
+    """Get number of workers from config or default to cpu_count - 1.
+
+    ``ED_L1_WORKERS`` overrides both (``1`` runs every candidate in-process, which is what a
+    debugger or an infeasibility trace needs)."""
+    env = os.environ.get("ED_L1_WORKERS")
+    if env:
+        try:
+            return max(1, int(env))
+        except ValueError:
+            pass
     if hasattr(config_obj, 'optimizer') and hasattr(config_obj.optimizer, 'num_workers'):
         num_workers = config_obj.optimizer.num_workers
     else:
@@ -2986,6 +2997,18 @@ def _apply_x_to_worker_config_inplace(x: np.ndarray, config: PintleEngineConfig,
             config.fuel_tank.initial_pressure_psi = _pf
 
 
+# Infeasibility trace: set ED_L1_TRACE_INFEAS=1 (with ED_L1_WORKERS=1 so candidates run in-process)
+# and each objective evaluation appends {checkpoint: running infeasibility score} here -- the only
+# way to see WHICH gate keeps a run infeasible when every candidate returns the 1e6 floor.
+_INFEAS_TRACE: List[Dict[str, float]] = []
+_INFEAS_TRACE_ON = bool(os.environ.get("ED_L1_TRACE_INFEAS"))
+
+
+def _infeas_trace(entry: Optional[Dict[str, float]], label: str, value: float) -> None:
+    if entry is not None:
+        entry[label] = float(value)
+
+
 def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, constants: dict) -> float:
     """Compute objective value from evaluation result.
 
@@ -3096,6 +3119,9 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
     P_F_ratio = P_F_psi / max_fuel_P_psi if max_fuel_P_psi > 0 else 0.0
 
     infeasibility_score = 0.0
+    _tr = {} if _INFEAS_TRACE_ON else None
+    if _tr is not None:
+        _INFEAS_TRACE.append(_tr)
 
     if A_chamber_check > 0 and A_throat_check > 0:
         contraction_ratio_check = A_chamber_check / A_throat_check
@@ -3148,6 +3174,7 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
             A_throat_check=A_throat_check,
         )
 
+    _infeas_trace(_tr, "geometry", infeasibility_score)
     # --- Evaluation Results ---
     eval_success = result.get('success', False) if isinstance(result, dict) else False
     # Runner.evaluate typically omits success; infer from finite thrust/Pc when absent
@@ -3259,6 +3286,7 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
         infeasibility_score += max(0.0, (effective_margin - chugging_margin) / effective_margin) ** 2
         infeasibility_score += max(0.0, (effective_margin - acoustic_margin) / effective_margin) ** 2
         infeasibility_score += max(0.0, (effective_margin - feed_margin) / effective_margin) ** 2
+    _infeas_trace(_tr, "stability", infeasibility_score)
     
     # Regularization: Cf band
     def _hinge_band(val, lo, hi, scale=1.0):
@@ -3436,6 +3464,8 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
                 max_outward_deg=float(constants.get("layer1_resultant_tilt_max_deg", 0.0)),
                 scale_deg=float(constants.get("layer1_resultant_tilt_scale_deg", 2.0)),
             )
+            _infeas_trace(_tr, "wall_tilt", infeasibility_score)
+            _infeas_trace(_tr, "tilt_deg", _tilt)
             momentum_term = _impinging_momentum_asymmetric_squared(
                 R_val,
                 wall_side_multiplier=float(
@@ -3974,6 +4004,60 @@ def _layer1_emit_objective_plot_point(
         pass
 
 
+def _layer1_infeasibility_reason(runner, x, requirements: dict, constants: dict) -> Optional[str]:
+    """One sentence on WHICH hard constraint held the best candidate out of the feasible set.
+
+    A run whose every candidate sat on the 1e6 infeasibility floor used to end with
+    "objective inf" and "Validation failed", which told the user nothing. Re-evaluate the best
+    design in-process with the infeasibility trace on and name the dominant gate.
+    """
+    global _INFEAS_TRACE_ON
+    try:
+        idx_P_O = 11 if constants.get("injector_type") == "impinging" else 8
+        P_O = float(x[idx_P_O]) * 6894.76
+        P_F = float(x[idx_P_O + 1]) * 6894.76
+        result = runner.evaluate(P_O, P_F, silent=True)
+    except Exception as e:
+        return f"No feasible design: the best candidate could not even be evaluated ({type(e).__name__}: {str(e)[:120]})."
+    prev, n0 = _INFEAS_TRACE_ON, len(_INFEAS_TRACE)
+    _INFEAS_TRACE_ON = True
+    try:
+        _compute_objective_value(result, np.asarray(x, dtype=float), requirements, constants)
+    except Exception as e:
+        return f"No feasible design: objective re-evaluation failed ({type(e).__name__})."
+    finally:
+        _INFEAS_TRACE_ON = prev
+    if len(_INFEAS_TRACE) <= n0:
+        return None
+    tr = _INFEAS_TRACE.pop()
+    geom = float(tr.get("geometry", 0.0))
+    stab = float(tr.get("stability", geom)) - geom
+    wall = float(tr.get("wall_tilt", tr.get("stability", geom))) - float(tr.get("stability", geom))
+    parts = []
+    if wall > 0:
+        tilt = tr.get("tilt_deg", float("nan"))
+        lim = float(constants.get("layer1_resultant_tilt_max_deg", 0.0))
+        parts.append((wall, f"the spray resultant tilts {tilt:+.1f} deg outward toward the wall (limit {lim:g} deg) -- "
+                            "lower the oxidizer jet angle, raise the fuel jet angle, or widen the angle bands"))
+    if stab > 0:
+        parts.append((stab, "a stability gate (minimum score / margins) is not met -- lower min_stability_score or stiffen the injector"))
+    if geom > 0:
+        parts.append((geom, "injector packing, flow capacity, or chamber proportions violate a hard limit -- widen the chamber OD or the jet bounds"))
+    if not parts:
+        # Re-evaluated in isolation the best design passes every gate: the search is stuck ON a
+        # constraint boundary and CMA's samples keep landing a hair outside it. For a doublet that
+        # is almost always the spray-resultant tilt limit, which defaults to exactly 0 deg outward.
+        lim = float(constants.get("layer1_resultant_tilt_max_deg", 0.0))
+        if constants.get("injector_type") == "impinging":
+            return ("No candidate cleared every hard constraint, yet the best design re-evaluates as feasible "
+                    f"on its own: the search is pinned on the spray-resultant tilt limit ({lim:g} deg outward). "
+                    "Re-run, or allow a degree of outward tilt (layer1_resultant_tilt_max_deg) if the liner can take it.")
+        return ("No candidate cleared every hard constraint, yet the best design re-evaluates as feasible on its "
+                "own: the search is pinned on a constraint boundary. Re-run, or relax the tightest gate slightly.")
+    parts.sort(key=lambda t: -t[0])
+    return "No candidate cleared every hard constraint. On the best one, " + parts[0][1] + "."
+
+
 def run_layer1_global_search(
     objective: Callable[[np.ndarray], float],
     bounds: list,
@@ -4084,6 +4168,29 @@ def run_layer1_global_search(
     return best_x
 
 
+def _layer1_check_of_target_in_cea_range(config_obj: Any, optimal_of: Any) -> None:
+    """Refuse a target O/F the propellant's CEA table cannot evaluate.
+
+    A propellant switch keeps the previous design target, so an ethalox target of 1.4 left
+    behind on a methalox config used to run a full optimization against a table that stops at
+    2.4 -- the mixture ratio pinned at the table edge and the run returned a huge objective with
+    nothing to say why. Fail before any work is done, with the fix in the message.
+    """
+    try:
+        mr_range = config_obj.combustion.cea.MR_range
+        lo, hi = float(mr_range[0]), float(mr_range[1])
+        of = float(optimal_of)
+    except (AttributeError, TypeError, ValueError, IndexError):
+        return
+    if not (np.isfinite(of) and lo <= of <= hi):
+        preset = getattr(config_obj, "propellant_preset", None) or "this propellant"
+        raise ValueError(
+            f"Design target O/F {of:.2f} is outside the CEA table for {preset} "
+            f"(MR_range [{lo:.2f}, {hi:.2f}]). Set optimal_of_ratio inside that range in Design "
+            f"Requirements -- switching propellant keeps the previous target."
+        )
+
+
 def run_layer1_optimization(
     config_obj: PintleEngineConfig,
     runner: PintleEngineRunner,
@@ -4184,6 +4291,7 @@ def run_layer1_optimization(
     # Extract requirements
     target_thrust = requirements.get("target_thrust", 7000.0)
     optimal_of = requirements.get("optimal_of_ratio", 2.3)
+    _layer1_check_of_target_in_cea_range(config_obj, optimal_of)
     min_stability = float(requirements.get("min_stability_margin", _LAYER1_DEFAULT_MIN_STABILITY_MARGIN))
 
     def _resolve_Lstar_bounds_from_req_and_config() -> Tuple[float, float]:
@@ -7806,6 +7914,16 @@ def run_layer1_optimization(
             optimized_config_runner.graphite_insert.enabled = False
     
     optimized_runner = PintleEngineRunner(optimized_config_runner)
+
+    # When nothing was feasible, say which gate held the best candidate out (see the helper).
+    infeasible_reason = None
+    try:
+        if best_x is not None and not _layer1_feasible_scalar_objective(float(opt_state.get("best_objective", float("inf")))):
+            infeasible_reason = _layer1_infeasibility_reason(optimized_runner, best_x, requirements, constants_dict)
+            if infeasible_reason and log_status:
+                log_status("warning", infeasible_reason)
+    except Exception:
+        infeasible_reason = None
     
     # Use stored validation results if available
     if "best_results_for_validation" in opt_state and opt_state["best_results_for_validation"] is not None:
@@ -8511,6 +8629,7 @@ def run_layer1_optimization(
                 else {}
             ),
             "primary_relative_residual": _prim_rel,
+            "infeasible_reason": infeasible_reason,
         },
         "exit_pressure_targeting": {
             "target_P_exit": target_P_exit,  # Atmospheric pressure from environment config (GPS/GFS-derived)

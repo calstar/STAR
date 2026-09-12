@@ -37,6 +37,8 @@ interface FlightSimulationProps {
   config: EngineConfig | null;
   isVisible?: boolean;
   onConfigUpdated?: (config: EngineConfig) => void;
+  /** Design-state slice this mount persists under (the Layer 4 mount uses its own). */
+  sliceKey?: string;
 }
 
 // Session storage handled via timeseriesSession utility (shared with TimeSeriesMode)
@@ -167,7 +169,7 @@ function MetricCard({
   );
 }
 
-export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: FlightSimulationProps) {
+export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sliceKey = 'flight' }: FlightSimulationProps) {
   // RocketPy availability
   const [rocketPyAvailable, setRocketPyAvailable] = useState<boolean | null>(null);
   const [rocketPyMessage, setRocketPyMessage] = useState<string>('');
@@ -220,7 +222,9 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
   // The fields Save Configuration does NOT write. Everything else on this tab
   // round-trips through config.rocket / config.environment on an explicit save;
   // these seven have no config field at all, so they were lost on reload.
-  useDesignSlice('flight', {
+  // Keyed per mount point: the Flight tab and the optimizer's Layer 4 both render this
+  // component, and two registrations under one key would leave one of them un-restored.
+  useDesignSlice(sliceKey, {
     atmosphereModel: [atmosphereModel, setAtmosphereModel],
     autoInertia: [autoInertia, setAutoInertia],
     noseFineness: [noseFineness, setNoseFineness],
@@ -1538,7 +1542,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
                   <h4 className="text-sm font-medium text-[var(--color-text-secondary)] mb-2">Altitude vs Time</h4>
                   <div className="h-64">
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={trajectoryData}>
+                      <LineChart data={trajectoryData} margin={{ top: 5, right: 20, left: 10, bottom: 20 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                         <XAxis
                           dataKey="time"
@@ -1587,7 +1591,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
                   <h4 className="text-sm font-medium text-[var(--color-text-secondary)] mb-2">Velocity vs Time</h4>
                   <div className="h-64">
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={trajectoryData}>
+                      <LineChart data={trajectoryData} margin={{ top: 5, right: 20, left: 10, bottom: 20 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                         <XAxis
                           dataKey="time"
@@ -1656,7 +1660,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
                     </h4>
                     <div className="h-64">
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={thrustCurveData}>
+                        <LineChart data={thrustCurveData} margin={{ top: 5, right: 20, left: 10, bottom: 20 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                           <XAxis
                             dataKey="time"
@@ -1708,7 +1712,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
                     </h4>
                     <div className="h-64">
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={tankPressureData}>
+                        <LineChart data={tankPressureData} margin={{ top: 5, right: 20, left: 10, bottom: 20 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                           <XAxis
                             dataKey="time"
@@ -1742,6 +1746,8 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
                             labelFormatter={(label) => `Time: ${Number(label).toFixed(3)}s`}
                           />
                           <Legend
+                            verticalAlign="top"
+                            height={30}
                             formatter={(value) => (value === 'lox_pressure' ? 'LOX Tank' : 'Fuel Tank')}
                           />
                           <Line
@@ -1774,7 +1780,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
                     </h4>
                     <div className="h-64">
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={tankFillData}>
+                        <LineChart data={tankFillData} margin={{ top: 5, right: 20, left: 10, bottom: 20 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                           <XAxis
                             dataKey="time"
@@ -1812,6 +1818,8 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
                             labelFormatter={(label) => `Time: ${Number(label).toFixed(3)}s`}
                           />
                           <Legend
+                            verticalAlign="top"
+                            height={30}
                             formatter={(value) => (value === 'lox_fill' ? 'LOX Tank' : 'Fuel Tank')}
                           />
                           <ReferenceLine y={0} stroke="#ef4444" strokeDasharray="5 5" />

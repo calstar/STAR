@@ -239,62 +239,6 @@ def calculate_throat_heat_flux_physics(
     return float(heat_flux_throat)
 
 
-def calculate_recirculation_intensity_physics(
-    fuel_velocity: float,
-    lox_velocity: float,
-    d_pintle_tip: float,
-    D_chamber: float,
-    Re_injector: float,
-) -> float:
-    """
-    Calculate recirculation intensity based on physics.
-    
-    Physics:
-    - Recirculation intensity depends on velocity ratio
-    - Higher velocity difference → stronger recirculation
-    - Depends on Reynolds number (turbulent flow)
-    - Scales with injector size
-    
-    Parameters:
-    -----------
-    fuel_velocity : float
-        Fuel injection velocity [m/s]
-    lox_velocity : float
-        LOX injection velocity [m/s]
-    d_pintle_tip : float
-        Pintle tip diameter [m]
-    D_chamber : float
-        Chamber diameter [m]
-    Re_injector : float
-        Injector Reynolds number
-    
-    Returns:
-    --------
-    intensity : float
-        Recirculation intensity (0-1)
-    """
-    # Velocity difference drives recirculation
-    velocity_diff = abs(fuel_velocity - lox_velocity)
-    velocity_avg = (fuel_velocity + lox_velocity) / 2.0
-    velocity_ratio = velocity_diff / (velocity_avg + 1e-10)
-    
-    # Base intensity from velocity ratio
-    # Higher velocity difference → stronger recirculation
-    base_intensity = 0.2 * velocity_ratio  # Physics-based scaling
-    
-    # Reynolds number effect: higher Re → more turbulent → stronger recirculation
-    Re_factor = np.clip(Re_injector / 1e4, 0.5, 2.0)
-    Re_enhancement = 1.0 + 0.3 * np.log10(max(Re_factor, 0.1))
-    
-    # Pintle size effect: larger pintle → larger recirculation
-    pintle_ratio = d_pintle_tip / (D_chamber + 1e-10)
-    pintle_factor = 1.0 + 0.2 * np.clip(pintle_ratio - 0.1, 0.0, 0.3)
-    
-    intensity = base_intensity * Re_enhancement * pintle_factor
-    
-    return float(np.clip(intensity, 0.0, 0.8))
-
-
 def calculate_turbulence_enhancement_physics(
     Re_throat: float,
     velocity_ratio: float,

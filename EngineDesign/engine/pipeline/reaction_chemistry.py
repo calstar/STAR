@@ -24,14 +24,8 @@ R_gas = 8314.462618  # J/(kmol·K) for per-kmol calculations
 def _fuel_name_for_kinetics(config: PintleEngineConfig) -> str:
     """Label used for Arrhenius fuel-type branching (matches reaction_rate_constant lists).
 
-    Priority: legacy ``propellants.fuel.name`` → ``combustion.cea.fuel_name`` → ``fluids['fuel'].name``
-    → ``\"RP-1\"``.
+    Priority: ``combustion.cea.fuel_name`` -> ``fluids['fuel'].name`` -> generic hydrocarbon ("RP-1").
     """
-    prop = getattr(config, "propellants", None)
-    if prop is not None and getattr(prop, "fuel", None) is not None:
-        name = getattr(prop.fuel, "name", None)
-        if name:
-            return str(name)
     cea = getattr(getattr(config, "combustion", None), "cea", None)
     if cea is not None:
         fn = getattr(cea, "fuel_name", None)
@@ -48,21 +42,18 @@ def _fuel_name_for_kinetics(config: PintleEngineConfig) -> str:
 
 def _fuel_props_for_evaporation(config: PintleEngineConfig) -> Optional[Dict[str, float]]:
     """Density and boiling point for droplet evaporation time scale."""
-    prop = getattr(config, "propellants", None)
-    if prop is not None and getattr(prop, "fuel", None) is not None:
-        bp = getattr(prop.fuel, "boiling_point", None)
-        return {
-            "density": float(prop.fuel.density),
-            "boiling_point": float(bp) if bp is not None else 489.0,
-        }
     fluids = getattr(config, "fluids", None)
     if not fluids or "fuel" not in fluids:
         return None
     fuel = fluids["fuel"]
     bp = getattr(fuel, "boiling_point", None)
+    if bp is None:
+        from engine.pipeline.assumptions import assume
+        bp = assume("kinetics.fuel.boiling_point", 489.0, unit="K",
+                    reason=f"fluids.fuel.boiling_point missing for {getattr(fuel, 'name', '?')} (RP-1 value used; set it or load a propellant preset)")
     return {
         "density": float(fuel.density),
-        "boiling_point": float(bp) if bp is not None else 489.0,
+        "boiling_point": float(bp),
     }
 
 
@@ -140,6 +131,20 @@ def calculate_reaction_progress(
         raise ValueError(f"Progress outside [0,1]: {progress} (this indicates a physics error)")
     
     return float(progress)
+
+
+_EA_MR_W = 0.10   # half-width [MR] of the smooth blend at the 1.5 / 3.0 boundaries
+
+
+def _ea_mr_factor(MR: float) -> float:
+    """Activation-energy multiplier vs O/F: 1.2 (fuel-rich) -> 1.0 -> 0.9 (oxidizer-rich), C1-smooth."""
+    def smooth(t):
+        t = min(max(t, 0.0), 1.0)
+        return t * t * (3.0 - 2.0 * t)
+    w = _EA_MR_W
+    lo = 1.2 + (1.0 - 1.2) * smooth((MR - (1.5 - w)) / (2.0 * w))     # 1.2 -> 1.0 around 1.5
+    hi = 1.0 + (0.9 - 1.0) * smooth((MR - (3.0 - w)) / (2.0 * w))     # 1.0 -> 0.9 around 3.0
+    return float(lo if MR < 2.25 else hi)
 
 
 def calculate_reaction_rate_constant(
@@ -251,12 +256,12 @@ def calculate_reaction_rate_constant(
             Ea = 80000.0
             n_pressure = 0.8
     
-    # Adjust activation energy based on mixture ratio
-    # Fuel-rich or oxidizer-rich can have different effective Ea
-    if MR < 1.5:  # Fuel-rich: more complex chemistry
-        Ea *= 1.2  # Higher effective activation energy
-    elif MR > 3.0:  # Oxidizer-rich: simpler chemistry
-        Ea *= 0.9  # Lower effective activation energy
+    # Effective activation energy vs mixture ratio: fuel-rich chemistry is slower (x1.2),
+    # oxidizer-rich faster (x0.9). Blended with a C1 smoothstep across +/-0.10 MR of the 1.5 and
+    # 3.0 boundaries -- the previous hard `if` put a 20% step in Ea at exactly MR = 1.5, which
+    # is inside the ethalox design band, and a step in the objective breaks any gradient-based
+    # or secant refinement that crosses it (same defect as combustion_physics._ea_norm_from_mr).
+    Ea *= _ea_mr_factor(MR)
     
     # Pre-exponential with pressure dependence
     # A(P) = A0 × (P / P0)^n_pre, where P0 = 1 MPa reference

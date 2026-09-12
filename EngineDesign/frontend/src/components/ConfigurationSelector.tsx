@@ -14,7 +14,6 @@ import { useReadOnly } from '@stardesign-ui';
 const PRETTY: Record<string, string> = {
   pintle: 'Pintle',
   impinging: 'Doublet (unlike-impinging)',
-  coaxial: 'Coaxial',
   methalox: 'Methalox (LOX / CH₄)',
   ethalox: 'Ethalox (LOX / Ethanol)',
   kerolox: 'Kerolox (LOX / RP-1)',
