@@ -30,6 +30,7 @@
 #include "control/RobustDDPController.hpp"
 #include "db.hpp"
 #include "elodin/ElodinClient.hpp"
+#include "net/DaqInterface.hpp"
 
 using namespace vtable;
 using namespace vtable::builder;
@@ -94,10 +95,24 @@ bool ControllerService::initialize(const PWMConfig& pwm_config,
                   << std::endl;
         return false;
     }
-    std::cout << "[ControllerService] ✅ UDP socket created for PWM output → "
-              << pwm_config_.actuator_board_ip << ":" << pwm_config_.actuator_port << std::endl;
-    std::cout << "[ControllerService]    Fuel CH" << (int)pwm_config_.fuel_channel << "  LOX CH"
-              << (int)pwm_config_.lox_channel << "  freq=" << pwm_config_.frequency_hz << "Hz"
+    if (!fsw::net::bindToDaqInterface(udp_socket_fd_, pwm_config_.bind_address,
+                                      "ControllerService")) {
+        ::close(udp_socket_fd_);
+        udp_socket_fd_ = -1;
+        return false;
+    }
+    auto describe = [](const PWMTarget& t) {
+        return t.resolved() ? t.board_ip + " CH" + std::to_string(static_cast<int>(t.channel))
+                            : std::string("(unresolved — PWM suppressed)");
+    };
+    std::cout << "[ControllerService] ✅ UDP socket created for PWM output → :"
+              << pwm_config_.actuator_port
+              << (pwm_config_.bind_address == "0.0.0.0"
+                      ? std::string()
+                      : " (from " + pwm_config_.bind_address + ")")
+              << std::endl;
+    std::cout << "[ControllerService]    Fuel " << describe(pwm_config_.fuel) << "   Ox "
+              << describe(pwm_config_.ox) << "  freq=" << pwm_config_.frequency_hz << "Hz"
               << "  duration=" << pwm_config_.duration_ms << "ms" << std::endl;
 
     // ── Elodin DB (optional) ────────────────────────────────────────────
@@ -119,30 +134,11 @@ bool ControllerService::initialize(const PWMConfig& pwm_config,
     }
 
     // ── Elodin subscriber (dedicated read-only connection for calibrated PT) ──
-    if (!elodin_host.empty()) {
-        if (elodin_subscriber_->connect(elodin_host, elodin_port)) {
-            elodin_sub_connected_ = true;
-            // Subscribe to calibrated PT tables for all board-number slots.
-            // low byte encoding: (board_number-1)*0x20 + 0x10 + channel
-            std::vector<std::pair<uint8_t, uint8_t>> cal_pt_tables;
-            for (uint8_t board_number = 1; board_number <= 10; ++board_number) {
-                const uint8_t base = static_cast<uint8_t>((board_number - 1) * 0x20);
-                for (uint8_t ch = 1; ch <= 10; ++ch) {
-                    cal_pt_tables.push_back({0x20, static_cast<uint8_t>(base + 0x10 + ch)});
-                }
-            }
-            // Sequencer state stream [0x50,0x00] for FIRE gate parity.
-            cal_pt_tables.push_back({0x50, 0x00});
-            elodin_subscriber_->subscribe_tables(cal_pt_tables);
-            std::cout << "[ControllerService] ✅ Elodin subscriber connected — "
-                         "subscribed to calibrated PT + Sequencer state"
-                      << std::endl;
-        } else {
-            std::cerr << "[ControllerService] ⚠️  Elodin subscriber connection failed — "
-                         "controller will not receive sensor data"
-                      << std::endl;
-        }
-    }
+    // A failure here is no longer terminal for the subscriber: elodinSubscriberLoop() retries.
+    if (!elodin_host.empty() && !connectSubscriber())
+        std::cerr << "[ControllerService] ⚠️  Elodin subscriber connection failed — retrying in "
+                     "the background"
+                  << std::endl;
 
     // ── Initialize controller ───────────────────────────────────────────
     if (!controller_->initialize(controller_config)) {
@@ -205,7 +201,10 @@ bool ControllerService::start(double loop_rate_hz) {
     loop_interval_ms_ = 1000.0 / loop_rate_hz;
 
     controller_thread_ = std::thread(&ControllerService::controllerLoop, this);
-    if (elodin_sub_connected_) {
+    // Started whenever a db is configured, not only when the first connect happened to succeed:
+    // the loop reconnects, so a controller that boots while the db is down now picks it up
+    // instead of running blind for the rest of the session.
+    if (!elodin_host_.empty()) {
         elodin_subscriber_thread_ = std::thread(&ControllerService::elodinSubscriberLoop, this);
     }
 
@@ -249,6 +248,12 @@ void ControllerService::setNavState(const RobustDDPController::NavState& nav) {
 }
 
 void ControllerService::setFireActive(bool active) {
+    // The single funnel both activation paths go through — the TCP FIRE_START/FIRE_STOP server and
+    // the [0x50] state-packet parity fallback. Guarding here rather than at each caller means a
+    // disabled gate cannot be reached by any route, present or future.
+    if (!fire_gate_enabled_.load())
+        return;
+
     const bool was_active = fire_active_.exchange(active);
     if (was_active == active)
         return;
@@ -379,10 +384,13 @@ RobustDDPController::Diagnostics ControllerService::getLastDiagnostics() const {
 //  PWM COMMAND SENDING  (matches combined_gui.py EXACTLY)
 // ═══════════════════════════════════════════════════════════════════════
 
-bool ControllerService::sendPWMCommand(uint8_t channel, float duty_cycle, float frequency,
+bool ControllerService::sendPWMCommand(const PWMTarget& target, float duty_cycle, float frequency,
                                        uint32_t duration_ms) {
     if (udp_socket_fd_ < 0)
         return false;
+    if (!target.resolved())
+        return false;
+    const uint8_t channel = target.channel;
 
     // Build packet — total 20 bytes for single command
     uint8_t packet[SINGLE_CMD_PACKET_SIZE];
@@ -423,9 +431,8 @@ bool ControllerService::sendPWMCommand(uint8_t channel, float duty_cycle, float 
     struct sockaddr_in dest{};
     dest.sin_family = AF_INET;
     dest.sin_port = htons(pwm_config_.actuator_port);
-    if (inet_pton(AF_INET, pwm_config_.actuator_board_ip.c_str(), &dest.sin_addr) != 1) {
-        std::cerr << "[ControllerService] ❌ Invalid actuator IP: " << pwm_config_.actuator_board_ip
-                  << std::endl;
+    if (inet_pton(AF_INET, target.board_ip.c_str(), &dest.sin_addr) != 1) {
+        std::cerr << "[ControllerService] ❌ Invalid actuator IP: " << target.board_ip << std::endl;
         return false;
     }
 
@@ -441,9 +448,21 @@ bool ControllerService::sendPWMCommand(uint8_t channel, float duty_cycle, float 
     return true;
 }
 
-bool ControllerService::sendPWMCommands(uint8_t channel1, float duty1, uint8_t channel2,
+bool ControllerService::sendPWMCommands(const PWMTarget& t1, float duty1, const PWMTarget& t2,
                                         float duty2, float frequency, uint32_t duration_ms) {
     if (udp_socket_fd_ < 0)
+        return false;
+    // One packet, one destination — the caller must have checked both targets share a board.
+    if (!t1.resolved() || !t2.resolved() || t1.board_ip != t2.board_ip)
+        return false;
+    const uint8_t channel1 = t1.channel;
+    const uint8_t channel2 = t2.channel;
+
+    // Actuator ids are 1-based, so 0 is the "unresolved" marker controller_main leaves behind when
+    // a PWM role is missing from [actuator_roles]. Refusing here is belt and braces next to the
+    // disabled fire gate: whatever else goes wrong, a packet is never addressed to channel 0 —
+    // and, more to the point, never to a guessed channel that belongs to some other valve.
+    if (channel1 == 0 || channel2 == 0)
         return false;
 
     uint8_t packet[DUAL_CMD_PACKET_SIZE];
@@ -479,7 +498,7 @@ bool ControllerService::sendPWMCommands(uint8_t channel1, float duty1, uint8_t c
     struct sockaddr_in dest{};
     dest.sin_family = AF_INET;
     dest.sin_port = htons(pwm_config_.actuator_port);
-    if (inet_pton(AF_INET, pwm_config_.actuator_board_ip.c_str(), &dest.sin_addr) != 1)
+    if (inet_pton(AF_INET, t1.board_ip.c_str(), &dest.sin_addr) != 1)
         return false;
 
     ssize_t sent = sendto(udp_socket_fd_, packet, DUAL_CMD_PACKET_SIZE, 0,
@@ -494,8 +513,20 @@ void ControllerService::sendActuationPWM(const RobustDDPController::ActuationCom
     float duty_F = static_cast<float>(std::max(0.0, std::min(1.0, act.duty_F)));
     float duty_O = static_cast<float>(std::max(0.0, std::min(1.0, act.duty_O)));
 
-    sendPWMCommands(pwm_config_.fuel_channel, duty_F, pwm_config_.lox_channel, duty_O,
-                    pwm_config_.frequency_hz, pwm_config_.duration_ms);
+    // Same board → one packet, so both valves are commanded by a single datagram exactly as
+    // before. Different boards → two, because a datagram has one destination; the two commands
+    // are then no longer simultaneous, which is a property of the rig's wiring rather than a
+    // choice this code gets to make. Neither branch can address an unresolved target: the send
+    // helpers reject those, and the gate is disabled at startup anyway.
+    const bool same_board = pwm_config_.fuel.resolved() && pwm_config_.ox.resolved() &&
+                            pwm_config_.fuel.board_ip == pwm_config_.ox.board_ip;
+    if (same_board) {
+        sendPWMCommands(pwm_config_.fuel, duty_F, pwm_config_.ox, duty_O, pwm_config_.frequency_hz,
+                        pwm_config_.duration_ms);
+    } else {
+        sendPWMCommand(pwm_config_.fuel, duty_F, pwm_config_.frequency_hz, pwm_config_.duration_ms);
+        sendPWMCommand(pwm_config_.ox, duty_O, pwm_config_.frequency_hz, pwm_config_.duration_ms);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -720,13 +751,73 @@ void ControllerService::controllerLoop() {
     }
 }
 
+/**
+ * Connect the subscriber and subscribe to everything it reads.
+ *
+ * Both halves must run on every reconnect, not just the first connect: the VTables live in the db
+ * process, so a db restart loses them and a reconnect that skips re-subscription comes back
+ * permanently silent. SequencerService::tryConnectElodin() documents the same rule for the
+ * publishing side, and heartbeat_service treats a failed subscribe as a failed connection for
+ * exactly this reason — so this returns false and lets the caller retry the whole thing.
+ */
+bool ControllerService::connectSubscriber() {
+    if (elodin_host_.empty())
+        return false;
+    if (!elodin_subscriber_->connect(elodin_host_, elodin_port_))
+        return false;
+
+    // Calibrated PT tables for all board-number slots.
+    // low byte encoding: (board_number-1)*0x20 + 0x10 + channel
+    std::vector<std::pair<uint8_t, uint8_t>> tables;
+    for (uint8_t board_number = 1; board_number <= 10; ++board_number) {
+        const uint8_t base = static_cast<uint8_t>((board_number - 1) * 0x20);
+        for (uint8_t ch = 1; ch <= 10; ++ch)
+            tables.push_back({0x20, static_cast<uint8_t>(base + 0x10 + ch)});
+    }
+    // Sequencer state stream [0x50,0x00] for FIRE gate parity.
+    tables.push_back({0x50, 0x00});
+    if (!elodin_subscriber_->subscribe_tables(tables)) {
+        std::cerr << "[ControllerService] ⚠️  Elodin subscribe failed — dropping the connection "
+                     "so it is retried rather than sitting on a silent socket"
+                  << std::endl;
+        elodin_subscriber_->disconnect();
+        return false;
+    }
+
+    std::cout << "[ControllerService] ✅ Elodin subscriber connected — "
+                 "subscribed to calibrated PT + Sequencer state"
+              << std::endl;
+    return true;
+}
+
 void ControllerService::elodinSubscriberLoop() {
     std::cout
         << "[ControllerService] 🎧 Elodin subscriber loop started (dedicated subscriber client)."
         << std::endl;
-    // Subscription already done in initialize() via subscribe_tables()
     std::vector<uint8_t> rx_buffer(8192);
 
+    // Outer loop: reconnect. This used to be absent — the thread started once and its inner loop
+    // exited the moment is_connected() went false, so a single db restart or network blip left
+    // the controller deaf to sequencer state for the life of the process, with nothing but one
+    // log line to say so. That matters because this path is the FIRE-gate parity fallback: it is
+    // what closes the PWM gate if the TCP command path is not working.
+    while (running_) {
+        if (!elodin_subscriber_->is_connected()) {
+            if (!connectSubscriber()) {
+                for (int i = 0; i < 20 && running_; ++i)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
+            }
+        }
+        subscriberReadLoop(rx_buffer);
+        if (running_)
+            std::cerr << "[ControllerService] ⚠️  Elodin subscriber disconnected — reconnecting"
+                      << std::endl;
+    }
+    std::cout << "[ControllerService] 🎧 Elodin subscriber loop stopped." << std::endl;
+}
+
+void ControllerService::subscriberReadLoop(std::vector<uint8_t>& rx_buffer) {
     while (running_ && elodin_subscriber_->is_connected()) {
         // 8-byte Elodin header: len(4) ty(1) id_hi(1) id_lo(1) req_id(1)
         uint8_t header[8];
@@ -765,9 +856,16 @@ void ControllerService::elodinSubscriberLoop() {
         // if TCP FIRE_START/FIRE_STOP control path misses an edge.
         if (type_hi == 0x50 && pid_lo == 0x00 && payload_len >= 17) {
             uint8_t state_val = rx_buffer[8 + 8];
-            // State enum order: FIRE is value 16 in current state machine.
-            // Keep this as hard parity fallback with sequencer source of truth.
-            setFireActive(state_val == 16);
+            // Parity fallback for a missed TCP FIRE_START/FIRE_STOP edge. The id comes from
+            // config ([fire] state) via setFireStateId rather than a literal, so renumbering
+            // states cannot move the PWM ignition gate onto a different one.
+            //
+            // Skipped entirely when the gate is disabled — setFireActive() would refuse anyway,
+            // but this branch runs at packet rate and there is no reason to call into it
+            // continuously just to be turned away. The `continue` stays either way so the packet
+            // is still consumed rather than falling through to the PT decoders below.
+            if (fire_gate_enabled_.load())
+                setFireActive(state_val == fire_state_id_);
             continue;
         }
 
@@ -814,7 +912,6 @@ void ControllerService::elodinSubscriberLoop() {
             }
         }
     }
-    std::cout << "[ControllerService] 🎧 Elodin subscriber loop stopped." << std::endl;
 }
 
 // ═══════════════════════════════════════════════════════════════════════

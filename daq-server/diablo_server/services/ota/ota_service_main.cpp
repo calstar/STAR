@@ -36,6 +36,9 @@
 #include <thread>
 #include <vector>
 
+#include "config/Config.hpp"
+#include "net/DaqInterface.hpp"
+
 namespace {
 std::atomic<bool> g_running{true};
 
@@ -53,6 +56,10 @@ std::string trim(const std::string& s) {
 // ── OTA Flash ────────────────────────────────────────────────────────────────
 
 static constexpr uint16_t OTA_PORT = 3232;
+
+// Local address OTA connections leave from, resolved from config at startup. "0.0.0.0" means the
+// host has no NIC on the board subnet and the kernel picks — see lib/include/net/DaqInterface.hpp.
+std::string g_bind_address = "0.0.0.0";
 static constexpr size_t CHUNK_SIZE = 4096;
 static constexpr int CONNECT_TIMEOUT_S = 5;
 static constexpr int TRANSFER_TIMEOUT_S = 60;
@@ -87,6 +94,15 @@ bool flashFirmware(const std::string& ip, const std::string& bin_path, std::stri
         struct timeval tv{.tv_sec = CONNECT_TIMEOUT_S, .tv_usec = 0};
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    }
+
+    // Reach the board over the board NIC. Unlike the UDP senders this one fails loudly if it
+    // takes the wrong route (connect() times out), but "flash timed out" is a much worse
+    // diagnostic than not having taken the wrong route in the first place.
+    if (!fsw::net::bindToDaqInterface(sock, g_bind_address, "OTAService")) {
+        close(sock);
+        error = "cannot bind OTA socket to " + g_bind_address;
+        return false;
     }
 
     struct sockaddr_in addr{};
@@ -362,18 +378,29 @@ void handleClient(int client_fd) {
 
 int main(int argc, char* argv[]) {
     uint16_t listen_port = 9997;
+    std::string config_path = "config/config.toml";
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--port" && i + 1 < argc) {
             listen_port = static_cast<uint16_t>(std::atoi(argv[++i]));
+        } else if (arg == "--config" && i + 1 < argc) {
+            config_path = argv[++i];
         } else if (arg == "--help" || arg == "-h") {
             std::cout
-                << "Usage: " << argv[0] << " [--port PORT]\n"
+                << "Usage: " << argv[0] << " [--port PORT] [--config PATH]\n"
                 << "  OTA_FLASH:<ip>:<firmware.bin>\n"
                 << "  OTA_BUILD_FLASH|ip|abs_platformio_project_dir|board_id (0=no ID flag)\n";
             return 0;
         }
+    }
+
+    {
+        const auto nic =
+            fsw::net::resolveDaqBindAddress(fsw::config::load(config_path), "OTAService");
+        if (!nic.ok)
+            return 1;
+        g_bind_address = nic.address;
     }
 
     signal(SIGINT, signalHandler);

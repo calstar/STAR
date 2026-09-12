@@ -2,8 +2,6 @@
  * Shared TypeScript types for frontend and backend
  */
 export declare enum MessageType {
-    SUBSCRIBE_SENSOR = "subscribe_sensor",
-    UNSUBSCRIBE_SENSOR = "unsubscribe_sensor",
     SEND_COMMAND = "send_command",
     QUERY_HISTORICAL = "query_historical",
     CALIBRATION_COMMAND = "calibration_command",
@@ -23,8 +21,10 @@ export declare enum MessageType {
     CONFIG_UPDATED = "config_updated",
     COUNTDOWN_TARGET_UPDATE = "countdown_target_update",
     SESSION_UPDATE = "session_update",
-    CONTROL_STATUS = "control_status",
-    CONTROL_UNLOCK = "control_unlock",
+    SESSION_START_BLOCKED = "session_start_blocked",// Server → Client: { issues, errors, warnings }
+    BOARD_LOG = "board_log",// Server → Client: { boardId, ts, lines, truncated }
+    CONTROL_STATUS = "control_status",// Server → Client: { operator, email }
+    CONTROL_UNLOCK = "control_unlock",// Client → Server: {} (arm control; identity-gated)
     CONTROL_UNLOCK_RESULT = "control_unlock_result"
 }
 export declare enum SensorType {
@@ -120,11 +120,37 @@ export interface CommandPayload {
         debugMode?: boolean;
         /** Unix timestamp in milliseconds. null clears/pauses the countdown. */
         targetTimeMs?: number | null;
+        /** session_start: Save (true) keeps the run's DB; Discard (false) deletes it on stop. */
         keepData?: boolean;
+        /** session_start: auto-stop timeout in milliseconds. */
         durationMs?: number;
+        /** session_start: run against the board simulator (true) instead of live hardware. */
+        simulated?: boolean;
+        /** session_extend: milliseconds to push the auto-stop deadline out by. */
         addMs?: number;
+        /**
+         * session_start: run despite config issues. The backend validates the profile it is about to
+         * deploy and refuses the start when anything is wrong, answering with SESSION_START_BLOCKED;
+         * this flag is the operator's second press of Start, saying they have read the list and want
+         * the run anyway. Never set it on the first attempt — that would silently restore the old
+         * behaviour where config errors were advisory.
+         */
+        force?: boolean;
+        /**
+         * state_transition: hold the target state for exactly this long, then let it return to its
+         * configured return state. Only honoured for a state the config marks as accepting one — the
+         * SEQUENCER decides, and it refuses this outright for the burn state, whose window is
+         * config-only. A refusal does not transition, so a frame replayed after a reconnect cannot
+         * start a hold. Omit to use the state's configured default.
+         */
+        holdMs?: number;
     };
 }
+/**
+ * DAQ run session — a run started/stopped from the session screen with a
+ * backend-owned auto-stop timeout. `enabled` is false when SESSION_SERVICE_MODE
+ * is off (the launch-site laptop): the UI hides the button and nothing auto-stops.
+ */
 export interface SessionStatus {
     enabled: boolean;
     active: boolean;
@@ -133,6 +159,24 @@ export interface SessionStatus {
     deadlineMs: number | null;
     remainingMs: number | null;
     freeDiskBytes: number | null;
+    /** True when the active run is fed by the board simulator instead of hardware. */
+    simulated: boolean;
+}
+/**
+ * Why a run refused to start: the config issues the backend found in the profile it was about to
+ * deploy. Sent only to the client that asked, in place of starting anything. The operator fixes
+ * them in the config editor, or presses Start again (SendCommand data.force) to run regardless.
+ */
+export interface SessionStartBlockedPayload {
+    issues: {
+        page: string;
+        level: 'error' | 'warn';
+        message: string;
+    }[];
+    errors: number;
+    warnings: number;
+    /** The profile that was validated — it is what session start deploys, not the running config. */
+    profile: string;
 }
 export interface ConnectionStatus {
     connected: boolean;
@@ -140,6 +184,17 @@ export interface ConnectionStatus {
     connId?: string;
     latency?: number;
     error?: string;
+    /** True when incoming data is synthetic (board simulator running). */
+    simulated?: boolean;
+    /** Backend-authoritative: an Elodin row was ingested within the freshness window,
+     *  i.e. the pipeline is actually delivering data right now (not just "run active"). */
+    dataFresh?: boolean;
+    /** The backend is shedding resolution to keep this client current. */
+    throttled?: boolean;
+    /** Percentage of produced sensor points this client actually received (0-100). */
+    resolutionPct?: number;
+    /** Age of the newest delivered sample at the last flush, in ms. */
+    lagMs?: number;
 }
 export interface MissionStartTime {
     missionStartTime: number;
@@ -178,12 +233,55 @@ export interface CalibrationStatusPayload {
     calibrationFilePath?: string | null;
 }
 /** Commands the frontend sends to drive the calibration engine */
-export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'save_coefficients' | 'clear_calibration';
+export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'save_coefficients' | 'clear_calibration' | 'capture_cubic_point' | 'clear_cubic_channel' | 'capture_point' | 'new_calibration';
 export interface CalibrationCommand {
     commandType: CalibrationCommandType;
     sensorId?: number;
     boardId?: number;
     referencePressure?: number;
+}
+/** One operator-captured calibration point for a channel's cubic fit. */
+export interface CubicCalibrationPoint {
+    adc: number;
+    psi: number;
+    t: number;
+}
+/**
+ * Per-sensor cubic calibration record produced by the calibration service. The frontend renders the
+ * captured `points` as a scatter and overlays the curve by evaluating `polyCoeffs` over
+ * `((adc - adcNormMin)/adcNormScale)^i` — no fitting in the browser.
+ */
+export interface CubicCalibrationChannel {
+    boardId: number;
+    connector: number;
+    logicalCh: number;
+    role: string;
+    active_model: 'cubic' | 'robust' | 'physics';
+    numPoints: number;
+    status: 'PENDING' | 'OK' | 'ERROR';
+    last_error: string;
+    rmse: number;
+    degree: number;
+    updatedAt: number;
+    coeffs: {
+        A: number;
+        B: number;
+        C: number;
+        D: number;
+    };
+    polyCoeffs: number[];
+    adcNormMin: number;
+    adcNormScale: number;
+    points: CubicCalibrationPoint[];
+    fitCurve?: {
+        adc: number;
+        psi: number;
+    }[];
+}
+/** Body of GET /api/cubic_calibration: the service's cubic_calibration.json, keyed by uid. */
+export interface CubicCalibrationPayload {
+    cubic_state?: Record<string, CubicCalibrationChannel>;
+    [key: string]: unknown;
 }
 /** Aggregated status for a single hardware board (PT, ACTUATOR, RTD, LC, TC, etc.). */
 export interface BoardStatus {
@@ -227,6 +325,25 @@ export interface BoardStatus {
 export interface BoardStatusPayload {
     boards: BoardStatus[];
 }
+/** One cached board log line, stamped with server arrival time. */
+export interface BoardLogLine {
+    boardId: number;
+    ts: number;
+    line: string;
+}
+/** Running per-board log counters (cumulative since backend start). */
+export interface BoardLogTotals {
+    received: number;
+    truncated: number;
+}
+/** MessageType.BOARD_LOG payload: one packet's worth of newline-split lines. */
+export interface BoardLogPayload {
+    boardId: number;
+    ts: number;
+    lines: string[];
+    truncated: boolean;
+    totals: BoardLogTotals;
+}
 export type NotificationCategory = 'info' | 'warning' | 'error';
 /** Ongoing notification (keyed); when ongoing turns false, frontend keeps entry but no longer "current". */
 export interface NotificationPayloadOngoing {
@@ -249,4 +366,25 @@ export declare function isNotificationOngoing(p: NotificationPayload): p is Noti
  * label. Falls back to 'UNKNOWN' if the code is not recognized.
  */
 export declare function engineStateCodeToLabel(code: number | null | undefined): string;
+/** The two controller_service PWM outputs, as they appear in the 4th element of an
+ *  [actuator_roles] entry. Absent from an entry means the sequencer owns that actuator. */
+export declare const PWM_ASSIGNMENTS: readonly ["pwm_fuel", "pwm_ox"];
+export type PwmAssignment = typeof PWM_ASSIGNMENTS[number];
+/** Which actuator serves each PWM output, from `[actuator_roles]`. */
+export declare function pwmAssignmentMap(config: any): Record<string, string[]>;
+/**
+ * Whether the controller's PWM outputs are assigned exactly once each.
+ *
+ * An [actuator_roles] entry's optional 4th element ("pwm_fuel" / "pwm_ox") is the single statement
+ * of which hardware controller_service drives. The same fact makes the sequencer stop commanding
+ * that actuator during a burn, so exactly one writer drives it — which is why a duplicate or a
+ * missing assignment is worth blocking rather than warning about. The C++ side enforces the same
+ * rule in PWMTargets.hpp and refuses to open the PWM fire gate without it.
+ *
+ * Both outputs unassigned is allowed and means "this rig does not use the PWM controller" — the
+ * digital-twin profile is exactly that. Assigning one but not the other is not.
+ *
+ * Returns one human-readable problem per bad output; empty means valid.
+ */
+export declare function validateControllerPwmActuators(config: any): string[];
 //# sourceMappingURL=types.d.ts.map

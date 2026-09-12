@@ -27,6 +27,15 @@ CACHE_DIR = Path(
 # pattern does not blur the real/simulated distinction the prefix exists for.
 RUN_RE = re.compile(r"^daq_(?P<sim>sim_)?(?P<date>\d{8})_(?P<time>\d{6})$")
 
+# The one thing this viewer writes: a shared one-line description per run. It lives
+# beside the run dirs, NOT under CACHE_DIR — docker-compose calls the cache volume "safe
+# to wipe", and a line somebody typed is not something to lose to a cache clear. The
+# Elodin mount is already read-write (elodin-db mmaps a DB O_RDWR even just to export
+# it), so nothing extra is needed to deploy this.
+DESCRIPTIONS_PATH = Path(
+    os.environ.get("WEBVIEWER_DESCRIPTIONS_PATH", str(ELODIN_DIR / "run_descriptions.json"))
+).expanduser()
+
 # Cap the throughput of CSV downloads (bytes/sec) so a big whole-run export can't
 # saturate the host's uplink and starve other services on the box. A long run's
 # tidy CSV can be hundreds of MB; this paces it instead of forbidding it.

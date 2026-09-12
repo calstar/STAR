@@ -7,7 +7,8 @@ import ActuatorStatePanel from '@/components/plots/ActuatorStatePanel';
 import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
 import { useSensorValue } from '@/lib/store';
 import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
-import { useSensorConfig, filterByRole } from '@/lib/sensor-config';
+import { useSensorConfig, resolveGroup, filterByRole } from '@/lib/sensor-config';
+import { useGuiConfig } from '@/lib/gui-config';
 import { usePressureLimits, getLimitsForSystem } from '@/lib/pressure-limits';
 
 function RtdReadoutStrip({
@@ -64,23 +65,22 @@ function RtdReadoutBox({
 
 export default function LOXGraphsPage() {
   const allSensors = useSensorConfig();
+  const { groups } = useGuiConfig();
   const pressureLimits = usePressureLimits();
   const loxLimits = getLimitsForSystem(pressureLimits, 'LOX');
   const [activeTab, setActiveTab] = useState<'PT' | 'RTD'>('PT');
 
-  const ptSensors = filterByRole(allSensors, 'Ox', 'LOX').filter(
-    (s) => s.calEntity.startsWith('PT') || s.calEntity.startsWith('PT_Cal')
-  );
-  // RTDs: LOX/Ox/Tank role names (config has "LOX Tank 1".."LOX Tank 4"); sort by id for stable order
-  const rtdByRole = filterByRole(allSensors, 'Ox', 'LOX', 'Tank').filter(
-    (s) => s.calEntity.startsWith('RTD') || s.calEntity.startsWith('RTD_Cal')
-  );
+  // Explicit membership from config [gui.groups].LOX (ordered); split into PT/RTD by entity type.
+  // Fallback to legacy role-name matching if the config has no LOX group (un-migrated config).
+  const loxGroup = groups.LOX
+    ? resolveGroup(allSensors, groups.LOX)
+    : filterByRole(allSensors, 'Ox', 'LOX', 'Tank');
+  const ptSensors = loxGroup.filter((s) => s.calEntity.startsWith('PT'));
+  const rtdByRole = loxGroup.filter((s) => s.calEntity.startsWith('RTD'));
   const rtdSensors = (
     rtdByRole.length > 0
       ? rtdByRole
-      : allSensors.filter(
-          (s) => s.calEntity.startsWith('RTD') || s.calEntity.startsWith('RTD_Cal')
-        )
+      : allSensors.filter((s) => s.calEntity.startsWith('RTD'))
   ).sort((a, b) => a.id - b.id);
 
   const currentSensors = activeTab === 'PT' ? ptSensors : rtdSensors;

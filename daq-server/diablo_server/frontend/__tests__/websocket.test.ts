@@ -130,6 +130,49 @@ describe('WebSocketClient', () => {
     expect(commandMessages[0].payload.data.actuatorState).toBe(ActuatorState.OPEN);
   });
 
+  it('should carry holdMs on a state_transition for a timed hold', async () => {
+    // The characterization tab asks the sequencer to hold a state for an exact window rather than
+    // bracketing it with two browser-timed commands. The duration rides on the ordinary transition;
+    // the sequencer is what decides whether a given state may accept one (never the burn state).
+    const client = new WebSocketClient(['ws://test:8081']);
+    client.connect();
+    await vi.waitFor(() => {
+      expect(mockWsInstance?.readyState).toBe(MockWebSocket.OPEN);
+    });
+
+    client.sendCommand({
+      commandType: 'state_transition',
+      data: { state: 13, holdMs: 1500 } as any,
+    });
+
+    const commandMessages = mockWsInstance!.sentMessages
+      .map(s => JSON.parse(s))
+      .filter((m: WSMessage) => m.type === MessageType.SEND_COMMAND);
+
+    expect(commandMessages.length).toBe(1);
+    expect(commandMessages[0].payload.commandType).toBe('state_transition');
+    expect(commandMessages[0].payload.data.state).toBe(13);
+    expect(commandMessages[0].payload.data.holdMs).toBe(1500);
+  });
+
+  it('should omit holdMs entirely for an ordinary transition', async () => {
+    // Every existing caller must stay byte-identical on the wire: the backend only appends the
+    // ":<ms>" suffix when holdMs is present, so an absent field has to stay absent.
+    const client = new WebSocketClient(['ws://test:8081']);
+    client.connect();
+    await vi.waitFor(() => {
+      expect(mockWsInstance?.readyState).toBe(MockWebSocket.OPEN);
+    });
+
+    client.sendCommand({ commandType: 'state_transition', data: { state: 2 } as any });
+
+    const commandMessages = mockWsInstance!.sentMessages
+      .map(s => JSON.parse(s))
+      .filter((m: WSMessage) => m.type === MessageType.SEND_COMMAND);
+
+    expect(commandMessages[0].payload.data.holdMs).toBeUndefined();
+  });
+
   it('should queue messages when WebSocket is not connected', () => {
     const client = new WebSocketClient(['ws://test:8081']);
     // Don't call connect() — WS is null

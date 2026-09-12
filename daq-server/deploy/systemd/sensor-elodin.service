@@ -1,6 +1,11 @@
 [Unit]
 Description=Sensor System Elodin DB
 After=network.target
+# elodin-db must be installed. Without this, a missing binary makes ExecStart fail and
+# Restart=always respawn it every 5s — an invisible spin that `systemctl --user --failed`
+# never lists. Assert (not Condition) turns it into an immediate, honest unit failure that
+# DOES show in --failed and does not retry. Install it: deploy/bootstrap_daq.sh.
+AssertPathExists=%h/.cargo/bin/elodin-db
 
 [Service]
 Type=simple

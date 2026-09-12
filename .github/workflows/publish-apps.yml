@@ -17,8 +17,7 @@ name: Publish app images
       - 'lib/stardesign/**'
       - 'lib/stardesign-ui/**'
       - 'pid-designer/**'
-      - 'recovery-calculator/**'
-      - 'onshape-viewer/**'
+      - 'star-openrocket/**'
       - 'daq-server/tools/postprocessing/webviewer/**'
       - 'landing/**'
       - 'starproject/**'
@@ -46,16 +45,16 @@ jobs:
           # engine-design-api builds from the repo root (native kernel + several
           # EngineDesign/ subtrees) -- see EngineDesign/Dockerfile.api.
           - { name: engine-design-api,            context: .,                           dockerfile: ./EngineDesign/Dockerfile.api }
-          - { name: engine-design-frontend,       context: .,     dockerfile: ./EngineDesign/frontend/Dockerfile }
-          # context is the repo root, not the subproject: this image installs
-          # lib/stardesign, which a subproject context cannot see.
+          - { name: engine-design-frontend,       context: .,                           dockerfile: ./EngineDesign/frontend/Dockerfile }
+          # context is the repo root, not the subproject: these images build on
+          # lib/stardesign (API) and compile lib/stardesign-ui from source
+          # (frontend), neither of which a subproject context can see.
           - { name: pid-designer-api,             context: .,                           dockerfile: ./pid-designer/Dockerfile.api }
-          - { name: pid-designer-frontend,        context: .,     dockerfile: ./pid-designer/frontend/Dockerfile }
-          # Repo root for the same reason as pid-designer-api above.
-          - { name: recovery-calculator-api,      context: .,                           dockerfile: ./recovery-calculator/Dockerfile.api }
-          - { name: recovery-calculator-frontend, context: ., dockerfile: ./recovery-calculator/frontend/Dockerfile }
-          - { name: onshape-viewer-api,           context: ./onshape-viewer,            dockerfile: ./onshape-viewer/Dockerfile.api }
-          - { name: onshape-viewer-frontend,      context: ./onshape-viewer/frontend,   dockerfile: ./onshape-viewer/frontend/Dockerfile }
+          - { name: pid-designer-frontend,        context: .,                           dockerfile: ./pid-designer/frontend/Dockerfile }
+          # Repo root for the same reason. star-openrocket is the recovery
+          # calculator merged into the Onshape viewer, so it carries both.
+          - { name: openrocket-api,               context: .,                           dockerfile: ./star-openrocket/Dockerfile.api }
+          - { name: openrocket-frontend,          context: .,                           dockerfile: ./star-openrocket/frontend/Dockerfile }
           # DAQ Run Viewer: one image serves both API and SPA (see its Dockerfile).
           - { name: daq-viewer,                   context: ./daq-server/tools/postprocessing/webviewer, dockerfile: ./daq-server/tools/postprocessing/webviewer/Dockerfile }
           # STARProject: one Next.js image serves pages + /api and runs migrations on start.
@@ -83,8 +82,25 @@ jobs:
             type=raw,value=latest
             type=sha,format=short
 
+      # Attempted twice, because a base-image pull is the one step here that fails
+      # for reasons that have nothing to do with the commit. daq-viewer died in
+      # 27 s on
+      #   failed to fetch oauth token: Post "https://auth.docker.io/token":
+      #   read: connection reset by peer
+      # while resolving python:3.12-slim -- before a single layer ran, and the
+      # identical context and Dockerfile built fine in daq-server-ci on that same
+      # commit. Base images come from Docker Hub anonymously (no account to log
+      # in with), so there is nothing to make that token fetch reliable; it is
+      # simply transient. Actions has no per-step retry, so the step is written
+      # out twice: the first is allowed to fail, and the second runs only if it
+      # did. A retry is nearly free and cannot mask a real break -- it reuses the
+      # first attempt's gha cache, so a genuinely broken build just fails again a
+      # few seconds later, while a flaky pull gets the second chance it needs.
+      # Keep the two `with:` blocks identical.
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
+        continue-on-error: true
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
@@ -92,5 +108,18 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Per-image cache scope so the matrix jobs don't clobber each other.
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      # No continue-on-error: this one is the gate, so two bad attempts fail the job.
+      - name: Build and push (retry)
+        if: steps.build.outcome == 'failure'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}

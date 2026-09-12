@@ -1,0 +1,11 @@
+# Keep USB autosuspend off for the TP-Link RTL8822BU Wi-Fi adapter.
+#
+# The chip's own IPS (Inactive Power Save) state is the thing that wedges it,
+# and USB-level autosuspend is a second, independent way for the link to go
+# quiet. The device currently reads power/control=on, but that is not sticky:
+# after a re-enumeration (including the ones this watchdog performs) it reverts
+# to the bus default, which is `auto`. This rule makes it stick.
+#
+# Belt-and-braces, not the primary fix — disabling Wi-Fi power save in
+# NetworkManager is what actually stops the wedge. See README.md.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="2357", ATTR{idProduct}=="0138", TEST=="power/control", ATTR{power/control}="on"

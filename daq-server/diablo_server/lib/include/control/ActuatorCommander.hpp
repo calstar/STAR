@@ -3,6 +3,7 @@
 #include <atomic>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -18,14 +19,15 @@ namespace sequencer {
  * Format in config.toml:  role_name = ["TYPE", channel, board_id]
  *   TYPE:  "NC"  — normally closed (logical pos = hw state)
  *          "NO"  — normally open   (logical pos inverted for hw: 0→hw1, 1→hw0)
- *          "PWM" — controlled by controller_service, not by sequencer (skipped in FIRE)
+ *          An entry with a 4th element ("pwm_fuel"/"pwm_ox") is controlled by
+ *          controller_service, not by the sequencer, and is skipped in FIRE.
  */
 struct ActuatorRole {
     int channel{0};        // 1-based actuator ID on the board
     int board_id{0};       // Board ID (e.g. 11, 12, 13, 14)
     std::string board_ip;  // IP of the board that owns this actuator
     bool is_no{false};     // Normally Open: invert the logical position
-    bool is_pwm{false};    // PWM type: sequencer skips in FIRE state
+    bool is_pwm{false};    // assigned to controller_service: sequencer skips it in FIRE
 };
 
 /**
@@ -43,26 +45,79 @@ public:
      * @param csv_path        Path to state_machine_actuators.csv (with fallbacks).
      * @return true on success.
      */
-    bool load(const std::string& config_content, const std::string& csv_path);
+    /**
+     * @param delay_csv_path Where the per-actuator staged delays live, from
+     *        [state_machine].actuator_delay_csv. Empty falls back to deriving it from `csv_path`.
+     *
+     *        The derivation used to be the ONLY way this was found: the delays filename was built
+     *        by swapping the "state_machine_actuators.csv" suffix on the positions path. That key
+     *        was parsed into the config and then read by nothing, so pointing it anywhere had no
+     *        effect — and if the positions file was named anything else the swap did not fire, the
+     *        POSITIONS file was opened as the delays file, every cell parsed as non-numeric, and
+     * the stand silently ran with no staggering at all. Losing a fire-column stagger with no error
+     * is not an acceptable failure mode for a missing filename.
+     */
+    bool load(const std::string& config_content, const std::string& csv_path,
+              const std::string& delay_csv_path = "");
+
+    /**
+     * Pin outgoing actuator commands to a NIC, unless [actuator_service].bind_address already
+     * named one explicitly. Call after load().
+     *
+     * bind_address defaulted to 0.0.0.0 in every shipped profile, so the bind() at the bottom of
+     * sendBatch() constrained nothing and the kernel chose the egress interface. That was
+     * harmless while the DAQ owned its machine and is not now that it shares the apps box.
+     */
+    void setDefaultBindAddress(const std::string& address);
 
     /**
      * Send actuator commands for the given state (one shot).
      * Groups commands by board IP, sends one UDP packet per board.
      * PWM actuators are skipped in FIRE state.
      */
-    void applyForState(State state);
+    /**
+     * Command every actuator for `state`.
+     *
+     * `is_transition` selects between the two things this does. On an actual state change it runs
+     * the CSV's per-actuator delays as a staged schedule; on the 1 Hz republish it sends the
+     * settled (final) positions with no delay. Without that split the republish would re-arm every
+     * pending delay once a second and the schedule would never finish.
+     */
+    void applyForState(State state, bool is_transition = false);
 
     /**
      * Start the 1 Hz continuous re-send loop for the given state.
      * Stops any previously running loop first.
      */
-    void startContinuousLoop(State state);
+    /** `allow_delays` false makes the entry apply immediately — used for abort states, which must
+     *  not sit behind a delay. */
+    void startContinuousLoop(State state, bool allow_delays = true);
 
     /** Stop the continuous re-send loop (blocks until the thread exits). */
     void stopContinuousLoop();
 
     /** Send one UDP packet for a single role (debug manual command). */
     bool sendSingleActuator(const std::string& name, int pos);
+
+    /**
+     * The logical positions the CSV declares for `state_name` (role -> 0 CLOSED / 1 OPEN).
+     * Empty when the state has no column.
+     *
+     * Exposed so a timed hold can be checked against the state it expires into: the hold closes
+     * its valves only because the return state's column says CLOSE, and if it does not, the timer
+     * expires, the state changes, and the valve stays open.
+     */
+    std::map<std::string, int> positionsForState(const std::string& state_name) const;
+
+    /**
+     * The staged delay, in seconds, that `role` waits before moving on entry to `state_name`.
+     * 0 when the state, the role, or the delays file has no entry.
+     *
+     * Exposed so a timed hold can be measured from when the valve it cares about actually opens
+     * rather than from the transition: a staggered state opens its valves at different times, so
+     * "the state was held for N" and "that valve was open for N" are different claims.
+     */
+    double delayForRole(const std::string& state_name, const std::string& role) const;
 
     /** Debug: hold this logical position for the role until cleared or state transition. */
     void setManualOverride(const std::string& name, int pos);
@@ -71,6 +126,15 @@ public:
     void clearAllManualOverrides();
 
     /** Set the Elodin client for publishing commanded state [0x32, ch] to the DB. */
+    /**
+     * Which state hands PWM actuators to controller_service. During it this commander stops
+     * commanding PWM roles entirely, so exactly one thing drives them during a burn. Was the
+     * State::FIRE enumerator; now follows [fire] state like every other fire decision.
+     */
+    void setFireState(State s) {
+        fire_state_ = s;
+    }
+
     void setElodinClient(fsw::elodin::ElodinClient* client) {
         elodin_ = client;
     }
@@ -85,6 +149,18 @@ public:
 
 private:
     std::map<std::string, ActuatorRole> roles_;
+    /** state -> actuator -> delay in seconds, from state_machine_actuator_delays.csv. */
+    std::map<std::string, std::map<std::string, double>> state_actuator_delays_;
+    /** Bumped on every transition so an in-flight delayed stage from the previous state aborts
+     *  instead of landing after we have already moved on. */
+    State fire_state_{State::FIRE};
+    std::atomic<uint64_t> schedule_gen_{0};
+    /** Roles whose delayed stage has not fired yet. The 1 Hz republish skips these: the board holds
+     *  its last commanded position, which is exactly the pre-transition value we want it to keep
+     *  until the delay elapses. Without this the republish would send the settled position first
+     *  and any delay longer than the republish period could never be observed. */
+    std::set<std::string> pending_roles_;
+    std::mutex pending_roles_mutex_;
     // CSV: state_name → { actuator_name → logical_pos (0 or 1) }
     std::map<std::string, std::map<std::string, int>> state_actuators_;
 
@@ -96,6 +172,7 @@ private:
     State loop_state_{State::IDLE};
 
     std::string bind_addr_{"0.0.0.0"};
+    bool bind_addr_explicit_{false};
     uint16_t actuator_port_{5005};
     bool loaded_{false};
     fsw::elodin::ElodinClient* elodin_{nullptr};
@@ -105,6 +182,8 @@ private:
         const std::string& state_name) const;
 
     // Build and send one UDP actuator command packet to a board.
+    /** Send to every board with the retransmits interleaved, so boards stay in step. */
+    bool sendBatch(const std::map<std::string, std::vector<std::pair<uint8_t, uint8_t>>>& by_board);
     bool sendUDP(const std::string& board_ip,
                  const std::vector<std::pair<uint8_t, uint8_t>>& id_state_pairs);
 

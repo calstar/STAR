@@ -2,181 +2,57 @@
 
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { SystemState, CommandPayload } from '@/lib/types';
+import { SystemState, CommandPayload, MessageType } from '@/lib/types';
 import { useEffect, useState, useMemo } from 'react';
 import { useControlMode } from '@/lib/control-mode';
+import { allStates, loadStates, stateNameUpper, bootStateId } from '@/lib/states';
+import { getApiBaseUrl } from '@/lib/websocket';
 
-const STATE_NAMES: Record<SystemState, string> = {
-  [SystemState.DEBUG]: 'DEBUG',
-  [SystemState.IDLE]: 'IDLE',
-  [SystemState.ARMED]: 'ARMED',
-  [SystemState.FUEL_FILL]: 'FUEL FILL',
-  [SystemState.OX_FILL]: 'OX FILL',
-  [SystemState.GN2_LOW_PRESS]: 'GN2 LOW PRESS',
-  [SystemState.GN2_VENT]: 'GN2 LOW VENT',
-  [SystemState.FUEL_PRESS]: 'FUEL PRESS',
-  [SystemState.FUEL_VENT]: 'FUEL VENT',
-  [SystemState.OX_PRESS]: 'OX PRESS',
-  [SystemState.OX_VENT]: 'OX VENT',
-  [SystemState.GN2_HIGH_PRESS]: 'GN2 HIGH PRESS',
-  [SystemState.GN2_HIGH_VENT]: 'GN2 HIGH VENT',
-  [SystemState.VENT]: 'VENT',
-  [SystemState.CALIBRATE]: 'CALIBRATE',
-  [SystemState.READY]: 'READY',
-  [SystemState.FIRE]: 'FIRE',
-  [SystemState.ENGINE_ABORT]: 'ENGINE ABORT',
-  [SystemState.GSE_ABORT]: 'GSE ABORT',
-  [SystemState.EMERGENCY_ABORT]: 'EMERGENCY ABORT',
-  [SystemState.PRESS_STANDBY]: 'PRESS STANDBY',
-};
 
 // States to exclude from diagram rendering
-const EXCLUDED_STATES = new Set([
-  SystemState.DEBUG,
-  SystemState.ENGINE_ABORT,
-  SystemState.GSE_ABORT,
-  SystemState.EMERGENCY_ABORT,
-]);
-
 const NW = 320; // node width
 const NH = 115; // node height
-const COLS = 5; // Updated to accommodate 5 columns in row 2 and 3
+const COLS_FALLBACK = 5;
 const COL_GAP = 360;
 const ROW_GAP = 155;
 const PAD = 24;
-const ROW_COUNT = 6; // rows 0–5
+const ROW_COUNT_FALLBACK = 6;
 
 // Grid layout: [row, col] 0-based
 // IMPORTANT: All states from SystemState enum must be included here to appear in the diagram
 // States without positions will default to [0, 0] and may overlap
 // DEBUG, ENGINE_ABORT, GSE_ABORT, EMERGENCY_ABORT are excluded from rendering
-const STATE_POS: Partial<Record<SystemState, [number, number]>> = {
-  // Row 0: IDLE
-  [SystemState.IDLE]: [0, 0],
-  // Row 1: Armed, Fuel Fill, Ox Fill
-  [SystemState.ARMED]: [1, 0],
-  [SystemState.FUEL_FILL]: [1, 1],
-  [SystemState.OX_FILL]: [1, 2],
-  // Row 2: Press Standby, GN2 Low Press, Fuel Press, OX Press, GN2 High Press
-  [SystemState.PRESS_STANDBY]: [2, 0],
-  [SystemState.GN2_LOW_PRESS]: [2, 1],
-  [SystemState.FUEL_PRESS]: [2, 2],
-  [SystemState.OX_PRESS]: [2, 3],
-  [SystemState.GN2_HIGH_PRESS]: [2, 4],
-  // Row 3: Vent, GN2 Low Vent, Fuel Vent, Ox Vent, GN2 High Vent
-  [SystemState.VENT]: [3, 0],
-  [SystemState.GN2_VENT]: [3, 1],
-  [SystemState.FUEL_VENT]: [3, 2],
-  [SystemState.OX_VENT]: [3, 3],
-  [SystemState.GN2_HIGH_VENT]: [3, 4],
-  // Row 4: Calibrate, Ready
-  [SystemState.CALIBRATE]: [4, 0],
-  [SystemState.READY]: [4, 1],
-  // Row 5: Fire
-  [SystemState.FIRE]: [5, 0],
-};
+/**
+ * Node positions come from [[states]] panel_row / panel_col in the active config profile, not from
+ * a table in this file. The old map silently defaulted a missing state to [0, 0] (`?? 0` below),
+ * so any state it did not know about rendered on top of Idle. A state with no coordinates is now
+ * simply not drawn.
+ */
+function statePos(state: SystemState): [number, number] | undefined {
+  const s = allStates().find((x) => x.id === state);
+  if (!s || s.panelRow === null || s.panelCol === null) return undefined;
+  return [s.panelRow, s.panelCol];
+}
 
 /**
- * Hardcoded state transitions derived from PressureStateMachine.cpp.
- * Used as the permanent fallback so arrows are always visible even when
- * the backend hasn't loaded the CSV yet.
+ * A transition edge, as the backend parsed it out of state_transitions.csv.
+ *
+ * A hardcoded STATIC_TRANSITIONS graph used to live here, transcribed from
+ * PressureStateMachine.cpp, keyed by the compiled enum and kept as a "permanent fallback so
+ * arrows are always visible". On a rig that renumbered its states those ids name different
+ * states, so the fallback did not show this rig's transitions - it showed another rig's, and
+ * every gate built on it disagreed with the config while looking perfectly populated.
+ * No graph beats a wrong graph.
  */
 interface Transition { from: SystemState; to: SystemState; }
 
-const STATIC_TRANSITIONS: Transition[] = [
-  // Main forward sequence
-  { from: SystemState.IDLE, to: SystemState.ARMED },
-  { from: SystemState.ARMED, to: SystemState.IDLE },
-  { from: SystemState.ARMED, to: SystemState.FUEL_FILL },
-  { from: SystemState.ARMED, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.FUEL_FILL, to: SystemState.ARMED },
-  { from: SystemState.FUEL_FILL, to: SystemState.OX_FILL },
-  { from: SystemState.OX_FILL, to: SystemState.ARMED },
-  { from: SystemState.OX_FILL, to: SystemState.PRESS_STANDBY },
-  // Press Standby can go to all press/vent states
-  { from: SystemState.PRESS_STANDBY, to: SystemState.GN2_LOW_PRESS },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.GN2_VENT },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.FUEL_PRESS },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.FUEL_VENT },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.OX_PRESS },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.OX_VENT },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.GN2_HIGH_PRESS },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.GN2_HIGH_VENT },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.FIRE },
-  { from: SystemState.PRESS_STANDBY, to: SystemState.VENT },
-  // GN2 low-pressure regulation loop
-  { from: SystemState.GN2_LOW_PRESS, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.GN2_LOW_PRESS, to: SystemState.GN2_VENT },
-  { from: SystemState.GN2_LOW_PRESS, to: SystemState.FUEL_PRESS },
-  { from: SystemState.GN2_LOW_PRESS, to: SystemState.OX_PRESS },
-  { from: SystemState.GN2_LOW_PRESS, to: SystemState.GN2_HIGH_VENT },
-  { from: SystemState.GN2_LOW_PRESS, to: SystemState.FIRE },
-  { from: SystemState.GN2_VENT, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.GN2_VENT, to: SystemState.GN2_LOW_PRESS },
-  { from: SystemState.GN2_VENT, to: SystemState.FUEL_VENT },
-  { from: SystemState.GN2_VENT, to: SystemState.OX_VENT },
-  { from: SystemState.GN2_VENT, to: SystemState.GN2_HIGH_VENT },
-  { from: SystemState.GN2_VENT, to: SystemState.FIRE },
-  // Fuel pressurisation loop
-  { from: SystemState.FUEL_PRESS, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.FUEL_PRESS, to: SystemState.GN2_VENT },
-  { from: SystemState.FUEL_PRESS, to: SystemState.FUEL_VENT },
-  { from: SystemState.FUEL_PRESS, to: SystemState.OX_PRESS },
-  { from: SystemState.FUEL_PRESS, to: SystemState.OX_VENT },
-  { from: SystemState.FUEL_PRESS, to: SystemState.GN2_HIGH_VENT },
-  { from: SystemState.FUEL_PRESS, to: SystemState.FIRE },
-  { from: SystemState.FUEL_VENT, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.FUEL_VENT, to: SystemState.GN2_VENT },
-  { from: SystemState.FUEL_VENT, to: SystemState.FUEL_PRESS },
-  { from: SystemState.FUEL_VENT, to: SystemState.OX_VENT },
-  { from: SystemState.FUEL_VENT, to: SystemState.GN2_HIGH_VENT },
-  { from: SystemState.FUEL_VENT, to: SystemState.FIRE },
-  // Ox pressurisation loop
-  { from: SystemState.OX_PRESS, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.OX_PRESS, to: SystemState.GN2_VENT },
-  { from: SystemState.OX_PRESS, to: SystemState.FUEL_VENT },
-  { from: SystemState.OX_PRESS, to: SystemState.OX_VENT },
-  { from: SystemState.OX_PRESS, to: SystemState.GN2_HIGH_VENT },
-  { from: SystemState.OX_PRESS, to: SystemState.FIRE },
-  { from: SystemState.OX_VENT, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.OX_VENT, to: SystemState.GN2_VENT },
-  { from: SystemState.OX_VENT, to: SystemState.FUEL_VENT },
-  { from: SystemState.OX_VENT, to: SystemState.OX_PRESS },
-  { from: SystemState.OX_VENT, to: SystemState.GN2_HIGH_VENT },
-  { from: SystemState.OX_VENT, to: SystemState.FIRE },
-  // GN2 high-pressure regulation loop
-  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.GN2_VENT },
-  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.FUEL_VENT },
-  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.OX_VENT },
-  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.GN2_HIGH_VENT },
-  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.CALIBRATE },
-  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.VENT },
-  { from: SystemState.GN2_HIGH_VENT, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.GN2_HIGH_VENT, to: SystemState.GN2_VENT },
-  { from: SystemState.GN2_HIGH_VENT, to: SystemState.FUEL_VENT },
-  { from: SystemState.GN2_HIGH_VENT, to: SystemState.OX_VENT },
-  { from: SystemState.GN2_HIGH_VENT, to: SystemState.GN2_HIGH_PRESS },
-  { from: SystemState.GN2_HIGH_VENT, to: SystemState.VENT },
-  // Calibrate and Ready
-  { from: SystemState.CALIBRATE, to: SystemState.PRESS_STANDBY },
-  { from: SystemState.CALIBRATE, to: SystemState.READY },
-  { from: SystemState.CALIBRATE, to: SystemState.VENT },
-  { from: SystemState.READY, to: SystemState.FIRE },
-  { from: SystemState.READY, to: SystemState.VENT },
-  // Fire and Vent
-  { from: SystemState.FIRE, to: SystemState.IDLE },
-  { from: SystemState.FIRE, to: SystemState.ARMED },
-  { from: SystemState.FIRE, to: SystemState.VENT },
-  { from: SystemState.VENT, to: SystemState.IDLE },
-];
-
-// States reachable from *any* state (emergencies + vent)
-// Note: DEBUG, ENGINE_ABORT, GSE_ABORT, EMERGENCY_ABORT are handled via top bar buttons, not diagram
-const ALWAYS_REACHABLE: SystemState[] = [];
-
-function nodeX(state: SystemState) { return PAD + (STATE_POS[state]?.[1] ?? 0) * COL_GAP; }
-function nodeY(state: SystemState) { return PAD + (STATE_POS[state]?.[0] ?? 0) * ROW_GAP; }
+// `?? 0` is deliberate here ONLY as a last resort — callers filter unplaced states out first
+// (hasPos below). Previously nothing filtered, so a state the position map did not know about was
+// drawn at [0, 0], stacked on top of Idle.
+function nodeX(state: SystemState) { return PAD + (statePos(state)?.[1] ?? 0) * COL_GAP; }
+function nodeY(state: SystemState) { return PAD + (statePos(state)?.[0] ?? 0) * ROW_GAP; }
+/** True if this state has a place on the diagram; unplaced states are not drawn. */
+function hasPos(state: SystemState) { return statePos(state) !== undefined; }
 
 /**
  * Draw an orthogonal elbow arrow between two nodes.
@@ -231,7 +107,7 @@ function StateNode({
 }: { state: SystemState; isActive: boolean; isReachable: boolean; onClick: () => void; }) {
   const isEmergency = false;
   const isClickable = isReachable || isActive || isEmergency;
-  const name = STATE_NAMES[state] ?? 'UNKNOWN';
+  const name = stateNameUpper(state) ?? 'UNKNOWN';
   const x = nodeX(state); const y = nodeY(state);
 
   const fill = isActive ? '#2563EB' : isReachable ? '#059669' : isEmergency ? '#7F1D1D' : '#1F2937';
@@ -269,12 +145,24 @@ function StateNode({
 
 export default function StateMachineDiagram() {
   const currentState = useSensorStore((s) => s.currentState);
-  const updateState = useSensorStore((s) => s.updateState);
   const ws = getWebSocketClient();
   const [backendTransitions, setBackendTransitions] = useState<Transition[]>([]);
+  // Bumped after states are (re)loaded so the diagram re-renders — allStates()/statePos() read the
+  // module cache synchronously, so a version tick is what tells React the positions changed.
+  const [, setStatesVersion] = useState(0);
   const { controlEnabled } = useControlMode();
 
-  // Request transitions from backend on mount; fall back to STATIC_TRANSITIONS if unavailable
+  // Load the config-declared states (names + panel positions) on mount, and RELOAD them whenever a
+  // config/CSV save is broadcast — otherwise the module-level cache in states.ts would hold the old
+  // positions until a full page reload.
+  useEffect(() => {
+    const refreshStates = (force: boolean) =>
+      void loadStates(getApiBaseUrl(), force).then(() => setStatesVersion((v) => v + 1));
+    refreshStates(false);
+    const unsub = ws.on(MessageType.CONFIG_UPDATED, () => refreshStates(true));
+    return () => { unsub(); };
+  }, [ws]);
+
   useEffect(() => {
     const handleTransitions = (payload: unknown) => {
       const data = payload as { transitions: Transition[] };
@@ -290,7 +178,7 @@ export default function StateMachineDiagram() {
       (ws as any).send({ type: 'get_state_transitions', timestamp: Date.now(), payload: {} });
     };
 
-    const timeoutId = setTimeout(() => {
+    const tryRequest = () => {
       if (ws.isConnected()) {
         requestTransitions();
       } else {
@@ -302,35 +190,41 @@ export default function StateMachineDiagram() {
         }, 100);
         setTimeout(() => clearInterval(checkConnection), 5000);
       }
-    }, 200);
+    };
 
-    return () => { clearTimeout(timeoutId); unsub(); };
+    const timeoutId = setTimeout(tryRequest, 200);
+    // Re-request the transition matrix after a config/CSV save so edited edges show without a reload.
+    const unsubCfg = ws.on(MessageType.CONFIG_UPDATED, () => tryRequest());
+
+    return () => { clearTimeout(timeoutId); unsub(); unsubCfg(); };
   }, [ws]);
 
   const debugMode = useSensorStore((s) => s.debugMode);
 
-  // Use backend transitions when available, otherwise fall back to hardcoded static transitions
-  const transitions = backendTransitions.length > 0 ? backendTransitions : STATIC_TRANSITIONS;
+  // Backend transitions when available. The hardcoded fallback is keyed by the compiled
+  // SystemState enum, so it is only meaningful while the built-in state list is also in force —
+  // once the config has supplied its own ids those pairs name different states, and offering them
+  // is worse than offering nothing.
+  const transitions = backendTransitions;
 
   const sendStateTransition = (targetState: SystemState) => {
     if (!controlEnabled) return;
-    const effectiveState = currentState ?? SystemState.IDLE;
+    const effectiveState = currentState ?? bootStateId() ?? -1;
     const isAllowed = transitions.some(t => t.from === effectiveState && t.to === targetState);
-    const isEmergency = ALWAYS_REACHABLE.includes(targetState);
     const isInDebugMode = debugMode;
 
     // In debug mode, allow any transition
-    if (!isAllowed && !isEmergency && !isInDebugMode && effectiveState !== targetState) {
-      console.warn(`⚠️ Invalid transition: ${STATE_NAMES[effectiveState]} → ${STATE_NAMES[targetState]}`);
-      alert(`Invalid transition: Cannot go from ${STATE_NAMES[effectiveState]} to ${STATE_NAMES[targetState]}`);
+    if (!isAllowed && !isInDebugMode && effectiveState !== targetState) {
+      console.warn(`⚠️ Invalid transition: ${stateNameUpper(effectiveState)} → ${stateNameUpper(targetState)}`);
+      alert(`Invalid transition: Cannot go from ${stateNameUpper(effectiveState)} to ${stateNameUpper(targetState)}`);
       return;
     }
 
-    updateState({
-      currentState: targetState,
-      stateName: STATE_NAMES[targetState] ?? `STATE ${targetState}`,
-      timestamp: Date.now(),
-    });
+    // Deliberately no optimistic update. The sequencer is authoritative and reports through
+    // _SEQUENCER_STATE [0x50]; moving the display here asserted a transition that had not happened
+    // yet, and nothing corrected it when the sequencer refused — the rig sat in Armed while the GUI
+    // showed Press Standby. The backend command path dropped its own optimistic update for this
+    // reason; this was the copy left behind.
     const command: CommandPayload = {
       commandType: 'state_transition',
       data: { state: targetState },
@@ -338,7 +232,7 @@ export default function StateMachineDiagram() {
     ws.sendCommand(command);
   };
 
-  const effectiveState = currentState ?? SystemState.IDLE;
+  const effectiveState = currentState ?? bootStateId() ?? -1;
 
   const reachableStates = useMemo(() => {
     const set = new Set(
@@ -346,13 +240,11 @@ export default function StateMachineDiagram() {
         .filter(t => t.from === effectiveState && t.from !== t.to)
         .map(t => t.to),
     );
-    // Emergency states are always reachable
-    ALWAYS_REACHABLE.forEach(s => set.add(s));
     // In debug mode, all non-excluded states are reachable
     if (debugMode) {
-      Object.values(SystemState)
-        .filter((s) => typeof s === 'number' && !EXCLUDED_STATES.has(s as SystemState))
-        .forEach((s) => set.add(s as SystemState));
+      allStates()
+        .filter((s) => !s.isAbort)
+        .forEach((s) => set.add(s.id as SystemState));
     }
     return set;
   }, [effectiveState, transitions, debugMode]);
@@ -367,16 +259,24 @@ export default function StateMachineDiagram() {
       .map(t => t.to),
   );
 
-  // Emergency arrows from current state (always draw these separately)
-  const emergencyTargets = ALWAYS_REACHABLE.filter(
-    s => s !== effectiveState && STATE_POS[s] !== undefined,
-  );
+  // Draw the states the CONFIG declares, not the ones the compiled SystemState enum happens to
+  // contain. Enumerating the enum drew every id 0-20 that could still find a position, so a rig
+  // that renamed its states kept rendering the built-in ones underneath — Calibrate (id 14, cell
+  // 4,0) landing on top of a config whose Ready also sits at (4,0).
+  //
+  // Aborts drop out by their config flag rather than by hardcoded id 17/18/19: they are reached
+  // from the emergency arrows, not placed on the grid. Nothing is excluded by id any more, which
+  // is what hid a state the operator put at id 0: the excluded-id set held SystemState.DEBUG = 0,
+  // so an Armed declared at id 0 was filtered out as though it were the legacy Debug state.
+  const states = allStates()
+    .filter((s) => !s.isAbort && hasPos(s.id as SystemState))
+    .map((s) => s.id as SystemState);
 
-  // Filter out excluded states from rendering
-  const states = Object.values(SystemState).filter(
-    (s) => typeof s === 'number' && !EXCLUDED_STATES.has(s as SystemState)
-  ) as SystemState[];
-
+  // Derived from the placed states, so adding one in config widens the canvas instead of
+  // drawing it off the edge.
+  const placed = allStates().filter((x) => x.panelRow !== null && x.panelCol !== null);
+  const COLS = placed.length ? Math.max(...placed.map((x) => x.panelCol as number)) + 1 : COLS_FALLBACK;
+  const ROW_COUNT = placed.length ? Math.max(...placed.map((x) => x.panelRow as number)) + 1 : ROW_COUNT_FALLBACK;
   const svgW = PAD * 2 + COLS * COL_GAP;
   const svgH = PAD * 2 + ROW_COUNT * ROW_GAP; // rows 0-5 (IDLE, Armed/Fill, Press, Vent, Calibrate/Ready, Fire)
 
@@ -389,7 +289,7 @@ export default function StateMachineDiagram() {
         <h2 className="text-[10px] font-bold tracking-widest text-text-muted uppercase">State Machine</h2>
         <span className="text-[10px] font-mono">
           <span className="text-text-muted">CURRENT: </span>
-          <span className="text-blue-400 font-bold">{STATE_NAMES[effectiveState]}</span>
+          <span className="text-blue-400 font-bold">{stateNameUpper(effectiveState)}</span>
         </span>
       </div>
 

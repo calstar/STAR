@@ -333,7 +333,7 @@ function FlashPageContent() {
                   type="file"
                   accept=".bin"
                   onChange={handleFileChange}
-                  className="block w-full text-sm text-text-muted file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-primary/20 file:text-primary file:font-semibold file:cursor-pointer hover:file:bg-primary/30"
+                  className="block w-full text-sm text-text-muted file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-blue-600/20 file:text-blue-400 file:font-semibold file:cursor-pointer hover:file:bg-blue-600/30"
                   disabled={flashing}
                 />
                 {file && (
@@ -349,7 +349,7 @@ function FlashPageContent() {
             type="button"
             onClick={handleFlash}
             disabled={flashing || !canFlash || !ip.trim()}
-            className="min-h-[48px] px-8 py-3 text-lg font-bold rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
+            className="min-h-[48px] px-8 py-3 text-lg font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {buttonLabel}
           </button>
@@ -357,7 +357,7 @@ function FlashPageContent() {
           {progress != null && flashing && (
             <div className="h-2 rounded-full bg-gray-800 overflow-hidden">
               <div
-                className="h-full bg-primary transition-all duration-300"
+                className="h-full bg-blue-600 transition-all duration-300"
                 style={{ width: `${progress}%` }}
               />
             </div>

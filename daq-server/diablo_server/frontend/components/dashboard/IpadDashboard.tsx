@@ -7,6 +7,7 @@ import StateMachineDiagram from '@/components/controls/StateMachineDiagram';
 import ActuatorControlByName from '@/components/controls/ActuatorControlByName';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { useActuatorsFromConfig, usePressureSensors } from '@/lib/dashboard-hooks';
+import { isFireState } from '@/lib/states';
 
 // Time window options for history plotting
 const TIME_WINDOWS = [
@@ -22,7 +23,7 @@ export default function IpadDashboard() {
     const actuatorsFromConfig = useActuatorsFromConfig();
     const pressureSensorsPlot = usePressureSensors();
 
-    const isFireState = currentState === SystemState.FIRE;
+    const isFire = isFireState(currentState);
     const pressurePlotForChart = usePressureHistoryPlotSeries(pressureSensorsPlot);
 
     return (
@@ -94,7 +95,7 @@ export default function IpadDashboard() {
             </div>
 
             {/* ── Bottom Section: Controller Status (when in FIRE state) ─────── */}
-            {isFireState && (
+            {isFire && (
                 <div className="flex-shrink-0 border-t border-gray-800 p-3 bg-card mt-auto sticky bottom-0 z-10 w-full shadow-[0_-10px_20px_rgba(0,0,0,0.5)]">
                     <div className="flex items-center gap-6">
                         <div className="flex items-center gap-2">

@@ -148,6 +148,10 @@ docker run --rm -v "$PWD/deploy/caddy:/etc/caddy:ro" \
   repo plus a deploy key would enable it.
 - **DAQ has no container.** Deploying it is still the systemd/tmux flow in
   `daq-server/deploy/` — auto-deploy covers the compose stacks only.
+- **The test stand's USB Wi-Fi adapter wedges.** The RTL8822BU drops off the
+  network and only returns after a physical replug. Cause and fix — plus a
+  watchdog that does the replug in software — are in `deploy/wifi-watchdog/`.
+  For anything that matters during a run, use the wired NIC.
 - **No automatic rollback.** Compose pins `:latest`, so a bad merge is rolled
   back by hand: pause the timer, then pin the previous `sha-<short>` tag (every
   image carries one) or revert on `main` and let the next tick ship it.

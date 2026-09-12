@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   parseGuiStreamConfig,
   envelopeWindowMs,
+  encoderWindowMs,
   EnvelopeAccumulator,
   DEFAULT_GUI_STREAM_CONFIG,
 } from '../gui-stream.js';
@@ -18,9 +19,9 @@ describe('parseGuiStreamConfig', () => {
 
   it('accepts valid mode and rate', () => {
     expect(parseGuiStreamConfig({ gui: { downsample_mode: 'throttle', points_per_second: 10 } }))
-      .toEqual({ mode: 'throttle', pointsPerSecond: 10 });
+      .toEqual({ mode: 'throttle', pointsPerSecond: 10, encoderPointsPerSecond: 100 });
     expect(parseGuiStreamConfig({ gui: { downsample_mode: 'envelope' } }))
-      .toEqual({ mode: 'envelope', pointsPerSecond: 20 });
+      .toEqual({ mode: 'envelope', pointsPerSecond: 20, encoderPointsPerSecond: 100 });
   });
 
   it('rejects out-of-range rates (bad config edit cannot take the stream down)', () => {
@@ -30,8 +31,36 @@ describe('parseGuiStreamConfig', () => {
   });
 
   it('computes window length as pointsPerSecond/2 windows per second', () => {
-    expect(envelopeWindowMs({ mode: 'envelope', pointsPerSecond: 20 })).toBe(100);
-    expect(envelopeWindowMs({ mode: 'envelope', pointsPerSecond: 10 })).toBe(200);
+    expect(envelopeWindowMs({ mode: 'envelope', pointsPerSecond: 20, encoderPointsPerSecond: 100 })).toBe(100);
+    expect(envelopeWindowMs({ mode: 'envelope', pointsPerSecond: 10, encoderPointsPerSecond: 100 })).toBe(200);
+  });
+
+  it('gives encoders their own, much shorter window', () => {
+    // Encoders feed OscopeTriggerPlot's valve-timing measurement, which the GUI
+    // budget's 100 ms windows would quantize away.
+    const cfg = parseGuiStreamConfig({ gui: { points_per_second: 20 } });
+    expect(cfg.encoderPointsPerSecond).toBe(100);
+    expect(encoderWindowMs(cfg)).toBe(20);
+    expect(encoderWindowMs(cfg)).toBeLessThan(envelopeWindowMs(cfg));
+  });
+
+  it('reads and bounds encoder_points_per_second', () => {
+    expect(parseGuiStreamConfig({ gui: { encoder_points_per_second: 500 } }).encoderPointsPerSecond).toBe(500);
+    expect(parseGuiStreamConfig({ gui: { encoder_points_per_second: 1e9 } }).encoderPointsPerSecond).toBe(100);
+    expect(parseGuiStreamConfig({ gui: { encoder_points_per_second: -5 } }).encoderPointsPerSecond).toBe(100);
+  });
+
+  it('is a no-op at the boards\' real ~48 Hz encoder rate', () => {
+    // One sample per 20 ms window => min == max => a single point passes
+    // through unchanged. This is a ceiling against a faster board, not a
+    // downsample of the current one.
+    const acc = new EnvelopeAccumulator(20);
+    const out: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      // ~48 Hz => ~20.8 ms spacing, just over one window each.
+      for (const p of acc.add('ENC1.CH1', 'ENC1.CH1', 'raw_angle', i * 21, 100 + i)) out.push(p.value);
+    }
+    expect(out).toEqual(Array.from({ length: 19 }, (_, i) => 100 + i));
   });
 });
 

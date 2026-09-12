@@ -1,0 +1,250 @@
+#!/bin/bash
+#
+# Watchdog for the TP-Link Archer USB Wi-Fi adapter (RTL8822BU, 2357:0138).
+#
+# The chip intermittently wedges in its hardware "IPS" (Inactive Power Save)
+# state. Once there, the driver cannot wake it and logs this every ~15s, once
+# per wpa_supplicant scan attempt, forever:
+#
+#     rtw88_8822bu 4-4:1.0: error beacon valid
+#     rtw88_8822bu 4-4:1.0: failed to download rsvd page
+#     rtw88_8822bu 4-4:1.0: failed to download firmware
+#     rtw88_8822bu 4-4:1.0: leave idle state failed
+#     rtw88_8822bu 4-4:1.0: failed to leave ips state      <-- the actual fault
+#     rtw88_8822bu 4-4:1.0: failed to leave idle state
+#
+# "failed to download firmware" is misleading: the firmware file is fine and
+# loads correctly whenever the chip is awake. It is downstream fallout from the
+# chip being asleep and unresponsive.
+#
+# Nothing short of re-enumerating the device recovers it — which is why
+# physically unplugging and replugging works. This script detects the
+# signature and does that in software.
+#
+# Usage:
+#   tplink-wifi-watchdog            check once, reset if wedged (timer calls this)
+#   tplink-wifi-watchdog --status   report health, change nothing
+#   tplink-wifi-watchdog --now      force a reset regardless of state
+#
+set -u
+
+VID=2357
+PID=0138
+LOOKBACK=90            # seconds of kernel log to inspect
+COOLDOWN=180           # min seconds between resets, so a reset that doesn't
+                       # help can't turn into a replug loop
+SETTLE=25              # how long to wait for the adapter to come back
+DHCP_GRACE=15          # further wait for a default route after associating
+STATE=/run/tplink-wifi-watchdog.last
+
+# Any of these three means the chip is wedged. The first is the root fault; the
+# other two are logged alongside it and make the match robust if the driver's
+# wording shifts between kernel versions.
+WEDGE_RE='failed to leave ips state|failed to leave idle state|leave idle state failed'
+
+log()  { logger -t tplink-wifi-watchdog -- "$*"; echo "$*"; }
+die()  { log "ERROR: $*"; exit 1; }
+
+# --- locate the adapter ------------------------------------------------------
+# By vendor:product, never by a hardcoded path. This is not theoretical
+# tidiness: rtw88_usb is built with switch_usb_mode=Y, and the adapter changes
+# BUS across a reset. Measured 2026-09-12 — it went from 4-4 (USB 3 SuperSpeed)
+# to 3-4 (USB 2), so its sysfs path and the port to cycle both moved from
+# usb4-port4 to usb3-port4. Anything pinned to "4-4" would already be broken.
+find_dev() {
+    local d
+    for d in /sys/bus/usb/devices/*; do
+        [ -r "$d/idVendor" ] || continue
+        [ "$(cat "$d/idVendor" 2>/dev/null)" = "$VID" ] || continue
+        [ "$(cat "$d/idProduct" 2>/dev/null)" = "$PID" ] || continue
+        basename "$d"
+        return 0
+    done
+    return 1
+}
+
+# The interface name is derived from the MAC (wlx<mac>), so it is stable across
+# replugs — but read it from sysfs anyway rather than hardcoding it.
+find_iface() {
+    local dev=$1 n
+    for n in /sys/bus/usb/devices/"$dev":*/net/*; do
+        [ -d "$n" ] || continue
+        basename "$n"
+        return 0
+    done
+    return 1
+}
+
+# Resolve the *port* the adapter sits on. Disabling the port is the closest
+# software equivalent to pulling the plug: it drops the link electrically,
+# where an `authorized` toggle only detaches the device logically.
+#
+# Device names are <bus>-<path>: "4-4" is port 4 on bus 4's root hub;
+# "4-4.2" is port 2 of a hub that is itself on port 4. The port directory
+# lives under the parent, and the two cases are spelled differently.
+find_portdir() {
+    local dev=$1 bus path parent port d
+    bus=${dev%%-*}
+    path=${dev#*-}
+    if [[ "$path" == *.* ]]; then
+        parent="$bus-${path%.*}"                       # device behind a hub
+        port="${path##*.}"
+        for d in /sys/bus/usb/devices/"$parent"/"$parent":1.*/"$parent-port$port"; do
+            [ -d "$d" ] && { echo "$d"; return 0; }
+        done
+    else
+        parent="usb$bus"                               # device on a root hub
+        port="$path"
+        d="/sys/bus/usb/devices/$parent/$bus-0:1.0/usb$bus-port$port"
+        [ -d "$d" ] && { echo "$d"; return 0; }
+    fi
+    return 1
+}
+
+wedged() {
+    journalctl -k --since "-${LOOKBACK}s" --no-pager 2>/dev/null \
+        | grep -qE "$WEDGE_RE"
+}
+
+# Associated and carrier up. Used to decide whether a reset actually worked.
+healthy() {
+    local iface=$1
+    [ -n "$iface" ] || return 1
+    [ "$(cat "/sys/class/net/$iface/operstate" 2>/dev/null)" = "up" ] || return 1
+    iw dev "$iface" link 2>/dev/null | grep -q '^Connected to'
+}
+
+# --- recovery ----------------------------------------------------------------
+# Escalating, cheapest first. Each step is checked before escalating, so a
+# adapter that recovers from a bus reset never gets its port cut.
+
+reset_usbreset() {          # USBDEVFS_RESET — a bus reset, device stays bound
+    local dev=$1 busnum devnum
+    command -v usbreset >/dev/null 2>&1 || return 1
+    busnum=$(cat "/sys/bus/usb/devices/$dev/busnum" 2>/dev/null) || return 1
+    devnum=$(cat "/sys/bus/usb/devices/$dev/devnum" 2>/dev/null) || return 1
+    log "step 1: usbreset on /dev/bus/usb/$(printf '%03d/%03d' "$busnum" "$devnum")"
+    usbreset "/dev/bus/usb/$(printf '%03d/%03d' "$busnum" "$devnum")" >/dev/null 2>&1
+}
+
+reset_port() {              # disable the port electrically == unplug it
+    local portdir=$1
+    log "step 2: cycling port $(basename "$portdir") (electrical, == replug)"
+    echo 1 > "$portdir/disable" 2>/dev/null || return 1
+    sleep 3
+    echo 0 > "$portdir/disable" 2>/dev/null || return 1
+}
+
+reset_authorized() {        # fallback when no port dir is available
+    local dev=$1
+    log "step 2 (fallback): toggling authorized on $dev"
+    echo 0 > "/sys/bus/usb/devices/$dev/authorized" 2>/dev/null || return 1
+    sleep 3
+    echo 1 > "/sys/bus/usb/devices/$dev/authorized" 2>/dev/null || return 1
+}
+
+# Association is the recovery signal, but it is NOT the same as a usable
+# network: DHCP finishes a beat later. Measured during the 2026-09-12 port-cycle
+# test, the interface reported "Connected to ..." while the default route was
+# still empty and pings failed. So: return success on association, then give
+# DHCP a short grace period and log what actually came back. A missing route is
+# reported, not treated as failure — the adapter may legitimately be on a
+# network that hands out no default route.
+wait_for_recovery() {
+    local i j iface
+    for ((i = 0; i < SETTLE; i++)); do
+        sleep 1
+        dev=$(find_dev) || continue
+        iface=$(find_iface "$dev") || continue
+        if healthy "$iface"; then
+            log "recovered: $iface associated after ${i}s"
+            for ((j = 0; j < DHCP_GRACE; j++)); do
+                ip route show default 2>/dev/null | grep -q "dev $iface" && break
+                sleep 1
+            done
+            if ip route show default 2>/dev/null | grep -q "dev $iface"; then
+                log "  default route back after a further ${j}s: $(ip -br addr show "$iface" | awk '{print $3}')"
+            else
+                log "  associated but no default route via $iface after ${DHCP_GRACE}s (may be expected)"
+            fi
+            return 0
+        fi
+    done
+    return 1
+}
+
+recover() {
+    local dev=$1 portdir
+
+    if reset_usbreset "$dev" && wait_for_recovery; then
+        return 0
+    fi
+    log "bus reset did not bring it back; escalating"
+
+    dev=$(find_dev) || die "adapter vanished after bus reset"
+    if portdir=$(find_portdir "$dev"); then
+        reset_port "$portdir" || log "port cycle failed; trying authorized toggle"
+    else
+        log "no port control node found for $dev"
+        reset_authorized "$dev" || die "authorized toggle failed"
+    fi
+
+    if wait_for_recovery; then
+        return 0
+    fi
+    log "still not associated after ${SETTLE}s — leaving it for the next tick"
+    return 1
+}
+
+# --- main --------------------------------------------------------------------
+MODE=${1:-check}
+
+dev=$(find_dev) || {
+    # Not an error: the adapter may simply be unplugged.
+    log "adapter $VID:$PID not present; nothing to do"
+    exit 0
+}
+iface=$(find_iface "$dev") || iface=""
+
+case "$MODE" in
+  --status)
+        echo "device:    $dev"
+        echo "interface: ${iface:-<none bound>}"
+        echo "portdir:   $(find_portdir "$dev" 2>/dev/null || echo '<not found>')"
+        echo "operstate: $(cat "/sys/class/net/$iface/operstate" 2>/dev/null || echo n/a)"
+        echo "powersave: $(iw dev "$iface" get power_save 2>/dev/null | sed 's/.*: //' || echo n/a)"
+        echo -n "link:      "; iw dev "$iface" link 2>/dev/null | head -1
+        if wedged; then
+            echo "state:     WEDGED (ips-state errors in the last ${LOOKBACK}s)"
+        elif healthy "$iface"; then
+            echo "state:     healthy"
+        else
+            echo "state:     not associated, but no wedge signature"
+        fi
+        exit 0
+        ;;
+  --now)
+        log "manual reset requested for $dev"
+        recover "$dev"
+        exit $?
+        ;;
+  check) ;;
+  *)    die "unknown argument: $MODE (expected --status, --now, or nothing)" ;;
+esac
+
+wedged || exit 0
+
+# Rate-limit. If a reset didn't fix it, cycling the port every 60s makes things
+# worse, not better — back off and let a human look.
+now=$(date +%s)
+if [ -f "$STATE" ]; then
+    last=$(cat "$STATE" 2>/dev/null || echo 0)
+    if [ $(( now - last )) -lt "$COOLDOWN" ]; then
+        log "wedge detected on $dev, but last reset was $(( now - last ))s ago (cooldown ${COOLDOWN}s) — skipping"
+        exit 0
+    fi
+fi
+echo "$now" > "$STATE"
+
+log "wedge detected on $dev (${iface:-no iface}) — recovering"
+recover "$dev"

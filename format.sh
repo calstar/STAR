@@ -116,12 +116,21 @@ find_cpp_files() {
             # Skip vendored / build / archived trees inside each target.
             # firmware/libraries is vendored (subtrees, symlinks); firmware/Archive
             # is intentionally frozen old code.
+            #
+            # nlohmann/ and toml++/ are vendored single-header libraries living under
+            # diablo_server/lib/include. Reformatting them was always wrong — they are
+            # upstream code — and they are also clang-format memory bombs: json.hpp is
+            # 899 KB and toml.hpp 475 KB of deeply-nested templates, and a single
+            # clang-format on json.hpp was measured at 5.6 GB RSS, enough to invoke the
+            # OOM killer on a 7 GB dev box (it took systemd with it). Combined with the
+            # job count below that was ~22 of them at once.
             find "$dir" \
                 \( -path "$dir/external"  -o -path "$dir/external/*" \
                 -o -path "$dir/build"     -o -path "$dir/build/*" \
                 -o -path "$dir/.pio"      -o -path "$dir/.pio/*" \
                 -o -path "$dir/Archive"   -o -path "$dir/Archive/*" \
-                -o -path "$dir/libraries" -o -path "$dir/libraries/*" \) -prune -o \
+                -o -path "$dir/libraries" -o -path "$dir/libraries/*" \
+                -o -name node_modules -o -name nlohmann -o -name "toml++" \) -prune -o \
                 -type f \( -name "*.cpp" -o -name "*.hpp" -o -name "*.c" -o -name "*.h" \) -print0
         else
             print_warning "Directory $dir not found, skipping..."
@@ -153,16 +162,23 @@ find_py_files() {
     done
 }
 
+# Capped at 8 rather than taking nproc straight: clang-format's peak memory is set by the
+# worst file in the tree, not the average, so on a many-core / modest-RAM machine (a 22-thread
+# laptop with 7 GB, say) an uncapped nproc is a reliable way to invoke the OOM killer. Override
+# with FORMAT_JOBS if you know your machine can take it.
 format_parallel_jobs() {
+    local n
     if [ -n "${FORMAT_JOBS:-}" ]; then
         echo "$FORMAT_JOBS"
+        return
     elif command -v nproc &>/dev/null; then
-        nproc
+        n=$(nproc)
     elif command -v sysctl &>/dev/null; then
-        sysctl -n hw.ncpu 2>/dev/null || echo 8
+        n=$(sysctl -n hw.ncpu 2>/dev/null || echo 8)
     else
-        echo 8
+        n=8
     fi
+    if [ "$n" -gt 8 ]; then echo 8; else echo "$n"; fi
 }
 
 format_cpp() {

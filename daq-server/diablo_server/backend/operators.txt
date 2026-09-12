@@ -8,8 +8,11 @@
 # In dev (no Caddy in front → no X-Auth-Email), control is allowed to anyone
 # locally — the password remains as a fat-finger guard.
 #
-# Committed on purpose: adding an email here grants nothing until someone with
-# server/deploy access pulls and restarts. Deploy access is the real gate.
+# Committed on purpose: the source of truth is version-controlled, and adding
+# someone still requires server/deploy access to edit the file on the box --
+# deploy access is the real gate. The running backend re-reads this file on
+# change (mtime-cached), so an edit on the server takes effect on the next
+# command; no restart or redeploy needed.
 
 aidanrickert@berkeley.edu
 aahilsyed72@berkeley.edu
@@ -18,3 +21,4 @@ manank_doshi@berkeley.edu
 rchikka15@berkeley.edu
 inez9@berkeley.edu
 carlosbautista@berkeley.edu
+tchang27@berkeley.edu

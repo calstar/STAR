@@ -1,5 +1,6 @@
 'use client'
 
+import { connectionBadge } from '@/lib/connection-badge';
 import { useEffect, useMemo, useState } from 'react';
 import { useSensorStore, useSensorValue, usePressureHistoryPlotSeries } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
@@ -11,17 +12,14 @@ import ActuatorControlByName from '@/components/controls/ActuatorControlByName';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { useControlMode } from '@/lib/control-mode';
 import { useSensorConfig } from '@/lib/sensor-config';
+import { useGuiConfig } from '@/lib/gui-config';
+import { usePressureLimits } from '@/lib/pressure-limits';
 import { buildPressureBarDefsFromSensorConfig, buildPressurePlotSeriesFromSensorList } from '@/lib/pressure-bar-defs';
+import { stateNameUpper } from '@/lib/states';
+import { stateIdByName, bootStateId } from '@/lib/states';
 
 // ── Constants shared with TopBar/UnifiedDashboard ────────────────────────────
 
-const STATE_NAMES: Record<number, string> = {
-  0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
-  5: 'GN2 LOW PRESS', 6: 'GN2 VENT', 7: 'FUEL PRESS', 8: 'FUEL VENT',
-  9: 'OX PRESS', 10: 'OX VENT', 11: 'GN2 HIGH PRESS', 12: 'HIGH VENT',
-  13: 'VENT', 14: 'CALIBRATE', 15: 'READY', 16: 'FIRE', 17: 'ABORT',
-  20: 'PRESS STANDBY',
-};
 
 const STATE_COLORS: Record<number, string> = {
   16: 'text-red-400', 17: 'text-red-500', 13: 'text-yellow-400',
@@ -72,8 +70,23 @@ export default function MobileDashboard() {
   const debugMode = useSensorStore((s) => s.debugMode);
   const setDebugMode = useSensorStore((s) => s.setDebugMode);
   const connectionStatus = useSensorStore((s) => s.connectionStatus) ?? { connected: false, elodinConnected: false };
+  const session = useSensorStore((s) => s.session);
   const connected = connectionStatus.connected;
   const elodinConnected = connectionStatus.elodinConnected;
+  const isSimulated = !!connectionStatus.simulated;
+  const dataFresh = !!connectionStatus.dataFresh; // backend-authoritative data-flowing signal
+  // Session-enabled deployment with no active run: pipeline is intentionally down.
+  const sessionStopped = !!(session?.enabled && !session.active);
+  // Dot + label + tooltip, shared with TopBar so the two cannot drift.
+  const badge = connectionBadge({
+    connected,
+    sessionStopped,
+    dataFresh,
+    simulated: isSimulated,
+    throttled: connectionStatus.throttled,
+    resolutionPct: connectionStatus.resolutionPct,
+    lagMs: connectionStatus.lagMs,
+  });
 
   const [clock, setClock] = useState('');
   const [timeWindow, setTimeWindow] = useState(60);
@@ -96,8 +109,8 @@ export default function MobileDashboard() {
   }, []);
 
   // ── Derived state ─────────────────────────────────────────────────────────
-  const effectiveState = currentState ?? SystemState.IDLE;
-  const currentStateName = STATE_NAMES[effectiveState] ?? `STATE ${effectiveState}`;
+  const effectiveState = currentState ?? bootStateId() ?? -1;
+  const currentStateName = stateNameUpper(effectiveState) ?? `STATE ${effectiveState}`;
   const stateColor = STATE_COLORS[effectiveState] ?? 'text-text';
   const isFullyConnected = connected && elodinConnected;
 
@@ -105,25 +118,42 @@ export default function MobileDashboard() {
     if (!controlEnabled) return;
     updateState({
       currentState: state,
-      stateName: STATE_NAMES[state] ?? `STATE ${state}`,
+      stateName: stateNameUpper(state) ?? `STATE ${state}`,
       timestamp: Date.now(),
     });
     const cmd: CommandPayload = { commandType: 'state_transition', data: { state } };
     ws.sendCommand(cmd);
   };
 
-  const handleEngineAbort = () => {
-    sendState(SystemState.VENT);
-    setTimeout(() => sendState(SystemState.ENGINE_ABORT), 5000);
-  };
-  const handleGseAbort = () => sendState(SystemState.GSE_ABORT);
-  const handleEmergencyAbort = () => {
-    if (!confirm('⚠️ EMERGENCY ABORT — immediately vent GN2 and abort all operations?')) return;
-    sendState(SystemState.EMERGENCY_ABORT);
+  // Same as TopBar: abort targets come from the config's [[states]] by name, not from the compiled
+  // enum's 13/17/18/19, which a rig on another numbering simply does not have.
+  const sendStateNamed = (name: string) => {
+    const id = stateIdByName(name);
+    if (id === null) {
+      console.error(`[MobileDashboard] config declares no "${name}" state — command not sent`);
+      return;
+    }
+    sendState(id);
   };
 
-  const pressureBarDefs = useMemo(() => buildPressureBarDefsFromSensorConfig(sensors), [sensors]);
-  const pressureSensorsPlot = useMemo(() => buildPressurePlotSeriesFromSensorList(sensors), [sensors]);
+  // Disable a control the config cannot satisfy, so an abort never looks armed while resolving to
+  // nothing — the same guard TopBar uses.
+  const hasState = (name: string) => stateIdByName(name) !== null;
+
+  const handleEngineAbort = () => {
+    sendStateNamed('Vent');
+    setTimeout(() => sendStateNamed('Engine Abort'), 5000);
+  };
+  const handleGseAbort = () => sendStateNamed('GSE Abort');
+  const handleEmergencyAbort = () => {
+    if (!confirm('⚠️ EMERGENCY ABORT — immediately vent GN2 and abort all operations?')) return;
+    sendStateNamed('Emergency Abort');
+  };
+
+  const { pressureBars } = useGuiConfig();
+  const limits = usePressureLimits();
+  const pressureBarDefs = useMemo(() => buildPressureBarDefsFromSensorConfig(sensors, pressureBars, limits), [sensors, pressureBars, limits]);
+  const pressureSensorsPlot = useMemo(() => buildPressurePlotSeriesFromSensorList(sensors, pressureBars, limits), [sensors, pressureBars, limits]);
   const pressurePlotForChart = usePressureHistoryPlotSeries(pressureSensorsPlot);
 
   return (
@@ -136,10 +166,8 @@ export default function MobileDashboard() {
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <span className="text-base font-bold tracking-widest text-blue-400 uppercase">DIABLO DAQ</span>
-            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-              isFullyConnected ? 'bg-green-500' : connected ? 'bg-yellow-500' : 'bg-red-500'
-            }`} />
-            <span className="text-xs text-gray-400">{isFullyConnected ? 'Connected' : connected ? 'Data Pipeline Down' : 'Disconnected'}</span>
+            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${badge.dotClass}`} title={badge.title} />
+            <span className="text-xs text-gray-400" title={badge.title}>{badge.label}</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-xs font-mono text-gray-400 tabular-nums">{clock}</span>
@@ -170,29 +198,47 @@ export default function MobileDashboard() {
           </button>
           <button
             onClick={handleEngineAbort}
-            disabled={!controlEnabled}
+            disabled={!controlEnabled || !hasState('Vent') || !hasState('Engine Abort')}
             className="flex-1 py-2 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border border-amber-600
                        text-white font-bold text-xs rounded tracking-wider transition-colors disabled:bg-amber-900 disabled:border-amber-900 disabled:text-amber-700 disabled:cursor-not-allowed"
-            title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+            title={
+              !controlEnabled
+                ? 'Viewer mode: controls locked'
+                : !hasState('Vent') || !hasState('Engine Abort')
+                  ? 'Config declares no Vent / Engine Abort state'
+                  : undefined
+            }
           >
             ENGINE ABORT
           </button>
           <button
             onClick={handleGseAbort}
-            disabled={!controlEnabled}
+            disabled={!controlEnabled || !hasState('GSE Abort')}
             className="flex-1 py-2 bg-orange-800 hover:bg-orange-700 active:bg-orange-900 border border-orange-600
                        text-white font-bold text-xs rounded tracking-wider transition-colors disabled:bg-orange-900 disabled:border-orange-900 disabled:text-orange-700 disabled:cursor-not-allowed"
-            title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+            title={
+              !controlEnabled
+                ? 'Viewer mode: controls locked'
+                : !hasState('GSE Abort')
+                  ? 'Config declares no GSE Abort state'
+                  : undefined
+            }
           >
             GSE ABORT
           </button>
           <button
             onClick={handleEmergencyAbort}
-            disabled={!controlEnabled}
+            disabled={!controlEnabled || !hasState('Emergency Abort')}
             className="flex-1 py-2 bg-red-700 hover:bg-red-600 active:bg-red-800 border border-red-500
                        text-white font-bold text-xs rounded tracking-wider transition-colors
                        shadow-[0_0_6px_rgba(239,68,68,0.3)] disabled:bg-red-900 disabled:border-red-900 disabled:text-red-700 disabled:cursor-not-allowed"
-            title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+            title={
+              !controlEnabled
+                ? 'Viewer mode: controls locked'
+                : !hasState('Emergency Abort')
+                  ? 'Config declares no Emergency Abort state'
+                  : undefined
+            }
           >
             E-ABORT
           </button>

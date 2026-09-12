@@ -108,6 +108,17 @@ jobs:
       working-directory: daq-server/diablo_server/frontend
       run: npm ci || npm install
 
+    # shared/types.js is a committed runtime artifact (prod backend does
+    # `await import('../../shared/types.js')`; Vite bundles the literal .js).
+    # Regenerate it from types.ts and fail if the checked-in copy drifted —
+    # a stale copy silently ships an undefined enum member to the frontend.
+    - name: Verify shared types are in sync
+      working-directory: daq-server/diablo_server/frontend
+      run: |
+        npm run build:shared
+        git diff --exit-code -- ../shared/types.js ../shared/types.d.ts ../shared/types.js.map ../shared/types.d.ts.map \
+          || { echo "::error::shared/types.* is stale — run 'npm run build:shared' in frontend/ and commit the result."; exit 1; }
+
     - name: Run backend unit tests
       working-directory: daq-server/diablo_server/backend
       run: npm run test
@@ -229,57 +240,6 @@ jobs:
           daq-server/${{ env.BUILD_DIR }}/lib/
         retention-days: 7
 
-  # Static analysis
-  static-analysis:
-    name: Static Analysis
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          cmake \
-          libeigen3-dev \
-          cppcheck \
-          clang-tidy-17 || sudo apt-get install -y clang-tidy
-
-    - name: Run cppcheck
-      run: |
-        cppcheck \
-          --enable=all \
-          --inconclusive \
-          --std=c++${{ env.CXX_STANDARD }} \
-          --suppress=missingIncludeSystem \
-          --suppress=unusedFunction \
-          --suppress=noExplicitConstructor \
-          --suppress=unmatchedSuppression \
-          --error-exitcode=1 \
-          --xml --xml-version=2 \
-          --output-file=cppcheck-report.xml \
-          diablo_server/ archive/legacy/utl/ || true
-
-    - name: Upload cppcheck results
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: cppcheck-report
-        path: daq-server/cppcheck-report.xml
-
-    - name: Run clang-tidy
-      run: |
-        # Only run on a subset to avoid timeout
-        find diablo_server archive/legacy/utl -name "*.cpp" -o -name "*.hpp" | head -20 | \
-        xargs -I {} clang-tidy {} \
-          -p ${{ env.BUILD_DIR }} \
-          -- -std=c++${{ env.CXX_STANDARD }} || true
-      continue-on-error: true
-
   # Code quality checks
   code-quality:
     name: Code Quality Checks
@@ -305,6 +265,9 @@ jobs:
         else
           echo "✅ No TODO/FIXME/HACK comments found"
         fi
+
+    - name: Config TOML has no underscore-separated numbers
+      run: python3 test/check_toml_no_underscore_ints.py
 
     - name: Check for large files
       run: |
@@ -398,6 +361,71 @@ jobs:
         fi
 
   # Run tests
+  # ThreadSanitizer over the sequencer's concurrency tests.
+  #
+  # This exists because the bug it guards is invisible to every other job here. The sequencer had
+  # two threads running the same multi-step transition sequence (a TCP client thread and
+  # FireManager's expiry thread), which double-joined the actuator republish thread. A plain -O2
+  # build does NOT reliably crash on that — a pre-fix binary survived 1016 commands over 65 s,
+  # because glibc tolerates a double pthread_join often enough to hide it. Under TSan the same
+  # code dies in 0.2 s at ~50 commands with a CHECK failure inside pthread_join.
+  #
+  # The Release ctest job cannot see this, and no static analyser runs here any more.
+  # Without this job the fix is unverified against regression.
+  thread-sanitizer:
+    name: ThreadSanitizer (sequencer)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential cmake ninja-build libeigen3-dev pkg-config gcc-12 g++-12 util-linux
+
+    - name: Build with -fsanitize=thread
+      env:
+        CC: gcc-12
+        CXX: g++-12
+      run: |
+        cmake -S . -B build-tsan \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_C_COMPILER=gcc-12 \
+          -DCMAKE_CXX_COMPILER=g++-12 \
+          -DCMAKE_CXX_STANDARD=${{ env.CXX_STANDARD }} \
+          -DCMAKE_CXX_FLAGS="-fsanitize=thread -g -O1" \
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
+          -G Ninja
+        cmake --build build-tsan --parallel $(nproc) \
+          --target test_sequencer_concurrency test_abort_ordering
+
+    # Two things that will waste an afternoon if they are not spelled out:
+    #
+    #  1. `setarch -R` disables ASLR. Without it TSan aborts at startup on modern kernels with
+    #     "FATAL: ThreadSanitizer: unexpected memory mapping" before running a single line.
+    #
+    #  2. The failure mode is a sanitizer CHECK abort (a non-zero exit), NOT a
+    #     "WARNING: ThreadSanitizer" data-race report. Gate on the exit code. Grepping the log for
+    #     "WARNING" would pass straight over the exact regression this job exists to catch.
+    # daq-server/build-tsan, not build-tsan: a step-level working-directory REPLACES
+    # defaults.run.working-directory rather than nesting under it, so the bare name resolved to
+    # $GITHUB_WORKSPACE/build-tsan while the build step (which used the default) had created
+    # daq-server/build-tsan. The job failed with "No such file or directory" before running a
+    # single test, which means the regression this job exists to catch was never actually guarded.
+    - name: Run concurrency tests under TSan
+      working-directory: daq-server/build-tsan
+      env:
+        TSAN_OPTIONS: halt_on_error=1 history_size=7
+      run: |
+        setarch -R ./bin/test_sequencer_concurrency
+        setarch -R ./bin/test_abort_ordering
+
   test:
     name: Run Tests
     runs-on: ubuntu-latest
@@ -463,6 +491,15 @@ jobs:
         cd ${{ env.BUILD_DIR }}
         ./bin/test_board_clock_sync
 
+    # Ethernet OTA flash wire-format test: drives the real ota_service binary
+    # against a loopback fake board (no hardware). Guards the espota handshake
+    # (big-endian size header, 4 KB chunk streaming, OK/silent-reboot/ERR paths)
+    # that a real ESP32-S3 depends on. Strict — a regression here must fail the job.
+    - name: Run OTA fake-board test
+      env:
+        OTA_SERVICE_BIN: ${{ env.BUILD_DIR }}/bin/ota_service
+      run: python3 test/test_ota_flash.py
+
     - name: Run Python smoke tests (allowlist only)
       run: |
         if [ -d "test" ]; then
@@ -495,6 +532,131 @@ jobs:
           echo "Running smoke tests..."
         fi
       continue-on-error: true
+
+  # ASan + UBSan over the full stack.
+  #
+  # Sanitizers only report on code that actually executes, which is why this job runs
+  # test_integration.sh rather than ctest. Measured both ways before adding it: all 10 ctest tests
+  # pass under ASan/UBSan with zero findings, while one integration run — which drives real UDP
+  # through every service — reported five misaligned u32 stores in config_broadcast and, in
+  # daq_bridge, a bool loaded as 212 out of a DiscoveredBoard whose max_sensors/active_sensors were
+  # equally uninitialised and get serialised straight into the generated board config. A
+  # ctest-only sanitizer job would have found none of that.
+  #
+  # Three things that will waste an afternoon if they are not spelled out:
+  #
+  #  1. `setarch -R` disables ASLR. Without it the sanitizer aborts at startup on modern kernels
+  #     with "unexpected memory mapping" before running a line. Same trap as the TSan job.
+  #
+  #  2. UBSan's non-fatal diagnostics go to each service's OWN stderr, which the harness redirects
+  #     into .tmp/integration_*.log. They do NOT reach this job's stdout, and `log_path` does not
+  #     capture them either. So the script exiting 0 proves nothing — the logs are the result, and
+  #     the grep below is what actually gates the job.
+  #
+  #  3. detect_leaks=0 on purpose: these are long-running services killed at teardown, so LSan
+  #     reports at exit would bury the memory-error signal this job exists for.
+  #
+  # The sensor rate is pinned to 5 Hz for the same reason the integration job pins it, only harder:
+  # ASan roughly halves throughput and the harness asserts >=97% frontend broadcast delivery, and at
+  # full rate under ASan a local run measured 96.8% and failed on that alone. Do not lower it
+  # further to buy headroom — 3 Hz was tried and the harness then failed the opposite assertion,
+  # median stream spacing 1005 ms against its 5-1000 ms window. 5 is the floor that satisfies both.
+  address-sanitizer:
+    name: ASan + UBSan (full stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    env:
+      INTEGRATION_SENSOR_HZ: '5'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential cmake ninja-build libeigen3-dev pkg-config \
+          gcc-12 g++-12 python3 python3-pip util-linux
+
+    - name: Install elodin-db
+      run: |
+        ELODIN_VERSION="v0.16.1"
+        ELODIN_DB_INSTALLER_URL="https://github.com/elodin-sys/elodin/releases/download/${ELODIN_VERSION}/elodin-db-installer.sh"
+        mkdir -p "$HOME/.cargo/bin"
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        export PATH="$HOME/.cargo/bin:$PATH"
+        curl --proto '=https' --tlsv1.2 -LsSf "$ELODIN_DB_INSTALLER_URL" | sh
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+
+    # -DSANITIZE=ON also forces CMAKE_POSITION_INDEPENDENT_CODE: daqv2_comms is a static library
+    # linked into a shared one, and ASan's __asan_option_detect_stack_use_after_return reference
+    # fails to relocate without PIC (a hard link error, not a warning).
+    - name: Build with -fsanitize=address,undefined
+      env:
+        CC: gcc-12
+        CXX: g++-12
+      run: |
+        cmake -S . -B ${{ env.BUILD_DIR }} \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          -DCMAKE_C_COMPILER=gcc-12 \
+          -DCMAKE_CXX_COMPILER=g++-12 \
+          -DCMAKE_CXX_STANDARD=${{ env.CXX_STANDARD }} \
+          -DSANITIZE=ON \
+          -G Ninja
+        cmake --build ${{ env.BUILD_DIR }} --parallel $(nproc)
+
+    - name: Install backend dependencies
+      run: cd diablo_server/backend && npm install
+
+    - name: Install Python dependencies
+      run: pip3 install tomli || true
+
+    - name: Run integration test under ASan/UBSan
+      env:
+        SKIP_CPP_BUILD: '1'
+        ASAN_OPTIONS: detect_leaks=0:abort_on_error=0:halt_on_error=0
+        UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=0
+      run: setarch -R bash test/test_integration.sh
+
+    # This step, not the one above, is the gate. See note 2 in the job comment.
+    - name: Fail on any sanitizer report
+      if: always()
+      run: |
+        shopt -s nullglob
+        hits=0
+        for f in .tmp/integration_*.log; do
+          if grep -qE "runtime error:|ERROR: AddressSanitizer|ERROR: LeakSanitizer" "$f"; then
+            echo "::error::sanitizer report in $(basename "$f")"
+            grep -nE "runtime error:|ERROR: AddressSanitizer|ERROR: LeakSanitizer" "$f" | head -40
+            hits=1
+          fi
+        done
+        if [ "$hits" != "0" ]; then
+          echo "Sanitizer findings above. Full logs are in the uploaded artifact."
+          exit 1
+        fi
+        echo "✅ no sanitizer reports across $(ls .tmp/integration_*.log 2>/dev/null | wc -l) service log(s)"
+
+    # include-hidden-files is required, not optional: .tmp is a dotted directory and
+    # upload-artifact v4 silently excludes hidden paths by default, so the first run of this
+    # job uploaded nothing while the gate above was reading 11 logs from that same path.
+    - name: Upload service logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: asan-service-logs
+        path: daq-server/.tmp/integration_*.log
+        include-hidden-files: true
+        retention-days: 7
+        if-no-files-found: warn
 
   # Full-stack integration test
   integration-test:
@@ -851,10 +1013,11 @@ jobs:
       - format-check
       - web-gui
       - build
-      - static-analysis
       - code-quality
       - security-scan
+      - thread-sanitizer
       - test
+      - address-sanitizer
       - integration-test
       - playwright-guitest-e2e
       - session-systemd-e2e
@@ -875,10 +1038,11 @@ jobs:
         echo "| Format Check | ${{ needs.format-check.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Web GUI | ${{ needs.web-gui.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Static Analysis | ${{ needs.static-analysis.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Code Quality | ${{ needs.code-quality.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Security Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| ThreadSanitizer (sequencer) | ${{ needs.thread-sanitizer.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Tests | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| ASan + UBSan (full stack) | ${{ needs.address-sanitizer.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Integration Test | ${{ needs.integration-test.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Playwright E2E (guitest) | ${{ needs.playwright-guitest-e2e.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Session Control E2E (systemd) | ${{ needs.session-systemd-e2e.result }} |" >> $GITHUB_STEP_SUMMARY

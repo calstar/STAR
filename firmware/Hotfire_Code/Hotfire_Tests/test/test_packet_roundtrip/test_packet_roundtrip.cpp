@@ -22,53 +22,49 @@
 // ---------------------------------------------------------------------------
 
 void test_board_heartbeat_roundtrip() {
-    Diablo::BoardHeartbeatPacket hb_in;
+    daq::BoardHeartbeatPacket hb_in;
     memset(hb_in.firmware_hash, 0xAB, 32);
     hb_in.board_id = 42;
-    hb_in.engine_state = Diablo::EngineState::FIRING;
-    hb_in.board_state = Diablo::BoardState::ACTIVE;
+    hb_in.engine_state = daq::EngineState::FIRING;
+    hb_in.board_state = daq::BoardState::ACTIVE;
 
     const uint32_t ts = 99999u;
     uint8_t buf[512];
-    size_t n =
-        Diablo::create_board_heartbeat_packet(hb_in, ts, buf, sizeof(buf));
+    size_t n = daq::create_board_heartbeat_packet(hb_in, ts, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
-    Diablo::PacketHeader hdr_out;
-    Diablo::BoardHeartbeatPacket hb_out;
+    daq::PacketHeader hdr_out;
+    daq::BoardHeartbeatPacket hb_out;
     TEST_ASSERT_TRUE(
-        Diablo::parse_board_heartbeat_packet(buf, n, hdr_out, hb_out));
+        daq::parse_board_heartbeat_packet(buf, n, hdr_out, hb_out));
 
-    TEST_ASSERT_EQUAL(Diablo::PacketType::BOARD_HEARTBEAT, hdr_out.packet_type);
+    TEST_ASSERT_EQUAL(daq::PacketType::BOARD_HEARTBEAT, hdr_out.packet_type);
     TEST_ASSERT_EQUAL(ts, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(42, hb_out.board_id);
-    TEST_ASSERT_EQUAL((int)Diablo::EngineState::FIRING,
-                      (int)hb_out.engine_state);
-    TEST_ASSERT_EQUAL((int)Diablo::BoardState::ACTIVE, (int)hb_out.board_state);
+    TEST_ASSERT_EQUAL((int)daq::EngineState::FIRING, (int)hb_out.engine_state);
+    TEST_ASSERT_EQUAL((int)daq::BoardState::ACTIVE, (int)hb_out.board_state);
     TEST_ASSERT_EQUAL_MEMORY(hb_in.firmware_hash, hb_out.firmware_hash, 32);
 }
 
 void test_board_heartbeat_buffer_too_small() {
-    Diablo::BoardHeartbeatPacket hb_in{};
+    daq::BoardHeartbeatPacket hb_in{};
     uint8_t buf[2];  // way too small
     TEST_ASSERT_EQUAL(
-        0, Diablo::create_board_heartbeat_packet(hb_in, 0u, buf, sizeof(buf)));
+        0, daq::create_board_heartbeat_packet(hb_in, 0u, buf, sizeof(buf)));
 }
 
 void test_board_heartbeat_parse_wrong_type() {
     // Construct a buffer with SENSOR_DATA type but try to parse as heartbeat
     uint8_t buf[512];
-    Diablo::BoardHeartbeatPacket hb_in{};
+    daq::BoardHeartbeatPacket hb_in{};
     hb_in.board_id = 1;
-    size_t n =
-        Diablo::create_board_heartbeat_packet(hb_in, 1u, buf, sizeof(buf));
+    size_t n = daq::create_board_heartbeat_packet(hb_in, 1u, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
     // Corrupt the packet type
-    buf[0] = (uint8_t)Diablo::PacketType::SENSOR_DATA;
-    Diablo::PacketHeader hdr;
-    Diablo::BoardHeartbeatPacket hb_out;
-    TEST_ASSERT_FALSE(
-        Diablo::parse_board_heartbeat_packet(buf, n, hdr, hb_out));
+    buf[0] = (uint8_t)daq::PacketType::SENSOR_DATA;
+    daq::PacketHeader hdr;
+    daq::BoardHeartbeatPacket hb_out;
+    TEST_ASSERT_FALSE(daq::parse_board_heartbeat_packet(buf, n, hdr, hb_out));
 }
 
 // ---------------------------------------------------------------------------
@@ -77,23 +73,23 @@ void test_board_heartbeat_parse_wrong_type() {
 
 void test_server_heartbeat_roundtrip() {
     // Create a server heartbeat manually (no create function, build raw)
-    Diablo::PacketHeader hdr;
-    hdr.packet_type = Diablo::PacketType::SERVER_HEARTBEAT;
+    daq::PacketHeader hdr;
+    hdr.packet_type = daq::PacketType::SERVER_HEARTBEAT;
     hdr.version = 0;
     hdr.timestamp = 12345;
-    Diablo::ServerHeartbeatPacket srv;
-    srv.engine_state = Diablo::EngineState::LOX_FILL;
+    daq::ServerHeartbeatPacket srv;
+    srv.engine_state = daq::EngineState::LOX_FILL;
 
     uint8_t buf[64];
     memcpy(buf, &hdr, sizeof(hdr));
     memcpy(buf + sizeof(hdr), &srv, sizeof(srv));
     size_t total = sizeof(hdr) + sizeof(srv);
 
-    Diablo::PacketHeader hdr_out;
-    Diablo::ServerHeartbeatPacket srv_out;
+    daq::PacketHeader hdr_out;
+    daq::ServerHeartbeatPacket srv_out;
     TEST_ASSERT_TRUE(
-        Diablo::parse_server_heartbeat_packet(buf, total, hdr_out, srv_out));
-    TEST_ASSERT_EQUAL((int)Diablo::EngineState::LOX_FILL,
+        daq::parse_server_heartbeat_packet(buf, total, hdr_out, srv_out));
+    TEST_ASSERT_EQUAL((int)daq::EngineState::LOX_FILL,
                       (int)srv_out.engine_state);
     TEST_ASSERT_EQUAL(12345, hdr_out.timestamp);
 }
@@ -104,15 +100,15 @@ void test_server_heartbeat_roundtrip() {
 
 void test_sensor_data_roundtrip() {
     const uint8_t num_sensors = 3;
-    std::vector<Diablo::SensorDataChunkCollection> chunks;
+    std::vector<daq::SensorDataChunkCollection> chunks;
 
-    Diablo::SensorDataChunkCollection c1(1000, num_sensors);
+    daq::SensorDataChunkCollection c1(1000, num_sensors);
     c1.add_datapoint(1, 0xDEAD);
     c1.add_datapoint(2, 0xBEEF);
     c1.add_datapoint(3, 0xCAFE);
     chunks.push_back(c1);
 
-    Diablo::SensorDataChunkCollection c2(2000, num_sensors);
+    daq::SensorDataChunkCollection c2(2000, num_sensors);
     c2.add_datapoint(1, 100);
     c2.add_datapoint(2, 200);
     c2.add_datapoint(3, 300);
@@ -120,14 +116,14 @@ void test_sensor_data_roundtrip() {
 
     const uint32_t hdr_ts = 5555u;
     uint8_t buf[512];
-    size_t n = Diablo::create_sensor_data_packet(chunks, num_sensors, hdr_ts,
-                                                 buf, sizeof(buf));
+    size_t n = daq::create_sensor_data_packet(chunks, num_sensors, hdr_ts, buf,
+                                              sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
-    Diablo::PacketHeader hdr_out;
-    std::vector<Diablo::SensorDataChunkCollection> chunks_out;
+    daq::PacketHeader hdr_out;
+    std::vector<daq::SensorDataChunkCollection> chunks_out;
     TEST_ASSERT_TRUE(
-        Diablo::parse_sensor_data_packet(buf, n, hdr_out, chunks_out));
+        daq::parse_sensor_data_packet(buf, n, hdr_out, chunks_out));
 
     TEST_ASSERT_EQUAL(hdr_ts, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(2, chunks_out.size());
@@ -142,15 +138,15 @@ void test_sensor_data_roundtrip() {
 }
 
 void test_sensor_data_buffer_too_small() {
-    std::vector<Diablo::SensorDataChunkCollection> chunks;
-    Diablo::SensorDataChunkCollection c1(1000, 2);
+    std::vector<daq::SensorDataChunkCollection> chunks;
+    daq::SensorDataChunkCollection c1(1000, 2);
     c1.add_datapoint(1, 100);
     c1.add_datapoint(2, 200);
     chunks.push_back(c1);
 
     uint8_t buf[4];  // too small
     TEST_ASSERT_EQUAL(
-        0, Diablo::create_sensor_data_packet(chunks, 2, 0u, buf, sizeof(buf)));
+        0, daq::create_sensor_data_packet(chunks, 2, 0u, buf, sizeof(buf)));
 }
 
 // ---------------------------------------------------------------------------
@@ -158,21 +154,20 @@ void test_sensor_data_buffer_too_small() {
 // ---------------------------------------------------------------------------
 
 void test_actuator_command_roundtrip() {
-    std::vector<Diablo::ActuatorCommand> cmds;
+    std::vector<daq::ActuatorCommand> cmds;
     cmds.push_back({1, 1});  // actuator 1 ON
     cmds.push_back({3, 0});  // actuator 3 OFF
     cmds.push_back({7, 1});  // actuator 7 ON
 
     const uint32_t ts = 7777u;
     uint8_t buf[512];
-    size_t n =
-        Diablo::create_actuator_command_packet(cmds, ts, buf, sizeof(buf));
+    size_t n = daq::create_actuator_command_packet(cmds, ts, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
-    Diablo::PacketHeader hdr_out;
-    std::vector<Diablo::ActuatorCommand> cmds_out;
+    daq::PacketHeader hdr_out;
+    std::vector<daq::ActuatorCommand> cmds_out;
     TEST_ASSERT_TRUE(
-        Diablo::parse_actuator_command_packet(buf, n, hdr_out, cmds_out));
+        daq::parse_actuator_command_packet(buf, n, hdr_out, cmds_out));
 
     TEST_ASSERT_EQUAL(ts, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(3, cmds_out.size());
@@ -185,10 +180,10 @@ void test_actuator_command_roundtrip() {
 }
 
 void test_actuator_command_empty_list() {
-    std::vector<Diablo::ActuatorCommand> cmds;  // empty
+    std::vector<daq::ActuatorCommand> cmds;  // empty
     uint8_t buf[512];
     TEST_ASSERT_EQUAL(
-        0, Diablo::create_actuator_command_packet(cmds, 0u, buf, sizeof(buf)));
+        0, daq::create_actuator_command_packet(cmds, 0u, buf, sizeof(buf)));
 }
 
 // ---------------------------------------------------------------------------
@@ -196,8 +191,8 @@ void test_actuator_command_empty_list() {
 // ---------------------------------------------------------------------------
 
 void test_pwm_actuator_roundtrip() {
-    std::vector<Diablo::PWMActuatorCommand> cmds;
-    Diablo::PWMActuatorCommand cmd;
+    std::vector<daq::PWMActuatorCommand> cmds;
+    daq::PWMActuatorCommand cmd;
     cmd.actuator_id = 5;
     cmd.duration = 3000;
     cmd.duty_cycle = 0.75f;
@@ -206,13 +201,12 @@ void test_pwm_actuator_roundtrip() {
 
     const uint32_t ts = 8888u;
     uint8_t buf[512];
-    size_t n = Diablo::create_pwm_actuator_packet(cmds, ts, buf, sizeof(buf));
+    size_t n = daq::create_pwm_actuator_packet(cmds, ts, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
-    Diablo::PacketHeader hdr_out;
-    std::vector<Diablo::PWMActuatorCommand> cmds_out;
-    TEST_ASSERT_TRUE(
-        Diablo::parse_pwm_actuator_packet(buf, n, hdr_out, cmds_out));
+    daq::PacketHeader hdr_out;
+    std::vector<daq::PWMActuatorCommand> cmds_out;
+    TEST_ASSERT_TRUE(daq::parse_pwm_actuator_packet(buf, n, hdr_out, cmds_out));
 
     TEST_ASSERT_EQUAL(ts, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(1, cmds_out.size());
@@ -235,18 +229,18 @@ void test_sensor_config_roundtrip_with_abort() {
 
     const uint32_t ts = 11111u;
     uint8_t buf[512];
-    size_t n = Diablo::create_sensor_config_packet(
+    size_t n = daq::create_sensor_config_packet(
         sensor_ids, ref_voltage, necessary_for_abort, controller_ip,
         enable_serial, ts, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
-    Diablo::PacketHeader hdr_out;
+    daq::PacketHeader hdr_out;
     std::vector<uint8_t> ids_out;
     uint8_t ref_out;
     bool abort_out;
     uint32_t ip_out;
     uint8_t serial_out;
-    TEST_ASSERT_TRUE(Diablo::parse_sensor_config_packet(
+    TEST_ASSERT_TRUE(daq::parse_sensor_config_packet(
         buf, n, hdr_out, ids_out, ref_out, abort_out, ip_out, serial_out));
 
     TEST_ASSERT_EQUAL(ts, hdr_out.timestamp);
@@ -267,18 +261,18 @@ void test_sensor_config_roundtrip_without_abort() {
 
     const uint32_t ts = 11112u;
     uint8_t buf[512];
-    size_t n = Diablo::create_sensor_config_packet(
+    size_t n = daq::create_sensor_config_packet(
         sensor_ids, ref_voltage, necessary_for_abort, controller_ip, 0, ts, buf,
         sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
-    Diablo::PacketHeader hdr_out;
+    daq::PacketHeader hdr_out;
     std::vector<uint8_t> ids_out;
     uint8_t ref_out;
     bool abort_out;
     uint32_t ip_out = 0xFFFFFFFF;
     uint8_t serial_out;
-    TEST_ASSERT_TRUE(Diablo::parse_sensor_config_packet(
+    TEST_ASSERT_TRUE(daq::parse_sensor_config_packet(
         buf, n, hdr_out, ids_out, ref_out, abort_out, ip_out, serial_out));
 
     TEST_ASSERT_EQUAL(ts, hdr_out.timestamp);
@@ -291,16 +285,16 @@ void test_sensor_config_roundtrip_without_abort() {
 void test_sensor_config_empty_sensors() {
     std::vector<uint8_t> sensor_ids;  // empty
     uint8_t buf[512];
-    size_t n = Diablo::create_sensor_config_packet(sensor_ids, 0, false, 0, 1,
-                                                   11113u, buf, sizeof(buf));
+    size_t n = daq::create_sensor_config_packet(sensor_ids, 0, false, 0, 1,
+                                                11113u, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
-    Diablo::PacketHeader hdr_out;
+    daq::PacketHeader hdr_out;
     std::vector<uint8_t> ids_out;
     uint8_t ref_out, serial_out;
     bool abort_out;
     uint32_t ip_out;
-    TEST_ASSERT_TRUE(Diablo::parse_sensor_config_packet(
+    TEST_ASSERT_TRUE(daq::parse_sensor_config_packet(
         buf, n, hdr_out, ids_out, ref_out, abort_out, ip_out, serial_out));
     TEST_ASSERT_EQUAL(0, ids_out.size());
 }
@@ -310,24 +304,24 @@ void test_sensor_config_empty_sensors() {
 // ---------------------------------------------------------------------------
 
 void test_actuator_config_roundtrip() {
-    std::vector<Diablo::AbortActuatorLocation> actuators;
+    std::vector<daq::AbortActuatorLocation> actuators;
     actuators.push_back({0xC0A80201, 1, 1, 0});  // IP, id, vent=on, abort=off
     actuators.push_back({0xC0A80202, 3, 0, 1});  // different board
 
-    std::vector<Diablo::AbortPTLocation> pts;
+    std::vector<daq::AbortPTLocation> pts;
     pts.push_back({0xC0A80203, 2, 500000});  // IP, sensor_id, threshold
 
     uint8_t buf[512];
-    size_t n = Diablo::create_actuator_config_packet(1, actuators, pts, 1,
-                                                     22222u, buf, sizeof(buf));
+    size_t n = daq::create_actuator_config_packet(1, actuators, pts, 1, 22222u,
+                                                  buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
-    Diablo::PacketHeader hdr_out;
+    daq::PacketHeader hdr_out;
     uint8_t is_controller;
-    std::vector<Diablo::AbortActuatorLocation> act_out;
-    std::vector<Diablo::AbortPTLocation> pt_out;
+    std::vector<daq::AbortActuatorLocation> act_out;
+    std::vector<daq::AbortPTLocation> pt_out;
     uint8_t serial_out;
-    TEST_ASSERT_TRUE(Diablo::parse_actuator_config_packet(
+    TEST_ASSERT_TRUE(daq::parse_actuator_config_packet(
         buf, n, hdr_out, is_controller, act_out, pt_out, serial_out));
 
     TEST_ASSERT_EQUAL(22222u, hdr_out.timestamp);
@@ -344,21 +338,21 @@ void test_actuator_config_roundtrip() {
 }
 
 void test_actuator_config_no_pts() {
-    std::vector<Diablo::AbortActuatorLocation> actuators;
+    std::vector<daq::AbortActuatorLocation> actuators;
     actuators.push_back({0xC0A80201, 1, 1, 1});
-    std::vector<Diablo::AbortPTLocation> pts;  // empty
+    std::vector<daq::AbortPTLocation> pts;  // empty
 
     uint8_t buf[512];
-    size_t n = Diablo::create_actuator_config_packet(0, actuators, pts, 0,
-                                                     22223u, buf, sizeof(buf));
+    size_t n = daq::create_actuator_config_packet(0, actuators, pts, 0, 22223u,
+                                                  buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
-    Diablo::PacketHeader hdr_out;
+    daq::PacketHeader hdr_out;
     uint8_t is_controller;
-    std::vector<Diablo::AbortActuatorLocation> act_out;
-    std::vector<Diablo::AbortPTLocation> pt_out;
+    std::vector<daq::AbortActuatorLocation> act_out;
+    std::vector<daq::AbortPTLocation> pt_out;
     uint8_t serial_out;
-    TEST_ASSERT_TRUE(Diablo::parse_actuator_config_packet(
+    TEST_ASSERT_TRUE(daq::parse_actuator_config_packet(
         buf, n, hdr_out, is_controller, act_out, pt_out, serial_out));
     TEST_ASSERT_EQUAL(22223u, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(0, is_controller);
@@ -372,22 +366,21 @@ void test_actuator_config_no_pts() {
 // ---------------------------------------------------------------------------
 
 void test_self_test_roundtrip() {
-    std::vector<Diablo::SelfTestResult> results;
+    std::vector<daq::SelfTestResult> results;
     results.push_back({1, 1});  // sensor 1 good
     results.push_back({2, 0});  // sensor 2 bad
     results.push_back({5, 1});  // sensor 5 good
 
     const uint32_t ts = 33333u;
     uint8_t buf[512];
-    size_t n =
-        Diablo::create_self_test_packet(1, results, ts, buf, sizeof(buf));
+    size_t n = daq::create_self_test_packet(1, results, ts, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
-    Diablo::PacketHeader hdr_out;
+    daq::PacketHeader hdr_out;
     uint8_t adc_good_out;
-    std::vector<Diablo::SelfTestResult> results_out;
-    TEST_ASSERT_TRUE(Diablo::parse_self_test_packet(buf, n, hdr_out,
-                                                    adc_good_out, results_out));
+    std::vector<daq::SelfTestResult> results_out;
+    TEST_ASSERT_TRUE(daq::parse_self_test_packet(buf, n, hdr_out, adc_good_out,
+                                                 results_out));
 
     TEST_ASSERT_EQUAL(ts, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(1, adc_good_out);
@@ -399,19 +392,19 @@ void test_self_test_roundtrip() {
 }
 
 void test_self_test_adc_bad() {
-    std::vector<Diablo::SelfTestResult> results;
+    std::vector<daq::SelfTestResult> results;
     results.push_back({1, 0});
 
     uint8_t buf[512];
     size_t n =
-        Diablo::create_self_test_packet(0, results, 33334u, buf, sizeof(buf));
+        daq::create_self_test_packet(0, results, 33334u, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
-    Diablo::PacketHeader hdr_out;
+    daq::PacketHeader hdr_out;
     uint8_t adc_good_out;
-    std::vector<Diablo::SelfTestResult> results_out;
-    TEST_ASSERT_TRUE(Diablo::parse_self_test_packet(buf, n, hdr_out,
-                                                    adc_good_out, results_out));
+    std::vector<daq::SelfTestResult> results_out;
+    TEST_ASSERT_TRUE(daq::parse_self_test_packet(buf, n, hdr_out, adc_good_out,
+                                                 results_out));
     TEST_ASSERT_EQUAL(33334u, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(0, adc_good_out);
 }
@@ -423,21 +416,20 @@ void test_self_test_adc_bad() {
 void test_abort_done_roundtrip() {
     const uint32_t ts = 44444u;
     uint8_t buf[64];
-    size_t n = Diablo::create_abort_done_packet(ts, buf, sizeof(buf));
+    size_t n = daq::create_abort_done_packet(ts, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
-    TEST_ASSERT_EQUAL(sizeof(Diablo::PacketHeader), n);
+    TEST_ASSERT_EQUAL(sizeof(daq::PacketHeader), n);
 
-    Diablo::PacketHeader hdr_out;
-    TEST_ASSERT_TRUE(Diablo::parse_abort_done_packet(buf, n, hdr_out));
-    TEST_ASSERT_EQUAL((int)Diablo::PacketType::ABORT_DONE,
+    daq::PacketHeader hdr_out;
+    TEST_ASSERT_TRUE(daq::parse_abort_done_packet(buf, n, hdr_out));
+    TEST_ASSERT_EQUAL((int)daq::PacketType::ABORT_DONE,
                       (int)hdr_out.packet_type);
     TEST_ASSERT_EQUAL(ts, hdr_out.timestamp);
 }
 
 void test_abort_done_buffer_too_small() {
     uint8_t buf[2];
-    TEST_ASSERT_EQUAL(0,
-                      Diablo::create_abort_done_packet(0u, buf, sizeof(buf)));
+    TEST_ASSERT_EQUAL(0, daq::create_abort_done_packet(0u, buf, sizeof(buf)));
 }
 
 // ---------------------------------------------------------------------------
@@ -445,18 +437,98 @@ void test_abort_done_buffer_too_small() {
 // ---------------------------------------------------------------------------
 
 void test_parse_null_buffer() {
-    Diablo::PacketHeader hdr;
-    Diablo::BoardHeartbeatPacket hb;
-    TEST_ASSERT_FALSE(
-        Diablo::parse_board_heartbeat_packet(nullptr, 100, hdr, hb));
+    daq::PacketHeader hdr;
+    daq::BoardHeartbeatPacket hb;
+    TEST_ASSERT_FALSE(daq::parse_board_heartbeat_packet(nullptr, 100, hdr, hb));
 
-    std::vector<Diablo::SensorDataChunkCollection> chunks;
-    TEST_ASSERT_FALSE(
-        Diablo::parse_sensor_data_packet(nullptr, 100, hdr, chunks));
+    std::vector<daq::SensorDataChunkCollection> chunks;
+    TEST_ASSERT_FALSE(daq::parse_sensor_data_packet(nullptr, 100, hdr, chunks));
 
-    std::vector<Diablo::ActuatorCommand> cmds;
+    std::vector<daq::ActuatorCommand> cmds;
     TEST_ASSERT_FALSE(
-        Diablo::parse_actuator_command_packet(nullptr, 100, hdr, cmds));
+        daq::parse_actuator_command_packet(nullptr, 100, hdr, cmds));
+}
+
+// ---------------------------------------------------------------------------
+// LOGS packet (type 15).
+// ---------------------------------------------------------------------------
+
+void test_log_packet_layout() {
+    const char* text = "line1\nline2\n";
+    const uint16_t text_len = (uint16_t)strlen(text);
+    uint8_t buf[64];
+    size_t n = daq::create_log_packet(0x01, (const uint8_t*)text, text_len,
+                                      0xDEADBEEFu, buf, sizeof(buf));
+    const size_t hdr = sizeof(daq::PacketHeader);
+    TEST_ASSERT_EQUAL(hdr + 3 + text_len, n);
+    TEST_ASSERT_EQUAL_UINT8((uint8_t)daq::PacketType::LOGS, buf[0]);
+    uint32_t ts;
+    memcpy(&ts, buf + 2, 4);
+    TEST_ASSERT_EQUAL_UINT32(0xDEADBEEFu, ts);  // timestamp (u32 LE)
+    TEST_ASSERT_EQUAL_UINT8(0x01, buf[hdr]);    // flags: TRUNCATED
+    uint16_t tl;
+    memcpy(&tl, buf + hdr + 1, 2);
+    TEST_ASSERT_EQUAL_UINT16(text_len, tl);  // text_len (u16 LE)
+    TEST_ASSERT_EQUAL_MEMORY(text, buf + hdr + 3, text_len);
+}
+
+void test_log_packet_buffer_too_small() {
+    const char* text = "hello";
+    uint8_t buf[4];  // smaller than the header alone
+    TEST_ASSERT_EQUAL(0, daq::create_log_packet(0, (const uint8_t*)text, 5, 0u,
+                                                buf, sizeof(buf)));
+}
+
+void test_log_packet_roundtrip() {
+    const char* text = "ONLINE board=3\nstate=IDLE\n";
+    const uint16_t text_len = (uint16_t)strlen(text);
+    uint8_t buf[128];
+    size_t n = daq::create_log_packet(0x01, (const uint8_t*)text, text_len,
+                                      0x12345678u, buf, sizeof(buf));
+    TEST_ASSERT_NOT_EQUAL(0, n);
+
+    daq::PacketHeader hdr;
+    uint8_t flags = 0;
+    const uint8_t* out_text = nullptr;
+    uint16_t out_len = 0;
+    TEST_ASSERT_TRUE(
+        daq::parse_log_packet(buf, n, hdr, flags, out_text, out_len));
+    TEST_ASSERT_EQUAL_UINT8((uint8_t)daq::PacketType::LOGS, hdr.packet_type);
+    TEST_ASSERT_EQUAL_UINT32(0x12345678u, hdr.timestamp);
+    TEST_ASSERT_EQUAL_UINT8(0x01, flags);
+    TEST_ASSERT_EQUAL_UINT16(text_len, out_len);
+    TEST_ASSERT_EQUAL_MEMORY(text, out_text, text_len);
+}
+
+void test_log_packet_parse_truncated() {
+    const char* text = "hello";
+    uint8_t buf[64];
+    size_t n = daq::create_log_packet(0, (const uint8_t*)text, 5, 0u, buf,
+                                      sizeof(buf));
+    TEST_ASSERT_NOT_EQUAL(0, n);
+
+    daq::PacketHeader hdr;
+    uint8_t flags = 0;
+    const uint8_t* out_text = nullptr;
+    uint16_t out_len = 0;
+    // Claim one fewer byte than the text needs -> must fail.
+    TEST_ASSERT_FALSE(
+        daq::parse_log_packet(buf, n - 1, hdr, flags, out_text, out_len));
+}
+
+void test_log_packet_parse_wrong_type() {
+    // A heartbeat packet must not parse as LOGS.
+    uint8_t buf[64];
+    daq::BoardHeartbeatPacket hb{};
+    size_t n = daq::create_board_heartbeat_packet(hb, 0u, buf, sizeof(buf));
+    TEST_ASSERT_NOT_EQUAL(0, n);
+
+    daq::PacketHeader hdr;
+    uint8_t flags = 0;
+    const uint8_t* out_text = nullptr;
+    uint16_t out_len = 0;
+    TEST_ASSERT_FALSE(
+        daq::parse_log_packet(buf, n, hdr, flags, out_text, out_len));
 }
 
 // ---------------------------------------------------------------------------
@@ -506,6 +578,12 @@ int main(int argc, char** argv) {
     // Abort Done
     RUN_TEST(test_abort_done_roundtrip);
     RUN_TEST(test_abort_done_buffer_too_small);
+
+    RUN_TEST(test_log_packet_layout);
+    RUN_TEST(test_log_packet_buffer_too_small);
+    RUN_TEST(test_log_packet_roundtrip);
+    RUN_TEST(test_log_packet_parse_truncated);
+    RUN_TEST(test_log_packet_parse_wrong_type);
 
     // Null buffer
     RUN_TEST(test_parse_null_buffer);

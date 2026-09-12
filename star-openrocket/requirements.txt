@@ -1,0 +1,27 @@
+# Onshape CM Viewer backend dependencies.
+#
+# Pins match .github/workflows/star-openrocket-ci.yml so laptops and CI resolve
+# the same versions.
+#
+# httpx is used rather than requests for its connection pooling and timeout
+# handling -- the build fires several hundred requests and the tessellation
+# responses are multi-megabyte.
+#
+# pygltflib is used rather than trimesh because the whole design hinges on
+# writing a specific `extras` payload onto each glTF node (see orkv2.md 3.4),
+# and trimesh's Scene export does not give direct control over per-node extras.
+fastapi>=0.128
+uvicorn[standard]>=0.34
+pydantic>=2.12
+httpx>=0.28
+pygltflib>=1.16
+numpy>=1.26
+
+# Recovery calculator (merged in): descent solver uses scipy; boto3 is lazy (S3 only).
+scipy>=1.11
+boto3>=1.34
+
+# The shared design core (per-user storage, sharing, version history) lives at
+# lib/stardesign and is installed separately -- not from here, because the path
+# that reaches it differs between a checkout and a Docker build context. See
+# setup.sh, the CI workflow, and Dockerfile.api.

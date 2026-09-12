@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, export_cache, runs, series
+from . import config, descriptions, export_cache, run_config, runs, series, summary
 
 app = FastAPI(title="Elodin Past-Run Viewer")
 
@@ -33,13 +33,71 @@ def _parse_components(components: str | None) -> list[str]:
     return [c for c in components.split(",") if c]
 
 
+def _time_source(value: str) -> str:
+    """Which clock the x-axis is. Defaults to the sensor clock; see series.py."""
+    if value not in series.TIME_SOURCES:
+        raise HTTPException(400, f"time_source must be one of {series.TIME_SOURCES}")
+    return value
+
+
 @app.get("/api/runs")
 def api_runs():
     return runs.list_runs()
 
 
+@app.put("/api/runs/{run_id}/description")
+def api_set_description(run_id: str, text: str = Body(..., embed=True, max_length=4000)):
+    """Set (or clear, with empty text) this run's shared one-line description.
+
+    Unowned on purpose: there is no login on this viewer, so anyone who can see a run can
+    label it and everyone else sees that label. Last write wins.
+    """
+    if not config.RUN_RE.match(run_id):
+        raise HTTPException(400, "invalid run id")
+    if not (config.ELODIN_DIR / run_id).is_dir():
+        raise HTTPException(404, f"run not found: {run_id}")
+    try:
+        entry = descriptions.set_text(run_id, text)
+    except OSError as e:
+        # Almost always a read-only or missing mount. Say so, rather than accepting the
+        # edit and quietly dropping it — the user would have no way to tell.
+        raise HTTPException(503, f"could not save description: {e}")
+    return {"run_id": run_id, "description": entry["text"], "updated_at": entry["updated_at"]}
+
+
+@app.get("/api/runs/{run_id}/summary")
+def api_summary(run_id: str):
+    """What is knowable about a run without exporting it — size, component count and an
+    approximate duration. Sub-second; safe to call on every run selection."""
+    if not config.RUN_RE.match(run_id):
+        raise HTTPException(400, "invalid run id")
+    if not (config.ELODIN_DIR / run_id).is_dir():
+        raise HTTPException(404, f"run not found: {run_id}")
+    return summary.summarize(run_id)
+
+
 @app.get("/api/runs/{run_id}/components")
 def api_components(run_id: str):
+    """The component index. Only for an already-indexed run: selecting a run must not
+    cost a multi-second export, so building one is POST /index, an explicit action."""
+    if not config.RUN_RE.match(run_id):
+        raise HTTPException(400, "invalid run id")
+    if not export_cache.is_cached(run_id):
+        raise HTTPException(409, "run is not indexed yet")
+    try:
+        return export_cache.get_index(run_id)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/runs/{run_id}/index")
+def api_index(run_id: str):
+    """Export the run to parquet and build its index — the expensive step, run only when
+    asked for. Synchronous: tens of seconds on a multi-GB run, and the caller shows a
+    busy state for the duration. Concurrent callers share one export (export_cache holds
+    a per-run lock), so a double click costs nothing extra."""
     if not config.RUN_RE.match(run_id):
         raise HTTPException(400, "invalid run id")
     try:
@@ -50,6 +108,27 @@ def api_components(run_id: str):
         raise HTTPException(500, str(e))
 
 
+@app.get("/api/runs/{run_id}/config", response_class=PlainTextResponse)
+def api_config(run_id: str):
+    """The config snapshot taken beside this run's DB when the session started.
+
+    Served verbatim — it is the record of what actually ran, so it is never reformatted
+    or re-serialised. Runs recorded before the snapshot existed simply have no file.
+    """
+    if not config.RUN_RE.match(run_id):
+        raise HTTPException(400, "invalid run id")
+    path = run_config.snapshot_path(run_id)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        raise HTTPException(404, "no config snapshot for this run")
+    return PlainTextResponse(
+        text,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'inline; filename="{run_id}.toml"'},
+    )
+
+
 @app.get("/api/runs/{run_id}/series")
 def api_series(
     run_id: str,
@@ -57,15 +136,19 @@ def api_series(
     start: float | None = None,
     end: float | None = None,
     max_points: int = 4000,
+    time_source: str = "sensor",
 ):
     if not config.RUN_RE.match(run_id):
         raise HTTPException(400, "invalid run id")
     comps = _parse_components(components)
     if not comps:
         raise HTTPException(400, "no components requested")
+    src = _time_source(time_source)
     export_cache.ensure_exported(run_id)
     try:
-        return series.series_json(run_id, comps, start, end, max(4, min(max_points, 50000)))
+        return series.series_json(
+            run_id, comps, start, end, max(4, min(max_points, 50000)), src
+        )
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
 
@@ -76,6 +159,7 @@ def api_download(
     components: str | None = None,
     start: float | None = None,
     end: float | None = None,
+    time_source: str = "sensor",
 ):
     """CSV export.
 
@@ -88,16 +172,17 @@ def api_download(
     """
     if not config.RUN_RE.match(run_id):
         raise HTTPException(400, "invalid run id")
+    src = _time_source(time_source)
     index = export_cache.get_index(run_id)
     comps = _parse_components(components)
     if comps:
-        rows = series.wide_csv_rows(run_id, comps, start, end)
+        rows = series.wide_csv_rows(run_id, comps, start, end, src)
         fname = f"{run_id}_selection.csv"
     else:
         comps = [c["name"] for c in index["components"] if c["primary"]]
         if not comps:
             raise HTTPException(404, "no exportable channels")
-        rows = series.long_csv_rows(run_id, comps, start, end)
+        rows = series.long_csv_rows(run_id, comps, start, end, src)
         fname = f"{run_id}.csv"
     # Rate-limit the stream so a large export can't saturate the host uplink.
     rows = series.throttle(rows, config.MAX_DOWNLOAD_BYTES_PER_SEC)

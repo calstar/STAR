@@ -31,13 +31,17 @@ export default function TimeRange({ t0, tEnd, start, end, onChange }: Props) {
 
   return (
     <div className="timerange">
-      <span className="tr-label">Window (T+ s):</span>
-      <input className="tr-input" value={s} onChange={(ev) => setS(ev.target.value)}
+      {/* Short on purpose: the full "Window (T+ s):" pushed the toolbar's last button
+          onto a second row, and the inputs starting at 0.00 next to "of 35.6s" already
+          say what the numbers are. */}
+      <span className="tr-label" title="Plot window, in seconds from the start of the run (T+)">
+        Window
+      </span>
+      <input className="input tr-input" value={s} onChange={(ev) => setS(ev.target.value)}
              onBlur={apply} onKeyDown={(ev) => ev.key === 'Enter' && apply()} />
       <span className="tr-dash">→</span>
-      <input className="tr-input" value={e} onChange={(ev) => setE(ev.target.value)}
+      <input className="input tr-input" value={e} onChange={(ev) => setE(ev.target.value)}
              onBlur={apply} onKeyDown={(ev) => ev.key === 'Enter' && apply()} />
-      <button className="btn-link" onClick={() => onChange(null, null)}>full run</button>
       <span className="tr-total">of {fmtDuration(tEnd - t0)}</span>
     </div>
   );

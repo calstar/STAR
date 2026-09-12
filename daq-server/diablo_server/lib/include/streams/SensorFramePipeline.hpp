@@ -41,6 +41,14 @@ public:
     };
     std::optional<LastHeartbeat> get_last_heartbeat();
 
+    // Raw type-15 LOGS packet, surfaced like heartbeats (poll() returns no
+    // SensorBatch for it). daq_bridge parses + forwards it to the backend.
+    struct LastLog {
+        std::vector<uint8_t> data;
+        std::string source_ip;
+    };
+    std::optional<LastLog> get_last_log();
+
 private:
     std::unique_ptr<daq_comms::transport::UDPSocket> socket_;
     std::vector<uint8_t> receive_buffer_;
@@ -49,6 +57,9 @@ private:
 
     std::vector<uint8_t> last_heartbeat_buffer_;
     std::string last_heartbeat_source_ip_;
+
+    std::vector<uint8_t> last_log_buffer_;
+    std::string last_log_source_ip_;
 
     static constexpr size_t RECEIVE_BUFFER_SIZE = 8192;
 };

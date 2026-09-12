@@ -19,18 +19,6 @@ export interface Client {
     lastPong: number;
 }
 
-/** Configuration for a PT board that has 4-20 mA high-pressure sensors */
-export interface HpPtBoardConfig {
-    boardIp: string;
-    adcRefVoltage: number;
-    hpPtConnectors: Set<number>;
-    excitationConnectorId: number;
-    fullScalePsi: number;
-    senseResistorOhms: number;
-    excitationDividerRatio: number;
-    channelToEntity: Record<number, string>;
-}
-
 // ── Actuator channel map (built from config.toml actuator_roles) ────────────
 // String-based: maps actuator role name → physical channel number.
 // No ActuatorId enum — everything uses config names directly.

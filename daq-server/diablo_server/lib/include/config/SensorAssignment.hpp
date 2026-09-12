@@ -41,10 +41,6 @@ struct PressureSensorSpec {
     SystemState system_state;   // GSE or FLIGHT
     std::string location;       // Physical location
     std::string purpose;        // Purpose (e.g., "High pressure", "Fuel upstream")
-
-    // Calibration info
-    std::string calibration_file;  // Path to calibration data
-    bool requires_calibration;
 };
 
 /**
@@ -156,11 +152,6 @@ public:
      * @brief Update board configuration from received packet
      */
     bool update_board_config_from_packet(uint8_t board_id, const uint8_t* data, size_t size);
-
-    /**
-     * @brief Generate configuration file with assignments
-     */
-    bool save_assignments_to_config(const std::string& output_path) const;
 
     /**
      * @brief Load assignments from config file

@@ -1,5 +1,6 @@
 'use client'
 
+import { connectionBadge } from '@/lib/connection-badge';
 import { useNavigate } from 'react-router-dom';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
@@ -12,15 +13,11 @@ import { plotEntityKeysForPressureBar } from '@/lib/sensor-colors';
 import NotificationPanel from '@/components/dashboard/NotificationPanel';
 import { useControlMode } from '@/lib/control-mode';
 import { useSensorConfig } from '@/lib/sensor-config';
+import { useGuiConfig } from '@/lib/gui-config';
+import { usePressureLimits } from '@/lib/pressure-limits';
 import { buildPressureBarDefsFromSensorConfig, type PressureBarDef } from '@/lib/pressure-bar-defs';
+import { stateNameUpper, isFireState, stateIdByName, bootStateId } from '@/lib/states';
 
-const STATE_NAMES: Record<number, string> = {
-  0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
-  5: 'GN2 LOW PRESS', 6: 'GN2 VENT', 7: 'FUEL PRESS', 8: 'FUEL VENT',
-  9: 'OX PRESS', 10: 'OX VENT', 11: 'GN2 HIGH PRESS', 12: 'HIGH VENT',
-  13: 'VENT', 14: 'CALIBRATE', 15: 'READY', 16: 'FIRE', 17: 'ABORT',
-  20: 'PRESS STANDBY',
-};
 
 const STATE_COLORS: Record<number, string> = {
   16: 'text-red-400',
@@ -100,16 +97,23 @@ export default function TopBar() {
   const countdownTargetTimeMs = useSensorStore((s) => s.countdownTargetTimeMs);
   const session = useSensorStore((s) => s.session);
   const navigate = useNavigate();
-  const { controlEnabled, isOperator, unlocking, error, unlock, lock } = useControlMode();
-  const [passwordInput, setPasswordInput] = useState('');
+  const { controlEnabled, isOperator, error, unlock, lock } = useControlMode();
   const [showUnlockForm, setShowUnlockForm] = useState(false);
 
   const connectionStatus = useSensorStore((s) => s.connectionStatus) ?? { connected: false, elodinConnected: false };
   const [clock, setClock] = useState('');
   const [countdown, setCountdown] = useState('---:--:--');
   const [countdownExpired, setCountdownExpired] = useState(false);
-  const [pressureBars, setPressureBars] = useState<PressureBarDef[]>([]);
   const sensors = useSensorConfig();
+  const { pressureBars: barConfig } = useGuiConfig();
+  const pressureLimits = usePressureLimits();
+
+  // Top-bar gauges come from config ([[gui.pressure_bars]]) with NOP/MEOP from
+  // [pressure_limits]; all three hooks refetch on CONFIG_UPDATED, so edits are live.
+  const pressureBars = useMemo(
+    () => buildPressureBarDefsFromSensorConfig(sensors, barConfig, pressureLimits),
+    [sensors, barConfig, pressureLimits],
+  );
 
   const ws = getWebSocketClient();
 
@@ -119,23 +123,13 @@ export default function TopBar() {
   const [dateTimeInput, setDateTimeInput] = useState('');
   const [hitZeroMode, setHitZeroMode] = useState<'time' | 'datetime'>('time');
 
-  const loadPressureBars = useCallback(() => {
-    setPressureBars(buildPressureBarDefsFromSensorConfig(sensors));
-  }, [sensors]);
-
-  useEffect(() => {
-    loadPressureBars();
-  }, [loadPressureBars]);
-
   useEffect(() => {
     try {
       startDataCache(); // begin 1 Hz background sampling for plot history
     } catch (err) {
       console.error('[TopBar] Failed to start data cache:', err);
     }
-    const unsubConfig = ws.on(MessageType.CONFIG_UPDATED, () => loadPressureBars());
-    return () => { unsubConfig(); };
-  }, [ws, loadPressureBars]);
+  }, []);
 
   useEffect(() => {
     const tick = () => setClock(new Date().toLocaleTimeString('en-US', { hour12: true }));
@@ -214,11 +208,29 @@ export default function TopBar() {
     setCountdownMenuOpen(false);
   }, [dateTimeInput, hitZeroMode, sendCountdownTarget, timeOfDayInput]);
 
-  const effectiveState = currentState ?? SystemState.IDLE;
-  const currentStateName = STATE_NAMES[effectiveState] ?? `STATE ${effectiveState}`;
+  const effectiveState = currentState ?? bootStateId() ?? -1;
+  const currentStateName = stateNameUpper(effectiveState);
   const stateColor = STATE_COLORS[effectiveState] ?? 'text-text';
   const isConnected = connectionStatus.connected;
   const isFullyConnected = connectionStatus.connected && connectionStatus.elodinConnected;
+  const isSimulated = !!connectionStatus.simulated;
+  // Backend-authoritative "pipeline is actually delivering data" — the badge shows
+  // Simulated/Connected only when this is true, so a run marked active but not yet
+  // (or no longer) producing data reads "Data Pipeline Down", never a stale badge.
+  const dataFresh = !!connectionStatus.dataFresh;
+  // Session-enabled deployment with no active run: the pipeline is intentionally
+  // down, so show "Session Stopped" rather than a "Data Pipeline Down" alarm.
+  const sessionStopped = !!(session?.enabled && !session.active);
+  // Dot + label + tooltip, shared with MobileDashboard so the two cannot drift.
+  const badge = connectionBadge({
+    connected: isConnected,
+    sessionStopped,
+    dataFresh,
+    simulated: isSimulated,
+    throttled: connectionStatus.throttled,
+    resolutionPct: connectionStatus.resolutionPct,
+    lagMs: connectionStatus.lagMs,
+  });
 
   const effectivePressureBars = useMemo(() => {
     if (pressureBars.length > 0) return pressureBars;
@@ -237,27 +249,42 @@ export default function TopBar() {
     if (!controlEnabled) return;
     updateState({
       currentState: state,
-      stateName: STATE_NAMES[state] ?? `STATE ${state}`,
+      stateName: stateNameUpper(state),
       timestamp: Date.now(),
     });
     const cmd: CommandPayload = { commandType: 'state_transition', data: { state } };
     requestAnimationFrame(() => ws.sendCommand(cmd));
   };
 
+  // Abort targets by name, from the config's own [[states]]. These were literals — VENT 13,
+  // ENGINE_ABORT 17, GSE_ABORT 18, EMERGENCY_ABORT 19 — and a rig on any other numbering has no
+  // such ids, so the command resolved to nothing and the button did nothing while looking like it
+  // had worked. sendStateNamed() no-ops loudly instead, and hasState() disables a control the
+  // config cannot satisfy.
+  const sendStateNamed = (name: string) => {
+    const id = stateIdByName(name);
+    if (id === null) {
+      console.error(`[TopBar] config declares no "${name}" state — command not sent`);
+      return;
+    }
+    sendState(id);
+  };
+  const hasState = (name: string) => stateIdByName(name) !== null;
+
   const handleEngineAbort = () => {
-    sendState(SystemState.VENT);
-    setTimeout(() => sendState(SystemState.ENGINE_ABORT), 5000);
+    sendStateNamed('Vent');
+    setTimeout(() => sendStateNamed('Engine Abort'), 5000);
   };
 
-  const handleGseAbort = () => sendState(SystemState.GSE_ABORT);
+  const handleGseAbort = () => sendStateNamed('GSE Abort');
 
   const handleEmergencyAbort = () => {
     if (!confirm('⚠️ EMERGENCY ABORT — immediately vent GN2 and abort all operations?')) return;
-    sendState(SystemState.EMERGENCY_ABORT);
+    sendStateNamed('Emergency Abort');
   };
 
   const handleExtendFire = () => {
-    if (!controlEnabled || currentState !== SystemState.FIRE) return;
+    if (!controlEnabled || !isFireState(currentState)) return;
     const cmd: CommandPayload = { commandType: 'extend_fire', data: {} };
     requestAnimationFrame(() => ws.sendCommand(cmd));
   };
@@ -277,9 +304,9 @@ export default function TopBar() {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isFullyConnected ? 'bg-green-500' : isConnected ? 'bg-yellow-500' : 'bg-red-500'}`} />
-            <span className="text-sm text-gray-300 font-semibold">
-              {isFullyConnected ? 'Connected' : isConnected ? 'Data Pipeline Down' : 'Disconnected'}
+            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${badge.dotClass}`} title={badge.title} />
+            <span className="text-sm text-gray-300 font-semibold" title={badge.title}>
+              {badge.label}
             </span>
           </div>
           {session?.enabled && (
@@ -492,7 +519,8 @@ export default function TopBar() {
                 if (controlEnabled) {
                   lock();
                   setShowUnlockForm(false);
-                  setPasswordInput('');
+                } else if (isOperator) {
+                  unlock();
                 } else {
                   setShowUnlockForm((v) => !v);
                 }
@@ -501,40 +529,22 @@ export default function TopBar() {
                   ? 'border-green-500 bg-green-900/40 text-green-300 hover:bg-green-800/60'
                   : 'border-gray-700 bg-gray-900 text-gray-400 hover:bg-gray-800'
                 }`}
+              title={
+                controlEnabled
+                  ? 'Controller mode: click to return to viewer'
+                  : isOperator
+                    ? 'Click to take control'
+                    : 'Viewer mode: you are not an approved operator'
+              }
             >
               {controlEnabled ? 'CONTROLLER' : 'VIEWER'}
             </button>
 
-            {!controlEnabled && showUnlockForm && (
+            {!controlEnabled && !isOperator && showUnlockForm && (
               <div className="absolute top-full right-0 mt-1 flex flex-col gap-1 bg-background border border-gray-700 rounded px-2 py-2 shadow-lg z-50 w-48">
-                {!isOperator ? (
-                  <span className="text-[10px] text-yellow-400">
-                    You&apos;re not an approved operator — control is view-only.
-                  </span>
-                ) : (
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      unlock(passwordInput);
-                    }}
-                    className="flex flex-col gap-1"
-                  >
-                    <input
-                      type="password"
-                      value={passwordInput}
-                      onChange={(e) => setPasswordInput(e.target.value)}
-                      placeholder="Control password"
-                      className="px-2 py-1 rounded bg-black/60 border border-gray-700 text-[11px] text-white"
-                    />
-                    <button
-                      type="submit"
-                      disabled={unlocking || !passwordInput}
-                      className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wider border border-blue-700 bg-blue-700/80 hover:bg-blue-600 disabled:opacity-50"
-                    >
-                      {unlocking ? 'Unlocking…' : 'Submit'}
-                    </button>
-                  </form>
-                )}
+                <span className="text-[10px] text-yellow-400">
+                  You&apos;re not an approved operator — control is view-only.
+                </span>
                 {error && (
                   <span className="text-[10px] text-red-400">
                     {error}
@@ -548,38 +558,56 @@ export default function TopBar() {
           <div className="flex flex-col justify-center gap-2 flex-1 min-w-[7.25rem] border-l border-gray-800/60 pl-2">
             <button
               onClick={handleExtendFire}
-              disabled={!controlEnabled || currentState !== SystemState.FIRE}
+              disabled={!controlEnabled || !isFireState(currentState)}
               className="w-full min-w-0 py-2 xl:py-3 bg-emerald-800 hover:bg-emerald-700 active:bg-emerald-900 border border-emerald-600
                          text-white font-semibold text-[10px] xl:text-xs rounded-xl tracking-wider transition-colors disabled:bg-gray-800 disabled:border-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed"
-              title={currentState === SystemState.FIRE ? 'Extend fire to 5s from fire start' : 'Only active in FIRE'}
+              title={isFireState(currentState) ? 'Extend fire to 5s from fire start' : 'Only active in FIRE'}
             >
               EXTEND FIRE
             </button>
             <button
               onClick={handleEngineAbort}
-              disabled={!controlEnabled}
+              disabled={!controlEnabled || !hasState('Vent') || !hasState('Engine Abort')}
               className="w-full py-2 xl:py-3 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border border-amber-600
                          text-white font-semibold text-[10px] xl:text-xs rounded-xl tracking-wider transition-colors disabled:bg-amber-900 disabled:border-amber-900 disabled:text-amber-700 disabled:cursor-not-allowed"
-              title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+              title={
+                !controlEnabled
+                  ? 'Viewer mode: controls locked'
+                  : !hasState('Vent') || !hasState('Engine Abort')
+                    ? 'Config declares no Vent / Engine Abort state'
+                    : undefined
+              }
             >
               ENG ABORT
             </button>
             <button
               onClick={handleGseAbort}
-              disabled={!controlEnabled}
+              disabled={!controlEnabled || !hasState('GSE Abort')}
               className="w-full py-2 xl:py-3 bg-orange-800 hover:bg-orange-700 active:bg-orange-900 border border-orange-600
                          text-white font-semibold text-[10px] xl:text-xs rounded-xl tracking-wider transition-colors disabled:bg-orange-900 disabled:border-orange-900 disabled:text-orange-700 disabled:cursor-not-allowed"
-              title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+              title={
+                !controlEnabled
+                  ? 'Viewer mode: controls locked'
+                  : !hasState('GSE Abort')
+                    ? 'Config declares no GSE Abort state'
+                    : undefined
+              }
             >
               GSE ABORT
             </button>
             <button
               onClick={handleEmergencyAbort}
-              disabled={!controlEnabled}
+              disabled={!controlEnabled || !hasState('Emergency Abort')}
               className="w-full py-2 xl:py-3 bg-red-700 hover:bg-red-600 active:bg-red-800 border border-red-500
                          text-white font-semibold text-[10px] xl:text-xs rounded-xl tracking-wider transition-colors
                          shadow-[0_0_6px_rgba(239,68,68,0.4)] disabled:bg-red-900 disabled:border-red-900 disabled:text-red-700 disabled:cursor-not-allowed"
-              title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+              title={
+                !controlEnabled
+                  ? 'Viewer mode: controls locked'
+                  : !hasState('Emergency Abort')
+                    ? 'Config declares no Emergency Abort state'
+                    : undefined
+              }
             >
               E-ABORT
             </button>

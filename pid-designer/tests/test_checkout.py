@@ -12,7 +12,10 @@ if nobody saves for `lock_ttl`, and none of it touches the operations that are
 not concurrent editing (rename, share, copy).
 """
 
+from datetime import datetime, timezone
+
 import fcntl
+import time
 import json
 import os
 import sys
@@ -229,7 +232,7 @@ def test_the_previous_holder_is_refused_rather_than_silently_overwriting(client,
     client.post(f"{BASE}/{doc_id}/checkout", headers=A)
     monkeypatch.setattr(documents.store, "lock_ttl", 0)
     client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A)
-    monkeypatch.setattr(documents.store, "lock_ttl", 300)
+    monkeypatch.setattr(documents.store, "lock_ttl", 900)
 
     assert _save(client, doc_id, A, nodes=[{"id": "stale"}]).status_code == 423
     assert _save(client, doc_id, B, params=OWNER_A, nodes=[{"id": "fresh"}]).status_code == 200
@@ -417,3 +420,98 @@ def test_a_returned_record_says_the_design_is_yours(client):
         body = resp.json()
         assert body["mine"] is True, f"{label} did not report the design as yours"
         assert body["ownerName"], f"{label} returned an empty ownerName"
+
+
+def test_lock_expires_at_is_in_the_future(client):
+    """`lockExpiresAt` is when the hold lapses, not when it was last beaten.
+
+    It used to carry the raw heartbeat -- a time already in the past -- so a bar
+    counting down to it read as expired the moment it rendered, which is why
+    nothing ever showed the user how long they had. Fails against that.
+    """
+    doc_id = _create(client)
+    client.post(f"{BASE}/{doc_id}/checkout", headers=A)
+    state = client.get(f"{BASE}/{doc_id}/checkout", headers=A).json()
+    expires = datetime.fromisoformat(state["lockExpiresAt"])
+    left = (expires - datetime.now(timezone.utc)).total_seconds()
+    assert 0 < left <= documents.store.lock_ttl
+    assert state["lockTtlSeconds"] == documents.store.lock_ttl
+
+
+def test_beat_refreshes_the_hold_without_writing(client):
+    """The fix for "it kicked me out while I was working".
+
+    Before this endpoint the only thing that refreshed a hold was a successful
+    autosave, so panning, measuring or thinking counted as idle. The beat must
+    push the expiry out and must NOT touch the stored payload.
+    """
+    doc_id = _create(client)
+    client.post(f"{BASE}/{doc_id}/checkout", headers=A)
+    _save(client, doc_id, A)
+    stored = client.get(f"{BASE}/{doc_id}/load", headers=A).json()
+    before = client.get(f"{BASE}/{doc_id}/checkout", headers=A).json()["lockExpiresAt"]
+
+    r = client.post(f"{BASE}/{doc_id}/checkout/beat", headers=A)
+    assert r.status_code == 200
+    assert r.json()["lockedByMe"] is True
+    assert r.json()["lockExpiresAt"] >= before
+    # Content untouched. Compared against whatever this app's payload shape is
+    # rather than a hardcoded one -- a beat that could clobber a working copy
+    # would be worse than the bug it fixes.
+    assert client.get(f"{BASE}/{doc_id}/load", headers=A).json() == stored
+
+
+def test_beat_refuses_when_you_do_not_hold_it(client):
+    """423 is the client's cue to stop beating and show the lost dialog.
+
+    Shared with B on purpose: an unshared user is refused at 403 long before the
+    lock is consulted, so it would prove nothing about the beat.
+    """
+    doc_id = _create(client)
+    _share(client, doc_id, [B["X-Auth-Email"]])
+    client.post(f"{BASE}/{doc_id}/checkout", headers=A)
+    assert client.post(f"{BASE}/{doc_id}/checkout/beat", headers=B, params=OWNER_A).status_code == 423
+
+
+def test_beat_alone_survives_the_ttl_but_idling_does_not(client, monkeypatch):
+    """The end-to-end claim, both directions.
+
+    Someone interacting without saving must keep the design; someone who has
+    genuinely walked away must lose it, because release is holder-only and the
+    on-close beacon is best-effort, so lapsing is the only thing that recovers a
+    checkout after a crash or a power cut.
+    """
+    doc_id = _create(client)
+    _share(client, doc_id, [B["X-Auth-Email"]])
+    assert client.post(f"{BASE}/{doc_id}/checkout", headers=A).status_code == 200
+
+    monkeypatch.setattr(documents.store, "lock_ttl", 2)
+    # Beat twice, each time before it would have lapsed. Total elapsed exceeds
+    # the TTL, and no save happens anywhere in here -- which is the entire point.
+    for _ in range(2):
+        time.sleep(1.2)
+        assert client.post(f"{BASE}/{doc_id}/checkout/beat", headers=A).status_code == 200
+    assert client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A).status_code == 423
+
+    # stop beating and it lapses on its own -- B gets it
+    time.sleep(2.2)
+    assert client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A).status_code == 200
+
+
+def test_a_lapsed_hold_cannot_be_beaten_back_to_life(client, monkeypatch):
+    """Beating is a refresh, not a resurrection.
+
+    Once the hold has gone the design is free and someone else may already have
+    taken it, so a client that could beat its way back would reintroduce exactly
+    the two-holders case checkouts exist to prevent. 423 here is what makes the
+    lost-checkout dialog offer "Take it back" rather than silently re-beating.
+    """
+    doc_id = _create(client)
+    _share(client, doc_id, [B["X-Auth-Email"]])
+    client.post(f"{BASE}/{doc_id}/checkout", headers=A)
+
+    monkeypatch.setattr(documents.store, "lock_ttl", 1)
+    time.sleep(1.05)
+    assert client.post(f"{BASE}/{doc_id}/checkout/beat", headers=A).status_code == 423
+    # and it really was free, not merely unbeatable
+    assert client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A).status_code == 200

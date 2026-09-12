@@ -51,8 +51,9 @@ else
     echo "Building elodin-db from source (Jetson/ARM64)..."
     ELODIN_SRC="/tmp/elodin-src"
     rm -rf "$ELODIN_SRC"
-    git clone --depth 1 --branch v0.16.2 https://github.com/elodin-sys/elodin.git "$ELODIN_SRC"
-    (cd "$ELODIN_SRC" && cargo install --path libs/db/cli)
+    git clone --depth 1 --branch v0.16.1 https://github.com/elodin-sys/elodin.git "$ELODIN_SRC"
+    # Crate root moved between elodin releases (libs/db/cli vs libs/db) — try both.
+    (cd "$ELODIN_SRC" && (cargo install --path libs/db/cli || cargo install --path libs/db))
     # Crate installs as impeller2-cli; symlink to elodin-db for compatibility
     if [ -x "$HOME/.cargo/bin/impeller2-cli" ] && [ ! -x "$ELODIN_BIN" ]; then
         ln -sf impeller2-cli "$ELODIN_BIN"

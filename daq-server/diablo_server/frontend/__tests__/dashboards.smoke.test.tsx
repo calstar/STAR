@@ -88,4 +88,28 @@ describe('Dashboard smoke tests', () => {
             <ActuatorControlByName name="LOX Main" channel={1} entity="ACT.LOX_Main" />
         )).not.toThrow();
     });
+
+    it('TabBar renders without crashing', async () => {
+        const { MemoryRouter } = await import('react-router-dom');
+        const { default: TabBar } = await import('@/components/dashboard/TabBar');
+        expect(() => render(
+            <MemoryRouter initialEntries={['/single-pane']}><TabBar /></MemoryRouter>
+        )).not.toThrow();
+    });
+
+    it('AllViewsPage renders without crashing', async () => {
+        const { MemoryRouter } = await import('react-router-dom');
+        const { default: AllViewsPage } = await import('@/app/views/page');
+        expect(() => render(
+            <MemoryRouter><AllViewsPage /></MemoryRouter>
+        )).not.toThrow();
+    });
+
+    it('OpenInPopupButton renders without crashing', async () => {
+        const { MemoryRouter } = await import('react-router-dom');
+        const { default: OpenInPopupButton } = await import('@/components/windows/OpenInPopupButton');
+        expect(() => render(
+            <MemoryRouter initialEntries={['/fuel']}><OpenInPopupButton /></MemoryRouter>
+        )).not.toThrow();
+    });
 });

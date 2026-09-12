@@ -1,9 +1,16 @@
 /**
- * Single source of truth for primary dashboard pressure bars / live cards.
- * Maps config.toml roles → calEntity so TopBar and home "Live Pressures" stay aligned.
+ * Builds the primary dashboard pressure bars / live cards.
+ *
+ * The bar LIST is config-driven — authored in config.toml [[gui.pressure_bars]]
+ * and fetched via useGuiConfig() — so which gauges show, their order, labels and
+ * colours change with no rebuild. NOP/MEOP always come from [pressure_limits]
+ * (the single source of truth, shared with the plot pages). When no config list
+ * is supplied we fall back to DEFAULT_BARS so nothing breaks pre-migration.
  */
 
 import type { SensorConfig } from '@/lib/sensor-config';
+import type { PressureBarConfig } from '@/lib/gui-config';
+import type { PressureLimitsMap } from '@/lib/pressure-limits';
 import { getEntityColor } from '@/lib/sensor-colors';
 
 /** Fixed strip colors (must stay stable; entity strings change with wiring). */
@@ -30,45 +37,92 @@ export type PressureBarDef = {
   avgEntities?: string[];
 };
 
-function pickCalEntity(byRole: Map<string, string>, roles: string[], fallbackEntity: string): string {
+/** Internal shape both the config list and DEFAULT_BARS normalize to. */
+type BarSource = {
+  label: string;
+  roles: string[];
+  avgRoles?: string[];
+  limitsKey?: string;
+  color?: string;
+};
+
+/**
+ * Fallback bar list used when config.toml has no [[gui.pressure_bars]].
+ * `limitsKey` points each bar at [pressure_limits] so thresholds stay unified
+ * even in the fallback path.
+ */
+const DEFAULT_BARS: BarSource[] = [
+  { label: 'GN2 HI', roles: ['GN2 High'], limitsKey: 'GN2_High' },
+  { label: 'GN2 REG', roles: ['GN2 Regulated'], limitsKey: 'GN2_Regulated' },
+  { label: 'FUEL UP', roles: ['Fuel Upstream'], limitsKey: 'Fuel_Upstream' },
+  { label: 'FUEL DN', roles: ['Fuel Downstream'], limitsKey: 'Fuel_Downstream' },
+  { label: 'LOX UP', roles: ['Ox Upstream', 'LOX Upstream'], limitsKey: 'Ox_Upstream' },
+  { label: 'LOX DN', roles: ['Ox Downstream', 'LOX Downstream'], limitsKey: 'Ox_Downstream' },
+  { label: 'GSE LO', roles: ['GSE Low'], limitsKey: 'GSE_Low' },
+  { label: 'GSE MID', roles: ['GSE Mid'], limitsKey: 'GSE_Mid' },
+  { label: 'GSE HI', roles: ['GSE High'], limitsKey: 'GSE_High' },
+  {
+    label: 'CHAMBER',
+    roles: ['Chamber Mid PT 1'],
+    avgRoles: ['Chamber Mid PT 1', 'Chamber Mid PT 2'],
+    limitsKey: 'Chamber',
+  },
+];
+
+/** Role name → conventional calibrated-entity fallback, e.g. "GN2 High" → "PT_Cal.GN2_High". */
+function roleToFallbackEntity(role: string): string {
+  return `PT_Cal.${role.replace(/\s+/g, '_')}`;
+}
+
+function pickCalEntity(byRole: Map<string, string>, roles: string[]): string {
   for (const r of roles) {
     const e = byRole.get(r);
     if (e) return e;
   }
-  return fallbackEntity;
+  return roles.length ? roleToFallbackEntity(roles[0]) : '';
 }
 
-/** Build the standard DAQ PT strip from /api/sensor-config (same mapping as TopBar). */
-export function buildPressureBarDefsFromSensorConfig(sensors: SensorConfig[]): PressureBarDef[] {
+/** Normalize a config-authored bar into the internal BarSource shape. */
+function configBarToSource(bar: PressureBarConfig): BarSource {
+  return {
+    label: bar.label,
+    roles: bar.role ? [bar.role] : (bar.avg_roles ?? []),
+    avgRoles: bar.avg_roles,
+    limitsKey: bar.limits,
+    color: bar.color,
+  };
+}
+
+/**
+ * Build the DAQ PT strip.
+ * @param sensors  from /api/sensor-config (role → calEntity)
+ * @param bars     config.toml [[gui.pressure_bars]] (via useGuiConfig); falls back to DEFAULT_BARS
+ * @param limits   [pressure_limits] map (via usePressureLimits); supplies NOP/MEOP
+ */
+export function buildPressureBarDefsFromSensorConfig(
+  sensors: SensorConfig[],
+  bars?: PressureBarConfig[],
+  limits?: PressureLimitsMap,
+): PressureBarDef[] {
   const byRole = new Map<string, string>();
   for (const s of sensors) byRole.set(String(s.role || ''), String(s.calEntity || ''));
 
-  const chamberMid1 = pickCalEntity(byRole, ['Chamber Mid PT 1'], 'PT_Cal.Chamber_Mid_PT_1');
-  const chamberMid2 = pickCalEntity(byRole, ['Chamber Mid PT 2'], 'PT_Cal.Chamber_Mid_PT_2');
+  const sources: BarSource[] = bars && bars.length ? bars.map(configBarToSource) : DEFAULT_BARS;
 
-  const rows: Omit<PressureBarDef, 'color'>[] = [
-    { label: 'GN2 HI', entity: pickCalEntity(byRole, ['GN2 High'], 'PT_Cal.GN2_High'), nop: 900, meop: 950 },
-    { label: 'GN2 REG', entity: pickCalEntity(byRole, ['GN2 Regulated'], 'PT_Cal.GN2_Regulated'), nop: 900, meop: 950 },
-    { label: 'FUEL UP', entity: pickCalEntity(byRole, ['Fuel Upstream'], 'PT_Cal.Fuel_Upstream'), nop: 600, meop: 650 },
-    { label: 'FUEL DN', entity: pickCalEntity(byRole, ['Fuel Downstream'], 'PT_Cal.Fuel_Downstream'), nop: 600, meop: 650 },
-    { label: 'LOX UP', entity: pickCalEntity(byRole, ['Ox Upstream', 'LOX Upstream'], 'PT_Cal.Ox_Upstream'), nop: 600, meop: 650 },
-    { label: 'LOX DN', entity: pickCalEntity(byRole, ['Ox Downstream', 'LOX Downstream'], 'PT_Cal.Ox_Downstream'), nop: 600, meop: 650 },
-    { label: 'GSE LO', entity: pickCalEntity(byRole, ['GSE Low'], 'PT_Cal.GSE_Low'), nop: 500, meop: 700 },
-    { label: 'GSE MID', entity: pickCalEntity(byRole, ['GSE Mid'], 'PT_Cal.GSE_Mid'), nop: 4000, meop: 4500 },
-    { label: 'GSE HI', entity: pickCalEntity(byRole, ['GSE High'], 'PT_Cal.GSE_High'), nop: 500, meop: 700 },
-    {
-      label: 'CHAMBER',
-      entity: chamberMid1,
-      nop: 500,
-      meop: 650,
-      avgEntities: [chamberMid1, chamberMid2],
-    },
-  ];
+  return sources.map((src) => {
+    const entity = pickCalEntity(byRole, src.roles);
+    const avgEntities = src.avgRoles?.map((r) => byRole.get(r) ?? roleToFallbackEntity(r));
+    const lim = src.limitsKey ? limits?.[src.limitsKey] : undefined;
 
-  return rows.map((r) => ({
-    ...r,
-    color: STRIP_LABEL_COLORS[r.label] ?? getEntityColor(r.avgEntities?.[0] ?? r.entity),
-  }));
+    return {
+      label: src.label,
+      entity,
+      nop: lim?.NOP,
+      meop: lim?.MEOP,
+      color: src.color ?? STRIP_LABEL_COLORS[src.label] ?? getEntityColor(avgEntities?.[0] ?? entity),
+      ...(avgEntities && avgEntities.length >= 2 ? { avgEntities } : {}),
+    };
+  });
 }
 
 /** Plot label formatting (matches dashboard cards). */
@@ -95,6 +149,10 @@ export function pressureBarDefsToPlotSeries(defs: PressureBarDef[]): PressurePlo
   return out;
 }
 
-export function buildPressurePlotSeriesFromSensorList(sensors: SensorConfig[]): PressurePlotSeries[] {
-  return pressureBarDefsToPlotSeries(buildPressureBarDefsFromSensorConfig(sensors));
+export function buildPressurePlotSeriesFromSensorList(
+  sensors: SensorConfig[],
+  bars?: PressureBarConfig[],
+  limits?: PressureLimitsMap,
+): PressurePlotSeries[] {
+  return pressureBarDefsToPlotSeries(buildPressureBarDefsFromSensorConfig(sensors, bars, limits));
 }

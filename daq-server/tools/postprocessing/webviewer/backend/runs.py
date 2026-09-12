@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from . import config, export_cache
+from . import config, descriptions, export_cache
 
 
 def list_runs() -> list[dict]:
@@ -14,6 +14,8 @@ def list_runs() -> list[dict]:
     runs = []
     if not config.ELODIN_DIR.is_dir():
         return runs
+    # One read for the whole listing, not one per run.
+    texts = descriptions.all_texts()
     for entry in config.ELODIN_DIR.iterdir():
         if not entry.is_dir():
             continue
@@ -34,6 +36,9 @@ def list_runs() -> list[dict]:
                 # it — weeks later the directory prefix is the only thing that
                 # distinguishes it from real test-stand data.
                 "simulated": m.group("sim") is not None,
+                # Shared, operator-written one-liner saying what this run was. "" when
+                # nobody has labelled it yet. See backend/descriptions.py.
+                "description": texts.get(entry.name, ""),
             }
         )
     runs.sort(key=lambda r: r["started"], reverse=True)

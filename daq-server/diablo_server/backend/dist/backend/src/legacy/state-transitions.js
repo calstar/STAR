@@ -91,7 +91,9 @@ function buildTransitionsCSVSearchPaths() {
     catch {
         /* fall through to defaults */
     }
-    paths.push(join(process.cwd(), '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'state_transitions.csv'), join(process.cwd(), '..', 'external', 'DiabloAvionics', 'test_guis', 'state_transitions.csv'), join(__dirname, '..', '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'state_transitions.csv'), join(__dirname, '../../../../external/DiabloAvionics/test_guis/state_transitions.csv'));
+    // Direct config/ fallback (canonical source of truth) if config.toml unreadable.
+    const rel = join('config', 'state_transitions.csv');
+    paths.push(join(process.cwd(), '..', '..', rel), join(process.cwd(), '..', rel), join(__dirname, '..', '..', '..', '..', rel));
     return paths;
 }
 export function getStateTransitions() {

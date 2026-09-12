@@ -5,8 +5,6 @@
 // WebSocket message types
 export enum MessageType {
   // Client → Server
-  SUBSCRIBE_SENSOR = 'subscribe_sensor',
-  UNSUBSCRIBE_SENSOR = 'unsubscribe_sensor',
   SEND_COMMAND = 'send_command',
   QUERY_HISTORICAL = 'query_historical',
   CALIBRATION_COMMAND = 'calibration_command',
@@ -28,10 +26,12 @@ export enum MessageType {
   CONFIG_UPDATED = 'config_updated',
   COUNTDOWN_TARGET_UPDATE = 'countdown_target_update',
   SESSION_UPDATE = 'session_update',
+  SESSION_START_BLOCKED = 'session_start_blocked',   // Server → Client: { issues, errors, warnings }
+  BOARD_LOG = 'board_log',                           // Server → Client: { boardId, ts, lines, truncated }
 
   // Engine-control authorization (DAQ operator gate)
   CONTROL_STATUS = 'control_status',                // Server → Client: { operator, email }
-  CONTROL_UNLOCK = 'control_unlock',                // Client → Server: { password }
+  CONTROL_UNLOCK = 'control_unlock',                // Client → Server: {} (arm control; identity-gated)
   CONTROL_UNLOCK_RESULT = 'control_unlock_result',  // Server → Client: { ok, reason }
 }
 
@@ -166,8 +166,26 @@ export interface CommandPayload {
     keepData?: boolean;
     /** session_start: auto-stop timeout in milliseconds. */
     durationMs?: number;
+    /** session_start: run against the board simulator (true) instead of live hardware. */
+    simulated?: boolean;
     /** session_extend: milliseconds to push the auto-stop deadline out by. */
     addMs?: number;
+    /**
+     * session_start: run despite config issues. The backend validates the profile it is about to
+     * deploy and refuses the start when anything is wrong, answering with SESSION_START_BLOCKED;
+     * this flag is the operator's second press of Start, saying they have read the list and want
+     * the run anyway. Never set it on the first attempt — that would silently restore the old
+     * behaviour where config errors were advisory.
+     */
+    force?: boolean;
+    /**
+     * state_transition: hold the target state for exactly this long, then let it return to its
+     * configured return state. Only honoured for a state the config marks as accepting one — the
+     * SEQUENCER decides, and it refuses this outright for the burn state, whose window is
+     * config-only. A refusal does not transition, so a frame replayed after a reconnect cannot
+     * start a hold. Omit to use the state's configured default.
+     */
+    holdMs?: number;
   };
 }
 
@@ -184,6 +202,21 @@ export interface SessionStatus {
   deadlineMs: number | null;
   remainingMs: number | null;
   freeDiskBytes: number | null;
+  /** True when the active run is fed by the board simulator instead of hardware. */
+  simulated: boolean;
+}
+
+/**
+ * Why a run refused to start: the config issues the backend found in the profile it was about to
+ * deploy. Sent only to the client that asked, in place of starting anything. The operator fixes
+ * them in the config editor, or presses Start again (SendCommand data.force) to run regardless.
+ */
+export interface SessionStartBlockedPayload {
+  issues: { page: string; level: 'error' | 'warn'; message: string }[];
+  errors: number;
+  warnings: number;
+  /** The profile that was validated — it is what session start deploys, not the running config. */
+  profile: string;
 }
 
 // Connection status
@@ -193,6 +226,23 @@ export interface ConnectionStatus {
   connId?: string;
   latency?: number;
   error?: string;
+  /** True when incoming data is synthetic (board simulator running). */
+  simulated?: boolean;
+  /** Backend-authoritative: an Elodin row was ingested within the freshness window,
+   *  i.e. the pipeline is actually delivering data right now (not just "run active"). */
+  dataFresh?: boolean;
+
+  // ── This client's own link (per-socket; see backend client-outbox.ts) ──────
+  // Computed server-side and sent, never derived in the browser: resolutionPct
+  // needs the produced-point count the client never receives, and lagMs needs
+  // the server clock. An operator must never look at decimated data unknowingly.
+
+  /** The backend is shedding resolution to keep this client current. */
+  throttled?: boolean;
+  /** Percentage of produced sensor points this client actually received (0-100). */
+  resolutionPct?: number;
+  /** Age of the newest delivered sample at the last flush, in ms. */
+  lagMs?: number;
 }
 
 // Mission start time (T+0 from first packet)
@@ -242,15 +292,61 @@ export type CalibrationCommandType =
   | 'reset_channel'       // clear all points and restart
   | 'enable_phase2'
   | 'disable_phase2'
-  | 'zero_all'            // zero-point init: all PTs set current ADC → 0 PSI
+  | 'zero_all'            // capture a 0 psi reference point on every cubic/robust PT (shared fit)
   | 'save_coefficients'   // persist current coefficients to disk
-  | 'clear_calibration';  // clear all state and start from scratch
+  | 'clear_calibration'   // clear all state and start from scratch
+  | 'capture_cubic_point' // add one (current ADC, ref PSI) point to a channel's cubic fit
+  | 'clear_cubic_channel' // drop a channel's cubic points and revert to the factory cubic
+  | 'capture_point'       // unified: add one (current ADC, ref PSI) point; service routes by config model
+  | 'new_calibration';    // unified: start fresh for a channel; service routes clear by config model
 
 export interface CalibrationCommand {
   commandType: CalibrationCommandType;
   sensorId?: number;
   boardId?: number;
   referencePressure?: number;  // PSI ground-truth for capture_reference
+}
+
+// ── Cubic PT calibration (service-owned fit, served read-only at GET /api/cubic_calibration) ──
+
+/** One operator-captured calibration point for a channel's cubic fit. */
+export interface CubicCalibrationPoint {
+  adc: number;   // averaged raw ADC code at capture time
+  psi: number;   // operator-entered reference pressure
+  t: number;     // capture time (unix seconds)
+}
+
+/**
+ * Per-sensor cubic calibration record produced by the calibration service. The frontend renders the
+ * captured `points` as a scatter and overlays the curve by evaluating `polyCoeffs` over
+ * `((adc - adcNormMin)/adcNormScale)^i` — no fitting in the browser.
+ */
+export interface CubicCalibrationChannel {
+  boardId: number;
+  connector: number;              // 1-based board-local connector
+  logicalCh: number;              // (slot-1)*10 + connector (PTCalibrationManager key)
+  role: string;                   // may be empty; the UI supplies it from sensor config
+  active_model: 'cubic' | 'robust' | 'physics';  // the model this uid streams (config truth)
+  numPoints: number;
+  status: 'PENDING' | 'OK' | 'ERROR';
+  last_error: string;
+  rmse: number;
+  degree: number;
+  updatedAt: number;              // unix seconds
+  coeffs: { A: number; B: number; C: number; D: number };  // raw-ADC-space cubic (cubic uids)
+  polyCoeffs: number[];           // normalized coeffs (well-conditioned; used for display eval)
+  adcNormMin: number;
+  adcNormScale: number;
+  points: CubicCalibrationPoint[];
+  // Robust uids only: (adc, psi) samples of the live robust model, for the overlay curve. Cubic
+  // uids draw their curve from polyCoeffs instead, so this is absent for them.
+  fitCurve?: { adc: number; psi: number }[];
+}
+
+/** Body of GET /api/cubic_calibration: the service's cubic_calibration.json, keyed by uid. */
+export interface CubicCalibrationPayload {
+  cubic_state?: Record<string, CubicCalibrationChannel>;
+  [key: string]: unknown;  // also carries calibration_polynomials/poly_coeffs/norm maps
 }
 
 // ── Board / heartbeat status ───────────────────────────────────────────────────
@@ -299,6 +395,30 @@ export interface BoardStatusPayload {
   boards: BoardStatus[];
 }
 
+// ── Board diagnostic logs (type-15 firmware logs, forwarded via daq_bridge) ──
+
+/** One cached board log line, stamped with server arrival time. */
+export interface BoardLogLine {
+  boardId: number;
+  ts: number;   // server arrival time, epoch ms
+  line: string;
+}
+
+/** Running per-board log counters (cumulative since backend start). */
+export interface BoardLogTotals {
+  received: number;   // BOARD_LOG packets (1 Hz flushes) received
+  truncated: number;  // of those, how many carried the TRUNCATED flag
+}
+
+/** MessageType.BOARD_LOG payload: one packet's worth of newline-split lines. */
+export interface BoardLogPayload {
+  boardId: number;
+  ts: number;          // server arrival time, epoch ms
+  lines: string[];
+  truncated: boolean;  // this packet overflowed the board's buffer
+  totals: BoardLogTotals;
+}
+
 // ── Notification types ─────────────────────────────────────────────────────
 
 export type NotificationCategory = 'info' | 'warning' | 'error';
@@ -340,4 +460,55 @@ export function engineStateCodeToLabel(code: number | null | undefined): string 
     return name.replace(/_/g, ' ');
   }
   return 'UNKNOWN';
+}
+
+// ── Controller PWM actuator assignment ───────────────────────────────────────
+/** The two controller_service PWM outputs, as they appear in the 4th element of an
+ *  [actuator_roles] entry. Absent from an entry means the sequencer owns that actuator. */
+export const PWM_ASSIGNMENTS = ['pwm_fuel', 'pwm_ox'] as const;
+export type PwmAssignment = typeof PWM_ASSIGNMENTS[number];
+
+/** Which actuator serves each PWM output, from `[actuator_roles]`. */
+export function pwmAssignmentMap(config: any): Record<string, string[]> {
+  const out: Record<string, string[]> = { pwm_fuel: [], pwm_ox: [] };
+  const roles = config?.actuator_roles;
+  if (!roles || typeof roles !== 'object') return out;
+  for (const [name, value] of Object.entries<any>(roles)) {
+    const assignment = Array.isArray(value) && typeof value[3] === 'string' ? value[3].trim() : '';
+    if (assignment && out[assignment]) out[assignment].push(name);
+  }
+  return out;
+}
+
+/**
+ * Whether the controller's PWM outputs are assigned exactly once each.
+ *
+ * An [actuator_roles] entry's optional 4th element ("pwm_fuel" / "pwm_ox") is the single statement
+ * of which hardware controller_service drives. The same fact makes the sequencer stop commanding
+ * that actuator during a burn, so exactly one writer drives it — which is why a duplicate or a
+ * missing assignment is worth blocking rather than warning about. The C++ side enforces the same
+ * rule in PWMTargets.hpp and refuses to open the PWM fire gate without it.
+ *
+ * Both outputs unassigned is allowed and means "this rig does not use the PWM controller" — the
+ * digital-twin profile is exactly that. Assigning one but not the other is not.
+ *
+ * Returns one human-readable problem per bad output; empty means valid.
+ */
+export function validateControllerPwmActuators(config: any): string[] {
+  const roles = config?.actuator_roles;
+  // No [actuator_roles] at all is a different (and much louder) misconfiguration; don't pile on.
+  if (!roles || typeof roles !== 'object') return [];
+  const assigned = pwmAssignmentMap(config);
+  if (assigned.pwm_fuel.length === 0 && assigned.pwm_ox.length === 0) return [];
+
+  const issues: string[] = [];
+  for (const [key, label] of [['pwm_fuel', 'fuel'], ['pwm_ox', 'ox']] as const) {
+    const names = assigned[key];
+    if (names.length === 0) {
+      issues.push(`No actuator is assigned "${key}" — the controller has no ${label} PWM output. Assign one, or clear the other assignment if this rig does not use the PWM controller.`);
+    } else if (names.length > 1) {
+      issues.push(`${names.length} actuators are assigned "${key}" (${names.join(', ')}) — exactly one must be.`);
+    }
+  }
+  return issues;
 }

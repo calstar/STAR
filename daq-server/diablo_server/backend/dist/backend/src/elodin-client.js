@@ -114,7 +114,7 @@ export class ElodinClient extends EventEmitter {
             high === 0x40 || high === 0x41 || high === 0x42 || high === 0x43 || high === 0x44 || // controller
             high === 0x46 || // calibration commands
             high === 0x50 || // sequencer/PSM
-            high === 0x60 // self-test
+            (high >= 0x60 && high <= 0x6F) // self-test (per-sensor: 0x60+sensor_id)
         );
     }
     handleData(data) {

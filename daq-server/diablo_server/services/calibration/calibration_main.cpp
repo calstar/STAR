@@ -3,7 +3,7 @@
  * @brief Standalone Calibration Service — subscribes directly to Elodin, applies calibration,
  *        publishes calibrated VTables back to Elodin.
  *
- * Connects directly to Elodin DB (port 2240) using subscribe_stream() to receive all raw sensor
+ * Connects directly to Elodin DB (port 2240) and subscribes to the raw sensor
  * data (PT, TC, RTD, LC). Publishes calibrated values to the same Elodin instance. No relay
  * dependency — fully independent of the relay and backend restart cycles.
  *
@@ -21,7 +21,7 @@
  * adjustments.json; streaming uses factory unless you opt into robust below. CAL_USE_ROBUST_PT=1 —
  * 100% robust mean for streaming (when sensor initialized) CAL_USE_ROBUST_BLEND=1 — 75% robust +
  * 25% factory CAL_USE_FACTORY_PT=1 — force factory cubic (same as default; explicit)
- *   CAL_BACKUP_PATH — override robust prior JSON (else latest calibration_backups/*.json)
+ *   CAL_BACKUP_PATH — override robust prior JSON (else the latest calibration_backups/ JSON)
  */
 
 #include <algorithm>
@@ -31,11 +31,14 @@
 #include <cmath>
 #include <csignal>
 #include <cstdlib>
+#include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -43,30 +46,83 @@
 #include <unordered_map>
 #include <vector>
 
+#include "calibration/CubicCalibrationStore.hpp"
 #include "calibration/PTCalibration.hpp"
 #include "calibration/RobustCalibrationManager.hpp"
 #include "calibration/SensorCalibration.hpp"
 #include "comms/messages/sensor/CalibratedPTMessage.hpp"
 #include "comms/messages/sensor/CalibratedSensorMessages.hpp"
+#include "config/Config.hpp"
+#include "config/LoadActiveBoards.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
 
 namespace {
 
-/** Last raw u32 per local CH1..10 on the HP PT board slot (for excitation normalization). */
-std::array<uint32_t, 11> g_hp_board_last_u32{};
-/** Hysteresis: 0 = treat as below loop, 1 = in 4–20 mA band (stops 3.99↔4.01 PSI chatter). */
-std::array<uint8_t, 11> g_hp_ma_live{};
-/** Low-pass of measured excitation voltage (V) for slow supply tracking. */
-double g_hp_v_exc_ema = -1.0;
-
-/** Per-sensor zero offsets (PSI) applied after LP PT path (factory or robust) and Zero All. */
-std::unordered_map<uint16_t, double> g_zero_offsets;
-std::mutex g_zero_offsets_mutex;
+/**
+ * Hysteresis: 0 = treat as below loop, 1 = in 4–20 mA band (stops 3.99↔4.01 PSI chatter).
+ * Keyed by board slot so one board's channel going live cannot unlatch another board's
+ * same-numbered channel.
+ */
+std::map<uint8_t, std::array<uint8_t, 11>> g_hp_ma_live;
 
 /** Per-sensor EMA state for LP PT output smoothing (initialized to NaN = not yet set). */
 std::unordered_map<uint16_t, double> g_lp_ema;
 constexpr double LP_EMA_ALPHA = 0.25;  // ~4-sample effective window
+
+/**
+ * Which model a PT streams: operator/factory cubic, the robust learner, the 75/25 blend, or the
+ * datasheet physics conversion (ratiometric for 0-5 V boards, 4-20 mA for current-loop). Chosen per
+ * sensor from [calibration_model_<board>] in config.toml (see main); a CAL_USE_* env var, when set,
+ * overrides all LP sensors via g_env_override.
+ */
+enum class PtModel { Cubic, Robust, Blend, Physics };
+
+/** uid (board_id*100 + connector) -> streaming model. Non-default resolutions are stored (4-20 mA
+ *  boards default to Physics, 0-5 V to Cubic); an absent uid means Cubic. */
+std::unordered_map<uint16_t, PtModel> g_pt_model;
+
+/** uid -> role name (from [sensor_roles_*]). Durable calibration is filed under the role, so it
+ *  follows the sensor when its connector changes (see re-file-by-role in the stores). Empty for
+ *  connectors with no configured role. */
+std::unordered_map<uint16_t, std::string> g_uid_role;
+
+/** Per-sensor physics-mode parameters (from [calibration_full_scale_*] /
+ * [calibration_sense_resistor_*], falling back to the board defaults). full_scale is PSI at full
+ * ADC / at 20 mA; sense_resistor Ω is the 4-20 mA shunt. Only present for uids the config/board
+ * provides. */
+std::unordered_map<uint16_t, double> g_pt_full_scale;
+std::unordered_map<uint16_t, double> g_pt_sense_resistor;
+
+/** Set once at startup: when a CAL_USE_* PT env var is present it forces every sensor, else nullopt
+ *  and the per-sensor config governs. */
+std::optional<PtModel> g_env_override;
+
+/**
+ * Which model an LC streams: an operator-built cubic fit, or the datasheet physics conversion
+ * (sensitivity/PGA-gain formula). No robust/blend — load cells don't need drift-learning. Chosen
+ * per sensor from [calibration_model_<lc_board>] in config; absent from the map means the default
+ * below (see lc_model_for), NOT Cubic — an unconfigured LC keeps streaming physics exactly as
+ * before this feature existed, so no rig's readings change until an operator opts a role into
+ * "cubic".
+ */
+enum class LcModel { Cubic, Physics };
+
+/** uid -> LC streaming model. A uid absent from this map defaults to Physics (see lc_model_for). */
+std::unordered_map<uint16_t, LcModel> g_lc_model;
+
+/** Per-sensor LC physics-mode parameters (from [calibration_full_scale_*] /
+ * [calibration_sensitivity_*] / [calibration_pga_*], falling back to [calibration.lc] globals).
+ * Only present for uids the config/board provides. */
+std::unordered_map<uint16_t, double> g_lc_full_scale;
+std::unordered_map<uint16_t, double> g_lc_sensitivity;
+std::unordered_map<uint16_t, double> g_lc_pga_gain;
+
+/** Every LC uid, populated at startup — the discriminant apply_capture/apply_clear/
+ *  reload_live_store use to route a shared uid-keyed cubic_store entry to lc_calibration instead
+ *  of pt_calibration/robust_manager (PT and LC uids share the store; their board_id ranges never
+ *  collide, but nothing else tags which kind a uid is). */
+std::set<uint16_t> g_lc_uids;
 
 }  // namespace
 
@@ -82,30 +138,151 @@ static bool env_flag_true(const char* name) {
     return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T');
 }
 
-/** Default true: LP PT uses factory cubic for streaming (letsfix / hardware-trusted). Set
- * CAL_USE_ROBUST_PT=1 or CAL_USE_ROBUST_BLEND=1 to opt into robust-dominated output. */
-static constexpr bool kLpPtDefaultFactoryOnly = true;
-
-static bool lp_pt_use_factory_only() {
-    if (env_flag_true("CAL_USE_FACTORY_PT"))
-        return true;
-    if (env_flag_true("CAL_USE_ROBUST_PT") || env_flag_true("CAL_USE_ROBUST_BLEND"))
-        return false;
-    return kLpPtDefaultFactoryOnly;
+/** Parse a config model string to the enum; "cubic" and anything unrecognized map to Cubic. */
+static PtModel parse_pt_model(const std::string& s) {
+    if (s == "robust")
+        return PtModel::Robust;
+    if (s == "physics")
+        return PtModel::Physics;
+    if (s == "blend")
+        return PtModel::Blend;
+    return PtModel::Cubic;
 }
 
-/** Optional 75% robust / 25% factory blend. */
-static bool lp_pt_use_robust_blend() {
-    return env_flag_true("CAL_USE_ROBUST_BLEND");
+/** Per-sensor streaming model; sensors absent from the map default to factory cubic. */
+static PtModel pt_model_for(uint16_t uid) {
+    auto it = g_pt_model.find(uid);
+    return it == g_pt_model.end() ? PtModel::Cubic : it->second;
+}
+
+/** Per-sensor physics full-scale PSI; default 1000 (0-5 V -> 0-1000 PSI) when unset. */
+static double pt_full_scale_for(uint16_t uid) {
+    auto it = g_pt_full_scale.find(uid);
+    return it != g_pt_full_scale.end() ? it->second : 1000.0;
+}
+
+/** Per-sensor 4-20 mA shunt resistance (Ω); default 120 when unset. */
+static double pt_sense_resistor_for(uint16_t uid) {
+    auto it = g_pt_sense_resistor.find(uid);
+    return it != g_pt_sense_resistor.end() ? it->second : 120.0;
+}
+
+/** Config-string form of a model, for the cubic store's per-uid active_model tag. */
+static const char* pt_model_name(PtModel m) {
+    switch (m) {
+        case PtModel::Robust:
+            return "robust";
+        case PtModel::Physics:
+            return "physics";
+        case PtModel::Blend:
+            return "blend";
+        default:
+            return "cubic";
+    }
+}
+
+/** Parse a config model string for an LC role; "cubic" maps to Cubic, everything else (including
+ *  unrecognized/"robust"/"blend", which LC doesn't support) maps to Physics. */
+static LcModel parse_lc_model(const std::string& s) {
+    return s == "cubic" ? LcModel::Cubic : LcModel::Physics;
+}
+
+/** Per-sensor LC streaming model; a uid absent from g_lc_model defaults to Physics (today's
+ *  behavior) rather than Cubic — cubic is strictly opt-in per role. */
+static LcModel lc_model_for(uint16_t uid) {
+    auto it = g_lc_model.find(uid);
+    return it == g_lc_model.end() ? LcModel::Physics : it->second;
+}
+
+/** Per-sensor LC physics full-scale kg; falls back to the [calibration.lc] global when unset. */
+static double lc_full_scale_for(uint16_t uid, double fallback) {
+    auto it = g_lc_full_scale.find(uid);
+    return it != g_lc_full_scale.end() ? it->second : fallback;
+}
+
+/** Per-sensor LC sensitivity mV/V; falls back to the [calibration.lc] global when unset. */
+static double lc_sensitivity_for(uint16_t uid, double fallback) {
+    auto it = g_lc_sensitivity.find(uid);
+    return it != g_lc_sensitivity.end() ? it->second : fallback;
+}
+
+/** Per-sensor LC PGA gain; falls back to the [calibration.lc] global when unset. */
+static double lc_pga_gain_for(uint16_t uid, double fallback) {
+    auto it = g_lc_pga_gain.find(uid);
+    return it != g_lc_pga_gain.end() ? it->second : fallback;
+}
+
+/** Config-string form of an LC model, for the cubic store's per-uid active_model tag. */
+static const char* lc_model_name(LcModel m) {
+    return m == LcModel::Cubic ? "cubic" : "physics";
+}
+
+/** Ratiometric 0-5 V PT: excitation is the ADC reference, so the ADC fraction is the pressure
+ *  fraction — psi = (adc / 2^31) * full_scale. Used by the `physics` model on non-loop boards. */
+static double convert_ratiometric_pt_to_pressure(int32_t adc_raw, double full_scale_psi) {
+    constexpr double ADC_MAX = 2147483648.0;  // 2^31
+    if (!(full_scale_psi > 0.0))
+        return 0.0;
+    const double psi = (static_cast<double>(adc_raw) / ADC_MAX) * full_scale_psi;
+    if (!std::isfinite(psi))
+        return 0.0;
+    return std::clamp(psi, -0.05 * full_scale_psi, full_scale_psi * 1.05);
+}
+
+/**
+ * The single PT source-selection rule, shared by the streaming path and the Zero-All helper so both
+ * agree. `physics` (the datasheet conversion — ratiometric or 4-20 mA per the board) is also the
+ * universal fallback: a cubic/robust sensor that isn't yet fit/seeded streams physics rather than
+ * 0. An env override (CAL_USE_*), when set, forces cubic/robust/blend across all sensors.
+ */
+static double select_pt_psi(uint16_t uid, double psi_fac, double psi_rob, double psi_phys,
+                            bool fac_ok, bool has_robust) {
+    const PtModel m = g_env_override ? *g_env_override : pt_model_for(uid);
+    switch (m) {
+        case PtModel::Physics:
+            // Physics is a datasheet conversion, used only when explicitly selected.
+            return psi_phys;
+        case PtModel::Robust:
+            // Robust streams its learned model; before any captured points its baseline is 0, so an
+            // uncalibrated robust sensor reads nothing (0) rather than a physics fallback.
+            return has_robust ? psi_rob : 0.0;
+        case PtModel::Blend: {
+            if (fac_ok && has_robust) {
+                constexpr double kFactoryWeight = 0.25;  // 75% robust + 25% factory
+                return (1.0 - kFactoryWeight) * psi_rob + kFactoryWeight * psi_fac;
+            }
+            return fac_ok ? psi_fac : (has_robust ? psi_rob : 0.0);
+        }
+        case PtModel::Cubic:
+        default:
+            // Uncalibrated / cleared cubic reads nothing (0) — no factory/physics fallback.
+            return fac_ok ? psi_fac : 0.0;
+    }
+}
+
+/**
+ * The LC source-selection rule, mirroring select_pt_psi minus robust/blend (LC doesn't learn
+ * drift). `physics` (the datasheet sensitivity/PGA conversion) is also this uid's default when
+ * absent from g_lc_model — see lc_model_for. A cubic uid with no captured points reads 0, same
+ * "physics-or-nothing" philosophy PT's cubic mode uses once explicitly opted in.
+ */
+static double select_lc_kg(uint16_t uid, double kg_cubic, double kg_phys, bool cubic_ok) {
+    switch (lc_model_for(uid)) {
+        case LcModel::Cubic:
+            return cubic_ok ? kg_cubic : 0.0;
+        case LcModel::Physics:
+        default:
+            return kg_phys;
+    }
 }
 
 /**
  * 4-20 mA HP PT → PSI. Wire raw is u32 full-scale to 2^31.
- * Optional: normalize shunt voltage by a slow-tracked excitation ADC (config
- * excitation_connector_id
- * + excitation_divider_attenuation) so supply ripple on PT2 does not move all three HP channels
- * together. Optional: per-channel mA hysteresis kills threshold flicker at ~4 mA open-circuit
- * noise.
+ *
+ * A 4-20 mA transmitter regulates its loop current independently of its supply, so the reading is
+ * absolute and needs no excitation reference — the shunt voltage against the internal 2.5 V ref is
+ * the whole measurement. Optional per-channel mA hysteresis kills threshold flicker at ~4 mA
+ * open-circuit noise.
  */
 /**
  * HP PT shunt codes are defined as unsigned in [0, 2^31) vs 2.5 V ref (see board_simulator).
@@ -119,10 +296,14 @@ static uint32_t coerce_hp_pt_adc_counts(int32_t /* as_signed */, uint32_t as_uns
     return as_unsigned > kMaxCode ? kMaxCode : as_unsigned;
 }
 
-static double convert_hp_pt_to_pressure(uint8_t local_ch, uint32_t adc_raw, double full_scale_psi,
-                                        double sense_resistor_ohms, double adc_ref_voltage,
-                                        uint32_t adc_exc_raw, bool use_excitation_norm,
-                                        double exc_divider_attenuation) {
+static double convert_hp_pt_to_pressure(uint8_t local_ch, uint32_t adc_raw,
+                                        const fsw::config::PtBoardConfig& board,
+                                        double full_scale_psi, double sense_resistor_ohms,
+                                        std::array<uint8_t, 11>& live_state) {
+    // full_scale_psi and sense_resistor_ohms are the per-sensor physics params (config override or
+    // board default); the ADC reference is a board-level hardware property.
+    const double adc_ref_voltage = board.adc_ref_voltage;
+
     constexpr double ADC_MAX = 2147483648.0;
     constexpr double I_MIN_MA = 4.0;
     constexpr double I_SPAN_MA = 16.0;
@@ -142,26 +323,11 @@ static double convert_hp_pt_to_pressure(uint8_t local_ch, uint32_t adc_raw, doub
 
     double v_sense = (static_cast<double>(adc) / ADC_MAX) * adc_ref_voltage;
 
-    if (use_excitation_norm && adc_exc_raw > 128u && adc_exc_raw < static_cast<uint32_t>(ADC_MAX) &&
-        exc_divider_attenuation > 1e-9) {
-        double v_e = (static_cast<double>(adc_exc_raw) / ADC_MAX) * adc_ref_voltage /
-                     exc_divider_attenuation;
-        if (std::isfinite(v_e) && v_e > 1e-5) {
-            if (g_hp_v_exc_ema < 0.0)
-                g_hp_v_exc_ema = v_e;
-            else
-                g_hp_v_exc_ema = 0.97 * g_hp_v_exc_ema + 0.03 * v_e;
-            double ratio = g_hp_v_exc_ema / std::max(v_e, 1e-9);
-            ratio = std::clamp(ratio, 0.88, 1.12);
-            v_sense *= ratio;
-        }
-    }
-
     double i_ma = (v_sense / sense_resistor_ohms) * 1000.0;
     if (!std::isfinite(v_sense) || !std::isfinite(i_ma))
         return 0.0;
 
-    uint8_t& live = g_hp_ma_live[local_ch];
+    uint8_t& live = live_state[local_ch];
     if (hyst > 0.0) {
         if (!live) {
             if (i_ma < i_on)
@@ -312,31 +478,94 @@ static uint16_t resolve_pt_sensor_uid(uint8_t type_lo, uint8_t ch,
 }
 
 /**
- * LP PT pressure exactly as published before zero offset and EMA — must match the streaming
- * branch so Zero All reads 0 PSI at the current ADC. (Using only factory psi for the offset while
- * streaming robust caused psi_display ≈ psi_rob - psi_fac, e.g. GN2 / GSE wrong after Zero All.)
+ * Map Elodin LC raw packet low byte + connector ch -> LC uid (board_id*100+ch). Mirrors
+ * resolve_pt_sensor_uid (kept as a separate copy rather than a shared/generalized helper so the
+ * PT/abort-threshold path is untouched by this change).
  */
-static double lp_pt_psi_before_offset(uint8_t board_number, uint8_t local_ch, uint16_t uid,
-                                      int32_t adc_i32,
-                                      const fsw::calibration::PTCalibrationManager& pt_calibration,
-                                      fsw::calibration::RobustCalibrationManager& robust_manager) {
-    const uint8_t pt_log_ch =
-        fsw::calibration::pt_logical_calibration_channel(board_number, local_ch);
-    const bool fac_ok = pt_calibration.is_calibrated(pt_log_ch);
-    const double psi_fac = fac_ok ? pt_calibration.calculate_pressure(pt_log_ch, adc_i32) : 0.0;
-    const double psi_rob = robust_manager.predict_pressure_psi(uid, adc_i32);
-
-    if (!fac_ok)
-        return psi_rob;
-    if (!robust_manager.has_sensor(uid))
-        return psi_fac;
-    if (lp_pt_use_factory_only())
-        return psi_fac;
-    if (lp_pt_use_robust_blend()) {
-        constexpr double kFactoryWeight = 0.25;
-        return (1.0 - kFactoryWeight) * psi_rob + kFactoryWeight * psi_fac;
+static uint16_t resolve_lc_sensor_uid(uint8_t type_lo, uint8_t ch,
+                                      const std::vector<fsw::elodin::BoardChannels>& lc_boards) {
+    if (ch == 0 || ch > 10)
+        return static_cast<uint16_t>(100u + ch);
+    uint8_t bn_slot = 1;
+    if (type_lo >= ch) {
+        unsigned delta = static_cast<unsigned>(type_lo - ch);
+        bn_slot = static_cast<uint8_t>(delta / 0x20u + 1u);
+        if (bn_slot < 1)
+            bn_slot = 1;
+        if (bn_slot > 10)
+            bn_slot = 10;
     }
-    return psi_rob;
+    for (const auto& bc : lc_boards) {
+        int mod = static_cast<int>(bc.board_id % 10);
+        int slot = (mod == 0) ? 10 : mod;
+        if (slot == static_cast<int>(bn_slot))
+            return static_cast<uint16_t>(bc.board_id) * 100u + ch;
+    }
+    return static_cast<uint16_t>(100u + ch);
+}
+
+/** A sensor needs at least this many captured points before its cubic/robust curve is trusted to
+ *  invert an abort threshold. Below it, the fit is too loose — a 1-2 point cubic can invert to an
+ *  ADC far from the intended pressure — so the abort threshold falls back to physics (the datasheet
+ *  mapping), which is always monotonic and sane. See invert_abort_psi_to_adc /
+ * write_abort_thresholds. */
+constexpr int kMinAbortCalPoints = 3;
+
+/**
+ * Invert an abort-procedure pressure (the level the boards vent DOWN below before completing an
+ * autonomous abort) to the raw ADC code the firmware compares against (dp.data < threshold_adc),
+ * for uid's model, by bisecting the SAME forward conversion the stream uses — so the board's
+ * "vented to safe" gate fires at exactly the pressure the operator configured on the curve they
+ * see.
+ *
+ * force_physics forces the datasheet (ratiometric / 4-20 mA) mapping regardless of the sensor's
+ * active model, used when the cubic/robust fit is too sparse to trust (see kMinAbortCalPoints).
+ *
+ * Monotonic increasing in adc for every model, so bisection is valid. Returns nullopt when the
+ * target is unreachable in [0, 2^31) — e.g. an uncalibrated cubic whose forward is flat 0, or
+ * full_scale 0 — so a sensor with no trustworthy mapping gets no threshold (the firmware then
+ * relies on its PT_ABORT_THRESHOLD_TIMEOUT) rather than a wrong one.
+ */
+static std::optional<int32_t> invert_abort_psi_to_adc(
+    uint16_t uid, uint8_t pt_log_ch, bool is_loop, const fsw::config::PtBoardConfig* loop_board,
+    double target_psi, bool force_physics,
+    const fsw::calibration::PTCalibrationManager& pt_calibration,
+    fsw::calibration::RobustCalibrationManager& robust_manager) {
+    if (!(target_psi > 0.0))
+        return std::nullopt;
+    const double full_scale = pt_full_scale_for(uid);
+    const double sense_resistor = pt_sense_resistor_for(uid);
+    const bool fac_ok = pt_calibration.is_calibrated(pt_log_ch);
+    const bool has_rob = robust_manager.has_sensor(uid);
+    auto forward = [&](int64_t adc) -> double {
+        const int32_t a = static_cast<int32_t>(adc);
+        std::array<uint8_t, 11> hyst{};  // fresh state → the static (unhysteresed) mapping
+        const double psi_phys =
+            is_loop && loop_board != nullptr
+                ? convert_hp_pt_to_pressure(static_cast<uint8_t>(uid % 100),
+                                            static_cast<uint32_t>(adc), *loop_board, full_scale,
+                                            sense_resistor, hyst)
+                : convert_ratiometric_pt_to_pressure(a, full_scale);
+        if (force_physics)
+            return psi_phys;
+        const double psi_fac = fac_ok ? pt_calibration.calculate_pressure(pt_log_ch, a) : 0.0;
+        const double psi_rob = robust_manager.predict_pressure_psi(uid, a);
+        return select_pt_psi(uid, psi_fac, psi_rob, psi_phys, fac_ok, has_rob);
+    };
+    constexpr int64_t kAdcMax = 2147483647;  // 2^31 - 1
+    if (forward(kAdcMax) < target_psi)
+        return std::nullopt;  // unreachable: uncalibrated, or target above full scale
+    if (forward(0) > target_psi)
+        return std::nullopt;  // target below the sensor's zero — nothing to gate on
+    int64_t lo = 0, hi = kAdcMax;
+    for (int i = 0; i < 40 && hi - lo > 1; ++i) {
+        const int64_t mid = lo + (hi - lo) / 2;
+        if (forward(mid) < target_psi)
+            lo = mid;
+        else
+            hi = mid;
+    }
+    return static_cast<int32_t>(hi);
 }
 
 int main(int argc, char* argv[]) {
@@ -402,36 +631,44 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
 
+    // Parse config once (paths + [calibration.*] params + per-sensor models) before the loaders.
+    const fsw::config::Config cal_cfg = fsw::config::load(config_path);
+    auto or_default = [](const std::string& v, const char* d) {
+        return v.empty() ? d : v;
+    };
+
     // Load calibration coefficients
-    fsw::calibration::PTCalibrationManager pt_calibration;
+    // Physics-or-nothing baseline: PT cubics come ONLY from operator captures (the cubic store,
+    // resumed below) or an explicit bench-cal import — never auto-loaded from a factory file. An
+    // uncalibrated cubic/robust sensor streams 0. set_default_paths still sets the default CSV the
+    // bench-cal import reads.
+    fsw::calibration::PTCalibrationManager pt_calibration(/*auto_load=*/false);
     pt_calibration.set_default_paths(
         "scripts/calibration/calibrations",
-        "external/DiabloAvionics/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv");
-    pt_calibration.load_calibration();
+        "firmware/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv");
 
     fsw::calibration::RobustCalibrationManager robust_manager;
 
+    // json_dir + first csv_paths entry now come from [calibration.<type>] in config (was
+    // hardcoded); empty keeps the historical default dir.
     fsw::calibration::SensorCalibrationManager tc_calibration("TC", "°C", 3);
     tc_calibration.load_calibration(
-        "scripts/calibration/calibrations/tc",
-        "external/DiabloAvionics/TC_Board/Calibration/tc_calibration.csv");
+        or_default(cal_cfg.calibration.tc_json_dir, "scripts/calibration/calibrations/tc"),
+        cal_cfg.calibration.tc_csv_path);
 
     fsw::calibration::SensorCalibrationManager rtd_calibration("RTD", "°C", 3);
     rtd_calibration.load_calibration(
-        "scripts/calibration/calibrations/rtd",
-        "external/DiabloAvionics/RTD_Board/Calibration/rtd_calibration.csv");
+        or_default(cal_cfg.calibration.rtd_json_dir, "scripts/calibration/calibrations/rtd"),
+        cal_cfg.calibration.rtd_csv_path);
 
     fsw::calibration::SensorCalibrationManager lc_calibration("LC", "kg", 3);
     lc_calibration.load_calibration(
-        "scripts/calibration/calibrations/lc",
-        "external/DiabloAvionics/LC_Board/Calibration/lc_calibration.csv");
+        or_default(cal_cfg.calibration.lc_json_dir, "scripts/calibration/calibrations/lc"),
+        cal_cfg.calibration.lc_csv_path);
 
-    std::cout << "[Calibration] PT:  " << pt_calibration.get_calibrated_count()
-              << " logical channels (slot1→JSON 1..10, slot2→11..20, … — avoids reusing board1 "
-                 "polynomials on PT2)"
+    std::cout << "[Calibration] PT:  physics-or-nothing baseline — cubics come from operator "
+                 "captures / bench-cal import only (resumed from the cubic store below)"
               << std::endl;
-    if (!pt_calibration.is_calibrated(5))
-        std::cerr << "[Calibration] WARNING: PT ch5 (Ox Upstream) not calibrated" << std::endl;
     std::cout << "[Calibration] TC:  " << tc_calibration.calibrated_count() << " channels"
               << std::endl;
     std::cout << "[Calibration] RTD: " << rtd_calibration.calibrated_count() << " channels"
@@ -440,325 +677,56 @@ int main(int argc, char* argv[]) {
               << std::endl;
 
     // Collect active boards with local channels for VTable registration (board-namespaced).
+    // Shared with daq_bridge and sequencer_service so all three agree on which boards are live
+    // and which Elodin slot each one owns.
     using BoardChannels = fsw::elodin::BoardChannels;
-    std::vector<BoardChannels> pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards, act_boards;
-    {
-        std::ifstream cfg(config_path);
-        if (cfg.is_open()) {
-            std::string line, section;
-            std::string board_type;
-            int board_id = 0;
-            bool board_enabled = true;
-            std::vector<int> active_conn;
-            int num_sensors = 0;
+    auto active_boards = fsw::config::load_active_boards(config_path);
+    auto boards_of = [&](fsw::config::ActiveBoardKind kind) {
+        auto it = active_boards.find(kind);
+        return it == active_boards.end() ? std::vector<BoardChannels>{} : it->second;
+    };
+    std::vector<BoardChannels> pt_boards = boards_of(fsw::config::ActiveBoardKind::PT);
+    std::vector<BoardChannels> tc_boards = boards_of(fsw::config::ActiveBoardKind::TC);
+    std::vector<BoardChannels> rtd_boards = boards_of(fsw::config::ActiveBoardKind::RTD);
+    std::vector<BoardChannels> lc_boards = boards_of(fsw::config::ActiveBoardKind::LC);
+    std::vector<BoardChannels> enc_boards = boards_of(fsw::config::ActiveBoardKind::ENCODER);
+    std::vector<BoardChannels> act_boards = boards_of(fsw::config::ActiveBoardKind::ACTUATOR);
 
-            auto flush_board = [&]() {
-                if (board_type.empty() || !board_enabled || board_id == 0)
-                    return;
-                std::vector<uint8_t> channels;
-                if (!active_conn.empty()) {
-                    for (int c : active_conn)
-                        channels.push_back(static_cast<uint8_t>(c));
-                } else if (num_sensors > 0) {
-                    for (int i = 1; i <= num_sensors; i++)
-                        channels.push_back(static_cast<uint8_t>(i));
-                }
-                if (channels.empty())
-                    return;
-                int slot_mod = board_id % 10;
-                uint8_t board_number = static_cast<uint8_t>(slot_mod == 0 ? 10 : slot_mod);
-                BoardChannels bc{static_cast<uint8_t>(board_id), board_number, channels};
-                if (board_type == "PT")
-                    pt_boards.push_back(bc);
-                else if (board_type == "TC")
-                    tc_boards.push_back(bc);
-                else if (board_type == "RTD")
-                    rtd_boards.push_back(bc);
-                else if (board_type == "LC")
-                    lc_boards.push_back(bc);
-                else if (board_type == "ENCODER")
-                    enc_boards.push_back(bc);
-                else if (board_type == "ACTUATOR")
-                    act_boards.push_back(bc);
-            };
+    // Per-PT-board sensor interface and 4-20 mA conversion parameters, keyed by Elodin slot.
+    // board_simulator.py back-calculates i_ma from the target PSI and sends valid 4-20 mA ADC
+    // codes for current-loop boards, so the 4-20 mA path is correct in sim and on hardware.
+    const auto pt_board_configs = fsw::config::load_pt_boards(config_path);
 
-            while (std::getline(cfg, line)) {
-                size_t c = line.find('#');
-                if (c != std::string::npos)
-                    line = line.substr(0, c);
-                while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
-                    line.pop_back();
-                size_t start = line.find_first_not_of(" \t");
-                if (start != std::string::npos)
-                    line = line.substr(start);
-                if (line.empty())
-                    continue;
+    /** The board's 4-20 mA config, or nullptr when this slot is not a current-loop PT board. */
+    auto current_loop_board = [&](uint8_t board_number) -> const fsw::config::PtBoardConfig* {
+        auto it = pt_board_configs.find(board_number);
+        if (it == pt_board_configs.end() || !fsw::config::is_current_loop(it->second))
+            return nullptr;
+        return &it->second;
+    };
 
-                if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
-                    flush_board();
-                    section = line.substr(1, line.size() - 2);
-                    if (section.rfind("boards.", 0) == 0) {
-                        board_type.clear();
-                        board_id = 0;
-                        board_enabled = true;
-                        active_conn.clear();
-                        num_sensors = 0;
-                    } else {
-                        board_type.clear();
-                    }
-                    continue;
-                }
-                if (section.rfind("boards.", 0) != 0)
-                    continue;
-                size_t eq = line.find('=');
-                if (eq == std::string::npos)
-                    continue;
-                std::string key = line.substr(0, eq);
-                std::string val = line.substr(eq + 1);
-                while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
-                    key.pop_back();
-                while (!val.empty() && val[0] == ' ')
-                    val.erase(0, 1);
-
-                if (key == "type") {
-                    if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
-                        val = val.substr(1, val.size() - 2);
-                    board_type = val;
-                } else if (key == "enabled" && val == "false") {
-                    board_enabled = false;
-                } else if (key == "board_id") {
-                    try {
-                        board_id = std::stoi(val);
-                    } catch (...) {
-                    }
-                } else if (key == "num_sensors") {
-                    try {
-                        num_sensors = std::stoi(val);
-                    } catch (...) {
-                    }
-                } else if (key == "active_connectors") {
-                    size_t b = val.find('['), e = val.find(']');
-                    if (b != std::string::npos && e != std::string::npos) {
-                        std::istringstream iss(val.substr(b + 1, e - b - 1));
-                        std::string tok;
-                        while (std::getline(iss, tok, ','))
-                            try {
-                                active_conn.push_back(std::stoi(tok));
-                            } catch (...) {
-                            }
-                    }
-                }
-            }
-            flush_board();
-        }
+    for (const auto& [slot, board] : pt_board_configs) {
+        if (!fsw::config::is_current_loop(board))
+            continue;
+        size_t channel_count = 0;
+        for (const auto& bc : pt_boards)
+            if (bc.board_number == slot)
+                channel_count = bc.channels.size();
+        std::cout << "[Calibration] HP PT slot " << static_cast<int>(slot) << " (board_id "
+                  << static_cast<int>(board.board_id) << "): " << channel_count
+                  << " channels (4-20 mA, " << board.full_scale_psi << " PSI full scale, "
+                  << board.sense_resistor_ohms << " ohm shunt)" << std::endl;
     }
 
-    // Parse HP PT config (4-20 mA) — local connector IDs
-    // board_simulator.py back-calculates i_ma from the target PSI and sends valid
-    // 4-20 mA ADC codes for HP PT connectors, so the 4-20 mA path is correct in
-    // both sim and real-hardware modes.
-    const bool use_sim_mode = []() {
-        const char* v = std::getenv("USE_SIM");
-        return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T');
-    }();
-    std::set<uint8_t> hp_pt_channels;
-    double hp_pt_full_scale_psi = 5000.0;
-    double hp_pt_sense_resistor_ohms = 120.0;
-    double hp_pt_adc_ref_voltage = 2.5;
-    int hp_pt_excitation_connector_id = -1;
-    double hp_pt_exc_div_atten = 1.0;
-    // Elodin slot (board_id % 10, 0→10) of the board that defines hp_pt_connectors — only that
-    // board's packets use the 4–20 mA path. Do NOT take board_id from unrelated [boards.*]
-    // sections (e.g. encoder 61 → slot 1) or LP PT CH1/3/4 get misclassified as HP and read 0 PSI.
-    uint8_t hp_pt_board_number = 255;  // no HP PT until we parse a non-empty hp_pt_connectors
-    {
-        std::ifstream cfg2(config_path);
-        if (cfg2.is_open()) {
-            std::string line, section, board_section;
-            std::string hp_pt_source_section;     // [boards.*] that defined hp_pt_connectors
-            uint8_t pending_slot_in_section = 0;  // board_id % 10 in current [boards.*]
-            while (std::getline(cfg2, line)) {
-                size_t c = line.find('#');
-                if (c != std::string::npos)
-                    line = line.substr(0, c);
-                while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
-                    line.pop_back();
-                size_t start = line.find_first_not_of(" \t");
-                if (start != std::string::npos)
-                    line = line.substr(start);
-                if (line.empty())
-                    continue;
-                if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
-                    section = line.substr(1, line.size() - 2);
-                    if (section.find("boards.") == 0) {
-                        board_section = section;
-                        pending_slot_in_section = 0;
-                    }
-                    continue;
-                }
-                if (board_section.empty())
-                    continue;
-                size_t eq = line.find('=');
-                if (eq == std::string::npos)
-                    continue;
-                std::string key = line.substr(0, eq);
-                while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
-                    key.pop_back();
-                std::string val = line.substr(eq + 1);
-                while (!val.empty() && (val[0] == ' ' || val[0] == '\t'))
-                    val.erase(0, 1);
-                if (key == "hp_pt_connectors") {
-                    hp_pt_channels.clear();
-                    size_t pos = val.find('[');
-                    if (pos == std::string::npos)
-                        pos = 0;
-                    else
-                        pos++;
-                    while (pos < val.size()) {
-                        while (pos < val.size() && (val[pos] == ' ' || val[pos] == ','))
-                            pos++;
-                        if (pos >= val.size())
-                            break;
-                        size_t end = val.find_first_of(",]", pos);
-                        if (end == std::string::npos)
-                            end = val.size();
-                        std::string num = val.substr(pos, end - pos);
-                        try {
-                            int conn = std::stoi(num);
-                            if (conn >= 1 && conn <= 10)
-                                hp_pt_channels.insert(static_cast<uint8_t>(conn));
-                        } catch (...) {
-                        }
-                        pos = end + 1;
-                    }
-                    if (!hp_pt_channels.empty()) {
-                        hp_pt_source_section = board_section;
-                        if (pending_slot_in_section > 0)
-                            hp_pt_board_number = pending_slot_in_section;
-                    }
-                } else if (key == "board_id") {
-                    try {
-                        int mod = std::stoi(val) % 10;
-                        pending_slot_in_section = static_cast<uint8_t>(mod == 0 ? 10 : mod);
-                        if (!hp_pt_channels.empty() && board_section == hp_pt_source_section)
-                            hp_pt_board_number = pending_slot_in_section;
-                    } catch (...) {
-                    }
-                } else if (key == "hp_pt_full_scale_psi") {
-                    try {
-                        hp_pt_full_scale_psi = std::stod(val);
-                    } catch (...) {
-                    }
-                } else if (key == "hp_pt_sense_resistor_ohms") {
-                    try {
-                        hp_pt_sense_resistor_ohms = std::stod(val);
-                    } catch (...) {
-                    }
-                } else if (key == "adc_ref_voltage") {
-                    try {
-                        hp_pt_adc_ref_voltage = std::stod(val);
-                    } catch (...) {
-                    }
-                } else if (key == "excitation_connector_id" &&
-                           board_section.find("pt_board_2") != std::string::npos) {
-                    try {
-                        hp_pt_excitation_connector_id = std::stoi(val);
-                    } catch (...) {
-                    }
-                } else if (key == "excitation_divider_attenuation" &&
-                           board_section.find("pt_board_2") != std::string::npos) {
-                    try {
-                        hp_pt_exc_div_atten = std::stod(val);
-                    } catch (...) {
-                    }
-                }
-            }
-        }
-        if (!hp_pt_channels.empty()) {
-            std::cout << "[Calibration] HP PT: " << hp_pt_channels.size() << " channels (4-20 mA, "
-                      << hp_pt_full_scale_psi << " PSI full scale)" << std::endl;
-            if (hp_pt_excitation_connector_id >= 1 && hp_pt_excitation_connector_id <= 10)
-                std::cout << "[Calibration] HP PT supply normalization: excitation connector "
-                          << hp_pt_excitation_connector_id
-                          << ", divider_attenuation=" << hp_pt_exc_div_atten << std::endl;
-            // If board_id appears after hp_pt_connectors in the same [boards.*] section, we still
-            // set hp_pt_board_number on the board_id line — but a malformed or hand-merged TOML can
-            // leave 255. Robust PT math on 4–20 mA ADC codes then produces wild PSI (looks like
-            // “HP PTs going crazy”). Fleet default: HP stack uses board_id 22 → Elodin slot 2.
-            if (hp_pt_board_number == 255) {
-                hp_pt_board_number = 2;
-                std::cout
-                    << "[Calibration] WARN: hp_pt_board_number unset after parse; defaulting "
-                       "to slot 2. Ensure board_id is present in the HP PT [boards.*] section."
-                    << std::endl;
-            }
-        }
-    }
-
-    // Parse [calibration.tc], [calibration.rtd], [calibration.lc] for default formula params
-    double tc_adc_ref_voltage = 2.5;
-    double rtd_adc_ref_voltage = 2.5;
-    double rtd_excitation_ua = 1000.0;
-    double rtd_r0_ohm = 1000.0;  // Pt1000
-    double lc_sensitivity_mv_per_v = 2.0;
-    double lc_pga_gain = 32.0;
-    double lc_full_scale_value = 300.0;  // kg
-    {
-        std::ifstream cfg3(config_path);
-        if (cfg3.is_open()) {
-            std::string line, section;
-            while (std::getline(cfg3, line)) {
-                size_t c = line.find('#');
-                if (c != std::string::npos)
-                    line = line.substr(0, c);
-                while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
-                    line.pop_back();
-                size_t start = line.find_first_not_of(" \t");
-                if (start != std::string::npos)
-                    line = line.substr(start);
-                if (line.empty())
-                    continue;
-                if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
-                    section = line.substr(1, line.size() - 2);
-                    continue;
-                }
-                size_t eq = line.find('=');
-                if (eq == std::string::npos)
-                    continue;
-                std::string key = line.substr(0, eq);
-                while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
-                    key.pop_back();
-                std::string val = line.substr(eq + 1);
-                while (!val.empty() && (val[0] == ' ' || val[0] == '\t'))
-                    val.erase(0, 1);
-                // Remove trailing quotes if present
-                if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
-                    val = val.substr(1, val.size() - 2);
-
-                try {
-                    if (section == "calibration.tc") {
-                        if (key == "adc_ref_voltage")
-                            tc_adc_ref_voltage = std::stod(val);
-                    } else if (section == "calibration.rtd") {
-                        if (key == "adc_ref_voltage")
-                            rtd_adc_ref_voltage = std::stod(val);
-                        else if (key == "excitation_ua")
-                            rtd_excitation_ua = std::stod(val);
-                        else if (key == "r0_ohm")
-                            rtd_r0_ohm = std::stod(val);
-                    } else if (section == "calibration.lc") {
-                        if (key == "sensitivity_mv_per_v")
-                            lc_sensitivity_mv_per_v = std::stod(val);
-                        else if (key == "pga_gain")
-                            lc_pga_gain = std::stod(val);
-                        else if (key == "full_scale_value")
-                            lc_full_scale_value = std::stod(val);
-                    }
-                } catch (...) {
-                }
-            }
-        }
-    }
+    // [calibration.tc/.rtd/.lc] default formula params, via fsw::config (toml++). cal_cfg parsed
+    // above.
+    const double tc_adc_ref_voltage = cal_cfg.calibration.tc_adc_ref_voltage;
+    const double rtd_adc_ref_voltage = cal_cfg.calibration.rtd_adc_ref_voltage;
+    const double rtd_excitation_ua = cal_cfg.calibration.rtd_excitation_ua;
+    const double rtd_r0_ohm = cal_cfg.calibration.rtd_r0_ohm;  // Pt1000
+    const double lc_sensitivity_mv_per_v = cal_cfg.calibration.lc_sensitivity_mv_per_v;
+    const double lc_pga_gain = cal_cfg.calibration.lc_pga_gain;
+    const double lc_full_scale_value = cal_cfg.calibration.lc_full_scale_value;  // kg
     std::cout << "[Calibration] TC default:  ITS-90 K-type, Vref=" << tc_adc_ref_voltage << "V"
               << std::endl;
     std::cout << "[Calibration] RTD default: CVD Pt" << (int)rtd_r0_ohm
@@ -767,45 +735,462 @@ int main(int argc, char* argv[]) {
     std::cout << "[Calibration] LC default:  " << lc_sensitivity_mv_per_v
               << "mV/V, PGA=" << lc_pga_gain << ", FS=" << lc_full_scale_value << "kg" << std::endl;
 
-    const fsw::calibration::PTCalibrationCoeffs* fallback_pt_coeffs = nullptr;
-    for (uint8_t probe_ch = 1; probe_ch <= 10; ++probe_ch) {
-        if (pt_calibration.is_calibrated(probe_ch)) {
-            fallback_pt_coeffs = pt_calibration.get_calibration(probe_ch);
-            break;
+    // ---- Per-sensor streaming model + physics params from config ----
+    // [calibration_model_<board_key>] maps a PT role -> "cubic"|"robust"|"physics"|"blend"; resolve
+    // it to the uid the streaming path uses (board_id*100 + connector) via
+    // [sensor_roles_<board_key>]. Every PT (incl. 4-20 mA) participates: cubic/robust operate on
+    // raw ADC and apply to all, while `physics` is the datasheet conversion (ratiometric or 4-20 mA
+    // per board). Default by interface: 4-20 mA -> physics (today's behavior), 0-5 V -> cubic.
+    // Physics params (full-scale, sense-resistor) come from
+    // [calibration_full_scale_<board>]/[calibration_sense_resistor_<board>] else board defaults. A
+    // CAL_USE_* env var overrides the model for every sensor (dev/testing).
+    if (env_flag_true("CAL_USE_FACTORY_PT"))
+        g_env_override = PtModel::Cubic;
+    else if (env_flag_true("CAL_USE_ROBUST_BLEND"))
+        g_env_override = PtModel::Blend;
+    else if (env_flag_true("CAL_USE_ROBUST_PT"))
+        g_env_override = PtModel::Robust;
+
+    g_pt_model.clear();
+    g_uid_role.clear();
+    g_pt_full_scale.clear();
+    g_pt_sense_resistor.clear();
+    for (const auto& b : cal_cfg.boards) {
+        if (b.type != "PT" || !b.enabled || b.board_id < 0)
+            continue;
+        const bool is_loop = b.has_hp_pt_keys || b.pt_type == "4-20 mA absolute";
+        const std::string board_key =
+            b.section.rfind("boards.", 0) == 0 ? b.section.substr(7) : b.section;
+        const auto* roles = cal_cfg.sensor_roles_for("sensor_roles_" + board_key);
+        if (roles == nullptr)
+            continue;  // no role map -> connectors default to cubic (0-5 V) at the streaming site
+        const auto* models = cal_cfg.calibration_model_for("calibration_model_" + board_key);
+        const auto* full_scales = cal_cfg.full_scale_for("calibration_full_scale_" + board_key);
+        const auto* resistors =
+            cal_cfg.sense_resistor_for("calibration_sense_resistor_" + board_key);
+        // Board-level physics defaults: 4-20 mA boards use their hp_pt_* params; a 0-5 V board maps
+        // 0-5 V -> 0-1000 PSI unless a per-sensor full-scale overrides it.
+        const double board_full_scale = is_loop ? b.hp_pt_full_scale_psi : 1000.0;
+        const double board_resistor = b.hp_pt_sense_resistor_ohms;
+        for (const auto& [role, connector] : *roles) {
+            if (connector < 1 || connector > 99)
+                continue;
+            const uint16_t uid = static_cast<uint16_t>(b.board_id * 100 + connector);
+            g_uid_role[uid] = role;  // the identity durable cal is filed under
+
+            PtModel m = is_loop ? PtModel::Physics : PtModel::Cubic;  // interface-aware default
+            if (models != nullptr) {
+                auto it = models->find(role);
+                if (it != models->end())
+                    m = parse_pt_model(it->second);
+            }
+            if (m != PtModel::Cubic)  // Cubic is pt_model_for's default; store the rest
+                g_pt_model[uid] = m;
+
+            double fs = board_full_scale, rs = board_resistor;
+            if (full_scales != nullptr) {
+                auto it = full_scales->find(role);
+                if (it != full_scales->end() && it->second > 0.0)
+                    fs = it->second;
+            }
+            if (resistors != nullptr) {
+                auto it = resistors->find(role);
+                if (it != resistors->end() && it->second > 0.0)
+                    rs = it->second;
+            }
+            g_pt_full_scale[uid] = fs;
+            g_pt_sense_resistor[uid] = rs;
         }
     }
-    for (const auto& bc : pt_boards) {
-        for (uint8_t local_ch : bc.channels) {
-            uint16_t uid = static_cast<uint16_t>(bc.board_id) * 100u + local_ch;
-            const uint8_t log_ch =
-                fsw::calibration::pt_logical_calibration_channel(bc.board_number, local_ch);
-            if (pt_calibration.is_calibrated(log_ch)) {
-                robust_manager.initialize_sensor(uid, *pt_calibration.get_calibration(log_ch));
-            } else if (fallback_pt_coeffs != nullptr) {
-                // Keep channels alive even when per-channel baseline fit is missing.
-                robust_manager.initialize_sensor(uid, *fallback_pt_coeffs);
+
+    // ---- Per-sensor LC streaming model + physics params from config (mirrors the PT block above,
+    // minus robust/blend). A board with no [sensor_roles_<board>] section contributes no per-role
+    // overrides here — its uids simply fall back to the [calibration.lc] globals at the streaming
+    // site (lc_full_scale_for/lc_sensitivity_for/lc_pga_gain_for), same as every LC board today.
+    g_lc_model.clear();
+    g_lc_full_scale.clear();
+    g_lc_sensitivity.clear();
+    g_lc_pga_gain.clear();
+    for (const auto& b : cal_cfg.boards) {
+        if (b.type != "LC" || !b.enabled || b.board_id < 0)
+            continue;
+        const std::string board_key =
+            b.section.rfind("boards.", 0) == 0 ? b.section.substr(7) : b.section;
+        const auto* roles = cal_cfg.sensor_roles_for("sensor_roles_" + board_key);
+        if (roles == nullptr)
+            continue;  // no role map -> connectors default to physics (see lc_model_for)
+        const auto* models = cal_cfg.calibration_model_for("calibration_model_" + board_key);
+        const auto* full_scales = cal_cfg.full_scale_for("calibration_full_scale_" + board_key);
+        const auto* sensitivities = cal_cfg.sensitivity_for("calibration_sensitivity_" + board_key);
+        const auto* pga_gains = cal_cfg.pga_gain_for("calibration_pga_" + board_key);
+        for (const auto& [role, connector] : *roles) {
+            if (connector < 1 || connector > 99)
+                continue;
+            const uint16_t uid = static_cast<uint16_t>(b.board_id * 100 + connector);
+            g_uid_role[uid] = role;  // shared with PT — role names are unique across the whole rig
+
+            if (models != nullptr) {
+                auto it = models->find(role);
+                if (it != models->end())
+                    g_lc_model[uid] = parse_lc_model(it->second);
+            }
+            if (full_scales != nullptr) {
+                auto it = full_scales->find(role);
+                if (it != full_scales->end() && it->second > 0.0)
+                    g_lc_full_scale[uid] = it->second;
+            }
+            if (sensitivities != nullptr) {
+                auto it = sensitivities->find(role);
+                if (it != sensitivities->end() && it->second > 0.0)
+                    g_lc_sensitivity[uid] = it->second;
+            }
+            if (pga_gains != nullptr) {
+                auto it = pga_gains->find(role);
+                if (it != pga_gains->end() && it->second > 0.0)
+                    g_lc_pga_gain[uid] = it->second;
             }
         }
     }
+
+    // Ordered uid->role for RobustCalibrationManager save/load, so the robust learned state is
+    // filed by role and re-attaches to the role's current connector (mirrors the cubic store).
+    const std::map<uint16_t, std::string> uid_role(g_uid_role.begin(), g_uid_role.end());
+
+    // Robust is NOT factory-seeded here anymore. Its per-sensor baseline is the operator's shared
+    // cubic fit, so it's initialized AFTER the cubic store loads (see below). A sensor with no
+    // captured points gets a zero baseline and reads 0 until it learns from captures.
+
+    // ---- Operator-built cubic PT calibration (see CubicCalibrationStore) ----
+    // The store owns per-connector captured (adc, psi) points and the fitted cubic; it is the sole
+    // source of PT cubics (there is no factory overlay). Captured points are shared: each capture
+    // feeds both this cubic fit and the robust learner.
+    fsw::calibration::CubicCalibrationStore cubic_store(
+        "scripts/calibration/calibrations/cubic_calibration.json");
+    std::unordered_map<uint16_t, std::deque<int32_t>> pt_adc_ring;  // recent raw ADC per uid
+    constexpr size_t kPtAdcRingMax = 128;                           // ~0.5 s of samples at ~250 Hz
+    for (const auto& bc : pt_boards) {
+        for (uint8_t local_ch : bc.channels) {
+            const uint16_t uid = static_cast<uint16_t>(bc.board_id) * 100u + local_ch;
+            const uint8_t log_ch =
+                fsw::calibration::pt_logical_calibration_channel(bc.board_number, local_ch);
+            const auto rit = g_uid_role.find(uid);
+            const std::string role = rit != g_uid_role.end() ? rit->second : std::string();
+            cubic_store.register_channel(uid, bc.board_id, local_ch, log_ch, role,
+                                         pt_model_name(pt_model_for(uid)));
+        }
+    }
+
+    // ---- Operator-built cubic LC calibration — registers into the SAME cubic_store as PT (uid
+    // board_id ranges never collide), so /api/cubic_calibration, calibration-profile save/load, and
+    // the seed-from-default mechanism all pick up LC channels for free. g_lc_uids is the
+    // discriminant apply_capture/apply_clear/reload_live_store use to route a store entry to
+    // lc_calibration instead of pt_calibration/robust_manager.
+    g_lc_uids.clear();
+    for (const auto& bc : lc_boards) {
+        for (uint8_t local_ch : bc.channels) {
+            const uint16_t uid = static_cast<uint16_t>(bc.board_id) * 100u + local_ch;
+            const uint8_t log_ch =
+                fsw::calibration::pt_logical_calibration_channel(bc.board_number, local_ch);
+            const auto rit = g_uid_role.find(uid);
+            const std::string role = rit != g_uid_role.end() ? rit->second : std::string();
+            g_lc_uids.insert(uid);
+            cubic_store.register_channel(uid, bc.board_id, local_ch, log_ch, role,
+                                         lc_model_name(lc_model_for(uid)));
+        }
+    }
+
+    // ---- Unified capture/clear routing (see the [calibration_model_*] plan)
+    // ---------------------- One capture path: the frontend sends {uid, ref}; the service routes by
+    // the uid's configured model. Cubic/Blend -> record point + fit + apply to pt_calibration.
+    // Robust -> record point for display + feed the RLS learner + refresh the sampled display
+    // curve. Same split for clear.
+    auto sample_robust_curve = [&](uint16_t uid) -> std::vector<std::pair<double, double>> {
+        std::vector<std::pair<double, double>> curve;
+        const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+        if (cch == nullptr || cch->points.empty())
+            return curve;
+        double amin = cch->points.front().adc, amax = amin;
+        for (const auto& p : cch->points) {
+            amin = std::min(amin, p.adc);
+            amax = std::max(amax, p.adc);
+        }
+        if (!(amax > amin))
+            amax = amin + 1.0;
+        constexpr int kSamples = 40;
+        curve.reserve(kSamples + 1);
+        for (int i = 0; i <= kSamples; ++i) {
+            const double adc = amin + (amax - amin) * i / kSamples;
+            const double psi =
+                robust_manager.predict_pressure_psi(uid, static_cast<int32_t>(std::llround(adc)));
+            curve.emplace_back(adc, psi);
+        }
+        return curve;
+    };
+    // Shared points: every capture — regardless of the sensor's active model — feeds BOTH the cubic
+    // fit and the robust learner, so switching a sensor's model later reuses the same points, and
+    // the merged UI can preview all three curves. The robust display curve is refreshed for every
+    // sensor that has points (not just robust ones).
+    // Recompute the boards' abort-procedure "vent to safe" thresholds from the CURRENT calibration
+    // and write them for config_broadcast to broadcast. Called at startup and after every capture /
+    // clear / live profile swap, so a mid-session calibration updates the hardware threshold within
+    // a broadcast cycle — no restart. Each abort PSI is inverted through the sensor's active model;
+    // a sensor with fewer than kMinAbortCalPoints captured points falls back to physics so a sparse
+    // fit can't emit a wildly wrong ADC, and one with no usable mapping is omitted (the firmware
+    // then leans on PT_ABORT_THRESHOLD_TIMEOUT) rather than given a wrong gate.
+    auto write_abort_thresholds = [&]() {
+        const std::string out_path = "scripts/calibration/calibrations/abort_thresholds.txt";
+        const long long now_unix = std::chrono::duration_cast<std::chrono::seconds>(
+                                       std::chrono::system_clock::now().time_since_epoch())
+                                       .count();
+        std::ostringstream body;
+        body << "# abort thresholds — one line per PT: uid  target_psi  raw_adc\n";
+        body << "# regenerated on every capture/clear/reload. generated_unix " << now_unix << "\n";
+        for (const auto& [role, target_psi] : cal_cfg.abort_pts) {
+            uint16_t uid = 0;
+            bool found = false;
+            for (const auto& [u, r] : g_uid_role)
+                if (r == role) {
+                    uid = u;
+                    found = true;
+                    break;
+                }
+            if (!found) {
+                std::cerr << "[Calibration] abort_pts \"" << role
+                          << "\": no PT sensor_role declares this name — no threshold emitted"
+                          << std::endl;
+                continue;
+            }
+            const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+            if (cch == nullptr)
+                continue;
+            uint8_t board_number = static_cast<uint8_t>((uid / 100) % 10);
+            if (board_number == 0)
+                board_number = 10;
+            const fsw::config::PtBoardConfig* loop_board = current_loop_board(board_number);
+            const bool is_loop = loop_board != nullptr;
+            const int npoints = static_cast<int>(cch->points.size());
+            const PtModel model = g_env_override ? *g_env_override : pt_model_for(uid);
+            // Physics-model sensors always use physics; cubic/robust/blend use their own curve only
+            // with enough captured points to trust it, else fall back to physics.
+            const bool sparse = (model != PtModel::Physics) && (npoints < kMinAbortCalPoints);
+            std::optional<int32_t> adc =
+                invert_abort_psi_to_adc(uid, cch->logical_ch, is_loop, loop_board, target_psi,
+                                        /*force_physics=*/sparse, pt_calibration, robust_manager);
+            // Model curve couldn't reach the target (bad fit) → fall back to physics; a datasheet
+            // gate beats no gate.
+            if (!adc && model != PtModel::Physics && !sparse)
+                adc =
+                    invert_abort_psi_to_adc(uid, cch->logical_ch, is_loop, loop_board, target_psi,
+                                            /*force_physics=*/true, pt_calibration, robust_manager);
+            if (!adc) {
+                std::cerr << "[Calibration] abort_pts \"" << role << "\" (" << target_psi
+                          << " psi): no usable mapping (full_scale 0?) — no threshold emitted"
+                          << std::endl;
+                continue;
+            }
+            if (sparse)
+                std::cout << "[Calibration] abort_pts \"" << role << "\": only " << npoints
+                          << " cal point(s) (<" << kMinAbortCalPoints
+                          << ") — using physics threshold" << std::endl;
+            body << uid << " " << target_psi << " " << static_cast<uint32_t>(*adc) << "\n";
+        }
+        const std::string tmp = out_path + ".tmp";
+        {
+            std::ofstream f(tmp, std::ios::trunc);
+            f << body.str();
+        }
+        std::error_code ec;
+        std::filesystem::rename(tmp, out_path, ec);
+        if (ec)
+            std::cerr << "[Calibration] abort_thresholds write failed: " << ec.message()
+                      << std::endl;
+    };
+
+    auto apply_pt_capture = [&](uint16_t uid, double adc_avg, double ref) {
+        const fsw::calibration::CubicFit fit = cubic_store.add_point(uid, adc_avg, ref);
+        const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+        if (fit.valid && cch != nullptr)
+            pt_calibration.set_calibration(
+                cch->logical_ch, fsw::calibration::PTCalibrationCoeffs(fit.A, fit.B, fit.C, fit.D));
+        robust_manager.update_calibration(uid, static_cast<int32_t>(std::llround(adc_avg)), ref);
+        cubic_store.set_fit_curve(uid, sample_robust_curve(uid));
+        cubic_store.save();
+        // Persist robust learning on every capture (not only the 5-min auto-save / clean stop), so
+        // a crash can't lose it.
+        robust_manager.save_adjustments(adjustments_path, &uid_role);
+        // This capture may have changed the sensor's curve → re-emit its abort threshold so the
+        // boards' vent-to-safe gate tracks the new calibration within a broadcast cycle.
+        write_abort_thresholds();
+    };
+    // LC capture: cubic fit only — no robust learner (LC doesn't need drift-learning) and no abort
+    // thresholds (a PT-only concept; abort_pts names PT roles).
+    auto apply_lc_capture = [&](uint16_t uid, double adc_avg, double ref) {
+        const fsw::calibration::CubicFit fit = cubic_store.add_point(uid, adc_avg, ref);
+        const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+        if (fit.valid && cch != nullptr)
+            lc_calibration.set_calibration(cch->logical_ch, fsw::calibration::PolynomialCalibration(
+                                                                fit.A, fit.B, fit.C, fit.D, "kg"));
+        cubic_store.save();
+    };
+    // Every capture/clear is routed by uid kind (g_lc_uids), so cmd_type 0/3/4/5/6 in the
+    // CalibrationCommand handler below work unchanged for both PT and LC uids.
+    auto apply_capture = [&](uint16_t uid, double adc_avg, double ref) {
+        if (g_lc_uids.count(uid))
+            apply_lc_capture(uid, adc_avg, ref);
+        else
+            apply_pt_capture(uid, adc_avg, ref);
+    };
+    // Clear = back to nothing: drop the captured points, remove the operator cubic (so cubic reads
+    // 0), and reset the robust learner (PT only). No factory/baseline revert.
+    auto apply_pt_clear = [&](uint16_t uid) {
+        const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+        if (cch != nullptr)
+            pt_calibration.clear_calibration(cch->logical_ch);
+        cubic_store.clear_channel(uid);
+        robust_manager.reset_adjustment(uid);
+        cubic_store.save();
+        robust_manager.save_adjustments(adjustments_path, &uid_role);
+        // Clearing drops the curve → re-emit (this sensor now falls back to physics or is omitted).
+        write_abort_thresholds();
+    };
+    auto apply_lc_clear = [&](uint16_t uid) {
+        const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+        if (cch != nullptr)
+            lc_calibration.clear_calibration(cch->logical_ch);
+        cubic_store.clear_channel(uid);
+        cubic_store.save();
+    };
+    auto apply_clear = [&](uint16_t uid) {
+        if (g_lc_uids.count(uid))
+            apply_lc_clear(uid);
+        else
+            apply_pt_clear(uid);
+    };
+
+    // Seed on first run: if the live store file is missing, copy the committed default (a curated,
+    // version-controlled calibration snapshot) into place so a fresh checkout / new machine boots
+    // with the team's calibration instead of an empty store. The live file is gitignored and
+    // rewritten on every capture; cubic_calibration.default.json is the tracked source you promote
+    // a known-good cal into (see scripts/calibration/promote_default.sh).
+    {
+        const std::filesystem::path live_path(
+            "scripts/calibration/calibrations/cubic_calibration.json");
+        const std::filesystem::path seed_path(
+            "scripts/calibration/calibrations/cubic_calibration.default.json");
+        std::error_code ec;
+        if (!std::filesystem::exists(live_path, ec) && std::filesystem::exists(seed_path, ec)) {
+            std::filesystem::copy_file(seed_path, live_path,
+                                       std::filesystem::copy_options::overwrite_existing, ec);
+            if (ec)
+                std::cout << "[Calibration] Cubic: seed copy failed (" << ec.message() << ")"
+                          << std::endl;
+            else
+                std::cout
+                    << "[Calibration] Cubic: seeded live store from cubic_calibration.default.json"
+                    << std::endl;
+        }
+    }
+
+    // Load (or reload) the live cubic store from disk and re-apply it to the running stream: each
+    // channel's fitted cubic → pt_calibration, and robust reseeded from that same cubic baseline.
+    // Used at startup AND when a calibration profile is swapped live (cmd 7): the file on disk is
+    // the source of truth, so re-reading it is all that's needed to switch the whole rig's cal.
+    //   restore_learned=true  (startup): additionally restore the learned robust θ from
+    //                                    adjustments.json on top of the cubic-seeded baseline.
+    //   restore_learned=false (profile swap): reset + reseed robust from the profile only — the
+    //                                    profile is the whole cal, so previously learned θ is
+    //                                    dropped.
+    auto reload_live_store = [&](bool restore_learned) -> size_t {
+        const size_t loaded = cubic_store.load();
+        for (uint16_t uid : cubic_store.uids()) {
+            const fsw::calibration::CubicFit* fit = cubic_store.fit_for(uid);
+            const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+            if (cch == nullptr)
+                continue;
+            const bool fit_ok = fit != nullptr && fit->valid;
+            if (g_lc_uids.count(uid)) {
+                // LC: cubic fit only, no robust baseline to reseed.
+                if (fit_ok)
+                    lc_calibration.set_calibration(cch->logical_ch,
+                                                   fsw::calibration::PolynomialCalibration(
+                                                       fit->A, fit->B, fit->C, fit->D, "kg"));
+                else
+                    lc_calibration.clear_calibration(cch->logical_ch);
+                continue;
+            }
+            if (fit_ok)
+                pt_calibration.set_calibration(
+                    cch->logical_ch,
+                    fsw::calibration::PTCalibrationCoeffs(fit->A, fit->B, fit->C, fit->D));
+            else
+                // No valid cubic (e.g. a blank profile) → clear any stale cubic so it reads 0.
+                pt_calibration.clear_calibration(cch->logical_ch);
+            const fsw::calibration::PTCalibrationCoeffs baseline =
+                fit_ok ? fsw::calibration::PTCalibrationCoeffs(fit->A, fit->B, fit->C, fit->D)
+                       : fsw::calibration::PTCalibrationCoeffs(0.0, 0.0, 0.0, 0.0);
+            robust_manager.reseed_sensor(uid, baseline);
+        }
+        // Restore learned robust θ only on process start (not on a live profile swap).
+        if (restore_learned)
+            robust_manager.load_adjustments(adjustments_path, &uid_role);
+        // Sample the robust preview curve for EVERY PT sensor that has points (not just robust
+        // ones), so the merged UI can show "what robust would look like" before you switch to it.
+        // LC has no robust display.
+        for (uint16_t uid : cubic_store.uids()) {
+            if (g_lc_uids.count(uid))
+                continue;
+            const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+            if (cch != nullptr && !cch->points.empty())
+                cubic_store.set_fit_curve(uid, sample_robust_curve(uid));
+        }
+        // Whole-rig cal just (re)loaded — startup or a live profile swap (cmd 7). Emit the abort
+        // thresholds from it so the boards' vent-to-safe gate matches the newly active calibration.
+        write_abort_thresholds();
+        return loaded;
+    };
 
     std::cout << "[Calibration] Robust adjustments path: " << adjustments_path << std::endl;
     std::cout << "[Calibration]   (override with --adjustments, CAL_BACKUP_PATH, or "
                  "calibration_backups/calibration_backup_*.json mtime)"
               << std::endl;
-    if (!robust_manager.load_adjustments(adjustments_path)) {
-        std::cout << "[Calibration]   File missing/unreadable — using factory-seeded robust only"
-                  << std::endl;
-    }
-    if (lp_pt_use_factory_only()) {
-        std::cout << "[Calibration] LP PT: factory cubic (default / CAL_USE_FACTORY_PT) — "
-                     "letsfix-style stable path"
-                  << std::endl;
-    } else if (lp_pt_use_robust_blend()) {
-        std::cout << "[Calibration] LP PT: CAL_USE_ROBUST_BLEND=1 — 75% robust + 25% factory"
-                  << std::endl;
+    // Resume previously captured points + learned robust state from disk.
+    const size_t cubic_loaded = reload_live_store(/*restore_learned=*/true);
+    if (cubic_loaded > 0)
+        std::cout << "[Calibration] Cubic: resumed " << cubic_loaded
+                  << " channel(s) from cubic_calibration.json" << std::endl;
+    // Always persist at startup so the record (with each channel's active_model) exists immediately
+    // — the UI / cal_model_select read it before any capture.
+    cubic_store.save();
+    if (g_env_override) {
+        const char* label = *g_env_override == PtModel::Cubic ? "factory cubic (CAL_USE_FACTORY_PT)"
+                            : *g_env_override == PtModel::Blend
+                                ? "75% robust + 25% factory (CAL_USE_ROBUST_BLEND)"
+                                : "100% robust when initialized (CAL_USE_ROBUST_PT)";
+        std::cout << "[Calibration] LP PT: env override — all sensors " << label << std::endl;
     } else {
-        std::cout << "[Calibration] LP PT: CAL_USE_ROBUST_PT=1 — 100% robust when initialized"
-                  << std::endl;
+        size_t robust_n = 0, blend_n = 0, physics_n = 0;
+        for (const auto& [uid, m] : g_pt_model) {
+            if (m == PtModel::Robust)
+                ++robust_n;
+            else if (m == PtModel::Blend)
+                ++blend_n;
+            else if (m == PtModel::Physics)
+                ++physics_n;
+        }
+        std::cout
+            << "[Calibration] PT: per-sensor model from config — default cubic (0-5 V) / physics "
+               "(4-20 mA); "
+            << robust_n << " robust, " << physics_n << " physics, " << blend_n << " blend"
+            << std::endl;
+        for (const auto& [uid, m] : g_pt_model)
+            std::cout << "[Calibration]   uid " << uid << " -> " << pt_model_name(m) << std::endl;
+    }
+    {
+        size_t lc_cubic_n = 0, lc_physics_n = 0;
+        for (uint16_t uid : g_lc_uids)
+            (lc_model_for(uid) == LcModel::Cubic ? lc_cubic_n : lc_physics_n)++;
+        std::cout << "[Calibration] LC: per-sensor model from config — default physics; "
+                  << lc_cubic_n << " cubic, " << lc_physics_n << " physics" << std::endl;
     }
 
     if (verbose())
@@ -822,11 +1207,15 @@ int main(int argc, char* argv[]) {
         }
         fsw::elodin::DatabaseConfig::register_calibrated_tables(
             elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
-        if (!elodin_client.subscribe_stream()) {
-            std::cerr << "[Cal] Failed to subscribe to Elodin stream" << std::endl;
+        // The raw sensor tables this service calibrates, built from the boards actually in
+        // config. This used to be subscribe_stream(), which guessed boards 1-8 x channels 1-10
+        // and sent 481 subscribe messages regardless of the rig.
+        if (!elodin_client.subscribe_tables(fsw::elodin::raw_sensor_tables(
+                pt_boards, act_boards, tc_boards, rtd_boards, lc_boards, enc_boards))) {
+            std::cerr << "[Cal] Failed to subscribe to raw sensor tables" << std::endl;
             return false;
         }
-        if (!elodin_client.subscribe_tables({{0x46, 0x00}})) {
+        if (!elodin_client.subscribe_tables({fsw::elodin::kTableCalibrationCommand})) {
             std::cerr << "[Cal] Failed to subscribe to CalibrationCommand [0x46,0x00]" << std::endl;
             return false;
         }
@@ -841,7 +1230,13 @@ int main(int argc, char* argv[]) {
     // when Elodin silently drops subscriptions (daq_bridge VTables not yet registered).
     elodin_client.set_recv_timeout_ms(3000);
 
-    uint8_t pkt_buf[65536];  // 64 KB — handles large Elodin subscription-ACK bursts
+    // Generous, but not for the reason the previous comment claimed ("handles large Elodin
+    // subscription-ACK bursts"). ACKs are 19-23 bytes and arrive one per read_packet() call, so
+    // their number never mattered; the largest single packet on this stream is a ~179-byte VTable
+    // definition. The size was really working around read_packet(), which used to corrupt the
+    // connection permanently if any packet exceeded the buffer. That is fixed — an oversized
+    // packet is now skipped — so this is ordinary headroom for VTables that grow.
+    uint8_t pkt_buf[65536];
     int packet_count = 0;
     static std::atomic<bool> logged_ch5{false};
     auto last_save = std::chrono::steady_clock::now();
@@ -857,8 +1252,9 @@ int main(int argc, char* argv[]) {
                 fsw::elodin::DatabaseConfig::register_calibrated_tables(
                     elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards,
                     act_boards);
-                elodin_client.subscribe_stream();
-                elodin_client.subscribe_tables({{0x46, 0x00}});
+                elodin_client.subscribe_tables(fsw::elodin::raw_sensor_tables(
+                    pt_boards, act_boards, tc_boards, rtd_boards, lc_boards, enc_boards));
+                elodin_client.subscribe_tables({fsw::elodin::kTableCalibrationCommand});
                 elodin_client.set_recv_timeout_ms(3000);
                 last_resubscribe = std::chrono::steady_clock::now();
                 last_packet_time = std::chrono::steady_clock::now();
@@ -878,8 +1274,9 @@ int main(int argc, char* argv[]) {
             if (since_pkt >= 5 && since_sub >= 5) {
                 std::cout << "[Cal] No packets for " << since_pkt
                           << "s — re-subscribing to raw streams" << std::endl;
-                elodin_client.subscribe_stream();
-                elodin_client.subscribe_tables({{0x46, 0x00}});
+                elodin_client.subscribe_tables(fsw::elodin::raw_sensor_tables(
+                    pt_boards, act_boards, tc_boards, rtd_boards, lc_boards, enc_boards));
+                elodin_client.subscribe_tables({fsw::elodin::kTableCalibrationCommand});
                 last_resubscribe = now_s;
             }
         }
@@ -910,63 +1307,71 @@ int main(int argc, char* argv[]) {
 
         // Only process RAW sensor packets or Calibration Commands.
         if (type_hi == 0x46) {
-            // CalibrationCommand: ts(8) | cmd(1) | sensor_id(2 LE) | pad(1) | ref_f32(4)
+            // CalibrationCommand: ts(8) | cmd(1)@8 | pad(1)@9 | sensor_id(2 LE)@10 | ref_f32(4)@12.
+            // sensor_id is at even offset 10 so it is an aligned u16 in the Elodin VTable and its
+            // high byte survives (uid = board_id*100+connector can exceed 255).
             if (pkt_len >= 8 + 16) {
                 const uint8_t* p = pkt_buf + 8;
                 uint8_t cmd_type = p[8];
                 uint16_t sensor_id =
-                    static_cast<uint16_t>(p[9]) | (static_cast<uint16_t>(p[10]) << 8);
-                float ref_val = *reinterpret_cast<const float*>(p + 12);
+                    static_cast<uint16_t>(p[10]) | (static_cast<uint16_t>(p[11]) << 8);
+                // memcpy, not a `const float*` cast: p is pkt_buf + 8, so p + 12 inherits the
+                // buffer's alignment and nothing guarantees it is 4-aligned (cppcheck
+                // invalidPointerCast). Same instruction, defined behaviour.
+                float ref_val;
+                std::memcpy(&ref_val, p + 12, sizeof(ref_val));
 
                 std::cout << "[Cal] Received CalibrationCommand: type=" << (int)cmd_type
                           << " sensor=" << static_cast<int>(sensor_id) << " ref=" << ref_val
                           << std::endl;
 
-                if (cmd_type == 0) {       // Zero All
+                if (cmd_type == 0) {  // Zero All — capture a 0 reference point on every PT + LC
+                    // A "zero" is just a captured reference point at 0 (psi or kg): it feeds the
+                    // same shared fit as any other capture, persists, and naturally averages
+                    // repeated zeroes — capturing real zero-drift over time rather than assuming a
+                    // uniform tare. Physics sensors take no points, so they're skipped.
+                    auto is_physics = [&](uint16_t uid) -> bool {
+                        return g_lc_uids.count(uid) ? lc_model_for(uid) == LcModel::Physics
+                                                    : pt_model_for(uid) == PtModel::Physics;
+                    };
+                    auto avg_adc = [&](uint16_t uid, double& out) -> bool {
+                        auto rit = pt_adc_ring.find(uid);
+                        if (rit != pt_adc_ring.end() && !rit->second.empty()) {
+                            double sum = 0.0;
+                            for (int32_t a : rit->second)
+                                sum += static_cast<double>(a);
+                            out = sum / static_cast<double>(rit->second.size());
+                            return true;
+                        }
+                        auto lit = last_adc_map.find(uid);
+                        if (lit != last_adc_map.end()) {
+                            out = static_cast<double>(lit->second);
+                            return true;
+                        }
+                        return false;
+                    };
+                    int zeroed = 0;
                     if (sensor_id == 0) {  // All sensors
-                        std::lock_guard<std::mutex> lk(g_zero_offsets_mutex);
-                        g_lp_ema.clear();  // reset EMA so zeroed value reaches GUI immediately
                         for (auto const& [id, val] : last_adc_map) {
-                            const uint8_t bid = static_cast<uint8_t>(id / 100);
-                            const uint8_t lch = static_cast<uint8_t>(id % 100);
-                            const uint8_t bn = (bid % 10) == 0 ? 10u : (bid % 10);
-                            const bool is_hp = (hp_pt_board_number != 255) &&
-                                               (bn == hp_pt_board_number) &&
-                                               hp_pt_channels.count(lch);
-                            robust_manager.zero_sensor(id, val);
-                            if (is_hp) {
-                                g_zero_offsets.erase(id);
+                            (void)val;
+                            if (is_physics(id))
+                                continue;  // datasheet zero; no points
+                            double adc_avg = 0.0;
+                            if (!avg_adc(id, adc_avg))
                                 continue;
-                            }
-                            // Offset must match streaming path (robust vs factory), after RCF zero.
-                            const double psi_base = lp_pt_psi_before_offset(
-                                bn, lch, id, val, pt_calibration, robust_manager);
-                            if (std::isfinite(psi_base))
-                                g_zero_offsets[id] = -psi_base;
+                            apply_capture(id, adc_avg, 0.0);
+                            ++zeroed;
                         }
-                        std::cout << "[Cal] Performed Zero All for " << last_adc_map.size()
-                                  << " sensors" << std::endl;
+                        std::cout << "[Cal] Zero All: captured 0 on " << zeroed << " PT/LC sensors"
+                                  << std::endl;
                     } else {
-                        if (last_adc_map.count(sensor_id)) {
-                            std::lock_guard<std::mutex> lk(g_zero_offsets_mutex);
-                            const uint8_t bid = static_cast<uint8_t>(sensor_id / 100);
-                            const uint8_t lch = static_cast<uint8_t>(sensor_id % 100);
-                            const uint8_t bn = (bid % 10) == 0 ? 10u : (bid % 10);
-                            const bool is_hp = (hp_pt_board_number != 255) &&
-                                               (bn == hp_pt_board_number) &&
-                                               hp_pt_channels.count(lch);
-                            robust_manager.zero_sensor(sensor_id, last_adc_map[sensor_id]);
-                            if (!is_hp) {
-                                const double psi_base = lp_pt_psi_before_offset(
-                                    bn, lch, sensor_id, last_adc_map[sensor_id], pt_calibration,
-                                    robust_manager);
-                                if (std::isfinite(psi_base))
-                                    g_zero_offsets[sensor_id] = -psi_base;
-                            } else {
-                                g_zero_offsets.erase(sensor_id);
-                            }
-                            g_lp_ema.erase(sensor_id);
+                        double adc_avg = 0.0;
+                        if (!is_physics(sensor_id) && avg_adc(sensor_id, adc_avg)) {
+                            apply_capture(sensor_id, adc_avg, 0.0);
+                            ++zeroed;
                         }
+                        std::cout << "[Cal] Zero: captured 0 on uid " << static_cast<int>(sensor_id)
+                                  << " (" << zeroed << ")" << std::endl;
                     }
                 } else if (cmd_type == 1) {  // Capture Reference
                     if (last_adc_map.count(sensor_id)) {
@@ -974,8 +1379,69 @@ int main(int argc, char* argv[]) {
                                                           ref_val);
                     }
                 } else if (cmd_type == 2) {  // Save
-                    robust_manager.save_adjustments(adjustments_path);
+                    robust_manager.save_adjustments(adjustments_path, &uid_role);
                     std::cout << "[Cal] Adjustments saved to " << adjustments_path << std::endl;
+                } else if (cmd_type == 3) {  // Capture cubic point (operator-built factory cubic)
+                    bool have_adc = false;
+                    double adc_avg = 0.0;
+                    auto rit = pt_adc_ring.find(sensor_id);
+                    if (rit != pt_adc_ring.end() && !rit->second.empty()) {
+                        double sum = 0.0;
+                        for (int32_t a : rit->second)
+                            sum += static_cast<double>(a);
+                        adc_avg = sum / static_cast<double>(rit->second.size());
+                        have_adc = true;
+                    } else if (last_adc_map.count(sensor_id)) {
+                        adc_avg = static_cast<double>(last_adc_map[sensor_id]);
+                        have_adc = true;
+                    }
+                    if (have_adc) {
+                        // Legacy cubic capture is now a shared capture (feeds cubic + robust).
+                        apply_capture(sensor_id, adc_avg, ref_val);
+                        std::cout << "[Cal] Cubic capture uid=" << static_cast<int>(sensor_id)
+                                  << " adc=" << adc_avg << " psi=" << ref_val << std::endl;
+                    } else {
+                        std::cout << "[Cal] Cubic capture: no ADC seen yet for uid "
+                                  << static_cast<int>(sensor_id) << std::endl;
+                    }
+                } else if (cmd_type == 4) {  // Clear channel → nothing (no factory revert)
+                    apply_clear(sensor_id);
+                    std::cout << "[Cal] Cubic cleared uid=" << static_cast<int>(sensor_id)
+                              << std::endl;
+                } else if (cmd_type == 5) {  // Unified capture point — routed by configured model
+                    bool have_adc = false;
+                    double adc_avg = 0.0;
+                    auto rit = pt_adc_ring.find(sensor_id);
+                    if (rit != pt_adc_ring.end() && !rit->second.empty()) {
+                        double sum = 0.0;
+                        for (int32_t a : rit->second)
+                            sum += static_cast<double>(a);
+                        adc_avg = sum / static_cast<double>(rit->second.size());
+                        have_adc = true;
+                    } else if (last_adc_map.count(sensor_id)) {
+                        adc_avg = static_cast<double>(last_adc_map[sensor_id]);
+                        have_adc = true;
+                    }
+                    if (have_adc) {
+                        apply_capture(sensor_id, adc_avg, ref_val);
+                        std::cout << "[Cal] Capture uid=" << static_cast<int>(sensor_id) << " ("
+                                  << pt_model_name(pt_model_for(sensor_id)) << ") adc=" << adc_avg
+                                  << " psi=" << ref_val << std::endl;
+                    } else {
+                        std::cout << "[Cal] Capture: no ADC seen yet for uid "
+                                  << static_cast<int>(sensor_id) << std::endl;
+                    }
+                } else if (cmd_type == 6) {  // Unified new calibration / clear — routed by model
+                    apply_clear(sensor_id);
+                    std::cout << "[Cal] New calibration uid=" << static_cast<int>(sensor_id) << " ("
+                              << pt_model_name(pt_model_for(sensor_id)) << ")" << std::endl;
+                } else if (cmd_type == 7) {  // Reload live store — the backend swapped the cal file
+                    // A calibration profile was loaded / a blank was created on disk by the
+                    // backend; re-read the live store and re-apply it to the running stream (reset
+                    // + reseed robust from the new profile). No session restart needed.
+                    const size_t n = reload_live_store(/*restore_learned=*/false);
+                    std::cout << "[Cal] Reloaded live calibration store (" << n
+                              << " channel(s)) after profile swap" << std::endl;
                 }
             }
             continue;
@@ -1036,101 +1502,77 @@ int main(int argc, char* argv[]) {
 
         elodin_client.begin_batch();
 
-        if (type_hi == 0x20) {  // PT raw
-            uint32_t hp_wire_adc = 0u;
-            if (board_number == hp_pt_board_number) {
-                hp_wire_adc = coerce_hp_pt_adc_counts(adc_i32, adc_u32);
-                if (ch_eff >= 1 && ch_eff <= 10)
-                    g_hp_board_last_u32[static_cast<size_t>(ch_eff)] = hp_wire_adc;
+        if (type_hi == 0x20) {  // PT raw — unified: every PT runs through model selection.
+            const fsw::config::PtBoardConfig* loop_board = current_loop_board(board_number);
+            const bool is_loop = loop_board != nullptr;
+            const uint16_t uid = resolve_pt_sensor_uid(type_lo, ch_eff, pt_boards);
+
+            // The ADC cubic/robust and captures work in: for a 4-20 mA board, the coerced unsigned
+            // shunt code (board_simulator back-calculates valid codes in sim too); else the raw
+            // i32.
+            const uint32_t hp_wire_adc = is_loop ? coerce_hp_pt_adc_counts(adc_i32, adc_u32) : 0u;
+            const int32_t cal_adc = is_loop ? static_cast<int32_t>(hp_wire_adc) : adc_i32;
+
+            last_adc_map[uid] = cal_adc;
+            {  // feed the capture ADC ring so a capture averages a short window
+                auto& ring = pt_adc_ring[uid];
+                ring.push_back(cal_adc);
+                if (ring.size() > kPtAdcRingMax)
+                    ring.pop_front();
             }
 
-            uint16_t uid = resolve_pt_sensor_uid(type_lo, ch_eff, pt_boards);
-            double psi;
-            uint8_t cal_status;
-            const bool is_hp_ch =
-                board_number == hp_pt_board_number && hp_pt_channels.count(ch_eff);
-            // board_simulator.py generates valid 4-20 mA ADC codes for HP PT connectors
-            // (back-calculates i_ma from target PSI), so apply the 4-20 mA path in both
-            // sim and real-hardware modes — no use_sim_mode guard needed here.
-            if (is_hp_ch) {
-                const bool exc_ok =
-                    hp_pt_excitation_connector_id >= 1 && hp_pt_excitation_connector_id <= 10;
-                const uint32_t adc_exc =
-                    exc_ok ? g_hp_board_last_u32[static_cast<size_t>(hp_pt_excitation_connector_id)]
-                           : 0u;
-                const bool use_norm = exc_ok && adc_exc >= 128u;
-                psi = convert_hp_pt_to_pressure(ch_eff, hp_wire_adc, hp_pt_full_scale_psi,
-                                                hp_pt_sense_resistor_ohms, hp_pt_adc_ref_voltage,
-                                                adc_exc, use_norm, hp_pt_exc_div_atten);
-                cal_status = 1;
-                last_adc_map[uid] = static_cast<int32_t>(hp_wire_adc);
-                if (verbose() && packet_count % 100 == 0)
-                    std::cout << "[Cal] HP PT B" << static_cast<int>(board_number) << " ch"
-                              << static_cast<int>(ch_eff) << " adc_s=" << adc_i32
-                              << " adc_hp=" << hp_wire_adc << " psi=" << psi << std::endl;
-            } else if (board_number == hp_pt_board_number && !hp_pt_channels.empty() &&
-                       !hp_pt_channels.count(ch_eff)) {
-                // Non-HP connector on the HP PT board (e.g., excitation monitor): output 0 PSI.
-                psi = 0.0;
-                cal_status = 0;
-                last_adc_map[uid] = adc_i32;
-            } else {
-                last_adc_map[uid] = adc_i32;
-                const uint8_t pt_log_ch =
-                    fsw::calibration::pt_logical_calibration_channel(board_number, ch_eff);
-                const bool fac_ok = pt_calibration.is_calibrated(pt_log_ch);
-                const double psi_fac =
-                    fac_ok ? pt_calibration.calculate_pressure(pt_log_ch, adc_i32) : 0.0;
-                const double psi_rob = robust_manager.predict_pressure_psi(uid, adc_i32);
+            const uint8_t pt_log_ch =
+                fsw::calibration::pt_logical_calibration_channel(board_number, ch_eff);
+            const bool fac_ok = pt_calibration.is_calibrated(pt_log_ch);
+            const double psi_fac =
+                fac_ok ? pt_calibration.calculate_pressure(pt_log_ch, cal_adc) : 0.0;
+            const double psi_rob = robust_manager.predict_pressure_psi(uid, cal_adc);
+            const double psi_phys =
+                is_loop
+                    ? convert_hp_pt_to_pressure(ch_eff, hp_wire_adc, *loop_board,
+                                                pt_full_scale_for(uid), pt_sense_resistor_for(uid),
+                                                g_hp_ma_live[board_number])
+                    : convert_ratiometric_pt_to_pressure(adc_i32, pt_full_scale_for(uid));
+            const bool has_rob = robust_manager.has_sensor(uid);
 
-                if (!fac_ok) {
-                    psi = psi_rob;
-                } else if (!robust_manager.has_sensor(uid)) {
-                    psi = psi_fac;
-                } else if (lp_pt_use_factory_only()) {
-                    psi = psi_fac;
-                } else if (lp_pt_use_robust_blend()) {
-                    constexpr double kFactoryWeight = 0.25;
-                    psi = (1.0 - kFactoryWeight) * psi_rob + kFactoryWeight * psi_fac;
-                } else {
-                    // Default: full robust prediction (matches calibration_server.py RCF path).
-                    psi = psi_rob;
-                }
+            double psi = select_pt_psi(uid, psi_fac, psi_rob, psi_phys, fac_ok, has_rob);
+
+            // cal_status: 1 when the selected model's own source is ready (physics always); 0 means
+            // it fell back to physics because the chosen cubic/robust model isn't calibrated yet.
+            const PtModel eff_model = g_env_override ? *g_env_override : pt_model_for(uid);
+            uint8_t cal_status = 1;
+            if (eff_model == PtModel::Cubic)
                 cal_status = fac_ok ? 1u : 0u;
-                // Apply zero offset then EMA for LP PT channels.
-                {
-                    std::lock_guard<std::mutex> lk(g_zero_offsets_mutex);
-                    auto it_off = g_zero_offsets.find(uid);
-                    if (it_off != g_zero_offsets.end())
-                        psi += it_off->second;
-                }
-                {
-                    auto& ema = g_lp_ema[uid];
-                    if (!std::isfinite(ema))
-                        ema = psi;
-                    else
-                        ema = LP_EMA_ALPHA * psi + (1.0 - LP_EMA_ALPHA) * ema;
-                    psi = ema;
-                }
-                if (verbose() && packet_count % 100 == 0)
-                    std::cout << "[Cal] PT B" << static_cast<int>(board_number) << " ch"
-                              << static_cast<int>(ch_eff) << " adc=" << adc_i32 << " psi=" << psi
-                              << std::endl;
-            }
-            if (is_hp_ch) {
-                if (!std::isfinite(psi))
-                    psi = 0.0;
+            else if (eff_model == PtModel::Robust)
+                cal_status = has_rob ? 1u : 0u;
+            else if (eff_model == PtModel::Blend)
+                cal_status = (fac_ok && has_rob) ? 1u : 0u;
+
+            // EMA smoothing (zeroing is now a captured 0 psi point that flows through the fit
+            // above, not a post-hoc offset).
+            {
+                auto& ema = g_lp_ema[uid];
+                if (!std::isfinite(ema))
+                    ema = psi;
                 else
-                    psi = std::clamp(psi, 0.0, hp_pt_full_scale_psi * 1.2);
-            } else {
-                if (!std::isfinite(psi))
-                    psi = 0.0;
-                else
-                    psi = std::clamp(psi, -3000.0, 20000.0);
+                    ema = LP_EMA_ALPHA * psi + (1.0 - LP_EMA_ALPHA) * ema;
+                psi = ema;
             }
+            if (verbose() && packet_count % 100 == 0)
+                std::cout << "[Cal] PT B" << static_cast<int>(board_number) << " ch"
+                          << static_cast<int>(ch_eff) << (is_loop ? " (4-20mA)" : "")
+                          << " adc=" << cal_adc << " psi=" << psi << std::endl;
+
+            if (!std::isfinite(psi))
+                psi = 0.0;
+            else if (is_loop)
+                psi = std::clamp(psi, 0.0, pt_full_scale_for(uid) * 1.2);
+            else
+                psi = std::clamp(psi, -3000.0, 20000.0);
+
             comms::messages::sensor::CalibratedPTMessage cal_msg(
                 ts_ns, ch_eff, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(psi),
-                is_hp_ch ? adc_u32 : static_cast<uint32_t>(adc_i32), cal_status);
+                is_loop ? adc_u32 : static_cast<uint32_t>(adc_i32), cal_status);
             elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
 
         } else if (type_hi == 0x21) {  // TC raw
@@ -1166,17 +1608,32 @@ int main(int argc, char* argv[]) {
                 static_cast<uint32_t>(adc_i32), cal_status);
             elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
 
-        } else if (type_hi == 0x23) {  // LC raw
-            double force_kg;
-            uint8_t cal_status;
-            if (lc_calibration.is_calibrated(ch_eff)) {
-                force_kg = lc_calibration.calculate(ch_eff, adc_i32);
-                cal_status = 1;
-            } else {
-                force_kg = convert_lc_adc_to_force(adc_i32, lc_sensitivity_mv_per_v, lc_pga_gain,
-                                                   lc_full_scale_value);
-                cal_status = 0;
+        } else if (type_hi == 0x23) {  // LC raw — unified: every LC runs through model selection
+                                       // (cubic operator fit, or the datasheet physics formula).
+            const uint16_t uid = resolve_lc_sensor_uid(type_lo, ch_eff, lc_boards);
+
+            last_adc_map[uid] = adc_i32;
+            {  // feed the shared capture ADC ring so a capture averages a short window
+                auto& ring = pt_adc_ring[uid];
+                ring.push_back(adc_i32);
+                if (ring.size() > kPtAdcRingMax)
+                    ring.pop_front();
             }
+
+            const uint8_t lc_log_ch =
+                fsw::calibration::pt_logical_calibration_channel(board_number, ch_eff);
+            const bool cubic_ok = lc_calibration.is_calibrated(lc_log_ch);
+            const double kg_cubic = cubic_ok ? lc_calibration.calculate(lc_log_ch, adc_i32) : 0.0;
+            const double kg_phys = convert_lc_adc_to_force(
+                adc_i32, lc_sensitivity_for(uid, lc_sensitivity_mv_per_v),
+                lc_pga_gain_for(uid, lc_pga_gain), lc_full_scale_for(uid, lc_full_scale_value));
+
+            double force_kg = select_lc_kg(uid, kg_cubic, kg_phys, cubic_ok);
+            const bool is_physics_model = lc_model_for(uid) == LcModel::Physics;
+            const uint8_t cal_status = is_physics_model ? 1u : (cubic_ok ? 1u : 0u);
+            if (!std::isfinite(force_kg))
+                force_kg = 0.0;
+
             comms::messages::sensor::CalibratedLCMessage cal_msg(
                 ts_ns, ch_eff, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(force_kg),
                 static_cast<uint32_t>(adc_i32), cal_status);
@@ -1204,10 +1661,17 @@ int main(int argc, char* argv[]) {
         // Periodic auto-save every 5 minutes
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::seconds>(now - last_save).count() > 300) {
-            robust_manager.save_adjustments(adjustments_path);
+            robust_manager.save_adjustments(adjustments_path, &uid_role);
             last_save = now;
         }
     }
+
+    // Persist on shutdown so a clean SIGINT/SIGTERM doesn't drop up to ~5 min of learning since the
+    // last periodic auto-save. (The cubic store already saves per capture; this covers robust θ.)
+    if (robust_manager.save_adjustments(adjustments_path, &uid_role))
+        std::cout << "[Cal] Saved robust adjustments on shutdown → " << adjustments_path
+                  << std::endl;
+    cubic_store.save();
 
     std::cout << "[Cal] Stopped." << std::endl;
     return 0;

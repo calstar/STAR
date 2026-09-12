@@ -60,8 +60,13 @@ public:
      * @brief Create UDP socket for sending to remote address
      * @param remote_address Remote address to send to
      * @param remote_port Remote port to send to
+     * @param is_sender Tag selecting this overload
+     * @param bind_address Local address to send from, pinning the egress NIC. Empty or "0.0.0.0"
+     *        leaves the interface to the kernel — which is only safe on a host with one route to
+     *        the boards. See lib/include/net/DaqInterface.hpp.
      */
-    UDPSocket(const std::string& remote_address, uint16_t remote_port, bool is_sender);
+    UDPSocket(const std::string& remote_address, uint16_t remote_port, bool is_sender,
+              const std::string& bind_address = "");
 
     ~UDPSocket() override;
 

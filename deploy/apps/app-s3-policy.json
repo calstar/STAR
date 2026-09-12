@@ -8,7 +8,7 @@
       "Resource": [
         "arn:aws:s3:::star-pid-designer",
         "arn:aws:s3:::star-engine-design",
-        "arn:aws:s3:::star-recovery-calculator"
+        "arn:aws:s3:::star-openrocket"
       ]
     },
     {
@@ -24,7 +24,7 @@
       "Resource": [
         "arn:aws:s3:::star-pid-designer/*",
         "arn:aws:s3:::star-engine-design/*",
-        "arn:aws:s3:::star-recovery-calculator/*"
+        "arn:aws:s3:::star-openrocket/*"
       ]
     }
   ]

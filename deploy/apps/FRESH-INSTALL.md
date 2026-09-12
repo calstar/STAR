@@ -1,7 +1,7 @@
 # Apps machine — full setup from a fresh Linux install
 
 End-to-end provisioning for the **apps machine** (Engine Design, P&ID Designer,
-Recovery Calculator, Onshape Viewer, landing) starting from a blank Ubuntu
+STAR OpenRocket, landing) starting from a blank Ubuntu
 install. It layers the base OS + Docker + SSH-over-Cloudflare underneath the
 app-level runbook in [`README.md`](README.md) — do that one after this.
 
@@ -13,9 +13,9 @@ Internet ─▶ Cloudflare edge ─▶ cloudflared (in Docker) ─┬▶ caddy:8
 One tunnel, one connector. The web apps and SSH both ride it, so **no inbound
 ports need to be open on the box** — not even 22.
 
-> **Don't want to type §1–§6 by hand?** [`bootstrap.sh`](bootstrap.sh) does all
+> **Don't want to type §1–§6 by hand?** [`bootstrap_apps.sh`](bootstrap_apps.sh) does all
 > of it. Copy it to a USB stick (optionally with a filled-in `star-apps.env`
-> next to it), then on the fresh box: `sudo bash /path/to/bootstrap.sh`. It
+> next to it), then on the fresh box: `sudo bash /path/to/bootstrap_apps.sh`. It
 > installs base packages, desktop auto-login, sshd, and Docker; checks out the
 > repo to `/opt/STAR`; and — if `star-apps.env` is present with a tunnel token —
 > launches the stack. The Cloudflare dashboard routes (below) are still manual.
@@ -192,8 +192,7 @@ Web routes — Service URL `http://caddy:80` for each:
 | `starberkeley.org` (apex → landing) | `http://caddy:80` |
 | `engine-design.starberkeley.org` | `http://caddy:80` |
 | `pid-designer.starberkeley.org` | `http://caddy:80` |
-| `recovery-calculator.starberkeley.org` | `http://caddy:80` |
-| `onshape-viewer.starberkeley.org` | `http://caddy:80` |
+| `openrocket.starberkeley.org` | `http://caddy:80` |
 
 Do **not** add `auth.` here — that stays on the EC2 tunnel. The SSH route is §5a.
 

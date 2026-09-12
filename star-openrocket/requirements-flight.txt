@@ -1,0 +1,7 @@
+# Optional: the 6-DOF flight / CP-cross-check path (backend/onshape/aero/rocketpy_*).
+# Heavy (pulls scipy, matplotlib, netCDF4), so it is kept out of requirements.txt and
+# CI -- the aero core, the CP(M) math and its unit tests need none of it, and the
+# rocketpy-dependent code lazy-imports this and its test skips when absent.
+#   install with:  .venv/bin/pip install -r requirements-flight.txt
+-r requirements.txt
+rocketpy>=1.13

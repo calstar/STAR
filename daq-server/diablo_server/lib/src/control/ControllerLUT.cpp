@@ -130,7 +130,7 @@ bool ControllerLUT::evaluate(const std::map<std::string, double>& point,
             return false;
 
         size_t hi = std::lower_bound(grid.begin(), grid.end(), x) - grid.begin();
-        if (hi <= 0)
+        if (hi == 0)
             hi = 1;
         if (hi >= grid.size())
             hi = grid.size() - 1;

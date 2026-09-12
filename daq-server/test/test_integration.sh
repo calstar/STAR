@@ -54,6 +54,9 @@ TEST_BACKEND_WS_PORT="${TEST_BACKEND_WS_PORT:-8181}"
 TEST_BACKEND_API_PORT="${TEST_BACKEND_API_PORT:-8182}"
 TEST_ACTUATOR_UDP_PORT="${TEST_ACTUATOR_UDP_PORT:-5015}"
 TEST_STARTUP_LISTEN_PORT="${TEST_STARTUP_LISTEN_PORT:-5014}"
+# Board-log ingest UDP port (daq_bridge → backend). Fixed 8092 in prod; offset here
+# so the test never collides with a running stack's log receiver.
+TEST_LOG_INGEST_PORT="${TEST_LOG_INGEST_PORT:-8192}"
 # sequencer_service TCP port (thin backend forwards SEND_COMMAND here)
 TEST_SEQUENCER_PORT="${TEST_SEQUENCER_PORT:-9998}"
 TEST_CONTROLLER_PORT="${TEST_CONTROLLER_PORT:-9997}"
@@ -95,7 +98,7 @@ kill_stale_integration_processes() {
   # Elodin DB — match on the test DB path pattern
   pkill -f "elodin.*integration_test" 2>/dev/null && killed=$((killed + 1)) || true
   # Also kill any process bound to our test ports
-  for port in $TEST_ELODIN_PORT $TEST_DAQ_UDP_PORT $TEST_BACKEND_WS_PORT $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_SEQUENCER_PORT; do
+  for port in $TEST_ELODIN_PORT $TEST_DAQ_UDP_PORT $TEST_BACKEND_WS_PORT $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_LOG_INGEST_PORT $TEST_SEQUENCER_PORT; do
     lsof -ti ":$port" 2>/dev/null | xargs kill 2>/dev/null || true
   done
   if [ "$killed" -gt 0 ]; then
@@ -135,8 +138,10 @@ cleanup() {
   fi
   rm -rf "$TEST_DB_PATH" 2>/dev/null || true
   rm -f "$TEST_CONFIG" 2>/dev/null || true
+  rm -f "$REPO_ROOT"/.tmp/integration_transitions_*.csv "$REPO_ROOT"/.tmp/integration_actuators_*.csv "$REPO_ROOT"/.tmp/integration_delays_*.csv 2>/dev/null || true
   rm -f "$UDP_COMMANDS_FILE" 2>/dev/null || true
   rm -f "$SIM_STATS_FILE" "$SIM_STATS_FILE.tmp" 2>/dev/null || true
+  rm -f "$REPO_ROOT/.tmp/integration_adjustments_$$.json" 2>/dev/null || true
   echo "✅ Cleanup done"
 }
 
@@ -179,11 +184,12 @@ echo ""
 mkdir -p "$REPO_ROOT/.tmp"
 
 # ── macOS loopback aliases for board simulator ────────────────────────────────
-# On Linux, 127.0.0.x all resolve to lo. On macOS, only 127.0.0.1 works unless
-# we add explicit aliases. The board_simulator binds each board to a distinct
-# 127.0.0.{2+index} IP so the DAQ bridge can route by source address.
+# On Linux, 127.0.0.x all resolve to lo. On macOS, only 127.0.0.1 works unless we add explicit
+# aliases. The board_simulator binds each board to 127.0.0.<host-octet> (the last octet of its
+# config IP, which equals its board_id here) so the DAQ bridge can route by source address. These
+# are the board_id octets from config_base.toml (enabled and not) plus the startup board (60).
 if [ "$(uname)" = "Darwin" ]; then
-  LOOPBACK_IPS=(2 3 4 5 6 7 8 9 60 61)
+  LOOPBACK_IPS=(11 12 13 14 21 22 31 32 41 42 51 52 60 61)
   NEED_ALIAS=false
   for i in "${LOOPBACK_IPS[@]}"; do
     if ! ifconfig lo0 2>/dev/null | grep -q "127.0.0.$i "; then
@@ -196,7 +202,7 @@ if [ "$(uname)" = "Darwin" ]; then
     for i in "${LOOPBACK_IPS[@]}"; do
       sudo ifconfig lo0 alias "127.0.0.$i" up 2>/dev/null || true
     done
-    echo "  ✅ Loopback aliases added (127.0.0.{2-9,60,61})"
+    echo "  ✅ Loopback aliases added (127.0.0.{board_id octets})"
   fi
 fi
 
@@ -219,7 +225,7 @@ kill_port() {
   fi
 }
 
-for port in $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_DAQ_UDP_PORT; do
+for port in $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_LOG_INGEST_PORT $TEST_DAQ_UDP_PORT; do
   kill_port "$port" udp
 done
 sleep 0.3
@@ -305,7 +311,7 @@ else
   echo "  ⚠️  controller_service not found — controller tests will be skipped"
 fi
 
-# Data source: board_simulator.py (speaks the current DAQv2-Comms protocol).
+# Data source: board_simulator.py (speaks the current daq-protocol protocol).
 # NOTE: transport/src/fake_packet_generator.cpp is a pre-DAQv2 fossil (0xAA
 # magic + XOR framing the current daq_bridge cannot parse) with no CMake
 # target — never use it here even if someone makes it buildable again.
@@ -343,8 +349,11 @@ echo ""
 # our test Elodin DB and listens on our test UDP port.
 
 echo "📝 Creating test config..."
-CONFIG_FILE="$REPO_ROOT/config/config.toml"
-[ ! -f "$CONFIG_FILE" ] && fail "config/config.toml not found"
+# Source from the frozen canonical config (config_base.toml), NOT config.toml — the latter is
+# overwritten at runtime by the config-profile deploy/switch, so tests must not depend on it.
+# config_base.toml is committed and only changed deliberately alongside test assertions.
+CONFIG_FILE="$REPO_ROOT/config/config_base.toml"
+[ ! -f "$CONFIG_FILE" ] && fail "config/config_base.toml not found"
 
 # Cross-platform in-place sed (macOS requires -i '', Linux requires -i)
 sedi() {
@@ -362,6 +371,8 @@ sedi "s/^port = 2240/port = $TEST_ELODIN_PORT/" "$TEST_CONFIG"
 sedi "s/^sensor_port = 5006/sensor_port = $TEST_DAQ_UDP_PORT/" "$TEST_CONFIG"
 # Replace actuator_cmd_port (under [network] section)
 sedi "s/^actuator_cmd_port = 5005/actuator_cmd_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
+# Replace board-log ingest port (under [logs] section) — daq_bridge reads it, backend binds it (env below)
+sedi "s/^backend_udp_port = .*/backend_udp_port = $TEST_LOG_INGEST_PORT/" "$TEST_CONFIG"
 # Pin the GUI downsample config so the test's assertions are deterministic
 # regardless of the production [gui] toggle, and so envelope downsampling is
 # OBSERVABLE: the sim's eligible streams are only 10 Hz, and at the production
@@ -376,8 +387,106 @@ sedi "s/^downsample_mode = .*/downsample_mode = \"$INTEGRATION_GUI_MODE\"/" "$TE
 sedi 's/^points_per_second = .*/points_per_second = 4/' "$TEST_CONFIG"
 # Point heartbeat broadcast to localhost to avoid sending to the real subnet
 sedi 's/^broadcast_ip = .*/broadcast_ip = "127.0.0.1"/' "$TEST_CONFIG"
+# Same reasoning for the egress bind: everything here talks to a simulator on
+# loopback, so say so. Left as 0.0.0.0 the services auto-resolve the interface
+# holding the board subnet and refuse to start when it is ambiguous — which it
+# now is on any machine that actually has the DAQ NIC (lo 127.0.0.1 plus
+# eth2 192.168.2.20 both match), i.e. the apps box and any dev box configured
+# like it. The refusal is correct; the harness just has to declare its intent.
+sedi 's/^bind_ip = .*/bind_ip = "127.0.0.1"/' "$TEST_CONFIG"
+# Short burn: the fire lifecycle check asserts the configured duration is honoured, so the value
+# just has to be distinguishable from FireManager's 6000 ms default — no need to sit through a
+# realistic burn on every CI run.
+sedi 's/^duration_ms = .*/duration_ms = 1500/' "$TEST_CONFIG"
+sedi 's/^extended_ms = .*/extended_ms = 3000/' "$TEST_CONFIG"
+# ── Flow Test: a gated timed hold, constructed here rather than shipped ───────────────────────
+# The sequencer can time a hold around ONE actuator rather than around the state, adding that
+# valve's staged delay so "1 s" means the VALVE was open for 1 s. Exercising that needs a state
+# whose valves are staggered, and a reference stand config should not grow a state just so CI can
+# measure one — so the CSVs are patched copies in .tmp and TEST_CONFIG is pointed at them.
+#
+# Appended AFTER the duration_ms sed above: that sed rewrites every line starting `duration_ms =`,
+# so a [flow] duration written earlier would be silently clobbered to the fire value.
+FLOW_STATE_ID=21
+FLOW_GATE_DELAY_S=0.4
+FLOW_HOLD_MS=800
+FLOW_TRANS_CSV="$REPO_ROOT/.tmp/integration_transitions_$$.csv"
+FLOW_ACTS_CSV="$REPO_ROOT/.tmp/integration_actuators_$$.csv"
+FLOW_DELAYS_CSV="$REPO_ROOT/.tmp/integration_delays_$$.csv"
+
+python3 - "$REPO_ROOT/config/profiles/default" "$FLOW_TRANS_CSV" "$FLOW_ACTS_CSV" \
+         "$FLOW_DELAYS_CSV" "$FLOW_GATE_DELAY_S" <<'PYEOF'
+import csv, sys, os
+src, out_t, out_a, out_d, gate_delay = sys.argv[1:6]
+
+def load(name):
+    with open(os.path.join(src, name)) as f:
+        return [r for r in csv.reader(f)]
+
+def save(path, rows):
+    with open(path, 'w', newline='') as f:
+        csv.writer(f).writerows(rows)
+
+NAME = 'Flow Test'
+RETURN = 'Press Standby'
+GATE = 'Fuel Main'
+
+# Transitions: reachable only from the hub, and able to get back to it — the sequencer refuses to
+# make a state holdable at all if it cannot reach its return target.
+t = load('state_transitions.csv')
+t[0].append(NAME)
+for r in t[1:]:
+    r.append('1' if r[0] == RETURN else '0')
+t.append([NAME] + ['1' if h in (RETURN, NAME) else '0' for h in t[0][1:]])
+save(out_t, t)
+
+# Actuators: the gate opens, everything else stays shut. RETURN already closes Fuel Main, which is
+# what actually ends the flow.
+a = load('state_machine_actuators.csv')
+a[0].append(NAME)
+for r in a[1:]:
+    r.append('OPEN' if r[0] == GATE else 'CLOSE')
+save(out_a, a)
+
+# Delays: the gate is staggered on the way IN only, so the hold must come out as
+# requested + gate delay.
+d = load('state_machine_actuator_delays.csv')
+d[0].append(NAME)
+for r in d[1:]:
+    r.append(gate_delay if r[0] == GATE else '0')
+save(out_d, d)
+PYEOF
+
+sedi "s|^transitions_csv = .*|transitions_csv = \"$FLOW_TRANS_CSV\"|" "$TEST_CONFIG"
+sedi "s|^actuator_csv = .*|actuator_csv = \"$FLOW_ACTS_CSV\"|" "$TEST_CONFIG"
+sedi "s|^actuator_delay_csv = .*|actuator_delay_csv = \"$FLOW_DELAYS_CSV\"|" "$TEST_CONFIG"
+
+cat >> "$TEST_CONFIG" <<EOF
+
+[[states]]
+id = $FLOW_STATE_ID
+name = "Flow Test"
+is_flow = true
+
+[flow]
+return_target = "Press Standby"
+duration_ms = $FLOW_HOLD_MS
+max_ms = 5000
+gate_actuator = "Fuel Main"
+EOF
+
+export INTEGRATION_FLOW_STATE_ID="$FLOW_STATE_ID"
+export INTEGRATION_FLOW_HOLD_MS="$FLOW_HOLD_MS"
+export INTEGRATION_FLOW_GATE_DELAY_MS=$(python3 -c "print(int(float('$FLOW_GATE_DELAY_S')*1000))")
+
 # Align SERVER_HEARTBEAT UDP with the same port as udp_listener (actuator/control path in CI)
 sedi "s/^broadcast_port = 5005/broadcast_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
+# controller_service is launched with --control-port $TEST_CONTROLLER_PORT, but the sequencer
+# reads [controller_service].port from the config to decide where to send FIRE_START/FIRE_STOP.
+# Without this rewrite it dialled the base config's 9999 while the controller listened on 9997,
+# so the fire gate was never actually delivered during an integration run — and nothing asserted
+# it, so the suite passed with that leg entirely untested.
+sedi "/^\[controller_service\]/,/^\[/ s/^port = .*/port = $TEST_CONTROLLER_PORT/" "$TEST_CONFIG"
 # NOTE: Do NOT replace board IPs — the DAQ bridge routes by source IP.
 # The board_simulator falls back to 127.0.0.{2+index} when config IPs
 # (192.168.2.x) aren't bindable, and the DAQ bridge has matching fallback
@@ -399,6 +508,13 @@ sedi "s/^send_port = 5005/send_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 sedi 's/^fallback_fuel_duty_cycle = 0.0/fallback_fuel_duty_cycle = 0.1/' "$TEST_CONFIG"
 sedi 's/^fallback_ox_duty_cycle = 0.0/fallback_ox_duty_cycle = 0.1/' "$TEST_CONFIG"
 
+# Exercise the per-sensor model selector: make Ox Upstream (pt_board conn 5 -> uid 2105) robust and
+# GSE Low (conn 2 -> uid 2102, CH2) physics; the rest stay cubic. cal_model_select verifies the
+# config choice is honored, cal_values verifies the physics conversion, and cal_robust_learn verifies
+# the robust stack learns. Anchored to the [calibration_model_pt_board] lines ("... = \"cubic\"").
+sedi 's/^"Ox Upstream" = "cubic"$/"Ox Upstream" = "robust"/' "$TEST_CONFIG"
+sedi 's/^"GSE Low" = "cubic"$/"GSE Low" = "physics"/' "$TEST_CONFIG"
+
 cat >> "$TEST_CONFIG" << EOF
 
 [boards.integration_startup]
@@ -412,7 +528,7 @@ num_sensors = 1
 active_connectors = [1]
 voltage_reference = 1
 necessary_for_abort = false
-enable_serial_printing = false
+enable_serial_printing = 0
 designated_survivor = false
 EOF
 
@@ -532,6 +648,7 @@ if [ "$BACKEND" = "thin" ]; then
     ELODIN_PORT=$TEST_ELODIN_PORT \
     ACTUATOR_SERVICE_PORT=9998 \
     CONFIG_PATH="$TEST_CONFIG" \
+    LOG_INGEST_PORT=$TEST_LOG_INGEST_PORT \
     npx tsx src/server.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
 else
   echo "🖥️  Starting Backend server (server-legacy.ts)..."
@@ -564,8 +681,24 @@ CALIB_SVC="$REPO_ROOT/build/bin/calibration_service"
 [ -x "$CALIB_SVC" ] || CALIB_SVC=""
 if [ -n "$CALIB_SVC" ]; then
   echo "🔬 Starting calibration_service..."
-  "$CALIB_SVC" --config "$TEST_CONFIG" --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
-    > "$REPO_ROOT/.tmp/integration_calibration_$$.log" 2>&1 &
+  # Run from $REPO_ROOT (the daq-server dir) like daq_bridge/sequencer above: the service resolves
+  # its factory PT calibration dir ("scripts/calibration/calibrations") and CSV relative to cwd, so
+  # without this the test only passes when invoked from daq-server/ (a bare `bash daq-server/test/...`
+  # from the repo root left cwd there → PT: 0 channels → robust never seeds → cal_robust_learn fails).
+  #
+  # --adjustments points robust learned-state at a per-run temp file (not the shared, untracked
+  # scripts/calibration/calibrations/adjustments.json): cal_robust_learn teaches CH5 a +50 offset and
+  # the service persists it on shutdown, so without isolation that offset survives into the next run
+  # and breaks cal_values (which expects pristine factory). A missing file just seeds from factory.
+  CAL_ADJ="$REPO_ROOT/.tmp/integration_adjustments_$$.json"
+  rm -f "$CAL_ADJ" 2>/dev/null || true
+  # Start from a clean operator-cubic store (physics-or-nothing: uncalibrated cubic reads 0), the way
+  # a fresh checkout does — otherwise a stale cubic_calibration.json from a prior local run would
+  # carry captured cubics into this run. The service regenerates it at startup.
+  rm -f "$REPO_ROOT/scripts/calibration/calibrations/cubic_calibration.json" 2>/dev/null || true
+  (cd "$REPO_ROOT" && "$CALIB_SVC" --config "$TEST_CONFIG" --adjustments "$CAL_ADJ" \
+    --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
+    > "$REPO_ROOT/.tmp/integration_calibration_$$.log" 2>&1) &
   PIDS+=($!)
   sleep 1
   if kill -0 "${PIDS[-1]}" 2>/dev/null; then
@@ -576,6 +709,72 @@ if [ -n "$CALIB_SVC" ]; then
   fi
 else
   echo "  ⚠️  calibration_service not found — calibrated data tests will show 0 entities"
+fi
+
+# ── Controller refuses a dangling PWM actuator, and drives nothing ───────────
+# [controller].pwm_fuel_actuator / pwm_ox_actuator name [actuator_roles] entries. The controller
+# has no independent notion of which valve is "the fuel press" and used to fall back to CH3/CH8 on
+# board 12 when the name was missing — driving PWM at whatever hardware sat on those channels.
+#
+# The resolution rules themselves are covered exhaustively and cheaply by test_controller_pwm_roles
+# (ctest). What only the real binary can show is the consequence: that a controller which cannot
+# resolve its actuators emits no PWM at all. "It logged a warning" is a much weaker claim than
+# "it sent nothing", and it is the second one that keeps a mis-typed role off the hardware.
+if [ -n "$CONTROLLER_SVC" ]; then
+  echo "🚫 Checking controller refuses an unassigned PWM output..."
+  BAD_CFG="$REPO_ROOT/.tmp/integration_badpwm_$$.toml"
+  BAD_LOG="$REPO_ROOT/.tmp/integration_badpwm_$$.log"
+  BAD_UDP="$REPO_ROOT/.tmp/integration_badpwm_udp_$$.txt"
+  # Strip the "pwm_fuel" assignment, leaving that output with no actuator.
+  sed 's/^\("Fuel Press" = \[[^]]*\), *"pwm_fuel"\]/\1]/' "$TEST_CONFIG" > "$BAD_CFG"
+  if command grep -aq '"pwm_fuel"' "$BAD_CFG"; then
+    echo "  ❌ test setup: could not remove the pwm_fuel assignment from $TEST_CONFIG"
+    UDP_CHECK_FAILED=1
+  fi
+  # Listen where PWM would land, so "nothing was sent" is observed rather than assumed.
+  timeout 8 python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1', $TEST_ACTUATOR_UDP_PORT))
+s.settimeout(6)
+n = 0
+try:
+    while True:
+        s.recvfrom(2048); n += 1
+except Exception:
+    pass
+open('$BAD_UDP','w').write(str(n))
+" &
+  BAD_LISTENER=$!
+  sleep 0.5
+  "$CONTROLLER_SVC" --config "$BAD_CFG" \
+    --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
+    --control-port "$((TEST_CONTROLLER_PORT + 20))" \
+    > "$BAD_LOG" 2>&1 &
+  BAD_PID=$!
+  sleep 2
+  # Ask it to fire. A controller that resolved its actuators would start PWM here.
+  printf 'FIRE_START\n' | timeout 2 nc 127.0.0.1 "$((TEST_CONTROLLER_PORT + 20))" >/dev/null 2>&1 || true
+  sleep 2
+  kill "$BAD_PID" 2>/dev/null || true
+  wait "$BAD_LISTENER" 2>/dev/null || true
+  BAD_PWM_COUNT="$(cat "$BAD_UDP" 2>/dev/null || echo 0)"
+  if command grep -aq 'no \[actuator_roles\] entry is assigned "pwm_fuel"' "$BAD_LOG" &&
+     command grep -aq "PWM fire gate DISABLED" "$BAD_LOG"; then
+    echo "  ✅ unassigned PWM output refused with a reason"
+  else
+    echo "  ❌ controller did not refuse an unassigned PWM output. Log:"
+    tail -20 "$BAD_LOG"
+    UDP_CHECK_FAILED=1
+  fi
+  if [ "$BAD_PWM_COUNT" = "0" ]; then
+    echo "  ✅ no PWM emitted while unresolved"
+  else
+    echo "  ❌ controller emitted $BAD_PWM_COUNT PWM packet(s) despite an unassigned output"
+    UDP_CHECK_FAILED=1
+  fi
+  rm -f "$BAD_CFG" "$BAD_UDP"
 fi
 
 # ── Start Controller Service ─────────────────────────────────────────────────
@@ -631,7 +830,10 @@ if [ -n "$INTEGRATION_SENSOR_HZ" ]; then
   SIM_RATE_FLAG="--sensor-hz $INTEGRATION_SENSOR_HZ"
 fi
 # shellcheck disable=SC2086  # intentional word splitting of the flags
-"$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --skip-startup $SIM_RATE_FLAG --stats-file "$SIM_STATS_FILE" $INTEGRATION_TIME_FLAGS > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
+# --allow-ip-fallback: this test's config keeps 192.168.2.x board IPs and deliberately relies on the
+# sim's loopback rebind (127.0.0.{2+idx}); the flag is REQUIRED here since that fallback now aborts by
+# default (so a hardware config can't silently emit synthetic data tagged as real boards).
+"$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --skip-startup --allow-ip-fallback $SIM_RATE_FLAG --stats-file "$SIM_STATS_FILE" $INTEGRATION_TIME_FLAGS > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
 SIM_PID=$!
 PIDS+=($SIM_PID)
 sleep 2
@@ -672,10 +874,14 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 export TEST_DAQ_UDP_PORT TEST_STARTUP_LISTEN_PORT BOARD_STARTUP_SIM="$REPO_ROOT/sim/board_startup_sim.py" PYTHON_BIN
 # Test 15 (sample conservation) reads the sim's live ground-truth stats file
 export INTEGRATION_SIM_STATS="$SIM_STATS_FILE"
+# cal_values reads the factory PT coeffs the service loaded (the test cwd is diablo_server/backend).
+export INTEGRATION_CAL_DIR="$REPO_ROOT/scripts/calibration/calibrations"
 # Must match the points_per_second sed above — arms the envelope cap/floor asserts
 # (envelope mode only; throttle ignores points_per_second)
 if [ "$INTEGRATION_GUI_MODE" = "envelope" ]; then
   export INTEGRATION_GUI_PPS=4
+  # The WS test reads [fire] from the config the stack is actually running, not a baked-in number.
+  export INTEGRATION_CONFIG="$TEST_CONFIG"
 fi
 export INTEGRATION_SKIP_STARTUP_E2E
 # Test 9 (SELF_TEST E2E): log every SELF_TEST.* SENSOR_UPDATE on the WS client
@@ -688,6 +894,7 @@ export INTEGRATION_SKIP_STARTUP_E2E
   --seq-log "$REPO_ROOT/.tmp/integration_sequencer_$$.log" \
   --backend-log "$REPO_ROOT/.tmp/integration_backend_$$.log" \
   --controller-log "$REPO_ROOT/.tmp/integration_controller_$$.log" \
+  --controller-port "$TEST_CONTROLLER_PORT" \
   --backend="$BACKEND" $SEQ_FLAG $CTRL_FLAG $VERBOSE_FLAG $ONLY_FLAG)
 WS_TEST_EXIT=$?
 

@@ -57,12 +57,31 @@ UDPSocket::UDPSocket(const std::string& bind_address, uint16_t bind_port)
     fcntl(socket_fd_, F_SETFL, flags | O_NONBLOCK);
 }
 
-UDPSocket::UDPSocket(const std::string& remote_address, uint16_t remote_port, bool is_sender)
+UDPSocket::UDPSocket(const std::string& remote_address, uint16_t remote_port, bool is_sender,
+                     const std::string& bind_address)
     : socket_fd_(-1), is_bound_(false), remote_address_(remote_address), remote_port_(remote_port) {
     socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd_ < 0) {
         last_error_ = "Failed to create UDP socket: " + std::string(strerror(errno));
         return;
+    }
+
+    // Pin the source address, and with it the egress interface. Bound on an ephemeral port: we
+    // are choosing a NIC, not a port. Non-fatal — an unpinned send still reaches a single-homed
+    // host — but the failure must not be silent.
+    if (!bind_address.empty() && bind_address != "0.0.0.0") {
+        struct sockaddr_in local;
+        memset(&local, 0, sizeof(local));
+        local.sin_family = AF_INET;
+        local.sin_port = 0;
+        if (inet_aton(bind_address.c_str(), &local.sin_addr) == 0) {
+            std::cerr << "[UDPSocket] Warning: bad bind address '" << bind_address << "'"
+                      << std::endl;
+        } else if (bind(socket_fd_, reinterpret_cast<struct sockaddr*>(&local), sizeof(local)) <
+                   0) {
+            std::cerr << "[UDPSocket] Warning: failed to bind sender to " << bind_address << ": "
+                      << strerror(errno) << std::endl;
+        }
     }
 
     // Set socket to non-blocking

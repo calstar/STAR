@@ -58,7 +58,11 @@ export function PRNode({ id, data, selected }: NodeProps) {
     <Frame nodeId={id} w={W} h={H} rotation={rotation} extra={<>
         <Port position={turn(Position.Left, rotation)}  id="l" />
         <Port position={turn(Position.Right, rotation)} id="r" />
-        {domeLoaded && <Port position={turn(Position.Top, rotation)} id="dome" />}
+        {/* The top is the dome when the regulator has one; otherwise it is a
+            plain third port, as upstream drawings connect it. */}
+        {domeLoaded
+          ? <Port position={turn(Position.Top, rotation)} id="dome" />
+          : <Port position={turn(Position.Top, rotation)} id="t" />}
         <span style={{ ...lettering, ...corner('a'), color: '#e2e8f0' }}>PR</span>
         {domeLoaded && (
           <span style={{ ...lettering, ...corner('b'), fontSize: 5.5, color: '#f59e0b' }}>DOME</span>
@@ -79,6 +83,7 @@ export function PRNode({ id, data, selected }: NodeProps) {
           fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
         <line x1="16" y1="44" x2="44" y2="16" stroke={stroke} strokeWidth={1.5} />
         <polygon points="44,16 36,18 42,24" fill={stroke} />
+        {!domeLoaded && <line x1="30" y1="0" x2="30" y2="8" stroke={stroke} strokeWidth={1.5} />}
         {domeLoaded && (
           <>
             {/* the dome, and the stem tying it to the seat */}

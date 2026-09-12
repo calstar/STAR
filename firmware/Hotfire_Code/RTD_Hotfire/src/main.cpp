@@ -12,10 +12,10 @@
 #include "main.h"
 
 #include <Arduino.h>
-#include <DAQv2-Comms.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -47,14 +47,14 @@ ADS126X_ASSERT_FILTER_RATE(FILTER, DATA_RATE);
 static ADS126X ads126x;    // ADC1 — connectors 1 & 2
 static ADS126X ads126x_2;  // ADC2 — connectors 3 & 4
 SPIClass ADC_SPI(HSPI);
-std::vector<Diablo::SensorDataChunkCollection> dataChunks;
+std::vector<daq::SensorDataChunkCollection> dataChunks;
 
 static SensorHotfire::CoreState coreState;
 static SensorHotfire::Config coreConfig;
 
 static unsigned long g_last_sensor_packet_log_ms = 0;
 
-bool g_sensor_hotfire_serial = true;
+bool g_verbose = true;
 
 // Helper: get the correct ADS126X instance and DRDY pin for a connector
 static ADS126X& adc_for_connector(uint8_t connector_id) {
@@ -88,7 +88,7 @@ static void collect_chunk_impl() {
         return;
     const uint8_t* active_ids = coreState.stored_config.sensor_ids;
 
-    Diablo::SensorDataChunkCollection chunk(millis(), active_count);
+    daq::SensorDataChunkCollection chunk(millis(), active_count);
     for (uint8_t i = 0; i < active_count; i++) {
         const uint8_t conn = active_ids[i];
         set_connector_rtd(conn);
@@ -117,37 +117,37 @@ static void send_chunks_to_impl(IPAddress dest_ip, int dest_port,
         return;
     uint8_t packetBuffer[SENSOR_HOTFIRE_MAX_PACKET_SIZE];
     const uint8_t num_sensors = dataChunks[0].num_sensors;
-    size_t packetSize = Diablo::create_sensor_data_packet(
+    size_t packetSize = daq::create_sensor_data_packet(
         dataChunks, num_sensors, millis(), packetBuffer, sizeof(packetBuffer));
     if (packetSize == 0)
         return;
     coreState.udp.beginPacket(dest_ip, dest_port);
     coreState.udp.write(packetBuffer, packetSize);
     coreState.udp.endPacket();
-    SENSOR_HOTFIRE_PRINT("Sent: sensor_data to ");
-    SENSOR_HOTFIRE_PRINT(dest_ip);
-    SENSOR_HOTFIRE_PRINT(":");
-    SENSOR_HOTFIRE_PRINTLN(dest_port);
+    HF_VERBOSE("Sent: sensor_data to ");
+    HF_VERBOSE(dest_ip);
+    HF_VERBOSE(":");
+    HF_VERBOSELN(dest_port);
 
     unsigned long now = millis();
     if (now - g_last_sensor_packet_log_ms >= 1000) {
         g_last_sensor_packet_log_ms = now;
-        SENSOR_HOTFIRE_PRINTLN("SENSOR_DATA contents:");
+        HF_VERBOSELN("SENSOR_DATA contents:");
         for (size_t i = 0; i < dataChunks.size(); ++i) {
             const auto& chunk = dataChunks[i];
-            SENSOR_HOTFIRE_PRINT("  chunk ");
-            SENSOR_HOTFIRE_PRINT(i);
-            SENSOR_HOTFIRE_PRINT(" ts=");
-            SENSOR_HOTFIRE_PRINT(chunk.timestamp);
-            SENSOR_HOTFIRE_PRINT(" :");
+            HF_VERBOSE("  chunk ");
+            HF_VERBOSE(i);
+            HF_VERBOSE(" ts=");
+            HF_VERBOSE(chunk.timestamp);
+            HF_VERBOSE(" :");
             for (const auto& dp : chunk.datapoints) {
-                SENSOR_HOTFIRE_PRINT(" (id=");
-                SENSOR_HOTFIRE_PRINT(static_cast<unsigned>(dp.sensor_id));
-                SENSOR_HOTFIRE_PRINT(", data=");
-                SENSOR_HOTFIRE_PRINT(dp.data);
-                SENSOR_HOTFIRE_PRINT(")");
+                HF_VERBOSE(" (id=");
+                HF_VERBOSE(static_cast<unsigned>(dp.sensor_id));
+                HF_VERBOSE(", data=");
+                HF_VERBOSE(dp.data);
+                HF_VERBOSE(")");
             }
-            SENSOR_HOTFIRE_PRINTLN_();
+            HF_VERBOSELN_();
         }
     }
 
@@ -155,10 +155,10 @@ static void send_chunks_to_impl(IPAddress dest_ip, int dest_port,
         coreState.udp.beginPacket(abort_controller_ip, abort_controller_port);
         coreState.udp.write(packetBuffer, packetSize);
         coreState.udp.endPacket();
-        SENSOR_HOTFIRE_PRINT("Sent: sensor_data to ");
-        SENSOR_HOTFIRE_PRINT(abort_controller_ip);
-        SENSOR_HOTFIRE_PRINT(":");
-        SENSOR_HOTFIRE_PRINTLN(abort_controller_port);
+        HF_VERBOSE("Sent: sensor_data to ");
+        HF_VERBOSE(abort_controller_ip);
+        HF_VERBOSE(":");
+        HF_VERBOSELN(abort_controller_port);
     }
     dataChunks.clear();
 }
@@ -242,16 +242,16 @@ static void send_chunks_to_cb(void*, IPAddress dest_ip, int dest_port,
 
 static void run_self_test_cb(void*,
                              const SensorHotfire::StoredSensorConfig& cfg,
-                             std::vector<Diablo::SelfTestResult>& results_out) {
+                             std::vector<daq::SelfTestResult>& results_out) {
     // 1. ADC self-test (TDAC internal) for both ADCs
     auto adc1_result = SensorSelfTest::run_adc_self_test(
         ads126x, Pins.ADC_DRDY_1, ADS126X_REF_NEG_VSS, ADS126X_REF_POS_INT);
-    results_out.push_back(Diablo::SelfTestResult{
+    results_out.push_back(daq::SelfTestResult{
         0u, static_cast<uint8_t>(adc1_result.passed ? 1 : 0)});
 
     auto adc2_result = SensorSelfTest::run_adc_self_test(
         ads126x_2, Pins.ADC_DRDY_2, ADS126X_REF_NEG_VSS, ADS126X_REF_POS_INT);
-    results_out.push_back(Diablo::SelfTestResult{
+    results_out.push_back(daq::SelfTestResult{
         100u, static_cast<uint8_t>(adc2_result.passed ? 1 : 0)});
 
     // 2. Sensor bias continuity test
@@ -273,7 +273,7 @@ static void run_self_test_cb(void*,
                                                      static_cast<uint8_t>(ch2));
         uint8_t pass =
             (bias.result == SensorSelfTest::BiasResult::CONNECTED) ? 1u : 0u;
-        results_out.push_back(Diablo::SelfTestResult{id, pass});
+        results_out.push_back(daq::SelfTestResult{id, pass});
     }
 
     SensorSelfTest::sensor_bias_disable(ads126x);

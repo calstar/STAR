@@ -61,7 +61,7 @@ function parseCalibratedSensorPayload(
   entity: string,
   fieldName: string = 'pressure_psi',
   rawFields: string[] = ['raw_adc_counts', 'raw_adc'],
-  /** HP PT board (slot 2, board_id 22): wire raw is unsigned 0..2³¹ scale; LP PT uses signed ADS1262 codes. */
+  /** HP 4–20 mA PT board (config-declared): wire raw is unsigned 0..2³¹ scale; LP PT uses signed ADS1262 codes. */
   rawAdcUnsigned: boolean = false,
 ): ParsedSensorData[] {
   // CalibratedPTMessage (and TC/RTD/LC/ACT siblings): u64(0) ts + u8(8) ch + pad3(9-11) + float(12)
@@ -124,7 +124,10 @@ export function parseRawLCMessage(
 export function parseElodinPacket(
   packetId: [number, number],
   payload: Buffer,
-  entityMaps?: EntityMaps
+  /** Board-numbers (board_id % 10) that are high-pressure 4-20 mA PT boards, from config
+   *  (see sensor-config.hpBoardNumbers). Selects unsigned-vs-signed raw-ADC interpretation
+   *  per PT board. Omitted or empty means no board uses the current-loop path. */
+  hpBoardNumbers?: Set<number>
 ): ParsedSensorData[] {
   const [high, low] = packetId;
 
@@ -145,12 +148,12 @@ export function parseElodinPacket(
   };
 
   // ── PT: [0x20, ...] ──────────────────────────────────────────────────────
-  // Board slot 2 (board_id …22) = HP 4–20 mA PTs: unsigned ADC full-scale to 2³¹ (see FSW convert_hp_pt_to_pressure).
-  // Other PT boards: signed ADS1262-style codes.
+  // HP 4–20 mA PT boards (config-declared, see hpBoardNumbers): unsigned ADC full-scale to 2³¹
+  // (see FSW convert_hp_pt_to_pressure). Other PT boards: signed ADS1262-style codes.
   if (high === 0x20 && low >= 0x01) {
     const { boardNumber, channel, isRaw } = decodeLow(low);
     if (channel >= 1 && channel <= 10) {
-      const hpPtSlot = boardNumber === 2;
+      const hpPtSlot = hpBoardNumbers?.has(boardNumber) ?? false;
       if (isRaw) {
         const r = parseRawSensorPayload(
           payload,

@@ -18,16 +18,21 @@ const groupChannelEma = new Map<string, Map<string, number>>();
 const groupChannelLastWall = new Map<string, Map<string, number>>();
 let lastPrune = 0;
 
-export type BoardScanGroupId = 'pt1' | 'pt2' | 'tc' | 'rtd' | 'lc' | 'act' | 'enc';
+/**
+ * A board-scan group key. PT boards get a per-board key `pt<n>` (n = board_number = board_id % 10),
+ * so any number of PT boards is supported; other sensor types are aggregated per-type.
+ */
+export type BoardScanGroupId = string;
 
 /**
  * Calibrated Elodin packets carry raw_adc_counts on *Cal entities (e.g. PT1_Cal.CH1),
  * not PT1.CH1. Raw-only packets use PT1.CH1. Both must count toward board scan rate.
- * Exported for the integration test's per-group sample-conservation breakdown.
+ * PT boards map to a per-board group `pt<n>` (n from the entity prefix) so a 3rd/Nth PT
+ * board is grouped like any other. Exported for the integration test's per-group breakdown.
  */
 export function mapEntityToGroup(entity: string): BoardScanGroupId | null {
-  if (/^PT1(_Cal)?\.CH/.test(entity)) return 'pt1';
-  if (/^PT2(_Cal)?\.CH/.test(entity)) return 'pt2';
+  const pt = entity.match(/^PT(\d+)(?:_Cal)?\.CH/);
+  if (pt) return `pt${pt[1]}`;
   if (/^TC\d+(_Cal)?\.CH/.test(entity)) return 'tc';
   if (/^RTD\d+(_Cal)?\.CH/.test(entity)) return 'rtd';
   if (/^LC\d+(_Cal)?\.CH/.test(entity)) return 'lc';
@@ -140,15 +145,15 @@ function averageGroupHz(group: BoardScanGroupId): number {
   return sum / ema.size;
 }
 
-/** Snapshot for GET /api/debug — Hz per board group from relay ingest (pre-throttle). */
-export function getBoardScanRateHz(): Record<BoardScanGroupId, number> {
-  return {
-    pt1: averageGroupHz('pt1'),
-    pt2: averageGroupHz('pt2'),
-    tc: averageGroupHz('tc'),
-    rtd: averageGroupHz('rtd'),
-    lc: averageGroupHz('lc'),
-    act: averageGroupHz('act'),
-    enc: averageGroupHz('enc'),
-  };
+/**
+ * Snapshot for GET /api/debug — Hz per board group from relay ingest (pre-throttle).
+ * Dynamic: one entry per group that has seen data — `pt<n>` per PT board plus the
+ * aggregated `tc`/`rtd`/`lc`/`act`/`enc`. Consumers should default a missing group to 0.
+ */
+export function getBoardScanRateHz(): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const group of groupChannelEma.keys()) {
+    out[group] = averageGroupHz(group);
+  }
+  return out;
 }

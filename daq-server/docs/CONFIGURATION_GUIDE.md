@@ -1,145 +1,175 @@
 # Configuration Guide
 
-## Overview
+How configuration is stored, edited, and applied on the DAQ server.
 
-The sensor system uses split configurations for Flight DAQ and Ground Systems DAQ to handle different operational modes.
+**The rule: an edit is a draft. Drafts apply when a session starts.** There are two deliberate
+exceptions, both listed below. If you are reading this because something you changed did not take
+effect, the answer is almost certainly "start a session".
 
-## Configuration Files
+---
 
-### `config.toml`
-Base configuration with common settings. Not used directly - serves as reference.
+## The three things called "config"
 
-### `config_flight_daq.toml`
-**Flight DAQ Configuration**
-- **Network**: `192.168.3.0/24` (IP range 100-150)
-- **Port**: `5005`
-- **Handles**: Flight sensors and actuators
-- **Use Case**: Flight operations
-- **During Hotfire**: Everything connects to ground DAQ instead
+| | What it is | Who writes it | Tracked in git |
+|---|---|---|---|
+| `config/profiles/<name>/config.toml` | **The draft.** What the config editor reads and writes. | The editor, via `POST /api/config` | Yes |
+| `config/config.toml` | **The deployed artifact.** What the C++ services actually read. Generated. | `deployActiveProfile()` only | No (gitignored) |
+| `config/.active_profile` | One line naming the active profile. Machine-specific. | Profile switch | No (gitignored) |
 
-**Flight Sensors:**
-- PT_HP, PT_LP (Board 0)
-- PT_FUP, PT_FDP (Board 1)
-- PT_OUP, PT_ODP (Board 2)
-- RTDs, TCs, LCs, Actuators (to be added)
+The three state-machine CSVs (`state_machine_actuators.csv`,
+`state_machine_actuator_delays.csv`, `state_transitions.csv`) live beside the profile's
+`config.toml` and deploy with it. They are profile-owned; the copies in `config/` are generated
+the same way.
 
-### `config_ground_daq.toml`
-**Ground Systems DAQ Configuration**
-- **Network**: `192.168.2.0/24` (IP range 100-150)
-- **Port**: `5005`
-- **Handles**: GSE sensors and during hotfire (all sensors)
-- **Use Case**: Development, testing, hotfire
-- **During Flight**: Flight sensors/actuators go to flight DAQ, everything else stays here
+Editing `config/config.toml` by hand is pointless — the next deploy overwrites it. Edit the
+profile.
 
-**GSE Sensors:**
-- PT_OF (Board 10 - LOX Fill)
-- PT_FF (Board 11 - Fuel Fill)
-- PT_HPF, PT_MPF, PT_LPF (Board 12 - Pressurant Fill)
-- RTDs, TCs, LCs (to be added)
+## The one apply point
 
-## Usage
+`deployActiveProfile()` (`backend/src/routes/config-profiles.ts`) copies the active profile's
+`config.toml` **and all its CSVs** into `config/`. It is all-or-nothing: every target is
+snapshotted first and rolled back together if the new config does not parse, because a
+half-applied deploy — new roles, old state table — is worse than no deploy.
 
-### Ground DAQ (Development/Hotfire)
-```bash
-# Start Ground DAQ
-./build/bin/daq_bridge config/config_ground_daq.toml
-```
+It runs in two situations:
 
-### Flight DAQ (Flight Operations)
-```bash
-# Start Flight DAQ
-./build/bin/daq_bridge config/config_flight_daq.toml
-```
+1. **At session start** (`session-manager.ts`), immediately before the pipeline units are
+   started. This is the apply point that matters. If the deploy fails, **the session start fails**
+   and nothing is started — a run on stale config with a green "session active" light is the worst
+   available outcome.
+2. **On save while idle.** With no session running there is nothing to protect, so a save deploys
+   straight away. Convenience only; the model is unchanged.
 
-### Hotfire Mode
-During hotfire, set `[hotfire].enabled = true` in `config_ground_daq.toml` to route all sensors (including flight sensors) to ground DAQ.
+During a session every write path degrades to a draft:
 
-## Operational Modes
+- `POST /api/config` and `/api/config/import` → write the profile, skip the deploy
+- `POST /api/state-csv` → same
+- `POST /api/config/profiles/switch` → **409**, you cannot swap rigs mid-run
 
-### Development Mode
-- Use: `config_ground_daq.toml`
-- All GSE sensors connect to ground DAQ
-- Flight sensors can be tested here too
+The editor shows a freeze banner and a count of un-applied changes while this is in effect.
 
-### Hotfire Mode
-- Use: `config_ground_daq.toml` with `hotfire.enabled = true`
-- **ALL sensors** (including flight sensors) connect to ground DAQ
-- Single point of data collection for hotfire testing
+## Why the services can trust it
 
-### Flight Mode
-- Use: `config_flight_daq.toml` for flight sensors/actuators
-- Use: `config_ground_daq.toml` for GSE sensors
-- **Split operation**: Flight sensors on flight DAQ, GSE sensors on ground DAQ
+The session-gated pipeline units — `sensor-elodin`, `sensor-daq`, `sensor-calibration`,
+`sensor-controller`, `sensor-actuator` — are stopped and started by the session. Each reads
+`config.toml` **once at startup** and holds it for the life of the run. There is no reload verb
+and no file watching; the sequencer's `RELOAD_CONFIG` was removed precisely because a hot-reload
+path in the safety-critical services is machinery that can only surprise you.
 
-## Network Configuration
+`service-controller.ts` also snapshots the config each run was started with next to its Elodin
+database (`<dbDir>.toml`), so a recorded run can always be read back with the config it was
+produced under.
 
-### Flight DAQ Network
-```
-Base IP: 192.168.3.0
-Range: 192.168.3.100-150
-Port: 5005
-```
+The **backend** is different: it is always-on and never restarts, so it must notice a deploy.
+It does that with a cache invalidated in `deployActiveProfile()` (`readDeployedConfig()` in
+`routes/config.ts`), plus a `CONFIG_UPDATED` broadcast that tells browsers to refetch. Same rule,
+different mechanism, because the constraint is different.
 
-### Ground DAQ Network
-```
-Base IP: 192.168.2.0
-Range: 192.168.2.100-150
-Port: 5005
-```
+---
 
-## Sensor Assignments
+## Exception 1 — board config broadcast
 
-### Flight System (Flight DAQ)
-| Board ID | Sensors | Channels | Purpose |
-|----------|---------|----------|---------|
-| 0 | PT_HP, PT_LP | 0, 1 | High pressure + COPV |
-| 1 | PT_FUP, PT_FDP | 0, 1 | Fuel upstream/downstream |
-| 2 | PT_OUP, PT_ODP | 0, 1 | Oxidizer upstream/downstream |
+`config_broadcast_service` is **always-on, not session-gated, and re-reads `config.toml` on every
+broadcast cycle** (~1 Hz). Board-level settings therefore reach hardware without a session:
 
-### GSE System (Ground DAQ)
-| Board ID | Sensors | Channels | Component |
-|----------|---------|----------|-----------|
-| 10 | PT_OF | 0 | LOX Fill |
-| 11 | PT_FF | 0 | Fuel Fill |
-| 12 | PT_HPF, PT_MPF, PT_LPF | 0, 1, 2 | Pressurant Fill |
+- `[boards.*]` — `enabled`, `active_connectors`, `voltage_reference`, `necessary_for_abort`,
+  `designated_survivor`, `enable_serial_printing`
+- `[actuator_roles]` and the Vent / Engine-Abort columns of `state_machine_actuators.csv`
+- **`[abort_pts]` — the autonomous overpressure trip thresholds**
 
-## Configuration Structure
+This is intentional. It is also worth understanding rather than assuming: the session freeze is
+the only thing that currently stops someone changing an abort trip mid-run, and that is a
+property of the freeze, not a decision the broadcaster makes.
 
-Each config file contains:
+One correction to an earlier version of this page, which said the boards *act on* `[abort_pts]`
+live. They do not, today. `abort_pt_locations` is only read in the actuator board's
+`NoConnectionAbort` and `PTAbort` states (`Actuator_Hotfire/src/main.cpp:541-571`), and the only
+entry to that chain is heartbeat-loss detection at `:838`, gated on `ENABLE_ALL_STATE_TRANSITIONS`
+— which is `false` in `hotfire_config.h:33-34` with no override anywhere in `firmware/`. The
+thresholds reach the boards; nothing consumes them. See `docs/IMPROVEMENTS.md`.
 
-```toml
-[system]
-mode = "FLIGHT" or "GROUND"
-state = "FLIGHT" or "GSE"
+The related endpoint `POST /api/board-log-mode` rides this exception — it surgically edits one
+field so verbosity can be raised *during* the misbehaviour it is meant to diagnose. It writes both
+`config.toml` (so the board gets it now) and the active profile (so the next deploy does not
+silently revert it).
 
-[system.network]
-base_ip = "192.168.X.0"
-ip_range_start = 100
-ip_range_end = 150
-bind_address = "0.0.0.0"
-bind_port = 5005
+## Exception 2 — calibration
 
-[database]
-db_host = "127.0.0.1"
-db_port = 2240
+Calibration is not in `config.toml` at all. The live store is
+`scripts/calibration/calibrations/cubic_calibration.json`, written only by `calibration_service`,
+with named snapshots under `profiles/` and a `.active` pointer.
 
-[sensors.flight.pt] or [sensors.gse.pt]
-PT_XXX = { board_id = X, channel = Y, max_psi = Z }
+Capture, zero, clear and whole-profile load all apply **immediately**, mid-session, by design —
+the capture-and-verify loop is the run. Loading a calibration profile publishes command 7 over
+Elodin and the service re-reads its store live.
 
-[hotfire]  # Ground DAQ only
-enabled = false
-include_flight_sensors = true
-```
+The config.toml keys calibration *does* read (`calibration_model_<board>`,
+`calibration_full_scale_<board>`, `calibration_sense_resistor_<board>`, `[adc]`,
+`[calibration.*]`) are ordinary boot-time config and follow the normal rule.
 
-## Switching Between Modes
+---
 
-1. **Development**: Use `config_ground_daq.toml`
-2. **Hotfire**: Use `config_ground_daq.toml` with `hotfire.enabled = true`
-3. **Flight**: Use `config_flight_daq.toml` for flight sensors, `config_ground_daq.toml` for GSE
+## Which NIC board traffic uses
 
-## Next Steps
+The DAQ shares the apps box with the Docker stack and the site LAN, so "the interface the kernel
+picks" is no longer the same thing as "the board LAN". Every board-facing socket therefore binds
+its **local address** to the NIC holding the board subnet, resolved once at startup by
+`fsw::net::resolveDaqBindAddress()` (`lib/include/net/DaqInterface.hpp`). Each service logs the
+result in one line — `board traffic pinned to eth2 192.168.2.20 (auto)`.
 
-- Add RTD, TC, LC sensor assignments
-- Add actuator assignments
-- Implement hotfire mode switching
-- Add validation for sensor assignments
+Resolution order:
+
+1. **`[network].bind_ip`**, if set to anything other than `0.0.0.0`. If that address is not on the
+   host, **the service refuses to start** — an explicit pin that silently degraded to `0.0.0.0`
+   would be the original bug wearing a config key.
+2. Otherwise the interface whose subnet contains the configured `[boards.*].ip` addresses. This is
+   the normal path: no config change is needed on the rig, and it is how a sim run resolves too
+   (its boards are `127.0.0.x`, matched by loopback).
+3. If **more than one** interface can reach the board subnet, the service refuses to start and
+   names the candidates. Ambiguity is the defect; picking one is how this went wrong before.
+4. If **none** can, it binds `0.0.0.0` with a warning. That is a dev laptop or CI, where the board
+   subnet does not exist and hard-failing would break `./dev.sh`.
+
+Note the mechanism is a source-address bind, not `SO_BINDTODEVICE` — the services run as
+unprivileged `systemd --user` units and `SO_BINDTODEVICE` needs `CAP_NET_RAW`.
+
+Broadcast destinations are subnet-directed (`[server_heartbeat].broadcast_ip`, shipped as
+`192.168.2.255`) rather than the limited `255.255.255.255`, for the same reason: a limited
+broadcast is the one destination that does not resolve to a single route. The sequencer's ABORT
+broadcast reads that key too, so a rig that moves the broadcast address moves the abort with it.
+
+`[discovery].network_interface` is **not** this knob — `BoardDiscovery` prints it and never
+applies it to a socket.
+
+## What is not config
+
+These are runtime commands, not configuration, and are unaffected by any of the above: state
+transitions, manual actuator overrides, debug mode, extend fire, countdown target, session
+start/stop/extend, and control unlock. They go over the WebSocket as `SEND_COMMAND` and are gated
+by operator arming, not by the config freeze.
+
+## Simulated runs
+
+Simulated sessions do **not** deploy the profile. The sim pipeline reads `config/sim_config.toml`,
+regenerated at session start from the frozen `config_base.toml` with `192.168.2.` rewritten to
+`127.0.0.` So profile edits are invisible to sim runs.
+
+This is deliberate rather than an oversight: the point of a sim run is that it behaves identically
+on every box, which a per-box active profile would destroy. The cost is that "config applies at
+session start" is not true on the sim path, so the session page says so when Simulated is selected.
+If you are testing config behaviour, test it on a live-mode session or you will conclude the model
+is broken.
+
+## A trap on dev boxes
+
+Session control is off unless `SESSION_SERVICE_MODE=systemd`, which is set only in
+`deploy/systemd/sensor-backend.service`. On the tmux dev stack and on laptops the mode is `off`,
+`sessionActive` is permanently `false`, and **every save deploys immediately** — the freeze is
+inert there. Do not verify freeze behaviour on the dev stack and conclude it works.
+
+## Related
+
+- `docs/CONTROLLER_STACK_AND_DB_WRITES.md` — what each pipeline service does with the config
+- `docs/SENSOR_ASSIGNMENT_SYSTEM.md` — **aspirational, not shipped**; the real path is the static
+  `[boards.*]` table broadcast by `config_broadcast`
+- `docs/IMPROVEMENTS.md` — known gaps

@@ -2,14 +2,16 @@
 
 import { useLocation } from 'react-router-dom';
 import TopBar from './TopBar';
+import TabBar from './TabBar';
+import { isPopupWindow } from '@/lib/is-popup';
 
-// Routes where the full desktop TopBar should be suppressed (they render their own compact header)
-const SUPPRESS_TOPBAR_PATHS = ['/window/mobile-gui', '/window/livestream'];
+// Routes that render their own compact header and no tab bar (full-bleed views).
+const SUPPRESS_TOPBAR_PATHS = ['/mobile', '/livestream'];
 
 export default function TopBarWrapper() {
   const { pathname } = useLocation();
   const suppress = SUPPRESS_TOPBAR_PATHS.some((p) => pathname === p || pathname?.startsWith(p + '/'));
-  const isIpad = pathname === '/window/ipad' || pathname?.startsWith('/window/ipad/');
+  const isIpad = pathname === '/ipad' || pathname?.startsWith('/ipad/');
 
   if (suppress) return null;
 
@@ -23,5 +25,13 @@ export default function TopBarWrapper() {
     );
   }
 
-  return <TopBar />;
+  // Popups are dedicated single-view windows — keep the TopBar, drop the tab bar.
+  const showTabs = !isPopupWindow();
+
+  return (
+    <>
+      <TopBar />
+      {showTabs && <TabBar />}
+    </>
+  );
 }

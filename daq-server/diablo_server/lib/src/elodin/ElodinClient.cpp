@@ -1,5 +1,6 @@
 #include "elodin/ElodinClient.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 
@@ -15,10 +16,21 @@ ElodinClient::~ElodinClient() {
 }
 
 bool ElodinClient::connect(const std::string& host, uint16_t port) {
-    disconnect();
+    std::lock_guard<std::mutex> lock(publish_mutex_);
+    return connect_locked(host, port);
+}
+
+bool ElodinClient::connect_locked(const std::string& host, uint16_t port) {
+    disconnect_locked();
 
     std::cout << "[ElodinClient] Connecting to Elodin database at " << host << ":" << port << "..."
               << std::endl;
+
+    // Remember the target BEFORE attempting, not after succeeding. reconnect() keys off these, so
+    // recording them only on success meant a service whose FIRST connect failed could never retry
+    // ("No previous connection to reconnect to") and stayed dead for the life of the process.
+    last_host_ = host;
+    last_port_ = port;
 
     if (!socket_->connect(host, port)) {
         last_error_ = socket_->last_error();
@@ -26,24 +38,28 @@ bool ElodinClient::connect(const std::string& host, uint16_t port) {
         return false;
     }
 
-    last_host_ = host;
-    last_port_ = port;
     std::cout << "[ElodinClient] ✅ Connected to Elodin database at " << host << ":" << port
               << std::endl;
     return true;
 }
 
 bool ElodinClient::reconnect() {
+    std::lock_guard<std::mutex> lock(publish_mutex_);
     if (last_host_.empty() || last_port_ == 0) {
         last_error_ = "No previous connection to reconnect to";
         return false;
     }
     std::cout << "[ElodinClient] Attempting reconnect to " << last_host_ << ":" << last_port_
               << "..." << std::endl;
-    return connect(last_host_, last_port_);
+    return connect_locked(last_host_, last_port_);
 }
 
 void ElodinClient::disconnect() {
+    std::lock_guard<std::mutex> lock(publish_mutex_);
+    disconnect_locked();
+}
+
+void ElodinClient::disconnect_locked() {
     if (socket_ && socket_->is_connected()) {
         std::cout << "[ElodinClient] Disconnecting from Elodin database..." << std::endl;
         socket_->flush();
@@ -76,48 +92,9 @@ void ElodinClient::set_recv_timeout_ms(int timeout_ms) {
         socket_->set_recv_timeout_ms(timeout_ms);
 }
 
-bool ElodinClient::subscribe_stream() {
-    // VTableStream packet: 8-byte header + 2-byte Postcard payload ([hi, lo])
-    // packetId for VTableStream = FNV-1a("VTableStream") = [0x11, 0x0d]
-    std::array<uint8_t, 2> msgstream_id = {0x11, 0x0d};
-
-    auto subscribe = [&](uint8_t hi, uint8_t lo) {
-        // Correct format: 8-byte header + 2-byte payload = 10 bytes total
-        // len field = payload_bytes(2) + header_after_len(4) = 6
-        std::vector<uint8_t> data(10, 0x00);
-        uint32_t len = 2 + 4;  // 2 payload bytes + 4 (ty + packetId + requestId)
-        std::memcpy(data.data(), &len, 4);
-        data[4] = static_cast<uint8_t>(fsw::elodin::PacketType::MSG);
-        data[5] = msgstream_id[0];
-        data[6] = msgstream_id[1];
-        data[7] = 0x00;
-        // Postcard payload: just the 2 ID bytes, no extra padding
-        data[8] = hi;
-        data[9] = lo;
-
-        send_msg(msgstream_id, data);
-    };
-
-    // Subscribe to RAW sensor VTables using board-namespaced 32-slot blocks.
-    // Each board gets a 32-slot block: raw channels at (board_number-1)*0x20 + 1..10
-    // Subscribe to boards 1-8 for each sensor type to cover all possible boards.
-    const uint8_t sensor_types[] = {0x20, 0x21, 0x22, 0x23, 0x24, 0x30};
-    for (uint8_t type_hi : sensor_types) {
-        for (int bn = 1; bn <= 8; ++bn) {
-            uint8_t base = static_cast<uint8_t>((bn - 1) * 0x20);
-            for (uint8_t ch = 1; ch <= 10; ++ch)
-                subscribe(type_hi, static_cast<uint8_t>(base + ch));
-        }
-    }
-
-    // Calibration commands from backend GUI -> calibration_service.
-    subscribe(0x46, 0x00);
-
-    return true;
-}
-
 bool ElodinClient::subscribe_tables(const std::vector<std::pair<uint8_t, uint8_t>>& table_ids) {
     std::array<uint8_t, 2> msgstream_id = {0x11, 0x0d};
+    bool ok = true;
 
     for (const auto& [hi, lo] : table_ids) {
         std::vector<uint8_t> data(10, 0x00);
@@ -129,10 +106,13 @@ bool ElodinClient::subscribe_tables(const std::vector<std::pair<uint8_t, uint8_t
         data[7] = 0x00;
         data[8] = hi;
         data[9] = lo;
-        send_msg(msgstream_id, data);
+        // Was fire-and-forget returning true unconditionally, which made every
+        // `if (!subscribe_...())` error path in the callers dead code.
+        if (!send_msg(msgstream_id, data))
+            ok = false;
     }
 
-    return true;
+    return ok;
 }
 
 void ElodinClient::begin_batch() {
@@ -212,20 +192,53 @@ ssize_t ElodinClient::read_packet(uint8_t* packet_buffer, size_t max_len) {
         return -1;
     }
 
-    // Parse header: len(4), ty(1), packet_id(2), request_id(1)
-    uint32_t packet_len = *reinterpret_cast<uint32_t*>(packet_buffer);
-    uint8_t packet_type = packet_buffer[4];
-    uint16_t packet_id = (static_cast<uint16_t>(packet_buffer[5]) << 8) | packet_buffer[6];
-    uint8_t request_id = packet_buffer[7];
+    // Header layout: len(4) | ty(1)@4 | packet_id(2 BE)@5 | request_id(1)@7. Only the length is
+    // consumed — nothing here matches a reply to the request that asked for it, and the other three
+    // fields were decoded into locals that were never read (GCC -Wunused-variable, cppcheck
+    // unreadVariable). The layout stays documented above rather than in dead assignments.
+    // memcpy, not a uint32_t* cast: packet_buffer is caller-supplied and carries no alignment
+    // guarantee.
+    uint32_t packet_len;
+    std::memcpy(&packet_len, packet_buffer, sizeof(packet_len));
 
-    // Validate packet length (must have at least the rest of the 8-byte header)
-    if (packet_len < 4 || packet_len > max_len) {
+    // A malformed length is unrecoverable — there is no way to know where the next packet starts.
+    if (packet_len < 4) {
         last_error_ = "Invalid packet length: " + std::to_string(packet_len);
+        socket_->disconnect();
         return -1;
     }
 
     // Read payload (packet_len - 4 bytes)
     size_t payload_len = packet_len - 4;
+
+    // Note the bound: this writes 8 + (packet_len - 4) = packet_len + 4 bytes, so the check has to
+    // be against max_len - 4. It used to be `packet_len > max_len`, which let packet_len == max_len
+    // through and overran the caller's buffer by 4 bytes (confirmed with a guard page: the kernel
+    // returned EFAULT at exactly that boundary). max_len >= 8 is already guaranteed above.
+    if (packet_len + 4 > max_len) {
+        // Drain and skip rather than abandoning the body in the socket. The old code returned -1
+        // here having consumed the 8-byte header but not the payload, so every subsequent read
+        // parsed payload bytes as a header — the connection was silently and permanently dead
+        // while is_connected() still reported true and the caller looped. Losing one packet is a
+        // recoverable cost; losing stream framing is not.
+        std::cerr << "[ElodinClient] packet " << packet_len << "B exceeds " << max_len
+                  << "B buffer — skipping it" << std::endl;
+        uint8_t scratch[1024];
+        size_t remaining = payload_len;
+        while (remaining > 0) {
+            const size_t chunk = std::min(remaining, sizeof(scratch));
+            if (!socket_->read_exact(scratch, chunk)) {
+                // Could not resynchronize; the stream is unusable, so force a reconnect.
+                last_error_ = "Failed draining oversized packet: " + socket_->last_error();
+                socket_->disconnect();
+                return -1;
+            }
+            remaining -= chunk;
+        }
+        last_error_ = "Skipped oversized packet: " + std::to_string(packet_len);
+        return 0;  // "nothing usable this round" — what every caller already does on 0
+    }
+
     if (payload_len > 0) {
         if (!socket_->read_exact(packet_buffer + 8, payload_len)) {
             last_error_ = socket_->last_error();

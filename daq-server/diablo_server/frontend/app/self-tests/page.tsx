@@ -107,6 +107,7 @@ function buildExpectedEntries(boardId: number, boardMeta?: ConfigBoardMeta): Boa
 export default function SelfTestsPage() {
     const boardsMap = useSensorStore((s) => s.boards as Record<number, BoardStatus>);
     const sensorData = useSensorStore((s) => s.sensorData);
+    const selfTestTs = useSensorStore((s) => s.selfTestTs);
     const updateSensor = useSensorStore((s) => s.updateSensor);
     const updateBoards = useSensorStore((s) => s.updateBoards);
     const ws = getWebSocketClient();
@@ -214,6 +215,11 @@ export default function SelfTestsPage() {
                                         {title}
                                     </h3>
                                     <div className="flex items-center gap-2">
+                                        {selfTestTs[boardId] != null && (
+                                            <span className="text-xs text-gray-500 font-mono" title="When this board last self-tested (persists across reconnects)">
+                                                {new Date(selfTestTs[boardId]).toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                            </span>
+                                        )}
                                         <span className="text-xs text-gray-500 font-mono">ID {boardId}</span>
                                         <span className={`text-xs px-2 py-0.5 rounded font-black font-mono uppercase ${verdictBadge}`}>
                                             {passCount} PASS · {failCount} FAIL · {pendingCount} PENDING

@@ -1,5 +1,20 @@
 # Sensor Assignment and Configuration System
 
+> **⚠️ ASPIRATIONAL — THIS IS NOT WHAT SHIPS.**
+>
+> This document describes a design in which an `FSWConfigManager` assigns board IPs by MAC hash
+> and boards report their assignments back over heartbeats. **No such component exists in the
+> running system.**
+>
+> What actually ships: board identity and sensor assignment are a **static table** in
+> `config/config.toml` (`[boards.*]`, `[sensor_roles_*]`, `[actuator_roles]`), broadcast to boards
+> unconditionally by `config_broadcast_service` roughly once a second. Boards are addressed at
+> fixed IPs from that table; nothing is negotiated and nothing is reported back.
+>
+> Read `docs/CONFIGURATION_GUIDE.md` for the real model. Keep this only as a record of the
+> intended direction — do not use it to reason about current behaviour, and do not file bugs
+> against the gap between the two.
+
 ## Overview
 
 The sensor assignment system manages the distribution of sensors to boards, IP assignment, and configuration distribution. The FSW (Flight Software) side assigns IP addresses and sensor configurations to boards, which then report back their assigned sensors.
