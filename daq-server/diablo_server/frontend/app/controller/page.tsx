@@ -43,31 +43,34 @@ function ValveStatusRow({ label, entity }: { label: string; entity: string }) {
 }
 
 function DutyCycleCard({ label, entity, color }: { label: string; entity: string; color: string }) {
-  const raw = useSensorValue(entity, 'duty_cycle') ?? 0;
+  // No `?? 0`: a stopped stream must not render as a confident 0.0% / OFF, which is the
+  // same picture as a closed gate. null carries through to a dash and a neutral pill.
+  const raw = useSensorValue(entity, 'duty_cycle');
   const on = useSensorValue(entity, 'onoff');
+  const noData = raw === null;
   // Backend sends 0–1; display as 0–100%
-  const dc = raw <= 1 && raw >= 0 ? raw * 100 : raw;
+  const dc = raw === null ? 0 : (raw <= 1 && raw >= 0 ? raw * 100 : raw);
 
   return (
     <div className="bg-card rounded-xl border border-gray-800 p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-bold tracking-wider text-text-muted uppercase">{label}</h3>
-        <span className={`text-xs font-bold font-mono px-2 py-0.5 rounded ${on ? 'bg-green-900/50 text-green-400 border border-green-800' :
+        <span className={`text-xs font-bold font-mono px-2 py-0.5 rounded ${on === null ? 'bg-gray-900/50 text-gray-600 border border-gray-800 italic' : on ? 'bg-green-900/50 text-green-400 border border-green-800' :
             'bg-gray-900/50 text-gray-500 border border-gray-800'
           }`}>
-          {on ? 'ON' : 'OFF'}
+          {on === null ? '--' : on ? 'ON' : 'OFF'}
         </span>
       </div>
       <div className="mb-2 flex items-baseline gap-2">
         <span className="text-2xl font-bold font-mono tabular-nums" style={{ color }}>
-          {dc.toFixed(1)}
+          {noData ? '--' : dc.toFixed(1)}
         </span>
         <span className="text-sm text-text-muted">%</span>
       </div>
       <div className="w-full bg-gray-800 rounded-full h-3 overflow-hidden">
         <div
           className="h-3 rounded-full transition-all duration-100"
-          style={{ width: `${Math.min(100, Math.max(0, dc))}%`, background: color }}
+          style={{ width: noData ? '0%' : `${Math.min(100, Math.max(0, dc))}%`, background: color }}
         />
       </div>
     </div>

@@ -111,29 +111,35 @@ export default function UnifiedDashboard() {
 
 // Controller status display component
 function ControllerStatusDisplay() {
-  const fuelDuty = useSensorValue('CONTROLLER.Fuel', 'duty_cycle') ?? 0;
-  const oxDuty = useSensorValue('CONTROLLER.Ox', 'duty_cycle') ?? 0;
-  const fuelOn = useSensorValue('CONTROLLER.Fuel', 'onoff') ?? 0;
-  const oxOn = useSensorValue('CONTROLLER.Ox', 'onoff') ?? 0;
+  // Stale reads as "no data", never as 0.0% / OFF.
+  //
+  // These used to be `?? 0`, so a stream that had simply stopped arriving rendered a
+  // confident "0.0%" and an OFF pill — the same picture as a gate that is genuinely
+  // closed. On the ignition path those are not interchangeable. null now carries through
+  // to a dash and a neutral pill.
+  const fuelDuty = useSensorValue('CONTROLLER.Fuel', 'duty_cycle');
+  const oxDuty = useSensorValue('CONTROLLER.Ox', 'duty_cycle');
+  const fuelOn = useSensorValue('CONTROLLER.Fuel', 'onoff');
+  const oxOn = useSensorValue('CONTROLLER.Ox', 'onoff');
 
   return (
     <div className="flex items-center gap-6">
       <div className="flex items-center gap-3">
         <span className="text-xs text-text-muted">Fuel:</span>
-        <span className="text-sm font-mono font-bold text-blue-400">{fuelDuty.toFixed(1)}%</span>
-        <span className={`text-xs px-2 py-0.5 rounded ${fuelOn ? 'bg-green-900/50 text-green-400 border border-green-800' :
+        <span className="text-sm font-mono font-bold text-blue-400">{fuelDuty !== null ? `${fuelDuty.toFixed(1)}%` : '--'}</span>
+        <span className={`text-xs px-2 py-0.5 rounded ${fuelOn === null ? 'bg-gray-900/50 text-gray-600 border border-gray-800 italic' : fuelOn ? 'bg-green-900/50 text-green-400 border border-green-800' :
             'bg-gray-900/50 text-gray-500 border border-gray-800'
           }`}>
-          {fuelOn ? 'ON' : 'OFF'}
+          {fuelOn === null ? '--' : fuelOn ? 'ON' : 'OFF'}
         </span>
       </div>
       <div className="flex items-center gap-3">
         <span className="text-xs text-text-muted">Ox:</span>
-        <span className="text-sm font-mono font-bold text-red-400">{oxDuty.toFixed(1)}%</span>
-        <span className={`text-xs px-2 py-0.5 rounded ${oxOn ? 'bg-green-900/50 text-green-400 border border-green-800' :
+        <span className="text-sm font-mono font-bold text-red-400">{oxDuty !== null ? `${oxDuty.toFixed(1)}%` : '--'}</span>
+        <span className={`text-xs px-2 py-0.5 rounded ${oxOn === null ? 'bg-gray-900/50 text-gray-600 border border-gray-800 italic' : oxOn ? 'bg-green-900/50 text-green-400 border border-green-800' :
             'bg-gray-900/50 text-gray-500 border border-gray-800'
           }`}>
-          {oxOn ? 'ON' : 'OFF'}
+          {oxOn === null ? '--' : oxOn ? 'ON' : 'OFF'}
         </span>
       </div>
     </div>
