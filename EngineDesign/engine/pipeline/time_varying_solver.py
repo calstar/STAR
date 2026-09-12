@@ -35,7 +35,6 @@ from engine.pipeline.thermal.graphite_cooling import compute_graphite_recession
 from engine.pipeline.stability.analysis import (
     calculate_chugging_frequency,
     calculate_acoustic_modes,
-    analyze_feed_system_stability,  # Correct function name
 )
 from engine.pipeline.thermal.regen_cooling import estimate_hot_wall_heat_flux
 
@@ -718,109 +717,34 @@ class TimeVaryingCoupledSolver:
                 "hotspot_max_intensity": 1.0,
             }
         
-        # Calculate stability with pintle geometry, impingement, and recirculation
-        # Use enhanced physics-based spatial stability analysis
-        # NOTE (UNIFICATION P3, FINDING F3): calculate_pintle_stability_enhanced returns a flat
-        # PLACEHOLDER (margin 0.5, 30 Hz) for non-pintle injectors. The scalars stability_margin and
-        # chugging_freq are overwritten below by the injector-agnostic comprehensive_stability_analysis,
-        # but feed_stability["stability_margin"] and the spatial `acoustic` retain placeholder values
-        # for non-pintle. Clean separation deferred to the legacy_pintle/ refactor (see CONTEXT.md).
-        try:
-            from engine.pipeline.stability.enhanced import calculate_pintle_stability_enhanced
-            from engine.pipeline.localized_ablation import calculate_impingement_zones
-
-            # Create position array for spatial analysis
-            n_stability_points = 50
-            positions_stability = np.linspace(0.0, self.L_chamber, n_stability_points)
-            
-            # Calculate local properties (simplified - assume uniform for now)
-            P_local = np.full(n_stability_points, Pc)
-            c_local = np.full(n_stability_points, np.sqrt(gamma_chamber * R_chamber * Tc))
-            rho_local = np.full(n_stability_points, Pc / (R_chamber * Tc))
-            mdot_local = np.full(n_stability_points, mdot_total)
-            
-            # Recession profile (spatial variation)
-            recession_profile = None
-            if ablative_cfg and ablative_cfg.enabled:
-                # Create spatial recession profile (more at impingement zones)
-                impingement_data = calculate_impingement_zones(
-                    config_current, self.L_chamber, D_chamber_new, n_points=n_stability_points
-                )
-                # Recession is enhanced at impingement zones
-                recession_base = recession_chamber_new
-                recession_profile = recession_base * impingement_data["impingement_heat_flux_multiplier"]
-            
-            # Get injection velocities for recirculation calculation
-            # These would come from injector solve, but use estimates for now
-            fuel_velocity = 50.0  # [m/s] - typical fuel injection velocity
-            lox_velocity = 30.0   # [m/s] - typical LOX injection velocity
-            
-            # Calculate enhanced pintle-based stability with recirculation
-            stability_spatial = calculate_pintle_stability_enhanced(
-                config_current,
-                positions_stability,
-                P_local,
-                c_local,
-                rho_local,
-                mdot_local,
-                recession_profile=recession_profile,
-                L_chamber=self.L_chamber,
-                D_chamber=D_chamber_new,
-                fuel_velocity=fuel_velocity,
-                lox_velocity=lox_velocity,
-            )
-            
-            # Use average values for single-point metrics
-            chugging_freq = float(np.mean(stability_spatial["chugging_frequency"]))
-            stability_margin = float(np.mean(stability_spatial["stability_margin"]))
-            
-            # Acoustic modes (use base calculation for now, could be enhanced)
-            acoustic = calculate_acoustic_modes(
-                self.L_chamber,
-                D_chamber_new,
-                gamma_chamber,
-                R_chamber,
-                Tc,
-            )
-            
-            # Feed system stability
-            feed_stability = {
-                "pogo_frequency": np.nan,
-                "surge_frequency": np.nan,
-                "stability_margin": stability_margin,
-            }
-            
-        except Exception as e:
-            # Fallback to simple calculation
-            import warnings
-            warnings.warn(f"Pintle stability calculation failed, using fallback: {e}")
-            chugging = calculate_chugging_frequency(
-                V_chamber_new,
-                A_throat_new,
-                cstar_actual,
-                gamma_chamber,
-                Pc,
-                R=R_chamber,
-                Tc=Tc,
-            )
-            chugging_freq = chugging["frequency"]
-            # CRITICAL FIX: Remove arbitrary 0.5 default - stability margin should be calculated
-            # If not available, use neutral (0.0) rather than arbitrary positive value
-            stability_margin = chugging.get("stability_margin", 0.0)  # Neutral if unknown
-            
-            acoustic = calculate_acoustic_modes(
-                self.L_chamber,
-                D_chamber_new,
-                Tc,
-                gamma_chamber,
-                R_chamber,
-            )
-            
-            feed_stability = {
-                "pogo_frequency": np.nan,
-                "surge_frequency": np.nan,
-                "stability_margin": 1.0,
-            }
+        # Stability. The injector-agnostic comprehensive analysis below is authoritative; these
+        # are the placeholders it overwrites, kept so the state record is always populated even
+        # when that analysis raises. (The old pintle-only "enhanced" spatial model that used to
+        # run here was fed hardcoded 50/30 m/s injection velocities and invented damping
+        # constants, and every scalar it produced was overwritten anyway -- removed.)
+        chugging = calculate_chugging_frequency(
+            V_chamber_new,
+            A_throat_new,
+            cstar_actual,
+            gamma_chamber,
+            Pc,
+            R=R_chamber,
+            Tc=Tc,
+        )
+        chugging_freq = chugging["frequency"]
+        stability_margin = float("nan")
+        acoustic = calculate_acoustic_modes(
+            self.L_chamber,
+            D_chamber_new,
+            Tc,
+            gamma_chamber,
+            R_chamber,
+        )
+        feed_stability = {
+            "pogo_frequency": np.nan,
+            "surge_frequency": np.nan,
+            "stability_margin": np.nan,
+        }
         
         # Use comprehensive stability analysis if available
         comprehensive_stability = None
@@ -852,9 +776,11 @@ class TimeVaryingCoupledSolver:
                 diagnostics=stability_diag,
             )
             
-            # Update stability_margin from comprehensive analysis
+            # The comprehensive analysis owns every stability scalar in the state record.
             stability_margin = comprehensive_stability.get("chugging", {}).get("stability_margin", stability_margin)
             chugging_freq = comprehensive_stability.get("chugging", {}).get("frequency", chugging_freq)
+            acoustic = comprehensive_stability.get("acoustic", acoustic)
+            feed_stability = comprehensive_stability.get("feed_system", feed_stability)
         except Exception as e:
             import warnings
             warnings.warn(f"Comprehensive stability analysis failed: {e}")

@@ -1075,6 +1075,7 @@ export interface Layer1Results {
     final_change?: number;
     best_objective?: number;
     best_objective_breakdown?: Record<string, unknown>;
+    infeasible_reason?: string | null;
     /** Thrust / O-F / P_exit relative errors and RMS (dimensionless); use for “true” physics convergence. */
     primary_relative_residual?: {
       rel_thrust?: number;

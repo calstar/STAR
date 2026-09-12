@@ -42,6 +42,23 @@ from engine.pipeline.constants import (
 from engine.core.closure import flows
 
 
+# Chamber-pressure search window. Mirrored VERBATIM in engine/accel/kernels.evaluate_core -- the
+# parity gate requires the two root-finds to agree, so change both or neither.
+#
+# Floor: the throat must be sonic for the demand model mdot = Pc*At/c* to hold, which needs
+# Pc > P_amb / (2/(gamma+1))^(gamma/(gamma-1)), i.e. ~1.8 atm across gamma 1.1-1.3. Below that the
+# efficiency model collapses, demand blows up, and the residual has a spurious zero crossing near
+# 20 psi: with the old 1 bar floor Brent converged to it and reported NEGATIVE thrust for the
+# shipped default config at its own configured tank pressures.
+PC_CHOKE_FLOOR_PA = 2.0 * 101325.0
+# Ceiling: Pc sits below the lower tank pressure by at least this fraction of it -- a floor on the
+# total feed + injector drop. It is a search bound, not a design rule; the previous 15% "feed loss
+# margin" was a guess that excluded the real operating point of any soft-injector case.
+PC_MIN_TOTAL_DROP_FRAC = 0.02
+# Equal-step scan resolution used to locate the highest-Pc sign change before Brent.
+PC_BRACKET_SCAN_POINTS = 32
+
+
 class ChamberSolver:
     """Solves for chamber pressure by balancing supply and demand"""
     
@@ -258,6 +275,88 @@ class ChamberSolver:
             return None
         return Pc_native
 
+    @staticmethod
+    def _highest_sign_change(f, Pc_min: float, Pc_max: float, r_min: float, r_max: float,
+                             n: int = PC_BRACKET_SCAN_POINTS):
+        """[lo, hi] holding the HIGHEST-Pc sign change of the residual on [Pc_min, Pc_max], or
+        (None, None). Equal steps scanned from the top; ``r_min``/``r_max`` are reused at the ends.
+        Verbatim mirror of the scan in accel.kernels.evaluate_core (parity)."""
+        pb, rb = Pc_max, r_max
+        for i in range(n - 1, -1, -1):
+            pa = Pc_min + (Pc_max - Pc_min) * (i / n)
+            ra = r_min if i == 0 else f(pa)
+            if np.isfinite(ra) and np.isfinite(rb) and np.sign(ra) != np.sign(rb):
+                return pa, pb
+            pb, rb = pa, ra
+        return None, None
+
+    def _raise_supply_exceeds_demand(self, P_tank_O, P_tank_F, Pc_max, residual_min, residual_max, debug):
+        """Supply > demand even at the ceiling: injector oversized / throat undersized for these
+        pressures. Raise with the supply/demand numbers at Pc_max so the message is actionable."""
+        try:
+            mdot_O_test, mdot_F_test, diag_test = flows(P_tank_O, P_tank_F, Pc_max, self.config)
+            mdot_supply_test = mdot_O_test + mdot_F_test
+            MR_test = mdot_O_test / mdot_F_test if mdot_F_test > 0 else np.inf
+            cg = ensure_chamber_geometry(self.config)
+            cea_props_test = self.cea_cache.eval(MR_test, Pc_max, 101325.0, cg.expansion_ratio)
+            cstar_ideal_test = cea_props_test.get("cstar_ideal", 0.0)
+            geometry_test = self._get_chamber_geometry()
+            advanced_params_test = {
+                "Pc": Pc_max,
+                "Tc": cea_props_test.get("Tc", DEFAULT_CHAMBER_TEMP_K),
+                "cstar_ideal": cstar_ideal_test,
+                "gamma": cea_props_test.get("gamma", DEFAULT_GAMMA_ND),
+                "R": cea_props_test.get("R", DEFAULT_GAS_CONST_J_KG_K),
+                "MR": MR_test,
+                "Ac": geometry_test["area_cross"],
+                "At": cg.A_throat,
+                "chamber_length": geometry_test["length"],
+                "Dinj": self._infer_injector_diameter(),
+                "m_dot_total": mdot_supply_test,
+                "spray_diagnostics": diag_test,
+                "turbulence_intensity": diag_test.get("turbulence_intensity_mix", DEFAULT_TURBULENCE_INTENSITY_ND),
+                "fuel_props": self._get_fuel_props(),
+            }
+            eta_test = eta_cstar(
+                calculate_Lstar(cg.volume, cg.A_throat, Lstar_override=cg.Lstar),
+                self.config.combustion.efficiency,
+                diag_test.get("cooling_efficiency", 1.0),
+                advanced_params_test,
+                debug=debug,
+            )
+            cstar_actual_test = eta_test * cstar_ideal_test
+            mdot_demand_test = (Pc_max * cg.A_throat) / cstar_actual_test if cstar_actual_test > 0 else np.inf
+            if mdot_demand_test > 0 and mdot_supply_test > mdot_demand_test:
+                Pc_estimate = mdot_supply_test * cstar_actual_test / cg.A_throat
+                raise ValueError(
+                    f"No solution: Supply > Demand at all Pc. "
+                    f"Residual at Pc_min: {residual_min:.4f} kg/s, at Pc_max: {residual_max:.4f} kg/s. "
+                    f"\nDiagnostics at Pc_max ({Pc_max/1e6:.2f} MPa):"
+                    f"\n  - Supply: {mdot_supply_test:.4f} kg/s (mdot_O={mdot_O_test:.4f}, mdot_F={mdot_F_test:.4f})"
+                    f"\n  - Demand: {mdot_demand_test:.4f} kg/s (c*_actual={cstar_actual_test:.1f} m/s, At={cg.A_throat*1e6:.2f} mm²)"
+                    f"\n  - Estimated Pc needed: {Pc_estimate/1e6:.2f} MPa (vs Pc_max={Pc_max/1e6:.2f} MPa)"
+                    f"\nPossible fixes:"
+                    f"\n  1. Reduce injector orifice areas (currently oversized)"
+                    f"\n  2. Increase throat area (currently undersized)"
+                    f"\n  3. Increase tank pressures to allow higher Pc_max"
+                    f"\n  4. Check combustion efficiency (low efficiency reduces demand)"
+                )
+            raise ValueError(
+                f"No solution: Supply > Demand at all Pc. "
+                f"Residual: [{residual_min:.4f}, {residual_max:.4f}] kg/s. "
+                f"Could not compute detailed diagnostics."
+            )
+        except ValueError:
+            raise
+        except Exception as diag_e:
+            raise ValueError(
+                f"No solution: Supply > Demand at all Pc. "
+                f"Residual at bounds: [{residual_min:.4f}, {residual_max:.4f}] kg/s. "
+                f"Pc_max ({Pc_max/1e6:.2f} MPa) limited by tank pressure. "
+                f"Possible causes: Injector oversized, throat undersized, or combustion efficiency too low. "
+                f"Diagnostic error: {diag_e}"
+            )
+
     def solve(
         self,
         P_tank_O: float,
@@ -285,24 +384,10 @@ class ChamberSolver:
         diagnostics : dict
             Solution diagnostics
         """
-        # Determine bounds
-        # Realistic bounds: Pc must be less than both tank pressures (accounting for feed losses)
-        Pc_min = 100000.0  # 100 kPa minimum
-        
-        # Estimate maximum feed losses for bounds calculation
-        # Use rough estimates: assume maximum flow gives ~10-20% pressure drop
-        # This is conservative but better than fixed 5% margin
-        # Actual feed losses will be calculated during solve
-        feed_loss_margin = 0.15  # 15% margin for feed losses (conservative estimate)
-        Pc_max = min(P_tank_O, P_tank_F) * (1.0 - feed_loss_margin)
-        
-        # If fuel pressure is much higher than oxidizer, we might need to allow
-        # Pc up to oxidizer pressure (since oxidizer flow limits the system)
-        # But this is already handled by min(P_tank_O, P_tank_F)
-        
-        # Clamp to config bounds
-        Pc_min = max(Pc_min, self.config.solver.Pc_bounds[0])
-        Pc_max = min(Pc_max, self.config.solver.Pc_bounds[1])
+        # Search window: choked-flow floor, tank-pressure ceiling (see the constants above), then
+        # the user's solver.Pc_bounds narrow it further.
+        Pc_min = max(PC_CHOKE_FLOOR_PA, self.config.solver.Pc_bounds[0])
+        Pc_max = min(min(P_tank_O, P_tank_F) * (1.0 - PC_MIN_TOTAL_DROP_FRAC), self.config.solver.Pc_bounds[1])
         
         if Pc_max <= Pc_min:
             raise ValueError(f"Invalid pressure bounds: Pc_max ({Pc_max}) <= Pc_min ({Pc_min})")
@@ -325,259 +410,94 @@ class ChamberSolver:
         def residual_func(Pc):
             return self.residual(Pc, P_tank_O, P_tank_F)
 
-        # Native fast path: run the whole residual loop + Brent in C when native can
-        # handle this config. On success skip the Python root-find. Importantly, this
-        # path is hit by the ~30% of Layer-1 CMA candidates that don't converge in the
-        # single-call ed_evaluate seam and fall back to runner.evaluate -> here, so
-        # keeping it native keeps that fallback fast (a pure-Python Brent solve here is
-        # ~100x slower). Any failure -> Python Brent below.
+        # Accelerated path: the whole residual loop + Brent in the numba kernel when it can
+        # handle this config. Importantly, this path is hit by the ~30% of Layer-1 CMA candidates
+        # that don't converge in the single-call seam and fall back to runner.evaluate -> here, so
+        # keeping it accelerated keeps that fallback fast (a pure-Python Brent solve here is ~100x
+        # slower). Any failure -> Python Brent below.
+        convergence_history: list = []
         _accel_pc = self._accel_chamber_pc(P_tank_O, P_tank_F)
         if _accel_pc is not None:
             Pc = _accel_pc
             success = True
-            skip_solve = True
-            residual_min, residual_max = -1.0, 1.0
         else:
-            # Check residual signs at bounds before solving
             residual_min = residual_func(Pc_min)
             residual_max = residual_func(Pc_max)
-        
-        # Check for NaN values and provide better error messages
-        if not np.isfinite(residual_min):
-            # Try to diagnose the issue
-            try:
-                # Test a few points to see where it fails
-                test_Pc = (Pc_min + Pc_max) / 2
-                test_res = residual_func(test_Pc)
-                if not np.isfinite(test_res):
-                    raise ValueError(
-                        f"Residual function returns non-finite values. "
-                        f"Pc_min={Pc_min/1e6:.2f} MPa, Pc_max={Pc_max/1e6:.2f} MPa. "
-                        f"Check injector geometry, feed system, or CEA cache."
-                    )
-            except Exception as e:
-                raise ValueError(
-                    f"Residual function evaluation failed at bounds. "
-                    f"Pc_min={Pc_min/1e6:.2f} MPa, Pc_max={Pc_max/1e6:.2f} MPa. "
-                    f"Error: {e}"
-                )
-        
-        if not np.isfinite(residual_max):
-            raise ValueError(
-                f"Residual function returns non-finite at Pc_max={Pc_max/1e6:.2f} MPa. "
-                f"Check that tank pressures are sufficient and injector geometry is valid."
-            )
-        
-        # brentq requires opposite signs at bounds
-        if np.sign(residual_min) == np.sign(residual_max):
-            # No root in interval - this happens when:
-            # 1. Supply > demand at all Pc (both positive) - need higher Pc but limited by tank pressure
-            # 2. Supply < demand at all Pc (both negative) - can't supply enough flow
-            
-            if residual_min > 0 and residual_max > 0:
-                # Supply > Demand at all Pc
-                # This means injector supplies more flow than combustion can demand
-                # Common causes:
-                # 1. Injector too large (orifice areas too big)
-                # 2. Throat too small (can't flow enough to balance supply)
-                # 3. Combustion efficiency too low (reduces demand)
-                # 4. Pc_max too conservative (we could go slightly higher)
-                
-                # Initialize skip_solve flag
-                skip_solve = False
-                
-                # Check if residual is small at Pc_max (near solution)
-                residual_tolerance = 0.1  # kg/s - accept if within 0.1 kg/s
-                
-                if residual_max < residual_tolerance:
-                    # Residual is small - we're very close to solution
-                    # Use Pc_max as solution with warning
-                    # import warnings
-                    # warnings.warn(
-                    #     f"Supply slightly > Demand at Pc_max. "
-                    #     f"Using Pc_max ({Pc_max/1e6:.2f} MPa) as solution. "
-                    #     f"Residual: {residual_max:.4f} kg/s. "
-                    #     f"Injector may be slightly oversized or throat slightly undersized."
-                    # )
-                    # Skip to solution validation - use Pc_max as solution
-                    Pc = Pc_max
-                    success = True
-                    # Skip the root finding loop below
-                    skip_solve = True
-                else:
-                    # Residual is significant - diagnose the issue
-                    # Get diagnostics at Pc_max to understand supply/demand
-                    try:
-                        mdot_O_test, mdot_F_test, diag_test = flows(
-                            P_tank_O, P_tank_F, Pc_max, self.config
-                        )
-                        mdot_supply_test = mdot_O_test + mdot_F_test
-                        
-                        # Get demand at Pc_max
-                        MR_test = mdot_O_test / mdot_F_test if mdot_F_test > 0 else np.inf
-                        cg = ensure_chamber_geometry(self.config)
-                        eps_default = cg.expansion_ratio
-                        cea_props_test = self.cea_cache.eval(MR_test, Pc_max, 101325.0, eps_default)
-                        cstar_ideal_test = cea_props_test.get("cstar_ideal", 0.0)
-                        
-                        # Build advanced_params for diagnostics
-                        geometry_test = self._get_chamber_geometry()
-                        advanced_params_test = {
-                            "Pc": Pc_max,
-                            "Tc": cea_props_test.get("Tc", DEFAULT_CHAMBER_TEMP_K),
-                            "cstar_ideal": cstar_ideal_test,
-                            "gamma": cea_props_test.get("gamma", DEFAULT_GAMMA_ND),
-                            "R": cea_props_test.get("R", DEFAULT_GAS_CONST_J_KG_K),
-                            "MR": MR_test,
-                            "Ac": geometry_test["area_cross"],
-                            "At": cg.A_throat,
-                            "chamber_length": geometry_test["length"],
-                            "Dinj": self._infer_injector_diameter(),
-                            "m_dot_total": mdot_supply_test,
-                            "spray_diagnostics": diag_test,
-                            "turbulence_intensity": diag_test.get("turbulence_intensity_mix", DEFAULT_TURBULENCE_INTENSITY_ND),
-                            "fuel_props": self._get_fuel_props(),
-                        }
-                        
-                        # Calculate efficiency
-                        eta_test = eta_cstar(
-                            calculate_Lstar(cg.volume, cg.A_throat, Lstar_override=cg.Lstar),
-                            self.config.combustion.efficiency,
-                            diag_test.get("cooling_efficiency", 1.0),
-                            advanced_params_test,
-                            debug=debug if 'debug' in locals() else False, 
-                        )
-                        cstar_actual_test = eta_test * cstar_ideal_test
-                        cg = ensure_chamber_geometry(self.config)
-                        mdot_demand_test = (Pc_max * cg.A_throat) / cstar_actual_test if cstar_actual_test > 0 else np.inf
-                        
-                        # Calculate what Pc would balance (extrapolate)
-                        # residual = supply - demand
-                        # At Pc_max: residual = mdot_supply - mdot_demand
-                        # Demand scales with Pc: mdot_demand ∝ Pc
-                        # Supply decreases slightly with Pc: mdot_supply decreases as Pc increases
-                        # Rough estimate: if we increase Pc by ΔPc, demand increases more than supply
-                        
-                        # Estimate required Pc (rough extrapolation)
-                        # Assume linear relationship near Pc_max
-                        if mdot_demand_test > 0 and mdot_supply_test > mdot_demand_test:
-                            # We need more Pc to increase demand
-                            # mdot_demand = Pc * At / c*, so Pc_needed = mdot_supply * c* / At
-                            cg = ensure_chamber_geometry(self.config)
-                            Pc_estimate = mdot_supply_test * cstar_actual_test / cg.A_throat
-                            
-                            raise ValueError(
-                                f"No solution: Supply > Demand at all Pc. "
-                                f"Residual at Pc_min: {residual_min:.4f} kg/s, at Pc_max: {residual_max:.4f} kg/s. "
-                                f"\nDiagnostics at Pc_max ({Pc_max/1e6:.2f} MPa):"
-                                f"\n  - Supply: {mdot_supply_test:.4f} kg/s (mdot_O={mdot_O_test:.4f}, mdot_F={mdot_F_test:.4f})"
-                                f"\n  - Demand: {mdot_demand_test:.4f} kg/s (c*_actual={cstar_actual_test:.1f} m/s, At={cg.A_throat*1e6:.2f} mm²)"
-                                f"\n  - Estimated Pc needed: {Pc_estimate/1e6:.2f} MPa (vs Pc_max={Pc_max/1e6:.2f} MPa)"
-                                f"\nPossible fixes:"
-                                f"\n  1. Reduce injector orifice areas (currently oversized)"
-                                f"\n  2. Increase throat area (currently undersized)"
-                                f"\n  3. Increase tank pressures to allow higher Pc_max"
-                                f"\n  4. Check combustion efficiency (low efficiency reduces demand)"
-                            )
-                        else:
-                            raise ValueError(
-                                f"No solution: Supply > Demand at all Pc. "
-                                f"Residual: [{residual_min:.4f}, {residual_max:.4f}] kg/s. "
-                                f"Could not compute detailed diagnostics."
-                            )
-                    except ValueError:
-                        # Re-raise explicit ValueErrors from above
-                        raise
-                    except Exception as diag_e:
-                        # Diagnostics failed - provide generic error
+
+            if not np.isfinite(residual_min):
+                # Try to diagnose the issue
+                try:
+                    test_res = residual_func((Pc_min + Pc_max) / 2)
+                    if not np.isfinite(test_res):
                         raise ValueError(
-                            f"No solution: Supply > Demand at all Pc. "
-                            f"Residual at bounds: [{residual_min:.4f}, {residual_max:.4f}] kg/s. "
-                            f"Pc_max ({Pc_max/1e6:.2f} MPa) limited by tank pressure. "
-                            f"Possible causes: Injector oversized, throat undersized, or combustion efficiency too low. "
-                            f"Diagnostic error: {diag_e}"
+                            f"Residual function returns non-finite values. "
+                            f"Pc_min={Pc_min/1e6:.2f} MPa, Pc_max={Pc_max/1e6:.2f} MPa. "
+                            f"Check injector geometry, feed system, or CEA cache."
                         )
-                    
-            else:
-                # Supply < Demand at all Pc (both negative)
+                except Exception as e:
+                    raise ValueError(
+                        f"Residual function evaluation failed at bounds. "
+                        f"Pc_min={Pc_min/1e6:.2f} MPa, Pc_max={Pc_max/1e6:.2f} MPa. "
+                        f"Error: {e}"
+                    )
+            if not np.isfinite(residual_max):
+                raise ValueError(
+                    f"Residual function returns non-finite at Pc_max={Pc_max/1e6:.2f} MPa. "
+                    f"Check that tank pressures are sufficient and injector geometry is valid."
+                )
+
+            # The residual is not monotonic in Pc, so neither an endpoint sign test nor a Brent
+            # over the whole window is safe: the operating point is the HIGHEST-Pc root, and the
+            # crossing nearest the floor (if any) is the barely-flowing spurious one. Locate the
+            # top-most sign change and bracket Brent inside it.
+            lo, hi = self._highest_sign_change(residual_func, Pc_min, Pc_max, residual_min, residual_max)
+            if lo is None:
+                if residual_min > 0 and residual_max > 0:
+                    self._raise_supply_exceeds_demand(P_tank_O, P_tank_F, Pc_max, residual_min, residual_max, debug)
                 raise ValueError(
                     f"No solution: Supply < Demand at all Pc. "
                     f"Residual at bounds: [{residual_min:.4f}, {residual_max:.4f}] kg/s. "
                     f"Insufficient mass flow. Check tank pressures and injector geometry."
                 )
-        
-        # Check if we already have a solution (from small residual case above)
-        # skip_solve is defined in the if-else block above, default to False if not set
-        if 'skip_solve' not in locals():
-            skip_solve = False
-        
-        if not skip_solve:
-            # Validate bracket before solving
-            bracket_check = NumericalStability.check_bracket(residual_func, Pc_min, Pc_max)
-            if not bracket_check.passed:
-                raise ValueError(f"Invalid bracket for root finding: {bracket_check.message}")
-            
-            # Track convergence history for diagnostics
-            convergence_history = []
-            
-            # Enhanced residual function with convergence tracking
+
             def tracked_residual_func(Pc):
                 res = residual_func(Pc)
                 convergence_history.append(float(res))
                 return res
-            
-            # Solve using bracketed secant (brentq) - safe and robust
+
             try:
                 if self.config.solver.method == "brentq":
                     Pc, result = brentq(
                         tracked_residual_func,
-                        Pc_min,
-                        Pc_max,
+                        lo,
+                        hi,
                         xtol=self.config.solver.tolerance,
                         rtol=self.config.solver.tolerance * 1e-3,  # Relative tolerance
                         maxiter=self.config.solver.max_iterations,
                         full_output=True
                     )
                     success = result.converged
-                    
-                    # Validate convergence
-                    conv_check = NumericalStability.check_convergence(
-                        convergence_history,
-                        self.config.solver.tolerance,
-                        min_iterations=3
-                    )
-                    if not conv_check.passed and conv_check.severity == "error":
-                        raise RuntimeError(f"Convergence validation failed: {conv_check.message}")
-                        
                 else:
-                    # Fallback to Newton's method (less robust)
+                    # Newton from the middle of the bracket (less robust; kept for configs that ask)
                     Pc = newton(
                         tracked_residual_func,
-                        Pc_guess,
+                        0.5 * (lo + hi),
                         tol=self.config.solver.tolerance,
                         maxiter=self.config.solver.max_iterations
                     )
                     success = True
-                    
-                    # Validate convergence for Newton
-                    conv_check = NumericalStability.check_convergence(
-                        convergence_history,
-                        self.config.solver.tolerance,
-                        min_iterations=3
-                    )
-                    if not conv_check.passed and conv_check.severity == "error":
-                        raise RuntimeError(f"Convergence validation failed: {conv_check.message}")
-                        
-            except ValueError as e:
-                # Re-raise ValueError (bracket issues, etc.)
+                conv_check = NumericalStability.check_convergence(
+                    convergence_history,
+                    self.config.solver.tolerance,
+                    min_iterations=3
+                )
+                if not conv_check.passed and conv_check.severity == "error":
+                    raise RuntimeError(f"Convergence validation failed: {conv_check.message}")
+            except ValueError:
                 raise
             except Exception as e:
                 raise RuntimeError(f"Chamber pressure solver failed: {e}")
-        else:
-            # We're using Pc_max as solution (small residual case)
-            # Already set Pc = Pc_max and success = True above
-            convergence_history = [residual_max]  # Store for diagnostics
-        
+
         # Validate solution
         Pc_val = float(Pc)
         if not np.isfinite(Pc_val):
@@ -623,46 +543,6 @@ class ChamberSolver:
             with_profile=not getattr(self, "_silent", False),
         )
 
-        # Calculate reaction progress through chamber (if finite-rate chemistry enabled)
-        reaction_progress = None
-        if getattr(self.config.combustion.efficiency, 'use_finite_rate_chemistry', True):
-            try:
-                from engine.pipeline.reaction_chemistry import calculate_chamber_reaction_progress
-                
-                # Pass spray diagnostics if available for better evaporation/mixing estimates
-                spray_diagnostics = closure_diag if closure_diag else None
-                
-                # Use conservative "Worst of Both Worlds" temperatures:
-                # Tc (Ideal) for residence time (shorter time is conservative)
-                # effective_Tc (Actual) for kinetics (slower chemistry is conservative)
-                reaction_progress = calculate_chamber_reaction_progress(
-                    current_Lstar,
-                    Pc_val,
-                    cea_props["Tc"], # Ideal Tc (Residence Time)
-                    cea_props["cstar_ideal"],
-                    cea_props["gamma"],
-                    cea_props["R"],
-                    MR,
-                    self.config,
-                    spray_diagnostics=spray_diagnostics,
-                    Tc_kinetics=effective_Tc, # Actual Tc (Kinetics)
-                )
-            except Exception as e:
-                # Don't silently fail - raise error or log warning
-                import warnings
-                warnings.warn(f"Reaction progress calculation failed: {e}. This may indicate invalid engine conditions.")
-                # Minimal fallback - but indicate uncertainty
-                # CRITICAL FIX: Correct residence time formula
-                rho_chamber = Pc_val / (cea_props["R"] * cea_props["Tc"]) if cea_props["R"] > 0 and cea_props["Tc"] > 0 else 1.0
-                # Use actual mdot_total from closure (calculated above)
-                cg = ensure_chamber_geometry(self.config)
-                tau_residence_correct = current_Lstar * rho_chamber * cg.A_throat / mdot_total if mdot_total > 0 else 0.001
-                reaction_progress = {
-                    "progress_throat": 1.0,  # Assume equilibrium
-                    "tau_residence": tau_residence_correct,
-                    "calculation_failed": True,
-                }
-        
         # Extract and validate mixture diagnostics (diagnostics-only, no efficiency impact)
         # Enable mixture coupling diagnostics if configured
         eff_cfg = self.config.combustion.efficiency

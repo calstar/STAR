@@ -966,8 +966,11 @@ def _solve_exit_mach(eps, g):
 @njit(cache=True)
 def evaluate_core(P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F, Pa):
     """Returns (ok, Pc, F, Isp, MR, cstar_actual, gamma, Tc, mdot_total, v_exit, Cf_actual)."""
-    Pc_min = 100000.0
-    Pc_max = min(P_O, P_F)*(1.0 - 0.15)
+    # Search window and bracket scan: VERBATIM mirror of engine/core/chamber_solver.py
+    # (PC_CHOKE_FLOOR_PA, PC_MIN_TOTAL_DROP_FRAC, ChamberSolver._highest_sign_change). The parity
+    # gate requires the two root-finds to agree, so change both or neither.
+    Pc_min = 2.0*101325.0
+    Pc_max = min(P_O, P_F)*(1.0 - 0.02)
     Pc_min = max(Pc_min, P[SV_PCMIN]); Pc_max = min(Pc_max, P[SV_PCMAX])
     if Pc_max <= Pc_min:
         return (0.0,)*22
@@ -976,41 +979,28 @@ def evaluate_core(P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F
     rmax = _residual(Pc_max, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F)
     if not np.isfinite(rmin) or not np.isfinite(rmax):
         return (0.0,)*22
-    if _sign(rmin) == _sign(rmax):
-        # The residual is not always monotonic in Pc: on the canonical impinging design at
-        # asymmetric tank pressures it is NEGATIVE at Pc_min, turns POSITIVE mid-range, and goes
-        # negative again by Pc_max, so an endpoint-only sign test sees "no root" and bails where
-        # a root plainly exists (measured: -0.214 at 1.0 bar, +0.76 at 20 bar, -0.96 at 27.4 bar,
-        # root at 23.75 bar). Scan for a sign-changing sub-interval before giving up -- the pure
-        # Python solver finds these, and the parity gate requires the accelerator to agree.
-        # Scan from the HIGH end down: a non-monotonic residual can also cross near Pc_min
-        # (a spurious low-pressure crossing where the chamber is barely flowing). The physical
-        # operating point is the HIGHEST-Pc root, which is the one the pure Python solver
-        # converges to; taking the first crossing from the bottom picked the spurious one and
-        # diverged from Python by 3.3x.
-        _n = 32
-        _lo = 0.0; _hi = 0.0; _found = False
-        _pb = Pc_max; _rb = rmax
-        for _i in range(_n - 1, -1, -1):
-            _pa = Pc_min + (Pc_max - Pc_min)*(_i/_n)
-            _ra = _residual(_pa, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F)
-            if np.isfinite(_ra) and np.isfinite(_rb) and _sign(_ra) != _sign(_rb):
-                _lo = _pa; _hi = _pb; _found = True
-                break
-            _pb = _pa; _rb = _ra
-        if _found:
-            Pc = _brentq(P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F,
-                         _lo, _hi, xtol, rtol, maxit)
-            if not np.isfinite(Pc):
-                return (0.0,)*22
-        elif rmin > 0 and rmax > 0 and rmax < 0.1:
-            Pc = Pc_max
-        else:
-            return (0.0,)*22
-    else:
-        Pc = _brentq(P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F, Pc_min, Pc_max, xtol, rtol, maxit)
-        if not np.isfinite(Pc):
-            return (0.0,)*22
+    # The residual is not monotonic in Pc: it is negative near the choking floor (barely flowing,
+    # the spurious crossing), positive through the operating range, and negative again once the
+    # injector drop gets small. The physical operating point is the HIGHEST-Pc root, so scan from
+    # Pc_max down for the first sign change and bracket Brent inside it. Endpoint-only tests
+    # missed interior roots (measured on canonical/impinging: -0.214 at 1 bar, +0.76 at 20 bar,
+    # -0.96 at 27.4 bar, root at 23.75 bar) and a whole-window Brent picked the spurious low one.
+    _n = 32
+    _lo = 0.0; _hi = 0.0; _found = False
+    _pb = Pc_max; _rb = rmax
+    for _i in range(_n - 1, -1, -1):
+        _pa = Pc_min + (Pc_max - Pc_min)*(_i/_n)
+        _ra = rmin if _i == 0 else _residual(_pa, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F)
+        if np.isfinite(_ra) and np.isfinite(_rb) and _sign(_ra) != _sign(_rb):
+            _lo = _pa; _hi = _pb; _found = True
+            break
+        _pb = _pa; _rb = _ra
+    if not _found:
+        return (0.0,)*22
+    Pc = _brentq(P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F,
+                 _lo, _hi, xtol, rtol, maxit)
+    if not np.isfinite(Pc):
+        return (0.0,)*22
     # recompute converged state
     (ok, mO, mF, uO, uF, D32O, D32F, momR, CdO, CdF, PiO, PiF, dpiO, dpiF, AgO, AgF,
      dpfO, dpfF, WeO, WeF, urel, xstar, constr, nit, tiO, tiF) = _solve_injector(P, P_O, P_F, Pc)

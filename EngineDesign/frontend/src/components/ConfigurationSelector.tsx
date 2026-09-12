@@ -17,7 +17,6 @@ const API_PORT = typeof __API_PORT__ === 'undefined' ? '8000' : __API_PORT__
 const PRETTY: Record<string, string> = {
   pintle: 'Pintle',
   impinging: 'Doublet (unlike-impinging)',
-  coaxial: 'Coaxial',
   methalox: 'Methalox (LOX / CH₄)',
   ethalox: 'Ethalox (LOX / Ethanol)',
   kerolox: 'Kerolox (LOX / RP-1)',

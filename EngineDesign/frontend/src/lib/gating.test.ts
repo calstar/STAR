@@ -90,8 +90,6 @@ const VIEW_ONLY: Record<string, string> = {
   'Optimizer.tsx:setActiveSubTab': 'which optimizer sub-tab is shown',
   'DemoLayerCard.tsx:setIsExpanded': 'expand/collapse a layer card',
   'FlightSimulation.tsx:setIsExpanded': 'expand/collapse a section',
-  'Layer4Optimization.tsx:setIsExpanded': 'expand/collapse a section',
-  'Layer4Optimization.tsx:onClick={runSimulation}': 'runs the flight sim; writes nothing',
   'ForwardMode.tsx:handleEvaluate()': 'runs evaluate(); reads the config, never writes it',
   'FlightSimulation.tsx:handleOptimize : handleSimulate': 'runs the flight sim; writes nothing',
   'CustomPlotter.tsx:setShowDataPreview': 'shows the raw data table under the chart',

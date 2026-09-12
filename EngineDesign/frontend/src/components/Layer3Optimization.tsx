@@ -387,9 +387,9 @@ export function Layer3Optimization({
                                     disabled={isRunning || readOnly}
                                     className="px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] text-sm focus:border-orange-500 focus:outline-none"
                                 >
-                                    <option value="gradient">⚡ Gradient (Fast ~30-60s)</option>
-                                    <option value="cma">🔬 CMA-ES (Thorough ~5-10min)</option>
-                                    <option value="de">🔄 Differential Evolution</option>
+                                    <option value="gradient">Gradient (Fast ~30-60s)</option>
+                                    <option value="cma">CMA-ES (Thorough ~5-10min)</option>
+                                    <option value="de">Differential Evolution</option>
                                 </select>
                                 <span className="text-xs text-[var(--color-text-secondary)]">
                                     {settings.optimization_method === 'gradient' && 'Exploits monotonic thickness-recession relationship'}
@@ -430,7 +430,7 @@ export function Layer3Optimization({
                                         : 'bg-orange-600 hover:bg-orange-700 shadow-lg shadow-orange-500/20'
                                         }`}
                                 >
-                                    {isRunning ? '🔄 Optimizing...' : '🔥 Run Layer 3'}
+                                    {isRunning ? 'Optimizing...' : 'Run Layer 3'}
                                 </button>
                                 {isRunning && (
                                     <button
@@ -441,7 +441,7 @@ export function Layer3Optimization({
                                             : 'bg-red-600 hover:bg-red-700'
                                             }`}
                                     >
-                                        {isStopping ? '⏳ Stopping...' : '⏹ Stop'}
+                                        {isStopping ? 'Stopping...' : 'Stop'}
                                     </button>
                                 )}
                             </div>
@@ -464,8 +464,8 @@ export function Layer3Optimization({
                         />
                     </div>
                     {message && <p className="text-sm text-[var(--color-text-secondary)]">{message}</p>}
-                    {error && <p className="text-sm text-red-400 mt-2 font-medium">❌ {error}</p>}
-                    {successMessage && <p className="text-sm text-green-400 mt-2 font-medium">✅ {successMessage}</p>}
+                    {error && <p className="text-sm text-red-400 mt-2 font-medium">{error}</p>}
+                    {successMessage && <p className="text-sm text-green-400 mt-2 font-medium">{successMessage}</p>}
                 </div>
             )}
 
@@ -473,19 +473,19 @@ export function Layer3Optimization({
             {results && (
                 <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
                     <div className="flex justify-between items-center mb-6">
-                        <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">🔥 Final Optimization Results</h3>
+                        <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">Final Optimization Results</h3>
                         <div className="flex gap-2">
                             <button
                                 onClick={downloadCSV}
                                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
                             >
-                                📊 Download CSV
+                                Download CSV
                             </button>
                             <button
                                 onClick={downloadConfig}
                                 className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors"
                             >
-                                💾 Download Config (YAML)
+                                Download Config (YAML)
                             </button>
                         </div>
                     </div>
@@ -554,7 +554,7 @@ export function Layer3Optimization({
                 {/* Convergence History */}
                 <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
                     <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                        <span className="text-orange-400">📈</span> Convergence History
+                        Convergence History
                     </h3>
                     <div className="h-[300px] w-full">
                         {objectiveHistory.length > 0 ? (
@@ -582,7 +582,7 @@ export function Layer3Optimization({
                 {/* Pressure Curves (Real-time or Final) */}
                 <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
                     <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                        <span className="text-blue-400">🌊</span> Pressure Curves {isRunning ? '(Baseline)' : '(Optimized)'}
+                        Pressure Curves {isRunning ? '(Baseline)' : '(Optimized)'}
                     </h3>
                     <div className="h-[300px] w-full">
                         {pressureCurves.length > 0 ? (
@@ -615,7 +615,7 @@ export function Layer3Optimization({
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
                                 <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                                    <span className="text-green-400">🚀</span> Thrust Curve
+                                    Thrust Curve
                                 </h3>
                                 <div className="h-[300px] w-full">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -638,7 +638,7 @@ export function Layer3Optimization({
 
                             <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
                                 <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                                    <span className="text-purple-400">🔥</span> Chamber Pressure
+                                    Chamber Pressure
                                 </h3>
                                 <div className="h-[300px] w-full">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -664,7 +664,7 @@ export function Layer3Optimization({
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
                                 <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                                    <span className="text-yellow-400">⚗️</span> Mixture Ratio (O/F)
+                                    Mixture Ratio (O/F)
                                 </h3>
                                 <div className="h-[300px] w-full">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -687,7 +687,7 @@ export function Layer3Optimization({
 
                             <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
                                 <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                                    <span className="text-red-400">🛡️</span> Cumulative Recession
+                                    Cumulative Recession
                                 </h3>
                                 <div className="h-[300px] w-full">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -716,7 +716,7 @@ export function Layer3Optimization({
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
                                 <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                                    <span className="text-orange-400">⚡</span> Recession Rates
+                                    Recession Rates
                                 </h3>
                                 <div className="h-[300px] w-full">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -742,7 +742,7 @@ export function Layer3Optimization({
 
                             <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
                                 <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                                    <span className="text-blue-400">📏</span> Diameters & L*
+                                    Diameters & L*
                                 </h3>
                                 <div className="h-[300px] w-full">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -774,7 +774,7 @@ export function Layer3Optimization({
                         <div className="grid grid-cols-1 gap-6">
                             <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
                                 <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                                    <span className="text-red-400">🧪</span> Throat Recession Rate Breakdown
+                                    Throat Recession Rate Breakdown
                                 </h3>
                                 <p className="text-sm text-[var(--color-text-secondary)] mb-4">
                                     Diagnostic split of throat recession rate into <strong>oxidation</strong> and <strong>thermal ablation</strong>.
@@ -808,7 +808,7 @@ export function Layer3Optimization({
                         <div className="grid grid-cols-1 gap-6">
                             <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
                                 <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                                    <span className="text-cyan-400">🔳</span> Areas & Contraction Ratio
+                                    Areas & Contraction Ratio
                                 </h3>
                                 <div className="h-[300px] w-full">
                                     <ResponsiveContainer width="100%" height="100%">
