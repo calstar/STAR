@@ -31,6 +31,24 @@ structure), see [`../docs/CONFIGURATION_GUIDE.md`](../docs/CONFIGURATION_GUIDE.m
 During hotfire, set `[hotfire].enabled = true` in `config_ground_daq.toml` to
 route all sensors (including flight sensors) to the ground DAQ.
 
+## Board registry (`[boards.*]`) and DHCP
+
+Each `[boards.*]` entry pins a board's `ip` (always `192.168.2.<board_id>`) and
+`board_id`. It also carries a `mac` field:
+
+```toml
+[boards.pt_board]
+ip  = "192.168.2.21"
+mac = "aa:bb:cc:dd:ee:ff"   # lowercase, colon-separated; blank = no static lease yet
+board_id = 21
+```
+
+`mac` is the single source of truth for the board's **DHCP static reservation**
+served by `star-dhcp` (`../deploy/dhcp/README.md`). A blank `mac` means the board
+has no reservation yet and will pull a dynamic-pool address — read its MAC from
+the lease table, fill it in here, and run `deploy/dhcp/reload_dhcp.sh`. The IP is
+handed out unchanged, so filling in `mac` never renumbers a board.
+
 ## Ports (from `config.toml`)
 
 - `5006` — sensor data (boards → bridge)

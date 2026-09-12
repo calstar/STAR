@@ -141,6 +141,21 @@ This symlinks the unit files into `~/.config/systemd/user/` **and** writes a
 `…/<unit>.service.d/workdir.conf` drop-in setting `WorkingDirectory` to your checkout
 (`~/STAR-daq/daq-server`), then reloads the daemon. No `~/sensor_system` symlink involved.
 
+## 5b. (Optional) Board-LAN DHCP
+
+If the boards get their IPs over DHCP instead of hardcoded firmware, install the
+board-LAN DHCP service. Unlike the `--user` units above, this is a **root system
+unit** (DHCP needs port 67):
+
+```bash
+sudo ~/STAR-daq/daq-server/deploy/dhcp/install_dhcp.sh
+```
+
+It installs dnsmasq, generates the config from `[boards.*]`, and enables (but
+does not start) `star-dhcp.service`. See `deploy/dhcp/README.md` for the full
+onboarding flow (discover a board's MAC from the lease table → add it to the
+config → reload).
+
 ## 6. Start it (this is the actual "run" step)
 
 ```bash
