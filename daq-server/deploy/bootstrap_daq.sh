@@ -161,6 +161,37 @@ else
   c_info "ufw not active — skipping firewall rules (nothing blocking board UDP)."
 fi
 
+# ── 10. Firewall: publish the GUI + API ports (ufw only, idempotent) ──────────
+# GUI on :3000 (GUI_PORT) and API + WebSocket on :8081, both served by
+# sensor-backend. Opened to any source deliberately: the stand is driven from
+# whatever laptop is on the bench, so these are not scoped to an interface or
+# subnet the way the board-UDP rules above are.
+#
+# BOTH ports are required — :3000 alone serves a broken GUI. The SPA is not
+# proxied: static-gui.ts is a plain file server, and frontend/lib/websocket.ts
+# resolves the backend at runtime from window.location. Loaded from an explicit
+# port, isProxiedOrigin() is false and getApiBaseUrl() returns <same-host>:8081,
+# so the browser fetches the API and opens the WebSocket there directly.
+# (frontend/__tests__/backend-origin.test.ts pins this behaviour.)
+#
+# Know what this exposes. The backend has no auth of its own: it reads the
+# X-Auth-Email header Caddy injects, and treats an ABSENT header as a trusted
+# local operator (backend/src/server.ts:855). Anything reaching :8081 directly
+# is therefore an operator, and can drive state_transition (ARMED / FUEL_FILL /
+# OX_FILL / FIRE / VENT), actuator open-close, extend_fire and session
+# start-stop; /api/ota-flash and /api/ota-flash/flash-all have no operator gate
+# at all. That is accepted here for a bench network. If this box is ever on an
+# open network, put Caddy in front (DAQ_BACKEND / DAQ_GUI) and drop these rules
+# rather than relying on the ports being unguessable.
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+  c_info "ufw: allowing inbound TCP :3000 (GUI) and :8081 (API + WebSocket) from any source"
+  sudo ufw allow 3000/tcp comment 'DAQ GUI (SPA)'
+  sudo ufw allow 8081/tcp comment 'DAQ API + WebSocket'
+  c_ok "GUI/API port rules applied"
+else
+  c_info "ufw not active — skipping GUI/API port rules (nothing blocking :3000/:8081)."
+fi
+
 echo
 c_ok "DAQ bootstrap complete."
 echo "  Verify:  curl -s localhost:8081/api/debug | head ;  curl -sI localhost:3000 | head -1"

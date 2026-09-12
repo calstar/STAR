@@ -1,0 +1,16 @@
+[Unit]
+Description=Recover the TP-Link RTL8822BU Wi-Fi adapter when it wedges in power-save
+Documentation=file:/home/aidan/STAR-daq/deploy/wifi-watchdog/README.md
+# Needs the journal to read the wedge signature, and NetworkManager to be the
+# thing that reconnects once the adapter re-enumerates.
+After=systemd-journald.service NetworkManager.service
+
+[Service]
+Type=oneshot
+# Root: writes to /sys/bus/usb/devices/*/authorized and usb*-port*/disable.
+# This is why it is a SYSTEM unit — every other unit in this repo is a user
+# unit under ~/.config/systemd/user, which cannot touch those nodes.
+ExecStart=/usr/local/sbin/tplink-wifi-watchdog
+# A reset takes usbreset + up to SETTLE(25s), twice in the escalating case.
+TimeoutStartSec=120
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

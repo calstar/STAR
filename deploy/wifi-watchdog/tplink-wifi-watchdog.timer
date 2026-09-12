@@ -1,0 +1,14 @@
+[Unit]
+Description=Check the TP-Link Wi-Fi adapter every minute
+
+[Timer]
+# First check shortly after boot, then every minute. The script's own journal
+# lookback is 90s, so consecutive ticks overlap and a wedge cannot fall through
+# the gap between them.
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Unit=tplink-wifi-watchdog.service
+
+[Install]
+WantedBy=timers.target
