@@ -1255,14 +1255,21 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     assert(received > 0, `Elodin → backend: data flowing (${received.toLocaleString()} updates)`);
     assert(received >= broadcast, `No phantom broadcasts (${broadcast.toLocaleString()} sent ≤ ${received.toLocaleString()} ingested)`);
 
-    // broadcast() is an unconditional ws.send() to every open client over loopback
-    // TCP — there is no drop path, so delivery should be ~100%. The only expected
-    // shortfall is edge skew: the /stats delta brackets the collection window, so
-    // messages in flight at either edge count as broadcast but not received. That
-    // is tens of ms of traffic per edge of a 5 s window — 3% slack covers it.
+    // A gross-breakage floor, NOT a ~100% delivery check — do not re-tighten it.
+    // sensorUpdatesBroadcast counts windows as they are STAGED into the per-client
+    // outbox (emitSensorWindow), not as they are sent, and the outbox is lossy on
+    // purpose: squeeze() merges window pairs to fit the client's measured drain
+    // rate and the top ladder level drops its oldest outright, trading resolution
+    // for currency. So this ratio is an upper bound that compaction legitimately
+    // pulls below 100% whenever the consumer is slow — including a contended CI
+    // runner, where a starved event loop looks to FlushPacer exactly like a slow
+    // socket. It read 100.0-100.3% with outboxWindowsHeld=0 on unloaded runners
+    // and 96.3% with outboxWindowsHeld=80 on a loaded one, which is the outbox
+    // working, not a regression. 85% still catches WS delivery being broken
+    // outright; outboxWindowsHeld below is what bounds the compaction itself.
     const wsDeliveryNum = broadcast > 0 ? updates.length / broadcast : 0;
-    assert(wsDeliveryNum >= 0.97,
-      `Frontend received ${updates.length.toLocaleString()}/${broadcast.toLocaleString()} broadcasts (${(wsDeliveryNum * 100).toFixed(1)}% — need ≥97%)`);
+    assert(wsDeliveryNum >= 0.85,
+      `Frontend received ${updates.length.toLocaleString()}/${broadcast.toLocaleString()} broadcasts (${(wsDeliveryNum * 100).toFixed(1)}% — need ≥85%)`);
   } else if (IS_THIN) {
     console.log('  ℹ️  Backend stats unavailable — skipping relay→backend loss check');
   }
