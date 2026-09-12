@@ -1,0 +1,54 @@
+# Shared design-bar UI (checkouts, sharing, versions), used by star-openrocket,
+# pid-designer and EngineDesign through a path alias.
+#
+# It needs a workflow of its own because no app runs its tests: every app's vitest
+# `include` is rooted at that app's own frontend directory, so a test file inside
+# lib/stardesign-ui/src was executed by nobody. The apps type-check this source when they
+# build, but that is not the same as running it, and two of the three app workflows do not
+# even trigger on changes here.
+#
+# Deliberately narrow: this never runs for an app-only change.
+name: stardesign-ui CI
+
+on:
+  push:
+    paths:
+      - 'lib/stardesign-ui/**'
+      - '.github/workflows/stardesign-ui-ci.yml'
+  pull_request:
+    paths:
+      - 'lib/stardesign-ui/**'
+      - '.github/workflows/stardesign-ui-ci.yml'
+
+defaults:
+  run:
+    working-directory: lib/stardesign-ui
+
+jobs:
+  test:
+    name: Shared UI (types + tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: npm
+        cache-dependency-path: lib/stardesign-ui/package-lock.json
+
+    - name: Install dependencies
+      run: npm ci
+
+    # A real gate, not a formality: tsconfig.json here exists so this checks something.
+    - name: Type-check
+      run: npm run lint
+
+    # jsdom + @testing-library. These cover the hook wiring — refs, effects, timers,
+    # listeners — which is where every checkout bug that reached a user actually lived.
+    - name: Unit tests
+      run: npm test

@@ -9,6 +9,7 @@ name: Engine Design CI
       # The shared design core: its permission check is what stops one user
       # editing another's designs, so a change to it has to run these tests.
       - 'lib/stardesign/**'
+      - 'lib/stardesign-ui/**'
       - '.github/workflows/engine-design-ci.yml'
   pull_request:
     paths:
@@ -16,6 +17,7 @@ name: Engine Design CI
       # The shared design core: its permission check is what stops one user
       # editing another's designs, so a change to it has to run these tests.
       - 'lib/stardesign/**'
+      - 'lib/stardesign-ui/**'
       - '.github/workflows/engine-design-ci.yml'
   workflow_dispatch:
 

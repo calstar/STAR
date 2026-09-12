@@ -11,10 +11,12 @@
  * hold the contract that the E2E depends on.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { CheckoutControl } from '@stardesign-ui/CheckoutControl';
-import type { Checkout } from '@stardesign-ui/useCheckout';
+import { render, screen, cleanup } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { CheckoutControl } from '../src/CheckoutControl';
+import type { Checkout } from '../src/useCheckout';
 
 const base: Checkout = {
   holder: 'me@berkeley.edu',
@@ -62,5 +64,53 @@ describe('the checked-out chip', () => {
     expect(readOnly).toContain('Read only');
     expect(readOnly).not.toContain('Editing');
     expect(markup({ held: false })).toContain('is editing'); // someone else holds it
+  });
+});
+
+/**
+ * The parts `renderToStaticMarkup` cannot reach: what the buttons actually do.
+ */
+describe('the chip s controls', () => {
+  afterEach(cleanup);
+
+  it('offers Keep editing only near expiry, and it refreshes the hold', async () => {
+    const keepAlive = vi.fn(async () => {});
+    render(<CheckoutControl checkout={{ ...base, held: true, secondsLeft: 90, keepAlive }} noun="design" />);
+
+    await userEvent.click(screen.getByRole('button', { name: /keep editing/i }));
+
+    expect(keepAlive).toHaveBeenCalledOnce();
+  });
+
+  it('hides Keep editing while there is plenty of time', () => {
+    render(<CheckoutControl checkout={{ ...base, held: true, secondsLeft: 600 }} noun="design" />);
+    expect(screen.queryByRole('button', { name: /keep editing/i })).toBeNull();
+  });
+
+  it('releases on demand', async () => {
+    const release = vi.fn(async () => {});
+    render(<CheckoutControl checkout={{ ...base, held: true, secondsLeft: 600, release }} noun="design" />);
+
+    await userEvent.click(screen.getByRole('button', { name: /^release$/i }));
+
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('takes a free design, and asks about notifications on that click', async () => {
+    // The permission prompt needs a user gesture, and asking on page load is what trains
+    // people to deny. Take is the one deliberate moment to ask.
+    const requestPermission = vi.fn();
+    vi.stubGlobal('Notification', class {
+      static permission = 'default';
+      static requestPermission = requestPermission;
+    });
+    const take = vi.fn(async () => {});
+    render(<CheckoutControl checkout={{ ...base, held: false, holder: null, holderName: null, take }} noun="design" />);
+
+    await userEvent.click(screen.getByRole('button', { name: /^take$/i }));
+
+    expect(take).toHaveBeenCalledOnce();
+    expect(requestPermission).toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });

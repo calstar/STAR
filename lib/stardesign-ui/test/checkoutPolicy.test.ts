@@ -21,8 +21,8 @@ import {
   shouldBeat,
   isUnexpectedLoss,
   mmss,
-} from '@stardesign-ui/checkoutPolicy';
-import type { CheckoutState } from '@stardesign-ui/api';
+} from '../src/checkoutPolicy';
+import type { CheckoutState } from '../src/api';
 
 const NOW = Date.parse('2026-09-11T12:00:00.000Z');
 const at = (offsetS: number) => new Date(NOW + offsetS * 1000).toISOString();
