@@ -24,7 +24,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CheckoutState, DesignApi, DocRef } from './api';
 import { ApiError, keyOf } from './api';
-import { isLocalHost, secondsLeft as secondsLeftOf, shouldBeat } from './checkoutPolicy';
+import { secondsLeft as secondsLeftOf, shouldBeat } from './checkoutPolicy';
 
 const FREE: CheckoutState = {
   lockedBy: null,
@@ -90,8 +90,16 @@ export interface UseCheckoutOptions<T> {
   heldPollMs?: number;
   /**
    * Treat this as a developer's own machine: take on open, beat every tick,
-   * take back on lapse. Defaults to whether the page is served from localhost
-   * (`isLocalHost`); an app or a test can say outright.
+   * take back on lapse.
+   *
+   * Off by default, so this hook's behaviour is exactly what it was before the
+   * option existed. It deliberately does NOT default to `isLocalHost(...)`:
+   * an E2E suite drives a real browser against a dev server on localhost, so a
+   * hostname default silently put every such test into local mode -- the tab
+   * took the design on open and beat every tick, and EngineDesign's
+   * "a tab that never took the design does not refresh its hold" failed. An
+   * app opts in (pid-designer passes `isLocalHost(location.hostname)`), which
+   * keeps the decision where someone can see it.
    */
   local?: boolean;
 }
@@ -102,7 +110,7 @@ export function useCheckout<T>({
   reload,
   pollMs = 10_000,
   heldPollMs = 15_000,
-  local = typeof location !== 'undefined' && isLocalHost(location.hostname),
+  local = false,
 }: UseCheckoutOptions<T>): Checkout {
   const [state, setState] = useState<CheckoutState>(FREE);
   const [busy, setBusy] = useState(false);

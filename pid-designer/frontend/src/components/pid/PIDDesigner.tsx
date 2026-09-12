@@ -26,7 +26,7 @@ import '@xyflow/react/dist/style.css';
 import { ComponentPalette } from './ComponentPalette';
 import { PIDToolbar } from './PIDToolbar';
 import { DiagramBar } from './DiagramBar';
-import { ChangeModal, ReadOnlyProvider, useCheckout, useReadOnly } from '@stardesign-ui';
+import { ChangeModal, ReadOnlyProvider, isLocalHost, useCheckout, useReadOnly } from '@stardesign-ui';
 import { Modal } from '../ui';
 import { primaryBtn } from '../../lib/ui';
 import * as api from '../../api/diagrams';
@@ -1322,6 +1322,11 @@ export function PIDDesigner() {
     api: designApi,
     ref: activeRef,
     reload: useCallback(async () => { setReloadKey((n) => n + 1); }, []),
+    // On a developer's own machine the checkout has no colleague to protect,
+    // so it stays out of the way: the diagram is taken on open, held while the
+    // tab lives, and taken straight back if it lapses. Deployed, the ordinary
+    // model applies -- press Take, and be told when it goes.
+    local: isLocalHost(location.hostname),
   });
 
   // What the title block says. The latest release label is fetched when the

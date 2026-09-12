@@ -353,8 +353,10 @@ describe('on a developer\'s own machine', () => {
   });
 
   it('deployed, opening never takes it', async () => {
-    // Pins both the model and the suite's origin: jsdom's default URL is
-    // localhost, which would put every test above into local mode.
+    // The default, and the reason the default is `false` rather than
+    // `isLocalHost(location.hostname)`: jsdom and every E2E browser run on
+    // localhost, so a hostname default put suites that test the deployed
+    // model into local mode instead.
     const api = stubApi();
     const view = renderHook(() => useCheckout({ api, ref: REF }));
     await tick(0);

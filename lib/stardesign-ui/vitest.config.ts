@@ -17,10 +17,6 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: 'jsdom',
-    // A deployed origin, not jsdom's default localhost: the hook relaxes its
-    // whole model on a developer's machine (`isLocalHost`), and the suite
-    // pins the deployed one. The local mode has tests that opt in by option.
-    environmentOptions: { jsdom: { url: 'https://pid-designer.starberkeley.org/' } },
     setupFiles: ['./vitest.setup.ts'],
     globals: true,
     include: ['test/**/*.{test,spec}.{ts,tsx}'],
