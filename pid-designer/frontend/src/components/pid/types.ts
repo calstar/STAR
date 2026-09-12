@@ -1,5 +1,6 @@
 import type { ParamValue } from './params';
 import type { LineSegment } from './segments';
+import type { Sketch } from './sketch/model';
 
 export type ComponentType =
   | 'RTD' | 'PT' | 'PG' | 'LC' | 'TC'
@@ -74,6 +75,13 @@ export interface PIDEdgeData {
    * has. See `segments.ts`.
    */
   segments?: LineSegment[];
+  /**
+   * The centerline sketch of the run, when somebody drew one. The
+   * `segments` above are exported from it on save (see `sketch/export.ts`),
+   * so feed-twin reads the shape it always did; this is the drawing that
+   * produced them, kept so it can be edited again.
+   */
+  sketch?: Sketch;
   params?: Record<string, ParamValue>;
   options?: Record<string, string>;
   partNumber?: string;

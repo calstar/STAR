@@ -193,7 +193,7 @@ because the sketch (Phase 4) still exports the shape it reads.
 
 ---
 
-## Phase 4 — The centerline sketch
+## Phase 4 — The centerline sketch — **done** (`pid-designer/frontend/src/components/pid/sketch/`; bends carry r/D and angle through `feedtwin.pid.segments` to the correlation)
 
 A CAD-like sketch of the run's centerline, the way someone would measure
 it on the stand. It lives in the line dialog (full width) and exports to

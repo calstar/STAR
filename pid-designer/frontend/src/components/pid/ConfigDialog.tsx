@@ -17,6 +17,10 @@ import { ManifoldEditor } from './ManifoldEditor';
 import type { ManifoldGeometry } from './ManifoldEditor';
 import { fittingCount } from './segments';
 import type { LineSegment } from './segments';
+import { SketchEditor } from './sketch/Sketch';
+import { emptySketch } from './sketch/model';
+import type { Sketch } from './sketch/model';
+import { exportSketch } from './sketch/export';
 import type { ComponentType, PIDNodeData } from './types';
 
 /**
@@ -45,6 +49,7 @@ export interface ConfigPatch {
   ports?: Record<string, PortInfo>;
   segments?: LineSegment[];
   geometry?: ManifoldGeometry;
+  sketch?: Sketch;
 }
 
 interface Props {
@@ -53,7 +58,7 @@ interface Props {
   kind: 'node' | 'edge';
   data: PIDNodeData & {
     lineType?: string; partNumber?: string; fluid?: string;
-    segments?: LineSegment[]; geometry?: ManifoldGeometry;
+    segments?: LineSegment[]; geometry?: ManifoldGeometry; sketch?: Sketch;
   };
   peers?: { id: string; label: string; hint?: string }[];
   readOnly: boolean;
@@ -78,6 +83,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   const [partNumber, setPartNumber] = useState(data.partNumber ?? '');
   const [segments, setSegments] = useState<LineSegment[]>([]);
   const [geometry, setGeometry] = useState<ManifoldGeometry | undefined>(undefined);
+  const [sketch, setSketch] = useState<Sketch | null>(null);
 
   const spec: ComponentSpec | undefined =
     kind === 'edge' ? LINE_SPECS.pipe : COMPONENT_SPECS[type];
@@ -90,6 +96,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
     setPorts({ ...(data.ports ?? {}) });
     setSegments(data.segments ? structuredClone(data.segments) : []);
     setGeometry(data.geometry ? structuredClone(data.geometry) : undefined);
+    setSketch(data.sketch ? structuredClone(data.sketch) : null);
   }, [open, data]);
 
   useEffect(() => {
@@ -183,17 +190,30 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
     }
     let lineType: string | undefined;
     let lineOptions = options;
+    let savedSegments = segments;
     if (kind === 'node') params = deriveParams(type, options, params);
     else {
       const d = deriveLineParams(options, params);
       params = d.params;
       lineType = d.lineType;
       lineOptions = { ...options, ...(d.construction ? { construction: d.construction } : {}) };
+      if (sketched) {
+        // The sketch is the run: its segments are what the solver reads, and
+        // the numbers it makes redundant are written from it so the sheet's
+        // checks and the quick path read the same thing.
+        const out = exportSketch(sketch!);
+        savedSegments = out.segments;
+        params.elevation_change = out.elevationChange;
+        params.length = { value: Math.round(out.totalLengthMm) / 1000, unit: 'm', source: 'measured', reference: 'from the centerline sketch' };
+        const first = out.segments[0];
+        if (first?.bore) params.bore = { ...first.bore };
+        delete params.K_minor;
+      }
     }
     // Counted, not asked for. Only when there is a list to count: with no
     // segments the drawing has not said, and a zero would be a claim.
-    if (kind === 'edge' && segments.length) {
-      const n = segments.reduce((sum, s) => sum + fittingCount(s), 0);
+    if (kind === 'edge' && savedSegments.length) {
+      const n = savedSegments.reduce((sum, s) => sum + fittingCount(s), 0);
       params.fitting_count = {
         value: n, unit: '-', source: 'default',
         reference: 'counted from the fittings on this run',
@@ -211,7 +231,8 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
       label: label.trim() || data.label,
       fluid: fluid || undefined,
       partNumber: partNumber.trim() || undefined,
-      ...(kind === 'edge' ? { lineType, segments: segments.length ? segments : undefined } : {}),
+      ...(kind === 'edge' ? { lineType, segments: savedSegments.length ? savedSegments : undefined,
+        sketch: sketch && sketch.legs.length ? sketch : undefined } : {}),
       ...(geometry ? { geometry } : {}),
     });
     onClose();
@@ -221,7 +242,8 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   // the one-number fields above it are not what a solve reads while it is
   // there -- so it is said, and it can be let go.
   const fittings = kind === 'edge' ? segments.reduce((n, s) => n + fittingCount(s), 0) : 0;
-  const superseded = kind === 'edge' && segments.length > 0;
+  const sketched = kind === 'edge' && !!sketch && sketch.legs.length > 0;
+  const superseded = kind === 'edge' && (segments.length > 0 || sketched);
 
   const title = kind === 'edge' ? 'Line' : (data.label || type);
 
@@ -230,7 +252,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
       open={open}
       onClose={onClose}
       title={title}
-      width="w-[440px]"
+      width={kind === 'edge' && sketch ? 'w-[680px]' : 'w-[440px]'}
       footer={
         <div className="flex gap-2">
           <button onClick={onClose} className={btn}>Cancel</button>
@@ -288,7 +310,12 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
                 saying which one counts. The plan's own rule for the loss
                 methods -- the panel says which is in force -- applies a level
                 up as well. */}
-            {superseded && (
+            {sketched ? (
+              <p className="text-[10px] text-[var(--color-text-muted)]">
+                Length, bore, fall and the bends come from the sketch below; the solver prices
+                the bends against flow rather than taking a lumped K.
+              </p>
+            ) : superseded && (
               <p className="text-[10px] text-amber-500/90">
                 This run carries an itemised list from before ({fittings} fitting{fittings === 1 ? '' : 's'});
                 the solver reads that instead of the numbers here.{' '}
@@ -356,6 +383,26 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
             ))}
           </div>
         ))}
+
+        {kind === 'edge' && (
+          <div className="space-y-1.5 border-t border-[var(--color-border)] pt-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Sketch the run</span>
+              {sketch ? (
+                <button disabled={readOnly} onClick={() => setSketch(null)}
+                  className="text-[10px] text-[var(--color-text-muted)] underline decoration-dotted hover:text-[var(--color-text-primary)]">
+                  remove the sketch
+                </button>
+              ) : (
+                <button disabled={readOnly} onClick={() => setSketch(emptySketch('in'))}
+                  className="text-[10px] text-[var(--color-text-secondary)] underline decoration-dotted hover:text-[var(--color-text-primary)]">
+                  draw the centerline →
+                </button>
+              )}
+            </div>
+            {sketch && <SketchEditor sketch={sketch} onChange={setSketch} readOnly={readOnly} />}
+          </div>
+        )}
 
         {type === 'MANIFOLD' && (
           <ManifoldEditor

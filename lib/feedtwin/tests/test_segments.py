@@ -472,3 +472,29 @@ def test_nothing_is_said_when_there_was_nothing_to_supersede() -> None:
     doc["edges"][0]["data"]["params"] = {}
     network = build_network(read_diagram(doc))
     assert not any("superseded" in w for w in network.warnings)
+
+
+def test_a_sketched_bend_is_priced_at_its_own_radius_and_angle() -> None:
+    """A bend from the centerline sketch carries r/D and the angle it turns.
+    The reader keeps both, and the run prices the bend on them rather than
+    on the correlation's defaults -- a tight bend and a sweep are not the
+    same fitting."""
+    from feedtwin.pid.segments import read_segments
+
+    def run(bend: dict) -> float:
+        loss = read_segments(
+            [
+                {
+                    "id": "s1",
+                    "bore": {"value": 10.0, "unit": "mm", "source": "measured"},
+                    "length": {"value": 1.0, "unit": "m", "source": "measured"},
+                    "fittings": [{"kind": "bend", "count": 1, **bend}],
+                }
+            ],
+            "L1",
+        )
+        fitting = loss.segments[0].fittings[0]
+        return fitting.bend_diameters, fitting.angle  # type: ignore[return-value]
+
+    assert run({"bendDiameters": 1.5, "angleDeg": 90.0}) == (1.5, 90.0)
+    assert run({}) == (0.0, 0.0)

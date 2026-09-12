@@ -70,6 +70,7 @@ const VIEW_ONLY: Record<string, string> = {
   'PIDToolbar.tsx:setExportOpen(o => !o)': 'opens the export menu; exporting reads the drawing and writes a file',
   'PIDToolbar.tsx:onClick={onClick}': 'an export choice (PNG, SVG, JSON); reads only',
   'PIDToolbar.tsx:setConfirmRestore(null)': 'cancels the restore dialog; the Restore button beside it is gated',
+  'SizeChart.tsx:setOpen(o => !o)': 'folds the size chart open or shut; picking a size from it is gated',
   'PIDDesigner.tsx:setShowChange(true)': 'opens the Change dialog (rename/share/copy are not gated by design)',
 }
 

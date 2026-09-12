@@ -227,6 +227,10 @@ def _fittings(
                 length=_mm(entry.get("lengthMm")),
                 engagement=_mm(entry.get("engagementMm")),
                 K=_plain(entry.get("K")),
+                # A sketched bend carries its geometry; a counted elbow does
+                # not, and the correlation's defaults stand.
+                bend_diameters=_plain(entry.get("bendDiameters")),
+                angle=_plain(entry.get("angleDeg")),
             )
         )
     return tuple(out), warnings

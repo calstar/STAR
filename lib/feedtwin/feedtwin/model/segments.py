@@ -97,6 +97,13 @@ class Fitting:
     K: float = 0.0
     """An explicit K for this fitting, overriding the correlation. Zero means
     "price it"."""
+    bend_diameters: float = 0.0
+    """A bend's centerline radius over its bore, r/D. Zero means "not stated",
+    and the bend correlation uses its own default. Comes off the drawing's
+    centerline sketch, where the radius was drawn."""
+    angle: float = 0.0
+    """A bend's turn [deg]. Zero means "not stated"; the correlation assumes
+    a right angle."""
 
 
 @dataclass(frozen=True, slots=True)

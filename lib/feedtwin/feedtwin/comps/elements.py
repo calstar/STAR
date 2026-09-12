@@ -895,9 +895,19 @@ class SegmentedPipe(HydraulicComponent):
                 continue
             own = fitting.bore if fitting.bore > 0.0 else bore
             try:
+                geometry = {
+                    name: value
+                    for name, value in (
+                        ("bend_diameters", fitting.bend_diameters),
+                        ("angle", fitting.angle),
+                    )
+                    if value > 0.0
+                }
                 K = fitting_K(
                     fitting.kind,
-                    FittingContext(bore=own, Re=Re, roughness=rough, fd=fd),
+                    FittingContext(
+                        bore=own, Re=Re, roughness=rough, fd=fd, params=geometry
+                    ),
                 )
             except KeyError:
                 # Not a kind this library prices. The reader warned; carrying on
