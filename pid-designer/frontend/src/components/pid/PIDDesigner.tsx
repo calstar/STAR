@@ -36,6 +36,7 @@ import { BranchableEdge } from './BranchableEdge';
 import { nextNodeId, seedIdsFrom } from './ids';
 import { defFor } from './types';
 import type { PIDNodeData } from './types';
+import { numberTag } from './tags';
 import { ConfigDialog } from './ConfigDialog';
 import type { ConfigPatch } from './ConfigDialog';
 import { FluidProvider } from './FluidContext';
@@ -707,7 +708,11 @@ function PIDCanvas({
       ? { page }
       : {
           componentType: type,
-          label: def.label,
+          // `ROT_#` becomes `ROT-3`, or whatever is next. The placeholder used
+          // to be stamped on as-is, so every rotary valve was tagged `ROT_#`
+          // and the second one tripped the duplicate-tag check.
+          label: numberTag(def.label, snapshot.current.nodes
+            .map(n => (n.data as unknown as PIDNodeData)?.label ?? '')),
           fluidType: 'default',
           // The palette entry's preset, plus every option's declared default,
           // so a symbol is never drawn in a state its own config disagrees
@@ -998,7 +1003,9 @@ function PIDCanvas({
         nodesConnectable={!readOnly}
         elementsSelectable={!readOnly}
         edgesReconnectable={!readOnly}
-        deleteKeyCode={readOnly ? null : 'Delete'}
+        // Both, because a Mac keyboard has no key marked Delete -- it has
+        // Backspace, and pressing it did nothing.
+        deleteKeyCode={readOnly ? null : ['Delete', 'Backspace']}
         selectionOnDrag={!readOnly && mode === 'select'}
         panOnDrag={readOnly || mode !== 'select'}
         selectionMode={SelectionMode.Partial}

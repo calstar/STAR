@@ -193,9 +193,15 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
   }
 
   // ── Lines ─────────────────────────────────────────────────────────────────
+  // Sized one of two ways: the one-number fields, or the itemised run, whose
+  // segments carry the length and bore instead. The check used to read only
+  // the first and fired on every line built the recommended way.
   const bare = edges.filter(e => {
     const d = edgeDataOf(e);
-    return !d.partNumber && !(d.params?.length && d.params?.bore);
+    if (d.partNumber) return false;
+    if (d.params?.length && d.params?.bore) return false;
+    const segs = d.segments ?? [];
+    return !(segs.length > 0 && segs.every(s => s.length && s.bore));
   });
   if (bare.length) {
     push({

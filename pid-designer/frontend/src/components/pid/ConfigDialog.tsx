@@ -3,8 +3,10 @@ import { Modal } from '../ui';
 import { btn, primaryBtn } from '../../lib/ui';
 import { COMPONENT_SPECS, LINE_SPECS, LINE_TYPE_LABELS, PEER_CHOICES } from './spec';
 import type { ComponentSpec, OptionSpec, ParamSpec, PortGroupSpec } from './spec';
-import { PROVENANCE_CHOICES, UNITS } from './params';
-import type { ParamValue, Provenance } from './params';
+import { UNITS } from './params';
+import type { ParamValue } from './params';
+import { fromDraft, isVerified, pickProvenance, placeholderFor, toDraft } from './drafts';
+import type { Draft } from './drafts';
 import { portIds } from './ports';
 import type { PortInfo, PortKind } from './ports';
 import { defaultTemperatureK, speciesById } from './fluids';
@@ -57,31 +59,12 @@ interface Props {
   onSave: (patch: ConfigPatch) => void;
 }
 
-type Draft = { value: string; unit: string; source: Provenance };
-
 const EMPTY: Draft = { value: '', unit: '', source: 'estimated' };
 
 const field =
   'rounded border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-accent)]';
 const wide = `${field} w-full`;
 const rowLabel = 'text-[11px] text-[var(--color-text-secondary)]';
-
-function toDraft(spec: ParamSpec, existing?: ParamValue): Draft {
-  const units = UNITS[spec.dimension];
-  if (existing) {
-    return {
-      value: String(existing.value),
-      unit: existing.unit || units[0],
-      source: existing.source === 'measured' || existing.source === 'manufacturer'
-        ? 'measured' : 'estimated',
-    };
-  }
-  return {
-    ...EMPTY,
-    unit: spec.suggested?.unit ?? units[0],
-    value: spec.suggested ? String(spec.suggested.value) : '',
-  };
-}
 
 export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSave }: Props) {
   const type = data.componentType as ComponentType;
@@ -135,7 +118,13 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
       const untouched = t.value.trim() === '' || t.value === lastAutoTemp.current;
       if (!untouched) return d;
       lastAutoTemp.current = String(k);
-      return { ...d, temperature: { ...t, value: String(k), unit: 'K' } };
+      // Written as what it is: a default that follows from the fluid, with
+      // the reason named -- so a run report counts it as assumed rather than
+      // as a measurement somebody made.
+      return { ...d, temperature: {
+        ...t, value: String(k), unit: 'K', source: 'default',
+        reference: `${speciesById(fluid)?.label ?? fluid} at its usual state`,
+      } };
     });
   }, [open, fluid, type, spec]);
 
@@ -145,10 +134,8 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
     const params: Record<string, ParamValue> = {};
     for (const p of spec.params) {
       if (p.derived) continue;                     // computed below, never typed
-      const d = drafts[p.key];
-      if (!d || d.value.trim() === '') continue;   // absent, not zero
-      const value = Number(d.value);
-      if (Number.isFinite(value)) params[p.key] = { value, unit: d.unit, source: d.source };
+      const v = fromDraft(drafts[p.key]);          // blank is absent, not zero
+      if (v) params[p.key] = v;
     }
     // Counted, not asked for. Only when there is a list to count: with no
     // segments the drawing has not said, and a zero would be a claim.
@@ -403,11 +390,14 @@ function ParamRow({ spec, draft, readOnly, onChange }: {
       <div className="grid grid-cols-[1fr_62px_84px] gap-1.5">
         <input
           inputMode="decimal"
-          placeholder="—"
+          // The suggestion, said as one. It used to be typed into the field
+          // for you, and Save then wrote it as a number you had stated.
+          placeholder={placeholderFor(spec)}
           value={draft.value}
           readOnly={readOnly}
           onChange={e => onChange({ value: e.target.value })}
           className={`${field} min-w-0`}
+          title={draft.reference || undefined}
         />
         <select
           value={draft.unit || units[0]}
@@ -420,12 +410,17 @@ function ParamRow({ spec, draft, readOnly, onChange }: {
         </select>
         {filled ? (
           <select
-            value={draft.source}
+            // Two answers over four sources: a datasheet number reads as
+            // verified and stays `manufacturer` unless somebody says
+            // otherwise. See `drafts.ts`.
+            value={isVerified(draft.source) ? 'verified' : 'estimate'}
             disabled={readOnly}
-            onChange={e => onChange({ source: e.target.value as Provenance })}
+            onChange={e => onChange(pickProvenance(draft, e.target.value === 'verified'))}
             className={`${field} min-w-0`}
+            title={draft.reference ? `${draft.source}: ${draft.reference}` : draft.source}
           >
-            {PROVENANCE_CHOICES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+            <option value="estimate">Estimate</option>
+            <option value="verified">Verified</option>
           </select>
         ) : <span />}
       </div>

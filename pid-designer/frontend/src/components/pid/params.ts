@@ -59,7 +59,7 @@ export interface ParamValue {
 export type Dimension =
   | 'pressure' | 'temperature' | 'length' | 'volume'
   | 'flow_coefficient' | 'dimensionless' | 'time' | 'mass' | 'mass_flow' | 'angle'
-  | 'specific_heat' | 'thermal_conductance';
+  | 'specific_heat' | 'thermal_conductance' | 'conductivity' | 'pressure_ratio';
 
 /**
  * Units offered per dimension, in the spelling `feedtwin.model.units` uses.
@@ -78,6 +78,9 @@ export const UNITS: Record<Dimension, string[]> = {
   angle:            ['deg', 'rad'],
   specific_heat:    ['J/(kg.K)'],
   thermal_conductance: ['W/K'],
+  conductivity:     ['W/(m.K)'],
+  // How a datasheet writes a supply-pressure effect: "17 psi per 1000 psi".
+  pressure_ratio:   ['psi/1000psi', 'psi/100psi', 'psi/psi', 'bar/bar'],
 };
 
 /** Pressures are absolute. Said in the UI, next to the field. */

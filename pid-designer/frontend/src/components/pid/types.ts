@@ -10,14 +10,8 @@ export type ComponentType =
   | 'TEXT' | 'REGION'
   | 'JUNCTION';
 
+/** Superseded by species -- see `fluids.ts`. Kept so old drawings still read. */
 export type FluidType = 'fuel' | 'lox' | 'pressurant' | 'default';
-
-export const FLUID_COLORS: Record<FluidType, string> = {
-  fuel:       '#f97316',
-  lox:        '#60a5fa',
-  pressurant: '#ef4444',
-  default:    '#94a3b8',
-};
 
 export interface PIDNodeData {
   componentType: ComponentType;
@@ -128,12 +122,12 @@ export const COMPONENT_DEFS: ComponentDef[] = [
   { id: 'QD_H',   type: 'QD',  label: 'HQD_#',   fullName: 'Hydraulic QD',        group: 'Flow Control',
     preset: { service: 'hydraulic' } },
 
-  { id: 'TANK',     type: 'TANK',     label: 'TANK',  fullName: 'Tank',                group: 'Hardware' },
+  { id: 'TANK',     type: 'TANK',     label: 'TK-#',  fullName: 'Tank',                group: 'Hardware' },
   { id: 'KBOTTLE',  type: 'KBOTTLE',  label: 'KB_#',  fullName: 'Pressurant bottle',          group: 'Supplies', fluid: 'nitrogen' },
   { id: 'DEWAR',    type: 'DEWAR',    label: 'DW_#',  fullName: 'Dewar',                      group: 'Supplies', fluid: 'nitrogen' },
-  { id: 'MANIFOLD', type: 'MANIFOLD', label: 'MAN-F', fullName: 'Manifold',                   group: 'Hardware' },
-  { id: 'ENGINE',   type: 'ENGINE',   label: 'ENG',   fullName: 'Injector + chamber',         group: 'Hardware' },
-  { id: 'INJECTOR', type: 'INJECTOR', label: 'INJ',   fullName: 'Injector only',           group: 'Hardware' },
+  { id: 'MANIFOLD', type: 'MANIFOLD', label: 'MF-#',  fullName: 'Manifold',                   group: 'Hardware' },
+  { id: 'ENGINE',   type: 'ENGINE',   label: 'ENG-#', fullName: 'Injector + chamber',         group: 'Hardware' },
+  { id: 'INJECTOR', type: 'INJECTOR', label: 'INJ-#', fullName: 'Injector only',           group: 'Hardware' },
 
   { id: 'REGION', type: 'REGION', label: 'Section', fullName: 'Section box', group: 'Annotation' },
   { id: 'TEXT',   type: 'TEXT',   label: 'Text',    fullName: 'Text',                       group: 'Annotation' },
