@@ -102,14 +102,27 @@ describe('the shapes a run takes', () => {
     expect(grip).toBeNull();
   });
 
-  it('straightens a run that is a few pixels out rather than leaning it', () => {
-    // The reported bug: a port five pixels off drew a line leaning over its
-    // whole length. Both ends move by half the error and the run is vertical.
+  it('straightens a run that is a hair out rather than leaning it', () => {
+    // A port three pixels off drew a line leaning over its whole length.
+    // Both ends move by half the error and the run is vertical.
     const { d } = routeOrthogonal(
       { x: 300, y: 100, side: B },
-      { x: 305, y: 400, side: T },
+      { x: 303, y: 400, side: T },
     );
-    expect(points(d)).toEqual([[302.5, 100], [302.5, 400]]);
+    expect(points(d)).toEqual([[301.5, 100], [301.5, 400]]);
+  });
+
+  it('jogs, rather than averages, a run whose ends are a grid step apart', () => {
+    // The reported bug: a valve one square to the side of the tank above it
+    // got a run straightened to the average x -- landing on neither port.
+    const { d } = routeOrthogonal(
+      { x: 300, y: 100, side: B },
+      { x: 310, y: 400, side: T },
+    );
+    const p = points(d);
+    expect(p[0]).toEqual([300, 100]);
+    expect(p[p.length - 1]).toEqual([310, 400]);
+    expect(orthogonal(d), d).toBe(true);
   });
 
   it('will not straighten a run whose ends point across it', () => {

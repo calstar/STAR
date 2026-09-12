@@ -5,7 +5,7 @@ export type ComponentType =
   | 'RTD' | 'PT' | 'PG' | 'LC' | 'TC'
   | 'MAN' | 'ROT' | 'SOL'
   | 'PR' | 'RV' | 'CV' | 'QD'
-  | 'TANK' | 'INJECTOR' | 'ENGINE' | 'MANIFOLD'
+  | 'TANK' | 'ENGINE' | 'MANIFOLD'
   | 'KBOTTLE' | 'DEWAR'
   | 'TEXT' | 'REGION'
   | 'JUNCTION';
@@ -127,7 +127,6 @@ export const COMPONENT_DEFS: ComponentDef[] = [
   { id: 'DEWAR',    type: 'DEWAR',    label: 'DW_#',  fullName: 'Dewar',                      group: 'Supplies', fluid: 'nitrogen' },
   { id: 'MANIFOLD', type: 'MANIFOLD', label: 'MF-#',  fullName: 'Manifold',                   group: 'Hardware' },
   { id: 'ENGINE',   type: 'ENGINE',   label: 'ENG-#', fullName: 'Injector + chamber',         group: 'Hardware' },
-  { id: 'INJECTOR', type: 'INJECTOR', label: 'INJ-#', fullName: 'Injector only',           group: 'Hardware' },
 
   { id: 'REGION', type: 'REGION', label: 'Section', fullName: 'Section box', group: 'Annotation' },
   { id: 'TEXT',   type: 'TEXT',   label: 'Text',    fullName: 'Text',                       group: 'Annotation' },

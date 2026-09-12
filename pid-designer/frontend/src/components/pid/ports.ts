@@ -154,8 +154,6 @@ export function portsOf(node: Node): string[] {
       return ['in', ...portIds('p', count('outlets', 4))];
     case 'ENGINE':
       return ['fuel', 'ox', 't'];
-    case 'INJECTOR':
-      return ['t', 'b'];
     case 'KBOTTLE':
       return ['t', 'r'];
     case 'DEWAR':

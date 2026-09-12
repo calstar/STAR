@@ -266,15 +266,6 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
     ],
   },
 
-  INJECTOR: {
-    params: [
-      P('injector_dp', 'Injector dP', 'pressure'),
-      P('Cd', 'Cd', 'dimensionless', { value: 0.61, unit: '-' }),
-      P('orifice_diameter', 'Orifice', 'length'),
-      P('orifice_count', 'Orifices', 'dimensionless'),
-    ],
-  },
-
   MANIFOLD: {
     params: [
       P('bore', 'Bore', 'length'),

@@ -27,7 +27,6 @@ export const nodeTypes: NodeTypes = {
   CV:       CheckValveNode,
   QD:       QDNode,
   TANK:     TankNode,
-  INJECTOR: TankNode,
   ENGINE:   EngineNode,
   MANIFOLD: ManifoldNode,
   KBOTTLE:  SupplyNode,

@@ -65,13 +65,6 @@ function PaletteSymbol({ type }: { type: ComponentType }) {
           <ellipse cx="16" cy="36" rx="13" ry="5" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
         </svg>
       );
-    case 'INJECTOR':
-      return (
-        <svg width="32" height="44" viewBox="0 0 32 44">
-          <rect x="6" y="2" width="20" height="10" rx="1" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
-          <polygon points="6,12 26,12 20,40 12,40" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
-        </svg>
-      );
     case 'ENGINE':
       return (
         <svg width="30" height="44" viewBox="0 0 30 44">

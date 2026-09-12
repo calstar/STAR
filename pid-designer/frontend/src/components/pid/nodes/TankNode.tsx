@@ -9,7 +9,6 @@ import { portId, portKind } from '../ports';
 import { useEffect } from 'react';
 
 const TANK_W = 60, TANK_H = 100;
-const INJ_W = 60, INJ_H = 100;
 
 /**
  * Ports across one end of the tank, evenly spaced.
@@ -46,7 +45,7 @@ function endPorts(
 }
 
 export function TankNode({ id, data, selected }: NodeProps) {
-  const { componentType, label, labelOffset, rotation, options, color } = data as unknown as PIDNodeData;
+  const { label, labelOffset, rotation, options, color } = data as unknown as PIDNodeData;
   const stroke = selected ? '#3b82f6' : '#94a3b8';
   // Declared here, or inherited from whatever feeds it. Naming the species on
   // the symbol is the point of picking a real one: "ETH" and "LOX" are what a
@@ -66,37 +65,9 @@ export function TankNode({ id, data, selected }: NodeProps) {
   const assigned = useNodeFluid(id);
   const species = speciesById(assigned?.species ?? undefined);
   const fluidColor = color ?? (species ? colorForSpecies(species.id) : UNSET_COLOR);
-  const isInjector = componentType === 'INJECTOR';
   // The box each symbol occupies once turned, so the tag stays under it.
   const quarter = (rotation ?? 0) % 180 === 90;
-  const injBoxH = quarter ? INJ_W : INJ_H;
   const tankBoxH = quarter ? TANK_W : TANK_H;
-
-  if (isInjector) {
-    return (
-      <Frame
-        nodeId={id} w={INJ_W} h={INJ_H} rotation={rotation}
-        extra={<>
-          <TurnedPort nodeId={id} id="t" side={Position.Top}    w={INJ_W} h={INJ_H} rotation={rotation ?? 0} />
-          <TurnedPort nodeId={id} id="b" side={Position.Bottom} w={INJ_W} h={INJ_H} rotation={rotation ?? 0} />
-          <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: injBoxH + 2 }} />
-        </>}
-      >
-
-        <svg width={INJ_W} height={INJ_H} viewBox={`0 0 ${INJ_W} ${INJ_H}`}>
-          <rect x="10" y="6" width="40" height="22" rx="2"
-            fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
-          <Upright rotation={rotation} x={30} y={21}>
-            <text x="30" y="21" textAnchor="middle" fontSize="8" fill="#e2e8f0" fontFamily="monospace">INJ</text>
-          </Upright>
-          <polygon points="10,28 50,28 38,88 22,88"
-            fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
-          <line x1="22" y1="88" x2="38" y2="88" stroke={stroke} strokeWidth={2} />
-        </svg>
-
-      </Frame>
-    );
-  }
 
   return (
     <Frame

@@ -44,7 +44,12 @@ const STUB = 16;
  * two symbols stacked deliberately can still be a few pixels out. Snapping the
  * run to their average is straight; joining the points is a line that leans.
  */
-const ALIGNED = 10;
+// Four, not ten. At ten, two ports a whole grid step apart -- a tank's
+// outlet over a valve placed one square to the side -- were "straightened"
+// by moving both ends half the error, so the run landed on neither port.
+// A step apart is a decision; the run jogs to honour it. Snap-on-drop is
+// what lines symbols up (snap.ts), so what remains is rounding.
+const ALIGNED = 4;
 
 /**
  * How far to the side a detour goes to clear the symbol it is leaving.

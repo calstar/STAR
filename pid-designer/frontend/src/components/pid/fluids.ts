@@ -128,7 +128,7 @@ const dataOf = (n: Node) => n.data as unknown as PIDNodeData;
  * worse, a walk that carried on through would paint the fuel side as oxidiser
  * and then report a conflict at every joint after it.
  */
-const MEETING_POINTS = new Set(['ENGINE', 'INJECTOR']);
+const MEETING_POINTS = new Set(['ENGINE']);
 
 /**
  * Is this end of a line a tank's ullage port?

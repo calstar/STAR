@@ -38,6 +38,7 @@ import { nextNodeId, seedIdsFrom } from './ids';
 import { defFor } from './types';
 import type { PIDNodeData } from './types';
 import { numberTag } from './tags';
+import { migrate } from './migrate';
 import { copySelection, pasteClip } from './clipboard';
 import type { Clip } from './clipboard';
 import { TitleBlock } from './TitleBlock';
@@ -285,7 +286,7 @@ function PIDCanvas({
     api.loadDiagram(diagramRef)
       .then(data => {
         if (cancelled) return;
-        const loaded = { nodes: data?.nodes ?? [], edges: data?.edges ?? [] };
+        const loaded = migrate({ nodes: data?.nodes ?? [], edges: data?.edges ?? [] });
         seedIdsFrom(loaded.nodes);
         setNodes(loaded.nodes);
         setEdges(loaded.edges);
@@ -735,7 +736,7 @@ function PIDCanvas({
     const def = defFor(entry);
     if (!def) return;
     const type = def.type;
-    const nodeH = (type === 'TANK' || type === 'INJECTOR' || type === 'ENGINE') ? 100 : 60;
+    const nodeH = (type === 'TANK' || type === 'ENGINE') ? 100 : 60;
     // From the provider, not from the `onInit` instance in state. Taking the
     // checkout remounts this canvas, and for the frame or two before `onInit`
     // has committed, that state is null -- so the palette silently dropped
