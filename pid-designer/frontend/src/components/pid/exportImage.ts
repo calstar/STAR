@@ -15,7 +15,7 @@
  */
 
 import { toSvg } from 'html-to-image';
-import { getNodesBounds, getViewportForBounds, type Node } from '@xyflow/react';
+import { getNodesBounds, type Node } from '@xyflow/react';
 
 /** What the title block says. */
 export interface SheetMeta {
@@ -55,13 +55,22 @@ export function fileStem(meta: SheetMeta): string {
   return `${clean(meta.name)} - ${clean(meta.page)}`;
 }
 
-/** The frame the shot is taken in: the visible symbols, padded. */
+/**
+ * The frame the shot is taken in: the visible symbols, padded.
+ *
+ * The transform is written out rather than asked of `getViewportForBounds`,
+ * whose padding argument is a fraction of the frame. Handed a pixel count
+ * it obliged with ninety-six times the frame, and the drawing was
+ * translated clean off the sheet -- leaving a title block, one vent arrow
+ * that happened to sit near the origin, and a pixel count that passed.
+ */
 function frame(flow: HTMLElement, nodes: Node[]) {
   const shown = nodes.filter(n => !n.hidden);
-  const bounds = getNodesBounds(shown.length ? shown : nodes);
+  const bounds = drawnBounds(flow) ?? getNodesBounds(shown.length ? shown : nodes);
   const width = Math.ceil((bounds.width + 2 * PAD) * SCALE);
   const height = Math.ceil((bounds.height + 2 * PAD) * SCALE);
-  const vp = getViewportForBounds(bounds, width, height, SCALE, SCALE, PAD * SCALE);
+  const x = (PAD - bounds.x) * SCALE;
+  const y = (PAD - bounds.y) * SCALE;
   const viewport = flow.querySelector<HTMLElement>('.react-flow__viewport');
   if (!viewport) throw new Error('no canvas to export');
   return {
@@ -69,9 +78,40 @@ function frame(flow: HTMLElement, nodes: Node[]) {
     style: {
       width: `${width}px`,
       height: `${height}px`,
-      transform: `translate(${vp.x}px, ${vp.y}px) scale(${vp.zoom})`,
+      transform: `translate(${x}px, ${y}px) scale(${SCALE})`,
     },
   };
+}
+
+/**
+ * The extent of what is actually drawn, in flow units.
+ *
+ * `getNodesBounds` is the symbols' boxes. A tag hangs below its symbol, a
+ * setpoint under that, a turned valve's tag off to its side -- all outside
+ * the box, and a frame drawn to the boxes cut MAN-FILL to "MAN-" at the
+ * edge of the sheet. So the rendered elements are measured instead: every
+ * node and everything inside it, mapped back through the viewport transform.
+ */
+function drawnBounds(flow: HTMLElement): { x: number; y: number; width: number; height: number } | null {
+  const viewport = flow.querySelector<HTMLElement>('.react-flow__viewport');
+  const pane = flow.getBoundingClientRect();
+  const m = /translate\(([-\d.]+)px,\s*([-\d.]+)px\)\s*scale\(([\d.]+)\)/.exec(viewport?.style.transform ?? '');
+  if (!viewport || !m) return null;
+  const tx = Number(m[1]), ty = Number(m[2]), k = Number(m[3]);
+  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+  for (const node of flow.querySelectorAll<HTMLElement>('.react-flow__node')) {
+    if (node.hidden || node.style.visibility === 'hidden') continue;
+    for (const el of [node, ...node.querySelectorAll<HTMLElement>('*')]) {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) continue;
+      left = Math.min(left, r.left); top = Math.min(top, r.top);
+      right = Math.max(right, r.right); bottom = Math.max(bottom, r.bottom);
+    }
+  }
+  if (!Number.isFinite(left)) return null;
+  const toFlow = (sx: number, sy: number) => ({ x: (sx - pane.left - tx) / k, y: (sy - pane.top - ty) / k });
+  const a = toFlow(left, top), b = toFlow(right, bottom);
+  return { x: a.x, y: a.y, width: b.x - a.x, height: b.y - a.y };
 }
 
 /** What html-to-image should leave out: chrome, not drawing. */
