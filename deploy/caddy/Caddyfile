@@ -78,25 +78,37 @@
 
 # ── Engine Design ──────────────────────────────────────────────────────────
 {$SCHEME:https}://engine-design.{$BASE_DOMAIN:starberkeley.org} {
-	import protected
+	# One route{} around the whole body: the Caddyfile adapter sorts `handle`
+	# ahead of `route`, and (protected) is a route -- so without this the
+	# handles below match, proxy, and terminate the request before
+	# forward_auth ever runs, leaving the site completely ungated.
+	route {
+		import protected
 
-	handle /api/* {
-		reverse_proxy engine-design-api:8000
-	}
-	handle {
-		reverse_proxy engine-design-frontend:4173
+		handle /api/* {
+			reverse_proxy engine-design-api:8000
+		}
+		handle {
+			reverse_proxy engine-design-frontend:4173
+		}
 	}
 }
 
 # ── P&ID Designer ──────────────────────────────────────────────────────────
 {$SCHEME:https}://pid-designer.{$BASE_DOMAIN:starberkeley.org} {
-	import protected
+	# One route{} around the whole body: the Caddyfile adapter sorts `handle`
+	# ahead of `route`, and (protected) is a route -- so without this the
+	# handles below match, proxy, and terminate the request before
+	# forward_auth ever runs, leaving the site completely ungated.
+	route {
+		import protected
 
-	handle /api/* {
-		reverse_proxy pid-designer-api:8001
-	}
-	handle {
-		reverse_proxy pid-designer-frontend:4174
+		handle /api/* {
+			reverse_proxy pid-designer-api:8001
+		}
+		handle {
+			reverse_proxy pid-designer-frontend:4174
+		}
 	}
 }
 
@@ -108,13 +120,19 @@
 # for an unapproved user on just those calls, 200 everywhere else. Nothing extra
 # is needed here. See auth/allowlist.py (_APP_PROTECTED_PATHS).
 {$SCHEME:https}://openrocket.{$BASE_DOMAIN:starberkeley.org} {
-	import protected
+	# One route{} around the whole body: the Caddyfile adapter sorts `handle`
+	# ahead of `route`, and (protected) is a route -- so without this the
+	# handles below match, proxy, and terminate the request before
+	# forward_auth ever runs, leaving the site completely ungated.
+	route {
+		import protected
 
-	handle /api/* {
-		reverse_proxy star-openrocket-api:8002
-	}
-	handle {
-		reverse_proxy star-openrocket-frontend:4177
+		handle /api/* {
+			reverse_proxy star-openrocket-api:8002
+		}
+		handle {
+			reverse_proxy star-openrocket-frontend:4177
+		}
 	}
 }
 
@@ -141,17 +159,23 @@
 # The SPA detects it was served on a default port and switches to same-origin
 # /api and /ws, which is what these routes expect.
 {$SCHEME:https}://daq-server.{$BASE_DOMAIN:starberkeley.org} {
-	import protected
+	# One route{} around the whole body: the Caddyfile adapter sorts `handle`
+	# ahead of `route`, and (protected) is a route -- so without this the
+	# handles below match, proxy, and terminate the request before
+	# forward_auth ever runs, leaving the site completely ungated.
+	route {
+		import protected
 
-	handle /api/* {
-		reverse_proxy {$DAQ_BACKEND:host.docker.internal:8081}
-	}
-	# Caddy proxies the upgrade transparently; the backend's WebSocketServer is
-	# bound to the whole HTTP server, so the /ws path needs no rewrite.
-	handle /ws* {
-		reverse_proxy {$DAQ_BACKEND:host.docker.internal:8081}
-	}
-	handle {
-		reverse_proxy {$DAQ_GUI:host.docker.internal:3000}
+		handle /api/* {
+			reverse_proxy {$DAQ_BACKEND:host.docker.internal:8081}
+		}
+		# Caddy proxies the upgrade transparently; the backend's WebSocketServer is
+		# bound to the whole HTTP server, so the /ws path needs no rewrite.
+		handle /ws* {
+			reverse_proxy {$DAQ_BACKEND:host.docker.internal:8081}
+		}
+		handle {
+			reverse_proxy {$DAQ_GUI:host.docker.internal:3000}
+		}
 	}
 }
