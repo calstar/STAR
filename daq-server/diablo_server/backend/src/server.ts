@@ -1110,10 +1110,23 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       }
       const stateName = declaredName ?? SystemState[targetState] ?? String(targetState);
       const csvName = declaredName ?? STATE_TO_CSV_NAME[stateName] ?? stateName;
+      // Optional timed hold. Only appended when it is a sane integer, so a malformed value never
+      // reaches the wire and every existing client stays byte-for-byte identical. This check is
+      // convenience, not safety: the sequencer validates independently and is the authority on
+      // which states may carry a duration at all (never the burn state).
+      const holdMs = command.data.holdMs;
+      let holdSuffix = '';
+      if (holdMs !== undefined) {
+        if (!Number.isInteger(holdMs) || holdMs <= 0 || holdMs > 3600000) {
+          send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Invalid hold duration: ${holdMs}` } });
+          break;
+        }
+        holdSuffix = `:${holdMs}`;
+      }
       // No optimistic update — real state/actuator positions arrive via _SEQUENCER_STATE [0x50]
       // and [0x32] packets from Elodin. FIRE_START/FIRE_STOP are sent from the subscriber path.
-      sendToActuatorService(`TRANSITION:${csvName}\n`).then(({ ok, reply }) => {
-        console.log(`[ThinServer] State transition ${stateName} → ${csvName}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
+      sendToActuatorService(`TRANSITION:${csvName}${holdSuffix}\n`).then(({ ok, reply }) => {
+        console.log(`[ThinServer] State transition ${stateName} → ${csvName}${holdSuffix}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
         if (!ok) {
           send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition failed: ${reply}` } });
         }
@@ -1219,7 +1232,9 @@ function sendToActuatorService(line: string): Promise<{ ok: boolean; reply: stri
       if (replyData.includes('\n')) {
         socket.destroy();
         const reply = replyData.trim();
-        done(reply === 'OK', reply);
+        // A hold transition answers OK:<accepted_ms> so the client can show the window the
+        // sequencer actually used rather than the one it asked for.
+        done(reply === 'OK' || reply.startsWith('OK:'), reply);
       }
     });
     socket.on('close', () => done(false, replyData.trim() || 'connection closed'));

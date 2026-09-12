@@ -138,6 +138,7 @@ cleanup() {
   fi
   rm -rf "$TEST_DB_PATH" 2>/dev/null || true
   rm -f "$TEST_CONFIG" 2>/dev/null || true
+  rm -f "$REPO_ROOT"/.tmp/integration_transitions_*.csv "$REPO_ROOT"/.tmp/integration_actuators_*.csv "$REPO_ROOT"/.tmp/integration_delays_*.csv 2>/dev/null || true
   rm -f "$UDP_COMMANDS_FILE" 2>/dev/null || true
   rm -f "$SIM_STATS_FILE" "$SIM_STATS_FILE.tmp" 2>/dev/null || true
   rm -f "$REPO_ROOT/.tmp/integration_adjustments_$$.json" 2>/dev/null || true
@@ -398,6 +399,86 @@ sedi 's/^bind_ip = .*/bind_ip = "127.0.0.1"/' "$TEST_CONFIG"
 # realistic burn on every CI run.
 sedi 's/^duration_ms = .*/duration_ms = 1500/' "$TEST_CONFIG"
 sedi 's/^extended_ms = .*/extended_ms = 3000/' "$TEST_CONFIG"
+# ── Flow Test: a gated timed hold, constructed here rather than shipped ───────────────────────
+# The sequencer can time a hold around ONE actuator rather than around the state, adding that
+# valve's staged delay so "1 s" means the VALVE was open for 1 s. Exercising that needs a state
+# whose valves are staggered, and a reference stand config should not grow a state just so CI can
+# measure one — so the CSVs are patched copies in .tmp and TEST_CONFIG is pointed at them.
+#
+# Appended AFTER the duration_ms sed above: that sed rewrites every line starting `duration_ms =`,
+# so a [flow] duration written earlier would be silently clobbered to the fire value.
+FLOW_STATE_ID=21
+FLOW_GATE_DELAY_S=0.4
+FLOW_HOLD_MS=800
+FLOW_TRANS_CSV="$REPO_ROOT/.tmp/integration_transitions_$$.csv"
+FLOW_ACTS_CSV="$REPO_ROOT/.tmp/integration_actuators_$$.csv"
+FLOW_DELAYS_CSV="$REPO_ROOT/.tmp/integration_delays_$$.csv"
+
+python3 - "$REPO_ROOT/config/profiles/default" "$FLOW_TRANS_CSV" "$FLOW_ACTS_CSV" \
+         "$FLOW_DELAYS_CSV" "$FLOW_GATE_DELAY_S" <<'PYEOF'
+import csv, sys, os
+src, out_t, out_a, out_d, gate_delay = sys.argv[1:6]
+
+def load(name):
+    with open(os.path.join(src, name)) as f:
+        return [r for r in csv.reader(f)]
+
+def save(path, rows):
+    with open(path, 'w', newline='') as f:
+        csv.writer(f).writerows(rows)
+
+NAME = 'Flow Test'
+RETURN = 'Press Standby'
+GATE = 'Fuel Main'
+
+# Transitions: reachable only from the hub, and able to get back to it — the sequencer refuses to
+# make a state holdable at all if it cannot reach its return target.
+t = load('state_transitions.csv')
+t[0].append(NAME)
+for r in t[1:]:
+    r.append('1' if r[0] == RETURN else '0')
+t.append([NAME] + ['1' if h in (RETURN, NAME) else '0' for h in t[0][1:]])
+save(out_t, t)
+
+# Actuators: the gate opens, everything else stays shut. RETURN already closes Fuel Main, which is
+# what actually ends the flow.
+a = load('state_machine_actuators.csv')
+a[0].append(NAME)
+for r in a[1:]:
+    r.append('OPEN' if r[0] == GATE else 'CLOSE')
+save(out_a, a)
+
+# Delays: the gate is staggered on the way IN only, so the hold must come out as
+# requested + gate delay.
+d = load('state_machine_actuator_delays.csv')
+d[0].append(NAME)
+for r in d[1:]:
+    r.append(gate_delay if r[0] == GATE else '0')
+save(out_d, d)
+PYEOF
+
+sedi "s|^transitions_csv = .*|transitions_csv = \"$FLOW_TRANS_CSV\"|" "$TEST_CONFIG"
+sedi "s|^actuator_csv = .*|actuator_csv = \"$FLOW_ACTS_CSV\"|" "$TEST_CONFIG"
+sedi "s|^actuator_delay_csv = .*|actuator_delay_csv = \"$FLOW_DELAYS_CSV\"|" "$TEST_CONFIG"
+
+cat >> "$TEST_CONFIG" <<EOF
+
+[[states]]
+id = $FLOW_STATE_ID
+name = "Flow Test"
+is_flow = true
+
+[flow]
+return_target = "Press Standby"
+duration_ms = $FLOW_HOLD_MS
+max_ms = 5000
+gate_actuator = "Fuel Main"
+EOF
+
+export INTEGRATION_FLOW_STATE_ID="$FLOW_STATE_ID"
+export INTEGRATION_FLOW_HOLD_MS="$FLOW_HOLD_MS"
+export INTEGRATION_FLOW_GATE_DELAY_MS=$(python3 -c "print(int(float('$FLOW_GATE_DELAY_S')*1000))")
+
 # Align SERVER_HEARTBEAT UDP with the same port as udp_listener (actuator/control path in CI)
 sedi "s/^broadcast_port = 5005/broadcast_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 # controller_service is launched with --control-port $TEST_CONTROLLER_PORT, but the sequencer

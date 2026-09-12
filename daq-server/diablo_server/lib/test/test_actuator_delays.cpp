@@ -33,11 +33,13 @@
 #include <thread>
 #include <vector>
 
-#include "DiabloPacketUtils.h"
+#include "BoardListener.hpp"
 #include "control/ActuatorCommander.hpp"
 #include "control/StateMachine.hpp"
 
 namespace fs = std::filesystem;
+using daqtest::BoardListener;
+using daqtest::Burst;
 using sequencer::ActuatorCommander;
 using sequencer::State;
 using Clock = std::chrono::steady_clock;
@@ -49,93 +51,6 @@ static void check(bool ok, const std::string& what) {
     if (!ok)
         g_failures++;
 }
-
-/** One received command burst: when it arrived (ms since t0) and which channels it carried. */
-struct Burst {
-    long long at_ms;
-    std::set<uint8_t> channels;
-};
-
-/** Collects UDP actuator packets, folding the 3x retransmit of one batch into a single burst. */
-class BoardListener {
-public:
-    explicit BoardListener(uint16_t port) : port_(port) {
-    }
-
-    bool start() {
-        sock_ = socket(AF_INET, SOCK_DGRAM, 0);
-        if (sock_ < 0)
-            return false;
-        int reuse = 1;
-        setsockopt(sock_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-        struct sockaddr_in addr{};
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(port_);
-        inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
-        if (bind(sock_, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
-            close(sock_);
-            sock_ = -1;
-            return false;
-        }
-        struct timeval tv{.tv_sec = 0, .tv_usec = 50000};
-        setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        running_ = true;
-        t0_ = Clock::now();
-        thread_ = std::thread([this]() {
-            run();
-        });
-        return true;
-    }
-
-    void stop() {
-        running_ = false;
-        if (thread_.joinable())
-            thread_.join();
-        if (sock_ >= 0)
-            close(sock_);
-    }
-
-    std::vector<Burst> bursts() {
-        std::lock_guard<std::mutex> lk(mutex_);
-        return bursts_;
-    }
-
-private:
-    void run() {
-        uint8_t buf[1024];
-        while (running_) {
-            ssize_t n = recv(sock_, buf, sizeof(buf), 0);
-            if (n <= 0)
-                continue;
-            daq::PacketHeader header;
-            std::vector<daq::ActuatorCommand> cmds;
-            if (!daq::parse_actuator_command_packet(buf, static_cast<size_t>(n), header, cmds))
-                continue;
-            std::set<uint8_t> chans;
-            for (const auto& c : cmds)
-                chans.insert(c.actuator_id);
-            const long long at =
-                std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0_).count();
-
-            std::lock_guard<std::mutex> lk(mutex_);
-            // The same batch is retransmitted 3x ~1 ms apart; fold identical content arriving
-            // within 50 ms into one burst so assertions talk about batches, not packets.
-            if (!bursts_.empty() && bursts_.back().channels == chans &&
-                at - bursts_.back().at_ms < 50) {
-                continue;  // a retransmit of the burst we already recorded
-            }
-            bursts_.push_back({at, chans});
-        }
-    }
-
-    uint16_t port_;
-    int sock_ = -1;
-    std::atomic<bool> running_{false};
-    std::thread thread_;
-    std::mutex mutex_;
-    std::vector<Burst> bursts_;
-    Clock::time_point t0_;
-};
 
 static std::string writeFixture(const fs::path& dir, uint16_t port, double slow_delay_s) {
     std::ofstream act(dir / "state_machine_actuators.csv");
@@ -252,6 +167,49 @@ int main() {
             if (x.at_ms > 500 && x.channels.count(2) && !x.channels.count(1))
                 stale_stage = true;
         check(!stale_stage, "stage from the abandoned state never fires after a new transition");
+    }
+
+    // ── 3. The caller's OWN sequence must stagger, not just the loop's ────────────────────────
+    // Blocks 1 and 2 drive startContinuousLoop directly. SequencerService::transitionTo does not:
+    // it calls applyForState(to) first and starts the loop after. For a long time that direct call
+    // omitted the flag, and it defaults to false — "this is the 1 Hz republish, send settled
+    // positions" — so it shipped every actuator at t=0 and the staged schedule that followed was
+    // re-commanding valves already in position. Every configured delay was inert.
+    //
+    // This block pins the mode PAIR the caller now has to use: a staged entry, then a loop that
+    // only republishes. It cannot catch the regression itself — the wrong call lived in
+    // SequencerService, which this target does not link. test_hold_rules drives the real caller
+    // and asserts the stagger on the wire; that is the one that fails if this is ever undone.
+    {
+        BoardListener listener(port);
+        if (!listener.start()) {
+            std::cerr << "could not re-bind UDP " << port << std::endl;
+            return 1;
+        }
+
+        ActuatorCommander ac;
+        ac.load(cfg, (dir / "state_machine_actuators.csv").string());
+
+        // Exactly what transitionTo runs on a real state change.
+        ac.applyForState(State::ARMED, /*is_transition=*/true);
+        ac.startContinuousLoop(State::ARMED, /*allow_delays=*/false);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(2600));
+        ac.stopContinuousLoop();
+        listener.stop();
+
+        const auto b = listener.bursts();
+        const long long target = static_cast<long long>(kDelay * 1000);
+
+        check(!b.empty() && b[0].channels.count(1),
+              "the transition's own apply sends the undelayed actuator at t=0");
+        check(!b.empty() && !b[0].channels.count(2),
+              "the transition's own apply does NOT send the delayed actuator at t=0");
+
+        const long long slow_open = daqtest::firstCommand(b, /*ch=*/2, /*hw=*/1);
+        check(slow_open >= target - 200 && slow_open <= target + 400,
+              "the delayed actuator was commanded at its delay, not immediately (at " +
+                  std::to_string(slow_open) + " ms, want ~" + std::to_string(target) + ")");
     }
 
     fs::remove_all(dir);

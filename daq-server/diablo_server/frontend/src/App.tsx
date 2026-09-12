@@ -85,7 +85,6 @@ export default function App() {
               <Route path="/calibration-cubic" element={<Navigate to="/calibration" replace />} />
               <Route path="/config" element={<P.ConfigPage />} />
               <Route path="/controller" element={<P.ControllerPage />} />
-              <Route path="/controls" element={<P.ControlsPage />} />
               <Route path="/encoders" element={<P.EncodersPage />} />
               <Route path="/flash" element={<P.FlashPage />} />
               <Route path="/livestream" element={<LivestreamRoute />} />

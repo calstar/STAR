@@ -45,7 +45,7 @@ points_per_second = 20
 # the 20 pts/s GUI budget would quantize away. At the boards' ~48 Hz this is a
 # no-op -- it bounds a faster encoder board, it does not downsample this one.
 encoder_points_per_second = 100
-tabs = [ "unified", "boards", "config", "calibration", "session" ]
+tabs = [ "unified", "boards", "config", "calibration", "feed-char", "session" ]
 
 [[gui.pressure_bars]]
 label = "FF Vent"
@@ -313,8 +313,8 @@ active_connectors = [ 1, 2 ]
 
 [calibration_model_pt_board]
 "Fuel Fill Vent" = "physics"
-"Fuel Upstream" = "physics"
-"Dome CTRL" = "physics"
+"Fuel Upstream" = "cubic"
+"Dome CTRL" = "cubic"
 "Low Press" = "physics"
 
 [calibration_full_scale_pt_board]
@@ -366,6 +366,7 @@ bind_address = "0.0.0.0"
 port = 9999
 fire_duration_ms = 6000
 fire_extended_ms = 10000
+sequencer_owns_valves = true
 
 [routing.pt_raw]
 packet_id = [ 32, 0 ]
@@ -590,6 +591,13 @@ state = ""
 expiry_target = "Armed"
 duration_ms = 1000
 extended_ms = 1000
+gate_actuator = "Fuel Main"
+
+[flow]
+return_target = "Ready"
+duration_ms = 1000
+max_ms = 10000
+gate_actuator = "Fuel Main"
 
 [[states]]
 id = 1
@@ -664,17 +672,24 @@ name = "Fire"
 panel_row = 4
 panel_col = 1
 
+[[states]]
+id = 13
+name = "Flow Test"
+is_flow = true
+
 [actuator_roles]
 "Fuel Upstream" = [ "NC", 1, 12 ]
 "High Press CTRL" = [ "NC", 2, 12 ]
 "Dome CTRL Vent" = [ "NC", 3, 12 ]
-"Fuel Main" = [ "NC", 5, 12 ]
-"Dome CTRL" = [ "NO", 1, 14 ]
+"Fuel Main" = [ "NC", 6, 12 ]
+"Dome CTRL" = [ "NO", 7, 12 ]
 "Fuel Fill Press" = [ "NC", 2, 14 ]
 "High Press Vent" = [ "NC", 3, 14 ]
+"Fuel Fill Vent" = [ "NC", 5, 14 ]
+"Low Press Vent" = [ "NC", 6, 14 ]
 
 [calibration_model_pt_board_2]
-"GN2 High" = "physics"
+"GN2 High" = "cubic"
 "Excitation V" = "physics"
-"Dome Mid" = "physics"
-"High Press" = "physics"
+"Dome Mid" = "cubic"
+"High Press" = "cubic"

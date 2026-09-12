@@ -22,6 +22,9 @@ export interface StateDef {
   isBoot: boolean;
   /** True for the state [fire].state names — the burn. Not an id: the burn is wherever config says. */
   isFire: boolean;
+  /** True for the state carrying [[states]].is_flow — the one the characterization hold drives.
+   *  A flag rather than a name, so renaming or moving it needs no code change. */
+  isFlow?: boolean;
   /** Position on the State Machine control panel. null = not shown there. */
   panelRow: number | null;
   panelCol: number | null;
@@ -103,6 +106,7 @@ export async function loadStates(apiBase: string, force = false): Promise<StateD
         byId = new Map(BUILT_IN_BY_ID);
         states = BUILT_IN;
       }
+      flowConfig = body?.flow ?? null;
       return adopt(Array.isArray(body?.states) ? body.states : []);
     } catch {
       // Built-in list stands; labels stay correct, they just stop tracking config.
@@ -118,6 +122,35 @@ export async function loadStates(apiBase: string, force = false): Promise<StateD
 export function stateName(id: number | null | undefined): string {
   if (id === null || id === undefined) return 'UNKNOWN';
   return byId.get(id)?.name ?? `STATE ${id}`;
+}
+
+/**
+ * The [flow] block from config, or null when the stand has no characterization hold.
+ * Populated by loadStates() alongside the state list.
+ */
+export interface FlowConfig {
+  returnTarget: string;
+  durationMs: number | null;
+  maxMs: number | null;
+}
+
+let flowConfig: FlowConfig | null = null;
+
+/** [flow] as the server reported it, or null if unconfigured. */
+export function flowSettings(): FlowConfig | null {
+  return flowConfig;
+}
+
+/**
+ * Id of the state the characterization hold drives, or null when no state is flagged.
+ *
+ * null is a real answer, not an error: it means nothing is configured, and the caller should
+ * disable its control and say so rather than guess a state. Never resolve this by name — the
+ * point of the flag is that the name is the operator's to change.
+ */
+export function flowStateId(): number | null {
+  for (const s of states) if (s.isFlow) return s.id;
+  return null;
 }
 
 /** Upper-case display name, for the header/top-bar styling. */

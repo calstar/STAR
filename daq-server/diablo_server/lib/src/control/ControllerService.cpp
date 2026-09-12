@@ -248,6 +248,12 @@ void ControllerService::setNavState(const RobustDDPController::NavState& nav) {
 }
 
 void ControllerService::setFireActive(bool active) {
+    // The single funnel both activation paths go through — the TCP FIRE_START/FIRE_STOP server and
+    // the [0x50] state-packet parity fallback. Guarding here rather than at each caller means a
+    // disabled gate cannot be reached by any route, present or future.
+    if (!fire_gate_enabled_.load())
+        return;
+
     const bool was_active = fire_active_.exchange(active);
     if (was_active == active)
         return;
@@ -451,6 +457,13 @@ bool ControllerService::sendPWMCommands(const PWMTarget& t1, float duty1, const 
         return false;
     const uint8_t channel1 = t1.channel;
     const uint8_t channel2 = t2.channel;
+
+    // Actuator ids are 1-based, so 0 is the "unresolved" marker controller_main leaves behind when
+    // a PWM role is missing from [actuator_roles]. Refusing here is belt and braces next to the
+    // disabled fire gate: whatever else goes wrong, a packet is never addressed to channel 0 —
+    // and, more to the point, never to a guessed channel that belongs to some other valve.
+    if (channel1 == 0 || channel2 == 0)
+        return false;
 
     uint8_t packet[DUAL_CMD_PACKET_SIZE];
     size_t offset = 0;
@@ -846,7 +859,13 @@ void ControllerService::subscriberReadLoop(std::vector<uint8_t>& rx_buffer) {
             // Parity fallback for a missed TCP FIRE_START/FIRE_STOP edge. The id comes from
             // config ([fire] state) via setFireStateId rather than a literal, so renumbering
             // states cannot move the PWM ignition gate onto a different one.
-            setFireActive(state_val == fire_state_id_);
+            //
+            // Skipped entirely when the gate is disabled — setFireActive() would refuse anyway,
+            // but this branch runs at packet rate and there is no reason to call into it
+            // continuously just to be turned away. The `continue` stays either way so the packet
+            // is still consumed rather than falling through to the PT decoders below.
+            if (fire_gate_enabled_.load())
+                setFireActive(state_val == fire_state_id_);
             continue;
         }
 

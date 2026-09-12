@@ -178,6 +178,14 @@ export interface CommandPayload {
      * behaviour where config errors were advisory.
      */
     force?: boolean;
+    /**
+     * state_transition: hold the target state for exactly this long, then let it return to its
+     * configured return state. Only honoured for a state the config marks as accepting one — the
+     * SEQUENCER decides, and it refuses this outright for the burn state, whose window is
+     * config-only. A refusal does not transition, so a frame replayed after a reconnect cannot
+     * start a hold. Omit to use the state's configured default.
+     */
+    holdMs?: number;
   };
 }
 

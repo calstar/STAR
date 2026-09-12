@@ -67,7 +67,7 @@ SequencerService::~SequencerService() {
 
     stopElodinRetry();
     actuator_commander_.stopContinuousLoop();
-    fire_manager_.stop();
+    hold_timer_.stop();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -194,78 +194,10 @@ static std::string resolveDataPath(const std::string& rel) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-/**
- * Resolve everything under [fire] against the currently-adopted state table.
- *
- * Called from init(). Extracted from it when reload still existed, and kept separate because it
- * documents one rule in one place: [fire] is resolved against the state table adopted from the
- * same config, never against the compiled enum.
- *
- * Must run after StateMachine::loadStatesFromConfig() and after state_machine_.load(), since it
- * resolves names through the former and sanity-checks the transition table from the latter.
- */
-void SequencerService::applyFireConfig(const fsw::config::Config& cfg) {
-    // Reset before resolving: on a reload an entry that has since been removed from config must
-    // disable the burn, not leave the previous run's id in place.
-    fire_state_ = State::UNKNOWN;
-    fire_expiry_state_ = State::UNKNOWN;
-
-    const std::string fs = cfg.fire.state;
-    if (fs.empty()) {
-        // No fire state configured → the fire timer never arms (nothing to auto-transition out
-        // of). UNKNOWN never equals a real state in transitionTo's `to == fire_state_` check.
-        fire_state_ = State::UNKNOWN;
-    } else {
-        State s = StateMachine::fromName(fs);
-        if (s == State::UNKNOWN)
-            // Config is authoritative and does not declare this name. Disable the burn (leave
-            // UNKNOWN) rather than fall back to the compiled Fire id, which names a different
-            // state on a renumbered rig — a misconfig fails safe and loud, not silent-wrong.
-            std::cerr << "[SequencerService] [fire] state \"" << fs
-                      << "\" is not a declared state — FIRE DISABLED" << std::endl;
-        else
-            fire_state_ = s;
-    }
-    const std::string ft = cfg.fire.expiry_target;
-    if (!ft.empty()) {
-        State s = StateMachine::fromName(ft);
-        if (s == State::UNKNOWN)
-            // Same rule for the timer's landing state: an undeclared name disables auto-expiry
-            // (leaves UNKNOWN → the isAllowed check below warns) instead of a compiled Armed.
-            std::cerr << "[SequencerService] [fire] expiry_target \"" << ft
-                      << "\" is not a declared state — fire auto-expiry disabled" << std::endl;
-        else
-            fire_expiry_state_ = s;
-    }
-    actuator_commander_.setFireState(fire_state_);
-    if (fire_state_ == State::UNKNOWN) {
-        std::cout << "[SequencerService] Fire state: (none) — fire timer disabled" << std::endl;
-    } else {
-        std::cout << "[SequencerService] Fire state: " << StateMachine::name(fire_state_)
-                  << " → expires to " << StateMachine::name(fire_expiry_state_) << std::endl;
-        // The expiry transition goes through the same isAllowed() gate as any other, so a
-        // target the fire state cannot reach leaves the system sitting in FIRE with a dead
-        // timer. Say so at startup rather than at T-0.
-        if (!state_machine_.isAllowed(fire_state_, fire_expiry_state_))
-            std::cerr << "[SequencerService] WARNING: " << StateMachine::name(fire_state_) << " → "
-                      << StateMachine::name(fire_expiry_state_)
-                      << " is not an allowed transition — the fire timer will expire into a "
-                         "refused transition and the system will stay in fire."
-                      << std::endl;
-    }
-
-    // FireManager durations from config.toml [fire] (see the parser for the
-    // [controller_service].fire_* fallback that keeps an un-migrated config working).
-    fire_manager_.configure(cfg.fire.duration_ms, cfg.fire.extended_ms);
-    std::cout << "[SequencerService] Fire window: " << cfg.fire.duration_ms << " ms (extended "
-              << cfg.fire.extended_ms << " ms)" << std::endl;
-}
-
+// applyConfig — everything a config load has to apply, in the one order that works.
+// Kept separate from init() so the order is stated once, in one place, rather than inline.
 // ─────────────────────────────────────────────────────────────────────────────
-bool SequencerService::init(const std::string& config_path) {
-    loadConfig(config_path);
-    const fsw::config::Config cfg = fsw::config::load_from_string(config_content_);
-
+bool SequencerService::applyConfig(const fsw::config::Config& cfg) {
     // Adopt [[states]] BEFORE anything resolves a state name. Both CSVs are parsed by name through
     // StateMachine::fromName(), which prefers the config's by_name map and falls back to the
     // compiled enum. This call used to sit below both loads, so the transition table was built
@@ -286,7 +218,11 @@ bool SequencerService::init(const std::string& config_path) {
 
     // Actuator commander — path from config.toml (canonical: daq-server/config/).
     std::string act_csv = resolveDataPath(cfg.state_machine.actuator_csv);
-    if (!actuator_commander_.load(config_content_, act_csv)) {
+    // Pass the delays path explicitly. It was declared in config and read by nobody — the commander
+    // guessed it from the positions filename instead, so a renamed positions file silently disabled
+    // every staged delay on the stand.
+    std::string delay_csv = resolveDataPath(cfg.state_machine.actuator_delay_csv);
+    if (!actuator_commander_.load(config_content_, act_csv, delay_csv)) {
         std::cerr << "[SequencerService] Failed to load state_machine_actuators.csv (tried: "
                   << act_csv << ")" << std::endl;
         return false;
@@ -315,15 +251,250 @@ bool SequencerService::init(const std::string& config_path) {
         return false;
     }
 
-    applyFireConfig(cfg);
+    // ── [fire]: which state burns, and where its timer lands ─────────────────────────────────
+    // Names, not enumerators. `state_val == 16` in ControllerService and a stringified
+    // State::ARMED here were the two places a rename or renumber silently broke ignition.
+    State fire_state = State::UNKNOWN;
+    State fire_expiry = State::UNKNOWN;
+    {
+        const std::string fs = cfg.fire.state;
+        if (fs.empty()) {
+            // No fire state configured → the fire timer never arms (nothing to auto-transition out
+            // of). UNKNOWN never equals a real state in transitionTo's `to == fire_state_` check.
+            fire_state = State::UNKNOWN;
+        } else {
+            const State s = StateMachine::fromName(fs);
+            if (s == State::UNKNOWN) {
+                // Every branch assigns. This used to log "falling back to Fire" and then leave the
+                // member at its State::FIRE initializer — id 16, which a profile that renumbered
+                // its states need not even have, and which on another might be a completely
+                // different state that would then arm the burn timer. On a reload it additionally
+                // kept whatever the PREVIOUS config had resolved to. Disabling is the safe answer.
+                std::cerr << "[SequencerService] [fire] state \"" << fs
+                          << "\" is not a known state — the fire timer is DISABLED" << std::endl;
+            } else {
+                fire_state = s;
+            }
+        }
+        const std::string ft = cfg.fire.expiry_target;
+        if (!ft.empty()) {
+            const State s = StateMachine::fromName(ft);
+            if (s == State::UNKNOWN)
+                // Same rule as the fire state: an undeclared name disables auto-expiry (leaves
+                // UNKNOWN, so the isAllowed check below warns) rather than falling back to a
+                // compiled Armed, which names a different state on a renumbered rig.
+                std::cerr << "[SequencerService] [fire] expiry_target \"" << ft
+                          << "\" is not a declared state — fire auto-expiry disabled" << std::endl;
+            else
+                fire_expiry = s;
+        }
+    }
+    fire_state_ = fire_state;
+    fire_expiry_state_ = fire_expiry;
+    fire_duration_ms_ = cfg.fire.duration_ms;
+    fire_extended_ms_ = cfg.fire.extended_ms;
+    actuator_commander_.setFireState(fire_state);
 
-    // Controller service endpoint for FIRE_START / FIRE_STOP
+    if (fire_state == State::UNKNOWN) {
+        std::cout << "[SequencerService] Fire state: (none) — fire timer disabled" << std::endl;
+    } else {
+        std::cout << "[SequencerService] Fire state: " << StateMachine::name(fire_state)
+                  << " → expires to " << StateMachine::name(fire_expiry) << " after "
+                  << cfg.fire.duration_ms << " ms (extended " << cfg.fire.extended_ms << " ms)"
+                  << std::endl;
+        // The expiry transition goes through the same isAllowed() gate as any other, so a
+        // target the fire state cannot reach leaves the system sitting in FIRE with a dead
+        // timer. Say so at startup rather than at T-0.
+        if (!state_machine_.isAllowed(fire_state, fire_expiry))
+            std::cerr << "[SequencerService] WARNING: " << StateMachine::name(fire_state) << " → "
+                      << StateMachine::name(fire_expiry)
+                      << " is not an allowed transition — the fire timer will expire into a "
+                         "refused transition and the system will stay in fire."
+                      << std::endl;
+    }
+
+    // ── Hold rules ───────────────────────────────────────────────────────────────────────────
+    // Exactly two things create entries, and both write `gui_settable` as a literal. It is never
+    // read from config, so no config edit — deliberate or accidental — can make a burn window
+    // settable by a client.
+    std::map<State, HoldRule> rules;
+
+    if (fire_state != State::UNKNOWN) {
+        HoldRule r;
+        r.default_ms = cfg.fire.duration_ms;
+        r.max_ms = cfg.fire.duration_ms;
+        r.extended_ms = cfg.fire.extended_ms;
+        r.return_state = fire_expiry;
+        r.gui_settable = false;  // a burn length comes from config, reviewed and in git. Always.
+        r.gate_actuator = cfg.fire.gate_actuator;
+        if (!r.gate_actuator.empty()) {
+            const double din =
+                actuator_commander_.delayForRole(StateMachine::name(fire_state), r.gate_actuator);
+            const double dout =
+                actuator_commander_.delayForRole(StateMachine::name(fire_expiry), r.gate_actuator);
+            r.gate_open_delay_ms = static_cast<uint32_t>(din * 1000.0 + 0.5);
+            r.gate_close_delay_ms = static_cast<uint32_t>(dout * 1000.0 + 0.5);
+            std::cout << "[SequencerService] Fire gate: \"" << r.gate_actuator << "\" opens +"
+                      << r.gate_open_delay_ms << " ms, closes +" << r.gate_close_delay_ms
+                      << " ms; burn window = " << r.default_ms << " ms of THAT valve being open"
+                      << std::endl;
+        } else {
+            // Catch the trap rather than let it burn short: a staggered fire column with the window
+            // measured from the transition burns for (duration - stagger), and equal values do not
+            // burn at all.
+            for (const auto& [role, pos] :
+                 actuator_commander_.positionsForState(StateMachine::name(fire_state))) {
+                if (pos != 1)
+                    continue;
+                const double d =
+                    actuator_commander_.delayForRole(StateMachine::name(fire_state), role);
+                if (d > 0.0)
+                    std::cerr << "[SequencerService] WARNING: fire opens \"" << role << "\" " << d
+                              << " s after entry, but no [fire].gate_actuator is set — the "
+                                 "burn window is measured from the TRANSITION, so that valve is "
+                                 "open for "
+                              << (static_cast<double>(r.default_ms) / 1000.0 - d) << " s, not "
+                              << (static_cast<double>(r.default_ms) / 1000.0) << " s." << std::endl;
+            }
+        }
+        rules[fire_state] = r;
+    }
+
+    // ── [flow]: the characterization hold ────────────────────────────────────────────────────
+    // WHICH state this is comes from the is_flow flag on a [[states]] entry, never from a name in
+    // [flow]. That is the one thing [fire] gets wrong: `[fire] state = "Fire"` is resolved by
+    // string, so renaming the state orphans it. Here the operator can rename it, delete it, or
+    // move the flag to a different state and everything follows.
+    State flow_state = State::UNKNOWN;
+    for (const auto& sd : cfg.states) {
+        if (!sd.is_flow || sd.id < 0 || sd.id > 255 || sd.name.empty())
+            continue;
+        const State s = static_cast<State>(static_cast<uint8_t>(sd.id));
+        if (flow_state == State::UNKNOWN) {
+            flow_state = s;  // first wins, as with is_boot in loadStatesFromConfig
+        } else {
+            std::cerr << "[SequencerService] More than one state carries is_flow — ignoring \""
+                      << sd.name << "\", using \"" << StateMachine::name(flow_state) << "\""
+                      << std::endl;
+        }
+    }
+
+    if (flow_state != State::UNKNOWN) {
+        // Every rejection below leaves the state NOT holdable, which makes the transition refuse
+        // up front so the valve never opens. That is deliberate and is stricter than the fire path
+        // above, which only warns: this hold exists solely to close a valve on a timer, so a hold
+        // that cannot close its valve has no safe degraded mode.
+        const std::string& rt = cfg.flow.return_target;
+        const State ret = rt.empty() ? State::UNKNOWN : StateMachine::fromName(rt);
+
+        if (flow_state == fire_state) {
+            std::cerr << "[SequencerService] ERROR: is_flow is set on the fire state — REFUSED. "
+                         "A burn window must not become client-settable."
+                      << std::endl;
+        } else if (cfg.flow.duration_ms == 0) {
+            std::cerr << "[SequencerService] ERROR: \"" << StateMachine::name(flow_state)
+                      << "\" is marked is_flow but [flow].duration_ms is unset — NOT holdable."
+                      << std::endl;
+        } else if (ret == flow_state) {
+            // The diagonal is 1 in most transition matrices, so this is reachable by a plausible
+            // config edit — and it would be a hold that expires into itself, re-arming forever with
+            // the valve held open. There is no "close" in that loop at all.
+            std::cerr
+                << "[SequencerService] ERROR: [flow].return_target is the flow state itself — "
+                   "the hold would re-arm forever with its valves open. NOT holdable."
+                << std::endl;
+        } else if (ret == State::UNKNOWN) {
+            std::cerr << "[SequencerService] ERROR: [flow].return_target \"" << rt
+                      << "\" is not a known state — \"" << StateMachine::name(flow_state)
+                      << "\" is NOT holdable. Its valves cannot be stranded open because the "
+                         "transition into it is now refused."
+                      << std::endl;
+        } else if (!state_machine_.isAllowed(flow_state, ret)) {
+            std::cerr << "[SequencerService] ERROR: " << StateMachine::name(flow_state) << " → "
+                      << StateMachine::name(ret)
+                      << " is not an allowed transition — the hold would expire into a refused "
+                         "transition and leave its valves open. NOT holdable."
+                      << std::endl;
+        } else {
+            HoldRule r;
+            r.default_ms = cfg.flow.duration_ms;
+            r.max_ms = cfg.flow.max_ms ? cfg.flow.max_ms : cfg.flow.duration_ms;
+            r.extended_ms = 0;  // a measured pulse is a fixed window; extend() must not stretch it
+            r.return_state = ret;
+            r.gui_settable = true;
+            r.gate_actuator = cfg.flow.gate_actuator;
+            if (!r.gate_actuator.empty()) {
+                // The delay this valve already waits, from the delays CSV. Read rather than
+                // configured twice: the stagger is declared in one place and the hold follows it,
+                // so editing the CSV cannot silently desynchronise the window from the valve.
+                const double din = actuator_commander_.delayForRole(StateMachine::name(flow_state),
+                                                                    r.gate_actuator);
+                const double dout =
+                    actuator_commander_.delayForRole(StateMachine::name(ret), r.gate_actuator);
+                r.gate_open_delay_ms = static_cast<uint32_t>(din * 1000.0 + 0.5);
+                r.gate_close_delay_ms = static_cast<uint32_t>(dout * 1000.0 + 0.5);
+            }
+            rules[flow_state] = r;
+            std::cout << "[SequencerService] Flow hold: " << StateMachine::name(flow_state) << " "
+                      << r.default_ms << " ms (max " << r.max_ms << ") → "
+                      << StateMachine::name(ret) << std::endl;
+            if (!r.gate_actuator.empty()) {
+                std::cout << "[SequencerService] Flow gate: \"" << r.gate_actuator << "\" opens +"
+                          << r.gate_open_delay_ms << " ms after entry, closes +"
+                          << r.gate_close_delay_ms << " ms after expiry; hold = requested + "
+                          << r.gate_open_delay_ms << " - " << r.gate_close_delay_ms
+                          << " ms, so the requested duration is how long IT is open" << std::endl;
+                if (r.gate_close_delay_ms >= r.gate_open_delay_ms + r.default_ms)
+                    std::cerr << "[SequencerService] WARNING: the gate closes later than the hold "
+                                 "would end — the window cannot be honoured and will be clamped."
+                              << std::endl;
+            }
+
+            // A warning, not a refusal: the transition is legal, so the machine does leave the
+            // hold. What this catches is a return column that leaves one of the held valves
+            // energised — the hold closes its valves only because the return state's CSV says
+            // CLOSE, and nothing else is going to.
+            const auto opens =
+                actuator_commander_.positionsForState(StateMachine::name(flow_state));
+            const auto closes = actuator_commander_.positionsForState(StateMachine::name(ret));
+            for (const auto& [role, pos] : opens) {
+                if (pos != 1)
+                    continue;
+                const auto it = closes.find(role);
+                if (it == closes.end() || it->second != 0)
+                    std::cerr << "[SequencerService] WARNING: " << StateMachine::name(flow_state)
+                              << " opens \"" << role << "\" but " << StateMachine::name(ret)
+                              << " does not close it — the hold will end with that valve still open"
+                              << std::endl;
+            }
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(config_mutex_);
+        hold_rules_ = std::move(rules);
+    }
+
+    // Controller service endpoint for FIRE_START / FIRE_STOP.
     // Read from config; defaults to 127.0.0.1:8000
     controller_host_ = cfg.controller_service.host;
     controller_port_ = cfg.controller_service.port;
-    fire_manager_.setNotifier([this](bool active) {
-        notifyControllerFire(active);
-    });
+    sequencer_owns_valves_ = cfg.controller_service.sequencer_owns_valves;
+    std::cout << "[SequencerService] Fire valve ownership: "
+              << (sequencer_owns_valves_
+                      ? "sequencer (controller_service is never told a burn started)"
+                      : "controller_service (FIRE_START / FIRE_STOP sent)")
+              << std::endl;
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+bool SequencerService::init(const std::string& config_path) {
+    loadConfig(config_path);
+    const fsw::config::Config cfg = fsw::config::load_from_string(config_content_);
+
+    if (!applyConfig(cfg))
+        return false;
 
     // Snapshot the actuator board list now, while we are reading config for the first and only
     // time. tryConnectElodin() re-registers VTables on every reconnect and must not go back to
@@ -352,8 +523,10 @@ bool SequencerService::init(const std::string& config_path) {
     // Publish initial state so any already-connected backend/GUI knows we started at IDLE.
     publishState();
     // Command IDLE actuators and keep resending so manual debug clicks cannot stick vs CSV.
-    actuator_commander_.applyForState(current_state_.load());
-    actuator_commander_.startContinuousLoop(current_state_.load());
+    // is_transition=true because this IS the entry into the boot state; the loop that follows is
+    // only the republisher. See the note in transitionTo — the two must not both claim the entry.
+    actuator_commander_.applyForState(current_state_.load(), /*is_transition=*/true);
+    actuator_commander_.startContinuousLoop(current_state_.load(), /*allow_delays=*/false);
 
     // Start the command worker last. Everything above runs on the caller's thread before any
     // command can be accepted, so init() needs no serialization of its own — and starting the
@@ -378,29 +551,85 @@ bool SequencerService::isAbortState(State s) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 bool SequencerService::transitionTo(const std::string& state_name) {
+    return transitionTo(state_name, 0);
+}
+
+bool SequencerService::transitionTo(const std::string& state_name, uint32_t requested_hold_ms,
+                                    std::string* refusal_reason) {
     // Resolve on the worker, not here. fromName() reads the config-declared state table, which
     // the worker owns — resolving on the caller's thread would read it from an arbitrary thread.
-    return enqueueAndWait([this, state_name]() {
+    // enqueueAndWait blocks until the lambda has run, so refusal_reason stays alive throughout.
+    return enqueueAndWait([this, state_name, requested_hold_ms, refusal_reason]() {
         State to = StateMachine::fromName(state_name);
         if (to == State::UNKNOWN) {
             std::cerr << "[SequencerService] Unknown state: " << state_name << std::endl;
+            if (refusal_reason)
+                *refusal_reason = "unknown state";
             return false;
         }
-        return doTransitionTo(to);
+        return doTransitionTo(to, requested_hold_ms, refusal_reason);
     });
 }
 
 bool SequencerService::transitionTo(State to) {
-    return enqueueAndWait([this, to]() {
-        return doTransitionTo(to);
+    return transitionTo(to, 0);
+}
+
+bool SequencerService::transitionTo(State to, uint32_t requested_hold_ms,
+                                    std::string* refusal_reason) {
+    return enqueueAndWait([this, to, requested_hold_ms, refusal_reason]() {
+        return doTransitionTo(to, requested_hold_ms, refusal_reason);
     });
 }
 
-bool SequencerService::doTransitionTo(State to) {
+bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
+                                      std::string* refusal_reason) {
     State from = current_state_.load();
+
+    HoldRule rule;
+    bool has_rule = false;
+    {
+        std::lock_guard<std::mutex> lk(config_mutex_);
+        const auto it = hold_rules_.find(to);
+        if (it != hold_rules_.end()) {
+            rule = it->second;
+            has_rule = true;
+        }
+    }
+
+    // Validate a client-supplied hold BEFORE anything moves — before the overrides are cleared,
+    // before the resend loop stops, before a single actuator is commanded. A refusal has to leave
+    // the rig exactly where it was: the WebSocket client queues commands while its socket is down
+    // and replays them on reconnect, so a stale "burn for 60 s" must be a no-op, not a transition
+    // that then runs for some other length.
+    if (requested_hold_ms != 0) {
+        const char* why = nullptr;
+        if (!has_rule)
+            why = "state is not holdable";
+        else if (!rule.gui_settable)
+            why = "duration not permitted for this state";
+        else if (requested_hold_ms > rule.max_ms)
+            why = "duration exceeds max";
+
+        if (why) {
+            std::cerr << "[SequencerService] Refused " << requested_hold_ms << " ms hold on "
+                      << StateMachine::name(to) << ": " << why << std::endl;
+            if (refusal_reason) {
+                *refusal_reason = why;
+                if (std::string(why) == "duration exceeds max")
+                    *refusal_reason += " (" + std::to_string(rule.max_ms) + " ms)";
+            }
+            // Republish so a client that moved its own display in anticipation is corrected —
+            // the same courtesy the ordinary refusal path below extends.
+            publishState();
+            return false;
+        }
+    }
 
     if (!debug_mode_) {
         if (!state_machine_.isAllowed(from, to)) {
+            if (refusal_reason)
+                *refusal_reason = "transition rejected";
             std::cerr << "[SequencerService] Transition " << StateMachine::name(from) << " → "
                       << StateMachine::name(to) << " is not allowed" << std::endl;
             // Republish the state we are actually in. A refusal used to publish nothing, so a
@@ -435,39 +664,93 @@ bool SequencerService::doTransitionTo(State to) {
     // Stop current continuous loop before applying the new state
     actuator_commander_.stopContinuousLoop();
 
-    // If leaving FIRE state, stop the fire manager
-    if (from == fire_state_ && to != fire_state_) {
-        fire_manager_.stop();
+    // A hold belongs to the state it was armed in, so any move ends it. Unconditional because
+    // stop() is a no-op when nothing is running, and because start() below stops first anyway —
+    // which is what makes re-entering a held state restart its window rather than stack a second.
+    hold_timer_.stop();
+
+    // Apply actuator commands for new state.
+    //
+    // is_transition=true is what makes this run the delays CSV as a staged schedule instead of
+    // dumping every actuator at t=0. It used to be omitted, and the parameter defaults to false —
+    // "this is the 1 Hz republish, send settled positions". So this call shipped the whole state
+    // at once, and the staged schedule that startContinuousLoop kicked off below then re-commanded
+    // valves that were already in position. Every configured delay was inert: parsed, logged as
+    // "Sent 1 commands (+1s)", and completely without effect on any state on any profile, the
+    // 80 ms fuel lead in default/server's Fire column included. The default argument is why it was
+    // invisible — omitting it compiled clean and read exactly like the pre-delay call it once was.
+    actuator_commander_.applyForState(to, /*is_transition=*/!isAbortState(to));
+
+    // Arm the hold HERE, immediately after the valves are commanded, rather than at the end of the
+    // transition: the window the operator asked for is the one between the open and the close, and
+    // everything below (the resend thread spawn, the Elodin publishes) would otherwise be counted
+    // inside it.
+    if (has_rule && rule.return_state != State::UNKNOWN) {
+        // The requested duration is what the GATE valve should be open for, so the state is held
+        // for the gate's stagger plus that. Without this, a 1 s request on a state whose main opens
+        // 1 s late would close everything exactly as the main opened — zero flow.
+        const uint32_t requested = requested_hold_ms != 0 ? requested_hold_ms : rule.default_ms;
+        // Both staggers. The entry delay pushes the valve's opening later, so the state must be
+        // held longer; the return state's delay keeps it open past the expiry transition, so the
+        // state must be held that much less. Net: hold = requested + open - close.
+        const int64_t want = static_cast<int64_t>(requested) +
+                             static_cast<int64_t>(rule.gate_open_delay_ms) -
+                             static_cast<int64_t>(rule.gate_close_delay_ms);
+        // Clamp rather than wrap: unsigned underflow here would become a ~49-day hold, valves open.
+        const uint32_t hold_ms = want > 0 ? static_cast<uint32_t>(want) : 1;
+        if (want <= 0)
+            std::cerr << "[SequencerService] Gate close delay (" << rule.gate_close_delay_ms
+                      << " ms) swallows the requested " << requested
+                      << " ms window — holding 1 ms. Fix the delays CSV." << std::endl;
+        const State return_state = rule.return_state;
+        // The controller is told a burn started only when it owns the valves. When the sequencer
+        // owns them there is no notifier at all rather than a suppressed one — nothing to forget
+        // to check — and a flow hold never has one regardless.
+        const bool notify_controller = (to == fire_state_) && !sequencer_owns_valves_;
+        hold_timer_.start(HoldSpec{hold_ms, rule.extended_ms,
+                                   [this, return_state]() {
+                                       // Timer thread. Resolve to a State rather than a name: the
+                                       // old code round-tripped through
+                                       // StateMachine::name(State::ARMED) → fromName(), so renaming
+                                       // the state made fromName() return UNKNOWN and the
+                                       // transition was refused — stranding the system in fire with
+                                       // the timer already stopped.
+                                       //
+                                       // Detached, never enqueueAndWait: this runs on the hold
+                                       // timer's own thread, and the worker handling the expiry
+                                       // transition calls hold_timer_.stop(), which joins this very
+                                       // thread. Waiting here would be a guaranteed deadlock — the
+                                       // worker waiting on the join, this thread waiting on the
+                                       // worker — and it would strand the rig in the held state
+                                       // with the gate valve open.
+                                       enqueueDetached([this, return_state]() {
+                                           return doTransitionTo(return_state);
+                                       });
+                                   },
+                                   notify_controller
+                                       ? std::function<void(bool)>([this](bool active) {
+                                             notifyControllerFire(active);
+                                         })
+                                       : nullptr,
+                                   StateMachine::name(to)});
     }
 
-    // Apply actuator commands for new state
-    actuator_commander_.applyForState(to);
-
-    // Start continuous re-send loop for new state
-    // Abort states apply immediately: their CSV delays are ignored, because an abort must not sit
-    // behind a timer. (The physical UDP abort broadcast is separate and already went out at the
-    // top of this function.)
-    actuator_commander_.startContinuousLoop(to, !entering_abort);
+    // Start continuous re-send loop for new state.
+    // allow_delays=false: the entry above already ran the schedule, so this loop is purely the
+    // 1 Hz republish. Letting it claim the entry as well would bump the schedule generation and
+    // cancel the stages the line above just armed. It still skips a role whose delay is pending,
+    // so the board holds its pre-transition position until that role's stage fires.
+    // (Abort states got their immediate apply above via isAbortState; an abort must not sit behind
+    // a timer. The physical UDP abort broadcast already went out at the top of this function.)
+    actuator_commander_.startContinuousLoop(to, /*allow_delays=*/false);
 
     // Update current state
     current_state_ = to;
 
-    // FIRE lifecycle — which state this is comes from [fire] state, not the enumerator.
-    if (to == fire_state_) {
-        fire_manager_.start([this]() {
-            // Timer thread. Resolve to a State rather than a name: the old code round-tripped
-            // through StateMachine::name(State::ARMED) → fromName(), so renaming the state made
-            // fromName() return UNKNOWN and the transition was refused — stranding the system in
-            // fire with the timer already stopped.
-            //
-            // Detached, never enqueueAndWait: this runs on FireManager's timer thread, and the
-            // worker handling the expiry transition will call fire_manager_.stop(), which joins
-            // this very thread. Waiting here would be a guaranteed deadlock — the worker waiting
-            // on the join, this thread waiting on the worker.
-            enqueueDetached([this]() {
-                return doTransitionTo(fire_expiry_state_);
-            });
-        });
+    // Abort lifecycle. The burn/flow lifecycle is not here: both are hold rules now, armed by the
+    // hold_timer_.start() above, so the fire window no longer needs a branch of its own.
+    if (isAbortState(to)) {
+        abort_broadcaster_.triggerAbort();
     }
 
     // Elodin publishing
@@ -523,18 +806,18 @@ bool SequencerService::doExtendFire() {
         std::cerr << "[SequencerService] EXTEND_FIRE ignored: not in FIRE state" << std::endl;
         return false;
     }
-    fire_manager_.extend();
-    return true;
+    return hold_timer_.extend();
 }
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Elodin publishing
 // ─────────────────────────────────────────────────────────────────────────────
 /**
  * Tell controller_service the burn gate changed. One TCP connection per message, 1 s send timeout.
  *
- * This lives here rather than in FireManager so exactly one component talks to the controller —
- * previously FireManager opened its own socket AND the backend independently detected the FIRE
- * edge and sent the same messages, so a safety-critical gate had two writers in two processes.
+ * This lives here rather than in the hold timer so exactly one component talks to the
+ * controller — previously the timer opened its own socket AND the backend independently saw the
+ * FIRE edge and sent the same messages, so a safety-critical gate had two writers in two processes.
  */
 void SequencerService::notifyControllerFire(bool active) {
     if (notifyControllerFireOnce(active))

@@ -189,12 +189,23 @@ Config from_table(const toml::table& t) {
     c.fire.extended_ms = static_cast<uint32_t>(
         i_or(t["fire"]["extended_ms"], i_or(t["controller_service"]["fire_extended_ms"], 10000)));
 
+    // [flow] — the characterization hold. No `state` key by design: which state this is comes from
+    // the is_flow flag on a [[states]] entry, so a rename cannot orphan it the way [fire].state
+    // can.
+    c.flow.return_target = s_or(t["flow"]["return_target"], "");
+    c.flow.duration_ms = static_cast<uint32_t>(i_or(t["flow"]["duration_ms"], 0));
+    c.flow.max_ms = static_cast<uint32_t>(i_or(t["flow"]["max_ms"], 0));
+    c.fire.gate_actuator = s_or(t["fire"]["gate_actuator"], "");
+    c.flow.gate_actuator = s_or(t["flow"]["gate_actuator"], "");
+
     c.controller_service.port = static_cast<uint16_t>(i_or(t["controller_service"]["port"], 9999));
     c.controller_service.host = s_or(t["controller_service"]["host"], c.controller_service.host);
     c.controller_service.fire_duration_ms =
         static_cast<uint32_t>(i_or(t["controller_service"]["fire_duration_ms"], 6000));
     c.controller_service.fire_extended_ms =
         static_cast<uint32_t>(i_or(t["controller_service"]["fire_extended_ms"], 10000));
+    c.controller_service.sequencer_owns_valves =
+        b_or(t["controller_service"]["sequencer_owns_valves"], false);
 
     c.controller.pwm_frequency_hz = d_or(t["controller"]["pwm_frequency_hz"], 10.0);
     c.controller.pwm_duration_ms =
@@ -250,6 +261,7 @@ Config from_table(const toml::table& t) {
                 s.name = (*st)["name"].value<std::string>().value_or("");
                 s.is_abort = (*st)["is_abort"].value<bool>().value_or(false);
                 s.is_boot = (*st)["is_boot"].value<bool>().value_or(false);
+                s.is_flow = (*st)["is_flow"].value<bool>().value_or(false);
                 c.states.push_back(s);
             }
 

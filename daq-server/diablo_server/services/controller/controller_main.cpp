@@ -103,6 +103,12 @@ static void handleControlClient(int client_fd, fsw::control::ControllerService* 
         std::cerr << "[ControllerService] ⚠️  control connection closed with no command "
                      "(timeout or peer went away)"
                   << std::endl;
+    } else if (!svc->isFireGateEnabled() && (buf == "FIRE_START" || buf == "FIRE_STOP")) {
+        // Answer rather than silently doing nothing: a sequencer built before the ownership
+        // switch existed would otherwise think it had handed over the gate.
+        std::cerr << "[ControllerService] ⚠️  " << buf
+                  << " refused — fire gate disabled (sequencer owns the valves)" << std::endl;
+        reply("ERR:fire gate disabled (sequencer owns the valves)\n");
     } else if (buf == "FIRE_START") {
         svc->setFireActive(true);
         std::cout << "[ControllerService] 🔥 FIRE_START received — PWM gate open" << std::endl;
@@ -416,12 +422,23 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Same posture for the PWM targets: config did not say which hardware to drive, so drive
-    // none. 255 never matches a real sequencer state, so the gate cannot open by either the TCP
-    // command or the Elodin parity path. The process keeps running — telemetry, the Elodin
-    // subscriber and the control loop are all still useful, and an operator needs to see the
-    // reason rather than a service that vanished at boot.
-    if (!unresolved.empty()) {
+    // Who drives the valves during the burn. When the sequencer owns them this service must not
+    // touch them at all: disabling the gate stops BOTH activation paths at once, since the TCP
+    // FIRE_START handler and the [0x50] parity fallback both funnel through setFireActive(). Also
+    // clear the parity id, so the state packet cannot arm anything even if the gate is later
+    // re-enabled by some future path.
+    if (cfg.controller_service.sequencer_owns_valves) {
+        service.setFireGateEnabled(false);
+        service.setFireStateId(255);
+        std::cout << "  Valve owner:    sequencer — PWM gate DISABLED, FIRE_START will be refused"
+                  << std::endl;
+    } else if (!unresolved.empty()) {
+        // Same posture for the PWM targets: config did not say which hardware to drive, so drive
+        // none. 255 never matches a real sequencer state, so the gate cannot open by either the TCP
+        // command or the Elodin parity path. The service still starts — it is also the DDP /
+        // diagnostics service and publishes to Elodin, and a rig that legitimately has no press
+        // valves (digital-twin) would otherwise lose all of that to an exit(1).
+        service.setFireGateEnabled(false);
         service.setFireStateId(255);
         for (const auto& why : unresolved)
             std::cerr << "  ⚠️  [controller] " << why << std::endl;
@@ -429,6 +446,8 @@ int main(int argc, char* argv[]) {
                      "[actuator_roles] entry \"pwm_fuel\" and one \"pwm_ox\" via the optional "
                      "4th element, e.g. \"Fuel Press\" = [\"NC\", 3, 12, \"pwm_fuel\"]."
                   << std::endl;
+    } else {
+        std::cout << "  Valve owner:    controller_service (PWM gate armed)" << std::endl;
     }
 
     std::string lut_path_raw = !lut_path_cli.empty() ? lut_path_cli : cfg.controller.lut_path;

@@ -94,6 +94,7 @@ interface ConfigData {
   abort_pts?: Record<string, number>;
   adc?: { internal_v?: number; vdd_nominal_v?: number; absolute_5v_v?: number };
   fire?: { state?: string; expiry_target?: string; duration_ms?: number; extended_ms?: number };
+  flow?: { return_target?: string; duration_ms?: number; max_ms?: number };
   states?: Array<{
     id?: number;
     name?: string;
@@ -101,6 +102,7 @@ interface ConfigData {
     panel_col?: number;
     is_abort?: boolean;
     is_boot?: boolean;
+    is_flow?: boolean;
   }>;
   // 4th element assigns the actuator to controller_service ("pwm_fuel" | "pwm_ox"); absent means
   // the sequencer owns it. See validateControllerPwmActuators.
@@ -850,6 +852,7 @@ export default function ConfigPage() {
       }
       if (!list[idx].is_abort) delete list[idx].is_abort;
       if (!list[idx].is_boot) delete list[idx].is_boot;
+      if (!list[idx].is_flow) delete list[idx].is_flow;
       return { ...prev, states: list } as ConfigData;
     });
 
@@ -869,9 +872,29 @@ export default function ConfigPage() {
     const to = (stateList[idx]?.name ?? '').trim();
     // Only a real, non-empty, changed name propagates. An empty name is invalid and blocked at Save;
     // a transient duplicate is allowed (and flagged) like role names, resolved before Save.
-    if (from && to && from !== to)
-      for (const set of [setCsvActuators, setCsvDelays, setCsvTransitions])
-        set((g) => renameCol(g, from, to));
+    if (!from || !to || from === to) return;
+    for (const set of [setCsvActuators, setCsvDelays, setCsvTransitions])
+      set((g) => renameCol(g, from, to));
+
+    // The CSVs are not the only place a state is named. [fire].state / [fire].expiry_target and
+    // [flow].return_target hold names too, and a rename that skipped them would leave the sequencer
+    // pointing at a state that no longer exists — a fire timer expiring into an unresolvable target
+    // is exactly what it warns about at startup.
+    setConfig((prev) => {
+      const p = prev as ConfigData;
+      const fire = p.fire;
+      const flow = p.flow;
+      const nextFire = fire
+        ? {
+          ...fire,
+          ...(fire.state === from ? { state: to } : {}),
+          ...(fire.expiry_target === from ? { expiry_target: to } : {}),
+        }
+        : fire;
+      const nextFlow = flow && flow.return_target === from ? { ...flow, return_target: to } : flow;
+      if (nextFire === fire && nextFlow === flow) return prev;
+      return { ...p, ...(nextFire ? { fire: nextFire } : {}), ...(nextFlow ? { flow: nextFlow } : {}) } as ConfigData;
+    });
   };
 
   const addState = () => {
@@ -990,6 +1013,7 @@ export default function ConfigPage() {
     };
   };
 
+  /** Rename a state's column (and, in the transitions grid, its from-row key) in one CSV grid. */
   const removeState = (idx: number) => {
     const name = stateList[idx]?.name;
     setConfig((prev) => ({
@@ -2337,6 +2361,7 @@ export default function ConfigPage() {
                         <th className="px-3 py-2 text-left font-semibold w-24">Col</th>
                         <th className="px-3 py-2 text-left font-semibold w-20">Boot</th>
                         <th className="px-3 py-2 text-left font-semibold w-20">Abort</th>
+                        <th className="px-3 py-2 text-left font-semibold w-20">Flow</th>
                         <th className="px-3 py-2 w-20" />
                       </tr>
                     </thead>
@@ -2397,6 +2422,16 @@ export default function ConfigPage() {
                               disabled={!canEdit}
                               title="Triggers the physical abort broadcast, and skips actuator delays"
                               className="w-4 h-4 accent-red-400"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <input
+                              type="checkbox"
+                              checked={st.is_flow === true}
+                              onChange={(e) => setState(i, { is_flow: e.target.checked })}
+                              disabled={!canEdit}
+                              title="The state the Feed Characterization tab drives. Its timings live in [flow]. Only one state may carry this."
+                              className="w-4 h-4 accent-emerald-400"
                             />
                           </td>
                           <td className="px-3 py-1.5 text-right whitespace-nowrap">
@@ -2684,6 +2719,113 @@ export default function ConfigPage() {
                         {renderField('Extended (ms)', config.fire?.extended_ms,
                           (v) => updateField('fire', 'extended_ms', v), 'number',
                           undefined, 'window EXTEND FIRE restarts at')}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+
+              {/* ── Flow (characterization hold) ────────────────────────────────────── */}
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold">Flow test</h3>
+                <p className="text-sm text-text-muted">
+                  The timed hold the Feed Characterization tab runs: it enters the state ticked{' '}
+                  <strong>Flow</strong> in the States list, holds it for an exact interval, then returns
+                  here — which is what actually closes the valves. Unlike Fire, <em>which</em> state this
+                  is comes from that tick box, not from a name, so renaming it is free.
+                </p>
+                {(() => {
+                  const names = stateList.map((x) => x.name).filter(Boolean) as string[];
+                  const flagged = stateList.filter((x) => x.is_flow === true);
+                  const flowName = flagged[0]?.name ?? '';
+                  const target = config.flow?.return_target ?? '';
+                  const durationMs = config.flow?.duration_ms;
+                  const maxMs = config.flow?.max_ms;
+                  const unknownTarget = !!target && names.length > 0 && !names.includes(target);
+                  // Same reachability rule as Fire, and here it is not merely a warning: the
+                  // sequencer refuses to make the state holdable at all if it cannot get back out,
+                  // precisely so a valve is never opened with nothing coming to close it.
+                  let unreachable = false;
+                  if (csvTransitions && flowName && target) {
+                    const r = csvTransitions.rows.find((x) => x.key === flowName);
+                    const ci = csvTransitions.states.indexOf(target);
+                    if (r && ci >= 0) unreachable = (r.cells[ci] || '0').trim() !== '1';
+                  }
+                  // Which valves the hold opens, and whether the return state shuts each of them.
+                  const notClosed: string[] = [];
+                  if (csvActuators && flowName && target && !unreachable) {
+                    const fi = csvActuators.states.indexOf(flowName);
+                    const ti = csvActuators.states.indexOf(target);
+                    if (fi >= 0 && ti >= 0) {
+                      for (const r of csvActuators.rows) {
+                        if ((r.cells[fi] || '').trim().toUpperCase() !== 'OPEN') continue;
+                        const back = (r.cells[ti] || '').trim().toUpperCase();
+                        if (back !== 'CLOSE' && back !== 'CLOSED') notClosed.push(r.key);
+                      }
+                    }
+                  }
+                  return (
+                    <>
+                      {flagged.length === 0 && (
+                        <InlineIssue level="warn">
+                          <p>
+                            No state is ticked <strong>Flow</strong>, so there is no characterization
+                            hold. The Feed Characterization tab will show its run button disabled.
+                          </p>
+                        </InlineIssue>
+                      )}
+                      {flagged.length > 1 && (
+                        <InlineIssue level="error">
+                          <p>
+                            {flagged.length} states are ticked <strong>Flow</strong>. Only the first
+                            (<strong>{flowName}</strong>) is used; untick the others.
+                          </p>
+                        </InlineIssue>
+                      )}
+                      {flagged.length > 0 && (unknownTarget || unreachable || !target || !durationMs) && (
+                        <InlineIssue level="error">
+                          {!target && <p>No <strong>Returns to</strong> state, so the hold has nowhere to land and is disabled.</p>}
+                          {unknownTarget && <p><strong>{target}</strong> is not a state in the States list above.</p>}
+                          {!durationMs && <p>No <strong>Duration</strong>, so the hold is disabled.</p>}
+                          {unreachable && (
+                            <p>
+                              <strong>{flowName} → {target}</strong> is not an allowed transition. The
+                              sequencer will refuse to make {flowName} holdable at all, so the valves are
+                              never opened — tick that cell in the Allowed transitions table above.
+                            </p>
+                          )}
+                        </InlineIssue>
+                      )}
+                      {notClosed.length > 0 && (
+                        <InlineIssue level="warn">
+                          <p>
+                            <strong>{flowName}</strong> opens {notClosed.join(', ')}, but{' '}
+                            <strong>{target}</strong> does not close {notClosed.length > 1 ? 'them' : 'it'}.
+                            The hold would end with {notClosed.length > 1 ? 'those valves' : 'that valve'} still
+                            open. Set the cell to CLOSE in the Actuator positions table above.
+                          </p>
+                        </InlineIssue>
+                      )}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div className="space-y-1">
+                          <label className="block text-sm font-semibold">
+                            Flow state
+                            <span className="text-xs text-text-muted ml-2">(set by the Flow tick box above)</span>
+                          </label>
+                          <div className="px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-text-muted">
+                            {flowName || '— none —'}
+                          </div>
+                        </div>
+                        {renderField('Returns to', target,
+                          (v) => updateField('flow', 'return_target', v), 'select',
+                          names.length ? names : [target].filter(Boolean),
+                          'its actuator column is what closes the valves')}
+                        {renderField('Duration (ms)', durationMs,
+                          (v) => updateField('flow', 'duration_ms', v), 'number',
+                          undefined, 'default hold when the tab sends none')}
+                        {renderField('Max (ms)', maxMs,
+                          (v) => updateField('flow', 'max_ms', v), 'number',
+                          undefined, 'ceiling on a duration the tab may request')}
                       </div>
                     </>
                   );
