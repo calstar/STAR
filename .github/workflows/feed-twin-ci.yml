@@ -80,7 +80,18 @@ jobs:
   backend:
     name: Backend (imports + tests)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 45, not the 15 the other jobs use. This suite integrates a stand: 197
+    # tests, measured at 21 minutes on a developer's machine in this job's own
+    # dependency set, and a runner core is slower than that. The 15 was never
+    # tested, because until the format and type steps ahead of it passed the
+    # tests had never once run here -- the job was cancelled at 15.2 minutes
+    # the first time it got that far, which reads as a failure and is not one.
+    #
+    # `-n auto` with pytest-xdist takes it to about 7 minutes and the suite
+    # passes clean under it; not adopted yet because a physics suite sharing a
+    # library directory deserves more than one green parallel run before CI
+    # depends on it.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
