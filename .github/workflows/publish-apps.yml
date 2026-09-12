@@ -53,8 +53,8 @@ jobs:
           - { name: pid-designer-frontend,        context: .,                           dockerfile: ./pid-designer/frontend/Dockerfile }
           # Repo root for the same reason. star-openrocket is the recovery
           # calculator merged into the Onshape viewer, so it carries both.
-          - { name: star-openrocket-api,          context: .,                           dockerfile: ./star-openrocket/Dockerfile.api }
-          - { name: star-openrocket-frontend,     context: .,                           dockerfile: ./star-openrocket/frontend/Dockerfile }
+          - { name: openrocket-api,               context: .,                           dockerfile: ./star-openrocket/Dockerfile.api }
+          - { name: openrocket-frontend,          context: .,                           dockerfile: ./star-openrocket/frontend/Dockerfile }
           # DAQ Run Viewer: one image serves both API and SPA (see its Dockerfile).
           - { name: daq-viewer,                   context: ./daq-server/tools/postprocessing/webviewer, dockerfile: ./daq-server/tools/postprocessing/webviewer/Dockerfile }
           # STARProject: one Next.js image serves pages + /api and runs migrations on start.
