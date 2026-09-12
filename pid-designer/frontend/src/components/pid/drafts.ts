@@ -33,6 +33,8 @@ export interface Draft {
   unit: string;
   source: Provenance;
   reference?: string;
+  /** The second number of a ratio row: "per [this] psi inlet drop". */
+  per?: string;
 }
 
 /** The two answers the dialog offers, and which of the four each stands for. */
@@ -43,14 +45,17 @@ export const isVerified = (source: Provenance) => VERIFIED.has(source);
 export function toDraft(spec: ParamSpec, existing?: ParamValue): Draft {
   const units = UNITS[spec.dimension];
   if (existing) {
+    // A supply coefficient stored as N psi/1000psi reopens as "N per 1000".
+    const per = spec.ratio ? (existing.unit === 'psi/1000psi' ? '1000' : existing.unit === 'psi/100psi' ? '100' : '1') : undefined;
     return {
       value: String(existing.value),
       unit: existing.unit || units[0],
       source: existing.source,
       ...(existing.reference ? { reference: existing.reference } : {}),
+      ...(per ? { per } : {}),
     };
   }
-  return { value: '', unit: spec.suggested?.unit ?? units[0], source: 'estimated' };
+  return { value: '', unit: spec.suggested?.unit ?? spec.unit ?? units[0], source: 'estimated' };
 }
 
 /**

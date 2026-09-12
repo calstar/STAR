@@ -10,6 +10,9 @@ import type { Draft } from './drafts';
 import { portIds } from './ports';
 import type { PortInfo, PortKind } from './ports';
 import { defaultTemperatureK, speciesById } from './fluids';
+import { deriveParams, supplyCoefficient } from './derive';
+import { SAT_REFERENCE, paramFromPreset, saturationK } from './materials';
+import { toPa } from './params';
 import { SegmentPanel } from './SegmentPanel';
 import { BoreProfile } from './BoreProfile';
 import { ManifoldEditor } from './ManifoldEditor';
@@ -108,35 +111,65 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   // somebody typed is never taken away from them.
   const [showAdvanced, setShowAdvanced] = useState(false);
   const lastAutoTemp = useRef<string | null>(null);
+  const tempSpec = spec?.params.find(p => p.key === 'temperature');
+  const pressureDraft = drafts.pressure;
   useEffect(() => {
-    if (!open || !spec?.fluids) return;
-    const k = defaultTemperatureK(fluid, type === 'DEWAR');
-    if (k === undefined) return;
+    if (!open || !spec?.fluids || !tempSpec) return;
+    // A dewar's liquid sits on the saturation curve at its delivery pressure,
+    // so the temperature is not a second question. A tank's is a preset.
+    let k: number | undefined;
+    let why: string;
+    if (tempSpec.auto === 'saturation') {
+      const pv = fromDraft(pressureDraft);
+      k = saturationK(fluid, toPa(pv) ?? NaN);
+      why = pv ? `${SAT_REFERENCE}, at ${pv.value} ${pv.unit}` : SAT_REFERENCE;
+      if (k === undefined) return;
+    } else {
+      if (tempSpec.presets) return;      // the dropdown is the answer
+      k = defaultTemperatureK(fluid, false);
+      why = `${speciesById(fluid)?.label ?? fluid} at its usual state`;
+      if (k === undefined) return;
+    }
+    const kk = k;
     setDrafts(d => {
       const t = d.temperature;
       if (!t) return d;
       const untouched = t.value.trim() === '' || t.value === lastAutoTemp.current;
       if (!untouched) return d;
-      lastAutoTemp.current = String(k);
-      // Written as what it is: a default that follows from the fluid, with
-      // the reason named -- so a run report counts it as assumed rather than
-      // as a measurement somebody made.
-      return { ...d, temperature: {
-        ...t, value: String(k), unit: 'K', source: 'default',
-        reference: `${speciesById(fluid)?.label ?? fluid} at its usual state`,
-      } };
+      lastAutoTemp.current = String(kk);
+      // Written as what it is: a default that follows from something else
+      // on the dialog, with the reason named -- so a run report counts it
+      // as assumed rather than as a measurement somebody made.
+      return { ...d, temperature: { ...t, value: String(kk), unit: 'K', source: 'default', reference: why } };
     });
-  }, [open, fluid, type, spec]);
+  }, [open, fluid, type, spec, tempSpec, pressureDraft?.value, pressureDraft?.unit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!spec) return null;
 
+  const showing = (p: ParamSpec) => {
+    if (!p.when) return true;
+    const v = options[p.when.option] ?? spec.options?.find(o => o.key === p.when!.option)?.default ?? '';
+    if (p.when.is !== undefined) return v === p.when.is;
+    if (p.when.not !== undefined) return v !== p.when.not;
+    return true;
+  };
+
   const save = () => {
-    const params: Record<string, ParamValue> = {};
+    let params: Record<string, ParamValue> = {};
     for (const p of spec.params) {
       if (p.derived) continue;                     // computed below, never typed
-      const v = fromDraft(drafts[p.key]);          // blank is absent, not zero
+      if (!showing(p)) continue;                   // a hidden field is not an answer
+      const d = drafts[p.key];
+      if (p.ratio) {
+        // The datasheet's pair, as one coefficient.
+        const v = supplyCoefficient(Number(d?.value), Number(d?.per), d?.source ?? 'estimated');
+        if (v) params[p.key] = v;
+        continue;
+      }
+      const v = fromDraft(d);                      // blank is absent, not zero
       if (v) params[p.key] = v;
     }
+    if (kind === 'node') params = deriveParams(type, options, params);
     // Counted, not asked for. Only when there is a list to count: with no
     // segments the drawing has not said, and a zero would be a claim.
     if (kind === 'edge' && segments.length) {
@@ -245,7 +278,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
           </Row>
         )}
 
-        {(spec.options ?? []).map(o => (
+        {(spec.options ?? []).filter(o => !o.section).map(o => (
           <OptionRow
             key={o.key}
             spec={o}
@@ -268,7 +301,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
                 Superseded by the segments below.
               </p>
             )}
-            {spec.params.filter(p => !p.advanced && !p.derived).map(p => (
+            {spec.params.filter(p => !p.advanced && !p.derived && !p.section && showing(p)).map(p => (
               <ParamRow
                 key={p.key}
                 spec={p}
@@ -291,7 +324,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
                     ? 'fewer'
                     : `${spec.params.filter(p => p.advanced).length} more`}
                 </button>
-                {showAdvanced && spec.params.filter(p => p.advanced && !p.derived).map(p => (
+                {showAdvanced && spec.params.filter(p => p.advanced && !p.derived && showing(p)).map(p => (
                   <ParamRow
                     key={p.key}
                     spec={p}
@@ -304,6 +337,28 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
             )}
           </div>
         )}
+
+        {/* Named sections -- a tank's Material, Insulation, Ports -- each a
+            heading with its choices and then the numbers those choices leave
+            to be typed. A dropdown that writes a number is followed by
+            nothing; one that needs a thickness is followed by the thickness. */}
+        {sectionsOf(spec).map(name => (
+          <div key={name} className="space-y-2 border-t border-[var(--color-border)] pt-2.5">
+            <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">{name}</span>
+            {(spec.options ?? []).filter(o => o.section === name).map(o => (
+              <OptionRow key={o.key} spec={o} value={options[o.key] ?? o.default} peers={peers}
+                readOnly={readOnly} onChange={v => setOptions(s => ({ ...s, [o.key]: v }))} />
+            ))}
+            {spec.params.filter(p => p.section === name && !p.derived && !p.advanced && showing(p)).map(p => (
+              <ParamRow key={p.key} spec={p} draft={drafts[p.key] ?? EMPTY} readOnly={readOnly}
+                onChange={patch => setDrafts(d => ({ ...d, [p.key]: { ...d[p.key], ...patch } }))} />
+            ))}
+            {showAdvanced && spec.params.filter(p => p.section === name && p.advanced && showing(p)).map(p => (
+              <ParamRow key={p.key} spec={p} draft={drafts[p.key] ?? EMPTY} readOnly={readOnly}
+                onChange={patch => setDrafts(d => ({ ...d, [p.key]: { ...d[p.key], ...patch } }))} />
+            ))}
+          </div>
+        ))}
 
         {kind === 'edge' && (
           <SegmentPanel segments={segments} onChange={setSegments} />
@@ -385,6 +440,61 @@ function ParamRow({ spec, draft, readOnly, onChange }: {
 }) {
   const units = UNITS[spec.dimension];
   const filled = draft.value.trim() !== '';
+
+  // "17 psi rise per 1000 psi inlet drop": the datasheet's two numbers.
+  if (spec.ratio) {
+    return (
+      <Row label={spec.label}>
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--color-text-secondary)]">
+          <input inputMode="decimal" placeholder="—" value={draft.value} readOnly={readOnly}
+            onChange={e => onChange({ value: e.target.value })} className={`${field} w-[64px]`} />
+          <span>psi rise per</span>
+          <input inputMode="decimal" placeholder="1000" value={draft.per ?? ''} readOnly={readOnly}
+            onChange={e => onChange({ per: e.target.value })} className={`${field} w-[64px]`} />
+          <span>psi inlet drop</span>
+        </div>
+      </Row>
+    );
+  }
+
+  // A dropdown of the usual answers, with the number box for the unusual one.
+  if (spec.presets) {
+    const match = spec.presets.find(p => String(p.value) === draft.value && p.unit === draft.unit);
+    const choice = !filled ? '' : match ? match.id : 'custom';
+    return (
+      <Row label={spec.label}>
+        <div className="grid grid-cols-[1fr_1fr] gap-1.5">
+          <select value={choice} disabled={readOnly} className={`${field} min-w-0`}
+            title={draft.reference || undefined}
+            onChange={e => {
+              const id = e.target.value;
+              if (id === '') onChange({ value: '', reference: undefined });
+              else if (id === 'custom') onChange({ value: draft.value || '', source: 'estimated', reference: undefined });
+              else {
+                const p = spec.presets!.find(x => x.id === id)!;
+                const v = paramFromPreset(p);
+                onChange({ value: String(v.value), unit: v.unit, source: v.source, reference: v.reference });
+              }
+            }}>
+            <option value="">—</option>
+            {spec.presets.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+            <option value="custom">Custom…</option>
+          </select>
+          {choice === 'custom' ? (
+            <div className="grid grid-cols-[1fr_62px] gap-1.5">
+              <input inputMode="decimal" placeholder="—" value={draft.value} readOnly={readOnly}
+                onChange={e => onChange({ value: e.target.value })} className={`${field} min-w-0`} />
+              <select value={draft.unit || units[0]} disabled={readOnly}
+                onChange={e => onChange({ unit: e.target.value })} className={`${field} min-w-0`}>
+                {units.map(u => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </div>
+          ) : <span />}
+        </div>
+      </Row>
+    );
+  }
+
   return (
     <Row label={spec.label}>
       <div className="grid grid-cols-[1fr_62px_84px] gap-1.5">
@@ -538,4 +648,12 @@ function PeerPicker({ label, value, peers, readOnly, onChange }: {
       </div>
     </div>
   );
+}
+
+/** The named headings a spec's fields sit under, in first-seen order. */
+function sectionsOf(spec: ComponentSpec): string[] {
+  const seen: string[] = [];
+  for (const o of spec.options ?? []) if (o.section && !seen.includes(o.section)) seen.push(o.section);
+  for (const p of spec.params) if (p.section && !seen.includes(p.section)) seen.push(p.section);
+  return seen;
 }

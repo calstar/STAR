@@ -199,24 +199,37 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
 
   // ── Relief against the vessel it protects ─────────────────────────────────
   // The one number a reviewer checks first on a sheet: does the thing
-  // protecting a vessel lift below what the vessel is rated to. Both figures
-  // are on the drawing, so the drawing can say. Only when both are stated --
-  // a missing MAWP is not a fault, it is Tuesday.
+  // protecting a vessel lift below what the vessel will take. The vessel's
+  // figure is its burst pressure -- what the team actually knows about a
+  // tank they built -- and the checks are stated against it: nothing may be
+  // set at or above it, and a tank run past half of it is a factor of safety
+  // below two. Only when both numbers are stated; a missing burst pressure
+  // is not a fault, it is Tuesday.
   const vesselOf = protectedVessels(nodes, edges);
   for (const n of nodes) {
     const d = dataOf(n);
     const t = d?.componentType;
     if (t === 'TANK') {
       const p = toPa(d.params?.pressure);
-      const mawp = toPa(d.params?.MAWP);
-      if (p !== undefined && mawp !== undefined && p > mawp) {
-        push({
-          id: `vessel-over-mawp-${n.id}`,
-          severity: 'error',
-          title: `${nameOf(n)} runs above its MAWP`,
-          detail: `Operating pressure ${fmt(d.params!.pressure!)} against a rating of ${fmt(d.params!.MAWP!)}.`,
-          nodeIds: [n.id],
-        });
+      const burst = toPa(d.params?.burst_pressure);
+      if (p !== undefined && burst !== undefined) {
+        if (p >= burst) {
+          push({
+            id: `vessel-over-burst-${n.id}`,
+            severity: 'error',
+            title: `${nameOf(n)} runs at or above its burst pressure`,
+            detail: `Operating pressure ${fmt(d.params!.pressure!)} against a burst pressure of ${fmt(d.params!.burst_pressure!)}.`,
+            nodeIds: [n.id],
+          });
+        } else if (p > burst / 2) {
+          push({
+            id: `vessel-low-sf-${n.id}`,
+            severity: 'warning',
+            title: `${nameOf(n)} has a factor of safety below 2`,
+            detail: `Operating pressure ${fmt(d.params!.pressure!)} on a burst pressure of ${fmt(d.params!.burst_pressure!)} is ${(burst / p).toFixed(2)}×.`,
+            nodeIds: [n.id],
+          });
+        }
       }
     }
     if (t !== 'RV') continue;
@@ -225,14 +238,14 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
     const v = dataOf(vessel);
     const set = toPa(d.params?.set_pressure);
     if (set === undefined) continue;
-    const mawp = toPa(v.params?.MAWP);
+    const burst = toPa(v.params?.burst_pressure);
     const op = toPa(v.params?.pressure);
-    if (mawp !== undefined && set > mawp) {
+    if (burst !== undefined && set >= burst) {
       push({
-        id: `relief-over-mawp-${n.id}`,
+        id: `relief-over-burst-${n.id}`,
         severity: 'error',
-        title: `${nameOf(n)} lifts above ${nameOf(vessel)}'s MAWP`,
-        detail: `Set at ${fmt(d.params!.set_pressure!)}; the vessel is rated to ${fmt(v.params!.MAWP!)}. It would not open before the tank failed.`,
+        title: `${nameOf(n)} lifts at or above ${nameOf(vessel)}'s burst pressure`,
+        detail: `Set at ${fmt(d.params!.set_pressure!)}; the vessel bursts at ${fmt(v.params!.burst_pressure!)}. It would not open before the tank failed.`,
         nodeIds: [n.id, vessel.id],
       });
     } else if (op !== undefined && set <= op) {

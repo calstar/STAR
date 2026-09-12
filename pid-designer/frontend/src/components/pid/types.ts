@@ -95,6 +95,12 @@ export interface ComponentDef {
   /** Options stamped onto the node at drop time. */
   preset?: Record<string, string>;
   /**
+   * Numbers stamped on at drop time, as defaults with a reference. A low-
+   * pressure transducer lands as 1000 psi and a high-pressure one as 5000,
+   * because that is what the two palette entries mean.
+   */
+  params?: Record<string, ParamValue>;
+  /**
    * Species stamped on at drop time, for supplies. A K-bottle entry is picked
    * from the palette already knowing what is in it, and everything downstream
    * inherits that -- so the common case needs no trip to the config at all.
@@ -105,8 +111,10 @@ export interface ComponentDef {
 export const COMPONENT_DEFS: ComponentDef[] = [
   { id: 'RTD',    type: 'RTD', label: 'RTD_#',   fullName: 'RTD', group: 'Sensors' },
   { id: 'TC',     type: 'TC',  label: 'TC_#',    fullName: 'Thermocouple',                    group: 'Sensors' },
-  { id: 'PT_HP',  type: 'PT',  label: 'PT-HP_#', fullName: 'Transducer (high press)',        group: 'Sensors' },
-  { id: 'PT_LP',  type: 'PT',  label: 'PT-LP_#', fullName: 'Transducer (low press)',          group: 'Sensors' },
+  { id: 'PT_HP',  type: 'PT',  label: 'PT-HP_#', fullName: 'Transducer (high press)',        group: 'Sensors',
+    params: { range_max: { value: 5000, unit: 'psi', source: 'default', reference: 'palette: high-pressure transducer' } } },
+  { id: 'PT_LP',  type: 'PT',  label: 'PT-LP_#', fullName: 'Transducer (low press)',          group: 'Sensors',
+    params: { range_max: { value: 1000, unit: 'psi', source: 'default', reference: 'palette: low-pressure transducer' } } },
   { id: 'PG',     type: 'PG',  label: 'PG_#',    fullName: 'Gauge',                  group: 'Sensors' },
   { id: 'LC',     type: 'LC',  label: 'LC_#',    fullName: 'Load cell',                       group: 'Sensors' },
 

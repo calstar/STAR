@@ -27,6 +27,21 @@ SPEC = ROOT / "pid-designer" / "frontend" / "src" / "components" / "pid" / "spec
 NOT_DRAWN = {
     # Solver-facing, chosen by the model rather than typed by a user.
     "model",
+    # Second-order for a full-open ball valve; feed-twin's IEC defaults stand
+    # and its report says they are assumed. Not a person-on-the-stand number.
+    "xT", "FL", "leak_closed", "leak_reverse",
+    # Regulator datasheet lines the team does not have and the solver defaults
+    # sensibly: droop, its rated flow, lockup creep, dropout.
+    "flow_droop", "rated_flow", "lockup_rise", "min_inlet_differential",
+    # Check valves on this stand have no stated cracking pressure.
+    "cracking_pressure",
+    # Estimated by feed-twin from the ullage gas and the vessel (Phase 2); a
+    # drawing may still carry a custom value, but it is not asked for.
+    "wall_conductance",
+    # Written by pid-designer from the material dropdown, never typed.
+    "wall_capacity",
+    # Vessel temperature is nominal on the drawing and optional.
+    "temperature",
 }
 
 
@@ -74,16 +89,21 @@ def test_the_thermal_params_specifically() -> None:
         assert f"'{param}'" in text, f"{param} is not settable on a line"
 
 
-def test_vessel_walls_are_settable_on_every_vessel_symbol() -> None:
-    """The wall is what decides how much a bottle cools on blowdown. It was
-    three bare numbers in feed-twin with no way to say otherwise from the
-    drawing; now every vessel symbol carries the three fields."""
+def test_tank_wall_is_a_material_and_a_dry_mass() -> None:
+    """The wall is what decides how much a vessel cools on blowdown. It used
+    to be three bare numbers; now a tank states a material (which writes the
+    specific heat) and a dry mass, and feed-twin estimates the conductance.
+    Bottles and dewars carry none of it: they are boundaries."""
     text = spec_text()
-    for symbol in ("TANK: {", "KBOTTLE: {", "DEWAR: {"):
-        start = text.index(symbol)
-        block = text[start : text.index("\n  },", start)]
-        for param in ("wall_mass", "wall_capacity", "wall_conductance"):
-            assert f"'{param}'" in block, f"{symbol[:-3]} cannot declare {param}"
+    start = text.index("TANK: {")
+    block = text[start : text.index("\n  },", start)]
+    assert "'material'" in block, "TANK has no material dropdown"
+    assert "'wall_mass'" in block, "TANK cannot declare its dry mass"
+    assert "'wall_capacity'" in block, "TANK does not write wall_capacity from the material"
+    for symbol in ("KBOTTLE: {", "DEWAR: {"):
+        s2 = text.index(symbol)
+        b2 = text[s2 : text.index("\n  },", s2)]
+        assert "'wall_" not in b2, f"{symbol[:-3]} should not ask about its wall"
 
 
 def test_spec_dimensions_are_ones_feedtwin_knows() -> None:

@@ -96,9 +96,9 @@ export const AMBIENT_K = 293;
  */
 export function defaultTemperatureK(species?: string, cryogenic = false): number | undefined {
   switch (species) {
-    case 'oxygen':   return 90;    // LOX
-    case 'methane':  return 112;   // LCH4
-    case 'nitrogen': return cryogenic ? 77 : AMBIENT_K;
+    case 'oxygen':   return 90.19;   // LOX, NIST WebBook normal boiling point
+    case 'methane':  return 111.67;  // LCH4
+    case 'nitrogen': return cryogenic ? 77.36 : AMBIENT_K;
     case 'helium':   return AMBIENT_K;
     case 'ethanol':  return AMBIENT_K;
     // 'other' is unmodelled on purpose, and guessing its temperature would be

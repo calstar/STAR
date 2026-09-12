@@ -150,26 +150,26 @@ describe('what the badge counts', () => {
 
 describe('a relief valve against the vessel it protects', () => {
   const psi = (value: number, source = 'manufacturer') => ({ value, unit: 'psi', source });
-  const tank = (id: string, pressure?: number, mawp?: number) => node(id, 'TANK', {
+  const tank = (id: string, pressure?: number, burst?: number) => node(id, 'TANK', {
     fluid: 'oxygen',
     params: {
       ...(pressure !== undefined ? { pressure: psi(pressure) } : {}),
       temperature: { value: 90, unit: 'K', source: 'measured' },
-      ...(mawp !== undefined ? { MAWP: psi(mawp) } : {}),
+      ...(burst !== undefined ? { burst_pressure: psi(burst) } : {}),
     },
   });
   const rv = (id: string, set: number) => node(id, 'RV', { params: { set_pressure: psi(set) } });
   const onTank = [edge('e', 'RV-1', 'TK-1', 'r', 't2')];
 
-  it('is quiet when the relief lifts between operating pressure and MAWP', () => {
-    const found = ids([tank('TK-1', 500, 800), rv('RV-1', 650)], onTank);
-    expect(found.filter(i => /relief|mawp/.test(i))).toEqual([]);
+  it('is quiet when the relief lifts between operating pressure and burst', () => {
+    const found = ids([tank('TK-1', 500, 1200), rv('RV-1', 650)], onTank);
+    expect(found.filter(i => /relief|burst|sf/.test(i))).toEqual([]);
   });
 
-  it('flags a relief set above the MAWP', () => {
+  it('flags a relief set at or above the burst pressure', () => {
     // It would not open before the tank failed.
     const found = runChecks([tank('TK-1', 500, 800), rv('RV-1', 900)], onTank);
-    const f = found.find(x => x.id === 'relief-over-mawp-RV-1')!;
+    const f = found.find(x => x.id === 'relief-over-burst-RV-1')!;
     expect(f.severity).toBe('error');
     expect(f.nodeIds).toEqual(['RV-1', 'TK-1']);
   });
@@ -179,31 +179,37 @@ describe('a relief valve against the vessel it protects', () => {
     expect(ids([tank('TK-1', 500, 800), rv('RV-1', 500)], onTank)).toContain('relief-under-operating-RV-1');
   });
 
-  it('flags a tank run above its own rating', () => {
-    expect(ids([tank('TK-1', 900, 800)])).toContain('vessel-over-mawp-TK-1');
+  it('flags a tank run at or above its burst pressure', () => {
+    expect(ids([tank('TK-1', 900, 800)])).toContain('vessel-over-burst-TK-1');
+  });
+
+  it('warns about a factor of safety below two', () => {
+    // 500 on 800 is 1.6x; 500 on 1200 is 2.4x.
+    expect(ids([tank('TK-1', 500, 800)])).toContain('vessel-low-sf-TK-1');
+    expect(ids([tank('TK-1', 500, 1200)])).not.toContain('vessel-low-sf-TK-1');
   });
 
   it('compares across units', () => {
     // 60 bar is 870 psi, above an 800 psi rating.
     const t = node('TK-1', 'TANK', { fluid: 'oxygen', params: {
-      pressure: psi(500), temperature: { value: 90, unit: 'K', source: 'measured' }, MAWP: psi(800) } });
+      pressure: psi(500), temperature: { value: 90, unit: 'K', source: 'measured' }, burst_pressure: psi(800) } });
     const r = node('RV-1', 'RV', { params: { set_pressure: { value: 60, unit: 'bar', source: 'manufacturer' } } });
-    expect(ids([t, r], onTank)).toContain('relief-over-mawp-RV-1');
+    expect(ids([t, r], onTank)).toContain('relief-over-burst-RV-1');
   });
 
   it('finds the tank through a junction, but not through a valve', () => {
     const j = node('J', 'JUNCTION');
     const viaJunction = [edge('a', 'RV-1', 'J', 'r', 'l'), edge('b', 'J', 'TK-1', 't', 't2')];
-    expect(ids([tank('TK-1', 500, 800), rv('RV-1', 900), j], viaJunction)).toContain('relief-over-mawp-RV-1');
+    expect(ids([tank('TK-1', 500, 800), rv('RV-1', 900), j], viaJunction)).toContain('relief-over-burst-RV-1');
     // Past a valve it is protecting something else, and this drawing has not
     // said what.
     const v = node('SOL-1', 'SOL');
     const viaValve = [edge('a', 'RV-1', 'SOL-1', 'r', 'l'), edge('b', 'SOL-1', 'TK-1', 'r', 't2')];
-    expect(ids([tank('TK-1', 500, 800), rv('RV-1', 900), v], viaValve)).not.toContain('relief-over-mawp-RV-1');
+    expect(ids([tank('TK-1', 500, 800), rv('RV-1', 900), v], viaValve)).not.toContain('relief-over-burst-RV-1');
   });
 
   it('says nothing when either number is not stated', () => {
-    // A missing MAWP is not a fault, it is Tuesday.
+    // A missing burst pressure is not a fault, it is Tuesday.
     expect(ids([tank('TK-1', 500), rv('RV-1', 900)], onTank).filter(i => /relief/.test(i))).toEqual([]);
   });
 });

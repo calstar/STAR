@@ -7,6 +7,7 @@ import { DraggableLabel } from './DraggableLabel';
 import { Upright } from './Upright';
 import { portId, portKind } from '../ports';
 import { useEffect } from 'react';
+import { fmtParam } from '../fmt';
 
 const TANK_W = 60, TANK_H = 100;
 
@@ -45,7 +46,11 @@ function endPorts(
 }
 
 export function TankNode({ id, data, selected }: NodeProps) {
-  const { label, labelOffset, rotation, options, color } = data as unknown as PIDNodeData;
+  const { label, labelOffset, rotation, options, color, params } = data as unknown as PIDNodeData;
+  // What is drawn on the face: the nominal pressure, and the temperature when
+  // one is stated. Two short lines under the species, inside the barrel, so
+  // they never meet the ports on the heads or the tag underneath.
+  const readout = [fmtParam(params?.pressure), fmtParam(params?.temperature)].filter(Boolean);
   const stroke = selected ? '#3b82f6' : '#94a3b8';
   // Declared here, or inherited from whatever feeds it. Naming the species on
   // the symbol is the point of picking a real one: "ETH" and "LOX" are what a
@@ -94,12 +99,18 @@ export function TankNode({ id, data, selected }: NodeProps) {
           strokeWidth={1.1} opacity={0.75} />
         <path d="M6,84 A24,9 0 0 1 54,84" fill="none" stroke={stroke}
           strokeWidth={1.1} opacity={0.75} />
-        <Upright rotation={rotation} x={30} y={52}>
-          <text x="30" y="52" textAnchor="middle" fontSize="10" fill={fluidColor}
+        <Upright rotation={rotation} x={30} y={readout.length ? 42 : 52}>
+          <text x="30" y={readout.length ? 42 : 52} textAnchor="middle" fontSize="10" fill={fluidColor}
             fontFamily="monospace" fontWeight="bold">
             {species?.short ?? 'TANK'}
           </text>
         </Upright>
+        {readout.map((line, i) => (
+          <Upright key={line} rotation={rotation} x={30} y={55 + i * 11}>
+            <text x="30" y={55 + i * 11} textAnchor="middle" fontSize="7.5" fill="#cbd5e1"
+              fontFamily="monospace">{line}</text>
+          </Upright>
+        ))}
       </svg>
 
     </Frame>

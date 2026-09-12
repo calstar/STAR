@@ -777,8 +777,10 @@ function PIDCanvas({
             ...Object.fromEntries((COMPONENT_SPECS[type]?.options ?? []).map(o => [o.key, o.default])),
             ...(def.preset ?? {}),
           },
-          // A supply picked from the palette already knows what is in it.
+          // A supply picked from the palette already knows what is in it,
+          // and a transducer its range.
           ...(def.fluid ? { fluid: def.fluid } : {}),
+          ...(def.params ? { params: structuredClone(def.params) } : {}),
           ...(host ? { attachedTo: host.id } : {}),
           page,
         } as PIDNodeData;

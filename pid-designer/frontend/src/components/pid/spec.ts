@@ -14,6 +14,8 @@
 import type { Dimension } from './params';
 import type { ComponentType } from './types';
 import type { SpeciesId } from './fluids';
+import { INSULATIONS, TANK_MATERIALS, TEMPERATURES, DEFAULT_MATERIAL } from './materials';
+import type { Preset } from './materials';
 
 export interface ParamSpec {
   key: string;
@@ -43,6 +45,25 @@ export interface ParamSpec {
    * computed on save and never rendered.
    */
   derived?: boolean;
+  /**
+   * A dropdown of known values, with *custom* at the bottom. A tank's
+   * temperature is one of four things nearly always; the number box is for
+   * the fifth. Picking a preset writes a `default` with the preset's reference.
+   */
+  presets?: Preset[];
+  /** Shown only while an option has (or lacks) a value. */
+  when?: { option: string; is?: string; not?: string };
+  /**
+   * The regulator's supply effect, as a datasheet prints it: "17 psi rise per
+   * 1000 psi of inlet". Two boxes, one number, unit `psi/1000psi`.
+   */
+  ratio?: boolean;
+  /** Filled from another field while untouched: a dewar's temperature from its pressure. */
+  auto?: 'saturation';
+  /** Dialog heading this field sits under. Absent means the top. */
+  section?: string;
+  /** The unit a blank field starts in, when the dimension's first is wrong for it. */
+  unit?: string;
 }
 
 export interface OptionSpec {
@@ -52,6 +73,7 @@ export interface OptionSpec {
   choices: { value: string; label: string }[];
   default: string;
   placeholder?: string;
+  section?: string;
 }
 
 /** Ports whose number is an option, and which can then be named. */
@@ -94,20 +116,28 @@ const D = (key: string, label: string, dimension: Dimension): ParamSpec =>
 
 const ALL_FLUIDS: SpeciesId[] = ['oxygen', 'ethanol', 'nitrogen', 'helium', 'methane', 'other'];
 
-function valveSpec(): ComponentSpec {
+/**
+ * Cd or Cv, and which one the team has.
+ *
+ * A manual valve, a check valve or a disconnect comes with a discharge
+ * coefficient more often than a flow coefficient; a regulator comes with a
+ * Cv. Whichever is chosen, the other is not asked for. When it is Cd, the
+ * drawing also writes the Cv it amounts to (see `derive.ts`), because
+ * feed-twin's valves speak Cv until its Cd model lands.
+ */
+const COEFFICIENT = (def: 'Cd' | 'Cv'): OptionSpec => ({
+  key: 'flowCoefficient', label: 'Given as', default: def,
+  choices: [{ value: 'Cd', label: 'Cd (discharge coefficient)' }, { value: 'Cv', label: 'Cv (flow coefficient)' }],
+});
+const CD: ParamSpec = { key: 'Cd', label: 'Cd', dimension: 'dimensionless', when: { option: 'flowCoefficient', is: 'Cd' } };
+const CV: ParamSpec = { key: 'Cv', label: 'Cv', dimension: 'flow_coefficient', when: { option: 'flowCoefficient', is: 'Cv' } };
+
+function actuatedValveSpec(): ComponentSpec {
   return {
     catalogued: true,
-    params: [
-      P('Cv', 'Cv', 'flow_coefficient'),
-      P('bore', 'Bore', 'length'),
-      P('travel_time', 'Travel time', 'time', { value: 0.05, unit: 's' }),
-      // Where a gas or a liquid chokes through it, IEC 60534. Datasheet
-      // numbers; the defaults are a globe/ball valve and feed-twin says so.
-      A('xT', 'xT (gas choke)', 'dimensionless', { value: 0.7, unit: '-' }),
-      A('FL', 'FL (liquid recovery)', 'dimensionless', { value: 0.9, unit: '-' }),
-      A('leak_closed', 'Seat leak when shut', 'flow_coefficient'),
-    ],
+    params: [CD, CV, P('bore', 'Bore', 'length'), P('travel_time', 'Travel time', 'time', { value: 0.05, unit: 's' })],
     options: [
+      COEFFICIENT('Cd'),
       { key: 'failState', label: 'Unpowered position', default: 'closed',
         choices: [
           { value: 'closed', label: 'Normally closed' },
@@ -117,30 +147,51 @@ function valveSpec(): ComponentSpec {
   };
 }
 
+/** Two ends and a coefficient: what a check valve or a disconnect has. */
+function passiveSpec(): ComponentSpec {
+  return { catalogued: true, params: [CD, CV, P('bore', 'Bore', 'length')], options: [COEFFICIENT('Cd')] };
+}
+
+const materialChoices = TANK_MATERIALS.map(m => ({ value: m.id, label: m.label }));
+const insulationChoices = [
+  { value: 'none', label: 'None (bare)' },
+  ...INSULATIONS.map(i => ({ value: i.id, label: i.label })),
+  { value: 'custom', label: 'Custom…' },
+];
+
 export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
   TANK: {
     fluids: ALL_FLUIDS,
     params: [
+      // Nominal, and drawn on the symbol. feed-twin's initial state comes
+      // from the scenario, not from here (see the overhaul plan, Phase 2).
       P('pressure', 'Operating pressure', 'pressure'),
-      P('temperature', 'Temperature', 'temperature'),
+      { key: 'temperature', label: 'Temperature', dimension: 'temperature', presets: TEMPERATURES },
       P('volume', 'Volume', 'volume'),
-      P('MAWP', 'MAWP', 'pressure'),
-      // The vessel's own wall, which fights the gas cooling during a blowdown
-      // or a press. Left blank, feed-twin estimates all three from the volume
-      // and says so; a weighed vessel should declare them.
-      P('wall_mass', 'Wall mass', 'mass'),
-      P('wall_capacity', 'Wall specific heat', 'specific_heat', { value: 900, unit: 'J/(kg.K)' }),
-      P('wall_conductance', 'Gas-to-wall hA', 'thermal_conductance'),
-      // What stands between the tank and the room. Left blank the tank is
-      // bare, and a bare LOX tank boils six times faster than one under an
-      // inch of fiberglass.
-      P('insulation_thickness', 'Insulation thickness', 'length'),
-      P('insulation_conductivity', 'Insulation conductivity', 'conductivity', { value: 0.04, unit: 'W/(m.K)' }),
+      // What the tank will take, which is what a team that built it knows.
+      // The checks read it: a relief must lift below it, and a tank run past
+      // half of it is a factor of safety under two.
+      P('burst_pressure', 'Burst pressure', 'pressure'),
+      // The wall: what it is made of writes its specific heat; the dry mass
+      // is the number on the scale with the tank empty.
+      { key: 'wall_mass', label: 'Dry mass', dimension: 'mass', section: 'Material', unit: 'kg' },
+      D('wall_capacity', 'Wall specific heat', 'specific_heat'),
+      // Estimated by feed-twin from the ullage gas and the vessel; a custom
+      // value here wins over the estimate.
+      { key: 'wall_conductance', label: 'Gas-to-wall hA (custom)', dimension: 'thermal_conductance', advanced: true, section: 'Material' },
+      // What stands between the tank and the room. A bare LOX tank boils
+      // several times faster than one under an inch of fiberglass.
+      { key: 'insulation_thickness', label: 'Thickness', dimension: 'length', section: 'Insulation',
+        when: { option: 'insulation', not: 'none' } },
+      { key: 'insulation_conductivity', label: 'Conductivity', dimension: 'conductivity', section: 'Insulation',
+        when: { option: 'insulation', is: 'custom' } },
     ],
     options: [
-      { key: 'portsTop', label: 'Top ports', default: '1',
+      { key: 'material', label: 'Material', default: DEFAULT_MATERIAL, choices: materialChoices, section: 'Material' },
+      { key: 'insulation', label: 'Insulation', default: 'none', choices: insulationChoices, section: 'Insulation' },
+      { key: 'portsTop', label: 'Top ports', default: '1', section: 'Ports',
         choices: ['1', '2', '3', '4'].map(n => ({ value: n, label: n })) },
-      { key: 'portsBottom', label: 'Bottom ports', default: '1',
+      { key: 'portsBottom', label: 'Bottom ports', default: '1', section: 'Ports',
         choices: ['1', '2', '3', '4'].map(n => ({ value: n, label: n })) },
     ],
     portGroups: [
@@ -149,67 +200,43 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
     ],
   },
 
+  // A bottle is a boundary: what is in it, how full, how big. Nothing else
+  // about it is the drawing's to say.
   KBOTTLE: {
-    // What actually turns up on a bottle rack.
     fluids: ['nitrogen', 'helium', 'oxygen'],
     params: [
       P('pressure', 'Supply pressure', 'pressure', { value: 2000, unit: 'psi' }),
-      P('temperature', 'Temperature', 'temperature', { value: 293, unit: 'K' }),
       P('volume', 'Water volume', 'volume', { value: 49, unit: 'L' }),
-      P('count', 'Bottles', 'dimensionless', { value: 1, unit: '-' }),
-      // The vessel's own wall, which fights the gas cooling during a blowdown
-      // or a press. Left blank, feed-twin estimates all three from the volume
-      // and says so; a weighed vessel should declare them.
-      P('wall_mass', 'Wall mass', 'mass'),
-      P('wall_capacity', 'Wall specific heat', 'specific_heat', { value: 500, unit: 'J/(kg.K)' }),
-      P('wall_conductance', 'Gas-to-wall hA', 'thermal_conductance'),
     ],
   },
 
+  // A dewar delivers at a pressure, and its liquid sits on the saturation
+  // curve at that pressure -- so the temperature is filled in, not asked.
   DEWAR: {
     fluids: ['nitrogen', 'oxygen'],
     params: [
       P('pressure', 'Delivery pressure', 'pressure', { value: 35, unit: 'psi' }),
-      P('temperature', 'Temperature', 'temperature'),
-      P('volume', 'Capacity', 'volume'),
-      // The vessel's own wall, which fights the gas cooling during a blowdown
-      // or a press. Left blank, feed-twin estimates all three from the volume
-      // and says so; a weighed vessel should declare them.
-      P('wall_mass', 'Wall mass', 'mass'),
-      P('wall_capacity', 'Wall specific heat', 'specific_heat', { value: 500, unit: 'J/(kg.K)' }),
-      P('wall_conductance', 'Gas-to-wall hA', 'thermal_conductance'),
+      { key: 'temperature', label: 'Temperature', dimension: 'temperature', auto: 'saturation' },
     ],
   },
 
   PR: {
     catalogued: true,
     params: [
-      P('setpoint', 'Setpoint', 'pressure'),
-      P('Cv', 'Cv', 'flow_coefficient'),
+      // One number, two names. The setpoint *is* the dome pressure on a
+      // dome-loaded regulator, so the field is relabelled rather than doubled,
+      // and saved under the key feed-twin reads for that case.
+      { key: 'setpoint', label: 'Setpoint', dimension: 'pressure', when: { option: 'domeLoaded', is: 'no' } },
+      { key: 'dome_pressure', label: 'Dome pressure', dimension: 'pressure', when: { option: 'domeLoaded', is: 'yes' } },
+      { key: 'dome_bias', label: 'Dome bias (outlet above dome)', dimension: 'pressure', when: { option: 'domeLoaded', is: 'yes' } },
+      CV, CD,
       P('bore', 'Orifice', 'length'),
-      // A regulator with no droop holds its setpoint at any flow, which makes
-      // its branch equation true for every mass flow -- the flow is genuinely
-      // indeterminate and feed-twin cannot solve it transiently. These two
-      // are the datasheet's droop curve in two numbers.
-      P('flow_droop', 'Droop at rated flow', 'pressure'),
-      P('rated_flow', 'Rated flow', 'mass_flow'),
-      // Supply-pressure effect, written the way the datasheet writes it:
-      // "17 psi per 1000 psi of inlet". The unit carries the "per", so the
-      // number is the one printed on the sheet. Two pressure fields used to
-      // stand here under names feed-twin never read, so a typed value went
-      // nowhere; these are the catalogue's own names.
-      A('supply_coefficient', 'Supply effect', 'pressure_ratio'),
-      A('inlet_reference', '  at inlet', 'pressure'),
-      // What a downstream relief actually sees between firings.
-      A('lockup_rise', 'Lockup rise', 'pressure'),
-      A('min_inlet_differential', 'Dropout (min in−out)', 'pressure'),
-      // Dome-loaded only. `dome_pressure` is superseded when a loading
-      // regulator is drawn — feed-twin takes that one's setpoint — so it is
-      // for a dome set from a panel that is not on the drawing.
-      P('dome_bias', 'Dome bias', 'pressure'),
-      P('dome_pressure', 'Dome pressure', 'pressure'),
+      // Supply-pressure effect the way the datasheet prints it, in one row.
+      { key: 'supply_coefficient', label: 'Supply effect', dimension: 'pressure_ratio', ratio: true },
+      P('inlet_reference', '  measured at inlet', 'pressure'),
     ],
     options: [
+      COEFFICIENT('Cv'),
       { key: 'domeLoaded', label: 'Dome loaded', default: 'no',
         choices: [{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }] },
     ],
@@ -220,36 +247,28 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
     params: [
       P('set_pressure', 'Set pressure', 'pressure'),
       P('reseat_pressure', 'Reseat pressure', 'pressure'),
-      P('Cv', 'Cv', 'flow_coefficient'),
+      CD, CV,
       P('bore', 'Orifice', 'length'),
     ],
+    options: [COEFFICIENT('Cd')],
   },
 
-  CV: {
-    catalogued: true,
-    params: [
-      P('cracking_pressure', 'Cracking pressure', 'pressure', { value: 3, unit: 'psi' }),
-      P('Cv', 'Cv', 'flow_coefficient'),
-      P('bore', 'Bore', 'length'),
-      A('leak_reverse', 'Reverse seat leak', 'flow_coefficient'),
-    ],
-  },
+  CV: passiveSpec(),
 
   QD: {
-    catalogued: true,
-    params: [
-      P('Cv', 'Cv', 'flow_coefficient'),
-      P('bore', 'Bore', 'length'),
-    ],
+    ...passiveSpec(),
     options: [
+      COEFFICIENT('Cd'),
       { key: 'pairedWith', label: 'Mates with', default: '', choices: PEER_CHOICES },
     ],
   },
 
-  MAN: valveSpec(),
-  ROT: valveSpec(),
-  SOL: valveSpec(),
+  MAN: { catalogued: true, params: [CD, CV, P('bore', 'Bore', 'length')], options: [COEFFICIENT('Cd')] },
+  ROT: actuatedValveSpec(),
+  SOL: actuatedValveSpec(),
 
+  // Drawn, not solved: feed-twin's engine is the Layer-1 config named here.
+  // The two numbers are what the sheet shows in the chamber.
   ENGINE: {
     options: [
       { key: 'engineConfig', label: 'Layer-1 config', default: '',
@@ -257,12 +276,7 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
     ],
     params: [
       P('chamber_pressure', 'Chamber pressure', 'pressure'),
-      P('chamber_temperature', 'Chamber temperature', 'temperature'),
-      P('injector_dp', 'Injector dP', 'pressure'),
-      P('mixture_ratio', 'O/F', 'dimensionless'),
-      P('throat_diameter', 'Throat', 'length'),
-      P('expansion_ratio', 'Expansion ratio', 'dimensionless'),
-      P('mdot_total', 'Total mass flow', 'mass_flow'),
+      { key: 'chamber_temperature', label: 'Chamber temperature', dimension: 'temperature' },
     ],
   },
 
@@ -287,30 +301,15 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
   },
 
   // Instruments carry a tag and a size and nothing else. They are drawn, not
-  // solved: a probe reads whatever it is clipped to, so a range, a fluid and a
-  // part number were three questions nobody wanted to answer sixty times.
-  // RTDs and thermocouples clip to what they read. Gauges and transducers do
-  // not: they are fittings, plumbed into the feed system on a tee or a port,
-  // so they connect like anything else and carry the numbers a fitting has.
+  // solved: a probe reads whatever it is clipped to. Gauges and transducers
+  // are plumbed on a tee or a port, and carry their range -- preset from the
+  // palette (1000 psi low, 5000 psi high) so it is right on landing.
   RTD: instrumentSpec(),
   TC: instrumentSpec(),
   LC: instrumentSpec(),
 
-  PT: {
-    catalogued: true,
-    params: [
-      P('range_max', 'Range', 'pressure'),
-      P('bore', 'Port bore', 'length'),
-    ],
-  },
-
-  PG: {
-    catalogued: true,
-    params: [
-      P('range_max', 'Range', 'pressure'),
-      P('bore', 'Port bore', 'length'),
-    ],
-  },
+  PT: { catalogued: true, params: [P('range_max', 'Range', 'pressure')] },
+  PG: { catalogued: true, params: [P('range_max', 'Range', 'pressure')] },
 
   /**
    * A junction is a tee.

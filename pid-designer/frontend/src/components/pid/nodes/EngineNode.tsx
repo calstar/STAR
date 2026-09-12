@@ -23,7 +23,7 @@ const W = 72, H = 120;
 export function EngineNode({ id, data, selected }: NodeProps) {
   const { label, labelOffset, rotation, params } = data as unknown as PIDNodeData;
   const stroke = selected ? '#3b82f6' : '#94a3b8';
-  const pc = params?.chamber_pressure;
+  const readout = [fmtParam(params?.chamber_pressure), fmtParam(params?.chamber_temperature)].filter(Boolean);
 
   const boxH = (rotation ?? 0) % 180 === 90 ? W : H;
   return (
@@ -56,13 +56,14 @@ export function EngineNode({ id, data, selected }: NodeProps) {
         <Upright rotation={rotation} x={36} y={24}>
           <text x="36" y="24" textAnchor="middle" fontSize="8" fill="#e2e8f0" fontFamily="monospace">INJ</text>
         </Upright>
-        {pc && (
-          <Upright rotation={rotation} x={36} y={60}>
-            <text x="36" y="60" textAnchor="middle" fontSize="8" fill="#f97316" fontFamily="monospace">
-              {fmtParam(pc)}
-            </text>
+        {/* In the chamber, between the face and the throat: the one place on
+            the symbol with room for two lines that no port or tag reaches. */}
+        {readout.map((line, i) => (
+          <Upright key={line} rotation={rotation} x={36} y={56 + i * 11}>
+            <text x="36" y={56 + i * 11} textAnchor="middle" fontSize="7.5"
+              fill={i === 0 ? '#f97316' : '#cbd5e1'} fontFamily="monospace">{line}</text>
           </Upright>
-        )}
+        ))}
       </svg>
     </Frame>
   );
