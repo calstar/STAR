@@ -1,0 +1,52 @@
+name: Deploy (Caddy) CI
+
+# deploy/caddy/Caddyfile decides who may reach every app, and nothing used to
+# test it. A site can look gated, adapt without a warning, and still serve its
+# whole API to anonymous callers -- `import protected` expands to a `route`, the
+# adapter sorts `handle` ahead of `route`, so the handles answer first and the
+# auth subrequest never runs. That shipped unnoticed. These two checks exist so
+# it cannot ship again.
+
+'on':
+  push:
+    paths:
+      - 'deploy/caddy/**'
+      - '.github/workflows/deploy-caddy-ci.yml'
+  pull_request:
+    paths:
+      - 'deploy/caddy/**'
+      - '.github/workflows/deploy-caddy-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-caddy-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Auth gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - uses: actions/checkout@v4
+
+    # Catches a malformed Caddyfile before either check below blames the gate.
+    - name: Caddyfile is valid
+      run: |
+        docker run --rm -v "$PWD/deploy/caddy/Caddyfile":/etc/caddy/Caddyfile:ro \
+          --entrypoint caddy caddy:2-alpine \
+          validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+    # Fast, and covers every site in the file rather than one representative.
+    - name: Every gated site runs forward_auth first
+      run: |
+        docker run --rm -v "$PWD/deploy/caddy/Caddyfile":/etc/caddy/Caddyfile:ro \
+          --entrypoint caddy caddy:2-alpine \
+          adapt --config /etc/caddy/Caddyfile --adapter caddyfile \
+          | python3 deploy/caddy/tests/check_gate_order.py
+
+    # Slower, but asserts what a browser actually gets: 401 with no session, and
+    # an X-Auth-Email the caller cannot choose.
+    - name: Unauthenticated callers are refused end-to-end
+      run: ./deploy/caddy/tests/test_auth_gate.sh
