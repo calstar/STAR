@@ -23,12 +23,26 @@ from feedtwin.props import Fluid, OutOfRange, PropertyError
 IN_TABLES = dict(p=1.0e7, T=300.0)
 
 #: Points outside the tabulated envelope, verified against the backend rather
-#: than assumed: 5 GPa is past the pressure ceiling, 20 K past the temperature
-#: floor, 1 Pa below the pressure floor.
+#: than assumed -- and every one of them chosen to be off the *table* while
+#: still inside the *equation of state*, which is a narrower window than it
+#: looks.
+#:
+#: This list used to reach past the tables by going to 5 GPa at 300 K and down
+#: to 20 K at 1 MPa. Both of those are solid nitrogen: above the melting line
+#: and below the triple point. CoolProp 7.2 answered anyway, extrapolating the
+#: fluid equation of state into the solid region and returning a density for
+#: it -- the accessor test below pinned one of those numbers, 1579.7 kg/m3, as
+#: an expectation. CoolProp 8.0 added a melting-line check and refuses, so the
+#: chain has nothing to fall through *to* and the test failed on an upgrade.
+#:
+#: The refusal is the correct behaviour, so the points moved rather than the
+#: check. The two edges that remain genuine fall-throughs -- the table stops,
+#: the equation of state continues -- are low pressure and high temperature.
+#: Both agree to 15 significant figures across the two CoolProp versions.
 PAST_THE_TABLES = [
-    ("above the pressure ceiling", dict(p=5.0e9, T=300.0)),
-    ("below the temperature floor", dict(p=1.0e6, T=20.0)),
+    ("above the temperature ceiling", dict(p=1.0e7, T=3000.0)),
     ("below the pressure floor", dict(p=1.0, T=300.0)),
+    ("far below the pressure floor", dict(p=1.0e-3, T=300.0)),
 ]
 
 
@@ -137,9 +151,14 @@ def test_accessor_and_get_agree_including_argument_order() -> None:
 
 
 def test_accessor_falls_through_the_chain_too() -> None:
-    """The fast path must not lose the fallback it was optimised around."""
+    """The fast path must not lose the fallback it was optimised around.
+
+    The point is off the table and served by the equation of state, so the
+    number is the equation of state's -- not, as it was, a density
+    extrapolated into solid nitrogen. See :data:`PAST_THE_TABLES`.
+    """
     rho = Fluid("nitrogen").accessor("rho", "p", "T")
-    assert rho(5.0e9, 300.0) == pytest.approx(1579.7, rel=1e-3)
+    assert rho(1.0e7, 3000.0) == pytest.approx(11.0908, rel=1e-4)
 
 
 def test_quality_is_none_outside_the_dome_not_a_sentinel() -> None:

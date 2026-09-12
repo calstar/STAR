@@ -51,9 +51,16 @@ if TYPE_CHECKING:  # pragma: no cover - types only
 #: Universal gas constant [J/(mol.K)], CODATA 2018 -- the value CoolProp uses.
 R_UNIVERSAL = 8.31446261815324
 
-#: Our neutral state pairs, mapped onto CoolProp's integer input constants.
+#: Our neutral state pairs, mapped onto CoolProp's input constants.
 #: Adding a pair is an entry here, not a branch.
-_INPUT_PAIRS: dict[StatePair, int] = {
+#:
+#: `Any` rather than `int` because CoolProp changed what these are between the
+#: versions this package supports: 7.2 ships no type information and they are
+#: plain ints, while 8.0 gives them a nominal `input_pairs` type that
+#: `AbstractState.update` then demands. They are ints at runtime either way --
+#: declaring `int` made the 8.0 stubs reject the very call this table exists to
+#: feed, and declaring the 8.0 name would not resolve on 7.2.
+_INPUT_PAIRS: dict[StatePair, Any] = {
     StatePair.PT: CP.PT_INPUTS,
     StatePair.PH: CP.HmassP_INPUTS,
     StatePair.PS: CP.PSmass_INPUTS,

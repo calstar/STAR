@@ -897,6 +897,28 @@ Choked form by flow is now taken only when the component refuses to price the fl
 A performance test that calls one state 20 000 times measures the memo, not the
 property layer. Walk the state (`_STEP_K = 1.0e-6`).
 
+### 4.10 A property library that answers for the solid phase
+
+CoolProp **7.2** evaluates the fluid equation of state wherever it is asked, including
+above the melting line and below the triple point. Nitrogen at 5 GPa / 300 K and at
+1 MPa / 20 K are both solid, and 7.2 returns a density for each. **8.0** added a
+melting-line check and refuses them.
+
+Two things follow. The property chain's fall-through can only be demonstrated where
+the table stops and the equation of state genuinely continues, which for nitrogen is
+low pressure and high temperature — *not* the pressure ceiling or the temperature
+floor, because there the table now ends where the physics does. And a number obtained
+from 7.2 outside the fluid region is not a property; one of them, 1579.7 kg/m³ for
+"nitrogen" at 5 GPa, had been pinned in a test as an expectation.
+
+The versions agree to 15 significant figures everywhere inside the fluid region, so
+this is a boundary difference and nothing else. Nothing on the stand runs near it —
+LN2 at 77 K is 14 K above the triple point — but a chilldown model that strays below
+63.15 K would have been answered rather than stopped.
+
+Re-check on any CoolProp upgrade: `lib/feedtwin/tests/test_props_chain.py`, whose
+`PAST_THE_TABLES` documents the window.
+
 ---
 
 ## Reporting

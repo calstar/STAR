@@ -80,15 +80,30 @@ include = ["feedtwin*"]
 feedtwin = ["py.typed", "**/*.toml"]
 
 [tool.mypy]
-python_version = "3.11"
+# No `python_version` on purpose: mypy targets whichever interpreter it runs
+# under, because the third-party stubs it has to parse are the ones installed
+# for that interpreter. Pinned to "3.11" this job broke -- the CI library job
+# runs 3.12 (matching Dockerfile.api), pip resolved numpy 2.5.3 there, and its
+# `__init__.pyi` uses a PEP 695 `type` statement that mypy refuses to parse
+# while targeting 3.11. A 3.11 machine gets numpy 2.4, whose stubs parse, so
+# the failure appeared only in CI.
+#
+# `requires-python = ">=3.11"` is still the floor, and it is proved by running
+# rather than by asserting: the backend job installs and exercises this package
+# on 3.11.
 packages = ["feedtwin"]
 strict = true
-# CoolProp and ht ship no type information, so mypy cannot see into them.
+# CoolProp, ht and (on some versions) PyYAML ship no type information mypy can
+# use, so it cannot see into them. Listed here rather than silenced inline with
+# `# type: ignore`: whether a given release of one of these ships stubs varies
+# with the version installed, and an inline ignore that becomes unnecessary is
+# itself an error under `strict` -- which is how a passing gate turned red on
+# nothing but a dependency upgrade.
 # (fluids does ship py.typed and is therefore genuinely checked -- which is why
 # feedtwin.model.units imports Kv_to_Cv from fluids.fittings, where it is
 # defined, rather than through the module that re-exports it.)
 # Their call sites are wrapped in this package precisely so the untyped surface
 # stays small and contained.
 [[tool.mypy.overrides]]
-module = ["CoolProp.*", "fluids.*", "ht.*", "scipy.*"]
+module = ["CoolProp.*", "fluids.*", "ht.*", "scipy.*", "yaml"]
 ignore_missing_imports = true

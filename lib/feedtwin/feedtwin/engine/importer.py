@@ -318,7 +318,7 @@ def load_engine(path: str | Path) -> EngineDesign:
     if not source.exists():
         raise EngineImportError(str(source), "no such file")
     try:
-        import yaml  # type: ignore[import-untyped]
+        import yaml
     except ImportError as exc:  # pragma: no cover - dependency is declared
         raise EngineImportError(
             str(source),
