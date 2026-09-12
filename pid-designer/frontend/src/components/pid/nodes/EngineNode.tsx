@@ -3,6 +3,7 @@ import { Frame, TurnedPort } from './Frame';
 import type { PIDNodeData } from '../types';
 import { DraggableLabel } from './DraggableLabel';
 import { Upright } from './Upright';
+import { fmtParam } from '../fmt';
 
 const W = 72, H = 120;
 
@@ -58,7 +59,7 @@ export function EngineNode({ id, data, selected }: NodeProps) {
         {pc && (
           <Upright rotation={rotation} x={36} y={60}>
             <text x="36" y="60" textAnchor="middle" fontSize="8" fill="#f97316" fontFamily="monospace">
-              {pc.value}{pc.unit === '-' ? '' : pc.unit}
+              {fmtParam(pc)}
             </text>
           </Upright>
         )}

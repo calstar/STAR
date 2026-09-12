@@ -289,7 +289,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
                   className="text-[10px] text-[var(--color-text-muted)] underline decoration-dotted hover:text-[var(--color-text-primary)]">
                   {showAdvanced
                     ? 'fewer'
-                    : `${spec.params.filter(p => p.advanced).length} more (wall, roughness, head)`}
+                    : `${spec.params.filter(p => p.advanced).length} more`}
                 </button>
                 {showAdvanced && spec.params.filter(p => p.advanced && !p.derived).map(p => (
                   <ParamRow

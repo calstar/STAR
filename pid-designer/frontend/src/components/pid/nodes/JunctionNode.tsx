@@ -1,5 +1,7 @@
 import { Position, type NodeProps } from '@xyflow/react';
 import { Port } from './Port';
+import { useNodeFluid } from '../FluidContext';
+import { colorForSpecies } from '../fluids';
 
 /**
  * A branch point: the tee, as the drawing says it.
@@ -10,7 +12,12 @@ import { Port } from './Port';
  * *selects* a node as well as the part that moves it: the dot could not be
  * picked at all, and pressing Delete over it did nothing.
  */
-export function JunctionNode({ selected }: NodeProps) {
+export function JunctionNode({ id, selected }: NodeProps) {
+  // A junction is a point *in* a run, so it is drawn in the run's own colour.
+  // A grey dot on an orange line read as something foreign sitting on the
+  // pipe rather than a tee in it.
+  const fluid = useNodeFluid(id);
+  const tint = fluid?.species ? colorForSpecies(fluid.species) : '#94a3b8';
   const handleStyle = {
     width: 10,
     height: 10,
@@ -24,9 +31,9 @@ export function JunctionNode({ selected }: NodeProps) {
         width: 10,
         height: 10,
         borderRadius: '50%',
-        background: selected ? '#3b82f6' : '#94a3b8',
+        background: selected ? '#3b82f6' : tint,
         border: '2px solid #0f172a',
-        boxShadow: `0 0 0 2px ${selected ? '#3b82f6' : '#475569'}`,
+        boxShadow: `0 0 0 2px ${selected ? '#3b82f6' : tint}`,
         position: 'relative',
         cursor: 'grab',
       }}

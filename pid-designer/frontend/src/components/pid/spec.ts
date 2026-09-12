@@ -101,6 +101,11 @@ function valveSpec(): ComponentSpec {
       P('Cv', 'Cv', 'flow_coefficient'),
       P('bore', 'Bore', 'length'),
       P('travel_time', 'Travel time', 'time', { value: 0.05, unit: 's' }),
+      // Where a gas or a liquid chokes through it, IEC 60534. Datasheet
+      // numbers; the defaults are a globe/ball valve and feed-twin says so.
+      A('xT', 'xT (gas choke)', 'dimensionless', { value: 0.7, unit: '-' }),
+      A('FL', 'FL (liquid recovery)', 'dimensionless', { value: 0.9, unit: '-' }),
+      A('leak_closed', 'Seat leak when shut', 'flow_coefficient'),
     ],
     options: [
       { key: 'failState', label: 'Unpowered position', default: 'closed',
@@ -126,6 +131,11 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
       P('wall_mass', 'Wall mass', 'mass'),
       P('wall_capacity', 'Wall specific heat', 'specific_heat', { value: 900, unit: 'J/(kg.K)' }),
       P('wall_conductance', 'Gas-to-wall hA', 'thermal_conductance'),
+      // What stands between the tank and the room. Left blank the tank is
+      // bare, and a bare LOX tank boils six times faster than one under an
+      // inch of fiberglass.
+      P('insulation_thickness', 'Insulation thickness', 'length'),
+      P('insulation_conductivity', 'Insulation conductivity', 'conductivity', { value: 0.04, unit: 'W/(m.K)' }),
     ],
     options: [
       { key: 'portsTop', label: 'Top ports', default: '1',
@@ -177,12 +187,22 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
       P('setpoint', 'Setpoint', 'pressure'),
       P('Cv', 'Cv', 'flow_coefficient'),
       P('bore', 'Orifice', 'length'),
-      // Supply-pressure effect as a datasheet states it: outlet rises this
-      // much for that much inlet decay. Two pressures rather than the
-      // dimensionless ratio the physics core wants, because nobody reads
-      // "0.0147" off a spec sheet -- they read "14.7 psi per 1000 psi".
-      P('supply_effect_out', 'Outlet rise', 'pressure'),
-      P('supply_effect_in', '  per inlet drop', 'pressure'),
+      // A regulator with no droop holds its setpoint at any flow, which makes
+      // its branch equation true for every mass flow -- the flow is genuinely
+      // indeterminate and feed-twin cannot solve it transiently. These two
+      // are the datasheet's droop curve in two numbers.
+      P('flow_droop', 'Droop at rated flow', 'pressure'),
+      P('rated_flow', 'Rated flow', 'mass_flow'),
+      // Supply-pressure effect, written the way the datasheet writes it:
+      // "17 psi per 1000 psi of inlet". The unit carries the "per", so the
+      // number is the one printed on the sheet. Two pressure fields used to
+      // stand here under names feed-twin never read, so a typed value went
+      // nowhere; these are the catalogue's own names.
+      A('supply_coefficient', 'Supply effect', 'pressure_ratio'),
+      A('inlet_reference', '  at inlet', 'pressure'),
+      // What a downstream relief actually sees between firings.
+      A('lockup_rise', 'Lockup rise', 'pressure'),
+      A('min_inlet_differential', 'Dropout (min in−out)', 'pressure'),
       // Dome-loaded only. `dome_pressure` is superseded when a loading
       // regulator is drawn — feed-twin takes that one's setpoint — so it is
       // for a dome set from a panel that is not on the drawing.
@@ -211,6 +231,7 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
       P('cracking_pressure', 'Cracking pressure', 'pressure', { value: 3, unit: 'psi' }),
       P('Cv', 'Cv', 'flow_coefficient'),
       P('bore', 'Bore', 'length'),
+      A('leak_reverse', 'Reverse seat leak', 'flow_coefficient'),
     ],
   },
 

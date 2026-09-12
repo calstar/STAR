@@ -81,11 +81,14 @@ describe('fluids', () => {
 });
 
 describe('boundary conditions a solve cannot start without', () => {
-  it('asks a tank for pressure, temperature and a fluid', () => {
+  it('asks a tank for pressure, temperature and a fluid, in one breath', () => {
+    // One row naming all three, not three rows. See the grouped form below.
     const t = titles([node('TK-1', 'TANK')]);
-    expect(t.some(x => x.includes('operating pressure'))).toBe(true);
-    expect(t.some(x => x.includes('propellant temperature'))).toBe(true);
-    expect(t.some(x => x.includes('fluid'))).toBe(true);
+    const row = t.find(x => x.startsWith('TK-1 has no'))!;
+    expect(row).toContain('pressure');
+    expect(row).toContain('temperature');
+    expect(row).toContain('fluid');
+    expect(t.filter(x => x.startsWith('TK-1 has no'))).toHaveLength(1);
   });
 
   it('asks an engine for a chamber pressure', () => {
@@ -142,5 +145,115 @@ describe('what the badge counts', () => {
     const severities = runChecks(nodes, []).map(f => f.severity);
     expect(severities).toEqual([...severities].sort(
       (a, b) => ({ error: 0, warning: 1, info: 2 })[a] - ({ error: 0, warning: 1, info: 2 })[b]));
+  });
+});
+
+describe('a relief valve against the vessel it protects', () => {
+  const psi = (value: number, source = 'manufacturer') => ({ value, unit: 'psi', source });
+  const tank = (id: string, pressure?: number, mawp?: number) => node(id, 'TANK', {
+    fluid: 'oxygen',
+    params: {
+      ...(pressure !== undefined ? { pressure: psi(pressure) } : {}),
+      temperature: { value: 90, unit: 'K', source: 'measured' },
+      ...(mawp !== undefined ? { MAWP: psi(mawp) } : {}),
+    },
+  });
+  const rv = (id: string, set: number) => node(id, 'RV', { params: { set_pressure: psi(set) } });
+  const onTank = [edge('e', 'RV-1', 'TK-1', 'r', 't2')];
+
+  it('is quiet when the relief lifts between operating pressure and MAWP', () => {
+    const found = ids([tank('TK-1', 500, 800), rv('RV-1', 650)], onTank);
+    expect(found.filter(i => /relief|mawp/.test(i))).toEqual([]);
+  });
+
+  it('flags a relief set above the MAWP', () => {
+    // It would not open before the tank failed.
+    const found = runChecks([tank('TK-1', 500, 800), rv('RV-1', 900)], onTank);
+    const f = found.find(x => x.id === 'relief-over-mawp-RV-1')!;
+    expect(f.severity).toBe('error');
+    expect(f.nodeIds).toEqual(['RV-1', 'TK-1']);
+  });
+
+  it('flags a relief set at or below the operating pressure', () => {
+    // It would be open the whole time.
+    expect(ids([tank('TK-1', 500, 800), rv('RV-1', 500)], onTank)).toContain('relief-under-operating-RV-1');
+  });
+
+  it('flags a tank run above its own rating', () => {
+    expect(ids([tank('TK-1', 900, 800)])).toContain('vessel-over-mawp-TK-1');
+  });
+
+  it('compares across units', () => {
+    // 60 bar is 870 psi, above an 800 psi rating.
+    const t = node('TK-1', 'TANK', { fluid: 'oxygen', params: {
+      pressure: psi(500), temperature: { value: 90, unit: 'K', source: 'measured' }, MAWP: psi(800) } });
+    const r = node('RV-1', 'RV', { params: { set_pressure: { value: 60, unit: 'bar', source: 'manufacturer' } } });
+    expect(ids([t, r], onTank)).toContain('relief-over-mawp-RV-1');
+  });
+
+  it('finds the tank through a junction, but not through a valve', () => {
+    const j = node('J', 'JUNCTION');
+    const viaJunction = [edge('a', 'RV-1', 'J', 'r', 'l'), edge('b', 'J', 'TK-1', 't', 't2')];
+    expect(ids([tank('TK-1', 500, 800), rv('RV-1', 900), j], viaJunction)).toContain('relief-over-mawp-RV-1');
+    // Past a valve it is protecting something else, and this drawing has not
+    // said what.
+    const v = node('SOL-1', 'SOL');
+    const viaValve = [edge('a', 'RV-1', 'SOL-1', 'r', 'l'), edge('b', 'SOL-1', 'TK-1', 'r', 't2')];
+    expect(ids([tank('TK-1', 500, 800), rv('RV-1', 900), v], viaValve)).not.toContain('relief-over-mawp-RV-1');
+  });
+
+  it('says nothing when either number is not stated', () => {
+    // A missing MAWP is not a fault, it is Tuesday.
+    expect(ids([tank('TK-1', 500), rv('RV-1', 900)], onTank).filter(i => /relief/.test(i))).toEqual([]);
+  });
+});
+
+describe('a check valve against the flow', () => {
+  const tank = (id: string) => node(id, 'TANK', { fluid: 'oxygen', params: {
+    pressure: { value: 500, unit: 'psi', source: 'measured' },
+    temperature: { value: 90, unit: 'K', source: 'measured' } } });
+  const cv = (id: string) => node(id, 'CV');
+  const valve = (id: string) => node(id, 'MAN');
+
+  it('is quiet when the inlet faces the source', () => {
+    // tank -> CV(l ... r) -> valve
+    const edges = [edge('a', 'TK-1', 'CV-1', 'b', 'l'), edge('b', 'CV-1', 'MV-1', 'r', 'l')];
+    expect(ids([tank('TK-1'), cv('CV-1'), valve('MV-1')], edges)).not.toContain('cv-backwards-CV-1');
+  });
+
+  it('flags one whose inlet is on the far side from the source', () => {
+    const edges = [edge('a', 'TK-1', 'CV-1', 'b', 'r'), edge('b', 'CV-1', 'MV-1', 'l', 'l')];
+    const f = runChecks([tank('TK-1'), cv('CV-1'), valve('MV-1')], edges).find(x => x.id === 'cv-backwards-CV-1')!;
+    expect(f.severity).toBe('warning');
+  });
+
+  it('does not judge one plumbed on a single side, or with no source', () => {
+    expect(ids([tank('TK-1'), cv('CV-1')], [edge('a', 'TK-1', 'CV-1', 'b', 'r')])).not.toContain('cv-backwards-CV-1');
+    const edges = [edge('a', 'MV-2', 'CV-1', 'r', 'r'), edge('b', 'CV-1', 'MV-1', 'l', 'l')];
+    expect(ids([valve('MV-2'), cv('CV-1'), valve('MV-1')], edges)).not.toContain('cv-backwards-CV-1');
+  });
+});
+
+describe('what a fresh drawing says about itself', () => {
+  it('lists everything a tank lacks on one row', () => {
+    // Two fresh tanks used to put six amber rows in the panel.
+    const found = runChecks([node('TK-1', 'TANK'), node('TK-2', 'TANK')], []);
+    const rows = found.filter(f => f.id.startsWith('missing-'));
+    expect(rows).toHaveLength(2);
+    expect(rows[0].title).toBe('TK-1 has no fluid, pressure or temperature');
+  });
+
+  it('counts joints priced from an unchecked NPT figure', () => {
+    const e = {
+      id: 'L1', source: 'A', target: 'B',
+      data: { segments: [{
+        id: 's', standard: 'NPT', tubeSize: '1/2', joinBy: 'NPT', joinSize: '1/2',
+        fittings: [{ id: 'f', kind: 'elbow_90', count: 3 }],
+      }] },
+    } as unknown as Edge;
+    const f = runChecks([node('A', 'MAN'), node('B', 'MAN')], [e]).find(x => x.id === 'joints-unchecked')!;
+    expect(f.severity).toBe('info');
+    expect(f.title).toMatch(/^2 joints/);
+    expect(f.edgeIds).toEqual(['L1']);
   });
 });

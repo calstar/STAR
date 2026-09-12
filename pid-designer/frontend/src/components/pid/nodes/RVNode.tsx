@@ -4,6 +4,7 @@ import type { PIDNodeData } from '../types';
 import { DraggableLabel } from './DraggableLabel';
 import { Frame } from './Frame';
 import { turn } from '../route';
+import { fmtParam } from '../fmt';
 
 const W = 60, H = 60;
 
@@ -38,11 +39,11 @@ export function RVNode({ id, data, selected }: NodeProps) {
             pointerEvents: 'none',
           }}
         >
-          {set && <>{set.value} {set.unit}</>}
+          {set && <>{fmtParam(set)}</>}
           {reseat && (
             <>
               <br />
-              <span style={{ color: '#64748b' }}>↺ {reseat.value} {reseat.unit}</span>
+              <span style={{ color: '#64748b' }}>↺ {fmtParam(reseat)}</span>
             </>
           )}
         </span>

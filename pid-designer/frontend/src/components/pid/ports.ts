@@ -23,6 +23,15 @@ import type { PIDNodeData } from './types';
 export type PortKind = 'flow' | 'instrument' | 'plug';
 
 /**
+ * Which of a check valve's two ports is the inlet.
+ *
+ * The symbol is drawn with its flow arrow pointing from `l` to `r`, and the
+ * checks read the same constant -- so the artwork and the rule that a check
+ * valve must face the flow cannot disagree about which way that is.
+ */
+export const CV_INLET = 'l';
+
+/**
  * The ports that are instrument tappings, worked out from what is on them.
  *
  * This used to be a third choice in a dropdown, and it was a second way of

@@ -3,7 +3,9 @@ import { propagateFluids, speciesById } from './fluids';
 import { isInstrument } from './attach';
 import { crossPageEdges, listPages, pageOf } from './pages';
 import { findVents } from './vents';
-import { portsOf, portIsDrawn } from './ports';
+import { portsOf, portIsDrawn, CV_INLET } from './ports';
+import { toPa } from './params';
+import { overlapOf } from './segments';
 import type { PIDNodeData, PIDEdgeData } from './types';
 
 /**
@@ -175,20 +177,102 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
   }
 
   // ── Boundary conditions a solve cannot start without ──────────────────────
+  // One row per vessel saying everything it lacks. Two fresh tanks used to
+  // put six amber rows in the panel -- pressure, temperature, fluid, twice --
+  // which is the wall of the same thing said again that people stop reading.
   for (const n of nodes) {
     const d = dataOf(n);
     const t = d?.componentType;
     if (t === 'TANK') {
-      if (!d.params?.pressure) missing(push, n, 'an operating pressure',
-        'A solve starts here; without it there is no boundary condition.');
-      if (!d.params?.temperature) missing(push, n, 'a propellant temperature',
-        'No temperature, no density, no flow.');
-      if (!speciesById(d.fluid)) missing(push, n, 'a fluid',
-        'Set it here and every line downstream inherits it.');
+      const lacks: string[] = [];
+      if (!speciesById(d.fluid)) lacks.push('a fluid');
+      if (!d.params?.pressure) lacks.push('a pressure');
+      if (!d.params?.temperature) lacks.push('a temperature');
+      if (lacks.length) missing(push, n, lacks,
+        'A solve starts at a tank: its fluid, pressure and temperature are the boundary condition, and every line downstream inherits the fluid.');
     }
     if (t === 'ENGINE') {
-      if (!d.params?.chamber_pressure) missing(push, n, 'a chamber pressure',
+      if (!d.params?.chamber_pressure) missing(push, n, ['a chamber pressure'],
         'It is the back pressure the whole feed works against.');
+    }
+  }
+
+  // ── Relief against the vessel it protects ─────────────────────────────────
+  // The one number a reviewer checks first on a sheet: does the thing
+  // protecting a vessel lift below what the vessel is rated to. Both figures
+  // are on the drawing, so the drawing can say. Only when both are stated --
+  // a missing MAWP is not a fault, it is Tuesday.
+  const vesselOf = protectedVessels(nodes, edges);
+  for (const n of nodes) {
+    const d = dataOf(n);
+    const t = d?.componentType;
+    if (t === 'TANK') {
+      const p = toPa(d.params?.pressure);
+      const mawp = toPa(d.params?.MAWP);
+      if (p !== undefined && mawp !== undefined && p > mawp) {
+        push({
+          id: `vessel-over-mawp-${n.id}`,
+          severity: 'error',
+          title: `${nameOf(n)} runs above its MAWP`,
+          detail: `Operating pressure ${fmt(d.params!.pressure!)} against a rating of ${fmt(d.params!.MAWP!)}.`,
+          nodeIds: [n.id],
+        });
+      }
+    }
+    if (t !== 'RV') continue;
+    const vessel = vesselOf.get(n.id);
+    if (!vessel) continue;
+    const v = dataOf(vessel);
+    const set = toPa(d.params?.set_pressure);
+    if (set === undefined) continue;
+    const mawp = toPa(v.params?.MAWP);
+    const op = toPa(v.params?.pressure);
+    if (mawp !== undefined && set > mawp) {
+      push({
+        id: `relief-over-mawp-${n.id}`,
+        severity: 'error',
+        title: `${nameOf(n)} lifts above ${nameOf(vessel)}'s MAWP`,
+        detail: `Set at ${fmt(d.params!.set_pressure!)}; the vessel is rated to ${fmt(v.params!.MAWP!)}. It would not open before the tank failed.`,
+        nodeIds: [n.id, vessel.id],
+      });
+    } else if (op !== undefined && set <= op) {
+      push({
+        id: `relief-under-operating-${n.id}`,
+        severity: 'error',
+        title: `${nameOf(n)} is set at or below ${nameOf(vessel)}'s operating pressure`,
+        detail: `Set at ${fmt(d.params!.set_pressure!)} with the tank run at ${fmt(v.params!.pressure!)}. It would be open the whole time.`,
+        nodeIds: [n.id, vessel.id],
+      });
+    }
+  }
+
+  // ── Check valves against the flow ─────────────────────────────────────────
+  // A check valve drawn backwards is a line that will not flow, and on a
+  // drawing it looks exactly like one drawn right. The fluid walk knows how
+  // far every symbol is from a source, so the side nearer a source is the
+  // side the flow arrives on -- and that had better be the inlet.
+  const hops = hopsFromSources(nodes, edges);
+  for (const n of nodes) {
+    if (dataOf(n)?.componentType !== 'CV') continue;
+    const at = (handle: string) => {
+      const e = edges.find(x =>
+        (x.source === n.id && x.sourceHandle === handle) ||
+        (x.target === n.id && x.targetHandle === handle));
+      if (!e) return undefined;
+      const other = e.source === n.id ? e.target : e.source;
+      return hops.get(other);
+    };
+    const inlet = at(CV_INLET);
+    const outlet = at(CV_INLET === 'l' ? 'r' : 'l');
+    if (inlet === undefined || outlet === undefined) continue;
+    if (inlet > outlet) {
+      push({
+        id: `cv-backwards-${n.id}`,
+        severity: 'warning',
+        title: `${nameOf(n)} points against the flow`,
+        detail: 'Its inlet is on the side further from the source. Rotate it 180° (R twice), or check which way the fluid actually goes here.',
+        nodeIds: [n.id],
+      });
     }
   }
 
@@ -343,6 +427,30 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
     });
   }
 
+  // ── Joints priced from an unchecked figure ────────────────────────────────
+  // The NPT engagements in `terminations.ts` are seeded from memory and say so
+  // on every use. A cut list built on them should not read as a citation.
+  let unchecked = 0;
+  const uncheckedOn: string[] = [];
+  for (const e of edges) {
+    for (const seg of edgeDataOf(e).segments ?? []) {
+      const overlap = overlapOf(seg);
+      if (overlap && overlap.unverified > 0) {
+        unchecked += overlap.unverified;
+        uncheckedOn.push(e.id);
+      }
+    }
+  }
+  if (unchecked) {
+    push({
+      id: 'joints-unchecked',
+      severity: 'info',
+      title: `${unchecked} joint${unchecked === 1 ? '' : 's'} priced from an unchecked NPT engagement`,
+      detail: 'The hand-tight lengths are seeded from memory, not from ASME B1.20.1 Table 8. Check the table before cutting tube to these figures.',
+      edgeIds: [...new Set(uncheckedOn)],
+    });
+  }
+
   // ── Numbers nobody has checked ────────────────────────────────────────────
   const assumed: string[] = [];
   for (const n of nodes) {
@@ -367,17 +475,86 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
 
 const RANK: Record<Severity, number> = { error: 0, warning: 1, info: 2 };
 
-function missing(push: (f: Finding) => void, n: Node, what: string, why: string) {
+function missing(push: (f: Finding) => void, n: Node, whats: string[], why: string) {
+  const bare = whats.map(w => w.replace(/^an? /, ''));
+  const list = bare.length <= 1 ? bare.join('')
+    : `${bare.slice(0, -1).join(', ')} or ${bare[bare.length - 1]}`;
   push({
-    id: `missing-${n.id}-${what.replace(/\s+/g, '-')}`,
+    id: `missing-${n.id}`,
     severity: 'warning',
-    title: `${nameOf(n)} has no ${what.replace(/^an? /, '')}`,
+    title: `${nameOf(n)} has no ${list}`,
     // Just the reason. It used to open with "<what> is not set", which is
     // what the title above it already says -- and a panel that says everything
     // twice is one people stop reading.
     detail: why,
     nodeIds: [n.id],
   });
+}
+
+const fmt = (p: { value: number; unit: string }) => `${p.value} ${p.unit}`;
+
+/**
+ * Which vessel each relief valve protects.
+ *
+ * Walked from the relief through lines, junctions and manifolds -- the things
+ * a relief is plumbed to a tank through -- and never through a valve or a
+ * regulator, past which it would be protecting something else. The first
+ * vessel reached is the one.
+ */
+function protectedVessels(nodes: Node[], edges: Edge[]): Map<string, Node> {
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const adj = new Map<string, string[]>();
+  for (const e of edges) {
+    if (!e.source || !e.target) continue;
+    (adj.get(e.source) ?? adj.set(e.source, []).get(e.source)!).push(e.target);
+    (adj.get(e.target) ?? adj.set(e.target, []).get(e.target)!).push(e.source);
+  }
+  const through = new Set(['JUNCTION', 'MANIFOLD']);
+  const out = new Map<string, Node>();
+  for (const rv of nodes) {
+    if (dataOf(rv)?.componentType !== 'RV') continue;
+    const seen = new Set([rv.id]);
+    const queue = [...(adj.get(rv.id) ?? [])];
+    while (queue.length) {
+      const id = queue.shift()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const n = byId.get(id);
+      const t = dataOf(n!)?.componentType;
+      if (t === 'TANK') { out.set(rv.id, n!); break; }
+      if (t && through.has(t)) queue.push(...(adj.get(id) ?? []));
+    }
+  }
+  return out;
+}
+
+/**
+ * How many lines each symbol is from the nearest source, walking any line in
+ * either direction. What "upstream" means on a drawing with no arrows.
+ */
+function hopsFromSources(nodes: Node[], edges: Edge[]): Map<string, number> {
+  const adj = new Map<string, string[]>();
+  for (const e of edges) {
+    if (!e.source || !e.target) continue;
+    (adj.get(e.source) ?? adj.set(e.source, []).get(e.source)!).push(e.target);
+    (adj.get(e.target) ?? adj.set(e.target, []).get(e.target)!).push(e.source);
+  }
+  const sources = new Set(['TANK', 'KBOTTLE', 'DEWAR']);
+  const dist = new Map<string, number>();
+  const queue: string[] = [];
+  for (const n of nodes) {
+    if (sources.has(dataOf(n)?.componentType ?? '')) { dist.set(n.id, 0); queue.push(n.id); }
+  }
+  while (queue.length) {
+    const id = queue.shift()!;
+    const d = dist.get(id)!;
+    for (const next of adj.get(id) ?? []) {
+      if (dist.has(next)) continue;
+      dist.set(next, d + 1);
+      queue.push(next);
+    }
+  }
+  return dist;
 }
 
 /** What the badge shows: things that are actually wrong. */

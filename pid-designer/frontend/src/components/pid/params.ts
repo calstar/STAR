@@ -85,3 +85,21 @@ export const UNITS: Record<Dimension, string[]> = {
 
 /** Pressures are absolute. Said in the UI, next to the field. */
 export const ABSOLUTE_NOTE = 'absolute, not gauge';
+
+/** Pascals per unit, for the pressures the dialog offers. Absolute throughout. */
+const PA_PER: Record<string, number> = {
+  Pa: 1, kPa: 1e3, MPa: 1e6, bar: 1e5, atm: 101325, psi: 6894.757293168361,
+};
+
+/**
+ * A pressure in pascals, or nothing if its unit is not one this file knows.
+ *
+ * For comparing two pressures on the drawing -- a relief against a MAWP --
+ * which is only meaningful once both are in the same unit. Nothing here is
+ * offered to the solver; feed-twin converts for itself.
+ */
+export function toPa(p: ParamValue | undefined): number | undefined {
+  if (!p) return undefined;
+  const k = PA_PER[p.unit];
+  return k === undefined ? undefined : p.value * k;
+}

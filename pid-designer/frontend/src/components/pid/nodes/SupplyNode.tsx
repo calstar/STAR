@@ -5,6 +5,7 @@ import { useNodeFluid } from '../FluidContext';
 import { DraggableLabel } from './DraggableLabel';
 import { Frame, TurnedPort } from './Frame';
 import { Upright } from './Upright';
+import { fmtParam } from '../fmt';
 
 /**
  * Where the propellant and the pressurant come from: a K-bottle, or a dewar.
@@ -86,7 +87,7 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
               color: '#94a3b8', whiteSpace: 'nowrap', pointerEvents: 'none',
             }}
           >
-            {p.value} {p.unit}
+            {fmtParam(p)}
           </span>
         )}
         <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: bottleBoxH + 15 }} />

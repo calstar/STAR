@@ -6,11 +6,13 @@ import { DraggableLabel } from './DraggableLabel';
 import { Frame } from './Frame';
 import { turn } from '../route';
 import { Upright } from './Upright';
+import { fmtParam } from '../fmt';
 
 const W = 60, H = 60;
 
 export function PRNode({ id, data, selected }: NodeProps) {
-  const { label, labelOffset, rotation, options } = data as unknown as PIDNodeData;
+  const { label, labelOffset, rotation, options, params } = data as unknown as PIDNodeData;
+  const setpoint = params?.setpoint;
   const stroke = selected ? '#3b82f6' : '#94a3b8';
   // A dome-loaded regulator has a third connection, and which one it is
   // matters: the dome sets the outlet, so a line run to it by mistake is a
@@ -27,7 +29,23 @@ export function PRNode({ id, data, selected }: NodeProps) {
         <Port position={turn(Position.Left, rotation)}  id="l" />
         <Port position={turn(Position.Right, rotation)} id="r" />
         {domeLoaded && <Port position={turn(Position.Top, rotation)} id="dome" />}
-        <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: boxH + 2 }} />
+        {/* The setpoint, on the face of it. A regulator's number is what a
+            reviewer scans a sheet for, and two clicks into a dialog is two
+            clicks nobody takes while scanning. */}
+        {setpoint && (
+          <span
+            style={{
+              position: 'absolute', left: '50%', top: boxH - 6,
+              transform: 'translateX(-50%)',
+              fontSize: 9, lineHeight: 1, fontFamily: 'monospace',
+              color: '#f59e0b', whiteSpace: 'nowrap', pointerEvents: 'none',
+            }}
+          >
+            {fmtParam(setpoint)}
+          </span>
+        )}
+        <DraggableLabel nodeId={id} label={label} offset={labelOffset}
+          defaultOffset={{ x: -4, y: boxH + (setpoint ? 8 : 2) }} />
       </>}
     >
 
