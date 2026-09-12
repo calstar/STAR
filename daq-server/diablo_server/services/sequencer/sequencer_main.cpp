@@ -3,7 +3,9 @@
  *
  * Listens on TCP (default port 9998) for newline-terminated text commands:
  *
- *   TRANSITION:<state_name>          — request state transition
+ *   TRANSITION:<state_name>[:<ms>]   — request state transition; the optional duration
+ *                                      overrides the hold of a state configured to accept
+ *                                      one (never the burn state — that is refused)
  *   ACTUATOR:<role_name>:<0|1>       — manual actuator command (debug mode only)
  *   DEBUG_MODE:<0|1>                 — toggle debug mode
  *   EXTEND_FIRE                      — extend FIRE window
@@ -34,6 +36,7 @@
 #include <thread>
 #include <vector>
 
+#include "control/HoldParse.hpp"
 #include "control/SequencerService.hpp"
 
 namespace {
@@ -75,13 +78,40 @@ void handleCommandLine(int client_fd, const std::string& raw, sequencer::Sequenc
 
     // ── TRANSITION:<state_name> ──────────────────────────────────────────
     if (cmd.compare(0, 11, "TRANSITION:") == 0) {
-        const std::string state_name = trim(cmd.substr(11));
+        const std::string rest = trim(cmd.substr(11));
+        std::string state_name = rest;
+        uint32_t hold_ms = 0;
+
+        // Optional trailing :<ms>. Split on the LAST colon like the ACTUATOR branch below, because
+        // state names contain spaces and may not be assumed colon-free either — and only accept the
+        // tail as a duration if it parses cleanly as one. Anything else stays part of the name, so
+        // a plain "TRANSITION:Flow Test" is byte-for-byte what it always was and no existing client
+        // changes. A state literally named "Foo:123" would misparse into an unknown state that is
+        // refused, rather than into an unintended actuation — the direction to fail in.
+        const size_t last_colon = rest.rfind(':');
+        if (last_colon != std::string::npos && last_colon > 0) {
+            uint32_t parsed = 0;
+            if (sequencer::parseHoldMs(trim(rest.substr(last_colon + 1)), parsed)) {
+                hold_ms = parsed;
+                state_name = trim(rest.substr(0, last_colon));
+            } else if (trim(rest.substr(last_colon + 1)).find_first_not_of("0123456789") ==
+                       std::string::npos) {
+                // All digits but rejected: zero, or past the wire ceiling. Say so rather than
+                // silently treating "Flow Test:0" as a state name and reporting it unknown.
+                sendReply("ERR:bad hold duration\n");
+                return;
+            }
+        }
+
+        std::string why;
         if (state_name.empty()) {
             sendReply("ERR:empty state name\n");
-        } else if (svc.transitionTo(state_name)) {
-            sendReply("OK\n");
+        } else if (svc.transitionTo(state_name, hold_ms, &why)) {
+            // Echo the window actually used so the client displays the sequencer's number rather
+            // than assuming its own was honoured.
+            sendReply(hold_ms ? "OK:" + std::to_string(hold_ms) + "\n" : std::string("OK\n"));
         } else {
-            sendReply("ERR:transition rejected\n");
+            sendReply("ERR:" + (why.empty() ? std::string("transition rejected") : why) + "\n");
         }
 
         // ── ACTUATOR:<role>:<0|1> ────────────────────────────────────────────
@@ -230,7 +260,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "[Sequencer] Listening on port " << listen_port << std::endl;
-    std::cout << "[Sequencer] Commands: TRANSITION:<state> | ACTUATOR:<name>:<0|1> "
+    std::cout << "[Sequencer] Commands: TRANSITION:<state>[:<ms>] | ACTUATOR:<name>:<0|1> "
               << "| DEBUG_MODE:<0|1> | EXTEND_FIRE" << std::endl;
 
     // Connections are tracked rather than detached, so every thread is joined before `svc` — a

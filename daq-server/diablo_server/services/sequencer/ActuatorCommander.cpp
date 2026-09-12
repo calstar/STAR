@@ -61,7 +61,8 @@ void ActuatorCommander::setDefaultBindAddress(const std::string& address) {
     bind_addr_ = address.empty() ? "0.0.0.0" : address;
 }
 
-bool ActuatorCommander::load(const std::string& config_content, const std::string& csv_path) {
+bool ActuatorCommander::load(const std::string& config_content, const std::string& csv_path,
+                             const std::string& delay_csv_path) {
     roles_.clear();
     state_actuators_.clear();
 
@@ -183,12 +184,25 @@ bool ActuatorCommander::load(const std::string& config_content, const std::strin
     // leaves the map empty, which means "everything at t=0" — the behaviour before delays existed.
     state_actuator_delays_.clear();
     {
-        std::string delay_csv = used_csv;
-        const std::string suffix = "state_machine_actuators.csv";
-        if (delay_csv.size() >= suffix.size() &&
-            delay_csv.compare(delay_csv.size() - suffix.size(), suffix.size(), suffix) == 0) {
-            delay_csv.replace(delay_csv.size() - suffix.size(), suffix.size(),
-                              "state_machine_actuator_delays.csv");
+        // Config first; the suffix swap is only the fallback for a caller that passes nothing.
+        std::string delay_csv = delay_csv_path;
+        if (delay_csv.empty()) {
+            delay_csv = used_csv;
+            const std::string suffix = "state_machine_actuators.csv";
+            if (delay_csv.size() >= suffix.size() &&
+                delay_csv.compare(delay_csv.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                delay_csv.replace(delay_csv.size() - suffix.size(), suffix.size(),
+                                  "state_machine_actuator_delays.csv");
+            } else {
+                // The swap did not fire, so `delay_csv` is still the POSITIONS file. Opening that
+                // as a delays table parses OPEN/CLOSE as numbers, finds none, and leaves every
+                // stagger at zero — silently. Say so instead.
+                std::cerr << "[ActuatorCommander] No delay CSV given and \"" << used_csv
+                          << "\" is not named state_machine_actuators.csv — running with NO "
+                             "actuator delays. Set [state_machine].actuator_delay_csv."
+                          << std::endl;
+                delay_csv.clear();
+            }
         }
         std::ifstream df(delay_csv);
         if (df.is_open()) {
@@ -535,8 +549,20 @@ void ActuatorCommander::startContinuousLoop(State state, bool allow_delays) {
         while (loop_running_) {
             applyForState(loop_state_, entry);
             entry = false;
-            for (int i = 0; i < 10 && loop_running_; ++i)
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            // Sleep in short slices rather than one long one, because stopContinuousLoop() joins
+            // this thread and transitionTo() joins BEFORE it commands the new state's valves — so
+            // this slice length is a floor on how fast any state change reaches the hardware.
+            //
+            // It was 100 ms, which put an up-to-100 ms wait between a timed hold expiring and its
+            // valve actually being told to close, swamping a countdown accurate to under a
+            // millisecond. It also delayed every other transition, aborts included, by the same
+            // amount. 10 ms costs 100 wakeups/second doing nothing but checking a flag.
+            //
+            // The right fix is a condition_variable so the join returns at once instead of at the
+            // next slice; that is deliberately not done here because it means restructuring this
+            // predicate, which is being changed elsewhere. Until then the slice is the bound.
+            for (int i = 0; i < 100 && loop_running_; ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         std::cout << "[ActuatorCommander] Continuous loop stopped" << std::endl;
     });
@@ -550,6 +576,23 @@ void ActuatorCommander::stopContinuousLoop() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // sendSingleActuator
+// ─────────────────────────────────────────────────────────────────────────────
+double ActuatorCommander::delayForRole(const std::string& state_name,
+                                       const std::string& role) const {
+    auto ds = state_actuator_delays_.find(state_name);
+    if (ds == state_actuator_delays_.end())
+        return 0.0;
+    auto it = ds->second.find(role);
+    return (it != ds->second.end() && it->second > 0.0) ? it->second : 0.0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+std::map<std::string, int> ActuatorCommander::positionsForState(
+    const std::string& state_name) const {
+    auto it = findStateActuators(state_name);
+    return it == state_actuators_.end() ? std::map<std::string, int>{} : it->second;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 bool ActuatorCommander::sendSingleActuator(const std::string& name, int pos) {
     // Case-insensitive lookup

@@ -45,7 +45,20 @@ public:
      * @param csv_path        Path to state_machine_actuators.csv (with fallbacks).
      * @return true on success.
      */
-    bool load(const std::string& config_content, const std::string& csv_path);
+    /**
+     * @param delay_csv_path Where the per-actuator staged delays live, from
+     *        [state_machine].actuator_delay_csv. Empty falls back to deriving it from `csv_path`.
+     *
+     *        The derivation used to be the ONLY way this was found: the delays filename was built
+     *        by swapping the "state_machine_actuators.csv" suffix on the positions path. That key
+     *        was parsed into the config and then read by nothing, so pointing it anywhere had no
+     *        effect — and if the positions file was named anything else the swap did not fire, the
+     *        POSITIONS file was opened as the delays file, every cell parsed as non-numeric, and
+     * the stand silently ran with no staggering at all. Losing a fire-column stagger with no error
+     * is not an acceptable failure mode for a missing filename.
+     */
+    bool load(const std::string& config_content, const std::string& csv_path,
+              const std::string& delay_csv_path = "");
 
     /**
      * Pin outgoing actuator commands to a NIC, unless [actuator_service].bind_address already
@@ -85,6 +98,26 @@ public:
 
     /** Send one UDP packet for a single role (debug manual command). */
     bool sendSingleActuator(const std::string& name, int pos);
+
+    /**
+     * The logical positions the CSV declares for `state_name` (role -> 0 CLOSED / 1 OPEN).
+     * Empty when the state has no column.
+     *
+     * Exposed so a timed hold can be checked against the state it expires into: the hold closes
+     * its valves only because the return state's column says CLOSE, and if it does not, the timer
+     * expires, the state changes, and the valve stays open.
+     */
+    std::map<std::string, int> positionsForState(const std::string& state_name) const;
+
+    /**
+     * The staged delay, in seconds, that `role` waits before moving on entry to `state_name`.
+     * 0 when the state, the role, or the delays file has no entry.
+     *
+     * Exposed so a timed hold can be measured from when the valve it cares about actually opens
+     * rather than from the transition: a staggered state opens its valves at different times, so
+     * "the state was held for N" and "that valve was open for N" are different claims.
+     */
+    double delayForRole(const std::string& state_name, const std::string& role) const;
 
     /** Debug: hold this logical position for the role until cleared or state transition. */
     void setManualOverride(const std::string& name, int pos);

@@ -3,7 +3,7 @@
  *
  * This path had no test coverage at all, which is how `fire_duration_ms` went unread for so long —
  * the keys lived in [controller_service] while the sequencer looked in [state_machine], so every
- * burn silently ran FireManager's 6000 ms default no matter what the config or GUI said. Nothing
+ * burn silently ran the timer's 6000 ms default no matter what the config or GUI said. Nothing
  * asserted a burn duration, so nothing noticed.
  *
  * Covers:
@@ -32,13 +32,14 @@
 
 #include "DiabloPacketUtils.h"
 #include "control/ActuatorCommander.hpp"
-#include "control/FireManager.hpp"
+#include "control/HoldTimer.hpp"
 #include "control/StateMachine.hpp"
 
 namespace fs = std::filesystem;
 namespace fs_alias = std::filesystem;
 using sequencer::ActuatorCommander;
-using sequencer::FireManager;
+using sequencer::HoldSpec;
+using sequencer::HoldTimer;
 using sequencer::State;
 using sequencer::StateMachine;
 using Clock = std::chrono::steady_clock;
@@ -58,37 +59,45 @@ int main() {
     {
         const uint32_t kDuration = 700;
         const uint32_t kExtended = 1400;
-        FireManager fm(kDuration, kExtended);
+        HoldTimer fm;
 
         std::vector<std::pair<bool, long long>> notices;  // (active, ms since start)
         std::mutex m;
         const auto t0 = Clock::now();
-        fm.setNotifier([&](bool active) {
-            std::lock_guard<std::mutex> lk(m);
-            notices.emplace_back(
-                active,
-                std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count());
-        });
-
         std::atomic<long long> expired_at{-1};
-        fm.start([&]() {
-            expired_at =
-                std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
-        });
+        fm.start(HoldSpec{
+            kDuration, kExtended,
+            [&]() {
+                expired_at =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0)
+                        .count();
+            },
+            [&](bool active) {
+                std::lock_guard<std::mutex> lk(m);
+                notices.emplace_back(
+                    active, std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0)
+                                .count());
+            },
+            "FIRE"});
         std::this_thread::sleep_for(std::chrono::milliseconds(kDuration + 400));
 
         const long long at = expired_at.load();
         check(at >= 0, "fire timer expired");
         // The regression this guards: a 700 ms configured burn must not run for 6000 ms.
-        check(at >= static_cast<long long>(kDuration) - 100 &&
-                  at <= static_cast<long long>(kDuration) + 250,
-              "expiry honoured the CONFIGURED duration, not FireManager's 6000 ms default");
+        // This window used to be [-100, +250]. It was that loose because runTimer() counted sleep
+        // *calls* (`elapsed_ms += 50`) rather than elapsed time, so every iteration overshot and
+        // the error only ever accumulated one way. Against a steady_clock deadline the only slack
+        // left is scheduler wake latency, so the window can be tight — while staying generous
+        // enough on the upper side for a loaded CI box, and nowhere near the 6000 ms default.
+        check(at >= static_cast<long long>(kDuration) - 5 &&
+                  at <= static_cast<long long>(kDuration) + 50,
+              "expiry honoured the CONFIGURED duration, not the built-in 6000 ms default");
 
         std::lock_guard<std::mutex> lk(m);
         check(notices.size() == 2, "exactly two controller notifications (start, stop)");
         check(!notices.empty() && notices[0].first, "first notification is FIRE_START");
         check(notices.size() > 1 && !notices[1].first, "second notification is FIRE_STOP");
-        check(notices.size() > 1 && notices[1].second >= static_cast<long long>(kDuration) - 100,
+        check(notices.size() > 1 && notices[1].second >= static_cast<long long>(kDuration) - 5,
               "FIRE_STOP is sent at expiry, not early");
     }
 
@@ -96,16 +105,17 @@ int main() {
     {
         const uint32_t kDuration = 500;
         const uint32_t kExtended = 1200;
-        FireManager fm(kDuration, kExtended);
-        fm.setNotifier([](bool) {
-        });
+        HoldTimer fm;
 
         const auto t0 = Clock::now();
         std::atomic<long long> expired_at{-1};
-        fm.start([&]() {
-            expired_at =
-                std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
-        });
+        fm.start(HoldSpec{kDuration, kExtended,
+                          [&]() {
+                              expired_at = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                               Clock::now() - t0)
+                                               .count();
+                          },
+                          nullptr, "FIRE"});
         std::this_thread::sleep_for(std::chrono::milliseconds(300));  // inside the original window
         fm.extend();
         std::this_thread::sleep_for(std::chrono::milliseconds(kExtended + 500));
@@ -115,27 +125,54 @@ int main() {
         // extend() restarts at extended_ms FROM NOW, so expiry is ~300 + 1200.
         check(at > static_cast<long long>(kDuration) + 150,
               "extend pushed expiry past the original duration");
-        check(at >= 300 + static_cast<long long>(kExtended) - 200 &&
-                  at <= 300 + static_cast<long long>(kExtended) + 400,
+        // Tightened with the deadline timer. The remaining lower slack is the 300 ms sleep_for
+        // before extend(), not the countdown.
+        check(at >= 300 + static_cast<long long>(kExtended) - 20 &&
+                  at <= 300 + static_cast<long long>(kExtended) + 60,
               "extended window is extended_ms measured from the extend call");
     }
 
     // ── 3. stop() cancels without firing the expiry callback ──────────────────────────────────
     {
-        FireManager fm(600, 1200);
+        HoldTimer fm;
         std::atomic<int> notify_count{0};
         std::atomic<bool> expired{false};
-        fm.setNotifier([&](bool) {
-            notify_count++;
-        });
-        fm.start([&]() {
-            expired = true;
-        });
+        fm.start(HoldSpec{600, 1200,
+                          [&]() {
+                              expired = true;
+                          },
+                          [&](bool) {
+                              notify_count++;
+                          },
+                          "FIRE"});
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
         fm.stop();  // leaving the fire state early
         std::this_thread::sleep_for(std::chrono::milliseconds(800));
         check(!expired.load(), "leaving fire early cancels the expiry transition");
         check(notify_count.load() == 2, "early exit still notifies the controller (start + stop)");
+    }
+
+    // ── 3b. extended_ms = 0 refuses extend(), so a fixed-window hold stays fixed ─────────────
+    {
+        // A characterization pulse is a duration the operator asked for and then weighed a mass
+        // against. Stretching it would make that mass describe a different window, so the flow
+        // hold sets extended_ms = 0 and extend() must decline rather than quietly restart.
+        HoldTimer fm;
+        std::atomic<long long> expired_at{-1};
+        const auto t0 = Clock::now();
+        fm.start(HoldSpec{300, 0,
+                          [&]() {
+                              expired_at = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                               Clock::now() - t0)
+                                               .count();
+                          },
+                          nullptr, "Flow Test"});
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        check(fm.extend() == false, "extend() is refused when extended_ms is 0");
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        const long long at = expired_at.load();
+        check(at >= 295 && at <= 350, "the refused extend left the original window intact");
+        check(fm.extend() == false, "extend() is refused once the hold is over");
     }
 
     // ── 4. The expiry target is resolved as a State, so a rename cannot strand the system ─────
@@ -159,17 +196,17 @@ int main() {
         // and change exactly once, at the end. A timer that fires early or an expiry that runs
         // twice both show up here.
         const uint32_t kDuration = 800;
-        FireManager fm(kDuration, 2000);
-        fm.setNotifier([](bool) {
-        });
+        HoldTimer fm;
 
         std::atomic<bool> in_fire{true};
         std::atomic<int> expiries{0};
         const auto t0 = Clock::now();
-        fm.start([&]() {
-            expiries++;
-            in_fire = false;  // stands in for transitionTo(fire_expiry_state_)
-        });
+        fm.start(HoldSpec{kDuration, 2000,
+                          [&]() {
+                              expiries++;
+                              in_fire = false;  // stands in for transitionTo(fire_expiry_state_)
+                          },
+                          nullptr, "FIRE"});
 
         bool left_early = false;
         long long left_at = -1;
@@ -188,7 +225,7 @@ int main() {
         check(!left_early, "stayed in fire for the whole configured window (no early exit)");
         check(left_at >= 0, "left fire at the end of the window");
         check(expiries.load() == 1, "the expiry transition ran exactly once, not repeatedly");
-        check(fm.isActive() == false, "fire manager is inactive once the burn has ended");
+        check(fm.isActive() == false, "the hold timer is inactive once the burn has ended");
     }
 
     // ── 6. The sequencer hands PWM control to controller_service during fire ──────────────────

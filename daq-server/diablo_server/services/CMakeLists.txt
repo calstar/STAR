@@ -17,7 +17,7 @@ add_executable(sequencer_service
     sequencer/StateMachine.cpp
     sequencer/ActuatorCommander.cpp
     sequencer/AbortBroadcaster.cpp
-    sequencer/FireManager.cpp
+    sequencer/HoldTimer.cpp
 )
 target_include_directories(sequencer_service PRIVATE ${COMMON_INCLUDES})
 target_link_libraries(sequencer_service

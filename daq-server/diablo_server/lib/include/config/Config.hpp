@@ -56,6 +56,16 @@ struct ControllerServiceConfig {  // [controller_service]
     std::string host = "127.0.0.1";
     uint32_t fire_duration_ms = 6000;
     uint32_t fire_extended_ms = 10000;
+    /**
+     * Who drives the valves during the burn. Default false keeps the historical split, where the
+     * sequencer hands PWM roles to controller_service and tells it when the gate opens.
+     *
+     * true means the sequencer owns them outright: it never sends FIRE_START, and the controller
+     * refuses to run its PWM gate at all. A rig with no PWM press valves wants this — otherwise
+     * the controller looks for roles it cannot find and, historically, fell back to hardcoded
+     * channel numbers that belonged to entirely different valves.
+     */
+    bool sequencer_owns_valves = false;
 };
 
 struct ControllerConfig {  // [controller]
@@ -99,6 +109,40 @@ struct FireConfig {     // [fire]
     std::string expiry_target;
     uint32_t duration_ms = 6000;
     uint32_t extended_ms = 10000;
+    /**
+     * The valve the burn is timed around, if the fire state staggers its actuators.
+     *
+     * Same meaning as [flow].gate_actuator, and it matters MORE here. A fire column that opens an
+     * upstream valve first and the main a second later, with the window measured from the
+     * transition, burns for (duration - stagger) — and if the stagger equals the duration it does
+     * not burn at all while still commanding an ignition sequence. Naming the gate makes
+     * duration_ms mean "this valve is open for that long", which is what a burn time is.
+     */
+    std::string gate_actuator;
+};
+
+/**
+ * [flow] — the characterization hold: open a valve for an exact interval, then close it.
+ *
+ * Mirrors [fire], with one deliberate difference. [fire] names its state by string, which is the
+ * coupling that let a rename strand the rig mid-burn; [flow] never does. WHICH state this is comes
+ * from the `is_flow` flag on a [[states]] entry, so the operator can rename it, delete it, or move
+ * the flag to another state without touching anything here.
+ */
+struct FlowConfig {             // [flow]
+    std::string return_target;  // where the hold expires to; "" disables the flow hold
+    uint32_t duration_ms = 0;   // default window when the client supplies none
+    uint32_t max_ms = 0;        // ceiling on a client-supplied window; 0 falls back to duration_ms
+    /**
+     * The actuator the hold is timed around — the one whose opening actually starts the flow.
+     *
+     * A staggered state does not open everything at once: a pressure-regulated feed may crack an
+     * upstream valve first and only then the main, using the per-actuator delays in
+     * state_machine_actuator_delays.csv. The requested duration is what the operator wants THIS
+     * valve open for, so the sequencer holds for (its delay + the requested duration). Empty means
+     * no stagger and the hold is measured from the transition.
+     */
+    std::string gate_actuator;
 };
 
 struct StateMachinePaths {  // [state_machine]
@@ -112,6 +156,9 @@ struct StateDef {  // one per [[states]]
     std::string name;
     bool is_abort = false;
     bool is_boot = false;
+    /** Marks the state the characterization hold drives. A flag rather than a name in [flow], so
+     *  renaming the state cannot break it. First one wins, as with is_boot. */
+    bool is_flow = false;
 };
 
 // [actuator_roles] value ["NC"|"NO", channel, board_id, controller_role?]
@@ -176,6 +223,7 @@ struct Config {
     std::vector<BoardConfig> boards;               // parse order preserved
     std::map<std::string, ActuatorRole> actuator_roles;
     FireConfig fire;
+    FlowConfig flow;
     ControllerServiceConfig controller_service;
     ControllerConfig controller;
     ActuatorServiceConfig actuator_service;

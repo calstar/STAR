@@ -109,6 +109,26 @@ public:
     }
 
     /**
+     * Master switch for the PWM ignition gate.
+     *
+     * Disabled means this service never drives a valve, whatever it is told: setFireActive() —
+     * the single funnel BOTH activation paths go through, TCP and the state-packet parity
+     * fallback — returns immediately. Two reasons to turn it off:
+     *
+     *   1. [controller_service].sequencer_owns_valves says the sequencer commands the valves
+     *      during the burn, so a second writer on the same channels would fight it.
+     *   2. The PWM roles could not be resolved from [actuator_roles]. This used to fall back to
+     *      hardcoded channel numbers, which on a stand that does not have those roles addressed
+     *      whatever valve happened to occupy them — on one profile, a vent.
+     */
+    void setFireGateEnabled(bool enabled) {
+        fire_gate_enabled_ = enabled;
+    }
+    bool isFireGateEnabled() const {
+        return fire_gate_enabled_.load();
+    }
+
+    /**
      * @brief Override controller output with fixed duty cycles for open-loop validation.
      * When both values are 0 (default), the RobustDDP controller runs normally.
      * Set non-zero to bypass the controller and send these fixed duties on every FIRE tick.
@@ -164,7 +184,8 @@ private:
 
     // ── State ──────────────────────────────────────────────────────────
     std::atomic<bool> running_{false};
-    std::atomic<bool> fire_active_{false};  // PWM only sent when FIRE state is active
+    std::atomic<bool> fire_active_{false};       // PWM only sent when FIRE state is active
+    std::atomic<bool> fire_gate_enabled_{true};  // see setFireGateEnabled
 
     // Open-loop test duty cycles (0 = use DDP controller; non-zero = bypass DDP)
     std::atomic<float> test_duty_fuel_{0.0f};

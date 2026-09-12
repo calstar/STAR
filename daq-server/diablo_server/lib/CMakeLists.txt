@@ -75,7 +75,7 @@ add_test(NAME board_clock_sync COMMAND test_board_clock_sync)
 
 add_executable(test_fire_lifecycle
     test/test_fire_lifecycle.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/FireManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
 )
@@ -106,7 +106,7 @@ add_executable(test_sequencer_elodin
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/FireManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
 )
 target_include_directories(test_sequencer_elodin PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -114,6 +114,26 @@ target_include_directories(test_sequencer_elodin PRIVATE
 )
 target_link_libraries(test_sequencer_elodin
     fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+# Deliberately NO add_test(). This is an integration test, not a unit test: it needs the repo root
+# as its working directory (for config/ and external/) and a live Elodin DB on 2240, so under ctest
+# it fails on the environment rather than on the code. Run it by hand from the repo root, or via
+# test/test_integration.sh which provides both.
+
+add_executable(test_hold_rules
+    test/test_hold_rules.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
+)
+target_include_directories(test_hold_rules PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_hold_rules
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME hold_rules COMMAND test_hold_rules)
 
 # test_robust_ddp has been built on every configure since it was added but was never registered
 # with CTest and is not invoked by CI either, so its assertions have never gated anything.
@@ -167,7 +187,7 @@ foreach(seq_test test_sequencer_concurrency test_abort_ordering)
         ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/FireManager.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
     )
     target_include_directories(${seq_test} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include

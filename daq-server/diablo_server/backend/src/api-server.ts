@@ -465,12 +465,26 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
               isAbort: e.is_abort === true,
               isBoot: e.is_boot === true,
               isFire: fireStateName !== null && e.name === fireStateName,
+              // Which state the characterization hold drives. A flag, not a name — the operator
+              // may rename or move it and every client follows without a code change.
+              isFlow: e.is_flow === true,
               // Absent coordinates mean "not on the control panel" — no separate hidden flag.
               panelRow: typeof e.panel_row === 'number' ? e.panel_row : null,
               panelCol: typeof e.panel_col === 'number' ? e.panel_col : null,
             }));
+          // [flow] rides along so a client can seed and bound a duration input without a second
+          // request. null when the stand has no flow hold configured, which is the client's cue to
+          // disable the control rather than offer one that the sequencer will refuse.
+          const rawFlow = (cfg as any)?.flow;
+          const flow = rawFlow && typeof rawFlow.return_target === 'string' && rawFlow.return_target
+            ? {
+              returnTarget: rawFlow.return_target as string,
+              durationMs: typeof rawFlow.duration_ms === 'number' ? rawFlow.duration_ms : null,
+              maxMs: typeof rawFlow.max_ms === 'number' ? rawFlow.max_ms : null,
+            }
+            : null;
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ states }));
+          res.end(JSON.stringify({ states, flow }));
         } catch (error: any) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: error.message || 'Failed to read states' }));
@@ -784,6 +798,63 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
           try { JSON.parse(body); res.end(body); }
           catch { res.end(JSON.stringify({ cubic_state: {} })); }  // partial/corrupt → empty
         }
+      } else if (url.pathname === '/api/feed-char/results') {
+        /**
+         * Feed-characterization results, stored WITH the run rather than in the browser.
+         *
+         * A CdA is a measurement of the rig, derived from that run's telemetry, so it belongs
+         * beside that run's data — not in a browser tab that loses it on refresh, nor in a
+         * downloaded CSV divorced from the trace it came from. One JSON line per result, in the
+         * session's own directory, so a run's folder carries both the raw pressures and what was
+         * concluded from them.
+         */
+        const dbDir = sessionManager.getStatus().dbDir;
+        if (!dbDir) {
+          // No run to attach to. Say so plainly rather than inventing a location — a result with
+          // no run is not a result anyone can check later.
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'No active session — start a run before recording results', results: [] }));
+          return true;
+        }
+        const resultsPath = path.join(dbDir, 'feed_characterization.jsonl');
+
+        if (req.method === 'GET') {
+          let results: unknown[] = [];
+          try {
+            results = fs.readFileSync(resultsPath, 'utf-8')
+              .split('\n')
+              .filter((l) => l.trim())
+              // Skip a torn last line rather than failing the whole read: the file is appended to
+              // live, so a reader can arrive mid-write.
+              .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+              .filter((x) => x !== null);
+          } catch { /* nothing recorded yet */ }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ results, dbDir }));
+          return true;
+        }
+
+        if (req.method === 'POST') {
+          if (!isConfigWriteAuthorized(req)) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Not an approved operator' }));
+            return true;
+          }
+          const body = await readJsonBody(req);
+          if (!body || typeof body !== 'object') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Expected a result object' }));
+            return true;
+          }
+          // Append, never rewrite: a result already written is a record of something that happened.
+          fs.appendFileSync(resultsPath, JSON.stringify({ ...body, recordedAt: new Date().toISOString() }) + '\n', 'utf-8');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, path: resultsPath }));
+          return true;
+        }
+
+        res.writeHead(405, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'GET or POST' }));
       } else if (url.pathname === '/api/calibration_profiles' && req.method === 'GET') {
         // List committed whole-rig calibration snapshots + which one is loaded.
         res.writeHead(200, { 'Content-Type': 'application/json' });

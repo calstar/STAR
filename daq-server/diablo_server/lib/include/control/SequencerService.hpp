@@ -2,9 +2,11 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <future>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -14,10 +16,18 @@
 #include "config/Config.hpp"
 #include "control/AbortBroadcaster.hpp"
 #include "control/ActuatorCommander.hpp"
-#include "control/FireManager.hpp"
+#include "control/HoldTimer.hpp"
 #include "control/StateMachine.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
+
+// Only referenced by const&, so a forward declaration keeps the whole config header out of every
+// translation unit that includes this one.
+namespace fsw {
+namespace config {
+struct Config;
+}
+}  // namespace fsw
 
 namespace sequencer {
 
@@ -28,7 +38,7 @@ namespace sequencer {
  *   - StateMachine      — transition validation
  *   - ActuatorCommander — UDP actuator commanding
  *   - AbortBroadcaster  — abort UDP broadcast
- *   - FireManager       — FIRE countdown + controller_service notifications
+ *   - HoldTimer         — the timed hold (FIRE countdown) + controller notifications
  *   - ElodinClient      — publishes state + allowed transitions to Elodin DB
  *
  * All external commands arrive via the TCP server in sequencer_main.cpp
@@ -72,9 +82,27 @@ public:
      * @return true if transition was accepted and executed.
      */
     bool transitionTo(const std::string& state_name);
+    bool transitionTo(const std::string& state_name, uint32_t requested_hold_ms,
+                      std::string* refusal_reason = nullptr);
     /** Resolve-free overload. Internal callers use this so a state never round-trips through its
      *  own name, which is what let a rename refuse the fire timer's expiry transition. */
     bool transitionTo(State to);
+
+    /**
+     * Transition, optionally overriding the target state's hold with a client-supplied window.
+     *
+     * `requested_hold_ms` of 0 means "none supplied" — the state's configured default is used, and
+     * this is the form every internal caller uses. A non-zero value is only honoured for a state
+     * whose hold rule is marked gui_settable, which the burn state never is; anything else is
+     * REFUSED WITHOUT TRANSITIONING. That last part is the point: a client that queues a command,
+     * disconnects and has it replayed on reconnect must end up where it started, not in a hold it
+     * cannot be talked out of.
+     *
+     * @param refusal_reason optional; on a false return, set to a short phrase suitable for a
+     *        protocol reply. One validation, one wording — the TCP layer does not get its own copy
+     *        of these rules to drift out of step with.
+     */
+    bool transitionTo(State to, uint32_t requested_hold_ms, std::string* refusal_reason = nullptr);
 
     /**
      * Enable or disable debug mode.
@@ -130,19 +158,56 @@ private:
 
     // Worker-thread bodies. These hold the real logic and must only ever run on cmd_thread_ —
     // they assume single-threaded access to the state machine and the actuator tables.
-    bool doTransitionTo(State to);
+    bool doTransitionTo(State to, uint32_t requested_hold_ms = 0,
+                        std::string* refusal_reason = nullptr);
     bool doSetDebugMode(bool enabled);
     bool doManualActuator(const std::string& name, int pos);
     bool doExtendFire();
 
+    /**
+     * One state's timed hold: how long, where it lands, and whether a client may set the length.
+     *
+     * Assembled from config at load. Exactly two things create entries — [fire] and [flow] — and
+     * `gui_settable` is written as a literal in both places rather than read from config, so no
+     * config edit can make a burn window client-settable.
+     */
+    struct HoldRule {
+        uint32_t default_ms = 0;
+        uint32_t max_ms = 0;
+        /** What EXTEND_FIRE restarts at. 0 makes the hold a fixed window. */
+        uint32_t extended_ms = 0;
+        State return_state = State::UNKNOWN;
+        bool gui_settable = false;
+        /**
+         * Milliseconds the gate actuator waits after the transition before it opens, from the
+         * delays CSV. The hold runs for (this + the requested duration), so the requested duration
+         * is what the GATE VALVE is open for rather than what the STATE is held for. 0 when the
+         * state opens everything at once.
+         */
+        uint32_t gate_open_delay_ms = 0;
+        /**
+         * The same actuator's delay in the RETURN state's column. The valve does not close at the
+         * expiry transition either — it closes that much after it, so a stagger on the way out
+         * lengthens the open window exactly as a stagger on the way in shortens it.
+         */
+        uint32_t gate_close_delay_ms = 0;
+        std::string gate_actuator;
+    };
+
     StateMachine state_machine_;
     ActuatorCommander actuator_commander_;
     AbortBroadcaster abort_broadcaster_;
-    FireManager fire_manager_;
+    HoldTimer hold_timer_;
     fsw::elodin::ElodinClient elodin_;
 
     std::atomic<State> current_state_{State::IDLE};
     std::atomic<bool> debug_mode_{false};
+
+    /** Holdable states, by target. Rebuilt on every config load; read on the transition path.
+     *  RELOAD_CONFIG runs on a TCP handler thread while a transition may be running on another,
+     *  hence the mutex. */
+    std::map<State, HoldRule> hold_rules_;
+    mutable std::mutex config_mutex_;
 
     std::string config_path_;
     std::string config_content_;
@@ -185,10 +250,14 @@ private:
 
     bool loadConfig(const std::string& path);
 
-    /** Resolve [fire] (burn state, expiry target, window) against the state table currently
-     *  adopted by StateMachine. Called from init(); the process keeps that resolution for its
-     *  whole life, since config is frozen for the duration of a run. */
-    void applyFireConfig(const fsw::config::Config& cfg);
+    /**
+     * Everything a config load has to apply, in the one order that works.
+     *
+     * Separate from init() so that order is stated once. It has to be exact: [[states]] is adopted
+     * before anything resolves a state name, both CSVs are parsed against that table, and [fire] is
+     * resolved last, against the same table rather than the compiled enum.
+     */
+    bool applyConfig(const fsw::config::Config& cfg);
 
     /** Send FIRE_START / FIRE_STOP to controller_service. The single place anything tells the
      *  controller the burn gate changed. Retries once if the first attempt is not acknowledged. */
@@ -209,8 +278,16 @@ private:
     // literal id.
     State fire_state_{State::UNKNOWN};
     State fire_expiry_state_{State::UNKNOWN};
+    // The burn window, from [fire]. Held here rather than on the timer because a duration that
+    // lives on the timer behind a setter is one a reload can forget to refresh — which is exactly
+    // what happened. HoldTimer takes it per start() instead.
+    uint32_t fire_duration_ms_{6000};
+    uint32_t fire_extended_ms_{10000};
     std::string controller_host_{"127.0.0.1"};
     uint16_t controller_port_{8000};
+    /** [controller_service].sequencer_owns_valves. When true the fire hold is given no notifier at
+     *  all, so there is no FIRE_START to suppress and no flag to forget to check. */
+    bool sequencer_owns_valves_{false};
 };
 
 }  // namespace sequencer

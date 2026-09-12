@@ -57,8 +57,6 @@ export const NAV_ITEMS: NavItem[] = [
     description: 'Thermocouples, RTDs, load cell — voltage and temperature' },
   { id: 'sensor-info', name: 'Sensor Info', path: '/sensor-info', accent: '#22D3EE',
     description: 'ADC code · converted value · data rate per channel' },
-  { id: 'controller-controls', name: 'Controls', path: '/controls', accent: '#F472B6',
-    description: 'Manual actuator & state controls' },
   { id: 'calibration', name: 'Calibration', path: '/calibration', accent: '#A3E635',
     description: 'Per-PT cubic / robust / physics — model per sensor, shared points, live curve previews' },
   { id: 'calibration-cubic', name: 'Cubic Calibration', path: '/calibration-cubic', accent: '#84CC16', deprecated: true,

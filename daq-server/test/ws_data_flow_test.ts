@@ -1412,6 +1412,74 @@ async function testStateTransitionDebugMode(ws: WebSocket): Promise<void> {
   // enter fire, STAY in fire for the configured window, then auto-transition to [fire]
   // expiry_target without anyone asking.
   {
+    // ── Flow Test: a hold timed around ONE valve, not around the state ───────────────────────
+    // The sequencer adds the gate actuator's staged delay to the requested duration, so a request
+    // of N ms means the GATE VALVE is open for N ms even though it opens late. Without that, a
+    // state whose main opens 400 ms in would close everything 400 ms early and flow for less than
+    // asked — the failure this asserts against is silent and looks like a bad CdA, not like a bug.
+    const flowStateId = Number(process.env.INTEGRATION_FLOW_STATE_ID ?? '');
+    const flowHoldMs = Number(process.env.INTEGRATION_FLOW_HOLD_MS ?? '');
+    const flowGateDelayMs = Number(process.env.INTEGRATION_FLOW_GATE_DELAY_MS ?? '');
+    if (!Number.isFinite(flowStateId) || !flowStateId) {
+      console.log('  ⚠️  no flow state configured for this run — skipping the gated hold check');
+    } else {
+      // The hub id comes from the compiled enum, the same way readFireConfig resolves its states.
+      // Safe here because the integration config is config_base, whose numbering IS the enum's —
+      // this is a test-only shortcut, not something a rig should ever do.
+      const hubId = (SystemState as any).PRESS_STANDBY as number | undefined;
+      if (!hubId) {
+        assert(false, '[Flow] could not resolve the hub state to start from');
+      } else {
+        // Park on the hub first: it is the only state with an edge to Flow Test.
+        send(ws, {
+          type: MessageType.SEND_COMMAND,
+          timestamp: Date.now(),
+          payload: { commandType: 'state_transition', data: { state: hubId } },
+        });
+        try {
+          await waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
+            (p) => p.currentState === hubId);
+        } catch { /* asserted below by the entry check */ }
+
+        const enteredFlow = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
+          (p) => p.currentState === flowStateId);
+        send(ws, {
+          type: MessageType.SEND_COMMAND,
+          timestamp: Date.now(),
+          payload: { commandType: 'state_transition', data: { state: flowStateId, holdMs: flowHoldMs } },
+        });
+
+        let enteredAt = 0;
+        try {
+          const { receivedAt } = await enteredFlow;
+          enteredAt = receivedAt;
+          assert(true, `[Flow] entered the gated flow state (hold ${flowHoldMs} ms, gate +${flowGateDelayMs} ms)`);
+        } catch (err: any) {
+          assert(false, `[Flow] could not enter the flow state: ${err.message}`);
+        }
+
+        if (enteredAt) {
+          try {
+            const back = await waitForMessage(ws, MessageType.STATE_UPDATE,
+              flowHoldMs + flowGateDelayMs + 5000, (p) => p.currentState === hubId);
+            const held = back.receivedAt - enteredAt;
+            // The state is held for requested + gate delay, so the valve itself is open for the
+            // requested duration. Measured from ENTRY, so the command round trip is not charged
+            // to the hold. Upper bound is generous for a loaded CI runner; the point is to
+            // separate "gate delay was added" from "it was not" — those differ by 400 ms here.
+            const want = flowHoldMs + flowGateDelayMs;
+            assert(held >= want - 250 && held <= want + 1500,
+              `[Flow] held for requested + gate stagger: ${held} ms (expected ~${want} ms = ${flowHoldMs} + ${flowGateDelayMs})`);
+            // The specific regression: if the stagger were ignored the hold would be flowHoldMs.
+            assert(held > flowHoldMs + 100,
+              `[Flow] the gate delay was actually added, not ignored (${held} ms > ${flowHoldMs} ms)`);
+          } catch (err: any) {
+            assert(false, `[Flow] no auto-return to the hub after the hold: ${err.message}`);
+          }
+        }
+      }
+    }
+
     const fireCfg = readFireConfig();
     if (!fireCfg) {
       console.log('  ⚠️  [fire] section not found in the test config — skipping fire lifecycle');
