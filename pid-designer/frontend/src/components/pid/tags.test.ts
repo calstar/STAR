@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isTemplateTag, numberTag, stemOf } from './tags';
+import { isTemplateTag, numberTag, stemOf, tagStem } from './tags';
 
 describe('a dropped symbol gets a tag of its own', () => {
   it('fills the number in', () => {
@@ -39,6 +39,14 @@ describe('a dropped symbol gets a tag of its own', () => {
     expect(stemOf('ROT_#')).toBe('ROT');
     expect(stemOf('TK-#')).toBe('TK');
     expect(stemOf('ENG')).toBe('ENG');
+  });
+
+  it('finds the stem of a tag already on the drawing', () => {
+    // A copy of SOL-3 is the next SOL, not SOL-3-1.
+    expect(tagStem('SOL-3')).toBe('SOL');
+    expect(tagStem('PT-HP-12')).toBe('PT-HP');
+    expect(tagStem('SV-LOX-VENT')).toBe('SV-LOX-VENT');
+    expect(tagStem('ROT_#')).toBe('ROT');
   });
 
   it('can tell a template from a tag', () => {

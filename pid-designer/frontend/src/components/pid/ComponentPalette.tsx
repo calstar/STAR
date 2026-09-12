@@ -146,8 +146,8 @@ export function ComponentPalette() {
   };
 
   return (
-    <aside className="w-52 shrink-0 bg-[#0f172a] border-r border-[#1e293b] overflow-y-auto flex flex-col">
-      <div className="p-3 border-b border-[#1e293b]">
+    <aside className="w-52 shrink-0 bg-[var(--color-bg-primary)] border-r border-[var(--color-border)] overflow-y-auto flex flex-col">
+      <div className="p-3 border-b border-[var(--color-border)]">
         <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Components</h2>
       </div>
       {grouped.map(({ group, items }) => (
@@ -159,7 +159,7 @@ export function ComponentPalette() {
               draggable
               onDragStart={e => onDragStart(e, def.id)}
               title={def.fullName}
-              className="flex items-center gap-2 px-2 py-1.5 rounded cursor-grab active:cursor-grabbing hover:bg-[#1e293b] transition-colors"
+              className="flex items-center gap-2 px-2 py-1.5 rounded cursor-grab active:cursor-grabbing hover:bg-[var(--color-bg-tertiary)] transition-colors"
             >
               <div className="flex items-center justify-center w-9 h-9 shrink-0">
                 <PaletteSymbol type={def.type} />

@@ -4,6 +4,7 @@ import {
   ReactFlow,
   Background,
   Controls,
+  MiniMap,
   Panel,
   addEdge,
   useNodesState,
@@ -37,6 +38,10 @@ import { nextNodeId, seedIdsFrom } from './ids';
 import { defFor } from './types';
 import type { PIDNodeData } from './types';
 import { numberTag } from './tags';
+import { copySelection, pasteClip } from './clipboard';
+import type { Clip } from './clipboard';
+import { TitleBlock } from './TitleBlock';
+import type { SheetMeta } from './exportImage';
 import { ConfigDialog } from './ConfigDialog';
 import type { ConfigPatch } from './ConfigDialog';
 import { FluidProvider } from './FluidContext';
@@ -200,6 +205,8 @@ interface CanvasProps {
   restoreMicroRef:    React.MutableRefObject<(versionId: string) => Promise<void>>;
   restoreReleaseRef:  React.MutableRefObject<(label: string) => Promise<void>>;
   mode:               InteractionMode;
+  /** What the title block says: the drawing's name and its latest release. */
+  sheet:              Omit<SheetMeta, 'page'>;
   /** Autosave hit a 403: this diagram was unshared while it was open. */
   onForbidden:        () => void;
   /** Autosave hit a 423: the checkout lapsed or was taken. */
@@ -209,7 +216,7 @@ interface CanvasProps {
 function PIDCanvas({
   diagramRef, fitRef, viewportsRef, page, setPage, declaredPages, setDeclaredPages, getRef, loadRef, clearRef, clearCountRef, undoRef, redoRef,
   releaseRef, getHistoryRef, getReleasesRef, restoreMicroRef, restoreReleaseRef, onForbidden, onLockLost,
-  mode,
+  mode, sheet,
 }: CanvasProps) {
   // `onNodesChange` is deliberately unused: `handleNodesChange` below applies
   // the changes itself so it can move clipped instruments in the same update.
@@ -331,6 +338,69 @@ function PIDCanvas({
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [diagramKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * Write a whole graph, and tell `snapshot` about it.
+   *
+   * These handlers read `snapshot.current` -- the last *rendered* state -- and
+   * write absolute arrays back. Two of them in one batch therefore both read
+   * the state before either ran, and the second overwrote the first: drop two
+   * transducers on a line without a render in between and only the second one
+   * existed. Updating the snapshot here is what makes the second read see the
+   * first write.
+   */
+  const commitGraph = useCallback((nodes: Node[], edges: Edge[]) => {
+    snapshot.current = { nodes, edges };
+    setNodes(nodes);
+    setEdges(edges);
+  }, [setNodes, setEdges]);
+
+  /**
+   * Cmd+C / Cmd+V / Cmd+D / Cmd+A.
+   *
+   * A stand has eight solenoid valves that are the same solenoid valve, and
+   * there was no way to copy one. Held in a ref rather than the system
+   * clipboard, because a paste is a graph -- ids, tags and lines to rewrite,
+   * see clipboard.ts -- and the OS clipboard only carries text. Nothing here
+   * fires while a field has focus, so typing into a tag stays typing.
+   */
+  const clipRef = useRef<Clip | null>(null);
+  useEffect(() => {
+    const typing = () => {
+      const el = document.activeElement as HTMLElement | null;
+      return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+    };
+    const paste = (clip: Clip | null) => {
+      if (!clip || readOnlyRef.current) return;
+      const { nodes: ns, edges: es } = snapshot.current;
+      const added = pasteClip(clip, ns, pageRef.current);
+      // The copy is the selection now, so a drag right after moves the copy.
+      commitGraph(
+        [...ns.map(n => (n.selected ? { ...n, selected: false } : n)), ...added.nodes],
+        [...es.map(e => (e.selected ? { ...e, selected: false } : e)), ...added.edges],
+      );
+    };
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || typing()) return;
+      const key = e.key.toLowerCase();
+      if (key === 'c' && !e.shiftKey) {
+        const clip = copySelection(snapshot.current.nodes, snapshot.current.edges);
+        if (clip) { clipRef.current = clip; e.preventDefault(); }
+      } else if (key === 'v' && !e.shiftKey) {
+        if (clipRef.current) { e.preventDefault(); paste(clipRef.current); }
+      } else if (key === 'd' && !e.shiftKey) {
+        const clip = copySelection(snapshot.current.nodes, snapshot.current.edges);
+        if (clip) { e.preventDefault(); paste(clip); }
+      } else if (key === 'a' && !e.shiftKey) {
+        if (readOnlyRef.current) return;
+        e.preventDefault();
+        const here = pageRef.current;
+        setNodes(nds => nds.map(n => ({ ...n, selected: pageOf(n.data as unknown as PIDNodeData) === here })));
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [commitGraph, setNodes]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -606,22 +676,6 @@ function PIDCanvas({
    * The Junction tool stays for placing one deliberately, on a line you have
    * not connected anything to yet.
    */
-  /**
-   * Write a whole graph, and tell `snapshot` about it.
-   *
-   * These handlers read `snapshot.current` -- the last *rendered* state -- and
-   * write absolute arrays back. Two of them in one batch therefore both read
-   * the state before either ran, and the second overwrote the first: drop two
-   * transducers on a line without a render in between and only the second one
-   * existed. Updating the snapshot here is what makes the second read see the
-   * first write.
-   */
-  const commitGraph = useCallback((nodes: Node[], edges: Edge[]) => {
-    snapshot.current = { nodes, edges };
-    setNodes(nodes);
-    setEdges(edges);
-  }, [setNodes, setEdges]);
-
   const connectingFrom = useRef<{ nodeId: string; handleId: string | null } | null>(null);
 
   const onConnectStart = useCallback((
@@ -1022,6 +1076,20 @@ function PIDCanvas({
         <AttachmentLayer nodes={nodes} edges={edges} />
         <VentLayer nodes={view.nodes} edges={view.edges} />
         <Controls />
+        {/* A drawing with forty symbols is bigger than a screen, and a
+            minimap is how you know which corner of it you are in. Under the
+            checks badge, which owns the top-right corner. */}
+        <MiniMap
+          pannable zoomable
+          position="top-right"
+          style={{ marginTop: 44, width: 160, height: 100 }}
+          bgColor="var(--color-bg-primary)"
+          maskColor="rgba(10, 15, 26, 0.6)"
+          nodeColor="#334155"
+          nodeStrokeColor="#475569"
+          nodeBorderRadius={2}
+        />
+        <TitleBlock meta={{ ...sheet, page }} />
         {/* One line, and only the gestures nothing else on screen mentions.
             It used to list nine, which wrapped to four lines on any canvas
             narrower than a desktop and climbed up through the middle of the
@@ -1030,7 +1098,7 @@ function PIDCanvas({
             it stopped taking clicks meant for the canvas underneath. */}
         <Panel position="bottom-center" className="pointer-events-none max-w-full">
           <span className="block truncate whitespace-nowrap text-[10px] text-slate-600 select-none">
-            Double-click to configure · R rotates · Right-click colours
+            Double-click to configure · R rotates · ⌘C ⌘V ⌘D copy, paste, duplicate · Right-click colours
           </span>
         </Panel>
       </ReactFlow>
@@ -1253,6 +1321,24 @@ export function PIDDesigner() {
     reload: useCallback(async () => { setReloadKey((n) => n + 1); }, []),
   });
 
+  // What the title block says. The latest release label is fetched when the
+  // diagram changes and again after a release is published, so the corner of
+  // the sheet says which revision is being looked at.
+  const [latestRelease, setLatestRelease] = useState<string | null>(null);
+  useEffect(() => {
+    setLatestRelease(null);
+    if (!activeRef) return;
+    let cancelled = false;
+    api.listReleases(activeRef)
+      .then(rs => { if (!cancelled && rs.length) setLatestRelease(rs[0].label); })
+      .catch(() => { /* offline: the block says working copy */ });
+    return () => { cancelled = true; };
+  }, [activeKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sheet = useMemo<Omit<SheetMeta, 'page'>>(() => ({
+    name: diagrams.find(d => keyOf(refOf(d)) === activeKey)?.name ?? 'Untitled',
+    release: latestRelease,
+  }), [diagrams, activeKey, latestRelease]);
+
   const onForbidden = useCallback(() => {
     setUnshared(diagrams.find(d => keyOf(refOf(d)) === activeKey)?.name ?? 'This diagram');
     void reloadAndFallBack();
@@ -1314,7 +1400,12 @@ export function PIDDesigner() {
         clearSummary={() => clearCountRef.current()}
         onUndo={() => undoRef.current()}
         onRedo={() => redoRef.current()}
-        onRelease={label => releaseRef.current(label)}
+        onRelease={async label => {
+          const made = await releaseRef.current(label);
+          setLatestRelease(made.label);
+          return made;
+        }}
+        sheet={{ ...sheet, page }}
         onGetHistory={() => getHistoryRef.current()}
         onGetReleases={() => getReleasesRef.current()}
         onRestoreMicro={versionId => restoreMicroRef.current(versionId)}
@@ -1351,6 +1442,7 @@ export function PIDDesigner() {
               restoreMicroRef={restoreMicroRef}
               restoreReleaseRef={restoreReleaseRef}
               mode={mode}
+              sheet={sheet}
               onForbidden={onForbidden}
               onLockLost={checkout.lost}
             />

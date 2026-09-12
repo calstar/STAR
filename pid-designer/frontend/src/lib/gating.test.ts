@@ -67,6 +67,9 @@ const VIEW_ONLY: Record<string, string> = {
   'SegmentPanel.tsx:setShowMethod': 'reveals the loss-method selector; the selector itself is gated',
   'SegmentPanel.tsx:setOpenRow': 'expands a fitting to show its fields; the fields themselves are gated',
   'SegmentPanel.tsx:setMore': 'shows the rest of the fitting list; adding one is gated',
+  'PIDToolbar.tsx:setExportOpen(o => !o)': 'opens the export menu; exporting reads the drawing and writes a file',
+  'PIDToolbar.tsx:onClick={onClick}': 'an export choice (PNG, SVG, JSON); reads only',
+  'PIDToolbar.tsx:setConfirmRestore(null)': 'cancels the restore dialog; the Restore button beside it is gated',
   'PIDDesigner.tsx:setShowChange(true)': 'opens the Change dialog (rename/share/copy are not gated by design)',
 }
 

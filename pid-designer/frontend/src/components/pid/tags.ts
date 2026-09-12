@@ -38,6 +38,17 @@ export function numberTag(template: string, existing: Iterable<string>): string 
   return `${stem}-${highest + 1}`;
 }
 
+/**
+ * The stem of a tag that is already on the drawing: `SOL-3` → `SOL`, so a
+ * copy of SOL-3 lands as the next free SOL rather than as `SOL-3-1`. A tag
+ * with no trailing number is its own stem, so a copy of `SV-LOX-VENT` is
+ * `SV-LOX-VENT-1` -- the drawing has not said what the next one of those
+ * is called, and this at least keeps it unique.
+ */
+export function tagStem(tag: string): string {
+  return stemOf(tag).replace(/-\d+$/, '');
+}
+
 /** Whether a tag is still an unfilled template: the bug this file fixes. */
 export const isTemplateTag = (tag: string) => /#\s*$/.test(tag);
 
