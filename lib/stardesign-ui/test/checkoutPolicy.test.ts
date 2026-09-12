@@ -101,21 +101,39 @@ describe('isExpiringSoon', () => {
 });
 
 describe('shouldBeat', () => {
-  const CAP = 15 * 60_000;
+  // The rule is "has anything happened since the last refresh", not "was the last
+  // thing recent". The window version kept a hold alive for as long as the lock's
+  // own TTL after a single click, so a user sitting still watched the countdown
+  // bounce 15:00 -> 14:45 -> 15:00 and never fall.
+  const beatAt = NOW - 30_000;
 
-  it('beats while the user has interacted recently', () => {
-    // The whole fix: panning, measuring or reading now keeps the hold, where
-    // previously only a save did.
-    expect(shouldBeat(NOW - 1000, NOW, CAP)).toBe(true);
+  it('refreshes when the user has done something since the last refresh', () => {
+    expect(shouldBeat(NOW, beatAt)).toBe(true);
   });
 
-  it('stops exactly at the cap, so an unattended tab frees the design', () => {
-    expect(shouldBeat(NOW - CAP, NOW, CAP)).toBe(false);
-    expect(shouldBeat(NOW - CAP + 1, NOW, CAP)).toBe(true);
+  it('does not refresh twice for the same interaction', () => {
+    // This is the whole bug: one Take must not license an endless run of refreshes.
+    expect(shouldBeat(beatAt - 1_000, beatAt)).toBe(false);
   });
 
-  it('stops after a long idle', () => {
-    expect(shouldBeat(NOW - 60 * 60_000, NOW, CAP)).toBe(false);
+  it('never refreshes when nothing has ever happened', () => {
+    expect(shouldBeat(0, 0)).toBe(false);
+  });
+
+  it('refreshes again as soon as something new happens', () => {
+    expect(shouldBeat(beatAt + 1, beatAt)).toBe(true);
+  });
+
+  it('does not refresh while the tab is hidden, however recent the interaction', () => {
+    // A backgrounded tab still runs its timers; without this a parked window holds
+    // the design against everybody else forever.
+    expect(shouldBeat(NOW, beatAt, false)).toBe(false);
+  });
+
+  it('declining to refresh is not releasing', () => {
+    // Hiding must stop the hold being renewed, never hand it back. Releasing on
+    // visibilitychange is what made a three-second glance cost someone their design.
+    expect(shouldBeat(NOW, beatAt, true)).toBe(true);
   });
 });
 
@@ -197,37 +215,5 @@ describe('secondsLeft is immune to clock skew', () => {
     const nearly = heldFor(30, at(30 + 17 * 3600));
     expect(isExpiringSoon(nearly, NOW, NOW)).toBe(true);
     expect(isExpiringSoon(heldFor(600), NOW, NOW)).toBe(false);
-  });
-});
-
-
-describe('an untouched or backgrounded tab must stop refreshing the hold', () => {
-  const CAP = 15 * 60_000;
-
-  it('never beats when nothing has been touched at all', () => {
-    // The hook seeds lastActivity at 0, not the mount time. Seeding it with
-    // Date.now() meant merely opening the page bought a full idle window, so
-    // the 15 s tick refreshed the lock the whole time and the countdown read a
-    // fresh 15:00 every time the user came back to the tab.
-    expect(shouldBeat(0, NOW, CAP)).toBe(false);
-  });
-
-  it('beats once something actually happens, and stops when it ages out', () => {
-    expect(shouldBeat(NOW, NOW, CAP)).toBe(true);
-    expect(shouldBeat(NOW - CAP - 1, NOW, CAP)).toBe(false);
-  });
-
-  it('does not beat while the tab is hidden, however recent the interaction', () => {
-    // A backgrounded tab still runs its timers, so without this a parked window
-    // holds the design against everybody else forever.
-    expect(shouldBeat(NOW, NOW, CAP, false)).toBe(false);
-  });
-
-  it('declining to refresh is not the same as releasing', () => {
-    // The distinction that matters: hiding the tab must stop the hold being
-    // renewed, never hand it back. Releasing on visibilitychange is what made a
-    // three-second glance at another tab cost someone their design.
-    expect(shouldBeat(NOW, NOW, CAP, true)).toBe(true);
-    expect(shouldBeat(NOW, NOW + 1000, CAP, true)).toBe(true);
   });
 });

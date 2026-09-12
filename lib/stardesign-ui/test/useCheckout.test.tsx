@@ -151,20 +151,30 @@ describe('keeping the hold alive', () => {
     expect(api.beatCheckout).not.toHaveBeenCalled();
   });
 
-  it('gives up once the interaction ages past the idle cap', async () => {
+  it('refreshes once per interaction, not once per tick', async () => {
+    // The symptom a user reported: with the design taken and nothing else touched, the
+    // countdown bounced 15:00 -> 14:45 -> 15:00 indefinitely. One interaction must buy one
+    // refresh, after which the countdown is allowed to run down.
     const api = stubApi();
-    await mountHeld(api, { idleCapMs: 60_000 });
-
-    await fire('pointerdown');
-    await tick(30_000);
-    expect(api.beatCheckout).toHaveBeenCalled();
-
-    // Let the interaction age past the cap first -- it keeps refreshing until it does,
-    // which is the intended behaviour -- then check it has genuinely stopped.
-    await tick(90_000);
-    api.beatCheckout.mockClear();
+    await mountHeld(api); // Take counts as the interaction
     await tick(60_000);
+    expect(api.beatCheckout).toHaveBeenCalledTimes(1);
+
+    api.beatCheckout.mockClear();
+    await tick(10 * 60_000);
     expect(api.beatCheckout).not.toHaveBeenCalled();
+  });
+
+  it('refreshes again the moment something new happens', async () => {
+    const api = stubApi();
+    await mountHeld(api);
+    await tick(60_000);
+    api.beatCheckout.mockClear();
+
+    await fire('keydown');
+    await tick(15_000);
+
+    expect(api.beatCheckout).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -88,12 +88,6 @@ export interface UseCheckoutOptions<T> {
   pollMs?: number;
   /** How often to beat/re-check while we DO hold it. */
   heldPollMs?: number;
-  /**
-   * Stop beating once interaction is this old, so a design left open on an
-   * unattended machine still frees itself. Activity inside this window keeps
-   * the hold indefinitely; that is the whole point.
-   */
-  idleCapMs?: number;
 }
 
 export function useCheckout<T>({
@@ -102,7 +96,6 @@ export function useCheckout<T>({
   reload,
   pollMs = 10_000,
   heldPollMs = 15_000,
-  idleCapMs = 15 * 60_000,
 }: UseCheckoutOptions<T>): Checkout {
   const [state, setState] = useState<CheckoutState>(FREE);
   const [busy, setBusy] = useState(false);
@@ -143,6 +136,9 @@ export function useCheckout<T>({
   // countdown visibly reset to full with nobody touching anything. Taking the
   // checkout stamps it, because pressing Take *is* the user doing something.
   const lastActivityRef = useRef(0);
+  /** When we last refreshed the hold, on our own clock. A beat happens only when
+   *  there has been interaction since this. */
+  const lastBeatAtRef = useRef(0);
   useEffect(() => {
     const mark = () => {
       lastActivityRef.current = Date.now();
@@ -170,7 +166,8 @@ export function useCheckout<T>({
     const tick = () => {
       const visible =
         typeof document === 'undefined' || document.visibilityState === 'visible';
-      const active = shouldBeat(lastActivityRef.current, Date.now(), idleCapMs, visible);
+      const active = shouldBeat(lastActivityRef.current, lastBeatAtRef.current, visible);
+      if (active) lastBeatAtRef.current = Date.now();
       const call = active ? api.beatCheckout(ref) : api.getCheckout(ref);
       call
         .then((s) => {
@@ -194,7 +191,7 @@ export function useCheckout<T>({
       cancelled = true;
       clearInterval(id);
     };
-  }, [api, ref, state.lockedByMe, heldPollMs, idleCapMs, applyState]);
+  }, [api, ref, state.lockedByMe, heldPollMs, applyState]);
 
   // A 1 Hz clock, only while we hold it, so the bar can count down.
   useEffect(() => {

@@ -69,8 +69,7 @@ export function isExpiringSoon(
  */
 export function shouldBeat(
   lastActivityMs: number,
-  nowMs: number,
-  idleCapMs: number,
+  lastBeatAtMs: number,
   visible = true,
 ): boolean {
   // Not while the tab is hidden. A backgrounded tab still runs its timers, so
@@ -79,7 +78,21 @@ export function shouldBeat(
   // release, which is the bug that made a three-second glance at another tab
   // cost you the design.
   if (!visible) return false;
-  return nowMs - lastActivityMs < idleCapMs;
+
+  // Refresh because something happened SINCE the last refresh -- not because
+  // something happened within some generous window.
+  //
+  // The window version was wrong in a way that looked right in tests and awful in
+  // use: it kept the hold alive while the last interaction was under `idleCapMs`
+  // old, and `idleCapMs` was the lock's own 15 minute TTL. So one press of Take
+  // licensed fifteen minutes of automatic refreshing, the countdown snapped back
+  // to 15:00 every tick, and a user sitting still watched it bounce 15:00 -> 14:45
+  // -> 15:00 forever without touching anything.
+  //
+  // "Since the last beat" needs no cap and no tuning: do something and the next
+  // tick refreshes; stop, and the countdown runs down honestly to zero and the
+  // design frees itself.
+  return lastActivityMs > lastBeatAtMs;
 }
 
 /**
