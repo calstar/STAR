@@ -15,30 +15,57 @@ from typing import List, Optional, Tuple
 from .qt import QThread, pyqtSignal
 
 
+PYSERIAL_MISSING = "pyserial not installed — run: pip install pyserial"
+
+
+def pyserial_error() -> Optional[str]:
+    """Return a message if pyserial can't be imported, else ``None``.
+
+    Lets callers tell "pyserial is missing" apart from "nothing is plugged in";
+    :func:`list_ports` returns an empty list for both.
+    """
+    try:
+        from serial.tools import list_ports as lp  # noqa: F401
+    except ImportError:
+        return PYSERIAL_MISSING
+    return None
+
+
 def list_ports() -> List[Tuple[str, str]]:
     """Return [(device, description)], best-guess board ports first.
 
-    Returns an empty list if pyserial isn't installed.
+    Returns an empty list if pyserial isn't installed — see :func:`pyserial_error`.
     """
     try:
         from serial.tools import list_ports as lp
     except ImportError:
         return []
-    ports = []
-    for p in lp.comports():
-        ports.append((p.device, p.description or ""))
 
-    def score(item):
-        dev, desc = item
-        blob = (dev + " " + desc).lower()
-        # ESP32-S3 / USB-CDC boards usually show up as usbmodem/usbserial/ttyACM.
-        for i, hint in enumerate(("usbmodem", "usbserial", "ttyacm", "ttyusb", "cu.")):
+    def score(dev: str, desc: str, hwid: str) -> int:
+        blob = " ".join((dev, desc, hwid)).lower()
+        # Windows exposes paired Bluetooth devices as COM ports; they are never
+        # the board and would otherwise sort first (COM8/COM9 before COM6).
+        if "bthenum" in blob or "bluetooth" in blob:
+            return 9
+        # ESP32-S3 native USB-CDC: Espressif VID 303A. This IS our board.
+        if "303a" in blob:
+            return 0
+        # Common USB-UART bridges: CP210x, FTDI, CH340/CH341, PL2303.
+        for vid in ("10c4", "0403", "1a86", "067b"):
+            if "vid:pid=" + vid in blob or "vid_" + vid in blob:
+                return 1
+        # macOS/Linux device-name hints (usbmodem = CDC, usbserial = bridge).
+        for i, hint in enumerate(("usbmodem", "usbserial", "ttyacm", "ttyusb"), start=2):
             if hint in blob:
                 return i
-        return 99
+        return 8
 
-    ports.sort(key=score)
-    return ports
+    ports = []
+    for p in lp.comports():
+        desc = p.description or ""
+        ports.append((score(p.device, desc, p.hwid or ""), p.device, desc))
+    ports.sort(key=lambda t: t[0])
+    return [(dev, desc) for _, dev, desc in ports]
 
 
 class SerialLink(QThread):

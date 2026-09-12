@@ -20,7 +20,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Deque, Dict, Optional
+from typing import Deque, Dict, Optional, Set
 
 from . import protocol
 from .profile import BoardProfile
@@ -59,6 +59,28 @@ class PacketStats:
         return self.total_bytes / elapsed if elapsed > 0 else 0.0
 
 
+def host_can_reach(ip: str, port: int) -> bool:
+    """Does this host have a route to `ip`?
+
+    UDP connect() only does a route lookup — no packet leaves the machine — so
+    this is a cheap, authoritative check. Needed because a board running the
+    zeroconf hunt (SENSOR_ETH_ZEROCONF) alternates between its static
+    192.168.2.<id> address and a link-local 169.254.x.y one, and BROADCASTS
+    from both. Broadcasts arrive here regardless of subnet, so the link sees a
+    source IP it cannot actually send back to; unicasting there fails with
+    ENETUNREACH (WinError 10051 on Windows).
+    """
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.connect((ip, port))
+            return True
+        finally:
+            probe.close()
+    except OSError:
+        return False
+
+
 class UdpLink(QThread):
     # parsed-object, source-ip
     heartbeat_received = pyqtSignal(object, str)
@@ -86,6 +108,9 @@ class UdpLink(QThread):
         # control/ABORT/OTA reach the board even if DHCP gave it a different
         # address than the configured static one.
         self.discovered_ip: Optional[str] = None
+        # Route-lookup cache, so the per-packet path doesn't probe every time.
+        self._reachable: Dict[str, bool] = {}
+        self._unreachable_logged: Set[str] = set()
 
     # -- lifecycle -----------------------------------------------------------
     def run(self) -> None:
@@ -170,10 +195,27 @@ class UdpLink(QThread):
         self.packet_received.emit(ptype, len(data), src_ip)
 
     def _learn_board_ip(self, src_ip: str) -> None:
-        """Adopt the board's real source IP as the command destination."""
-        if src_ip and src_ip != self.discovered_ip:
-            self.discovered_ip = src_ip
-            self.board_discovered.emit(src_ip)
+        """Adopt the board's real source IP — but only one we can reach.
+
+        A board mid-zeroconf-hunt broadcasts from an address this host has no
+        route to. Adopting it blindly points every control packet at a dead
+        destination, so the address has to survive a route check first.
+        """
+        if not src_ip or src_ip == self.discovered_ip:
+            return
+        reachable = self._reachable.get(src_ip)
+        if reachable is None:
+            reachable = host_can_reach(src_ip, self.profile.control_port)
+            self._reachable[src_ip] = reachable
+        if not reachable:
+            if src_ip not in self._unreachable_logged:
+                self._unreachable_logged.add(src_ip)
+                self.status.emit(
+                    f"Board also broadcasting from {src_ip}, but this host has no "
+                    f"route there — still sending to {self.target_ip}")
+            return
+        self.discovered_ip = src_ip
+        self.board_discovered.emit(src_ip)
 
     def _count_malformed(self, size: int, src_ip: str) -> None:
         with self._stats_lock:
@@ -206,7 +248,16 @@ class UdpLink(QThread):
             self.sock.sendto(packet, (dest_ip, self.profile.control_port))
             return True
         except OSError as exc:
-            self.status.emit(f"Send failed: {exc}")
+            # If the learned address turned out to be unreachable, drop it and
+            # fall back to the configured one rather than failing forever.
+            if self.discovered_ip == dest_ip:
+                self._reachable[dest_ip] = False
+                self.discovered_ip = None
+                self.status.emit(
+                    f"Send to {dest_ip} failed ({exc}) — no route from this host; "
+                    f"falling back to {self.profile.board_ip}")
+            else:
+                self.status.emit(f"Send failed: {exc}")
             return False
 
     def send_server_heartbeat(self, engine_state: int = protocol.EngineState.SAFE) -> bool:

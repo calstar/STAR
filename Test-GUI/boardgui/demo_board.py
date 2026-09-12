@@ -36,13 +36,23 @@ def _sine_code(t: float, connector_id: int) -> int:
     return struct.unpack("<I", struct.pack("<i", signed))[0]
 
 
-def build_sensor_data(connectors: List[int], board_ms: int, chunks: int = 4) -> bytes:
+# One packet carries several chunks that were sampled BEFORE it was assembled,
+# spaced by the firmware's collect cadence — not all at the send instant.
+CHUNK_PERIOD_MS = 12
+
+
+def build_sensor_data(connectors: List[int], board_ms: int, chunks: int = 4,
+                      chunk_period_ms: int = CHUNK_PERIOD_MS) -> bytes:
     body = bytearray(struct.pack(protocol.SENSOR_DATA_HEADER_FORMAT, chunks, len(connectors)))
-    now = time.time()
     for c in range(chunks):
-        body += struct.pack(protocol.SENSOR_DATA_CHUNK_FORMAT, (board_ms + c) & 0xFFFFFFFF)
+        # oldest chunk first, most recent one stamped ~now
+        age_ms = (chunks - 1 - c) * chunk_period_ms
+        chunk_ms = (board_ms - age_ms) & 0xFFFFFFFF
+        body += struct.pack(protocol.SENSOR_DATA_CHUNK_FORMAT, chunk_ms)
+        # sample the wave at the chunk's own instant so value and timestamp agree
+        t = (board_ms - age_ms) / 1000.0
         for cid in connectors:
-            body += struct.pack(protocol.SENSOR_DATAPOINT_FORMAT, cid, _sine_code(now + c * 0.01, cid))
+            body += struct.pack(protocol.SENSOR_DATAPOINT_FORMAT, cid, _sine_code(t, cid))
     return protocol._make_header(protocol.PacketType.SENSOR_DATA, board_ms) + bytes(body)
 
 
