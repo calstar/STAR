@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Modal } from '../ui';
 import { btn, primaryBtn } from '../../lib/ui';
-import { COMPONENT_SPECS, LINE_SPECS, LINE_TYPE_LABELS, PEER_CHOICES } from './spec';
+import { COMPONENT_SPECS, LINE_SPECS, PEER_CHOICES } from './spec';
 import type { ComponentSpec, OptionSpec, ParamSpec, PortGroupSpec } from './spec';
 import { UNITS } from './params';
 import type { ParamValue } from './params';
@@ -10,14 +10,12 @@ import type { Draft } from './drafts';
 import { portIds } from './ports';
 import type { PortInfo, PortKind } from './ports';
 import { defaultTemperatureK, speciesById } from './fluids';
-import { deriveParams, supplyCoefficient } from './derive';
+import { deriveLineParams, deriveParams, supplyCoefficient } from './derive';
 import { SAT_REFERENCE, paramFromPreset, saturationK } from './materials';
 import { toPa } from './params';
-import { SegmentPanel } from './SegmentPanel';
-import { BoreProfile } from './BoreProfile';
 import { ManifoldEditor } from './ManifoldEditor';
 import type { ManifoldGeometry } from './ManifoldEditor';
-import { fittingCount, transitionsOf } from './segments';
+import { fittingCount } from './segments';
 import type { LineSegment } from './segments';
 import type { ComponentType, PIDNodeData } from './types';
 
@@ -78,19 +76,17 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   const [ports, setPorts] = useState<Record<string, PortInfo>>({});
   const [fluid, setFluid] = useState<string>(data.fluid ?? '');
   const [partNumber, setPartNumber] = useState(data.partNumber ?? '');
-  const [lineType, setLineType] = useState(data.lineType ?? 'pipe');
   const [segments, setSegments] = useState<LineSegment[]>([]);
   const [geometry, setGeometry] = useState<ManifoldGeometry | undefined>(undefined);
 
   const spec: ComponentSpec | undefined =
-    kind === 'edge' ? LINE_SPECS[lineType] : COMPONENT_SPECS[type];
+    kind === 'edge' ? LINE_SPECS.pipe : COMPONENT_SPECS[type];
 
   useEffect(() => {
     if (!open) return;
     setLabel(data.label ?? '');
     setFluid(data.fluid ?? '');
     setPartNumber(data.partNumber ?? '');
-    setLineType(data.lineType ?? 'pipe');
     setPorts({ ...(data.ports ?? {}) });
     setSegments(data.segments ? structuredClone(data.segments) : []);
     setGeometry(data.geometry ? structuredClone(data.geometry) : undefined);
@@ -98,9 +94,25 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
 
   useEffect(() => {
     if (!open || !spec) return;
-    setDrafts(Object.fromEntries(spec.params.map(p => [p.key, toDraft(p, data.params?.[p.key])])));
-    setOptions(Object.fromEntries((spec.options ?? []).map(o => [o.key, data.options?.[o.key] ?? o.default])));
-  }, [open, data, spec]);
+    const stored = { ...(data.params ?? {}) };
+    if (kind === 'edge') {
+      // Two names for one number, see derive.ts: the drawing shows the fall
+      // somebody measured, the solver keeps the rise it defines.
+      const rise = stored.elevation_change;
+      if (rise) stored.fall = { ...rise, value: -rise.value };
+      if (stored.roughness && !stored.roughness_custom) stored.roughness_custom = stored.roughness;
+    }
+    setDrafts(Object.fromEntries(spec.params.map(p => [p.key, toDraft(p, stored[p.key])])));
+    const opts = Object.fromEntries((spec.options ?? []).map(o => [o.key, data.options?.[o.key] ?? o.default]));
+    if (kind === 'edge') {
+      // A stored hose reopens with its flag set; a stored roughness that is
+      // not one of the materials reopens as custom.
+      if (data.lineType === 'flex_hose') opts.hose = data.options?.construction ?? 'smooth_bore';
+      const r = data.params?.roughness;
+      if (r && !data.options?.material) opts.material = 'custom';
+    }
+    setOptions(opts);
+  }, [open, data, spec, kind]);
 
   // ── Temperature follows the fluid ──────────────────────────────────────────
   //
@@ -169,7 +181,15 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
       const v = fromDraft(d);                      // blank is absent, not zero
       if (v) params[p.key] = v;
     }
+    let lineType: string | undefined;
+    let lineOptions = options;
     if (kind === 'node') params = deriveParams(type, options, params);
+    else {
+      const d = deriveLineParams(options, params);
+      params = d.params;
+      lineType = d.lineType;
+      lineOptions = { ...options, ...(d.construction ? { construction: d.construction } : {}) };
+    }
     // Counted, not asked for. Only when there is a list to count: with no
     // segments the drawing has not said, and a zero would be a claim.
     if (kind === 'edge' && segments.length) {
@@ -187,7 +207,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
       keptPorts[id] = { ...(name ? { label: name } : {}), ...(k !== 'flow' ? { kind: k } : {}) };
     }
     onSave({
-      params, options, ports: keptPorts,
+      params, options: lineOptions, ports: keptPorts,
       label: label.trim() || data.label,
       fluid: fluid || undefined,
       partNumber: partNumber.trim() || undefined,
@@ -197,34 +217,20 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
     onClose();
   };
 
-  // ΣK, live. Fittings priced by feed-twin's ladder are not known here, so
-  // this is the part that *is* knowable from the drawing alone: the derived
-  // bore transitions, plus a count of the fittings waiting to be priced.
-  const derivedK = kind === 'edge'
-    ? transitionsOf(segments).reduce((n, t2) => n + (t2?.K ?? 0), 0)
-    : 0;
+  // An itemised run from before the sketch. It still feeds the solver, and
+  // the one-number fields above it are not what a solve reads while it is
+  // there -- so it is said, and it can be let go.
   const fittings = kind === 'edge' ? segments.reduce((n, s) => n + fittingCount(s), 0) : 0;
-
-  // No ΣK unless there is one. Every fitting here is priced by feed-twin from
-  // geometry, so a zero would be reporting "nothing was stated" as "nothing".
-  const parts = [
-    fittings ? `${fittings} fitting${fittings === 1 ? '' : 's'}` : '',
-    derivedK ? `K ${derivedK.toFixed(2)} at bore changes` : '',
-  ].filter(Boolean);
-  // An itemised run is the whole answer for that line, so the one-number
-  // fields above it are no longer what a solve reads.
   const superseded = kind === 'edge' && segments.length > 0;
 
-  const title = kind === 'edge'
-    ? `Line${parts.length ? ` · ${parts.join(' · ')}` : ''}`
-    : (data.label || type);
+  const title = kind === 'edge' ? 'Line' : (data.label || type);
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={title}
-      width={kind === 'edge' ? "w-[900px]" : "w-[420px]"}
+      width="w-[440px]"
       footer={
         <div className="flex gap-2">
           <button onClick={onClose} className={btn}>Cancel</button>
@@ -232,22 +238,8 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
         </div>
       }
     >
-      <div className={kind === 'edge' ? 'grid grid-cols-[300px_1fr] gap-4' : ''}>
-      {kind === 'edge' && (
-        <div className="sticky top-0 self-start">
-          <BoreProfile segments={segments} />
-        </div>
-      )}
+      <div>
       <div className="max-h-[60vh] space-y-2.5 overflow-y-auto pr-1">
-        {kind === 'edge' && (
-          <Row label="Type">
-            <select value={lineType} disabled={readOnly} onChange={e => setLineType(e.target.value)} className={wide}>
-              {Object.keys(LINE_SPECS).map(k => (
-                <option key={k} value={k}>{LINE_TYPE_LABELS[k] ?? k}</option>
-              ))}
-            </select>
-          </Row>
-        )}
 
         {kind === 'node' && (
           <Row label="Tag">
@@ -297,8 +289,13 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
                 methods -- the panel says which is in force -- applies a level
                 up as well. */}
             {superseded && (
-              <p className="text-[10px] text-[var(--color-text-muted)]">
-                Superseded by the segments below.
+              <p className="text-[10px] text-amber-500/90">
+                This run carries an itemised list from before ({fittings} fitting{fittings === 1 ? '' : 's'});
+                the solver reads that instead of the numbers here.{' '}
+                <button disabled={readOnly} onClick={() => setSegments([])}
+                  className="underline decoration-dotted hover:text-[var(--color-text-primary)]">
+                  let it go
+                </button>
               </p>
             )}
             {spec.params.filter(p => !p.advanced && !p.derived && !p.section && showing(p)).map(p => (
@@ -315,14 +312,14 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
                 that is off unless a drawing asks for it; flat alongside length
                 and bore they read as four more things you were supposed to
                 know. See `ParamSpec.advanced`. */}
-            {spec.params.some(p => p.advanced) && (
+            {spec.params.some(p => p.advanced && showing(p)) && (
               <>
                 <button
                   onClick={() => setShowAdvanced(v => !v)}
                   className="text-[10px] text-[var(--color-text-muted)] underline decoration-dotted hover:text-[var(--color-text-primary)]">
                   {showAdvanced
                     ? 'fewer'
-                    : `${spec.params.filter(p => p.advanced).length} more`}
+                    : `${spec.params.filter(p => p.advanced && showing(p)).length} more`}
                 </button>
                 {showAdvanced && spec.params.filter(p => p.advanced && !p.derived && showing(p)).map(p => (
                   <ParamRow
@@ -359,10 +356,6 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
             ))}
           </div>
         ))}
-
-        {kind === 'edge' && (
-          <SegmentPanel segments={segments} onChange={setSegments} />
-        )}
 
         {type === 'MANIFOLD' && (
           <ManifoldEditor

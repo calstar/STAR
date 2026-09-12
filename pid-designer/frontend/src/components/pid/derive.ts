@@ -11,7 +11,7 @@
  */
 
 import type { ParamValue } from './params';
-import { INSULATIONS, TANK_MATERIALS, cvFromCd, paramFromPreset } from './materials';
+import { INSULATIONS, LINE_MATERIALS, TANK_MATERIALS, cvFromCd, paramFromPreset } from './materials';
 
 /**
  * What to add to (or remove from) the params on save, given the options.
@@ -76,4 +76,47 @@ export function supplyCoefficient(risePsi: number, perInletPsi: number, source: 
   const per1000 = Math.round((risePsi * 1000 / perInletPsi) * 1000) / 1000;
   return { value: per1000, unit: 'psi/1000psi', source,
     reference: `${risePsi} psi outlet rise per ${perInletPsi} psi inlet drop` };
+}
+
+/**
+ * What a line's dialog writes from its choices.
+ *
+ * - The material becomes feed-twin's `roughness`, or the custom figure does.
+ * - "Fall, inlet − outlet" becomes the signed `elevation_change` (a rise)
+ *   feed-twin reads, negated. Two names for one number; the drawing keeps
+ *   the one people measure and the solver keeps the one it defines.
+ * - `flex_hose` construction is what the hose flag turns into.
+ *
+ * Returns the params to store and the catalogue kind the line is.
+ */
+export function deriveLineParams(
+  options: Record<string, string>,
+  params: Record<string, ParamValue>,
+): { params: Record<string, ParamValue>; lineType: 'pipe' | 'flex_hose'; construction?: string } {
+  const out: Record<string, ParamValue> = { ...params };
+
+  const material = LINE_MATERIALS.find(m => m.id === (options.material ?? ''));
+  if (material) {
+    out.roughness = paramFromPreset(material);
+    delete out.roughness_custom;
+  } else if (out.roughness_custom) {
+    out.roughness = out.roughness_custom;
+    delete out.roughness_custom;
+  } else {
+    delete out.roughness;
+  }
+
+  const fall = out.fall;
+  delete out.fall;
+  if (fall) {
+    out.elevation_change = { ...fall, value: -fall.value,
+      reference: fall.reference ?? 'fall, inlet − outlet, as measured' };
+  } else {
+    delete out.elevation_change;
+  }
+
+  const hose = options.hose ?? 'no';
+  return hose === 'no'
+    ? { params: out, lineType: 'pipe' }
+    : { params: out, lineType: 'flex_hose', construction: hose };
 }

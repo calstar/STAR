@@ -38,7 +38,7 @@ Nothing above needs a mapping table. Every renamed *label* keeps its key.
 
 ---
 
-## Phase 0 — Quick fixes (small, no contract change)
+## Phase 0 — Quick fixes (small, no contract change) — **done, 56f7d870**
 
 1. **Header.** The "P&ID Designer" bar is a title over empty space. The
    title moves into the diagram bar's left end; the bar goes. The canvas
@@ -60,7 +60,7 @@ Gates: 282 → same count green; live check of the three visuals.
 
 ---
 
-## Phase 1 — Component dialogs slimmed, symbols show their numbers
+## Phase 1 — Component dialogs slimmed, symbols show their numbers — **done, 8c74212d**
 
 ### Tank
 - **Fluid** (as now). **Temperature** becomes optional with a dropdown:
@@ -151,7 +151,7 @@ symbol readout at 0/90/180/270.
 
 ---
 
-## Phase 2 — The feed-twin half (in this monorepo; can be done by either agent)
+## Phase 2 — The feed-twin half — **done** (see the commit; benchmark identical with the film off, +0.03 psi on 2.3 with it on)
 
 1. Tank `pressure`/`temperature` read as nominal; initial state from the
    scenario. Benchmark script run before and after (`scripts/physics_benchmark.py`).
@@ -167,7 +167,7 @@ Each is opt-in and defaults to today's behaviour, asserted both ways per
 
 ---
 
-## Phase 3 — Line config, simplified (no sketch yet)
+## Phase 3 — Line config, simplified (no sketch yet) — **done**
 
 The line dialog becomes three things and a door:
 

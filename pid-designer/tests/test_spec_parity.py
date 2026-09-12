@@ -42,6 +42,11 @@ NOT_DRAWN = {
     "wall_capacity",
     # Vessel temperature is nominal on the drawing and optional.
     "temperature",
+    # A line's thermal mass is one weighed figure (`line_mass`); the fitting
+    # tally and its per-fitting mass are the estimate it replaces.
+    "fitting_mass",
+    # Hose second-order terms feed-twin defaults and reports as assumed.
+    "end_fitting_K", "convolution_factor", "min_bend_radius_dynamic",
 }
 
 
@@ -83,9 +88,10 @@ def test_every_catalogued_line_param_is_reachable_in_the_ui(line: str) -> None:
 
 
 def test_the_thermal_params_specifically() -> None:
-    """Named, because these are the ones it happened to."""
+    """Named, because these are the ones it happened to. `fitting_mass` has
+    since become `line_mass` -- one weighed figure for the whole run."""
     text = spec_text()
-    for param in ("wall_thickness", "fitting_count", "fitting_mass"):
+    for param in ("wall_thickness", "fitting_count", "line_mass"):
         assert f"'{param}'" in text, f"{param} is not settable on a line"
 
 

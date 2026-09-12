@@ -129,3 +129,25 @@ export function cvFromCd(cd: number, boreMm: number): number {
   const areaIn2 = Math.PI * (boreMm / 25.4) ** 2 / 4;
   return Math.round(GPM_PER_IN2_AT_1PSI * cd * areaIn2 * 1000) / 1000;
 }
+
+// ── Line materials → roughness ───────────────────────────────────────────────
+
+/**
+ * What the team's tube is, and the roughness that goes with it.
+ *
+ * Drawn aluminium tube is the Moody chart's "drawn tubing" row. The two
+ * stainless finishes come from Farshad's measured table as shipped in the
+ * `fluids` library (`roughness_Farshad`): electropolished and bare stainless.
+ * Farshad measured 13 % chrome steel, not 316; the finish is what the number
+ * tracks, but the alloy differs, so both stainless rows say so.
+ */
+export const LINE_MATERIALS: Preset[] = [
+  { id: 'al6061', label: 'Aluminium 6061-T6 (drawn tube)', value: 0.0015, unit: 'mm', verified: true,
+    reference: 'Moody (1944) drawn tubing, 0.0015 mm; fluids.friction roughness table' },
+  { id: 'ss316_polished', label: '316 stainless, polished', value: 0.030, unit: 'mm', verified: false,
+    reference: 'Farshad (2001) electropolished stainless, 0.030 mm, via fluids.roughness_Farshad — measured on Cr13, not 316' },
+  { id: 'ss316_rough', label: '316 stainless, as drawn / rough', value: 0.055, unit: 'mm', verified: false,
+    reference: 'Farshad (2001) bare stainless, 0.055 mm, via fluids.roughness_Farshad — measured on Cr13, not 316' },
+];
+
+export const DEFAULT_LINE_MATERIAL = 'ss316_polished';

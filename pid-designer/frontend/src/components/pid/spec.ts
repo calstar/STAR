@@ -14,7 +14,7 @@
 import type { Dimension } from './params';
 import type { ComponentType } from './types';
 import type { SpeciesId } from './fluids';
-import { INSULATIONS, TANK_MATERIALS, TEMPERATURES, DEFAULT_MATERIAL } from './materials';
+import { INSULATIONS, TANK_MATERIALS, TEMPERATURES, DEFAULT_MATERIAL, LINE_MATERIALS, DEFAULT_LINE_MATERIAL } from './materials';
 import type { Preset } from './materials';
 
 export interface ParamSpec {
@@ -359,70 +359,65 @@ function instrumentSpec(): ComponentSpec {
   };
 }
 
-/** What a line is. Names match `components.toml`. */
+/**
+ * What a line is. Names match `components.toml`.
+ *
+ * One kind of line. It used to be four -- pipe, flex hose, bend, fitting --
+ * chosen from a dropdown before anything else could be typed, and the choice
+ * was the wrong first question: a run is a run, and what is in it is what
+ * the sketch (Phase 4) will say. What is asked here is what somebody with a
+ * tape and a scale knows: how long, how wide, what it is made of, how far it
+ * drops, how heavy. A hose is a flag under *more*, because it is the one
+ * thing that changes the friction law.
+ */
 export const LINE_SPECS: Record<string, ComponentSpec> = {
   pipe: {
     catalogued: true,
     params: [
       P('length', 'Length', 'length'),
-      P('bore', 'Bore', 'length'),
-      P('K_minor', 'Lumped fitting K', 'dimensionless', { value: 0, unit: '-' }),
-      A('roughness', 'Roughness', 'length', { value: 1.5e-3, unit: 'mm' }),
-      // Static head. Ten metres of LOX is about 1.6 bar, so a tall stand that
-      // leaves this unset is wrong by more than most of its line losses.
-      A('elevation_change', 'Rise (outlet − inlet)', 'length', { value: 0, unit: 'm' }),
-      // Thermal mass. Both feed the line-wall model in feed-twin, which is off
-      // unless a drawing declares metal for it -- see docs/thermal/line-walls.md.
+      P('bore', 'Bore (flow diameter)', 'length'),
+      // Height the run drops from inlet to outlet, for hydrostatic head.
+      // Positive when the outlet is lower. Stored as feed-twin's signed
+      // `elevation_change` (rise), negated -- see derive.ts.
+      { key: 'fall', label: 'Fall, inlet − outlet', dimension: 'length', unit: 'm' },
+      D('elevation_change', 'Rise (outlet − inlet)', 'length'),
+      // The shortcut when there is no sketch: one K for everything in the
+      // run, taken as the fully turbulent figure. feed-twin treats it as
+      // constant; a sketched run gets its bends priced against flow instead.
+      P('K_minor', 'Lumped K (fully turbulent)', 'dimensionless'),
+      // One weighed figure for tube and fittings together, for the wall
+      // model. Beats the estimate from wall thickness and fitting count.
+      { key: 'line_mass', label: 'Line mass (weighed)', dimension: 'mass', unit: 'kg' },
+      D('roughness', 'Roughness', 'length'),
+      { key: 'roughness_custom', label: 'Roughness (custom)', dimension: 'length', unit: 'mm',
+        when: { option: 'material', is: 'custom' } },
       A('wall_thickness', 'Tube wall', 'length', { value: 0.889, unit: 'mm' }),
-      // Counted off the fitting list rather than typed -- see `ParamSpec.derived`.
-      // The solver needs it for the line-wall model; the drawing already knows.
       D('fitting_count', 'Fittings on this run', 'dimensionless'),
-      A('fitting_mass', 'Fitting mass (weighed)', 'mass'),
-    ],
-  },
-  flex_hose: {
-    catalogued: true,
-    params: [
-      P('length', 'Length', 'length'),
-      P('bore', 'Bore', 'length'),
-      P('installed_bend_radius', 'Installed bend radius', 'length'),
-      P('min_bend_radius', 'Min bend radius', 'length'),
-      A('end_fitting_K', 'End fittings K', 'dimensionless', { value: 0.5, unit: '-' }),
-      A('min_bend_radius_dynamic', 'Min bend radius (flexing)', 'length'),
-      A('convolution_factor', 'Convolution friction factor', 'dimensionless', { value: 2, unit: '-' }),
+      // Flex hose only: the bend it is installed at, and what it may not go below.
+      { key: 'installed_bend_radius', label: 'Installed bend radius', dimension: 'length', advanced: true,
+        when: { option: 'hose', not: 'no' } },
+      { key: 'min_bend_radius', label: 'Min bend radius', dimension: 'length', advanced: true,
+        when: { option: 'hose', not: 'no' } },
     ],
     options: [
-      { key: 'construction', label: 'Construction', default: 'smooth_bore',
+      { key: 'material', label: 'Material', default: DEFAULT_LINE_MATERIAL,
+        choices: [...LINE_MATERIALS.map(m => ({ value: m.id, label: m.label })), { value: 'custom', label: 'Custom roughness…' }] },
+      // A hose is a run whose friction law differs. Saved as feed-twin's
+      // `flex_hose` kind with its `construction`; see derive.ts.
+      { key: 'hose', label: 'Flex hose', default: 'no',
         choices: [
-          { value: 'smooth_bore', label: 'Smooth bore' },
-          { value: 'convoluted', label: 'Convoluted' },
+          { value: 'no', label: 'No — hardline' },
+          { value: 'smooth_bore', label: 'Yes, smooth bore' },
+          { value: 'convoluted', label: 'Yes, convoluted' },
         ] },
-    ],
-  },
-  bend: {
-    params: [
-      P('bore', 'Bore', 'length'),
-      P('bend_radius', 'Bend radius', 'length'),
-      P('angle', 'Angle', 'angle', { value: 90, unit: 'deg' }),
-    ],
-  },
-  fitting: {
-    catalogued: true,
-    params: [P('bore', 'Bore', 'length')],
-    options: [
-      { key: 'kind', label: 'Kind', default: 'elbow_90',
-        choices: [
-          'elbow_90', 'elbow_45', 'bend', 'contraction', 'expansion',
-          'entrance_sharp', 'exit', 'tee_run', 'tee_branch',
-          'ball_valve_full', 'gate_valve_full', 'globe_valve', 'swing_check',
-        ].map(k => ({ value: k, label: k.replace(/_/g, ' ') })) },
     ],
   },
 };
 
+/** Catalogue names a run may be stored under; `flex_hose` when the hose flag is set. */
+export const LINE_KINDS = ['pipe', 'flex_hose'] as const;
+
 export const LINE_TYPE_LABELS: Record<string, string> = {
   pipe: 'Hardline',
   flex_hose: 'Flex hose',
-  bend: 'Bend',
-  fitting: 'Fitting',
 };

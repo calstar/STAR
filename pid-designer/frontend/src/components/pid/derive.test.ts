@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveParams, supplyCoefficient } from './derive';
+import { deriveLineParams, deriveParams, supplyCoefficient } from './derive';
 
 
 describe('what the tank dialog writes from its dropdowns', () => {
@@ -71,5 +71,41 @@ describe('the supply effect, as the datasheet prints it', () => {
   it('refuses a zero or missing inlet drop', () => {
     expect(supplyCoefficient(17, 0, 'estimated')).toBeUndefined();
     expect(supplyCoefficient(NaN, 1000, 'estimated')).toBeUndefined();
+  });
+});
+
+describe('what the line dialog writes from its choices', () => {
+  const mm = (value: number) => ({ value, unit: 'mm', source: 'measured' as const });
+
+  it('turns the material into a roughness with its source', () => {
+    const { params, lineType } = deriveLineParams({ material: 'al6061', hose: 'no' }, {});
+    expect(lineType).toBe('pipe');
+    expect(params.roughness).toMatchObject({ value: 0.0015, unit: 'mm', source: 'default' });
+    expect(params.roughness.reference).toMatch(/Moody/);
+  });
+
+  it('says when a stainless figure was measured on a different alloy', () => {
+    const { params } = deriveLineParams({ material: 'ss316_polished', hose: 'no' }, {});
+    expect(params.roughness.reference).toMatch(/UNVERIFIED/);
+  });
+
+  it('takes a custom roughness as typed', () => {
+    const { params } = deriveLineParams({ material: 'custom', hose: 'no' }, { roughness_custom: mm(0.01) });
+    expect(params.roughness.value).toBe(0.01);
+    expect(params.roughness_custom).toBeUndefined();
+  });
+
+  it('stores a fall as a negative rise, in the same unit', () => {
+    // 0.8 m of fall is what somebody measures; feed-twin defines a rise.
+    const { params } = deriveLineParams({ material: 'al6061', hose: 'no' },
+      { fall: { value: 0.8, unit: 'm', source: 'measured' } });
+    expect(params.elevation_change).toMatchObject({ value: -0.8, unit: 'm', source: 'measured' });
+    expect(params.fall).toBeUndefined();
+  });
+
+  it('makes a hose a flex_hose with its construction', () => {
+    const out = deriveLineParams({ material: 'al6061', hose: 'convoluted' }, {});
+    expect(out.lineType).toBe('flex_hose');
+    expect(out.construction).toBe('convoluted');
   });
 });
