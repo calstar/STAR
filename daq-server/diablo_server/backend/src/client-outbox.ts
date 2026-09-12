@@ -315,6 +315,45 @@ export const SOCKET_IDLE_BYTES = 4 * 1024;
  *  states an operational requirement directly, unlike a window count. */
 export const DEFAULT_TARGET_LAG_MS = 1500;
 
+/** Beyond this the link is in trouble, not merely throttled. Twice the currency budget,
+ *  because the pacer only flushes on a full drain and its own design test allows up to
+ *  2x TARGET between flushes — so anything past that is not normal pacing. */
+export const STARVED_LAG_MS = DEFAULT_TARGET_LAG_MS * 2;
+
+/**
+ * What to tell the operator about one client's link.
+ *
+ * A pure function on purpose. The status used to be assigned only at the END of a
+ * successful flush, after the `shouldFlush` gate and an empty-drain check had both been
+ * passed — so a client too backed-up to flush AT ALL kept its optimistic seed
+ * (throttled: false, lagMs: 0, resolutionPct: 100) and the badge showed green
+ * "Connected — Live data at full resolution". The more starved a client was, the
+ * healthier it reported. Deciding from observations instead of from having flushed is
+ * what fixes that, and being pure is what makes it testable — a setInterval is not.
+ */
+export function linkStatus(o: {
+  /** Newest sample actually put on this socket, or null if nothing ever has been. */
+  lastDeliveredTsMs: number | null;
+  nowMs: number;
+  resolutionRatio: number;
+  squeezeDropped: boolean;
+  starvedLagMs?: number;
+}): { throttled: boolean; lagMs: number; resolutionPct: number } {
+  const starved = o.starvedLagMs ?? STARVED_LAG_MS;
+  // Nothing delivered yet is the connect race, not starvation: a client that has just
+  // opened has no lag to report and must not be flagged before it has had a chance.
+  const lagMs = o.lastDeliveredTsMs === null
+    ? 0
+    : Math.max(0, o.nowMs - o.lastDeliveredTsMs);
+  return {
+    lagMs,
+    // squeezeDropped catches ordinary throttling; the lag term is the backstop for the
+    // client that cannot flush at all and so never sets it.
+    throttled: o.squeezeDropped || lagMs > starved,
+    resolutionPct: Math.round(Math.min(1, Math.max(0, o.resolutionRatio)) * 100),
+  };
+}
+
 /**
  * Decides when a client flushes and how big the dump may be.
  *

@@ -40,7 +40,7 @@ import {
   EnvelopeAccumulator, parseGuiStreamConfig, envelopeWindowMs, encoderWindowMs,
   type GuiStreamConfig, type EnvelopePoint,
 } from './gui-stream.js';
-import { ClientOutbox, FlushPacer, SOCKET_IDLE_BYTES } from './client-outbox.js';
+import { ClientOutbox, FlushPacer, SOCKET_IDLE_BYTES, linkStatus } from './client-outbox.js';
 import { sendBackfill, type HistoryPayload } from './history-backfill.js';
 import { HistoryCache } from './history-cache.js';
 import { startGuiStaticServer } from './static-gui.js';
@@ -190,10 +190,14 @@ function saneSampleTimeMs(tsMs: number, fallbackMs: number): number {
 interface ClientStream {
   outbox: ClientOutbox;
   pacer: FlushPacer;
-  /** Last flush's observations, surfaced to the operator via CONNECTION_STATUS. */
+  /** This link's observations, surfaced to the operator via CONNECTION_STATUS. Recomputed
+   *  every tick from what has actually been delivered — NOT only on a successful flush,
+   *  which is how a starved client used to report itself perfectly healthy. */
   throttled: boolean;
   lagMs: number;
   resolutionPct: number;
+  /** Newest sample put on this socket, or null if nothing ever has been. */
+  lastDeliveredTsMs: number | null;
 }
 const clientStreams = new Map<WebSocket, ClientStream>();
 
@@ -223,6 +227,22 @@ setInterval(() => {
   const now = Date.now();
   for (const [ws, cs] of clientStreams) {
     if (ws.readyState !== WebSocket.OPEN) continue;
+
+    // Status FIRST, before either `continue` below. A client that cannot flush is exactly
+    // the one whose status matters, and it is the one that never reached the old
+    // assignment at the end of this loop.
+    {
+      const st = linkStatus({
+        lastDeliveredTsMs: cs.lastDeliveredTsMs,
+        nowMs: now,
+        resolutionRatio: cs.outbox.resolutionRatio(),
+        squeezeDropped: cs.outbox.squeezeDroppedLast,
+      });
+      cs.throttled = st.throttled;
+      cs.lagMs = st.lagMs;
+      cs.resolutionPct = st.resolutionPct;
+    }
+
     if (!cs.pacer.shouldFlush(ws.bufferedAmount, now)) continue;
 
     const newest = cs.outbox.newestTimestamp();
@@ -242,9 +262,7 @@ setInterval(() => {
       }
     }
     cs.pacer.noteFlush(bytes, now);
-    cs.throttled = cs.outbox.squeezeDroppedLast;
-    cs.lagMs = newest === null ? 0 : Math.max(0, now - newest);
-    cs.resolutionPct = Math.round(cs.outbox.resolutionRatio() * 100);
+    if (newest !== null) cs.lastDeliveredTsMs = newest;
   }
 }, 100);
 
@@ -870,6 +888,9 @@ wss.on('connection', (ws: WebSocket, req) => {
     throttled: false,
     lagMs: 0,
     resolutionPct: 100,
+    // null, not Date.now(): nothing has been delivered yet, and the flush loop treats
+    // null as the connect race rather than as a stale link.
+    lastDeliveredTsMs: null,
   });
   (ws as WsWithControl).__daqAlive = true;
   ws.on('pong', () => { (ws as WsWithControl).__daqAlive = true; });
