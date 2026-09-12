@@ -25,7 +25,7 @@ export function Column({
   const { setNodeRef, isOver } = useDroppable({ id: `col:${status}` });
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col rounded-xl bg-neutral-100 dark:bg-neutral-800 p-2">
+    <div className="flex w-[75vw] min-w-[16rem] max-w-[20rem] flex-none snap-start flex-col rounded-xl bg-neutral-100 dark:bg-neutral-800 p-2 lg:w-auto lg:min-w-0 lg:max-w-none lg:flex-1">
       <div className="flex items-center justify-between px-2 py-1.5">
         <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-200">{label}</h3>
         <span className="text-xs text-neutral-500 dark:text-neutral-400">{tasks.length}</span>

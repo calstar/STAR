@@ -39,7 +39,7 @@ export function DigestSettings({
     });
 
   const chip = (active: boolean) =>
-    `rounded-full border px-2.5 py-0.5 text-sm ${
+    `min-h-11 sm:min-h-0 rounded-full border px-3 sm:px-2.5 py-1 sm:py-0.5 text-sm ${
       active
         ? "border-neutral-900 bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
         : "border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
@@ -85,9 +85,9 @@ export function DigestSettings({
 
       <div>
         <p className="text-sm font-medium">What to include</p>
-        <div className="mt-2 grid grid-cols-2 gap-2">
+        <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-2">
           {kindOptions.map(([k, label]) => (
-            <label key={k} className="flex items-center gap-2 text-sm">
+            <label key={k} className="flex min-h-11 sm:min-h-0 items-center gap-2 text-sm">
               <input
                 type="checkbox"
                 checked={kindSel.has(k)}

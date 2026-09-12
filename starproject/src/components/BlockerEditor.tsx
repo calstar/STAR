@@ -55,11 +55,11 @@ export function BlockerEditor({
           maxLength={300}
           disabled={candidates.length === 0}
           aria-label="Blocker note"
-          className="min-w-28 flex-1 rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm disabled:opacity-50"
+          className="min-h-11 w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm disabled:opacity-50 sm:min-h-0 sm:w-auto sm:min-w-28 sm:flex-1"
         />
         <button
           disabled={pending || candidates.length === 0}
-          className="rounded bg-neutral-900 px-3 py-1 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300 disabled:opacity-50"
+          className="min-h-11 rounded bg-neutral-900 px-3 py-1 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300 disabled:opacity-50 sm:min-h-0"
         >
           Add
         </button>

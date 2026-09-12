@@ -64,7 +64,7 @@ export default async function TasksPage({
   }));
 
   return (
-    <div className="mx-auto max-w-[88rem] px-6 py-8">
+    <div className="mx-auto max-w-[88rem] px-4 sm:px-6 py-6 sm:py-8">
       <h1 className="text-2xl font-semibold">Tasks</h1>
       <div className="mt-6">
         <NewTaskForm

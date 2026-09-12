@@ -3,6 +3,19 @@
 /* Class-based dark mode: `dark:` variants apply when <html class="dark">. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Slightly reduced type scale (about one point off each step) so dense screens
+   breathe a little more. Only font sizes shrink — spacing and touch-target
+   utilities are untouched. Default line-height ratios still apply, so leading
+   gets proportionally airier. */
+@theme {
+  --text-xs: 0.71875rem; /* 11.5px, was 12px */
+  --text-sm: 0.8125rem; /* 13px, was 14px */
+  --text-base: 0.9375rem; /* 15px, was 16px */
+  --text-lg: 1.0625rem; /* 17px, was 18px */
+  --text-xl: 1.1875rem; /* 19px, was 20px */
+  --text-2xl: 1.375rem; /* 22px, was 24px */
+}
+
 /* Always reserve room for the vertical scrollbar so navigating between a page
    that scrolls and one that doesn't (e.g. Activity) doesn't shift the header. */
 html {
@@ -46,6 +59,32 @@ html {
 }
 .gantt .bar-wrapper:hover .bar {
   filter: brightness(0.94);
+}
+
+/* frappe-gantt wraps its fixed-width SVG in .gantt-container (overflow: auto),
+   which is the element that actually pans the timeline. Give it smooth touch
+   momentum and keep a horizontal swipe from chaining into browser navigation
+   or scrolling the page behind it. */
+.gantt-container {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+/* Small screens: bar/row sizing is bumped via frappe-gantt options in
+   GanttChart.tsx (CSS can't reflow the SVG layout); here we just enlarge the
+   SVG text to stay legible on a phone and drop the grey tap flash so a tap on
+   a bar reads as opening the task modal, not a stray highlight. */
+@media (max-width: 640px) {
+  .gantt-container {
+    -webkit-tap-highlight-color: transparent;
+  }
+  .gantt .bar-label {
+    font-size: 13px !important;
+  }
+  .gantt .lower-text,
+  .gantt .upper-text {
+    font-size: 13px !important;
+  }
 }
 
 /* We open our own task modal on bar click, so hide frappe-gantt's popup. */
