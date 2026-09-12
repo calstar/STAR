@@ -1,7 +1,7 @@
-#include <DAQv2-Comms.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 
 #include <cstring>
 
@@ -124,7 +124,7 @@ void printRawPacketData(const uint8_t* buffer, size_t size) {
 /**
  * @brief Prints packet header information
  */
-void printPacketHeader(const Diablo::PacketHeader& header) {
+void printPacketHeader(const daq::PacketHeader& header) {
     Serial.println("--- Packet Header ---");
     Serial.print("Packet Type: ");
     Serial.print(static_cast<int>(header.packet_type));
@@ -132,31 +132,31 @@ void printPacketHeader(const Diablo::PacketHeader& header) {
 
     // Print type name
     switch (header.packet_type) {
-        case Diablo::PacketType::BOARD_HEARTBEAT:
+        case daq::PacketType::BOARD_HEARTBEAT:
             Serial.print("BOARD_HEARTBEAT");
             break;
-        case Diablo::PacketType::SERVER_HEARTBEAT:
+        case daq::PacketType::SERVER_HEARTBEAT:
             Serial.print("SERVER_HEARTBEAT");
             break;
-        case Diablo::PacketType::SENSOR_DATA:
+        case daq::PacketType::SENSOR_DATA:
             Serial.print("SENSOR_DATA");
             break;
-        case Diablo::PacketType::ACTUATOR_COMMAND:
+        case daq::PacketType::ACTUATOR_COMMAND:
             Serial.print("ACTUATOR_COMMAND");
             break;
-        case Diablo::PacketType::SENSOR_CONFIG:
+        case daq::PacketType::SENSOR_CONFIG:
             Serial.print("SENSOR_CONFIG");
             break;
-        case Diablo::PacketType::ACTUATOR_CONFIG:
+        case daq::PacketType::ACTUATOR_CONFIG:
             Serial.print("ACTUATOR_CONFIG");
             break;
-        case Diablo::PacketType::ABORT:
+        case daq::PacketType::ABORT:
             Serial.print("ABORT");
             break;
-        case Diablo::PacketType::ABORT_DONE:
+        case daq::PacketType::ABORT_DONE:
             Serial.print("ABORT_DONE");
             break;
-        case Diablo::PacketType::CLEAR_ABORT:
+        case daq::PacketType::CLEAR_ABORT:
             Serial.print("CLEAR_ABORT");
             break;
         default:
@@ -174,8 +174,8 @@ void printPacketHeader(const Diablo::PacketHeader& header) {
 /**
  * @brief Prints Board Heartbeat packet information
  */
-void printBoardHeartbeat(const Diablo::PacketHeader& header,
-                         const Diablo::BoardHeartbeatPacket& data) {
+void printBoardHeartbeat(const daq::PacketHeader& header,
+                         const daq::BoardHeartbeatPacket& data) {
     Serial.println("=== Board Heartbeat Packet ===");
     printPacketHeader(header);
 
@@ -190,19 +190,19 @@ void printBoardHeartbeat(const Diablo::PacketHeader& header,
     Serial.print(static_cast<int>(data.engine_state));
     Serial.print(" (");
     switch (data.engine_state) {
-        case Diablo::EngineState::SAFE:
+        case daq::EngineState::SAFE:
             Serial.print("SAFE");
             break;
-        case Diablo::EngineState::PRESSURIZING:
+        case daq::EngineState::PRESSURIZING:
             Serial.print("PRESSURIZING");
             break;
-        case Diablo::EngineState::LOX_FILL:
+        case daq::EngineState::LOX_FILL:
             Serial.print("LOX_FILL");
             break;
-        case Diablo::EngineState::FIRING:
+        case daq::EngineState::FIRING:
             Serial.print("FIRING");
             break;
-        case Diablo::EngineState::POST_FIRE:
+        case daq::EngineState::POST_FIRE:
             Serial.print("POST_FIRE");
             break;
         default:
@@ -215,34 +215,34 @@ void printBoardHeartbeat(const Diablo::PacketHeader& header,
     Serial.print(static_cast<int>(data.board_state));
     Serial.print(" (");
     switch (data.board_state) {
-        case Diablo::BoardState::SETUP:
+        case daq::BoardState::SETUP:
             Serial.print("SETUP");
             break;
-        case Diablo::BoardState::ACTIVE:
+        case daq::BoardState::ACTIVE:
             Serial.print("ACTIVE");
             break;
-        case Diablo::BoardState::CONNECTION_LOSS_DETECTED:
+        case daq::BoardState::CONNECTION_LOSS_DETECTED:
             Serial.print("CONNECTION_LOSS_DETECTED");
             break;
-        case Diablo::BoardState::NO_CONNECTION_ABORT:
+        case daq::BoardState::NO_CONNECTION_ABORT:
             Serial.print("NO_CONNECTION_ABORT");
             break;
-        case Diablo::BoardState::NO_CONN_ABORT_FOLLOWER:
+        case daq::BoardState::NO_CONN_ABORT_FOLLOWER:
             Serial.print("NO_CONN_ABORT_FOLLOWER");
             break;
-        case Diablo::BoardState::PT_ABORT:
+        case daq::BoardState::PT_ABORT:
             Serial.print("PT_ABORT");
             break;
-        case Diablo::BoardState::NO_PT_ABORT:
+        case daq::BoardState::NO_PT_ABORT:
             Serial.print("NO_PT_ABORT");
             break;
-        case Diablo::BoardState::ABORT_FINISHED:
+        case daq::BoardState::ABORT_FINISHED:
             Serial.print("ABORT_FINISHED");
             break;
-        case Diablo::BoardState::STANDALONE_ABORT:
+        case daq::BoardState::STANDALONE_ABORT:
             Serial.print("STANDALONE_ABORT");
             break;
-        case Diablo::BoardState::SELF_TEST:
+        case daq::BoardState::SELF_TEST:
             Serial.print("SELF_TEST");
             break;
         default:
@@ -256,8 +256,8 @@ void printBoardHeartbeat(const Diablo::PacketHeader& header,
 /**
  * @brief Prints Server Heartbeat packet information
  */
-void printServerHeartbeat(const Diablo::PacketHeader& header,
-                          const Diablo::ServerHeartbeatPacket& data) {
+void printServerHeartbeat(const daq::PacketHeader& header,
+                          const daq::ServerHeartbeatPacket& data) {
     Serial.println("=== Server Heartbeat Packet ===");
     printPacketHeader(header);
 
@@ -266,19 +266,19 @@ void printServerHeartbeat(const Diablo::PacketHeader& header,
     Serial.print(static_cast<int>(data.engine_state));
     Serial.print(" (");
     switch (data.engine_state) {
-        case Diablo::EngineState::SAFE:
+        case daq::EngineState::SAFE:
             Serial.print("SAFE");
             break;
-        case Diablo::EngineState::PRESSURIZING:
+        case daq::EngineState::PRESSURIZING:
             Serial.print("PRESSURIZING");
             break;
-        case Diablo::EngineState::LOX_FILL:
+        case daq::EngineState::LOX_FILL:
             Serial.print("LOX_FILL");
             break;
-        case Diablo::EngineState::FIRING:
+        case daq::EngineState::FIRING:
             Serial.print("FIRING");
             break;
-        case Diablo::EngineState::POST_FIRE:
+        case daq::EngineState::POST_FIRE:
             Serial.print("POST_FIRE");
             break;
         default:
@@ -301,7 +301,7 @@ void decodeAndPrintPacket(const uint8_t* buffer, size_t size) {
     }
 
     // Check minimum size for header
-    const size_t min_header_size = sizeof(Diablo::PacketHeader);
+    const size_t min_header_size = sizeof(daq::PacketHeader);
     if (size < min_header_size) {
         Serial.println("Error: Packet too small to contain header");
         Serial.print("Received size: ");
@@ -314,7 +314,7 @@ void decodeAndPrintPacket(const uint8_t* buffer, size_t size) {
     }
 
     // Try to read the header first
-    Diablo::PacketHeader header;
+    daq::PacketHeader header;
     memcpy(&header, buffer, min_header_size);
 
     // Validate header
@@ -325,17 +325,17 @@ void decodeAndPrintPacket(const uint8_t* buffer, size_t size) {
     bool decoded = false;
 
     switch (header.packet_type) {
-        case Diablo::PacketType::BOARD_HEARTBEAT: {
-            Diablo::BoardHeartbeatPacket heartbeatData;
-            if (Diablo::parse_board_heartbeat_packet(buffer, size, header,
-                                                     heartbeatData)) {
+        case daq::PacketType::BOARD_HEARTBEAT: {
+            daq::BoardHeartbeatPacket heartbeatData;
+            if (daq::parse_board_heartbeat_packet(buffer, size, header,
+                                                  heartbeatData)) {
                 printBoardHeartbeat(header, heartbeatData);
                 decoded = true;
             } else {
                 Serial.println("Error: Failed to parse Board Heartbeat packet");
                 Serial.print("Expected size: ");
-                Serial.print(sizeof(Diablo::PacketHeader) +
-                             sizeof(Diablo::BoardHeartbeatPacket));
+                Serial.print(sizeof(daq::PacketHeader) +
+                             sizeof(daq::BoardHeartbeatPacket));
                 Serial.print(" bytes, received: ");
                 Serial.print(size);
                 Serial.println(" bytes");
@@ -343,18 +343,18 @@ void decodeAndPrintPacket(const uint8_t* buffer, size_t size) {
             break;
         }
 
-        case Diablo::PacketType::SERVER_HEARTBEAT: {
-            Diablo::ServerHeartbeatPacket heartbeatData;
-            if (Diablo::parse_server_heartbeat_packet(buffer, size, header,
-                                                      heartbeatData)) {
+        case daq::PacketType::SERVER_HEARTBEAT: {
+            daq::ServerHeartbeatPacket heartbeatData;
+            if (daq::parse_server_heartbeat_packet(buffer, size, header,
+                                                   heartbeatData)) {
                 printServerHeartbeat(header, heartbeatData);
                 decoded = true;
             } else {
                 Serial.println(
                     "Error: Failed to parse Server Heartbeat packet");
                 Serial.print("Expected size: ");
-                Serial.print(sizeof(Diablo::PacketHeader) +
-                             sizeof(Diablo::ServerHeartbeatPacket));
+                Serial.print(sizeof(daq::PacketHeader) +
+                             sizeof(daq::ServerHeartbeatPacket));
                 Serial.print(" bytes, received: ");
                 Serial.print(size);
                 Serial.println(" bytes");
@@ -362,7 +362,7 @@ void decodeAndPrintPacket(const uint8_t* buffer, size_t size) {
             break;
         }
 
-        case Diablo::PacketType::SENSOR_DATA:
+        case daq::PacketType::SENSOR_DATA:
             Serial.println(
                 "Packet type: SENSOR_DATA (not yet implemented for full "
                 "decoding)");
@@ -373,7 +373,7 @@ void decodeAndPrintPacket(const uint8_t* buffer, size_t size) {
             decoded = true;  // At least we identified the type
             break;
 
-        case Diablo::PacketType::ACTUATOR_COMMAND:
+        case daq::PacketType::ACTUATOR_COMMAND:
             Serial.println(
                 "Packet type: ACTUATOR_COMMAND (not yet implemented for "
                 "full decoding)");
@@ -384,7 +384,7 @@ void decodeAndPrintPacket(const uint8_t* buffer, size_t size) {
             decoded = true;  // At least we identified the type
             break;
 
-        case Diablo::PacketType::SENSOR_CONFIG:
+        case daq::PacketType::SENSOR_CONFIG:
             Serial.println(
                 "Packet type: SENSOR_CONFIG (not yet implemented for full "
                 "decoding)");
@@ -395,7 +395,7 @@ void decodeAndPrintPacket(const uint8_t* buffer, size_t size) {
             decoded = true;  // At least we identified the type
             break;
 
-        case Diablo::PacketType::ACTUATOR_CONFIG:
+        case daq::PacketType::ACTUATOR_CONFIG:
             Serial.println(
                 "Packet type: ACTUATOR_CONFIG (not yet implemented for full "
                 "decoding)");
@@ -406,7 +406,7 @@ void decodeAndPrintPacket(const uint8_t* buffer, size_t size) {
             decoded = true;  // At least we identified the type
             break;
 
-        case Diablo::PacketType::ABORT:
+        case daq::PacketType::ABORT:
             Serial.println(
                 "Packet type: ABORT (not yet implemented for full decoding)");
             Serial.print("Packet size: ");
@@ -416,7 +416,7 @@ void decodeAndPrintPacket(const uint8_t* buffer, size_t size) {
             decoded = true;  // At least we identified the type
             break;
 
-        case Diablo::PacketType::ABORT_DONE:
+        case daq::PacketType::ABORT_DONE:
             Serial.println(
                 "Packet type: ABORT_DONE (not yet implemented for full "
                 "decoding)");
@@ -427,7 +427,7 @@ void decodeAndPrintPacket(const uint8_t* buffer, size_t size) {
             decoded = true;  // At least we identified the type
             break;
 
-        case Diablo::PacketType::CLEAR_ABORT:
+        case daq::PacketType::CLEAR_ABORT:
             Serial.println(
                 "Packet type: CLEAR_ABORT (not yet implemented for full "
                 "decoding)");

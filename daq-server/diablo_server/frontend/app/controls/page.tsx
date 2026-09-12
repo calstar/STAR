@@ -6,6 +6,8 @@ import ActuatorControlByName from '@/components/controls/ActuatorControlByName';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { useSensorConfig } from '@/lib/sensor-config';
+import { useGuiConfig } from '@/lib/gui-config';
+import { usePressureLimits } from '@/lib/pressure-limits';
 import { buildPressurePlotSeriesFromSensorList } from '@/lib/pressure-bar-defs';
 import { usePressureHistoryPlotSeries } from '@/lib/store';
 
@@ -20,7 +22,12 @@ const STATE_NAMES: Record<number, string> = {
 export default function ControlsPage() {
   const { actuators: actuatorsFromConfig, loading: actuatorsLoading } = useActuatorsFromConfig();
   const sensors = useSensorConfig();
-  const pressurePlot = useMemo(() => buildPressurePlotSeriesFromSensorList(sensors), [sensors]);
+  const { pressureBars } = useGuiConfig();
+  const limits = usePressureLimits();
+  const pressurePlot = useMemo(
+    () => buildPressurePlotSeriesFromSensorList(sensors, pressureBars, limits),
+    [sensors, pressureBars, limits],
+  );
   const pressurePlotForChart = usePressureHistoryPlotSeries(pressurePlot);
 
   return (

@@ -12,8 +12,10 @@ export function PRNode({ id, data, selected }: NodeProps) {
     <div style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation ?? 0}deg)`, transformOrigin: 'center' }}>
       <Handle type="target" position={Position.Left}  id="l" style={{ background: '#94a3b8' }} />
       <Handle type="source" position={Position.Right} id="r" style={{ background: '#94a3b8' }} />
+      <Handle type="target" position={Position.Top}   id="t" style={{ background: '#94a3b8' }} />
 
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
+        <line x1="30" y1="0" x2="30" y2="8" stroke={stroke} strokeWidth={1.5} />
         <rect x="8" y="8" width="44" height="44" rx="3"
           fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
         <line x1="16" y1="44" x2="44" y2="16" stroke={stroke} strokeWidth={1.5} />

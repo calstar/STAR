@@ -21,11 +21,18 @@ export interface GuiStreamConfig {
   /** Target broadcast budget per stream. Envelope mode emits up to 2 points
    *  per window, so windows/sec = pointsPerSecond / 2. */
   pointsPerSecond: number;
+  /** Separate, much higher budget for encoder streams ([0x24]). Encoders feed
+   *  OscopeTriggerPlot's valve-actuation timing (inter-encoder skew, plateau
+   *  detection), which the GUI budget's 100 ms windows would quantize away. At
+   *  the boards' ~48 Hz this is a no-op — it exists to bound a faster encoder
+   *  board, not to downsample the current one. */
+  encoderPointsPerSecond: number;
 }
 
 export const DEFAULT_GUI_STREAM_CONFIG: GuiStreamConfig = {
   mode: 'envelope',
   pointsPerSecond: 20,
+  encoderPointsPerSecond: 100,
 };
 
 /** Parse the [gui] section of config.toml (already TOML-parsed). Unknown or
@@ -42,12 +49,20 @@ export function parseGuiStreamConfig(config: unknown): GuiStreamConfig {
   const pps = Number(gui.points_per_second);
   if (Number.isFinite(pps) && pps >= 2 && pps <= 1000) out.pointsPerSecond = pps;
 
+  const epps = Number(gui.encoder_points_per_second);
+  if (Number.isFinite(epps) && epps >= 2 && epps <= 2000) out.encoderPointsPerSecond = epps;
+
   return out;
 }
 
 export function envelopeWindowMs(cfg: GuiStreamConfig): number {
   // pointsPerSecond / 2 windows per second → window length in ms.
   return 2000 / cfg.pointsPerSecond;
+}
+
+/** Window length for encoder streams — same arithmetic, separate budget. */
+export function encoderWindowMs(cfg: GuiStreamConfig): number {
+  return 2000 / cfg.encoderPointsPerSecond;
 }
 
 export interface EnvelopePoint {
@@ -71,6 +86,30 @@ interface KeyWindow {
   max: number;
   maxTs: number;
   count: number;
+}
+
+/**
+ * Min/max of a window as chronologically ordered points — the single copy of
+ * this rule, shared by the envelope here and by the per-client outbox
+ * (client-outbox.ts), which re-serializes merged windows the same way.
+ *
+ * Ordering is load-bearing downstream: the browser's data cache
+ * (frontend/lib/data-cache.ts addDataPoint) drops any point older than its ring
+ * head, so points must leave here ascending. Identical timestamps are nudged
+ * +1 ms so same-timestamp dedupe layers (history ring, client cache) keep both.
+ */
+export function minMaxToPoints(
+  min: number, minTs: number, max: number, maxTs: number,
+): EnvelopePoint[] {
+  if (min === max && minTs === maxTs) return [{ tMs: minTs, value: min }];
+  const first: EnvelopePoint = minTs <= maxTs
+    ? { tMs: minTs, value: min }
+    : { tMs: maxTs, value: max };
+  const second: EnvelopePoint = minTs <= maxTs
+    ? { tMs: maxTs, value: max }
+    : { tMs: minTs, value: min };
+  if (second.tMs === first.tMs) second.tMs = first.tMs + 1;
+  return [first, second];
 }
 
 /**
@@ -160,19 +199,8 @@ export class EnvelopeAccumulator {
 }
 
 /** Min/max of a closed window as chronologically ordered points.
- *  Single distinct sample → one point. If min and max share the same
- *  millisecond but differ in value, the second point is nudged +1 ms so
- *  same-timestamp dedupe layers (history ring, client cache) keep both. */
+ *  Single distinct sample → one point; see minMaxToPoints for the rest. */
 function emitWindow(w: KeyWindow): EnvelopePoint[] {
-  if (w.count === 1 || (w.min === w.max && w.minTs === w.maxTs)) {
-    return [{ tMs: w.minTs, value: w.min }];
-  }
-  const first: EnvelopePoint = w.minTs <= w.maxTs
-    ? { tMs: w.minTs, value: w.min }
-    : { tMs: w.maxTs, value: w.max };
-  const second: EnvelopePoint = w.minTs <= w.maxTs
-    ? { tMs: w.maxTs, value: w.max }
-    : { tMs: w.minTs, value: w.min };
-  if (second.tMs === first.tMs) second.tMs = first.tMs + 1;
-  return [first, second];
+  if (w.count === 1) return [{ tMs: w.minTs, value: w.min }];
+  return minMaxToPoints(w.min, w.minTs, w.max, w.maxTs);
 }

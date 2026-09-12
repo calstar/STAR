@@ -12,10 +12,18 @@
 
 import { useEffect, useState } from 'react';
 import type { BoardStatus } from '@/lib/types';
+import { serverNowMs } from '@/lib/plot-time';
 
 const RATE_WINDOW_MS = 3000; // rolling window for Hz computation
 
-/** Hide readouts / stop synthetic plot extension if no SENSOR_UPDATE for this long. */
+/** Hide readouts / stop synthetic plot extension if no SENSOR_UPDATE for this long.
+ *
+ *  Measured on the SERVER timeline, not local arrival time. The backend may be
+ *  shedding resolution for a slow client (see backend client-outbox.ts), which
+ *  delivers fewer, chunkier batches of *current* data — on arrival time that
+ *  would blink "stale" between batches even though the samples are fresh. The
+ *  question this answers is "how old is the newest sample?", not "how long since
+ *  a packet landed?". */
 export const SENSOR_DATA_STALE_MS = 1500;
 
 /** Boards / Heartbeats pane only: longer window than sensor grid (lower update rate; avoids flicker). */
@@ -40,7 +48,7 @@ const _timestamps: Map<string, number[]> = new Map();
 const _lastUpdate: Map<string, number> = new Map();
 const _emaRate: Map<string, number> = new Map();
 
-export function recordSensorUpdate(entity: string, component: string): void {
+export function recordSensorUpdate(entity: string, component: string, sampleTsMs?: number): void {
   if (typeof performance === 'undefined') return;
   const key = `${entity}.${component}`;
   const now = performance.now();
@@ -52,7 +60,12 @@ export function recordSensorUpdate(entity: string, component: string): void {
   }
 
   ts.push(now);
-  _lastUpdate.set(key, Date.now());
+  // Freshness keys off the sample's own server timestamp so a throttled client
+  // reads live. Rate (the ts[] buffer above) stays on the local monotonic clock:
+  // Hz is about delivery cadence, which is a different question.
+  _lastUpdate.set(key, Number.isFinite(sampleTsMs) && (sampleTsMs as number) > 0
+    ? (sampleTsMs as number)
+    : Date.now());
 
   // Prune entries outside the rolling window
   const cutoff = now - RATE_WINDOW_MS;
@@ -114,11 +127,12 @@ export function getSensorRate(entity: string, component: string): number {
   return smoothed;
 }
 
-/** True if this exact `entity.component` key had a SENSOR_UPDATE within SENSOR_DATA_STALE_MS. */
+/** True if this exact `entity.component` key's newest sample is younger than
+ *  SENSOR_DATA_STALE_MS on the server timeline. */
 export function isSensorKeyFresh(key: string): boolean {
   const t = _lastUpdate.get(key);
   if (t == null || !Number.isFinite(t)) return false;
-  return Date.now() - t < SENSOR_DATA_STALE_MS;
+  return serverNowMs() - t < SENSOR_DATA_STALE_MS;
 }
 
 /**

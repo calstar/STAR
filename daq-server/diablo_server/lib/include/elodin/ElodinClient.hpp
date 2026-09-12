@@ -67,14 +67,20 @@ public:
     }
 
     /**
-     * @brief Subscribe to all stream data from Elodin (sends a StreamFilter MSG).
-     */
-    bool subscribe_stream();
-
-    /**
      * @brief Subscribe to specific tables by ID.
+     *
+     * There is deliberately no "subscribe to everything" call. There used to be —
+     * subscribe_stream(), documented as "subscribe to all stream data" — but it was really the
+     * calibration service's table list under a general name: 480 raw sensor ids plus the
+     * calibration command table. heartbeat_service called it expecting everything, received 481
+     * tables it discarded, and never received the one table it reads, so its engine_state sat at
+     * 0 forever. Elodin has no wildcard; every subscriber must name what it consumes.
+     *
+     * See raw_sensor_tables() / calibrated_sensor_tables() in DatabaseConfig.hpp for the sensor
+     * id sets, and kTableSequencerState / kTableCalibrationCommand for the non-sensor ones.
+     *
      * @param table_ids Vector of (hi, lo) byte pairs identifying each table.
-     * @return true if all subscribe messages were sent.
+     * @return false if any subscribe message failed to send.
      */
     bool subscribe_tables(const std::vector<std::pair<uint8_t, uint8_t>>& table_ids);
 
@@ -170,6 +176,14 @@ public:
     std::vector<uint8_t> serialize_msg(uint16_t message_id, const MessageType& msg);
 
 private:
+    // connect/reconnect/disconnect tear down and replace the socket that publish() writes to, so
+    // they take publish_mutex_ like every publish does. The _locked helpers exist because
+    // connect() must call disconnect() while already holding it (std::mutex is not recursive).
+    // Without this a service that publishes from one thread while retrying the connection from
+    // another — sequencer_service does exactly that — races on the socket.
+    bool connect_locked(const std::string& host, uint16_t port);
+    void disconnect_locked();
+
     std::unique_ptr<daq_comms::transport::TCPClient> socket_;
     std::mutex publish_mutex_;
     std::unordered_map<uint16_t, std::string> table_names_;

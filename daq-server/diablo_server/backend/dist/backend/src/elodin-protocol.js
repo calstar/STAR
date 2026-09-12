@@ -307,9 +307,10 @@ export function parseElodinPacket(packetId, payload, entityMaps) {
             { entity: `PSM.actuator.${actuatorId}`, component: 'status', value: status, timestamp: tsMs },
         ];
     }
-    // ── Self Test Result: [0x60, 0x01..0x3F] ────────────────────────────────
+    // ── Self Test Result: [0x60+sensor_id, board_id] ─────────────────────────
+    // Each sensor gets its own VTable so VTableStream delivers every result.
     // Layout: U64(0) timestamp_ns | U8(8) sensor_id | U8(9) result (1=pass, 0=fail)
-    if (high === 0x60 && payload.length >= 10) {
+    if (high >= 0x60 && high <= 0x6F && payload.length >= 10) {
         const boardId = low;
         const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
         const sensorId = payload.readUInt8(8);

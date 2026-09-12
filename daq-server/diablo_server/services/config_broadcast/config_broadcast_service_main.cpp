@@ -15,16 +15,29 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <cstring>
+
+// These packets are byte-packed: a u32 lands at offset 2, and the actuator entries step by 7, so
+// &buf[off] is routinely not 4-aligned. Writing through a uint32_t* there is undefined behaviour
+// (UBSan: "store to misaligned address ... requires 4 byte alignment", caught on all five call
+// sites during an integration run). memcpy compiles to the same single store on x86-64 and ARM64
+// and is defined everywhere, so this is a correctness fix with no code-generation cost.
+static inline void store_u32(uint8_t* dst, uint32_t v) {
+    std::memcpy(dst, &v, sizeof(v));
+}
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
 
-#include "calibration/PTCalibration.hpp"
+#include "config/Config.hpp"
+#include "net/DaqInterface.hpp"
 
 namespace {
 std::atomic<bool> g_running{true};
@@ -42,36 +55,6 @@ std::string trim(const std::string& s) {
     size_t a = s.find_first_not_of(" \t\r\n\"");
     size_t b = s.find_last_not_of(" \t\r\n\"");
     return (a == std::string::npos) ? "" : s.substr(a, b - a + 1);
-}
-
-std::string getTomlValue(const std::string& content, const std::string& section,
-                         const std::string& key, const std::string& fallback = "") {
-    std::string sec_header = "[" + section + "]";
-    auto sec_pos = content.find(sec_header);
-    if (sec_pos == std::string::npos)
-        return fallback;
-
-    auto search_start = sec_pos + sec_header.size();
-    auto next_sec = content.find("\n[", search_start);
-    std::string sec_content = (next_sec == std::string::npos)
-                                  ? content.substr(search_start)
-                                  : content.substr(search_start, next_sec - search_start);
-
-    std::istringstream iss(sec_content);
-    std::string line;
-    while (std::getline(iss, line)) {
-        auto c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        auto eq = line.find('=');
-        if (eq == std::string::npos)
-            continue;
-        std::string k = trim(line.substr(0, eq));
-        std::string v = trim(line.substr(eq + 1));
-        if (k == key)
-            return v;
-    }
-    return fallback;
 }
 
 uint32_t ipToU32Le(const std::string& ip) {
@@ -94,175 +77,14 @@ struct BoardInfo {
     bool designated_survivor;
     bool necessary_for_abort;
     int voltage_reference;
-    bool enable_serial_printing;
+    // Serial-print / log-stream mode byte (0..3): 0 USB Tier-1, 1 USB verbose,
+    // 2 stream Tier-1, 3 stream Tier-1+2. Sent verbatim as the config packet's
+    // enable_serial_printing byte; the firmware interprets it as the mode.
+    int enable_serial_printing;
     std::vector<int> active_connectors;
     int num_sensors;
     uint16_t listen_port;
 };
-
-void parseActuatorRole(const std::string& val, int& channel, int& board_id, bool& is_no) {
-    channel = 0;
-    board_id = 0;
-    is_no = false;
-    size_t i = val.find('[');
-    if (i == std::string::npos)
-        return;
-    size_t j = val.find(',', i + 1);
-    if (j == std::string::npos)
-        return;
-    std::string type_str = trim(val.substr(i + 1, j - i - 1));
-    if (type_str == "NO" || type_str == "no")
-        is_no = true;
-    size_t k = val.find(',', j + 1);
-    try {
-        if (k != std::string::npos)
-            board_id = std::stoi(trim(val.substr(k + 1)));
-        channel =
-            std::stoi(trim(val.substr(j + 1, (k != std::string::npos ? k : val.size()) - j - 1)));
-    } catch (...) {
-    }
-}
-
-std::vector<BoardInfo> parseBoards(const std::string& content) {
-    std::vector<BoardInfo> boards;
-    size_t pos = 0;
-    while ((pos = content.find("[boards.", pos)) != std::string::npos) {
-        size_t end = content.find(']', pos);
-        if (end == std::string::npos)
-            break;
-        std::string sec = content.substr(pos + 1, end - pos - 1);
-        std::string type = getTomlValue(content, sec, "type", "");
-        std::string ip = getTomlValue(content, sec, "ip", "");
-        std::string id_str =
-            getTomlValue(content, sec, "board_id", getTomlValue(content, sec, "id", "0"));
-        bool enabled = getTomlValue(content, sec, "enabled", "true") != "false";
-        bool designated = getTomlValue(content, sec, "designated_survivor", "false") == "true";
-        bool nec_abort = getTomlValue(content, sec, "necessary_for_abort", "false") == "true";
-        int ref = 0;
-        try {
-            ref = std::stoi(getTomlValue(content, sec, "voltage_reference", "0"));
-        } catch (...) {
-        }
-        bool ser = getTomlValue(content, sec, "enable_serial_printing", "false") == "true";
-        int num_sens = 10;
-        try {
-            num_sens = std::stoi(getTomlValue(content, sec, "num_sensors", "10"));
-        } catch (...) {
-        }
-
-        uint16_t listen_port = DEFAULT_LISTEN_PORT;
-        try {
-            listen_port = static_cast<uint16_t>(
-                std::stoul(getTomlValue(content, sec, "listen_port", "5005")));
-        } catch (...) {
-        }
-
-        std::vector<int> active;
-        std::string active_str = getTomlValue(content, sec, "active_connectors", "");
-        if (!active_str.empty()) {
-            size_t p = active_str.find('[');
-            if (p != std::string::npos) {
-                p++;
-                while (p < active_str.size()) {
-                    while (p < active_str.size() && (active_str[p] == ' ' || active_str[p] == ','))
-                        p++;
-                    if (p >= active_str.size())
-                        break;
-                    size_t e = active_str.find_first_of(",]", p);
-                    if (e == std::string::npos)
-                        e = active_str.size();
-                    try {
-                        active.push_back(std::stoi(trim(active_str.substr(p, e - p))));
-                    } catch (...) {
-                    }
-                    p = e + 1;
-                }
-            }
-        }
-        if (active.empty())
-            for (int i = 1; i <= num_sens; ++i)
-                active.push_back(i);
-
-        int bid = 0;
-        try {
-            bid = std::stoi(id_str);
-        } catch (...) {
-        }
-        if (ip.empty() && bid > 0)
-            ip = "192.168.2." + std::to_string(bid);
-
-        boards.push_back({bid, ip, type, enabled, designated, nec_abort, ref, ser, active, num_sens,
-                          listen_port});
-        pos = end + 1;
-    }
-    return boards;
-}
-
-std::map<std::string, int> parseSensorRoles(const std::string& content,
-                                            const std::string& section) {
-    std::map<std::string, int> out;
-    std::string sec_header = "[" + section + "]";
-    auto sec_pos = content.find(sec_header);
-    if (sec_pos == std::string::npos)
-        return out;
-    auto search_start = sec_pos + sec_header.size();
-    auto next_sec = content.find("\n[", search_start);
-    std::string sec_content = (next_sec == std::string::npos)
-                                  ? content.substr(search_start)
-                                  : content.substr(search_start, next_sec - search_start);
-
-    std::istringstream iss(sec_content);
-    std::string line;
-    while (std::getline(iss, line)) {
-        auto c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        auto eq = line.find('=');
-        if (eq == std::string::npos)
-            continue;
-        std::string key = trim(line.substr(0, eq));
-        std::string val = trim(line.substr(eq + 1));
-        if (key.size() >= 2 && key.front() == '"' && key.back() == '"')
-            key = key.substr(1, key.size() - 2);
-        try {
-            out[key] = std::stoi(val);
-        } catch (...) {
-        }
-    }
-    return out;
-}
-
-std::map<std::string, double> parseAbortPts(const std::string& content) {
-    std::map<std::string, double> out;
-    std::string sec_content;
-    auto pos = content.find("[abort_pts]");
-    if (pos == std::string::npos)
-        return out;
-    pos += 11;
-    auto next = content.find("\n[", pos);
-    sec_content =
-        (next == std::string::npos) ? content.substr(pos) : content.substr(pos, next - pos);
-
-    std::istringstream iss(sec_content);
-    std::string line;
-    while (std::getline(iss, line)) {
-        auto c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        auto eq = line.find('=');
-        if (eq == std::string::npos)
-            continue;
-        std::string key = trim(line.substr(0, eq));
-        std::string val = trim(line.substr(eq + 1));
-        if (key.size() >= 2 && key.front() == '"' && key.back() == '"')
-            key = key.substr(1, key.size() - 2);
-        try {
-            out[key] = std::stod(val);
-        } catch (...) {
-        }
-    }
-    return out;
-}
 
 void parseVentAbortFromCsv(const std::string& csv_path, std::map<std::string, int>& vent_map,
                            std::map<std::string, int>& abort_map) {
@@ -307,6 +129,316 @@ void parseVentAbortFromCsv(const std::string& csv_path, std::map<std::string, in
     }
 }
 
+// One UDP packet to send: (packet type, bytes, dest IP, dest port).
+using ConfigPacket = std::tuple<uint8_t, std::vector<uint8_t>, std::string, uint16_t>;
+
+// Abort thresholds the calibration service computed through each sensor's REAL model (cubic /
+// robust / physics, with a physics fallback for sparse cal), keyed by uid -> {target_psi, raw_adc}.
+// The calibration service is the authority — it has every model loaded and re-emits on each
+// capture/clear/reload. config_broadcast prefers these and only falls back to its own inline
+// physics inversion when a uid is absent (calibration service starting up / down) or its recorded
+// PSI no longer matches the live config (an abort_pts edit the service hasn't re-emitted for yet).
+std::map<uint16_t, std::pair<double, uint32_t>> readAbortThresholds() {
+    std::map<uint16_t, std::pair<double, uint32_t>> out;
+    const char* candidates[] = {
+        "scripts/calibration/calibrations/abort_thresholds.txt",
+        "../scripts/calibration/calibrations/abort_thresholds.txt",
+        "../../scripts/calibration/calibrations/abort_thresholds.txt",
+    };
+    for (const char* path : candidates) {
+        std::ifstream f(path);
+        if (!f.is_open())
+            continue;
+        std::string line;
+        while (std::getline(f, line)) {
+            if (line.empty() || line[0] == '#')
+                continue;
+            std::istringstream is(line);
+            unsigned uid = 0;
+            double psi = 0.0;
+            unsigned long adc = 0;
+            if (is >> uid >> psi >> adc)
+                out[static_cast<uint16_t>(uid)] = {psi, static_cast<uint32_t>(adc)};
+        }
+        break;  // first found wins
+    }
+    return out;
+}
+
+// Read config.toml fresh and build the full SENSOR_CONFIG/ACTUATOR_CONFIG packet set.
+// Called every broadcast cycle so board edits (roles, active_connectors, voltage_reference,
+// abort thresholds, enable flags) go live without restarting the service or a session.
+// Returns an empty vector on any failure (missing/truncated file, no designated survivor);
+// the caller keeps the last-good set rather than dropping board config for a cycle.
+//
+// ── THIS IS THE ONE DELIBERATE EXCEPTION to the draft-at-session-start rule ───────────────────
+// Everywhere else, config reaches a running rig at exactly one point: the backend deploys the
+// active profile to config/ at session start, and the pipeline services then read it once at
+// boot. This service does not follow that rule, on purpose. It is always-on rather than
+// session-gated, and board config (including [abort_pts] trip thresholds and boards.*.enabled)
+// is expected to reach hardware without cycling a session.
+//
+// Do not "fix" this into consistency without deciding what should happen to boards between runs
+// — an always-on service that reads once at boot would need a service restart to pick up an
+// edit, which is a third apply point and worse than either option. See
+// docs/CONFIGURATION_GUIDE.md.
+std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
+    const fsw::config::Config cfg = fsw::config::load(config_path);
+
+    // Map typed boards -> local BoardInfo (expand active_connectors, synthesize ip like the old
+    // parser).
+    std::vector<BoardInfo> boards;
+    for (const auto& b : cfg.boards) {
+        std::vector<int> active = b.active_connectors;
+        if (active.empty())
+            for (int i = 1; i <= b.num_sensors; ++i)
+                active.push_back(i);
+        std::string ip = b.ip;
+        if (ip.empty() && b.board_id > 0)
+            ip = "192.168.2." + std::to_string(b.board_id);
+        boards.push_back({b.board_id, ip, b.type, b.enabled, b.designated_survivor,
+                          b.necessary_for_abort, b.voltage_reference, b.enable_serial_printing,
+                          active, b.num_sensors, b.listen_port});
+    }
+
+    std::string designated_ip;
+    int designated_id = -1;
+    for (const auto& b : boards) {
+        if (b.enabled && b.type == "ACTUATOR" && b.designated_survivor) {
+            designated_ip = b.ip;
+            designated_id = b.id;
+            break;
+        }
+    }
+    // No designated survivor → treat as a bad/partial read and keep last-good.
+    if (designated_ip.empty())
+        return {};
+
+    std::map<int, std::string> board_id_to_ip;
+    for (const auto& b : boards)
+        if (b.id > 0)
+            board_id_to_ip[b.id] = b.ip;
+
+    std::map<std::string, int> vent_map, abort_map;
+    std::string csv_path = cfg.state_machine.actuator_csv;
+    const char* csv_fbs[] = {
+        "config/state_machine_actuators.csv",
+        "../config/state_machine_actuators.csv",
+        "../../config/state_machine_actuators.csv",
+    };
+    for (const char* fb : csv_fbs) {
+        std::ifstream t(fb);
+        if (t.is_open()) {
+            csv_path = fb;
+            break;
+        }
+    }
+    parseVentAbortFromCsv(csv_path, vent_map, abort_map);
+
+    const std::map<std::string, double>& abort_pts = cfg.abort_pts;
+
+    std::map<std::string, std::tuple<int, int, bool>> actuator_roles;
+    for (const auto& [name, r] : cfg.actuator_roles)
+        if (r.channel >= 1 && r.channel <= 255)
+            actuator_roles[name] = {r.channel, r.board_id > 0 ? r.board_id : 12, r.is_no};
+
+    // Autonomous overpressure abort thresholds: invert each abort PSI to a raw ADC code through the
+    // SAME per-sensor model the calibration service streams to the GUI, so a board trips at the ADC
+    // that matches the pressure the operator sees. This used to invert a factory
+    // PTCalibrationManager that the physics-or-nothing deploy does not ship (and that deliberately
+    // excludes the operator cubic) — every lookup returned null, each abort sensor was silently
+    // skipped, and the ACTUATOR_CONFIG packet carried zero thresholds: the hardware overpressure
+    // net was simply absent. A threshold that cannot be computed is now logged loudly and omitted
+    // (no board trip for that one sensor) rather than shipped wrong or dropped in silence.
+    //
+    // Only ratiometric-physics (0-5 V) inversion is implemented: adc = psi/full_scale * 2^31, the
+    // exact inverse of the calibration service's convert_ratiometric_pt_to_pressure. A sensor whose
+    // model is cubic/robust/blend, or that sits on a 4-20 mA board, is refused here (set its
+    // calibration_model to "physics" for a board trip, or it has none) — inverting the operator
+    // cubic or the current-loop curve would duplicate that math and is left as a follow-up. Both
+    // shipped rigs' abort PTs are ratiometric physics.
+    const auto cal_thresholds = readAbortThresholds();
+    std::vector<std::tuple<uint32_t, uint8_t, uint32_t>> abort_pt_list;
+    std::set<std::string> abort_warnings;
+    for (const auto& [sensor_name, threshold_psi] : abort_pts) {
+        const std::string tag = "[ConfigBroadcast] abort_pts \"" + sensor_name + "\": ";
+        bool resolved_role = false;
+        for (const auto& b : cfg.boards) {
+            if (b.type != "PT" || !b.enabled || b.board_id <= 0)
+                continue;
+            const std::string board_key =
+                b.section.rfind("boards.", 0) == 0 ? b.section.substr(7) : b.section;
+            const auto* roles = cfg.sensor_roles_for("sensor_roles_" + board_key);
+            if (roles == nullptr)
+                continue;
+            auto rit = roles->find(sensor_name);
+            if (rit == roles->end())
+                continue;  // not on this board — keep looking
+            resolved_role = true;
+            const int channel = rit->second;
+            if (channel < 1 || channel > 255) {
+                abort_warnings.insert(tag + "channel out of range — no board abort threshold");
+                break;
+            }
+            const uint16_t uid = static_cast<uint16_t>(b.board_id * 100 + channel);
+            // Prefer the calibration service's model-correct threshold, as long as the PSI it was
+            // computed for still matches the live config (it re-emits on capture/clear/reload, not
+            // on a bare abort_pts edit). This is the path that covers cubic/robust and operator
+            // cal.
+            {
+                auto cit = cal_thresholds.find(uid);
+                if (cit != cal_thresholds.end() &&
+                    std::abs(cit->second.first - threshold_psi) < 0.5) {
+                    abort_pt_list.push_back(
+                        {ipToU32Le(b.ip), static_cast<uint8_t>(channel), cit->second.second});
+                    break;
+                }
+            }
+            // Fallback (calibration service not up yet, or the abort PSI changed and it hasn't
+            // re-emitted): invert physics inline. Interface + model + full-scale resolved exactly
+            // as calibration_main does, so a physics threshold lands on the same curve the operator
+            // reads.
+            const bool is_loop = b.has_hp_pt_keys || b.pt_type == "4-20 mA absolute";
+            std::string model = is_loop ? "physics" : "cubic";  // interface-aware default
+            if (const auto* models = cfg.calibration_model_for("calibration_model_" + board_key)) {
+                auto mit = models->find(sensor_name);
+                if (mit != models->end())
+                    model = mit->second;
+            }
+            double full_scale = is_loop ? b.hp_pt_full_scale_psi : 1000.0;
+            if (const auto* fss = cfg.full_scale_for("calibration_full_scale_" + board_key)) {
+                auto fit = fss->find(sensor_name);
+                if (fit != fss->end() && fit->second > 0.0)
+                    full_scale = fit->second;
+            }
+
+            if (model != "physics" || is_loop) {
+                abort_warnings.insert(
+                    tag + "model \"" + model + (is_loop ? " (4-20 mA)" : "") +
+                    "\" cannot be inverted for a board trip — set "
+                    "calibration_model = \"physics\", or this sensor has NO trip");
+                break;
+            }
+            if (!(full_scale > 0.0) || !(threshold_psi > 0.0)) {
+                abort_warnings.insert(tag + "non-positive full_scale/threshold — NO board trip");
+                break;
+            }
+            constexpr double ADC_MAX = 2147483648.0;  // 2^31
+            double adc = std::clamp((threshold_psi / full_scale) * ADC_MAX, 0.0, ADC_MAX - 1.0);
+            abort_pt_list.push_back({ipToU32Le(b.ip), static_cast<uint8_t>(channel),
+                                     static_cast<uint32_t>(llround(adc))});
+            break;  // handled on its owning board
+        }
+        if (!resolved_role)
+            abort_warnings.insert(tag + "no PT sensor_role declares this name — NO board trip");
+    }
+    // Log each distinct abort-threshold problem once while it persists, and note recovery — never
+    // spam the every-cycle rebuild. Dropping resolved entries lets a re-break warn again.
+    {
+        static std::set<std::string> s_last_abort_warnings;
+        for (const auto& w : abort_warnings)
+            if (s_last_abort_warnings.count(w) == 0)
+                std::cerr << "⚠️  " << w << std::endl;
+        if (abort_warnings.empty() && !s_last_abort_warnings.empty())
+            std::cout << "[ConfigBroadcast] all abort_pts thresholds resolved" << std::endl;
+        s_last_abort_warnings = abort_warnings;
+    }
+
+    auto build_actuator_config = [&](int is_abort_controller,
+                                     int enable_serial) -> std::vector<uint8_t> {
+        std::vector<std::tuple<uint32_t, uint8_t, uint8_t, uint8_t>> abort_actuators;
+        for (const auto& [name, tup] : actuator_roles) {
+            int ch = std::get<0>(tup), bid = std::get<1>(tup);
+            std::string ip = board_id_to_ip.count(bid) ? board_id_to_ip[bid] : designated_ip;
+            uint8_t vent = static_cast<uint8_t>(vent_map.count(name) ? vent_map[name] : 0);
+            uint8_t abort = static_cast<uint8_t>(abort_map.count(name) ? abort_map[name] : 0);
+            abort_actuators.push_back({ipToU32Le(ip), static_cast<uint8_t>(ch), vent, abort});
+        }
+
+        size_t N = std::min(abort_actuators.size(), size_t(255));
+        size_t X = std::min(abort_pt_list.size(), size_t(255));
+        size_t body = 1 + 1 + N * 7 + 1 + X * 9 + 1;
+        size_t total = 6 + body;
+
+        std::vector<uint8_t> buf(total);
+        buf[0] = ACTUATOR_CONFIG;
+        buf[1] = 0;
+        store_u32(&buf[2], 0);
+
+        size_t off = 6;
+        buf[off++] = static_cast<uint8_t>(is_abort_controller);
+        buf[off++] = static_cast<uint8_t>(N);
+        for (size_t i = 0; i < N; ++i) {
+            auto [ip, aid, vent, abort] = abort_actuators[i];
+            store_u32(&buf[off], ip);
+            off += 4;
+            buf[off++] = aid;
+            buf[off++] = vent;
+            buf[off++] = abort;
+        }
+        buf[off++] = static_cast<uint8_t>(X);
+        for (size_t i = 0; i < X; ++i) {
+            auto [ip, sid, adc] = abort_pt_list[i];
+            store_u32(&buf[off], ip);
+            off += 4;
+            buf[off++] = sid;
+            store_u32(&buf[off], adc);
+            off += 4;
+        }
+        buf[off] = static_cast<uint8_t>(enable_serial);  // mode byte 0..3
+        return buf;
+    };
+
+    auto build_sensor_config = [&](const BoardInfo& b) -> std::vector<uint8_t> {
+        std::vector<uint8_t> channels;
+        for (int c : b.active_connectors)
+            if (c >= 1 && c <= 255)
+                channels.push_back(static_cast<uint8_t>(c));
+        size_t num = std::min(channels.size(), size_t(255));
+        size_t body = 1 + num + 1 + 1 + (b.necessary_for_abort ? 4 : 0) + 1;
+        size_t total = 6 + body;
+
+        std::vector<uint8_t> buf(total);
+        buf[0] = SENSOR_CONFIG;
+        buf[1] = 0;
+        store_u32(&buf[2], 0);
+
+        size_t off = 6;
+        buf[off++] = static_cast<uint8_t>(num);
+        for (size_t i = 0; i < num; ++i)
+            buf[off++] = channels[i];
+        buf[off++] = static_cast<uint8_t>(std::min(2, std::max(0, b.voltage_reference)));
+        buf[off++] = b.necessary_for_abort ? 1 : 0;
+        if (b.necessary_for_abort) {
+            uint32_t ip_be = ipToU32Be(designated_ip);
+            buf[off] = (ip_be >> 24) & 0xFF;
+            buf[off + 1] = (ip_be >> 16) & 0xFF;
+            buf[off + 2] = (ip_be >> 8) & 0xFF;
+            buf[off + 3] = ip_be & 0xFF;
+            off += 4;
+        }
+        buf[off] = static_cast<uint8_t>(b.enable_serial_printing);  // mode byte 0..3
+        return buf;
+    };
+
+    std::vector<ConfigPacket> packets;
+    for (const auto& b : boards) {
+        if (!b.enabled)
+            continue;
+        if (b.type == "ACTUATOR") {
+            int is_abort = (b.id == designated_id) ? 1 : 0;
+            auto pkt = build_actuator_config(is_abort, b.enable_serial_printing);
+            if (!pkt.empty())
+                packets.push_back({ACTUATOR_CONFIG, pkt, b.ip, b.listen_port});
+        } else if (b.type == "PT" || b.type == "TC" || b.type == "RTD" || b.type == "LC" ||
+                   b.type == "ENCODER") {
+            auto pkt = build_sensor_config(b);
+            packets.push_back({SENSOR_CONFIG, pkt, b.ip, b.listen_port});
+        }
+    }
+    return packets;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -349,217 +481,22 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (interval_ms < 0 && !config_content.empty()) {
-        std::string val =
-            getTomlValue(config_content, "config_broadcast_service", "interval_ms", "");
-        if (!val.empty()) {
-            try {
-                interval_ms = std::max(500, std::stoi(val));
-            } catch (...) {
-            }
-        }
+    // Precedence: defaults < config < CLI (--interval-ms). Config value clamped to >=500 ms.
+    if (interval_ms < 0) {
+        const fsw::config::Config cfg = fsw::config::load(config_path);
+        interval_ms = std::max(500, static_cast<int>(cfg.config_broadcast_interval_ms));
     }
-    if (interval_ms < 0)
-        interval_ms = 1000;
 
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
 
-    auto boards = parseBoards(config_content);
-    std::string designated_ip;
-    int designated_id = -1;
-    for (const auto& b : boards) {
-        if (b.enabled && b.type == "ACTUATOR" && b.designated_survivor) {
-            designated_ip = b.ip;
-            designated_id = b.id;
-            break;
-        }
-    }
-
-    if (designated_ip.empty()) {
-        std::cerr << "[ConfigBroadcast] No designated_survivor actuator board" << std::endl;
-        return 1;
-    }
-
-    std::map<int, std::string> board_id_to_ip;
-    for (const auto& b : boards)
-        if (b.id > 0)
-            board_id_to_ip[b.id] = b.ip;
-
-    std::map<std::string, int> vent_map, abort_map;
-    std::string csv_path = getTomlValue(config_content, "state_machine", "actuator_csv",
-                                        "config/state_machine_actuators.csv");
-    const char* csv_fbs[] = {
-        "config/state_machine_actuators.csv",
-        "../config/state_machine_actuators.csv",
-        "external/DiabloAvionics/test_guis/state_machine_actuators.csv",
-    };
-    for (const char* fb : csv_fbs) {
-        std::ifstream t(fb);
-        if (t.is_open()) {
-            csv_path = fb;
-            break;
-        }
-    }
-    parseVentAbortFromCsv(csv_path, vent_map, abort_map);
-
-    auto sensor_roles = parseSensorRoles(config_content, "sensor_roles_pt_board");
-    if (sensor_roles.empty())
-        sensor_roles = parseSensorRoles(config_content, "sensor_roles");
-    auto abort_pts = parseAbortPts(config_content);
-
-    fsw::calibration::PTCalibrationManager::set_default_paths(
-        "scripts/calibration/calibrations",
-        "external/DiabloAvionics/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv");
-    fsw::calibration::PTCalibrationManager pt_cal;
-    pt_cal.load_calibration();
-
-    std::string current_section;
-    std::map<std::string, std::tuple<int, int, bool>> actuator_roles;
-    std::istringstream cfg(config_content);
-    std::string line, cell;
-    while (std::getline(cfg, line)) {
-        auto c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        if (line.size() >= 2 && line[0] == '[') {
-            size_t end = line.find(']');
-            current_section = (end != std::string::npos) ? line.substr(1, end - 1) : "";
-            continue;
-        }
-        auto eq = line.find('=');
-        if (eq == std::string::npos || current_section != "actuator_roles")
-            continue;
-        std::string key = trim(line.substr(0, eq));
-        std::string val = trim(line.substr(eq + 1));
-        if (key.size() >= 2 && key.front() == '"' && key.back() == '"')
-            key = key.substr(1, key.size() - 2);
-        int ch = 0, bid = 0;
-        bool is_no = false;
-        parseActuatorRole(val, ch, bid, is_no);
-        if (ch >= 1 && ch <= 255)
-            actuator_roles[key] = {ch, bid > 0 ? bid : 12, is_no};
-    }
-
-    std::vector<std::tuple<uint8_t, std::vector<uint8_t>, std::string, uint16_t>> packets;
-
-    auto build_actuator_config = [&](int is_abort_controller,
-                                     bool enable_serial) -> std::vector<uint8_t> {
-        std::vector<std::tuple<uint32_t, uint8_t, uint8_t, uint8_t>> abort_actuators;
-        for (const auto& [name, tup] : actuator_roles) {
-            int ch = std::get<0>(tup), bid = std::get<1>(tup);
-            bool is_no = std::get<2>(tup);
-            std::string ip = board_id_to_ip.count(bid) ? board_id_to_ip[bid] : designated_ip;
-            uint8_t vent = static_cast<uint8_t>(vent_map.count(name) ? vent_map[name] : 0);
-            uint8_t abort = static_cast<uint8_t>(abort_map.count(name) ? abort_map[name] : 0);
-            abort_actuators.push_back({ipToU32Le(ip), static_cast<uint8_t>(ch), vent, abort});
-        }
-
-        std::string pt_board_ip;
-        for (const auto& b : boards) {
-            if (b.enabled && b.type == "PT") {
-                pt_board_ip = b.ip;
-                break;
-            }
-        }
-
-        std::vector<std::tuple<uint32_t, uint8_t, uint32_t>> abort_pt_list;
-        for (const auto& [sensor_name, threshold_psi] : abort_pts) {
-            auto it = sensor_roles.find(sensor_name);
-            if (it == sensor_roles.end())
-                continue;
-            int sensor_id = it->second;
-            const auto* coeffs = pt_cal.get_calibration(static_cast<uint8_t>(sensor_id));
-            if (!coeffs)
-                continue;
-            auto adc_opt = coeffs->invert_to_adc(threshold_psi);
-            if (!adc_opt)
-                continue;
-            if (!pt_board_ip.empty())
-                abort_pt_list.push_back({ipToU32Le(pt_board_ip), static_cast<uint8_t>(sensor_id),
-                                         static_cast<uint32_t>(*adc_opt & 0xFFFFFFFFu)});
-        }
-
-        size_t N = std::min(abort_actuators.size(), size_t(255));
-        size_t X = std::min(abort_pt_list.size(), size_t(255));
-        size_t body = 1 + 1 + N * 7 + 1 + X * 9 + 1;
-        size_t total = 6 + body;
-
-        std::vector<uint8_t> buf(total);
-        buf[0] = ACTUATOR_CONFIG;
-        buf[1] = 0;
-        *reinterpret_cast<uint32_t*>(&buf[2]) = 0;
-
-        size_t off = 6;
-        buf[off++] = static_cast<uint8_t>(is_abort_controller);
-        buf[off++] = static_cast<uint8_t>(N);
-        for (size_t i = 0; i < N; ++i) {
-            auto [ip, aid, vent, abort] = abort_actuators[i];
-            *reinterpret_cast<uint32_t*>(&buf[off]) = ip;
-            off += 4;
-            buf[off++] = aid;
-            buf[off++] = vent;
-            buf[off++] = abort;
-        }
-        buf[off++] = static_cast<uint8_t>(X);
-        for (size_t i = 0; i < X; ++i) {
-            auto [ip, sid, adc] = abort_pt_list[i];
-            *reinterpret_cast<uint32_t*>(&buf[off]) = ip;
-            off += 4;
-            buf[off++] = sid;
-            *reinterpret_cast<uint32_t*>(&buf[off]) = adc;
-            off += 4;
-        }
-        buf[off] = enable_serial ? 1 : 0;
-        return buf;
-    };
-
-    auto build_sensor_config = [&](const BoardInfo& b) -> std::vector<uint8_t> {
-        std::vector<uint8_t> channels;
-        for (int c : b.active_connectors)
-            if (c >= 1 && c <= 255)
-                channels.push_back(static_cast<uint8_t>(c));
-        size_t num = std::min(channels.size(), size_t(255));
-        size_t body = 1 + num + 1 + 1 + (b.necessary_for_abort ? 4 : 0) + 1;
-        size_t total = 6 + body;
-
-        std::vector<uint8_t> buf(total);
-        buf[0] = SENSOR_CONFIG;
-        buf[1] = 0;
-        *reinterpret_cast<uint32_t*>(&buf[2]) = 0;
-
-        size_t off = 6;
-        buf[off++] = static_cast<uint8_t>(num);
-        for (size_t i = 0; i < num; ++i)
-            buf[off++] = channels[i];
-        buf[off++] = static_cast<uint8_t>(std::min(2, std::max(0, b.voltage_reference)));
-        buf[off++] = b.necessary_for_abort ? 1 : 0;
-        if (b.necessary_for_abort) {
-            uint32_t ip_be = ipToU32Be(designated_ip);
-            buf[off] = (ip_be >> 24) & 0xFF;
-            buf[off + 1] = (ip_be >> 16) & 0xFF;
-            buf[off + 2] = (ip_be >> 8) & 0xFF;
-            buf[off + 3] = ip_be & 0xFF;
-            off += 4;
-        }
-        buf[off] = b.enable_serial_printing ? 1 : 0;
-        return buf;
-    };
-
-    for (const auto& b : boards) {
-        if (!b.enabled)
-            continue;
-        if (b.type == "ACTUATOR") {
-            int is_abort = (b.id == designated_id) ? 1 : 0;
-            auto pkt = build_actuator_config(is_abort, b.enable_serial_printing);
-            if (!pkt.empty())
-                packets.push_back({ACTUATOR_CONFIG, pkt, b.ip, b.listen_port});
-        } else if (b.type == "PT" || b.type == "TC" || b.type == "RTD" || b.type == "LC" ||
-                   b.type == "ENCODER") {
-            auto pkt = build_sensor_config(b);
-            packets.push_back({SENSOR_CONFIG, pkt, b.ip, b.listen_port});
-        }
-    }
+    // Packets (including abort thresholds) are rebuilt from the live config every cycle (below) so
+    // board and calibration edits apply with no restart / no session.
+    auto packets = buildPackets(config_path);
+    if (packets.empty())
+        std::cerr << "[ConfigBroadcast] No packets from config yet (no designated_survivor?); "
+                     "retrying each cycle"
+                  << std::endl;
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
@@ -567,32 +504,88 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Pin the egress NIC. This service unicasts to each board, so the destination already names
+    // one subnet — but nothing stopped the kernel choosing a different interface to reach it on a
+    // host with several. Resolved from the config as loaded at startup: the send loop re-reads
+    // config.toml every cycle for board edits, and a NIC change mid-run is not a board edit.
+    {
+        const auto nic =
+            fsw::net::resolveDaqBindAddress(fsw::config::load(config_path), "ConfigBroadcast");
+        if (!nic.ok) {
+            close(sock);
+            return 1;
+        }
+        fsw::net::bindToDaqInterface(sock, nic.address, "ConfigBroadcast");
+    }
+
     struct sockaddr_in dest;
     memset(&dest, 0, sizeof(dest));
     dest.sin_family = AF_INET;
 
-    std::cout << "[ConfigBroadcast] Started — interval=" << interval_ms << "ms (C++ standalone)"
-              << std::endl;
-    std::cout << "[ConfigBroadcast] " << packets.size() << " packet types to " << boards.size()
-              << " boards" << std::endl;
+    std::cout << "[ConfigBroadcast] Started — interval=" << interval_ms
+              << "ms (C++ standalone, live config reload)" << std::endl;
+    std::cout << "[ConfigBroadcast] " << packets.size() << " packet types" << std::endl;
 
     unsigned long total_sent = 0;
+    // Per-destination send accounting. The single global counter could not distinguish
+    // "all 8 boards got their config" from "the same board got it 8 times".
+    std::map<std::string, unsigned long> tx_ok, tx_fail, tx_bad_addr;
+    std::map<std::string, size_t> tx_bytes;
+    std::map<std::string, uint8_t> tx_type;
     auto last_log = std::chrono::steady_clock::now();
 
     while (g_running) {
+        // Re-read config.toml and rebuild each cycle so board edits go live. Keep the
+        // last-good set if a read is empty/mid-write (buildPackets returns {} on failure).
+        auto fresh = buildPackets(config_path);
+        if (!fresh.empty())
+            packets.swap(fresh);
+
         for (const auto& [pkt_type, pkt, ip, listen_port] : packets) {
-            if (inet_pton(AF_INET, ip.c_str(), &dest.sin_addr) != 1)
+            const std::string dest_key = ip + ":" + std::to_string(listen_port);
+            if (inet_pton(AF_INET, ip.c_str(), &dest.sin_addr) != 1) {
+                tx_bad_addr[dest_key]++;
                 continue;
+            }
             dest.sin_port = htons(listen_port);
+            errno = 0;
             ssize_t sent = sendto(sock, pkt.data(), pkt.size(), 0,
                                   reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest));
-            if (sent == static_cast<ssize_t>(pkt.size()))
+            if (sent == static_cast<ssize_t>(pkt.size())) {
                 total_sent++;
+                tx_ok[dest_key]++;
+                tx_bytes[dest_key] = pkt.size();
+                tx_type[dest_key] = pkt_type;
+            } else {
+                // A short or failed send is the whole bug class we are chasing: the old code
+                // counted only successes, so a silently dropped packet looked identical to a
+                // delivered one. Report errno the first time and then once per 10s per dest.
+                tx_fail[dest_key]++;
+                int e = errno;
+                if (tx_fail[dest_key] == 1 || tx_fail[dest_key] % 10 == 0) {
+                    std::cerr << "[ConfigBroadcast] ✗ sendto(" << dest_key
+                              << ") type=" << (int)pkt_type << " len=" << pkt.size() << " returned "
+                              << sent << " errno=" << e << " (" << std::strerror(e) << ")"
+                              << std::endl;
+                }
+            }
         }
 
         auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration<double>(now - last_log).count() >= 10.0 && total_sent > 0) {
-            std::cout << "[ConfigBroadcast] Sent " << total_sent << " packets total" << std::endl;
+        if (std::chrono::duration<double>(now - last_log).count() >= 10.0) {
+            std::cout << "[ConfigBroadcast] Sent " << total_sent << " packets total ("
+                      << packets.size() << " dests this cycle)" << std::endl;
+            for (const auto& [dkey, n] : tx_ok) {
+                std::cout << "   → " << dkey << "  type=" << (int)tx_type[dkey]
+                          << " len=" << tx_bytes[dkey] << "  ok=" << n << " fail=" << tx_fail[dkey]
+                          << std::endl;
+            }
+            for (const auto& [dkey, n] : tx_fail)
+                if (tx_ok.find(dkey) == tx_ok.end())
+                    std::cout << "   → " << dkey << "  ok=0 fail=" << n << std::endl;
+            for (const auto& [dkey, n] : tx_bad_addr)
+                std::cout << "   → " << dkey << "  INVALID ADDRESS, never sent (n=" << n << ")"
+                          << std::endl;
             last_log = now;
         }
 

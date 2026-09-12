@@ -127,7 +127,8 @@ server reads as a claim to be an editor and refuses (403) if you are not one.
 A diagram is editable only by whoever holds its **checkout**. Opening one never
 takes it -- viewing must not block a colleague -- so the canvas is read only
 until you press Take in the diagram bar. The checkout returns on its own after a
-few minutes without a save, and on tab close. See
+15 minutes without a save, and on tab close -- but not merely because you
+switched tabs or shut the lid. See
 [`lib/stardesign`](../lib/stardesign/README.md#checkouts).
 
 There is deliberately **no delete**. Diagrams are shared and editable by more

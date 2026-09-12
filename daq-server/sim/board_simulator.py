@@ -5,6 +5,7 @@ import time
 import threading
 import random
 import os
+import sys
 import argparse
 import json
 import math
@@ -27,6 +28,7 @@ PACKET_TYPE_ACTUATOR_COMMAND = 4
 PACKET_TYPE_SENSOR_CONFIG = 5
 PACKET_TYPE_ACTUATOR_CONFIG = 6
 PACKET_TYPE_SELF_TEST = 12
+PACKET_TYPE_LOGS = 15
 
 # Board States (DAQv2-Comms DiabloEnums.h)
 BOARD_STATE_SETUP = 1
@@ -79,10 +81,15 @@ class SimulatedBoard:
         skip_startup=False,
         timing=None,
         sensor_hz=None,
+        allow_ip_fallback=False,
     ):
         self.name = name
         self.board_index = board_index
         self.config = board_config
+        # Only permit rebinding a non-bindable config IP to loopback when explicitly allowed
+        # (sim_config.toml already uses loopback IPs so it never needs this; a hardware config
+        # must NOT silently fall back — that emits synthetic data tagged with real board IDs).
+        self.allow_ip_fallback = bool(allow_ip_fallback)
         self.target_ip = target_ip
         self.target_port = target_port
         self.low_noise = low_noise
@@ -130,9 +137,16 @@ class SimulatedBoard:
         }
         self.board_type = type_map.get(self.board_type_str, BOARD_TYPE_PT)
 
-        # HP PT specific settings
-        self.hp_pt_connectors = set(board_config.get("hp_pt_connectors", []))
-        self.excitation_id = board_config.get("excitation_connector_id", -1)
+        # Sensor interface, declared per board. The ADC reference is set once per board, so every
+        # connector on a 4-20 mA board is a loop channel — there is no per-connector list.
+        # Falls back to the legacy hp_pt_* key presence for a config written before pt_type.
+        pt_type = board_config.get("pt_type")
+        if pt_type is not None:
+            self.is_current_loop = pt_type == "4-20 mA absolute"
+        else:
+            self.is_current_loop = bool(board_config.get("hp_pt_connectors")) or (
+                "hp_pt_full_scale_psi" in board_config
+            )
         self.hp_pt_full_scale_psi = board_config.get("hp_pt_full_scale_psi", 5000.0)
         self.hp_pt_sense_resistor_ohms = board_config.get(
             "hp_pt_sense_resistor_ohms", 120
@@ -146,6 +160,13 @@ class SimulatedBoard:
         # SETUP→SELF_TEST→ACTIVE path never runs — self-test UDP is never sent unless we
         # emit it once here (GUI + Playwright expect SELF_TEST.BOARD_* in sensorData).
         self._skip_startup_self_test_sent = False
+        # Self-test is a one-shot at activation, but on a session start it races the
+        # pipeline coming up (daq_bridge binding :5006, backend re-subscribing to the
+        # new Elodin DB). A single packet is often lost → no self-test shown. Re-send
+        # the same result a few times over the first seconds so at least one lands
+        # once the pipeline is ready. (Same idea as board_startup_sim's send burst.)
+        self._selftest_resend_until = 0.0  # wall-clock deadline; 0 = not arming
+        self._selftest_last_resend = 0.0
 
         self.running = False
         self.sock = None
@@ -167,10 +188,30 @@ class SimulatedBoard:
                 f"[{self.name}] Bound to {bind_ip}:{bind_port}", flush=True
             )
         except Exception:
-            # When config IPs (e.g. 192.168.2.21) are not on this host, use distinct
-            # loopback IPs so daq_bridge can route each board's data correctly.
-            # 127.0.0.2 = first board, 127.0.0.3 = second, etc.
-            fallback_ip = f"127.0.0.{2 + self.board_index}"
+            # The config IP (e.g. 192.168.2.21) is not on this host. Falling back to loopback here
+            # is how synthetic data ends up tagged with a REAL board's identity — the root cause of
+            # sim data sneaking into a live run. Only do it when explicitly allowed (sim_config.toml
+            # uses loopback IPs and doesn't need this; the integration test opts in). Otherwise abort.
+            if not self.allow_ip_fallback:
+                sys.exit(
+                    f"[{self.name}] FATAL: config IP {self.config.get('ip')} is not bindable on this "
+                    f"host. Refusing loopback fallback — it would emit synthetic data tagged as board "
+                    f"{self.config.get('board_id')}. Run the simulator against config/sim_config.toml "
+                    f"(loopback IPs), or pass --allow-ip-fallback (integration test only)."
+                )
+            # When config IPs (e.g. 192.168.2.21) are not on this host, bind a distinct loopback IP
+            # per board so daq_bridge can route each board's data. Mirror the config IP's host octet
+            # (192.168.2.51 -> 127.0.0.51): the bridge resolves loopback packets by that octet, which
+            # is identity-based and immune to [boards] iteration order (the C++ toml++ loader sorts
+            # alphabetically, this file iterates source order — an index-based scheme mislabels
+            # boards). Falls back to the old index scheme only if the config IP has no usable octet.
+            try:
+                host_octet = int(str(self.config.get("ip", "")).rsplit(".", 1)[-1])
+            except (ValueError, TypeError):
+                host_octet = 0
+            fallback_ip = (
+                f"127.0.0.{host_octet}" if host_octet >= 2 else f"127.0.0.{2 + self.board_index}"
+            )
             try:
                 self.sock.bind((fallback_ip, bind_port))
                 self.ip = fallback_ip
@@ -218,8 +259,11 @@ class SimulatedBoard:
         run_started = time.time()
         last_heartbeat = 0
         last_sensor_data = 0
+        last_log = 0
+        log_seq = 0
 
         heartbeat_interval = 1.0  # 1 Hz
+        log_interval = 1.0  # 1 Hz — simple diagnostic logs, always on (see _send_logs)
         if self.sensor_hz:
             # Uniform override (--sensor-hz): every board type, encoder included.
             # Encoder is normally 5x the others AND exempt from GUI envelope
@@ -262,15 +306,34 @@ class SimulatedBoard:
             ):
                 self._send_self_test()
                 self._skip_startup_self_test_sent = True
+                self._selftest_resend_until = now + 6.0  # re-send window (pipeline-startup race)
                 print(
                     f"[{self.name}] skip-startup: one-shot SELF_TEST sent (pass all active connectors)",
                     flush=True,
                 )
 
+            # --- Self-test re-send window: the result is one-shot, but a session start
+            # races the pipeline coming up, so resend it ~1 Hz for a few seconds after
+            # activation. Same values (idempotent in the backend cache); ensures delivery. ---
+            if (
+                self._selftest_resend_until > 0.0
+                and now < self._selftest_resend_until
+                and now - self._selftest_last_resend >= 1.0
+            ):
+                self._send_self_test()
+                self._selftest_last_resend = now
+
             # --- Send Heartbeat (all states, matching firmware) ---
             if now - last_heartbeat >= heartbeat_interval:
                 self._send_heartbeat(ts_ms)
                 last_heartbeat = now
+
+            # --- Send diagnostic LOGS (type 15), 1 Hz, always on (does NOT honor the
+            # config mode byte — the sim just streams so the pipeline can be tested). ---
+            if now - last_log >= log_interval:
+                self._send_logs(ts_ms, log_seq)
+                log_seq += 1
+                last_log = now
 
             # --- Send Sensor Data (ACTIVE only, matching firmware) ---
             if self.board_state == BOARD_STATE_ACTIVE:
@@ -298,6 +361,7 @@ class SimulatedBoard:
                 # Firmware: run self-test once, send results, immediately go ACTIVE
                 # (SensorHotfireCore.h: SelfTest state is transient — same loop iteration)
                 self._send_self_test()
+                self._selftest_resend_until = time.time() + 6.0  # re-send window (pipeline-startup race)
                 self.board_state = BOARD_STATE_ACTIVE
                 print(
                     f"[{self.name}] SELF_TEST sent, transitioning to ACTIVE",
@@ -348,6 +412,22 @@ class SimulatedBoard:
         except Exception:
             pass
 
+    def _send_logs(self, ts_ms, seq):
+        """Send a type-15 LOGS packet: a simple, board-identifying diagnostic line.
+        Wire format matches daq::create_log_packet / parse_log_packet:
+          PacketHeader(6B: type,version,ts) + flags(1B) + text_len(2B LE) + text.
+        The sim always streams these (it does NOT gate on the config mode byte) so
+        the board→bridge→backend→frontend log path can be exercised end to end."""
+        text = f"[SIM] board {self.board_id} {self.board_type_str} alive #{seq}".encode("utf-8")
+        flags = 0
+        text_len = len(text) & 0xFFFF
+        # <BBIBH = type(u8) version(u8) ts(u32 LE) flags(u8) text_len(u16 LE)
+        header = struct.pack("<BBIBH", PACKET_TYPE_LOGS, 0, ts_ms, flags, text_len)
+        try:
+            self.sock.sendto(header + text[:text_len], (self.target_ip, self.target_port))
+        except Exception:
+            pass
+
     def _send_sensor_data(self, ts_ms):
         """Collect one chunk (one scan of all channels, stamped with the board
         clock); send a packet once chunks_per_packet chunks are accumulated —
@@ -387,15 +467,11 @@ class SimulatedBoard:
         t = time.time()
         ADC_MAX = 2147483648  # 2^31 as per backend logic
 
-        if sensor_id == self.excitation_id:
-            # Excitation feed: ~1.8V on 2.5V ref (must be > 0 for backend to accept HP PT)
-            return int(ADC_MAX * 1.8 / 2.5)
-
         if self.board_type == BOARD_TYPE_PT:
             # Local connector id (1–10) — matches Elodin packet channel / daq_bridge
             target_psi = self.sim_pt_targets.get(sensor_id)
 
-            if sensor_id in self.hp_pt_connectors:
+            if self.is_current_loop:
                 # HP PT (4-20 mA): psi = (i-4)/16 * full_scale. adc ∝ i.
                 # i_ma = 4 + 16*psi/full_scale; v = i*R/1000; adc = v/2.5 * ADC_MAX
                 psi = target_psi or 4000.0
@@ -491,6 +567,13 @@ def main():
         "--skip-startup",
         action="store_true",
         help="Skip SETUP/SELF_TEST lifecycle, go directly to ACTIVE",
+    )
+    parser.add_argument(
+        "--allow-ip-fallback",
+        action="store_true",
+        help="Permit binding loopback when a config IP isn't on this host (sim_config.toml / "
+             "integration test only — NEVER with a hardware config; it would emit synthetic data "
+             "tagged with real board IDs).",
     )
     parser.add_argument(
         "--sensor-hz",
@@ -595,6 +678,7 @@ def main():
             sim_pt_targets=sim_pt_targets,
             skip_startup=args.skip_startup,
             sensor_hz=args.sensor_hz,
+            allow_ip_fallback=args.allow_ip_fallback,
             timing=TimingPathology(
                 chunks_per_packet=args.chunks_per_packet,
                 net_jitter_ms=args.net_jitter_ms,

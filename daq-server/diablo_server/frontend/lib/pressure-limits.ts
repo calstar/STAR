@@ -6,7 +6,8 @@
  */
 
 import { useEffect, useState } from 'react';
-import { getApiBaseUrl } from './websocket';
+import { getApiBaseUrl, getWebSocketClient } from './websocket';
+import { MessageType } from './types';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,12 @@ const DEFAULT_LIMITS: PressureLimitsMap = {
 
 let _cache: PressureLimitsMap | null = null;
 let _fetchPromise: Promise<PressureLimitsMap> | null = null;
+
+/** Invalidate the cache so the next fetch re-reads (e.g. after a config save). */
+export function invalidatePressureLimitsCache(): void {
+    _cache = null;
+    _fetchPromise = null;
+}
 
 export async function fetchPressureLimits(): Promise<PressureLimitsMap> {
     if (_cache !== null) return _cache;
@@ -69,6 +76,16 @@ export function usePressureLimits(): PressureLimitsMap {
             if (!cancelled) setLimits(l);
         });
         return () => { cancelled = true; };
+    }, []);
+
+    // Refetch on config save so edited NOP/MEOP reflect live (top bar + plots).
+    useEffect(() => {
+        const ws = getWebSocketClient();
+        const unsub = ws.on(MessageType.CONFIG_UPDATED, () => {
+            invalidatePressureLimitsCache();
+            fetchPressureLimits().then((l) => setLimits(l));
+        });
+        return unsub;
     }, []);
 
     return limits;

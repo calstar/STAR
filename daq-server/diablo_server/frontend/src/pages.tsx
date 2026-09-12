@@ -1,16 +1,16 @@
 /**
- * Lazy page registry — single source for both the route table (App.tsx) and
- * the popup-window dispatcher (/window/:view). Each page loads as its own
- * chunk, so a popup window fetches only what it renders.
+ * Lazy page registry — the route table in App.tsx imports every page from here.
+ * Each page loads as its own chunk, so a route (or popped-out window) fetches
+ * only what it renders.
  *
  * Page components still live under app/ (their pre-SPA home); the folder is
  * plain components now — no framework routing semantics attached.
  */
 import { lazy } from 'react';
 
-export const HomePage           = lazy(() => import('@/app/page'));
 export const BoardsPage         = lazy(() => import('@/app/boards/page'));
 export const CalibrationPage    = lazy(() => import('@/app/calibration/page'));
+export const CubicCalPage       = lazy(() => import('@/app/calibration-cubic/page'));
 export const ConfigPage         = lazy(() => import('@/app/config/page'));
 export const ControllerPage     = lazy(() => import('@/app/controller/page'));
 export const ControlsPage       = lazy(() => import('@/app/controls/page'));
@@ -37,30 +37,4 @@ export const UnifiedWindowPage  = lazy(() => import('@/app/window/unified/page')
 export const IpadWindowPage     = lazy(() => import('@/app/window/ipad/page'));
 export const MobileGuiPage      = lazy(() => import('@/app/window/mobile-gui/page'));
 
-/** /window/:view registry — keys must match WindowLauncher URLs. */
-export const windowViews: Record<string, React.ComponentType> = {
-  fuel: FuelPage,
-  lox: LoxPage,
-  copv: CopvPage,
-  gse: GsePage,
-  raw: RawPage,
-  all: AllPlotsPage,
-  controls: ControlsPage,
-  controller: ControllerPage,
-  status: StatusPage,
-  boards: BoardsPage,
-  flash: FlashPage,
-  config: ConfigPage,
-  calibration: CalibrationPage,
-  unified: UnifiedWindowPage,
-  ipad: IpadWindowPage,
-  'lcs-tcs-rtd': LcsTcsRtdPage,
-  chamber: ChamberPage,
-  'sensor-info': SensorInfoPage,
-  'mobile-gui': MobileGuiPage,
-  'solenoid-char': SolenoidCharPage,
-  encoders: EncodersPage,
-  livestream: LivestreamPage,
-  'self-tests': SelfTestsPage,
-  'feed-char': FeedCharPage,
-};
+export const AllViewsPage       = lazy(() => import('@/app/views/page'));

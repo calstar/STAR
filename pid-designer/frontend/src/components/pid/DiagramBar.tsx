@@ -1,7 +1,7 @@
 import type { DiagramMeta, DocRef } from '../../api/diagrams';
 import { keyOf, refOf } from '../../api/diagrams';
 import { btn } from '../../lib/ui';
-import { CheckoutControl } from '@stardesign-ui';
+import { CheckoutControl, CheckoutLostDialog } from '@stardesign-ui';
 import type { Checkout } from '@stardesign-ui';
 
 interface DiagramBarProps {
@@ -49,6 +49,10 @@ export function DiagramBar({ diagrams, activeKey, onSelect, onOpenChange, checko
       </button>
 
       <CheckoutControl checkout={checkout} noun="diagram" disabled={!activeKey} />
+      {/* Renders nothing until the hold is lost without the user releasing it.
+          Lives here, beside the control, so every app that shows the chip also
+          tells the user when it goes. */}
+      <CheckoutLostDialog checkout={checkout} noun="diagram" />
     </div>
   );
 }

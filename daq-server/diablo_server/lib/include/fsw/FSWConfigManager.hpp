@@ -10,10 +10,10 @@
 #include "config/SensorAssignment.hpp"
 #include "transport/NetworkSocket.hpp"
 
-namespace Diablo {
+namespace daq {
 struct PacketHeader;
 struct BoardHeartbeatPacket;
-}  // namespace Diablo
+}  // namespace daq
 
 namespace fsw {
 namespace fsw {
@@ -36,6 +36,12 @@ public:
      */
     bool initialize(const std::string& bind_address, uint16_t bind_port);
 
+private:
+    /** Local address board config packets are sent from — the same NIC this manager listens on.
+     *  Empty/"0.0.0.0" leaves the egress interface to the kernel. */
+    std::string bind_address_;
+
+public:
     /**
      * @brief Process board heartbeat and assign IP if needed
      * @param heartbeat Parsed heartbeat packet
@@ -43,8 +49,8 @@ public:
      * @param mac_address Board MAC address
      * @return Assigned IP address
      */
-    std::string process_board_heartbeat(const Diablo::PacketHeader& header,
-                                        const Diablo::BoardHeartbeatPacket& body,
+    std::string process_board_heartbeat(const daq::PacketHeader& header,
+                                        const daq::BoardHeartbeatPacket& body,
                                         const std::string& source_ip,
                                         const std::string& mac_address);
 

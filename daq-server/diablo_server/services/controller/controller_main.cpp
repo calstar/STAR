@@ -26,19 +26,18 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
+#include "config/Config.hpp"
 #include "control/ControllerService.hpp"
+#include "control/PWMTargets.hpp"
 #include "control/RobustDDPController.hpp"
-
-// ── Simple TOML value parser (no library dependency) ───────────────────
-static std::string trim(const std::string& s) {
-    size_t a = s.find_first_not_of(" \t\r\n\"");
-    size_t b = s.find_last_not_of(" \t\r\n\"");
-    return (a == std::string::npos) ? "" : s.substr(a, b - a + 1);
-}
+#include "control/StateMachine.hpp"
+#include "net/DaqInterface.hpp"
 
 /** Resolve path relative to config: paths like output/lut/... are relative to project root. */
 static std::string resolveConfigPath(const std::string& config_path, const std::string& path) {
@@ -51,101 +50,6 @@ static std::string resolveConfigPath(const std::string& config_path, const std::
     return project_root + "/" + path;
 }
 
-static std::string getTomlValue(const std::string& content, const std::string& section,
-                                const std::string& key, const std::string& fallback = "") {
-    std::string sec_header = "[" + section + "]";
-    auto sec_pos = content.find(sec_header);
-    if (sec_pos == std::string::npos)
-        return fallback;
-
-    auto search_start = sec_pos + sec_header.size();
-    auto next_sec = content.find("\n[", search_start);
-    std::string sec_content = (next_sec == std::string::npos)
-                                  ? content.substr(search_start)
-                                  : content.substr(search_start, next_sec - search_start);
-
-    std::istringstream iss(sec_content);
-    std::string line;
-    while (std::getline(iss, line)) {
-        auto c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        auto eq = line.find('=');
-        if (eq == std::string::npos)
-            continue;
-        std::string k = trim(line.substr(0, eq));
-        std::string v = trim(line.substr(eq + 1));
-        if (k == key)
-            return v;
-    }
-    return fallback;
-}
-
-// Parse [actuator_roles] entry: "Fuel Press" = ["NC", 3, 12] → channel, board_id, is_no
-static void parseActuatorRole(const std::string& val, int& channel, int& board_id, bool& is_no) {
-    channel = 0;
-    board_id = 0;
-    is_no = false;
-    size_t i = val.find('[');
-    if (i == std::string::npos)
-        return;
-    size_t j = val.find(',', i + 1);
-    if (j == std::string::npos)
-        return;
-    std::string type_str = trim(val.substr(i + 1, j - i - 1));
-    if (type_str == "NO" || type_str == "no")
-        is_no = true;
-    size_t k = val.find(',', j + 1);
-    try {
-        if (k != std::string::npos)
-            board_id = std::stoi(trim(val.substr(k + 1)));
-        channel =
-            std::stoi(trim(val.substr(j + 1, (k != std::string::npos ? k : val.size()) - j - 1)));
-    } catch (...) {
-    }
-}
-
-// Build board_id → IP map from all [boards.xxx] sections (mirrors actuator_service logic)
-static std::map<int, std::string> buildBoardIpMap(const std::string& config_content,
-                                                  const std::string& config_path) {
-    std::map<int, std::string> m;
-
-    // Fallback: scan [boards.xxx] sections in config.toml
-    if (!config_content.empty()) {
-        size_t pos = 0;
-        while (pos < config_content.size()) {
-            size_t next = config_content.find("[boards.", pos);
-            if (next == std::string::npos)
-                break;
-            size_t end = config_content.find(']', next);
-            if (end == std::string::npos)
-                break;
-            std::string sec = config_content.substr(next + 1, end - next - 1);
-            std::string ip = getTomlValue(config_content, sec, "ip", "");
-            std::string id_str = getTomlValue(config_content, sec, "board_id",
-                                              getTomlValue(config_content, sec, "id", "0"));
-            if (!ip.empty() && !m.count(0)) {
-                try {
-                    int id = std::stoi(id_str);
-                    if (id > 0 && !m.count(id))
-                        m[id] = ip;
-                } catch (...) {
-                }
-            }
-            pos = end + 1;
-        }
-    }
-
-    // Last-resort defaults matching standard subnet layout
-    if (m.empty()) {
-        m[11] = "192.168.2.11";
-        m[12] = "192.168.2.12";
-        m[13] = "192.168.2.13";
-        m[14] = "192.168.2.14";
-    }
-    return m;
-}
-
 // ── Signal handling ────────────────────────────────────────────────────
 static std::atomic<bool> g_running{true};
 
@@ -155,8 +59,65 @@ static void signalHandler(int /*sig*/) {
 }
 
 // ── TCP control server (FIRE_START / FIRE_STOP) ─────────────────────────
-// Mirrors the actuator_service TCP command pattern.
-// TS backend connects, sends "FIRE_START\n" or "FIRE_STOP\n", then disconnects.
+// The sequencer connects, sends "FIRE_START\n" or "FIRE_STOP\n", reads the reply, disconnects.
+//
+// Structure mirrors sequencer_main.cpp's accept loop, for the reason documented there: this loop
+// must keep calling accept(). It used to read the command inline, byte at a time, with a blocking
+// recv() and no SO_RCVTIMEO — so a peer that connected and never sent a newline parked it
+// permanently. A half-open connection (the sequencer's host dropping off the network without a
+// FIN), a port scan, or an operator running `nc` against the port to check it was up all did it.
+// Worse, it was silent at both ends: the kernel completes the handshake and buffers the bytes, so
+// the sequencer's send() succeeded and it logged the command as delivered while nothing read it.
+// (See also SequencerService::notifyControllerFire, which now checks the ACK for that reason.)
+constexpr size_t kMaxControlClients = 64;
+
+// One connection on its own thread: read a line, dispatch, reply, close.
+static void handleControlClient(int client_fd, fsw::control::ControllerService* svc) {
+    // A silent peer can pin this thread, but never the accept loop, and only for 5 s.
+    struct timeval tv{.tv_sec = 5, .tv_usec = 0};
+    setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    std::string buf;
+    bool got_line = false;
+    while (g_running && buf.size() < 64) {
+        char tmp[64];
+        ssize_t n = ::recv(client_fd, tmp, sizeof(tmp), 0);
+        if (n <= 0)
+            break;  // peer closed, timed out, or shutdown() woke us
+        buf.append(tmp, static_cast<size_t>(n));
+        const size_t nl = buf.find('\n');
+        if (nl != std::string::npos) {
+            buf.resize(nl);
+            got_line = true;
+            break;
+        }
+    }
+
+    auto reply = [client_fd](const char* s) {
+        ::send(client_fd, s, std::strlen(s), MSG_NOSIGNAL);
+    };
+
+    if (!got_line) {
+        // Timed out or the peer vanished mid-command. One line, at the point of failure — this
+        // port is reachable from the site LAN and a scanner must not be able to flood the log.
+        std::cerr << "[ControllerService] ⚠️  control connection closed with no command "
+                     "(timeout or peer went away)"
+                  << std::endl;
+    } else if (buf == "FIRE_START") {
+        svc->setFireActive(true);
+        std::cout << "[ControllerService] 🔥 FIRE_START received — PWM gate open" << std::endl;
+        reply("OK\n");
+    } else if (buf == "FIRE_STOP") {
+        svc->setFireActive(false);
+        std::cout << "[ControllerService] 🛑 FIRE_STOP received — PWM gate closed" << std::endl;
+        reply("OK\n");
+    } else {
+        std::cerr << "[ControllerService] ⚠️  Unknown control cmd: \"" << buf << "\"" << std::endl;
+        reply("ERR\n");
+    }
+    ::close(client_fd);
+}
+
 static void runControlServer(fsw::control::ControllerService* svc, uint16_t port) {
     int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd < 0) {
@@ -181,8 +142,30 @@ static void runControlServer(fsw::control::ControllerService* svc, uint16_t port
     std::cout << "[ControllerService] 🎮 Control server on TCP :" << port
               << "  (FIRE_START | FIRE_STOP)" << std::endl;
 
+    // Threads are counted and joined rather than detached, so none outlives `svc`.
+    struct Conn {
+        std::thread th;
+        int fd{-1};
+        std::atomic<bool> done{false};
+    };
+    std::vector<std::unique_ptr<Conn>> conns;
+
+    auto reap_finished = [&conns]() {
+        for (auto it = conns.begin(); it != conns.end();) {
+            if ((*it)->done.load()) {
+                if ((*it)->th.joinable())
+                    (*it)->th.join();
+                it = conns.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    };
+
     while (g_running) {
-        struct timeval tv{1, 0};
+        reap_finished();
+
+        struct timeval tv{0, 10000};  // 10 ms — keeps the g_running check cheap and responsive
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(listen_fd, &fds);
@@ -193,32 +176,37 @@ static void runControlServer(fsw::control::ControllerService* svc, uint16_t port
         if (client < 0)
             continue;
 
-        std::string buf;
-        char c;
-        while (buf.size() < 64 && ::recv(client, &c, 1, 0) == 1) {
-            if (c == '\n')
-                break;
-            buf += c;
+        // Reap again before testing the cap, so a burst of short-lived connections inside one
+        // select() iteration is not counted against the limit after those threads have finished.
+        reap_finished();
+        if (conns.size() >= kMaxControlClients) {
+            // Say why rather than closing cold — a bare close() reaches the client as a TCP
+            // reset, indistinguishable from the service having crashed.
+            static const char kBusy[] = "ERR:too many connections\n";
+            ::send(client, kBusy, sizeof(kBusy) - 1, MSG_NOSIGNAL);
+            std::cerr << "[ControllerService] ⚠️  client limit (" << kMaxControlClients
+                      << ") reached — refusing connection" << std::endl;
+            ::close(client);
+            continue;
         }
 
-        if (buf == "FIRE_START") {
-            svc->setFireActive(true);
-            std::cout << "[ControllerService] 🔥 FIRE_START received — PWM gate open" << std::endl;
-            const char* reply = "OK\n";
-            ::send(client, reply, std::strlen(reply), 0);
-        } else if (buf == "FIRE_STOP") {
-            svc->setFireActive(false);
-            std::cout << "[ControllerService] 🛑 FIRE_STOP received — PWM gate closed" << std::endl;
-            const char* reply = "OK\n";
-            ::send(client, reply, std::strlen(reply), 0);
-        } else {
-            std::cerr << "[ControllerService] ⚠️  Unknown control cmd: \"" << buf << "\""
-                      << std::endl;
-            const char* reply = "ERR\n";
-            ::send(client, reply, std::strlen(reply), 0);
-        }
-        ::close(client);
+        auto conn = std::make_unique<Conn>();
+        conn->fd = client;
+        Conn* raw = conn.get();
+        conn->th = std::thread([raw, svc]() {
+            handleControlClient(raw->fd, svc);
+            raw->done = true;
+        });
+        conns.push_back(std::move(conn));
     }
+
+    // Wake anything parked in recv() so shutdown does not wait out the 5 s timeout, then join.
+    for (const auto& c : conns)
+        ::shutdown(c->fd, SHUT_RDWR);
+    for (const auto& c : conns)
+        if (c->th.joinable())
+            c->th.join();
+
     ::close(listen_fd);
 }
 
@@ -306,131 +294,62 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    const fsw::config::Config cfg = fsw::config::load(config_path);
+
+    // Populate the config-declared [[states]] in THIS process before any name→id resolution below.
+    // The controller is a separate process from the sequencer and never called this; without it,
+    // stateId() resolved the fire state against the compiled enum (Fire→16) while the sequencer
+    // publishes ids from config — so on a renumbered rig the two disagreed on what "16" means and
+    // the PWM ignition parity gate watched the wrong id.
+    sequencer::StateMachine::loadStatesFromConfig(config_content);
+
     // ── Extract settings from config ───────────────────────────────────
     fsw::control::ControllerService::PWMConfig pwm;
 
-    // Build board_id → IP map from [boards.xxx] sections (uses discovery if available)
-    auto board_ip_map = buildBoardIpMap(config_content, config_path);
+    pwm.actuator_port = cfg.network.actuator_cmd_port;
 
-    // Read actuator_cmd_port from [network] (boards listen on this for commands)
+    // Resolve [controller].pwm_*_actuator → [actuator_roles] → [boards.*] IP. See PWMTargets.hpp
+    // for why there is nothing to fall back to here. `unresolved` collects the reasons; the fire
+    // gate is disabled below if it is non-empty.
+    const auto pwm_resolution = fsw::control::resolvePWMTargets(cfg);
+    const std::vector<std::string>& unresolved = pwm_resolution.issues;
+    pwm.fuel = pwm_resolution.fuel;
+    pwm.ox = pwm_resolution.ox;
+
+    // Which NIC PWM commands leave from. The controller shares the apps box with the Docker
+    // stack and the site LAN, so "the route to the actuator board" is no longer a single answer.
     {
-        std::string v = getTomlValue(config_content, "network", "actuator_cmd_port", "5005");
-        pwm.actuator_port = static_cast<uint16_t>(std::atoi(v.c_str()));
+        const auto nic = fsw::net::resolveDaqBindAddress(cfg, "controller");
+        if (!nic.ok)
+            return 1;
+        pwm.bind_address = nic.address;
     }
 
-    // Parse [actuator_roles] to find Fuel Press and LOX Press channels/boards
-    {
-        int fuel_channel = 3, fuel_board_id = 12;
-        int lox_channel = 8, lox_board_id = 12;
-        bool found_fuel = false, found_lox = false;
+    // Controller loop / PWM settings from [controller].
+    pwm.frequency_hz = static_cast<float>(cfg.controller.pwm_frequency_hz);
+    pwm.duration_ms = cfg.controller.pwm_duration_ms;
+    double loop_hz = cfg.controller.controller_loop_hz;
 
-        std::string current_section;
-        std::istringstream cfg(config_content);
-        std::string line;
-        while (std::getline(cfg, line)) {
-            auto c = line.find('#');
-            if (c != std::string::npos)
-                line = line.substr(0, c);
-            if (line.size() >= 2 && line[0] == '[') {
-                size_t end = line.find(']');
-                current_section = (end != std::string::npos) ? line.substr(1, end - 1) : "";
-                continue;
-            }
-            if (current_section != "actuator_roles")
-                continue;
-            auto eq = line.find('=');
-            if (eq == std::string::npos)
-                continue;
-            std::string key = trim(line.substr(0, eq));
-            std::string val = trim(line.substr(eq + 1));
-            int ch = 0, bid = 0;
-            bool is_no = false;
-            parseActuatorRole(val, ch, bid, is_no);
-            if (ch < 1)
-                continue;
-            if (key == "Fuel Press") {
-                fuel_channel = ch;
-                fuel_board_id = bid;
-                found_fuel = true;
-            } else if (key == "LOX Press") {
-                lox_channel = ch;
-                lox_board_id = bid;
-                found_lox = true;
-            }
-        }
-
-        if (!found_fuel)
-            std::cerr << "⚠️  [controller] 'Fuel Press' not found in [actuator_roles]; "
-                         "using defaults (CH3, board 12)"
-                      << std::endl;
-        if (!found_lox)
-            std::cerr << "⚠️  [controller] 'LOX Press' not found in [actuator_roles]; "
-                         "using defaults (CH8, board 12)"
-                      << std::endl;
-
-        pwm.fuel_channel = static_cast<uint8_t>(fuel_channel);
-        pwm.lox_channel = static_cast<uint8_t>(lox_channel);
-
-        // Resolve board IDs to IPs; warn if they differ (PWMConfig has one IP for now)
-        auto fuel_it = board_ip_map.find(fuel_board_id);
-        auto lox_it = board_ip_map.find(lox_board_id);
-        std::string fuel_ip = (fuel_it != board_ip_map.end())
-                                  ? fuel_it->second
-                                  : "192.168.2." + std::to_string(fuel_board_id);
-        std::string lox_ip = (lox_it != board_ip_map.end())
-                                 ? lox_it->second
-                                 : "192.168.2." + std::to_string(lox_board_id);
-
-        if (fuel_ip != lox_ip)
-            std::cerr << "⚠️  [controller] Fuel Press (" << fuel_ip << ") and LOX Press (" << lox_ip
-                      << ") on different boards — using fuel board IP for both" << std::endl;
-        pwm.actuator_board_ip = fuel_ip;
-    }
-
-    // Controller loop / PWM settings from [controller] section
-    double loop_hz = 10.0;
-    {
-        std::string v;
-        v = getTomlValue(config_content, "controller", "pwm_frequency_hz", "10.0");
-        pwm.frequency_hz = static_cast<float>(std::atof(v.c_str()));
-
-        v = getTomlValue(config_content, "controller", "pwm_duration_ms", "10000");
-        pwm.duration_ms = static_cast<uint32_t>(std::atoi(v.c_str()));
-
-        v = getTomlValue(config_content, "controller", "controller_loop_hz", "10.0");
-        loop_hz = std::atof(v.c_str());
-    }
-
-    if (!elodin_host_from_cli) {
-        std::string db_host = getTomlValue(config_content, "database", "host", "127.0.0.1");
-        if (!db_host.empty())
-            elodin_host = db_host;
-    }
-    if (!elodin_port_from_cli) {
-        std::string db_port_str = getTomlValue(config_content, "database", "port", "2240");
-        if (!db_port_str.empty())
-            elodin_port = static_cast<uint16_t>(std::atoi(db_port_str.c_str()));
-    }
+    // Precedence: defaults < config < CLI (--elodin-host/--elodin-port).
+    if (!elodin_host_from_cli)
+        elodin_host = cfg.database.host;
+    if (!elodin_port_from_cli)
+        elodin_port = cfg.database.port;
     if (elodin_host.empty())
         elodin_host = "127.0.0.1";
     if (elodin_port == 0)
         elodin_port = 2240;
 
-    // Read control port from [controller_service].port (FIRE_START / FIRE_STOP TCP gate)
-    if (control_port == 0) {
-        std::string cp = getTomlValue(config_content, "controller_service", "port", "9999");
-        if (!cp.empty())
-            control_port = static_cast<uint16_t>(std::atoi(cp.c_str()));
-        if (control_port == 0)
-            control_port = 9999;
-    }
+    // Control port from [controller_service].port (FIRE_START / FIRE_STOP TCP gate); --control-port
+    // wins.
+    if (control_port == 0)
+        control_port = cfg.controller_service.port;
 
     // Controller algorithm config (using defaults from RobustDDPController.hpp)
     fsw::control::RobustDDPController::Config ctrl_cfg;
     // Override safety constraint from config (0 = disabled, useful for simulation)
     {
-        std::string v = getTomlValue(config_content, "controller", "P_copv_min_pa", "0");
-        double pmin = std::atof(v.c_str());
+        double pmin = cfg.controller.P_copv_min_pa;
         ctrl_cfg.P_copv_min = pmin;  // 0 disables the check; real hotfire sets >0
         if (pmin == 0.0)
             std::cout << "  P_copv_min:     disabled (0)" << std::endl;
@@ -442,10 +361,17 @@ int main(int argc, char* argv[]) {
     std::cout << "\n═══════════════════════════════════════════════════════════" << std::endl;
     std::cout << "  Robust DDP Controller Service" << std::endl;
     std::cout << "═══════════════════════════════════════════════════════════" << std::endl;
-    std::cout << "  Actuator board: " << pwm.actuator_board_ip << ":" << pwm.actuator_port
-              << std::endl;
-    std::cout << "  Fuel Press:     CH" << (int)pwm.fuel_channel << std::endl;
-    std::cout << "  LOX Press:      CH" << (int)pwm.lox_channel << std::endl;
+    // Name the actuator as well as the wire address, so an operator can tell at a glance which
+    // valve this process believes it is driving.
+    auto describe_target = [](const fsw::control::ControllerService::PWMTarget& t) {
+        if (!t.resolved())
+            return std::string("(unassigned)");
+        return "\"" + t.actuator_name + "\" → " + t.board_ip + " CH" +
+               std::to_string((int)t.channel);
+    };
+    std::cout << "  Actuator port:  " << pwm.actuator_port << std::endl;
+    std::cout << "  PWM fuel:       " << describe_target(pwm.fuel) << std::endl;
+    std::cout << "  PWM ox:         " << describe_target(pwm.ox) << std::endl;
     std::cout << "  PWM frequency:  " << pwm.frequency_hz << " Hz" << std::endl;
     std::cout << "  PWM duration:   " << pwm.duration_ms << " ms" << std::endl;
     std::cout << "  Control loop:   " << loop_hz << " Hz" << std::endl;
@@ -464,11 +390,49 @@ int main(int argc, char* argv[]) {
     // ── Initialize ─────────────────────────────────────────────────────
     fsw::control::ControllerService service;
 
-    std::string lut_path_raw = !lut_path_cli.empty()
-                                   ? lut_path_cli
-                                   : getTomlValue(config_content, "controller", "lut_path", "");
-    std::string thrust_curve_path_raw =
-        getTomlValue(config_content, "controller", "thrust_curve_path", "");
+    // Which sequencer state id means "firing", for the parity fallback that watches the sequencer
+    // state packet. Config, not a literal — see ControllerService::setFireStateId.
+    {
+        const std::string fire_state = cfg.fire.state;
+        if (fire_state.empty()) {
+            // No fire state configured → the PWM fire gate never activates (id 255 = UNKNOWN never
+            // matches a real sequencer state), matching the sequencer's disabled fire timer.
+            service.setFireStateId(255);
+            std::cout << "  Fire state:     (none) — PWM fire gate disabled" << std::endl;
+        } else {
+            const uint8_t id = sequencer::StateMachine::stateId(fire_state);
+            if (id != 255) {
+                service.setFireStateId(id);
+                std::cout << "  Fire state:     " << fire_state << " (id " << static_cast<int>(id)
+                          << ")" << std::endl;
+            } else {
+                // Config declares states but not this name: disable the gate (255 never matches a
+                // real sequencer state) rather than leaving it on a compiled id, matching the
+                // sequencer's disabled fire timer. Fail safe and loud, not silent-wrong.
+                service.setFireStateId(255);
+                std::cerr << "  ⚠️  [fire] state \"" << fire_state
+                          << "\" is not a declared state — PWM fire gate DISABLED" << std::endl;
+            }
+        }
+    }
+
+    // Same posture for the PWM targets: config did not say which hardware to drive, so drive
+    // none. 255 never matches a real sequencer state, so the gate cannot open by either the TCP
+    // command or the Elodin parity path. The process keeps running — telemetry, the Elodin
+    // subscriber and the control loop are all still useful, and an operator needs to see the
+    // reason rather than a service that vanished at boot.
+    if (!unresolved.empty()) {
+        service.setFireStateId(255);
+        for (const auto& why : unresolved)
+            std::cerr << "  ⚠️  [controller] " << why << std::endl;
+        std::cerr << "  ⚠️  [controller] PWM fire gate DISABLED. Assign exactly one "
+                     "[actuator_roles] entry \"pwm_fuel\" and one \"pwm_ox\" via the optional "
+                     "4th element, e.g. \"Fuel Press\" = [\"NC\", 3, 12, \"pwm_fuel\"]."
+                  << std::endl;
+    }
+
+    std::string lut_path_raw = !lut_path_cli.empty() ? lut_path_cli : cfg.controller.lut_path;
+    std::string thrust_curve_path_raw = cfg.controller.thrust_curve_path;
     std::string lut_path = resolveConfigPath(config_path, lut_path_raw);
     std::string thrust_curve_path = resolveConfigPath(config_path, thrust_curve_path_raw);
     if (!lut_path.empty())
@@ -497,12 +461,8 @@ int main(int argc, char* argv[]) {
     // ── Optional open-loop test duty (fallback_fuel/ox_duty_cycle from config) ──
     // When non-zero this bypasses the DDP controller so you can validate UDP PWM delivery.
     {
-        float td_f = 0.0f, td_o = 0.0f;
-        std::string v;
-        v = getTomlValue(config_content, "controller", "fallback_fuel_duty_cycle", "0");
-        td_f = static_cast<float>(std::atof(v.c_str()));
-        v = getTomlValue(config_content, "controller", "fallback_ox_duty_cycle", "0");
-        td_o = static_cast<float>(std::atof(v.c_str()));
+        float td_f = static_cast<float>(cfg.controller.fallback_fuel_duty_cycle);
+        float td_o = static_cast<float>(cfg.controller.fallback_ox_duty_cycle);
         if (td_f > 0.0f || td_o > 0.0f)
             service.setTestDuty(td_f, td_o);
     }

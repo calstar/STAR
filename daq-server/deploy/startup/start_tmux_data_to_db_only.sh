@@ -55,7 +55,7 @@ fi
 
 CMD_DB="printf '\n  ══ ELODIN DB — :2240 (data lands here) ══\n\n' && mkdir -p $HOME/.local/share/elodin && RUST_LOG=info exec $ELODIN_DB_BIN run '[::]:2240' '$HOME/.local/share/elodin/daq_live'"
 CMD_DAQ="printf '\n  ══ DAQ BRIDGE — UDP :5006 → Elodin DB ══\n\n' && sleep 2 && cd $PROJECT && exec $DAQ_BIN config/config.toml 2>&1"
-CMD_SIM="printf '\n  ══ BOARD SIMULATOR — sends UDP to :5006 ══\n\n' && sleep 3 && cd $PROJECT && exec python3 sim/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 2>&1"
+CMD_SIM="printf '\n  ══ BOARD SIMULATOR — sends UDP to :5006 ══\n\n' && sleep 3 && cd $PROJECT && exec python3 sim/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 --allow-ip-fallback 2>&1"
 
 tmux new-session  -d -s "$SESSION" -n main -x 160 -y 50 "bash --norc --noprofile -c \"$CMD_DB\""
 tmux set-option -t "$SESSION" remain-on-exit on

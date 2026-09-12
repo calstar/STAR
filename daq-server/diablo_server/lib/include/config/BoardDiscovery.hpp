@@ -21,11 +21,11 @@ namespace config {
  * Each board has a unique signature used for identification and IP assignment
  */
 struct BoardSignature {
-    uint32_t board_id;         // Unique board ID (MAC address hash or serial number)
-    uint8_t board_type;        // Board type (PT, TC, RTD, LC, etc.)
-    uint8_t hardware_version;  // Hardware revision
-    uint8_t firmware_version;  // Firmware version
-    uint16_t serial_number;    // Board serial number
+    uint32_t board_id = 0;         // Unique board ID (MAC address hash or serial number)
+    uint8_t board_type = 0;        // Board type (PT, TC, RTD, LC, etc.)
+    uint8_t hardware_version = 0;  // Hardware revision
+    uint8_t firmware_version = 0;  // Firmware version
+    uint16_t serial_number = 0;    // Board serial number
 
     // Comparison operators for map/set usage
     bool operator<(const BoardSignature& other) const {
@@ -55,12 +55,12 @@ struct BoardSignature {
  * @brief Detected sensor information from board
  */
 struct SensorInfo {
-    uint8_t sensor_type;   // Sensor type (PT, TC, RTD, LC)
-    uint8_t channel_id;    // Channel ID on board
-    uint8_t sensor_count;  // Number of sensors of this type
-    bool is_active;        // Whether sensor is currently active
-    uint8_t quality;       // Data quality (0-255)
-    std::string location;  // Physical location (if known)
+    uint8_t sensor_type = 0;   // Sensor type (PT, TC, RTD, LC)
+    uint8_t channel_id = 0;    // Channel ID on board
+    uint8_t sensor_count = 0;  // Number of sensors of this type
+    bool is_active = false;    // Whether sensor is currently active
+    uint8_t quality = 0;       // Data quality (0-255)
+    std::string location;      // Physical location (if known)
 };
 
 /**
@@ -72,13 +72,13 @@ struct DiscoveredBoard {
     std::string mac_address;          // MAC address
     std::vector<SensorInfo> sensors;  // Detected sensors
     std::chrono::steady_clock::time_point last_seen;
-    bool is_configured;  // Whether board has been configured
-    uint16_t port;       // Communication port
+    bool is_configured = false;  // Whether board has been configured
+    uint16_t port = 0;           // Communication port
 
     // Board capabilities
-    uint8_t max_sensors;           // Maximum sensors board supports
-    uint8_t active_sensors;        // Currently active sensors
-    bool supports_dynamic_config;  // Can board accept config updates?
+    uint8_t max_sensors = 0;               // Maximum sensors board supports
+    uint8_t active_sensors = 0;            // Currently active sensors
+    bool supports_dynamic_config = false;  // Can board accept config updates?
 };
 
 /**
@@ -269,11 +269,6 @@ public:
      * @brief Update configuration with discovered boards
      */
     bool update_with_boards(const std::vector<DiscoveredBoard>& boards);
-
-    /**
-     * @brief Save updated configuration
-     */
-    bool save_config(const std::string& output_path) const;
 
     /**
      * @brief Get current configuration

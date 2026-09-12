@@ -45,27 +45,27 @@ enum class IncomingPacketKind {
 };
 
 // Replicate getBoardStateForHeartbeat() from Actuator_Hotfire/main.cpp
-static Diablo::BoardState getBoardStateForHeartbeat(
+static daq::BoardState getBoardStateForHeartbeat(
     ActuatorControllerState state) {
     switch (state) {
         case ActuatorControllerState::WaitingForServer:
-            return Diablo::BoardState::SETUP;
+            return daq::BoardState::SETUP;
         case ActuatorControllerState::Active:
-            return Diablo::BoardState::ACTIVE;
+            return daq::BoardState::ACTIVE;
         case ActuatorControllerState::ConnectionLossDetected:
-            return Diablo::BoardState::CONNECTION_LOSS_DETECTED;
+            return daq::BoardState::CONNECTION_LOSS_DETECTED;
         case ActuatorControllerState::NoConnectionAbort:
-            return Diablo::BoardState::NO_CONNECTION_ABORT;
+            return daq::BoardState::NO_CONNECTION_ABORT;
         case ActuatorControllerState::NoConnAbortFollower:
-            return Diablo::BoardState::NO_CONN_ABORT_FOLLOWER;
+            return daq::BoardState::NO_CONN_ABORT_FOLLOWER;
         case ActuatorControllerState::PTAbort:
-            return Diablo::BoardState::PT_ABORT;
+            return daq::BoardState::PT_ABORT;
         case ActuatorControllerState::NoPTAbort:
-            return Diablo::BoardState::NO_PT_ABORT;
+            return daq::BoardState::NO_PT_ABORT;
         case ActuatorControllerState::AbortFinished:
-            return Diablo::BoardState::ABORT_FINISHED;
+            return daq::BoardState::ABORT_FINISHED;
         default:
-            return Diablo::BoardState::SETUP;
+            return daq::BoardState::SETUP;
     }
 }
 
@@ -219,69 +219,66 @@ void test_actuator_none_kind_stays() {
 void test_actuator_heartbeat_state_mapping_table() {
     struct {
         ActuatorControllerState state;
-        Diablo::BoardState expected;
+        daq::BoardState expected;
     } mappings[] = {
-        {ActuatorControllerState::WaitingForServer, Diablo::BoardState::SETUP},
-        {ActuatorControllerState::Active, Diablo::BoardState::ACTIVE},
+        {ActuatorControllerState::WaitingForServer, daq::BoardState::SETUP},
+        {ActuatorControllerState::Active, daq::BoardState::ACTIVE},
         {ActuatorControllerState::ConnectionLossDetected,
-         Diablo::BoardState::CONNECTION_LOSS_DETECTED},
+         daq::BoardState::CONNECTION_LOSS_DETECTED},
         {ActuatorControllerState::NoConnectionAbort,
-         Diablo::BoardState::NO_CONNECTION_ABORT},
+         daq::BoardState::NO_CONNECTION_ABORT},
         {ActuatorControllerState::NoConnAbortFollower,
-         Diablo::BoardState::NO_CONN_ABORT_FOLLOWER},
-        {ActuatorControllerState::PTAbort, Diablo::BoardState::PT_ABORT},
-        {ActuatorControllerState::NoPTAbort, Diablo::BoardState::NO_PT_ABORT},
+         daq::BoardState::NO_CONN_ABORT_FOLLOWER},
+        {ActuatorControllerState::PTAbort, daq::BoardState::PT_ABORT},
+        {ActuatorControllerState::NoPTAbort, daq::BoardState::NO_PT_ABORT},
         {ActuatorControllerState::AbortFinished,
-         Diablo::BoardState::ABORT_FINISHED},
+         daq::BoardState::ABORT_FINISHED},
     };
 
     for (auto& m : mappings) {
-        Diablo::BoardState got = getBoardStateForHeartbeat(m.state);
+        daq::BoardState got = getBoardStateForHeartbeat(m.state);
         TEST_ASSERT_EQUAL_MESSAGE(
             (int)m.expected, (int)got,
             "State mapping mismatch in getBoardStateForHeartbeat");
 
         // Also verify: create heartbeat → parse → board_state roundtrips
         // correctly
-        Diablo::BoardHeartbeatPacket hb{};
+        daq::BoardHeartbeatPacket hb{};
         hb.board_id = 99;
-        hb.engine_state = Diablo::EngineState::SAFE;
+        hb.engine_state = daq::EngineState::SAFE;
         hb.board_state = got;
 
         uint8_t buf[512];
         size_t n =
-            Diablo::create_board_heartbeat_packet(hb, 12345u, buf, sizeof(buf));
+            daq::create_board_heartbeat_packet(hb, 12345u, buf, sizeof(buf));
         TEST_ASSERT_GREATER_THAN(0, n);
 
-        Diablo::PacketHeader hdr_out;
-        Diablo::BoardHeartbeatPacket hb_out;
+        daq::PacketHeader hdr_out;
+        daq::BoardHeartbeatPacket hb_out;
         TEST_ASSERT_TRUE(
-            Diablo::parse_board_heartbeat_packet(buf, n, hdr_out, hb_out));
+            daq::parse_board_heartbeat_packet(buf, n, hdr_out, hb_out));
         TEST_ASSERT_EQUAL((int)m.expected, (int)hb_out.board_state);
         TEST_ASSERT_EQUAL(99, hb_out.board_id);
     }
 }
 
 void test_actuator_heartbeat_board_id_preserved() {
-    Diablo::BoardHeartbeatPacket hb{};
+    daq::BoardHeartbeatPacket hb{};
     hb.board_id = 127;
-    hb.engine_state = Diablo::EngineState::FIRING;
+    hb.engine_state = daq::EngineState::FIRING;
     hb.board_state =
         getBoardStateForHeartbeat(ActuatorControllerState::PTAbort);
 
     uint8_t buf[512];
-    size_t n =
-        Diablo::create_board_heartbeat_packet(hb, 12346u, buf, sizeof(buf));
+    size_t n = daq::create_board_heartbeat_packet(hb, 12346u, buf, sizeof(buf));
 
-    Diablo::PacketHeader hdr_out;
-    Diablo::BoardHeartbeatPacket hb_out;
+    daq::PacketHeader hdr_out;
+    daq::BoardHeartbeatPacket hb_out;
     TEST_ASSERT_TRUE(
-        Diablo::parse_board_heartbeat_packet(buf, n, hdr_out, hb_out));
+        daq::parse_board_heartbeat_packet(buf, n, hdr_out, hb_out));
     TEST_ASSERT_EQUAL(127, hb_out.board_id);
-    TEST_ASSERT_EQUAL((int)Diablo::EngineState::FIRING,
-                      (int)hb_out.engine_state);
-    TEST_ASSERT_EQUAL((int)Diablo::BoardState::PT_ABORT,
-                      (int)hb_out.board_state);
+    TEST_ASSERT_EQUAL((int)daq::EngineState::FIRING, (int)hb_out.engine_state);
+    TEST_ASSERT_EQUAL((int)daq::BoardState::PT_ABORT, (int)hb_out.board_state);
 }
 
 // ===========================================================================

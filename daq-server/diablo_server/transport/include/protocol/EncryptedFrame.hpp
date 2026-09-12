@@ -8,7 +8,7 @@
 namespace daq_comms {
 namespace protocol {
 
-/** Parsed DAQv2 SELF_TEST payload (host-side mirror; filled from Diablo::parse_self_test_packet).
+/** Parsed DAQv2 SELF_TEST payload (host-side mirror; filled from daq::parse_self_test_packet).
  */
 struct ParsedSelfTestPacket {
     uint8_t packet_type = 0;

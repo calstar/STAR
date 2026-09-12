@@ -8,6 +8,7 @@ import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { MessageType, SystemState } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { getEntityColor } from '@/lib/sensor-colors';
+import { stateNameUpper, stateName, isFireState, isAbortState } from '@/lib/states';
 
 const LBF_TO_N = 4.44822;
 
@@ -73,12 +74,6 @@ function DutyCycleCard({ label, entity, color }: { label: string; entity: string
   );
 }
 
-const STATE_NAMES: Record<number, string> = {
-  0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
-  5: 'GN2 PRESS', 6: 'GN2 VENT', 7: 'FUEL PRESS', 8: 'FUEL VENT',
-  9: 'OX PRESS', 10: 'OX VENT', 11: 'HIGH PRESS', 12: 'HIGH VENT',
-  13: 'VENT', 14: 'CALIBRATE', 15: 'READY', 16: 'FIRE', 17: 'ABORT',
-};
 
 export default function ControllerPage() {
   const currentState = useSensorStore((state) => state.currentState);
@@ -107,29 +102,6 @@ export default function ControllerPage() {
   useEffect(() => {
     const unsub = ws.on(MessageType.CONFIG_UPDATED, loadLcConfig);
 
-    ws.send({
-      type: MessageType.SUBSCRIBE_SENSOR,
-      timestamp: Date.now(),
-      payload: { entity: 'CONTROLLER.Fuel' },
-    });
-    ws.send({
-      type: MessageType.SUBSCRIBE_SENSOR,
-      timestamp: Date.now(),
-      payload: { entity: 'CONTROLLER.Ox' },
-    });
-    ws.send({
-      type: MessageType.SUBSCRIBE_SENSOR,
-      timestamp: Date.now(),
-      payload: { entity: 'CONTROLLER.diagnostics' },
-    });
-    lcChannels.forEach((ch) => {
-      ws.send({
-        type: MessageType.SUBSCRIBE_SENSOR,
-        timestamp: Date.now(),
-        payload: { entity: `LC_Cal.CH${ch}` },
-      });
-    });
-
     return () => { unsub(); };
   }, [ws, loadLcConfig, lcChannels]);
 
@@ -145,12 +117,15 @@ export default function ControllerPage() {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 text-xs bg-gray-900 rounded px-3 py-1.5 border border-gray-800">
             <span className="text-text-muted">STATE:</span>
-            <span className={`font-mono font-bold ${currentState === SystemState.FIRE ? 'text-red-400' :
-                currentState === SystemState.READY ? 'text-green-400' :
-                  currentState === SystemState.ABORT ? 'text-red-500' :
+            {/* Colour by what the state IS, not by a compiled id — SystemState.FIRE is 16 and this
+                rig's Fire is 12, so the burn rendered in plain text while some unrelated state
+                got the red. Ready has no flag of its own, so it stays a name match. */}
+            <span className={`font-mono font-bold ${isFireState(currentState) ? 'text-red-400' :
+                isAbortState(currentState) ? 'text-red-500' :
+                  stateName(currentState) === 'Ready' ? 'text-green-400' :
                     'text-text'
               }`}>
-              {currentState !== null ? STATE_NAMES[currentState] : '---'}
+              {currentState !== null ? stateNameUpper(currentState) : '---'}
             </span>
           </div>
           <div className="flex items-center gap-3 text-xs text-text-muted bg-gray-900 rounded px-3 py-1.5 border border-gray-800">

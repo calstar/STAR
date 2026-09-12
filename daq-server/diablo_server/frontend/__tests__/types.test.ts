@@ -54,7 +54,6 @@ describe('ActuatorState enum', () => {
 
 describe('MessageType enum', () => {
   it('should have correct string values for WebSocket protocol', () => {
-    expect(MessageType.SUBSCRIBE_SENSOR).toBe('subscribe_sensor');
     expect(MessageType.SEND_COMMAND).toBe('send_command');
     expect(MessageType.SENSOR_UPDATE).toBe('sensor_update');
     expect(MessageType.ACTUATOR_UPDATE).toBe('actuator_update');

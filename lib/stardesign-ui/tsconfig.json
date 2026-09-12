@@ -1,0 +1,26 @@
+{
+  /* Type-checking for the shared library on its own, so `npm run lint` here is a real
+     gate rather than a no-op. The consuming apps also type-check this source (each has
+     "../../lib/stardesign-ui/src" in its `include`), but only when THEY are built — and
+     two of the three app workflows do not even trigger on changes to this directory. */
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": ["vitest/globals", "@testing-library/jest-dom"]
+  },
+  "include": ["src", "test", "vitest.config.ts", "vitest.setup.ts"]
+}

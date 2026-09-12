@@ -40,7 +40,10 @@ export interface CalibrationHost {
 
 /**
  * Publish a CalibrationCommand [0x46, 0x00] packet to Elodin DB.
- * Layout: [timestamp_ns(8), command_type(1), sensor_id(uint16 LE), pad(1), reference_value(f32)]
+ * Layout: [timestamp_ns(8), command_type(1)@8, pad(1)@9, sensor_id(uint16 LE)@10, reference(f32)@12].
+ * sensor_id sits at the even offset 10 so it is an aligned u16 in the Elodin VTable (see
+ * register_calibration_command_vtable) — it carries the full uid board_id*100+connector, so its high
+ * byte must survive.
  */
 function publishCalibrationCommand(host: CalibrationHost, type: number, sensorId: number, ref: number): void {
     if (!host.elodin) {
@@ -51,24 +54,36 @@ function publishCalibrationCommand(host: CalibrationHost, type: number, sensorId
     // timestamp_ns (8 bytes)
     payload.writeBigUInt64LE(BigInt(Date.now()) * 1000000n, 0);
     payload.writeUInt8(type, 8);
-    payload.writeUInt16LE(sensorId & 0xffff, 9);
-    payload.writeUInt8(0, 11);
+    payload.writeUInt8(0, 9);  // pad (keeps sensor_id 2-byte aligned at offset 10)
+    payload.writeUInt16LE(sensorId & 0xffff, 10);
     payload.writeFloatLE(ref, 12);
     host.elodin.publishTable([0x46, 0x00], payload);
+}
+
+/**
+ * Tell the calibration service to re-read the live cubic store from disk (cmd 7). Used after the
+ * backend swaps the store file for a calibration-profile load / new-blank, so the change takes
+ * effect on the running stream without a session restart. If the service is down (session off) the
+ * packet is silently dropped and the swapped file applies at the next session start.
+ */
+export function publishCalibrationReload(host: CalibrationHost): void {
+    publishCalibrationCommand(host, 7, 0, 0);
 }
 
 function getActiveChannels(host: CalibrationHost): number[] {
     const channels = new Set<number>();
 
-    // Preferred: derive PT channels directly from config boards (board_id * 100 + channel).
-    // This matches calibration_service unique IDs and avoids mismatches with legacy maps.
+    // Preferred: derive PT + LC channels directly from config boards (board_id * 100 + channel).
+    // This matches calibration_service unique IDs and avoids mismatches with legacy maps. PT and
+    // LC board_ids never collide, so both kinds share this uid space safely — the service routes
+    // captures/clears by uid kind (see calibration_main.cpp g_lc_uids).
     try {
         const config = readConfig() as any;
         const boards = (config?.boards || {}) as Record<string, any>;
         for (const [, boardRaw] of Object.entries(boards)) {
             const board = boardRaw as any;
             if (board?.enabled === false) continue;
-            if (board?.type !== 'PT') continue;
+            if (board?.type !== 'PT' && board?.type !== 'LC') continue;
             const boardId = Number(board?.board_id);
             if (!Number.isFinite(boardId)) continue;
             const activeChannels: number[] =
@@ -129,7 +144,7 @@ export function handleCalibrationCommand(
             if (uniqueId == null || !activeChannels.includes(uniqueId)) {
                 host.send(ws, {
                     type: MessageType.ERROR, timestamp: Date.now(),
-                    payload: { message: `Channel ${sensorId} on Board ${boardId} is not a valid PT channel` }
+                    payload: { message: `Channel ${sensorId} on Board ${boardId} is not a valid PT/LC channel` }
                 });
                 return;
             }
@@ -142,6 +157,104 @@ export function handleCalibrationCommand(
             }
             publishCalibrationCommand(host, 1, uniqueId, refPsi);
             console.log(`📐 Calibration: CH${sensorId} (Board ${boardId}) ref=${refPsi} PSI → calibration_service (Elodin)`);
+            break;
+        }
+        case 'capture_cubic_point': {
+            // Operator-built cubic: forward (channel, ref PSI) to calibration_service, which pairs it
+            // with the current ADC, refits the cubic, applies it live, and persists it.
+            const refPsi = Number(referencePressure);
+            if (sensorId == null || referencePressure == null || !Number.isFinite(refPsi)) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'capture_cubic_point requires sensorId and a numeric referencePressure (PSI)' }
+                });
+                return;
+            }
+            const activeChannels = getActiveChannels(host);
+            if (uniqueId == null || !activeChannels.includes(uniqueId)) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: `Channel ${sensorId} on Board ${boardId} is not a valid PT/LC channel` }
+                });
+                return;
+            }
+            if (!host.elodin) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'Elodin not connected — start calibration_service and DB; cannot forward capture_cubic_point.' }
+                });
+                return;
+            }
+            publishCalibrationCommand(host, 3, uniqueId, refPsi);
+            console.log(`📐 Cubic capture: CH${sensorId} (Board ${boardId}) ref=${refPsi} PSI → calibration_service`);
+            break;
+        }
+        case 'clear_cubic_channel': {
+            if (uniqueId == null) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'clear_cubic_channel requires sensorId and boardId' }
+                });
+                return;
+            }
+            if (!host.elodin) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'Elodin not connected — cannot forward clear_cubic_channel.' }
+                });
+                return;
+            }
+            publishCalibrationCommand(host, 4, uniqueId, 0);
+            console.log(`🗑️ Cubic clear: CH${sensorId} (Board ${boardId}) → calibration_service`);
+            break;
+        }
+        case 'capture_point': {
+            // Unified capture: forward (channel, ref PSI); calibration_service pairs it with the
+            // current ADC and routes it to the channel's configured model (cubic fit OR robust RLS).
+            const refPsi = Number(referencePressure);
+            if (sensorId == null || referencePressure == null || !Number.isFinite(refPsi)) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'capture_point requires sensorId and a numeric referencePressure (PSI)' }
+                });
+                return;
+            }
+            const activeChannels = getActiveChannels(host);
+            if (uniqueId == null || !activeChannels.includes(uniqueId)) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: `Channel ${sensorId} on Board ${boardId} is not a valid PT/LC channel` }
+                });
+                return;
+            }
+            if (!host.elodin) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'Elodin not connected — start calibration_service and DB; cannot forward capture_point.' }
+                });
+                return;
+            }
+            publishCalibrationCommand(host, 5, uniqueId, refPsi);
+            console.log(`📐 Capture: CH${sensorId} (Board ${boardId}) ref=${refPsi} PSI → calibration_service (routes by model)`);
+            break;
+        }
+        case 'new_calibration': {
+            if (uniqueId == null) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'new_calibration requires sensorId and boardId' }
+                });
+                return;
+            }
+            if (!host.elodin) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'Elodin not connected — cannot forward new_calibration.' }
+                });
+                return;
+            }
+            publishCalibrationCommand(host, 6, uniqueId, 0);
+            console.log(`🆕 New calibration: CH${sensorId} (Board ${boardId}) → calibration_service (routes by model)`);
             break;
         }
         case 'enable_phase2':
@@ -240,7 +353,7 @@ export function handleCalibrationCommand(
                 host.ptCalibration.set(ch, { ...defaultCoeffs });
             }
             host.lastRawAdc.clear();
-            console.log('🗑️ Calibration cleared — ZERO ALL then CAPTURE to build ADC→pressure fit');
+            console.log('🗑️ Calibration cleared — capture points (incl. a 0 psi point) to build the ADC→pressure fit');
             break;
         }
         default:

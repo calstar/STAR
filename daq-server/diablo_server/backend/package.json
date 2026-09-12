@@ -15,9 +15,9 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@iarna/toml": "^2.2.5",
     "axios": "^1.13.5",
     "msgpack-lite": "^0.1.26",
+    "smol-toml": "^1.8.0",
     "ws": "^8.19.0"
   },
   "devDependencies": {

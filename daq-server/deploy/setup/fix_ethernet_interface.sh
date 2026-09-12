@@ -69,12 +69,15 @@ else
 
     if [ "$APPLY" == "y" ] || [ "$APPLY" == "Y" ]; then
         echo "Applying configuration..."
-        sudo ip addr add 192.168.2.201/24 dev $ETH_INTERFACE 2>/dev/null || echo "IP may already exist"
+        # 192.168.2.20, not .201: the board firmware hardcodes the server at 192.168.2.20:5006
+        # (see deploy/README.md). This line used to assign .201 while every message around it said
+        # .20, and the check below matched ".20" as a substring of ".201" and reported success.
+        sudo ip addr add 192.168.2.20/24 dev $ETH_INTERFACE 2>/dev/null || echo "IP may already exist"
         sudo ip link set $ETH_INTERFACE up
         sleep 1
 
-        # Verify
-        NEW_IP=$(ip addr show $ETH_INTERFACE | grep "inet.*192.168.2.20" | awk '{print $2}' | cut -d/ -f1)
+        # Verify. Anchored on the prefix boundary so .201 cannot pass as .20.
+        NEW_IP=$(ip -o -4 addr show $ETH_INTERFACE | awk '{print $4}' | cut -d/ -f1 | grep -x "192.168.2.20")
         if [ -n "$NEW_IP" ]; then
             echo "✅ IP assigned: $NEW_IP"
         else
@@ -95,4 +98,4 @@ echo ""
 echo "3. Configure your board to send to: 192.168.2.20:5006"
 echo ""
 echo "4. Test connectivity:"
-echo "   ping <board_ip>  (from board, ping 192.168.2.201)"
+echo "   ping <board_ip>  (from a board, ping the server at 192.168.2.20)"

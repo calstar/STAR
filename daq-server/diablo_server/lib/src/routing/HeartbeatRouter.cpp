@@ -13,7 +13,7 @@ HeartbeatRouter::HeartbeatRouter(fsw::elodin::ElodinClient& elodin_client)
 }
 
 HeartbeatRouter::BoardEvent HeartbeatRouter::process_heartbeat(
-    const Diablo::PacketHeader& header, const Diablo::BoardHeartbeatPacket& heartbeat,
+    const daq::PacketHeader& header, const daq::BoardHeartbeatPacket& heartbeat,
     uint8_t board_type_wire, uint64_t receive_ts_ns, int elodin_board_id_if_known) {
     uint8_t logical_id = heartbeat.board_id;
     if (elodin_board_id_if_known >= 0 && elodin_board_id_if_known <= 255) {
@@ -39,8 +39,8 @@ HeartbeatRouter::BoardEvent HeartbeatRouter::process_heartbeat(
             event = BoardEvent::RECONNECTED;
             std::cout << "[HeartbeatRouter] Board " << (int)logical_id << " reconnected after "
                       << gap.count() << "ms" << std::endl;
-        } else if (heartbeat.board_state == Diablo::BoardState::SETUP &&
-                   state.last_board_state != Diablo::BoardState::SETUP) {
+        } else if (heartbeat.board_state == daq::BoardState::SETUP &&
+                   state.last_board_state != daq::BoardState::SETUP) {
             event = BoardEvent::SETUP_REENTRY;
             std::cout << "[HeartbeatRouter] Board " << (int)logical_id << " re-entered SETUP state"
                       << std::endl;

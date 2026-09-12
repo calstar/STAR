@@ -8,7 +8,7 @@ DAQ_DIR="$(cd "$DIR/../.." && pwd -P)"          # the repo's daq-server/ dir
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 
 UNITS="sensor-elodin sensor-daq sensor-simulator sensor-calibration \
-sensor-controller sensor-actuator sensor-backend sensor-frontend sensor-sidecar \
+sensor-controller sensor-actuator sensor-backend sensor-frontend \
 sensor-heartbeat sensor-config-broadcast"
 
 mkdir -p "$SYSTEMD_DIR"

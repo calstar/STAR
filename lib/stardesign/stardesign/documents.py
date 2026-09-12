@@ -44,6 +44,8 @@ Concurrent editing is not resolved, it is prevented. At most one person holds a
 design's write token at a time, and only the holder may save. Taking it is
 explicit (opening a design never takes it, so viewing never blocks a colleague);
 it lapses on its own after ``lock_ttl`` without a save, and on tab close.
+Hiding the tab -- switching away, minimising, closing a lid -- does not release
+it; only a real close does.
 
 The compare-and-set runs inside ``_index_lock``, the same ``flock`` that already
 serialises index writes, so two simultaneous takes cannot both succeed. That
@@ -74,7 +76,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
@@ -114,7 +116,13 @@ class DesignStore:
     #: How long a checkout survives without a save. Expiry is evaluated lazily,
     #: when someone tries to take the design -- no reaper, and exactly as correct
     #: for the only question that matters ("can two people hold it at once?").
-    lock_ttl: int = 300
+    #:
+    #: 15 minutes, not 5: a save is what refreshes this, and reading a result or
+    #: thinking about one is not saving. At 5 minutes an ordinary pause cost you
+    #: the design. It stays finite because release is holder-only and the
+    #: on-close beacon is best-effort, so this is the only thing that frees a
+    #: checkout after a crash or a power cut.
+    lock_ttl: int = 900
     #: An empty document body, used when creating and as a fallback on /load.
     empty_payload: Callable[[], dict] = lambda: {"config": {}}
     #: (owner, doc_id) -> monotonic time of the last microversion. In-process
@@ -409,13 +417,44 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         return store.lock_holder(record)
 
     def _lock_state(record: dict, viewer: str, names: dict[str, str]) -> dict:
-        """The checkout, as the design bar wants to render it."""
+        """The checkout, as the design bar wants to render it.
+
+        ``lockExpiresAt`` is the moment the hold lapses -- beat + ``lock_ttl`` --
+        not the beat itself. It used to carry the raw heartbeat, which is a time
+        already in the past, so anything counting down to it read as expired the
+        instant it rendered. That is why the bar never showed the user how long
+        they had.
+        """
         holder = _lock_holder(record)
+        expires = None
+        if holder:
+            beat = record.get("lockHeartbeat") or record.get("lockedAt")
+            if beat:
+                try:
+                    expires = (
+                        datetime.fromisoformat(beat) + timedelta(seconds=store.lock_ttl)
+                    ).isoformat()
+                except (TypeError, ValueError):
+                    expires = None
+        # A duration as well as an instant. The instant is only meaningful to a
+        # client whose clock agrees with ours, and nothing makes that true: a
+        # browser on one host talking to a server on another (Windows and WSL,
+        # say) can be hours apart, and the countdown then reads as hours left --
+        # or, when the browser runs fast, as permanently expired. The duration
+        # costs nothing and is immune to it, so it is what the bar counts down.
+        remaining = None
+        if expires is not None:
+            remaining = max(
+                0.0,
+                (datetime.fromisoformat(expires) - datetime.now(timezone.utc)).total_seconds(),
+            )
         return {
             "lockedBy": holder,
             "lockedByName": (names.get(holder) or holder) if holder else None,
             "lockedByMe": holder == viewer,
-            "lockExpiresAt": record.get("lockHeartbeat") if holder else None,
+            "lockExpiresAt": expires,
+            "lockExpiresInSeconds": remaining,
+            "lockTtlSeconds": store.lock_ttl,
         }
 
     def _take_lock(owner: str, doc_id: str, viewer: str) -> dict:
@@ -759,6 +798,28 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         ref = _resolve_doc(request, owner, doc_id)
         _release_lock(ref.owner, ref.doc_id, ref.viewer)
         return {"ok": True}
+
+    @router.post(f"{sub}/{{doc_id}}/checkout/beat")
+    async def beat_checkout(request: Request, doc_id: str, owner: str | None = None):
+        """Refresh your own hold without writing anything.
+
+        Until this existed the only thing that refreshed a checkout was a
+        successful ``/autosave``, so "inactivity" meant "no change to the saved
+        payload" rather than "not working". Reading a result, panning a canvas,
+        measuring something or thinking about it all counted as idle, and the
+        design was taken out from under you mid-task. The client sends this while
+        you are actually interacting; it is deliberately content-free so it can
+        never race an autosave or churn a microversion.
+
+        423 if you do not hold it -- the client treats that as "you lost it" and
+        stops, rather than beating into a void.
+        """
+        ref = _resolve_doc(request, owner, doc_id)
+        _require_lock(ref)
+        _beat_lock(ref.owner, ref.doc_id, ref.viewer)
+        record = store.find_record(ref.owner, ref.doc_id) or ref.record
+        names = directory.display_names(request, store.ud)
+        return _lock_state(record, ref.viewer, names)
 
     @router.get(f"{sub}/{{doc_id}}/checkout")
     async def get_checkout(request: Request, doc_id: str, owner: str | None = None):

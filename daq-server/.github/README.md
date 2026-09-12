@@ -16,12 +16,23 @@ Runs on push / PR / manual dispatch. Jobs include:
 3. **Build** — GCC 12 and Clang 18, **Release** only; Clang is pinned to GCC
    12's libstdc++ (`--gcc-install-dir`) to avoid libstdc++ 14 + C++20
    `<format>`/`<chrono>` breakage.
-4. **Static Analysis** — cppcheck and clang-tidy.
-5. **Code Quality** — TODOs, large files, etc.
-6. **Security Scan** — semgrep, secret patterns, unsafe C APIs.
-7. **Tests** — CTest, sequencer test, Python tests.
-8. **Integration Test** — scripted integration (Rust elodin-db, backend, etc.).
-9. **Build Summary** — table of all job results.
+4. **Code Quality** — TODOs, large files, etc.
+5. **Security Scan** — semgrep, secret patterns, unsafe C APIs.
+6. **Tests** — CTest, sequencer test, Python tests.
+7. **ThreadSanitizer (sequencer)** — the concurrency tests under `-fsanitize=thread`.
+8. **ASan + UBSan (full stack)** — `-DSANITIZE=ON`, then `test_integration.sh`.
+9. **Integration Test** — scripted integration (Rust elodin-db, backend, etc.).
+10. **Build Summary** — table of all job results.
+
+The sanitizer jobs run the *tests*, not the analyser — they only report on code that
+actually executes, which is why job 8 drives the full stack rather than CTest (CTest
+under ASan/UBSan is clean; one integration run was not). Its real gate is a grep over
+`.tmp/integration_*.log`, since UBSan writes to each service's own stderr.
+
+There is no static-analysis job: cppcheck could not fail and clang-tidy had no
+compilation database, so both were removed rather than left decorative. Compiler
+warnings replaced them — `CMakeLists.txt` sets `-Wall -Wextra -Wpedantic` with
+`-Werror=return-type`, so every build job carries them. See `docs/IMPROVEMENTS.md`.
 
 Optional locally: [pre-commit](https://pre-commit.com/)
 (`daq-server/.pre-commit-config.yaml`) — not run in CI.

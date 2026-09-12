@@ -97,8 +97,12 @@ def main() -> int:
         try:
             data, _addr = sock.recvfrom(4096)
             if data and len(data) >= 1 and data[0] == PACKET_SENSOR_CONFIG:
+                # enable_serial_printing (log mode byte, 0..3) is always the LAST byte of
+                # the config packet. Report it so the integration test can confirm a
+                # GUI-driven mode change actually reached this board (it does not act on it).
+                mode = data[-1]
                 print(
-                    "[board_startup_sim] SENSOR_CONFIG received, sending SELF_TEST",
+                    f"[board_startup_sim] SENSOR_CONFIG received enable_serial_printing={mode}, sending SELF_TEST",
                     flush=True,
                 )
                 # Single pass result for connector 2 — keeps WS path unambiguous (integration asserts sensor_2=1).

@@ -7,10 +7,9 @@ import { useSensorStore, useSensorValue, useLoadCellForceKg } from '@/lib/store'
 import { getApiBaseUrl, getWebSocketClient } from '@/lib/websocket';
 import { MessageType } from '@/lib/types';
 import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
-import { useSensorConfig } from '@/lib/sensor-config';
+import { useSensorConfig, resolveGroup } from '@/lib/sensor-config';
+import { useGuiConfig } from '@/lib/gui-config';
 
-/** Chamber PT role names in display order (config: sensor_roles_pt_board channels 4, 8, 9, 10). */
-const CHAMBER_PT_ROLES_ORDER = ['Chamber Mid PT 1', 'Chamber Mid PT 2', 'Chamber Throat PT 1', 'Chamber Throat PT 2'];
 const WINDOW_SECONDS = 60;
 
 function buildChannels(boards: Record<string, any>, type: 'TC' | 'RTD' | 'LC'): number[] {
@@ -88,15 +87,15 @@ function LcKgCompact({ calEntity, label, color }: { entity: string; calEntity: s
 export default function ChamberGraphsPage() {
     const ws = getWebSocketClient();
     const allSensors = useSensorConfig();
-    // Chamber PTs only (exclude TC/LC with "Chamber" in role); order Mid 1, Mid 2, Throat 1, Throat 2
-    const ptSensors = CHAMBER_PT_ROLES_ORDER
-      .map((role) =>
-        allSensors.find((s) => {
-          const calEntity = s.calEntity;
-          return (calEntity.startsWith('PT_Cal.') || /^PT\d+_Cal\.CH\d+$/.test(calEntity)) && s.role === role;
-        })
-      )
-      .filter((s): s is NonNullable<typeof s> => s != null);
+    const { groups } = useGuiConfig();
+    // Chamber PTs, explicit membership + order from config [gui.groups].Chamber (PTs only;
+    // TC/LC come from board type below). Roles that aren't PTs are filtered out. Fallback to
+    // legacy role-name matching ("Chamber" PTs) if the config has no Chamber group.
+    const ptSensors = (
+      groups.Chamber
+        ? resolveGroup(allSensors, groups.Chamber)
+        : allSensors.filter((s) => s.role.includes('Chamber'))
+    ).filter((s) => s.calEntity.startsWith('PT'));
 
     const [tcData, setTcData] = useState<{ entity: string; label: string; voltageReference: number }[]>([]);
     const [lcEntities, setLcEntities] = useState<string[]>([]);

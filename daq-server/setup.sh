@@ -128,7 +128,9 @@ if [ -x "$ELODIN_BIN" ]; then
 else
   # Try the prebuilt installer first (matches CI — much faster than source
   # build). Fall back to cargo install from git if the installer fails.
-  ELODIN_VERSION="v0.16.2"
+  # Keep this pinned to the version CI installs + validates against (see
+  # .github/workflows/daq-server-ci.yml). deploy/bootstrap_daq.sh is the preferred one-shot.
+  ELODIN_VERSION="v0.16.1"
   INSTALLER_URL="https://github.com/elodin-sys/elodin/releases/download/${ELODIN_VERSION}/elodin-db-installer.sh"
   mkdir -p "$HOME/.cargo/bin"
   info "Installing elodin-db $ELODIN_VERSION via prebuilt installer..."
@@ -139,7 +141,8 @@ else
     ELODIN_SRC="/tmp/elodin-src-$$"
     rm -rf "$ELODIN_SRC"
     git clone --depth 1 --branch "$ELODIN_VERSION" https://github.com/elodin-sys/elodin.git "$ELODIN_SRC"
-    (cd "$ELODIN_SRC" && cargo install --path libs/db)
+    # Crate root moved between elodin releases (libs/db vs libs/db/cli) — try both.
+    (cd "$ELODIN_SRC" && (cargo install --path libs/db/cli || cargo install --path libs/db))
     rm -rf "$ELODIN_SRC"
     # The crate may install as impeller2-cli; symlink for compat.
     if [ ! -x "$ELODIN_BIN" ] && [ -x "$HOME/.cargo/bin/impeller2-cli" ]; then

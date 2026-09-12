@@ -46,6 +46,7 @@ async function collectBoardHeartbeatResult(page: Page): Promise<BoardHeartbeatRe
         (card.querySelector('h3')?.textContent ?? '').replace(/\s+/g, ' ').trim() || 'Board';
       let status = '';
       let state = '';
+      let selfTest = '';
       card.querySelectorAll('div.flex-1.min-w-0').forEach((sec) => {
         const lab = (sec.querySelector('div.text-text-muted')?.textContent ?? '')
           .replace(/\s+/g, ' ')
@@ -54,10 +55,8 @@ async function collectBoardHeartbeatResult(page: Page): Promise<BoardHeartbeatRe
         const val = sec.querySelector('span.font-mono.font-bold')?.textContent?.trim() ?? '';
         if (lab === 'STATUS') status = val;
         if (lab === 'STATE') state = val;
+        if (lab === 'SELF TEST') selfTest = val;
       });
-
-      const selfTestMatch = (card as HTMLElement).innerText.match(/Self Test:\s*([^\n\r]+)/i);
-      const selfTest = (selfTestMatch?.[1] ?? '').trim();
 
       const hbBad = /Heartbeat:\s*---/.test((card as HTMLElement).innerText);
 

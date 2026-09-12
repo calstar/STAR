@@ -26,19 +26,24 @@ import * as http from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
-import { loadSensorRoleMap } from './sensor-config.js';
+import { loadSensorRoleMap, hpBoardNumbers } from './sensor-config.js';
 import { registerVTables, clearSubscriptionState } from './elodin-vtable-registry.js';
 import { registerControllerVTables } from './legacy/elodin-vtable-controller.js';
 import { createAPIHandler } from './api-server.js';
-import { readConfig } from './routes/config.js';
+import { startBoardLogReceiver } from './board-logs.js';
+import { readConfig, readDeployedConfig } from './routes/config.js';
 import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } from './legacy/state-actuators.js';
 import type { StateActuatorMap } from './legacy/state-actuators.js';
 import { getStateTransitions } from './legacy/state-transitions.js';
 import { recordBoardScanIngest, getBoardScanRateHz, isPrimaryPhysicalStream, mapEntityToGroup } from './board-scan-rate.js';
-import { EnvelopeAccumulator, parseGuiStreamConfig, envelopeWindowMs, type GuiStreamConfig } from './gui-stream.js';
+import {
+  EnvelopeAccumulator, parseGuiStreamConfig, envelopeWindowMs, encoderWindowMs,
+  type GuiStreamConfig, type EnvelopePoint,
+} from './gui-stream.js';
+import { ClientOutbox, FlushPacer } from './client-outbox.js';
 import { HistoryCache } from './history-cache.js';
 import { startGuiStaticServer } from './static-gui.js';
-import { handleCalibrationCommand, type CalibrationHost } from './calibration-handler.js';
+import { handleCalibrationCommand, publishCalibrationReload, type CalibrationHost } from './calibration-handler.js';
 import { loadPTCalibration, type CalibrationCoefficients } from './calibration.js';
 import { MessageType, SystemState } from '../../shared/types.js';
 import { isOperator } from './operators.js';
@@ -48,15 +53,17 @@ import type { SensorUpdate, StateUpdate, CommandPayload, BoardStatus, ActuatorUp
 // ── Config ───────────────────────────────────────────────────────────────────
 
 const WS_PORT = parseInt(process.env.WS_PORT ?? '8081', 10);
-// Engine-control fat-finger password (server-side). Shared, not per-user; the
-// real authorization is the operators allowlist (see operators.ts). Default is
-// the well-known dev value; set CONTROL_PASSWORD on the deployed server.
-const CONTROL_PASSWORD = process.env.CONTROL_PASSWORD || 'diablo';
 // Command types that actuate/transition the engine — gated by the operator
 // unlock. Read-only queries and countdown display are not.
 const CONTROL_COMMAND_TYPES = new Set(['state_transition', 'actuator', 'extend_fire', 'debug_mode', 'session_start', 'session_stop', 'session_extend']);
 // Per-connection control-auth state, stashed on the WebSocket.
-type WsWithControl = WebSocket & { __daqOperator?: boolean; __daqControlAuthorized?: boolean };
+type WsWithControl = WebSocket & {
+  __daqOperator?: boolean;
+  __daqControlAuthorized?: boolean;
+  /** Cleared each keepalive sweep, set again on pong. A socket that misses a
+   *  sweep is gone in a way TCP never reported (Wi-Fi drop, closed lid). */
+  __daqAlive?: boolean;
+};
 const ELODIN_HOST = process.env.ELODIN_HOST ?? '127.0.0.1';
 const ELODIN_PORT = parseInt(process.env.ELODIN_PORT ?? '2240', 10);
 const ACT_SVC_PORT = parseInt(process.env.ACTUATOR_SERVICE_PORT ?? '9998', 10);
@@ -79,15 +86,27 @@ const BOARD_HEARTBEAT_STALE_MS = 5000;
  *  network jitter and Date.now() quantization. */
 const BROADCAST_MIN_MS = 50;
 
-/**
- * True for PT/TC/RTD/LC raw+cal and actuator raw+state ([0x20]–[0x23], [0x30]–[0x31]).
- * Encoder ([0x24]), heartbeats ([0x10]), self-test ([0x60]), controller ([0x40]–[0x44]),
- * sequencer/PSM ([0x50]), etc. are not throttled.
+/** Which rate budget a stream is downsampled against, or null to pass through.
+ *
+ *  'gui'     — PT/TC/RTD/LC raw+cal and actuator raw+state ([0x20]–[0x23],
+ *              [0x30]–[0x31]), the bulk of the traffic.
+ *  'encoder' — encoder ([0x24]). Given its OWN, much higher budget rather than
+ *              the GUI one: OscopeTriggerPlot measures valve actuation timing
+ *              from these (inter-encoder skew, plateau detection), and a 100 ms
+ *              GUI window would quantize that measurement away. At the boards'
+ *              ~48 Hz the encoder window holds ~1 sample, so min == max and
+ *              points pass through untouched — this is a ceiling against a
+ *              faster board being fitted later, not a downsample of today.
+ *  null      — heartbeats ([0x10]), self-test ([0x60]), controller
+ *              ([0x40]–[0x44]), sequencer/PSM ([0x50]): event-like, low-rate,
+ *              every update goes out immediately.
  */
-function shouldThrottleSensorStreamPacket(high: number, _low: number): boolean {
-  if (high === 0x20 || high === 0x21 || high === 0x22 || high === 0x23) return true;
-  if (high === 0x30 || high === 0x31) return true;
-  return false;
+type StreamBudget = 'gui' | 'encoder' | null;
+function streamBudgetFor(high: number, _low: number): StreamBudget {
+  if (high === 0x20 || high === 0x21 || high === 0x22 || high === 0x23) return 'gui';
+  if (high === 0x30 || high === 0x31) return 'gui';
+  if (high === 0x24) return 'encoder';
+  return null;
 }
 
 // ── History cache (epoch-ms timestamps; see history-cache.ts) ────────────────
@@ -105,20 +124,46 @@ setInterval(() => history.prune(), 60_000);
 
 let guiStreamConfig: GuiStreamConfig = parseGuiStreamConfig(safeReadConfigForGui());
 const envelope = new EnvelopeAccumulator(envelopeWindowMs(guiStreamConfig));
-console.log(`[ThinServer] GUI downsampling: ${guiStreamConfig.mode} @ ${guiStreamConfig.pointsPerSecond} pts/s per stream`);
+const encoderEnvelope = new EnvelopeAccumulator(encoderWindowMs(guiStreamConfig));
+console.log(`[ThinServer] GUI downsampling: ${guiStreamConfig.mode} @ ${guiStreamConfig.pointsPerSecond} pts/s per stream`
+  + ` (encoders @ ${guiStreamConfig.encoderPointsPerSecond} pts/s)`);
 
 function safeReadConfigForGui(): unknown {
   try { return readConfig(); } catch { return null; }
 }
 
+/**
+ * Name of a state id as the ACTIVE config declares it, or null if the config declares no [[states]]
+ * (or not this id).
+ *
+ * Served from the deployed-config cache. A profile CAN be redeployed under a running backend —
+ * the backend is always-on, not one of the session-gated pipeline units — which is why this is a
+ * cache with invalidation rather than a boot-time read. deployActiveProfile() drops it, so the
+ * next command after a deploy resolves against the new rig's names.
+ */
+function configStateName(id: number): string | null {
+  try {
+    const raw = (readDeployedConfig() as any)?.states;
+    if (!Array.isArray(raw)) return null;
+    const hit = raw.find((e: any) => e?.id === id && typeof e?.name === 'string');
+    return hit ? (hit.name as string) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Re-read [gui] settings after a config save (wired via onConfigUpdated). */
 function reloadGuiStreamConfig(): void {
   const next = parseGuiStreamConfig(safeReadConfigForGui());
-  if (next.mode !== guiStreamConfig.mode || next.pointsPerSecond !== guiStreamConfig.pointsPerSecond) {
-    console.log(`[ThinServer] GUI downsampling changed: ${next.mode} @ ${next.pointsPerSecond} pts/s per stream`);
+  if (next.mode !== guiStreamConfig.mode
+      || next.pointsPerSecond !== guiStreamConfig.pointsPerSecond
+      || next.encoderPointsPerSecond !== guiStreamConfig.encoderPointsPerSecond) {
+    console.log(`[ThinServer] GUI downsampling changed: ${next.mode} @ ${next.pointsPerSecond} pts/s per stream`
+      + ` (encoders @ ${next.encoderPointsPerSecond} pts/s)`);
   }
   guiStreamConfig = next;
   envelope.setWindowMs(envelopeWindowMs(next));
+  encoderEnvelope.setWindowMs(encoderWindowMs(next));
 }
 
 /** Sample timestamps are forwarded from Elodin (bridge receipt, epoch ms). A
@@ -131,7 +176,28 @@ function saneSampleTimeMs(tsMs: number, fallbackMs: number): number {
     ? tsMs : fallbackMs;
 }
 
-/** Single exit point for downsampled sensor streams: history + stats + WS. */
+/**
+ * Per-client sensor staging. Sensor samples go here rather than straight to
+ * ws.send(), so a client that cannot keep up loses resolution instead of
+ * falling further and further behind (see client-outbox.ts).
+ *
+ * Control and event messages deliberately do NOT pass through this — they keep
+ * using send()/broadcast() directly. Sensor samples are idempotent and the next
+ * supersedes the last, which is what makes them safe to compact; a state
+ * transition or an abort notification is not.
+ */
+interface ClientStream {
+  outbox: ClientOutbox;
+  pacer: FlushPacer;
+  /** Last flush's observations, surfaced to the operator via CONNECTION_STATUS. */
+  throttled: boolean;
+  lagMs: number;
+  resolutionPct: number;
+}
+const clientStreams = new Map<WebSocket, ClientStream>();
+
+/** Single exit point for streams that bypass downsampling (event-like: state,
+ *  self-test, controller, sequencer). Broadcast immediately, never staged. */
 function emitSensorPoint(key: string, entity: string, component: string, value: number, tMs: number): void {
   history.record(key, tMs, value);
   stats.sensorUpdatesBroadcast++;
@@ -139,14 +205,64 @@ function emitSensorPoint(key: string, entity: string, component: string, value: 
   broadcast({ type: MessageType.SENSOR_UPDATE, timestamp: Date.now(), payload: update });
 }
 
+/** Single exit point for downsampled sensor streams: history, then per-client
+ *  staging. One call per closed envelope window (1–2 points, chronological). */
+function emitSensorWindow(key: string, entity: string, component: string, points: EnvelopePoint[]): void {
+  if (points.length === 0) return;
+  for (const p of points) history.record(key, p.tMs, p.value);
+  stats.sensorUpdatesBroadcast += points.length;
+  for (const cs of clientStreams.values()) cs.outbox.push(key, entity, component, points);
+}
+
+// Drain each client's outbox as fast as its own socket allows. The interval
+// between a client's flushes is set by how long its socket took to clear the
+// last dump — that measurement is also what sizes the next one, so resolution
+// (not currency) absorbs a slow link.
+setInterval(() => {
+  const now = Date.now();
+  for (const [ws, cs] of clientStreams) {
+    if (ws.readyState !== WebSocket.OPEN) continue;
+    if (!cs.pacer.shouldFlush(ws.bufferedAmount, now)) continue;
+
+    const newest = cs.outbox.newestTimestamp();
+    cs.outbox.squeeze(cs.pacer.budgetBytes);
+    const flushed = cs.outbox.drain();
+    if (flushed.length === 0) continue;
+
+    let bytes = 0;
+    for (const series of flushed) {
+      for (const p of series.points) {
+        const update: SensorUpdate = {
+          entity: series.entity, component: series.component, value: p.value, timestamp: p.tMs,
+        };
+        const data = JSON.stringify({ type: MessageType.SENSOR_UPDATE, timestamp: now, payload: update });
+        bytes += data.length;
+        try { ws.send(data); } catch { /* closing; the reaper will collect it */ }
+      }
+    }
+    cs.pacer.noteFlush(bytes, now);
+    cs.throttled = cs.outbox.squeezeDroppedLast;
+    cs.lagMs = newest === null ? 0 : Math.max(0, now - newest);
+    cs.resolutionPct = Math.round(cs.outbox.resolutionRatio() * 100);
+  }
+}, 100);
+
+// Reset the resolution window periodically so the reported percentage tracks
+// the link's recent behavior rather than averaging over the whole session.
+setInterval(() => {
+  for (const cs of clientStreams.values()) cs.outbox.resetStats();
+}, 10_000);
+
 // Timer flush so trickling/stopped streams don't hold their last window open.
 // Runs regardless of mode so a runtime envelope→throttle switch drains any
 // still-open windows instead of dropping them (map is empty in throttle mode).
 setInterval(() => {
-  for (const closed of envelope.flushOlderThan(Date.now())) {
-    for (const p of closed.points) {
-      emitSensorPoint(closed.key, closed.entity, closed.component, p.value, p.tMs);
-    }
+  const nowMs = Date.now();
+  for (const closed of envelope.flushOlderThan(nowMs)) {
+    emitSensorWindow(closed.key, closed.entity, closed.component, closed.points);
+  }
+  for (const closed of encoderEnvelope.flushOlderThan(nowMs)) {
+    emitSensorWindow(closed.key, closed.entity, closed.component, closed.points);
   }
 }, 50);
 
@@ -156,6 +272,8 @@ let firstPacketTimeMs: number | null = null;
 import { loadCountdownTargetTimeMs, saveCountdownTargetTimeMs } from './countdown-state.js';
 let countdownTargetMs: number | null = loadCountdownTargetTimeMs();
 import { sessionManager } from './session-manager.js';
+import { ConfigIssuesError } from './config-validation.js';
+import { countByLevel } from '../../shared/config-validation.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -174,7 +292,14 @@ try {
   }
 } catch { /* no calibration file — fine */ }
 
-const calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
+// Sensor-role → entity naming. Rebuilt on config save (onConfigUpdated) so a
+// Sensor Roles edit reflects without a backend restart. calibrationHost reads
+// this via its channelToEntityMap property (updated in lockstep below).
+let calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
+
+/** Cached HP (4-20 mA) PT board-number set for the Elodin decode hot path. Rebuilt on config
+ *  reload (onConfigUpdated) so moving/adding an HP board takes effect without a restart. */
+let _hpBoardNumbers = hpBoardNumbers();
 
 /** Cached slot→board_id map for uniqueIdFromPtEntity — built once, avoids config re-reads on hot path. */
 const _ptSlotToBoardId = new Map<number, number>();
@@ -255,7 +380,11 @@ loadBoardsFromConfig();
 
 // ── State actuator map (expected positions per state from CSV) ────────────────
 
-const STATE_ACTUATOR_MAP: StateActuatorMap = getStateActuatorMap();
+// `let`, not `const`: this is parsed from state_machine_actuators.csv at import time, and the
+// State Management tab can now change that file at runtime. It used to be a const that nothing
+// ever rebuilt, so expected-position / mismatch detection kept using the CSV as it was when the
+// backend booted.
+let STATE_ACTUATOR_MAP: StateActuatorMap = getStateActuatorMap();
 
 /**
  * Build entity→expected map for a given state.
@@ -332,7 +461,7 @@ function checkActuatorMismatch(state: SystemState): void {
 
   const key = 'actuator_mismatch';
   if (mismatched.length > 0) {
-    const stateName = SystemState[state] ?? 'UNKNOWN';
+    const stateName = configStateName(state) ?? SystemState[state] ?? 'UNKNOWN';
     const msg = `Actuator mismatch in ${stateName}: ${mismatched.join(', ')}`;
     console.warn(`[ThinServer] ⚠️ ${msg}`);
     broadcastNotification({ key, category: 'warning', message: msg, timestampMs: now, ongoing: true });
@@ -425,8 +554,25 @@ const selfTestNotifiedBoards = new Set<number>();
  *  Replayed as SENSOR_UPDATE on WS connect so late-connecting browsers see results. */
 const selfTestLatest = new Map<string, SensorUpdate>();
 
+// Rolling notification history so a reloaded/late-connecting browser recovers the
+// last few minutes of warnings/info instead of starting blank. Replayed on connect.
+const NOTIFICATION_BUFFER_MS = 5 * 60 * 1000;
+const NOTIFICATION_BUFFER_MAX = 500; // hard cap so a flapping alert can't grow it unbounded
+const notificationBuffer: { at: number; payload: NotificationPayload }[] = [];
+
+function pruneNotificationBuffer(now: number): void {
+  const cutoff = now - NOTIFICATION_BUFFER_MS;
+  while (notificationBuffer.length > 0 && notificationBuffer[0].at < cutoff) notificationBuffer.shift();
+  if (notificationBuffer.length > NOTIFICATION_BUFFER_MAX) {
+    notificationBuffer.splice(0, notificationBuffer.length - NOTIFICATION_BUFFER_MAX);
+  }
+}
+
 function broadcastNotification(payload: NotificationPayload): void {
-  broadcast({ type: MessageType.NOTIFICATION, timestamp: Date.now(), payload });
+  const at = Date.now();
+  notificationBuffer.push({ at, payload });
+  pruneNotificationBuffer(at);
+  broadcast({ type: MessageType.NOTIFICATION, timestamp: at, payload });
 }
 
 function boardLabel(status: BoardStatus): string {
@@ -509,6 +655,12 @@ setInterval(markStaleBoards, 1000);
 // burst (multi-chunk board packets), forwarding at least one row per channel per
 // packet; DB *storage* keeps every row. See integration Test 15 for the invariant.
 
+// Authoritative "data is actually flowing" signal: epoch-ms of the last entity we
+// ingested from Elodin. The status badge derives dataFresh from this, so it reflects
+// real end-to-end delivery — not just "a run is marked active" or the WS being open.
+let lastIngestMs = 0;
+const DATA_FRESH_MS = 3000; // no ingest for this long ⇒ pipeline is not delivering
+
 const stats = {
   ingestEntityUpdatesReceived: 0,  // every finite-value entity parsed from Elodin DB
   // Raw physical channel samples (non-_Cal, canonical component only): exactly one
@@ -526,23 +678,82 @@ const stats = {
 };
 
 // ── Local state (sequencer / actuator_service authoritative) ────────────────
-let currentState: SystemState = SystemState.IDLE;
+/** Boot state id from the config's [[states]] (is_boot), or IDLE if none is flagged. This was a
+ *  bare SystemState.IDLE — a literal 1 — which names a different state on a rig that renumbered,
+ *  so the backend reported and mismatch-checked against the wrong state until the first
+ *  _SEQUENCER_STATE packet arrived. */
+function configBootStateId(): SystemState {
+  try {
+    const raw = (readConfig() as any)?.states;
+    if (Array.isArray(raw)) {
+      const boot = raw.find((e: any) => e?.is_boot === true && typeof e?.id === 'number');
+      if (boot) return boot.id as SystemState;
+    }
+  } catch {
+    /* fall through */
+  }
+  return SystemState.IDLE;
+}
+
+let currentState: SystemState = configBootStateId();
 let debugMode = false;
 
 // ── HTTP + WebSocket server ──────────────────────────────────────────────────
 
 const apiHandler = createAPIHandler({
   getEngineState: () => currentState,
-  getDebugInfo: () => ({
-    ingestConnected: elodin.isConnected(),
-    ingestPacketsReceived: stats.ingestEntityUpdatesReceived,
-    wsClients: wss.clients.size,
-    sensorCacheSize: history.size,
-    useRelay: false,
-    boardScanRateHz: getBoardScanRateHz(),
-  }),
+  getDebugInfo: () => {
+    // Turns "the dashboards are stuck, restart the backend" into a diagnosis:
+    // a large wsBufferedBytes against a small wsClients is this exact bug.
+    let buffered = 0;
+    for (const ws of wss.clients) buffered += ws.bufferedAmount;
+    let windows = 0;
+    for (const cs of clientStreams.values()) windows += cs.outbox.windowsHeld;
+    return {
+      ingestConnected: elodin.isConnected(),
+      ingestPacketsReceived: stats.ingestEntityUpdatesReceived,
+      wsClients: wss.clients.size,
+      sensorCacheSize: history.size,
+      useRelay: false,
+      boardScanRateHz: getBoardScanRateHz(),
+      wsBufferedBytes: buffered,
+      outboxWindowsHeld: windows,
+      heapUsedMb: Math.round(process.memoryUsage().heapUsed / 1048576),
+    };
+  },
+  onStateCsvUpdated: () => {
+    // The CSV on disk changed and was deployed. Rebuild what the always-on backend derives from
+    // it, and tell browsers to refetch.
+    //
+    // Nothing is pushed to the run pipeline. Config reaches it at exactly one point --
+    // deployActiveProfile() at session start -- and the services read it once at boot. This used
+    // to send RELOAD_CONFIG to hot-reload the actuator and transition tables into a running
+    // sequencer, which was dead weight in the safety-critical path: this callback only fires when
+    // the CSV was actually *deployed*, and a deploy only happens when no session is active, so
+    // there was never a running sequencer for it to reach.
+    try {
+      STATE_ACTUATOR_MAP = getStateActuatorMap();
+    } catch (e) {
+      console.warn('\u26a0\ufe0f Failed to rebuild STATE_ACTUATOR_MAP:', e);
+    }
+    broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
+  },
+  onCalibrationReload: () => {
+    // A calibration profile was loaded / a blank created on disk (api-server swapped the live
+    // store file). Ask the calibration service to re-read it so the whole rig's cal switches live.
+    publishCalibrationReload(calibrationHost);
+  },
   onConfigUpdated: () => {
     reloadGuiStreamConfig();
+    // Rebuild sensor-role-derived caches so a Sensor Roles / board_id edit reflects
+    // live (the backend is always-on and isn't restarted by a session start).
+    calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
+    calibrationHost.channelToEntityMap = calChannelToEntityMap;
+    _ptSlotToBoardId.clear();
+    _hpBoardNumbers = hpBoardNumbers();
+    // Tell every open client the config changed so they refetch /api/* live
+    // (sensor-config, pressure-limits, pressure-bars) — no reload/restart.
+    broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
   },
 });
 
@@ -609,6 +820,27 @@ function broadcastBoardStatus(): void {
 
 setInterval(broadcastBoardStatus, 1000 / BOARD_STATUS_HZ);
 
+// ── Keepalive ────────────────────────────────────────────────────────────────
+//
+// TCP does not reliably report a peer that vanished without a FIN — a closed
+// laptop lid or a walk out of Wi-Fi range leaves the socket readyState OPEN
+// forever, and it keeps being fed. The outbox bounds what such a client costs,
+// but nothing else ever removes it from wss.clients, so probe and reap.
+const KEEPALIVE_MS = 30_000;
+setInterval(() => {
+  for (const ws of wss.clients) {
+    const w = ws as WsWithControl;
+    if (w.__daqAlive === false) {
+      console.warn('[ThinServer] Reaping unresponsive WS client (missed keepalive)');
+      clientStreams.delete(ws);
+      ws.terminate();
+      continue;
+    }
+    w.__daqAlive = false;
+    try { ws.ping(); } catch { /* already closing */ }
+  }
+}, KEEPALIVE_MS);
+
 // ── Client connection ─────────────────────────────────────────────────────────
 
 wss.on('connection', (ws: WebSocket, req) => {
@@ -622,11 +854,24 @@ wss.on('connection', (ws: WebSocket, req) => {
 
   // Engine-control authorization. Caddy injects X-Auth-Email on the upgrade
   // (from the session cookie). No header ⇒ no Caddy in front (dev/test-stand) ⇒
-  // trusted local ⇒ treat as operator. Control still requires the password
-  // unlock below (__daqControlAuthorized) — a fat-finger guard in every env.
+  // trusted local ⇒ treat as operator. Approved operators still explicitly arm
+  // control via the toggle below (__daqControlAuthorized) — a fat-finger guard
+  // in every env.
   const authEmail = ((req.headers['x-auth-email'] as string | undefined) || '').trim();
   const isOp = authEmail === '' ? true : isOperator(authEmail);
   (ws as WsWithControl).__daqOperator = isOp;
+
+  // Sensor staging for this client (see client-outbox.ts). Registered before
+  // any send so the first window produced after connect is already captured.
+  clientStreams.set(ws, {
+    outbox: new ClientOutbox(),
+    pacer: new FlushPacer(),
+    throttled: false,
+    lagMs: 0,
+    resolutionPct: 100,
+  });
+  (ws as WsWithControl).__daqAlive = true;
+  ws.on('pong', () => { (ws as WsWithControl).__daqAlive = true; });
   (ws as WsWithControl).__daqControlAuthorized = false;
 
   let inboundMessages = 0;
@@ -638,14 +883,13 @@ wss.on('connection', (ws: WebSocket, req) => {
   // Connection status
   send(ws, {
     type: MessageType.CONNECTION_STATUS, timestamp: Date.now(),
-    payload: { connected: true, elodinConnected: elodin.isConnected(), connId },
+    payload: connectionStatusPayload({ connId, ...clientStreamStatus(ws) }),
   });
   outboundMessages++;
   lastOutboundAt = Date.now();
 
   // Control authorization status — lets the UI enable/disable the arm step
-  // before any password is typed (non-operators see it disabled, never a
-  // false-armed state).
+  // before arming (non-operators see it disabled, never a false-armed state).
   send(ws, {
     type: MessageType.CONTROL_STATUS, timestamp: Date.now(),
     payload: { operator: isOp, email: authEmail || null },
@@ -678,7 +922,7 @@ wss.on('connection', (ws: WebSocket, req) => {
   // Current state
   send(ws, {
     type: MessageType.STATE_UPDATE, timestamp: Date.now(),
-    payload: { currentState, stateName: SystemState[currentState] ?? 'UNKNOWN', timestamp: Date.now(), debugMode },
+    payload: { currentState, stateName: configStateName(currentState) ?? SystemState[currentState] ?? 'UNKNOWN', timestamp: Date.now(), debugMode },
   });
   outboundMessages++;
   lastOutboundAt = Date.now();
@@ -719,6 +963,21 @@ wss.on('connection', (ws: WebSocket, req) => {
     lastOutboundAt = Date.now();
   }
 
+  // Notification history: replay the last few minutes (chronological, so the
+  // client's keyed dedup reconstructs current vs cleared state) so a reloaded
+  // browser recovers recent warnings/info instead of starting blank.
+  {
+    const now = Date.now();
+    pruneNotificationBuffer(now);
+    for (const n of notificationBuffer) {
+      send(ws, { type: MessageType.NOTIFICATION, timestamp: n.at, payload: n.payload });
+    }
+    if (notificationBuffer.length > 0) {
+      outboundMessages += notificationBuffer.length;
+      lastOutboundAt = now;
+    }
+  }
+
   // Historical data
   sendHistoricalData(ws);
   outboundMessages++;
@@ -736,6 +995,7 @@ wss.on('connection', (ws: WebSocket, req) => {
   });
 
   ws.on('close', (code, reasonBuffer) => {
+    clientStreams.delete(ws);
     const reason = reasonBuffer?.toString() ?? '';
     console.log(`[WS_BACKEND] ${JSON.stringify({
       event: 'conn_close',
@@ -780,15 +1040,13 @@ function handleMessage(ws: WebSocket, message: any): void {
       handleCommand(ws, message.payload as CommandPayload);
       break;
     case MessageType.CONTROL_UNLOCK: {
-      // Fat-finger password + operator identity, both checked server-side. The
-      // reply drives the UI's armed state, so it can never disagree with what the
-      // backend will actually accept.
-      const password = (message.payload && message.payload.password) || '';
+      // Arming is identity-only: approved operators may toggle control on. Checked
+      // server-side; the reply drives the UI's armed state, so it can never
+      // disagree with what the backend will actually accept.
       const op = (ws as WsWithControl).__daqOperator === true;
-      const ok = op && password === CONTROL_PASSWORD;
-      (ws as WsWithControl).__daqControlAuthorized = ok;
-      const reason = !op ? 'not_operator' : ok ? 'ok' : 'incorrect_password';
-      send(ws, { type: MessageType.CONTROL_UNLOCK_RESULT, timestamp: Date.now(), payload: { ok, reason } });
+      (ws as WsWithControl).__daqControlAuthorized = op;
+      const reason = op ? 'ok' : 'not_operator';
+      send(ws, { type: MessageType.CONTROL_UNLOCK_RESULT, timestamp: Date.now(), payload: { ok: op, reason } });
       break;
     }
     case MessageType.QUERY_HISTORICAL:
@@ -796,10 +1054,6 @@ function handleMessage(ws: WebSocket, message: any): void {
       break;
     case MessageType.CALIBRATION_COMMAND:
       handleCalibrationCommand(calibrationHost, ws, message.payload);
-      break;
-    case MessageType.SUBSCRIBE_SENSOR:
-    case MessageType.UNSUBSCRIBE_SENSOR:
-      // Thin backend broadcasts all updates to all clients, ignore filter requests safely.
       break;
     case 'get_state_transitions':
       send(ws, { type: 'state_transitions', timestamp: Date.now(), payload: { transitions: getStateTransitions() } });
@@ -812,13 +1066,13 @@ function handleMessage(ws: WebSocket, message: any): void {
 function broadcastStateUpdate(): void {
   broadcast({
     type: MessageType.STATE_UPDATE, timestamp: Date.now(),
-    payload: { currentState, stateName: SystemState[currentState] ?? 'UNKNOWN', timestamp: Date.now(), debugMode },
+    payload: { currentState, stateName: configStateName(currentState) ?? SystemState[currentState] ?? 'UNKNOWN', timestamp: Date.now(), debugMode },
   });
 }
 
 function handleCommand(ws: WebSocket, command: CommandPayload): void {
-  // The real, unbypassable gate: engine-control commands require an unlocked
-  // (operator + password) connection, regardless of what the UI shows.
+  // The real, unbypassable gate: engine-control commands require an armed
+  // (approved-operator) connection, regardless of what the UI shows.
   if (CONTROL_COMMAND_TYPES.has(command.commandType) && !(ws as WsWithControl).__daqControlAuthorized) {
     send(ws, {
       type: MessageType.ERROR, timestamp: Date.now(),
@@ -829,8 +1083,33 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
   switch (command.commandType) {
     case 'state_transition': {
       const targetState = command.data.state!;
-      const stateName = SystemState[targetState] ?? String(targetState);
-      const csvName = STATE_TO_CSV_NAME[stateName] ?? stateName;
+      const declaredName = configStateName(targetState);
+      // Resolve the id through the config the sequencer itself loaded, not the compiled enum.
+      // The GUI sends a [[states]] id; SystemState is a fixed table that only agrees with it on a
+      // rig that never renumbered. On one that did, every id from the first divergence up named a
+      // different state: id 7 is Vent in config and FUEL_PRESS in the enum, so pressing Vent sent
+      // TRANSITION:Fuel Press — and because Fuel Press is a real state here, fromName() resolved
+      // it and the sequencer would have run it. A vent request executing a press is not a failure
+      // mode worth keeping for the sake of a fallback.
+      //
+      // So once the config declares a [[states]] list it is the sole authority: an id it does not
+      // declare is rejected, not rewritten through the enum. The enum fallback below stands only
+      // when the config declares no states at all (legacy / unconfigured rig).
+      const cfgStates = (() => {
+        try {
+          const r = (readConfig() as any)?.states;
+          return Array.isArray(r) ? r : null;
+        } catch {
+          return null;
+        }
+      })();
+      if (cfgStates && cfgStates.length > 0 && declaredName === null) {
+        console.warn(`[ThinServer] state_transition rejected: id ${targetState} not in active config [[states]]`);
+        send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition rejected: id ${targetState} is not a state in the active config` } });
+        break;
+      }
+      const stateName = declaredName ?? SystemState[targetState] ?? String(targetState);
+      const csvName = declaredName ?? STATE_TO_CSV_NAME[stateName] ?? stateName;
       // No optimistic update — real state/actuator positions arrive via _SEQUENCER_STATE [0x50]
       // and [0x32] packets from Elodin. FIRE_START/FIRE_STOP are sent from the subscriber path.
       sendToActuatorService(`TRANSITION:${csvName}\n`).then(({ ok, reply }) => {
@@ -878,12 +1157,33 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       break;
     case 'session_start':
       sessionManager
-        .start(!!command.data.keepData, command.data.durationMs ?? 0)
-        .catch((err) => send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Session start failed: ${err.message}` } }));
+        .start(
+          !!command.data.keepData,
+          command.data.durationMs ?? 0,
+          !!command.data.simulated,
+          !!command.data.force,
+        )
+        .then(() => broadcastConnectionStatus())
+        .catch((err) => {
+          // A config-gated refusal is not a failure to report as a one-line string: the operator
+          // needs the list, grouped by the page that fixes each item, and the choice to run anyway.
+          // Sent only to the client that asked — another browser did not press this button.
+          if (err instanceof ConfigIssuesError) {
+            const { errors, warnings } = countByLevel(err.issues);
+            send(ws, {
+              type: MessageType.SESSION_START_BLOCKED,
+              timestamp: Date.now(),
+              payload: { issues: err.issues, errors, warnings, profile: err.profile },
+            });
+            return;
+          }
+          send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Session start failed: ${err.message}` } });
+        });
       break;
     case 'session_stop':
       sessionManager
         .stop(false)
+        .then(() => broadcastConnectionStatus())
         .catch((err) => send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Session stop failed: ${err.message}` } }));
       break;
     case 'session_extend':
@@ -997,9 +1297,68 @@ function scheduleResubscribe(attempt: number): void {
   }, 5000);
 }
 
+// True when incoming data is synthetic. In a session-enabled deployment this is
+// exactly "an active simulated run" — the backend's own USE_SIM env is ignored
+// there because the systemd sim harness sets USE_SIM=1 on the backend process
+// permanently (so it would wrongly read simulated even when the run is stopped or
+// live). Only the field-laptop path (session control off, no run concept) falls
+// back to USE_SIM=1 (the terminal `dev.sh --sim` stack). Drives the purple badge.
+function isSimulated(): boolean {
+  if (sessionManager.isEnabled()) return sessionManager.isSimulated();
+  return process.env.USE_SIM === '1';
+}
+
+// Single source of truth for the status badge. Every field is backend-observed —
+// no frontend guessing: connected (this socket), elodinConnected (backend↔Elodin
+// link), simulated (active simulated run), and dataFresh (we actually ingested a
+// row from Elodin within DATA_FRESH_MS — i.e. the pipeline is really delivering).
+//
+// throttled/resolutionPct/lagMs describe ONE client's link and so must be passed
+// per socket. They cannot be derived in the browser: resolutionPct needs the
+// produced-point count the client never receives, and lagMs needs the server
+// clock. An operator must never be looking at decimated data without being told.
+function connectionStatusPayload(extra: Record<string, unknown> = {}) {
+  return {
+    connected: true,
+    elodinConnected: elodin.isConnected(),
+    simulated: isSimulated(),
+    dataFresh: Date.now() - lastIngestMs < DATA_FRESH_MS,
+    throttled: false,
+    resolutionPct: 100,
+    lagMs: 0,
+    ...extra,
+  };
+}
+
+/** This client's own outbox observations, for connectionStatusPayload(). */
+function clientStreamStatus(ws: WebSocket): Record<string, unknown> {
+  const cs = clientStreams.get(ws);
+  if (!cs) return {};
+  return { throttled: cs.throttled, resolutionPct: cs.resolutionPct, lagMs: cs.lagMs };
+}
+
+// Re-send connection status. Per-client rather than a single broadcast: each
+// dashboard must report the state of ITS link, not whichever one is worst.
+function broadcastConnectionStatus(): void {
+  const ts = Date.now();
+  for (const ws of wss.clients) {
+    if (ws.readyState !== WebSocket.OPEN) continue;
+    send(ws, {
+      type: MessageType.CONNECTION_STATUS,
+      timestamp: ts,
+      payload: connectionStatusPayload(clientStreamStatus(ws)),
+    });
+  }
+}
+
+// Push the authoritative status ~1 Hz so dataFresh (and thus the badge) never goes
+// stale — otherwise it would only refresh on connect/elodin-flip and could show
+// "Simulated Data" long after the pipeline stopped delivering.
+setInterval(broadcastConnectionStatus, 1000);
+
 elodin.on('connected', () => {
   console.log('[ThinServer] Elodin Connected');
-  broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true } });
+  broadcastConnectionStatus();
 
   if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
   shouldResubscribe = true;
@@ -1014,7 +1373,11 @@ elodin.on('connected', () => {
 
 elodin.on('disconnected', () => {
   console.log('[ThinServer] Elodin DB disconnected');
-  broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: false } });
+  // The data source is gone (run stopped / DB swap). Clear the freshness clock so a
+  // new run starts as "not delivering" (dataFresh=false) instead of briefly showing
+  // the stale previous run's fresh state — fixes the "Simulated Data" flash on start.
+  lastIngestMs = 0;
+  broadcastConnectionStatus();
   if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
   clearSubscriptionState();
 });
@@ -1035,7 +1398,7 @@ elodin.on('packet', (header: any, payload: Buffer) => {
     }
 
     // ── Parse sensor/actuator/state packets ──────────────────────────────────
-    const parsedList = parseElodinPacket(header.packetId, payload);
+    const parsedList = parseElodinPacket(header.packetId, payload, _hpBoardNumbers);
 
     if (parsedList.length === 0) {
       if (high >= 0x40) {
@@ -1086,21 +1449,11 @@ elodin.on('packet', (header: any, payload: Buffer) => {
       broadcastStateUpdate();
       broadcastCommandedActuatorsForState(currentState);
       scheduleActuatorMismatchCheck(currentState);
-      if (currentState === SystemState.FIRE && prevState !== SystemState.FIRE) {
-        sendToControllerService('FIRE_START\n').then(({ ok, reply }) => {
-          if (!ok) {
-            console.error(`[ThinServer] FIRE_START not acknowledged by controller_service: ${reply}`);
-            broadcastNotification({ key: 'fire_start_failed', category: 'error', message: `FIRE_START not acknowledged by controller: ${reply}`, timestampMs: Date.now(), ongoing: false });
-          }
-        });
-      } else if (prevState === SystemState.FIRE && currentState !== SystemState.FIRE) {
-        sendToControllerService('FIRE_STOP\n').then(({ ok, reply }) => {
-          if (!ok) {
-            console.error(`[ThinServer] FIRE_STOP not acknowledged by controller_service: ${reply}`);
-            broadcastNotification({ key: 'fire_stop_failed', category: 'error', message: `FIRE_STOP not acknowledged by controller: ${reply}`, timestampMs: Date.now(), ongoing: false });
-          }
-        });
-      }
+      // FIRE_START / FIRE_STOP are NOT sent from here. The sequencer owns the burn gate and
+      // notifies controller_service itself (SequencerService::notifyControllerFire). This branch
+      // used to send them too, so a safety-critical gate had two writers in two processes racing
+      // on the same TCP endpoint — and this one keyed off SystemState.FIRE, a hardcoded enum,
+      // rather than the configured fire state.
       return;
     }
 
@@ -1136,6 +1489,7 @@ elodin.on('packet', (header: any, payload: Buffer) => {
 
       const key = `${parsed.entity}.${parsed.component}`;
       stats.ingestEntityUpdatesReceived++;
+      lastIngestMs = Date.now();
 
       // Pre-downsample ingest rate (what boards/Elodin actually deliver) — not WS broadcast rate.
       recordBoardScanIngest(parsed.entity, parsed.component);
@@ -1150,25 +1504,27 @@ elodin.on('packet', (header: any, payload: Buffer) => {
       // guarded against off-clock publishers.
       const tsMs = saneSampleTimeMs(parsed.timestamp, epochNow);
 
-      if (!shouldThrottleSensorStreamPacket(high, low)) {
-        // Event-like streams (state, self-test, encoder, controller): every
-        // update goes out immediately, no downsampling.
+      const budget = streamBudgetFor(high, low);
+      if (budget === null) {
+        // Event-like streams (state, self-test, controller, sequencer): every
+        // update goes out immediately, no downsampling and no staging.
         emitSensorPoint(key, parsed.entity, parsed.component, parsed.value, tsMs);
         continue;
       }
 
-      if (guiStreamConfig.mode === 'throttle') {
+      if (budget === 'gui' && guiStreamConfig.mode === 'throttle') {
         // Legacy drop-throttle (config.toml [gui] downsample_mode = "throttle").
         const lastBcast = broadcastLastTime.get(key) ?? 0;
         if (epochNow - lastBcast < BROADCAST_MIN_MS) continue;
         broadcastLastTime.set(key, epochNow);
-        emitSensorPoint(key, parsed.entity, parsed.component, parsed.value, tsMs);
+        emitSensorWindow(key, parsed.entity, parsed.component, [{ tMs: tsMs, value: parsed.value }]);
       } else {
         // Min/max envelope: extremes of each window survive with their real
         // timestamps, so transients can't hide between broadcast slots.
-        for (const p of envelope.add(key, parsed.entity, parsed.component, tsMs, parsed.value)) {
-          emitSensorPoint(key, parsed.entity, parsed.component, p.value, p.tMs);
-        }
+        // Encoders run on their own, much shorter window (see streamBudgetFor).
+        const acc = budget === 'encoder' ? encoderEnvelope : envelope;
+        const closed = acc.add(key, parsed.entity, parsed.component, tsMs, parsed.value);
+        if (closed.length > 0) emitSensorWindow(key, parsed.entity, parsed.component, closed);
       }
     }
   } catch (err) {
@@ -1216,5 +1572,12 @@ httpServer.listen(WS_PORT, () => {
   console.log(`[ThinServer] Actuator service: localhost:${ACT_SVC_PORT}`);
   // Init the run-session manager last, once broadcast/notify + wss are live.
   // No-op (enabled=false) unless SESSION_SERVICE_MODE is mock/systemd.
-  sessionManager.init(broadcast, broadcastNotification);
+  // On run stop, re-baseline board status from config (clears stale heartbeat
+  // timestamps) so boards read "disconnected", matching fresh startup, instead of "---".
+  sessionManager.init(broadcast, broadcastNotification, () => {
+    loadBoardsFromConfig();
+    broadcastBoardStatus();
+  });
+  // Board diagnostic logs (type-15 LOGS forwarded by daq_bridge over loopback UDP).
+  startBoardLogReceiver(broadcast);
 });

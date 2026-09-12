@@ -19,8 +19,8 @@ namespace board {
  *   u64 timestamp_ns  (0)  — monotonic receive timestamp
  *   u8  board_id      (8)
  *   u8  board_type    (9)  — config wire byte (see fsw::daq_wire / BoardTypeWire.hpp)
- *   u8  engine_state  (10) — Diablo::EngineState raw value
- *   u8  board_state   (11) — Diablo::BoardState raw value
+ *   u8  engine_state  (10) — daq::EngineState raw value
+ *   u8  board_state   (11) — daq::BoardState raw value
  *   u32 packet_ts_ms  (12) — board-reported timestamp from packet header
  */
 using BoardHeartbeatElodinMessage = CommsMessage<uint64_t,  // (0) timestamp_ns

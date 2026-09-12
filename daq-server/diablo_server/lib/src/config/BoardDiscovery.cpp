@@ -77,9 +77,9 @@ void BoardDiscovery::stop_discovery() {
 
 void BoardDiscovery::process_board_announcement(const uint8_t* data, size_t size,
                                                 const std::string& source_ip) {
-    Diablo::PacketHeader hdr;
-    Diablo::BoardHeartbeatPacket hb;
-    if (!Diablo::parse_board_heartbeat_packet(data, size, hdr, hb)) {
+    daq::PacketHeader hdr;
+    daq::BoardHeartbeatPacket hb;
+    if (!daq::parse_board_heartbeat_packet(data, size, hdr, hb)) {
         return;
     }
 
@@ -144,9 +144,9 @@ void BoardDiscovery::process_board_announcement(const uint8_t* data, size_t size
 
 void BoardDiscovery::process_sensor_data(const uint8_t* data, size_t size,
                                          const std::string& source_ip) {
-    Diablo::PacketHeader hdr;
-    std::vector<Diablo::SensorDataChunkCollection> chunks;
-    if (!Diablo::parse_sensor_data_packet(data, size, hdr, chunks) || chunks.empty()) {
+    daq::PacketHeader hdr;
+    std::vector<daq::SensorDataChunkCollection> chunks;
+    if (!daq::parse_sensor_data_packet(data, size, hdr, chunks) || chunks.empty()) {
         return;
     }
 
@@ -212,9 +212,9 @@ void BoardDiscovery::process_sensor_data(const uint8_t* data, size_t size,
 std::vector<SensorInfo> BoardDiscovery::detect_sensors_from_packet(const uint8_t* data,
                                                                    size_t size) const {
     std::vector<SensorInfo> sensors;
-    Diablo::PacketHeader hdr;
-    std::vector<Diablo::SensorDataChunkCollection> chunks;
-    if (!Diablo::parse_sensor_data_packet(data, size, hdr, chunks) || chunks.empty()) {
+    daq::PacketHeader hdr;
+    std::vector<daq::SensorDataChunkCollection> chunks;
+    if (!daq::parse_sensor_data_packet(data, size, hdr, chunks) || chunks.empty()) {
         return sensors;
     }
     std::map<uint8_t, bool> sensor_ids;

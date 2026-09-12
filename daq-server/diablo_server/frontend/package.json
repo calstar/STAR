@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "build:shared": "tsc -p ../shared/tsconfig.json",
+    "predev": "npm run build:shared",
+    "prebuild": "npm run build:shared",
+    "pretest:build": "npm run build:shared",
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "start": "vite preview --host 0.0.0.0 --port 3000",

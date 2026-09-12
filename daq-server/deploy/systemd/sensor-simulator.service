@@ -1,12 +1,21 @@
 [Unit]
 Description=Sensor System Board Simulator (synthetic UDP when no hardware)
 After=network.target sensor-daq.service
+# Three strikes → `failed` (visible in `systemctl --user --failed`) instead of the guard below
+# becoming another silent 5-second respawn loop.
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
 Type=simple
 WorkingDirectory=%h/sensor_system
 Environment=DAQ_CONFIG=config/config.toml
 EnvironmentFile=-%h/.config/daq/pipeline.env
+# Refuse to run unless the pipeline overlay actually selected sim. The units OBEY EnvironmentFile
+# (pipeline.env), which ConditionEnvironment= can't see — so gate in ExecStartPre, where the unit
+# environment (incl. USE_SIM from pipeline.env) is in scope. `$$` defers expansion to the shell so
+# it reads the live overlay value, not a systemd pre-expansion. No overlay ⇒ USE_SIM unset ⇒ refuse.
+ExecStartPre=/bin/sh -c '[ "$${USE_SIM}" = "1" ] || { echo "REFUSING: USE_SIM=$${USE_SIM:-unset} — simulator must not run during a live run" >&2; exit 1; }'
 ExecStart=/usr/bin/python3 sim/board_simulator.py --config ${DAQ_CONFIG} --target 127.0.0.1 --port 5006
 Restart=always
 RestartSec=5

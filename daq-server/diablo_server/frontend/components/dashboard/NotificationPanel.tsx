@@ -68,51 +68,17 @@ export default function NotificationPanel() {
 
   const items = notifications;
 
-  const lastMaxTsRef = useRef<number>(0);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [active, setActive] = useState(false);
-
-  useEffect(() => {
-    if (!items.length) return;
-    const maxTs = Math.max(...items.map((n) => n.timestampMs));
-    if (maxTs <= lastMaxTsRef.current) return;
-    lastMaxTsRef.current = maxTs;
-
-    setActive(true);
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      setActive(false);
-      timerRef.current = null;
-    }, 200);
-  }, [items]);
-
   return (
-    <div className="h-full flex flex-col w-full min-w-[150px] flex-shrink-0 relative">
-      <div className="absolute top-1 right-1 pointer-events-none z-10">
-        <span className="relative flex h-4 w-4 items-center justify-center">
-          <span
-            className={`absolute inline-flex rounded-full h-4 w-4 transition-colors duration-75 ${
-              active ? 'bg-red-500/40' : 'bg-emerald-400/25'
-            }`}
-          />
-          <span
-            className={`relative inline-flex rounded-full h-2.5 w-2.5 transition-colors duration-75 ${
-              active ? 'bg-red-500' : 'bg-emerald-400'
-            }`}
-          />
-        </span>
-      </div>
-      <div className="flex flex-col gap-1 mb-1.5 pl-1 pr-6">
-        <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Board heartbeat</div>
-        <div className="flex items-center justify-start">
-          <button
-            type="button"
-            onClick={clearNotifications}
-            className="px-2 py-1 rounded border border-gray-700 text-lg font-semibold text-gray-300 hover:bg-gray-800 active:bg-gray-700"
-          >
-            Clear
-          </button>
-        </div>
+    <div className="h-full flex flex-col w-full min-w-[150px] flex-shrink-0">
+      <div className="flex items-center justify-between gap-2 mb-1.5 px-1">
+        <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Notifications</div>
+        <button
+          type="button"
+          onClick={clearNotifications}
+          className="px-2 py-0.5 rounded border border-gray-700 text-xs font-semibold text-gray-300 hover:bg-gray-800 active:bg-gray-700"
+        >
+          Clear
+        </button>
       </div>
       <div className="flex-1 min-h-0 rounded border border-gray-800 bg-black/40 overflow-hidden flex flex-col">
         <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-gray-800/70 flex flex-col">

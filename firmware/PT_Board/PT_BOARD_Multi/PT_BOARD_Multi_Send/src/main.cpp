@@ -9,10 +9,10 @@
  */
 
 #include <Arduino.h>
-#include <DAQv2-Comms.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -137,7 +137,7 @@ void setup() {
 // Loop: cycle connectors 1..10, one measurement each, one SENSOR_DATA packet
 // ---------------------------------------------------------------------------
 void loop() {
-    Diablo::SensorDataChunkCollection chunk(millis(), NUM_PTS);
+    daq::SensorDataChunkCollection chunk(millis(), NUM_PTS);
     float voltages[NUM_PTS];
 
     for (int conn = 1; conn <= NUM_PTS; conn++) {
@@ -157,10 +157,10 @@ void loop() {
         chunk.add_datapoint(static_cast<uint8_t>(conn - 1), vbits);
     }
 
-    std::vector<Diablo::SensorDataChunkCollection> chunks;
+    std::vector<daq::SensorDataChunkCollection> chunks;
     chunks.push_back(chunk);
 
-    size_t n = Diablo::create_sensor_data_packet(
+    size_t n = daq::create_sensor_data_packet(
         chunks, NUM_PTS, millis(), packetBuffer, sizeof(packetBuffer));
     if (n == 0)
         return;

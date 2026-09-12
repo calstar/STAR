@@ -1,10 +1,10 @@
 #include "main.h"
 
 #include <Arduino.h>
-#include <DAQv2-Comms.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 
 #include <cstring>
 
@@ -44,12 +44,12 @@ SPIClass ADC_SPI(HSPI);
 // Forward declarations
 void flush_adc_cycles(int cycles);
 void read_single_connector(uint8_t connector_id, int num_readings,
-                           Diablo::SensorDataChunkCollection& chunk);
+                           daq::SensorDataChunkCollection& chunk);
 void set_connector_rtd(uint8_t connector_id);
 void collect_chunk();
 void sendSensorDataPacket();
 
-std::vector<Diablo::SensorDataChunkCollection> chunks;
+std::vector<daq::SensorDataChunkCollection> chunks;
 
 float convert_code_to_voltage(int32_t code) {
     return ((float)code * 2.5f) / 2147483648.0f;
@@ -147,7 +147,7 @@ void set_connector_rtd(uint8_t connector_id) {
 }
 
 void read_single_connector(uint8_t connector_id, int num_readings,
-                           Diablo::SensorDataChunkCollection& chunk) {
+                           daq::SensorDataChunkCollection& chunk) {
     uint32_t value = 0;
 
     for (int i = 0; i < num_readings; i++) {
@@ -166,7 +166,7 @@ void read_single_connector(uint8_t connector_id, int num_readings,
 }
 
 void collect_chunk() {
-    Diablo::SensorDataChunkCollection chunk(millis(), NUM_CONNECTORS);
+    daq::SensorDataChunkCollection chunk(millis(), NUM_CONNECTORS);
 
     for (uint8_t connector_id = 1; connector_id <= NUM_CONNECTORS;
          connector_id++) {
@@ -186,7 +186,7 @@ void sendSensorDataPacket() {
     }
 
     uint8_t packetBuffer[MAX_PACKET_SIZE];
-    size_t packetSize = Diablo::create_sensor_data_packet(
+    size_t packetSize = daq::create_sensor_data_packet(
         chunks, NUM_CONNECTORS, millis(), packetBuffer, sizeof(packetBuffer));
 
     if (packetSize == 0) {

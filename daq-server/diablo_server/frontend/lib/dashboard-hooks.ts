@@ -1,10 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSensorStore } from '@/lib/store';
 import { getApiBaseUrl, getWebSocketClient } from '@/lib/websocket';
 import { MessageType } from '@/lib/types';
 import type { SensorConfig } from '@/lib/sensor-config';
+import { useGuiConfig } from '@/lib/gui-config';
+import { usePressureLimits } from '@/lib/pressure-limits';
 import { buildPressurePlotSeriesFromSensorList, type PressurePlotSeries } from '@/lib/pressure-bar-defs';
 
 export type ActuatorEntry = {
@@ -62,17 +64,15 @@ export function useActuatorsFromConfig(): ActuatorEntry[] {
  */
 export function usePressureSensors(): PressurePlotSeries[] {
   const ws = getWebSocketClient();
-  const [series, setSeries] = useState<PressurePlotSeries[]>(() => buildPressurePlotSeriesFromSensorList([]));
+  const [sensors, setSensors] = useState<SensorConfig[]>([]);
+  const { pressureBars } = useGuiConfig();
+  const limits = usePressureLimits();
 
   const load = useCallback(() => {
     fetch(`${getApiBaseUrl()}/api/sensor-config`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((data: { sensors?: SensorConfig[] } | null) => {
-        setSeries(buildPressurePlotSeriesFromSensorList(data?.sensors ?? []));
-      })
-      .catch(() => {
-        setSeries(buildPressurePlotSeriesFromSensorList([]));
-      });
+      .then((data: { sensors?: SensorConfig[] } | null) => setSensors(data?.sensors ?? []))
+      .catch(() => setSensors([]));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -82,5 +82,10 @@ export function usePressureSensors(): PressurePlotSeries[] {
     return () => { unsub(); };
   }, [ws, load]);
 
-  return series;
+  // Bars + limits come from config (useGuiConfig / usePressureLimits already
+  // refetch on CONFIG_UPDATED), so the series follow config edits live.
+  return useMemo(
+    () => buildPressurePlotSeriesFromSensorList(sensors, pressureBars, limits),
+    [sensors, pressureBars, limits],
+  );
 }

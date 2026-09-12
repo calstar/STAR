@@ -308,14 +308,12 @@ function fillUncalibratedChannelsFromAgreeing(calMap) {
  *  1. scripts/calibration/calibrations/ (project root — used by femboy/FSW)
  *  2. calibration/                     (repo-root fallback)
  *  3. web-gui/backend/data/
- *  4. external/DiabloAvionics/test_guis/
  */
 export function loadPTCalibration(overridePath) {
     const candidateDirs = [
         path.join(__dirname, '../../../scripts/calibration/calibrations'), // femboy / daq_bridge path
         path.join(__dirname, '../../../calibration'),
         path.join(__dirname, '../data'),
-        path.join(__dirname, '../../../external/DiabloAvionics/test_guis'),
     ];
     // If caller supplied a specific file path, try it first
     if (overridePath) {

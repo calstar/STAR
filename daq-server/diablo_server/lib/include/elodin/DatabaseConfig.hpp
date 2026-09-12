@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "ElodinClient.hpp"
@@ -22,6 +23,33 @@ struct BoardChannels {
     uint8_t board_number;           // board_id % 10
     std::vector<uint8_t> channels;  // local channels (1-10)
 };
+
+/**
+ * @brief Elodin table ids (hi, lo) for the RAW sensor VTables the given boards publish.
+ *
+ * The (type_hi, (board_number-1)*0x20 + channel) encoding is defined by
+ * DatabaseConfig::register_tables(), so it lives here beside it rather than being re-derived by
+ * every subscriber. Built from the boards actually in config — the version this replaced guessed
+ * boards 1-8 x channels 1-10 and subscribed to 480 tables whether they existed or not.
+ */
+std::vector<std::pair<uint8_t, uint8_t>> raw_sensor_tables(
+    const std::vector<BoardChannels>& pt_boards, const std::vector<BoardChannels>& act_boards,
+    const std::vector<BoardChannels>& tc_boards, const std::vector<BoardChannels>& rtd_boards,
+    const std::vector<BoardChannels>& lc_boards, const std::vector<BoardChannels>& enc_boards);
+
+/**
+ * @brief Elodin table ids for the CALIBRATED VTables, matching register_calibrated_tables()
+ *        (same encoding as above with a +0x10 channel offset, and ACT at 0x31 rather than 0x30).
+ */
+std::vector<std::pair<uint8_t, uint8_t>> calibrated_sensor_tables(
+    const std::vector<BoardChannels>& pt_boards, const std::vector<BoardChannels>& tc_boards,
+    const std::vector<BoardChannels>& rtd_boards, const std::vector<BoardChannels>& lc_boards,
+    const std::vector<BoardChannels>& enc_boards, const std::vector<BoardChannels>& act_boards);
+
+/** Non-sensor tables, named rather than spelled as literals at each use site. */
+constexpr std::pair<uint8_t, uint8_t> kTableSequencerState{0x50, 0x00};
+constexpr std::pair<uint8_t, uint8_t> kTableControllerState{0x43, 0x00};
+constexpr std::pair<uint8_t, uint8_t> kTableCalibrationCommand{0x46, 0x00};
 
 /**
  * @brief Register sensor table schemas with Elodin database.

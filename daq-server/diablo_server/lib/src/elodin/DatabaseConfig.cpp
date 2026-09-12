@@ -131,6 +131,45 @@ static bool register_actuator_state_vtable(ElodinClient& client, uint8_t type_hi
 // PUBLIC API — RAW VTables only (for daq_bridge)
 // ════════════════════════════════════════════════════════════════════════════
 
+namespace {
+/** Append (type_hi, (board_number-1)*0x20 + offset + ch) for every active channel. */
+void appendTables(std::vector<std::pair<uint8_t, uint8_t>>& out,
+                  const std::vector<BoardChannels>& boards, uint8_t type_hi, uint8_t offset) {
+    for (const auto& board : boards)
+        for (uint8_t ch : board.channels)
+            out.push_back(
+                {type_hi, static_cast<uint8_t>((board.board_number - 1) * 0x20 + offset + ch)});
+}
+}  // namespace
+
+std::vector<std::pair<uint8_t, uint8_t>> raw_sensor_tables(
+    const std::vector<BoardChannels>& pt_boards, const std::vector<BoardChannels>& act_boards,
+    const std::vector<BoardChannels>& tc_boards, const std::vector<BoardChannels>& rtd_boards,
+    const std::vector<BoardChannels>& lc_boards, const std::vector<BoardChannels>& enc_boards) {
+    std::vector<std::pair<uint8_t, uint8_t>> t;
+    appendTables(t, pt_boards, 0x20, 0x00);
+    appendTables(t, act_boards, 0x30, 0x00);
+    appendTables(t, tc_boards, 0x21, 0x00);
+    appendTables(t, rtd_boards, 0x22, 0x00);
+    appendTables(t, lc_boards, 0x23, 0x00);
+    appendTables(t, enc_boards, 0x24, 0x00);
+    return t;
+}
+
+std::vector<std::pair<uint8_t, uint8_t>> calibrated_sensor_tables(
+    const std::vector<BoardChannels>& pt_boards, const std::vector<BoardChannels>& tc_boards,
+    const std::vector<BoardChannels>& rtd_boards, const std::vector<BoardChannels>& lc_boards,
+    const std::vector<BoardChannels>& enc_boards, const std::vector<BoardChannels>& act_boards) {
+    std::vector<std::pair<uint8_t, uint8_t>> t;
+    appendTables(t, pt_boards, 0x20, 0x10);
+    appendTables(t, tc_boards, 0x21, 0x10);
+    appendTables(t, rtd_boards, 0x22, 0x10);
+    appendTables(t, lc_boards, 0x23, 0x10);
+    appendTables(t, enc_boards, 0x24, 0x10);
+    appendTables(t, act_boards, 0x31, 0x10);
+    return t;
+}
+
 bool DatabaseConfig::register_tables(ElodinClient& client,
                                      const std::vector<BoardChannels>& pt_boards,
                                      const std::vector<BoardChannels>& act_boards,
@@ -447,11 +486,16 @@ static bool register_sequencer_vtable(ElodinClient& client) {
 }
 
 static bool register_calibration_command_vtable(ElodinClient& client) {
-    // CalibrationCommand: u64 timestamp_ns | u8 type | u8 sensor_id | u16 pad | f32 reference_value
+    // CalibrationCommand: u64 timestamp_ns | u8 type | u8 pad | u16 sensor_id (LE) | f32 reference.
+    // sensor_id is the uid board_id*100+connector (e.g. board 21 conn 5 = 2105) — a full u16, so it
+    // sits at the even offset 10 (2-byte aligned). It used to be declared u8 at offset 9; Elodin
+    // zeroes any byte no field covers, so the high byte was dropped and every capture to a board
+    // with id >= 3 (uid > 255) landed on uid & 0xFF (e.g. 2105 -> 57). The backend writer and the
+    // service parser use this same layout.
     auto vt = builder::vtable({
         raw_field(0, 8, schema(PrimType::U64(), {}, component("CALIBRATION.command.timestamp_ns"))),
         raw_field(8, 1, schema(PrimType::U8(), {}, component("CALIBRATION.command.type"))),
-        raw_field(9, 1, schema(PrimType::U8(), {}, component("CALIBRATION.command.sensor_id"))),
+        raw_field(10, 2, schema(PrimType::U16(), {}, component("CALIBRATION.command.sensor_id"))),
         raw_field(12, 4,
                   schema(PrimType::F32(), {}, component("CALIBRATION.command.reference_value"))),
     });

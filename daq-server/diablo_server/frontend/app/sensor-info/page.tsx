@@ -341,10 +341,9 @@ export default function SensorInfoPage() {
   // ── DAQ ingest data-rate probe (Elodin → backend) ───────────────────────────
   const [ingestPackets, setIngestPackets] = useState<number | null>(null);
   const [ingestRateHz, setIngestRateHz] = useState<number>(0);
-  /** Backend avg per-channel Hz per board group from Elodin ingest (pre-WS-throttle ≈ scan rate). */
-  const [boardScanHz, setBoardScanHz] = useState({
-    pt1: 0, pt2: 0, tc: 0, rtd: 0, lc: 0, act: 0, enc: 0,
-  });
+  /** Backend avg per-channel Hz per board group from Elodin ingest (pre-WS-throttle ≈ scan rate).
+   *  Dynamic keys: `pt<n>` per PT board plus tc/rtd/lc/act/enc. Missing group ⇒ 0. */
+  const [boardScanHz, setBoardScanHz] = useState<Record<string, number>>({});
   /** Wall time of last successful `/api/debug` response (ingest + board scan metrics). */
   const [lastDebugPollOkMs, setLastDebugPollOkMs] = useState<number | null>(null);
   useStaleRenderTick();
@@ -372,17 +371,7 @@ export default function SensorInfoPage() {
           prevCount = count;
           prevTime = now;
           const b = data.boardScanRateHz;
-          if (b && typeof b === 'object') {
-            setBoardScanHz({
-              pt1: typeof b.pt1 === 'number' ? b.pt1 : 0,
-              pt2: typeof b.pt2 === 'number' ? b.pt2 : 0,
-              tc: typeof b.tc === 'number' ? b.tc : 0,
-              rtd: typeof b.rtd === 'number' ? b.rtd : 0,
-              lc: typeof b.lc === 'number' ? b.lc : 0,
-              act: typeof b.act === 'number' ? b.act : 0,
-              enc: typeof b.enc === 'number' ? b.enc : 0,
-            });
-          }
+          if (b && typeof b === 'object') setBoardScanHz(b as Record<string, number>);
           setLastDebugPollOkMs(now);
         })
         .catch(() => {
@@ -400,6 +389,8 @@ export default function SensorInfoPage() {
 
   const [ptSensors,  setPtSensors]  = useState<PtSensor[]>([]);
   const [hptSensors, setHptSensors] = useState<PtSensor[]>([]);
+  /** Distinct PT boards (for the per-board scan-rate tiles). boardNumber = board_id % 10 (0→10). */
+  const [ptBoards, setPtBoards] = useState<{ boardId: number; boardNumber: number; isHp: boolean }[]>([]);
 
   // Dynamic channel lists from /api/config, seeded with defaults so the
   // initial render matches the post-config-fetch structure.
@@ -479,6 +470,16 @@ export default function SensorInfoPage() {
 
         setPtSensors(pt);
         setHptSensors(hpt);
+
+        // Distinct PT boards for the per-board scan-rate tiles (any number of PT boards).
+        const boardMap = new Map<number, { boardId: number; boardNumber: number; isHp: boolean }>();
+        for (const s of mapped as any[]) {
+          const bid = typeof s.boardId === 'number' ? s.boardId : undefined;
+          if (bid === undefined || boardMap.has(bid)) continue;
+          const mod = bid % 10;
+          boardMap.set(bid, { boardId: bid, boardNumber: mod === 0 ? 10 : mod, isHp: !!s.isHpPt });
+        }
+        setPtBoards([...boardMap.values()].sort((a, b) => a.boardId - b.boardId));
       })
       .catch(() => {});
   }, []);
@@ -534,33 +535,31 @@ export default function SensorInfoPage() {
               Mean per-channel Elodin ingest rate before WebSocket throttle (true DAQ/board delivery rate).
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-x-4 gap-y-1" data-testid="sensor-info-board-scan">
+              {ptBoards.map((b) => (
+                <div key={b.boardId}>
+                  <div className="text-[10px] text-gray-500">{b.isHp ? 'HPT' : 'PT'} B{b.boardId} (PT{b.boardNumber}.*)</div>
+                  <div className="text-cyan-400">{ingestMetricsStale ? '---' : `${fmtHz(boardScanHz[`pt${b.boardNumber}`] ?? 0)} Hz`}</div>
+                </div>
+              ))}
               <div>
-                <div className="text-[10px] text-gray-500">PT B21 (PT1.*)</div>
-                <div className="text-cyan-400">{ingestMetricsStale ? '---' : `${fmtHz(boardScanHz.pt1)} Hz`}</div>
+                <div className="text-[10px] text-gray-500">TC (TC*)</div>
+                <div className="text-cyan-400">{ingestMetricsStale ? '---' : `${fmtHz(boardScanHz.tc ?? 0)} Hz`}</div>
               </div>
               <div>
-                <div className="text-[10px] text-gray-500">HPT B22 (PT2.*)</div>
-                <div className="text-cyan-400">{ingestMetricsStale ? '---' : `${fmtHz(boardScanHz.pt2)} Hz`}</div>
+                <div className="text-[10px] text-gray-500">RTD (RTD*)</div>
+                <div className="text-cyan-400">{ingestMetricsStale ? '---' : `${fmtHz(boardScanHz.rtd ?? 0)} Hz`}</div>
               </div>
               <div>
-                <div className="text-[10px] text-gray-500">TC B51 (TC*)</div>
-                <div className="text-cyan-400">{ingestMetricsStale ? '---' : `${fmtHz(boardScanHz.tc)} Hz`}</div>
+                <div className="text-[10px] text-gray-500">LC (LC*)</div>
+                <div className="text-cyan-400">{ingestMetricsStale ? '---' : `${fmtHz(boardScanHz.lc ?? 0)} Hz`}</div>
               </div>
               <div>
-                <div className="text-[10px] text-gray-500">RTD B31 (RTD*)</div>
-                <div className="text-cyan-400">{ingestMetricsStale ? '---' : `${fmtHz(boardScanHz.rtd)} Hz`}</div>
+                <div className="text-[10px] text-gray-500">ENC (ENC*)</div>
+                <div className="text-cyan-400">{ingestMetricsStale ? '---' : `${fmtHz(boardScanHz.enc ?? 0)} Hz`}</div>
               </div>
               <div>
-                <div className="text-[10px] text-gray-500">LC B41 (LC*)</div>
-                <div className="text-cyan-400">{ingestMetricsStale ? '---' : `${fmtHz(boardScanHz.lc)} Hz`}</div>
-              </div>
-              <div>
-                <div className="text-[10px] text-gray-500">ENC B61 (ENC*)</div>
-                <div className="text-cyan-400">{ingestMetricsStale ? '---' : `${fmtHz(boardScanHz.enc)} Hz`}</div>
-              </div>
-              <div>
-                <div className="text-[10px] text-gray-500">ACT B12/14 (ACT*)</div>
-                <div className="text-cyan-400">{ingestMetricsStale ? '---' : `${fmtHz(boardScanHz.act)} Hz`}</div>
+                <div className="text-[10px] text-gray-500">ACT (ACT*)</div>
+                <div className="text-cyan-400">{ingestMetricsStale ? '---' : `${fmtHz(boardScanHz.act ?? 0)} Hz`}</div>
               </div>
             </div>
           </div>

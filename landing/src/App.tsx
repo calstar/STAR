@@ -25,14 +25,6 @@ function IconPID() {
     </svg>
   );
 }
-function IconRecovery() {
-  return (
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2 11a10 10 0 0 1 20 0z" />
-      <path d="M2 11l5 3M22 11l-5 3M12 11v9M9 14l3 6M15 14l-3 6" />
-    </svg>
-  );
-}
 function IconCAD() {
   return (
     <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -198,30 +190,18 @@ const APPS: AppCard[] = [
     iconColor: '#d8b4fe',
   },
   {
-    id: 'recovery-calculator',
-    href: 'https://recovery-calculator.starberkeley.org',
-    label: 'Recovery Calculator',
-    subdomain: 'recovery-calculator.starberkeley.org',
+    id: 'star-openrocket',
+    href: 'https://openrocket.starberkeley.org',
+    label: 'STAR OpenRocket',
+    subdomain: 'openrocket.starberkeley.org',
     description:
-      'Tool to determine how parachute recovery systems perform under simulated conditions, used as a design aid.',
-    icon: <IconRecovery />,
-    colorClass: 'card-orange',
-    iconBg: 'linear-gradient(135deg, #c2410c 0%, #f97316 100%)',
-    iconColor: '#fdba74',
-  },
-  {
-    id: 'onshape-viewer',
-    href: 'https://onshape-viewer.starberkeley.org',
-    label: 'Onshape Viewer',
-    subdomain: 'onshape-viewer.starberkeley.org',
-    description:
-      'Pulls assemblies from Onshape and renders. Soon to become an improved version of OpenRocket.',
+      'Pulls assemblies from Onshape and computes centre of mass, stability, ascent flight dynamics, and parachute recovery — a STAR take on OpenRocket.',
     icon: <IconCAD />,
     colorClass: 'card-cyan',
     iconBg: 'linear-gradient(135deg, #0e7490 0%, #06b6d4 100%)',
     iconColor: '#67e8f9',
     restricted:
-      'Only authorized users can use this; Onshape API credits are limited. Contact Aidan for access.',
+      'Open to any Berkeley login. Pulling or building CAD from Onshape is limited to approved users (shared API credits) — contact Aidan for import access.',
   },
   {
     id: 'starproject',

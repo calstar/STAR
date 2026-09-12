@@ -83,16 +83,16 @@ static State applyPacketTransition(State state, IncomingPacketKind kind,
 
 // Replicate readPacketHeader from SensorHotfireCore.h
 static IncomingPacketKind readPacketHeader(const uint8_t* buf, size_t len) {
-    if (len < sizeof(Diablo::PacketHeader))
+    if (len < sizeof(daq::PacketHeader))
         return IncomingPacketKind::None;
-    Diablo::PacketHeader hdr;
+    daq::PacketHeader hdr;
     memcpy(&hdr, buf, sizeof(hdr));
     switch (hdr.packet_type) {
-        case Diablo::PacketType::SERVER_HEARTBEAT:
+        case daq::PacketType::SERVER_HEARTBEAT:
             return IncomingPacketKind::ServerHeartbeat;
-        case Diablo::PacketType::SENSOR_CONFIG:
+        case daq::PacketType::SENSOR_CONFIG:
             return IncomingPacketKind::SensorConfig;
-        case Diablo::PacketType::CLEAR_ABORT:
+        case daq::PacketType::CLEAR_ABORT:
             return IncomingPacketKind::ClearAbort;
         default:
             return IncomingPacketKind::None;
@@ -107,15 +107,15 @@ static IncomingPacketKind processIncomingPacket(StoredConfig& stored_config,
 
     if (kind == IncomingPacketKind::SensorConfig) {
         // Parse the config packet
-        Diablo::PacketHeader hdr_out;
+        daq::PacketHeader hdr_out;
         std::vector<uint8_t> ids;
         uint8_t ref;
         bool abort_needed;
         uint32_t controller_ip;
         uint8_t serial;
-        if (Diablo::parse_sensor_config_packet(buf, len, hdr_out, ids, ref,
-                                               abort_needed, controller_ip,
-                                               serial)) {
+        if (daq::parse_sensor_config_packet(buf, len, hdr_out, ids, ref,
+                                            abort_needed, controller_ip,
+                                            serial)) {
             stored_config.valid = true;
             stored_config.num_sensors = ids.size();
             for (size_t i = 0; i < ids.size() && i < 10; i++) {
@@ -132,18 +132,18 @@ static IncomingPacketKind processIncomingPacket(StoredConfig& stored_config,
 }
 
 // Replicate the heartbeat state→BoardState mapping from loop()
-static Diablo::BoardState getBoardStateForHeartbeat(State state) {
+static daq::BoardState getBoardStateForHeartbeat(State state) {
     switch (state) {
         case State::WaitingForServer:
-            return Diablo::BoardState::SETUP;
+            return daq::BoardState::SETUP;
         case State::Active:
-            return Diablo::BoardState::ACTIVE;
+            return daq::BoardState::ACTIVE;
         case State::StandaloneAbort:
-            return Diablo::BoardState::STANDALONE_ABORT;
+            return daq::BoardState::STANDALONE_ABORT;
         case State::SelfTest:
-            return Diablo::BoardState::SELF_TEST;
+            return daq::BoardState::SELF_TEST;
         default:
-            return Diablo::BoardState::SETUP;
+            return daq::BoardState::SETUP;
     }
 }
 
@@ -219,12 +219,12 @@ void test_sensor_none_packet_doesnt_transition() {
 // ===========================================================================
 
 void test_sensor_process_server_heartbeat_packet() {
-    Diablo::PacketHeader hdr;
-    hdr.packet_type = Diablo::PacketType::SERVER_HEARTBEAT;
+    daq::PacketHeader hdr;
+    hdr.packet_type = daq::PacketType::SERVER_HEARTBEAT;
     hdr.version = 0;
     hdr.timestamp = 1000;
-    Diablo::ServerHeartbeatPacket srv;
-    srv.engine_state = Diablo::EngineState::SAFE;
+    daq::ServerHeartbeatPacket srv;
+    srv.engine_state = daq::EngineState::SAFE;
 
     uint8_t buf[64];
     memcpy(buf, &hdr, sizeof(hdr));
@@ -240,8 +240,8 @@ void test_sensor_process_server_heartbeat_packet() {
 void test_sensor_process_sensor_config_packet() {
     std::vector<uint8_t> sensor_ids = {1, 2, 3};
     uint8_t buf[512];
-    size_t n = Diablo::create_sensor_config_packet(sensor_ids, 0, false, 0, 1,
-                                                   9001u, buf, sizeof(buf));
+    size_t n = daq::create_sensor_config_packet(sensor_ids, 0, false, 0, 1,
+                                                9001u, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     SensorSM::StoredConfig cfg{};
@@ -260,7 +260,7 @@ void test_sensor_process_sensor_config_with_abort() {
     std::vector<uint8_t> sensor_ids = {5, 10};
     uint32_t controller_ip = 0xC0A80232;
     uint8_t buf[512];
-    size_t n = Diablo::create_sensor_config_packet(
+    size_t n = daq::create_sensor_config_packet(
         sensor_ids, 1, true, controller_ip, 1, 9002u, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
@@ -277,8 +277,8 @@ void test_sensor_process_sensor_config_with_abort() {
 }
 
 void test_sensor_process_clear_abort_packet() {
-    Diablo::PacketHeader hdr;
-    hdr.packet_type = Diablo::PacketType::CLEAR_ABORT;
+    daq::PacketHeader hdr;
+    hdr.packet_type = daq::PacketType::CLEAR_ABORT;
     hdr.version = 0;
     hdr.timestamp = 0;
     uint8_t buf[16];
@@ -303,39 +303,38 @@ void test_sensor_process_too_short_returns_none() {
 void test_sensor_heartbeat_state_mapping_table() {
     struct {
         SensorSM::State state;
-        Diablo::BoardState expected;
+        daq::BoardState expected;
     } mappings[] = {
-        {SensorSM::State::WaitingForServer, Diablo::BoardState::SETUP},
-        {SensorSM::State::Active, Diablo::BoardState::ACTIVE},
-        {SensorSM::State::StandaloneAbort,
-         Diablo::BoardState::STANDALONE_ABORT},
-        {SensorSM::State::SelfTest, Diablo::BoardState::SELF_TEST},
+        {SensorSM::State::WaitingForServer, daq::BoardState::SETUP},
+        {SensorSM::State::Active, daq::BoardState::ACTIVE},
+        {SensorSM::State::StandaloneAbort, daq::BoardState::STANDALONE_ABORT},
+        {SensorSM::State::SelfTest, daq::BoardState::SELF_TEST},
     };
 
     for (auto& m : mappings) {
-        Diablo::BoardState got = SensorSM::getBoardStateForHeartbeat(m.state);
+        daq::BoardState got = SensorSM::getBoardStateForHeartbeat(m.state);
         TEST_ASSERT_EQUAL_MESSAGE(
             (int)m.expected, (int)got,
             "State mapping mismatch in getBoardStateForHeartbeat");
 
         // Also create → parse heartbeat to verify wire encoding
-        Diablo::BoardHeartbeatPacket hb{};
+        daq::BoardHeartbeatPacket hb{};
         hb.board_id = 42;
-        hb.engine_state = Diablo::EngineState::SAFE;
+        hb.engine_state = daq::EngineState::SAFE;
         hb.board_state = got;
 
         uint8_t buf[512];
         size_t n =
-            Diablo::create_board_heartbeat_packet(hb, 9003u, buf, sizeof(buf));
+            daq::create_board_heartbeat_packet(hb, 9003u, buf, sizeof(buf));
         TEST_ASSERT_GREATER_THAN(0, n);
 
-        Diablo::PacketHeader hdr_out;
-        Diablo::BoardHeartbeatPacket hb_out;
+        daq::PacketHeader hdr_out;
+        daq::BoardHeartbeatPacket hb_out;
         TEST_ASSERT_TRUE(
-            Diablo::parse_board_heartbeat_packet(buf, n, hdr_out, hb_out));
+            daq::parse_board_heartbeat_packet(buf, n, hdr_out, hb_out));
         TEST_ASSERT_EQUAL((int)m.expected, (int)hb_out.board_state);
         TEST_ASSERT_EQUAL(42, hb_out.board_id);
-        TEST_ASSERT_EQUAL((int)Diablo::EngineState::SAFE,
+        TEST_ASSERT_EQUAL((int)daq::EngineState::SAFE,
                           (int)hb_out.engine_state);
     }
 }
