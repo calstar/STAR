@@ -28,6 +28,22 @@ import { ApiError, keyOf } from './api';
 /** Well inside the server's 5-minute `lock_ttl`, and cheap. */
 const HEARTBEAT_MS = 90_000;
 
+/**
+ * Running on a developer's own machine.
+ *
+ * Checkouts exist so two people on the shared server do not overwrite each
+ * other. Locally there is one person, and the same machinery was throwing
+ * them out of their own session: the tab released its claim the moment it
+ * was hidden -- switching to another window was enough -- and stopped
+ * heartbeating, so coming back meant pressing Take again. Locally the
+ * checkout is taken on open, kept alive regardless of focus, never released
+ * on hide, and re-taken if it ever lapses. The server still requires it for
+ * a save; it is simply never in the way.
+ */
+const LOCAL =
+  typeof location !== 'undefined' &&
+  (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+
 const FREE: CheckoutState = {
   lockedBy: null,
   lockedByName: null,
@@ -125,6 +141,7 @@ export function useCheckout<T>({
     const id = setInterval(() => {
       const r = refRef.current;
       if (!r || !heldRef.current) return;
+      if (LOCAL) { api.takeCheckout(r).catch(() => {}); return; }
       // Only a tab somebody is looking at. A background tab renewing is how a
       // forgotten window keeps a design checked out all afternoon -- and where
       // every client is the same user (any dev setup, and any one person with
@@ -140,6 +157,7 @@ export function useCheckout<T>({
   // the inactivity timeout for a design nobody has open.
   useEffect(() => {
     const drop = () => {
+      if (LOCAL) return;
       const r = refRef.current;
       if (r && heldRef.current) api.releaseCheckoutOnUnload(r);
     };
@@ -192,7 +210,15 @@ export function useCheckout<T>({
 
   const lost = useCallback(() => {
     setState((s) => ({ ...s, lockedByMe: false }));
-  }, []);
+    // Locally a lapsed checkout is a nuisance, not a colleague: take it back.
+    if (LOCAL) void take();
+  }, [take]);
+
+  // Locally, open means editable: take it on arrival rather than asking.
+  useEffect(() => {
+    if (!LOCAL || !ref || state.lockedByMe || busy) return;
+    void take();
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     holder: state.lockedBy,
