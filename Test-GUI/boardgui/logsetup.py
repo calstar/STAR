@@ -12,6 +12,7 @@ Stdlib only — safe to import without a display.
 from __future__ import annotations
 
 import logging
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional, Tuple
@@ -44,6 +45,15 @@ def configure_logging(board_type: str,
                                        backupCount=5, encoding="utf-8")
     file_handler.setFormatter(fmt)
     logger.addHandler(file_handler)
+
+    # The log carries SI units (uV) and arrows; a Windows console defaults to
+    # cp1252 and would either mangle them or raise UnicodeEncodeError mid-log.
+    for stream in (sys.stderr,):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):    # already detached / not a tty
+                pass
 
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(fmt)

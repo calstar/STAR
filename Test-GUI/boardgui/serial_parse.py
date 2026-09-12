@@ -54,6 +54,8 @@ _RE_STATE = re.compile(r"State ->\s*(\w+)")
 _RE_UDP_PORT = re.compile(r"UDP listening on port\s*(\d+)")
 _RE_PACKET_RX = re.compile(r"Received packet from\s*([\d.]+):(\d+)\s*type\s*(\d+)\s*\((\w+)\)")
 _RE_IDDATA = re.compile(r"\(id=(\d+),\s*data=(\d+)\)")
+# "chunk 0 ts=12345 : (id=1, data=...)" — the sample instant, not arrival time.
+_RE_CHUNK_TS = re.compile(r"\bts=(\d+)")
 
 
 class SerialParser:
@@ -113,7 +115,9 @@ class SerialParser:
         pairs = _RE_IDDATA.findall(line)
         if pairs:
             values: Dict[int, int] = {int(sid): int(data) for sid, data in pairs}
-            return {"kind": "readings", "values": values}
+            m = _RE_CHUNK_TS.search(line)
+            return {"kind": "readings", "values": values,
+                    "timestamp_ms": int(m.group(1)) if m else None}
 
         if line.startswith("SENSOR_CONFIG received"):
             return {"kind": "sensor_config_received"}
@@ -153,6 +157,9 @@ def _self_test() -> None:
 
     e = p.feed("  chunk 0 ts=12345 : (id=1, data=99999) (id=2, data=88888) (id=3, data=7)")
     assert e["kind"] == "readings" and e["values"] == {1: 99999, 2: 88888, 3: 7}, e
+    assert e["timestamp_ms"] == 12345, e
+    e = p.feed("(id=4, data=5)")          # no ts= on the line -> fall back to arrival
+    assert e["timestamp_ms"] is None, e
 
     assert p.feed("") is None
     assert p.feed("some unrelated boot line") is None

@@ -65,6 +65,13 @@ ALIGN_TOP = _enum(Qt, "AlignmentFlag", "AlignTop")
 # Fonts
 FONT_BOLD = _enum(QtGui.QFont, "Weight", "Bold")
 
+# Orientation (splitters)
+ORIENT_HORIZONTAL = _enum(Qt, "Orientation", "Horizontal")
+
+# Frame shapes
+FRAME_NOFRAME = _enum(QtWidgets.QFrame, "Shape", "NoFrame")
+FRAME_PANEL = _enum(QtWidgets.QFrame, "Shape", "StyledPanel")
+
 # Text cursor (log console auto-scroll)
 TEXTCURSOR_END = _enum(QtGui.QTextCursor, "MoveOperation", "End")
 

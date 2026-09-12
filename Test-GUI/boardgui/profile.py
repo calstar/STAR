@@ -16,12 +16,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List
 
-# reference_voltage byte (SENSOR_CONFIG) -> ADC full-scale volts, for code->volt
-# 0 = internal 2.5 V, 1 = VDD (~3.3 V ratiometric), 2 = 5 V absolute.
-REFERENCE_VOLTAGE_VOLTS: Dict[int, float] = {0: 2.5, 1: 3.3, 2: 5.0}
+# reference_voltage byte (SENSOR_CONFIG) -> ADC full-scale volts, for code->volt.
+# "VDD" is the ADS1262's *analog* supply AVDD (ADS126X_REF_POS_VDD in
+# LC_Hotfire/src/main.cpp), not the ESP32's 3.3 V logic rail. AVDD is the 5 V
+# analog rail — see daq-server/config/config.toml [adc] vdd_nominal_v = 5.0.
+#
+# NOTE: on a ratiometric board the reference IS the bridge excitation, so it
+# cancels out of the real force conversion entirely (see
+# daq-server/tools/calibration/sense_conversions.py code_to_force). The volts
+# shown here are a bench-level sanity number, not a calibrated measurement.
+REFERENCE_VOLTAGE_VOLTS: Dict[int, float] = {0: 2.5, 1: 5.0, 2: 5.0}
 REFERENCE_VOLTAGE_LABELS: Dict[int, str] = {
     0: "Internal 2.5 V",
-    1: "VDD (~3.3 V, ratiometric)",
+    1: "VDD / AVDD (5 V, ratiometric)",
     2: "5 V absolute",
 }
 

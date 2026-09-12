@@ -22,25 +22,42 @@ the board does:
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from collections import deque
-from typing import Deque, Dict, Optional, Tuple
+from bisect import bisect_left
+from typing import Deque, Dict, List, Optional, Tuple
 
 import pyqtgraph as pg
 
 from . import protocol
+from . import filters as filt
+from .clocksync import BoardClockSync, TimeSyncConfig
 from .network import UdpLink
-from .profile import BoardProfile
-from .serial_link import SerialLink, list_ports
+from .profile import REFERENCE_VOLTAGE_LABELS, BoardProfile
+from .serial_link import SerialLink, list_ports, pyserial_error
 from .serial_parse import SerialParser
-from .qt import (ALIGN_CENTER, ALIGN_RIGHT, ALIGN_VCENTER, FONT_BOLD, QtCore,
+from .qt import (ALIGN_CENTER, ALIGN_RIGHT, ALIGN_VCENTER, FONT_BOLD,
+                 FRAME_NOFRAME, FRAME_PANEL, ORIENT_HORIZONTAL, QtCore,
                  QtGui, QtWidgets, QTimer, TEXTCURSOR_END, pyqtSignal)
+
+DEFAULT_LEFT_WIDTH = 360   # starting width of the status/controls column
+MIN_LEFT_WIDTH = 240       # narrowest the splitter will let it get
 
 BAUD_RATES = [9600, 19200, 38400, 57600, 74880, 115200, 230400, 460800, 921600]
 
 UI_REFRESH_MS = 100
-PLOT_WINDOW_SEC = 30.0
+# The plot gets its own timer so a heavy repaint can be throttled independently
+# of the status labels. With clipping, decimation and antialiasing off, a frame
+# costs ~5-10 ms, so 10 Hz is comfortable.
+PLOT_REFRESH_MS = 100
 MAX_POINTS_PER_CHANNEL = 6000
+# Rolling x-window options: (label, seconds). None = show the whole buffer,
+# which at the boards' sample rate is roughly MAX_POINTS_PER_CHANNEL samples.
+TRIM_SLACK = 2000           # extra room before a batched trim
+TIME_WINDOWS = [("1 s", 1.0), ("5 s", 5.0), ("10 s", 10.0), ("30 s", 30.0),
+                ("1 min", 60.0), ("5 min", 300.0), ("All", None)]
+DEFAULT_WINDOW_LABEL = "30 s"
 
 # distinct plot colours for up to 10 connectors
 _COLORS = [
@@ -53,6 +70,25 @@ _COLORS = [
 # -----------------------------------------------------------------------------
 # Small widgets
 # -----------------------------------------------------------------------------
+class ValueLabel(QtWidgets.QLabel):
+    """Status value that wraps instead of being clipped by the column width.
+
+    Values here vary wildly in length ("—" vs "Setup (waiting for server)" vs
+    a 64-char hash), and the column is user-resizable, so anything can end up
+    too narrow. Wrapping keeps the text visible; the tooltip always carries the
+    untruncated value for the cases the caller shortens on purpose.
+    """
+
+    def __init__(self, text: str = "") -> None:
+        super().__init__(text)
+        self.setWordWrap(True)
+        self.setToolTip(text)
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt naming
+        super().setText(text)
+        self.setToolTip(text)
+
+
 class StatusLight(QtWidgets.QWidget):
     """A coloured dot + text label used for the Connected indicator."""
 
@@ -120,6 +156,16 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         # runtime state
         self.link: Optional[UdpLink] = None
         self.serial: Optional[SerialLink] = None
+        self._warned_no_pyserial = False
+        # Per-board clock sync, ported from the DAQ server's bridge so the GUI
+        # timeline matches what the server records (see clocksync.py).
+        self.clock_sync = BoardClockSync(TimeSyncConfig())
+        # One physical board = one millis() clock, so it gets ONE sync key.
+        # Keying on the source path instead (src_ip, or "serial") splits the
+        # timeline: each key anchors its own offset, and when the paths differ
+        # in latency by more than the packet interval — serial buffering vs
+        # UDP, say — their samples interleave and x goes backwards.
+        self._clock_key = f"{profile.board_type}#{profile.board_id}"
         self.parser = SerialParser()
         self.serial_state_text: Optional[str] = None
         self.last_heartbeat: Optional[protocol.BoardHeartbeat] = None
@@ -137,6 +183,14 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         self.last_raw: Dict[int, int] = {}
         self.value_labels: Dict[str, QtWidgets.QLabel] = {}
         self.conn_value_labels: Dict[int, QtWidgets.QLabel] = {}
+        self.conn_fs_labels: Dict[int, QtWidgets.QLabel] = {}
+        # Filtered copy of each connector's series, kept in step with the raw
+        # one so switching filters never loses data (see _rebuild_filters).
+        self.filtered: Dict[int, List[float]] = {}
+        self._filter_objs: Dict[int, filt.Filter] = {}
+        self._filter_factory = None
+        self._bank_fs = None
+        self.raw_curves: Dict[int, object] = {}
         self.conn_checkboxes: Dict[int, QtWidgets.QCheckBox] = {}
         self.plot_curves: Dict[int, pg.PlotDataItem] = {}
 
@@ -147,6 +201,9 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         self.ui_timer = QTimer(self)
         self.ui_timer.timeout.connect(self._refresh)
         self.ui_timer.start(UI_REFRESH_MS)
+        self.plot_timer = QTimer(self)
+        self.plot_timer.timeout.connect(self._refresh_plot)
+        self.plot_timer.start(PLOT_REFRESH_MS)
 
         # auto SERVER_HEARTBEAT (matches the production server's cadence)
         self.hb_timer = QTimer(self)
@@ -185,12 +242,32 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         left.addWidget(self._build_packets_group())
         left.addWidget(self._build_controls_group())
         left.addStretch(1)
+        left.addWidget(self._build_heartbeat_group())
         left_container = QtWidgets.QWidget()
         left_container.setLayout(left)
-        left_container.setFixedWidth(340)
-        body.addWidget(left_container)
 
-        body.addWidget(self._build_readings_group(), stretch=1)
+        # The status/controls column scrolls vertically (it is taller than a
+        # laptop screen once the config fields are open) and its width is
+        # drag-resizable against the plot — widen it to read long values, or
+        # narrow it to give the graph more room.
+        left_scroll = QtWidgets.QScrollArea()
+        left_scroll.setWidget(left_container)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(FRAME_NOFRAME)
+        left_scroll.setMinimumWidth(MIN_LEFT_WIDTH)
+
+        readings = self._build_readings_group()
+        readings.setMinimumWidth(320)
+
+        self.monitor_splitter = QtWidgets.QSplitter(ORIENT_HORIZONTAL)
+        self.monitor_splitter.addWidget(left_scroll)
+        self.monitor_splitter.addWidget(readings)
+        self.monitor_splitter.setChildrenCollapsible(False)
+        self.monitor_splitter.setStretchFactor(0, 0)   # left keeps its width…
+        self.monitor_splitter.setStretchFactor(1, 1)   # …the plot absorbs resizes
+        self.monitor_splitter.setHandleWidth(8)
+        self.monitor_splitter.setSizes([DEFAULT_LEFT_WIDTH, 900])
+        body.addWidget(self.monitor_splitter)
         return tab
 
     def _build_top_bar(self) -> QtWidgets.QWidget:
@@ -294,7 +371,8 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
                 initial: str = "—") -> None:
         k = QtWidgets.QLabel(key)
         k.setStyleSheet("color: #999;")
-        v = QtWidgets.QLabel(initial)
+        k.setWordWrap(True)
+        v = ValueLabel(initial)
         vf = v.font()
         vf.setWeight(FONT_BOLD)
         v.setFont(vf)
@@ -340,26 +418,6 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         lay = QtWidgets.QVBoxLayout(g)
         lay.setSpacing(6)
 
-        # SERVER_HEARTBEAT: auto at the production cadence, or one-shot
-        hb_row = QtWidgets.QHBoxLayout()
-        hb_row.setSpacing(6)
-        self.auto_hb_cb = QtWidgets.QCheckBox("Auto SERVER_HEARTBEAT")
-        self.auto_hb_cb.setToolTip(
-            f"Send SERVER_HEARTBEAT every {self.profile.server_heartbeat_interval_ms} ms "
-            "(what the production DAQ server does)")
-        hb_row.addWidget(self.auto_hb_cb)
-        self.engine_combo = QtWidgets.QComboBox()
-        for val in sorted(protocol.ENGINE_STATE_NAMES):
-            self.engine_combo.addItem(protocol.ENGINE_STATE_NAMES[val], val)
-        self.engine_combo.setToolTip("Engine state carried in the heartbeat")
-        hb_row.addWidget(self.engine_combo)
-        hb_btn = QtWidgets.QPushButton("Send")
-        hb_btn.setFixedWidth(52)
-        hb_btn.clicked.connect(self._send_heartbeat_now)
-        hb_row.addWidget(hb_btn)
-        hb_row.addStretch(1)
-        lay.addLayout(hb_row)
-
         # CONFIG (activates the board's state machine) — full-width row so the
         # label never truncates in the fixed-width left column
         if self.profile.kind == "actuator":
@@ -371,14 +429,26 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
             self.abort_controller_cb.setChecked(self.profile.is_abort_controller)
             self.abort_controller_cb.setToolTip(
                 "Mark this board as the designated survivor / abort controller")
-            lay.addWidget(self.config_btn)
-            lay.addWidget(self.abort_controller_cb)
+            self.cfg_serial_print_cb = QtWidgets.QCheckBox("enable serial printing")
+            self.cfg_serial_print_cb.setChecked(self.profile.enable_serial_printing)
+            self.cfg_serial_print_cb.setToolTip(
+                "enable_serial_printing byte: whether the board keeps printing "
+                "its debug stream over USB once configured")
+            self.config_btn.setToolTip(
+                "WaitingForServer -> Active. Sends the fields above")
+            # Same shape as the sensor side: fields first, Send underneath them.
+            act_box = QtWidgets.QGroupBox("ACTUATOR_CONFIG fields")
+            act_lay = QtWidgets.QVBoxLayout(act_box)
+            act_lay.setSpacing(4)
+            act_lay.addWidget(self.abort_controller_cb)
+            act_lay.addWidget(self.cfg_serial_print_cb)
+            act_lay.addWidget(self.config_btn)
+            lay.addWidget(act_box)
         else:
             self.config_btn = QtWidgets.QPushButton("Send SENSOR_CONFIG (activate)")
             self.config_btn.setToolTip(
-                "WaitingForServer -> SelfTest -> Active; sensor ids = the "
-                "displayed connectors")
-            lay.addWidget(self.config_btn)
+                "WaitingForServer -> SelfTest -> Active. Sends the fields above")
+            lay.addWidget(self._build_sensor_config_fields())
         self.config_btn.clicked.connect(self._send_config)
 
         # Abort path
@@ -450,6 +520,86 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
 
         return g
 
+    def _build_sensor_config_fields(self) -> QtWidgets.QGroupBox:
+        """Editable copy of every field that goes into SENSOR_CONFIG.
+
+        The wire layout is (see protocol.build_sensor_config and
+        lib/DAQv2-Comms/src/DiabloPackets.h ``SensorConfigData``):
+            num_sensors, sensor_ids[N], reference_voltage, necessary_for_abort,
+            [controller_ip if necessary_for_abort], enable_serial_printing
+        Defaults come from the BoardProfile; change them here to send something
+        other than the profile's values without editing the profile.
+        """
+        g = QtWidgets.QGroupBox("SENSOR_CONFIG fields")
+        grid = QtWidgets.QGridLayout(g)
+        grid.setColumnStretch(1, 1)
+        grid.setSpacing(4)
+
+        def key(text: str, row: int) -> None:
+            lbl = QtWidgets.QLabel(text)
+            lbl.setStyleSheet("color: #999;")
+            lbl.setWordWrap(True)
+            grid.addWidget(lbl, row, 0)
+
+        key("Sensor ids", 0)
+        self.cfg_ids_edit = QtWidgets.QLineEdit(
+            ", ".join(str(c) for c in self.profile.display_connectors()))
+        self.cfg_ids_edit.setToolTip(
+            "Connector ids the board should sample, comma separated. "
+            "Defaults to this profile's active connectors.")
+        grid.addWidget(self.cfg_ids_edit, 0, 1)
+
+        key("Reference voltage", 1)
+        self.cfg_ref_combo = QtWidgets.QComboBox()
+        for val in sorted(REFERENCE_VOLTAGE_LABELS):
+            self.cfg_ref_combo.addItem(f"{val} — {REFERENCE_VOLTAGE_LABELS[val]}", val)
+        idx = self.cfg_ref_combo.findData(self.profile.reference_voltage)
+        if idx >= 0:
+            self.cfg_ref_combo.setCurrentIndex(idx)
+        self.cfg_ref_combo.setToolTip("ADC full-scale reference the board uses")
+        grid.addWidget(self.cfg_ref_combo, 1, 1)
+
+        self.cfg_abort_cb = QtWidgets.QCheckBox("necessary for abort")
+        self.cfg_abort_cb.setChecked(self.profile.necessary_for_abort)
+        self.cfg_abort_cb.setToolTip(
+            "If set, the board is abort-critical and the controller IP below "
+            "is included in the packet")
+        grid.addWidget(self.cfg_abort_cb, 2, 0, 1, 2)
+
+        key("Controller IP", 3)
+        self.cfg_controller_ip = QtWidgets.QLineEdit("0.0.0.0")
+        self.cfg_controller_ip.setToolTip(
+            "Abort controller the board reports to. Only sent when "
+            "'necessary for abort' is checked.")
+        grid.addWidget(self.cfg_controller_ip, 3, 1)
+
+        self.cfg_serial_print_cb = QtWidgets.QCheckBox("enable serial printing")
+        self.cfg_serial_print_cb.setChecked(self.profile.enable_serial_printing)
+        self.cfg_serial_print_cb.setToolTip(
+            "Whether the board keeps printing its debug stream over USB once "
+            "configured — uncheck and the serial pane goes quiet")
+        grid.addWidget(self.cfg_serial_print_cb, 4, 0, 1, 2)
+
+        # The Send button belongs with the fields it sends, at the bottom of
+        # the box — not floating above them.
+        grid.addWidget(self.config_btn, 5, 0, 1, 2)
+
+        self.cfg_abort_cb.toggled.connect(self.cfg_controller_ip.setEnabled)
+        self.cfg_controller_ip.setEnabled(self.cfg_abort_cb.isChecked())
+        return g
+
+    def _config_sensor_ids(self) -> List[int]:
+        """Parse the sensor-id field; fall back to the profile if it is unusable."""
+        text = self.cfg_ids_edit.text().replace(",", " ")
+        try:
+            ids = [int(tok) for tok in text.split()]
+        except ValueError:
+            ids = []
+        if not ids:
+            ids = self.profile.display_connectors()
+            self.log.warning("Sensor ids field unreadable — falling back to %s", ids)
+        return ids
+
     # -- send-side control handlers ------------------------------------------
     def _link_or_warn(self) -> Optional[UdpLink]:
         if self.link is None:
@@ -487,23 +637,30 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
                 is_abort_controller=self.abort_controller_cb.isChecked(),
                 abort_actuators=locations,
                 abort_pts=[],
-                enable_serial_printing=self.profile.enable_serial_printing)
+                enable_serial_printing=self.cfg_serial_print_cb.isChecked())
             if ok:
                 self.log.info(
                     "Sent ACTUATOR_CONFIG (controller=%d, %d actuators @ %s) -> %s:%d",
                     self.abort_controller_cb.isChecked(), len(locations), board_ip,
                     link.target_ip, self.profile.control_port)
         else:
+            ids = self._config_sensor_ids()
+            ref = self.cfg_ref_combo.currentData()
+            for_abort = self.cfg_abort_cb.isChecked()
             ok = link.send_sensor_config(
                 sensor_ids=ids,
-                reference_voltage=self.profile.reference_voltage,
-                necessary_for_abort=self.profile.necessary_for_abort,
-                controller_ip="0.0.0.0" if self.profile.necessary_for_abort else None,
-                enable_serial_printing=self.profile.enable_serial_printing)
+                reference_voltage=ref,
+                necessary_for_abort=for_abort,
+                controller_ip=self.cfg_controller_ip.text().strip() if for_abort else None,
+                enable_serial_printing=self.cfg_serial_print_cb.isChecked())
             if ok:
-                self.log.info("Sent SENSOR_CONFIG (ids=%s, ref=%d) -> %s:%d",
-                              ids, self.profile.reference_voltage,
-                              link.target_ip, self.profile.control_port)
+                self.log.info(
+                    "Sent SENSOR_CONFIG (ids=%s, ref=%d, abort=%d, controller=%s, "
+                    "serial_print=%d) -> %s:%d",
+                    ids, ref, for_abort,
+                    self.cfg_controller_ip.text().strip() if for_abort else "-",
+                    self.cfg_serial_print_cb.isChecked(),
+                    link.target_ip, self.profile.control_port)
 
     def _send_abort(self) -> None:
         link = self._link_or_warn()
@@ -561,30 +718,135 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
                           cmd.actuator_id, cmd.duration_ms, cmd.duty_cycle,
                           cmd.frequency_hz)
 
+    def _build_heartbeat_group(self) -> QtWidgets.QGroupBox:
+        """SERVER_HEARTBEAT — the keep-alive, kept apart from the config controls.
+
+        This is the one control you leave running for a whole session rather
+        than click once, so it sits at the bottom of the column, out of the way
+        of the config/abort buttons.
+        """
+        g = QtWidgets.QGroupBox("Server heartbeat")
+        lay = QtWidgets.QVBoxLayout(g)
+        lay.setSpacing(4)
+
+        self.auto_hb_cb = QtWidgets.QCheckBox("Auto SERVER_HEARTBEAT")
+        self.auto_hb_cb.setToolTip(
+            f"Send SERVER_HEARTBEAT every {self.profile.server_heartbeat_interval_ms} ms "
+            "(what the production DAQ server does)")
+        lay.addWidget(self.auto_hb_cb)
+
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(6)
+        eng_lbl = QtWidgets.QLabel("Engine state")
+        eng_lbl.setStyleSheet("color: #999;")
+        row.addWidget(eng_lbl)
+        self.engine_combo = QtWidgets.QComboBox()
+        for val in sorted(protocol.ENGINE_STATE_NAMES):
+            self.engine_combo.addItem(protocol.ENGINE_STATE_NAMES[val], val)
+        self.engine_combo.setToolTip("Engine state carried in the heartbeat")
+        row.addWidget(self.engine_combo, 1)
+        lay.addLayout(row)
+
+        hb_btn = QtWidgets.QPushButton("Send one SERVER_HEARTBEAT")
+        hb_btn.setToolTip("Send a single heartbeat now, without the auto cadence")
+        hb_btn.clicked.connect(self._send_heartbeat_now)
+        lay.addWidget(hb_btn)
+        return g
+
     def _build_readings_group(self) -> QtWidgets.QGroupBox:
         g = QtWidgets.QGroupBox(f"Live {self.profile.reading_name} — per connector")
         lay = QtWidgets.QVBoxLayout(g)
 
-        pg.setConfigOptions(antialias=True)
+        # rolling time window for the x axis
+        win_row = QtWidgets.QHBoxLayout()
+        win_row.setSpacing(6)
+        win_lbl = QtWidgets.QLabel("Time window")
+        win_lbl.setStyleSheet("color: #999;")
+        win_row.addWidget(win_lbl)
+        self.window_combo = QtWidgets.QComboBox()
+        for label, seconds in TIME_WINDOWS:
+            self.window_combo.addItem(label, seconds)
+        self.window_combo.setCurrentText(DEFAULT_WINDOW_LABEL)
+        self.window_combo.setToolTip(
+            "How much history the plot shows. The y axis rescales to whatever "
+            "is inside this window, not the whole buffer.")
+        self.window_combo.currentIndexChanged.connect(self._apply_time_window)
+        win_row.addWidget(self.window_combo)
+
+        filt_lbl = QtWidgets.QLabel("Filter")
+        filt_lbl.setStyleSheet("color: #999;")
+        win_row.addWidget(filt_lbl)
+        self.filter_combo = QtWidgets.QComboBox()
+        self.filter_combo.setMinimumWidth(180)
+        self.filter_combo.setToolTip(
+            "Noise filter applied to the displayed trace and the value column. "
+            "The raw ADC code and % of full scale stay unfiltered.")
+        self.filter_combo.currentIndexChanged.connect(self._rebuild_filters)
+        win_row.addWidget(self.filter_combo)
+        self.show_raw_cb = QtWidgets.QCheckBox("show raw")
+        self.show_raw_cb.setToolTip("Overlay the unfiltered trace faintly behind the filtered one")
+        win_row.addWidget(self.show_raw_cb)
+        self.compare_btn = QtWidgets.QPushButton("Compare filters")
+        self.compare_btn.setToolTip(
+            "Run every candidate filter over the buffered data and rank them by "
+            "noise reduction, with each one's lag priced as a reading error")
+        self.compare_btn.clicked.connect(self._compare_filters)
+        self.drift_btn = QtWidgets.QPushButton("Drift analysis")
+        self.drift_btn.setToolTip(
+            "Allan deviation: how the reading's spread changes with averaging "
+            "time. Finds the best averaging time and says whether drift or "
+            "white noise is limiting you.")
+        self.drift_btn.clicked.connect(self._drift_analysis)
+        win_row.addWidget(self.drift_btn)
+        self._populate_filter_combo()
+        win_row.addWidget(self.compare_btn)
+        win_row.addStretch(1)
+        lay.addLayout(win_row)
+
+        # Antialiasing is the single most expensive option for a dense live
+        # trace — Qt rasterises every segment with coverage blending. At one
+        # sample per pixel column it buys almost nothing visually, so it is off
+        # here (it stays on for text/axes, which are drawn once).
+        pg.setConfigOptions(antialias=False)
         self.plot = pg.PlotWidget()
         self.plot.setBackground("#101216")
         self.plot.showGrid(x=True, y=True, alpha=0.25)
         self.plot.setLabel("bottom", "time", units="s")
         self.plot.setLabel("left", self.profile.reading_name, units=self.profile.value_unit)
         self.plot.addLegend(offset=(10, 10))
+        # Autoscale y to the data actually on screen. Without setAutoVisible the
+        # view fits every point in the buffer, so one old spike flattens the
+        # live trace even after it has scrolled out of the window.
+        vb = self.plot.getViewBox()
+        vb.setAutoVisible(y=True)
+        vb.enableAutoRange(axis="y")
+        # Draw only what is on screen, and thin it to roughly one sample per
+        # pixel column. Without these, a full buffer is re-rasterised every
+        # frame — ~125 ms at 6000 pts x 3 curves, against a 100 ms timer.
+        # "peak" keeps spikes visible while thinning, which matters for a
+        # sensor trace.
+        self.plot.setClipToView(True)
+        self.plot.setDownsampling(auto=True, mode="peak")
+        # auto downsampling still leaves ~3 points per pixel column; _refresh_plot
+        # tightens this to the widget width each frame (see _bound_draw_cost).
+        self._last_ds = 1
         lay.addWidget(self.plot, stretch=1)
 
         # per-connector current-value table + toggle
         table = QtWidgets.QGridLayout()
         table.addWidget(self._muted("Connector"), 0, 0)
         table.addWidget(self._muted("Raw ADC code"), 0, 1)
-        table.addWidget(self._muted(f"{self.profile.reading_name} ({self.profile.value_unit})"), 0, 2)
-        table.addWidget(self._muted("Plot"), 0, 3)
+        # No fixed unit in the header — the value is SI-scaled per reading.
+        table.addWidget(self._muted(self.profile.reading_name), 0, 2)
+        table.addWidget(self._muted("% of full scale"), 0, 3)
+        table.addWidget(self._muted("Plot"), 0, 4)
         row = 1
         for cid in self.profile.display_connectors():
             color = _COLORS[(cid - 1) % len(_COLORS)]
-            self.readings[cid] = (deque(maxlen=MAX_POINTS_PER_CHANNEL),
-                                  deque(maxlen=MAX_POINTS_PER_CHANNEL))
+            # Plain lists, not deques: _refresh_plot bisects for the visible
+            # window and slices it out, so only on-screen points reach
+            # pyqtgraph. Trimming is batched in _append_reading.
+            self.readings[cid] = ([], [])
             name = self.profile.connector_label(cid)
             name_lbl = QtWidgets.QLabel(f"● {name}")
             name_lbl.setStyleSheet(f"color: rgb{color};")
@@ -595,18 +857,30 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
             vf = val_lbl.font()
             vf.setWeight(FONT_BOLD)
             val_lbl.setFont(vf)
+            fs_lbl = QtWidgets.QLabel("—")
+            fs_lbl.setAlignment(ALIGN_RIGHT)
+            fs_lbl.setToolTip(
+                "Signed ADC code as a percentage of the converter's full-scale "
+                "range (±2³¹). Independent of the reference "
+                "voltage and the PGA setting.")
             cb = QtWidgets.QCheckBox()
             cb.setChecked(True)
             self.conn_value_labels[cid] = val_lbl
+            self.conn_fs_labels[cid] = fs_lbl
             self.value_labels[f"raw_{cid}"] = raw_lbl
             self.conn_checkboxes[cid] = cb
             table.addWidget(name_lbl, row, 0)
             table.addWidget(raw_lbl, row, 1)
             table.addWidget(val_lbl, row, 2)
-            table.addWidget(cb, row, 3, alignment=ALIGN_CENTER)
+            table.addWidget(fs_lbl, row, 3, alignment=ALIGN_RIGHT)
+            table.addWidget(cb, row, 4, alignment=ALIGN_CENTER)
 
-            curve = self.plot.plot([], [], pen=pg.mkPen(color=color, width=2), name=name)
+            # faint unfiltered ghost, drawn under the filtered trace
+            ghost = self.plot.plot([], [], pen=pg.mkPen(color=color + (70,), width=1))
+            self.raw_curves[cid] = ghost
+            curve = self.plot.plot([], [], pen=pg.mkPen(color=color, width=1), name=name)
             self.plot_curves[cid] = curve
+            self.filtered[cid] = []
             row += 1
         lay.addLayout(table)
         return g
@@ -707,7 +981,16 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
             self.port_combo.setCurrentIndex(0)  # best-guess board port first
         if not ports:
             self.port_combo.setEditText("")
-            self.port_combo.lineEdit().setPlaceholderText("no serial ports found — plug in the board")
+            missing = pyserial_error()
+            if missing:
+                # Don't report a missing dependency as "no board plugged in".
+                self.port_combo.lineEdit().setPlaceholderText(missing)
+                if not self._warned_no_pyserial:
+                    self._warned_no_pyserial = True
+                    self.log.warning("%s (using %s)", missing, sys.executable)
+            else:
+                self.port_combo.lineEdit().setPlaceholderText(
+                    "no serial ports found — plug in the board")
 
     def _selected_port(self) -> str:
         # itemData holds the bare device path; editable text may include the desc.
@@ -790,6 +1073,7 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
             self.value_labels["board_state"].setText(e["value"])
         elif kind == "fw_hash":
             self.value_labels["fw_hash"].setText(e["value"][:16] + "…")
+            self.value_labels["fw_hash"].setToolTip("SHA-256: " + e["value"])
         elif kind == "identity":
             self.value_labels["reported_id"].setText(str(e["board_id"]))
         elif kind == "eth":
@@ -807,13 +1091,13 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         elif kind == "packet_rx":
             self.log.info("Board received %s from %s", e["name"], e["src"])
         elif kind == "readings":
-            base_t = now - self.start_time
+            ts_ms = e.get("timestamp_ms")
+            base_t = (now - self.start_time if ts_ms is None
+                      else self._plot_times(self._clock_key, time.time_ns(), [ts_ms])[0])
             for cid, raw in e["values"].items():
                 if cid not in self.readings:
                     continue
-                ts, vs = self.readings[cid]
-                ts.append(base_t)
-                vs.append(self.profile.decode_value(raw))
+                self._append_reading(cid, base_t, self.profile.decode_value(raw))
                 self.last_raw[cid] = raw
             self.last_sensor_data_time = now
 
@@ -833,18 +1117,26 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
                           hb.firmware_hash_hex[:8], src_ip)
 
     def _on_sensor_data(self, sd: protocol.SensorData, src_ip: str) -> None:
-        self.last_sensor_data_time = time.time()
+        arrival_ns = time.time_ns()
+        self.last_sensor_data_time = arrival_ns / 1e9
         self.sensor_packet_count += 1
-        # Use the newest chunk for the "current value"; push every chunk to plot.
-        base_t = self.last_sensor_data_time - self.start_time
+        # Collect the distinct chunk timestamps in send order and stamp the
+        # packet in one call — the same shape as the bridge's clock-sync block
+        # (daq_bridge_main.cpp, "Clock sync: per-chunk corrected timestamps").
+        chunk_ms: List[int] = []
         for chunk in sd.chunks:
+            if not chunk_ms or chunk_ms[-1] != chunk.timestamp_ms:
+                chunk_ms.append(chunk.timestamp_ms)
+        x_by_ts = dict(zip(chunk_ms,
+                           self._plot_times(self._clock_key, arrival_ns, chunk_ms)))
+        default_x = arrival_ns / 1e9 - self.start_time
+        for chunk in sd.chunks:
+            chunk_t = x_by_ts.get(chunk.timestamp_ms, default_x)
             for dp in chunk.datapoints:
                 if dp.sensor_id not in self.readings:
                     continue
-                volt = self.profile.decode_value(dp.raw)
-                ts, vs = self.readings[dp.sensor_id]
-                ts.append(base_t)
-                vs.append(volt)
+                self._append_reading(dp.sensor_id, chunk_t,
+                                     self.profile.decode_value(dp.raw))
                 self.last_raw[dp.sensor_id] = dp.raw
 
     def _on_self_test(self, st: protocol.SelfTest, src_ip: str) -> None:
@@ -922,10 +1214,16 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
 
     # -- periodic refresh ----------------------------------------------------
     def _refresh(self) -> None:
+        # Filter windows are specified in seconds, so if the measured sample
+        # rate moves materially the candidate list has to be resized.
+        fs = self._estimate_fs()
+        if self._bank_fs is None or abs(fs - self._bank_fs) / self._bank_fs > 0.2:
+            self._bank_fs = fs
+            self._populate_filter_combo()
+            self._rebuild_filters()
         self._refresh_connection_light()
         self._refresh_status()
         self._refresh_packets()
-        self._refresh_plot()
 
     def _refresh_connection_light(self) -> None:
         # The top-left light reflects the SERIAL (USB) link the user chose.
@@ -955,6 +1253,7 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
             # live Ethernet heartbeat carries board id + firmware hash
             self.value_labels["reported_id"].setText(str(hb.board_id))
             self.value_labels["fw_hash"].setText(hb.firmware_hash_hex[:16] + "…")
+            self.value_labels["fw_hash"].setToolTip("SHA-256: " + hb.firmware_hash_hex)
         # heartbeat timing works for either source (serial 'Sent: heartbeat' or UDP)
         if self.last_heartbeat_time is not None:
             self.value_labels["hb_age"].setText(f"{time.time() - self.last_heartbeat_time:.1f} s ago")
@@ -978,24 +1277,257 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         self.value_labels["bytes_rate"].setText(f"{self._fmt_bytes(s.bytes_per_sec())}/s")
         self.value_labels["cnt_hb"].setText(str(s.by_type.get(protocol.PacketType.BOARD_HEARTBEAT, 0)))
 
+    def _append_reading(self, cid: int, t: float, value: float) -> None:
+        """Append one sample, trimming the buffer in batches.
+
+        Trimming every append would be O(n) per sample; doing it once per
+        overflow block keeps it amortised O(1).
+        """
+        ts, vs = self.readings[cid]
+        # Belt-and-braces: _refresh_plot bisects this list, and pyqtgraph draws
+        # points in array order, so a single out-of-order x would draw a line
+        # running backwards. The clock sync already guarantees monotonicity per
+        # key; this holds the line if a sample ever arrives by another route.
+        if ts and t < ts[-1]:
+            t = ts[-1]
+        ts.append(t)
+        vs.append(value)
+        f = self._filter_objs.get(cid)
+        self.filtered.setdefault(cid, []).append(f.update(value) if f else value)
+        if len(ts) > MAX_POINTS_PER_CHANNEL + TRIM_SLACK:
+            cut = len(ts) - MAX_POINTS_PER_CHANNEL
+            del ts[:cut]
+            del vs[:cut]
+            del self.filtered[cid][:cut]
+
+    def _plot_times(self, board_key: str, arrival_ns: int,
+                    chunk_ms: List[int]) -> List[float]:
+        """Chunk board-millis -> x positions (seconds since the GUI started).
+
+        Delegates to the same BoardClockSync the DAQ bridge uses, so a chunk
+        lands at the same instant here as it does in the server's recording:
+        the board's millis() spacing is preserved and network jitter is
+        filtered out, instead of every chunk in a packet collapsing onto the
+        arrival time.
+        """
+        stamped = self.clock_sync.stamp_packet(board_key, arrival_ns, chunk_ms)
+        return [ns / 1e9 - self.start_time for ns in stamped]
+
+    @staticmethod
+    def _fmt_si(value: float, unit: str) -> str:
+        """Format a value with an SI prefix, so a load cell reading in the
+        microvolts doesn't display as 0.00001 V.
+
+        Steps down V -> mV -> uV -> nV on magnitude, keeping ~4 significant
+        figures at every scale.
+        """
+        a = abs(value)
+        if a == 0:
+            return f"0 {unit}"
+        if a >= 1:
+            return f"{value:+.4f} {unit}"
+        if a >= 1e-3:
+            return f"{value * 1e3:+.4f} m{unit}"
+        if a >= 1e-6:
+            return f"{value * 1e6:+.3f} µ{unit}"
+        return f"{value * 1e9:+.1f} n{unit}"
+
+    # -- noise filtering ------------------------------------------------------
+    def _estimate_fs(self) -> float:
+        """Samples per second, measured from the buffered timestamps.
+
+        The filters are sized in seconds, so they need the real rate rather than
+        the nominal one — chunk cadence varies with the board's config.
+        """
+        for ts, _ in self.readings.values():
+            if len(ts) > 20 and ts[-1] > ts[0]:
+                return (len(ts) - 1) / (ts[-1] - ts[0])
+        return 100.0
+
+    def _populate_filter_combo(self) -> None:
+        """Fill the picker with candidates sized for the measured rate."""
+        fs = self._estimate_fs()
+        self._filter_bank = filt.default_bank(fs)
+        keep = self.filter_combo.currentIndex()
+        self.filter_combo.blockSignals(True)
+        self.filter_combo.clear()
+        for make in self._filter_bank:
+            self.filter_combo.addItem(make().label, make)
+        if 0 <= keep < self.filter_combo.count():
+            self.filter_combo.setCurrentIndex(keep)
+        self.filter_combo.blockSignals(False)
+
+    def _rebuild_filters(self) -> None:
+        """Re-run the chosen filter over everything already buffered.
+
+        Filtering happens once per sample on arrival (cheap), so changing the
+        filter has to replay the buffer to keep the displayed history
+        consistent with the new setting.
+        """
+        make = self.filter_combo.currentData()
+        self._filter_factory = make
+        for cid, (ts, vs) in self.readings.items():
+            f = make() if make else filt.NoFilter()
+            self._filter_objs[cid] = f
+            self.filtered[cid] = [f.update(v) for v in vs]
+        if make:
+            self.log.info("Filter: %s (fs ~ %.0f Hz)", make().label, self._estimate_fs())
+
+    def _compare_filters(self) -> None:
+        """Rank every candidate over the buffered data and log the table."""
+        cid = next((c for c in self.profile.display_connectors()
+                    if self.conn_checkboxes[c].isChecked()
+                    and len(self.readings[c][0]) >= 64), None)
+        if cid is None:
+            self.log.warning("Compare filters: need at least 64 samples on a "
+                             "plotted connector — start the stream first")
+            return
+        ts, vs = self.readings[cid]
+        fs = self._estimate_fs()
+        dt = 1.0 / fs
+        # Slope of the current data, so each filter's lag is priced as the
+        # reading error it would cause at the rate the load is actually moving.
+        span = max(1e-9, ts[-1] - ts[0])
+        ramp = (vs[-1] - vs[0]) / span
+        reports = filt.compare(vs, dt, filt.default_bank(fs), ramp_rate=ramp)
+        if not reports:
+            self.log.warning("Compare filters: not enough data")
+            return
+        unit = self.profile.value_unit
+        self.log.info("Filter comparison on %s — %d samples @ %.0f Hz, "
+                      "signal slope %s/s",
+                      self.profile.connector_label(cid), len(vs), fs,
+                      self._fmt_si(ramp, unit))
+        self.log.info("  %-26s %12s %8s %9s %12s",
+                      "filter", "noise", "vs raw", "lag", "ramp error")
+        for r in reports:
+            self.log.info("  %-26s %12s %7.1fx %8.0f ms %12s",
+                          r.label, self._fmt_si(r.noise, unit),
+                          r.noise_reduction, r.lag_s * 1000,
+                          self._fmt_si(r.ramp_error, unit))
+        best = reports[0]
+        pick = filt.suggest(reports)
+        self.log.info("  quietest: %s (%.1fx, %.0f ms lag)",
+                      best.label, best.noise_reduction, best.lag_s * 1000)
+        if pick is not None:
+            self.log.info("  suggested: %s — %.1fx noise reduction for only "
+                          "%.0f ms lag (%s error while the load is moving)",
+                          pick.label, pick.noise_reduction, pick.lag_s * 1000,
+                          self._fmt_si(pick.ramp_error, unit))
+
+    def _drift_analysis(self) -> None:
+        """Allan deviation of the buffered data — where averaging stops helping."""
+        cid = next((c for c in self.profile.display_connectors()
+                    if self.conn_checkboxes[c].isChecked()
+                    and len(self.readings[c][0]) >= 256), None)
+        if cid is None:
+            self.log.warning("Drift analysis: need at least 256 samples on a "
+                             "plotted connector")
+            return
+        ts, vs = self.readings[cid]
+        fs = self._estimate_fs()
+        curve = filt.allan_deviation(vs, 1.0 / fs)
+        if not curve:
+            self.log.warning("Drift analysis: not enough data")
+            return
+        unit = self.profile.value_unit
+        slope = filt.drift_slope(curve)
+        best = filt.optimal_averaging(curve)
+        self.log.info("Allan deviation on %s — %d samples @ %.0f Hz (%.1f s)",
+                      self.profile.connector_label(cid), len(vs), fs,
+                      ts[-1] - ts[0])
+        self.log.info("  %10s  %14s", "avg time", "sigma")
+        for tau, sigma in curve:
+            mark = "  <- best" if best and tau == best[0] else ""
+            self.log.info("  %8.3f s  %14s%s", tau, self._fmt_si(sigma, unit), mark)
+        if best:
+            self.log.info("  best averaging time: %.2f s (sigma %s) "
+                          "≈ moving average n=%d",
+                          best[0], self._fmt_si(best[1], unit),
+                          max(1, int(round(best[0] * fs))))
+        if slope is not None:
+            if slope < -0.35:
+                verdict = ("white-noise limited — averaging longer still "
+                           "helps; the buffer may be too short to see drift")
+            elif slope < 0.15:
+                verdict = ("flicker/1-f limited — averaging longer buys "
+                           "almost nothing beyond this point")
+            else:
+                verdict = ("RANDOM WALK — averaging longer makes the reading "
+                           "WORSE. No causal filter fixes this; it has to be "
+                           "attacked at the sensor (ratiometric reference, ADC "
+                           "chop, thermal settling, cabling)")
+            self.log.info("  long-tau slope %+.2f: %s", slope, verdict)
+
+    def _bound_draw_cost(self, points_in_view: int) -> None:
+        """Keep painted points near one peak-pair per pixel column.
+
+        pyqtgraph's auto downsampling leaves roughly three points per column,
+        which at three curves is ~9000 segments a frame. Pinning the decimation
+        to the widget's actual width makes repaint cost flat no matter how wide
+        the time window or how full the buffer is.
+        """
+        # "peak" emits a min/max PAIR per bin, so bins = width gives two points
+        # per pixel column and ds = points / width (not / 2*width).
+        width_px = max(1, self.plot.width())
+        ds = max(1, points_in_view // width_px)
+        if ds != self._last_ds:
+            self._last_ds = ds
+            self.plot.setDownsampling(ds=ds, auto=False, mode="peak")
+
+    def _apply_time_window(self) -> None:
+        """Re-range x immediately when the picker changes (don't wait for data)."""
+        self._refresh_plot()
+
     def _refresh_plot(self) -> None:
         now_rel = time.time() - self.start_time
+        window = self.window_combo.currentData()
+        vb = self.plot.getViewBox()
+        if window is None:
+            vb.enableAutoRange(axis="x")
+        else:
+            # Anchor the window to the newest sample when data is flowing, so a
+            # stalled stream leaves the last trace on screen instead of
+            # scrolling off into empty space.
+            newest = max((ts[-1] for ts, _ in self.readings.values() if ts),
+                         default=now_rel)
+            right = max(newest, now_rel - window)
+            vb.setXRange(right - window, right, padding=0)
+        vb.enableAutoRange(axis="y")
+        x_left = None if window is None else vb.viewRange()[0][0]
+        widest = 0
         for cid, (ts, vs) in self.readings.items():
             visible = self.conn_checkboxes[cid].isChecked()
             curve = self.plot_curves[cid]
+            ghost = self.raw_curves[cid]
             if not visible:
                 curve.setData([], [])
+                ghost.setData([], [])
             elif ts:
-                curve.setData(list(ts), list(vs))
+                # Timestamps are non-decreasing (BoardClockSync guarantees it),
+                # so bisect finds the window start without scanning.
+                lo = 0 if x_left is None else max(0, bisect_left(ts, x_left) - 1)
+                widest = max(widest, len(ts) - lo)
+                series = self.filtered.get(cid) or vs
+                if len(series) != len(ts):          # mid-rebuild; fall back
+                    series = vs
+                curve.setData(ts[lo:], series[lo:])
+                if self.show_raw_cb.isChecked() and self._filter_factory is not None:
+                    ghost.setData(ts[lo:], vs[lo:])
+                else:
+                    ghost.setData([], [])
             # current-value labels
             if cid in self.last_raw:
                 raw = self.last_raw[cid]
-                self.value_labels[f"raw_{cid}"].setText(str(protocol.raw_to_signed(raw)))
-                if vs:
-                    self.conn_value_labels[cid].setText(f"{vs[-1]:+.5f}")
-        # scroll x window
-        if now_rel > PLOT_WINDOW_SEC:
-            self.plot.setXRange(now_rel - PLOT_WINDOW_SEC, now_rel, padding=0)
+                signed = protocol.raw_to_signed(raw)
+                self.value_labels[f"raw_{cid}"].setText(str(signed))
+                # Signed 32-bit code against the converter's full scale.
+                self.conn_fs_labels[cid].setText(f"{signed / 2147483648.0 * 100:+.3f} %")
+                series = self.filtered.get(cid) or vs
+                if series:
+                    self.conn_value_labels[cid].setText(
+                        self._fmt_si(series[-1], self.profile.value_unit))
+        self._bound_draw_cost(widest)
 
     @staticmethod
     def _fmt_bytes(n: float) -> str:
