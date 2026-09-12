@@ -32,7 +32,7 @@ import {
   BoardLogTotals,
 } from './types';
 import type { VoltageRefNominals } from './voltageRef';
-import { recordSensorUpdate, isSensorKeyFresh } from './sensor-rate';
+import { recordSensorUpdate, isSensorKeyFresh, setDeliveryLagAllowanceMs } from './sensor-rate';
 interface SensorData {
   [key: string]: number; // entity.component -> value
 }
@@ -527,6 +527,10 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   },
 
   updateConnectionStatus: (status: ConnectionStatus) => {
+    // Feed this link's measured lag to the staleness rule. A throttled client is paced to
+    // ~1500 ms by design, which is exactly what the readout window called stale — so
+    // without this the numbers dash out on every burst even though the data is current.
+    setDeliveryLagAllowanceMs(status.lagMs);
     set({ connectionStatus: status });
   },
 

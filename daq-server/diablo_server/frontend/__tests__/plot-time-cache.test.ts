@@ -32,14 +32,10 @@ async function freshModules() {
   const plotTime = await import('@/lib/plot-time');
   plotTime.resetPlotTimeForTests();
   const dataCache = await import('@/lib/data-cache');
-  const sensorRate = await import('@/lib/sensor-rate');
-  // getAlignedHistory masks stale streams as NaN; mark streams fresh the same
-  // way the live path does (store.updateSensor → recordSensorUpdate), which
-  // passes the sample's own server timestamp — freshness is measured on the
-  // server timeline, not on local arrival time.
-  const markFresh = (entity: string, component: string, sampleTsMs: number) =>
-    sensorRate.recordSensorUpdate(entity, component, sampleTsMs);
-  return { plotTime, dataCache, markFresh };
+  // No markFresh() any more: getAlignedHistory no longer consults readout freshness, so
+  // a test does not have to pretend a stream is fresh to see its own data back. Plots
+  // draw what the cache holds and end each line at its last sample.
+  return { plotTime, dataCache };
 }
 
 const T0 = 1_800_000_000_000; // arbitrary epoch-ms base
@@ -84,9 +80,8 @@ describe('plot-time', () => {
 
 describe('data-cache (server-timestamp keyed)', () => {
   it('addDataPoint stores points at their server timestamps; live window reads them back', async () => {
-    const { dataCache, markFresh } = await freshModules();
+    const { dataCache } = await freshModules();
     const cache = dataCache.getDataCache();
-    markFresh('PT1_Cal.CH1', 'pressure_psi', T0 + 450);
     for (let i = 0; i < 10; i++) {
       cache.addDataPoint('PT1_Cal.CH1', 'pressure_psi', 100 + i, T0 + i * 50);
     }
@@ -99,9 +94,8 @@ describe('data-cache (server-timestamp keyed)', () => {
   });
 
   it('drops strictly-older points and overwrites same-instant points', async () => {
-    const { dataCache, markFresh } = await freshModules();
+    const { dataCache } = await freshModules();
     const cache = dataCache.getDataCache();
-    markFresh('e', 'c', T0 + 100);
     cache.addDataPoint('e', 'c', 1, T0 + 100);
     cache.addDataPoint('e', 'c', 2, T0 + 50);   // older → dropped
     cache.addDataPoint('e', 'c', 3, T0 + 100);  // same instant → overwrite
@@ -111,9 +105,8 @@ describe('data-cache (server-timestamp keyed)', () => {
   });
 
   it('HISTORICAL_DATA merges by timestamp — never wipes live data (the reset bug)', async () => {
-    const { dataCache, markFresh } = await freshModules();
+    const { dataCache } = await freshModules();
     const cache = dataCache.getDataCache();
-    markFresh('e', 'c', T0 + 4000);
     cache.start();
     const historical = listeners.get('historical_data');
     expect(historical).toBeTypeOf('function');
@@ -172,5 +165,87 @@ describe('T+ axis labeling', () => {
     // …but cached data is untouched.
     const out = cache.getAlignedHistory(['e'], ['c'], 60)!;
     expect(out.time).toEqual([T0 + 30_000]);
+  });
+});
+
+describe('gap rendering — draw what arrived, stop where it ends', () => {
+  /** getAlignedHistory windows on serverNowMs(), so pin "now" past the data. */
+  const pinNow = (plotTime: any, tsMs: number) => plotTime.noteServerTimestamp(tsMs);
+
+  it('a stalled series keeps its history and stops at its last sample', async () => {
+    // The headline regression. A stalled stream used to be blanked ACROSS THE WHOLE
+    // WINDOW, erasing measurements the rig really sent.
+    const { dataCache, plotTime } = await freshModules();
+    const cache = dataCache.getDataCache();
+    for (let i = 0; i < 20; i++) cache.addDataPoint('stalled', 'c', i, T0 + i * 50);      // ends T0+950
+    for (let i = 0; i < 200; i++) cache.addDataPoint('live', 'c', i, T0 + i * 50);        // ends T0+9950
+    pinNow(plotTime, T0 + 9950);
+
+    const out = cache.getAlignedHistory(['stalled', 'live'], ['c', 'c'], 60)!;
+    const stalled = out.values[0];
+    // Its real history survives ...
+    expect(stalled.slice(0, 20).every((v) => Number.isFinite(v))).toBe(true);
+    // ... and the line ends rather than coasting to the right edge.
+    expect(Number.isNaN(stalled[stalled.length - 1])).toBe(true);
+  });
+
+  it('a mid-window dropout is a gap, not a flat line', async () => {
+    const { dataCache, plotTime } = await freshModules();
+    const cache = dataCache.getDataCache();
+    for (let i = 0; i < 40; i++) cache.addDataPoint('e', 'c', 1, T0 + i * 50);            // ends T0+1950
+    for (let i = 0; i < 40; i++) cache.addDataPoint('e', 'c', 2, T0 + 7000 + i * 50);     // 5 s hole
+    pinNow(plotTime, T0 + 8950);
+
+    const out = cache.getAlignedHistory(['e'], ['c'], 60)!;
+    const v = out.values[0];
+    expect(v.some((x) => Number.isNaN(x))).toBe(true);              // the hole is drawn as a hole
+    expect(v.filter((x) => x === 1).length).toBeGreaterThan(0);     // both sides survive
+    expect(v.filter((x) => x === 2).length).toBeGreaterThan(0);
+  });
+
+  it('a 10 Hz sensor is not gapped against a 75 Hz time base', async () => {
+    // Guards MIN_HOLD_MS / GAP_FACTOR against being re-tightened: slow sensors are
+    // normal here (actuators ~10 Hz, PTs ~75 Hz), not a fault.
+    const { dataCache, plotTime } = await freshModules();
+    const cache = dataCache.getDataCache();
+    for (let i = 0; i < 300; i++) cache.addDataPoint('fast', 'c', i, T0 + i * 13);   // ~75 Hz
+    for (let i = 0; i < 40; i++)  cache.addDataPoint('slow', 'c', i, T0 + i * 100);  // ~10 Hz
+    pinNow(plotTime, T0 + 3900);
+
+    const out = cache.getAlignedHistory(['fast', 'slow'], ['c', 'c'], 60)!;
+    const slow = out.values[1];
+    const upTo = out.time.findIndex((t) => t > T0 + 3900);
+    const drawn = upTo === -1 ? slow : slow.slice(0, upTo);
+    expect(drawn.some((x) => Number.isNaN(x))).toBe(false);
+  });
+
+  it('a min/max decimated stream is not gapped between its pairs', async () => {
+    // The bimodality guard, and the test most likely to catch a later "just use the
+    // median" simplification: the outbox emits both extremes of a window with their
+    // ORIGINAL timestamps, so deltas alternate ~5 ms and ~500 ms.
+    const { dataCache, plotTime } = await freshModules();
+    const cache = dataCache.getDataCache();
+    for (let w = 0; w < 20; w++) {
+      cache.addDataPoint('dec', 'c', 10, T0 + w * 500);
+      cache.addDataPoint('dec', 'c', 90, T0 + w * 500 + 5);
+    }
+    pinNow(plotTime, T0 + 9505);
+
+    const out = cache.getAlignedHistory(['dec'], ['c'], 60)!;
+    expect(out.values[0].some((x) => Number.isNaN(x))).toBe(false);
+  });
+
+  it('history is never erased just because delivery paused (the iPad case)', async () => {
+    // 1.5 s of sample-time data arriving every 1.5 s: continuous in sample time, bursty
+    // on the wire. The display must not blank between bursts.
+    const { dataCache, plotTime } = await freshModules();
+    const cache = dataCache.getDataCache();
+    for (let i = 0; i < 300; i++) cache.addDataPoint('pt', 'c', i, T0 + i * 50);   // 15 s @20Hz
+    pinNow(plotTime, T0 + 14950);
+
+    const out = cache.getAlignedHistory(['pt'], ['c'], 60)!;
+    const v = out.values[0];
+    expect(v.every((x) => Number.isNaN(x))).toBe(false);
+    expect(v.filter((x) => Number.isFinite(x)).length).toBe(v.length);
   });
 });

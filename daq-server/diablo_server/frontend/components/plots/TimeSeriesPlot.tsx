@@ -24,8 +24,16 @@ interface TimeSeriesPlotProps {
   valueTransforms?: ((v: number) => number)[];
 }
 
-function applyTransform(v: number, transform?: (x: number) => number): number {
-  return !isFinite(v) || !transform ? v : transform(v);
+/** Per-point value for uPlot: a real number, or null meaning "no sample here".
+ *
+ *  null, never NaN. uPlot's gap detection tests `yVal === null`; NaN passes that check
+ *  and reaches `lineTo(NaN, NaN)`, which the canvas spec makes a no-op — so a NaN run is
+ *  drawn as one straight interpolated segment across the hole, the opposite of a gap.
+ *  (The old whole-series NaN fill only looked right because EVERY point was a no-op, so
+ *  nothing was drawn at all — which is what erased real history.) */
+function applyTransform(v: number, transform?: (x: number) => number): number | null {
+  if (!Number.isFinite(v)) return null;
+  return transform ? transform(v) : v;
 }
 
 const DEFAULT_WINDOW_SECONDS = 60;
@@ -139,7 +147,7 @@ export default function TimeSeriesPlot({
       const tData   = cached?.time.length   ? cached.time   : [serverNowMs()];
       const vData   = cached?.values.length
         ? cached.values.map((v, i) => v.map(x => applyTransform(x, transforms[i])))
-        : entities.map(() => [NaN]);
+        : entities.map(() => [null]);
 
       try {
         const opts = buildOpts(dims.w, dims.h);

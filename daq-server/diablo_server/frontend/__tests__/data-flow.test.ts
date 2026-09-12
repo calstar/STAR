@@ -12,7 +12,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useSensorStore, ALIASES, buildAliasesFromConfig } from '@/lib/store';
-import { recordSensorUpdate } from '@/lib/sensor-rate';
+import { recordSensorUpdate, resetSensorRateForTests, setDeliveryLagAllowanceMs } from '@/lib/sensor-rate';
 import {
   SystemState,
   ActuatorState,
@@ -40,6 +40,9 @@ function resetStore() {
 
 beforeEach(() => {
   resetStore();
+  // sensor-rate now carries the delivery-lag allowance as module state; without this a
+  // test that reports a lag would silently widen the staleness window for later tests.
+  resetSensorRateForTests();
 });
 
 // ── Test 1: Sensor data → store (uses real timers + async wait) ──────────────
@@ -288,6 +291,26 @@ describe('Sensor stream staleness', () => {
     await new Promise((r) => setTimeout(r, 400));
 
     expect(useSensorStore.getState().getSensorValue('PT_Cal.PT_CH1', 'pressure_psi')).toBe(51);
+  });
+
+  it('a reported delivery lag widens the window instead of dashing every burst', async () => {
+    // The iPad case: the backend paces a throttled client to ~1500 ms, which is exactly
+    // the base stale window. Without the allowance the readout dashes between bursts even
+    // though the data is current.
+    const { updateSensor } = useSensorStore.getState();
+    setDeliveryLagAllowanceMs(1500);
+
+    updateSensor({
+      entity: 'PT_Cal.PT_CH1',
+      component: 'pressure_psi',
+      value: 50,
+      timestamp: Date.now(),
+    });
+    await waitForSensorFlush();
+
+    await new Promise((r) => setTimeout(r, 1600));   // past the base window
+
+    expect(useSensorStore.getState().getSensorValue('PT_Cal.PT_CH1', 'pressure_psi')).toBe(50);
   });
 });
 

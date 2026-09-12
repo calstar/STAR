@@ -14,7 +14,8 @@
  *  - getAlignedHistory() allocates once per call (unavoidable for uPlot).
  */
 
-import { ALIASES, isSensorStreamFresh } from './store';
+import { ALIASES } from './store';
+import { SENSOR_DATA_STALE_MS } from './sensor-rate';
 import { getWebSocketClient } from './websocket';
 import { MessageType } from './types';
 import { noteServerTimestamp, newestServerTsMs, serverNowMs } from './plot-time';
@@ -22,6 +23,44 @@ import { noteServerTimestamp, newestServerTsMs, serverNowMs } from './plot-time'
 // Ring capacity must cover the longest dashboard window (5 min = 300 s) at the
 // backend's downsampled rate (~20 pts/s) → 300×20 = 6000; headroom for bursts.
 const CACHE_MAX_POINTS  = 16000;
+
+/* ── Gap rendering ────────────────────────────────────────────────────────────
+ * How long a drawn line may coast past its last real sample before it breaks.
+ *
+ * Alignment is sample-and-hold, which used to hold the last value FOREVER — a dead
+ * sensor drew a flat line across the plot, indistinguishable from a steady hold. The
+ * counter-fix was to blank the whole series once it went stale, which erased real
+ * measurements instead. Both are wrong: draw every point that arrived, then stop.
+ *
+ * The hold is derived per-series from its OWN sample deltas, because sensors here run
+ * from ~10 Hz actuators to ~75 Hz PTs and one constant cannot fit both. A trailing EMA
+ * rather than a window mean or median, for two reasons:
+ *   - the outbox compacts the old end of a window and leaves the new end at full
+ *     resolution, so a window-wide mean sits between the two and dashes the old half;
+ *   - min/max decimation makes the deltas BIMODAL — mergeWindows() keeps both extremes
+ *     with their original timestamps, so a window emits two points milliseconds apart
+ *     and then jumps a whole window. A median picks the near-zero mode and renders the
+ *     trace as a row of ticks.
+ * A trailing EMA is local (it tracks resolution changes as the loop walks) and averages
+ * across the bimodal pair. */
+const GAP_EMA_ALPHA     = 0.25;
+/** Multiple of the mean interval tolerated before breaking. Worst phase of the bimodal
+ *  case gives hold ~= 5 x 0.41W ~= 2W, i.e. 2x margin over one decimated window; below
+ *  about 3 every throttled trace dashes. */
+const GAP_FACTOR        = 5;
+/** A 75 Hz PT arrives decimated at ~20 pts/s; one missed envelope must not break it. */
+const MIN_HOLD_MS       = 250;
+/** Sanity bound so a pathological EMA cannot hold a value across the whole window. */
+const MAX_HOLD_MS       = 10_000;
+/** Deltas required before the EMA is trusted to size a hold.
+ *
+ *  The startup transient is the trap: a min/max decimated stream alternates ~5 ms (the
+ *  two extremes of one window, kept with their original timestamps) and ~495 ms (the jump
+ *  to the next window). Seeded from the first 5 ms delta the EMA reads 5, the hold clamps
+ *  to MIN_HOLD_MS, and the very next inter-window jump is mistaken for a dropout. It only
+ *  converges to ~215 ms — a comfortably sufficient hold — after several deltas, so until
+ *  then fall back to the readout window rather than guess. */
+const EMA_WARMUP_DELTAS = 4;
 // The stack routinely publishes >80 entity.component streams. A low key cap causes
 // live series eviction and "dead" plots until a backfill reloads them.
 const CACHE_MAX_KEYS    = 2000;
@@ -40,6 +79,44 @@ interface RingSeries {
 }
 
 // ── Cache class ───────────────────────────────────────────────────────────────
+/** Mean-interval EMA step; see the gap-rendering constants above. */
+function nextEma(ema: number, deltaMs: number): number {
+  return ema < 0 ? deltaMs : GAP_EMA_ALPHA * deltaMs + (1 - GAP_EMA_ALPHA) * ema;
+}
+
+/** How long this series may coast past its last sample, given the intervals so far. */
+function holdMsFor(ema: number, seen: number): number {
+  return ema < 0 || seen < EMA_WARMUP_DELTAS
+    ? SENSOR_DATA_STALE_MS
+    : Math.min(MAX_HOLD_MS, Math.max(MIN_HOLD_MS, GAP_FACTOR * ema));
+}
+
+/**
+ * Timestamps that must exist on the x-axis for this series' holes to be drawn as holes.
+ *
+ * uPlot joins consecutive points with a straight segment, so a series whose own samples
+ * are the time base has no x-position inside its own gap — the hole gets drawn as one
+ * long interpolated line, which is the flat-line bug again for single-series plots.
+ * Emitting one marker just past the end of each hold gives the mapping somewhere to put
+ * a NaN.
+ */
+function gapMarkers(w: { time: number[]; values: number[] }): number[] {
+  const marks: number[] = [];
+  let ema = -1;
+  let seen = 0;
+  for (let k = 1; k < w.time.length; k++) {
+    const hold = holdMsFor(ema, seen);
+    const d = w.time[k] - w.time[k - 1];
+    // +1: the mapping holds while `t - lastSample <= hold`, so a marker exactly ON the
+    // boundary is still held and draws no break. One millisecond past it is the first x
+    // that is genuinely outside the hold.
+    if (d > hold + 1) marks.push(w.time[k - 1] + hold + 1);
+    ema = nextEma(ema, d);
+    seen++;
+  }
+  return marks;
+}
+
 class SensorDataCache {
   private cache: Map<string, RingSeries> = new Map();
   private pruneInterval: ReturnType<typeof setInterval> | null = null;
@@ -280,37 +357,69 @@ class SensorDataCache {
     const cutoffMs = serverNowMs() - windowSeconds * 1000;
     const keys     = entities.map((e, i) => `${e}.${componentMap[i]}`);
 
-    // Find time base — first series with data in the window.
-    let baseWindow: { time: number[]; values: number[] } | null = null;
-    for (const k of keys) {
+    // Read every series once, then take the time base from the FRESHEST of them — the one
+    // whose last sample is newest (ties broken by point count).
+    //
+    // It used to be "the first key with data", which meant a stalled series silently
+    // truncated the grid: co-plotted live series were simply not drawn past the stalled
+    // one's last sample. That was invisible while everything got blanked anyway, and it
+    // is the reason a stalled sensor could take healthy ones down with it. Reading once
+    // also drops the duplicate readWindow the base series used to pay.
+    const windows = keys.map((k) => {
       const s = this.findSeries(k);
-      if (!s) continue;
-      const w = this.readWindow(s, cutoffMs);
-      if (w && w.time.length > 0) { baseWindow = w; break; }
+      return s ? this.readWindow(s, cutoffMs) : null;
+    });
+
+    let baseWindow: { time: number[]; values: number[] } | null = null;
+    let baseLast = -Infinity;
+    for (const w of windows) {
+      if (!w || w.time.length === 0) continue;
+      const last = w.time[w.time.length - 1];
+      if (last > baseLast || (last === baseLast && baseWindow && w.time.length > baseWindow.time.length)) {
+        baseWindow = w;
+        baseLast = last;
+      }
     }
     if (!baseWindow) return null;
 
-    const time = baseWindow.time;
-    const len  = time.length;
+    // Splice a marker into every hole so the break has an x to live at (see gapMarkers).
+    // Other series hold their value across that x, which is correct: they are still live,
+    // it is this one that stopped.
+    const marks = new Set<number>();
+    for (const w of windows) if (w && w.time.length > 1) for (const m of gapMarkers(w)) marks.add(m);
 
-    const values = keys.map((key, idx) => {
-      const entity = entities[idx];
-      const comp = componentMap[idx];
-      if (!isSensorStreamFresh(entity, comp)) {
-        return new Array<number>(len).fill(NaN);
-      }
-      const s = this.findSeries(key);
-      if (!s) return new Array<number>(len).fill(NaN);
-      const w = this.readWindow(s, cutoffMs);
-      if (!w) return new Array<number>(len).fill(NaN);
+    let time = baseWindow.time;
+    if (marks.size > 0) {
+      const lo = time[0], hi = time[time.length - 1];
+      const extra = [...marks].filter((m) => m > lo && m < hi);
+      if (extra.length > 0) time = [...time, ...extra].sort((a, b) => a - b);
+    }
+    const len = time.length;
+
+    // No freshness gate here. Readout staleness (SENSOR_DATA_STALE_MS) answers "is this
+    // number still current?", which is the right question for a readout and the wrong one
+    // for a plot: it blanked complete, correct history because the backend deliberately
+    // paces a throttled client at the same 1500 ms the frontend called stale. Plots draw
+    // what the cache holds; the per-series hold below is what ends a line honestly.
+    const values = windows.map((w) => {
+      if (!w || w.time.length === 0) return new Array<number>(len).fill(NaN);
 
       const out: number[] = new Array(len);
       let j = 0;
+      let ema = -1;   // mean inter-sample interval seen so far, ms
+      let seen = 0;
 
       for (let i = 0; i < len; i++) {
         const t = time[i];
-        while (j + 1 < w.time.length && w.time[j + 1] <= t) j++;
-        out[i] = w.time[j] <= t ? w.values[j] : NaN;
+        while (j + 1 < w.time.length && w.time[j + 1] <= t) {
+          ema = nextEma(ema, w.time[j + 1] - w.time[j]);
+          seen++;
+          j++;
+        }
+        // Fewer than two samples gives no interval to measure; fall back to the readout
+        // window, the only other statement we have about what "current" means.
+        const hold = holdMsFor(ema, seen);
+        out[i] = (w.time[j] <= t && t - w.time[j] <= hold) ? w.values[j] : NaN;
       }
       return out;
     });
