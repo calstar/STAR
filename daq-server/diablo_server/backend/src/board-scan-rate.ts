@@ -59,6 +59,27 @@ export function isPrimaryPhysicalStream(entity: string, component: string): bool
   return false;
 }
 
+/** Below this there is not enough observation to claim a rate. */
+const MIN_OBSERVATION_MS = 250;
+
+/**
+ * Samples per second over the interval [oldest retained sample, now].
+ *
+ * NOT over the span between the first and last sample in the window, which is what this
+ * used to do:
+ *
+ *     const span = ts[ts.length - 1] - ts[start];
+ *     return ((recent - 1) / span) * 1000;
+ *
+ * A board that batches — the load cell flushes a few readings together and then waits
+ * ~500 ms — puts several samples microseconds apart at the end of the window, so `span`
+ * collapsed to a fraction of a millisecond and the rate exploded. Measured on the stand:
+ * a load cell genuinely delivering ~6 Hz was reported as 24542 Hz, while every steady
+ * board read correctly, because a stream that fills the window evenly never hits it.
+ *
+ * Ending the interval at `now` is what makes it robust: the quiet tail after a burst is
+ * counted, so bursty and steady streams of the same throughput report the same number.
+ */
 function hzForTimestamps(ts: number[]): number {
   if (ts.length < 2) return 0;
   const now = performance.now();
@@ -67,9 +88,9 @@ function hzForTimestamps(ts: number[]): number {
   while (start < ts.length && ts[start] < cutoff) start++;
   const recent = ts.length - start;
   if (recent < 2) return 0;
-  const span = ts[ts.length - 1] - ts[start];
-  if (span <= 0) return 0;
-  return ((recent - 1) / span) * 1000;
+  const elapsed = now - ts[start];
+  if (elapsed < MIN_OBSERVATION_MS) return 0;
+  return (recent / elapsed) * 1000;
 }
 
 function emaForKey(group: string, channel: string, rawHz: number): number {
