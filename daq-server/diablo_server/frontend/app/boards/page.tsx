@@ -53,7 +53,7 @@ export default function BoardsPage() {
   useEffect(() => {
     fetch(`${getApiBaseUrl()}/api/config`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((data: { config?: { boards?: Record<string, { board_id?: number; enabled?: boolean; active_connectors?: number[]; num_sensors?: number; enable_serial_printing?: number | boolean }> } } | null) => {
+      .then((data: { config?: { boards?: Record<string, { board_id?: number; enabled?: boolean; active_connectors?: number[]; enable_serial_printing?: number | boolean }> } } | null) => {
         const boards = data?.config?.boards;
         if (!boards || typeof boards !== 'object') return;
         const next: Record<number, number> = {};
@@ -64,7 +64,7 @@ export default function BoardsPage() {
           if (!Number.isFinite(boardId) || boardId <= 0) return;
           const channelCount = Array.isArray(b.active_connectors) && b.active_connectors.length > 0
             ? b.active_connectors.length
-            : Math.max(0, Number(b.num_sensors) || 0);
+            : 0;   // no active_connectors means no channels
           next[boardId] = 1 + channelCount; // TDAC + channels
           // Tolerate a legacy boolean value (true→1, false→0).
           const raw = b.enable_serial_printing;

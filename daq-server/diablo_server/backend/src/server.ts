@@ -796,6 +796,12 @@ export function applyDeployedConfigChange(): void {
   } catch (e) {
     console.warn('Failed to rebuild STATE_ACTUATOR_MAP:', e);
   }
+  // The board list too. loadBoardsFromConfig() ran at startup and on session STOP and
+  // nowhere else, so enabling a board in the config editor reached the Boards panel at
+  // neither the edit nor the deploy — an enabled LC board was simply absent until the
+  // backend restarted or a run ended, which reads exactly like the panel hardcoding a list.
+  loadBoardsFromConfig();
+  broadcastBoardStatus();
   // Tell every open client the config changed so they refetch /api/* live
   // (states, sensor-config, pressure-limits, pressure-bars) — no reload/restart.
   broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });

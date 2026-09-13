@@ -10,7 +10,7 @@ Usage:
     from config_loader import load_config, get_board_by_type, get_calibration_config, get_abort_pts
 
     cfg = load_config()                          # full dict
-    pt = get_board_by_type("PT")                 # {ip, send_port, num_sensors, …}
+    pt = get_board_by_type("PT")                 # {ip, send_port, active_connectors, …}
     cal = get_calibration_config("pt")           # {json_dir, csv_paths}
     abort_pts = get_abort_pts()                  # {"Fuel Upstream": 400, …} (PSI)
 """
@@ -202,6 +202,26 @@ def get_boards_by_type(board_type: str) -> List[dict]:
     return result
 
 
+def active_connectors(board: dict) -> List[int]:
+    """The connectors this board samples.
+
+    ``active_connectors`` is the config's only statement of which channels exist —
+    config_broadcast packs exactly this list into the board's SensorConfigPacket, and
+    the firmware's ``num_sensors`` byte is just its length. There is no separate count
+    to expand into a 1..N range, so an empty list means the board samples nothing.
+    """
+    raw = board.get("active_connectors")
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out: List[int] = []
+    for c in raw:
+        try:
+            out.append(int(c))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def decode_board_namespaced_low(low: int) -> Optional[tuple]:
     """
     Decode daq_bridge / Elodin low byte: (board_slot, connector_1_10, is_raw).
@@ -233,10 +253,7 @@ def packet_ch_for_board_connector(
         slot = 10 if mod == 0 else mod
         if slot != board_slot:
             continue
-        active = board.get("active_connectors", [])
-        if not active:
-            num = int(board.get("num_sensors", 10) or 10)
-            active = list(range(1, num + 1))
+        active = active_connectors(board)
         if connector not in active:
             continue
         return int(connector)
@@ -255,11 +272,7 @@ def build_channel_to_orchestrator_key() -> Dict[tuple, tuple]:
             if not board.get("enabled", True):
                 continue
             board_id = board.get("board_id", 1)
-            active = board.get("active_connectors", [])
-            if not active:
-                num = board.get("num_sensors", 10)
-                active = list(range(1, num + 1))
-            for conn in active:
+            for conn in active_connectors(board):
                 packet_ch = conn
                 unique_ch = board_id * 100 + conn
                 mapping[(stype, packet_ch)] = (stype, unique_ch)
@@ -293,10 +306,7 @@ def get_hp_pt_packet_channels() -> Dict[int, dict]:
     for board in get_boards_by_type("PT"):
         if not board.get("enabled", True) or not is_current_loop_board(board):
             continue
-        conns = board.get("active_connectors")
-        if not isinstance(conns, (list, tuple)):
-            num = board.get("num_sensors", 10)
-            conns = list(range(1, int(num) + 1)) if isinstance(num, int) else []
+        conns = active_connectors(board)
         cfg = {
             "full_scale_psi": float(board.get("hp_pt_full_scale_psi", 5000.0)),
             "sense_resistor_ohms": float(board.get("hp_pt_sense_resistor_ohms", 120.0)),
@@ -315,11 +325,7 @@ def build_orchestrator_key_to_packet_ch() -> Dict[tuple, int]:
             if not board.get("enabled", True):
                 continue
             board_id = board.get("board_id", 1)
-            active = board.get("active_connectors", [])
-            if not active:
-                num = board.get("num_sensors", 10)
-                active = list(range(1, num + 1))
-            for conn in active:
+            for conn in active_connectors(board):
                 packet_ch = conn
                 unique_ch = board_id * 100 + conn
                 mapping[(stype, unique_ch)] = packet_ch
@@ -382,7 +388,7 @@ def print_config_summary():
         status = "✅" if b.get("enabled", True) else "⬜"
         print(
             f"    {status} {name:<20s}  type={b.get('type', '?'):<8s}"
-            f"  ip={b.get('ip', '?'):<16s}  sensors={b.get('num_sensors', '?')}"
+            f"  ip={b.get('ip', '?'):<16s}  channels={len(active_connectors(b))}"
         )
     print("  Calibration:")
     for st in ["pt", "tc", "rtd", "lc"]:

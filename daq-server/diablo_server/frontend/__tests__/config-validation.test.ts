@@ -228,17 +228,17 @@ describe('grouping for the session page', () => {
 });
 
 // ── Roles vs active_connectors ───────────────────────────────────────────────
-// Two facts that are easy to mistake for one, and nothing used to compare them.
-// active_connectors is wire-level: config_broadcast packs it into the packet sent to the
-// board, so it decides what the hardware samples. sensor_roles is naming, and drives
-// display, calibration keying (cal is filed by role) and abort_pts. So "removing a
-// channel" did two different things depending on which one you edited.
+// active_connectors is wire-level (broadcast to the board, decides what it samples);
+// sensor_roles is naming (display, calibration keying, abort_pts). Only one direction is a
+// fault worth gating on: a role that names a channel the board never samples can never show
+// data. The reverse — a sampled channel with no role — is the normal case for spare
+// channels and is deliberately not reported; on the real rig it produced nine warnings.
 describe('roles vs active_connectors', () => {
-  const withLc = (connectors: number[] | undefined, roles: Record<string, number>) => {
+  const withLc = (connectors: number[], roles: Record<string, number>, extra: Record<string, unknown> = {}) => {
     const cfg: any = cleanConfig();
     cfg.boards.lc_board_2 = {
       type: 'LC', board_id: 42, enabled: true, ip: '192.0.2.42',
-      ...(connectors ? { active_connectors: connectors } : {}),
+      active_connectors: connectors, ...extra,
     };
     cfg.sensor_roles_lc_board_2 = roles;
     return cfg;
@@ -252,23 +252,41 @@ describe('roles vs active_connectors', () => {
     expect(issue!.page).toBe('boards');
   });
 
-  it('warns when a sampled channel has no role naming it', () => {
-    const issues = validateConfigForRun(withLc([1, 2, 6], { Thrust: 1 }), cleanCsv());
-    expect(issues.some((i) => i.message.includes('no role'))).toBe(true);
-  });
-
-  it('is quiet when the two agree', () => {
-    const issues = validateConfigForRun(withLc([1, 2, 6], { A: 1, B: 2, C: 6 }), cleanCsv());
-    expect(issues.some((i) => i.message.includes('no role') || i.message.includes('not told to sample'))).toBe(false);
-  });
-
-  it('says nothing when active_connectors is absent — that means 1..num_sensors, not "none"', () => {
-    const issues = validateConfigForRun(withLc(undefined, { Thrust: 3 }), cleanCsv());
-    expect(issues.some((i) => i.message.includes('not told to sample'))).toBe(false);
-  });
-
-  it('does not block a run over it — these are warnings, not errors', () => {
-    const issues = validateConfigForRun(withLc([1, 2, 6], { Thrust: 1, Ghost: 4 }), cleanCsv());
+  it('does not block a run over it — a warning, not an error', () => {
+    const issues = validateConfigForRun(withLc([1], { Thrust: 1, Ghost: 4 }), cleanCsv());
     expect(issues.every((i) => i.level === 'warn')).toBe(true);
+  });
+
+  it('stays quiet about spare channels — an unnamed channel is the normal case', () => {
+    const issues = validateConfigForRun(withLc([1, 2, 6], { Thrust: 1 }), cleanCsv());
+    expect(issues.some((i) => i.message.includes('lc_board_2'))).toBe(false);
+  });
+
+  it('is quiet when every role names a sampled channel', () => {
+    const issues = validateConfigForRun(withLc([1, 2, 6], { A: 1, B: 2, C: 6 }), cleanCsv());
+    expect(issues.some((i) => i.message.includes('lc_board_2'))).toBe(false);
+  });
+
+  it('says nothing about a DISABLED board — it samples nothing', () => {
+    const issues = validateConfigForRun(
+      withLc([1], { Ghost: 4 }, { enabled: false }), cleanCsv());
+    expect(issues.some((i) => i.message.includes('lc_board_2'))).toBe(false);
+  });
+
+  it('does not judge an ACTUATOR board by the sensor-role map', () => {
+    // Its channels are named in [actuator_roles] as ["NC", channel, board_id]; comparing it
+    // against sensor_roles would flag every channel it has.
+    const cfg: any = cleanConfig();
+    cfg.boards.act_x = {
+      type: 'ACTUATOR', board_id: 13, enabled: true, ip: '192.0.2.13',
+      active_connectors: [1, 2, 3],
+    };
+    const issues = validateConfigForRun(cfg, cleanCsv());
+    expect(issues.some((i) => i.message.includes('act_x'))).toBe(false);
+  });
+
+  it('an empty connector list with roles still warns — empty means no channels now', () => {
+    const issues = validateConfigForRun(withLc([], { Thrust: 1 }), cleanCsv());
+    expect(issues.some((i) => i.message.includes('Thrust'))).toBe(true);
   });
 });

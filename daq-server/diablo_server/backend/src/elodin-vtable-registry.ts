@@ -168,17 +168,15 @@ function buildVTableStreamSubscriptionList(): Array<[number, number]> {
             const mod = id % 10;
             const boardNumberRaw = mod === 0 ? 10 : mod;
             const boardNumber = ((boardNumberRaw - 1) % 8) + 1;
-            const n = Number(b.num_sensors ?? 0);
+            // active_connectors (active_connections is the older spelling) is the only
+            // statement of which channels exist. No 1..num_sensors fallback: a board with an
+            // empty list samples nothing, so registering entities for it would invent sensors.
             const rawConnectors = Array.isArray(b.active_connectors) && (b.active_connectors as unknown[]).length > 0
                 ? (b.active_connectors as unknown[])
-                : Array.isArray(b.active_connections) && (b.active_connections as unknown[]).length > 0
+                : Array.isArray(b.active_connections)
                     ? (b.active_connections as unknown[])
                     : [];
-            const active = rawConnectors.length > 0
-                ? rawConnectors.map((x) => Number(x)).filter((x) => Number.isFinite(x) && x >= 1 && x <= 10)
-                : n > 0
-                    ? Array.from({ length: Math.min(10, n) }, (_, i) => i + 1)
-                    : [];
+            const active = rawConnectors.map((x) => Number(x)).filter((x) => Number.isFinite(x) && x >= 1 && x <= 10);
             if (active.length === 0) continue;
 
             const typeHi =

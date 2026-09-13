@@ -19,7 +19,7 @@ function buildChannels(boards: Record<string, any>, type: 'TC' | 'RTD' | 'LC'): 
     const active: number[] =
       Array.isArray(board.active_connectors) && board.active_connectors.length > 0
         ? (board.active_connectors as number[])
-        : Array.from({ length: (board.num_sensors as number) ?? 10 }, (_, i) => i + 1);
+        : [];
     channels.push(...active);
   }
   return channels;
@@ -33,7 +33,7 @@ function buildTcChannelsWithRef(boards: Record<string, any>): { entity: string; 
     const active: number[] =
       Array.isArray(board.active_connectors) && board.active_connectors.length > 0
         ? (board.active_connectors as number[])
-        : Array.from({ length: (board.num_sensors as number) ?? 10 }, (_, i) => i + 1);
+        : [];
     for (const ch of active) {
       out.push({ entity: `TC.CH${ch}`, label: `TC Ch${ch}`, voltageReference: ref });
     }

@@ -571,11 +571,7 @@ class CalibrationOrchestratorGUI(QtWidgets.QMainWindow):
             for (st, _), active_conns in self.orchestrator.active_connectors.items():
                 if st == stype:
                     channels.extend(active_conns)
-            channels = (
-                sorted(set(channels))
-                if channels
-                else list(range(1, info.num_sensors + 1))
-            )
+            channels = sorted(set(channels)) if channels else list(info.connectors)
             for ch in channels:
                 key = (stype, ch)
                 self.orchestrator.references[key] = value

@@ -122,7 +122,12 @@ class SimulatedBoard:
         self.ip = board_config.get("ip", "127.0.0.1")
         self.board_id = board_config.get("board_id", 0)
         self.board_type_str = board_config.get("type", "PT")
-        self.num_sensors = board_config.get("num_sensors", 10)
+        # The channels this board samples. active_connectors is the config's only
+        # statement of that (it is what config_broadcast packs into the board's
+        # SensorConfigPacket), so there is no count to fall back to.
+        self.active_connectors = [
+            int(c) for c in board_config.get("active_connectors", []) or []
+        ]
         self.listen_port = board_config.get("listen_port", 5005)
 
         # Map string type to enum
@@ -380,9 +385,7 @@ class SimulatedBoard:
         the adc_good field. The DAQ bridge publishes adc_good as a sensor_id=0
         Elodin row, then publishes each per-channel result separately.
         """
-        active_connectors = self.config.get("active_connectors", [])
-        if not active_connectors:
-            active_connectors = list(range(1, self.num_sensors + 1))
+        active_connectors = self.active_connectors
 
         ts_ms = self._board_ms(time.time())
         header = struct.pack("<BBI", PACKET_TYPE_SELF_TEST, 0, ts_ms)
@@ -432,9 +435,7 @@ class SimulatedBoard:
         """Collect one chunk (one scan of all channels, stamped with the board
         clock); send a packet once chunks_per_packet chunks are accumulated —
         matching real firmware batching (SENSOR_MAX_CHUNKS_BEFORE_SEND)."""
-        active_connectors = self.config.get("active_connectors", [])
-        if not active_connectors:
-            active_connectors = list(range(1, self.num_sensors + 1))
+        active_connectors = self.active_connectors
 
         chunk_data = struct.pack("<I", ts_ms)
         for sensor_id in active_connectors:
@@ -711,9 +712,7 @@ def main():
             "boards": {},
         }
         for b in simulated_boards:
-            active = b.config.get(
-                "active_connectors", list(range(1, b.num_sensors + 1))
-            )
+            active = b.active_connectors
             stats["boards"][b.name] = {
                 "type": b.board_type_str,
                 "board_id": b.board_id,

@@ -15,12 +15,12 @@ const LBF_TO_N = 4.44822;
 function buildLcChannels(boards: Record<string, unknown>): number[] {
   const channels: number[] = [];
   for (const board of Object.values(boards)) {
-    const b = board as { type?: string; enabled?: boolean; active_connectors?: number[]; num_sensors?: number };
+    const b = board as { type?: string; enabled?: boolean; active_connectors?: number[] };
     if (b.type !== 'LC' || b.enabled === false) continue;
     const active: number[] =
       Array.isArray(b.active_connectors) && b.active_connectors.length > 0
         ? b.active_connectors
-        : Array.from({ length: (b.num_sensors ?? 4) }, (_, i) => i + 1);
+        : [];
     channels.push(...active);
   }
   return Array.from(new Set(channels)).sort((a, b) => a - b);

@@ -36,9 +36,7 @@ export function buildTcDataFromBoards(boards: Record<string, unknown>): TcRowCon
     const bn = elodinSlotFromBoardId(boardId);
     const ref = Math.min(2, Math.max(0, (b.voltage_reference as number) ?? 0));
     const active: number[] =
-      Array.isArray(b.active_connectors) && (b.active_connectors as number[]).length > 0
-        ? (b.active_connectors as number[])
-        : Array.from({ length: (b.num_sensors as number) ?? 10 }, (_, i) => i + 1);
+      (Array.isArray(b.active_connectors) ? (b.active_connectors as number[]) : []);
     for (const ch of active) {
       out.push({
         entity: `TC${bn}.CH${ch}`,
@@ -59,9 +57,7 @@ export function buildRtdDataFromBoards(boards: Record<string, unknown>): RtdLcRo
     const boardId = typeof b.board_id === 'number' ? b.board_id : 31;
     const bn = elodinSlotFromBoardId(boardId);
     const active: number[] =
-      Array.isArray(b.active_connectors) && (b.active_connectors as number[]).length > 0
-        ? (b.active_connectors as number[])
-        : Array.from({ length: (b.num_sensors as number) ?? 4 }, (_, i) => i + 1);
+      (Array.isArray(b.active_connectors) ? (b.active_connectors as number[]) : []);
     for (const ch of active) {
       out.push({
         entity: `RTD${bn}.CH${ch}`,
@@ -81,9 +77,7 @@ export function buildLcDataFromBoards(boards: Record<string, unknown>): RtdLcRow
     const boardId = typeof b.board_id === 'number' ? b.board_id : 41;
     const bn = elodinSlotFromBoardId(boardId);
     const active: number[] =
-      Array.isArray(b.active_connectors) && (b.active_connectors as number[]).length > 0
-        ? (b.active_connectors as number[])
-        : Array.from({ length: (b.num_sensors as number) ?? 4 }, (_, i) => i + 1);
+      (Array.isArray(b.active_connectors) ? (b.active_connectors as number[]) : []);
     for (const ch of active) {
       out.push({
         entity: `LC${bn}.CH${ch}`,
@@ -125,9 +119,7 @@ export function buildEncoderDataFromBoards(
     const boardId = typeof b.board_id === 'number' ? b.board_id : 61;
     const bn = elodinSlotFromBoardId(boardId);
     const active: number[] =
-      Array.isArray(b.active_connectors) && (b.active_connectors as number[]).length > 0
-        ? (b.active_connectors as number[])
-        : Array.from({ length: (b.num_sensors as number) ?? 2 }, (_, i) => i + 1);
+      (Array.isArray(b.active_connectors) ? (b.active_connectors as number[]) : []);
     for (const ch of active) {
       out.push({
         entity: `ENC${bn}.CH${ch}`,
@@ -153,9 +145,7 @@ export function buildActChannelsFromBoards(boards: Record<string, unknown>): {
     const boardId = typeof b.board_id === 'number' ? b.board_id : 11;
     const bn = elodinSlotFromBoardId(boardId);
     const active: number[] =
-      Array.isArray(b.active_connectors) && (b.active_connectors as number[]).length > 0
-        ? (b.active_connectors as number[])
-        : Array.from({ length: (b.num_sensors as number) ?? 10 }, (_, i) => i + 1);
+      (Array.isArray(b.active_connectors) ? (b.active_connectors as number[]) : []);
     for (const ch of active) {
       out.push({
         entity: `ACT${bn}.CH${ch}`,

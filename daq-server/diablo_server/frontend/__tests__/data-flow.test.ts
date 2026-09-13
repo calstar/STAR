@@ -149,7 +149,7 @@ describe('Alias resolution via getSensorValue()', () => {
   beforeEach(() => {
     buildAliasesFromConfig({
       boards: {
-        pt1: { type: 'PT', board_id: 1, enabled: true, num_sensors: 10 },
+        pt1: { type: 'PT', board_id: 1, enabled: true, active_connectors: [1,2,3,4,5,6,7,8,9,10] },
       },
       sensor_roles_pt1: {
         'Fuel Upstream': 1,

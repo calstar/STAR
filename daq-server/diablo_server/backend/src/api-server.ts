@@ -160,9 +160,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
     const boardIp: string = board.ip || '';
     const boardRolesKey = `sensor_roles_${boardKey}`;
     const rolesSection = (config as any)[boardRolesKey] as Record<string, number> | undefined;
-    const active: number[] = Array.isArray(board.active_connectors) && board.active_connectors.length > 0
-      ? (board.active_connectors as number[])
-      : Array.from({ length: (board.num_sensors ?? 4) }, (_, i) => i + 1);
+    const active: number[] = Array.isArray(board.active_connectors) ? (board.active_connectors as number[]) : [];
 
     const boardNumber = elodinSlotFromBoardId(boardId);
     if (rolesSection && typeof rolesSection === 'object') {
@@ -227,9 +225,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
         });
       }
     } else {
-      const active: number[] = Array.isArray(board.active_connectors) && board.active_connectors.length > 0
-        ? (board.active_connectors as number[])
-        : Array.from({ length: (board.num_sensors ?? 4) }, (_, i) => i + 1);
+      const active: number[] = Array.isArray(board.active_connectors) ? (board.active_connectors as number[]) : [];
       for (const ch of active) {
         sensors.push({
           type: 'LC',

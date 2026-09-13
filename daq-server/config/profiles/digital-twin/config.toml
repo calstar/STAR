@@ -116,7 +116,6 @@ type = "PT"
 pt_type = "0-5V ratiometric"
 ip = "192.168.2.21"
 send_port = 5005
-num_sensors = 10
 board_id = 21
 enabled = true
 enable_serial_printing = false
@@ -130,7 +129,6 @@ type = "PT"
 pt_type = "4-20 mA absolute"
 ip = "192.168.2.22"
 send_port = 5005
-num_sensors = 10
 board_id = 22
 enabled = true
 enable_serial_printing = true
@@ -146,12 +144,12 @@ ip = "192.168.2.11"
 send_port = 5005
 listen_port = 5005
 num_actuators = 10
-num_sensors = 10
 board_id = 11
 enabled = false
 enable_serial_printing = true
 necessary_for_abort = false
 voltage_reference = 0
+active_connectors = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
 
 [boards.actuator_board_2]
 type = "ACTUATOR"
@@ -159,13 +157,13 @@ ip = "192.168.2.12"
 send_port = 5005
 listen_port = 5005
 num_actuators = 10
-num_sensors = 10
 board_id = 12
 enabled = true
 enable_serial_printing = true
 designated_survivor = true
 necessary_for_abort = false
 voltage_reference = 0
+active_connectors = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
 
 [boards.actuator_board_3]
 type = "ACTUATOR"
@@ -173,12 +171,12 @@ ip = "192.168.2.13"
 send_port = 5005
 listen_port = 5005
 num_actuators = 10
-num_sensors = 10
 board_id = 13
 enabled = false
 enable_serial_printing = true
 necessary_for_abort = false
 voltage_reference = 0
+active_connectors = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
 
 [boards.actuator_board_4]
 type = "ACTUATOR"
@@ -186,31 +184,29 @@ ip = "192.168.2.14"
 send_port = 5005
 listen_port = 5005
 num_actuators = 10
-num_sensors = 10
 board_id = 14
 enabled = true
 enable_serial_printing = true
 necessary_for_abort = false
 voltage_reference = 0
+active_connectors = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
 
 [boards.lc_board]
 type = "LC"
 ip = "192.168.2.41"
 send_port = 5005
-num_sensors = 4
 board_id = 41
-enabled = false
+enabled = true
 enable_serial_printing = true
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 1
-active_connectors = [ 1, 2, 3 ]
+active_connectors = [ 1 ]
 
 [boards.lc_board_2]
 type = "LC"
 ip = "192.168.2.42"
 send_port = 5005
-num_sensors = 4
 board_id = 42
 enabled = true
 enable_serial_printing = true
@@ -223,7 +219,6 @@ active_connectors = [ 1 ]
 type = "TC"
 ip = "192.168.2.51"
 send_port = 5005
-num_sensors = 10
 board_id = 51
 enabled = true
 enable_serial_printing = true
@@ -236,20 +231,18 @@ active_connectors = [ 2, 3, 4, 5 ]
 type = "TC"
 ip = "192.168.2.52"
 send_port = 5005
-num_sensors = 10
 board_id = 52
 enabled = false
 enable_serial_printing = true
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 0
-active_connectors = []
+active_connectors = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
 
 [boards.rtd_board]
 type = "RTD"
 ip = "192.168.2.31"
 send_port = 5005
-num_sensors = 4
 board_id = 31
 enabled = true
 enable_serial_printing = true
@@ -262,21 +255,19 @@ active_connectors = [ 1, 2, 3, 4 ]
 type = "RTD"
 ip = "192.168.2.32"
 send_port = 5005
-num_sensors = 4
 board_id = 32
 enabled = false
 enable_serial_printing = true
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 0
-active_connectors = []
+active_connectors = [ 1, 2, 3, 4 ]
 
 [boards.encoder_board]
 type = "ENCODER"
 ip = "192.168.2.61"
 send_port = 5005
 listen_port = 5005
-num_sensors = 2
 board_id = 61
 enabled = true
 enable_serial_printing = false
@@ -682,15 +673,17 @@ is_flow = true
 [actuator_roles]
 "Fuel Upstream" = [ "NC", 1, 12 ]
 "High Press CTRL" = [ "NC", 2, 12 ]
-"Dome CTRL Vent" = [ "NC", 3, 12 ]
+"Dome CTRL" = [ "NO", 3, 12 ]
 "Fuel Main" = [ "NC", 6, 12 ]
-"Dome CTRL" = [ "NO", 7, 12 ]
-"Ox Upstream" = [ "NO", 8, 12 ]
+"fuel vent" = [ "NC", 7, 12 ]
+"lox vent" = [ "NC", 9, 12 ]
+"Ox Upstream" = [ "NO", 10, 12 ]
 "Fuel Fill Press" = [ "NC", 2, 14 ]
 "High Press Vent" = [ "NC", 3, 14 ]
 "Fuel Fill Vent" = [ "NC", 5, 14 ]
 "Low Press Vent" = [ "NC", 6, 14 ]
 "Ox Main" = [ "NC", 7, 14 ]
+"Dome CTRL Vent" = [ "NC", 10, 14 ]
 
 [calibration_model_pt_board_2]
 "GN2 High" = "cubic"

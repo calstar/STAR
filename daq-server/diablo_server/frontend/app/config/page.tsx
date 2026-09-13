@@ -1765,7 +1765,13 @@ export default function ConfigPage() {
                       boardKey,
                       boardType: b.type as string,
                       title: `${b.type} Roles — ${boardKey} (sensor_roles_${boardKey})`,
-                      maxCh: typeof b.num_sensors === 'number' && b.num_sensors > 0 ? b.num_sensors : 10,
+                      // The channels this board is told to sample — the only statement of
+                      // which exist. Adding a role now picks from these rather than from a
+                      // 1..num_sensors range, so a role cannot be created for a channel the
+                      // board will never send.
+                      channels: (Array.isArray(b.active_connectors)
+                        ? b.active_connectors.map(Number).filter((n: number) => Number.isFinite(n))
+                        : []),
                       // cubic/robust/physics applies to every PT (cubic/robust fit the raw ADC; physics
                       // is the datasheet conversion). Default: 4-20 mA -> physics, 0-5 V -> cubic.
                       modelKey: `calibration_model_${boardKey}`,
@@ -1783,7 +1789,7 @@ export default function ConfigPage() {
                       boardResistor: typeof b?.hp_pt_sense_resistor_ohms === 'number' ? b.hp_pt_sense_resistor_ohms : 120,
                     };
                   })
-                ).map(({ key, title, maxCh, boardKey, boardType, modelKey, fullScaleKey, resistorKey, showModel, isLC, isLoop, defaultModel, boardFullScale, boardResistor }) => {
+                ).map(({ key, title, channels, boardKey, boardType, modelKey, fullScaleKey, resistorKey, showModel, isLC, isLoop, defaultModel, boardFullScale, boardResistor }) => {
                   const map = (config as any)[key] as Record<string, number> | undefined;
                   // File (insertion) order so a row stays put while you edit its channel or name —
                   // the map is re-sorted by channel only on Save (see sortRolesForSave), never
@@ -2040,12 +2046,16 @@ export default function ConfigPage() {
                       <button
                         onClick={() => {
                           const updated = { ...(map || {}) };
-                          // First free channel 1..maxCh (board's num_sensors). Full → don't add.
+                          // First of the board's active_connectors that has no role yet. If the
+                          // board declares none, there is nothing to name — say so rather than
+                          // inventing channel 1, which the board would never sample.
                           const used = new Set(Object.values(updated).map((v) => Number(v)));
                           let freeCh = 0;
-                          for (let c = 1; c <= maxCh; c++) { if (!used.has(c)) { freeCh = c; break; } }
+                          for (const c of channels) { if (!used.has(c)) { freeCh = c; break; } }
                           if (freeCh === 0) {
-                            setError(`All ${maxCh} channels are in use here — remove a role before adding another.`);
+                            setError(channels.length === 0
+                              ? 'This board has no active connectors — add one above before naming a role.'
+                              : `All ${channels.length} active connectors are in use here — remove a role before adding another.`);
                             setTimeout(() => setError(null), 4000);
                             return;
                           }

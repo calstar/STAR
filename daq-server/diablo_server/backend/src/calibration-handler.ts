@@ -86,10 +86,12 @@ function getActiveChannels(host: CalibrationHost): number[] {
             if (board?.type !== 'PT' && board?.type !== 'LC') continue;
             const boardId = Number(board?.board_id);
             if (!Number.isFinite(boardId)) continue;
-            const activeChannels: number[] =
-                Array.isArray(board.active_connectors) && board.active_connectors.length > 0
-                    ? board.active_connectors.map((v: unknown) => Number(v)).filter((v: number) => Number.isFinite(v) && v >= 1)
-                    : Array.from({ length: Math.max(0, Number(board.num_sensors) || 0) }, (_, i) => i + 1);
+            // active_connectors is the whole story: it is what config_broadcast packs into
+            // the board's SensorConfigPacket, so a channel missing from it is a channel the
+            // board never samples. No 1..N fallback — there is no N any more.
+            const activeChannels: number[] = Array.isArray(board.active_connectors)
+                ? board.active_connectors.map((v: unknown) => Number(v)).filter((v: number) => Number.isFinite(v) && v >= 1)
+                : [];
             for (const ch of activeChannels) channels.add(boardId * 100 + ch);
         }
     } catch {

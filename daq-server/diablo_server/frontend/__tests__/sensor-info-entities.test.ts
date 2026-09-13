@@ -46,7 +46,6 @@ const INTEGRATION_LIKE_BOARDS: Record<string, unknown> = {
     enabled: true,
     board_id: 61,
     active_connectors: [1, 2],
-    num_sensors: 2,
   },
 };
 

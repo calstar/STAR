@@ -187,7 +187,6 @@ struct BoardConfig {
     std::string ip;
     int board_id = -1;  // board_id, with legacy "id" fallback
     bool enabled = true;
-    int num_sensors = 10;
     int num_actuators = 0;
     uint16_t send_port = 5005;
     uint16_t listen_port = 5005;
@@ -195,7 +194,19 @@ struct BoardConfig {
     int voltage_reference = 0;
     bool necessary_for_abort = false;
     bool designated_survivor = false;
-    std::vector<int> active_connectors;  // empty -> caller expands to 1..num_sensors
+    /** Connector ids this board samples — the ONLY statement of which channels exist.
+     *
+     *  These are identifiers, not a range: {1, 3, 5, 7} is ordinary, and getAdcChannel()
+     *  maps each id to hardware, so an id above the count is normal. It goes on the wire
+     *  verbatim as SensorConfigPacket's `N x uint8_t sensor_id`, and the packet's
+     *  `num_sensors` byte is simply N — the firmware reads it as `active_count` and loops
+     *  over the ids (see LC_Hotfire collect_chunk_impl).
+     *
+     *  There used to be a separate config-only `num_sensors` that meant "expand to 1..N
+     *  when this list is empty". Nothing on the wire or in firmware carried that meaning,
+     *  and having both let a board declare {1, 2, 6} beside num_sensors = 4, which no
+     *  layer defined. Empty now means no channels, which is what it reads like. */
+    std::vector<int> active_connectors;
 
     // PT-specific (feeds pt_boards()):
     std::string pt_type;  // "" if absent

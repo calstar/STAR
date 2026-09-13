@@ -218,7 +218,9 @@ export function buildAliasesFromConfig(config: any): void {
     const activeChannels: number[] =
       Array.isArray(board.active_connectors) && board.active_connectors.length > 0
         ? board.active_connectors.map((v: unknown) => Number(v)).filter((v: number) => Number.isFinite(v) && v >= 1)
-        : Array.from({ length: Math.max(0, Number(board.num_sensors) || 0) }, (_, i) => i + 1);
+        // No num_sensors fallback: active_connectors is the only statement of which channels
+        // exist, and an empty list means none (see Config.hpp).
+        : [];
 
     // Look for sensor_roles_<boardKey> section in config
     const rolesKey = `sensor_roles_${boardKey}`;

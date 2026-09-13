@@ -73,7 +73,6 @@ BoardConfig parse_board(const std::string& section, const toml::table& bt) {
     b.board_id =
         static_cast<int>(i_or(bt["board_id"], i_or(bt["id"], -1)));  // legacy "id" fallback
     b.enabled = b_or(bt["enabled"], true);
-    b.num_sensors = static_cast<int>(i_or(bt["num_sensors"], 10));
     b.num_actuators = static_cast<int>(i_or(bt["num_actuators"], 0));
     b.send_port = static_cast<uint16_t>(i_or(bt["send_port"], 5005));
     b.listen_port = static_cast<uint16_t>(i_or(bt["listen_port"], 5005));
@@ -413,12 +412,11 @@ std::map<ActiveBoardKind, std::vector<elodin::BoardChannels>> active_boards(cons
         elodin::BoardChannels bc;
         bc.board_id = static_cast<uint8_t>(b.board_id);
         bc.board_number = slot;
-        if (!b.active_connectors.empty())
-            for (int ch : b.active_connectors)
-                bc.channels.push_back(static_cast<uint8_t>(ch));
-        else
-            for (int i = 1; i <= b.num_sensors; i++)
-                bc.channels.push_back(static_cast<uint8_t>(i));
+        // active_connectors is the only statement of which channels exist; an empty list
+        // means none. This used to fall back to 1..num_sensors, a config-only field with
+        // no counterpart on the wire or in firmware.
+        for (int ch : b.active_connectors)
+            bc.channels.push_back(static_cast<uint8_t>(ch));
         result[bt].push_back(std::move(bc));
     }
     return result;

@@ -124,41 +124,40 @@ export function validateConfigForRun(config, csv) {
             add('boards', 'error', `${boardDisplayName(boards, key)} (${key}): ${msg}`);
     }
     // ── Roles vs active_connectors ────────────────────────────────────────────
-    // Two facts that are easy to confuse for one, and nothing used to compare them.
     // active_connectors is wire-level: config_broadcast packs it into the packet sent to the
-    // board (build_sensor_config), so it decides which channels the hardware samples.
-    // sensor_roles_<board> is naming: role -> channel, driving display, calibration keying
-    // (cal is filed by role) and abort_pts.
+    // board (build_sensor_config) and the firmware loops over those ids, so it decides which
+    // channels the hardware samples. sensor_roles_<board> is naming: role -> channel, driving
+    // the display, calibration keying (cal is filed by role) and abort_pts.
     //
-    // So the two ways of "removing a channel" do different things — drop the role and the
-    // board keeps sending it unnamed; drop the connector and the role points at a channel
-    // that is now silent. Both are warnings rather than errors: either can be a deliberate
-    // intermediate state, and a run on a rig with an unnamed channel is not unsafe, just
-    // confusing. The point is that nobody discovers it from a blank plot mid-test.
+    // Only ONE direction is reported: a role naming a channel the board is not told to sample.
+    // That role can never show data, which is a real and confusing fault.
+    //
+    // The reverse — a sampled channel with no role — is deliberately NOT reported. Spare
+    // channels are the normal case: a 10-channel board running four sensors has six unnamed,
+    // and on the real rig that rule produced nine warnings, nearly all of them fine. False
+    // positives are expensive here, because this list gates session start: an operator warned
+    // about things that are not wrong learns to click past the list, and then it stops meaning
+    // anything. The config editor still shows unnamed channels inline, where it is context
+    // rather than a gate.
     for (const key of Object.keys(boards)) {
         const b = boards[key] ?? {};
+        // A disabled board samples nothing, so nothing about its channels can be wrong.
+        if (b.enabled === false)
+            continue;
+        // An ACTUATOR board names its channels in [actuator_roles], not sensor_roles_<board>.
+        if (String(b.type ?? '').toUpperCase() === 'ACTUATOR')
+            continue;
         const declared = Array.isArray(b.active_connectors)
             ? b.active_connectors.map(Number).filter((n) => Number.isFinite(n))
             : [];
-        // Empty means "expand to 1..num_sensors" (Config.hpp), not "nothing active".
-        if (declared.length === 0)
-            continue;
         const roles = (config?.[`sensor_roles_${key}`] ?? {});
-        const roleChannels = Object.values(roles).map(Number).filter((n) => Number.isFinite(n));
-        if (roleChannels.length === 0)
-            continue;
-        const name = boardDisplayName(boards, key);
-        const orphanRoles = Object.entries(roles)
+        const orphans = Object.entries(roles)
             .filter(([, ch]) => !declared.includes(Number(ch)))
             .map(([role, ch]) => `${role} (ch ${ch})`);
-        if (orphanRoles.length > 0) {
-            add('boards', 'warn', `${name} (${key}): ${orphanRoles.join(', ')} name channel(s) the board is not told to ` +
-                'sample — those roles will show no data. Add them to Active Connectors or remove the roles.');
-        }
-        const unnamed = declared.filter((c) => !roleChannels.includes(c));
-        if (unnamed.length > 0) {
-            add('boards', 'warn', `${name} (${key}): channel ${unnamed.join(', ')} ${unnamed.length > 1 ? 'are' : 'is'} sampled ` +
-                'but has no role — that data arrives unnamed and cannot be calibrated (cal is filed by role).');
+        if (orphans.length > 0) {
+            add('boards', 'warn', `${boardDisplayName(boards, key)} (${key}): ${orphans.join(', ')} name channel(s) the ` +
+                'board is not told to sample, so those roles can never show data. Add them to Active ' +
+                'Connectors, or remove the roles.');
         }
     }
     // ── Controller PWM assignment ─────────────────────────────────────────────
