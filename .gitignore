@@ -47,4 +47,8 @@ build/
 **/build/
 .userdata/
 **/.userdata/
+
+# star-openrocket's downloaded motor/geometry cache. Regenerated on demand;
+# 31 MB of it, and machine-local.
+star-openrocket/cache/
 EngineDesign/engine/output/
