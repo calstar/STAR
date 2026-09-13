@@ -87,6 +87,10 @@ class SessionManager {
    *  pristine config baseline (else boards keep a stale heartbeat timestamp and
    *  read "---" instead of the disconnected baseline shown on fresh startup). */
   private onStopped: () => void = () => {};
+  /** Fired after the active profile is deployed at session start, so the backend can rebuild
+   *  its config-derived caches and tell open browsers to refetch. Without it a profile edited
+   *  during a run reached config.toml here and no client ever heard about it. */
+  private onConfigDeployed: () => void = () => {};
 
   private active = false;
   private dbDir: string | null = null;
@@ -97,10 +101,16 @@ class SessionManager {
   private warnTimers: NodeJS.Timeout[] = [];
   private stopTimer: NodeJS.Timeout | null = null;
 
-  init(broadcast: Broadcast, notify: Notify, onStopped: () => void = () => {}): void {
+  init(
+    broadcast: Broadcast,
+    notify: Notify,
+    onStopped: () => void = () => {},
+    onConfigDeployed: () => void = () => {},
+  ): void {
     this.broadcast = broadcast;
     this.notify = notify;
     this.onStopped = onStopped;
+    this.onConfigDeployed = onConfigDeployed;
     if (!this.enabled) return;
     // Recover a session that outlived a backend restart.
     const persisted = loadSession();
@@ -264,6 +274,15 @@ class SessionManager {
     if (!this.simulated) {
       try {
         deployActiveProfile();
+        // Config has just changed on disk. Rebuild the backend's derived caches and tell
+        // every open browser to refetch — this is the ONE moment a profile edited during a
+        // run becomes what the rig will actually use, and until now nothing announced it, so
+        // open tabs kept showing the previous config's states until someone reloaded.
+        try {
+          this.onConfigDeployed();
+        } catch (e) {
+          console.warn('Config-deployed handler threw:', e);
+        }
       } catch (e) {
         const detail = (e as Error)?.message ?? String(e);
         console.error('❌ Failed to deploy active profile at session start:', detail);
