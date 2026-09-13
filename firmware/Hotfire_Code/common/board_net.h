@@ -1,8 +1,8 @@
 /**
  * Board networking — the ground station decides addresses, not the board.
  *
- * Opt in per board with -DSENSOR_ETH_USE_DHCP (LC and Actuator today). The
- * board then asks for an address and uses whatever it is given:
+ * Enabled per board with -DSENSOR_ETH_USE_DHCP (every hotfire board today).
+ * The board asks for an address and uses whatever it is given:
  *
  *   1. boot: DHCP DISCOVER. The DAQ server / Test-GUI answers from its
  *      MAC -> IP reservation table, so the address a board gets is decided in
