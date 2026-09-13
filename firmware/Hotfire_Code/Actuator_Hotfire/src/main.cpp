@@ -1127,8 +1127,8 @@ void setup() {
     // W5500 / Ethernet status (same prints as the sense boards so the shared
     // test-GUI serial parser understands both)
     Serial.println("[ETH] Ethernet initialized (SPI WIZnet)");
-    Serial.print("Configured static IP: ");
-    Serial.println(staticIP);
+    Serial.print("Address source: ");
+    Serial.println(BoardNet::sourceName(net.source));
     Serial.print("Stack IP (Ethernet.localIP): ");
     Serial.println(Ethernet.localIP());
     Serial.print("Hardware: ");
