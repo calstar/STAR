@@ -16,6 +16,13 @@
  *   2. The ReactFlow props that make the canvas interactive, and the handlers
  *      that rewrite the diagram, are all derived from `readOnly` -- because
  *      those are not controls at all and no `disabled` audit would see them.
+ *   3. Those handlers read it through `readOnlyRef`, not through the closure.
+ *
+ * (3) is not style. Taking the checkout remounts the canvas *before* `held`
+ * flips, so a handler that captured `readOnly` captured `true` and kept it:
+ * the palette dropped nothing, and the advice going round the team was to take
+ * the diagram, release it, and take it again. A guard on a ref cannot be one
+ * render behind the chip that claims you are editing.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -47,9 +54,23 @@ const VIEW_ONLY: Record<string, string> = {
   'PIDToolbar.tsx:onClick={openHistory}': 'opens the history panel',
   'PIDToolbar.tsx:setShowHistory(false)': 'closes the history panel',
   'PIDToolbar.tsx:setShowRelease(false)': 'closes the release dialog',
+  'PIDToolbar.tsx:setConfirmClear(null)': 'cancels the clear confirmation; the Clear button itself is gated',
   'PIDToolbar.tsx:setRelLabel': 'the label field inside the release dialog, which Release already gates',
   'PIDToolbar.tsx:onClick={submitRelease}': 'inside the release dialog, which Release already gates',
   'PIDDesigner.tsx:setUnshared(null)': 'dismisses the "no longer shared" notice',
+  'ChecksPanel.tsx:onClick={() => setOpen(o => !o)}': 'opens the checks panel; it reads the diagram and writes nothing',
+  'ChecksPanel.tsx:onClick={() => setOpen(false)}': 'closes the checks panel',
+  'ChecksPanel.tsx:onSelect(finding.nodeIds': 'selects what a finding is about — selection is view state, stripped by toStored',
+  'SegmentPanel.tsx:setOpenRow(openRow === r.id': 'expands a fitting row to show its fields; the fields themselves are gated',
+  'ConfigDialog.tsx:onClick={onClose}': 'Cancel closes the config dialog; Save is what writes, and Save is gated',
+  'ConfigDialog.tsx:setShowAdvanced': 'folds the wall/roughness/head params in and out; the fields themselves are gated',
+  'SegmentPanel.tsx:setShowMethod': 'reveals the loss-method selector; the selector itself is gated',
+  'SegmentPanel.tsx:setOpenRow': 'expands a fitting to show its fields; the fields themselves are gated',
+  'SegmentPanel.tsx:setMore': 'shows the rest of the fitting list; adding one is gated',
+  'PIDToolbar.tsx:setExportOpen(o => !o)': 'opens the export menu; exporting reads the drawing and writes a file',
+  'PIDToolbar.tsx:onClick={onClick}': 'an export choice (PNG, SVG, JSON); reads only',
+  'PIDToolbar.tsx:setConfirmRestore(null)': 'cancels the restore dialog; the Restore button beside it is gated',
+  'SizeChart.tsx:setOpen(o => !o)': 'folds the size chart open or shut; picking a size from it is gated',
   'PIDDesigner.tsx:setShowChange(true)': 'opens the Change dialog (rename/share/copy are not gated by design)',
 }
 
@@ -64,6 +85,11 @@ const MUST_DERIVE_FROM_READONLY = [
   'elementsSelectable',
   'edgesReconnectable',
   'deleteKeyCode',
+  // Both rewrite the graph without going through a control: dropping a
+  // connection on a line branches it, and deleting a junction puts the run
+  // back. Neither is a button an audit of controls would ever see.
+  'const onConnectEnd',
+  'const onDelete',
   'loadRef.current',
   'clearRef.current',
   'undoRef.current',
@@ -131,7 +157,7 @@ describe('every diagram-editing control is gated on the checkout', () => {
       if (name in NOT_EDITING) continue
       for (const tag of ['button', 'input', 'select', 'textarea']) {
         for (const text of openingTags(src, tag)) {
-          if (/\breadOnly\b/.test(text)) continue
+          if (/\breadOnly(Ref\.current)?\b/.test(text)) continue
           if (excuseFor(name, text)) continue
           offenders.push(`${name}  ${text.replace(/\s+/g, ' ').slice(0, 100)}`)
         }
@@ -150,12 +176,43 @@ describe('every diagram-editing control is gated on the checkout', () => {
       const at = src!.indexOf(name)
       if (at === -1) return true
       const window = src!.slice(at, at + 400)
-      return !/\breadOnly\b/.test(window)
+      return !/\breadOnly(Ref\.current)?\b/.test(window)
     })
     expect(
       ungated,
       `not derived from readOnly (a viewer could still change the diagram):\n${ungated.join('\n')}`,
     ).toEqual([])
+  })
+
+  it('guards handlers on the ref, so none can be a render behind the chip', () => {
+    const src = Object.entries(files).find(([p]) => p.endsWith('/PIDDesigner.tsx'))?.[1]
+    expect(src, 'PIDDesigner.tsx not found').toBeTruthy()
+
+    // `if (readOnly)` / `if (!readOnly)` / `|| readOnly` inside a handler body.
+    // The bare value is correct in JSX props, which re-read it every render;
+    // it is wrong in anything that outlives one.
+    const stale = [...src!.matchAll(/if\s*\([^)]*\breadOnly\b(?!Ref)[^)]*\)/g)].map((m) => m[0])
+    expect(
+      stale,
+      `guarded on the closure instead of readOnlyRef.current:\n${stale.join('\n')}`,
+    ).toEqual([])
+  })
+
+  it('never puts a destructive edit on a bare click', () => {
+    // Junction insertion used to be the plain click handler on a line, so a
+    // double-click -- which is two clicks -- inserted two junctions and then
+    // opened a dialog for an edge that no longer existed, and clicking around
+    // scattered them across the drawing. A gesture that rewrites the graph has
+    // to be armed first.
+    const src = Object.entries(files).find(([p]) => p.endsWith('/BranchableEdge.tsx'))?.[1]
+    expect(src, 'BranchableEdge.tsx not found').toBeTruthy()
+
+    const handler = src!.slice(src!.indexOf('const onClickBranch'))
+    const guard = handler.slice(0, handler.indexOf('\n  }'))
+    expect(
+      /if \(!armed/.test(guard),
+      'onClickBranch must return early unless the junction tool is armed',
+    ).toBe(true)
   })
 
   it('keeps every exemption pointing at a real file', () => {

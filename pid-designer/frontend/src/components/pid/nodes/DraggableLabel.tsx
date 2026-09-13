@@ -6,6 +6,9 @@ interface DraggableLabelProps {
   nodeId: string;
   label: string;
   offset?: { x: number; y: number };
+  /** Where the tag sits when nobody has dragged it. Measured from the top-left
+   *  of the symbol's box *as drawn*, so a caller that turns its artwork passes
+   *  the turned box's height and the tag stays underneath it. */
   defaultOffset: { x: number; y: number };
 }
 
@@ -23,6 +26,10 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset }: Draggab
 
   useEffect(() => { if (!editing) setEditVal(label); }, [label, editing]);
 
+  // Nothing here turns any more. A symbol's rotation is applied to its
+  // artwork alone (see `Frame`), so the tag is drawn in the box's own frame:
+  // upright by construction, and below the symbol as it actually appears
+  // rather than below where it would have been unturned.
   const currentOffset = offset ?? defaultOffset;
 
   const commitLabel = useCallback(() => {
@@ -50,11 +57,14 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset }: Draggab
     const onMove = (e: MouseEvent) => {
       if (!dragStart.current) return;
       const { zoom } = getViewport();
+      const dx = (e.clientX - dragStart.current.mouseX) / zoom;
+      const dy = (e.clientY - dragStart.current.mouseY) / zoom;
+
       setNodes(nds => nds.map(n =>
         n.id === nodeId
           ? { ...n, data: { ...n.data, labelOffset: {
-              x: dragStart.current!.ox + (e.clientX - dragStart.current!.mouseX) / zoom,
-              y: dragStart.current!.oy + (e.clientY - dragStart.current!.mouseY) / zoom,
+              x: dragStart.current!.ox + dx,
+              y: dragStart.current!.oy + dy,
             }}}
           : n,
       ));
@@ -127,7 +137,10 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset }: Draggab
           style={{
             cursor: 'default',
             color:      dragging ? '#3b82f6' : '#cbd5e1',
-            background: dragging ? 'rgba(59,130,246,0.15)' : 'rgba(10,15,26,0.8)',
+            // Opaque, not 80%. A tank's tag sits directly under its bottom
+            // port, so the run leaving that port passes behind the text --
+            // and at 80% it showed through the letters.
+            background: dragging ? 'rgba(59,130,246,0.15)' : 'var(--color-bg-primary)',
             outline:    dragging ? '1px dashed #3b82f6' : 'none',
           }}
         >

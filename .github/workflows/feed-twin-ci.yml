@@ -1,0 +1,265 @@
+name: feed-twin CI
+
+'on':
+  push:
+    paths:
+      - 'feed-twin/**'
+      # The physics core. Every number this app produces comes from it, so a
+      # change there has to run these gates -- including the ones in the app.
+      - 'lib/feedtwin/**'
+      # EngineDesign's dependency set: the engine-design-compat job below proves
+      # the physics core can be installed alongside it, so a change to what
+      # EngineDesign pins has to re-run that proof.
+      - 'EngineDesign/requirements-base.txt'
+      - '.github/workflows/feed-twin-ci.yml'
+  pull_request:
+    paths:
+      - 'feed-twin/**'
+      - 'lib/feedtwin/**'
+      - 'EngineDesign/requirements-base.txt'
+      - '.github/workflows/feed-twin-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  # The physics core, on its own. Deliberately a separate job from the backend:
+  # the whole premise of ADR-0001 is that this package stands up with no web
+  # stack installed, and the only way to keep that true is to prove it in an
+  # environment that has never seen FastAPI.
+  library:
+    name: Physics core (lint, types, tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # 3.12, matching Dockerfile.api's python:3.12-slim -- the library is
+          # exercised here on the version it actually ships on. The backend job
+          # below runs 3.11, which is the floor in pyproject.toml, so between
+          # them both ends of the supported range are covered.
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: lib/feedtwin/pyproject.toml
+
+      - name: Install the physics core
+        # Editable, so mypy and the PropsSI scan see the tree rather than a
+        # copy in site-packages. Note that nothing here installs fastapi --
+        # test_package_carries_no_web_framework depends on that being true.
+        run: pip install -e "lib/feedtwin[dev]"
+
+      - name: Format (black --check)
+        # No working-directory: black finds the repo root by walking up to .git
+        # and reads [tool.black] from the root pyproject.toml, keeping this
+        # package on the same style as the rest of the repo.
+        run: black --check lib/feedtwin
+
+      - name: Types (mypy --strict)
+        # working-directory matters: mypy reads its target from [tool.mypy] in
+        # lib/feedtwin/pyproject.toml, and discovers that file relative to the
+        # working directory. Run from the repo root it finds the root
+        # pyproject.toml, which configures only black, and exits with
+        # "Missing target module, package, files, or command".
+        working-directory: lib/feedtwin
+        run: mypy
+
+      # Two gates, and the second is the reason this phase exists.
+      #
+      # test_package.py proves `import feedtwin` works and the physics stack
+      # resolved -- Phase 00's exit criterion, half of it.
+      #
+      # test_property_call_discipline.py fails the build on any PropsSI call in
+      # library code. That is not style policing: PropsSI rebuilds its backend
+      # per call and is ~1300x slower than a reused AbstractState (184.5 us vs
+      # 0.14 us, measured). A stiff transient evaluates properties millions of
+      # times, and nothing about the slow spelling looks wrong in review.
+      - name: Tests
+        run: python -m pytest lib/feedtwin/tests -q
+
+  backend:
+    name: Backend (imports + tests)
+    runs-on: ubuntu-latest
+    # 45, not the 15 the other jobs use. This suite integrates a stand: 197
+    # tests, measured at 21 minutes on a developer's machine in this job's own
+    # dependency set, and a runner core is slower than that. The 15 was never
+    # tested, because until the format and type steps ahead of it passed the
+    # tests had never once run here -- the job was cancelled at 15.2 minutes
+    # the first time it got that far, which reads as a failure and is not one.
+    #
+    # `-n auto` with pytest-xdist takes it to about 7 minutes and the suite
+    # passes clean under it; not adopted yet because a physics suite sharing a
+    # library directory deserves more than one green parallel run before CI
+    # depends on it.
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: feed-twin/requirements.txt
+
+      - name: Install dependencies
+        working-directory: feed-twin
+        # The physics core is installed from a path, not from requirements.txt
+        # -- the path that reaches it differs between a checkout and a Docker
+        # build context. Same arrangement as lib/stardesign in the other apps.
+        run: |
+          pip install -r requirements.txt
+          pip install -e ../lib/feedtwin
+
+      - name: Verify imports
+        working-directory: feed-twin
+        run: python3 -c "import backend.main; print('backend imports OK')"
+
+      - name: Install test dependencies
+        working-directory: feed-twin
+        # httpx: starlette's TestClient is built on it, and the design-tool
+        # import tests drive it through an httpx.MockTransport.
+        # anyio: those tests are async, and it carries the pytest plugin that
+        # runs them. It arrives transitively with httpx today -- named here
+        # anyway, because a transitive dependency that disappears would turn an
+        # async test gate into a silent no-op rather than a failure.
+        run: pip install pytest httpx anyio black mypy
+
+      # The app gets the same lint and type gates as the library. It is a small
+      # shell today, which is exactly why holding the line is cheap -- the time
+      # to discover the backend was never type-checked is not the first time it
+      # grows a solve endpoint.
+      - name: Format (black --check)
+        working-directory: feed-twin
+        run: black --check backend tests
+
+      - name: Types (mypy --strict)
+        working-directory: feed-twin
+        # --ignore-missing-imports, unlike the library job: the app's own
+        # per-module overrides would be config for one dependency, and FastAPI
+        # ships its own types anyway.
+        run: mypy backend --strict --ignore-missing-imports
+
+      # Proves the library imports in the *app's* environment too, which is
+      # built from a different requirements file than the library job's. Phase
+      # 00 claims both environments; both are checked.
+      - name: Run tests
+        working-directory: feed-twin
+        run: python -m pytest tests -q
+
+  # Phase 00's other exit criterion: the physics core has to be installable
+  # alongside EngineDesign, because Layer X will import it in that process
+  # (ADR-0001). Nothing makes EngineDesign depend on feedtwin yet -- that
+  # happens in Phase 04, when feed_loss.py starts delegating -- so this proves
+  # the two dependency sets can coexist *before* anything is riding on it.
+  #
+  # The realistic failure is a numpy ceiling: EngineDesign pins numba, numba
+  # constrains numpy's upper bound, and feedtwin wants numpy >= 1.26. A resolver
+  # conflict discovered in Phase 04 would be a bad surprise; discovered here it
+  # is a version bump.
+  engine-design-compat:
+    name: Coexists with EngineDesign
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            EngineDesign/requirements-base.txt
+            lib/feedtwin/pyproject.toml
+
+      # requirements-base, not requirements.txt: the latter adds rocketcea,
+      # which builds NASA CEA from Fortran source and is only needed to
+      # regenerate the CEA cache. Nothing about dependency resolution needs it.
+      - name: Install EngineDesign, then the physics core on top
+        run: |
+          pip install -r EngineDesign/requirements-base.txt
+          pip install -e lib/feedtwin
+
+      # pip resolves happily and then warns about incompatibilities rather than
+      # failing, so check explicitly instead of trusting the exit code above.
+      - name: No broken dependencies
+        run: pip check
+
+      # working-directory: EngineDesign because `engine` is a source package in
+      # that tree, not an installed distribution -- it is only importable with
+      # EngineDesign/ on sys.path, which is how its own CI runs too.
+      - name: Both import in one process
+        working-directory: EngineDesign
+        run: |
+          python3 -c "
+          import feedtwin, engine, numpy, scipy
+          print('feedtwin', feedtwin.__version__)
+          print('numpy   ', numpy.__version__)
+          print('scipy   ', scipy.__version__)
+          "
+
+  frontend:
+    name: Frontend (TypeScript build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: feed-twin/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: feed-twin/frontend
+        run: npm ci || npm install
+
+      # `npm run build` is `tsc -b && vite build`, so this is the type gate as
+      # well as the build gate.
+      - name: TypeScript build
+        working-directory: feed-twin/frontend
+        run: npm run build
+
+      # Only the pure logic is tested, and deliberately: `src/lib/series.ts` is
+      # the one part of this frontend that can be *wrong* rather than merely
+      # ugly. Rendering assertions on a layout that is still moving would cost
+      # more to maintain than they catch.
+      - name: Unit tests
+        working-directory: feed-twin/frontend
+        run: npm test
+
+  # Docker image build. Proves the images build against the current tree, on a
+  # PR rather than after the merge -- publish-apps.yml only runs on push to
+  # main, so without this a Dockerfile that no longer matches the tree breaks
+  # the deploy image instead of the PR. That is exactly how
+  # EngineDesign/Dockerfile.api broke main when PR #37 deleted engine/native.
+  #
+  # push: false, so this publishes nothing and needs no GHCR login.
+  docker-image:
+    name: Docker image (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: feed-twin-api,      context: ., dockerfile: ./feed-twin/Dockerfile.api }
+          - { name: feed-twin-frontend, context: ., dockerfile: ./feed-twin/frontend/Dockerfile }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.name }}

@@ -28,11 +28,17 @@ feed_system:
   # under-predicted LOX feed loss by ~3.8x (dP ~ 1/A^2).
   fuel:
     line_size: 3/8_NPT
+    # Tank outlet to injector manifold. Sets the chug-model line inertance (length/area);
+    # 0.305 m is the value the model used to carry hardcoded -- measure it on the vehicle.
+    length: 0.305
     K0: 2.0
     K1: 0.0
     phi_type: none
   oxidizer:
     line_size: 3/8_NPT
+    # Tank outlet to injector manifold. Sets the chug-model line inertance (length/area);
+    # 0.305 m is the value the model used to carry hardcoded -- measure it on the vehicle.
+    length: 0.305
     K0: 2.0
     K1: 0.0
     phi_type: none
@@ -67,7 +73,6 @@ regen_cooling:
   n_segments: 20
   gas_turbulence_intensity: 0.1
   coolant_turbulence_intensity: 0.05
-  hot_gas_cp: 2200.0
   recovery_factor: null
 film_cooling:
   enabled: false

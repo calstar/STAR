@@ -157,6 +157,15 @@ class FeedSystemConfig(BaseModel):
         default="none",
         description="Pressure function type"
     )
+    length: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Feed-line length from tank outlet to injector manifold [m]. Sets the line inertance "
+            "(length / area) in the chug model. Leave unset and the stability model records a "
+            "0.305 m assumption instead of using it silently."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -246,7 +255,6 @@ class RegenCoolingConfig(BaseModel):
     n_segments: int = Field(default=20, gt=0, description="Number of axial segments for heat-transfer integration")
     gas_turbulence_intensity: float = Field(default=0.1, ge=0, description="Estimated turbulence intensity of hot gas (0-1)")
     coolant_turbulence_intensity: float = Field(default=0.05, ge=0, description="Estimated turbulence intensity of coolant (0-1)")
-    hot_gas_cp: float = Field(default=2200.0, gt=0, description="Hot-gas specific heat [J/(kg·K)]")
     recovery_factor: Optional[float] = Field(default=None, gt=0, le=1, description="Turbulent boundary layer recovery factor for adiabatic wall temperature (Taw = Tc × recovery_factor). Typical range: 0.90-0.98. If None, uses default from constants.")
 
 
@@ -359,8 +367,6 @@ class StainlessSteelCaseConfig(BaseModel):
     specific_heat: float = Field(default=500.0, gt=0, description="Specific heat [J/(kg·K)]")
     max_temperature: float = Field(default=1000.0, gt=0, description="Maximum allowable temperature [K] (melting point ~1700K, but limit lower for structural integrity)")
     emissivity: float = Field(default=0.3, ge=0, le=1, description="Surface emissivity")
-    yield_strength: float = Field(default=200e6, gt=0, description="Yield strength at max temp [Pa]")
-    youngs_modulus: float = Field(default=200e9, gt=0, description="Young's modulus [Pa]")
 
 
 class AblativeCoolingConfig(BaseModel):
@@ -641,10 +647,6 @@ class CombustionEfficiencyConfig(BaseModel):
     # --- Mixing efficiency (Rupe momentum-ratio model) ---
     # Replaces the old k-e near-field mixing model + the eta_turbulence step-function.
     # eta_mix = Em_peak * exp(-(ln(R/R_opt))^2 / (2*sigma^2)), R = injector momentum ratio.
-    mixing_model: Literal["rupe"] = Field(
-        default="rupe",
-        description="Mixing efficiency model. 'rupe': momentum-ratio mixing efficiency (Rupe/SP-8089)."
-    )
     Em_peak: float = Field(
         default=0.96, ge=0.5, le=1.0,
         description="Peak (best-achievable) mixing efficiency at the balanced momentum ratio. "
@@ -806,6 +808,57 @@ class CombustionConfig(BaseModel):
     efficiency: CombustionEfficiencyConfig = Field(default_factory=CombustionEfficiencyConfig)
 
 
+class StabilityConfig(BaseModel):
+    """Inputs to the combustion / feed stability model that belong to neither the propellant
+    (``fluids``) nor the plumbing (``feed_system``): the combustion-response calibration, the
+    nozzle-entrance Mach the acoustic damping uses, the acoustic damping coefficients, and the
+    dome-regulator dynamics. A ``None`` here means "derive it" and the derivation is recorded in
+    the assumptions registry (rich report -> assumptions.fallbacks_used), never substituted silently.
+    """
+    n_interaction: float = Field(
+        default=0.5, gt=0,
+        description="Crocco interaction index n (calibration range 0.3-0.6). The forward-mode slider overrides it per run.",
+    )
+    chi_acoustic: float = Field(
+        default=0.15, gt=0, le=1,
+        description="Sensitive-lag fraction chi: tau_sens = chi * tau_vap for the acoustic n-tau driving.",
+    )
+    mach_nozzle_entrance: Optional[float] = Field(
+        default=None, gt=0, lt=1,
+        description="Mean Mach at the nozzle entrance (sets nozzle damping). None = solve it from the contraction ratio (isentropic, subsonic).",
+    )
+    damping_injector_frac: float = Field(
+        default=0.02, ge=0,
+        description="Injector-face acoustic damping as a fraction of pi*f [-]. First-cut; calibrate against a cold ring-down test.",
+    )
+    damping_twophase_frac: float = Field(
+        default=0.03, ge=0,
+        description="Two-phase (droplet) acoustic damping as a fraction of pi*f*droplet_loading [-]. First-cut.",
+    )
+    droplet_loading: float = Field(
+        default=1.0, ge=0,
+        description="Relative liquid loading near the injector face for the two-phase damping term [-].",
+    )
+    acoustic_gate_alpha_offset: float = Field(
+        default=350.0, ge=0,
+        description=(
+            "Calibration allowance for the acoustic gate [1/s]: a mode growing slower than this still "
+            "maps to a neutral gate margin because the a-priori damping coefficients are un-measured. "
+            "Set 0 for the strict alpha < 0 criterion."
+        ),
+    )
+    regulator_enabled: bool = Field(default=True, description="Model the dome regulator upstream of each tank in the chug loop.")
+    regulator_corner_hz: float = Field(default=3.0, gt=0, description="Regulator response corner frequency [Hz].")
+    regulator_Z_hf: float = Field(
+        default=0.0, ge=0,
+        description="Regulator high-frequency series impedance [Pa*s/kg]. 0 = ideal pressure source (optimistic); measure via a step test.",
+    )
+    regulator_max_excursion_psi: float = Field(
+        default=0.0, ge=0,
+        description="Regulator outlet pressure excursion bound [psi]. Reporting only; not a pole-shifter.",
+    )
+
+
 class ChamberGeometryConfig(BaseModel):
     """
     Unified chamber geometry configuration for solve_chamber_geometry_with_cea.
@@ -908,13 +961,13 @@ class LOXTankConfig(BaseModel):
 
 
 class FuelTankConfig(BaseModel):
-    """Fuel tank geometry configuration for flight simulation"""
-    rp1_h: float = Field(gt=0, description="RP-1 tank height (internal cylindrical length, not including end caps) [m]")
-    rp1_radius: float = Field(gt=0, description="RP-1 tank internal radius [m]")
+    """Fuel tank geometry configuration for flight simulation. The rp1_* field names are legacy; the tank holds whichever fuel the config names."""
+    rp1_h: float = Field(gt=0, description="Fuel tank height (internal cylindrical length, not including end caps) [m]")
+    rp1_radius: float = Field(gt=0, description="Fuel tank internal radius [m]")
     fuel_tank_pos: float = Field(description="Fuel tank center position relative to nozzle exit (positive = above, negative = below nozzle) [m]")
-    mass: Optional[float] = Field(default=None, gt=0, description="Initial RP-1 PROPELLANT mass [kg] (liquid only, not tank structure). Depletes during burn.")
+    mass: Optional[float] = Field(default=None, gt=0, description="Initial fuel PROPELLANT mass [kg] (liquid only, not tank structure). Depletes during burn.")
     initial_pressure_psi: Optional[float] = Field(default=None, gt=0, description="Initial fuel tank pressure [psi]")
-    tank_volume_m3: Optional[float] = Field(default=None, gt=0, description="RP-1 tank volume [m³]. If not provided, will be calculated from rp1_h and rp1_radius using π×r²×h")
+    tank_volume_m3: Optional[float] = Field(default=None, gt=0, description="Fuel tank volume [m³]. If not provided, will be calculated from rp1_h and rp1_radius using π×r²×h (field names are legacy)")
 
 
 class PressTankConfig(BaseModel):
@@ -1915,6 +1968,7 @@ class PintleEngineConfig(BaseModel):
     chamber: Optional[ChamberConfig] = Field(default=None, description="Legacy chamber config (use chamber_geometry instead)")
     nozzle: Optional[NozzleConfig] = Field(default=None, description="Legacy nozzle config (use chamber_geometry instead)")
     solver: SolverConfig = Field(default_factory=SolverConfig)
+    stability: StabilityConfig = Field(default_factory=StabilityConfig, description="Combustion / feed stability model inputs (calibration, regulator, acoustic damping)")
     optimizer: Optional[OptimizerConfig] = Field(default=None, description="Optimizer configuration")
     # Flight simulation fields (optional)
     lox_tank: Optional[LOXTankConfig] = Field(default=None, description="LOX tank configuration for flight simulation")
@@ -1992,11 +2046,7 @@ class PintleEngineConfig(BaseModel):
         sync_burn_time_fields(self)
         return self
 
-    class Config:
-        # NOTE: "allow" ACCEPTS unknown YAML keys (stores them as extra attributes)
-        # — it does not reject them. Kept permissive for legacy configs; typo'd
-        # keys are therefore silently inert.
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 def ensure_chamber_geometry(config: PintleEngineConfig) -> ChamberGeometryConfig:

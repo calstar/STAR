@@ -1,0 +1,1600 @@
+{
+  "nodes": [
+    {
+      "id": "KB1",
+      "position": {
+        "x": 40,
+        "y": 300
+      },
+      "data": {
+        "componentType": "KBOTTLE",
+        "label": "KB-GN2",
+        "fluid": "nitrogen",
+        "params": {
+          "pressure": {
+            "value": 4500,
+            "unit": "psi",
+            "source": "measured",
+            "reference": "bottle gauge"
+          },
+          "temperature": {
+            "value": 293.15,
+            "unit": "K",
+            "source": "measured",
+            "reference": ""
+          },
+          "volume": {
+            "value": 4.6871,
+            "unit": "L",
+            "source": "measured",
+            "reference": "operator: the same COPV the Study tab runs (SCBA class, 286 in^3)"
+          },
+          "wall_mass": {
+            "value": 3.5,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "45 scf SCBA cylinder: aluminium liner with carbon overwrap, ~3.5 kg bare. Weigh it"
+          },
+          "wall_capacity": {
+            "value": 850,
+            "unit": "J/(kg.K)",
+            "source": "estimated",
+            "reference": "aluminium liner (900) and carbon overwrap (~800), mass-weighted"
+          },
+          "wall_conductance": {
+            "value": 20,
+            "unit": "W/K",
+            "source": "estimated",
+            "reference": "dense-gas natural convection over ~0.16 m^2 at 100-150 W/(m^2.K); the least-known number on the stand"
+          },
+          "MAWP": {
+            "value": 6750,
+            "unit": "psi",
+            "source": "estimated",
+            "reference": "1.5 x the 4500 psi service pressure of an SCBA-class COPV; the hydrotest figure. The twin trips and asks for a reset above this."
+          }
+        }
+      }
+    },
+    {
+      "id": "PT_HI",
+      "position": {
+        "x": 40,
+        "y": 235
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "PT-GN2-HI",
+        "attachedTo": "KB1",
+        "params": {}
+      }
+    },
+    {
+      "id": "PR_C",
+      "position": {
+        "x": 150,
+        "y": 415
+      },
+      "data": {
+        "componentType": "PR",
+        "label": "PR-CTRL",
+        "fluid": "nitrogen",
+        "params": {
+          "setpoint": {
+            "value": 450,
+            "unit": "psi",
+            "source": "measured",
+            "reference": "hand knob"
+          }
+        },
+        "options": {
+          "domeLoaded": "no"
+        }
+      }
+    },
+    {
+      "id": "PR_D",
+      "position": {
+        "x": 250,
+        "y": 300
+      },
+      "data": {
+        "componentType": "PR",
+        "label": "PR-DOME",
+        "fluid": "nitrogen",
+        "params": {
+          "setpoint": {
+            "value": 500,
+            "unit": "psi",
+            "source": "estimated",
+            "reference": ""
+          },
+          "dome_bias": {
+            "value": 50,
+            "unit": "psi",
+            "source": "manufacturer",
+            "reference": "Aqua 1092-50"
+          },
+          "Cv": {
+            "value": 0.8,
+            "unit": "Cv",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "flow_droop": {
+            "value": 20,
+            "unit": "psi",
+            "source": "estimated",
+            "reference": ""
+          },
+          "rated_flow": {
+            "value": 0.05,
+            "unit": "kg/s",
+            "source": "manufacturer",
+            "reference": ""
+          }
+        },
+        "options": {
+          "domeLoaded": "yes"
+        }
+      }
+    },
+    {
+      "id": "PT_REG",
+      "position": {
+        "x": 360,
+        "y": 235
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "PT-GN2-REG",
+        "attachedTo": "MF2",
+        "params": {}
+      }
+    },
+    {
+      "id": "MF1",
+      "position": {
+        "x": 150,
+        "y": 300
+      },
+      "data": {
+        "componentType": "MANIFOLD",
+        "label": "MAN-GN2",
+        "fluid": "nitrogen",
+        "params": {}
+      }
+    },
+    {
+      "id": "SV_GN2_VENT",
+      "position": {
+        "x": 360,
+        "y": 175
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "SV-GN2-VENT",
+        "fluid": "nitrogen",
+        "params": {
+          "Cv": {
+            "value": 1.2,
+            "unit": "Cv",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "bore": {
+            "value": 6.35,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "VENT_GN2",
+      "position": {
+        "x": 360,
+        "y": 115
+      },
+      "data": {
+        "componentType": "VENT",
+        "label": "VENT-GN2",
+        "params": {}
+      }
+    },
+    {
+      "id": "SV_LOX_PRESS",
+      "position": {
+        "x": 460,
+        "y": 210
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "SV-LOX-PRESS",
+        "fluid": "nitrogen",
+        "params": {
+          "Cv": {
+            "value": 1.2,
+            "unit": "Cv",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "bore": {
+            "value": 6.35,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "OXT",
+      "position": {
+        "x": 570,
+        "y": 210
+      },
+      "data": {
+        "componentType": "TANK",
+        "label": "TK-LOX",
+        "fluid": "oxygen",
+        "params": {
+          "pressure": {
+            "value": 500,
+            "unit": "psi",
+            "source": "manufacturer",
+            "reference": "design operating pressure; the simulator starts vented"
+          },
+          "temperature": {
+            "value": 90.0,
+            "unit": "K",
+            "source": "measured",
+            "reference": ""
+          },
+          "volume": {
+            "value": 15.1,
+            "unit": "L",
+            "source": "measured",
+            "reference": "operator: the LOX tank is 3.99 US gallons"
+          },
+          "diameter": {
+            "value": 152.4,
+            "unit": "mm",
+            "source": "estimated",
+            "reference": "not measured; sets the static head and the wetted area only"
+          },
+          "insulation_thickness": {
+            "value": 25.4,
+            "unit": "mm",
+            "source": "measured",
+            "reference": "operator: the LOX tank is wrapped in about an inch of fiberglass"
+          },
+          "insulation_conductivity": {
+            "value": 0.04,
+            "unit": "W/(m.K)",
+            "source": "estimated",
+            "reference": "fiberglass batt, 0.035-0.045 W/(m.K) at room temperature; colder is lower"
+          },
+          "MAWP": {
+            "value": 1000,
+            "unit": "psi",
+            "source": "estimated",
+            "reference": "not measured; twice the 500 psig operating pressure. The twin trips and asks for a reset above this."
+          }
+        }
+      }
+    },
+    {
+      "id": "PT_OXU",
+      "position": {
+        "x": 570,
+        "y": 140
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "PT-OX-UP",
+        "attachedTo": "OXT",
+        "params": {}
+      }
+    },
+    {
+      "id": "SV_LOX_VENT",
+      "position": {
+        "x": 680,
+        "y": 140
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "SV-LOX-VENT",
+        "fluid": "nitrogen",
+        "params": {
+          "Cv": {
+            "value": 3.8,
+            "unit": "Cv",
+            "source": "estimated",
+            "reference": "calibrated: the tank vents blow 550 psig down to zero in about a second on the stand (operator); a 1/4 in path takes 2.5 s whatever the valve's Cv. Verify against the part."
+          },
+          "bore": {
+            "value": 9.525,
+            "unit": "mm",
+            "source": "estimated",
+            "reference": "calibrated: the tank vents blow 550 psig down to zero in about a second on the stand (operator); a 1/4 in path takes 2.5 s whatever the valve's Cv. Verify against the part."
+          }
+        }
+      }
+    },
+    {
+      "id": "VENT_LOX",
+      "position": {
+        "x": 780,
+        "y": 140
+      },
+      "data": {
+        "componentType": "VENT",
+        "label": "VENT-LOX",
+        "params": {}
+      }
+    },
+    {
+      "id": "SV_LOX_FILL",
+      "position": {
+        "x": 460,
+        "y": 140
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "SV-LOX-FILL",
+        "fluid": "oxygen",
+        "params": {
+          "Cv": {
+            "value": 1.2,
+            "unit": "Cv",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "bore": {
+            "value": 6.35,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "MVO",
+      "position": {
+        "x": 700,
+        "y": 250
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "MV-OX",
+        "fluid": "oxygen",
+        "params": {
+          "Cv": {
+            "value": 26.1,
+            "unit": "Cv",
+            "source": "estimated",
+            "reference": "Crane TP-410 full-bore ball valve, K = 3*fT = 0.0814 at 12.7 mm"
+          },
+          "bore": {
+            "value": 12.7,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "1/2 in. NPT full-port ball valve"
+          }
+        }
+      }
+    },
+    {
+      "id": "PT_OXD",
+      "position": {
+        "x": 860,
+        "y": 200
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "PT-OX-DN",
+        "attachedTo": "MVO",
+        "options": {
+          "side": "downstream"
+        },
+        "params": {}
+      }
+    },
+    {
+      "id": "SV_FUEL_PRESS",
+      "position": {
+        "x": 460,
+        "y": 400
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "SV-FUEL-PRESS",
+        "fluid": "nitrogen",
+        "params": {
+          "Cv": {
+            "value": 1.2,
+            "unit": "Cv",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "bore": {
+            "value": 6.35,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "FUT",
+      "position": {
+        "x": 570,
+        "y": 400
+      },
+      "data": {
+        "componentType": "TANK",
+        "label": "TK-FUEL",
+        "fluid": "ethanol",
+        "params": {
+          "pressure": {
+            "value": 500,
+            "unit": "psi",
+            "source": "manufacturer",
+            "reference": "design operating pressure; the simulator starts vented"
+          },
+          "temperature": {
+            "value": 293.15,
+            "unit": "K",
+            "source": "measured",
+            "reference": ""
+          },
+          "volume": {
+            "value": 8.67,
+            "unit": "L",
+            "source": "measured",
+            "reference": "operator: 6.5 kg of ethanol plus 5 % ullage; 6.5 kg / 789.4 kg/m3 / 0.95"
+          },
+          "diameter": {
+            "value": 152.4,
+            "unit": "mm",
+            "source": "estimated",
+            "reference": "not measured; sets the static head and the wetted area only"
+          },
+          "MAWP": {
+            "value": 1000,
+            "unit": "psi",
+            "source": "estimated",
+            "reference": "not measured; twice the 500 psig operating pressure. The twin trips and asks for a reset above this."
+          }
+        }
+      }
+    },
+    {
+      "id": "PT_FUU",
+      "position": {
+        "x": 570,
+        "y": 470
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "PT-FU-UP",
+        "attachedTo": "FUT",
+        "params": {}
+      }
+    },
+    {
+      "id": "SV_FUEL_VENT",
+      "position": {
+        "x": 680,
+        "y": 470
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "SV-FUEL-VENT",
+        "fluid": "nitrogen",
+        "params": {
+          "Cv": {
+            "value": 3.8,
+            "unit": "Cv",
+            "source": "estimated",
+            "reference": "calibrated: the tank vents blow 550 psig down to zero in about a second on the stand (operator); a 1/4 in path takes 2.5 s whatever the valve's Cv. Verify against the part."
+          },
+          "bore": {
+            "value": 9.525,
+            "unit": "mm",
+            "source": "estimated",
+            "reference": "calibrated: the tank vents blow 550 psig down to zero in about a second on the stand (operator); a 1/4 in path takes 2.5 s whatever the valve's Cv. Verify against the part."
+          }
+        }
+      }
+    },
+    {
+      "id": "VENT_FUEL",
+      "position": {
+        "x": 780,
+        "y": 470
+      },
+      "data": {
+        "componentType": "VENT",
+        "label": "VENT-FUEL",
+        "params": {}
+      }
+    },
+    {
+      "id": "MVF",
+      "position": {
+        "x": 700,
+        "y": 350
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "MV-FU",
+        "fluid": "ethanol",
+        "params": {
+          "Cv": {
+            "value": 26.1,
+            "unit": "Cv",
+            "source": "estimated",
+            "reference": "Crane TP-410 full-bore ball valve, K = 3*fT = 0.0814 at 12.7 mm"
+          },
+          "bore": {
+            "value": 12.7,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "1/2 in. NPT full-port ball valve"
+          }
+        }
+      }
+    },
+    {
+      "id": "PT_FUD",
+      "position": {
+        "x": 860,
+        "y": 400
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "PT-FU-DN",
+        "attachedTo": "MVF",
+        "options": {
+          "side": "downstream"
+        },
+        "params": {}
+      }
+    },
+    {
+      "id": "ENG",
+      "position": {
+        "x": 950,
+        "y": 300
+      },
+      "data": {
+        "componentType": "ENGINE",
+        "label": "ENG-01",
+        "params": {
+          "pressure": {
+            "value": 350,
+            "unit": "psi",
+            "source": "estimated",
+            "reference": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "MF2",
+      "position": {
+        "x": 360,
+        "y": 300
+      },
+      "data": {
+        "componentType": "MANIFOLD",
+        "label": "MAN-REG",
+        "fluid": "nitrogen",
+        "params": {}
+      }
+    },
+    {
+      "id": "TC_REGI",
+      "type": "TC",
+      "position": {
+        "x": 760,
+        "y": 150
+      },
+      "data": {
+        "componentType": "TC",
+        "label": "TC-REG-IN",
+        "attachedTo": "MF1",
+        "params": {}
+      }
+    },
+    {
+      "id": "TC_REGO",
+      "type": "TC",
+      "position": {
+        "x": 760,
+        "y": 250
+      },
+      "data": {
+        "componentType": "TC",
+        "label": "TC-REG-OUT",
+        "attachedTo": "MF2",
+        "params": {}
+      }
+    },
+    {
+      "id": "RTD_OXT",
+      "type": "RTD",
+      "position": {
+        "x": 40,
+        "y": 470
+      },
+      "data": {
+        "componentType": "RTD",
+        "label": "RTD-LOX",
+        "attachedTo": "OXT",
+        "params": {}
+      }
+    },
+    {
+      "id": "TC_OXD",
+      "type": "TC",
+      "position": {
+        "x": 40,
+        "y": 700
+      },
+      "data": {
+        "componentType": "TC",
+        "label": "TC-OX-DN",
+        "attachedTo": "MVO",
+        "options": {
+          "side": "downstream"
+        },
+        "params": {}
+      }
+    },
+    {
+      "id": "TC_FUD",
+      "type": "TC",
+      "position": {
+        "x": 600,
+        "y": 700
+      },
+      "data": {
+        "componentType": "TC",
+        "label": "TC-FU-DN",
+        "attachedTo": "MVF",
+        "options": {
+          "side": "downstream"
+        },
+        "params": {}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "l_kb",
+      "source": "KB1",
+      "target": "MF1",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.5,
+            "unit": "m",
+            "source": "measured",
+            "reference": "off the stand"
+          },
+          "bore": {
+            "value": 12.7,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 4.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "fitting tally"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.3,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "3 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_ctrl",
+      "source": "MF1",
+      "target": "PR_C",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.3,
+            "unit": "m",
+            "source": "measured",
+            "reference": "off the stand"
+          },
+          "bore": {
+            "value": 6.35,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 4.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "fitting tally"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.2,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "2 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_dome",
+      "source": "PR_C",
+      "target": "PR_D",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.3,
+            "unit": "m",
+            "source": "measured",
+            "reference": "off the stand"
+          },
+          "bore": {
+            "value": 6.35,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 4.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "fitting tally"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.2,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "2 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_reg",
+      "source": "MF1",
+      "target": "PR_D",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.3,
+            "unit": "m",
+            "source": "measured",
+            "reference": "off the stand"
+          },
+          "bore": {
+            "value": 6.35,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 4.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "fitting tally"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.3,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "3 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_gn2vent2",
+      "source": "SV_GN2_VENT",
+      "target": "VENT_GN2",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.5,
+            "unit": "m",
+            "source": "measured",
+            "reference": "off the stand"
+          },
+          "bore": {
+            "value": 6.35,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 2.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "fitting tally"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.3,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "3 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_oxpress",
+      "source": "SV_LOX_PRESS",
+      "target": "OXT",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.5,
+            "unit": "m",
+            "source": "measured",
+            "reference": "off the stand"
+          },
+          "bore": {
+            "value": 7.75,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 2.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "fitting tally"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.3,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "3 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_oxfill",
+      "source": "SV_LOX_FILL",
+      "target": "OXT",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.4,
+            "unit": "m",
+            "source": "measured",
+            "reference": "off the stand"
+          },
+          "bore": {
+            "value": 12.7,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 2.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "fitting tally"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.3,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "3 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_oxvent",
+      "source": "OXT",
+      "target": "SV_LOX_VENT",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.4,
+            "unit": "m",
+            "source": "measured",
+            "reference": "off the stand"
+          },
+          "bore": {
+            "value": 9.525,
+            "unit": "mm",
+            "source": "estimated",
+            "reference": "calibrated: the tank vents blow 550 psig down to zero in about a second on the stand (operator); a 1/4 in path takes 2.5 s whatever the valve's Cv. Verify against the part."
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 2.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "fitting tally"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.3,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "3 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_oxvent2",
+      "source": "SV_LOX_VENT",
+      "target": "VENT_LOX",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.5,
+            "unit": "m",
+            "source": "measured",
+            "reference": "off the stand"
+          },
+          "bore": {
+            "value": 9.525,
+            "unit": "mm",
+            "source": "estimated",
+            "reference": "calibrated: the tank vents blow 550 psig down to zero in about a second on the stand (operator); a 1/4 in path takes 2.5 s whatever the valve's Cv. Verify against the part."
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 2.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "fitting tally"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.3,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "3 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_ox1",
+      "source": "OXT",
+      "target": "MVO",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.07,
+            "unit": "m",
+            "source": "estimated",
+            "reference": "LOX main: 1/2 in. valve + line, 8 in. overall, less the valve body"
+          },
+          "bore": {
+            "value": 10.92,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "1/2 in. x 0.035 wall Swagelok tube, ID 0.430 in."
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 0.5,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "sharp exit from the tank into the line (Crane A-29, K=0.5); no elbows or tube fittings counted -- itemise the run to price them"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.2,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "2 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_ox2",
+      "source": "MVO",
+      "target": "ENG",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.07,
+            "unit": "m",
+            "source": "estimated",
+            "reference": "LOX main: 1/2 in. valve + line, 8 in. overall, less the valve body"
+          },
+          "bore": {
+            "value": 10.92,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "1/2 in. x 0.035 wall Swagelok tube, ID 0.430 in."
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 0.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "no fittings counted on this stub"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.2,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "2 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_fupress",
+      "source": "SV_FUEL_PRESS",
+      "target": "FUT",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.5,
+            "unit": "m",
+            "source": "measured",
+            "reference": "off the stand"
+          },
+          "bore": {
+            "value": 7.75,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 2.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "fitting tally"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.3,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "3 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_fuvent",
+      "source": "FUT",
+      "target": "SV_FUEL_VENT",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.4,
+            "unit": "m",
+            "source": "measured",
+            "reference": "off the stand"
+          },
+          "bore": {
+            "value": 9.525,
+            "unit": "mm",
+            "source": "estimated",
+            "reference": "calibrated: the tank vents blow 550 psig down to zero in about a second on the stand (operator); a 1/4 in path takes 2.5 s whatever the valve's Cv. Verify against the part."
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 2.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "fitting tally"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.3,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "3 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_fuvent2",
+      "source": "SV_FUEL_VENT",
+      "target": "VENT_FUEL",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.5,
+            "unit": "m",
+            "source": "measured",
+            "reference": "off the stand"
+          },
+          "bore": {
+            "value": 9.525,
+            "unit": "mm",
+            "source": "estimated",
+            "reference": "calibrated: the tank vents blow 550 psig down to zero in about a second on the stand (operator); a 1/4 in path takes 2.5 s whatever the valve's Cv. Verify against the part."
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 2.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "fitting tally"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.3,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "3 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_fu1",
+      "source": "FUT",
+      "target": "MVF",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.9144,
+            "unit": "m",
+            "source": "estimated",
+            "reference": "fuel main: 3 ft of 1/2 in. Swagelok tube, tank to ball valve"
+          },
+          "bore": {
+            "value": 10.92,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "1/2 in. x 0.035 wall Swagelok tube, ID 0.430 in."
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 0.5,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "sharp exit from the tank into the line (Crane A-29, K=0.5); no elbows or tube fittings counted -- itemise the run to price them"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.5,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "5 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_fu2",
+      "source": "MVF",
+      "target": "ENG",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.05,
+            "unit": "m",
+            "source": "estimated",
+            "reference": "fuel main: ball valve outlet straight into the injector"
+          },
+          "bore": {
+            "value": 10.92,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "1/2 in. x 0.035 wall Swagelok tube, ID 0.430 in."
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 0.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "no fittings counted on this stub"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.2,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "2 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_reg_out",
+      "source": "PR_D",
+      "target": "MF2",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.3,
+            "unit": "m",
+            "source": "measured",
+            "reference": "off the stand"
+          },
+          "bore": {
+            "value": 7.75,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 2.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "fitting tally"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.3,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "3 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_gn2vent",
+      "source": "MF2",
+      "target": "SV_GN2_VENT",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.3,
+            "unit": "m",
+            "source": "measured"
+          },
+          "bore": {
+            "value": 6.35,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 2.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "fitting tally"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.3,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "3 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_oxpress_in",
+      "source": "MF2",
+      "target": "SV_LOX_PRESS",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.6,
+            "unit": "m",
+            "source": "measured",
+            "reference": "off the stand"
+          },
+          "bore": {
+            "value": 7.75,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 3.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "fitting tally"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.4,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "4 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    },
+    {
+      "id": "l_fupress_in",
+      "source": "MF2",
+      "target": "SV_FUEL_PRESS",
+      "data": {
+        "lineType": "pipe",
+        "params": {
+          "length": {
+            "value": 0.7,
+            "unit": "m",
+            "source": "measured",
+            "reference": "off the stand"
+          },
+          "bore": {
+            "value": 7.75,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": ""
+          },
+          "roughness": {
+            "value": 0.0015,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "drawn stainless"
+          },
+          "K_minor": {
+            "value": 3.0,
+            "unit": "-",
+            "source": "estimated",
+            "reference": "fitting tally"
+          },
+          "wall_thickness": {
+            "value": 0.889,
+            "unit": "mm",
+            "source": "manufacturer",
+            "reference": "0.035 in., the standard wall of the 1/2 in. seamless 316 tube on this stand"
+          },
+          "fitting_mass": {
+            "value": 0.4,
+            "unit": "kg",
+            "source": "estimated",
+            "reference": "4 x 1/2 in. tube union at ~100 g: one at each end of the run plus one per 300 mm. The single number this model is most sensitive to -- measure the stand and replace it"
+          }
+        }
+      }
+    }
+  ]
+}

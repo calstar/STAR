@@ -1,0 +1,1406 @@
+{
+ "nodes": [
+  {
+   "id": "KB1",
+   "position": {
+    "x": 40,
+    "y": 300
+   },
+   "data": {
+    "componentType": "KBOTTLE",
+    "label": "COPV-GN2",
+    "fluid": "nitrogen",
+    "params": {
+     "pressure": {
+      "value": 4500,
+      "unit": "psi",
+      "source": "manufacturer",
+      "reference": "service pressure"
+     },
+     "temperature": {
+      "value": 293.15,
+      "unit": "K",
+      "source": "measured",
+      "reference": ""
+     },
+     "volume": {
+      "value": 4.6871,
+      "unit": "L",
+      "source": "measured",
+      "reference": "45 scf SCBA cylinder: 52.8 mol std air, Z=1.115 at 4500 psi -> 4.64 L water volume, plus 3 in^3 of fittings (estimated)"
+     }
+    }
+   }
+  },
+  {
+   "id": "PT_HI",
+   "position": {
+    "x": 40,
+    "y": 235
+   },
+   "data": {
+    "componentType": "PT",
+    "label": "PT-COPV",
+    "attachedTo": "KB1"
+   }
+  },
+  {
+   "id": "PR_C",
+   "position": {
+    "x": 150,
+    "y": 415
+   },
+   "data": {
+    "componentType": "PR",
+    "label": "PR-CTRL",
+    "fluid": "nitrogen",
+    "params": {
+     "setpoint": {
+      "value": 500,
+      "unit": "psi",
+      "source": "measured",
+      "reference": "hand knob, gives 550 at the tanks"
+     },
+     "flow_droop": {
+      "value": 5,
+      "unit": "psi",
+      "source": "estimated",
+      "reference": "dome line carries almost no flow; droop is nominal but must be non-zero"
+     },
+     "rated_flow": {
+      "value": 0.01,
+      "unit": "kg/s",
+      "source": "estimated",
+      "reference": ""
+     },
+     "Cv": {
+      "value": 0.06,
+      "unit": "Cv",
+      "source": "estimated",
+      "reference": "panel reg on a dome line"
+     }
+    },
+    "options": {
+     "domeLoaded": "no"
+    }
+   }
+  },
+  {
+   "id": "PR_D",
+   "position": {
+    "x": 250,
+    "y": 300
+   },
+   "data": {
+    "componentType": "PR",
+    "label": "PR-DOME",
+    "fluid": "nitrogen",
+    "params": {
+     "setpoint": {
+      "value": 500,
+      "unit": "psi",
+      "source": "estimated",
+      "reference": ""
+     },
+     "dome_bias": {
+      "value": 50,
+      "unit": "psi",
+      "source": "manufacturer",
+      "reference": "Aqua Environment Technical Bulletin 1031, Model 1092: spring bias option, the -50 in 1092-50"
+     },
+     "Cv": {
+      "value": 0.8,
+      "unit": "Cv",
+      "source": "manufacturer",
+      "reference": "Aqua Environment Technical Bulletin 1031, Model 1092: Cv 0.8, 0.23 in orifice"
+     },
+     "flow_droop": {
+      "value": 8.3,
+      "unit": "psi",
+      "source": "measured",
+      "reference": "backed out from the stand's ~25 psi drop at ignition, minus the measured line and solenoid losses. Not on the datasheet: TB 1031 gives Cv and the supply-pressure effect and no droop curve at all."
+     },
+     "rated_flow": {
+      "value": 0.09646,
+      "unit": "kg/s",
+      "source": "measured",
+      "reference": "the GN2 duty the droop above was backed out at"
+     },
+     "supply_coefficient": {
+      "value": 17,
+      "unit": "psi/1000psi",
+      "source": "manufacturer",
+      "reference": "Aqua Environment Technical Bulletin 1031, Model 1092: '17 PSI increase per 1000 PSI drop in inlet pressure'"
+     },
+     "inlet_reference": {
+      "value": 4500,
+      "unit": "psi",
+      "source": "measured",
+      "reference": "COPV service pressure, the datum for the above"
+     },
+     "lockup_rise": {
+      "value": 0,
+      "unit": "psi",
+      "source": "measured",
+      "reference": "stand sits at 550 = dome 500 + 50 bias, no creep above it"
+     },
+     "bore": {
+      "value": 0.23,
+      "unit": "in",
+      "source": "manufacturer",
+      "reference": "Aqua Environment Technical Bulletin 1031, Model 1092: 0.23 in orifice"
+     }
+    },
+    "options": {
+     "domeLoaded": "yes"
+    }
+   }
+  },
+  {
+   "id": "PT_REG",
+   "position": {
+    "x": 360,
+    "y": 235
+   },
+   "data": {
+    "componentType": "PT",
+    "label": "PT-GN2-REG",
+    "attachedTo": "MF2"
+   }
+  },
+  {
+   "id": "MF1",
+   "position": {
+    "x": 150,
+    "y": 300
+   },
+   "data": {
+    "componentType": "MANIFOLD",
+    "label": "MAN-GN2",
+    "fluid": "nitrogen"
+   }
+  },
+  {
+   "id": "SV_GN2_VENT",
+   "position": {
+    "x": 360,
+    "y": 175
+   },
+   "data": {
+    "componentType": "SOL",
+    "label": "SV-GN2-VENT",
+    "fluid": "nitrogen",
+    "params": {
+     "Cv": {
+      "value": 1.7,
+      "unit": "Cv",
+      "source": "measured",
+      "reference": "press solenoid on the stand"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     }
+    }
+   }
+  },
+  {
+   "id": "VENT_GN2",
+   "position": {
+    "x": 360,
+    "y": 115
+   },
+   "data": {
+    "componentType": "VENT",
+    "label": "VENT-GN2"
+   }
+  },
+  {
+   "id": "SV_LOX_PRESS",
+   "position": {
+    "x": 460,
+    "y": 210
+   },
+   "data": {
+    "componentType": "SOL",
+    "label": "SV-LOX-PRESS",
+    "fluid": "nitrogen",
+    "params": {
+     "Cv": {
+      "value": 1.7,
+      "unit": "Cv",
+      "source": "measured",
+      "reference": "press solenoid on the stand"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     }
+    }
+   }
+  },
+  {
+   "id": "OXT",
+   "position": {
+    "x": 570,
+    "y": 210
+   },
+   "data": {
+    "componentType": "TANK",
+    "label": "TK-LOX",
+    "fluid": "oxygen",
+    "params": {
+     "pressure": {
+      "value": 500,
+      "unit": "psi",
+      "source": "manufacturer",
+      "reference": "design operating pressure; the simulator starts vented"
+     },
+     "temperature": {
+      "value": 90.0,
+      "unit": "K",
+      "source": "measured",
+      "reference": ""
+     },
+     "volume": {
+      "value": 9.677429254600174,
+      "unit": "L",
+      "source": "manufacturer",
+      "reference": "10.5 kg LOX at 5% ullage"
+     },
+     "diameter": {
+      "value": 160.1460715445023,
+      "unit": "mm",
+      "source": "estimated",
+      "reference": "3:1 L/D"
+     }
+    }
+   }
+  },
+  {
+   "id": "PT_OXU",
+   "position": {
+    "x": 570,
+    "y": 140
+   },
+   "data": {
+    "componentType": "PT",
+    "label": "PT-OX-UP",
+    "attachedTo": "OXT"
+   }
+  },
+  {
+   "id": "SV_LOX_VENT",
+   "position": {
+    "x": 680,
+    "y": 140
+   },
+   "data": {
+    "componentType": "SOL",
+    "label": "SV-LOX-VENT",
+    "fluid": "nitrogen",
+    "params": {
+     "Cv": {
+      "value": 1.7,
+      "unit": "Cv",
+      "source": "measured",
+      "reference": "press solenoid on the stand"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     }
+    }
+   }
+  },
+  {
+   "id": "VENT_LOX",
+   "position": {
+    "x": 780,
+    "y": 140
+   },
+   "data": {
+    "componentType": "VENT",
+    "label": "VENT-LOX"
+   }
+  },
+  {
+   "id": "SV_LOX_FILL",
+   "position": {
+    "x": 460,
+    "y": 140
+   },
+   "data": {
+    "componentType": "SOL",
+    "label": "SV-LOX-FILL",
+    "fluid": "oxygen",
+    "params": {
+     "Cv": {
+      "value": 1.7,
+      "unit": "Cv",
+      "source": "measured",
+      "reference": "press solenoid on the stand"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     }
+    }
+   }
+  },
+  {
+   "id": "MVO",
+   "position": {
+    "x": 700,
+    "y": 250
+   },
+   "data": {
+    "componentType": "SOL",
+    "label": "MV-OX",
+    "fluid": "oxygen",
+    "params": {
+     "Cv": {
+      "value": 6.0,
+      "unit": "Cv",
+      "source": "estimated",
+      "reference": "not measured -- placeholder for the main valve"
+     },
+     "bore": {
+      "value": 9.5,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "travel_time": {
+      "value": 0.05,
+      "unit": "s",
+      "source": "measured",
+      "reference": "fast solenoid, shut to open"
+     }
+    }
+   }
+  },
+  {
+   "id": "CVO",
+   "position": {
+    "x": 790,
+    "y": 250
+   },
+   "data": {
+    "componentType": "CV",
+    "label": "CK-OX",
+    "fluid": "oxygen",
+    "params": {
+     "Cv": {
+      "value": 8.0,
+      "unit": "Cv",
+      "source": "estimated",
+      "reference": "not measured -- placeholder"
+     },
+     "cracking_pressure": {
+      "value": 3.0,
+      "unit": "psi",
+      "source": "estimated",
+      "reference": "not measured -- placeholder"
+     },
+     "bore": {
+      "value": 12.7,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     }
+    }
+   }
+  },
+  {
+   "id": "PT_OXD",
+   "position": {
+    "x": 860,
+    "y": 200
+   },
+   "data": {
+    "componentType": "PT",
+    "label": "PT-OX-DN",
+    "attachedTo": "CVO"
+   }
+  },
+  {
+   "id": "SV_FUEL_PRESS",
+   "position": {
+    "x": 460,
+    "y": 400
+   },
+   "data": {
+    "componentType": "SOL",
+    "label": "SV-FUEL-PRESS",
+    "fluid": "nitrogen",
+    "params": {
+     "Cv": {
+      "value": 1.7,
+      "unit": "Cv",
+      "source": "measured",
+      "reference": "press solenoid on the stand"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     }
+    }
+   }
+  },
+  {
+   "id": "FUT",
+   "position": {
+    "x": 570,
+    "y": 400
+   },
+   "data": {
+    "componentType": "TANK",
+    "label": "TK-FUEL",
+    "fluid": "ethanol",
+    "params": {
+     "pressure": {
+      "value": 500,
+      "unit": "psi",
+      "source": "manufacturer",
+      "reference": "design operating pressure; the simulator starts vented"
+     },
+     "temperature": {
+      "value": 293.15,
+      "unit": "K",
+      "source": "measured",
+      "reference": ""
+     },
+     "volume": {
+      "value": 8.668171777466338,
+      "unit": "L",
+      "source": "manufacturer",
+      "reference": "6.5 kg ethanol at 5% ullage"
+     },
+     "diameter": {
+      "value": 154.37327735574797,
+      "unit": "mm",
+      "source": "estimated",
+      "reference": "3:1 L/D"
+     }
+    }
+   }
+  },
+  {
+   "id": "PT_FUU",
+   "position": {
+    "x": 570,
+    "y": 470
+   },
+   "data": {
+    "componentType": "PT",
+    "label": "PT-FU-UP",
+    "attachedTo": "FUT"
+   }
+  },
+  {
+   "id": "SV_FUEL_VENT",
+   "position": {
+    "x": 680,
+    "y": 470
+   },
+   "data": {
+    "componentType": "SOL",
+    "label": "SV-FUEL-VENT",
+    "fluid": "nitrogen",
+    "params": {
+     "Cv": {
+      "value": 1.7,
+      "unit": "Cv",
+      "source": "measured",
+      "reference": "press solenoid on the stand"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     }
+    }
+   }
+  },
+  {
+   "id": "VENT_FUEL",
+   "position": {
+    "x": 780,
+    "y": 470
+   },
+   "data": {
+    "componentType": "VENT",
+    "label": "VENT-FUEL"
+   }
+  },
+  {
+   "id": "MVF",
+   "position": {
+    "x": 700,
+    "y": 350
+   },
+   "data": {
+    "componentType": "SOL",
+    "label": "MV-FU",
+    "fluid": "ethanol",
+    "params": {
+     "Cv": {
+      "value": 6.0,
+      "unit": "Cv",
+      "source": "estimated",
+      "reference": "not measured -- placeholder for the main valve"
+     },
+     "bore": {
+      "value": 9.5,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "travel_time": {
+      "value": 0.05,
+      "unit": "s",
+      "source": "measured",
+      "reference": "fast solenoid, shut to open"
+     }
+    }
+   }
+  },
+  {
+   "id": "CVF",
+   "position": {
+    "x": 790,
+    "y": 350
+   },
+   "data": {
+    "componentType": "CV",
+    "label": "CK-FU",
+    "fluid": "ethanol",
+    "params": {
+     "Cv": {
+      "value": 8.0,
+      "unit": "Cv",
+      "source": "estimated",
+      "reference": "not measured -- placeholder"
+     },
+     "cracking_pressure": {
+      "value": 3.0,
+      "unit": "psi",
+      "source": "estimated",
+      "reference": "not measured -- placeholder"
+     },
+     "bore": {
+      "value": 9.5,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     }
+    }
+   }
+  },
+  {
+   "id": "PT_FUD",
+   "position": {
+    "x": 860,
+    "y": 400
+   },
+   "data": {
+    "componentType": "PT",
+    "label": "PT-FU-DN",
+    "attachedTo": "CVF"
+   }
+  },
+  {
+   "id": "ENG",
+   "position": {
+    "x": 950,
+    "y": 300
+   },
+   "data": {
+    "componentType": "ENGINE",
+    "label": "ENG-01",
+    "params": {
+     "pressure": {
+      "value": 350,
+      "unit": "psi",
+      "source": "estimated",
+      "reference": ""
+     }
+    }
+   }
+  },
+  {
+   "id": "MF2",
+   "position": {
+    "x": 360,
+    "y": 300
+   },
+   "data": {
+    "componentType": "MANIFOLD",
+    "label": "MAN-REG",
+    "fluid": "nitrogen"
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "l_kb",
+   "source": "KB1",
+   "target": "MF1",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.5,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 12.7,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 4.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_ctrl",
+   "source": "MF1",
+   "target": "PR_C",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.3,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 4.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_dome",
+   "source": "PR_C",
+   "target": "PR_D",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.3,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 4.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_reg",
+   "source": "MF1",
+   "target": "PR_D",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.3,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 4.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_gn2vent2",
+   "source": "SV_GN2_VENT",
+   "target": "VENT_GN2",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.5,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 2.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_oxpress",
+   "source": "SV_LOX_PRESS",
+   "target": "OXT",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 2.0,
+      "unit": "in",
+      "source": "measured",
+      "reference": "part of the 6 in reg-to-tank run"
+     },
+     "bore": {
+      "value": 0.43,
+      "unit": "in",
+      "source": "measured",
+      "reference": "1/2 in OD x 0.035 in wall Swagelok"
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "estimated",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 1.5,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "a union and an elbow per segment"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_oxfill",
+   "source": "SV_LOX_FILL",
+   "target": "OXT",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.4,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 12.7,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 2.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_oxvent",
+   "source": "OXT",
+   "target": "SV_LOX_VENT",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.4,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 2.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_oxvent2",
+   "source": "SV_LOX_VENT",
+   "target": "VENT_LOX",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.5,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 2.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_ox1",
+   "source": "OXT",
+   "target": "MVO",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.4,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 12.7,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 2.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_ox2",
+   "source": "MVO",
+   "target": "CVO",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.3,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 12.7,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 2.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_ox3",
+   "source": "CVO",
+   "target": "ENG",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 1.6,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 12.7,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 8.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_fupress",
+   "source": "SV_FUEL_PRESS",
+   "target": "FUT",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 2.0,
+      "unit": "in",
+      "source": "measured",
+      "reference": "part of the 6 in reg-to-tank run"
+     },
+     "bore": {
+      "value": 0.43,
+      "unit": "in",
+      "source": "measured",
+      "reference": "1/2 in OD x 0.035 in wall Swagelok"
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "estimated",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 1.5,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "a union and an elbow per segment"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_fuvent",
+   "source": "FUT",
+   "target": "SV_FUEL_VENT",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.4,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 2.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_fuvent2",
+   "source": "SV_FUEL_VENT",
+   "target": "VENT_FUEL",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.5,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 2.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_fu1",
+   "source": "FUT",
+   "target": "MVF",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.4,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 9.5,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 2.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_fu2",
+   "source": "MVF",
+   "target": "CVF",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.3,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 9.5,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 2.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_fu3",
+   "source": "CVF",
+   "target": "ENG",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 1.8,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 9.5,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 9.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_reg_out",
+   "source": "PR_D",
+   "target": "MF2",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 2.0,
+      "unit": "in",
+      "source": "measured",
+      "reference": "part of the 6 in reg-to-tank run"
+     },
+     "bore": {
+      "value": 0.43,
+      "unit": "in",
+      "source": "measured",
+      "reference": "1/2 in OD x 0.035 in wall Swagelok"
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "estimated",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 1.5,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "a union and an elbow per segment"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_gn2vent",
+   "source": "MF2",
+   "target": "SV_GN2_VENT",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 0.3,
+      "unit": "m",
+      "source": "measured",
+      "reference": "off the stand"
+     },
+     "bore": {
+      "value": 6.35,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": ""
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "manufacturer",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 2.0,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "fitting tally"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_oxpress_in",
+   "source": "MF2",
+   "target": "SV_LOX_PRESS",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 2.0,
+      "unit": "in",
+      "source": "measured",
+      "reference": "part of the 6 in reg-to-tank run"
+     },
+     "bore": {
+      "value": 0.43,
+      "unit": "in",
+      "source": "measured",
+      "reference": "1/2 in OD x 0.035 in wall Swagelok"
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "estimated",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 1.5,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "a union and an elbow per segment"
+     }
+    }
+   }
+  },
+  {
+   "id": "l_fupress_in",
+   "source": "MF2",
+   "target": "SV_FUEL_PRESS",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 2.0,
+      "unit": "in",
+      "source": "measured",
+      "reference": "part of the 6 in reg-to-tank run"
+     },
+     "bore": {
+      "value": 0.43,
+      "unit": "in",
+      "source": "measured",
+      "reference": "1/2 in OD x 0.035 in wall Swagelok"
+     },
+     "roughness": {
+      "value": 0.0015,
+      "unit": "mm",
+      "source": "estimated",
+      "reference": "drawn stainless"
+     },
+     "K_minor": {
+      "value": 1.5,
+      "unit": "-",
+      "source": "estimated",
+      "reference": "a union and an elbow per segment"
+     }
+    }
+   }
+  }
+ ]
+}

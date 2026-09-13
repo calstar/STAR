@@ -112,3 +112,18 @@ export function mmss(totalSeconds: number): string {
   const m = Math.floor(safe / 60);
   return `${m}:${String(safe % 60).padStart(2, '0')}`;
 }
+
+/**
+ * Is this page served from the developer's own machine?
+ *
+ * On a dev box the checkout has no colleague to protect: the only person who
+ * can hold the design is the one at the keyboard, so every rule that exists to
+ * free a design for someone else -- press Take, lapse when idle, be told when
+ * it goes -- is pure friction. `useCheckout` uses this to take the design on
+ * open, keep it while the tab lives, and take it straight back if it lapses.
+ * Deployed, none of that applies and the model above is in force.
+ */
+export function isLocalHost(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1' || h.endsWith('.localhost');
+}

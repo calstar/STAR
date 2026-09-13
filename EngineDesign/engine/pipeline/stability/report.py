@@ -64,8 +64,15 @@ def _vaporization_profile(inp: Dict[str, Any], Pc: float, n_pts: int = 40) -> Di
     L_ch = inp["L_ch"]
     rho_O = float(inp.get("rho_O", 1140.0))   # config-sourced via build_stability_inputs (P2c)
     eta = inp["eta_inj_O"]
-    # representative droplet axial speed ~ LOX injection velocity v=sqrt(2*dP/rho) (Cd~0.6)
-    v_drop = 0.6 * float(np.sqrt(max(2.0 * eta * Pc / rho_O, 1.0)))
+    # Representative droplet axial speed: the solved oxidizer injection velocity when the closure
+    # provides it, else Bernoulli with the solved Cd (a fixed Cd of 0.6 used to sit here).
+    u_O = inp.get("u_O")
+    if u_O is not None and np.isfinite(float(u_O)) and float(u_O) > 0.0:
+        v_drop = float(u_O)
+    else:
+        Cd = inp.get("Cd_O")
+        Cd = float(Cd) if (Cd is not None and np.isfinite(float(Cd)) and float(Cd) > 0.0) else 0.6
+        v_drop = Cd * float(np.sqrt(max(2.0 * eta * Pc / rho_O, 1.0)))
     tau_vap = inp["tau_conv_O"]
     L_vap = v_drop * tau_vap if np.isfinite(tau_vap) else float("nan")
     x_max = float(max(L_ch, L_vap if np.isfinite(L_vap) else L_ch) * 1.1)
@@ -83,11 +90,11 @@ def _vaporization_profile(inp: Dict[str, Any], Pc: float, n_pts: int = 40) -> Di
 
 def _sensitivity(inp: Dict[str, Any]) -> Dict[str, Any]:
     """n / chi sensitivity bands for the acoustic limiting-mode growth rate (cheap sweep)."""
-    D_ch, L_ch, gas = inp["D_ch"], inp["L_ch"], inp["gas"]
+    D_ch, L_ch, gas, coeffs = inp["D_ch"], inp["L_ch"], inp["gas"], inp["damping_coeffs"]
     tv = inp["tau_conv_O"]
-    a_n = [acoustic.fast_acoustic(D_ch, L_ch, gas, n=nn, tau_sens=inp["tau_sens"])["alpha_max"]
+    a_n = [acoustic.fast_acoustic(D_ch, L_ch, gas, n=nn, tau_sens=inp["tau_sens"], coeffs=coeffs)["alpha_max"]
            for nn in (0.3, 0.6)]
-    a_chi = [acoustic.fast_acoustic(D_ch, L_ch, gas, n=inp["n_interaction"], tau_sens=cc * tv)["alpha_max"]
+    a_chi = [acoustic.fast_acoustic(D_ch, L_ch, gas, n=inp["n_interaction"], tau_sens=cc * tv, coeffs=coeffs)["alpha_max"]
              for cc in (0.05, 0.30)]
     return {"acoustic_alpha_vs_n": [float(min(a_n)), float(max(a_n))],
             "acoustic_alpha_vs_chi": [float(min(a_chi)), float(max(a_chi))]}
@@ -103,7 +110,7 @@ def _chug_pole(chug_rich: Dict[str, Any]) -> Dict[str, float]:
 
 
 def _radar(chug_margin: float, ac: Dict[str, Any], vap: Dict[str, Any],
-           gate_threshold: float) -> Dict[str, Any]:
+           gate_threshold: float, alpha_offset: float) -> Dict[str, Any]:
     """Viz #7: one-glance health radar."""
     def mode_alpha(name):
         for m in ac["modes"]:
@@ -112,8 +119,8 @@ def _radar(chug_margin: float, ac: Dict[str, Any], vap: Dict[str, Any],
         return float("-inf")
     a1L, a1T = mode_alpha("1L"), mode_alpha("1T")
     # normalize alphas to a 0..1.3 "margin-like" scale via the same acoustic gate mapping
-    v1L = analysis._acoustic_gate_margin(a1L)
-    v1T = analysis._acoustic_gate_margin(a1T)
+    v1L = analysis._acoustic_gate_margin(a1L, alpha_offset)
+    v1T = analysis._acoustic_gate_margin(a1T, alpha_offset)
     vap_complete = float(np.clip(vap["L_ch_m"] / vap["L_vap_m"], 0.0, 1.3)) if (
         np.isfinite(vap["L_vap_m"]) and vap["L_vap_m"] > 0) else 1.3
     axes = ["chug", "1L", "1T", "vaporization"]
@@ -272,9 +279,10 @@ def build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: fl
 
     # --- acoustic (full mode set with damping budgets) ---
     ac = acoustic.analyze_acoustic_modes(inp["D_ch"], inp["L_ch"], gas,
-                                         n=inp["n_interaction"], tau_sens=inp["tau_sens"])
+                                         n=inp["n_interaction"], tau_sens=inp["tau_sens"],
+                                         coeffs=inp["damping_coeffs"])
     ac_alpha_max = ac["modes"][0]["alpha"] if ac["modes"] else float("nan")
-    acoustic_margin = analysis._acoustic_gate_margin(ac_alpha_max)
+    acoustic_margin = analysis._acoustic_gate_margin(ac_alpha_max, inp["acoustic_gate_alpha_offset"])
     acoustic_modes = [{
         "name": m["mode"], "freq_hz": m["f_hz"], "alpha": m["alpha"],
         "driving": m["driving"],
@@ -288,7 +296,7 @@ def build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: fl
 
     vap = _vaporization_profile(inp, Pc)
     sens = _sensitivity(inp)
-    radar = _radar(chug_margin, ac, vap, gate_threshold)
+    radar = _radar(chug_margin, ac, vap, gate_threshold, inp["acoustic_gate_alpha_offset"])
 
     min_margin = float(min(chug_margin, acoustic_margin))
     state = ("stable" if (chug_margin >= gate_threshold and acoustic_margin >= gate_threshold
@@ -320,6 +328,10 @@ def build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: fl
             "dP_reg_max_psi": float(streams[0].regulator.max_excursion_pa / _PA_PER_PSI),
             "eta_inj_O": inp["eta_inj_O"], "eta_inj_F": inp["eta_inj_F"],
             "smd_O_um": float(inp["D32_O"] * 1e6),
+            "mach_nozzle_entrance": float(inp["mach_nozzle_entrance"]),
+            "contraction_ratio": float(inp["contraction_ratio"]),
+            "feed_length_O_m": float(inp["feed_length_O"]), "feed_length_F_m": float(inp["feed_length_F"]),
+            "acoustic_gate_alpha_offset": float(inp["acoustic_gate_alpha_offset"]),
             # Every recorded silent-default substitution this process has made (P2c registry).
             # Empty list = config fully specified the physics. The hardcoded-Cd bug class, surfaced.
             "fallbacks_used": _fallbacks_used(),

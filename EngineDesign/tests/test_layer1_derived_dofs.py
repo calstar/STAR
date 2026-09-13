@@ -804,3 +804,97 @@ def test_momentum_band_is_symmetric_now_that_tilt_owns_the_guard():
     assert _mom(0.97, band_width=0.05) == 0.0
     assert _mom(1.08, band_width=0.05) > 0.0
     assert _mom(0.92, band_width=0.05) > 0.0
+
+
+def test_design_point_is_stamped_from_the_solved_engine():
+    """chamber_geometry.design_* must describe THIS engine, not the template it came from.
+
+    Nothing ever wrote these: config_schemas builds them with
+    `getattr(chamber, 'design_MR', 2.55)`, so an optimised config carried the template's values
+    forward forever. A real emitted design was stamped MR 2.55 / 350 psi / 7000 N while actually
+    solving at O/F ~1.65 / 416 psi / 7200 N -- and backend/routers/geometry.py feeds design_MR
+    straight into solve_chamber_geometry_with_cea, so the geometry tab drew the contour at the
+    stale ratio.
+    """
+    import logging
+    from engine.pipeline.io import load_config
+    from engine.optimizer.layers.layer1_static_optimization import _layer1_stamp_design_point
+
+    cfg = load_config("configs/canonical/impinging.yaml")
+    cfg.chamber_geometry.design_MR = 2.55          # the stale template values
+    cfg.chamber_geometry.design_pressure = 2.413166e6
+    cfg.chamber_geometry.design_thrust = 7000.0
+
+    solved = {"MR": 1.6461, "Pc": 2.8690e6, "F": 7200.0}
+    _layer1_stamp_design_point(cfg, solved, None)
+
+    assert cfg.chamber_geometry.design_MR == pytest.approx(solved["MR"])
+    assert cfg.chamber_geometry.design_pressure == pytest.approx(solved["Pc"])
+    assert cfg.chamber_geometry.design_thrust == pytest.approx(solved["F"])
+
+
+def test_design_point_stamp_warns_outside_the_cea_cache_range():
+    """An MR outside combustion.cea.MR_range means anything reading it extrapolates."""
+    import logging
+    from engine.pipeline.io import load_config
+    from engine.optimizer.layers.layer1_static_optimization import _layer1_stamp_design_point
+
+    cfg = load_config("configs/canonical/impinging.yaml")
+    lo, hi = [float(v) for v in cfg.combustion.cea.MR_range]
+
+    seen = []
+    logger = logging.getLogger("stamp_range_test")
+    logger.warning = lambda msg, *a, **k: seen.append(msg % a if a else msg)
+
+    _layer1_stamp_design_point(cfg, {"MR": (lo + hi) / 2.0, "Pc": 2.8e6, "F": 7200.0}, logger)
+    assert not seen, "in-range MR must not warn"
+
+    _layer1_stamp_design_point(cfg, {"MR": hi + 1.0, "Pc": 2.8e6, "F": 7200.0}, logger)
+    assert seen and "outside the CEA cache" in seen[0]
+
+
+def test_design_point_stamp_ignores_non_finite_performance():
+    """A failed evaluate must not overwrite a good design point with NaN."""
+    from engine.pipeline.io import load_config
+    from engine.optimizer.layers.layer1_static_optimization import _layer1_stamp_design_point
+
+    cfg = load_config("configs/canonical/impinging.yaml")
+    cfg.chamber_geometry.design_MR = 1.65
+    _layer1_stamp_design_point(cfg, {"MR": float("nan"), "Pc": 0.0, "F": None}, None)
+    assert cfg.chamber_geometry.design_MR == pytest.approx(1.65)
+
+
+def test_stale_pressure_curves_are_flagged():
+    """The initial tank pressure exists twice, owned by different layers, never reconciled.
+
+    Layer 1 writes lox_tank/fuel_tank.initial_pressure_psi; Layer 2 writes
+    pressure_curves.initial_lox/fuel_pressure_pa. Re-running Layer 1 silently leaves the curves
+    describing the previous design (observed 11.3 psi out on LOX, 24.9 psi on fuel). Tank
+    pressure is the upstream boundary condition for the feed-system twin (docs/adr/0001), so a
+    disagreement must not cross that boundary unannounced.
+    """
+    import logging
+    from engine.pipeline.io import load_config
+    from engine.optimizer.layers.layer1_static_optimization import (
+        _layer1_warn_stale_pressure_curves,
+    )
+
+    cfg = load_config("configs/canonical/impinging.yaml")
+    if getattr(cfg, "pressure_curves", None) is None or getattr(cfg, "lox_tank", None) is None:
+        pytest.skip("config has no pressure_curves / lox_tank to compare")
+
+    seen = []
+    logger = logging.getLogger("stale_curves_test")
+    logger.warning = lambda msg, *a, **k: seen.append(msg % a if a else msg)
+
+    PSI = 6894.76
+    cfg.lox_tank.initial_pressure_psi = 548.6
+    cfg.pressure_curves.initial_lox_pressure_pa = 548.6 * PSI       # agrees
+    cfg.fuel_tank.initial_pressure_psi = 548.6
+    cfg.pressure_curves.initial_fuel_pressure_pa = 548.6 * PSI      # agrees
+    _layer1_warn_stale_pressure_curves(cfg, logger)
+    assert not seen, "matching pressures must not warn"
+
+    cfg.pressure_curves.initial_lox_pressure_pa = 537.3 * PSI       # 11.3 psi stale
+    _layer1_warn_stale_pressure_curves(cfg, logger)
+    assert seen and "LOX tank pressure disagrees" in seen[0]

@@ -651,7 +651,7 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
           </div>
 
           <ResponsiveContainer width="100%" height={400}>
-            <ComposedChart data={chartData} margin={{ top: 5, right: 60, left: 20, bottom: 5 }}>
+            <ComposedChart data={chartData} margin={{ top: 5, right: 60, left: 20, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
               <XAxis
                 dataKey={xAxis}
@@ -707,7 +707,7 @@ export function CustomPlotter({ isVisible = true }: CustomPlotterProps) {
               )}
 
               <Tooltip content={<CustomTooltip />} />
-              <Legend />
+              <Legend verticalAlign="top" height={30} />
 
               {/* Render series */}
               {yAxes.map((field, idx) => {

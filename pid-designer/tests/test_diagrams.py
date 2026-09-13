@@ -392,3 +392,56 @@ def test_owner_param_cannot_escape_the_root(client, tmp_path, owner):
     # Both the scan and the resolve must be read-only: no folder conjured for a
     # user who does not exist.
     assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == before
+
+
+def test_an_empty_flush_does_not_destroy_the_diagram(client):
+    """`/flush` is the target of a page-unload sendBeacon.
+
+    That is the one request in the system most likely to arrive truncated or
+    synthesised by something that is not the editor -- and `DiagramPayload`
+    defaults both fields to `[]`, so a body of `{}` validates perfectly. It used
+    to replace the working copy with nothing, snapshot the nothing into history,
+    and return `{"ok": true}`: a diagram destroyed by a request that looked, from
+    the client's side, like a successful save.
+    """
+    doc_id = _create(client, A, "Beacon")
+    _take(client, doc_id)
+    drawing = {
+        "nodes": [{"id": "TK", "type": "TANK", "position": {"x": 0, "y": 0},
+                   "data": {"componentType": "TANK", "label": "TK-LOX"}}],
+        "edges": [],
+    }
+    assert client.post(f"{BASE}/{doc_id}/autosave", headers=A, json=drawing).status_code == 200
+
+    assert client.post(f"{BASE}/{doc_id}/flush", headers=A, json={}).status_code == 200
+    kept = client.get(f"{BASE}/{doc_id}/load", headers=A).json()
+    assert len(kept["nodes"]) == 1, "an empty flush must fall back to the working copy"
+    assert kept["nodes"][0]["id"] == "TK"
+
+
+def test_a_flush_that_carries_a_drawing_still_saves_it(client):
+    """The beacon legitimately carries the final edit when it beat the autosave,
+    so a non-empty body must still win."""
+    doc_id = _create(client, A, "Beacon carries")
+    _take(client, doc_id)
+    final = {
+        "nodes": [{"id": "KB", "type": "KBOTTLE", "position": {"x": 1, "y": 2},
+                   "data": {"componentType": "KBOTTLE", "label": "KB-HE"}}],
+        "edges": [],
+    }
+    assert client.post(f"{BASE}/{doc_id}/flush", headers=A, json=final).status_code == 200
+    saved = client.get(f"{BASE}/{doc_id}/load", headers=A).json()
+    assert [n["id"] for n in saved["nodes"]] == ["KB"]
+
+
+def test_clearing_a_diagram_on_purpose_still_works(client):
+    """Emptying is a real user action -- it just goes through autosave, which is
+    a foreground request the editor makes deliberately after a Clear."""
+    doc_id = _create(client, A, "Cleared")
+    _take(client, doc_id)
+    client.post(f"{BASE}/{doc_id}/autosave", headers=A, json={
+        "nodes": [{"id": "TK", "type": "TANK", "position": {"x": 0, "y": 0},
+                   "data": {"componentType": "TANK", "label": "TK"}}], "edges": []})
+    assert client.post(f"{BASE}/{doc_id}/autosave", headers=A,
+                       json={"nodes": [], "edges": []}).status_code == 200
+    assert client.get(f"{BASE}/{doc_id}/load", headers=A).json()["nodes"] == []

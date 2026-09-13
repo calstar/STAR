@@ -88,6 +88,20 @@ export interface UseCheckoutOptions<T> {
   pollMs?: number;
   /** How often to beat/re-check while we DO hold it. */
   heldPollMs?: number;
+  /**
+   * Treat this as a developer's own machine: take on open, beat every tick,
+   * take back on lapse.
+   *
+   * Off by default, so this hook's behaviour is exactly what it was before the
+   * option existed. It deliberately does NOT default to `isLocalHost(...)`:
+   * an E2E suite drives a real browser against a dev server on localhost, so a
+   * hostname default silently put every such test into local mode -- the tab
+   * took the design on open and beat every tick, and EngineDesign's
+   * "a tab that never took the design does not refresh its hold" failed. An
+   * app opts in (pid-designer passes `isLocalHost(location.hostname)`), which
+   * keeps the decision where someone can see it.
+   */
+  local?: boolean;
 }
 
 export function useCheckout<T>({
@@ -96,6 +110,7 @@ export function useCheckout<T>({
   reload,
   pollMs = 10_000,
   heldPollMs = 15_000,
+  local = false,
 }: UseCheckoutOptions<T>): Checkout {
   const [state, setState] = useState<CheckoutState>(FREE);
   const [busy, setBusy] = useState(false);
@@ -113,6 +128,9 @@ export function useCheckout<T>({
   }, []);
 
   const key = ref ? keyOf(ref) : null;
+  // `local`: there is nobody to hand the design to, so the checkout is kept
+  // out of the way -- taken on open, held while the tab lives, taken back if
+  // it lapses. Deployed, the model at the top applies.
   // Read inside callbacks and the unload handler, so neither needs `ref` in a
   // dependency array and neither goes stale.
   const refRef = useRef(ref);
@@ -166,14 +184,16 @@ export function useCheckout<T>({
     const tick = () => {
       const visible =
         typeof document === 'undefined' || document.visibilityState === 'visible';
-      const active = shouldBeat(lastActivityRef.current, lastBeatAtRef.current, visible);
+      // Locally, every tick beats: an idle dev box lapsing its own design is a
+      // nuisance with no beneficiary.
+      const active = local || shouldBeat(lastActivityRef.current, lastBeatAtRef.current, visible);
       if (active) lastBeatAtRef.current = Date.now();
       const call = active ? api.beatCheckout(ref) : api.getCheckout(ref);
       call
         .then((s) => {
           if (cancelled) return;
           applyState(s);
-          if (!s.lockedByMe) setLostUnexpectedly(true);
+          if (!s.lockedByMe) gone();
         })
         .catch((e: unknown) => {
           if (cancelled) return;
@@ -182,7 +202,7 @@ export function useCheckout<T>({
           // than flapping a live editor to read-only on one dropped request.
           if (e instanceof ApiError && e.status === 423) {
             setState((prev) => ({ ...prev, lockedByMe: false }));
-            setLostUnexpectedly(true);
+            gone();
           }
         });
     };
@@ -191,7 +211,7 @@ export function useCheckout<T>({
       cancelled = true;
       clearInterval(id);
     };
-  }, [api, ref, state.lockedByMe, heldPollMs, applyState]);
+  }, [api, ref, state.lockedByMe, heldPollMs, applyState, local]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A 1 Hz clock, only while we hold it, so the bar can count down.
   useEffect(() => {
@@ -279,10 +299,24 @@ export function useCheckout<T>({
     }
   }, [api, applyState]);
 
+  // The hold went away without us releasing it. Deployed: say so. Locally:
+  // take it straight back -- there is no one it could have gone to.
+  const gone = useCallback(() => {
+    if (local) void take();
+    else setLostUnexpectedly(true);
+  }, [local, take]);
+
   const lost = useCallback(() => {
     setState((s) => ({ ...s, lockedByMe: false }));
-    setLostUnexpectedly(true);
-  }, []);
+    gone();
+  }, [gone]);
+
+  // Locally, opening a design takes it. `busy` is left out of the deps on
+  // purpose: this fires once per design, not again after every take settles.
+  useEffect(() => {
+    if (!local || !ref || state.lockedByMe || busy) return;
+    void take();
+  }, [local, key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const acknowledgeLost = useCallback(() => setLostUnexpectedly(false), []);
 

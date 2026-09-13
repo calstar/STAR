@@ -314,7 +314,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
           Thrust vs Time
         </h4>
         <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+          <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 20 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
             <XAxis
               dataKey="time"
@@ -333,7 +333,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
               label={{ value: 'Thrust (kN)', angle: -90, position: 'insideLeft', fill: '#3b82f6' }}
             />
             <Tooltip content={customTooltip} />
-            <Legend />
+            <Legend verticalAlign="top" height={30} />
             <Line
               type="monotone"
               dataKey="thrust"
@@ -352,7 +352,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
           Chamber Pressure vs Time
         </h4>
         <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+          <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 20 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
             <XAxis
               dataKey="time"
@@ -371,7 +371,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
               label={{ value: 'Pc (psi)', angle: -90, position: 'insideLeft', fill: '#10b981' }}
             />
             <Tooltip content={customTooltip} />
-            <Legend />
+            <Legend verticalAlign="top" height={30} />
             <Line
               type="monotone"
               dataKey="Pc"
@@ -390,7 +390,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
           Mass Flow Rates vs Time
         </h4>
         <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+          <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 20 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
             <XAxis
               dataKey="time"
@@ -409,7 +409,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
               label={{ value: 'Mass Flow Rate (kg/s)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
             />
             <Tooltip content={customTooltip} />
-            <Legend />
+            <Legend verticalAlign="top" height={30} />
             <Line
               type="monotone"
               dataKey="mdot_total"
@@ -444,7 +444,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
           O/F Ratio vs Time
         </h4>
         <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+          <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 20 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
             <XAxis
               dataKey="time"
@@ -463,7 +463,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
               label={{ value: 'O/F Ratio', angle: -90, position: 'insideLeft', fill: '#eab308' }}
             />
             <Tooltip content={customTooltip} />
-            <Legend />
+            <Legend verticalAlign="top" height={30} />
             <Line
               type="monotone"
               dataKey="MR"
@@ -498,7 +498,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             )}
           </div>
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+            <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
               <XAxis
                 dataKey="time"
@@ -517,7 +517,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
                 label={{ value: 'Pressure (psi)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
               />
               <Tooltip content={customTooltip} />
-              <Legend />
+              <Legend verticalAlign="top" height={30} />
               <Line
                 type="monotone"
                 dataKey="copv_pressure"
@@ -554,7 +554,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             Tank Fill Levels vs Time
           </h4>
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+            <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
               <XAxis
                 dataKey="time"
@@ -573,7 +573,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
                 label={{ value: 'Mass (kg)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
               />
               <Tooltip content={customTooltip} />
-              <Legend />
+              <Legend verticalAlign="top" height={30} />
               {data.lox_mass_remaining_kg && (
                 <Line
                   type="monotone"
@@ -606,7 +606,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             Injector Pressure Drops vs Time
           </h4>
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+            <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
               <XAxis
                 dataKey="time"
@@ -625,7 +625,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
                 label={{ value: 'Pressure Drop (psi)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
               />
               <Tooltip content={customTooltip} />
-              <Legend />
+              <Legend verticalAlign="top" height={30} />
               <Line
                 type="monotone"
                 dataKey="delta_P_injector_O"
@@ -654,7 +654,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             Characteristic Length (L*) vs Time
           </h4>
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+            <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
               <XAxis
                 dataKey="time"
@@ -673,7 +673,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
                 label={{ value: 'L* (mm)', angle: -90, position: 'insideLeft', fill: '#a855f7' }}
               />
               <Tooltip content={customTooltip} />
-              <Legend />
+              <Legend verticalAlign="top" height={30} />
               <Line
                 type="monotone"
                 dataKey="Lstar"
@@ -694,7 +694,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             Recession Rate vs Time
           </h4>
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+            <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
               <XAxis
                 dataKey="time"
@@ -713,7 +713,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
                 label={{ value: 'Recession Rate (µm/s)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
               />
               <Tooltip content={customTooltip} />
-              <Legend />
+              <Legend verticalAlign="top" height={30} />
               {data.recession_rate_ablative_um_s && (
                 <Line
                   type="monotone"
@@ -756,7 +756,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             Cumulative Recession vs Time
           </h4>
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+            <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
               <XAxis
                 dataKey="time"
@@ -775,7 +775,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
                 label={{ value: 'Cumulative Recession (mm)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
               />
               <Tooltip content={customTooltip} />
-              <Legend />
+              <Legend verticalAlign="top" height={30} />
               {data.recession_cumulative_ablative_mm && (
                 <Line
                   type="monotone"
@@ -818,7 +818,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             Geometry Growth vs Time
           </h4>
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+            <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
               <XAxis
                 dataKey="time"
@@ -837,7 +837,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
                 label={{ value: 'Change (%)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
               />
               <Tooltip content={customTooltip} />
-              <Legend />
+              <Legend verticalAlign="top" height={30} />
               <Line
                 type="monotone"
                 dataKey="V_chamber_pct_change"

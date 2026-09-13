@@ -112,6 +112,30 @@
 	}
 }
 
+# ── Feed Twin ────────────────────────────────────────────────────────────────
+# `import protected` matters more here than elsewhere: this app reads designs
+# out of pid-designer and EngineDesign on the caller's behalf, and it does that
+# by forwarding the X-Auth-Email this gate sets. Serve it unprotected and the
+# header is absent, so every import runs as the dev user.
+{$SCHEME:https}://feed-twin.{$BASE_DOMAIN:starberkeley.org} {
+	# One route{} around the whole body, for the reason given on the other
+	# sites: the adapter sorts `handle` ahead of `route`, and (protected) is a
+	# route, so without this the handles below proxy and terminate the request
+	# before forward_auth runs. Here that does not merely expose the app -- it
+	# strips the identity the app imports designs with, so every import would
+	# run as whoever the backend falls back to.
+	route {
+		import protected
+
+		handle /api/* {
+			reverse_proxy feed-twin-api:8003
+		}
+		handle {
+			reverse_proxy feed-twin-frontend:4178
+		}
+	}
+}
+
 # ── STAR OpenRocket ───────────────────────────────────────────────────────────
 # `import protected` is the same shared @berkeley.edu gate as everywhere else, so
 # the whole app still requires a login. The tighter approved-users allowlist is

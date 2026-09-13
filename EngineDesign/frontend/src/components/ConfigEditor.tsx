@@ -10,28 +10,29 @@ interface ConfigEditorProps {
 }
 
 // Section metadata for better labels and descriptions
-const SECTION_META: Record<string, { label: string; icon: string; description: string }> = {
-  fluids: { label: 'Fluids', icon: '💧', description: 'Oxidizer and fuel properties' },
-  injector: { label: 'Injector', icon: '🔧', description: 'Injector geometry (pintle or impinging doublet)' },
-  feed_system: { label: 'Feed System', icon: '⚡', description: 'Propellant feed configuration' },
-  regen_cooling: { label: 'Regenerative Cooling', icon: '❄️', description: 'Cooling channel parameters' },
-  film_cooling: { label: 'Film Cooling', icon: '🌊', description: 'Film cooling settings' },
-  ablative_cooling: { label: 'Ablative Cooling', icon: '🔥', description: 'Ablative material properties' },
-  graphite_insert: { label: 'Graphite Insert', icon: '⬛', description: 'Throat insert configuration' },
-  stainless_steel_case: { label: 'Steel Case', icon: '🔩', description: 'Case material properties' },
-  discharge: { label: 'Discharge Coefficients', icon: '📊', description: 'Cd models for oxidizer/fuel' },
-  spray: { label: 'Spray Modeling', icon: '💨', description: 'Atomization and spray parameters' },
-  combustion: { label: 'Combustion', icon: '🔥', description: 'CEA and efficiency models' },
-  chamber_geometry: { label: 'Chamber Geometry (Unified)', icon: '🎯', description: 'Unified chamber and nozzle design parameters' },
-  chamber: { label: 'Chamber', icon: '🎯', description: 'Combustion chamber geometry' },
-  nozzle: { label: 'Nozzle', icon: '🚀', description: 'Nozzle expansion parameters' },
-  solver: { label: 'Solver', icon: '⚙️', description: 'Numerical solver settings' },
-  lox_tank: { label: 'LOX Tank', icon: '🛢️', description: 'Oxidizer tank geometry' },
-  fuel_tank: { label: 'Fuel Tank', icon: '⛽', description: 'Fuel tank geometry' },
-  press_tank: { label: 'Pressurization Tank', icon: '🎈', description: 'Pressurant system' },
-  rocket: { label: 'Rocket', icon: '🚀', description: 'Vehicle mass and geometry' },
-  environment: { label: 'Environment', icon: '🌍', description: 'Launch site conditions' },
-  thrust: { label: 'Thrust Profile', icon: '📈', description: 'Burn duration settings' },
+const SECTION_META: Record<string, { label: string; description: string }> = {
+  fluids: { label: 'Fluids', description: 'Oxidizer and fuel properties' },
+  injector: { label: 'Injector', description: 'Injector geometry (pintle or impinging doublet)' },
+  feed_system: { label: 'Feed System', description: 'Propellant feed configuration' },
+  regen_cooling: { label: 'Regenerative Cooling', description: 'Cooling channel parameters' },
+  film_cooling: { label: 'Film Cooling', description: 'Film cooling settings' },
+  ablative_cooling: { label: 'Ablative Cooling', description: 'Ablative material properties' },
+  graphite_insert: { label: 'Graphite Insert', description: 'Throat insert configuration' },
+  stainless_steel_case: { label: 'Steel Case', description: 'Case material properties' },
+  discharge: { label: 'Discharge Coefficients', description: 'Cd models for oxidizer/fuel' },
+  spray: { label: 'Spray Modeling', description: 'Atomization and spray parameters' },
+  combustion: { label: 'Combustion', description: 'CEA and efficiency models' },
+  chamber_geometry: { label: 'Chamber Geometry (Unified)', description: 'Unified chamber and nozzle design parameters' },
+  chamber: { label: 'Chamber', description: 'Combustion chamber geometry' },
+  nozzle: { label: 'Nozzle', description: 'Nozzle expansion parameters' },
+  solver: { label: 'Solver', description: 'Numerical solver settings' },
+  stability: { label: 'Stability Model', description: 'Combustion-response calibration, regulator dynamics, acoustic damping' },
+  lox_tank: { label: 'LOX Tank', description: 'Oxidizer tank geometry' },
+  fuel_tank: { label: 'Fuel Tank', description: 'Fuel tank geometry' },
+  press_tank: { label: 'Pressurization Tank', description: 'Pressurant system' },
+  rocket: { label: 'Rocket', description: 'Vehicle mass and geometry' },
+  environment: { label: 'Environment', description: 'Launch site conditions' },
+  thrust: { label: 'Thrust Profile', description: 'Burn duration settings' },
 };
 
 // Human-readable field labels
@@ -60,6 +61,18 @@ const FIELD_LABELS: Record<string, string> = {
   spacing: 'Element Spacing (m)',
   d_inlet: 'Inlet Diameter (m)',
   line_size: 'Feed Line Size',
+  // Stability model inputs (StabilityConfig)
+  n_interaction: 'Interaction Index n',
+  chi_acoustic: 'Sensitive-Lag Fraction χ',
+  mach_nozzle_entrance: 'Nozzle-Entrance Mach (blank = from contraction ratio)',
+  damping_injector_frac: 'Injector Damping Fraction',
+  damping_twophase_frac: 'Two-Phase Damping Fraction',
+  droplet_loading: 'Droplet Loading',
+  acoustic_gate_alpha_offset: 'Acoustic Gate Allowance (1/s)',
+  regulator_enabled: 'Model Dome Regulator',
+  regulator_corner_hz: 'Regulator Corner Frequency (Hz)',
+  regulator_Z_hf: 'Regulator HF Impedance (Pa·s/kg)',
+  regulator_max_excursion_psi: 'Regulator Excursion Bound (psi)',
   // Evaporation / spray-length model
   C_evap: 'Evaporation Calibration Constant',
   cp_gas: 'Combustion Gas cp (J/kg·K)',
@@ -454,7 +467,6 @@ function SectionCard({ sectionKey, data, onEdit }: SectionCardProps) {
   const [isExpanded, setIsExpanded] = useViewState(`configSection.${sectionKey}`, false);
   const meta = SECTION_META[sectionKey] || {
     label: sectionKey.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-    icon: '📄',
     description: '',
   };
 
@@ -462,7 +474,6 @@ function SectionCard({ sectionKey, data, onEdit }: SectionCardProps) {
     return (
       <div className="bg-[var(--color-bg-tertiary)] rounded-xl p-4 opacity-50">
         <div className="flex items-center gap-3">
-          <span className="text-xl">{meta.icon}</span>
           <div>
             <h4 className="font-medium text-[var(--color-text-primary)]">{meta.label}</h4>
             <p className="text-xs text-[var(--color-text-secondary)]">Not configured</p>
@@ -519,7 +530,6 @@ function SectionCard({ sectionKey, data, onEdit }: SectionCardProps) {
         className="w-full flex items-center justify-between p-4 hover:bg-[var(--color-bg-tertiary)] transition-colors"
       >
         <div className="flex items-center gap-3">
-          <span className="text-xl">{meta.icon}</span>
           <div className="text-left">
             <h4 className="font-medium text-[var(--color-text-primary)]">{meta.label}</h4>
             <p className="text-xs text-[var(--color-text-secondary)]">

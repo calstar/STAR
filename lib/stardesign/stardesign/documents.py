@@ -884,10 +884,29 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
     async def flush_document(
         request: Request, doc_id: str, payload: store.body_model, owner: str | None = None
     ):
-        """Force an immediate microversion. Target of the on-close sendBeacon."""
+        """Force an immediate microversion. Target of the on-close sendBeacon.
+
+        The body is an *override*, not the source of truth. It is honoured only
+        when it actually carries a document; an empty one falls back to the
+        working copy already on disk.
+
+        That asymmetry is the whole point. This endpoint is the target of a
+        page-unload `sendBeacon`, which is the single request in the system most
+        likely to arrive truncated, retried, or synthesised by something that is
+        not the editor -- and the body model defaults every field to empty, so a
+        body of `{}` validates perfectly. Before this, `POST /flush {}` replaced
+        the working copy with nothing, snapshotted the nothing into history, and
+        returned `{"ok": true}`. A diagram could be destroyed by a request that
+        looked, from the client side, like a successful save.
+
+        Emptying a design deliberately still works: that is `autosave`, which is
+        a foreground request the editor makes on purpose after a Clear.
+        """
         ref = _resolve_doc(request, owner, doc_id)
         _require_lock(ref)
         data = store.to_data(payload)
+        if data == store.empty_payload():
+            data = _read_working(ref.owner, ref.doc_id) or data
         _write_working(ref.owner, ref.doc_id, data)
         try:
             store.backend.snapshot_micro(ref.owner, ref.doc_id, data)
