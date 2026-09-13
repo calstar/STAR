@@ -526,6 +526,20 @@ export default function CalibrationPage() {
               )}
             </div>
 
+            {/* A capture is a mean over a ~1 s window. If the reading was still moving inside
+                it — the button pressed while a load settled — the mean sits between two values
+                and belongs to neither. The point is recorded anyway (losing an operator's
+                capture silently is worse), so say so here and let them delete it. */}
+            {selectedState?.last_capture && !selectedState.last_capture.settled && (
+              <div className="rounded-lg border border-amber-700 bg-amber-900/20 px-4 py-3 text-sm text-amber-200">
+                <strong>Last capture was taken while the reading was still moving.</strong>{' '}
+                It drifted {Math.round(selectedState.last_capture.driftAdc).toLocaleString()} ADC
+                counts across the {selectedState.last_capture.windowMs} ms window
+                ({selectedState.last_capture.driftZ.toFixed(0)}× the noise). The point was still
+                recorded — if the load had not settled, clear the calibration and capture it again.
+              </div>
+            )}
+
             {/* Live readouts */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <Stat label={selectedKind === 'LC' ? 'Force' : 'Pressure'} value={`${fmtPsi(selValue)} ${unit}`} className="text-3xl text-green-400" />

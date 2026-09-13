@@ -36,6 +36,39 @@ struct CubicFit {
     int degree = 0;
 };
 
+/**
+ * Which family of sensor a channel belongs to.
+ *
+ * logical_ch is `(slot - 1) * 10 + connector` with `slot = board_id % 10`, and
+ * check_board_slots only prevents two boards of the SAME kind sharing a slot. So PT board
+ * 22 and LC board 42 are both slot 2, and PT uid 2201 and LC uid 4201 both land on logical
+ * channel 11. The logical-channel maps below are written from a uid-ordered map, so the
+ * higher uid silently won: on 2026-09-13 a load cell's curve overwrote a 5000 psi
+ * transducer's on disk. The kind namespaces those maps so the two cannot collide.
+ */
+enum class SensorKind { PT, LC };
+
+/**
+ * How trustworthy the most recent capture on this channel was.
+ *
+ * A capture is a mean over a short window (CaptureWindow). If the reading was still moving
+ * inside that window — the operator pressed Calibrate while the load was settling — the mean
+ * is between two values and belongs to neither. The point is still recorded, because
+ * discarding an operator's action whose only feedback is a counter that fails to increment is
+ * worse than recording it visibly; `settled` is how the GUI marks it.
+ */
+struct CaptureQuality {
+    bool valid = false;  // false = no capture recorded since this channel was loaded
+    double t = 0.0;      // unix seconds
+    double adc = 0.0;
+    size_t n = 0;
+    uint64_t window_ms = 0;
+    double spread = 0.0;
+    double drift = 0.0;
+    double drift_z = 0.0;
+    bool settled = true;
+};
+
 /** Per-sensor calibration record: identity, captured points, and the current fit. */
 struct CubicChannel {
     uint16_t uid = 0;       // board_id*100 + connector (UI key)
@@ -49,11 +82,15 @@ struct CubicChannel {
     // cubic `fit` is left invalid (points are display-only) and `fit_curve` holds the sampled
     // model.
     std::string active_model = "cubic";
+    // Which logical-channel namespace this channel's fit is serialized into. PT by default so
+    // a legacy file, and any caller that does not say, keeps its historical meaning.
+    SensorKind kind = SensorKind::PT;
     std::vector<CubicPoint> points;
     CubicFit fit;
     // Robust display overlay: (adc, psi) samples of the live robust model (predict_pressure_psi),
     // set by the service on each robust capture. Empty for cubic uids.
     std::vector<std::pair<double, double>> fit_curve;
+    CaptureQuality last_capture;
     std::string status = "PENDING";  // PENDING (<2 pts) | OK | ERROR
     std::string last_error;
     double updated_at = 0.0;
@@ -65,6 +102,8 @@ struct CubicChannel {
  *   - re-loadable by this class on restart (resume points, re-fit), and
  *   - backward-compatible with the existing calibration_polynomials/poly_coeffs loaders
  *     (logical-channel-keyed) so the file doubles as the factory-cubic overlay the service loads.
+ *     Those maps are PT-only; load cells get lc_-prefixed equivalents, because the two share a
+ *     logical-channel space (see SensorKind).
  * The service is the sole writer; the Node backend only reads the file to serve the UI.
  */
 class CubicCalibrationStore {
@@ -75,12 +114,16 @@ public:
      *  `active_model` is the config truth ("cubic"|"robust"); it takes precedence over a value
      *  restored from disk by load(). */
     void register_channel(uint16_t uid, uint8_t board_id, uint8_t connector, uint8_t logical_ch,
-                          const std::string& role, const std::string& active_model = "cubic");
+                          const std::string& role, const std::string& active_model = "cubic",
+                          SensorKind kind = SensorKind::PT);
 
     /** Append a capture point (raw ADC, reference PSI), cap history, and re-fit. Returns the fit.
      *  For a robust uid the point is recorded for display only and an invalid fit is returned
      *  (the robust learner is updated by the service, not here). */
     CubicFit add_point(uint16_t uid, double adc, double psi);
+
+    /** Record how the last capture on this uid went, for the UI to show. */
+    void note_capture(uint16_t uid, const CaptureQuality& q);
 
     /** Replace a robust uid's display fit-curve (sampled predict_pressure_psi points). */
     void set_fit_curve(uint16_t uid, const std::vector<std::pair<double, double>>& curve);
@@ -103,6 +146,9 @@ public:
 private:
     mutable std::mutex mutex_;
     std::string file_path_;
+    /** Set when load() could not read an existing file. Blocks save(), so an unreadable
+     *  store is never replaced by the empty one we fell back to. */
+    bool load_failed_ = false;
     std::map<uint16_t, CubicChannel> channels_;
 
     CubicFit compute_fit(const std::vector<CubicPoint>& pts) const;

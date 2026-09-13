@@ -35,7 +35,7 @@ CubicCalibrationStore::CubicCalibrationStore(std::string file_path)
 
 void CubicCalibrationStore::register_channel(uint16_t uid, uint8_t board_id, uint8_t connector,
                                              uint8_t logical_ch, const std::string& role,
-                                             const std::string& active_model) {
+                                             const std::string& active_model, SensorKind kind) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto& ch = channels_[uid];
     ch.uid = uid;
@@ -46,6 +46,7 @@ void CubicCalibrationStore::register_channel(uint16_t uid, uint8_t board_id, uin
         ch.role = role;
     if (!active_model.empty())
         ch.active_model = active_model;  // config truth; wins over a disk-restored value
+    ch.kind = kind;                      // config truth, likewise
 }
 
 CubicFit CubicCalibrationStore::compute_fit(const std::vector<CubicPoint>& pts) const {
@@ -113,15 +114,21 @@ CubicFit CubicCalibrationStore::compute_fit(const std::vector<CubicPoint>& pts) 
 
 CubicFit CubicCalibrationStore::add_point(uint16_t uid, double adc, double psi) {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto& ch = channels_[uid];
-    if (ch.uid == 0) {
-        // Never registered (e.g. capture arrived before config wiring) — derive identity from uid.
-        ch.uid = uid;
-        ch.board_id = static_cast<uint8_t>(uid / 100);
-        ch.connector = static_cast<uint8_t>(uid % 100);
-        ch.logical_ch =
-            pt_logical_calibration_channel(slot_from_board_id(ch.board_id), ch.connector);
+    // Refuse an unknown uid rather than inventing a channel for it. register_channel() runs at
+    // startup for every configured connector, so a uid that is not here did not come from the
+    // config — and `channels_[uid]` would have silently created one, guessing PT identity from
+    // the number and filing a load cell's point on a PT's logical channel.
+    auto cit = channels_.find(uid);
+    if (cit == channels_.end()) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            std::cout << "[CubicStore] refusing capture for unregistered uid " << uid
+                      << " (not in config); further such warnings suppressed" << std::endl;
+        }
+        return CubicFit{};
     }
+    auto& ch = cit->second;
 
     CubicPoint pt;
     pt.adc = adc;
@@ -156,6 +163,13 @@ CubicFit CubicCalibrationStore::add_point(uint16_t uid, double adc, double psi) 
         ch.last_error.clear();
     }
     return ch.fit;
+}
+
+void CubicCalibrationStore::note_capture(uint16_t uid, const CaptureQuality& q) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = channels_.find(uid);
+    if (it != channels_.end())
+        it->second.last_capture = q;
 }
 
 void CubicCalibrationStore::set_fit_curve(uint16_t uid,
@@ -214,16 +228,23 @@ std::string CubicCalibrationStore::serialize() const {
     json poly_coeffs = json::object();
     json norm_min = json::object();
     json norm_scale = json::object();
+    json lc_polys = json::object();
+    json lc_poly_coeffs = json::object();
+    json lc_norm_min = json::object();
+    json lc_norm_scale = json::object();
     json state = json::object();
 
     for (const auto& [uid, ch] : channels_) {
         // Logical-channel-keyed maps: consumed by PTCalibrationManager / loadCalibrationJSON.
+        // Split by kind — a PT and a load cell on the same slot share a logical channel, and
+        // writing both into one map let the higher uid overwrite the other (see SensorKind).
         if (ch.fit.valid) {
             const std::string lkey = std::to_string(static_cast<int>(ch.logical_ch));
-            polys[lkey] = {ch.fit.A, ch.fit.B, ch.fit.C, ch.fit.D};
-            poly_coeffs[lkey] = ch.fit.poly;
-            norm_min[lkey] = ch.fit.norm_min;
-            norm_scale[lkey] = ch.fit.norm_scale;
+            const bool is_lc = ch.kind == SensorKind::LC;
+            (is_lc ? lc_polys : polys)[lkey] = {ch.fit.A, ch.fit.B, ch.fit.C, ch.fit.D};
+            (is_lc ? lc_poly_coeffs : poly_coeffs)[lkey] = ch.fit.poly;
+            (is_lc ? lc_norm_min : norm_min)[lkey] = ch.fit.norm_min;
+            (is_lc ? lc_norm_scale : norm_scale)[lkey] = ch.fit.norm_scale;
         }
 
         // uid-keyed rich state for the UI (points + per-channel fit + identity).
@@ -233,6 +254,7 @@ std::string CubicCalibrationStore::serialize() const {
         cj["logicalCh"] = static_cast<int>(ch.logical_ch);
         cj["role"] = ch.role;
         cj["active_model"] = ch.active_model;
+        cj["kind"] = ch.kind == SensorKind::LC ? "LC" : "PT";
         cj["numPoints"] = ch.points.size();
         cj["status"] = ch.status;
         cj["last_error"] = ch.last_error;
@@ -243,6 +265,16 @@ std::string CubicCalibrationStore::serialize() const {
         cj["polyCoeffs"] = ch.fit.poly;
         cj["adcNormMin"] = ch.fit.norm_min;
         cj["adcNormScale"] = ch.fit.norm_scale;
+        if (ch.last_capture.valid) {
+            cj["last_capture"] = {{"t", ch.last_capture.t},
+                                  {"adc", ch.last_capture.adc},
+                                  {"n", ch.last_capture.n},
+                                  {"windowMs", ch.last_capture.window_ms},
+                                  {"spreadAdc", ch.last_capture.spread},
+                                  {"driftAdc", ch.last_capture.drift},
+                                  {"driftZ", ch.last_capture.drift_z},
+                                  {"settled", ch.last_capture.settled}};
+        }
         json pts = json::array();
         for (const auto& p : ch.points)
             pts.push_back({{"adc", p.adc}, {"psi", p.psi}, {"t", p.t}});
@@ -261,12 +293,21 @@ std::string CubicCalibrationStore::serialize() const {
     root["calibration_poly_coeffs"] = poly_coeffs;
     root["calibration_adc_norm_min"] = norm_min;
     root["calibration_adc_norm_scale"] = norm_scale;
+    root["lc_calibration_polynomials"] = lc_polys;
+    root["lc_calibration_poly_coeffs"] = lc_poly_coeffs;
+    root["lc_calibration_adc_norm_min"] = lc_norm_min;
+    root["lc_calibration_adc_norm_scale"] = lc_norm_scale;
     root["cubic_state"] = state;
     return root.dump(2);
 }
 
 bool CubicCalibrationStore::save() const {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (load_failed_) {
+        // A file we could not read is a file we must not replace: it is the only copy of the
+        // operator's captured points, and this store is empty precisely because the read failed.
+        return false;
+    }
     try {
         std::filesystem::path p(file_path_);
         if (p.has_parent_path())
@@ -299,10 +340,21 @@ size_t CubicCalibrationStore::load() {
     try {
         root = nlohmann::json::parse(content);
     } catch (...) {
-        return 0;  // corrupt/partial file — start clean rather than crash
-    }
-    if (!root.contains("cubic_state") || !root["cubic_state"].is_object())
+        // Corrupt/partial file — start clean rather than crash, but REMEMBER it. The service
+        // saves at startup, and a caller that cannot tell "unreadable" from "no file yet"
+        // would overwrite an operator's points with an empty store on the next write.
+        load_failed_ = true;
+        std::cout << "[CubicStore] " << file_path_
+                  << " could not be parsed — refusing to overwrite it" << std::endl;
         return 0;
+    }
+    if (!root.contains("cubic_state") || !root["cubic_state"].is_object()) {
+        load_failed_ = true;
+        std::cout << "[CubicStore] " << file_path_
+                  << " has no cubic_state — refusing to overwrite it" << std::endl;
+        return 0;
+    }
+    load_failed_ = false;
 
     // role -> current uid, from the channels register_channel() created before this load. Durable
     // cal is filed by role, so an entry re-attaches to the connector its role now occupies — the
@@ -352,6 +404,10 @@ size_t CubicCalibrationStore::load() {
                 pt_logical_calibration_channel(slot_from_board_id(ch.board_id), ch.connector);
             ch.role = entry_role;
             ch.active_model = cj.value("active_model", std::string("cubic"));
+            // Only an ORPHAN takes its kind from the file; a channel the config registered
+            // keeps config's, exactly as active_model does. A legacy file has no "kind", and
+            // defaulting an orphan to PT preserves what those maps have always meant.
+            ch.kind = cj.value("kind", std::string("PT")) == "LC" ? SensorKind::LC : SensorKind::PT;
         }
 
         ch.points.clear();

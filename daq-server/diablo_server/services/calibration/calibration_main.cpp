@@ -124,6 +124,8 @@ std::unordered_map<uint16_t, double> g_lc_pga_gain;
  *  of pt_calibration/robust_manager (PT and LC uids share the store; their board_id ranges never
  *  collide, but nothing else tags which kind a uid is). */
 std::set<uint16_t> g_lc_uids;
+/** Board ids of every LC board, so a connector outside active_connectors still routes as LC. */
+std::set<uint8_t> g_lc_board_ids;
 
 }  // namespace
 
@@ -455,6 +457,12 @@ static void signalHandler(int /*sig*/) {
 /** Monotonic now, in ns. The capture window judges liveness on OUR clock and never the
  *  board's, so a board whose clock is skewed or has just reset cannot make a dead channel
  *  look live (or a live one look stale). */
+/** Wall-clock unix seconds, for stamping a record a human will read. */
+static double unix_now() {
+    return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
 static uint64_t mono_ns() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                      std::chrono::steady_clock::now().time_since_epoch())
@@ -888,7 +896,8 @@ int main(int argc, char* argv[]) {
             const auto rit = g_uid_role.find(uid);
             const std::string role = rit != g_uid_role.end() ? rit->second : std::string();
             cubic_store.register_channel(uid, bc.board_id, local_ch, log_ch, role,
-                                         pt_model_name(pt_model_for(uid)));
+                                         pt_model_name(pt_model_for(uid)),
+                                         fsw::calibration::SensorKind::PT);
         }
     }
 
@@ -898,7 +907,9 @@ int main(int argc, char* argv[]) {
     // discriminant apply_capture/apply_clear/reload_live_store use to route a store entry to
     // lc_calibration instead of pt_calibration/robust_manager.
     g_lc_uids.clear();
+    g_lc_board_ids.clear();
     for (const auto& bc : lc_boards) {
+        g_lc_board_ids.insert(bc.board_id);
         for (uint8_t local_ch : bc.channels) {
             const uint16_t uid = static_cast<uint16_t>(bc.board_id) * 100u + local_ch;
             const uint8_t log_ch =
@@ -907,7 +918,8 @@ int main(int argc, char* argv[]) {
             const std::string role = rit != g_uid_role.end() ? rit->second : std::string();
             g_lc_uids.insert(uid);
             cubic_store.register_channel(uid, bc.board_id, local_ch, log_ch, role,
-                                         lc_model_name(lc_model_for(uid)));
+                                         lc_model_name(lc_model_for(uid)),
+                                         fsw::calibration::SensorKind::LC);
         }
     }
 
@@ -1068,8 +1080,15 @@ int main(int argc, char* argv[]) {
         return o.str();
     };
 
+    // g_lc_uids only holds connectors in active_connectors, so an LC channel outside that list
+    // used to fall through to the PT path and write a PT logical channel. The board id settles
+    // the kind regardless of which connectors are declared.
+    auto is_lc_uid = [&](uint16_t uid) {
+        return g_lc_uids.count(uid) > 0 ||
+               g_lc_board_ids.count(static_cast<uint8_t>(uid / 100)) > 0;
+    };
     auto apply_capture = [&](uint16_t uid, double adc_avg, double ref) {
-        if (g_lc_uids.count(uid))
+        if (is_lc_uid(uid))
             apply_lc_capture(uid, adc_avg, ref);
         else
             apply_pt_capture(uid, adc_avg, ref);
@@ -1095,7 +1114,7 @@ int main(int argc, char* argv[]) {
         cubic_store.save();
     };
     auto apply_clear = [&](uint16_t uid) {
-        if (g_lc_uids.count(uid))
+        if (is_lc_uid(uid))
             apply_lc_clear(uid);
         else
             apply_pt_clear(uid);
@@ -1142,7 +1161,7 @@ int main(int argc, char* argv[]) {
             if (cch == nullptr)
                 continue;
             const bool fit_ok = fit != nullptr && fit->valid;
-            if (g_lc_uids.count(uid)) {
+            if (is_lc_uid(uid)) {
                 // LC: cubic fit only, no robust baseline to reseed.
                 if (fit_ok)
                     lc_calibration.set_calibration(cch->logical_ch,
@@ -1171,7 +1190,7 @@ int main(int argc, char* argv[]) {
         // ones), so the merged UI can show "what robust would look like" before you switch to it.
         // LC has no robust display.
         for (uint16_t uid : cubic_store.uids()) {
-            if (g_lc_uids.count(uid))
+            if (is_lc_uid(uid))
                 continue;
             const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
             if (cch != nullptr && !cch->points.empty())
@@ -1441,6 +1460,13 @@ int main(int argc, char* argv[]) {
                     const fsw::calibration::CaptureResult cr = take_capture(sensor_id, "Capture");
                     if (cr.ok) {
                         apply_capture(sensor_id, cr.adc_avg, ref_val);
+                        // Recorded either way; `settled` is how the GUI flags a capture taken
+                        // while the reading was still moving.
+                        cubic_store.note_capture(sensor_id,
+                                                 fsw::calibration::CaptureQuality{
+                                                     true, unix_now(), cr.adc_avg, cr.n,
+                                                     fsw::calibration::kCaptureWindowMs, cr.spread,
+                                                     cr.drift, cr.drift_z, cr.settled});
                         std::cout << "[Cal] Capture uid=" << static_cast<int>(sensor_id) << " ("
                                   << pt_model_name(pt_model_for(sensor_id)) << ") "
                                   << capture_detail(cr) << " ref=" << ref_val << std::endl;
