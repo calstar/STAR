@@ -45,6 +45,60 @@ function physicsKg(adc: number, p: LcPhysicsParams): number {
   return (adc / codeFs) * p.fullScale;
 }
 
+/**
+ * The ADC code at this sensor's full scale — where its physics curve actually ends.
+ *
+ * Fixed by the datasheet params in config, so it is identical for two identically
+ * configured channels no matter what either of them has captured.
+ */
+function physicsSpanAdc(physics?: PhysicsParams, lcPhysics?: LcPhysicsParams): number {
+  if (lcPhysics) {
+    const codeFs = (lcPhysics.sensitivityMvPerV / 1000) * lcPhysics.pgaGain * ADC_MAX;
+    return codeFs > 0 ? codeFs : ADC_MAX;
+  }
+  if (physics?.isLoop) {
+    // Full scale is 20 mA through the sense resistor.
+    const vSense = (20 / 1000) * (physics.senseResistor ?? 120);
+    const frac = vSense / (physics.adcRefVoltage ?? 2.5);
+    return frac > 0 ? frac * ADC_MAX : ADC_MAX;
+  }
+  // 0-5 V ratiometric reaches full scale at full code.
+  return ADC_MAX;
+}
+
+/**
+ * The [lo, hi] ADC range the model curves are swept across.
+ *
+ * A cubic is only meaningful near the points it was fitted to, so a cubic/robust sensor
+ * zooms to its captures. Physics is not: it is a fixed datasheet formula that reads
+ * nothing from the capture history. Sweeping it over a capture window made two
+ * identically configured load cells draw completely different-looking curves — the same
+ * line, on axes a hundredfold apart (stand, 2026-09-13). A physics sensor therefore gets
+ * its own full-scale range, identical for every channel configured the same way, and its
+ * captured points still plot at their true position on it.
+ *
+ * Exported for the test; the component is the only caller.
+ */
+export function physicsSweepRangeForTests(
+  activeModel: 'cubic' | 'robust' | 'physics' | undefined,
+  points: Array<{ adc: number }>,
+  physics?: PhysicsParams,
+  lcPhysics?: LcPhysicsParams,
+): [number, number] {
+  // No captures also lands here: the old code then swept to ADC_MAX, which for a 2 mV/V
+  // load cell at PGA 32 is 15x past anything the sensor can output.
+  if (activeModel === 'physics' || points.length === 0) {
+    return [0, physicsSpanAdc(physics, lcPhysics)];
+  }
+  const adcs = points.map((p) => p.adc);
+  let lo = Math.min(...adcs);
+  let hi = Math.max(...adcs);
+  const pad = (hi - lo) * 0.15 || Math.abs(hi) * 0.1 || 1;
+  lo -= pad;
+  hi += pad;
+  return [lo, hi];
+}
+
 function evalCubicNorm(adc: number, poly: number[], min: number, scale: number): number {
   const s = scale || 1;
   const x = (adc - min) / s;
@@ -123,17 +177,7 @@ export function CalibrationChart({ state, height = 420, activeModel, show, physi
       op: n > 1 ? 0.35 + 0.65 * (i / (n - 1)) : 1, // oldest→newest
     }));
 
-    // Shared ADC sweep range: around the captured points if any, else the full physics range.
-    let lo: number, hi: number;
-    if (n >= 1) {
-      const adcs = pts.map((p) => p.adc);
-      lo = Math.min(...adcs);
-      hi = Math.max(...adcs);
-      const pad = (hi - lo) * 0.15 || Math.abs(hi) * 0.1 || 1;
-      lo -= pad; hi += pad;
-    } else {
-      lo = 0; hi = ADC_MAX;
-    }
+    const [lo, hi] = physicsSweepRangeForTests(activeModel, pts, physics, lcPhysics);
 
     const N = 60;
     const poly = state?.polyCoeffs;
@@ -152,7 +196,7 @@ export function CalibrationChart({ state, height = 420, activeModel, show, physi
       for (const c of state?.fitCurve ?? []) rows.push({ adc: c.adc, psiRobust: c.psi });
     }
     return rows.sort((a, b) => a.adc - b.adc);
-  }, [state, showCubic, showRobust, showPhysics, physics, lcPhysics]);
+  }, [state, showCubic, showRobust, showPhysics, physics, lcPhysics, activeModel]);
 
   const w = (m: 'cubic' | 'robust' | 'physics') => (activeModel === m ? 3 : 1.5);
   const dash = (m: 'cubic' | 'robust' | 'physics') => (activeModel && activeModel !== m ? '4 3' : undefined);
