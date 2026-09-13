@@ -761,19 +761,45 @@ const apiHandler = createAPIHandler({
     // store file). Ask the calibration service to re-read it so the whole rig's cal switches live.
     publishCalibrationReload(calibrationHost);
   },
-  onConfigUpdated: () => {
-    reloadGuiStreamConfig();
-    // Rebuild sensor-role-derived caches so a Sensor Roles / board_id edit reflects
-    // live (the backend is always-on and isn't restarted by a session start).
-    calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
-    calibrationHost.channelToEntityMap = calChannelToEntityMap;
-    _ptSlotToBoardId.clear();
-    _hpBoardNumbers = hpBoardNumbers();
-    // Tell every open client the config changed so they refetch /api/* live
-    // (sensor-config, pressure-limits, pressure-bars) — no reload/restart.
-    broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
-  },
+  onConfigUpdated: () => applyDeployedConfigChange(),
 });
+
+/**
+ * Everything the always-on backend must redo when new config reaches disk, plus the nudge
+ * that makes open browsers pick it up.
+ *
+ * Named and exported to the session path because SessionManager.start() deploys too. The
+ * api-server edit routes call deployActiveProfile() and then onConfigUpdated(); the session
+ * path called deployActiveProfile() with nothing after it, so a profile edited during a run
+ * landed in config.toml at the next session start and no client was ever told. /api/states
+ * served the new state immediately while every open tab kept the list it had cached at page
+ * load, and the state diagram silently disagreed with the rig until someone hit reload.
+ * Observed on the stand 2026-09-12: "LOX Press" saved 20:06, deployed 20:08, invisible in
+ * the GUI on both sides of it.
+ *
+ * Deliberately NOT fired on a plain save. With a session active a save is a draft — nothing
+ * is deployed and the rig keeps running what it booted with, so the GUI should keep showing
+ * that, not the draft.
+ */
+export function applyDeployedConfigChange(): void {
+  reloadGuiStreamConfig();
+  // Rebuild sensor-role-derived caches so a Sensor Roles / board_id edit reflects
+  // live (the backend is always-on and isn't restarted by a session start).
+  calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
+  calibrationHost.channelToEntityMap = calChannelToEntityMap;
+  _ptSlotToBoardId.clear();
+  _hpBoardNumbers = hpBoardNumbers();
+  // The state CSVs are deployed in the same step, so rebuild what is derived from them too
+  // rather than relying on onStateCsvUpdated, which the session path never fires.
+  try {
+    STATE_ACTUATOR_MAP = getStateActuatorMap();
+  } catch (e) {
+    console.warn('Failed to rebuild STATE_ACTUATOR_MAP:', e);
+  }
+  // Tell every open client the config changed so they refetch /api/* live
+  // (states, sensor-config, pressure-limits, pressure-bars) — no reload/restart.
+  broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
+}
 
 const httpServer = http.createServer(async (req, res) => {
   const urlPath = (req.url ?? '').split('?')[0] ?? '';
@@ -1676,7 +1702,7 @@ httpServer.listen(WS_PORT, () => {
   sessionManager.init(broadcast, broadcastNotification, () => {
     loadBoardsFromConfig();
     broadcastBoardStatus();
-  });
+  }, applyDeployedConfigChange);
   // Board diagnostic logs (type-15 LOGS forwarded by daq_bridge over loopback UDP).
   startBoardLogReceiver(broadcast);
 });
