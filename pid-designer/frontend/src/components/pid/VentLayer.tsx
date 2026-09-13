@@ -53,7 +53,7 @@ export function VentLayer({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) {
           const sx = m.x + 14 * m.dx, sy = m.y + 14 * m.dy;
           const tx = m.x + 24 * m.dx, ty = m.y + 24 * m.dy;
           return (
-            <g key={m.id} stroke="#94a3b8" strokeWidth={1.5} fill="none">
+            <g key={m.id} stroke="var(--color-text-secondary)" strokeWidth={1.5} fill="none">
               <line x1={m.x} y1={m.y} x2={sx} y2={sy} />
               <polyline points={`${sx + 6 * px},${sy + 6 * py} ${tx},${ty} ${sx - 6 * px},${sy - 6 * py}`} />
             </g>

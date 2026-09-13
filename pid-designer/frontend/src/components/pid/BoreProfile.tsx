@@ -18,9 +18,14 @@ import type { LineSegment } from './segments';
  * change happens.
  */
 
+// The pipe wall, drawn -- the same functional blue as Sketch.tsx's WALL
+// (same concept, a different view of it), kept deliberately rather than
+// grayed out: it's real geometry, not decoration.
 const BORE = '#38bdf8';
 const BORE_FILL = 'rgba(56,189,248,0.13)';
-const ASSUMED = '#f59e0b';
+// A value the solver assumed rather than one that was measured or set --
+// the same "verify this" semantic as --color-warning, so it uses that token.
+const ASSUMED = 'var(--color-warning)';
 
 export function BoreProfile({ segments }: { segments: LineSegment[] }) {
   const [hover, setHover] = useState<string | null>(null);
@@ -100,7 +105,7 @@ export function BoreProfile({ segments }: { segments: LineSegment[] }) {
         style={{ aspectRatio: `${W} / ${H}` }}
       >
         <path d={path} fill={BORE_FILL} stroke={BORE} strokeWidth={1.2} strokeLinejoin="round" />
-        <path d={centre} fill="none" stroke="#475569" strokeWidth={0.8} strokeDasharray="4 3" />
+        <path d={centre} fill="none" stroke="var(--color-text-muted)" strokeWidth={0.8} strokeDasharray="4 3" />
 
         {/* Where each element begins, and what it is. */}
         {walls.spans.map(({ element, mid }) => {
@@ -116,7 +121,7 @@ export function BoreProfile({ segments }: { segments: LineSegment[] }) {
                 <line
                   x1={tx(s.x + nx * s.r * rScale)} y1={ty(s.y + ny * s.r * rScale)}
                   x2={tx(s.x - nx * s.r * rScale)} y2={ty(s.y - ny * s.r * rScale)}
-                  stroke={element.assumed ? ASSUMED : '#64748b'}
+                  stroke={element.assumed ? ASSUMED : 'var(--color-text-muted)'}
                   strokeWidth={on ? 1.6 : 0.9}
                   strokeDasharray={element.kind === 'transition' ? '2 2' : undefined}
                 />

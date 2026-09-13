@@ -4,7 +4,6 @@ import {
   ReactFlow,
   Background,
   Controls,
-  MiniMap,
   Panel,
   addEdge,
   useNodesState,
@@ -29,6 +28,7 @@ import { DiagramBar } from './DiagramBar';
 import { ChangeModal, ReadOnlyProvider, isLocalHost, useCheckout, useReadOnly } from '@stardesign-ui';
 import { Modal } from '../ui';
 import { primaryBtn } from '../../lib/ui';
+import { applyTheme, getInitialTheme, type Theme } from '../../lib/theme';
 import * as api from '../../api/diagrams';
 import { designApi, keyOf, refOf } from '../../api/diagrams';
 import type { DiagramMeta, DocRef, MicroVersion, ReleaseVersion, Snapshot } from '../../api/diagrams';
@@ -212,12 +212,15 @@ interface CanvasProps {
   onForbidden:        () => void;
   /** Autosave hit a 423: the checkout lapsed or was taken. */
   onLockLost:         () => void;
+  /** React Flow themes its own chrome (handles, selection, controls) off
+   *  this -- it does not read the CSS variables above on its own. */
+  theme:              Theme;
 }
 
 function PIDCanvas({
   diagramRef, fitRef, viewportsRef, page, setPage, declaredPages, setDeclaredPages, getRef, loadRef, clearRef, clearCountRef, undoRef, redoRef,
   releaseRef, getHistoryRef, getReleasesRef, restoreMicroRef, restoreReleaseRef, onForbidden, onLockLost,
-  mode, sheet,
+  mode, sheet, theme,
 }: CanvasProps) {
   // `onNodesChange` is deliberately unused: `handleNodesChange` below applies
   // the changes itself so it can move clipped instruments in the same update.
@@ -1072,26 +1075,13 @@ function PIDCanvas({
         snapGrid={SNAP}
         onMove={rememberViewport}
         defaultViewport={viewportsRef.current.get(viewKey) ?? { x: 0, y: 0, zoom: 1 }}
-        colorMode="dark"
+        colorMode={theme}
         defaultEdgeOptions={{ type: 'smoothstep' }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#1e293b" />
+        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-border)" />
         <AttachmentLayer nodes={nodes} edges={edges} />
         <VentLayer nodes={view.nodes} edges={view.edges} />
         <Controls />
-        {/* A drawing with forty symbols is bigger than a screen, and a
-            minimap is how you know which corner of it you are in. Under the
-            checks badge, which owns the top-right corner. */}
-        <MiniMap
-          pannable zoomable
-          position="top-right"
-          style={{ marginTop: 44, width: 160, height: 100 }}
-          bgColor="var(--color-bg-primary)"
-          maskColor="rgba(10, 15, 26, 0.6)"
-          nodeColor="#334155"
-          nodeStrokeColor="#475569"
-          nodeBorderRadius={2}
-        />
         <TitleBlock meta={{ ...sheet, page }} />
         {/* One line, and only the gestures nothing else on screen mentions.
             It used to list nine, which wrapped to four lines on any canvas
@@ -1100,7 +1090,7 @@ function PIDCanvas({
             `nowrap` is what makes that impossible rather than unlikely, and
             it stopped taking clicks meant for the canvas underneath. */}
         <Panel position="bottom-center" className="pointer-events-none max-w-full">
-          <span className="block truncate whitespace-nowrap text-[10px] text-slate-600 select-none">
+          <span className="block truncate whitespace-nowrap text-[10px] text-[var(--color-text-muted)] select-none">
             Double-click to configure · R rotates · ⌘C ⌘V ⌘D copy, paste, duplicate · Right-click colours
           </span>
         </Panel>
@@ -1212,6 +1202,17 @@ function PIDCanvas({
 // ── Top-level designer ────────────────────────────────────────────────────────
 export function PIDDesigner() {
   const [mode, setMode] = useState<InteractionMode>('pan');
+  // Applied once before mount (main.tsx), so this just mirrors the DOM state
+  // rather than deciding it -- re-deriving it here would need the same
+  // localStorage read twice and could disagree with what's already applied.
+  const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const toggleTheme = useCallback(() => {
+    setTheme(t => {
+      const next: Theme = t === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+      return next;
+    });
+  }, []);
 
   const [diagrams, setDiagrams] = useState<DiagramMeta[]>([]);
   const [activeRef, setActiveRef] = useState<DocRef | null>(null);
@@ -1360,13 +1361,15 @@ export function PIDDesigner() {
     // is unaffected: gating is opt-in, and Take / Release must stay live
     // exactly when you do not hold the diagram.
     <ReadOnlyProvider readOnly={!checkout.held}>
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)]">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <DiagramBar
         diagrams={diagrams}
         activeKey={activeKey}
         onSelect={selectDiagram}
         onOpenChange={() => setShowChange(true)}
         checkout={checkout}
+        theme={theme}
+        onToggleTheme={toggleTheme}
       />
 
       {showChange && (
@@ -1453,9 +1456,10 @@ export function PIDDesigner() {
               sheet={sheet}
               onForbidden={onForbidden}
               onLockLost={checkout.lost}
+              theme={theme}
             />
           ) : (
-            <div className="flex-1 flex items-center justify-center text-sm text-slate-600">
+            <div className="flex-1 flex items-center justify-center text-sm text-[var(--color-text-muted)]">
               {ready ? 'Create a diagram to begin.' : 'Loading…'}
             </div>
           )}

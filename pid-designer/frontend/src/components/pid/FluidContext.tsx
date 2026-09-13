@@ -61,5 +61,6 @@ export function useEdgeFluidColor(id: string, override?: string): string {
   return f?.species ? colorForSpecies(f.species) : UNSET_COLOR;
 }
 
-/** Two fluids meeting. Loud on purpose. */
-export const CONFLICT_COLOR = '#e11d48';
+/** Two fluids meeting. Loud on purpose -- the shared danger token, not its
+ *  own hardcoded red. */
+export const CONFLICT_COLOR = 'var(--color-danger)';

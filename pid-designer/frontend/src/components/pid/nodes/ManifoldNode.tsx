@@ -42,7 +42,7 @@ export function ManifoldNode({ id, data, selected }: NodeProps) {
   const assigned = useNodeFluid(id);
   const species = speciesById(assigned?.species ?? undefined);
   const fluid = color ?? (species ? colorForSpecies(species.id) : UNSET_COLOR);
-  const stroke = selected ? '#3b82f6' : (color ?? '#94a3b8');
+  const stroke = selected ? 'var(--color-text-primary)' : (color ?? 'var(--color-text-secondary)');
 
   const outlets = Math.max(1, Number(options?.outlets ?? 4));
 

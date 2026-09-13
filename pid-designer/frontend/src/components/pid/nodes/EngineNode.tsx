@@ -22,7 +22,7 @@ const W = 72, H = 120;
  */
 export function EngineNode({ id, data, selected }: NodeProps) {
   const { label, labelOffset, rotation, params } = data as unknown as PIDNodeData;
-  const stroke = selected ? '#3b82f6' : '#94a3b8';
+  const stroke = selected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)';
   const readout = [fmtParam(params?.chamber_pressure), fmtParam(params?.chamber_temperature)].filter(Boolean);
 
   const boxH = (rotation ?? 0) % 180 === 90 ? W : H;
@@ -39,7 +39,7 @@ export function EngineNode({ id, data, selected }: NodeProps) {
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
         {/* injector manifold block */}
         <rect x="10" y="8" width="52" height="24" rx="2"
-          fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
+          fill="var(--color-bg-tertiary)" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
         {/* injector face */}
         <line x1="10" y1="32" x2="62" y2="32" stroke={stroke} strokeWidth={2} />
         {[18, 27, 36, 45, 54].map(x => (
@@ -47,21 +47,21 @@ export function EngineNode({ id, data, selected }: NodeProps) {
         ))}
         {/* chamber, throat, bell */}
         <path d="M14,32 L14,62 Q14,76 30,84 L42,84 Q58,76 58,62 L58,32"
-          fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
+          fill="var(--color-bg-tertiary)" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
         <path d="M30,84 Q22,100 16,114 L56,114 Q50,100 42,84 Z"
-          fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
+          fill="var(--color-bg-tertiary)" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
         {/* One wrapper each: the counter-rotation is about the text's own
             anchor, so two texts sharing one would spin the second about the
             first's position and fling it off the symbol. */}
         <Upright rotation={rotation} x={36} y={24}>
-          <text x="36" y="24" textAnchor="middle" fontSize="8" fill="#e2e8f0" fontFamily="monospace">INJ</text>
+          <text x="36" y="24" textAnchor="middle" fontSize="8" fill="var(--color-text-primary)" fontFamily="monospace">INJ</text>
         </Upright>
         {/* In the chamber, between the face and the throat: the one place on
             the symbol with room for two lines that no port or tag reaches. */}
         {readout.map((line, i) => (
           <Upright key={line} rotation={rotation} x={36} y={56 + i * 11}>
             <text x="36" y={56 + i * 11} textAnchor="middle" fontSize="7.5"
-              fill={i === 0 ? '#f97316' : '#cbd5e1'} fontFamily="monospace">{line}</text>
+              fill={i === 0 ? 'var(--color-text-primary)' : 'var(--color-text-secondary)'} fontFamily="monospace">{line}</text>
           </Upright>
         ))}
       </svg>

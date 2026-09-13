@@ -18,7 +18,7 @@ const W = 60, H = 60;
  */
 export function QDNode({ id, data, selected }: NodeProps) {
   const { label, labelOffset, rotation, options } = data as unknown as PIDNodeData;
-  const stroke = selected ? '#3b82f6' : '#94a3b8';
+  const stroke = selected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)';
   const hydraulic = options?.service === 'hydraulic';
 
   // The box once turned, so the tag sits under what is drawn.
@@ -34,7 +34,7 @@ export function QDNode({ id, data, selected }: NodeProps) {
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
         <circle
           cx="30" cy="30" r="25"
-          fill="#1e293b"
+          fill="var(--color-bg-tertiary)"
           stroke={stroke}
           strokeWidth={selected ? 2.5 : 1.5}
           // A hydraulic disconnect reads as dashed, so the two are separable in
@@ -45,7 +45,7 @@ export function QDNode({ id, data, selected }: NodeProps) {
         <line x1="46" y1="14" x2="14" y2="46" stroke={stroke} strokeWidth={2} />
         {hydraulic && (
           <Upright rotation={rotation} x={30} y={52}>
-            <text x="30" y="52" textAnchor="middle" fontSize="7" fill="#a78bfa" fontFamily="monospace">HYD</text>
+            <text x="30" y="52" textAnchor="middle" fontSize="7" fill="var(--color-text-secondary)" fontFamily="monospace">HYD</text>
           </Upright>
         )}
       </svg>

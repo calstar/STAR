@@ -27,7 +27,7 @@ export function RegionNode({ id, data, selected }: NodeProps) {
   useEffect(() => { if (!editing) setDraft(label ?? ''); }, [label, editing]);
   useEffect(() => { if (editing) inputRef.current?.select(); }, [editing]);
 
-  const stroke = color ?? '#64748b';
+  const stroke = color ?? 'var(--color-text-muted)';
 
   const commit = () => {
     setNodes(nds => nds.map(n => (n.id === id ? { ...n, data: { ...n.data, label: draft } } : n)));
