@@ -1757,6 +1757,9 @@ export default function ConfigPage() {
                 {(Object.entries(((config as any).boards || {}) as Record<string, any>)
                   .filter(([, b]) => ['PT', 'RTD', 'TC', 'ENCODER', 'LC'].includes(b?.type))
                   .map(([boardKey, b]) => {
+                    // The rig-wide load-cell defaults the calibration service falls back to when a
+                    // role has no per-sensor override (lc_*_for in calibration_main.cpp).
+                    const lcGlobals = (((config as any).calibration || {}).lc || {}) as Record<string, number>;
                     const isPT = b?.type === 'PT';
                     const isLC = b?.type === 'LC';
                     const isLoop = isPT && !!(b?.hp_pt_connectors || b?.hp_pt_full_scale_psi != null || b?.pt_type === '4-20 mA absolute');
@@ -1777,6 +1780,12 @@ export default function ConfigPage() {
                       modelKey: `calibration_model_${boardKey}`,
                       fullScaleKey: `calibration_full_scale_${boardKey}`,
                       resistorKey: `calibration_sense_resistor_${boardKey}`,
+                      // A load cell's physics conversion is force = adc / ((mV/V / 1000) * PGA
+                      // * 2^31) * full_scale (convert_lc_adc_to_force). The calibration service
+                      // reads these two per role and nothing could write them, so an LC's
+                      // physics calibration was only ever settable rig-wide via [calibration.lc].
+                      sensitivityKey: `calibration_sensitivity_${boardKey}`,
+                      pgaKey: `calibration_pga_${boardKey}`,
                       // Load cells carry a per-role model exactly like PTs — cubic fits the raw
                       // ADC, physics is the datasheet conversion — so they get the selector too.
                       // Robust is PT-only (it is an RLS fit over PT captures), and an LC defaults
@@ -1785,11 +1794,19 @@ export default function ConfigPage() {
                       isLC,
                       isLoop,
                       defaultModel: isLC ? 'physics' : isLoop ? 'physics' : 'cubic',
-                      boardFullScale: isLoop ? (typeof b?.hp_pt_full_scale_psi === 'number' ? b.hp_pt_full_scale_psi : 5000) : 1000,
+                      // An LC's full scale is a FORCE, and its default is the rig-wide
+                      // [calibration.lc] value the service falls back to — not the PT 1000 PSI,
+                      // which is what this column used to offer a load cell.
+                      boardFullScale: isLC
+                        ? (typeof lcGlobals.full_scale_value === 'number' ? lcGlobals.full_scale_value : 300)
+                        : isLoop ? (typeof b?.hp_pt_full_scale_psi === 'number' ? b.hp_pt_full_scale_psi : 5000) : 1000,
                       boardResistor: typeof b?.hp_pt_sense_resistor_ohms === 'number' ? b.hp_pt_sense_resistor_ohms : 120,
+                      boardSensitivity: typeof lcGlobals.sensitivity_mv_per_v === 'number' ? lcGlobals.sensitivity_mv_per_v : 2,
+                      boardPga: typeof lcGlobals.pga_gain === 'number' ? lcGlobals.pga_gain : 32,
+                      fullScaleUnit: isLC ? 'kg' : 'PSI',
                     };
                   })
-                ).map(({ key, title, channels, boardKey, boardType, modelKey, fullScaleKey, resistorKey, showModel, isLC, isLoop, defaultModel, boardFullScale, boardResistor }) => {
+                ).map(({ key, title, channels, boardKey, boardType, modelKey, fullScaleKey, resistorKey, sensitivityKey, pgaKey, showModel, isLC, isLoop, defaultModel, boardFullScale, boardResistor, boardSensitivity, boardPga, fullScaleUnit }) => {
                   const map = (config as any)[key] as Record<string, number> | undefined;
                   // File (insertion) order so a row stays put while you edit its channel or name —
                   // the map is re-sorted by channel only on Save (see sortRolesForSave), never
@@ -1881,9 +1898,15 @@ export default function ConfigPage() {
                         </InlineIssue>
                       )}
 
+                      {/* The Model selector and the physics params live on a ROLE row, so a board
+                          with no roles yet offered no way to pick a calibration at all — you had to
+                          know that "+ Add Role" below was the way in. Say so, and name the model the
+                          board's channels fall back to meanwhile. */}
                       {entries.length === 0 && (
                         <p className="text-sm text-text-muted">
-                          No entries. Add one to create this section in `config.toml`.
+                          No roles yet, so nothing names {channels.length > 0 ? `channel ${channels.join(', ')}` : 'this board'}.
+                          {' '}Add one below to name a channel{showModel ? ` and choose its calibration model (these channels stream ${defaultModel} until then)` : ''}
+                          {' '}— that also creates <code>{key}</code> in the config.
                         </p>
                       )}
                       {/* Column headers — the row is a flex of fixed-width cells, so each header
@@ -1898,10 +1921,19 @@ export default function ConfigPage() {
                           <span className="w-28 shrink-0">Channel</span>
                           {showModel && <span className="w-32 shrink-0">Model</span>}
                           {showModel && (
-                            <span className="w-24 shrink-0" title="Full-scale pressure (only used in physics-conversion mode)">Max PSI</span>
+                            <span className="w-24 shrink-0" title={`Full-scale ${isLC ? 'force' : 'pressure'} (only used in physics-conversion mode)`}>
+                              Max {fullScaleUnit}
+                            </span>
                           )}
                           {showModel && isLoop && (
                             <span className="w-24 shrink-0" title="Sense resistor for the 4-20 mA shunt (only used in physics-conversion mode)">Sense Ω</span>
+                          )}
+                          {/* The two numbers that actually define a load cell's physics curve. */}
+                          {showModel && isLC && (
+                            <span className="w-24 shrink-0" title="Load cell rated output at full scale, mV per volt of excitation (only used in physics-conversion mode)">mV/V</span>
+                          )}
+                          {showModel && isLC && (
+                            <span className="w-24 shrink-0" title="ADC programmable-gain amplifier setting on the board (only used in physics-conversion mode)">PGA</span>
                           )}
                           <span className="w-24 shrink-0" aria-hidden="true" />
                         </div>
@@ -1929,7 +1961,7 @@ export default function ConfigPage() {
                                 for (const [k, v] of Object.entries(map || {})) rebuilt[k === name ? newName : k] = v;
                                 const patch: any = { ...config, [key]: rebuilt };
                                 // Keep the parallel per-sensor maps (model + physics params) in sync.
-                                for (const pk of [modelKey, fullScaleKey, resistorKey]) {
+                                for (const pk of [modelKey, fullScaleKey, resistorKey, sensitivityKey, pgaKey]) {
                                   const mm = (config as any)[pk];
                                   if (mm && name in mm) {
                                     const rebuiltMap: Record<string, any> = {};
@@ -1993,7 +2025,9 @@ export default function ConfigPage() {
                                     setConfig({ ...config, [fullScaleKey]: u } as any);
                                   }}
                                   disabled={!isPhysics}
-                                  title={isPhysics ? 'Full-scale PSI (physics mode)' : 'Full-scale PSI — editable when this sensor is in physics mode'}
+                                  title={isPhysics
+                                    ? `Full-scale ${fullScaleUnit} (physics mode)`
+                                    : `Full-scale ${fullScaleUnit} — editable when this sensor is in physics mode`}
                                   className="w-24 shrink-0 px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-40 disabled:cursor-not-allowed"
                                 />
                                 {isLoop && (
@@ -2010,6 +2044,39 @@ export default function ConfigPage() {
                                     className="w-24 shrink-0 px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-40 disabled:cursor-not-allowed"
                                   />
                                 )}
+                                {/* force = adc / ((mV/V / 1000) * PGA * 2^31) * Max kg — the whole LC
+                                    physics conversion. Nothing could write these two, so picking
+                                    "Physics" for a load cell meant accepting whatever [calibration.lc]
+                                    says for the entire rig. That is wrong the moment two load cells
+                                    differ, and two of them is now the normal case. */}
+                                {isLC && (
+                                  <CommitOnBlurNumber
+                                    value={((config as any)[sensitivityKey]?.[name]) ?? boardSensitivity}
+                                    onCommit={(n) => {
+                                      if (n === undefined) return;
+                                      const u = { ...((config as any)[sensitivityKey] || {}) };
+                                      u[name] = n;
+                                      setConfig({ ...config, [sensitivityKey]: u } as any);
+                                    }}
+                                    disabled={!isPhysics}
+                                    title={isPhysics ? 'Rated output, mV/V' : 'Rated output mV/V — editable when this sensor is in physics mode'}
+                                    className="w-24 shrink-0 px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                                  />
+                                )}
+                                {isLC && (
+                                  <CommitOnBlurNumber
+                                    value={((config as any)[pgaKey]?.[name]) ?? boardPga}
+                                    onCommit={(n) => {
+                                      if (n === undefined) return;
+                                      const u = { ...((config as any)[pgaKey] || {}) };
+                                      u[name] = n;
+                                      setConfig({ ...config, [pgaKey]: u } as any);
+                                    }}
+                                    disabled={!isPhysics}
+                                    title={isPhysics ? 'ADC PGA gain' : 'ADC PGA gain — editable when this sensor is in physics mode'}
+                                    className="w-24 shrink-0 px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                                  />
+                                )}
                               </>
                             )}
                             <button
@@ -2018,7 +2085,7 @@ export default function ConfigPage() {
                                 delete updated[name];
                                 const patch: any = { ...config, [key]: updated };
                                 // Drop the sensor's parallel per-sensor entries too.
-                                for (const pk of [modelKey, fullScaleKey, resistorKey]) {
+                                for (const pk of [modelKey, fullScaleKey, resistorKey, sensitivityKey, pgaKey]) {
                                   const mm = (config as any)[pk];
                                   if (mm && name in mm) {
                                     const um = { ...mm };
