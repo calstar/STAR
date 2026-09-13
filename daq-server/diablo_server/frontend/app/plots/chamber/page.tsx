@@ -9,37 +9,11 @@ import { MessageType } from '@/lib/types';
 import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
 import { useSensorConfig, resolveGroup } from '@/lib/sensor-config';
 import { useGuiConfig } from '@/lib/gui-config';
+import { buildSenseRowsFromBoards, type SenseRowConfig } from '@/lib/sensor-info-entities';
 
 const WINDOW_SECONDS = 60;
 
-function buildChannels(boards: Record<string, any>, type: 'TC' | 'RTD' | 'LC'): number[] {
-  const channels: number[] = [];
-  for (const board of Object.values(boards)) {
-    if (board.type !== type || board.enabled === false) continue;
-    const active: number[] =
-      Array.isArray(board.active_connectors) && board.active_connectors.length > 0
-        ? (board.active_connectors as number[])
-        : [];
-    channels.push(...active);
-  }
-  return channels;
-}
 
-function buildTcChannelsWithRef(boards: Record<string, any>): { entity: string; label: string; voltageReference: number }[] {
-  const out: { entity: string; label: string; voltageReference: number }[] = [];
-  for (const board of Object.values(boards)) {
-    if (board.type !== 'TC' || board.enabled === false) continue;
-    const ref = Math.min(2, Math.max(0, (board.voltage_reference as number) ?? 0));
-    const active: number[] =
-      Array.isArray(board.active_connectors) && board.active_connectors.length > 0
-        ? (board.active_connectors as number[])
-        : [];
-    for (const ch of active) {
-      out.push({ entity: `TC.CH${ch}`, label: `TC Ch${ch}`, voltageReference: ref });
-    }
-  }
-  return out;
-}
 
 
 const READOUT_CARD_CLASS = 'bg-white/[0.02] border border-white/5 rounded-lg px-3 py-2.5 flex items-center gap-3 min-w-[5rem] flex-1 basis-0';
@@ -97,9 +71,8 @@ export default function ChamberGraphsPage() {
         : allSensors.filter((s) => s.role.includes('Chamber'))
     ).filter((s) => s.calEntity.startsWith('PT'));
 
-    const [tcData, setTcData] = useState<{ entity: string; label: string; voltageReference: number }[]>([]);
-    const [lcEntities, setLcEntities] = useState<string[]>([]);
-    const [lcLabels, setLcLabels] = useState<string[]>([]);
+    const [tcData, setTcData] = useState<SenseRowConfig[]>([]);
+    const [lcData, setLcData] = useState<SenseRowConfig[]>([]);
 
     const loadChannelConfig = useCallback(() => {
       fetch(`${getApiBaseUrl()}/api/config`)
@@ -112,16 +85,14 @@ export default function ChamberGraphsPage() {
             useSensorStore.getState().setVoltageRefNominals({ internalV: adc.internal_v, absolute5vV: adc.absolute_5v_v });
           }
           if (!boards) return;
-          const allTc = buildTcChannelsWithRef(boards);
-          const tc = allTc.filter((d) => {
-            const ch = parseInt(d.entity.replace('TC.CH', ''), 10);
-            return [2, 3, 4, 5].includes(ch);
-          });
+          // Board-scoped: two boards of one type routinely share a connector number, and
+          // a bare LC_Cal.CH1 resolves through the store's alias table to whichever board
+          // it finds first — two readouts, one board's data.
+          const tc = buildSenseRowsFromBoards(boards, 'TC').filter((d) => [2, 3, 4, 5].includes(d.channel));
           if (tc.length) setTcData(tc);
-          const lc = buildChannels(boards, 'LC');
+          const lc = buildSenseRowsFromBoards(boards, 'LC');
           if (lc.length) {
-            setLcEntities(lc.map((ch) => `LC.CH${ch}`));
-            setLcLabels(lc.map((ch) => `LC Ch${ch}`));
+            setLcData(lc);
           }
         })
         .catch(() => {});
@@ -134,15 +105,15 @@ export default function ChamberGraphsPage() {
     }, [ws, loadChannelConfig]);
 
     const tcEntities = tcData.map((d) => d.entity);
-    const tcCalEntities = tcData.map((d) => d.entity.replace('TC.', 'TC_Cal.'));
+    const tcCalEntities = tcData.map((d) => d.calEntity);
     const tcLabels = tcData.map((d) => d.label);
-    const lcCalEntities = lcEntities.map((e) => e.replace('LC.', 'LC_Cal.'));
+    const lcCalEntities = lcData.map((d) => d.calEntity);
 
     const ptEntities = ptSensors.map(s => s.calEntity);
     const ptLabels = ptSensors.map(s => s.role);
     const ptColors = ptEntities.map(e => getEntityColor(e));
     const tcColors = tcEntities.map(e => getEntityColor(e));
-    const lcColors = lcEntities.map(e => getEntityColor(e));
+    const lcColors = lcData.map((d) => getEntityColor(d.entity));
 
     return (
         <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
@@ -166,10 +137,10 @@ export default function ChamberGraphsPage() {
                             <PtPsiCompact key={s.calEntity} entity={s.calEntity} label={['Mid 1', 'Mid 2', 'Throat 1', 'Throat 2'][i] ?? `P${i + 1}`} color={getEntityColor(s.calEntity)} />
                         ))}
                         {tcData.map((d, i) => (
-                            <TcTempCompact key={d.entity} entity={d.entity} calEntity={d.entity.replace('TC.', 'TC_Cal.')} label={d.label.replace('TC Ch', 'TC')} color={tcColors[i] ?? getEntityColor(d.entity)} voltageReference={d.voltageReference} />
+                            <TcTempCompact key={d.entity} entity={d.entity} calEntity={d.calEntity} label={d.label.replace('TC Ch', 'TC')} color={tcColors[i] ?? getEntityColor(d.entity)} voltageReference={d.voltageReference} />
                         ))}
-                        {lcEntities.map((e, i) => (
-                            <LcKgCompact key={e} entity={e} calEntity={e.replace('LC.', 'LC_Cal.')} label={`LC${i + 1}`} color={lcColors[i] ?? getEntityColor(e)} />
+                        {lcData.map((d, i) => (
+                            <LcKgCompact key={d.entity} entity={d.entity} calEntity={d.calEntity} label={d.label.replace('LC Ch', 'LC')} color={lcColors[i] ?? getEntityColor(d.entity)} />
                         ))}
                     </div>
             </div>
@@ -191,8 +162,8 @@ export default function ChamberGraphsPage() {
                         </div>
                         <div className="flex-1 min-h-0 flex flex-col">
                             <div className="text-xs font-medium text-gray-500 flex-shrink-0 px-1">LC Forces (kg)</div>
-                            {lcEntities.length > 0 ? (
-                              <TimeSeriesPlot title="" entities={lcCalEntities} component="force_kg" yLabel="Force (kg)" labels={lcLabels} colors={lcColors} windowSeconds={WINDOW_SECONDS} />
+                            {lcData.length > 0 ? (
+                              <TimeSeriesPlot title="" entities={lcCalEntities} component="force_kg" yLabel="Force (kg)" labels={lcData.map((d) => d.label)} colors={lcColors} windowSeconds={WINDOW_SECONDS} />
                             ) : (
                               <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">No LC boards in config</div>
                             )}

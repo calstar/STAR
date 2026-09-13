@@ -9,22 +9,10 @@ import { MessageType, SystemState } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { getEntityColor } from '@/lib/sensor-colors';
 import { stateNameUpper, stateName, isFireState, isAbortState } from '@/lib/states';
+import { buildSenseRowsFromBoards, type SenseRowConfig } from '@/lib/sensor-info-entities';
 
 const LBF_TO_N = 4.44822;
 
-function buildLcChannels(boards: Record<string, unknown>): number[] {
-  const channels: number[] = [];
-  for (const board of Object.values(boards)) {
-    const b = board as { type?: string; enabled?: boolean; active_connectors?: number[] };
-    if (b.type !== 'LC' || b.enabled === false) continue;
-    const active: number[] =
-      Array.isArray(b.active_connectors) && b.active_connectors.length > 0
-        ? b.active_connectors
-        : [];
-    channels.push(...active);
-  }
-  return Array.from(new Set(channels)).sort((a, b) => a - b);
-}
 
 /** Display follows commanded state only (state machine / user command); no ADC. */
 function ValveStatusRow({ label, entity }: { label: string; entity: string }) {
@@ -84,17 +72,21 @@ export default function ControllerPage() {
   const { actuators } = useActuatorsFromConfig();
   const VALVES = actuators.map((a) => ({ label: a.name, entity: a.entity, ch: a.entity, channel: a.channel }));
 
-  const [lcChannels, setLcChannels] = useState<number[]>([1]);
+  // Board-scoped rows, not channel numbers: two LC boards routinely both report on
+  // connector 1, and the bare key LC_Cal.CH1 resolves through the store's alias table to
+  // whichever of them it finds first — so a channel-number list plots one board twice.
+  const [lcRows, setLcRows] = useState<SenseRowConfig[]>([]);
   const loadLcConfig = useCallback(async () => {
     try {
       const base = getApiBaseUrl();
       const res = await fetch(`${base}/api/config`);
+      // /api/config answers { config, active } — reading cfg.boards here found nothing,
+      // so this plot silently fell back to a hardcoded channel 1 on every rig.
       const cfg = await res.json();
-      const boards = (cfg?.boards ?? {}) as Record<string, unknown>;
-      const chs = buildLcChannels(boards);
-      if (chs.length > 0) setLcChannels(chs);
+      const boards = (cfg?.config?.boards ?? {}) as Record<string, unknown>;
+      setLcRows(buildSenseRowsFromBoards(boards, 'LC'));
     } catch {
-      setLcChannels([1]);
+      setLcRows([]);
     }
   }, []);
 
@@ -106,7 +98,7 @@ export default function ControllerPage() {
     const unsub = ws.on(MessageType.CONFIG_UPDATED, loadLcConfig);
 
     return () => { unsub(); };
-  }, [ws, loadLcConfig, lcChannels]);
+  }, [ws, loadLcConfig]);
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-3">
@@ -202,33 +194,33 @@ export default function ControllerPage() {
           </div>
           <div className="bg-card rounded-xl border border-gray-800 p-3 flex flex-col min-h-[120px] flex-1 min-w-0 overflow-hidden shrink-0">
             <TimeSeriesPlot
-              key={`thrust-${lcChannels.join(',')}`}
+              key={`thrust-${lcRows.map((r) => r.calEntity).join(',')}`}
               title="Thrust (N)"
               component="F_ref"
               entities={[
                 'CONTROLLER.diagnostics',
                 'CONTROLLER.diagnostics',
-                ...lcChannels.map((ch) => `LC_Cal.CH${ch}`),
+                ...lcRows.map((r) => r.calEntity),
               ]}
               components={[
                 'F_ref',
                 'F_estimated',
-                ...lcChannels.map(() => 'force_lbf'),
+                ...lcRows.map(() => 'force_lbf'),
               ]}
               labels={[
                 'Desired',
                 'Estimated',
-                ...lcChannels.map((ch) => `Actual (LC${ch})`),
+                ...lcRows.map((r) => `Actual (${r.label})`),
               ]}
               valueTransforms={[
                 undefined,
                 undefined,
-                ...lcChannels.map(() => (v: number) => (isFinite(v) ? v * LBF_TO_N : v)),
+                ...lcRows.map(() => (v: number) => (isFinite(v) ? v * LBF_TO_N : v)),
               ]}
               colors={[
                 '#60A5FA',
                 '#34D399',
-                ...lcChannels.map((_, i) => ['#F59E0B', '#EC4899', '#8B5CF6'][i % 3] ?? '#F59E0B'),
+                ...lcRows.map((_, i) => ['#F59E0B', '#EC4899', '#8B5CF6'][i % 3] ?? '#F59E0B'),
               ]}
               yLabel="Thrust (N)"
               windowSeconds={60}

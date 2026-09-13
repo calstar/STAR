@@ -294,6 +294,19 @@ export function buildAliasesFromConfig(config: any): void {
     }
   }
 
+  // A generic key that resolves to more than one board's stream is a coin flip: the
+  // lookup returns whichever candidate has data first, so a pane built on bare channel
+  // numbers renders one board twice. Panes are board-scoped now (buildSenseRowsFromBoards);
+  // say so loudly if one is not, because on the stand this looks like a dead sensor, not
+  // like a naming bug (two LC boards on connector 1, 2026-09-13).
+  const ambiguous = Object.entries(aliases).filter(([, v]) => v.length > 1);
+  if (ambiguous.length > 0) {
+    console.warn(
+      `[Store] ${ambiguous.length} ambiguous generic sensor key(s) — two enabled boards claim the same channel. ` +
+      `Panes must use board-scoped entities. e.g. ${ambiguous[0][0]} → ${ambiguous[0][1].join(', ')}`
+    );
+  }
+
   ALIASES = aliases;
   ACT_ROLE_TO_CMD_ENTITY = roleToCmdEntity;
   // Bump stale tick so any selector that reads ALIASES (useActuatorCommandedState,

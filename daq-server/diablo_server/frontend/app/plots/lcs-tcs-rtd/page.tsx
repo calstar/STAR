@@ -7,46 +7,15 @@ import { useSensorStore, useSensorValue, useLoadCellForceKg } from '@/lib/store'
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType } from '@/lib/types';
 import { getApiBaseUrl } from '@/lib/websocket';
+import { buildSenseRowsFromBoards, type SenseRowConfig } from '@/lib/sensor-info-entities';
 
-const TC_ENTITIES = ['TC.CH1', 'TC.CH2', 'TC.CH3', 'TC.CH4'];
-const RTD_ENTITIES = ['RTD.CH1', 'RTD.CH2', 'RTD.CH3', 'RTD.CH4'];
-const TC_LABELS = ['TC Ch1', 'TC Ch2', 'TC Ch3', 'TC Ch4'];
-const RTD_LABELS = ['RTD Ch1', 'RTD Ch2', 'RTD Ch3', 'RTD Ch4'];
 const SENSE_COLORS = ['#F59E0B', '#10B981', '#3B82F6', '#EC4899'];
 
 const WINDOW_SECONDS = 60;
 
 // ── Config helper ─────────────────────────────────────────────────────────────
 
-function buildChannels(boards: Record<string, any>, type: 'TC' | 'RTD' | 'LC'): number[] {
-  const channels: number[] = [];
-  for (const board of Object.values(boards)) {
-    if (board.type !== type || board.enabled === false) continue;
-    const active: number[] =
-      Array.isArray(board.active_connectors) && board.active_connectors.length > 0
-        ? (board.active_connectors as number[])
-        : [];
-    channels.push(...active);
-  }
-  return channels;
-}
 
-/** Build TC entity list with each board's voltage_reference (0=internal, 1=VDD, 2=5V). Uses first TC board's ref when multiple. */
-function buildTcChannelsWithRef(boards: Record<string, any>): { entity: string; label: string; voltageReference: number }[] {
-  const out: { entity: string; label: string; voltageReference: number }[] = [];
-  for (const board of Object.values(boards)) {
-    if (board.type !== 'TC' || board.enabled === false) continue;
-    const ref = Math.min(2, Math.max(0, (board.voltage_reference as number) ?? 0));
-    const active: number[] =
-      Array.isArray(board.active_connectors) && board.active_connectors.length > 0
-        ? (board.active_connectors as number[])
-        : [];
-    for (const ch of active) {
-      out.push({ entity: `TC.CH${ch}`, label: `TC Ch${ch}`, voltageReference: ref });
-    }
-  }
-  return out;
-}
 
 // ── Readout boxes ─────────────────────────────────────────────────────────────
 
@@ -164,7 +133,7 @@ export default function LCS_TCS_RTDPage() {
   const ws = getWebSocketClient();
 
   // Dynamic channel lists from config (TC includes board voltage_reference per channel)
-  const [tcData, setTcData] = useState<{ entity: string; label: string; voltageReference: number }[]>([]);
+  const [tcData, setTcData] = useState<SenseRowConfig[]>([]);
   const [rtdEntities, setRtdEntities] = useState<string[]>([]);
   const [rtdCalEntities, setRtdCalEntities] = useState<string[]>([]);
   const [rtdLabels, setRtdLabels] = useState<string[]>([]);
@@ -187,27 +156,27 @@ export default function LCS_TCS_RTDPage() {
       }
       if (!boards) return;
 
-      const tc = buildTcChannelsWithRef(boards);
+      // Board-scoped throughout: two boards of one type routinely share a connector
+      // number, and a bare LC_Cal.CH1 resolves through the store's alias table to
+      // whichever board it happens to find first — two rows, one board's data.
+      const tc = buildSenseRowsFromBoards(boards, 'TC');
       if (tc.length) setTcData(tc);
 
-      const rtd = buildChannels(boards, 'RTD');
+      const rtd = buildSenseRowsFromBoards(boards, 'RTD');
       if (rtd.length) {
-        const entities = rtd.map((ch) => `RTD.CH${ch}`);
-        const calEntities = rtd.map((ch) => `RTD_Cal.CH${ch}`);
-        const labels = rtd.map((ch) => {
-          const role = sensorConfig?.find((s) => s.calEntity === `RTD_Cal.CH${ch}`)?.role;
-          return role ?? `RTD Ch${ch}`;
-        });
-        setRtdEntities(entities);
-        setRtdCalEntities(calEntities);
-        setRtdLabels(labels);
+        setRtdEntities(rtd.map((r) => r.entity));
+        setRtdCalEntities(rtd.map((r) => r.calEntity));
+        setRtdLabels(rtd.map((r) => {
+          const role = sensorConfig?.find((s) => s.calEntity === r.calEntity)?.role;
+          return role ?? r.label;
+        }));
       }
 
-      const lc = buildChannels(boards, 'LC');
+      const lc = buildSenseRowsFromBoards(boards, 'LC');
       if (lc.length) {
-        setLcEntities(lc.map((ch) => `LC.CH${ch}`));
-        setLcCalEntities(lc.map((ch) => `LC_Cal.CH${ch}`));
-        setLcLabels(lc.map((ch) => `LC Ch${ch}`));
+        setLcEntities(lc.map((r) => r.entity));
+        setLcCalEntities(lc.map((r) => r.calEntity));
+        setLcLabels(lc.map((r) => r.label));
       }
     }).catch(() => {});
   }, []);
@@ -223,7 +192,9 @@ export default function LCS_TCS_RTDPage() {
   }, [ws, loadChannelConfig]);
 
   const tcEntities = tcData.map((d) => d.entity);
-  const tcCalEntities = tcData.map((d) => d.entity.replace('TC.', 'TC_Cal.'));
+  // d.calEntity, never a string replace: entities are board-scoped (TC1.CH2), so
+  // 'TC1.CH2'.replace('TC.', 'TC_Cal.') silently returns the raw entity unchanged.
+  const tcCalEntities = tcData.map((d) => d.calEntity);
   const tcLabels = tcData.map((d) => d.label);
 
   return (
@@ -246,7 +217,7 @@ export default function LCS_TCS_RTDPage() {
                     <TCTempReadout
                       key={d.entity}
                       entity={d.entity}
-                      calEntity={d.entity.replace('TC.', 'TC_Cal.')}
+                      calEntity={d.calEntity}
                       label={d.label}
                       color={SENSE_COLORS[i % SENSE_COLORS.length]}
                       voltageReference={d.voltageReference}
