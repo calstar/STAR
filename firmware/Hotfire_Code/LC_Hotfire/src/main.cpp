@@ -44,7 +44,7 @@ using namespace sense_board_pins;
 // load cell is a scale reading a fill over seconds. 400 SPS + SINC4 is ~16x
 // quieter for free, before any host-side filtering.
 #define FILTER ADS126X_SINC4
-#define DATA_RATE ADS126X_RATE_20
+#define DATA_RATE ADS126X_RATE_400
 ADS126X_ASSERT_FILTER_RATE(FILTER, DATA_RATE);
 #define GAIN ADS126X_GAIN_32
 #define NUM_CHANNELS 5

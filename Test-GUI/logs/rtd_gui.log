@@ -1,0 +1,24 @@
+14:26:01.346  INFO     GUI started for RTD (board id 31, 192.168.2.31). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/rtd_gui.log
+14:26:01.346  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:26:01.346  INFO     Board MAC is de:ad:be:ef:00:1f
+14:26:01.346  INFO     Closing GUI
+14:26:01.355  INFO     GUI started for RTD (board id 32, 192.168.2.32). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/rtd_gui.log
+14:26:01.355  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:26:01.356  INFO     Board MAC is de:ad:be:ef:00:20
+14:26:01.356  INFO     Closing GUI
+14:27:29.486  INFO     GUI started for RTD (board id 31, 192.168.2.31). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/rtd_gui.log
+14:27:29.486  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:27:29.487  INFO     Board MAC is de:ad:be:ef:00:1f
+14:27:29.487  INFO     Closing GUI
+14:27:29.496  INFO     GUI started for RTD (board id 32, 192.168.2.32). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/rtd_gui.log
+14:27:29.496  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:27:29.496  INFO     Board MAC is de:ad:be:ef:00:20
+14:27:29.496  INFO     Closing GUI
+14:29:32.980  INFO     GUI started for RTD (board id 31, 192.168.2.31). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/rtd_gui.log
+14:29:32.980  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:29:32.981  INFO     Board MAC is de:ad:be:ef:00:1f
+14:29:32.981  INFO     Closing GUI
+14:29:32.989  INFO     GUI started for RTD (board id 32, 192.168.2.32). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/rtd_gui.log
+14:29:32.990  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:29:32.990  INFO     Board MAC is de:ad:be:ef:00:20
+14:29:32.990  INFO     Closing GUI

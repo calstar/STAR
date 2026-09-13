@@ -1,0 +1,24 @@
+14:26:01.322  INFO     GUI started for TC (board id 51, 192.168.2.51). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/tc_gui.log
+14:26:01.322  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:26:01.322  INFO     Board MAC is de:ad:be:ef:00:33
+14:26:01.322  INFO     Closing GUI
+14:26:01.337  INFO     GUI started for TC (board id 52, 192.168.2.52). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/tc_gui.log
+14:26:01.337  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:26:01.337  INFO     Board MAC is de:ad:be:ef:00:34
+14:26:01.337  INFO     Closing GUI
+14:27:29.462  INFO     GUI started for TC (board id 51, 192.168.2.51). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/tc_gui.log
+14:27:29.462  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:27:29.462  INFO     Board MAC is de:ad:be:ef:00:33
+14:27:29.462  INFO     Closing GUI
+14:27:29.477  INFO     GUI started for TC (board id 52, 192.168.2.52). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/tc_gui.log
+14:27:29.477  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:27:29.477  INFO     Board MAC is de:ad:be:ef:00:34
+14:27:29.477  INFO     Closing GUI
+14:29:32.956  INFO     GUI started for TC (board id 51, 192.168.2.51). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/tc_gui.log
+14:29:32.957  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:29:32.957  INFO     Board MAC is de:ad:be:ef:00:33
+14:29:32.957  INFO     Closing GUI
+14:29:32.971  INFO     GUI started for TC (board id 52, 192.168.2.52). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/tc_gui.log
+14:29:32.971  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:29:32.971  INFO     Board MAC is de:ad:be:ef:00:34
+14:29:32.971  INFO     Closing GUI

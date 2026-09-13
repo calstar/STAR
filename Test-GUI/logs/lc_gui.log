@@ -1,0 +1,2034 @@
+21:22:14.929  INFO     GUI started for LC (board id 21, 192.168.2.21). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+21:22:14.929  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+16:19:31.912  INFO     Closing GUI
+13:19:30.850  INFO     GUI started for LC (board id 21, 192.168.2.21). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+13:19:30.851  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+13:19:30.851  INFO     OTA: 'not-an-ip' is not a valid IPv4 address.
+13:19:30.851  INFO     OTA verified: board firmware hash matches the uploaded image
+13:19:30.851  INFO     OTA: Board rejected the image: image failed validation
+13:19:30.851  INFO     OTA target set to the live Board IP 192.168.2.99
+13:19:30.852  INFO     Closing GUI
+13:31:05.094  INFO     GUI started for LC (board id 21, 192.168.2.21). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+13:31:05.095  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+13:31:05.095  INFO     OTA: 'not-an-ip' is not a valid IPv4 address.
+13:31:05.095  INFO     OTA verified: board firmware hash matches the uploaded image
+13:31:05.095  INFO     OTA: Board rejected the image: image failed validation
+13:31:05.095  INFO     OTA target set to the live Board IP 192.168.2.99
+13:31:05.095  INFO     Closing GUI
+14:15:39.593  INFO     GUI started for LC (board id 21, 192.168.2.21). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+14:15:39.593  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:15:39.593  INFO     OTA: 'not-an-ip' is not a valid IPv4 address.
+14:15:39.593  INFO     OTA verified: board firmware hash matches the uploaded image
+14:15:39.593  INFO     OTA: Board rejected the image: image failed validation
+14:15:39.594  INFO     OTA target set to the live Board IP 192.168.2.99
+14:15:39.594  INFO     Closing GUI
+14:16:07.964  INFO     GUI started for LC (board id 21, 192.168.2.21). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+14:16:07.964  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:16:07.969  INFO     Board MAC is de:ad:be:ef:2a:3c
+14:16:07.969  INFO     Reservation saved: de:ad:be:ef:2a:3c will be assigned 192.168.2.41
+14:16:11.002  INFO     DHCP server listening on 0.0.0.0:1 — 1 reservation(s)
+14:16:11.003  INFO     DHCP: OFFER 192.168.2.41 to de:ad:be:ef:2a:3c
+14:16:11.004  INFO     DHCP: ACK 192.168.2.41 to de:ad:be:ef:2a:3c
+14:16:11.004  INFO     Assigned 192.168.2.41 to de:ad:be:ef:2a:3c
+14:16:11.005  INFO     DHCP: NAK de:ad:be:ef:2a:3c — it asked for 169.254.42.60, its reservation is 192.168.2.41
+14:16:11.005  INFO     DHCP: 00:11:22:33:44:55 asked for an address but has no reservation — ignoring it. Add one to assign it an IP.
+14:16:11.006  WARNING  A board at 00:11:22:33:44:55 asked for an address and has no reservation — it got nothing. Add it below to assign it one.
+14:16:11.006  INFO     Filter: none (raw) (fs ~ 100 Hz)
+14:16:11.925  INFO     Closing GUI
+14:22:29.189  INFO     GUI started for LC (board id 21, 192.168.2.21). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+14:22:29.189  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:22:29.189  INFO     OTA: 'not-an-ip' is not a valid IPv4 address.
+14:22:29.189  INFO     OTA verified: board firmware hash matches the uploaded image
+14:22:29.189  INFO     OTA: Board rejected the image: image failed validation
+14:22:29.189  INFO     OTA target set to the live Board IP 192.168.2.99
+14:22:29.189  INFO     Closing GUI
+14:22:29.527  INFO     GUI started for LC (board id 21, 192.168.2.21). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+14:22:29.527  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:22:29.528  INFO     Board MAC is de:ad:be:ef:2a:3c
+14:22:29.528  INFO     Reservation saved: de:ad:be:ef:2a:3c will be assigned 192.168.2.41
+14:22:32.557  INFO     DHCP server listening on 0.0.0.0:1 — 1 reservation(s)
+14:22:32.557  INFO     DHCP: OFFER 192.168.2.41 to de:ad:be:ef:2a:3c
+14:22:32.558  INFO     DHCP: ACK 192.168.2.41 to de:ad:be:ef:2a:3c
+14:22:32.558  INFO     Assigned 192.168.2.41 to de:ad:be:ef:2a:3c
+14:22:32.558  INFO     DHCP: NAK de:ad:be:ef:2a:3c — it asked for 169.254.42.60, its reservation is 192.168.2.41
+14:22:32.558  INFO     DHCP: 00:11:22:33:44:55 asked for an address but has no reservation — ignoring it. Add one to assign it an IP.
+14:22:32.558  WARNING  A board at 00:11:22:33:44:55 asked for an address and has no reservation — it got nothing. Add it below to assign it one.
+14:22:32.558  INFO     Filter: none (raw) (fs ~ 100 Hz)
+14:22:33.469  INFO     Closing GUI
+14:26:01.274  INFO     GUI started for LC (board id 41, 192.168.2.41). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+14:26:01.275  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:26:01.275  INFO     Board MAC is de:ad:be:ef:00:29
+14:26:01.275  INFO     Closing GUI
+14:26:01.284  INFO     GUI started for LC (board id 42, 192.168.2.42). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+14:26:01.284  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:26:01.285  INFO     Board MAC is de:ad:be:ef:00:2a
+14:26:01.285  INFO     Closing GUI
+14:27:29.416  INFO     GUI started for LC (board id 41, 192.168.2.41). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+14:27:29.416  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:27:29.416  INFO     Board MAC is de:ad:be:ef:00:29
+14:27:29.417  INFO     Closing GUI
+14:27:29.426  INFO     GUI started for LC (board id 42, 192.168.2.42). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+14:27:29.427  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:27:29.427  INFO     Board MAC is de:ad:be:ef:00:2a
+14:27:29.427  INFO     Closing GUI
+14:27:29.673  INFO     GUI started for LC (board id 41, 192.168.2.41). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+14:27:29.673  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:27:29.674  INFO     OTA: 'not-an-ip' is not a valid IPv4 address.
+14:27:29.674  INFO     OTA verified: board firmware hash matches the uploaded image
+14:27:29.674  INFO     OTA: Board rejected the image: image failed validation
+14:27:29.674  INFO     OTA target set to the live Board IP 192.168.2.99
+14:27:29.674  INFO     Closing GUI
+14:27:38.125  INFO     GUI started for LC (board id 41, 192.168.2.41). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+14:27:38.125  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:27:38.126  INFO     Board MAC is de:ad:be:ef:2a:3c
+14:27:45.272  INFO     GUI started for LC (board id 41, 192.168.2.41). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+14:27:45.272  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:27:45.272  INFO     Board MAC is de:ad:be:ef:2a:3c
+14:28:50.080  INFO     GUI started for LC (board id 41, 192.168.2.41). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+14:28:50.080  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:28:50.081  INFO     Board MAC is de:ad:be:ef:2a:3c
+14:28:50.081  INFO     Reservation saved: de:ad:be:ef:2a:3c will be assigned 192.168.2.41
+14:28:53.116  INFO     DHCP server listening on 0.0.0.0:1 — 1 reservation(s)
+14:28:53.117  INFO     DHCP: OFFER 192.168.2.41 to de:ad:be:ef:2a:3c
+14:28:53.117  INFO     DHCP: ACK 192.168.2.41 to de:ad:be:ef:2a:3c
+14:28:53.118  INFO     Assigned 192.168.2.41 to de:ad:be:ef:2a:3c
+14:28:53.119  INFO     DHCP: NAK de:ad:be:ef:2a:3c — it asked for 169.254.42.60, its reservation is 192.168.2.41
+14:28:53.119  INFO     DHCP: 00:11:22:33:44:55 asked for an address but has no reservation — ignoring it. Add one to assign it an IP.
+14:28:53.119  WARNING  A board at 00:11:22:33:44:55 asked for an address and has no reservation — it got nothing. Add it below to assign it one.
+14:28:53.120  INFO     Filter: none (raw) (fs ~ 100 Hz)
+14:28:54.036  INFO     Closing GUI
+14:29:32.912  INFO     GUI started for LC (board id 41, 192.168.2.41). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+14:29:32.912  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:29:32.912  INFO     Board MAC is de:ad:be:ef:00:29
+14:29:32.912  INFO     Closing GUI
+14:29:32.920  INFO     GUI started for LC (board id 42, 192.168.2.42). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+14:29:32.921  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:29:32.921  INFO     Board MAC is de:ad:be:ef:00:2a
+14:29:32.921  INFO     Closing GUI
+14:29:33.338  INFO     GUI started for LC (board id 41, 192.168.2.41). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+14:29:33.339  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+14:29:33.340  INFO     Board MAC is de:ad:be:ef:2a:3c
+14:29:33.340  INFO     Reservation saved: de:ad:be:ef:2a:3c will be assigned 192.168.2.41
+14:29:36.369  INFO     DHCP server listening on 0.0.0.0:1 — 1 reservation(s)
+14:29:36.369  INFO     DHCP: OFFER 192.168.2.41 to de:ad:be:ef:2a:3c
+14:29:36.370  INFO     DHCP: ACK 192.168.2.41 to de:ad:be:ef:2a:3c
+14:29:36.370  INFO     Assigned 192.168.2.41 to de:ad:be:ef:2a:3c
+14:29:36.370  INFO     DHCP: NAK de:ad:be:ef:2a:3c — it asked for 169.254.42.60, its reservation is 192.168.2.41
+14:29:36.370  INFO     DHCP: 00:11:22:33:44:55 asked for an address but has no reservation — ignoring it. Add one to assign it an IP.
+14:29:36.370  WARNING  A board at 00:11:22:33:44:55 asked for an address and has no reservation — it got nothing. Add it below to assign it one.
+14:29:36.371  INFO     Filter: none (raw) (fs ~ 100 Hz)
+14:29:37.291  INFO     Closing GUI
+15:37:17.932  INFO     GUI started for LC (board id 41, 192.168.2.41). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+15:37:17.932  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+15:37:18.362  INFO     Filter: none (raw) (fs ~ 100 Hz)
+15:37:23.360  INFO     Opening serial /dev/cu.usbmodem1101 @ 115200 baud…
+15:37:23.366  INFO     Serial connected: /dev/cu.usbmodem1101
+15:37:39.776  WARNING  No reservations yet — the server would answer nobody. Add one below first (connect the board over USB to get its MAC).
+15:37:39.782  ERROR    DHCP server could not start: could not bind UDP 0.0.0.0:67 — [Errno 48] Address already in use. Another DHCP server may already be running here.
+15:39:13.493  INFO     Disconnected serial
+15:39:13.497  INFO     Serial closed
+15:39:18.008  WARNING  No reservations yet — the server would answer nobody. Add one below first (connect the board over USB to get its MAC).
+15:39:18.010  ERROR    DHCP server could not start: could not bind UDP 0.0.0.0:67 — [Errno 48] Address already in use. Another DHCP server may already be running here.
+15:39:18.525  WARNING  No reservations yet — the server would answer nobody. Add one below first (connect the board over USB to get its MAC).
+15:39:18.530  ERROR    DHCP server could not start: could not bind UDP 0.0.0.0:67 — [Errno 48] Address already in use. Another DHCP server may already be running here.
+15:39:18.689  WARNING  No reservations yet — the server would answer nobody. Add one below first (connect the board over USB to get its MAC).
+15:39:18.690  ERROR    DHCP server could not start: could not bind UDP 0.0.0.0:67 — [Errno 48] Address already in use. Another DHCP server may already be running here.
+15:39:18.825  WARNING  No reservations yet — the server would answer nobody. Add one below first (connect the board over USB to get its MAC).
+15:39:18.826  ERROR    DHCP server could not start: could not bind UDP 0.0.0.0:67 — [Errno 48] Address already in use. Another DHCP server may already be running here.
+15:40:13.343  INFO     Opening serial /dev/cu.usbmodem1101 @ 115200 baud…
+15:40:13.347  INFO     Serial connected: /dev/cu.usbmodem1101
+15:42:31.586  INFO     Disconnected serial
+15:42:31.592  INFO     Serial closed
+15:42:35.606  INFO     Opening serial /dev/cu.usbmodem1101 @ 115200 baud…
+15:42:35.611  INFO     Serial connected: /dev/cu.usbmodem1101
+15:42:55.845  INFO     Board MAC is 46:1b:f6:91:06:ed
+15:42:57.682  INFO     Board is trying DHCP…
+15:42:59.333  INFO     Board's OTA listener is up on port 3232
+15:42:59.334  INFO     Board takes its address from the server and broadcasts until one is heard
+15:42:59.334  INFO     Board state -> Setup (waiting for server)
+15:43:19.674  WARNING  Cannot send — start the Ethernet UDP listener first
+15:43:32.374  WARNING  Cannot send — start the Ethernet UDP listener first
+15:43:32.907  WARNING  Cannot send — start the Ethernet UDP listener first
+15:44:13.987  INFO     Closing GUI
+15:44:14.035  INFO     Disconnected serial
+15:44:14.089  INFO     Serial closed
+16:04:03.835  INFO     GUI started for LC (board id 41, 192.168.2.41). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+16:04:03.835  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+16:04:04.049  INFO     Filter: none (raw) (fs ~ 100 Hz)
+16:04:11.987  INFO     Link: Listening on 0.0.0.0:5006
+16:04:12.677  INFO     Board discovered at 192.168.2.41
+16:04:12.677  INFO     Board online: id=41 state=Setup (waiting for server) engine=Safe fw=c56ef530… from 192.168.2.41
+16:04:12.678  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:12.683  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:13.680  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:13.680  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:14.682  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:14.682  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:15.684  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:15.685  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:16.687  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:16.687  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:17.689  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:17.689  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:18.692  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:18.693  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:19.695  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:19.697  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:20.700  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:20.700  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:21.701  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:21.702  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:22.702  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:22.703  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:23.706  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:23.707  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:24.709  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:24.709  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:25.710  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:25.711  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:26.712  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:26.712  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:27.714  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:27.714  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:28.725  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:28.726  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:29.731  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:29.731  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:30.736  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:30.736  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:31.729  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:31.729  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:32.737  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:32.738  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:33.738  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:33.739  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:34.735  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:34.735  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:35.704  INFO     Sent SENSOR_CONFIG (ids=[1, 2, 3], ref=1, abort=0, controller=-, serial_print=1) -> 192.168.2.41:5005
+16:04:38.161  INFO     SELF_TEST: ADC OK, connectors 0/3 passed
+16:04:38.162  INFO     [eth] SELF_TEST          14B  from 192.168.2.41
+16:04:38.162  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:39.373  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:40.584  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:41.796  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:43.007  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:44.227  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:45.433  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:46.638  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:47.849  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:47.855  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:49.062  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:04:49.070  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:49.071  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:50.278  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:50.279  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:51.491  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:51.492  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:52.703  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:52.704  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:53.917  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:53.918  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:55.128  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:55.137  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:56.342  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:56.351  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:57.553  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:57.559  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:58.767  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:58.768  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:59.978  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:04:59.984  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:04:59.984  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:01.196  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:01.205  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:02.408  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:02.417  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:03.620  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:03.621  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:04.832  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:04.840  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:06.044  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:06.053  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:07.257  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:07.258  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:08.467  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:08.469  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:09.680  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:09.681  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:10.892  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:05:10.896  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:10.897  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:10.914  INFO     Filter: none (raw) (fs ~ 1 Hz)
+16:05:12.108  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:12.109  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:13.328  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:13.329  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:14.531  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:14.532  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:15.744  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:15.744  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:16.955  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:16.955  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:18.166  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:18.166  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:19.377  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:19.377  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:20.589  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:20.590  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:21.801  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:05:21.805  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:21.805  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:23.027  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:23.028  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:24.230  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:24.231  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:25.439  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:25.440  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:26.652  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:26.653  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:27.864  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:27.865  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:29.075  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:29.076  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:30.288  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:30.289  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:31.500  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:31.501  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:32.712  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:05:32.732  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:32.733  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:33.930  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:33.930  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:35.143  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:35.143  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:36.355  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:36.356  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:37.567  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:37.567  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:38.778  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:38.779  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:39.991  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:39.992  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:41.202  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:41.203  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:42.414  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:42.415  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:43.628  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:05:43.631  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:43.631  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:44.841  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:44.841  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:46.052  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:46.053  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:47.265  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:47.266  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:48.477  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:48.478  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:49.689  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:49.689  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:50.901  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:50.902  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:52.112  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:52.114  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:53.325  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:53.326  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:54.536  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:05:54.540  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:54.541  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:54.615  INFO     Filter: none (raw) (fs ~ 1 Hz)
+16:05:55.753  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:55.754  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:56.966  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:56.967  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:58.178  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:58.179  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:59.390  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:05:59.391  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:00.601  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:00.601  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:01.813  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:01.815  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:03.026  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:03.029  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:04.238  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:04.239  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:05.450  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:06:05.454  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:05.455  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:06.667  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:06.668  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:07.880  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:07.880  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:09.092  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:09.094  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:10.305  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:10.307  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:11.518  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:11.521  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:12.731  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:12.732  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:13.943  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:13.944  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:15.155  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:15.157  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:16.368  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:06:16.372  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:16.372  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:17.584  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:17.585  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:18.797  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:18.799  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:20.009  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:20.011  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:21.221  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:21.222  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:22.432  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:22.434  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:23.645  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:23.647  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:24.858  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:24.859  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:26.070  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:26.070  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:27.281  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:06:27.286  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:27.286  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:27.515  WARNING  No reservations yet — the server would answer nobody. Add one below first (connect the board over USB to get its MAC).
+16:06:27.516  ERROR    DHCP server could not start: could not bind UDP 0.0.0.0:67 — [Errno 48] Address already in use. Another DHCP server may already be running here.
+16:06:28.498  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:28.499  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:29.709  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:29.711  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:30.922  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:30.924  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:32.135  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:32.136  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:33.347  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:33.348  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:34.558  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:34.560  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:35.772  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:35.774  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:36.983  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:36.985  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:38.195  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:06:38.299  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:38.300  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:39.509  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:39.510  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:40.720  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:40.721  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:41.931  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:41.932  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:43.142  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:43.143  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:44.353  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:44.354  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:45.564  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:45.565  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:46.775  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:46.777  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:47.986  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:47.987  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:48.152  WARNING  No reservations yet — the server would answer nobody. Add one below first (connect the board over USB to get its MAC).
+16:06:48.154  ERROR    DHCP server could not start: could not bind UDP 0.0.0.0:67 — [Errno 48] Address already in use. Another DHCP server may already be running here.
+16:06:48.720  WARNING  No reservations yet — the server would answer nobody. Add one below first (connect the board over USB to get its MAC).
+16:06:48.724  ERROR    DHCP server could not start: could not bind UDP 0.0.0.0:67 — [Errno 48] Address already in use. Another DHCP server may already be running here.
+16:06:48.886  WARNING  No reservations yet — the server would answer nobody. Add one below first (connect the board over USB to get its MAC).
+16:06:48.888  ERROR    DHCP server could not start: could not bind UDP 0.0.0.0:67 — [Errno 48] Address already in use. Another DHCP server may already be running here.
+16:06:49.017  WARNING  No reservations yet — the server would answer nobody. Add one below first (connect the board over USB to get its MAC).
+16:06:49.019  ERROR    DHCP server could not start: could not bind UDP 0.0.0.0:67 — [Errno 48] Address already in use. Another DHCP server may already be running here.
+16:06:49.197  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:06:49.201  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:49.201  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:50.411  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:50.413  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:51.622  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:51.623  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:52.833  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:52.834  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:54.044  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:54.045  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:55.255  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:55.257  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:56.466  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:56.467  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:57.677  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:57.678  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:58.888  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:06:58.889  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:00.099  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:07:00.103  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:00.103  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:01.313  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:01.314  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:02.524  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:02.525  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:03.735  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:03.736  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:04.946  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:04.947  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:06.157  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:06.158  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:07.369  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:07.370  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:08.604  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:08.605  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:09.790  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:09.792  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:11.002  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:07:11.005  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:11.005  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:12.219  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:12.219  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:13.426  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:13.426  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:14.637  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:14.638  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:15.849  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:15.850  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:17.059  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:17.060  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:18.270  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:18.272  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:19.481  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:19.483  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:20.693  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:20.694  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:21.904  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:07:21.911  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:21.912  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:23.120  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:23.121  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:24.329  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:24.330  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:25.540  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:25.541  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:26.752  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:26.753  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:27.963  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:27.964  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:29.174  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:29.175  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:30.384  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:30.385  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:31.596  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:31.597  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:32.807  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:07:32.810  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:32.810  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:34.021  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:34.021  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:35.233  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:35.234  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:36.444  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:36.445  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:37.654  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:37.655  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:38.866  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:38.867  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:40.077  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:40.078  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:41.288  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:41.288  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:42.498  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:42.499  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:43.710  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:07:43.713  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:43.714  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:44.924  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:44.925  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:46.135  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:46.136  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:47.347  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:47.348  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:48.558  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:48.559  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:49.769  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:49.769  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:50.980  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:50.981  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:52.191  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:52.192  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:53.402  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:53.405  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:54.613  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:07:54.619  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:54.619  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:55.826  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:55.827  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:57.037  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:57.038  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:58.249  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:58.250  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:59.459  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:07:59.460  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:00.670  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:00.671  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:01.882  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:01.882  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:03.093  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:03.094  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:04.304  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:04.304  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:05.516  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:08:05.518  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:05.518  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:06.728  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:06.729  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:07.940  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:07.941  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:09.151  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:09.152  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:10.362  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:10.362  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:11.573  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:11.574  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:12.784  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:12.785  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:13.995  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:13.996  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:15.206  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:15.207  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:16.419  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:08:16.420  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:16.420  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:17.631  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:17.632  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:18.842  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:18.843  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:20.053  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:20.054  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:21.264  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:21.265  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:22.475  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:22.476  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:23.686  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:23.687  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:24.897  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:24.898  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:26.108  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:26.109  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:27.319  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:08:27.322  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:27.323  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:28.533  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:28.534  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:29.744  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:29.745  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:30.955  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:30.956  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:32.166  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:32.167  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:33.377  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:33.378  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:34.588  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:34.589  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:35.799  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:35.800  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:37.010  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:37.011  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:38.221  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:08:38.224  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:38.225  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:39.435  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:39.436  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:40.647  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:40.648  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:41.858  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:41.859  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:43.069  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:43.069  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:44.280  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:44.281  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:45.491  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:45.492  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:46.702  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:46.703  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:47.913  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:47.914  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:49.124  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:08:49.128  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:49.128  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:50.339  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:50.339  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:51.550  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:51.552  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:52.761  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:52.762  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:53.972  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:53.973  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:55.183  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:55.184  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:56.394  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:56.394  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:57.605  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:57.606  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:58.819  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:08:58.820  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:00.027  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:09:00.031  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:00.031  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:01.242  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:01.242  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:02.453  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:02.454  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:03.664  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:03.665  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:04.875  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:04.876  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:06.085  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:06.086  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:07.295  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:07.296  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:08.504  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:08.505  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:09.714  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:09.714  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:10.924  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:09:10.927  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:10.928  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:12.137  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:12.138  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:13.347  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:13.347  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:14.557  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:14.558  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:15.767  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:15.768  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:16.977  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:16.978  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:18.187  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:18.188  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:19.397  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:19.397  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:20.608  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:20.609  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:21.819  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:09:21.822  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:21.823  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:23.032  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:23.032  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:24.242  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:24.243  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:25.453  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:25.454  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:26.663  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:26.664  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:27.874  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:27.875  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:29.085  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:29.086  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:30.295  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:30.296  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:31.506  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:31.507  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:32.717  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:09:32.720  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:32.721  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:33.931  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:33.931  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:35.141  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:35.142  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:36.352  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:36.353  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:37.563  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:37.564  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:38.773  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:38.774  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:39.985  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:39.986  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:41.195  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:41.197  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:42.406  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:42.407  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:43.618  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:09:43.621  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:43.621  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:44.832  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:44.833  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:46.043  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:46.044  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:47.254  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:47.255  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:48.465  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:48.466  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:49.676  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:49.677  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:50.886  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:50.887  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:52.098  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:52.099  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:53.308  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:53.311  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:54.520  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:09:54.523  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:54.523  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:55.733  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:55.734  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:56.944  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:56.945  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:58.155  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:58.156  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:59.366  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:09:59.367  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:00.577  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:00.578  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:01.788  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:01.789  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:02.998  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:02.999  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:04.210  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:04.211  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:05.421  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:10:05.424  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:05.425  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:06.635  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:06.636  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:07.846  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:07.847  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:09.056  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:09.057  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:10.268  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:10.269  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:11.479  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:11.480  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:12.689  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:12.691  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:13.900  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:13.901  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:15.111  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:15.112  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:16.323  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:10:16.326  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:16.326  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:17.537  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:17.538  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:18.748  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:18.750  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:19.959  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:19.960  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:21.171  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:21.172  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:22.381  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:22.382  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:23.592  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:23.593  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:24.803  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:24.804  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:26.014  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:26.015  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:27.226  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:10:27.229  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:27.229  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:28.439  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:28.441  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:29.650  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:29.651  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:30.861  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:30.862  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:32.072  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:32.073  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:33.283  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:33.284  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:34.494  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:34.494  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:35.705  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:35.705  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:36.916  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:36.916  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:38.127  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:10:38.131  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:38.131  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:39.341  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:39.342  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:40.552  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:40.553  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:41.763  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:41.764  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:42.974  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:42.975  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:44.185  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:44.186  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:45.397  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:45.398  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:46.607  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:46.608  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:47.818  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:47.818  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:49.029  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:10:49.033  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:49.033  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:50.243  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:50.244  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:51.454  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:51.454  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:52.665  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:52.666  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:53.876  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:53.877  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:55.087  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:55.088  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:56.298  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:56.298  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:57.509  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:57.510  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:58.720  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:58.721  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:59.931  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:10:59.935  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:10:59.935  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:01.145  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:01.146  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:02.356  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:02.357  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:03.567  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:03.568  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:04.778  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:04.779  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:05.989  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:05.990  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:07.200  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:07.201  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:08.411  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:08.412  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:09.622  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:09.623  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:10.833  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:11:10.837  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:10.837  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:12.047  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:12.048  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:13.258  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:13.258  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:14.469  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:14.470  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:14.696  INFO     OTA target set to the live Board IP 192.168.2.41
+16:11:15.680  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:15.680  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:16.891  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:16.892  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:17.309  INFO     OTA: starting upload to 192.168.2.41:3232 (message 'upload #1 at 16:04:03')
+16:11:17.369  INFO     OTA: Building firmware…
+16:11:17.370  INFO     OTA: Building LC_Hotfire with message 'upload #1 at 16:04:03'…
+16:11:18.102  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:18.106  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:19.313  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:19.313  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:20.524  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:20.524  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:21.229  INFO     OTA: build failed:
+<command-line>: warning: missing terminating " character
+<command-line>: warning: missing terminating " character
+<command-line>: error: missing terminating " character
+/Users/inez/Berkeley/star/firmware/libraries/STAR_EthernetOTA/src/STAR_EthernetOTA.cpp:221:12: note: in expansion of macro 'STAR_OTA_TEST_MESSAGE'
+     return STAR_OTA_TEST_MESSAGE;
+            ^~~~~~~~~~~~~~~~~~~~~
+<command-line>: error: missing terminating " character
+/Users/inez/Berkeley/star/firmware/libraries/STAR_EthernetOTA/src/STAR_EthernetOTA.cpp:225:34: note: in expansion of macro 'STAR_OTA_TEST_MESSAGE'
+     static const char* message = STAR_OTA_TEST_MESSAGE;
+                                  ^~~~~~~~~~~~~~~~~~~~~
+/Users/inez/Berkeley/star/firmware/libraries/STAR_EthernetOTA/src/STAR_EthernetOTA.cpp: In function 'const char* StarOTA::testMessage()':
+/Users/inez/Berkeley/star/firmware/libraries/STAR_EthernetOTA/src/STAR_EthernetOTA.cpp:221:5: error: return-statement with no value, in function returning 'const char*' [-fpermissive]
+     return STAR_OTA_TEST_MESSAGE;
+     ^~~~~~
+/Users/inez/Berkeley/star/firmware/libraries/STAR_EthernetOTA/src/STAR_EthernetOTA.cpp: In function 'void StarOTA::printTestMessage()':
+/Users/inez/Berkeley/star/firmware/libraries/STAR_EthernetOTA/src/STAR_EthernetOTA.cpp:225:55: error: expected primary-expression before ';' token
+     static const char* message = STAR_OTA_TEST_MESSAGE;
+                                                       ^
+*** [.pio/build/adafruit_feather_esp32s3/libc87/STAR_EthernetOTA/STAR_EthernetOTA.cpp.o] Error 1
+<command-line>: warning: missing terminating " character
+========================== [FAILED] Took 2.66 seconds ==========================
+Environment               Status    Duration
+------------------------  --------  ------------
+adafruit_feather_esp32s3  FAILED    00:00:02.656
+==================== 1 failed, 0 succeeded in 00:00:02.656 ====================
+16:11:21.739  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:11:21.739  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:21.740  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:22.950  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:22.951  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:24.161  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:24.164  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:25.372  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:25.373  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:26.583  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:26.584  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:27.794  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:27.794  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:29.005  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:29.006  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:30.216  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:30.217  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:31.427  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:31.429  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:32.638  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:11:32.648  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:32.648  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:33.853  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:33.853  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:35.063  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:35.063  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:36.274  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:36.274  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:37.485  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:37.485  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:38.697  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:38.698  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:39.907  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:39.907  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:41.118  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:41.119  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:42.329  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:42.329  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:43.540  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:11:43.551  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:43.551  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:44.754  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:44.755  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:45.965  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:45.966  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:47.176  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:47.177  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:48.387  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:48.388  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:49.597  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:49.598  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:50.809  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:50.810  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:52.020  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:52.021  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:53.231  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:53.232  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:54.443  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:11:54.451  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:54.451  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:55.657  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:55.658  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:56.868  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:56.869  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:58.079  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:58.080  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:59.290  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:11:59.291  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:00.501  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:00.502  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:01.712  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:01.713  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:02.923  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:02.924  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:04.134  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:04.135  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:05.345  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:12:05.352  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:05.352  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:06.560  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:06.561  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:07.771  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:07.772  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:08.982  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:08.983  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:10.193  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:10.195  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:11.404  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:11.405  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:12.615  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:12.616  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:13.826  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:13.827  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:15.037  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:15.038  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:16.248  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:12:16.258  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:16.259  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:17.462  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:17.463  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:18.673  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:18.674  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:19.884  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:19.885  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:21.096  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:21.097  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:22.306  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:22.307  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:23.517  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:23.518  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:24.728  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:24.729  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:25.939  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:25.940  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:27.150  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:12:27.159  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:27.159  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:28.364  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:28.364  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:29.575  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:29.576  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:30.786  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:30.787  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:31.996  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:31.999  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:33.209  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:33.210  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:34.419  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:34.420  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:35.636  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:35.636  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:36.841  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:36.842  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:38.053  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:12:38.059  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:38.059  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:39.266  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:39.266  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:40.477  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:40.478  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:41.688  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:41.688  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:42.899  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:42.899  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:44.112  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:44.113  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:45.320  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:45.321  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:46.532  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:46.533  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:47.743  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:47.744  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:48.954  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:12:48.962  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:48.962  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:50.169  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:50.170  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:51.380  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:51.381  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:52.591  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:52.592  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:53.801  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:53.802  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:55.013  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:55.014  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:56.224  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:56.224  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:57.435  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:57.436  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:58.646  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:58.647  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:59.857  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:12:59.866  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:12:59.866  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:01.072  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:01.073  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:02.283  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:02.283  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:03.494  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:03.495  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:04.705  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:04.706  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:05.916  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:05.917  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:07.127  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:07.128  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:08.338  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:08.339  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:09.548  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:09.550  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:10.760  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:13:10.766  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:10.766  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:11.973  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:11.974  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:13.185  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:13.186  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:14.395  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:14.396  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:15.606  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:15.607  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:16.818  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:16.819  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:18.029  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:18.030  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:19.239  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:19.243  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:20.451  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:20.451  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:21.662  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:13:21.670  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:21.670  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:22.875  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:22.876  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:24.086  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:24.087  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:25.298  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:25.298  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:26.509  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:26.510  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:27.720  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:27.721  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:28.930  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:28.931  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:30.142  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:30.143  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:31.353  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:31.354  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:32.564  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:13:32.574  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:32.574  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:33.779  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:33.780  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:34.989  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:34.990  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:36.201  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:36.201  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:37.411  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:37.412  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:38.622  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:38.624  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:39.834  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:39.835  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:41.045  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:41.046  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:42.256  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:42.256  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:43.467  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:13:43.475  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:43.475  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:44.682  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:44.683  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:45.893  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:45.893  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:47.104  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:47.105  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:48.314  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:48.315  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:49.526  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:49.526  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:50.736  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:50.738  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:51.948  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:51.949  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:53.159  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:53.160  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:54.370  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:13:54.378  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:13:54.378  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:04.723  INFO     GUI started for LC (board id 41, 192.168.2.41). Log file: /Users/inez/Berkeley/star/Test-GUI/logs/lc_gui.log
+16:14:04.723  INFO     Pick the board's USB serial port above and click Connect. Use 'Start Ethernet UDP' to watch the network path.
+16:14:04.915  INFO     Filter: none (raw) (fs ~ 100 Hz)
+16:14:19.827  INFO     Link: Listening on 0.0.0.0:5006
+16:14:21.022  INFO     Board discovered at 192.168.2.41
+16:14:21.022  INFO     Board online: id=41 state=Active engine=Safe fw=c56ef530… from 192.168.2.41
+16:14:21.022  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:21.023  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:22.232  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:22.233  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:23.443  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:23.444  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:24.654  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:24.656  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:25.865  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:25.867  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:27.077  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:14:27.080  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:27.080  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:28.291  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:28.292  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:29.502  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:29.504  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:30.713  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:30.714  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:31.924  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:31.926  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:33.135  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:33.136  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:34.346  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:34.347  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:34.828  INFO     OTA: starting upload to 192.168.2.41:3232 (message 'hello world')
+16:14:34.830  INFO     OTA: Building firmware…
+16:14:34.890  INFO     OTA: Building LC_Hotfire with message 'hello world'…
+16:14:35.557  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:35.559  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:36.768  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:36.771  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:37.979  INFO     [eth] SENSOR_DATA       179B  from 192.168.2.41
+16:14:37.984  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:37.984  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:39.193  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:39.193  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:40.329  INFO     OTA: Built /Users/inez/Berkeley/star/firmware/Hotfire_Code/LC_Hotfire/.pio/build/adafruit_feather_esp32s3/firmware.bin
+16:14:40.332  INFO     OTA: Uploading 317712 bytes to 192.168.2.41:3232…
+16:14:40.404  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:40.407  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:41.838  INFO     OTA: Board acknowledged the image and is rebooting.
+16:14:46.894  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:46.894  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:47.894  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:47.898  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:48.895  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:48.895  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:49.896  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:49.896  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:50.896  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:50.897  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:51.897  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:51.898  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:52.899  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:52.900  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:53.899  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:53.900  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:54.900  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:54.901  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:55.901  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:55.902  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:56.903  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:56.904  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:57.903  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:57.905  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:58.905  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:58.906  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:59.905  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:14:59.907  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:00.906  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:00.907  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:01.907  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:01.908  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:02.909  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:02.910  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:03.909  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:03.911  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:04.911  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:04.912  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:05.912  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:05.913  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:06.914  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:06.915  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:07.915  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:07.917  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:08.917  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:08.918  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:09.918  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:09.919  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:10.919  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:10.920  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:11.919  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:11.921  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:12.921  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:12.922  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:13.922  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:13.923  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:14.924  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:14.925  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:15.925  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:15.926  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:16.926  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:16.927  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:17.927  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:17.928  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:18.929  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:18.930  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:19.929  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:19.931  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:20.931  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:20.932  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:21.931  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:21.932  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:22.933  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:22.934  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:23.933  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:23.934  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:24.934  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:24.935  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:25.935  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:25.936  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:26.937  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:26.938  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:27.937  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:27.939  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:28.938  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:28.939  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:29.939  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:29.940  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:30.941  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:30.942  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:31.941  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:31.943  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:32.943  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:32.944  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:33.944  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:33.946  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:34.946  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:34.947  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:35.946  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:35.947  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:36.948  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:36.949  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:37.948  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:37.950  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:38.950  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:38.951  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:39.950  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:39.951  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:40.952  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:40.953  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:41.952  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:41.954  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:42.954  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:42.955  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:43.954  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:43.955  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:44.956  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:44.957  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:45.956  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:45.957  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:46.957  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:46.959  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:47.958  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:47.959  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:48.959  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:48.960  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:49.960  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:49.961  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:50.962  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:50.963  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:51.962  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:51.963  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:52.963  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:52.964  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:53.964  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:53.965  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:54.966  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:54.967  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:55.967  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:55.968  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:56.968  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:56.969  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:57.969  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:57.970  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:58.971  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:58.972  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:59.971  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:15:59.972  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:00.973  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:00.974  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:01.973  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:01.974  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:02.975  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:02.976  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:03.975  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:03.976  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:04.977  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:04.978  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:05.977  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:05.978  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:06.978  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:06.980  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:07.979  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:07.980  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:08.980  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:08.981  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:09.981  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:09.982  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:10.982  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:10.983  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:11.983  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:11.984  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:12.984  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:12.986  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:13.985  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:13.986  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:14.986  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:14.988  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:15.987  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:15.988  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:16.989  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:16.990  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:17.989  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:17.990  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:18.994  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:18.995  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:19.995  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:19.996  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:20.995  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:20.996  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:21.995  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:21.996  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:22.995  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:22.995  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:23.995  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:23.996  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:24.996  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:24.997  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:25.997  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:25.998  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:26.998  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:26.999  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:27.999  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:28.000  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:29.000  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:29.001  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:30.001  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:30.002  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:31.002  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:31.003  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:32.003  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:32.004  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:33.004  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:33.005  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:34.005  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:34.006  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:35.006  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:35.007  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:36.007  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:36.008  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:37.008  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:37.009  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:38.009  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:38.010  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:39.010  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:39.011  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:40.011  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:40.012  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:41.012  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:41.013  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:42.014  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:42.015  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:43.015  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:43.016  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:44.016  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:44.017  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:45.017  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:45.018  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:46.018  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:46.019  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:47.019  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:47.021  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:48.020  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:48.021  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:49.021  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:49.022  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:50.022  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:50.023  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:51.024  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:51.024  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:52.024  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:52.025  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:53.025  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:53.026  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:54.026  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:54.027  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:55.027  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:55.028  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:56.028  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:56.029  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:57.029  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:57.031  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:58.030  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:58.030  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:59.031  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:16:59.033  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:00.032  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:00.033  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:01.033  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:01.116  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:02.034  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:02.035  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:03.035  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:03.036  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:04.036  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:04.037  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:05.037  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:05.038  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:06.038  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:06.039  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:07.039  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:07.040  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:08.040  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:08.041  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:09.041  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:09.041  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:10.042  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:10.042  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:11.043  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:11.044  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:12.044  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:12.045  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:13.045  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:13.046  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:14.046  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:14.047  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:15.047  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:15.048  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:16.048  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:16.049  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:17.049  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:17.050  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:18.050  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:18.051  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:19.051  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:19.052  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:20.052  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:20.053  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:21.053  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:21.054  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:22.054  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:22.055  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:23.055  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:23.056  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:24.056  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:24.057  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:25.057  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:25.058  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:26.058  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:26.059  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:27.059  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:27.060  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:28.060  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:28.061  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:29.061  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:29.062  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:30.063  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:30.064  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:31.064  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:31.065  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:32.065  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:32.066  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:33.066  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:33.067  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:34.067  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:34.068  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:35.068  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:35.069  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:36.069  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:36.070  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:37.070  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:37.070  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:38.071  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:38.072  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:39.072  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:39.073  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:40.073  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:40.074  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:41.074  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:41.075  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:42.075  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:42.076  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:43.076  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:43.077  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:44.077  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:44.078  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:45.078  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:45.079  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:46.080  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:46.081  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:47.082  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:47.083  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:48.084  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:48.085  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:49.086  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:49.087  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:50.088  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:17:50.089  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:51.124  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:51.124  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:51.926  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:51.926  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:52.928  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:52.929  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:53.929  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:53.930  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:54.931  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:54.932  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:55.932  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:55.933  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:56.934  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:56.939  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:57.935  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:57.936  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:58.937  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:58.938  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:59.939  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:23:59.940  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:00.940  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:00.941  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:01.942  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:01.943  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:02.943  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:02.944  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:03.944  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:03.945  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:04.945  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:04.946  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:05.947  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:05.948  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:06.948  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:06.950  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:07.950  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:07.951  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:08.951  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:08.952  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:09.952  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:09.953  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:10.953  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:10.954  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:11.955  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:11.956  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:12.956  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:12.957  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:13.957  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:13.957  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:14.958  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:14.959  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:15.959  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:15.960  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:16.961  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:16.962  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:17.962  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:17.963  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:18.963  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:18.964  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:19.964  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:19.965  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:20.965  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:20.966  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:21.966  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:21.967  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:22.967  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:22.969  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:23.969  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:23.970  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:24.973  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:24.974  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:25.975  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:25.976  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:26.975  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:26.977  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:27.973  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:27.974  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:28.975  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:28.976  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:29.975  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:29.976  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:30.976  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:30.977  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:31.977  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:31.978  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:32.978  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:32.980  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:33.979  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:33.980  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:34.980  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:34.980  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:35.981  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:35.982  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:36.982  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:24:36.983  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:52.104  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:52.105  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:52.506  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:52.507  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:53.506  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:53.506  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:54.507  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:54.508  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:55.508  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:55.509  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:56.510  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:56.511  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:57.511  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:57.512  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:58.512  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:58.513  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:59.513  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:26:59.514  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:00.514  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:00.515  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:01.514  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:01.515  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:02.516  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:02.517  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:03.517  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:03.518  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:04.517  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:04.518  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:05.519  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:05.519  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:06.520  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:06.521  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:07.521  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:07.522  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:08.522  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:08.522  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:09.522  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:09.523  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:10.524  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:10.525  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:11.525  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:11.526  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:12.526  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:12.527  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:13.527  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:13.528  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:14.528  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:14.529  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:15.529  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:15.530  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:16.530  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:16.531  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:17.533  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:17.534  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:18.532  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:18.533  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:19.533  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:19.534  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:20.412  INFO     OTA: starting upload to 192.168.2.41:3232 (message 'hello world 2')
+16:27:20.414  INFO     OTA: Building firmware…
+16:27:20.421  INFO     OTA: Building LC_Hotfire with message 'hello world 2'…
+16:27:20.534  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:20.535  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:21.535  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:21.538  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:22.536  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:22.538  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:23.537  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:23.540  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:24.538  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:24.541  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:25.539  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:25.541  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:26.030  INFO     OTA: Built /Users/inez/Berkeley/star/firmware/Hotfire_Code/LC_Hotfire/.pio/build/adafruit_feather_esp32s3/firmware.bin
+16:27:26.033  INFO     OTA: Uploading 317712 bytes to 192.168.2.41:3232…
+16:27:27.489  INFO     OTA: Board acknowledged the image and is rebooting.
+16:27:32.541  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:32.541  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:33.542  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:33.542  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:34.543  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:34.544  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:35.544  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:35.545  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:36.545  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:36.545  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:37.546  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:37.547  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:38.547  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:38.549  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:39.548  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:39.549  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:40.549  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:40.549  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:41.549  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:41.550  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:42.551  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:42.552  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:43.552  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:43.553  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:44.553  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:44.554  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:45.554  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:45.555  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:46.555  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:46.556  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:47.556  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:47.557  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:48.557  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:48.558  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:49.558  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:49.558  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:50.559  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:50.559  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:51.563  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:51.563  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:52.561  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:52.563  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:53.562  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:53.562  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:54.563  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:54.564  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:55.564  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:55.565  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:56.565  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:56.567  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:57.566  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:57.567  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:58.567  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:58.569  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:59.568  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:27:59.569  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:00.569  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:00.570  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:01.570  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:01.571  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:02.571  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:02.572  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:03.572  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:03.573  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:04.573  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:04.574  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:05.576  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:05.577  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:06.577  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:06.578  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:07.577  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:07.577  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:08.577  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:08.578  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:09.578  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:09.579  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:10.579  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:10.580  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:11.580  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:11.581  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:12.581  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:12.582  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:13.582  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:13.583  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:14.583  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:14.585  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:15.584  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:15.585  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:16.585  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:16.586  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:17.587  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:17.588  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:18.588  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:18.588  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:19.589  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:19.589  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:20.590  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:20.591  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:21.591  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:21.592  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:22.592  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:22.593  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:23.593  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:23.594  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:24.594  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:24.595  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:25.595  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:25.596  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:26.596  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:26.600  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:27.597  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:27.598  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:28.598  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:28.599  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:29.599  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:29.600  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:30.600  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:30.602  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:31.601  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:31.602  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:32.602  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:32.604  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:33.603  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:33.604  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:34.604  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:34.605  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:35.605  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:35.606  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:36.607  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:36.608  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:37.607  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:37.608  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:38.609  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:38.610  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:39.610  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:39.612  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:40.611  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:40.612  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:41.612  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:41.613  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:42.613  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:42.615  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:43.614  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:43.615  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:44.616  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:44.617  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:45.617  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:45.618  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:46.619  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:46.620  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:47.619  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:47.621  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:48.621  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:48.622  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:49.621  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:49.623  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:50.622  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:50.623  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:51.623  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:51.624  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:52.624  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:52.625  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:53.625  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:53.626  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:54.626  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:54.627  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:55.627  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:55.629  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:56.628  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:56.629  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:57.629  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:57.631  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:58.631  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:58.632  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:59.631  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:28:59.632  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:00.632  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:00.633  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:01.633  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:01.634  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:02.635  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:02.636  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:03.635  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:03.637  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:04.636  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:04.638  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:05.637  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:05.639  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:06.639  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:06.640  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:07.639  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:07.640  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:08.640  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:08.641  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:09.641  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:09.642  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:10.643  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:10.644  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:11.644  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:11.646  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:12.646  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:12.647  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:13.646  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:13.648  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:14.648  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:14.649  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:15.648  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:15.650  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:16.650  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:16.651  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:17.651  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:17.652  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:18.652  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:18.652  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:19.652  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:19.653  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:20.653  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:20.654  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:21.655  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:21.656  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:22.656  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:22.657  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:23.658  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:23.659  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:24.659  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:24.660  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:25.659  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:25.660  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:26.661  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:26.662  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:27.661  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:27.662  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:28.663  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
+16:29:28.664  INFO     [eth] BOARD_HEARTBEAT    41B  from 192.168.2.41
