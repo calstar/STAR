@@ -44,8 +44,12 @@ function UnitField({ value, onChange, kind, min }: {
   // Every use of this writes a design field (motor aft offset, rail length), so
   // it goes read-only with the design rather than each call site remembering.
   const disabled = useDisabled()
-  const [editing, setEditing] = useState(false)
-  const shown = editing ? val(value, kind) : forInput(value, kind)
+  // The characters typed, held for as long as the box has focus. Showing the
+  // parsed number back instead rewrites the box under the caret on every
+  // keystroke and makes a `0` impossible to delete -- see `NumberInput`, which
+  // this is the design-side twin of.
+  const [draft, setDraft] = useState<string | null>(null)
+  const shown = draft ?? forInput(value, kind)
   return (
     <input
       type="number"
@@ -53,9 +57,10 @@ function UnitField({ value, onChange, kind, min }: {
       min={min}
       disabled={disabled}
       value={shown}
-      onFocus={() => setEditing(true)}
-      onBlur={() => setEditing(false)}
+      onFocus={() => setDraft(String(val(value, kind)))}
+      onBlur={() => setDraft(null)}
       onChange={(e) => {
+        setDraft(e.target.value)
         const t = e.target.value.trim()
         onChange(t === '' ? 0 : si(Number(t), kind))
       }}
