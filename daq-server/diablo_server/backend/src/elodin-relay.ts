@@ -13,7 +13,6 @@ import * as net from 'net';
 import { WebSocketServer } from 'ws';
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
 import { registerVTables, clearSubscriptionState } from './elodin-vtable-registry.js';
-import { registerControllerVTables, registerActuatorCommandedVTables } from './legacy/elodin-vtable-controller.js';
 import { loadActuatorChannelToEntityMap } from './sensor-config.js';
 
 const ELODIN_HOST = process.env.ELODIN_HOST || '127.0.0.1';
@@ -154,14 +153,9 @@ function main(): void {
     tablePacketCount = 0;
     seenHighBytes.clear();
     if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
-    // Register CONTROLLER VTables so publish [0x43] from backend→relay→Elodin is accepted
-    registerControllerVTables(elodin).then((ok) => {
-      if (ok) console.log('[Relay] Controller VTables registered (CONTROLLER.state etc.)');
-    }).catch((e) => { console.error('[Relay] Controller VTable registration failed:', e); });
-    const actuatorMap = loadActuatorChannelToEntityMap();
-    registerActuatorCommandedVTables(elodin, actuatorMap).then((ok) => {
-      if (ok) console.log('[Relay] Actuator Commanded VTables registered');
-    }).catch((e) => { console.error('[Relay] Actuator Commanded VTable registration failed:', e); });
+    // No VTable REGISTRATION here either — see the note in server.ts. The DB rejects
+    // every one of these (verified against elodin-db), and the C++ services register the
+    // real tables.
     // Use VTableStream (not Stream) so Elodin DB sends whole-row TABLE packets
     registerVTables(elodin).then(() => {
       console.log('[Relay] VTableStream subscriptions sent; relaying TABLE packets to WebSocket clients.');

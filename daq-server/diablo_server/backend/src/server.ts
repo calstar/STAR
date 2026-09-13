@@ -27,8 +27,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { loadSensorRoleMap, hpBoardNumbers } from './sensor-config.js';
-import { registerVTables, clearSubscriptionState } from './elodin-vtable-registry.js';
-import { registerControllerVTables } from './legacy/elodin-vtable-controller.js';
+import { registerVTables, clearSubscriptionState, noteSubscriptionRejected } from './elodin-vtable-registry.js';
 import { createAPIHandler } from './api-server.js';
 import { startBoardLogReceiver } from './board-logs.js';
 import { readConfig, readDeployedConfig } from './routes/config.js';
@@ -1453,8 +1452,22 @@ elodin.on('connected', () => {
   registerVTables(elodin).then(() => {
     scheduleResubscribe(1);
   });
-  registerControllerVTables(elodin);
-  console.log('[ThinServer] Connected to Elodin, registered VTables.');
+  // No VTable REGISTRATION from here. The C++ services own it (sequencer:
+  // "Registered Sequencer/Controller VTables"), and every message this backend sent was
+  // rejected by the DB anyway — measured against elodin-db: 5x "postcard Serde
+  // Deserialization Error" for the controller tables and 20x "Hit the end of buffer" for
+  // the actuator ones. encodeVTable emits a VTableMsg this DB version cannot parse, and
+  // the "✅ Registered" it logged only ever meant socket.write() returned true.
+  console.log('[ThinServer] Connected to Elodin, subscriptions sent.');
+});
+
+// The DB refuses a subscription for a VTable that does not exist YET — the publisher
+// registers it when that service starts, which on a session start is a few seconds after
+// this backend reconnects. Un-mark the pair and make sure a retry is queued; without this
+// the refusal was silent and permanent, and the GUI sat on a stale state all session.
+elodin.on('dbError', (requestId: number, description: string) => {
+  noteSubscriptionRejected(requestId, description);
+  scheduleResubscribe(1);
 });
 
 elodin.on('disconnected', () => {

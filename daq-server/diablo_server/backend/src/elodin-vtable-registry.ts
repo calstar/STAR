@@ -73,12 +73,52 @@ function encodeVTable(config: {
 
 // ── VTableStream subscriptions (board-namespaced IDs, config + fallbacks) ───
 
-/** Subscribed [high,low] keys — avoids duplicate subs on 5s retry (duplicate delivery / inflated rates). */
+/** Subscribed [high,low] keys — avoids duplicate subs on 5s retry.
+ *
+ *  Duplicate delivery is a REAL hazard here and the reason this set exists: the DB spawns
+ *  a fresh stream task per VTableStream message with no dedupe, so re-subscribing a live
+ *  table doubles its rate. What is NOT a hazard, despite an earlier comment here, is
+ *  replay — handle_vtable_stream's RealTimeStage waits on the next write and sends only
+ *  latest(), so a subscribe never re-sends stored history. Verified against elodin-db.
+ *
+ *  That distinction is what makes retry safe: a REJECTED subscription spawned no stream,
+ *  so re-sending it cannot duplicate anything. Rejected pairs are removed from this set by
+ *  noteSubscriptionRejected() and re-sent by the next scheduled pass. */
 const subscribedVTableStreamPairs = new Set<string>();
+
+/** requestId → pair key, for subscriptions whose reply has not come back yet. */
+const pendingSubscriptionReqIds = new Map<number, string>();
+/** Rotating 1..255 (0 is the default for everything else, so it means "not tracked"). */
+let nextSubscriptionReqId = 1;
 
 /** Call on Elodin disconnect so the next connect re-sends all streams cleanly. */
 export function clearSubscriptionState(): void {
     subscribedVTableStreamPairs.clear();
+    pendingSubscriptionReqIds.clear();
+}
+
+/**
+ * Handle an ErrorResponse from the DB (ElodinClient 'dbError').
+ *
+ * The startup race this exists for: the backend subscribes to everything the moment it
+ * connects, but the pipeline services register their VTables when THEY start — the
+ * sequencer registered _SEQUENCER_STATE 3 s after the backend had already subscribed to
+ * it. The DB answers "invalid msg id" and drops the subscription; nothing retried, so the
+ * GUI froze on a stale state for the rest of the session while sensor data flowed
+ * perfectly. Un-marking the pair lets the existing resubscribe pass pick it up once the
+ * table exists.
+ */
+export function noteSubscriptionRejected(requestId: number, description: string): void {
+    const key = pendingSubscriptionReqIds.get(requestId);
+    if (key === undefined) return;
+    pendingSubscriptionReqIds.delete(requestId);
+    if (!subscribedVTableStreamPairs.delete(key)) return;
+    const [high, low] = key.split(',').map(Number);
+    console.warn(
+        `[Elodin] subscription refused for [0x${high.toString(16).padStart(2, '0')}, ` +
+        `0x${low.toString(16).padStart(2, '0')}]: ${description} — will retry ` +
+        '(the publisher has probably not registered its VTable yet)',
+    );
 }
 
 /**
@@ -227,7 +267,12 @@ export async function registerVTables(client: ElodinClient): Promise<boolean> {
             const payload = Buffer.alloc(2);
             payload.writeUInt8(high, 0);
             payload.writeUInt8(low, 1);
-            const ok = client.sendRawMessage(vtableStreamMsgId, ElodinPacketType.MSG, payload);
+            // Unique-ish requestId so an ErrorResponse can be traced back to THIS pair —
+            // the DB echoes req_id on the error (PacketTx::send_msg).
+            const reqId = nextSubscriptionReqId;
+            nextSubscriptionReqId = (nextSubscriptionReqId % 255) + 1;
+            pendingSubscriptionReqIds.set(reqId, key);
+            const ok = client.sendRawMessage(vtableStreamMsgId, ElodinPacketType.MSG, payload, reqId);
             if (ok) {
                 subscribedVTableStreamPairs.add(key);
                 successCount++;
