@@ -226,3 +226,49 @@ describe('grouping for the session page', () => {
     expect(ids).toContain('system');   // used by the "profile could not be read" issue
   });
 });
+
+// ── Roles vs active_connectors ───────────────────────────────────────────────
+// Two facts that are easy to mistake for one, and nothing used to compare them.
+// active_connectors is wire-level: config_broadcast packs it into the packet sent to the
+// board, so it decides what the hardware samples. sensor_roles is naming, and drives
+// display, calibration keying (cal is filed by role) and abort_pts. So "removing a
+// channel" did two different things depending on which one you edited.
+describe('roles vs active_connectors', () => {
+  const withLc = (connectors: number[] | undefined, roles: Record<string, number>) => {
+    const cfg: any = cleanConfig();
+    cfg.boards.lc_board_2 = {
+      type: 'LC', board_id: 42, enabled: true, ip: '192.0.2.42',
+      ...(connectors ? { active_connectors: connectors } : {}),
+    };
+    cfg.sensor_roles_lc_board_2 = roles;
+    return cfg;
+  };
+
+  it('warns when a role names a channel the board is not told to sample', () => {
+    const issues = validateConfigForRun(withLc([1, 2, 6], { Thrust: 1, Ghost: 4 }), cleanCsv());
+    const issue = issues.find((i) => i.message.includes('Ghost'));
+    expect(issue).toBeTruthy();
+    expect(issue!.level).toBe('warn');
+    expect(issue!.page).toBe('boards');
+  });
+
+  it('warns when a sampled channel has no role naming it', () => {
+    const issues = validateConfigForRun(withLc([1, 2, 6], { Thrust: 1 }), cleanCsv());
+    expect(issues.some((i) => i.message.includes('no role'))).toBe(true);
+  });
+
+  it('is quiet when the two agree', () => {
+    const issues = validateConfigForRun(withLc([1, 2, 6], { A: 1, B: 2, C: 6 }), cleanCsv());
+    expect(issues.some((i) => i.message.includes('no role') || i.message.includes('not told to sample'))).toBe(false);
+  });
+
+  it('says nothing when active_connectors is absent — that means 1..num_sensors, not "none"', () => {
+    const issues = validateConfigForRun(withLc(undefined, { Thrust: 3 }), cleanCsv());
+    expect(issues.some((i) => i.message.includes('not told to sample'))).toBe(false);
+  });
+
+  it('does not block a run over it — these are warnings, not errors', () => {
+    const issues = validateConfigForRun(withLc([1, 2, 6], { Thrust: 1, Ghost: 4 }), cleanCsv());
+    expect(issues.every((i) => i.level === 'warn')).toBe(true);
+  });
+});
