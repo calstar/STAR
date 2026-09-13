@@ -146,9 +146,9 @@ export function ManifoldEditor({ outlets, geometry, ports, onSave }: {
         onPointerLeave={() => setDrag(null)}
       >
         <rect x={ox} y={oy} width={bw} height={bh} rx={3}
-          fill="rgba(148,163,184,0.10)" stroke="#94a3b8" strokeWidth={1.2} />
+          fill="var(--color-bg-tertiary)" stroke="var(--color-text-secondary)" strokeWidth={1.2} />
         <line x1={ox + 4} y1={oy + bh / 2} x2={ox + bw - 4} y2={oy + bh / 2}
-          stroke="#64748b" strokeWidth={1} strokeDasharray="3 3" />
+          stroke="var(--color-text-muted)" strokeWidth={1} strokeDasharray="3 3" />
 
         {ids.map(id => {
           const p = perimeterPoint(draft.positions[id] ?? 0, bw, bh);
@@ -156,7 +156,7 @@ export function ManifoldEditor({ outlets, geometry, ports, onSave }: {
           if (kind === 'plug') return null;
           const cx = ox + p.x, cy = oy + p.y;
           const on = drag === id;
-          const colour = id === 'in' ? '#38bdf8' : '#94a3b8';
+          const colour = id === 'in' ? 'var(--color-accent)' : 'var(--color-text-secondary)';
           return (
             <g key={id}
                onPointerDown={e => { if (!readOnly) { e.stopPropagation(); setDrag(id); } }}

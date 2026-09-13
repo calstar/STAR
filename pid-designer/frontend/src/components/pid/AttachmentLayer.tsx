@@ -51,11 +51,16 @@ export function AttachmentLayer({ nodes, edges }: { nodes: Node[]; edges: Edge[]
         width={1} height={1}
       >
         {leaders.map(l => (
-          <line
-            key={l.id}
-            x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2}
-            stroke="#475569" strokeWidth={1} strokeDasharray="2 3"
-          />
+          <g key={l.id}>
+            <line
+              x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2}
+              stroke="var(--color-text-secondary)" strokeWidth={1.2} strokeDasharray="2 3"
+            />
+            {/* Where it lands, not just that it's connected somewhere --
+                the dashed line alone reads as "faint pipe" until something
+                marks the actual point of contact. */}
+            <circle cx={l.x2} cy={l.y2} r={2.5} fill="var(--color-text-secondary)" />
+          </g>
         ))}
       </svg>
     </ViewportPortal>

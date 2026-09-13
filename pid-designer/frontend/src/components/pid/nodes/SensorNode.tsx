@@ -24,7 +24,7 @@ export function SensorNode({ id, data, selected }: NodeProps) {
   const S = SIZES[(options?.size as keyof typeof SIZES) ?? 'normal'] ?? SIZES.normal;
   // Gauges and transducers are plumbed; probes and load cells clip.
   const tapped = componentType === 'PT' || componentType === 'PG';
-  const stroke = selected ? '#3b82f6' : (color ?? '#94a3b8');
+  const stroke = selected ? 'var(--color-text-primary)' : (color ?? 'var(--color-text-secondary)');
 
   return (
     <Frame nodeId={id} w={S} h={S} rotation={rotation} extra={<>
@@ -37,12 +37,12 @@ export function SensorNode({ id, data, selected }: NodeProps) {
       <svg width={S} height={S} viewBox="0 0 60 60">
         <circle
           cx="30" cy="30" r="26"
-          fill="#1e293b"
+          fill="var(--color-bg-tertiary)"
           stroke={stroke}
           strokeWidth={selected ? 2.5 : 1.5}
         />
         <Upright rotation={rotation} x={30} y={34}>
-          <text x="30" y="34" textAnchor="middle" fontSize="14" fill="#e2e8f0"
+          <text x="30" y="34" textAnchor="middle" fontSize="14" fill="var(--color-text-primary)"
             fontFamily="monospace" fontWeight="bold">
             {componentType}
           </text>

@@ -31,8 +31,10 @@ const BLOCK_H = 56;
 /** Pixels per flow unit. Two gives a print that survives being zoomed. */
 const SCALE = 2;
 
-const BG = () =>
-  getComputedStyle(document.documentElement).getPropertyValue('--color-bg-primary').trim() || '#0a0f1a';
+const cssVar = (name: string, fallback: string) =>
+  getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+
+const BG = () => cssVar('--color-bg-primary', '#0a0a0a');
 
 /**
  * How long a render may take before it is called off, so the menu cannot say
@@ -184,13 +186,16 @@ export function titleRows(meta: SheetMeta): [string, string][] {
   ];
 }
 
-const INK = '#cbd5e1';
-const MUTED = '#64748b';
-const RULE = '#334155';
+// Read at export time, not module scope, so a title block drawn after a
+// theme toggle always matches what is on screen right now rather than
+// whatever theme happened to be active when this module first loaded.
+const INK = () => cssVar('--color-text-primary', '#f2f2f2');
+const MUTED = () => cssVar('--color-text-muted', '#737373');
+const RULE = () => cssVar('--color-border', '#2e2e2e');
 
 function drawTitleBlock(ctx: CanvasRenderingContext2D, width: number, top: number, meta: SheetMeta) {
   const h = BLOCK_H * SCALE;
-  ctx.strokeStyle = RULE;
+  ctx.strokeStyle = RULE();
   ctx.lineWidth = SCALE;
   ctx.beginPath();
   ctx.moveTo(0, top + 0.5);
@@ -206,10 +211,10 @@ function drawTitleBlock(ctx: CanvasRenderingContext2D, width: number, top: numbe
       ctx.lineTo(i * cell + 0.5, top + h);
       ctx.stroke();
     }
-    ctx.fillStyle = MUTED;
+    ctx.fillStyle = MUTED();
     ctx.font = `${9 * SCALE}px ui-monospace, Menlo, monospace`;
     ctx.fillText(label, x, top + 18 * SCALE);
-    ctx.fillStyle = INK;
+    ctx.fillStyle = INK();
     ctx.font = `${i === 0 ? 'bold ' : ''}${13 * SCALE}px ui-monospace, Menlo, monospace`;
     ctx.fillText(value, x, top + 40 * SCALE);
   });
@@ -223,7 +228,7 @@ function titleBlockSvg(doc: Document, width: number, top: number, meta: SheetMet
     const l = doc.createElementNS(NS, 'line');
     l.setAttribute('x1', String(x1)); l.setAttribute('y1', String(y1));
     l.setAttribute('x2', String(x2)); l.setAttribute('y2', String(y2));
-    l.setAttribute('stroke', RULE); l.setAttribute('stroke-width', String(SCALE));
+    l.setAttribute('stroke', RULE()); l.setAttribute('stroke-width', String(SCALE));
     g.appendChild(l);
   };
   const text = (x: number, y: number, s: string, size: number, fill: string, bold = false) => {
@@ -242,8 +247,8 @@ function titleBlockSvg(doc: Document, width: number, top: number, meta: SheetMet
   rows.forEach(([label, value], i) => {
     const x = i * cell + 16 * SCALE;
     if (i > 0) line(i * cell, top, i * cell, top + h);
-    text(x, top + 18 * SCALE, label, 9, MUTED);
-    text(x, top + 40 * SCALE, value, 13, INK, i === 0);
+    text(x, top + 18 * SCALE, label, 9, MUTED());
+    text(x, top + 40 * SCALE, value, 13, INK(), i === 0);
   });
   return g;
 }

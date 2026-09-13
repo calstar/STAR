@@ -5,20 +5,49 @@
    type-check but render unstyled -- silently, with no build error. */
 @source "../../../lib/stardesign-ui/src";
 
+/* True black/white/gray, deliberately: every value below has R=G=B, so
+   there is no blue (or any other) cast anywhere in pid-designer's own
+   chrome. Functional color survives on purpose -- fluid-line identity
+   (fuel/LOX/pressurant), checkout/status states, errors -- because those
+   colors carry meaning the way a P&ID's own ink does; only decorative
+   chrome hue was the complaint. Dark is the default (`:root`) so there is
+   no flash of the wrong theme before JS runs; `[data-theme="light"]`
+   overrides. See lib/theme.ts for the toggle that sets the attribute. */
 :root {
-  --color-bg-primary: #0a0f1a;
-  --color-bg-secondary: #0f172a;
-  /* Hover lift for controls. Added with the shared button/modal styles: the
-     diagram bar used to hardcode #1e293b / #334155, which meant pid-designer
-     silently drifted from the palette the other design tools share. */
-  --color-bg-tertiary: #1e293b;
-  --color-accent: #3b82f6;
-  --color-accent-hover: #2563eb;
-  --color-border: #1e293b;
-  --color-text-primary: #f1f5f9;
-  --color-text-secondary: #94a3b8;
-  /* Matched to recovery-calculator, which picked it for contrast (7.8:1). */
-  --color-text-muted: #9fb0c4;
+  --color-bg-primary: #0a0a0a;
+  --color-bg-secondary: #111111;
+  --color-bg-tertiary: #1c1c1c;
+  --color-accent: #616161;
+  --color-accent-hover: #757575;
+  --color-border: #2e2e2e;
+  --color-text-primary: #f2f2f2;
+  --color-text-secondary: #a3a3a3;
+  /* #737373 measured ~4.2:1 against this bg at the small caption sizes it's
+     actually used at -- just under WCAG AA's 4.5:1. Brightened one step. */
+  --color-text-muted: #7a7a7a;
+  /* The only two named exceptions to true-gray chrome, alongside fluid-line
+     identity: an actual danger/warning state earns real color the way a
+     P&ID's own ink would. Everything that isn't one of these two states, or
+     fluid identity, stays gray -- see ChecksPanel.tsx, FluidContext.tsx,
+     ValveNode.tsx's fail-open marker. */
+  --color-danger: #f87171;
+  --color-warning: #fbbf24;
+}
+
+:root[data-theme='light'] {
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #f7f7f7;
+  --color-bg-tertiary: #ececec;
+  --color-accent: #404040;
+  --color-accent-hover: #262626;
+  --color-border: #dcdcdc;
+  --color-text-primary: #0f0f0f;
+  --color-text-secondary: #525252;
+  /* #7a7a7a measured ~4.3:1 against white at the small caption sizes it's
+     actually used at -- just under WCAG AA's 4.5:1. Darkened one step. */
+  --color-text-muted: #6b6b6b;
+  --color-danger: #dc2626;
+  --color-warning: #d97706;
 }
 
 * {
@@ -30,4 +59,5 @@ body {
   background-color: var(--color-bg-primary);
   color: var(--color-text-primary);
   font-family: system-ui, -apple-system, sans-serif;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }

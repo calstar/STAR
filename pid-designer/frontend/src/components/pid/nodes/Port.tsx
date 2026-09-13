@@ -47,8 +47,8 @@ export function Port({
   // something the symbol should have to be told.
   const tap = useIsTap(nodeId ?? '', id);
   const look = tap
-    ? { background: 'transparent', border: '1.5px solid #64748b', width: 5, height: 5 }
-    : { background: '#94a3b8' };
+    ? { background: 'transparent', border: '1.5px solid var(--color-text-muted)', width: 5, height: 5 }
+    : { background: 'var(--color-text-secondary)' };
   return (
     <Handle
       type="source"
