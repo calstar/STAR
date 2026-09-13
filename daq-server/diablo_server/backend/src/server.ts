@@ -1488,8 +1488,9 @@ elodin.on('connected', () => {
   // "Registered Sequencer/Controller VTables"), and every message this backend sent was
   // rejected by the DB anyway — measured against elodin-db: 5x "postcard Serde
   // Deserialization Error" for the controller tables and 20x "Hit the end of buffer" for
-  // the actuator ones. encodeVTable emits a VTableMsg this DB version cannot parse, and
-  // the "✅ Registered" it logged only ever meant socket.write() returned true.
+  // the actuator ones. That encoder emitted a VTableMsg this DB version cannot parse, and
+  // the "✅ Registered" it logged only ever meant socket.write() returned true. It has
+  // been deleted (see elodin-vtable-registry.ts); this backend only subscribes.
   console.log('[ThinServer] Connected to Elodin, subscriptions sent.');
 });
 
