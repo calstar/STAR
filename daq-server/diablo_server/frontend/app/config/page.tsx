@@ -265,7 +265,11 @@ function CommitOnBlurName({
 /** A single string that changes whenever any of the three state tables changes — used to detect
  *  unsaved edits without deep-comparing the grids. */
 const csvSignature = (a: CsvGrid | null, d: CsvGrid | null, t: CsvGrid | null): string =>
-  [a, d, t].map((g) => (g ? serializeCsvGrid(g) : '')).join(' ');
+  // '\\0' as an ESCAPE, not a literal NUL byte. A raw NUL in the source makes this file
+  // read as binary to grep/ripgrep, which then reports "no matches" for strings that are
+  // plainly here — silently, with exit 0. That is how a stale num_sensors input survived a
+  // repo-wide sweep for it (2026-09-13). Same separator at runtime, still greppable.
+  [a, d, t].map((g) => (g ? serializeCsvGrid(g) : '')).join('\0');
 
 /** Rows/columns present in `have` but not `want`, and vice versa — the orphan/missing warnings. */
 // Roles are edited in file order (so a row stays put while you type) and re-ordered only on Save:
@@ -1446,9 +1450,11 @@ export default function ConfigPage() {
                   const b = board as any;
                   const open = !!openBoards[boardKey];
                   const toggle = () => setOpenBoards((prev) => ({ ...prev, [boardKey]: !prev[boardKey] }));
+                  // The channel count is the length of active_connectors — the board's only
+                  // statement of which channels exist. There is no separate count any more.
                   const channels = b.type === 'ACTUATOR'
                     ? (b.num_actuators !== undefined ? `${b.num_actuators} act` : null)
-                    : (b.num_sensors !== undefined ? `${b.num_sensors} ch` : null);
+                    : (Array.isArray(b.active_connectors) ? `${b.active_connectors.length} ch` : null);
                   // The board DECLARES its sensor interface via pt_type — the same key the backend
                   // (isCurrentLoopBoard) and the C++ calibration service read, so there is one
                   // source of truth. There is deliberately no type = "HP_PT": the hardware is
@@ -1574,12 +1580,11 @@ export default function ConfigPage() {
                       </FieldSection>
 
                       <FieldSection title="Channels">
-                        {renderField(
-                          'Num Sensors',
-                          (board as any).num_sensors,
-                          (val) => updateBoard(boardKey, 'num_sensors', val),
-                          'number'
-                        )}
+                        {/* No "Num Sensors" field. It was a second, unreconciled statement of the
+                            board's channels beside active_connectors, and this input was rendered
+                            unconditionally — so editing it wrote num_sensors back into a config that
+                            no longer has it. active_connectors is the list the board is actually
+                            sent (build_sensor_config), and its length is the count. */}
                         {(board as any).num_actuators !== undefined && renderField(
                           'Num Actuators',
                           (board as any).num_actuators,
@@ -1831,8 +1836,9 @@ export default function ConfigPage() {
                     : [];
                   const roleChannels = [...new Set(entries.map(([, ch]) => Number(ch)).filter(Number.isFinite))]
                     .sort((a, b) => a - b);
-                  // Only meaningful once the board actually declares a list; empty means
-                  // "expand to 1..num_sensors" (see Config.hpp), not "nothing active".
+                  // Only meaningful once the board declares a list. An empty list now means the
+                  // board samples NOTHING — there is no count left to expand into a 1..N range —
+                  // so with nothing declared there is no disagreement to report either.
                   const rolesWithoutConnector = declared.length ? roleChannels.filter((c) => !declared.includes(c)) : [];
                   const connectorsWithoutRole = declared.length ? declared.filter((c) => !roleChannels.includes(c)) : [];
                   const inSync = rolesWithoutConnector.length === 0 && connectorsWithoutRole.length === 0;
