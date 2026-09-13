@@ -1,7 +1,8 @@
 """
 launch() — turn a BoardProfile into a running GUI.
 
-Keeps each board app (e.g. LC-GUI/lc_gui.py) down to a profile + one call.
+Keeps each board app (e.g. Sense-GUI/sense_gui.py) down to a profile + one
+call.
 Handles: argument parsing (override IP / ports / bind), logging setup, the
 QApplication, and a friendly message if the Qt/plotting deps are missing.
 """

@@ -19,10 +19,9 @@
 #define ETHERNET_INIT_DELAY_MS 1000   // Delay after Ethernet.init()
 #define ETHERNET_BEGIN_DELAY_MS 1000  // Delay after Ethernet.begin()
 
-// DHCP (opt-in per board via -DSENSOR_ETH_USE_DHCP). When enabled, the board
-// tries DHCP at boot with these short timeouts, then falls back to its static
-// 192.168.2.<BOARD_ID> address if no lease is obtained. Timeouts are kept
-// short so a stand network without a DHCP server does not stall boot.
+// DHCP (opt-in per board via -DSENSOR_ETH_USE_DHCP). The ground station
+// assigns the address from its MAC -> IP reservation table; these timeouts are
+// kept short so a stand network with no DHCP server does not stall boot.
 #ifndef SENSOR_ETH_DHCP_TIMEOUT_MS
 #define SENSOR_ETH_DHCP_TIMEOUT_MS 5000  // max total wait for a DHCP lease
 #endif
@@ -30,21 +29,11 @@
 #define SENSOR_ETH_DHCP_RESPONSE_TIMEOUT_MS 2000  // per-request response wait
 #endif
 
-// Zero-config discovery (opt-in via -DSENSOR_ETH_ZEROCONF; implies DHCP).
-// While no server has been heard the board broadcasts BOARD_HEARTBEAT and,
-// if DHCP failed, alternates its address between static 192.168.2.<BOARD_ID>
-// and a MAC-derived link-local 169.254.x.y each phase below, so both a
-// production server at 192.168.2.20 and an unconfigured (self-assigned)
-// laptop can find it. The server's IP is learned from its own packets.
-#ifdef SENSOR_ETH_ZEROCONF
-#ifndef SENSOR_ETH_USE_DHCP
-#define SENSOR_ETH_USE_DHCP
-#endif
-#endif
-// Phase dwell is 50x the server's 200 ms heartbeat period so a running
-// server always locks the board long before the phase can expire.
-#define SENSOR_ZEROCONF_PHASE_MS 10000
-// Server silence before discovery broadcasts resume (address stays put).
+// Server discovery. While no server has been heard the board broadcasts
+// BOARD_HEARTBEAT, and it learns the server's address from the server's own
+// packets. The board never picks its own IP -- see common/board_net.h.
+// Server silence before discovery broadcasts resume (our address is
+// unaffected; it belongs to the server, not to us).
 #define SENSOR_ZEROCONF_SERVER_SILENCE_MS 10000
 
 // LED status blink (optional; actuator uses, sense boards may use)

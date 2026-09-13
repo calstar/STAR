@@ -2,8 +2,9 @@
 BoardProfile — the single object that turns the generic monitor into a
 board-specific GUI.
 
-To create a GUI for a new board you only write one of these (see LC-GUI/lc_gui.py
-for the reference example). Nothing else in ``boardgui`` needs to change.
+One of these defines a board. The four sense boards (LC/PT/TC/RTD) are rows in
+``Sense-GUI/sense_gui.py``; a board that needs its own app writes one directly
+(see ``Actuator-GUI/actuator_gui.py``). Nothing else in ``boardgui`` changes.
 
 The values here come straight from the firmware and the DAQ server config:
   * firmware        : firmware/Hotfire_Code/<BOARD>_Hotfire/src/main.cpp
@@ -81,6 +82,14 @@ class BoardProfile:
     # --- server-side cadence --------------------------------------------------
     server_heartbeat_interval_ms: int = 200  # matches config.toml server_heartbeat
     heartbeat_timeout_sec: float = 2.5       # "Disconnected" after this gap
+
+    # --- firmware / OTA -------------------------------------------------------
+    # PlatformIO project for this board, relative to the repo root. The OTA tab
+    # uses it to build an image with a test message baked in; leave it empty
+    # and the tab still uploads a .bin you pick by hand.
+    firmware_project: str = ""
+    firmware_env: str = ""          # PlatformIO env within that project
+    ota_port: int = 3232            # STAR_OTA_DEFAULT_PORT on the board
 
     # --- serial (USB) link ----------------------------------------------------
     serial_baud: int = 115200                # firmware Serial.begin(115200)

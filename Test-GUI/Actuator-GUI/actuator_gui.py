@@ -45,15 +45,12 @@ def actuator_profile() -> BoardProfile:
         board_type="ACT",
         title="Actuator Board",
         kind="actuator",
-        # NOTE: the current actuator firmware ships with the default BOARD_ID
-        # (21) — no -DBOARD_ID=11 in its build — so the real board reports id 21
-        # and statically falls back to 192.168.2.21. The DAQ config *intends*
-        # actuator #1 to be 11 / 192.168.2.11; change these back once the
-        # firmware adds -DBOARD_ID=11. With zeroconf the GUI auto-discovers the
-        # board's real address anyway; you can also edit the Board IP field or
-        # pass --board-ip / --board-id.
-        board_id=21,                 # board's reported id (IP low octet)
-        board_ip="192.168.2.21",     # firmware static-fallback IP = 192.168.2.<id>
+        # Matches daq-server/config/config.toml [boards.actuator_board] and the
+        # firmware's -DBOARD_ID=11. For actuator #2 pass --board-id 12.
+        board_id=11,
+        # Static fallback only — the board normally holds whatever the
+        # Addresses tab assigned it, and the GUI retargets automatically.
+        board_ip="192.168.2.11",
         server_ip="192.168.2.20",    # firmware sends heartbeats/data here (this PC)
         listen_port=5006,            # we receive board packets here
         control_port=5005,           # board listens here for our control packets
@@ -66,6 +63,9 @@ def actuator_profile() -> BoardProfile:
         value_encoding="float",
         necessary_for_abort=False,
         enable_serial_printing=True,
+        # OTA: which PlatformIO project the OTA tab builds and pushes
+        firmware_project="firmware/Hotfire_Code/Actuator_Hotfire",
+        firmware_env="adafruit_feather_esp32s3",
         # ACTUATOR_CONFIG defaults: not the abort controller; vent/abort states
         # all 0 (off) — the safe bench-test choice. Flip entries to 1 to
         # exercise the abort path, e.g. abort_vent_states={1: 1, 2: 1}.

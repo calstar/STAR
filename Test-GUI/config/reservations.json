@@ -1,0 +1,10 @@
+{
+  "reservations": [
+    {
+      "mac": "4a:27:e2:88:39:5d",
+      "ip": "192.168.2.11",
+      "board_id": 11,
+      "label": "Actuator1"
+    }
+  ]
+}

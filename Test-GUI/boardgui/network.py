@@ -11,6 +11,11 @@ hard-codes the server at 192.168.2.20:5006).
 The receiver runs in a QThread and emits typed signals carrying the parsed
 dataclasses from ``protocol``. Ethernet/packet statistics (counts, rates,
 per-type tallies, malformed count) are tracked here and polled by the GUI.
+
+Which address we send *to* is decided by ``discovery.DiscoveryPolicy`` — a
+board holds whatever address the ground station assigned it, so the target is
+learned from its packets rather than assumed. That policy is pure stdlib and separately
+testable (``python -m boardgui.discovery``).
 """
 
 from __future__ import annotations
@@ -20,11 +25,14 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Deque, Dict, Optional, Set
+from typing import Deque, Dict, Optional
 
 from . import protocol
+from .discovery import ADOPTED, UNREACHABLE, DiscoveryPolicy, host_can_reach
 from .profile import BoardProfile
 from .qt import QThread, pyqtSignal
+
+__all__ = ["PacketStats", "UdpLink", "host_can_reach"]
 
 # Packet types that originate from the board — used to learn its address.
 _BOARD_ORIGIN_TYPES = frozenset({
@@ -59,28 +67,6 @@ class PacketStats:
         return self.total_bytes / elapsed if elapsed > 0 else 0.0
 
 
-def host_can_reach(ip: str, port: int) -> bool:
-    """Does this host have a route to `ip`?
-
-    UDP connect() only does a route lookup — no packet leaves the machine — so
-    this is a cheap, authoritative check. Needed because a board running the
-    zeroconf hunt (SENSOR_ETH_ZEROCONF) alternates between its static
-    192.168.2.<id> address and a link-local 169.254.x.y one, and BROADCASTS
-    from both. Broadcasts arrive here regardless of subnet, so the link sees a
-    source IP it cannot actually send back to; unicasting there fails with
-    ENETUNREACH (WinError 10051 on Windows).
-    """
-    try:
-        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            probe.connect((ip, port))
-            return True
-        finally:
-            probe.close()
-    except OSError:
-        return False
-
-
 class UdpLink(QThread):
     # parsed-object, source-ip
     heartbeat_received = pyqtSignal(object, str)
@@ -103,14 +89,10 @@ class UdpLink(QThread):
         self._stop = False
         self._stats_lock = Lock()
         self.stats = PacketStats()
-        # Board's actual source IP, learned from inbound board packets. When
-        # set, the send path targets this instead of profile.board_ip, so
-        # control/ABORT/OTA reach the board even if DHCP gave it a different
-        # address than the configured static one.
-        self.discovered_ip: Optional[str] = None
-        # Route-lookup cache, so the per-packet path doesn't probe every time.
-        self._reachable: Dict[str, bool] = {}
-        self._unreachable_logged: Set[str] = set()
+        # Where control/ABORT/OTA actually go. The board may hold a DHCP lease
+        # or be on its static fallback, so its address is learned from its
+        # packets rather than assumed to be profile.board_ip.
+        self.discovery = DiscoveryPolicy(profile.board_ip, profile.control_port)
 
     # -- lifecycle -----------------------------------------------------------
     def run(self) -> None:
@@ -149,7 +131,16 @@ class UdpLink(QThread):
     @property
     def target_ip(self) -> str:
         """IP the send path currently targets (discovered, else configured)."""
-        return self.discovered_ip or self.profile.board_ip
+        return self.discovery.target_ip
+
+    @property
+    def discovered_ip(self) -> Optional[str]:
+        return self.discovery.discovered_ip
+
+    def set_board_ip(self, ip: str) -> None:
+        """User picked an address: send there until the board is seen again."""
+        self.profile.board_ip = ip
+        self.discovery.set_configured_ip(ip)
 
     # -- receive path --------------------------------------------------------
     def _handle(self, data: bytes, src_ip: str) -> None:
@@ -197,25 +188,17 @@ class UdpLink(QThread):
     def _learn_board_ip(self, src_ip: str) -> None:
         """Adopt the board's real source IP — but only one we can reach.
 
-        A board mid-zeroconf-hunt broadcasts from an address this host has no
-        route to. Adopting it blindly points every control packet at a dead
-        destination, so the address has to survive a route check first.
+        A board can broadcast from an address this host has no route to.
+        Adopting it blindly points every control packet at a dead destination,
+        so the address has to survive a route check first.
         """
-        if not src_ip or src_ip == self.discovered_ip:
-            return
-        reachable = self._reachable.get(src_ip)
-        if reachable is None:
-            reachable = host_can_reach(src_ip, self.profile.control_port)
-            self._reachable[src_ip] = reachable
-        if not reachable:
-            if src_ip not in self._unreachable_logged:
-                self._unreachable_logged.add(src_ip)
-                self.status.emit(
-                    f"Board also broadcasting from {src_ip}, but this host has no "
-                    f"route there — still sending to {self.target_ip}")
-            return
-        self.discovered_ip = src_ip
-        self.board_discovered.emit(src_ip)
+        decision, ip = self.discovery.observe(src_ip)
+        if decision is ADOPTED:
+            self.board_discovered.emit(ip)
+        elif decision is UNREACHABLE:
+            self.status.emit(
+                f"Board also broadcasting from {ip}, but this host has no "
+                f"route there — still sending to {self.target_ip}")
 
     def _count_malformed(self, size: int, src_ip: str) -> None:
         with self._stats_lock:
@@ -243,19 +226,17 @@ class UdpLink(QThread):
             return False
         # Prefer the board's learned source IP; fall back to the configured
         # static IP until the first board packet arrives.
-        dest_ip = self.discovered_ip or self.profile.board_ip
+        dest_ip = self.target_ip
         try:
             self.sock.sendto(packet, (dest_ip, self.profile.control_port))
             return True
         except OSError as exc:
-            # If the learned address turned out to be unreachable, drop it and
-            # fall back to the configured one rather than failing forever.
-            if self.discovered_ip == dest_ip:
-                self._reachable[dest_ip] = False
-                self.discovered_ip = None
+            # A real failure outranks the route check: drop the learned address
+            # and fall back to the configured one rather than failing forever.
+            if self.discovery.note_send_failure(dest_ip):
                 self.status.emit(
                     f"Send to {dest_ip} failed ({exc}) — no route from this host; "
-                    f"falling back to {self.profile.board_ip}")
+                    f"falling back to {self.discovery.configured_ip}")
             else:
                 self.status.emit(f"Send failed: {exc}")
             return False

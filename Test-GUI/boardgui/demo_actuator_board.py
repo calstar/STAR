@@ -19,6 +19,12 @@ Run it alongside the GUI (both on localhost):
     # terminal 2
     python Actuator-GUI/actuator_gui.py --board-ip 127.0.0.1
 
+Add ``--discover`` to also emulate how the real firmware finds its
+server, and ``--dhcp-server`` to make it ask the GUI for its address
+the way a real board does (see ``demo_net``):
+
+    python -m boardgui.demo_actuator_board --dhcp-server 127.0.0.1:6767 --discover
+
 Pure stdlib + boardgui.protocol — no Qt.
 """
 
@@ -33,6 +39,7 @@ import time
 from typing import Dict
 
 from . import protocol
+from .demo_net import BoardNetwork, add_network_args, make_tx_socket
 
 ON_VOLTS = 1.5      # current-sense level for an energized actuator
 OFF_VOLTS = 0.02    # leakage/noise floor for an off actuator
@@ -92,6 +99,7 @@ def main(argv=None) -> int:
     p.add_argument("--listen-port", type=int, default=5005, help="where the GUI sends control")
     p.add_argument("--board-id", type=int, default=21)
     p.add_argument("--num-actuators", type=int, default=10)
+    add_network_args(p)
     args = p.parse_args(argv)
 
     actuators = {aid: SimActuator() for aid in range(1, args.num_actuators + 1)}
@@ -101,16 +109,17 @@ def main(argv=None) -> int:
     rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     rx.bind(("0.0.0.0", args.listen_port))
     rx.settimeout(0.02)
-    tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    tx = make_tx_socket(args.bind_ip)
+    board = BoardNetwork(tx, args, args.board_id, tag="demo_actuator")
 
-    dest = (args.server_ip, args.server_port)
     start = time.time()
     board_state = protocol.BoardState.SETUP
     engine_state = protocol.EngineState.SAFE
     last_hb = 0.0
     last_data = 0.0
-    print(f"[demo_actuator] id={args.board_id} -> {dest}, listening on :{args.listen_port}, "
+    print(f"[demo_actuator] id={args.board_id}, listening on :{args.listen_port}, "
           f"actuators=1..{args.num_actuators}")
+    print(f"[demo_actuator] {board.describe()}")
 
     while True:
         now = time.time()
@@ -121,6 +130,7 @@ def main(argv=None) -> int:
             data, addr = rx.recvfrom(protocol.MAX_PACKET_SIZE)
             hdr = protocol.parse_header(data)
             if hdr:
+                board.on_server_packet(addr[0], now)
                 ptype = hdr.packet_type
                 if ptype == protocol.PacketType.ACTUATOR_CONFIG:
                     cfg = protocol.parse_actuator_config(data)
@@ -159,18 +169,21 @@ def main(argv=None) -> int:
         except socket.timeout:
             pass
 
-        # 1 Hz heartbeat
+        board.tick(now)
+
+        # 1 Hz heartbeat — doubles as the discovery broadcast while no server
+        # is known, exactly as in the firmware's heartbeat tick.
         if now - last_hb >= 1.0:
             last_hb = now
             hb = protocol._make_header(protocol.PacketType.BOARD_HEARTBEAT, board_ms) + \
                 struct.pack(protocol.BOARD_HEARTBEAT_BODY_FORMAT, fw_hash, args.board_id,
                             engine_state, board_state)
-            tx.sendto(hb, dest)
+            board.send(hb, is_heartbeat=True)
 
         # 10 Hz current-sense data when active (ADC_READ_INTERVAL_MS = 100)
         if board_state == protocol.BoardState.ACTIVE and now - last_data >= 0.1:
             last_data = now
-            tx.sendto(build_sensor_data(actuators, board_ms), dest)
+            board.send(build_sensor_data(actuators, board_ms))
 
         time.sleep(0.005)
 

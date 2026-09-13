@@ -4,8 +4,10 @@ Drives the board directly (no GUI): broadcasts SERVER_HEARTBEAT so the board
 locks an address and stays out of no-connection abort, sends SENSOR_CONFIG to
 activate it, then records connector-1 samples and reports the Allan deviation.
 
-Broadcast rather than unicast is deliberate: while the zeroconf firmware is
-hunting it alternates between 192.168.2.<id> and a link-local 169.254.x, so a
+Broadcast rather than unicast is deliberate: because the ground station
+assigns addresses,
+it may hold an address the ground station assigned it rather than its old
+static one, so a
 unicast to the static address misses it half the time.
 
 Usage:  python tools_capture.py <seconds> <label>

@@ -75,6 +75,16 @@ FRAME_PANEL = _enum(QtWidgets.QFrame, "Shape", "StyledPanel")
 # Text cursor (log console auto-scroll)
 TEXTCURSOR_END = _enum(QtGui.QTextCursor, "MoveOperation", "End")
 
+# Selectable labels (so a firmware hash can be copied out of the OTA tab)
+TEXT_SELECTABLE = _enum(Qt, "TextInteractionFlag", "TextSelectableByMouse")
+
+# Table selection (the Addresses tab's reservation table)
+SELECT_ROWS = _enum(QtWidgets.QAbstractItemView, "SelectionBehavior", "SelectRows")
+
+# Message box buttons (OTA upload confirmation)
+MSGBOX_YES = _enum(QtWidgets.QMessageBox, "StandardButton", "Yes")
+MSGBOX_NO = _enum(QtWidgets.QMessageBox, "StandardButton", "No")
+
 
 def run_app(app) -> int:
     """app.exec() on PyQt6, app.exec_() on PyQt5."""

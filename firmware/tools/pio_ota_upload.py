@@ -49,9 +49,12 @@ _UPLOADER = os.path.join(_TOOLS_DIR, "ota_upload.py")
 def _on_upload(source, target, env):
     """Run ota_upload.py against the just-built firmware.bin."""
     firmware = str(source[0])
-    flags = env.get("UPLOADERFLAGS") or []
-    if isinstance(flags, str):
-        flags = flags.split()
+    # upload_flags does not arrive as a plain list. PlatformIO prepends the
+    # literal string "$UPLOAD_FLAGS" onto UPLOADERFLAGS and leaves SCons to
+    # expand it when the upload *command* runs -- but we read the value
+    # ourselves instead of running a command string, so without expanding it
+    # first every flag from platformio.ini is invisible and --ip looks absent.
+    flags = [str(f) for f in env.subst_list("$UPLOADERFLAGS")[0]]
 
     if not any(str(f).startswith("--ip") for f in flags):
         print("[OTA] ERROR: no --ip in upload_flags. Add e.g.\n"

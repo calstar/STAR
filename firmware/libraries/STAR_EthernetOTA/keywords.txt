@@ -1,0 +1,38 @@
+#######################################
+# Syntax Coloring Map For STAR_EthernetOTA
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+StarOTA	KEYWORD1
+Server	KEYWORD1
+Config	KEYWORD1
+Result	KEYWORD1
+PortableServer	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+begin	KEYWORD2
+poll	KEYWORD2
+clientWaiting	KEYWORD2
+lastResult	KEYWORD2
+onStart	KEYWORD2
+onProgress	KEYWORD2
+onEnd	KEYWORD2
+resultName	KEYWORD2
+printTestMessage	KEYWORD2
+testMessage	KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+
+STAR_OTA_DEFAULT_PORT	LITERAL1
+STAR_OTA_CHUNK_SIZE	LITERAL1
+STAR_OTA_TIMEOUT_MS	LITERAL1
+STAR_OTA_MAX_IMAGE_BYTES	LITERAL1
+STAR_OTA_TEST_MESSAGE	LITERAL1

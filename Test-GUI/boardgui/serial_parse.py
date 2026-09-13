@@ -6,10 +6,19 @@ over Ethernet, printing (see firmware/Hotfire_Code/common/SensorHotfireCore.h,
 firmware_hash.h, and LC_Hotfire/src/main.cpp):
 
     Firmware hash: <64 hex>
+    MAC: DE:AD:BE:EF:2A:3C
     Board ID and IP: 21 / 192.168.2.21
     Hardware: W5500
     Link status: Connected
-    [ETH] DHCP lease acquired: 192.168.2.137
+    [NET] requesting an address by DHCP...
+    [NET] server assigned us 192.168.2.41
+    [NET] no DHCP server answered -- falling back to the static 192.168.2.21
+    [NET] server learned: 192.168.2.20
+    [NET] server silent -- resuming discovery
+    Address source: DHCP (assigned by the server)
+    [OTA] listening on TCP port 3232
+    [OTA] progress: 45% (147456 / 327680 bytes)
+    [OTA-MSG] upload #3 at 14:22:07
     UDP listening on port 5005
     State -> WaitingForServer   (also -> Active / SelfTest / StandaloneAbort)
     Sent: heartbeat to 192.168.2.20:5006
@@ -48,7 +57,28 @@ _RE_FW_HASH = re.compile(r"Firmware hash:\s*([0-9A-Fa-f]{64})")
 _RE_IDENTITY = re.compile(r"Board ID and IP:\s*(\d+)\s*/\s*([\d.]+)")
 _RE_HARDWARE = re.compile(r"^Hardware:\s*(.+?)\s*$")
 _RE_LINK = re.compile(r"^Link status:\s*(\w+)")
-_RE_DHCP = re.compile(r"DHCP lease acquired:\s*([\d.]+)")
+# The board's MAC — what the ground station keys its IP reservations on, so
+# reading it off the serial log is how a new board gets registered without
+# anyone having to sniff its DHCP request.
+_RE_MAC = re.compile(r"^MAC:\s*((?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2})\s*$")
+_RE_DHCP = re.compile(r"(?:DHCP lease acquired|server assigned us):?\s*([\d.]+)")
+_RE_DHCP_TRY = re.compile(r"\[(?:ETH|NET)\]\s*(?:Attempting DHCP|requesting an address)")
+_RE_DHCP_FAIL = re.compile(r"\[(?:ETH|NET)\]\s*(?:DHCP failed|no DHCP server answered)")
+_RE_ADDR_SOURCE = re.compile(r"^Address source:\s*(.+?)\s*$")
+# Server discovery (firmware/Hotfire_Code/common/board_net.h). These say who
+# the board is currently talking to, which is the difference between a board
+# that is silent and one that is broken.
+_RE_ZC_ENABLED = re.compile(r"\[NET\]\s*address assigned by the server")
+_RE_ZC_SERVER = re.compile(r"\[NET\]\s*server learned:\s*([\d.]+)")
+_RE_ZC_SILENT = re.compile(r"\[NET\]\s*server silent")
+# OTA (firmware/libraries/STAR_EthernetOTA). The [OTA-MSG] line is the bench
+# marker a board prints when built with -DSTAR_OTA_TEST_MESSAGE: watching it
+# change is the simplest confirmation that an upload actually landed.
+_RE_OTA_MSG = re.compile(r"\[OTA-MSG\]\s*(.*)$")
+_RE_OTA_PROGRESS = re.compile(r"\[OTA\]\s*progress:\s*(\d+)%")
+_RE_OTA_ERROR = re.compile(r"\[OTA\]\s*ERROR:\s*(.+)$")
+_RE_OTA_LISTEN = re.compile(r"\[OTA\]\s*listening on TCP port\s*(\d+)")
+_RE_OTA_NOTE = re.compile(r"\[OTA\]\s*(.+)$")
 _RE_LOCAL_IP = re.compile(r"Stack IP \(Ethernet\.localIP\):\s*([\d.]+)")
 _RE_STATE = re.compile(r"State ->\s*(\w+)")
 _RE_UDP_PORT = re.compile(r"UDP listening on port\s*(\d+)")
@@ -79,6 +109,14 @@ class SerialParser:
         if m:
             return {"kind": "identity", "board_id": int(m.group(1)), "board_ip": m.group(2)}
 
+        m = _RE_MAC.match(line)
+        if m:
+            return {"kind": "mac", "value": m.group(1).replace("-", ":").lower()}
+
+        m = _RE_ADDR_SOURCE.match(line)
+        if m:
+            return {"kind": "eth", "field": "address_source", "value": m.group(1)}
+
         m = _RE_HARDWARE.search(line)
         if m:
             return {"kind": "eth", "field": "hardware", "value": m.group(1)}
@@ -90,6 +128,44 @@ class SerialParser:
         m = _RE_DHCP.search(line)
         if m:
             return {"kind": "eth", "field": "ip", "value": m.group(1), "via": "DHCP"}
+
+        if _RE_DHCP_TRY.search(line):
+            return {"kind": "eth", "field": "dhcp", "value": "attempting"}
+
+        if _RE_DHCP_FAIL.search(line):
+            return {"kind": "eth", "field": "dhcp", "value": "failed"}
+
+        # -- server discovery ----------------------------------------------
+        m = _RE_ZC_SERVER.search(line)
+        if m:
+            return {"kind": "zeroconf", "event": "server_learned", "ip": m.group(1)}
+
+        if _RE_ZC_SILENT.search(line):
+            return {"kind": "zeroconf", "event": "server_lost"}
+
+        if _RE_ZC_ENABLED.search(line):
+            return {"kind": "zeroconf", "event": "enabled"}
+
+        # -- OTA -----------------------------------------------------------
+        m = _RE_OTA_MSG.search(line)
+        if m:
+            return {"kind": "ota_message", "value": m.group(1).strip()}
+
+        m = _RE_OTA_ERROR.search(line)
+        if m:
+            return {"kind": "ota", "event": "error", "value": m.group(1).strip()}
+
+        m = _RE_OTA_PROGRESS.search(line)
+        if m:
+            return {"kind": "ota", "event": "progress", "percent": int(m.group(1))}
+
+        m = _RE_OTA_LISTEN.search(line)
+        if m:
+            return {"kind": "ota", "event": "listening", "port": int(m.group(1))}
+
+        m = _RE_OTA_NOTE.search(line)
+        if m:
+            return {"kind": "ota", "event": "note", "value": m.group(1).strip()}
 
         m = _RE_LOCAL_IP.search(line)
         if m:
@@ -147,6 +223,48 @@ def _self_test() -> None:
     assert p.feed("Hardware: W5500") == {"kind": "eth", "field": "hardware", "value": "W5500"}
     assert p.feed("Link status: Connected") == {"kind": "eth", "field": "link", "value": "Connected"}
     assert p.feed("[ETH] DHCP lease acquired: 192.168.2.137")["value"] == "192.168.2.137"
+    assert p.feed("[NET] server assigned us 192.168.2.41") == {
+        "kind": "eth", "field": "ip", "value": "192.168.2.41", "via": "DHCP"}
+    assert p.feed("[NET] requesting an address by DHCP...") == {
+        "kind": "eth", "field": "dhcp", "value": "attempting"}
+    assert p.feed("[ETH] Attempting DHCP...") == {
+        "kind": "eth", "field": "dhcp", "value": "attempting"}
+    assert p.feed("[NET] no DHCP server answered -- falling back") == {
+        "kind": "eth", "field": "dhcp", "value": "failed"}
+
+    # the MAC the ground station keys its reservations on
+    assert p.feed("MAC: DE:AD:BE:EF:2A:3C") == {
+        "kind": "mac", "value": "de:ad:be:ef:2a:3c"}
+    assert p.feed("MAC: de-ad-be-ef-2a-3c")["value"] == "de:ad:be:ef:2a:3c"
+    assert p.feed("MAC: nonsense") is None, "must not accept a non-MAC"
+
+    assert p.feed("Address source: DHCP (assigned by the server)") == {
+        "kind": "eth", "field": "address_source",
+        "value": "DHCP (assigned by the server)"}
+
+    # server discovery (address assignment is the server's job, not the board's)
+    assert p.feed("[NET] server learned: 192.168.2.20") == {
+        "kind": "zeroconf", "event": "server_learned", "ip": "192.168.2.20"}
+    assert p.feed("[NET] server silent -- resuming discovery") == {
+        "kind": "zeroconf", "event": "server_lost"}
+    assert p.feed(
+        "[NET] address assigned by the server; broadcasting until one is heard"
+    ) == {"kind": "zeroconf", "event": "enabled"}
+
+    # OTA lines
+    assert p.feed("[OTA-MSG] upload #3 at 14:22:07") == {
+        "kind": "ota_message", "value": "upload #3 at 14:22:07"}
+    assert p.feed("[OTA] listening on TCP port 3232") == {
+        "kind": "ota", "event": "listening", "port": 3232}
+    assert p.feed("[OTA] progress: 45% (147456 / 327680 bytes)") == {
+        "kind": "ota", "event": "progress", "percent": 45}
+    e = p.feed("[OTA] ERROR: timed out waiting for the 4-byte size header")
+    assert e["kind"] == "ota" and e["event"] == "error", e
+    assert "size header" in e["value"], e
+    # an unclassified [OTA] line still surfaces rather than being swallowed
+    assert p.feed("[OTA] client connected -- starting transfer") == {
+        "kind": "ota", "event": "note",
+        "value": "client connected -- starting transfer"}
 
     assert p.feed("UDP listening on port 5005") == {"kind": "udp_port", "value": 5005}
     assert p.feed("Sent: heartbeat to 192.168.2.20:5006") == {"kind": "heartbeat_sent"}

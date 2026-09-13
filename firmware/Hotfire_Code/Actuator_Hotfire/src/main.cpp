@@ -9,10 +9,10 @@
  * (Hotfire_Code/Actuator_Hotfire).
  *
  * Networking mirrors the sense-board core (SensorHotfireCore.h): with
- * -DSENSOR_ETH_ZEROCONF the board tries DHCP, falls back to static
- * 192.168.2.<BOARD_ID>, alternates onto a MAC-derived link-local 169.254.x.y
- * while unheard, broadcasts BOARD_HEARTBEAT until a server is learned from its
- * packets, and locks its address on first server contact.
+ * -DSENSOR_ETH_USE_DHCP the ground station assigns this board's address from
+ * its MAC -> IP reservation table, and the board broadcasts BOARD_HEARTBEAT
+ * until a server is heard, learning the server's address from its packets.
+ * See common/board_net.h.
  */
 
 #include "main.h"
@@ -31,7 +31,9 @@
 #include "actuator_board_pins.h"
 #include "actuator_config.h"
 #include "firmware_hash.h"
-#include "hotfire_ota.h"
+#include "board_net.h"
+
+#include <STAR_EthernetOTA.h>
 
 using namespace actuator_board_pins;
 
@@ -49,18 +51,12 @@ const int udpListenPort = 5005;
 const int serverPort = HOTFIRE_SERVER_PORT;
 const int ptBoardPort = 5005;
 EthernetUDP udp;
-static OTAEthernetServer otaServer(HOTFIRE_OTA_PORT);
+static StarOTA::Server otaServer(HOTFIRE_OTA_PORT);
 
-// DHCP / zero-config discovery state (see hotfire_config.h; mirrors
-// SensorHotfireCore.h so actuator and sense boards behave identically)
-static bool usingDhcp = false;  // true if a DHCP lease is active
-#ifdef SENSOR_ETH_ZEROCONF
-static bool serverLearned = false;  // server IP adopted from an inbound packet
-static bool addrLocked = false;     // one-way: set on first server contact/OTA
-static bool inLinkLocal = false;    // current phase: static vs 169.254.x.y
-static unsigned long phaseStartMillis = 0;
-static unsigned long lastServerPacketMillis = 0;
-#endif
+// Address + server-discovery state. The scheme lives in common/board_net.h,
+// shared with SensorHotfireCore.h so the actuator and the sense boards behave
+// identically and cannot drift apart.
+static BoardNet::State net;
 
 //-----------------------------------------------------------------------------
 // Verbose serial gate from ACTUATOR_CONFIG (enable_serial_printing); default on
@@ -70,76 +66,13 @@ static unsigned long lastServerPacketMillis = 0;
 #include "hotfire_log.h"
 bool g_verbose = true;
 
-//-----------------------------------------------------------------------------
-// Zero-config discovery (same scheme as SensorHotfireCore.h). While no server
-// is known the board broadcasts BOARD_HEARTBEAT; the server's IP is learned
-// from inbound server packets; with neither DHCP nor a server on the static
-// subnet, the address alternates between static 192.168.2.<BOARD_ID> and a
-// MAC-derived link-local 169.254.x.y so an unconfigured (self-assigned)
-// laptop can reach it. The first server contact locks the address until
-// reboot.
-//-----------------------------------------------------------------------------
-#ifdef SENSOR_ETH_ZEROCONF
-static IPAddress zeroconfLinkLocalIP(const byte mac_in[6]) {
-    // RFC 3927 space minus its reserved first/last /24s; clamping both host
-    // octets to [1,254] also keeps the low octet clear of .0/.255.
-    uint8_t x = mac_in[4];
-    uint8_t y = mac_in[5];
-    if (x < 1)
-        x = 1;
-    if (x > 254)
-        x = 254;
-    if (y < 1)
-        y = 1;
-    if (y > 254)
-        y = 254;
-    return IPAddress(169, 254, x, y);
-}
-
-static void zeroconfSetPhase(bool toLinkLocal) {
-    IPAddress ip = toLinkLocal ? zeroconfLinkLocalIP(mac) : staticIP;
-    // Single SIPR register write; the W5500's UDP and OTA sockets are
-    // port-bound and survive it.
-    Ethernet.setLocalIP(ip);
-    inLinkLocal = toLinkLocal;
-    phaseStartMillis = millis();
-    Serial.print("[ZEROCONF] address phase -> ");
-    Serial.println(ip);
-    Serial.flush();
-}
-
-static void zeroconfOnServerPacket(IPAddress remote_ip) {
-    lastServerPacketMillis = millis();
-    if (!addrLocked) {
-        if (!usingDhcp) {
-            // Snap to the server's address family before locking.
-            bool wantLinkLocal = (remote_ip[0] == 169 && remote_ip[1] == 254);
-            if (wantLinkLocal != inLinkLocal)
-                zeroconfSetPhase(wantLinkLocal);
-        }
-        addrLocked = true;  // one-way: never re-address mid-test
-        Serial.println("[ZEROCONF] address locked");
-        Serial.flush();
-    }
-    if (!serverLearned || !(remote_ip == serverIP)) {
-        serverIP = remote_ip;
-        serverLearned = true;
-        Serial.print("[ZEROCONF] server learned: ");
-        Serial.println(remote_ip);
-        Serial.flush();
-    }
-}
-#endif  // SENSOR_ETH_ZEROCONF
-
-static bool zeroconfSkipDefaultUnicast() {
-#ifdef SENSOR_ETH_ZEROCONF
-    // In link-local phase with no server known, the unicast to the default
-    // 192.168.2.x server is guaranteed dead and each attempt blocks ~1.8 s
-    // in W5500 ARP retries; the broadcast heartbeat still announces us.
-    return inLinkLocal && !serverLearned;
-#else
-    return false;
-#endif
+/**
+ * Freeze our address before a single byte reaches flash. Our address is a DHCP
+ * lease, and a renewal landing mid-flash would move us and drop the transfer,
+ * so this suspends renewals for the duration.
+ */
+static void otaFreezeAddress(void*, uint32_t) {
+    BoardNet::beginOtaHold(net);
 }
 
 //-----------------------------------------------------------------------------
@@ -357,9 +290,9 @@ static void sendBoardHeartbeat() {
 // Helpers: self IP as uint32_t, IP in PT list
 //-----------------------------------------------------------------------------
 static uint32_t getSelfIP() {
-    // Use the live stack address, not staticIP: with DHCP/zeroconf the board
-    // may sit on a leased or link-local address, and self-matching against
-    // ACTUATOR_CONFIG locations must reflect where we actually are.
+    // Use the live stack address, not staticIP: the board sits on whatever
+    // the server leased it, and self-matching against ACTUATOR_CONFIG
+    // locations must reflect where we actually are.
     IPAddress self = Ethernet.localIP();
     return static_cast<uint32_t>(self[0]) << 24 |
            static_cast<uint32_t>(self[1]) << 16 |
@@ -595,8 +528,8 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
             daq::ServerHeartbeatPacket data;
             if (daq::parse_server_heartbeat_packet(buffer, len, dummy, data)) {
                 last_server_heartbeat_ms = millis();
-#ifdef SENSOR_ETH_ZEROCONF
-                zeroconfOnServerPacket(remoteIP);
+#ifdef SENSOR_ETH_USE_DHCP
+                BoardNet::onServerPacket(net, remoteIP, serverIP);
 #endif
                 uint32_t sip = (static_cast<uint32_t>(serverIP[0]) << 24) |
                                (static_cast<uint32_t>(serverIP[1]) << 16) |
@@ -625,8 +558,8 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
                 g_verbose = (enable_serial & 1);
                 g_log_stream_level =
                     (enable_serial >= 2) ? (enable_serial - 1) : 0;
-#ifdef SENSOR_ETH_ZEROCONF
-                zeroconfOnServerPacket(remoteIP);
+#ifdef SENSOR_ETH_USE_DHCP
+                BoardNet::onServerPacket(net, remoteIP, serverIP);
 #endif
                 return IncomingPacketKind::Config;
             }
@@ -1176,25 +1109,16 @@ void setup() {
     led_cycle_start_ms = millis();
 
     ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_ETH));
+    BoardNet::configure(net, mac, staticIP, subnet);
+    BoardNet::printMac(net);
     SPI.begin(Actuator_Board.ETH_SCLK, Actuator_Board.ETH_MISO,
               Actuator_Board.ETH_MOSI, Actuator_Board.ETH_CS);
     delay(ETHERNET_SPI_DELAY_MS);
     Ethernet.init(Actuator_Board.ETH_CS);
     delay(ETHERNET_INIT_DELAY_MS);
 #ifdef SENSOR_ETH_USE_DHCP
-    // Try DHCP first (short timeout), fall back to the deterministic static
-    // address on failure — same policy as SensorHotfireCore.h.
-    Serial.println("[ETH] Attempting DHCP...");
-    if (Ethernet.begin(mac, SENSOR_ETH_DHCP_TIMEOUT_MS,
-                       SENSOR_ETH_DHCP_RESPONSE_TIMEOUT_MS) == 1) {
-        usingDhcp = true;
-        Serial.print("[ETH] DHCP lease acquired: ");
-        Serial.println(Ethernet.localIP());
-    } else {
-        usingDhcp = false;
-        Serial.println("[ETH] DHCP failed — falling back to static IP");
-        Ethernet.begin(mac, staticIP, dns, gateway, subnet);
-    }
+    // The ground station decides our address; we only ask for one.
+    BoardNet::begin(net, dns, gateway);
 #else
     Ethernet.begin(mac, staticIP, dns, gateway, subnet);
 #endif
@@ -1240,19 +1164,19 @@ void setup() {
     Serial.flush();
 
     udp.begin(udpListenPort);
+    otaServer.onStart(otaFreezeAddress);
     otaServer.begin();
     Serial.print("UDP listening on port ");
     Serial.println(udpListenPort);
-    Serial.printf("OTA TCP server listening on port %d\n", HOTFIRE_OTA_PORT);
 
     state = ActuatorControllerState::WaitingForServer;
     Serial.println("State -> WaitingForServer");
     Serial.flush();
     state_enter_ms = millis();
     last_server_heartbeat_ms = 0;
-#ifdef SENSOR_ETH_ZEROCONF
-    phaseStartMillis = millis();
-    Serial.println("[ZEROCONF] enabled: broadcast discovery + AutoIP fallback");
+#ifdef SENSOR_ETH_USE_DHCP
+    Serial.println(
+        "[NET] address assigned by the server; broadcasting until one is heard");
 #endif
 
     Serial.println("Setup complete. State: WaitingForServer");
@@ -1269,26 +1193,15 @@ void setup() {
 
 void loop() {
 #ifdef SENSOR_ETH_USE_DHCP
-    // Renew/rebind the DHCP lease as it expires. No-op on the static path.
-    if (usingDhcp)
-        Ethernet.maintain();
+    // Renew the lease as it expires; no-op while an OTA is in flight.
+    BoardNet::maintainLease(net);
 #endif
-#ifdef SENSOR_ETH_ZEROCONF
-    // Address hunting: only before any server contact, and only while still
-    // waiting for configuration -- a locked or configured board never moves.
-    if (!usingDhcp && !addrLocked &&
-        state == ActuatorControllerState::WaitingForServer &&
-        millis() - phaseStartMillis >= SENSOR_ZEROCONF_PHASE_MS)
-        zeroconfSetPhase(!inLinkLocal);
-#endif
-    // Non-blocking OTA check — blocks only if a client actually connects
-    EthernetClient ota_client = otaServer.available();
-    if (ota_client) {
-#ifdef SENSOR_ETH_ZEROCONF
-        addrLocked = true;  // never re-address mid-flash
-#endif
-        hotfire_handleOTA(ota_client);
-    }
+    // Non-blocking OTA check — blocks only if a client actually connects,
+    // and never returns on success (the board reboots into the new image).
+    otaServer.poll();
+    // Bench marker: prints only on builds made with -DSTAR_OTA_TEST_MESSAGE,
+    // so consecutive OTA uploads are visibly different on the serial monitor.
+    StarOTA::printTestMessage();
 
     updateLedNonBlocking();
     updatePWM();
@@ -1334,15 +1247,14 @@ void loop() {
         }
     }
 
-#ifdef SENSOR_ETH_ZEROCONF
+#ifdef SENSOR_ETH_USE_DHCP
     // Server gone quiet: forget it and resume discovery broadcasts so a new
     // (or restarted) server can find us. The address stays locked -- only the
     // outbound destination resets.
-    if (serverLearned && millis() - lastServerPacketMillis >=
-                             SENSOR_ZEROCONF_SERVER_SILENCE_MS) {
-        serverLearned = false;
+    if (BoardNet::serverWentSilent(net)) {
+        net.serverLearned = false;
         serverIP = IPAddress(192, 168, 2, HOTFIRE_SERVER_IP_OCTET_4);
-        Serial.println("[ZEROCONF] server silent -- resuming discovery");
+        Serial.println("[NET] server silent -- resuming discovery");
         Serial.flush();
     }
 #endif
@@ -1378,21 +1290,16 @@ void loop() {
     if (now - lastHeartbeatMillis >= BOARD_HEARTBEAT_INTERVAL_MS) {
         lastHeartbeatMillis = now;
         if (state == ActuatorControllerState::WaitingForServer) {
-            // In link-local phase with no server known, the unicast to the
-            // default server is dead and blocks in ARP retries; the broadcast
-            // below still announces us.
-            if (!zeroconfSkipDefaultUnicast()) {
-                HF_VERBOSELN("Setup state: sending heartbeat");
-                Serial.flush();
-                sendBoardHeartbeat();
-            }
+            HF_VERBOSELN("Setup state: sending heartbeat");
+            Serial.flush();
+            sendBoardHeartbeat();
         } else {
             sendBoardHeartbeat();
         }
-#ifdef SENSOR_ETH_ZEROCONF
+#ifdef SENSOR_ETH_USE_DHCP
         // Discovery: announce to everyone on the wire until a server is
         // learned. Reuses the normal heartbeat packet on the same 1 s tick.
-        if (!serverLearned)
+        if (!net.serverLearned)
             sendBoardHeartbeatTo(IPAddress(255, 255, 255, 255),
                                  HOTFIRE_SERVER_PORT);
 #endif

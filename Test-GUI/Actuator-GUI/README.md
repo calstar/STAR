@@ -73,18 +73,19 @@ The **Board IP** field (top-right) is where control packets are sent. It starts
 at the profile default, **auto-updates to the board's real address** once its
 packets arrive, and you can **type a different IP + Set** to override at any time.
 
-Network setup for this path: **none, usually.** Actuator firmware is zero-config
-(`SENSOR_ETH_ZEROCONF`, same scheme as LC): at boot it tries DHCP (5 s), falls
-back to static `192.168.2.<board_id>`, and if still nobody talks to it,
-alternates onto a link-local `169.254.x.y` address every 10 s — broadcasting its
-heartbeat the whole time. Your laptop's self-assigned `169.254.x.x` (what every
-OS does with no DHCP) is enough: the GUI hears the broadcast, learns the board's
-address, and the board learns the GUI's from the reply. Worst case ~20 s from
-board power-on to 🟢. If your OS firewall prompts, allow Python to receive UDP.
+Network setup for this path: **the GUI assigns the board's address.** The
+firmware asks for one by DHCP at boot (`-DSENSOR_ETH_USE_DHCP`) and uses
+whatever it is given; the **Addresses** tab answers from its MAC → IP table.
+Register the board once — connect it over USB, its MAC appears in that tab,
+save the reservation — and it lands on the same address every boot.
 
-The board **locks its address on first contact** (safety: it never re-addresses
-mid-session), so if you swap laptops, give it ~12 s to notice the silence and
-resume discovery — or just power-cycle it.
+The GUI needs `sudo` to serve addresses (port 67 is privileged), and it answers
+only MACs you have registered, so it cannot disturb anything else on the
+network. If no address server is running, the board falls back to its old
+static `192.168.2.<board_id>` and says so on serial, so it is never unreachable.
+
+The board still finds *us* by broadcasting its heartbeat until we reply, so the
+**Board IP** field tracks it automatically either way.
 
 > Old manual path (still works, and is what the production DAQ server uses):
 > put your laptop at the board's static subnet with
@@ -102,10 +103,17 @@ python -m boardgui.demo_actuator_board
 python actuator_gui.py --board-ip 127.0.0.1
 ```
 
-In the GUI click **Start Ethernet UDP**, then **Send ACTUATOR_CONFIG**. The fake
-board goes Active and streams current-sense data; toggle actuators and watch
-their traces jump between ~0 V and ~1.5 V, or fire a PWM burst and watch it
-chop. (The demo covers the UDP path; the serial path needs a real board.)
+To exercise the **address assignment** and **discovery** paths too — the parts
+that are easy to get wrong and impossible to test from a static fake:
+
+```bash
+python -m boardgui.demo_actuator_board --dhcp-server 127.0.0.1:6767 --discover
+```
+
+The fake board then does a real DHCP exchange against this GUI's address server
+(point `--dhcp-server` at whatever port the Addresses tab is using), reports the
+address it was assigned, falls back loudly if nothing answers, and broadcasts
+until the GUI talks to it — the same sequence the real firmware runs.
 
 ## Logs
 

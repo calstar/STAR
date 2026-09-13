@@ -58,9 +58,42 @@ inline void delay(unsigned long) {
 inline void delayMicroseconds(unsigned int) {
 }
 
+// Minimal IPAddress stub (real Arduino gets this from IPAddress.h via
+// Ethernet.h). Declared before SerialStub so Serial.print(ip) can exist.
+class IPAddress {
+public:
+    IPAddress() : _o{0, 0, 0, 0} {
+    }
+    IPAddress(uint8_t a, uint8_t b, uint8_t c, uint8_t d) : _o{a, b, c, d} {
+    }
+    uint8_t operator[](int i) const {
+        return _o[i];
+    }
+    uint8_t& operator[](int i) {
+        return _o[i];
+    }
+    bool operator==(const IPAddress& o) const {
+        return memcmp(_o, o._o, 4) == 0;
+    }
+    bool operator!=(const IPAddress& o) const {
+        return !(*this == o);
+    }
+    operator uint32_t() const {
+        return (uint32_t)_o[0] << 24 | (uint32_t)_o[1] << 16 |
+               (uint32_t)_o[2] << 8 | (uint32_t)_o[3];
+    }
+
+private:
+    uint8_t _o[4];
+};
+
 // Minimal Serial stub with printf support
 #include <cstdio>
 struct SerialStub {
+    void print(const IPAddress&) {
+    }
+    void println(const IPAddress&) {
+    }
     void begin(unsigned long) {
     }
     void print(const char*) {
