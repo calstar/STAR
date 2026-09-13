@@ -40,10 +40,6 @@ connection_retry_delay_ms = 1000
 [gui]
 downsample_mode = "envelope"
 points_per_second = 20
-# Encoders ([0x24]) get their own, much higher budget: they feed the scope
-# view's valve-actuation timing (inter-encoder skew, plateau detection), which
-# the 20 pts/s GUI budget would quantize away. At the boards' ~48 Hz this is a
-# no-op -- it bounds a faster encoder board, it does not downsample this one.
 encoder_points_per_second = 100
 tabs = [ "unified", "boards", "config", "calibration", "feed-char", "session" ]
 
@@ -221,7 +217,7 @@ enable_serial_printing = true
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 0
-active_connectors = [ 1, 2, 6 ]
+active_connectors = [ 1 ]
 
 [boards.tc_board]
 type = "TC"
@@ -637,6 +633,12 @@ panel_row = 2
 panel_col = 3
 
 [[states]]
+id = 14
+name = "LOX Press"
+panel_row = 1
+panel_col = 3
+
+[[states]]
 id = 7
 name = "Vent"
 panel_row = 3
@@ -683,10 +685,12 @@ is_flow = true
 "Dome CTRL Vent" = [ "NC", 3, 12 ]
 "Fuel Main" = [ "NC", 6, 12 ]
 "Dome CTRL" = [ "NO", 7, 12 ]
+"Ox Upstream" = [ "NO", 8, 12 ]
 "Fuel Fill Press" = [ "NC", 2, 14 ]
 "High Press Vent" = [ "NC", 3, 14 ]
 "Fuel Fill Vent" = [ "NC", 5, 14 ]
 "Low Press Vent" = [ "NC", 6, 14 ]
+"Ox Main" = [ "NC", 7, 14 ]
 
 [calibration_model_pt_board_2]
 "GN2 High" = "cubic"
