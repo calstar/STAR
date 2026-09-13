@@ -558,6 +558,63 @@ def build_request(msg_type: int, mac: str, xid: int = 0x12345678,
     return packet + b"\x00" * max(0, 300 - len(packet))
 
 
+def find_existing_server(interface: Optional[str] = None,
+                         timeout: float = 2.0,
+                         port: int = SERVER_PORT,
+                         host: str = "255.255.255.255",
+                         probe_mac: str = "02:00:00:5a:5a:5a") -> Optional[str]:
+    """Is something already serving DHCP on this wire? Return its IP, or None.
+
+    Two DHCP servers on one segment is a race: a board takes whichever OFFER
+    lands first, so the same board can come up on a different address run to
+    run. daq-server's dnsmasq is the authority on the stand, and this GUI
+    carries a bench server for stands that have no DAQ host -- they must never
+    both be running, so the GUI probes before it starts.
+
+    Sends a DISCOVER from a locally-administered MAC that belongs to no board
+    and never follows up with a REQUEST, so nothing is leased; a server may
+    briefly hold the offered address, which the pool is sized to absorb.
+
+    Finds any server that answers a MAC it does not know -- which is dnsmasq,
+    because of its dynamic pool, and dnsmasq is the case this guards against.
+    It cannot see a reservation-only server (another copy of this GUI, with
+    adopt_unknown off): such a server answers nobody it has not been told
+    about, including this probe. So None means "no pool server answered", not
+    "the wire is definitely clear".
+
+    Any error means "could not tell", reported as None rather than a false
+    all-clear -- the caller decides what to do with an inconclusive probe.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if interface:
+            try:
+                bind_socket_to_interface(sock, interface)
+            except OSError:
+                pass  # best effort; an unbound probe still usually works
+        sock.settimeout(timeout)
+        sock.bind(("0.0.0.0", 0))
+        xid = 0x5A5A0001
+        sock.sendto(build_request(DISCOVER, probe_mac, xid=xid), (host, port))
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            sock.settimeout(max(0.05, deadline - time.monotonic()))
+            try:
+                data, addr = sock.recvfrom(1024)
+            except (socket.timeout, OSError):
+                break
+            reply = parse_reply(data)
+            if reply and reply.get("msg_type") == OFFER and reply["xid"] == xid:
+                return reply.get("server_id") or addr[0]
+    except OSError:
+        return None
+    finally:
+        sock.close()
+    return None
+
+
 def parse_reply(data: bytes) -> Optional[dict]:
     """Decode a BOOTREPLY, for the self-test and for diagnostics."""
     if len(data) < _HEADER_LEN:
@@ -698,6 +755,28 @@ def _self_test() -> None:
 
     assert leases == [(LC_MAC, "192.168.2.41")], leases
     assert unknowns == [STRANGER], f"one report per unknown MAC, got {unknowns}"
+
+    # ---- find_existing_server: the guard against two servers on one wire ----
+    # It spots a server that answers an unknown MAC -- i.e. one with a pool,
+    # which is the dnsmasq case it exists to catch.
+    pool_cfg = ServerConfig(port=9067, client_port=9068, bind_ip="127.0.0.1",
+                            server_ip="127.0.0.1", adopt_unknown=True,
+                            pool=("192.168.2.200", "192.168.2.201"))
+    pool_srv = DhcpServer(Reservations(), pool_cfg, on_event=lambda m: None)
+    pool_srv.bind()
+    pt = threading.Thread(target=pool_srv.serve_forever, daemon=True)
+    pt.start()
+    try:
+        found = find_existing_server(timeout=1.5, port=9067, host="127.0.0.1")
+        assert found is not None, "probe missed a running DHCP server"
+    finally:
+        pool_srv.stop()
+        pt.join(timeout=3)
+
+    # ...and reports nothing once that server is gone.
+    assert find_existing_server(timeout=0.5, port=9067,
+                                host="127.0.0.1") is None, \
+        "probe reported a server that is not running"
 
     print("dhcp self-test: OK")
 

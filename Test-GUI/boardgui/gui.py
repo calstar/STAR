@@ -36,7 +36,8 @@ from . import protocol
 from . import filters as filt
 from . import ota as ota_client
 from .clocksync import BoardClockSync, TimeSyncConfig
-from .dhcp import (Reservations, ServerConfig, interface_with_address,
+from .dhcp import (Reservations, ServerConfig, find_existing_server,
+                   interface_with_address,
                    parse_mac)
 from .dhcp_task import DhcpWorker
 from .network import UdpLink
@@ -45,7 +46,7 @@ from .profile import REFERENCE_VOLTAGE_LABELS, BoardProfile
 from .serial_link import SerialLink, list_ports, pyserial_error
 from .serial_parse import SerialParser
 from .qt import (ALIGN_CENTER, ALIGN_RIGHT, ALIGN_VCENTER, FONT_BOLD,
-                 MSGBOX_YES, SELECT_ROWS, TEXT_SELECTABLE,
+                 MSGBOX_CANCEL, MSGBOX_YES, SELECT_ROWS, TEXT_SELECTABLE,
                  FRAME_NOFRAME, FRAME_PANEL, ORIENT_HORIZONTAL, QtCore,
                  QtGui, QtWidgets, QTimer, TEXTCURSOR_END, pyqtSignal)
 
@@ -1086,10 +1087,14 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
             self.log.warning(
                 "No reservations yet — the server would answer nobody. Add "
                 "one below first (connect the board over USB to get its MAC).")
+        iface = self.dhcp_iface_edit.currentText().strip() or None
+        port = self.dhcp_port_spin.value()
+        if not self._confirm_no_other_dhcp(iface, port):
+            return
         cfg = ServerConfig(
             server_ip=self.dhcp_server_ip_edit.text().strip() or self.profile.server_ip,
-            port=self.dhcp_port_spin.value(),
-            bind_interface=self.dhcp_iface_edit.currentText().strip() or None,
+            port=port,
+            bind_interface=iface,
         )
         self.dhcp_worker = DhcpWorker(self.reservations, cfg)
         self.dhcp_worker.event.connect(lambda m: self.log.info("%s", m))
@@ -1099,6 +1104,36 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         self.dhcp_worker.started_ok.connect(self._on_dhcp_started)
         self.dhcp_worker.start()
         self.dhcp_btn.setText("Stop assigning addresses")
+
+    def _confirm_no_other_dhcp(self, iface: Optional[str], port: int) -> bool:
+        """Refuse to become a second DHCP server without the operator saying so.
+
+        daq-server's dnsmasq is the authority on the stand; this bench server
+        exists for stands that have no DAQ host. Two of them on one wire is a
+        race -- a board takes whichever OFFER arrives first -- so if something
+        already answers here, make the operator choose rather than silently
+        starting a competing server.
+        """
+        self.log.info("Checking whether something already serves DHCP here...")
+        other = find_existing_server(interface=iface, port=port)
+        if other is None:
+            return True
+        answer = QtWidgets.QMessageBox.warning(
+            self, "Another DHCP server is already running",
+            f"{other} is already handing out addresses on this network.\n\n"
+            "That is normally daq-server's dnsmasq, which is the authority "
+            "for the stand. Running this bench server alongside it means a "
+            "board takes whichever reply arrives first, so it can come up on "
+            "a different address every boot.\n\n"
+            "Start anyway?",
+            MSGBOX_YES | MSGBOX_CANCEL, MSGBOX_CANCEL)
+        if answer != MSGBOX_YES:
+            self.log.info("DHCP server not started — %s already serves this "
+                          "network.", other)
+            return False
+        self.log.warning("Starting a SECOND DHCP server alongside %s — boards "
+                         "may get inconsistent addresses.", other)
+        return True
 
     def _stop_dhcp(self) -> None:
         if self.dhcp_worker is not None:

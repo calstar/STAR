@@ -71,6 +71,30 @@ MAC from the pool, then pin it:
    ```
 5. **Power-cycle the board.** On its next DHCP request it gets its reserved
    static IP (`192.168.2.<board_id>`) instead of a pool address.
+6. **Refresh the Test-GUI's copy**, so the bench server agrees with this one:
+   ```bash
+   python3 daq-server/deploy/dhcp/generate_dhcp_config.py \
+     --config daq-server/config/config_base.toml \
+     --out-dir /etc/star-dhcp \
+     --gui-reservations Test-GUI/config/reservations.json
+   ```
+   Commit the regenerated file. See "Two servers, one registry" below.
+
+## Two servers, one registry
+
+The Test-GUI carries its own DHCP server (`Test-GUI/boardgui/dhcp.py`) for
+benches with no DAQ host — a switch, a board and a laptop. **dnsmasq here is the
+authority; that one is the fallback, and they must never serve the same wire at
+once.** Two servers on one segment is a race: a board takes whichever OFFER
+arrives first, so it can come up on a different address every boot.
+
+Two things keep them from fighting:
+
+* **One registry.** `Test-GUI/config/reservations.json` is generated from the
+  same `[boards.*]` table by `--gui-reservations`, so the two cannot disagree
+  about which board owns which address. Do not hand-edit it.
+* **A check at startup.** The GUI probes for an existing DHCP server before it
+  starts its own and makes the operator confirm if one answers.
 
 ## Changing the base config (subnet / pool / interface)
 
@@ -98,10 +122,11 @@ python3 daq-server/deploy/dhcp/generate_dhcp_config.py \
 
 | File | Role |
 |------|------|
-| `generate_dhcp_config.py` | Reads `[boards.*]`, emits `star-dhcp.conf` + `star-dhcp.hosts`. |
+| `generate_dhcp_config.py` | Reads `[boards.*]`, emits `star-dhcp.conf` + `star-dhcp.hosts`, and with `--gui-reservations` the Test-GUI's table too. |
 | `install_dhcp.sh` | One-time install: dnsmasq + generate + enable the system unit. |
 | `reload_dhcp.sh` | Regenerate reservations + `systemctl reload` (use after MAC edits). |
 | `../systemd/star-dhcp.service` | Root system unit running dnsmasq on the board NIC. |
 | `/etc/star-dhcp/star-dhcp.conf` | Generated base config (interface, pool, options). |
 | `/etc/star-dhcp/star-dhcp.hosts` | Generated MAC→IP reservations. |
 | `/var/lib/misc/star-dhcp.leases` | dnsmasq lease table (read board MACs here). |
+| `Test-GUI/config/reservations.json` | Generated table for the GUI's bench server; never hand-edited. |

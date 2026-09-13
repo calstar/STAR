@@ -81,9 +81,10 @@ TEXT_SELECTABLE = _enum(Qt, "TextInteractionFlag", "TextSelectableByMouse")
 # Table selection (the Addresses tab's reservation table)
 SELECT_ROWS = _enum(QtWidgets.QAbstractItemView, "SelectionBehavior", "SelectRows")
 
-# Message box buttons (OTA upload confirmation)
+# Message box buttons (OTA upload confirmation, DHCP conflict warning)
 MSGBOX_YES = _enum(QtWidgets.QMessageBox, "StandardButton", "Yes")
 MSGBOX_NO = _enum(QtWidgets.QMessageBox, "StandardButton", "No")
+MSGBOX_CANCEL = _enum(QtWidgets.QMessageBox, "StandardButton", "Cancel")
 
 
 def run_app(app) -> int:

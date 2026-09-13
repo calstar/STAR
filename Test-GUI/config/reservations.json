@@ -1,10 +1,11 @@
 {
+  "_generated": "by daq-server/deploy/dhcp/generate_dhcp_config.py --gui-reservations; edit [boards.*] in the DAQ config instead. daq-server's dnsmasq is the DHCP authority.",
   "reservations": [
     {
       "mac": "4a:27:e2:88:39:5d",
       "ip": "192.168.2.11",
       "board_id": 11,
-      "label": "Actuator1"
+      "label": "actuator_board"
     }
   ]
 }

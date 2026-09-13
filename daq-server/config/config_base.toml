@@ -177,7 +177,7 @@ hp_pt_sense_resistor_ohms = 120
 [boards.actuator_board]
 type = "ACTUATOR"
 ip = "192.168.2.11"
-mac = ""
+mac = "4a:27:e2:88:39:5d"
 send_port = 5005
 listen_port = 5005
 num_actuators = 10

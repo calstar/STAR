@@ -17,6 +17,12 @@ Emits two files into --out-dir:
   star-dhcp.conf   stable base config (interface, pool, options); DHCP-only.
   star-dhcp.hosts  MAC->IP reservations, one per board that has a mac.
 
+--gui-reservations additionally writes the Test-GUI's reservations.json from
+the same table. The GUI carries its own bench DHCP server for stands with no
+DAQ host; pointing both at this registry keeps them from disagreeing about
+which board owns which address. dnsmasq here remains the authority -- the two
+must never serve the same wire at once.
+
 The systemd unit points dnsmasq at star-dhcp.conf, which references the hosts
 file via dhcp-hostsfile. Reservations reload on SIGHUP (systemctl reload) with
 no service bounce; base-config changes need a restart.
@@ -26,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import json
 import os
 import re
 import sys
@@ -140,6 +147,32 @@ def build_hosts(reservations: list[tuple[str, str, str]]) -> str:
     return "\n".join(lines)
 
 
+def build_gui_reservations(reservations: list[tuple[str, str, str]],
+                           boards: dict) -> str:
+    """The Test-GUI's reservations.json, from the same registry.
+
+    Schema is boardgui.dhcp.Reservation.to_json(): mac, ip, board_id, label.
+    Written sorted by IP so regenerating produces no spurious diffs.
+    """
+    entries = []
+    for name, mac, ip in reservations:
+        b = boards.get(name, {})
+        entries.append({
+            "mac": mac,
+            "ip": ip,
+            "board_id": b.get("board_id"),
+            "label": name,
+        })
+    entries.sort(key=lambda e: ipaddress.ip_address(e["ip"]))
+    payload = {
+        "_generated": "by daq-server/deploy/dhcp/generate_dhcp_config.py "
+                      "--gui-reservations; edit [boards.*] in the DAQ config "
+                      "instead. daq-server's dnsmasq is the DHCP authority.",
+        "reservations": entries,
+    }
+    return json.dumps(payload, indent=2) + "\n"
+
+
 def build_conf(*, interface: str, subnet: ipaddress.IPv4Network,
                pool_start: int, pool_end: int, lease: str,
                hostsfile: Path, leasefile: str) -> str:
@@ -204,6 +237,10 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"dynamic-pool lease time (default: {DEFAULT_LEASE})")
     ap.add_argument("--leasefile", default=DEFAULT_LEASEFILE,
                     help=f"dnsmasq lease db path (default: {DEFAULT_LEASEFILE})")
+    ap.add_argument("--gui-reservations", type=Path, default=None,
+                    help="also write the Test-GUI's reservations.json here, "
+                         "from the same [boards.*] table (e.g. "
+                         "Test-GUI/config/reservations.json)")
     ap.add_argument("--check", action="store_true",
                     help="validate and print to stdout without writing files")
     args = ap.parse_args(argv)
@@ -239,6 +276,10 @@ def main(argv: list[str] | None = None) -> int:
         print(conf)
         print("# ===== star-dhcp.hosts =====")
         print(hosts, end="")
+        if args.gui_reservations:
+            print(f"# ===== {args.gui_reservations} =====")
+            print(build_gui_reservations(reservations, cfg.get("boards", {})),
+                  end="")
         print(f"# {len(reservations)} reservation(s), subnet {subnet}, "
               f"pool {base}.{args.pool_start}-{args.pool_end}", file=sys.stderr)
         return 0
@@ -247,6 +288,11 @@ def main(argv: list[str] | None = None) -> int:
     (args.out_dir / "star-dhcp.conf").write_text(conf)
     hostsfile.write_text(hosts)
     print(f"wrote {args.out_dir/'star-dhcp.conf'} and {hostsfile}")
+    if args.gui_reservations:
+        args.gui_reservations.parent.mkdir(parents=True, exist_ok=True)
+        args.gui_reservations.write_text(
+            build_gui_reservations(reservations, cfg.get("boards", {})))
+        print(f"wrote {args.gui_reservations} (Test-GUI bench server)")
     print(f"{len(reservations)} reservation(s), subnet {subnet}, "
           f"pool {base}.{args.pool_start}-{args.pool_end}, lease {args.lease}")
     if not reservations:

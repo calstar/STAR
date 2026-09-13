@@ -138,19 +138,33 @@ real one does:
 python -m boardgui.demo_board --dhcp-server 127.0.0.1:6767 --discover
 ```
 
-## Addresses: the GUI decides, the board asks
+## Addresses: the ground station decides, the board asks
 
-Boards do not choose their own IP. Every LC and Actuator board spends its first
-5 seconds asking for one by DHCP (`-DSENSOR_ETH_USE_DHCP`, see
-`firmware/Hotfire_Code/common/board_net.h`) and uses whatever it is given. The
-**Addresses** tab is what answers, from a table of **MAC → IP reservations**
-this GUI owns — so a board's address is decided in one place, by people, and is
-the same every boot.
+Boards do not choose their own IP. Every hotfire board spends its first 5
+seconds asking for one by DHCP (`-DSENSOR_ETH_USE_DHCP`, see
+`firmware/Hotfire_Code/common/board_net.h`) and uses whatever it is given — so a
+board's address is decided in one place, by people, and is the same every boot.
 
-Registering a board takes one step: connect it over USB on the Monitor tab. It
-prints its MAC at boot, the Addresses tab fills it in and suggests the IP that
-matches its board ID, and **Save reservation** writes it. From then on the board
-gets that address whenever it boots with the server running.
+**On the stand, `daq-server` answers, not this GUI.** Its dnsmasq service is the
+DHCP authority (`daq-server/deploy/dhcp/`), serving reservations generated from
+the `[boards.*]` table in the DAQ config. The **Addresses** tab here is a *bench*
+server for setups with no DAQ host — a bare switch, a board, and a laptop.
+
+Because both read the same registry, they cannot disagree about which board owns
+which address. `config/reservations.json` is **generated**, not hand-edited:
+
+```sh
+# from daq-server/, after filling in a [boards.*].mac
+python3 deploy/dhcp/generate_dhcp_config.py \
+    --config config/config_base.toml \
+    --out-dir /etc/star-dhcp \
+    --gui-reservations ../Test-GUI/config/reservations.json
+```
+
+To register a board, connect it over USB on the Monitor tab: it prints its MAC at
+boot, and the Addresses tab fills it in and suggests the IP matching its board
+ID. **Save reservation** writes it here for bench use — put the same MAC in the
+DAQ config's `[boards.*].mac` so the stand agrees.
 
 ```
 MAC: DE:AD:BE:EF:2A:3C          <- the board, over USB serial
@@ -160,7 +174,7 @@ de:ad:be:ef:2a:3c → 192.168.2.41   <- the reservation you save
 [NET] server assigned us 192.168.2.41    <- the board, next boot
 ```
 
-Two things to know before starting the server:
+Three things to know before starting the server:
 
 * **Port 67 is privileged**, so the GUI needs to be started with `sudo` to hand
   out addresses. Without it the tab says so rather than failing silently.
@@ -168,6 +182,11 @@ Two things to know before starting the server:
   network is otherwise a hazard — this one cannot hand an address to anything
   it has not been told about, and an unregistered board that asks is surfaced
   in the tab instead.
+* **It checks first whether something else is already serving DHCP** and makes
+  you confirm before starting alongside it. Two servers on one wire is a race:
+  a board takes whichever reply lands first, so it can come up on a different
+  address every boot. If you are on the stand, `daq-server` is already doing
+  this job — leave this tab alone.
 
 If no DHCP server answers at all, a board falls back to its old static
 `192.168.2.<BOARD_ID>` so it is never mute on the wire and `daq-server`'s
