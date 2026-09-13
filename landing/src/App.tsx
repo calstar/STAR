@@ -33,6 +33,15 @@ function IconCAD() {
     </svg>
   );
 }
+function IconValve() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12h5M17 12h5" />
+      <path d="M7 7v10l10-10v10z" />
+      <path d="M12 12V6M9.5 6h5" />
+    </svg>
+  );
+}
 function IconBoard() {
   return (
     <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -202,6 +211,18 @@ const APPS: AppCard[] = [
     iconColor: '#67e8f9',
     restricted:
       'Open to any Berkeley login. Pulling or building CAD from Onshape is limited to approved users (shared API credits) — contact Aidan for import access.',
+  },
+  {
+    id: 'feed-twin',
+    href: 'https://feed-twin.starberkeley.org',
+    label: 'Feed System Twin',
+    subdomain: 'feed-twin.starberkeley.org',
+    description:
+      'Transient model of the whole propellant feed system — COPV through regulator, tanks, lines, valves and injector to the chamber. Imports schematics and engine configs straight from the P&ID Designer and Engine Design. Early build: the physics lands over the coming phases, so today it reports the stack it is running.',
+    icon: <IconValve />,
+    colorClass: 'card-orange',
+    iconBg: 'linear-gradient(135deg, #c2410c 0%, #f97316 100%)',
+    iconColor: '#fdba74',
   },
   {
     id: 'starproject',
