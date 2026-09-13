@@ -20,7 +20,7 @@ const SWATCHES = [
   '#ef4444', '#f97316', '#f59e0b', '#eab308',
   '#84cc16', '#22c55e', '#14b8a6', '#06b6d4',
   '#3b82f6', '#6366f1', '#a855f7', '#ec4899',
-  '#f43f5e', '#94a3b8', '#e2e8f0', '#0f172a',
+  '#f43f5e', '#8f8f8f', '#f5f5f5', '#0a0a0a',
 ];
 
 export function ColorMenu({ x, y, current, onPick, onClear, onClose }: {
@@ -61,7 +61,7 @@ export function ColorMenu({ x, y, current, onPick, onClear, onClose }: {
             disabled={readOnly}
             onClick={() => { onPick(c); onClose(); }}
             className="h-4 w-4 rounded-sm border border-black/30 transition-transform hover:scale-110"
-            style={{ background: c, outline: current === c ? '2px solid #3b82f6' : undefined }}
+            style={{ background: c, outline: current === c ? '2px solid var(--color-text-primary)' : undefined }}
           />
         ))}
       </div>

@@ -37,7 +37,7 @@ export function TextNode({ id, data, selected }: NodeProps) {
   };
 
   const fontSize = nodeData.fontSize ?? 13;
-  const color    = nodeData.color    ?? '#e2e8f0';
+  const color    = nodeData.color    ?? 'var(--color-text-primary)';
 
   return (
     <div
@@ -54,7 +54,7 @@ export function TextNode({ id, data, selected }: NodeProps) {
           cursor: 'grab',
           opacity: hovered || selected ? 1 : 0,
           transition: 'opacity 0.15s',
-          color: '#64748b',
+          color: 'var(--color-text-muted)',
           fontSize: 10,
           letterSpacing: 1,
           userSelect: 'none',
@@ -83,7 +83,7 @@ export function TextNode({ id, data, selected }: NodeProps) {
               fontSize,
               color,
               background: 'rgba(15,23,42,0.85)',
-              border: '1px solid #3b82f6',
+              border: '1px solid var(--color-text-primary)',
               borderRadius: 4,
               padding: '2px 6px',
               outline: 'none',
@@ -99,8 +99,8 @@ export function TextNode({ id, data, selected }: NodeProps) {
             style={{
               fontSize,
               color,
-              background: selected ? 'rgba(59,130,246,0.08)' : 'transparent',
-              border: selected ? '1px dashed #3b82f6' : '1px dashed transparent',
+              background: selected ? 'rgba(from var(--color-text-primary) r g b / 0.08)' : 'transparent',
+              border: selected ? '1px dashed var(--color-text-primary)' : '1px dashed transparent',
               borderRadius: 4,
               padding: '2px 6px',
               cursor: 'default',
@@ -110,7 +110,7 @@ export function TextNode({ id, data, selected }: NodeProps) {
               minHeight: 24,
             }}
           >
-            {nodeData.text || <span style={{ color: '#475569', fontStyle: 'italic' }}>double-click to edit</span>}
+            {nodeData.text || <span style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>double-click to edit</span>}
           </div>
         )}
       </div>

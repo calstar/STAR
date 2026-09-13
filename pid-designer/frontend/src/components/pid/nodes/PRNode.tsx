@@ -23,7 +23,7 @@ const W = 60, H = 60;
 export function PRNode({ id, data, selected }: NodeProps) {
   const { label, labelOffset, rotation, options, params } = data as unknown as PIDNodeData;
   const setpoint = params?.setpoint;
-  const stroke = selected ? '#3b82f6' : '#94a3b8';
+  const stroke = selected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)';
   // A dome-loaded regulator has a third connection, and which one it is
   // matters: the dome sets the outlet, so a line run to it by mistake is a
   // regulator held at whatever that line happens to be. Marked on the symbol
@@ -63,15 +63,15 @@ export function PRNode({ id, data, selected }: NodeProps) {
         {domeLoaded
           ? <Port position={turn(Position.Top, rotation)} id="dome" />
           : <Port position={turn(Position.Top, rotation)} id="t" />}
-        <span style={{ ...lettering, ...corner('a'), color: '#e2e8f0' }}>PR</span>
+        <span style={{ ...lettering, ...corner('a'), color: 'var(--color-text-primary)' }}>PR</span>
         {domeLoaded && (
-          <span style={{ ...lettering, ...corner('b'), fontSize: 5.5, color: '#f59e0b' }}>DOME</span>
+          <span style={{ ...lettering, ...corner('b'), fontSize: 5.5, color: 'var(--color-text-primary)' }}>DOME</span>
         )}
         {/* The setpoint, on the face of it. A regulator's number is what a
             reviewer scans a sheet for, and two clicks into a dialog is two
             clicks nobody takes while scanning. */}
         {setpoint && (
-          <span style={{ ...lettering, ...numberStyle, color: '#f59e0b' }}>
+          <span style={{ ...lettering, ...numberStyle, color: 'var(--color-text-primary)' }}>
             {fmtParam(setpoint)}
           </span>
         )}
@@ -80,14 +80,14 @@ export function PRNode({ id, data, selected }: NodeProps) {
     >
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
         <rect x="8" y="8" width="44" height="44" rx="3"
-          fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
+          fill="var(--color-bg-tertiary)" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
         <line x1="16" y1="44" x2="44" y2="16" stroke={stroke} strokeWidth={1.5} />
         <polygon points="44,16 36,18 42,24" fill={stroke} />
         {!domeLoaded && <line x1="30" y1="0" x2="30" y2="8" stroke={stroke} strokeWidth={1.5} />}
         {domeLoaded && (
           <>
             {/* the dome, and the stem tying it to the seat */}
-            <path d="M22,8 Q30,0 38,8 Z" fill="#1e293b" stroke={stroke} strokeWidth={1.2} />
+            <path d="M22,8 Q30,0 38,8 Z" fill="var(--color-bg-tertiary)" stroke={stroke} strokeWidth={1.2} />
             <line x1="30" y1="8" x2="30" y2="14" stroke={stroke} strokeWidth={1.2} />
           </>
         )}

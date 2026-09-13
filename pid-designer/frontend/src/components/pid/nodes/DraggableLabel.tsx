@@ -106,7 +106,7 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset }: Draggab
           opacity: hovered || dragging ? 1 : 0,
           transition: 'opacity 0.15s',
           fontSize: '10px',
-          color: '#64748b',
+          color: 'var(--color-text-muted)',
           lineHeight: 1,
           padding: '0 2px',
         }}
@@ -127,7 +127,7 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset }: Draggab
             if (e.key === 'Escape') setEditing(false);
           }}
           onMouseDown={e => e.stopPropagation()}
-          className="text-xs text-center bg-[#1e293b] border border-blue-500 text-white rounded px-1 w-24 outline-none"
+          className="text-xs text-center bg-[var(--color-bg-tertiary)] border border-[var(--color-accent)] text-[var(--color-text-primary)] rounded px-1 w-24 outline-none"
           style={{ cursor: 'text' }}
         />
       ) : (
@@ -136,12 +136,12 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset }: Draggab
           className="text-xs px-1 rounded leading-tight"
           style={{
             cursor: 'default',
-            color:      dragging ? '#3b82f6' : '#cbd5e1',
+            color:      dragging ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
             // Opaque, not 80%. A tank's tag sits directly under its bottom
             // port, so the run leaving that port passes behind the text --
             // and at 80% it showed through the letters.
-            background: dragging ? 'rgba(59,130,246,0.15)' : 'var(--color-bg-primary)',
-            outline:    dragging ? '1px dashed #3b82f6' : 'none',
+            background: dragging ? 'rgba(from var(--color-text-primary) r g b / 0.15)' : 'var(--color-bg-primary)',
+            outline:    dragging ? '1px dashed var(--color-text-primary)' : 'none',
           }}
         >
           {label}

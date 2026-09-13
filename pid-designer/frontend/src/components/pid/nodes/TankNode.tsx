@@ -51,7 +51,7 @@ export function TankNode({ id, data, selected }: NodeProps) {
   // one is stated. Two short lines under the species, inside the barrel, so
   // they never meet the ports on the heads or the tag underneath.
   const readout = [fmtParam(params?.pressure), fmtParam(params?.temperature)].filter(Boolean);
-  const stroke = selected ? '#3b82f6' : '#94a3b8';
+  const stroke = selected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)';
   // Declared here, or inherited from whatever feeds it. Naming the species on
   // the symbol is the point of picking a real one: "ETH" and "LOX" are what a
   // reader is checking, and "fuel" never told them which fuel.
@@ -107,7 +107,7 @@ export function TankNode({ id, data, selected }: NodeProps) {
         </Upright>
         {readout.map((line, i) => (
           <Upright key={line} rotation={rotation} x={30} y={55 + i * 11}>
-            <text x="30" y={55 + i * 11} textAnchor="middle" fontSize="7.5" fill="#cbd5e1"
+            <text x="30" y={55 + i * 11} textAnchor="middle" fontSize="7.5" fill="var(--color-text-secondary)"
               fontFamily="monospace">{line}</text>
           </Upright>
         ))}

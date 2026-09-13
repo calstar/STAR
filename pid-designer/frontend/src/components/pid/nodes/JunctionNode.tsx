@@ -17,7 +17,7 @@ export function JunctionNode({ id, selected }: NodeProps) {
   // A grey dot on an orange line read as something foreign sitting on the
   // pipe rather than a tee in it.
   const fluid = useNodeFluid(id);
-  const tint = fluid?.species ? colorForSpecies(fluid.species) : '#94a3b8';
+  const tint = fluid?.species ? colorForSpecies(fluid.species) : 'var(--color-text-secondary)';
   const handleStyle = {
     width: 10,
     height: 10,
@@ -31,9 +31,9 @@ export function JunctionNode({ id, selected }: NodeProps) {
         width: 10,
         height: 10,
         borderRadius: '50%',
-        background: selected ? '#3b82f6' : tint,
-        border: '2px solid #0f172a',
-        boxShadow: `0 0 0 2px ${selected ? '#3b82f6' : tint}`,
+        background: selected ? 'var(--color-text-primary)' : tint,
+        border: '2px solid var(--color-bg-secondary)',
+        boxShadow: `0 0 0 2px ${selected ? 'var(--color-text-primary)' : tint}`,
         position: 'relative',
         cursor: 'grab',
       }}

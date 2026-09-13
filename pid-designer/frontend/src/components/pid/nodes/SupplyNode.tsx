@@ -28,7 +28,7 @@ const DW_W = 72, DW_H = 76;
 
 export function SupplyNode({ id, data, selected }: NodeProps) {
   const { componentType, label, labelOffset, rotation, color, params } = data as unknown as PIDNodeData;
-  const stroke = selected ? '#3b82f6' : '#94a3b8';
+  const stroke = selected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)';
   const assigned = useNodeFluid(id);
   const species = speciesById(assigned?.species ?? undefined);
   const tint = color ?? (species ? colorForSpecies(species.id) : UNSET_COLOR);
@@ -54,7 +54,7 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
 
         <svg width={DW_W} height={DW_H} viewBox={`0 0 ${DW_W} ${DW_H}`}>
           <rect x="30" y="1" width="12" height="7" rx="1"
-            fill="#1e293b" stroke={stroke} strokeWidth={1.2} />
+            fill="var(--color-bg-tertiary)" stroke={stroke} strokeWidth={1.2} />
           <rect x="4" y="8" width="64" height="64" rx="16"
             fill={tint + '1f'} stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
           {/* the vacuum jacket, which is what makes it a dewar and not a drum */}
@@ -84,7 +84,7 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
               position: 'absolute', left: '50%', top: bottleBoxH + 1,
               transform: 'translateX(-50%)',
               fontSize: 9, lineHeight: 1, fontFamily: 'monospace',
-              color: '#94a3b8', whiteSpace: 'nowrap', pointerEvents: 'none',
+              color: 'var(--color-text-secondary)', whiteSpace: 'nowrap', pointerEvents: 'none',
             }}
           >
             {fmtParam(p)}
@@ -96,7 +96,7 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
 
       <svg width={KB_W} height={KB_H} viewBox={`0 0 ${KB_W} ${KB_H}`}>
         {/* valve stem and cap */}
-        <rect x="18" y="1" width="8" height="7" fill="#1e293b" stroke={stroke} strokeWidth={1.1} />
+        <rect x="18" y="1" width="8" height="7" fill="var(--color-bg-tertiary)" stroke={stroke} strokeWidth={1.1} />
         {/* the bottle: domed shoulder, straight body */}
         <path d={`M6,26 Q6,11 22,9 Q38,11 38,26 L38,${KB_H - 5} Q38,${KB_H - 1} 34,${KB_H - 1} L10,${KB_H - 1} Q6,${KB_H - 1} 6,${KB_H - 5} Z`}
           fill={tint + '1f'} stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />

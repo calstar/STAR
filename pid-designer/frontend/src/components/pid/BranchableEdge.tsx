@@ -155,7 +155,7 @@ export function BranchableEdge(props: EdgeProps) {
       {armed && hoverAt && !dragging && (
         <circle
           cx={hoverAt.x} cy={hoverAt.y} r={5}
-          fill={strokeColor} stroke="#0f172a" strokeWidth={2}
+          fill={strokeColor} stroke="var(--color-bg-secondary)" strokeWidth={2}
           style={{ pointerEvents: 'none' }}
         />
       )}
@@ -185,7 +185,7 @@ export function BranchableEdge(props: EdgeProps) {
             width={horizontal ? 3 : 14}
             height={horizontal ? 14 : 3}
             rx={1.5}
-            fill={dragging ? '#3b82f6' : strokeColor}
+            fill={dragging ? 'var(--color-text-primary)' : strokeColor}
             opacity={dragging ? 1 : 0.55}
             style={{ pointerEvents: 'all' }}
           />

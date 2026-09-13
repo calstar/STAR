@@ -15,7 +15,7 @@ export const SWATCHES = [
   '#ef4444', '#f97316', '#f59e0b', '#eab308',
   '#84cc16', '#22c55e', '#14b8a6', '#06b6d4',
   '#3b82f6', '#6366f1', '#a855f7', '#ec4899',
-  '#f43f5e', '#94a3b8', '#e2e8f0', '#0f172a',
+  '#f43f5e', '#8f8f8f', '#f5f5f5', '#0a0a0a',
 ];
 
 export function PaintTool({ colour, onColour, active, onToggle }: {
