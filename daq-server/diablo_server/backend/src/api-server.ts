@@ -58,6 +58,23 @@ export interface SensorConfigEntry {
   calEntity: string;
 }
 
+/**
+ * How many enabled boards of this type the rig has.
+ *
+ * A generated role name ("LC Ch1") says nothing about which board it came from, and two
+ * boards of one type routinely declare the same connector — two LC boards each reporting
+ * on channel 1. The calibration page and the GUI list these names, so with a twin present
+ * the name has to carry the board_id or the operator is picking blind.
+ */
+function enabledBoardCount(boards: Record<string, any>, type: string): number {
+  return Object.values(boards).filter((b: any) => b?.type === type && b?.enabled !== false).length;
+}
+
+/** Generated role for a board with no [sensor_roles_<board>] section. */
+function generatedRole(type: string, boardId: number, ch: number, multiBoard: boolean): string {
+  return multiBoard ? `${type}${boardId} Ch${ch}` : `${type} Ch${ch}`;
+}
+
 function asBoardId(raw: unknown, fallback: number): number {
   if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
   const n = Number(raw);
@@ -150,6 +167,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
     }
   }
 
+  const manyRtdBoards = enabledBoardCount(boards, 'RTD') > 1;
   // RTD boards: sensor_roles_<boardKey> or active_connectors with role "RTD ChN"
   for (const [boardKey, boardRaw] of Object.entries(boards)) {
     const board = boardRaw as Record<string, any>;
@@ -184,7 +202,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
         sensors.push({
           type: 'RTD',
           id: ch,
-          role: `RTD Ch${ch}`,
+          role: generatedRole('RTD', boardId, ch, manyRtdBoards),
           boardId,
           boardIp,
           isHpPt: false,
@@ -196,6 +214,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
     }
   }
 
+  const manyLcBoards = enabledBoardCount(boards, 'LC') > 1;
   // LC boards: from active_connectors when no sensor_roles_<boardKey>; role "LC ChN"
   for (const [boardKey, boardRaw] of Object.entries(boards)) {
     const board = boardRaw as Record<string, any>;
@@ -230,7 +249,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
         sensors.push({
           type: 'LC',
           id: ch,
-          role: `LC Ch${ch}`,
+          role: generatedRole('LC', boardId, ch, manyLcBoards),
           boardId,
           boardIp,
           isHpPt: false,
