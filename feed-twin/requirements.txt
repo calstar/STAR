@@ -1,0 +1,32 @@
+# feed-twin backend dependencies.
+#
+# Pins match .github/workflows/feed-twin-ci.yml so laptops and CI resolve the
+# same versions. The backend itself is intentionally tiny -- it is a shell
+# around lib/feedtwin, and every interesting dependency belongs to the library,
+# not to this app.
+fastapi>=0.128
+uvicorn[standard]>=0.34
+pydantic>=2.12
+
+# The physics core lives at lib/feedtwin and is installed separately -- not from
+# here, because the path that reaches it differs between a checkout and a Docker
+# build context. See setup.sh, the CI workflow, and Dockerfile.api. It brings
+# CoolProp, fluids, ht, numpy and scipy with it.
+#
+# lib/stardesign (per-user documents, sharing, version history) is deliberately
+# NOT here yet: scenarios become shared documents in Phase 09, and wiring the
+# store in before there is anything to store would be dead code.
+
+# Pulling a diagram straight out of pid-designer (POST /api/library/pull).
+# Also what FastAPI's TestClient runs on, so it is not a new dependency
+# so much as a declared one.
+httpx>=0.27
+
+# File uploads. FastAPI needs it for UploadFile and says so at import
+# time rather than at request time, which is the good kind of failure.
+python-multipart>=0.0.9
+
+# Reading EngineDesign's Layer-1 configs. feed-twin's own configs are
+# TOML deliberately -- YAML parses 1e-3 as a string -- so this is a
+# boundary format we read, never one we write.
+PyYAML>=6.0

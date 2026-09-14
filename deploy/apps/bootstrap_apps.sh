@@ -170,8 +170,15 @@ if [[ -d "$CLONE_DIR/.git" ]]; then
   git -C "$CLONE_DIR" reset --hard "origin/$BRANCH"
 else
   git clone --depth 1 --filter=blob:none --sparse -b "$BRANCH" "$REPO_URL" "$CLONE_DIR"
-  git -C "$CLONE_DIR" sparse-checkout set deploy/apps
 fi
+# Every path docker-compose.yml bind-mounts must exist in the *working tree*, not
+# merely in the index. Docker silently creates an empty root-owned directory for a
+# bind mount whose source is missing, so a path left out here does not fail the
+# deploy -- it quietly hands the container an empty file. That is how auth ended up
+# reading an empty onshape allowlist (./auth/allowlists -> /config) and denying
+# every user. Run this outside the clone branch as well: a box cloned before a path
+# was added would otherwise never pick it up.
+git -C "$CLONE_DIR" sparse-checkout set deploy/apps deploy/caddy auth/allowlists
 chown -R "$ADMIN_USER":"$ADMIN_USER" "$CLONE_DIR"
 
 # ── §5b  Wi-Fi hardening (keep the uplink alive on Wi-Fi-only hosts) ──────────

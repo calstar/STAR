@@ -1,0 +1,295 @@
+{
+ "nodes": [
+  {
+   "id": "KB-1",
+   "type": "KBOTTLE",
+   "position": {
+    "x": 40,
+    "y": 80
+   },
+   "data": {
+    "componentType": "KBOTTLE",
+    "label": "KB-1",
+    "fluid": "nitrogen",
+    "params": {
+     "pressure": {
+      "value": 6000,
+      "unit": "psi",
+      "source": "verified"
+     }
+    }
+   }
+  },
+  {
+   "id": "PR-1",
+   "type": "PR",
+   "position": {
+    "x": 180,
+    "y": 90
+   },
+   "data": {
+    "componentType": "PR",
+    "label": "PR-1"
+   }
+  },
+  {
+   "id": "SOL-1",
+   "type": "SOL",
+   "position": {
+    "x": 320,
+    "y": 90
+   },
+   "data": {
+    "componentType": "SOL",
+    "label": "SOL-1"
+   }
+  },
+  {
+   "id": "PT-1",
+   "type": "PT",
+   "position": {
+    "x": 320,
+    "y": 10
+   },
+   "data": {
+    "componentType": "PT",
+    "label": "PT-1"
+   }
+  },
+  {
+   "id": "TK-1",
+   "type": "TANK",
+   "position": {
+    "x": 470,
+    "y": 60
+   },
+   "data": {
+    "componentType": "TANK",
+    "label": "TK-1",
+    "fluid": "ethanol",
+    "options": {
+     "portsTop": "1",
+     "portsBottom": "2"
+    }
+   }
+  },
+  {
+   "id": "MAN-1",
+   "type": "MAN",
+   "position": {
+    "x": 470,
+    "y": 260
+   },
+   "data": {
+    "componentType": "MAN",
+    "label": "MAN-1"
+   }
+  },
+  {
+   "id": "MF-1",
+   "type": "MANIFOLD",
+   "position": {
+    "x": 620,
+    "y": 260
+   },
+   "data": {
+    "componentType": "MANIFOLD",
+    "label": "MF-1",
+    "options": {
+     "outlets": "4"
+    }
+   }
+  },
+  {
+   "id": "ENG-1",
+   "type": "ENGINE",
+   "position": {
+    "x": 640,
+    "y": 400
+   },
+   "data": {
+    "componentType": "ENGINE",
+    "label": "ENG-1"
+   }
+  },
+  {
+   "id": "RV-1",
+   "type": "RV",
+   "position": {
+    "x": 300,
+    "y": 260
+   },
+   "data": {
+    "componentType": "RV",
+    "label": "RV-1"
+   }
+  },
+  {
+   "id": "QD-1",
+   "type": "QD",
+   "position": {
+    "x": 120,
+    "y": 460
+   },
+   "data": {
+    "componentType": "QD",
+    "label": "QD-1",
+    "page": "GSE"
+   }
+  },
+  {
+   "id": "KB-2",
+   "type": "KBOTTLE",
+   "position": {
+    "x": 40,
+    "y": 540
+   },
+   "data": {
+    "componentType": "KBOTTLE",
+    "label": "KB-2",
+    "fluid": "helium",
+    "page": "GSE"
+   }
+  },
+  {
+   "id": "junc_1",
+   "type": "JUNCTION",
+   "position": {
+    "x": 495,
+    "y": 75
+   },
+   "data": {
+    "componentType": "JUNCTION",
+    "label": "junc_1",
+    "page": "Main"
+   }
+  },
+  {
+   "id": "node_1",
+   "type": "PG",
+   "position": {
+    "x": 470,
+    "y": -10
+   },
+   "data": {
+    "componentType": "PG",
+    "label": "PG_#",
+    "fluidType": "default",
+    "options": {},
+    "page": "Main"
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "e1",
+   "source": "KB-1",
+   "sourceHandle": "r",
+   "target": "PR-1",
+   "targetHandle": "l",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 2,
+      "unit": "ft",
+      "source": "estimate"
+     },
+     "bore": {
+      "value": 0.25,
+      "unit": "in",
+      "source": "estimate"
+     }
+    }
+   }
+  },
+  {
+   "id": "e2",
+   "source": "PR-1",
+   "sourceHandle": "r",
+   "target": "SOL-1",
+   "targetHandle": "l",
+   "type": "smoothstep",
+   "data": {}
+  },
+  {
+   "id": "e4",
+   "source": "TK-1",
+   "sourceHandle": "b",
+   "target": "MAN-1",
+   "targetHandle": "l",
+   "type": "smoothstep",
+   "data": {
+    "lineType": "pipe",
+    "params": {
+     "length": {
+      "value": 4,
+      "unit": "ft",
+      "source": "estimate"
+     }
+    },
+    "segments": [
+     {
+      "id": "s1",
+      "fittings": [
+       {
+        "id": "r1",
+        "kind": "elbow_90",
+        "count": 3
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "e5",
+   "source": "MAN-1",
+   "sourceHandle": "r",
+   "target": "MF-1",
+   "targetHandle": "in",
+   "type": "smoothstep",
+   "data": {}
+  },
+  {
+   "id": "e6",
+   "source": "MF-1",
+   "sourceHandle": "p",
+   "target": "ENG-1",
+   "targetHandle": "fuel",
+   "type": "smoothstep",
+   "data": {}
+  },
+  {
+   "id": "SOL-1-junc_1",
+   "source": "SOL-1",
+   "sourceHandle": "r",
+   "target": "junc_1",
+   "targetHandle": "l",
+   "type": "smoothstep",
+   "data": {
+    "offset": 0
+   }
+  },
+  {
+   "id": "junc_1-TK-1",
+   "source": "junc_1",
+   "sourceHandle": "b",
+   "target": "TK-1",
+   "targetHandle": "t",
+   "type": "smoothstep",
+   "data": {
+    "offset": 0
+   }
+  },
+  {
+   "id": "node_1-junc_1",
+   "source": "node_1",
+   "sourceHandle": "b",
+   "target": "junc_1",
+   "type": "smoothstep",
+   "data": {}
+  }
+ ]
+}

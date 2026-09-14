@@ -1664,7 +1664,9 @@ def _layer1_apply_chamber_geometry_to_config(
         L_chamber = V_chamber / A_chamber if A_chamber > 0 else 0.2
         L_cylindrical = max(L_chamber * 0.5, 0.05)
 
-    L_chamber = np.clip(L_chamber, 0.005, 1.0)
+    # Positivity guard only. The old clip also capped the chamber at 1.0 m, a size limit no
+    # requirement asked for; engine length is constrained by max_engine_length elsewhere.
+    L_chamber = max(float(L_chamber), 0.005)
 
     if config.chamber_geometry is None:
         cg = ensure_chamber_geometry(config)
@@ -1737,6 +1739,115 @@ def _layer1_apply_chamber_geometry_to_config(
 _DERIVE_AT_SLOPE_DEFAULT = 0.35   # dlnF/dlnAt, measured on ethalox impinging
 _DERIVE_AT_SLOPE_MIN = 0.12
 _DERIVE_AT_SLOPE_MAX = 1.20
+
+
+def _layer1_stamp_design_point(config, performance, logger=None) -> None:
+    """Write the ACHIEVED operating point into ``chamber_geometry.design_*``.
+
+    ``design_MR`` / ``design_pressure`` / ``design_thrust`` are supposed to describe the design
+    the config represents. Nothing ever wrote them: `config_schemas` builds them with
+    ``getattr(chamber, 'design_MR', 2.55)``, so an optimised config carried whatever the template
+    started with. Observed on a real emitted design -- MR 2.55 / 350 psi / 7000 N stamped on an
+    engine actually solved at O/F ~1.68 / 420 psi / 7200 N.
+
+    That is not cosmetic: ``backend/routers/geometry.py`` reads ``design_MR`` and feeds it
+    straight into ``solve_chamber_geometry_with_cea``, so the Chamber Geometry tab drew the
+    contour at the stale mixture ratio -- and 2.55 sits OUTSIDE the shipped CEA cache range
+    (``MR_range: [1.0, 2.5]``), i.e. extrapolating past the table edge.
+
+    Warns rather than raises when the achieved MR falls outside the cache range: the design is
+    still real, but anything reading design_MR against that cache is extrapolating.
+    """
+    cg = getattr(config, "chamber_geometry", None)
+    if cg is None or not isinstance(performance, dict):
+        return
+
+    def _finite_pos(value):
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return None
+        return v if (np.isfinite(v) and v > 0) else None
+
+    mr = _finite_pos(performance.get("MR"))
+    pc = _finite_pos(performance.get("Pc"))
+    thrust = _finite_pos(performance.get("F"))
+
+    if mr is not None:
+        cg.design_MR = mr
+    if pc is not None:
+        cg.design_pressure = pc
+    if thrust is not None:
+        cg.design_thrust = thrust
+
+    # Keep the legacy mirror in step -- some readers still fall back to config.chamber.
+    legacy = getattr(config, "chamber", None)
+    if legacy is not None:
+        if mr is not None and hasattr(legacy, "design_MR"):
+            legacy.design_MR = mr
+        if pc is not None and hasattr(legacy, "design_pressure"):
+            legacy.design_pressure = pc
+        if thrust is not None and hasattr(legacy, "design_thrust"):
+            legacy.design_thrust = thrust
+
+    if mr is None or logger is None:
+        return
+    try:
+        mr_range = config.combustion.cea.MR_range
+        lo, hi = float(mr_range[0]), float(mr_range[1])
+    except (AttributeError, TypeError, ValueError, IndexError):
+        return
+    if not (lo <= mr <= hi):
+        logger.warning(
+            "design_MR %.4f is outside the CEA cache MR_range [%.2f, %.2f]; anything reading "
+            "it against that cache is extrapolating past the table edge.", mr, lo, hi
+        )
+
+
+
+def _layer1_warn_stale_pressure_curves(config, logger=None, tol_psi: float = 1.0) -> None:
+    """Flag Layer-2 pressure curves that no longer match the tank pressures Layer 1 just set.
+
+    The initial tank pressure exists twice, owned by different layers and never reconciled:
+    Layer 1 writes ``lox_tank/fuel_tank.initial_pressure_psi``; Layer 2 writes
+    ``pressure_curves.initial_lox/fuel_pressure_pa``. Re-running Layer 1 moves the tanks and
+    silently leaves the curves describing the previous design -- observed 11.3 psi out on the
+    LOX side and 24.9 psi on the fuel side of a real emitted config.
+
+    This matters beyond EngineDesign. Tank pressure is the UPSTREAM BOUNDARY CONDITION for the
+    feed-system twin (docs/adr/0001), which EngineDesign's optimizer will import directly for
+    Layer X. Two disagreeing values for one boundary condition is exactly the kind of thing that
+    silently poisons a twin, so say so loudly rather than letting it cross the boundary.
+
+    Detection only -- which layer should win is a design call, not something to guess here.
+    """
+    if logger is None:
+        return
+    curves = getattr(config, "pressure_curves", None)
+    if curves is None:
+        return
+    PSI = 6894.76
+    for tank_attr, curve_attr, label in (
+        ("lox_tank", "initial_lox_pressure_pa", "LOX"),
+        ("fuel_tank", "initial_fuel_pressure_pa", "fuel"),
+    ):
+        tank = getattr(config, tank_attr, None)
+        if tank is None:
+            continue
+        try:
+            tank_psi = float(getattr(tank, "initial_pressure_psi", float("nan")))
+            curve_psi = float(getattr(curves, curve_attr, float("nan"))) / PSI
+        except (TypeError, ValueError):
+            continue
+        if not (np.isfinite(tank_psi) and np.isfinite(curve_psi)):
+            continue
+        if abs(tank_psi - curve_psi) > tol_psi:
+            logger.warning(
+                "%s tank pressure disagrees with the Layer-2 pressure curve: tank %.1f psi vs "
+                "curve start %.1f psi (%.1f psi apart). The curves predate this Layer 1 run; "
+                "re-run Layer 2 before trusting them or anything downstream of them.",
+                label, tank_psi, curve_psi, abs(tank_psi - curve_psi),
+            )
 
 
 def _layer1_eps_for_exit_pressure(Pc_Pa: float, gamma: float, Pe_Pa: float):
@@ -2575,7 +2686,7 @@ def _config_to_dict(config: PintleEngineConfig) -> dict:
     
     Uses pydantic's dict() method if available, otherwise falls back to __dict__.
     """
-    return config.dict() if hasattr(config, 'dict') else config.__dict__
+    return config.model_dump() if hasattr(config, 'model_dump') else config.__dict__
 
 
 def _dict_to_config(config_dict: dict) -> PintleEngineConfig:
@@ -2732,7 +2843,16 @@ def _snap_integer_dims(x: np.ndarray, integer_indices: list) -> np.ndarray:
 
 
 def _get_num_workers(config_obj) -> int:
-    """Get number of workers from config or default to cpu_count - 1."""
+    """Get number of workers from config or default to cpu_count - 1.
+
+    ``ED_L1_WORKERS`` overrides both (``1`` runs every candidate in-process, which is what a
+    debugger or an infeasibility trace needs)."""
+    env = os.environ.get("ED_L1_WORKERS")
+    if env:
+        try:
+            return max(1, int(env))
+        except ValueError:
+            pass
     if hasattr(config_obj, 'optimizer') and hasattr(config_obj.optimizer, 'num_workers'):
         num_workers = config_obj.optimizer.num_workers
     else:
@@ -2877,6 +2997,18 @@ def _apply_x_to_worker_config_inplace(x: np.ndarray, config: PintleEngineConfig,
             config.fuel_tank.initial_pressure_psi = _pf
 
 
+# Infeasibility trace: set ED_L1_TRACE_INFEAS=1 (with ED_L1_WORKERS=1 so candidates run in-process)
+# and each objective evaluation appends {checkpoint: running infeasibility score} here -- the only
+# way to see WHICH gate keeps a run infeasible when every candidate returns the 1e6 floor.
+_INFEAS_TRACE: List[Dict[str, float]] = []
+_INFEAS_TRACE_ON = bool(os.environ.get("ED_L1_TRACE_INFEAS"))
+
+
+def _infeas_trace(entry: Optional[Dict[str, float]], label: str, value: float) -> None:
+    if entry is not None:
+        entry[label] = float(value)
+
+
 def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, constants: dict) -> float:
     """Compute objective value from evaluation result.
 
@@ -2987,6 +3119,9 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
     P_F_ratio = P_F_psi / max_fuel_P_psi if max_fuel_P_psi > 0 else 0.0
 
     infeasibility_score = 0.0
+    _tr = {} if _INFEAS_TRACE_ON else None
+    if _tr is not None:
+        _INFEAS_TRACE.append(_tr)
 
     if A_chamber_check > 0 and A_throat_check > 0:
         contraction_ratio_check = A_chamber_check / A_throat_check
@@ -3039,6 +3174,7 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
             A_throat_check=A_throat_check,
         )
 
+    _infeas_trace(_tr, "geometry", infeasibility_score)
     # --- Evaluation Results ---
     eval_success = result.get('success', False) if isinstance(result, dict) else False
     # Runner.evaluate typically omits success; infer from finite thrust/Pc when absent
@@ -3150,6 +3286,7 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
         infeasibility_score += max(0.0, (effective_margin - chugging_margin) / effective_margin) ** 2
         infeasibility_score += max(0.0, (effective_margin - acoustic_margin) / effective_margin) ** 2
         infeasibility_score += max(0.0, (effective_margin - feed_margin) / effective_margin) ** 2
+    _infeas_trace(_tr, "stability", infeasibility_score)
     
     # Regularization: Cf band
     def _hinge_band(val, lo, hi, scale=1.0):
@@ -3327,6 +3464,8 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
                 max_outward_deg=float(constants.get("layer1_resultant_tilt_max_deg", 0.0)),
                 scale_deg=float(constants.get("layer1_resultant_tilt_scale_deg", 2.0)),
             )
+            _infeas_trace(_tr, "wall_tilt", infeasibility_score)
+            _infeas_trace(_tr, "tilt_deg", _tilt)
             momentum_term = _impinging_momentum_asymmetric_squared(
                 R_val,
                 wall_side_multiplier=float(
@@ -3865,6 +4004,60 @@ def _layer1_emit_objective_plot_point(
         pass
 
 
+def _layer1_infeasibility_reason(runner, x, requirements: dict, constants: dict) -> Optional[str]:
+    """One sentence on WHICH hard constraint held the best candidate out of the feasible set.
+
+    A run whose every candidate sat on the 1e6 infeasibility floor used to end with
+    "objective inf" and "Validation failed", which told the user nothing. Re-evaluate the best
+    design in-process with the infeasibility trace on and name the dominant gate.
+    """
+    global _INFEAS_TRACE_ON
+    try:
+        idx_P_O = 11 if constants.get("injector_type") == "impinging" else 8
+        P_O = float(x[idx_P_O]) * 6894.76
+        P_F = float(x[idx_P_O + 1]) * 6894.76
+        result = runner.evaluate(P_O, P_F, silent=True)
+    except Exception as e:
+        return f"No feasible design: the best candidate could not even be evaluated ({type(e).__name__}: {str(e)[:120]})."
+    prev, n0 = _INFEAS_TRACE_ON, len(_INFEAS_TRACE)
+    _INFEAS_TRACE_ON = True
+    try:
+        _compute_objective_value(result, np.asarray(x, dtype=float), requirements, constants)
+    except Exception as e:
+        return f"No feasible design: objective re-evaluation failed ({type(e).__name__})."
+    finally:
+        _INFEAS_TRACE_ON = prev
+    if len(_INFEAS_TRACE) <= n0:
+        return None
+    tr = _INFEAS_TRACE.pop()
+    geom = float(tr.get("geometry", 0.0))
+    stab = float(tr.get("stability", geom)) - geom
+    wall = float(tr.get("wall_tilt", tr.get("stability", geom))) - float(tr.get("stability", geom))
+    parts = []
+    if wall > 0:
+        tilt = tr.get("tilt_deg", float("nan"))
+        lim = float(constants.get("layer1_resultant_tilt_max_deg", 0.0))
+        parts.append((wall, f"the spray resultant tilts {tilt:+.1f} deg outward toward the wall (limit {lim:g} deg) -- "
+                            "lower the oxidizer jet angle, raise the fuel jet angle, or widen the angle bands"))
+    if stab > 0:
+        parts.append((stab, "a stability gate (minimum score / margins) is not met -- lower min_stability_score or stiffen the injector"))
+    if geom > 0:
+        parts.append((geom, "injector packing, flow capacity, or chamber proportions violate a hard limit -- widen the chamber OD or the jet bounds"))
+    if not parts:
+        # Re-evaluated in isolation the best design passes every gate: the search is stuck ON a
+        # constraint boundary and CMA's samples keep landing a hair outside it. For a doublet that
+        # is almost always the spray-resultant tilt limit, which defaults to exactly 0 deg outward.
+        lim = float(constants.get("layer1_resultant_tilt_max_deg", 0.0))
+        if constants.get("injector_type") == "impinging":
+            return ("No candidate cleared every hard constraint, yet the best design re-evaluates as feasible "
+                    f"on its own: the search is pinned on the spray-resultant tilt limit ({lim:g} deg outward). "
+                    "Re-run, or allow a degree of outward tilt (layer1_resultant_tilt_max_deg) if the liner can take it.")
+        return ("No candidate cleared every hard constraint, yet the best design re-evaluates as feasible on its "
+                "own: the search is pinned on a constraint boundary. Re-run, or relax the tightest gate slightly.")
+    parts.sort(key=lambda t: -t[0])
+    return "No candidate cleared every hard constraint. On the best one, " + parts[0][1] + "."
+
+
 def run_layer1_global_search(
     objective: Callable[[np.ndarray], float],
     bounds: list,
@@ -3975,6 +4168,29 @@ def run_layer1_global_search(
     return best_x
 
 
+def _layer1_check_of_target_in_cea_range(config_obj: Any, optimal_of: Any) -> None:
+    """Refuse a target O/F the propellant's CEA table cannot evaluate.
+
+    A propellant switch keeps the previous design target, so an ethalox target of 1.4 left
+    behind on a methalox config used to run a full optimization against a table that stops at
+    2.4 -- the mixture ratio pinned at the table edge and the run returned a huge objective with
+    nothing to say why. Fail before any work is done, with the fix in the message.
+    """
+    try:
+        mr_range = config_obj.combustion.cea.MR_range
+        lo, hi = float(mr_range[0]), float(mr_range[1])
+        of = float(optimal_of)
+    except (AttributeError, TypeError, ValueError, IndexError):
+        return
+    if not (np.isfinite(of) and lo <= of <= hi):
+        preset = getattr(config_obj, "propellant_preset", None) or "this propellant"
+        raise ValueError(
+            f"Design target O/F {of:.2f} is outside the CEA table for {preset} "
+            f"(MR_range [{lo:.2f}, {hi:.2f}]). Set optimal_of_ratio inside that range in Design "
+            f"Requirements -- switching propellant keeps the previous target."
+        )
+
+
 def run_layer1_optimization(
     config_obj: PintleEngineConfig,
     runner: PintleEngineRunner,
@@ -4075,6 +4291,7 @@ def run_layer1_optimization(
     # Extract requirements
     target_thrust = requirements.get("target_thrust", 7000.0)
     optimal_of = requirements.get("optimal_of_ratio", 2.3)
+    _layer1_check_of_target_in_cea_range(config_obj, optimal_of)
     min_stability = float(requirements.get("min_stability_margin", _LAYER1_DEFAULT_MIN_STABILITY_MARGIN))
 
     def _resolve_Lstar_bounds_from_req_and_config() -> Tuple[float, float]:
@@ -7697,6 +7914,16 @@ def run_layer1_optimization(
             optimized_config_runner.graphite_insert.enabled = False
     
     optimized_runner = PintleEngineRunner(optimized_config_runner)
+
+    # When nothing was feasible, say which gate held the best candidate out (see the helper).
+    infeasible_reason = None
+    try:
+        if best_x is not None and not _layer1_feasible_scalar_objective(float(opt_state.get("best_objective", float("inf")))):
+            infeasible_reason = _layer1_infeasibility_reason(optimized_runner, best_x, requirements, constants_dict)
+            if infeasible_reason and log_status:
+                log_status("warning", infeasible_reason)
+    except Exception:
+        infeasible_reason = None
     
     # Use stored validation results if available
     if "best_results_for_validation" in opt_state and opt_state["best_results_for_validation"] is not None:
@@ -8402,6 +8629,7 @@ def run_layer1_optimization(
                 else {}
             ),
             "primary_relative_residual": _prim_rel,
+            "infeasible_reason": infeasible_reason,
         },
         "exit_pressure_targeting": {
             "target_P_exit": target_P_exit,  # Atmospheric pressure from environment config (GPS/GFS-derived)
@@ -8563,7 +8791,11 @@ def run_layer1_optimization(
     layer1_logger.handlers.clear()
     
     update_progress("Layer 1: Complete", 1.0, "Layer 1 optimization complete!")
-    
+
+    # Stamp the ACHIEVED operating point onto the config we are about to hand back, so
+    # chamber_geometry.design_* describes this engine rather than whatever template it came from.
+    _layer1_stamp_design_point(optimized_config, final_performance, layer1_logger)
+    _layer1_warn_stale_pressure_curves(optimized_config, layer1_logger)
 
     return optimized_config, results
 

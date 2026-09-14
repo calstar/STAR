@@ -21,6 +21,8 @@ interface DiagramBarProps {
 export function DiagramBar({ diagrams, activeKey, onSelect, onOpenChange, checkout }: DiagramBarProps) {
   return (
     <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-primary)] px-4 py-1.5">
+      <span className="mr-2 shrink-0 text-sm font-semibold text-[var(--color-text-primary)]">P&amp;ID Designer</span>
+      <span className="h-4 w-px shrink-0 bg-[var(--color-border)]" />
       <span className="shrink-0 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Diagram</span>
       <select
         value={activeKey ?? ''}

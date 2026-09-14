@@ -60,6 +60,15 @@ def _fetch_auth(cookie: str) -> list[dict]:
     if not base:
         return []
     req = urllib.request.Request(f"{base}/users", method="GET")
+    # AUTH_USERS_URL is a public hostname, so this call goes out through
+    # Cloudflare, which blocks urllib's default `Python-urllib/x.y` signature
+    # with a 403 (error 1010) before the request ever reaches auth. That 403 is
+    # an HTTPError -- a URLError subclass -- so the handler below swallows it and
+    # the roster silently degrades to the volume scan: every share picker in
+    # every design tool then offers only the people who already have designs.
+    # Any ordinary User-Agent gets through; there is no need to look like a
+    # browser.
+    req.add_header("User-Agent", "stardesign/1.0")
     if cookie:
         req.add_header("Cookie", cookie)
     try:

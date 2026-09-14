@@ -1241,7 +1241,7 @@ export function Layer1Optimization({
 
       {/* Settings */}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">⚙️ Optimization Settings</h3>
+        <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">Optimization Settings</h3>
         <div className="grid grid-cols-1 gap-4">
           {/* When the throat is solved from the thrust target the engine lands on that
               target by construction, so a tolerance has nothing to authorise -- showing an
@@ -1292,14 +1292,14 @@ export function Layer1Optimization({
             : 'bg-blue-600 hover:bg-blue-700 hover:scale-105'
             }`}
         >
-          {isRunning ? '🔄 Running Optimization...' : '🚀 Run Layer 1 Optimization'}
+          {isRunning ? 'Running Optimization...' : 'Run Layer 1 Optimization'}
         </button>
         {isRunning && (
           <button
             onClick={handleStop}
             className="px-8 py-4 font-bold rounded-lg text-white text-lg transition-all bg-red-600 hover:bg-red-700 hover:scale-105"
           >
-            ⏹ Stop Optimizer
+            Stop Optimizer
           </button>
         )}
       </div>
@@ -1307,7 +1307,7 @@ export function Layer1Optimization({
       {/* Progress */}
       {(isRunning || progress > 0) && (
         <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
-          <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">📊 Progress</h3>
+          <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">Progress</h3>
 
           {/* Progress Bar */}
           <div className="mb-4">
@@ -1336,7 +1336,9 @@ export function Layer1Optimization({
             </h4>
             {objectiveHistory.length > 0 ? (
               <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={objectiveHistory} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                {/* Legend on top and a real bottom margin: with both the legend and the axis
+                    title in the strip under the axis they drew over each other mid-run. */}
+                <LineChart data={objectiveHistory} margin={{ top: 5, right: 30, left: 20, bottom: 20 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
                   <XAxis
                     dataKey="iteration"
@@ -1350,8 +1352,10 @@ export function Layer1Optimization({
                   <YAxis
                     scale="log"
                     domain={['auto', 'auto']}
+                    width={72}
                     stroke="var(--color-text-secondary)"
                     tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
+                    tickFormatter={(v: number) => (Math.abs(v) >= 1e4 || (v !== 0 && Math.abs(v) < 1e-2) ? v.toExponential(0) : v.toLocaleString())}
                     label={{ value: 'Weighted penalty sum (log)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
                   />
                   <Tooltip
@@ -1363,6 +1367,8 @@ export function Layer1Optimization({
                     }}
                   />
                   <Legend
+                    verticalAlign="top"
+                    height={30}
                     payload={[
                       { value: 'Candidate (feasible)', type: 'circle', color: '#3b82f6', id: 'cand' },
                       { value: 'New best', type: 'circle', color: '#ef4444', id: 'newbest' },
@@ -1446,7 +1452,7 @@ export function Layer1Optimization({
       {/* Error */}
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4">
-          <p className="text-red-400 font-semibold">❌ Error: {error}</p>
+          <p className="text-red-400 font-semibold">Error: {error}</p>
         </div>
       )}
 
@@ -1454,7 +1460,7 @@ export function Layer1Optimization({
       {results && results.performance && (
         <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">✅ Optimization Results</h3>
+            <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">Optimization Results</h3>
             {results.config_yaml && (
               <button
                 onClick={() => {
@@ -1470,14 +1476,14 @@ export function Layer1Optimization({
                 }}
                 className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-sm font-medium shadow-sm"
               >
-                <span>💾 Download Optimized Config (YAML)</span>
+                <span>Download Optimized Config (YAML)</span>
               </button>
             )}
           </div>
 
           {/* Key Performance Metrics */}
           <div className="mb-6">
-            <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-3">🎯 Performance</h4>
+            <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-3">Performance</h4>
             <div className="grid grid-cols-4 gap-4">
               <ResultCard
                 label="Thrust"
@@ -1701,7 +1707,12 @@ export function Layer1Optimization({
           {/* Objective Diagnostics */}
           {results.convergence_info?.best_objective !== undefined && (
             <div className="mb-6">
-              <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-3">🧠 Objective Diagnostics</h4>
+              <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-3">Objective Diagnostics</h4>
+              {results.convergence_info.infeasible_reason && (
+                <p className="mb-3 text-sm text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                  {results.convergence_info.infeasible_reason}
+                </p>
+              )}
               <div className="grid grid-cols-2 gap-4 mb-3">
                 <ResultCard
                   label="Best Objective (Residual)"
@@ -1816,7 +1827,7 @@ export function Layer1Optimization({
 
           {/* Optimized Pressures */}
           <div className="mb-6">
-            <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-3">🔋 Optimized Tank Pressures</h4>
+            <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-3">Optimized Tank Pressures</h4>
             <div className="grid grid-cols-2 gap-4">
               <ResultCard
                 label="LOX Tank Pressure"
@@ -1864,7 +1875,7 @@ export function Layer1Optimization({
           {/* Injector / Post-Injector Pressure Details */}
           <div className="mb-6">
             <div className="flex items-center justify-between mb-3">
-              <h4 className="text-md font-semibold text-[var(--color-text-primary)]">🫧 Injector Pressure Drops</h4>
+              <h4 className="text-md font-semibold text-[var(--color-text-primary)]">Injector Pressure Drops</h4>
               <button
                 onClick={() => setShowInjectorPressures((v) => !v)}
                 className="px-3 py-1.5 text-xs rounded-md border border-[var(--color-border)] hover:bg-[var(--color-bg-primary)] transition-colors"
@@ -1896,7 +1907,7 @@ export function Layer1Optimization({
 
           {/* Stability Results */}
           <div className="mb-6">
-            <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-3">🛡️ Stability Analysis</h4>
+            <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-3">Stability Analysis</h4>
             {(() => {
               // Extract stability data from various possible locations
               const perf = results.performance;
@@ -1959,7 +1970,7 @@ export function Layer1Optimization({
           {results.geometry && Object.keys(results.geometry).length > 0 && (
             <div className="mb-6">
               <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-3">
-                📐 Optimized Geometry
+                Optimized Geometry
                 {typeof results.geometry.injector_type === 'string' && (
                   <span className="ml-2 text-xs px-2 py-1 rounded bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
                     injector: {String(results.geometry.injector_type)}
@@ -2208,7 +2219,7 @@ export function Layer1Optimization({
           {/* Chamber Contour Plot */}
           {chamberGeometry && chamberGeometry.chamber_contour_x && chamberGeometry.chamber_contour_x.length > 0 && (
             <div className="mt-6">
-              <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-3">📊 Optimized Chamber Contour</h4>
+              <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-3">Optimized Chamber Contour</h4>
               <ChamberContourPlot
                 geometry={chamberGeometry}
                 title="Optimized Chamber Geometry"

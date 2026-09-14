@@ -3,7 +3,8 @@ import { DesignRequirements, DEFAULT_DESIGN_REQUIREMENTS } from './DesignRequire
 import { Layer1Optimization } from './Layer1Optimization';
 import { Layer2Optimization } from './Layer2Optimization';
 import { Layer3Optimization } from './Layer3Optimization';
-import { Layer4Optimization } from './Layer4Optimization';
+import { FlightSimulation } from './FlightSimulation';
+import { emitConfigChanged } from '../lib/configBus';
 import { useReadOnly } from '@stardesign-ui';
 import { useViewState } from '../lib/viewState';
 import {
@@ -98,7 +99,7 @@ export function Optimizer({ config }: OptimizerProps) {
     <div className="space-y-6">
       {/* Main Header */}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
-        <h1 className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">🚀 Engine Design Optimization</h1>
+        <h1 className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">Engine Design Optimization</h1>
         <p className="text-[var(--color-text-secondary)]">
           <strong>Goal:</strong> Size optimal injector and chamber geometry to meet your:
         </p>
@@ -116,7 +117,7 @@ export function Optimizer({ config }: OptimizerProps) {
           : 'bg-red-500/10 border-red-500/30 text-red-400'
           }`}>
           <p className="font-semibold">
-            {saveStatus.type === 'success' ? '✅' : '❌'} {saveStatus.message}
+            {saveStatus.message}
           </p>
         </div>
       )}
@@ -130,7 +131,7 @@ export function Optimizer({ config }: OptimizerProps) {
             : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
             }`}
         >
-          📋 Design Requirements
+          Design Requirements
         </button>
         <button
           onClick={() => setActiveSubTab('layer1')}
@@ -139,7 +140,7 @@ export function Optimizer({ config }: OptimizerProps) {
             : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
             }`}
         >
-          🔧 Layer 1: Static Optimization
+          Layer 1: Static Optimization
         </button>
         <button
           onClick={() => setActiveSubTab('layer2')}
@@ -148,7 +149,7 @@ export function Optimizer({ config }: OptimizerProps) {
             : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
             }`}
         >
-          🌊 Layer 2: Pressure Optimizer
+          Layer 2: Pressure Optimizer
         </button>
         <button
           onClick={() => setActiveSubTab('layer3')}
@@ -157,7 +158,7 @@ export function Optimizer({ config }: OptimizerProps) {
             : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
             }`}
         >
-          🔥 Layer 3: Thermal Protection
+          Layer 3: Thermal Protection
         </button>
         <button
           onClick={() => setActiveSubTab('layer4')}
@@ -166,7 +167,7 @@ export function Optimizer({ config }: OptimizerProps) {
             : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
             }`}
         >
-          ✈️ Layer 4: Flight Simulation
+          Layer 4: Flight Simulation
         </button>
       </nav>
 
@@ -177,6 +178,7 @@ export function Optimizer({ config }: OptimizerProps) {
             requirements={requirements}
             onRequirementsChange={setRequirements}
             onSave={handleSave}
+            config={config}
           />
         </div>
         <div className={subTabPanelClass('layer1')}>
@@ -201,10 +203,14 @@ export function Optimizer({ config }: OptimizerProps) {
           />
         </div>
         <div className={subTabPanelClass('layer4')}>
-          <Layer4Optimization
-            requirements={requirements}
-            isDirty={isDirty}
-            saveRequirementsToServer={saveRequirementsToServer}
+          {/* The same flight simulator as the Flight tab. This sub-tab used to carry its own
+              1100-line copy with RP-1's density and an 85% fill factor hardcoded client-side,
+              so every non-kerolox design had its fuel load capped against the wrong tank. */}
+          <FlightSimulation
+            config={config}
+            isVisible={activeSubTab === 'layer4'}
+            onConfigUpdated={(c) => emitConfigChanged(c)}
+            sliceKey="layer4"
           />
         </div>
       </div>

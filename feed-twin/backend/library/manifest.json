@@ -1,0 +1,288 @@
+[
+ {
+  "id": "4396ec5d752d",
+  "kind": "engine",
+  "name": "ethalox doublet 7000N",
+  "sha256": "4396ec5d752d1ce168e5d10b68d861a93fb8cd27191c404ae0488e4a2954ea14",
+  "size": 16812,
+  "imported_at": "2026-09-09T18:21:28+00:00",
+  "source": "upload",
+  "filename": "4396ec5d752d.yaml",
+  "notes": "",
+  "summary": {
+   "injector": "impinging",
+   "oxidiser": "oxygen",
+   "fuel": "ethanol",
+   "throat_mm2": 1735.3,
+   "thrust_N": 7000.0,
+   "mixture_ratio": 1.65,
+   "warnings": []
+  }
+ },
+ {
+  "id": "b7bba9e67a3a",
+  "kind": "diagram",
+  "name": "copv_study_gn2",
+  "sha256": "b7bba9e67a3a5c56fc39709a470f49ba8cf29f9ffa7452fd62719a53230df0b7",
+  "size": 27125,
+  "imported_at": "2026-09-10T01:27:25+00:00",
+  "source": "copv sizing study",
+  "filename": "b7bba9e67a3a.json",
+  "notes": "",
+  "summary": {
+   "symbols": 27,
+   "lines": 22,
+   "kinds": {
+    "KBOTTLE": 1,
+    "PT": 6,
+    "PR": 2,
+    "MANIFOLD": 2,
+    "SOL": 8,
+    "VENT": 3,
+    "TANK": 2,
+    "CV": 2,
+    "ENGINE": 1
+   },
+   "engineConfig": ""
+  }
+ },
+ {
+  "id": "b0f71d4e2464",
+  "kind": "diagram",
+  "name": "copv_study_he",
+  "sha256": "b0f71d4e24643927ad2e188ed7b022722f133ece45f5cdabbb26d175d4a24abd",
+  "size": 27104,
+  "imported_at": "2026-09-10T01:27:25+00:00",
+  "source": "copv sizing study",
+  "filename": "b0f71d4e2464.json",
+  "notes": "",
+  "summary": {
+   "symbols": 27,
+   "lines": 22,
+   "kinds": {
+    "KBOTTLE": 1,
+    "PT": 6,
+    "PR": 2,
+    "MANIFOLD": 2,
+    "SOL": 8,
+    "VENT": 3,
+    "TANK": 2,
+    "CV": 2,
+    "ENGINE": 1
+   },
+   "engineConfig": ""
+  }
+ },
+ {
+  "id": "cc8747f12fde",
+  "kind": "diagram",
+  "name": "diagram-3",
+  "sha256": "cc8747f12fdebff3c167ddfe244eddfc2dd44588f8448645c78b325f533ff824",
+  "size": 4182,
+  "imported_at": "2026-09-10T05:24:08+00:00",
+  "source": "pid-designer:local/diagram-3@working copy",
+  "filename": "cc8747f12fde.json",
+  "notes": "",
+  "summary": {
+   "symbols": 10,
+   "lines": 3,
+   "kinds": {
+    "TANK": 1,
+    "MANIFOLD": 1,
+    "PT": 3,
+    "REGION": 1,
+    "KBOTTLE": 1,
+    "LC": 1,
+    "PG": 1,
+    "PR": 1
+   },
+   "engineConfig": ""
+  }
+ },
+ {
+  "id": "664bf118a0c2",
+  "kind": "diagram",
+  "name": "untitled-2",
+  "sha256": "664bf118a0c22f317f24ec2ebe2995f09fba24d5cce3e0be828b99c8e5cf50af",
+  "size": 4405,
+  "imported_at": "2026-09-10T05:24:08+00:00",
+  "source": "pid-designer:local/untitled-2@working copy",
+  "filename": "664bf118a0c2.json",
+  "notes": "",
+  "summary": {
+   "symbols": 13,
+   "lines": 8,
+   "kinds": {
+    "KBOTTLE": 2,
+    "PR": 1,
+    "SOL": 1,
+    "PT": 1,
+    "TANK": 1,
+    "MAN": 1,
+    "MANIFOLD": 1,
+    "ENGINE": 1,
+    "RV": 1,
+    "QD": 1,
+    "JUNCTION": 1,
+    "PG": 1
+   },
+   "engineConfig": ""
+  }
+ },
+ {
+  "id": "aeb1418946d8",
+  "kind": "engine",
+  "name": "Ethalox 7200N Doublet",
+  "sha256": "aeb1418946d860cf59d0636d3e80add3123ed46b865fbe4c8cf118c636106d35",
+  "size": 16559,
+  "imported_at": "2026-09-10T06:52:38+00:00",
+  "source": "engine-design:local/ethalox-7200n-doublet@working copy",
+  "filename": "aeb1418946d8.yaml",
+  "notes": "",
+  "summary": {
+   "injector": "impinging",
+   "oxidiser": "oxygen",
+   "fuel": "ethanol",
+   "throat_mm2": 1727.2,
+   "thrust_N": 7199.996835079049,
+   "mixture_ratio": 1.65,
+   "warnings": []
+  }
+ },
+ {
+  "id": "b07746f33955",
+  "kind": "diagram",
+  "name": "ethalox-stand-7200n-helium",
+  "sha256": "b07746f3395514846bfdd8f1d016e8f5186f61f6687b62cfa736e71b8f5b08fa",
+  "size": 26226,
+  "imported_at": "2026-09-10T07:05:48+00:00",
+  "source": "pid-designer:local/ethalox-stand-7200n-helium@working copy",
+  "filename": "b07746f33955.json",
+  "notes": "",
+  "summary": {
+   "symbols": 23,
+   "lines": 17,
+   "kinds": {
+    "KBOTTLE": 1,
+    "PT": 6,
+    "PR": 2,
+    "MANIFOLD": 1,
+    "SOL": 7,
+    "TANK": 2,
+    "ENGINE": 1,
+    "VENT": 3
+   },
+   "engineConfig": ""
+  }
+ },
+ {
+  "id": "bfd966fdc1d2",
+  "kind": "diagram",
+  "name": "ethalox-stand-7200n-helium",
+  "sha256": "bfd966fdc1d2ebc518e909dbce52c3a6684f00ee1e96064845455080d11699e4",
+  "size": 28135,
+  "imported_at": "2026-09-10T07:08:03+00:00",
+  "source": "pid-designer:local/ethalox-stand-7200n-helium@working copy",
+  "filename": "bfd966fdc1d2.json",
+  "notes": "",
+  "summary": {
+   "symbols": 24,
+   "lines": 19,
+   "kinds": {
+    "KBOTTLE": 1,
+    "PT": 6,
+    "PR": 2,
+    "MANIFOLD": 2,
+    "SOL": 7,
+    "TANK": 2,
+    "ENGINE": 1,
+    "VENT": 3
+   },
+   "engineConfig": ""
+  }
+ },
+ {
+  "id": "727858dd44db",
+  "kind": "diagram",
+  "name": "Copv Study Gn2",
+  "sha256": "727858dd44db02bce221c80a38438fc6fe4054af61e936156abe61a5f75576a0",
+  "size": 47677,
+  "imported_at": "2026-09-12T04:03:32+00:00",
+  "source": "shipped:copv_study_gn2.json",
+  "filename": "727858dd44db.json",
+  "notes": "",
+  "summary": {
+   "symbols": 30,
+   "lines": 20,
+   "kinds": {
+    "KBOTTLE": 1,
+    "PT": 6,
+    "PR": 2,
+    "MANIFOLD": 2,
+    "SOL": 8,
+    "VENT": 3,
+    "TANK": 2,
+    "ENGINE": 1,
+    "TC": 4,
+    "RTD": 1
+   },
+   "engineConfig": ""
+  }
+ },
+ {
+  "id": "41c9a39ac34b",
+  "kind": "diagram",
+  "name": "Copv Study He",
+  "sha256": "41c9a39ac34b7d71fe8a19d564d8f1210eb54a749cd011f3823186dae41e7340",
+  "size": 47656,
+  "imported_at": "2026-09-12T04:03:32+00:00",
+  "source": "shipped:copv_study_he.json",
+  "filename": "41c9a39ac34b.json",
+  "notes": "",
+  "summary": {
+   "symbols": 30,
+   "lines": 20,
+   "kinds": {
+    "KBOTTLE": 1,
+    "PT": 6,
+    "PR": 2,
+    "MANIFOLD": 2,
+    "SOL": 8,
+    "VENT": 3,
+    "TANK": 2,
+    "ENGINE": 1,
+    "TC": 4,
+    "RTD": 1
+   },
+   "engineConfig": ""
+  }
+ },
+ {
+  "id": "b82571fb933d",
+  "kind": "diagram",
+  "name": "Ethalox Stand",
+  "sha256": "b82571fb933dfb4aa19ea3644f5fb49223f095e9f8155e37fa5af05309cdd238",
+  "size": 44916,
+  "imported_at": "2026-09-12T04:03:32+00:00",
+  "source": "shipped:ethalox_stand.json",
+  "filename": "b82571fb933d.json",
+  "notes": "",
+  "summary": {
+   "symbols": 30,
+   "lines": 20,
+   "kinds": {
+    "KBOTTLE": 1,
+    "PT": 6,
+    "PR": 2,
+    "MANIFOLD": 2,
+    "SOL": 8,
+    "VENT": 3,
+    "TANK": 2,
+    "ENGINE": 1,
+    "TC": 4,
+    "RTD": 1
+   },
+   "engineConfig": ""
+  }
+ }
+]

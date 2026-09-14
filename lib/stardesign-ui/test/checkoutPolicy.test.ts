@@ -21,6 +21,7 @@ import {
   shouldBeat,
   isUnexpectedLoss,
   mmss,
+  isLocalHost,
 } from '../src/checkoutPolicy';
 import type { CheckoutState } from '../src/api';
 
@@ -216,4 +217,19 @@ describe('secondsLeft is immune to clock skew', () => {
     expect(isExpiringSoon(nearly, NOW, NOW)).toBe(true);
     expect(isExpiringSoon(heldFor(600), NOW, NOW)).toBe(false);
   });
+});
+
+describe('isLocalHost', () => {
+  // The whole checkout model relaxes on a developer's own machine, so what
+  // counts as one has to be exact: a deployed hostname that matched would
+  // silently take colleagues' designs on open.
+  it.each(['localhost', 'LOCALHOST', '127.0.0.1', '[::1]', 'pid.localhost'])('%s is local', (h) => {
+    expect(isLocalHost(h)).toBe(true);
+  });
+  it.each(['pid-designer.starberkeley.org', 'localhost.starberkeley.org', '10.0.0.5', ''])(
+    '%s is not',
+    (h) => {
+      expect(isLocalHost(h)).toBe(false);
+    },
+  );
 });

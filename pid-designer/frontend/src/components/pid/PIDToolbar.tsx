@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react';
-import type { ReactFlowInstance, Node, Edge } from '@xyflow/react';
+import type { Node, Edge } from '@xyflow/react';
 import type { InteractionMode, MicroVersion, ReleaseVersion } from './PIDDesigner';
 import { useReadOnly } from '@stardesign-ui';
+import { Modal } from '../ui';
+import { download, exportPng, exportSvg, fileStem } from './exportImage';
+import type { SheetMeta } from './exportImage';
 
 interface PIDToolbarProps {
-  rfInstance:        ReactFlowInstance | null;
+  onFitView:         () => void;
   getSnapshot:       () => { nodes: Node[]; edges: Edge[] };
   loadSnapshot:      (data: { nodes: Node[]; edges: Edge[] }) => void;
   onClear:           () => void;
+  /** What Clear would take, for the confirmation. */
+  clearSummary:      () => { page: string; nodes: number; edges: number };
   onUndo:            () => void;
   onRedo:            () => void;
   onRelease:         (label: string) => Promise<{ label: string; savedAt: string }>;
@@ -18,6 +23,8 @@ interface PIDToolbarProps {
   canVersion:        boolean;
   mode:              InteractionMode;
   onModeChange:      (mode: InteractionMode) => void;
+  /** What the exported sheet's title block says. */
+  sheet:             SheetMeta;
 }
 
 function relativeTime(iso: string): string {
@@ -31,26 +38,39 @@ function relativeTime(iso: string): string {
 }
 
 export function PIDToolbar({
-  rfInstance, getSnapshot, loadSnapshot, onClear, onUndo, onRedo,
+  onFitView, getSnapshot, loadSnapshot, onClear, clearSummary, onUndo, onRedo,
   onRelease, onGetHistory, onGetReleases, onRestoreMicro, onRestoreRelease,
-  canVersion, mode, onModeChange,
+  canVersion, mode, onModeChange, sheet,
 }: PIDToolbarProps) {
   // Undo, Redo, Clear, Import and the two Restores rewrite the diagram, so they
   // need the checkout. Pan / Select / Fit View / Export / History only change
   // what you are looking at, and stay live.
   const readOnly = useReadOnly();
-  const fitView = () => rfInstance?.fitView({ padding: 0.1 });
+  const fitView = () => onFitView();
 
   const [showRelease, setShowRelease] = useState(false);
   const [relLabel, setRelLabel]       = useState('');
   const [relStatus, setRelStatus]     = useState<'idle' | 'saving' | 'ok' | 'err'>('idle');
   const [relError, setRelError]       = useState('');
 
+  // Clear is the one button here that destroys work and cannot be reached by
+  // accident afterwards -- undo covers it, but only if somebody realises in
+  // time. It asks, and it says exactly what it is about to take.
+  const [confirmClear, setConfirmClear] = useState<{ page: string; nodes: number; edges: number } | null>(null);
+
   const [showHistory, setShowHistory]     = useState(false);
   const [micro, setMicro]                 = useState<MicroVersion[]>([]);
   const [releases, setReleases]           = useState<ReleaseVersion[]>([]);
   const [historyStatus, setHistoryStatus] = useState<'idle' | 'loading' | 'err'>('idle');
   const [restoring, setRestoring]         = useState<string | null>(null);
+  // Restore replaces the canvas. It asks through the same dialog Clear
+  // does, not a browser confirm() that lands wherever the browser puts it.
+  const [confirmRestore, setConfirmRestore] =
+    useState<{ what: string; run: () => Promise<void> } | null>(null);
+
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState<'png' | 'svg' | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -106,34 +126,51 @@ export function PIDToolbar({
     if (next) void refreshHistory();
   };
 
-  const restoreMicro = async (v: MicroVersion) => {
-    if (!confirm(`Restore microversion from ${new Date(v.savedAt).toLocaleString()}?\n\nThis replaces your current canvas (your working copy is snapshotted continuously, so you can undo).`)) return;
-    setRestoring(v.versionId);
-    try {
-      await onRestoreMicro(v.versionId);
-      setShowHistory(false);
-    } finally {
-      setRestoring(null);
-    }
-  };
+  const restoreMicro = (v: MicroVersion) => setConfirmRestore({
+    what: `the autosave from ${new Date(v.savedAt).toLocaleString()}`,
+    run: async () => {
+      setRestoring(v.versionId);
+      try { await onRestoreMicro(v.versionId); setShowHistory(false); }
+      finally { setRestoring(null); }
+    },
+  });
 
-  const restoreRelease = async (r: ReleaseVersion) => {
-    if (!confirm(`Restore release "${r.label}"?\n\nThis replaces your current canvas.`)) return;
-    setRestoring(`rel:${r.label}`);
-    try {
-      await onRestoreRelease(r.label);
-      setShowHistory(false);
-    } finally {
-      setRestoring(null);
-    }
-  };
+  const restoreRelease = (r: ReleaseVersion) => setConfirmRestore({
+    what: `release ${r.label}`,
+    run: async () => {
+      setRestoring(`rel:${r.label}`);
+      try { await onRestoreRelease(r.label); setShowHistory(false); }
+      finally { setRestoring(null); }
+    },
+  });
 
+  // Three shapes of the same drawing: the JSON is the drawing for a machine,
+  // the PNG and SVG are it for a person. All named after the diagram, not
+  // `pid_diagram.json`, which is what every export of every drawing was.
   const exportJSON = () => {
     const blob = new Blob([JSON.stringify(getSnapshot(), null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'pid_diagram.json'; a.click();
-    URL.revokeObjectURL(url);
+    download(blob, `${sheet.name.replace(/[\\/:*?"<>|]+/g, '-').trim()}.json`);
+    setExportOpen(false);
+  };
+
+  const exportImage = async (kind: 'png' | 'svg') => {
+    const flow = document.querySelector<HTMLElement>('.react-flow');
+    if (!flow) return;
+    setExporting(kind);
+    setExportError(null);
+    try {
+      const { nodes } = getSnapshot();
+      const shown = nodes.filter(n => (n.data as { page?: string })?.page === sheet.page || !(n.data as { page?: string })?.page);
+      const blob = kind === 'png'
+        ? await exportPng(flow, shown, sheet)
+        : await exportSvg(flow, shown, sheet);
+      download(blob, `${fileStem(sheet)}.${kind}`);
+      setExportOpen(false);
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : 'export failed');
+    } finally {
+      setExporting(null);
+    }
   };
 
   const importJSON = () => {
@@ -146,7 +183,7 @@ export function PIDToolbar({
         const data = JSON.parse(await file.text()) as { nodes: Node[]; edges: Edge[] };
         if (Array.isArray(data.nodes) && Array.isArray(data.edges)) {
           loadSnapshot(data);
-          setTimeout(() => rfInstance?.fitView({ padding: 0.1 }), 100);
+          setTimeout(() => onFitView(), 100);
         }
       } catch { alert('Invalid P&ID JSON file.'); }
     };
@@ -154,15 +191,15 @@ export function PIDToolbar({
   };
 
   const btn    = 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded transition-colors border';
-  const def    = `${btn} bg-[#1e293b] text-slate-300 hover:bg-[#334155] border-[#334155]`;
+  const def    = `${btn} bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] border-[var(--color-border)]`;
   const danger = `${btn} bg-red-900/30 text-red-400 hover:bg-red-900/50 border-red-800/50`;
   const green  = `${btn} bg-emerald-900/30 text-emerald-400 hover:bg-emerald-900/50 border-emerald-800/50`;
   const active = `${btn} bg-blue-600/30 text-blue-300 border-blue-500/50`;
-  const modeBtn = (m: InteractionMode) => `${btn} ${mode === m ? active.replace(btn, '') : 'bg-[#1e293b] text-slate-300 hover:bg-[#334155] border-[#334155]'}`;
+  const modeBtn = (m: InteractionMode) => `${btn} ${mode === m ? active.replace(btn, '') : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] border-[var(--color-border)]'}`;
 
   return (
     <div className="relative">
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-[#1e293b] bg-[#0f172a]">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg-primary)]">
         <button onClick={() => onModeChange('pan')} className={modeBtn('pan')} title="Pan (V)">
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -173,11 +210,11 @@ export function PIDToolbar({
         <button onClick={() => onModeChange('select')} className={modeBtn('select')} title="Box Select (B)">
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M4 5a1 1 0 011-1h4a1 1 0 010 2H6v3a1 1 0 01-2 0V5zm16 0a1 1 0 00-1-1h-4a1 1 0 000 2h3v3a1 1 0 002 0V5zM4 19a1 1 0 001 1h4a1 1 0 000-2H6v-3a1 1 0 00-2 0v4zm16 0a1 1 01-1 1h-4a1 1 0 010-2h3v-3a1 1 0 012 0v4z" />
+              d="M4 5a1 1 0 011-1h4a1 1 0 010 2H6v3a1 1 0 01-2 0V5zm16 0a1 1 0 00-1-1h-4a1 1 0 000 2h3v3a1 1 0 002 0V5zM4 19a1 1 0 001 1h4a1 1 0 000-2H6v-3a1 1 0 00-2 0v4zm16 0a1 1 0 01-1 1h-4a1 1 0 010-2h3v-3a1 1 0 012 0v4z" />
           </svg>
           Select
         </button>
-        <div className="w-px h-5 bg-[#334155]" />
+        <div className="w-px h-5 bg-[var(--color-bg-tertiary)]" />
 
         <button onClick={onUndo} disabled={readOnly} className={`${def} disabled:opacity-40`} title="Undo (Ctrl+Z)">
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -191,7 +228,7 @@ export function PIDToolbar({
           </svg>
           Redo
         </button>
-        <div className="w-px h-5 bg-[#334155]" />
+        <div className="w-px h-5 bg-[var(--color-bg-tertiary)]" />
 
         <button onClick={fitView} className={def}>
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -200,19 +237,34 @@ export function PIDToolbar({
           </svg>
           Fit View
         </button>
-        <button onClick={exportJSON} className={def}>
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-          </svg>
-          Export
-        </button>
+        <div className="relative">
+          <button onClick={() => setExportOpen(o => !o)} className={exportOpen ? active : def} title="Export this sheet">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Export
+          </button>
+          {exportOpen && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setExportOpen(false)} />
+              <div className="absolute left-0 top-full z-40 mt-1 w-56 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-1 shadow-2xl">
+                <ExportRow onClick={() => void exportImage('png')} busy={exporting === 'png'}
+                  title="PNG image" hint="this sheet, with a title block" />
+                <ExportRow onClick={() => void exportImage('svg')} busy={exporting === 'svg'}
+                  title="SVG" hint="scalable, for a document" />
+                <ExportRow onClick={exportJSON} title="JSON" hint="the whole diagram, for import" />
+                {exportError && <p className="px-2 py-1 text-[10px] text-red-400">{exportError}</p>}
+              </div>
+            </>
+          )}
+        </div>
         <button onClick={importJSON} disabled={readOnly} className={`${def} disabled:opacity-40`}>
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4-4m0 0l4 4m-4-4v12" />
           </svg>
           Import
         </button>
-        <div className="w-px h-5 bg-[#334155]" />
+        <div className="w-px h-5 bg-[var(--color-bg-tertiary)]" />
 
         <button
           onClick={() => { setShowRelease(true); setRelStatus('idle'); setRelError(''); }}
@@ -229,7 +281,7 @@ export function PIDToolbar({
         <button
           onClick={openHistory}
           disabled={!canVersion}
-          className={`${btn} disabled:opacity-40 ${showHistory ? 'bg-blue-600/20 text-blue-300 border-blue-600/40' : 'bg-[#1e293b] text-slate-300 hover:bg-[#334155] border-[#334155]'}`}
+          className={`${btn} disabled:opacity-40 ${showHistory ? 'bg-blue-600/20 text-blue-300 border-blue-600/40' : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] border-[var(--color-border)]'}`}
         >
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -238,7 +290,11 @@ export function PIDToolbar({
         </button>
 
         <div className="ml-auto" />
-        <button onClick={onClear} disabled={readOnly} className={`${danger} disabled:opacity-40`}>
+        <button
+          onClick={() => setConfirmClear(clearSummary())}
+          disabled={readOnly}
+          className={`${danger} disabled:opacity-40`}
+        >
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -248,7 +304,7 @@ export function PIDToolbar({
       </div>
 
       {showHistory && (
-        <div className="border-b border-[#1e293b] bg-[#0a1628] px-4 py-3 max-h-[320px] overflow-y-auto">
+        <div className="border-b border-[var(--color-border)] bg-[var(--color-bg-primary)] px-4 py-3 max-h-[320px] overflow-y-auto">
           {historyStatus === 'loading' && <p className="text-xs text-slate-500 py-2">Loading…</p>}
           {historyStatus === 'err' && <p className="text-xs text-red-400 py-2">Failed to load history - is the backend running?</p>}
 
@@ -263,7 +319,7 @@ export function PIDToolbar({
                       key={r.label}
                       onClick={() => restoreRelease(r)}
                       disabled={readOnly || restoring === `rel:${r.label}`}
-                      className="flex items-center gap-2 text-left px-2 py-1.5 rounded hover:bg-[#1e293b] transition-colors group disabled:opacity-50"
+                      className="flex items-center gap-2 text-left px-2 py-1.5 rounded hover:bg-[var(--color-bg-tertiary)] transition-colors group disabled:opacity-50"
                     >
                       <span className="inline-flex items-center justify-center text-[10px] font-semibold text-emerald-300 bg-emerald-900/40 border border-emerald-800/50 rounded px-1.5 py-0.5 shrink-0">{r.label}</span>
                       <span className="text-[10px] text-slate-600 flex-1 group-hover:text-slate-400">
@@ -283,9 +339,9 @@ export function PIDToolbar({
                       key={v.versionId}
                       onClick={() => restoreMicro(v)}
                       disabled={readOnly || restoring === v.versionId}
-                      className="flex items-center gap-2 text-left px-2 py-1.5 rounded hover:bg-[#1e293b] transition-colors group disabled:opacity-50"
+                      className="flex items-center gap-2 text-left px-2 py-1.5 rounded hover:bg-[var(--color-bg-tertiary)] transition-colors group disabled:opacity-50"
                     >
-                      <span className="w-2 h-2 rounded-full shrink-0 bg-[#334155]" />
+                      <span className="w-2 h-2 rounded-full shrink-0 bg-[var(--color-bg-tertiary)]" />
                       <span className="text-xs text-slate-300 flex-1 truncate">{new Date(v.savedAt).toLocaleString()}</span>
                       <span className="text-[10px] text-slate-600 shrink-0 group-hover:text-slate-400">
                         {restoring === v.versionId ? 'Restoring…' : relativeTime(v.savedAt)}
@@ -298,6 +354,59 @@ export function PIDToolbar({
           )}
         </div>
       )}
+
+      <Modal
+        open={confirmClear !== null}
+        onClose={() => setConfirmClear(null)}
+        title={`Clear ${confirmClear?.page ?? ''}?`}
+        footer={
+          <div className="flex gap-2">
+            <button onClick={() => setConfirmClear(null)} className={btn}>Cancel</button>
+            <button
+              disabled={readOnly}
+              onClick={() => { onClear(); setConfirmClear(null); }}
+              className={danger}
+            >
+              Clear this page
+            </button>
+          </div>
+        }
+      >
+        <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
+          {confirmClear?.nodes === 0 ? (
+            <>There is nothing on this page.</>
+          ) : (
+            <>
+              This removes <b>{confirmClear?.nodes} component{confirmClear?.nodes === 1 ? '' : 's'}</b>
+              {confirmClear?.edges ? <> and <b>{confirmClear.edges} line{confirmClear.edges === 1 ? '' : 's'}</b></> : null}
+              {' '}from <b>{confirmClear?.page}</b>. Other pages are untouched.
+            </>
+          )}
+        </p>
+      </Modal>
+
+      <Modal
+        open={confirmRestore !== null}
+        onClose={() => setConfirmRestore(null)}
+        title="Restore this version?"
+        footer={
+          <div className="flex gap-2">
+            <button onClick={() => setConfirmRestore(null)} className={btn}>Cancel</button>
+            <button
+              disabled={readOnly}
+              onClick={() => { const r = confirmRestore; setConfirmRestore(null); if (r) void r.run(); }}
+              className={danger}
+            >
+              Restore
+            </button>
+          </div>
+        }
+      >
+        <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
+          This replaces the canvas with <b>{confirmRestore?.what}</b>. The working copy is
+          autosaved continuously, so what is there now stays in the history.
+        </p>
+      </Modal>
 
       {showRelease && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => relStatus !== 'saving' && setShowRelease(false)}>
@@ -323,7 +432,7 @@ export function PIDToolbar({
               <button
                 onClick={() => setShowRelease(false)}
                 disabled={relStatus === 'saving'}
-                className={`${btn} bg-[#1e293b] text-slate-400 hover:bg-[#334155] border-[#334155] disabled:opacity-50`}
+                className={`${btn} bg-[#1e293b] text-slate-400 hover:bg-[var(--color-bg-tertiary)] border-[#334155] disabled:opacity-50`}
               >
                 Cancel
               </button>
@@ -343,5 +452,20 @@ export function PIDToolbar({
         </div>
       )}
     </div>
+  );
+}
+
+function ExportRow({ title, hint, onClick, busy }: {
+  title: string; hint: string; onClick: () => void; busy?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={busy}
+      className="flex w-full flex-col items-start rounded px-2 py-1.5 text-left hover:bg-[var(--color-bg-tertiary)] disabled:opacity-60"
+    >
+      <span className="text-xs text-[var(--color-text-primary)]">{busy ? 'Rendering…' : title}</span>
+      <span className="text-[10px] text-[var(--color-text-muted)]">{hint}</span>
+    </button>
   );
 }

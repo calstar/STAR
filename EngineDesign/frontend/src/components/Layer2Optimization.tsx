@@ -524,7 +524,7 @@ export function Layer2Optimization({
                                     : 'bg-purple-600 hover:bg-purple-700 shadow-lg shadow-purple-500/20'
                                     }`}
                             >
-                                {isRunning ? '🔄 Optimizing...' : '🚀 Run Layer 2'}
+                                {isRunning ? 'Optimizing...' : 'Run Layer 2'}
                             </button>
                             {isRunning && (
                                 <button
@@ -535,7 +535,7 @@ export function Layer2Optimization({
                                         : 'bg-red-600 hover:bg-red-700'
                                         }`}
                                 >
-                                    {isStopping ? '⏳ Stopping...' : '⏹ Stop'}
+                                    {isStopping ? 'Stopping...' : 'Stop'}
                                 </button>
                             )}
                         </div>
@@ -630,8 +630,8 @@ export function Layer2Optimization({
                         />
                     </div>
                     {message && <p className="text-sm text-[var(--color-text-secondary)]">{message}</p>}
-                    {error && <p className="text-sm text-red-400 mt-2 font-medium">❌ {error}</p>}
-                    {successMessage && <p className="text-sm text-green-400 mt-2 font-medium">✅ {successMessage}</p>}
+                    {error && <p className="text-sm text-red-400 mt-2 font-medium">{error}</p>}
+                    {successMessage && <p className="text-sm text-green-400 mt-2 font-medium">{successMessage}</p>}
                 </div>
             )}
 
@@ -640,7 +640,7 @@ export function Layer2Optimization({
                 {/* Convergence History */}
                 <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
                     <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                        <span className="text-purple-400">📈</span> Convergence History
+                        Convergence History
                     </h3>
                     <div className="h-[300px] w-full">
                         {objectiveHistory.length > 0 ? (
@@ -668,7 +668,7 @@ export function Layer2Optimization({
                 {/* Pressure Curves */}
                 <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
                     <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                        <span className="text-blue-400">🌊</span> Pressure Curves (Current Best)
+                        Pressure Curves (Current Best)
                         {pressureCurves.some(p => p.copv !== undefined) && (
                             <span className="text-xs text-purple-400 ml-2">+ COPV</span>
                         )}
@@ -732,19 +732,19 @@ export function Layer2Optimization({
             {results && (
                 <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
                     <div className="flex justify-between items-center mb-6">
-                        <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">✨ Final Optimization Results</h3>
+                        <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">Final Optimization Results</h3>
                         <div className="flex gap-2">
                             <button
                                 onClick={downloadCSV}
                                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
                             >
-                                📊 Download CSV
+                                Download CSV
                             </button>
                             <button
                                 onClick={downloadConfig}
                                 className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors"
                             >
-                                💾 Download Config (YAML)
+                                Download Config (YAML)
                             </button>
                         </div>
                     </div>
@@ -765,7 +765,7 @@ export function Layer2Optimization({
                         results.summary.thrust_curve_time.length > 0 && results.summary.thrust_curve_values.length > 0 && (
                             <div className="mt-6">
                                 <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                                    <span className="text-green-400">🚀</span> Thrust Curve (Time Series, No Ablation/Oxidation)
+                                    Thrust Curve (Time Series, No Ablation/Oxidation)
                                 </h4>
                                 <div className="h-[300px] w-full">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -812,7 +812,7 @@ export function Layer2Optimization({
                         results.summary.thrust_curve_time.length > 0 && results.summary.of_curve_values.length > 0 && (
                             <div className="mt-6">
                                 <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                                    <span className="text-yellow-400">⚗️</span> O/F Ratio (Mixture Ratio) Curve (Time Series, No Ablation/Oxidation)
+                                    O/F Ratio (Mixture Ratio) Curve (Time Series, No Ablation/Oxidation)
                                 </h4>
                                 <div className="h-[300px] w-full">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -859,7 +859,7 @@ export function Layer2Optimization({
                         results.summary.thrust_curve_time.length > 0 && results.summary.delta_p_inj_O_psi.length > 0 && results.summary.delta_p_inj_F_psi.length > 0 && (
                             <div className="mt-6">
                                 <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                                    <span className="text-cyan-400">💧</span> Injector Pressure Drops (Time Series, No Ablation/Oxidation)
+                                    Injector Pressure Drops (Time Series, No Ablation/Oxidation)
                                 </h4>
                                 <div className="h-[300px] w-full">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -916,7 +916,7 @@ export function Layer2Optimization({
                         results.summary.copv_time_s.length > 0 && results.summary.copv_pressure_trace_Pa.length > 0 && (
                             <div className="mt-6">
                                 <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                                    <span className="text-purple-400">🔋</span> COPV & Tank Pressures
+                                    COPV & Tank Pressures
                                 </h4>
                                 <div className="mb-2 grid grid-cols-2 gap-4">
                                     <ResultCard
@@ -1022,7 +1022,7 @@ export function Layer2Optimization({
                     <div className="mt-8 pt-8 border-t border-[var(--color-border)]">
                         <div className="flex justify-between items-center mb-4">
                             <h4 className="text-lg font-semibold text-[var(--color-text-primary)] flex items-center gap-2">
-                                <span className="text-purple-400">🎮</span> Controller Simulation
+                                Controller Simulation
                             </h4>
                             <div className="flex gap-2">
                                 {controllerLoading && (
@@ -1036,7 +1036,7 @@ export function Layer2Optimization({
                                         onClick={handleStopController}
                                         className="px-4 py-2 rounded-lg font-medium transition-colors bg-red-600 hover:bg-red-700 text-white"
                                     >
-                                        ⏹ Stop
+                                        Stop
                                     </button>
                                 ) : (
                                     <>
@@ -1052,7 +1052,7 @@ export function Layer2Optimization({
                                             ▶ Run from Layer 2 Results
                                         </button>
                                         <label className="px-4 py-2 rounded-lg font-medium transition-colors bg-green-600 hover:bg-green-700 text-white cursor-pointer">
-                                            📁 Run from Config File
+                                            Run from Config File
                                             <input
                                                 type="file"
                                                 accept=".yaml,.yml"
@@ -1187,7 +1187,7 @@ export function Layer2Optimization({
                         
                         {controllerError && (
                             <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
-                                ❌ {controllerError}
+                                {controllerError}
                             </div>
                         )}
 

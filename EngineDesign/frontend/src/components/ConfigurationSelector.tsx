@@ -3,6 +3,9 @@ import { getSwitchOptions, switchConfig, type SwitchOptions, type EngineConfig }
 import { emitConfigChanged } from '../lib/configBus';
 import { useReadOnly } from '@stardesign-ui';
 
+declare const __API_PORT__: string
+const API_PORT = typeof __API_PORT__ === 'undefined' ? '8000' : __API_PORT__
+
 /**
  * First-class injector + propellant selectors (UNIFICATION P6).
  *
@@ -14,7 +17,6 @@ import { useReadOnly } from '@stardesign-ui';
 const PRETTY: Record<string, string> = {
   pintle: 'Pintle',
   impinging: 'Doublet (unlike-impinging)',
-  coaxial: 'Coaxial',
   methalox: 'Methalox (LOX / CH₄)',
   ethalox: 'Ethalox (LOX / Ethanol)',
   kerolox: 'Kerolox (LOX / RP-1)',
@@ -89,7 +91,7 @@ export default function ConfigurationSelector({ onConfigChange }: Props) {
       <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)]">
         <span>Propellant / Injector</span>
         <span className="text-amber-500" title={error ?? ''}>
-          {error ? '(start backend on :8000)' : 'loading…'}
+          {error ? `(start backend on :${API_PORT})` : 'loading…'}
         </span>
       </div>
     );

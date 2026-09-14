@@ -342,14 +342,8 @@ def build_flight_config(base_config, request: FlightSimRequest):
         config_dict["environment"]["date"] = request.environment.date
         config_dict["environment"]["atmosphere_model"] = request.environment.atmosphere_model
     elif config_dict.get("environment") is None:
-        # Set defaults
-        config_dict["environment"] = {
-            "latitude": 35.0,
-            "longitude": -117.0,
-            "elevation": 0.0,
-            "date": [2025, 1, 1, 12],
-            "atmosphere_model": "standard_atmosphere",
-        }
+        # No launch site anywhere: the request model's defaults, stated once, up in EnvironmentConfig.
+        config_dict["environment"] = EnvironmentConfig().model_dump()
     
     # Update rocket
     if request.rocket:
@@ -379,20 +373,20 @@ def build_flight_config(base_config, request: FlightSimRequest):
                 "fin_position": request.rocket.fins.fin_position,
             }
     elif config_dict.get("rocket") is None:
-        # Set defaults
+        # No vehicle anywhere: derive from the request model's defaults so this block cannot drift
+        # from RocketConfig (the literal copy that used to sit here said propulsion_dry_mass 24 kg
+        # while its own component defaults summed to 16).
+        rd = RocketConfig()
         config_dict["rocket"] = {
-            "airframe_mass": 78.72,
-            "propulsion_dry_mass": 24.0,
-            "radius": 0.1015,
-            "motor_position": 0.0,
-            "inertia": [8.0, 8.0, 0.5],
-            "fins": {
-                "no_fins": 3,
-                "root_chord": 0.2,
-                "tip_chord": 0.1,
-                "fin_span": 0.3,
-                "fin_position": 0.1,
-            },
+            "airframe_mass": rd.airframe_mass,
+            "propulsion_dry_mass": rd.engine_mass + rd.lox_tank_structure_mass + rd.fuel_tank_structure_mass,
+            "radius": rd.radius,
+            "motor_position": rd.motor_position,
+            "inertia": list(rd.inertia),
+            "nose_kind": rd.nose_kind,
+            "nose_fineness_ratio": rd.nose_fineness_ratio,
+            "avionics_payload_length_m": rd.avionics_payload_length_m,
+            "fins": FinsConfig().model_dump(),
         }
     
     return config_dict
@@ -424,19 +418,19 @@ def _apply_propellant_mass_caps(config_dict: dict, base_config) -> tuple[dict, d
         lox_tank_max = lox_max
         fill_factor = lox_ff
         current_lox = float(config_dict.get("lox_tank", {}).get("mass", 0) or 0)
-        effective = min(current_lox, lox_max) if current_lox > lox_max else current_lox
+        effective = min(current_lox, lox_max)
         if current_lox > lox_max:
             config_dict["lox_tank"]["mass"] = lox_max
             cap_note = "explicit capacity" if lox_explicit else f"{lox_ff * 100:.0f}% fill"
             print(f"[Flight] Capped LOX mass: {current_lox:.2f} -> {lox_max:.2f} kg ({cap_note}, vol {lox_vol * 1000:.1f}L)")
         mass_adjustments["lox"] = {
             "original": current_lox,
-            "capped": effective if current_lox <= lox_max else lox_max,
+            "capped": effective,
             "max_fill_kg": lox_max,
             "tank_volume_m3": lox_vol,
             "fill_factor": lox_ff,
             "was_capped": current_lox > lox_max + 1e-6,
-            "explicit_capacity_kg": lox_explicit,
+            "explicit_capacity_kg": lox_max if lox_explicit else None,
         }
 
     if cap_config.fuel_tank is not None:
@@ -444,19 +438,19 @@ def _apply_propellant_mass_caps(config_dict: dict, base_config) -> tuple[dict, d
         fuel_tank_max = fuel_max
         fill_factor = fuel_ff
         current_fuel = float(config_dict.get("fuel_tank", {}).get("mass", 0) or 0)
-        effective = min(current_fuel, fuel_max) if current_fuel > fuel_max else current_fuel
+        effective = min(current_fuel, fuel_max)
         if current_fuel > fuel_max:
             config_dict["fuel_tank"]["mass"] = fuel_max
             cap_note = "explicit capacity" if fuel_explicit else f"{fuel_ff * 100:.0f}% fill"
             print(f"[Flight] Capped Fuel mass: {current_fuel:.2f} -> {fuel_max:.2f} kg ({cap_note}, vol {fuel_vol * 1000:.1f}L)")
         mass_adjustments["fuel"] = {
             "original": current_fuel,
-            "capped": effective if current_fuel <= fuel_max else fuel_max,
+            "capped": effective,
             "max_fill_kg": fuel_max,
             "tank_volume_m3": fuel_vol,
             "fill_factor": fuel_ff,
             "was_capped": current_fuel > fuel_max + 1e-6,
-            "explicit_capacity_kg": fuel_explicit,
+            "explicit_capacity_kg": fuel_max if fuel_explicit else None,
         }
 
     return mass_adjustments, lox_tank_max, fuel_tank_max, fill_factor

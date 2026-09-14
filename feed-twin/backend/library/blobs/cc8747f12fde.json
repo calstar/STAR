@@ -1,0 +1,252 @@
+{
+ "nodes": [
+  {
+   "id": "node_21",
+   "type": "TANK",
+   "position": {
+    "x": 610,
+    "y": 230
+   },
+   "data": {
+    "componentType": "TANK",
+    "label": "TANK",
+    "fluidType": "default",
+    "options": {
+     "portsTop": "2",
+     "portsBottom": "2"
+    },
+    "page": "Main",
+    "params": {},
+    "ports": {},
+    "color": "#84cc16"
+   }
+  },
+  {
+   "id": "node_22",
+   "type": "MANIFOLD",
+   "position": {
+    "x": 500,
+    "y": 140
+   },
+   "data": {
+    "componentType": "MANIFOLD",
+    "label": "MAN-F",
+    "fluidType": "default",
+    "options": {
+     "outlets": "4",
+     "orientation": "horizontal"
+    },
+    "page": "Main",
+    "rotation": 270,
+    "params": {
+     "bore": {
+      "value": 1,
+      "unit": "in",
+      "source": "estimated"
+     }
+    },
+    "ports": {},
+    "labelOffset": {
+     "x": 44.328141872394085,
+     "y": 38.90652483955581
+    },
+    "geometry": {
+     "width": 120,
+     "height": 26,
+     "positions": {
+      "in": 0.08613719493295724,
+      "p": 0.2929385042679562,
+      "p2": 0.5799779394392357,
+      "p3": 0.7,
+      "p4": 0.9
+     }
+    },
+    "color": "#84cc16"
+   },
+   "hidden": false
+  },
+  {
+   "id": "node_23",
+   "type": "PT",
+   "position": {
+    "x": 470,
+    "y": 270
+   },
+   "data": {
+    "componentType": "PT",
+    "label": "PT-HP_#",
+    "fluidType": "default",
+    "options": {},
+    "page": "Main",
+    "color": "#84cc16"
+   }
+  },
+  {
+   "id": "node_24",
+   "type": "PT",
+   "position": {
+    "x": 440,
+    "y": 160
+   },
+   "data": {
+    "componentType": "PT",
+    "label": "PT-LP_#",
+    "fluidType": "default",
+    "options": {},
+    "page": "Main",
+    "color": "#84cc16"
+   }
+  },
+  {
+   "id": "node_25",
+   "type": "REGION",
+   "position": {
+    "x": 850,
+    "y": 250
+   },
+   "width": 320,
+   "height": 220,
+   "zIndex": -1,
+   "data": {
+    "componentType": "REGION",
+    "label": "Section",
+    "page": "Main",
+    "color": "#84cc16"
+   }
+  },
+  {
+   "id": "node_26",
+   "type": "KBOTTLE",
+   "position": {
+    "x": 190,
+    "y": 270
+   },
+   "data": {
+    "componentType": "KBOTTLE",
+    "label": "KB_#",
+    "fluidType": "default",
+    "options": {},
+    "fluid": "helium",
+    "page": "Main",
+    "params": {
+     "pressure": {
+      "value": 2000,
+      "unit": "psi",
+      "source": "estimated"
+     },
+     "temperature": {
+      "value": 293,
+      "unit": "K",
+      "source": "estimated"
+     },
+     "volume": {
+      "value": 49,
+      "unit": "L",
+      "source": "estimated"
+     },
+     "count": {
+      "value": 1,
+      "unit": "-",
+      "source": "estimated"
+     }
+    },
+    "ports": {}
+   }
+  },
+  {
+   "id": "node_27",
+   "type": "PT",
+   "position": {
+    "x": 180,
+    "y": 140
+   },
+   "data": {
+    "componentType": "PT",
+    "label": "PT-HP_#",
+    "fluidType": "default",
+    "options": {},
+    "page": "Main",
+    "rotation": 0
+   }
+  },
+  {
+   "id": "node_28",
+   "type": "LC",
+   "position": {
+    "x": 420,
+    "y": 340
+   },
+   "data": {
+    "componentType": "LC",
+    "label": "LC_#",
+    "fluidType": "default",
+    "options": {
+     "size": "normal"
+    },
+    "page": "Main"
+   }
+  },
+  {
+   "id": "node_29",
+   "type": "PG",
+   "position": {
+    "x": 340,
+    "y": 160
+   },
+   "data": {
+    "componentType": "PG",
+    "label": "PG_#",
+    "fluidType": "default",
+    "options": {},
+    "page": "Main"
+   }
+  },
+  {
+   "id": "node_30",
+   "type": "PR",
+   "position": {
+    "x": 260,
+    "y": 260
+   },
+   "data": {
+    "componentType": "PR",
+    "label": "PR_#",
+    "fluidType": "default",
+    "options": {
+     "domeLoaded": "no"
+    },
+    "page": "Main",
+    "rotation": 0
+   }
+  }
+ ],
+ "edges": [
+  {
+   "type": "smoothstep",
+   "source": "node_26",
+   "sourceHandle": "t",
+   "target": "node_27",
+   "targetHandle": "b",
+   "data": {},
+   "id": "xy-edge__node_26t-node_27b"
+  },
+  {
+   "type": "smoothstep",
+   "source": "node_26",
+   "sourceHandle": "r",
+   "target": "node_30",
+   "targetHandle": "l",
+   "data": {},
+   "id": "xy-edge__node_26r-node_30l"
+  },
+  {
+   "type": "smoothstep",
+   "source": "node_30",
+   "sourceHandle": "r",
+   "target": "node_29",
+   "targetHandle": "b",
+   "data": {},
+   "id": "xy-edge__node_30r-node_29b"
+  }
+ ]
+}

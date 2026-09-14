@@ -63,6 +63,19 @@ class DynamicsParams:
     T_gas_copv_initial: float = 293.0  # Initial COPV gas temperature [K]
     T_gas_F_initial: float = 293.0  # Initial fuel tank gas temperature [K]
     T_gas_O_initial: float = 250.0  # Initial oxidizer tank gas temperature [K] (LOX tank is colder)
+
+    # --- Pressurisation-path hardware ------------------------------------------------------
+    # These were literals inside step(): a COPV -> regulator -> tank chain with the orifice
+    # geometry baked into the function body, which is one of the four fragmented feed models
+    # docs/adr/0001 calls out. They are real hardware numbers a user must be able to set once
+    # this path is calibrated or replaced by lib/feedtwin. Defaults are exactly the values that
+    # were hardcoded, so behaviour is unchanged unless someone overrides them.
+    gamma_gas: float = 1.4        # Specific heat ratio of the pressurant (N2)
+    Cd_regulator: float = 0.7     # Discharge coefficient, regulator orifice
+    Cd_valve: float = 0.65        # Discharge coefficient, solenoid valve orifice
+    A_regulator: float = 2e-5     # Regulator orifice area [m^2] (~20 mm^2)
+    A_valve_F: float = 5e-5       # Fuel solenoid valve flow area [m^2] (~50 mm^2)
+    A_valve_O: float = 5e-5       # Oxidiser solenoid valve flow area [m^2] (~50 mm^2)
     
     @classmethod
     def from_config(cls, config: ControllerConfig) -> DynamicsParams:
@@ -90,6 +103,13 @@ class DynamicsParams:
             T_gas_copv_initial=getattr(config, 'T_gas_copv_initial', 293.0),  # COPV initial temp
             T_gas_F_initial=getattr(config, 'T_gas_F_initial', 293.0),  # Fuel tank initial temp
             T_gas_O_initial=getattr(config, 'T_gas_O_initial', 250.0),  # LOX tank initial temp (colder)
+            # Pressurisation-path hardware; getattr so an older ControllerConfig still loads.
+            gamma_gas=getattr(config, 'gamma_gas', 1.4),
+            Cd_regulator=getattr(config, 'Cd_regulator', 0.7),
+            Cd_valve=getattr(config, 'Cd_valve', 0.65),
+            A_regulator=getattr(config, 'A_regulator', 2e-5),
+            A_valve_F=getattr(config, 'A_valve_F', 5e-5),
+            A_valve_O=getattr(config, 'A_valve_O', 5e-5),
         )
 
 
@@ -160,17 +180,22 @@ def step(
     # n = 1.4: adiabatic (no heat transfer, γ for diatomic gas)
     # n = 1.2: typical for blowdown (some heat transfer with tank walls)
     
-    # Initialize temperatures on first call (store in function attributes)
-    if not hasattr(step, '_temp_initialized'):
-        step._T_copv_0 = getattr(params, 'T_gas_copv_initial', params.T_gas)
-        step._T_F_0 = getattr(params, 'T_gas_F_initial', params.T_gas)
-        step._T_O_0 = getattr(params, 'T_gas_O_initial', 250.0)  # LOX tank colder
-        step._m_copv_0 = m_gas_copv
-        step._m_F_0 = m_gas_F
-        step._m_O_0 = m_gas_O
-        step._V_F_0 = V_u_F
-        step._V_O_0 = V_u_O
-        step._temp_initialized = True
+    # Reference state for the polytropic relation, captured on this params object's first
+    # step. It used to live on the FUNCTION object as private attributes, which made it
+    # process-global: the first trajectory ever stepped set the reference for every later
+    # one, across configs. An optimizer evaluating thousands of candidates -- exactly the
+    # Layer X access pattern docs/adr/0001 describes -- would hand candidates 2..N the
+    # reference state of candidate 1. Scoping it to `params` makes it per-config.
+    if not getattr(params, '_temp_initialized', False):
+        params._T_copv_0 = getattr(params, 'T_gas_copv_initial', params.T_gas)
+        params._T_F_0 = getattr(params, 'T_gas_F_initial', params.T_gas)
+        params._T_O_0 = getattr(params, 'T_gas_O_initial', 250.0)  # LOX tank colder
+        params._m_copv_0 = m_gas_copv
+        params._m_F_0 = m_gas_F
+        params._m_O_0 = m_gas_O
+        params._V_F_0 = V_u_F
+        params._V_O_0 = V_u_O
+        params._temp_initialized = True
     
     # Compute current gas temperatures using polytropic relation
     # T = T0 * (rho/rho0)^(n-1) = T0 * (m/V) / (m0/V0))^(n-1)
@@ -180,45 +205,45 @@ def step(
     
     if use_polytropic:
         # COPV temperature: polytropic expansion/compression
-        if step._m_copv_0 > 1e-10 and params.V_copv > 1e-10:
-            rho_copv_0 = step._m_copv_0 / params.V_copv
+        if params._m_copv_0 > 1e-10 and params.V_copv > 1e-10:
+            rho_copv_0 = params._m_copv_0 / params.V_copv
             rho_copv = m_gas_copv / params.V_copv if params.V_copv > 1e-10 else rho_copv_0
             if rho_copv_0 > 1e-10:
-                T_copv = step._T_copv_0 * (rho_copv / rho_copv_0) ** (n_poly - 1.0)
+                T_copv = params._T_copv_0 * (rho_copv / rho_copv_0) ** (n_poly - 1.0)
                 T_copv = max(200.0, min(400.0, T_copv))  # Clamp to reasonable range [200-400 K]
             else:
-                T_copv = step._T_copv_0
+                T_copv = params._T_copv_0
         else:
-            T_copv = step._T_copv_0
+            T_copv = params._T_copv_0
         
         # Fuel tank temperature: polytropic expansion/compression
-        if step._m_F_0 > 1e-10 and step._V_F_0 > 1e-10:
-            rho_F_0 = step._m_F_0 / step._V_F_0
+        if params._m_F_0 > 1e-10 and params._V_F_0 > 1e-10:
+            rho_F_0 = params._m_F_0 / params._V_F_0
             rho_F = m_gas_F / V_u_F if V_u_F > 1e-10 else rho_F_0
             if rho_F_0 > 1e-10:
-                T_gas_F = step._T_F_0 * (rho_F / rho_F_0) ** (n_poly - 1.0)
+                T_gas_F = params._T_F_0 * (rho_F / rho_F_0) ** (n_poly - 1.0)
                 T_gas_F = max(200.0, min(400.0, T_gas_F))  # Clamp to reasonable range
             else:
-                T_gas_F = step._T_F_0
+                T_gas_F = params._T_F_0
         else:
-            T_gas_F = step._T_F_0
+            T_gas_F = params._T_F_0
         
         # Oxidizer tank temperature: polytropic expansion/compression
-        if step._m_O_0 > 1e-10 and step._V_O_0 > 1e-10:
-            rho_O_0 = step._m_O_0 / step._V_O_0
+        if params._m_O_0 > 1e-10 and params._V_O_0 > 1e-10:
+            rho_O_0 = params._m_O_0 / params._V_O_0
             rho_O = m_gas_O / V_u_O if V_u_O > 1e-10 else rho_O_0
             if rho_O_0 > 1e-10:
-                T_gas_O = step._T_O_0 * (rho_O / rho_O_0) ** (n_poly - 1.0)
+                T_gas_O = params._T_O_0 * (rho_O / rho_O_0) ** (n_poly - 1.0)
                 T_gas_O = max(200.0, min(400.0, T_gas_O))  # Clamp to reasonable range
             else:
-                T_gas_O = step._T_O_0
+                T_gas_O = params._T_O_0
         else:
-            T_gas_O = step._T_O_0
+            T_gas_O = params._T_O_0
     else:
         # Isothermal process: temperature constant
-        T_copv = step._T_copv_0
-        T_gas_F = step._T_F_0
-        T_gas_O = step._T_O_0
+        T_copv = params._T_copv_0
+        T_gas_F = params._T_F_0
+        T_gas_O = params._T_O_0
     
     # Extract control
     u_F = np.clip(u[IDX_U_F], 0.0, 1.0)
@@ -228,15 +253,16 @@ def step(
     # Flow path: COPV -> Regulator -> Tanks (when valves open)
     # Model: Compressible gas flow through orifices with proper choked/subsonic flow
     
-    # Physical constants for N2 gas
-    gamma_gas = 1.4  # Specific heat ratio for N2
-    Cd_regulator = 0.7  # Discharge coefficient for regulator orifice
-    Cd_valve = 0.65  # Discharge coefficient for solenoid valve orifice
-    
-    # Effective flow areas [m²] - typical solenoid valve characteristics
-    A_regulator = 2e-5  # Regulator orifice area (~20 mm²)
-    A_valve_F = 5e-5  # Fuel solenoid valve flow area (~50 mm²)
-    A_valve_O = 5e-5  # Oxidizer solenoid valve flow area (~50 mm²)
+    # Pressurant properties and orifice geometry now come from DynamicsParams rather than
+    # being literals here -- same defaults, but settable per vehicle. See docs/adr/0001: this
+    # COPV -> regulator -> tank chain is one of the feed models lib/feedtwin absorbs.
+    gamma_gas = params.gamma_gas
+    Cd_regulator = params.Cd_regulator
+    Cd_valve = params.Cd_valve
+
+    A_regulator = params.A_regulator
+    A_valve_F = params.A_valve_F
+    A_valve_O = params.A_valve_O
     
     # Gas flow from COPV to regulator [kg/s]
     # CRITICAL: Flow ONLY happens when at least one valve is open (u > 0)
@@ -445,11 +471,11 @@ def step(
     # This is the key: limited gas supply + temperature drop means pressure drops faster
     if params.V_copv > 1e-10:
         # Update COPV temperature for next step (polytropic expansion)
-        if use_polytropic and step._m_copv_0 > 1e-10:
+        if use_polytropic and params._m_copv_0 > 1e-10:
             rho_copv_next = m_gas_copv_next / params.V_copv
-            rho_copv_0 = step._m_copv_0 / params.V_copv
+            rho_copv_0 = params._m_copv_0 / params.V_copv
             if rho_copv_0 > 1e-10:
-                T_copv_next = step._T_copv_0 * (rho_copv_next / rho_copv_0) ** (n_poly - 1.0)
+                T_copv_next = params._T_copv_0 * (rho_copv_next / rho_copv_0) ** (n_poly - 1.0)
                 T_copv_next = max(200.0, min(400.0, T_copv_next))
             else:
                 T_copv_next = T_copv
@@ -649,11 +675,11 @@ def step(
     # - When m increases faster than V, pressure increases (pressurization)
     if V_u_F_next > 1e-10:
         # Update fuel tank temperature for next step (polytropic expansion)
-        if use_polytropic and step._m_F_0 > 1e-10 and step._V_F_0 > 1e-10:
+        if use_polytropic and params._m_F_0 > 1e-10 and params._V_F_0 > 1e-10:
             rho_F_next = m_gas_F_next / V_u_F_next
-            rho_F_0 = step._m_F_0 / step._V_F_0
+            rho_F_0 = params._m_F_0 / params._V_F_0
             if rho_F_0 > 1e-10:
-                T_gas_F_next = step._T_F_0 * (rho_F_next / rho_F_0) ** (n_poly - 1.0)
+                T_gas_F_next = params._T_F_0 * (rho_F_next / rho_F_0) ** (n_poly - 1.0)
                 T_gas_F_next = max(200.0, min(400.0, T_gas_F_next))
             else:
                 T_gas_F_next = T_gas_F
@@ -700,11 +726,11 @@ def step(
     # This is the realistic behavior: flow begins -> ullage grows -> T drops -> pressure drops instantly
     if V_u_O_next > 1e-10:
         # Update oxidizer tank temperature for next step (polytropic expansion)
-        if use_polytropic and step._m_O_0 > 1e-10 and step._V_O_0 > 1e-10:
+        if use_polytropic and params._m_O_0 > 1e-10 and params._V_O_0 > 1e-10:
             rho_O_next = m_gas_O_next / V_u_O_next
-            rho_O_0 = step._m_O_0 / step._V_O_0
+            rho_O_0 = params._m_O_0 / params._V_O_0
             if rho_O_0 > 1e-10:
-                T_gas_O_next = step._T_O_0 * (rho_O_next / rho_O_0) ** (n_poly - 1.0)
+                T_gas_O_next = params._T_O_0 * (rho_O_next / rho_O_0) ** (n_poly - 1.0)
                 T_gas_O_next = max(200.0, min(400.0, T_gas_O_next))
             else:
                 T_gas_O_next = T_gas_O

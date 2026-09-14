@@ -1,0 +1,15 @@
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.vite/
+dist/
+
+# Dev per-user working copies + local version history (USERDATA_DIR fallback).
+# Nothing writes here until Phase 09, but the ignore is cheap and the first
+# accidental commit of a working copy is not.
+.userdata/
+
+# Run artifacts: Parquet frame dumps from local solves (Phase 09).
+runs/

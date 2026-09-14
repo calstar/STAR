@@ -41,3 +41,10 @@ daq-server/BACKEND_REVIEW.md
 # macOS
 .DS_Store
 **/.DS_Store
+
+# Build trees, per-app user data, engine run output: never source.
+build/
+**/build/
+.userdata/
+**/.userdata/
+EngineDesign/engine/output/

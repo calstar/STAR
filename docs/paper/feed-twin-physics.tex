@@ -1,0 +1,1475 @@
+%==============================================================================
+%  feed-twin: governing equations, constitutive closure, and numerical method
+%
+%  REVISION 2 -- audited line-by-line against the implementation.
+%
+%  The mathematics below is what the code does, including the constants. The
+%  prose is deliberately skeletal. Two kinds of comment mark where you write:
+%
+%    % EXPAND  -- narrative belongs here; the equations are already stated.
+%    % NOTE:   -- what the paragraph needs to *say*, and sometimes why.
+%
+%  Compile: pdflatex twice (cleveref), or `tectonic feed-twin-physics.tex`.
+%==============================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{siunitx}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage{enumitem}
+\usepackage{array}
+
+\sisetup{detect-all, per-mode=symbol}
+% Units siunitx does not ship. psi is the working unit on a stand, and the
+% paper quotes it wherever the hardware does.
+\DeclareSIUnit{\psi}{psi}
+\DeclareSIUnit{\psig}{psig}
+\DeclareSIUnit{\inch}{in}
+
+\newtheorem{proposition}{Proposition}
+\newtheorem{remark}{Remark}
+\newtheorem{assumption}{Assumption}
+\newtheorem{definition}{Definition}
+
+\newcommand{\mdot}{\dot{m}}
+\newcommand{\Qdot}{\dot{Q}}
+\newcommand{\dd}[2]{\frac{\partial #1}{\partial #2}}
+\newcommand{\eff}{\mathcal{E}}          % NTU effectiveness (not roughness)
+\newcommand{\Nfix}{\mathcal{N}_{\mathrm{fix}}}
+\newcommand{\Nfree}{\mathcal{N}_{\mathrm{free}}}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{A Lumped-Parameter Digital Twin of a Pressure-Fed\\
+       Rocket Propellant Feed System:\\
+       Governing Equations, Constitutive Closure, and Numerical Method}
+\author{CalSTAR Propulsion}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+% EXPAND
+% NOTE: One paragraph. What is modelled (pressurant supply through regulator
+% to tanks to injector to chamber), at what fidelity (lumped, quasi-steady
+% lines, exact vessel thermodynamics), and the three things a reader should
+% take away: (i) the algebraic network is closed exactly inside every
+% derivative evaluation; (ii) every constitutive relation is adapted from a
+% published source, not fitted; (iii) every optional model reproduces the
+% baseline bit-for-bit when off.
+We formulate a pressure-fed liquid propellant feed system as a semi-explicit
+index-1 differential--algebraic system on a directed graph. Vessel inventories
+evolve differentially in $(m, U)$; the hydraulic network is closed algebraically
+at every right-hand-side evaluation by a row-scaled, damped Newton iteration
+whose Jacobian is the graph incidence matrix plus one finite-difference scalar
+per branch. Constitutive closure is by adapted, published correlations. We give
+the complete equation set with the constants the implementation uses, the
+thermal transport model, the engine coupling, both time-marching schemes (a
+stiff implicit integrator for batch studies and an explicit, sub-stepped
+scheme with an RC stability bound for the interactive cockpit), the
+drawing-to-network construction rules, and the verification methodology.
+Every closure's validity limit is stated where it is introduced and collected
+in \cref{sec:limits}.
+\end{abstract}
+
+\tableofcontents
+
+%==============================================================================
+\section{Scope and modelling posture}
+%==============================================================================
+% EXPAND
+% NOTE: Say what the tool is *for* -- pad-side and burn-time prediction of
+% tank pressure, pressurant budget, mixture ratio drift, and chamber pressure
+% for a small pressure-fed engine -- and what it is *not* for: injector
+% internal flow, acoustics, manifold maldistribution, two-phase feed.
+
+The model is \emph{lumped-parameter}: there is no mesh, no spatial
+discretisation, and consequently no CFL condition. A feed system is a directed
+graph whose edges carry one-dimensional, quasi-steady constitutive relations and
+whose vertices carry either a prescribed pressure or a mass balance. The
+algebraic state dimension is of order $10^1$--$10^2$; the differential state
+dimension is of order $10^1$.
+
+Three commitments shape everything below.
+
+\begin{enumerate}[label=(C\arabic*)]
+\item \textbf{Adapted, not invented.} Every correlation is taken from a
+      published source through a thin adapter onto a reference implementation
+      (\code{fluids}, \code{ht}, CoolProp). Where a constant cannot be adapted
+      it is \emph{calibrated} at import against the reference implementation
+      rather than transcribed (\cref{sec:choking}).
+\item \textbf{Provenance is part of the state.} Every hardware number is a
+      tuple $(\text{value}, \text{unit}, \text{source}, \text{reference})$ with
+      $\text{source}\in\{\text{measured},\text{manufacturer},\text{estimated},\text{default}\}$,
+      ranked in that order. There is no implicit source. Every result is
+      stamped with the versions of every library that can move a number.
+\item \textbf{Optional physics is inert by default.} A model that can be
+      switched off must, when off, reproduce the previous answer bit-for-bit;
+      and when on against a geometry that declares nothing for it, likewise
+      (\cref{sec:toggle}).
+\end{enumerate}
+
+%==============================================================================
+\section{Nomenclature}
+%==============================================================================
+\begin{center}
+\small
+\begin{tabular}{lll}
+\toprule
+Symbol & Meaning & Unit \\
+\midrule
+$\mathcal{N},\mathcal{B}$ & node and branch sets; $\Nfix,\Nfree$ fixed and free nodes & --- \\
+$p_i$ & pressure at node $i$ (absolute) & \si{\pascal} \\
+$T_i$ & temperature at node $i$ (given to the steady solve) & \si{\kelvin} \\
+$\mdot_b$ & mass flow in branch $b$, positive upstream$\to$downstream & \si{\kilogram\per\second} \\
+$d_i$ & external demand drawn from node $i$ & \si{\kilogram\per\second} \\
+$\rho,\mu,k,c_p,c_v$ & density, viscosity, conductivity, heat capacities & SI \\
+$h,u$ & specific enthalpy, specific internal energy & \si{\joule\per\kilogram} \\
+$\gamma$ & heat-capacity ratio $c_p/c_v$ & --- \\
+$R_s$ & specific gas constant $R/M$ & \si{\joule\per\kilogram\per\kelvin} \\
+$D$ & bore (internal diameter) & \si{\metre} \\
+$L$ & length & \si{\metre} \\
+$\varepsilon$ & absolute roughness & \si{\metre} \\
+$K$ & resistance coefficient, referred to a stated bore & --- \\
+$f_D$ & Darcy friction factor & --- \\
+$\mathrm{Re},\mathrm{Pr},\mathrm{Nu},\mathrm{Bi}$ & Reynolds, Prandtl, Nusselt, Biot & --- \\
+$C_v,K_v$ & valve flow coefficients & --- \\
+$\sigma$ & actuator travel fraction, $0$ shut, $1$ open & --- \\
+$\chi(\sigma)$ & inherent valve characteristic & --- \\
+$x, x_T, F_\gamma, Y$ & IEC 60534 pressure-drop ratio, its terminal factor, $\gamma/1.40$, expansion factor & --- \\
+$C_d$ & discharge coefficient & --- \\
+$m,U$ & vessel mass, total internal energy & \si{\kilogram}, \si{\joule} \\
+$V_u,V_\ell$ & ullage and liquid volume & \si{\cubic\metre} \\
+$A_i$ & gas--liquid interface area & \si{\square\metre} \\
+$\Pi$ & expansion power $p\,\mathrm{d}V_u/\mathrm{d}t$ & \si{\watt} \\
+$\beta,\alpha$ & thermal effusivity $\sqrt{k\rho c}$, diffusivity $k/(\rho c)$ & SI \\
+$\eff$ & heat-exchanger effectiveness & --- \\
+$c^*,C_F,A_t$ & characteristic velocity, thrust coefficient, throat area & SI \\
+$\Lambda$ & injector stiffness $\Delta p_{\mathrm{inj}}/p_c$ & --- \\
+$\kappa$ & Jacobian slope floor & \si{\pascal\second\per\kilogram} \\
+$\mathcal{K}$ & choked-row stiffness & \si{\pascal\second\per\kilogram} \\
+$\tau_{RC}$ & regulator--ullage time constant & \si{\second} \\
+$\Gamma$ & explicit-coupling safety factor & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+%==============================================================================
+\section{Network formulation}\label{sec:network}
+%==============================================================================
+
+\subsection{Graph and state}
+Let $G=(\mathcal{N},\mathcal{B})$ be a directed graph. Each branch $b$ has an
+upstream node $\mathrm{up}(b)$ and a downstream node $\mathrm{dn}(b)$. A node
+is \emph{fixed} if it carries a prescribed pressure (vessel ullages and
+outlets, ambient, the chamber) and \emph{free} otherwise. All pressures inside
+the model are \textbf{absolute}; the stand's transducers cancel atmosphere, so
+every pressure a person reads from or types into the twin is \textbf{gauge}
+(psig, vented $=0$), converted at the API boundary and nowhere else.
+Differential pressures are the same in either. Every node carries a
+fluid species and a temperature; \textbf{the steady solve holds temperature
+fixed} and solves for pressure only. Temperature is updated between solves by
+\cref{sec:thermal}.
+
+The algebraic unknown vector is
+\begin{equation}
+  \mathbf{y} = \bigl(\{p_i\}_{i\in\Nfree},\;\{\mdot_b\}_{b\in\mathcal{B}'}\bigr)
+  \in\mathbb{R}^{n},
+  \qquad n = |\Nfree'| + |\mathcal{B}'|,
+\end{equation}
+where the primes denote the sets after the reductions of \cref{sec:reduce}.
+
+\subsection{Governing equations}
+\begin{align}
+  g_i(\mathbf{y}) &=
+    \sum_{b:\,\mathrm{dn}(b)=i}\mdot_b - \sum_{b:\,\mathrm{up}(b)=i}\mdot_b - d_i = 0,
+    && i\in\Nfree', \label{eq:mass}\\[2pt]
+  g_b(\mathbf{y}) &=
+    \bigl(p_{\mathrm{up}(b)}-p_{\mathrm{dn}(b)}\bigr)
+    - \Delta p_b^{\mathrm{tot}}\bigl(\mdot_b;\,\boldsymbol{\phi}_b\bigr) = 0,
+    && b\in\mathcal{B}', \label{eq:branch}
+\end{align}
+where $\boldsymbol{\phi}_b$ is the fluid state and signal set evaluated
+\textbf{at the branch's upstream node}: $\rho,\mu,\gamma,R_s$ at
+$(p_{\mathrm{up}}, T_{\mathrm{up}})$, together with $p_{\mathrm{sat}}(T_{\mathrm{up}})$
+and $p_{\mathrm{crit}}$ (\cref{sec:phase}). The signed total is
+\begin{equation}
+  \Delta p_b^{\mathrm{tot}}(\mdot)
+    = \operatorname{sgn}(\mdot)\,\Delta p_b(|\mdot|) + \Delta p_b^{\mathrm{static}},
+  \label{eq:signed}
+\end{equation}
+for every component except the regulator (\cref{sec:regulator}).
+
+\subsection{Reductions before the solve}\label{sec:reduce}
+% NOTE: These three steps are why a stand with the whole panel shut is a
+% zero-dimensional problem rather than a singular one. Say that most of a real
+% feed system is stubs.
+\begin{enumerate}[label=(R\arabic*)]
+\item \textbf{Isolation.} A valve commanded to $\sigma\le\sigma_{\mathrm{shut}}=10^{-3}$
+      is an open circuit: its branch is removed from $\mathcal{B}$ and its flow
+      set to zero. A caller may add branches (a dry tank's outlets).
+\item \textbf{Dead-end peeling.} Iteratively, any free node with zero demand
+      and exactly one live branch is a stub: node and branch are removed. A free
+      node left with \emph{no} live branch (cut off by an isolated valve) is a
+      stub whose live end lies across the removed branch. Peeling repeats until
+      no stub remains.
+\item \textbf{Exact back-fill.} After the solve each stub carries $\mdot=0$ and
+      $p_{\mathrm{stub}} = p_{\mathrm{live}} \mp \Delta p^{\mathrm{static}}$.
+      A stub whose component holds a drop at zero flow ($\Delta p_b(0)>0$: a
+      check valve below cracking, a regulator at lockup) is reported
+      \emph{indeterminate}, and indeterminacy propagates along a chain of stubs.
+\end{enumerate}
+
+\subsection{Initial guess, warm start, and row scaling}
+\begin{equation}
+  p_i^{(0)} = \frac{1}{|\Nfix|}\sum_{k\in\Nfix}p_k,\qquad
+  \mdot_b^{(0)} = \mdot_0 = 10^{-3}\ \si{\kilogram\per\second}
+  \quad\text{(non-zero on purpose; see \cref{sec:regular})}.
+\end{equation}
+A caller may override any entry with a previous solution (warm start). The
+residual is dimensionally mixed, so convergence is tested on row-scaled entries,
+\begin{equation}
+  s_i = \max\Bigl(\max_{j\in\Nfree'}|d_j|,\ \mdot_0,\ 10^{-3}\Bigr)
+  \ \text{for mass rows},\qquad
+  s_b = \max_{k\in\Nfix}|p_k|\ \text{for branch rows},
+  \label{eq:scales}
+\end{equation}
+\begin{equation}
+  \|\mathbf{g}\|_{\mathrm{sc}} = \max_{r\notin\mathcal{I}}\frac{|g_r|}{s_r} < \mathrm{tol},
+  \qquad
+  \mathrm{tol} = \begin{cases}10^{-6} & \text{standalone steady}\\ 10^{-5} & \text{inside a batch transient}\\ 10^{-4} & \text{live cockpit}\end{cases}
+  \label{eq:norm}
+\end{equation}
+with $\mathcal{I}$ the exclusion set of \cref{sec:regular}. Row scaling does not
+change the Newton step ($\mathbf{J}^{-1}\mathbf{g}$ is invariant); it changes
+only the test.
+
+\subsection{Jacobian structure}\label{sec:jac}
+% EXPAND: this is why a step costs one derivative per component.
+Mass rows are the (constant) incidence matrix:
+$\partial g_i/\partial\mdot_b\in\{+1,-1,0\}$, $\partial g_i/\partial p_j = 0$.
+An unchoked branch row has two constant entries and one scalar:
+\begin{equation}
+  \dd{g_b}{p_{\mathrm{up}}}=+1,\qquad
+  \dd{g_b}{p_{\mathrm{dn}}}=-1,\qquad
+  \dd{g_b}{\mdot_b}=-\,\dd{\Delta p_b^{\mathrm{tot}}}{\mdot_b}
+  \approx -\frac{\Delta p_b^{\mathrm{tot}}(\mdot_b+\delta)-\Delta p_b^{\mathrm{tot}}(\mdot_b-\delta)}{2\delta},
+  \label{eq:fd}
+\end{equation}
+a \textbf{central} difference with $\delta = \max(10^{-6}|\mdot_b|,\,10^{-9})$.
+No correlation is differentiated analytically. If either evaluation raises,
+the slope is set to $\kappa$ (\cref{sec:regular}). Residual and derivative are
+assembled in one pass so each component is evaluated three times per
+iteration, not six.
+
+\subsection{Regularisation at zero flow}\label{sec:regular}
+Quadratic losses give $\partial\Delta p/\partial\mdot\to 0$ as $\mdot\to0$, so
+the branch row of \cref{eq:fd} is singular there. The assembled entry is
+floored, sign-preserving:
+\begin{equation}
+  J_{bb} = -\operatorname{sgn}\!\Bigl(\dd{\Delta p_b}{\mdot_b}\Bigr)
+           \max\Bigl(\Bigl|\dd{\Delta p_b}{\mdot_b}\Bigr|,\ \kappa\Bigr),
+  \qquad \kappa = 10^{-3}\ \si{\pascal\second\per\kilogram}.
+\end{equation}
+Every unchoked branch with $|\partial\Delta p/\partial\mdot|<\kappa$ enters
+$\mathcal{I}$: its row is \emph{unresolvable}, not merely small, and it is
+excluded from \cref{eq:norm} and from the backtracking merit function. All such
+branches are reported at convergence.
+
+\begin{proposition}[Regularisation cannot mask a conservation error]
+$\mathcal{I}$ contains only branch rows. Every mass balance \cref{eq:mass} is
+tested, so conservation holds to $\mathrm{tol}$ at every node regardless of how
+many branches are floored.
+\end{proposition}
+
+\subsection{Choked branch rows}\label{sec:chokedrow}
+A branch is written in choked form if the component reports that the
+available drop exceeds its critical value (\cref{sec:choking}; for a regulator,
+that it has shut, with ceiling $0$). A second route exists for an iterate whose
+\emph{flow} guess the component cannot price --- a gas orifice asked to pass
+more than sonic --- and it is taken only when the gradient is forward,
+$p_{\mathrm{up}}>p_{\mathrm{dn}}$; against the gradient the flow is priced just
+under the ceiling and the row stays invertible so Newton can reverse it.
+\begin{remark}
+The forward-gradient condition is load-bearing. Without it a Newton iterate
+that overshot a solenoid's sonic ceiling was pinned there regardless of the
+pressures, and a pinned row does not depend on $p_{\mathrm{dn}}$: on a helium
+press manifold this converged with sonic flow running \emph{up} a
+\SI{16}{\psi} gradient into a tank already above its regulator's setpoint,
+\SI{26}{\psi} per pair of sub-steps into a three-gram ullage, ratcheting the
+tank to \SI{745}{\psig} against a \SI{550}{\psig} regulator.
+\end{remark}
+The choked row is
+\begin{equation}
+  g_b = \mathcal{K}\bigl(\mdot^{\mathrm{ceil}}_b - \mdot_b\bigr),\qquad
+  \dd{g_b}{\mdot_b} = -\mathcal{K},\quad
+  \dd{g_b}{p_{\mathrm{up}}} = \mathcal{K}\frac{\mdot^{\mathrm{ceil}}_b}{p_{\mathrm{up}}},\quad
+  \dd{g_b}{p_{\mathrm{dn}}} = 0,
+  \qquad \mathcal{K}=10^{8}\ \si{\pascal\second\per\kilogram},
+  \label{eq:chokerow}
+\end{equation}
+the $p_{\mathrm{up}}$ derivative following from $\mdot^{\mathrm{ceil}}\propto p_{\mathrm{up}}$
+for an ideal gas. A ceiling of exactly zero means \emph{shut} (a regulator that
+has closed) and is honoured only when the first test fires.
+
+\subsection{Damped Newton iteration}
+Solve $\mathbf{J}\Delta\mathbf{y} = -\mathbf{g}$ by sparse LU (a failed
+factorisation is a failed solve, reported as ``a node with no path to a fixed
+pressure''). Then backtrack:
+\begin{equation}
+  \lambda = \max\Bigl\{2^{-j}: j=0,\dots,19,\ \
+    \min_{i\in\Nfree'}\bigl(y_i + 2^{-j}\Delta y_i\bigr) > 0,\ \
+    \|\mathbf{g}(\mathbf{y}+2^{-j}\Delta\mathbf{y})\|_{\mathrm{sc}} < \|\mathbf{g}(\mathbf{y})\|_{\mathrm{sc}}\Bigr\}.
+\end{equation}
+If no $j$ qualifies, a last-resort step $\lambda=0.01$ is taken with node
+pressures clamped to $\max(0.01\,p_i,\ \SI{1}{\pascal})$; the iteration cap
+(100 standalone, 30 live) is what ends a stalled solve.
+
+\subsection{Physicality guard}
+A converged residual on an iterate with any $p_i\le0$ is rejected as a failed
+solve. Newton knows nothing of absolute zero, and a stiff branch can satisfy
+\cref{eq:branch} at a large negative pressure that the property layer will
+refuse several frames later.
+
+%==============================================================================
+\section{Fluid state at a node}\label{sec:phase}
+%==============================================================================
+% NOTE: The phase rule is the single largest hidden assumption in the steady
+% solve. Say that phase is a *declaration* made by whatever built the network,
+% and that the temperature rule is only the fallback for a node nobody
+% declared.
+
+Branch properties are evaluated from the upstream node's $(p,T)$ through a
+property chain (\cref{sec:props}). Every node carries a declared phase
+$\varphi\in\{\text{liquid},\text{gas},\varnothing\}$, set from topology by the
+drawing reader (\cref{sec:pid}, D2). With the default \code{multiphase = False},
+\begin{equation}
+  (\rho,\mu,\gamma,p_{\mathrm{sat}}) = \begin{cases}
+    \text{values at }(p,T), & \varphi=\text{gas},\\[2pt]
+    \text{saturated-liquid values at } T\ \text{(independent of $p$)}, & \varphi=\text{liquid},\ \text{or } \varphi=\varnothing \text{ and } T<T_{\mathrm{crit}},\\[2pt]
+    \text{values at }(p,T),\ p_{\mathrm{sat}}=0, & \varphi=\varnothing \text{ and } T\ge T_{\mathrm{crit}}.
+  \end{cases}
+  \label{eq:phaserule}
+\end{equation}
+The liquid branch exists so that a propellant leg can never be silently priced
+as gas because a temperature reached it wrong (LOX at
+\SI{1140}{\kilogram\per\cubic\metre} against gaseous oxygen at \num{40}), and
+it makes a feed line's properties constant across a solve, which is cached
+(quantised in $T$). The declaration exists because the fallback is by
+\emph{temperature alone} and cannot tell a subcritical vapour from its liquid.
+
+\begin{remark}[Consequences of the rule]\label{rem:phase}
+(i) A liquid is priced saturated; real feed lines run subcooled and are a few
+percent stiffer. (ii) An \emph{undeclared} node below $T_{\mathrm{crit}}$ is
+priced as liquid whatever it holds --- an ethanol-vapour line
+($T_{\mathrm{crit}}=\SI{514}{\kelvin}$) would come out as liquid ethanol ---
+which is why every node the drawing can classify is declared, and only nodes
+the drawing cannot place (a bare junction reached by nothing) fall through.
+(iii) Pressurant lines are unaffected either way: N$_2$ and He are supercritical
+at every pad temperature.
+\end{remark}
+
+%==============================================================================
+\section{Constitutive closure: branch models}\label{sec:branches}
+%==============================================================================
+
+\subsection{Dynamic head and the resistance formalism}
+\begin{equation}
+  \Delta p = K\cdot\tfrac12\rho V^2,\qquad
+  V=\frac{\mdot}{\rho\,\frac{\pi}{4}D^2},\qquad
+  \mathrm{Re}=\frac{4|\mdot|}{\pi D\mu}.
+  \label{eq:head}
+\end{equation}
+Every $K$ below is referred to a stated bore.
+
+\subsection{Straight pipe (\code{darcy})}
+\begin{equation}
+  \Delta p_{\mathrm{pipe}} = \Bigl(f_D\frac{L}{D}+K_{\mathrm{minor}}\Bigr)\tfrac12\rho V^2,
+  \qquad
+  \Delta p^{\mathrm{static}} = \rho g\,\Delta z,
+  \label{eq:darcy}
+\end{equation}
+\begin{equation}
+  f_D = \begin{cases}
+    0, & \mathrm{Re}\le0,\\
+    64/\mathrm{Re}, & 0<\mathrm{Re}<\mathrm{Re}_{\mathrm{lam}}=2040,\\
+    f_D^{\text{method}}(\mathrm{Re},\varepsilon/D), & \mathrm{Re}\ge\mathrm{Re}_{\mathrm{lam}},
+  \end{cases}
+\end{equation}
+where the turbulent method is a named option (default \emph{Clamond}, an
+essentially exact solution of Colebrook--White). The set of admissible names is
+read from \code{fluids} at import so the two cannot disagree. Static head is
+carried separately because it does not change sign with the flow
+(\cref{eq:signed}).
+
+\subsection{Discrete fitting (\code{fitting})}
+\begin{equation}
+  K_{\mathrm{fit}} = \mathcal{F}_{\mathrm{kind}}\bigl(D,\mathrm{Re},\varepsilon,f_D;\,\boldsymbol\theta\bigr),
+\end{equation}
+from a registry of adapters onto \code{fluids.fittings}: rounded bends at a
+stated angle and $r/D$ (default $5$), sharp contraction and sudden expansion
+(both need $D_2$), sharp entrance, normal exit, Crane converging tee run and
+branch, Crane ball, gate, globe and swing-check valves, and Crane's
+$K = n\,f_T$ forms ($n=30$ for a 90$^\circ$ elbow, $16$ for 45$^\circ$).
+\begin{remark}[The fitting-$K$ trap]
+A tabulated $K$ already prices the flow through the fitting's own body. The
+friction term of \cref{eq:darcy} must therefore use tube length only; using an
+end-to-end run length with the elbows also counted as $K$ pays for them twice.
+\end{remark}
+
+\subsection{Hardline bend (\code{bend})}
+$K$ from \code{fluids.bend\_rounded} with the \emph{actual} centreline radius
+$r_c$ and angle. No curved-friction term is added: the correlation already
+contains it, and between $r_c/D=1$ and $5$ the loss changes severalfold.
+$r_c<r_{\min}$ is reported as a violation, never enforced.
+
+\subsection{Flexible hose (\code{flex\_hose})}
+\begin{equation}
+  \Delta p = \Bigl(f_D^{\mathrm{hose}}\frac{L}{D}+K_{\mathrm{end}}\Bigr)\tfrac12\rho V^2,
+  \qquad
+  f_D^{\mathrm{hose}} = \begin{cases}
+    f_D^{\mathrm{curved}}\bigl(\mathrm{Re},D,D_c=2r_{\mathrm{inst}},\varepsilon\bigr)\cdot\zeta, & r_{\mathrm{inst}}>0,\\
+    f_D(\mathrm{Re},\varepsilon/D)\cdot\zeta, & \text{straight},
+  \end{cases}
+\end{equation}
+with $\zeta$ the convolution multiplier ($1$ smooth-bore; user-declared for
+convoluted hose) and $K_{\mathrm{end}}$ the two crimped end fittings (default
+$0.5$). Static and dynamic minimum bend radii are checked; the dynamic one is
+a warning.
+
+\subsection{Segmented line (\code{segmented}) and the authority ladder}\label{sec:segments}
+\begin{equation}
+  \Delta p_{\mathrm{line}} = \sum_{s=1}^{S}\Delta p_s + \sum_{s=1}^{S-1}\Delta p^{\mathrm{trans}}_{s\to s+1},
+  \qquad
+  \Delta p^{\mathrm{static}} = \rho g\sum_s\Delta z_s\ \ (\text{or the line total if no segment states one}).
+\end{equation}
+\begin{center}
+\begin{tabular}{clc}
+\toprule
+Rank & Method & $\Delta p_s$ \\
+\midrule
+1 & \code{curve}       & linear interpolation of a measured $\Delta p(\mdot)$; \emph{refuses} outside its range \\
+2 & \code{measured\_K} & $K_s\,\tfrac12\rho V_s^2$, $K_s$ from a flow bench \\
+3 & \code{itemised}    & $\bigl(f_D L_s^{\mathrm{tube}}/D_s+\sum_j K_j\bigr)\tfrac12\rho V_s^2$ \\
+4 & \code{lumped\_K}   & $K_s\,\tfrac12\rho V_s^2$, $K_s$ asserted \\
+5 & \code{unstated}    & $0$, reported as unsized \\
+\bottomrule
+\end{tabular}
+\end{center}
+A line reports both its best and its \emph{weakest} method. In rank 3,
+$L^{\mathrm{tube}}$ is the stated length with fitting bodies (less thread
+engagement) removed when the length basis is ``overall''; if any fitting lacks
+a body length the stated length is used whole and warned. A fitting with its
+own $K$ uses it; one with its own bore is priced in that bore and referred back
+to the segment's:
+\begin{equation}
+  K_j^{\mathrm{(seg)}} = K_j^{(D_j)}\Bigl(\frac{D_s}{D_j}\Bigr)^{4}.
+\end{equation}
+Bore changes between segments are \emph{derived} contractions/expansions
+referred to the smaller bore.
+
+\subsection{Orifices}
+\paragraph{Fixed $C_d$ (\code{orifice/cd}).}
+\begin{equation}
+  \Delta p = \frac{\mdot^2}{2\rho\,(C_dA)^2},\qquad A=\tfrac{\pi}{4}D^2 .
+  \label{eq:orifice}
+\end{equation}
+\paragraph{ISO 5167 (\code{orifice/iso5167}).} Downstream pressure from
+\code{fluids.differential\_pressure\_meter\_solver} with Reader--Harris/Gallagher
+$C(\beta,\mathrm{Re},\text{taps}=D)$ and expansibility $\epsilon\equiv1$
+(incompressible). Infeasible flow raises rather than returning a negative
+pressure.
+
+\subsection{Compressible orifice (\code{gas\_orifice/isentropic})}\label{sec:gasorifice}
+% NOTE: Omitted from revision 1. It is the model behind every relief orifice.
+\begin{align}
+  r^* &= \Bigl(\frac{2}{\gamma+1}\Bigr)^{\gamma/(\gamma-1)},\qquad
+  \mdot^{\mathrm{ceil}} = C_dA\,p_1\sqrt{\frac{\gamma}{R_sT_1}}\Bigl(\frac{2}{\gamma+1}\Bigr)^{\frac{\gamma+1}{2(\gamma-1)}},\\
+  \mdot(r) &= C_dA\,p_1\sqrt{\frac{2\gamma}{(\gamma-1)R_sT_1}\Bigl(r^{2/\gamma}-r^{(\gamma+1)/\gamma}\Bigr)},
+  \qquad r=\frac{p_2}{p_1}\in(r^*,1).
+\end{align}
+The branch relation inverts $\mdot(r)$ for $r$ by Brent's method on
+$[r^*,1)$, where it is monotone; $|\mdot|\ge\mdot^{\mathrm{ceil}}$ is
+infeasible and the branch is written in choked form (\cref{eq:chokerow}) with
+$\Delta p_{\mathrm{crit}} = p_1(1-r^*)$. Missing $\gamma$ or $R_s$ default to
+$1.4$ and \SI{296.8}{\joule\per\kilogram\per\kelvin} (air/N$_2$).
+
+\subsection{Manifold (\code{manifold/plenum})}\label{sec:manifold}
+% NOTE: Omitted from revision 1. A COPV manifold with PT, relief, fill QD and
+% regulator feed is the common case on this stand.
+A plenum node plus one branch per port. A \emph{flow} port carries
+\begin{equation}
+  \Delta p_{\mathrm{port}} = \bigl(K_{\mathrm{turn}}+K_{\mathrm{fit}}\bigr)\tfrac12\rho V_{\mathrm{port}}^2,
+  \qquad
+  \Delta p^{\mathrm{static}} = -\rho g\,z_{\mathrm{port}},
+\end{equation}
+with $K_{\mathrm{turn}}=1.3$ by default (a branch tee at 90$^\circ$ is $\approx1.0$--$1.4$),
+or derived as $K_{\mathrm{contraction}}(D_{\mathrm{plenum}}\!\to\!D_{\mathrm{port}}) + 1.3$
+when the port is smaller than the plenum. \emph{Instrument} and \emph{conditional}
+(shut relief) ports are declared dead ends and back-filled exactly.
+
+\subsection{Valve (\code{valve})}\label{sec:valve}
+\begin{equation}
+  K_{\mathrm{valve}} = \frac{1.6\times10^{9}\,D^{4}}{\bigl(C_v^{\mathrm{eff}}/1.56\bigr)^{2}}\quad[D\ \text{in m}],
+  \qquad
+  C_v^{\mathrm{eff}}(\sigma) = \max\bigl(C_v\,\chi(\sigma),\ C_v^{\mathrm{leak}}\bigr),
+  \qquad
+  \Delta p = K_{\mathrm{valve}}\tfrac12\rho V^2,
+  \label{eq:cvk}
+\end{equation}
+where $\chi$ is linear, equal-percentage, quick-opening (from
+\code{fluids.control\_valve}) or a tabulated $C_v(\sigma)$ curve. Isolation
+(\cref{sec:reduce}) is decided on travel $\sigma\le10^{-3}$, not on the
+resulting $C_v$.
+
+\subsection{Compressible flow through a valve, and choking}\label{sec:choking}
+IEC 60534-2-1 sizes a valve on gas as
+\begin{equation}
+  W = N_6\,C\,Y\sqrt{x\,p_1\rho_1},\qquad
+  x=\frac{p_1-p_2}{p_1},\qquad
+  Y=1-\frac{x}{3F_\gamma x_T},\qquad
+  F_\gamma=\frac{\gamma}{1.40},
+  \label{eq:iec}
+\end{equation}
+with choking at $x_{\mathrm{crit}}=F_\gamma x_T$ where $Y=\tfrac23$ exactly.
+The ceiling used in \cref{eq:chokerow} is
+\begin{equation}
+  \mdot^{\mathrm{ceil}} = \mathcal{C}\,C_v^{\mathrm{eff}}\,\frac{2}{3}
+     \sqrt{F_\gamma x_T\,\frac{p_1}{1000}\,\rho_1},
+  \qquad
+  \text{choked}\iff \Delta p_{\mathrm{avail}}\ge F_\gamma x_T\,p_1,
+  \label{eq:ceiling}
+\end{equation}
+with $x_T=0.7$ unless the valve declares one (its true range is
+$\approx0.3$--$0.8$, and it is the largest single uncertainty in a choked-gas
+prediction).
+
+\begin{remark}[Calibration rather than transcription]
+$\mathcal{C}$ depends on the unit set and on the $C_v$/$K_v$ pairing
+($1\,K_v = 1.156\,C_v$). A transcribed $N_6$ was wrong by $10.5\times$, then by
+exactly $1/0.865^2$. $\mathcal{C}$ is therefore obtained once at import by
+inverting \code{fluids.control\_valve.size\_control\_valve\_g} at a reference
+point; its invariance across He/N$_2$, \SIrange{200}{4500}{\psi},
+\SIrange{250}{293}{\kelvin} and $C_v\in[1.6,60]$ to five figures is the check
+that \cref{eq:ceiling} has the right \emph{form}.
+\end{remark}
+
+\paragraph{Liquid choking and cavitation.} $p_2^{\mathrm{choke}} = p_2(p_{\mathrm{sat}},p_{\mathrm{crit}},F_L,p_1)$
+per IEC 60534; undefined (and so reported) when $p_{\mathrm{sat}}$ is unknown.
+The cavitation index $\sigma_c=(p_1-p_v)/(p_1-p_2)$ is a diagnostic.
+
+\subsection{Check valve (\code{check\_valve})}
+\begin{equation}
+  \Delta p = \begin{cases}
+    K(C_v)\tfrac12\rho V^2 + \Delta p_{\mathrm{crack}}, & \mdot\ge0,\\
+    K(C_v^{\mathrm{leak,rev}})\tfrac12\rho V^2, & \mdot<0,
+  \end{cases}
+\end{equation}
+discontinuous at $\mdot=0$ by $\Delta p_{\mathrm{crack}}$, which is why a
+stub behind an unopened check valve is reported indeterminate
+(\cref{sec:reduce}).
+
+\subsection{Measured element (\code{measured})}
+$\Delta p = \mathcal{I}_{\mathrm{lin}}\bigl[\Delta p(\mdot)\bigr](|\mdot|)$,
+linear interpolation of a flow-bench table. It refuses outside the measured
+range rather than extrapolating; unlike the property chain there is no
+defensible fallback.
+
+\subsection{Pressure regulator (\code{regulator/droop})}\label{sec:regulator}
+% EXPAND: a regulator defends a setpoint; it does not have a loss.
+% NOTE: Say why there is no force balance (needs the diaphragm's effective
+% area vs lift, which no vendor publishes).
+The commanded setpoint is either fixed or dome-loaded,
+\begin{equation}
+  p_{\mathrm{set}} = \begin{cases} p_{\mathrm{dome}} + \Delta p_{\mathrm{bias}} & \text{dome-loaded (the 1092-50: } \Delta p_{\mathrm{bias}}=\SI{50}{\psi}),\\ p_{\mathrm{set}}^{\mathrm{hand}} & \text{otherwise,}\end{cases}
+\end{equation}
+where $p_{\mathrm{dome}}$ is a \emph{signal} (\cref{sec:pid}). The effective
+outlet target is affine in supply pressure and flow:
+\begin{equation}
+  p^{\mathrm{eff}}_{\mathrm{set}}(\mdot,p_1)
+   = p_{\mathrm{set}} + S\,(p_1^{\mathrm{ref}}-p_1) - D_r\frac{|\mdot|}{\mdot_{\mathrm{rated}}},
+  \label{eq:reg}
+\end{equation}
+$S$ the supply-pressure coefficient in the datasheet's own units
+(\SI{17}{\psi} per \SI{1000}{\psi} for the 1092-50; it carries a
+\emph{pressure ratio} dimension so a bare $0.017$ is rejected), $D_r$ the droop
+at rated flow. The branch relation is
+\begin{equation}
+  \Delta p_{\mathrm{reg}}(\mdot) = \max\Bigl(p_1-p^{\mathrm{eff}}_{\mathrm{set}},\ K_{\mathrm{seat}}\tfrac12\rho V^2,\ 0\Bigr),\qquad
+  \Delta p_{\mathrm{reg}}(0)=\max\bigl(p_1-p_{\mathrm{lock}},0\bigr),\quad
+  p_{\mathrm{lock}}=p_{\mathrm{set}}+\Delta p_{\mathrm{lock}},
+\end{equation}
+with $K_{\mathrm{seat}}$ from the seat $C_v$ via \cref{eq:cvk}. \emph{Saturated}
+means the seat term binds. \emph{Shut} (choked form with ceiling $0$) means
+downstream already exceeds the setpoint:
+\begin{equation}
+  \text{shut}\iff \Delta p_{\mathrm{avail}} < \bigl(p_1 - p^{\mathrm{eff}}_{\mathrm{set}}(0,p_1)\bigr) - 0.005\,p^{\mathrm{eff}}_{\mathrm{set}},
+\end{equation}
+the half-percent band existing so a tank sitting on its setpoint does not flip
+the branch equation every step.
+
+\begin{proposition}[Droop makes the branch determinate]
+With $D_r=0$ the branch equation is satisfied for every $\mdot$ between two
+fixed pressures; $J_{bb}\equiv0$ and the flow is undetermined. With $D_r>0$ the
+row has slope $D_r/\mdot_{\mathrm{rated}}$ and $\mdot$ is unique. Zero droop
+is therefore reported as a violation, and a perfect setpoint is a separate
+named model (\code{ideal}).
+\end{proposition}
+
+\begin{remark}[Reverse flow]
+\Cref{eq:signed} mirrored would place a step of $2(p_1-p_{\mathrm{set}})$ across
+$\mdot=0$ and a finite-difference slope of order $10^{16}$. Reverse flow is
+instead the poppet on its seat: $\Delta p^{\mathrm{tot}} = \max(p_1-p_{\mathrm{lock}},0) + R_{\mathrm{rev}}\,\mdot$
+with $R_{\mathrm{rev}}=10^{10}\ \si{\pascal\second\per\kilogram}$ --- continuous
+at zero, steep, and still descendable.
+\end{remark}
+
+Two further named models: \code{curve} reads outlet against flow from a
+datasheet curve, shifted by the dome and corrected by $S$; \code{measured}
+reads $\Delta p(\mdot)$ directly.
+
+\subsection{Injector leg}\label{sec:injectorleg}
+% NOTE: Omitted from revision 1 in its Re-dependent form. This must agree
+% with EngineDesign at the same operating point or the two tools model
+% different injectors.
+\begin{equation}
+  \Delta p = \frac{\mdot^2}{2\rho\,(C_d A)^2},\qquad
+  C_d(\mathrm{Re}) = \mathrm{clip}\Bigl(C_d^{\infty}(d_h) - \frac{a_{\mathrm{Re}}}{\sqrt{\mathrm{Re}}},\ C_d^{\min},\ C_d^{\infty}(d_h)\Bigr),\qquad
+  \mathrm{Re}=\frac{\rho V d_h}{\mu},\ V=\frac{|\mdot|}{\rho A},
+  \label{eq:cd}
+\end{equation}
+with optional multiplicative pressure and temperature corrections
+$1+a_p(p/p_{\mathrm{ref}}-1)$, $1+a_T(T/T_{\mathrm{ref}}-1)$, and a geometry
+dependence
+\begin{equation}
+  C_d^{\infty}(d) = \mathrm{clip}\Bigl(
+    \begin{cases} C_d^{\infty}\,(d/d_{\mathrm{ref}})^{0.20}, & d<d_{\mathrm{ref}}\\ C_d^{\infty} + 0.015\ln(d/d_{\mathrm{ref}}), & d\ge d_{\mathrm{ref}}\end{cases},\ 0.48,\ 0.62\Bigr),
+  \quad d_{\mathrm{ref}}=\SI{2}{\milli\metre},
+\end{equation}
+when the engine config enables it. $A$ and $d_h$ are extracted per injector
+type (impinging: $n$ round jets; pintle: discrete ox orifices, fuel annulus;
+coaxial: core ports and outer annulus). Defaults when the config has no
+discharge block: $C_d^\infty=0.6$, $C_d^{\min}=0.15$.
+
+%==============================================================================
+\section{Vessel models}\label{sec:vessels}
+%==============================================================================
+
+\subsection{State pairs}
+% NOTE: The ullage is (m, U) because a real gas's energy balance is exact only
+% in u; the liquid is (m, T) because liquid density is ~180x less sensitive to
+% pressure, so recovering p from (rho, u) amplifies error by that factor.
+\begin{equation}
+  \text{gas: } (m,U,T_w),\ \ \rho=\frac{m}{V},\ u=\frac{U}{m},\ (p,T,h)=\mathrm{EOS}(\rho,u);
+  \qquad
+  \text{liquid: } (m_\ell, T_\ell),\ \ \rho_\ell = \rho_{\mathrm{sat}}(T_\ell).
+\end{equation}
+A $(\rho,u)$ inversion that fails is raised as \emph{ullage condensed}: either
+a long unpressurised hold has genuinely chilled the gas into a liquid-like
+state, or the step is too large.
+
+\subsection{Fixed-volume gas vessel (bottle, plenum)}
+\begin{align}
+  \dot m &= \mdot_{\mathrm{in}}-\mdot_{\mathrm{out}},\\
+  \dot U &= \mdot_{\mathrm{in}}h_{\mathrm{in}} - \mdot_{\mathrm{out}}\,h(\rho,u) + \Qdot_{\mathrm{ext}} + \Qdot_w,
+  \qquad \Qdot_w = (hA)_w\,(T_w-T_g),\qquad
+  \dot T_w = -\frac{\Qdot_w}{m_wc_w}.
+  \label{eq:bottle}
+\end{align}
+Outflow carries the vessel's own \emph{enthalpy}, not internal energy; the
+difference is the flow work that cools what remains.
+
+The wall term carries a stirring factor $\sigma_s\ge 1$ while gas is
+being charged in, $\Qdot_w = \sigma_s\,hA\,(T_w-T)$: $hA$ is the still-gas
+conductance and a charge jet drives forced convection several times it. With
+$\sigma_s=1$ a \SI{25}{\second} GSE fill of \SI{10}{\kilogram} of N$_2$ into
+\SI{44}{\litre} is an adiabatic charge and lands at \SI{380}{\kelvin}
+($\gamma T_{\mathrm{bank}}$ less what the wall takes), then sags \SI{12}{\percent}
+in a minute; the stand does not, so the default is $\sigma_s=20$
+(\SI{336}{\kelvin} over a \SI{316}{\kelvin} wall, \SI{3}{\percent}), an
+order-of-magnitude estimate to be calibrated against the bottle RTD. The same
+factor applies to an ullage while it is being pressed --- gas arriving with
+the tank more than \SI{2}{\percent} below its supply --- and not to the few
+grams a second two tanks at lockup trade through a shared manifold, which is
+slosh, not a jet (applied to that, it ratcheted both tanks \SI{16}{\psi}
+above lockup in ten seconds).
+% NOTE: Replace 20 with the value the RTD gives after a real GN2 High Press.
+
+\subsection{Propellant tank}
+\begin{align}
+  \dot V_u &= \frac{\mdot_\ell}{\rho_\ell},\qquad \Pi = p\,\dot V_u,\\
+  \dot U_u &= \mdot_g h_g + \Qdot_{\mathrm{ext}} + \Qdot_w - \Qdot_i - \Pi, \label{eq:ullage}\\
+  \Qdot_{\mathrm{wet}} &= U_{\mathrm{wet}}\,A_{\mathrm{wet}}(\ell)\,(T_{w,\ell} - T_\ell)\ \ (\text{chilldown; 0 unless requested}),\label{eq:chilldown}\\
+  \dot T_w &= -\frac{\Qdot_w + \Qdot_{\mathrm{wet}}}{m_wc_w}\ \ (\text{one wall node}),\qquad
+  \dot T_{w,u} = -\frac{\Qdot_w}{(1-f_{\mathrm{wet}})\,m_wc_w},\ \ 
+  \dot T_{w,\ell} = -\frac{\Qdot_{\mathrm{wet}}}{f_{\mathrm{wet}}\,m_wc_w}\ \ (\text{two}),\label{eq:twowall}\\
+  \dot m_\ell &= -\mdot_\ell - \mdot_v - \mdot_{v,w},\qquad
+  \dot T_\ell = \frac{\Qdot_i + \Qdot_{\mathrm{wet}} - \Qdot_{\mathrm{boil}} - \Qdot^{\mathrm{lat}}}{m_\ell c_{p,\ell}},\qquad
+  \dot t_c = 1,\\
+  \Qdot_{\mathrm{amb},u} &= U_{\mathrm{amb}}\,(A_H - A_{\mathrm{wet}}(\ell))\,(T_{\mathrm{amb}}-T_{w,u}),\qquad
+  \Qdot_{\mathrm{amb},\ell} = U_{\mathrm{amb}}\,A_{\mathrm{wet}}(\ell)\,(T_{\mathrm{amb}}-T_{w,\ell}),\label{eq:leak}\\
+  \mdot_{v,w} &= \frac{\Qdot_{\mathrm{boil}}}{h_{fg}(T_\ell)},\qquad
+  \Qdot_{\mathrm{boil}} = \begin{cases}\Qdot_{\mathrm{wet}} & T_{w,\ell} > T_{\mathrm{sat}}(p) + \Delta T_{\mathrm{onb}}\\ 0 & \text{otherwise},\end{cases}\label{eq:wallboil}
+\end{align}
+with the wetted-wall conductance itself regime-dependent,
+\begin{equation}
+  h_{\mathrm{wet}} = \begin{cases} h_{\mathrm{film}} & T_{w,\ell} - T_{\mathrm{sat}}(p) \ge \Delta T_{\mathrm{Leid}} \\ h_{\mathrm{nuc}} & 0 < T_{w,\ell} - T_{\mathrm{sat}}(p) < \Delta T_{\mathrm{Leid}} \\ h_{\mathrm{film}} & \text{otherwise (single phase)},\end{cases}
+  \label{eq:regimes}
+\end{equation}
+$h_{\mathrm{film}}=\SI{100}{\watt\per\square\metre\per\kelvin}$ (a vapour film
+insulates a wall far above saturation), $h_{\mathrm{nuc}}=\SI{3000}{\watt\per\square\metre\per\kelvin}$
+once the superheat is under the Leidenfrost point $\Delta T_{\mathrm{Leid}}=\SI{40}{\kelvin}$
+and the liquid wets the metal, and $\Delta T_{\mathrm{onb}}=\SI{2}{\kelvin}$ the incipience
+superheat below which the wall warms the liquid rather than boiling it. All three
+are estimates from cryogen boiling curves and are dialled from the cockpit's
+Configuration tab.
+
+\paragraph{Stratification.} A quiescent cryogen does not warm as a lump. Heat
+that reaches the wetted wall and does not boil rides up the wall in a
+natural-convection boundary layer and pools at the surface; the bulk below stays
+cold, and the ullage sees the surface. The tank therefore carries a surface
+temperature $T_s$ apart from the bulk $T_\ell$: a slab of depth $\delta_s$
+over the interface, $m_s = \rho_\ell A_i \delta_s$ (never more than the liquid
+present), with
+\begin{equation}
+  m_s c_\ell \dot T_s = \Qdot_i + \Qdot_{\mathrm{wet}} - \Qdot_{\mathrm{boil}} - \Qdot^{\mathrm{lat}} - h_{\mathrm{mix}} A_i (T_s - T_\ell),
+  \qquad
+  (m_\ell - m_s) c_\ell \dot T_\ell = h_{\mathrm{mix}} A_i (T_s - T_\ell),
+  \label{eq:strat}
+\end{equation}
+and the collapse and vapour closures (\cref{sec:collapse,sec:vapour}) evaluated at
+$T_s$. The wall's convective share reaches the layer only in the proportion
+$[(T_{w,\ell}-T_s)/(T_{w,\ell}-T_\ell)]_0^1$: liquid warmed at a wall arrives no hotter
+than the wall, so a layer at the wall's temperature takes nothing more from it and
+the remainder goes to the bulk (in a slab of fixed depth, ``thickening the layer''
+is warming the bulk). The ullage's heat needs no such bound; the collapse term
+already follows $T_g - T_s$. The layer itself is bounded at saturation for the
+tank's total pressure (and two kelvin under the critical temperature, where the
+saturation line ends): a surface there boils rather than superheats, and heat
+that would have warmed it evaporates it instead. Without that a room-temperature
+dry wall over a small ullage ran the surface to \SI{154.6}{\kelvin} and every
+property call failed. What sustains a climb of tens of psi a minute is
+therefore warm hardware -- the dry wall the liquid never touched, still near
+\SI{200}{\kelvin} after a two-minute load -- warming the ullage, which warms
+the surface. $\delta_s=\SI{1}{\centi\metre}$ and $h_{\mathrm{mix}}=\SI{5}{\watt\per\square\metre\per\kelvin}$
+by default (estimates; the tank's own shut-vent trace calibrates them); a load
+resets $T_s$ to $T_\ell$ since a pour stirs the liquid. Off ($\delta_s=0$, the
+library default) the liquid is well mixed and \cref{eq:strat} collapses to the
+single bulk balance. The three closures together are what set a shut LOX tank's
+climb: boiling the whole leak into the ullage gives $\sim\SI{100}{psi/min}$,
+warming fifteen kilograms gives $\sim\SI{0.3}{psi/min}$, and a centimetre of
+warm surface under a \SI{75}{\watt} leak gives the tens of psi per minute a stand
+actually shows.
+with \cref{eq:leak} added to the respective wall lumps of \cref{eq:twowall}
+($U_{\mathrm{amb}}=0$ by default in the library; on the cockpit
+$U_{\mathrm{amb}} = (1/h_{\mathrm{air}} + t_{\mathrm{ins}}/k_{\mathrm{ins}})^{-1}$ with
+$h_{\mathrm{air}}=\SI{8}{\watt\per\square\metre\per\kelvin}$ and the insulation the
+drawing declares --- an inch of fiberglass on the LOX tank gives
+\SI{1.3}{\watt\per\square\metre\per\kelvin}, about \SI{75}{\watt}; a bare tank sees
+$h_{\mathrm{air}}$, six times that) and \cref{eq:wallboil}
+the wall-boiling closure (off by default in the library; on with the vapour
+model on the cockpit). Nucleation needs the wall above saturation at the
+tank's \emph{total} pressure, so a LOX tank at atmosphere with its vent shut
+boils and climbs --- self-limiting, as the rising pressure lifts
+$T_{\mathrm{sat}}$ toward the wall --- while the same tank under
+\SI{38}{\bar} of pressurant is a hundred kelvin subcooled and the leak warms
+the bulk instead. Gas leaving through a vent takes pressurant and vapour in
+proportion to their masses --- only along paths that end at a vent boundary,
+found by following the solved flows through the graph and splitting at each
+junction; what goes to a neighbouring tank through a shared manifold and back
+is booked as pressurant both ways, since the network carries no species. The
+vapour term was missing until 2026-09-11 and a venting LOX tank kept every
+gram it boiled; applied to the manifold slosh as well, it ratcheted a pair of
+tanks at lockup upward.
+with $\Qdot_i$ from \cref{sec:collapse}, $\mdot_v$ and $\Qdot^{\mathrm{lat}}$
+from \cref{sec:vapour}, and $t_c$ the interface contact time, a state so a
+repressurisation can reset it. The wall may be one lump (the default, and
+every state built before the second node existed) or two: the wall under the
+liquid, $T_{w,\ell}$, and the wall above it, $T_{w,u}$, split by the wetted-area
+fraction $f_{\mathrm{wet}} = A_{\mathrm{wet}}(\ell)/A_{\mathrm{wet}}(H)$ of the
+tank as it stands, with no conduction between them (a thin wall over a tank's
+height is a twenty-minute time constant).
+\begin{remark}[Why two nodes]
+One lump cannot describe a loaded cryogenic tank. At the liquid's temperature
+it condenses the pressurant on the ullage face --- N$_2$ at \SI{39}{\bar}
+saturates at \SI{113}{\kelvin}, well above a \SI{90}{\kelvin} wall --- and at
+ambient it boils the liquid at kilowatts through $U_{\mathrm{wet}}$. Primed as
+freshly filled (wall \SI{293}{\kelvin}, $t_c=\SI{2}{\second}$), a LOX tank with
+collapse and chilldown enabled sat \SI{139}{\psi} under lockup at $T$-0 and its
+recovery read as an ignition transient. A primed tank now carries
+$T_{w,\ell}=T_\ell$, $T_{w,u}=T_g$, and $t_c=$ the stated pad hold.
+\end{remark}
+\begin{remark}[Initial vapour]
+A tank primed with a vapour model fitted, liquid present and $t_c>0$ starts
+with its propellant's equilibrium vapour, $p_{\mathrm{vap}}=p_{\mathrm{sat}}(T_\ell)$
+(only where $p_{\mathrm{sat}}<\tfrac12 p$), and the pressurant makes up the
+\emph{remainder} of the stated total. Built dry, a saturated cryogen boils
+that vapour off after the regulator has locked up at the total, and nothing
+can take the extra \SI{15}{\psi} (LOX at \SI{90}{\kelvin}) back out; the trace
+then opens above lockup. Default and \code{none}: no vapour, exactly as before.
+\end{remark} Pressures seen by the network:
+\begin{equation}
+  p_{\mathrm{ullage}} = p_{\mathrm{EOS}}(\rho_g,u_g) + p_{\mathrm{vap}},\qquad
+  p_{\mathrm{outlet}} = p_{\mathrm{ullage}} + \rho_\ell\,g\,\ell(V_\ell),
+  \label{eq:outlet}
+\end{equation}
+where the level $\ell$ inverts $V_{\mathrm{below}}(\ell)$ by Brent's method.
+
+\paragraph{Simultaneous in- and out-flow.} The cockpit feeds \cref{eq:ullage}
+one net gas stream with an effective enthalpy,
+\begin{equation}
+  \mdot_g = \mdot_{g,\mathrm{in}}-\mdot_{g,\mathrm{out}},\qquad
+  h_g = \frac{\mdot_{g,\mathrm{in}}h_{\mathrm{in}} - \mdot_{g,\mathrm{out}}h(\rho_g,u_g)}{\mdot_g},
+\end{equation}
+so a tank being pressed and vented at once does not price the whole exchange
+at the supply's enthalpy.
+
+\subsection{Geometry}
+Cylinder radius $r$, barrel $L_b$, semi-ellipsoidal heads of depth $c=r/\text{ratio}$
+(2:1 default; hemispherical $c=r$; flat $c=0$):
+\begin{gather}
+  V_{\mathrm{head}}(d) = \frac{\pi r^2 d^2(3c-d)}{3c^2},\qquad
+  V_{\mathrm{head}}^{\mathrm{tot}}=\tfrac23\pi r^2c,\qquad
+  A_{\mathrm{xs}}(d) = \pi r^2\Bigl[1-\Bigl(\frac{c-d}{c}\Bigr)^2\Bigr],\\
+  A_{\mathrm{wet}}^{\mathrm{head}}(d) = 2\pi r d\ \ (\text{hat-box; exact for a hemisphere, a few percent low for 2:1}),\qquad
+  A_{\mathrm{wet}}^{\mathrm{barrel}}=2\pi r\,\ell_{\mathrm{barrel}}.
+\end{gather}
+$A_i = A_{\mathrm{xs}}(\ell)$ is the interface area of \cref{sec:collapse}.
+A tabulated $V(h)$ (with optional $A(h)$, $A_{\mathrm{wet}}(h)$) from CAD is the
+escape hatch. The cockpit builds a tank from the drawing's volume and diameter,
+2:1 heads, solving $L_b = \max\bigl((V-\tfrac43\pi r^2\cdot\tfrac r2)/(\pi r^2),0\bigr)$.
+
+\subsection{Ullage collapse: transient interfacial conduction}\label{sec:collapse}
+% NOTE: Why not a steady h: the layer depth grows as sqrt(pi alpha t) -- 1.1 mm
+% at 5 s, 3.8 mm at 60 s for LOX -- so no single coefficient fits both a burn
+% and a pad hold.
+\begin{equation}
+  \Qdot_i = \eta_c\,A_i\,(T_g-T_\ell)\,\frac{\beta}{\sqrt{\pi\,\max(t_c,\,t_{\min})}},
+  \qquad \beta=\sqrt{k\rho c_p}\Big|_{\mathrm{sat},T_\ell},\qquad t_{\min}=\SI{1}{\milli\second},
+  \label{eq:collapse}
+\end{equation}
+whose closed-form integral at constant $A_i,\Delta T$ is $Q_i(t)=2\eta_cA_i\Delta T\beta\sqrt{t/\pi}$.
+$\eta_c=1$ is quiescent conduction; a fitted enhancement from a cold flow goes
+there and nowhere else. Named alternatives: \code{none}.
+\begin{remark}
+Quiescent conduction is a \textbf{lower bound}: free convection, slosh, jet
+scrubbing and N$_2$-over-LOX condensation all move more. A pressurant budget on
+\cref{eq:collapse} is optimistic.
+\end{remark}
+
+\subsection{Propellant vapour}\label{sec:vapour}
+Dalton partial pressures, \emph{not} a mixture EOS:
+\begin{equation}
+  p_{\mathrm{vap}} = \begin{cases}
+    p^{\ell}_{\mathrm{EOS}}\bigl(\rho=m_v/V_u,\ T=T_g\bigr) & \text{if }>0,\\
+    \dfrac{m_v R_s^{\ell}T_g}{V_u} & \text{otherwise (ideal-gas fallback; } R_s^\ell = R/M_\ell),
+  \end{cases}
+\end{equation}
+the fallback existing because the Helmholtz formulation returns non-physical
+values at very low partial density (\SI{1}{\micro\gram} of O$_2$ in
+\SI{0.5}{\litre} gave \SI{-6057}{\psi}). Evaporation (\code{saturated}):
+\begin{equation}
+  \psi = \mathrm{clip}\Bigl(\frac{p_{\mathrm{sat}}(T_\ell)-p_{\mathrm{vap}}}{p_{\mathrm{sat}}(T_\ell)},\,-1,\,1\Bigr),\qquad
+  \Qdot^{\mathrm{lat}} = f_{\mathrm{sat}}\,\psi\,\bigl(\Qdot_i+\Qdot_{\mathrm{wet}}\bigr),\qquad
+  \mdot_v = \frac{\Qdot^{\mathrm{lat}}}{h_{fg}(T_\ell)},
+  \label{eq:evap}
+\end{equation}
+$h_{fg}=h_{\mathrm{sat}}^v-h_{\mathrm{sat}}^\ell$ from the same EOS, $f_{\mathrm{sat}}=1$
+by default. $\psi<0$ is condensation. Default model: \code{none} in the library; the cockpit fits \code{saturated} with wall boiling (\cref{eq:wallboil}) and the ambient leak (\cref{eq:leak}) on, since 2026-09-11.
+
+\begin{proposition}[Vapour carries mass and partial pressure, not energy]\label{prop:reference}
+$u_g$ is referred to the pressurant's reference state and $h_{\mathrm{sat}}$
+to the propellant's; these are unrelated (saturated LOX at \SI{90}{\kelvin}:
+\SI{-133.7}{\kilo\joule\per\kilogram}; helium at ullage conditions:
+\SI{+628.6}{\kilo\joule\per\kilogram}). Adding $\mdot_vh_{\mathrm{sat}}$ into
+\cref{eq:ullage} is a category error that drives the state negative within a
+step. The energy that produced the vapour has already left \cref{eq:ullage}
+through $\Qdot_i$; the vapour contributes no energy term. The stated cost is
+that the vapour's own sensible energy is not returned to the ullage, biasing it
+cool.
+\end{proposition}
+
+\subsection{Pressurant budget (derived quantity)}
+For a stated expulsion the gas inflow that holds $p_{\mathrm{ullage}}$ constant
+is found per step by bisection on $\mdot_g$ (monotone), integrating
+\cref{eq:ullage} with expansion, interfacial and wall terms; the result is
+reported with the residual pressure error rather than trusted.
+
+%==============================================================================
+\section{Thermal transport in lines}\label{sec:thermal}
+%==============================================================================
+
+\subsection{Enthalpy propagation and Joule--Thomson}
+% NOTE: Emphasise that temperature is *not* a solver unknown. The walk runs
+% after each solve and lags it by one step -- deliberately, so it cannot
+% perturb Newton.
+An adiabatic component with no shaft work conserves specific enthalpy. After
+each network solve, node temperatures are updated by a fixed-point walk:
+vessel nodes are seeded from their integrated states; then, for up to 12 sweeps
+or until no node moves by more than \SI{0.05}{\kelvin},
+\begin{equation}
+  h_i = \frac{\sum_{b\in\mathcal{B}^{\mathrm{in}}_i}|\mdot_b|\,h_b^{\mathrm{out}}}{\sum_{b\in\mathcal{B}^{\mathrm{in}}_i}|\mdot_b|},
+  \qquad
+  T_i = T_{\mathrm{EOS}}(p_i,h_i),
+  \qquad
+  \mathcal{B}^{\mathrm{in}}_i = \{b: \text{flow enters } i,\ |\mdot_b|>\SI{e-6}{\kilogram\per\second}\},
+  \label{eq:enthalpy}
+\end{equation}
+with $h_b^{\mathrm{out}} = h(p_{\mathrm{up}},T_{\mathrm{up}}) + \Qdot_{w,b}/|\mdot_b|$
+(\cref{sec:wall}). Direction follows the sign of $\mdot_b$. Vessel nodes are
+never overwritten, but the enthalpy arriving at an ullage node, $h_i$ of
+\cref{eq:enthalpy}, is recorded and is $h_{\mathrm{in}}$ in \cref{eq:ullage}
+whenever anything arrived; only a node nothing reached that step falls back to
+the bottle's enthalpy.
+\begin{remark}[The source matters, not just the path]
+An earlier revision read $h_i$ only with line walls enabled and quoted the
+bottle otherwise, on the argument that an adiabatic path conserves enthalpy.
+That holds for gas that \emph{came from the bottle}. Two tanks primed on one
+press manifold at equal pressure trade $\mathcal{O}(\si{\gram\per\second})$
+back and forth each step; gas arriving from the other tank's \SI{293}{\kelvin}
+ullage was priced at $h(\SI{4500}{\psi},\SI{293}{\kelvin})$, which for helium
+is \emph{above} $h(\SI{550}{\psi},\SI{293}{\kelvin})$, so every exchange pumped
+energy in: both ullages warmed \SI{6}{\kelvin} and rose \SI{15}{\psi} above
+lockup with no flow through the regulator. Nitrogen ran the same error the
+other way and cooled. Reading $h_i$ unconditionally changes nothing for
+bottle-fed gas beyond the walk's \SI{0.05}{\kelvin} tolerance.
+\end{remark}
+\begin{remark}
+\Cref{eq:enthalpy} produces Joule--Thomson at every throttle with no
+gas-specific code: N$_2$ throttled \SIrange{4500}{550}{\psi} cools
+${\approx}\,\SI{30}{\kelvin}$; He (inversion ${\approx}\,\SI{45}{\kelvin}$) warms
+${\approx}\,\SI{15}{\kelvin}$. A fixed delivery temperature erases the difference.
+\end{remark}
+
+\subsection{Line walls: NTU--effectiveness exchange}\label{sec:wall}
+% EXPAND: the icicle observation, and that it is evidence for the metal's own
+% thermal mass (path A) and against the room (path B, 0.04-0.18 K).
+\begin{align}
+  \mathrm{Nu} &= \begin{cases}3.66, & \mathrm{Re}<\mathrm{Re}_{\mathrm{lam}},\\ 0.023\,\mathrm{Re}^{0.8}\mathrm{Pr}^{\,n}, & \mathrm{Re}\ge\mathrm{Re}_{\mathrm{lam}},\ \ n=0.4\ (T_w>T_{\mathrm{in}}),\ 0.3\ (T_w<T_{\mathrm{in}}),\end{cases}\\
+  \bar h &= \frac{\mathrm{Nu}\,k}{D},\qquad
+  \mathrm{NTU}=\frac{\bar h A_s}{|\mdot|c_p},\qquad
+  \eff = 1-e^{-\min(\mathrm{NTU},40)},\qquad
+  A_s = \pi D\max(L,D),\label{eq:ntu}\\
+  T_{\mathrm{out}} &= T_{\mathrm{in}}+\eff\,(T_w-T_{\mathrm{in}}),\qquad
+  \Qdot_w = |\mdot|c_p\,\eff\,(T_w-T_{\mathrm{in}}).
+\end{align}
+Properties are evaluated at $(p_{\mathrm{up}},T_{\mathrm{in}})$. Zero flow gives
+exactly zero exchange. $\mathrm{Nu}$ is checked against
+\code{ht.turbulent\_Dittus\_Boelter} (agreement \SI{0.00}{\percent}) and
+\code{ht.Nu\_conv\_internal} (\SI{1.1}{\percent}) in the benchmark.
+
+\paragraph{Wall thermal state.} Once per solve (not per sweep),
+\begin{equation}
+  T_w^{+} = T_w - \frac{\Qdot_w\,\Delta t}{m_w\,c_w(T_w)},\qquad
+  \text{then } T_w^{+}\leftarrow T_{\mathrm{in}}\ \text{if } (T_w-T_{\mathrm{in}})(T_w^{+}-T_{\mathrm{in}})<0,
+\end{equation}
+the clamp forbidding the wall from crossing the stream in one step (sign-agnostic:
+warm gas through a cold LOX line is the same equation reversed). Metal:
+\begin{equation}
+  m_w = \tfrac{\pi}{4}\bigl[(D+2\tau)^2-D^2\bigr]L\rho_s + m_{\mathrm{fit}},\qquad
+  m_{\mathrm{fit}} = \begin{cases} m_{\mathrm{fit}}^{\mathrm{weighed}} & \text{if given},\\ N\cdot\SI{113}{\gram}\,(D/\SI{10.92}{\milli\metre})^2 & \text{from a count},\end{cases}
+\end{equation}
+$\rho_s=\SI{8000}{\kilogram\per\cubic\metre}$; $c_w(T)$ piecewise-linear through
+NIST values for austenitic stainless, $c_w(293)/c_w(77)\approx2.6$. The
+bore-scaling is fitted over \SIrange{0.25}{0.5}{\inch} unions (measured
+$32$, $62$, \SI{113}{\gram}; exponent $1.82$).
+
+\subsection{Wall initial condition}
+\begin{assumption}[No soak]\label{as:soak}
+No heat transfer at zero flow; no model of how a stand drifts toward ambient
+while it sits.
+\end{assumption}
+Each wall is seeded on the first solve for which \cref{eq:enthalpy} has
+converged, to the temperature of its upstream node at that instant:
+liquid lines at liquid temperature, lines off an ullage at the ullage's,
+pressurant lines at the bottle's. Seeding from declared drawing values would put
+a vent line off the top of a LOX tank \SI{200}{\kelvin} too cold.
+
+\subsection{Validity of the lumped wall}\label{sec:biot}
+$\mathrm{Bi}=\bar hL_c/k_s$ with $\bar h\approx\SI{2800}{\watt\per\square\metre\per\kelvin}$,
+$k_s\approx\SI{15}{\watt\per\metre\per\kelvin}$:
+\begin{center}
+\begin{tabular}{lccl}
+\toprule
+$L_c$ & $\mathrm{Bi}$ & Over-credit at \SI{6}{\second} (vs 1-D conduction) & \\
+\midrule
+\SI{0.889}{\milli\metre} tube wall & 0.17 & $0\%$ & lumped exact \\
+\SI{5}{\milli\metre} fitting body & 0.93 & $19\%$ & invalid \\
+\SI{8}{\milli\metre} fitting body & 1.49 & $32\%$ & invalid \\
+\bottomrule
+\end{tabular}
+\end{center}
+Steel's diffusion depth is \SI{4.7}{\milli\metre} at \SI{6}{\second}. Carried
+knowingly because the result is film-limited (\cref{sec:limits}).
+
+%==============================================================================
+\section{Engine coupling}\label{sec:engine}
+%==============================================================================
+
+\subsection{Chamber}
+\begin{equation}
+  p_c = \max\Bigl(\frac{(\mdot_{\mathrm{ox}}+\mdot_f)\,\eta_{c^*}\,c^*(p_c,\mathrm{MR})}{A_t},\ p_{\mathrm{amb}}\Bigr),
+  \qquad \mathrm{MR}=\frac{\mdot_{\mathrm{ox}}}{\mdot_f},
+  \label{eq:pc}
+\end{equation}
+iterated three fixed-point passes (the $p_c$-dependence of $c^*$ is weak). A
+cold chamber sits at $p_{\mathrm{amb}}$ through its own nozzle; this is physics,
+not a guard. Thrust and impulse, reported only when $p_c>1.001\,p_{\mathrm{amb}}$:
+\begin{equation}
+  F = \eta_n\,C_F(p_c,\mathrm{MR})\,p_c\,A_t,\qquad
+  I_{sp}=\frac{F}{(\mdot_{\mathrm{ox}}+\mdot_f)\,g_0},\qquad
+  \tau_{\mathrm{fill}} = \frac{V_c}{A_tc^*}\ \ (\text{reported, not integrated}).
+\end{equation}
+$\eta_{c^*}$ and $\eta_n$ are $1$ unless the engine config states them.
+
+\subsection{Combustion closure}
+$c^*,C_F,T_c,\gamma$ by trilinear interpolation (\code{RegularGridInterpolator})
+of EngineDesign's cached CEA table on $(p_c,\mathrm{MR},A_e/A_t)$ at the
+table's design expansion ratio; queries outside the $(p_c,\mathrm{MR})$ range
+are \emph{clamped} to the edge and flagged, so a startup can run and a plateau
+that is a table edge is identifiable.
+
+\subsection{Closing the loop around the network}\label{sec:engineloop}
+The chamber node is a fixed-pressure boundary whose value depends on the flows
+it receives. Let $g(p)$ be the chamber pressure implied by solving the network
+with the chamber pinned at $p$. The fixed point $f(p)=g(p)-p=0$ is found:
+\begin{itemize}[nosep]
+\item \textbf{Batch (transient, run):} by secant on $f$, with the secant step
+      taken only when the local slope $f'<0.5$ (the map is nearly affine and
+      contractive), otherwise a relaxed step $\omega f$ ($\omega=0.5$
+      transient, $0.4$ run); floored at $p_{\mathrm{amb}}$; tolerance $10^{-5}$
+      ($10^{-4}$ run) relative; 40 (30) iterations; non-convergence is
+      \emph{reported}, since it is a design finding (an injector too soft for
+      its feed system).
+\item \textbf{Cockpit:} solved, not relaxed, on every coupling step. The
+      root of $f$ is bracketed by construction --- $f(p_{\mathrm{amb}})\ge 0$
+      whenever propellant arrives, $f(p_{\mathrm{feed}})<0$ where nothing
+      flows --- and regula falsi with a bisection guard finds it to
+      \SI{0.5}{\psi} in a handful of network solves, warm-started so a step
+      on which the previous answer still holds costs no extra solve.
+\end{itemize}
+\begin{remark}[Why relaxation was abandoned]
+The cockpit used $p_c\leftarrow p_c+\omega\,(g(p_c)-p_c)$ with $\omega=0.3$.
+That is a fixed-point iteration on a map whose slope at the operating point
+is $g'(p_c) = -p_c/(2\,\Delta p_{\mathrm{inj}})$, so the relaxed iteration
+has multiplier $1-\omega+\omega g'$. For the 7000 N doublet
+($\Delta p_{\mathrm{inj}}\approx\SI{66}{\psi}$ at $p_c\approx\SI{400}{\psia}$,
+$g'\approx-3$) that is $-0.2$: stable. For the 7200 N doublet at
+$\Delta p_{\mathrm{inj}}\approx\SI{40}{\psi}$ it is below $-1$, and the burn
+flip-flopped frame by frame between \SI{718}{\psia} --- above the tank
+pressure --- and nothing. The dynamics also depended on the tick length,
+because the factor was per step. Solving the fixed point removes both.
+\end{remark}
+Flow into the chamber is clamped non-negative (a chamber does not receive
+backflow; a negative mid-iteration means the injector cannot pass at that
+$p_c$). Without an engine model the chamber boundary is the drawing's design
+pressure while propellant is arriving (${>}\,\SI{1}{\gram\per\second}$) and
+ambient otherwise.
+
+\subsection{Mixture-ratio decomposition}
+% NOTE: This is an identity, not a fit -- say so, and say what each factor is
+% *for* (redrill vs re-plumb).
+From \cref{eq:orifice} on each side,
+\begin{equation}
+  \mathrm{MR} = \underbrace{\frac{C_{d,\mathrm{ox}}A_{\mathrm{ox}}\sqrt{\rho_{\mathrm{ox}}}}{C_{d,f}A_f\sqrt{\rho_f}}}_{\text{face ratio}}
+  \cdot
+  \underbrace{\sqrt{\frac{\Delta p_{\mathrm{inj,ox}}}{\Delta p_{\mathrm{inj},f}}}}_{\text{feed term}},
+\end{equation}
+exactly, with $C_d$ \emph{recovered} from the solved $(\mdot,\rho,A,\Delta p)$
+so the identity closes on the solver's own numbers and its residual measures
+inconsistency rather than the difference between two $C_d$ models. Stiffness
+$\Lambda_s=\Delta p_{\mathrm{inj},s}/p_c$ is reported per side against the
+engine's own design band, else $0.20$ (soft) and $0.10$ (barely metering). The
+fuel-side trim pressure to restore the design MR at the present flow is
+$\Delta p_{\mathrm{inj,ox}}/(\mathrm{MR}_{\mathrm{des}}/\text{face})^2 - \Delta p_{\mathrm{inj},f}$,
+an under-estimate because the fuel line's own loss rises with the flow.
+
+%==============================================================================
+\section{Transient formulation}\label{sec:dae}
+%==============================================================================
+
+\subsection{Semi-explicit index-1 DAE}
+\begin{equation}
+  \dot{\mathbf{x}} = \mathbf{f}(\mathbf{x},\mathbf{y},t),\qquad
+  \mathbf{0}=\mathbf{g}(\mathbf{x},\mathbf{y},t),
+  \label{eq:dae}
+\end{equation}
+$\mathbf{x}$ the vessel states (bottle: $m,U,T_w$; tank: $m_u,U_u,T_w,m_\ell,T_\ell,t_c$),
+$\mathbf{g}$ from \cref{eq:mass,eq:branch}. Index 1 because
+$\partial\mathbf{g}/\partial\mathbf{y}$ is nonsingular under \cref{sec:regular}.
+Vessel states set the fixed boundary pressures (\cref{eq:outlet}); solved flows
+return as vessel in/outflows, signed by topology. Gas arriving at a tank
+carries the enthalpy of the \emph{upstream} node's $(p,T)$.
+
+\subsection{Nested solution}
+% EXPAND: the trade against monolithic (carrying p as algebraic unknowns).
+At every right-hand-side evaluation $\mathbf{g}=\mathbf{0}$ is solved to
+convergence. The constraint is satisfied exactly rather than to a tolerance,
+the integrator state stays small, and a failure is localised to a named time
+with a labelled state vector.
+
+\subsection{Quasi-steady lines}\label{sec:qs}
+\begin{assumption}[Quasi-steady]\label{as:qs}
+Flow in every branch establishes much faster than the vessels change.
+\end{assumption}
+With mass-flow inertance $I=L/A$ (\si{\pascal\second\squared\per\kilogram}) and the local
+quadratic-loss slope $\partial\Delta p/\partial\mdot\approx2\Delta p/|\mdot|$,
+\begin{equation}
+  \tau_{\mathrm{inert}} = \frac{I}{\partial\Delta p/\partial\mdot}
+    = \frac{L\,|\mdot|}{2A\,\Delta p},
+  \label{eq:inert}
+\end{equation}
+reported per branch \textbf{at that branch's own peak flow} (it goes as
+$1/\mdot$, so a value read while a valve closes is large and meaningless).
+\SI{2}{\metre} of \SI{0.375}{\inch} LOX line at \SI{1.5}{\kilogram\per\second}:
+${\approx}\,\SI{9}{\milli\second}$. A $\tau_{\mathrm{inert}}$ approaching the
+transient's timescale means the formulation does not apply to that branch; no
+step change fixes it.
+
+\subsection{Batch integration}
+Stiff by construction (a \SI{40}{\milli\second} valve beside a \SI{5}{\second}
+blowdown): BDF (default), Radau or LSODA; $\mathrm{rtol}=10^{-6}$,
+$\mathrm{atol}=10^{-9}$; inner network tolerance $10^{-5}$. Command edges (each
+command's start and end) are step boundaries, and the maximum step is bounded
+by a quarter of the shortest gap between edges. Commanded actuators move by a
+named shape --- smoothstep $3\xi^2-2\xi^3$ (default), linear, or step --- over
+a declared travel time; a later command on the same signal supersedes an
+earlier one from wherever the actuator has got to.
+
+\subsection{Conservation audit}
+\begin{equation}
+  \mathcal{R} = \Bigl(\int\!\mdot_{\mathrm{in}}\,\mathrm{d}t - \int\!\mdot_{\mathrm{out}}\,\mathrm{d}t\Bigr) - \Delta\Bigl(\sum_{\text{state slots named }\ast\text{mass}}\Bigr),
+\end{equation}
+boundary flows by the trapezoid rule over the \emph{recorded} samples on
+branches with exactly one end at a vessel node, inventory read from the state
+vector directly. Two error sources: integrator tolerance (smooth blowdown) or
+output quadrature (fast valve inside a slow burn); reported as a number so the
+binding one can be identified.
+
+\subsection{Explicit cockpit coupling}\label{sec:rc}
+% NOTE: Say plainly that this is a different scheme from the batch path --
+% forward Euler on the vessels with the network re-solved between sub-steps --
+% and that its stability bound is the thing this subsection derives.
+The interactive path advances vessels by forward Euler with the network
+re-solved between sub-steps. A tick $\Delta t\le\SI{0.25}{\second}$ is divided
+into $n_c$ coupling steps,
+\begin{equation}
+  n_c = \min\Bigl(\max\Bigl(\Bigl\lfloor\frac{\chi_{\mathrm{last}}\,\Delta t/\Delta t_{\mathrm{last}}}{0.04}\Bigr\rfloor+1,\
+    \Bigl\lfloor\frac{\Delta t}{\Gamma\,\tau_{RC}}\Bigr\rfloor+1\Bigr),\ 400\Bigr),
+  \qquad \Gamma=1,
+\end{equation}
+$\chi_{\mathrm{last}}$ the largest fractional vessel-pressure change over the
+previous tick. The RC bound:
+\begin{equation}
+  C=\frac{m_u}{p_u}\ \si{\kilogram\per\pascal},\qquad
+  R=\min_{\text{regulators}}\frac{D_r}{\mdot_{\mathrm{rated}}}\ \si{\pascal\second\per\kilogram},\qquad
+  \tau_{RC}=\min_{\text{tanks}}\,CR .
+  \label{eq:rc}
+\end{equation}
+Line resistance is omitted, which only lengthens $\tau_{RC}$, so the bound errs
+toward more steps. $\Gamma$ was swept: tick-to-tick roughness is flat to
+$\Gamma=2$ and broken by $4$; \cref{eq:rc} explains why helium (small $C$) was
+forty times noisier than nitrogen at the same step. Within each coupling step
+the vessels take 4 sub-steps, each further divided so that no sub-step changes
+ullage mass by more than \SI{2}{\percent} or estimated temperature by more than
+\SI{3}{\percent} (cap 200), with up to six halvings on an EOS refusal; the
+ullage mass is floored at what atmosphere would hold in its volume.
+
+Further rules of the live path: a tank stops accepting gas once
+$p_u > p_{\mathrm{supply}}(1+0.005)$ and the refused mass is credited back to
+the bottle (without this helium lost half its bottle); a tank below
+\SI{1}{\gram} of liquid isolates its outlets; actuators slew linearly at
+$1/t_{\mathrm{travel}}$ (default \SI{50}{\milli\second}); the warm start is
+dropped for flows but kept for pressures when the isolated set changes;
+indeterminate stub nodes hold their last known pressure.
+
+\paragraph{The cockpit runs the study's numerics.} Until 2026-09-11 the
+interactive path differed from the batch path in three more ways: a Newton cap
+of 30 iterations against the study's 120, a single outer step per panel tick
+(\SI{0.25}{\second}) against the study's \SIrange{0.01}{0.02}{\second}, and a
+wall-clock budget of \SI{0.15}{\second} per tick that folded the remaining
+coupling steps into one when the solver fell behind. The fold was the
+difference an operator could see: traces that were smooth in a study were
+rough on the console, and a burn was pre-computed at study settings and
+replayed rather than run. All three are gone. A panel tick of $\Delta t$ is
+integrated as $\lceil\Delta t/0.02\rceil$ outer steps of \SI{0.02}{\second}
+(each with the coupling and sub-step rules above), the Newton cap is 120, and
+there is no budget: a stand whose regulator--ullage loop is too stiff for real
+time runs in slow motion, and the panel reports the ratio of stand time to
+wall time. A pre-computed replay remains available to a client that asks for it.
+
+\paragraph{Limits.} Each vessel carries the MAWP its drawing declares (gauge).
+A step that leaves a vessel above it stops the stand on that frame: the
+state is reported with the vessel and the pressure it reached, commands are
+refused until the stand is reset, and the frame -- with its history -- stays
+on the panel. The model could integrate on to the propellant's critical
+pressure; a tank could not.
+
+%==============================================================================
+The number of coupling steps per tick is the largest of three: the
+pressure-change rule ($\Delta p/p \le 0.04$ per step, from the previous tick),
+the RC rule ($\Delta t \le \Gamma\,C R$), and a mass rule --- no step may move
+more than \SI{4}{\percent} of any ullage's mass, sized from the last solve's
+flows, because the RC rule's $R$ is the regulator's droop slope, its stiffness
+near lockup, and a wide-open regulator passes ten times its rated flow into a
+\SI{0.43}{\litre} ullage. Independently of step size, a vessel clips the last
+step of a press onto its supply: the admitted mass is
+$\Delta m \le m_u\,[(p_s(1+\beta) - p)/p]/\gamma$ with $\gamma=1.67$ bounding the
+charge heating, and the remainder is refused back to the bottle. Without the
+clip the fuel tank overshot lockup by \SI{35}{\psi} on the crossing step and the
+regulator shut on it.
+
+\section{Thermophysical properties}\label{sec:props}
+%==============================================================================
+Each species has an ordered backend chain, default (\code{bicubic}, \code{heos}):
+CoolProp's tabulated bicubic interpolant over the Helmholtz EOS (10--30$\times$
+faster), which \emph{refuses} outside its envelope, falling through to the EOS.
+A measured $(p,T)$ table may be placed in front. Addressable pairs:
+$(p,T),(p,h),(p,s),(p,q),(T,q),(p,\rho),(h,s),(\rho,T),(\rho,u)$. $Z$ is derived
+as $p/(\rho R_sT)$ on every backend (agrees with CoolProp's own to $3\times10^{-6}$).
+Backends are thread-confined; results are memoised on the resolved
+state (256 entries, cleared wholesale). Substance constants
+($p_{\mathrm{crit}},T_{\mathrm{crit}},M$) are read from the chain.
+
+%==============================================================================
+\section{From drawing to network}\label{sec:pid}
+%==============================================================================
+% NOTE: These rules are methodology, and several of them are where real
+% defects lived. Each deserves a sentence on the failure it prevents.
+\begin{enumerate}[label=(D\arabic*)]
+\item \textbf{Fluid and temperature propagate together} by breadth-first walk
+      from declared symbols, stopping at barriers (\code{TANK}, \code{ENGINE},
+      \code{INJECTOR}); two passes --- supplies first, then tanks down their
+      outlets only --- so a manifold one hop from a tank is not painted with
+      propellant. A declaration always beats an inherited value.
+\item \textbf{A tank is two fixed boundaries}, ullage and outlet, with no
+      branch between them. The ullage node carries the \emph{pressurant}
+      species. A line attaches to the ullage if its far end reaches a gas
+      supply or atmosphere without crossing a vessel; otherwise the outlet.
+      Every node on the pressurant or vent reach is declared \emph{gas};
+      every tank outlet, injector face and node painted with a tank's contents
+      is declared \emph{liquid} (\cref{eq:phaserule}).
+\item \textbf{Vents are inferred:} a \code{MAN}/\code{ROT}/\code{SOL}/\code{RV}
+      with exactly one unplumbed port has that port fixed at
+      $p_{\mathrm{amb}}=\SI{101325}{\pascal}$.
+\item \textbf{A dome-control regulator is lifted out of the flow graph}; its
+      outlet setpoint, evaluated at its own supply pressure, becomes the
+      \code{dome} signal of the regulator it loads --- which is how the
+      supply-pressure effect reaches every tank through the control regulator's
+      own $S$.
+\item \textbf{The engine attaches by species:} each line reaching the engine
+      symbol is re-terminated on an injector face node for the propellant it
+      carries; an unmatched species is warned, not dropped.
+\item \textbf{Instruments} read their clip's upstream node by default, or the
+      downstream node on request; a transducer clipped to nothing reads nothing.
+\item \textbf{Defaults are warned:} a source with no pressure is \SI{500}{\psi},
+      a sink \SI{350}{\psi}; a tank whose fluid is gaseous at its stated
+      temperature is flagged with the saturation temperature it is missing.
+\end{enumerate}
+Uncoupled steady builds give the tank outlet the static boundary
+$p_{\mathrm{ullage}} + \rho_\ell g\,\ell$, with $\ell$ the level of a
+\SI{95}{\percent} fill in the drawn volume at the drawn bore with 2:1 heads,
+inverted exactly as the cockpit inverts it; a missing volume or bore is
+defaulted (\SI{17.5}{\litre}, \SI{152}{\milli\metre}) and warned. The cockpit
+overwrites the value with \cref{eq:outlet} at every step.
+
+%==============================================================================
+\section{Verification and validation}\label{sec:vv}
+%==============================================================================
+
+\subsection{The governing rule}
+\begin{quote}
+A model cannot be verified with itself. A run that converges, plots smoothly
+and violates no assertion is not evidence.
+\end{quote}
+
+\subsection{Tiered regimen}
+% EXPAND: one paragraph per tier; the doc is docs/PHYSICS-BENCHMARK.md.
+\begin{description}[leftmargin=2em,style=nextline]
+\item[Tier 0 --- gates] Type, format, unit tests.
+\item[Tier 1 --- closed form] Component checks against hand calculation and the
+  reference libraries, no network, no integrator: Darcy--Weisbach by hand; a
+  one-segment run equals a plain pipe; choking against \code{fluids}' own IEC
+  60534 (\SI{0.00000}{\percent} across five cases); latent heats against the
+  handbook; boil-off exactly $q/h_{fg}$; vapour partial pressure positive and
+  monotone over seven decades; chilldown magnitudes; stainless $c_w$ against
+  NIST; $\mathrm{Nu}$ against \code{ht}; Biot bounds; the icicle arithmetic.
+\item[Tier 2 --- integration] The He/N$_2$ study at $\Delta t=\SI{10}{\milli\second}$
+  (the ignition dip is a \SI{40}{\milli\second} feature), all pressures psig.
+  Expectations live in \code{docs/PHYSICS-BENCHMARK.md} \S2.1 and are
+  re-baselined there whenever a physics change moves them; tolerance
+  $\pm\SI{2}{\psi}$, $\pm\SI{0.05}{\second}$. Both gases start at
+  \SI{550.0}{\psig}; helium recovers lockup within half a second and nitrogen
+  in about three. Full-physics variant: thermal effects move the
+  \emph{pad state}, not the burn (N$_2$ cases within \SI{0.4}{\psi} of each other
+  at the recorded instants). Line-wall variant and its sensitivity sweep.
+  % NOTE: re-baselined 2026-09-10; the previous table predated enthalpy
+  % propagation and had never been re-run. Say that, and say the rule cuts
+  % both ways.
+\item[Tier 3 --- venting and state machine] Blowdown against a hand-integrated
+  choked isentrope (\SI{30}{\milli\second} simulated vs \SI{39}{\milli\second}
+  hand; the simulator must never be \emph{faster} than the sonic limit);
+  isolation; vents must exist; the state machine fails closed.
+\item[Tier 4 --- the trap list] Named failures, each with the check that
+  catches it: reference-state mixing, invented geometry wearing a real
+  provenance tag, dataclass fields dropped on rebuild, non-physical states
+  reported as success, a ceiling of $0$ meaning shut, reverse flow through a
+  regulator, documents destroyed by a successful-looking save, benchmarks that
+  measure their own cache.
+\end{description}
+
+\subsection{Sabotage testing}
+Every physics test is verified by breaking the mechanism it guards and
+confirming the test fails.
+
+\subsection{Energy audits}
+Wall heat delivered to the stream, integrated, against $\int m_wc_w\,\mathrm{d}T_w$:
+closure to \SI{0.45}{\percent}, the residual being midpoint-evaluated $c_w$.
+
+\subsection{Toggle discipline}\label{sec:toggle}
+\emph{Off} is byte-identical to the baseline; \emph{on} against a geometry
+declaring nothing for the model is also byte-identical. The second is not
+implied by the first: it requires gating on the model having something to do,
+not merely on the flag. (The line-wall model reads the walked arrival enthalpy
+into \cref{eq:ullage} only when \emph{both} the flag is set \emph{and} the
+drawing declared metal.)
+
+\subsection{Study methodology}
+% NOTE: Say why the study primes T-0 directly instead of flying the pad
+% sequence: pressing draws on the bottle under test, so an undersized COPV
+% would fail for two reasons at once.
+Tanks primed at \SI{95}{\percent} fill and \SI{550}{\psig} (dome \SI{500}{\psig}
+$+$ \SI{50}{\psi} bias), bottle at \SI{4500}{\psig}, a stated pad hold of
+\SI{300}{\second} (interface contact time; wetted wall at liquid temperature,
+ullage-side wall at gas temperature); then settled with the press solenoids
+held open until every tank has sat within \SI{4}{\psi} of lockup (wider than the regulator's own \SI{0.5}{\percent} dead band) for
+\SI{0.5}{\second} (at least \SI{2}{\second}, at most \SI{10}{\second}, and a
+note if it never does), valves released into \code{Ready}, \SI{0.5}{\second}
+recorded lead-in as the ignition datum, burn to \SI{0.06}{\kilogram} remaining; the pressure floor is
+taken after \SI{0.3}{\second}, converged samples only. Sweep volumes
+$\{2,3,4,6,8\}\,\si{\litre}$ with the as-built bottle inserted at its real
+volume.
+
+%==============================================================================
+\section{Stated limitations}\label{sec:limits}
+%==============================================================================
+% EXPAND: a paragraph each.
+\begin{enumerate}[label=(L\arabic*)]
+\item \textbf{Liquids priced saturated} (\cref{eq:phaserule}, \cref{rem:phase}).
+      Subcooling is ignored. An \emph{undeclared} sub-critical node falls back
+      to the temperature rule; the drawing reader declares every node it can
+      place.
+\item \textbf{No soak} (\cref{as:soak}).
+\item \textbf{Lumped fitting walls} (\cref{sec:biot}): $\mathrm{Bi}\approx1$,
+      over-credit \SIrange{19}{32}{\percent}, worth $\approx$\SI{3}{\psi} of
+      \SI{54}{\psi} because doubling declared metal moves the answer by
+      \SI{6}{\psi}; fails for thin, sparsely fitted, high-flow geometry.
+\item \textbf{Vapour energy} (\cref{prop:reference}); \textbf{collapse is a lower
+      bound} (\cref{eq:collapse}).
+\item \textbf{Quasi-steady lines} (\cref{as:qs}), reported per branch.
+\item \textbf{Two wall lumps split at a fixed area fraction} (\cref{eq:twowall}).
+      As the level falls, cold wetted wall becomes ullage-side wall; the model
+      does not hand metal from one lump to the other, so a long burn understates
+      how much cold wall the ullage sees.
+\item \textbf{Vessel walls are estimated unless declared.} A drawing may
+      declare $m_w$, $c_w$, $(hA)_w$ on any vessel symbol. Undeclared, a tank
+      takes \SI{0.457}{\kilogram\per\litre}, \SI{900}{\joule\per\kilogram\per\kelvin},
+      $(hA)_w = 12\,(V/\SI{17.5}{\litre})^{2/3}\ \si{\watt\per\kelvin}$; a
+      bottle \SI{1.36}{\kilogram\per\litre} (steel K-bottle), $500$,
+      $20\,(V/\SI{4.687}{\litre})^{2/3}$; each use is reported as an assumption.
+      $(hA)_w$ remains the least-known number on the stand, and the split of
+      thermal effects between bottle wall and line walls depends on it.
+\item \textbf{$x_T=0.7$ default} is the largest choked-gas uncertainty;
+      $K_{\mathrm{turn}}=1.3$ manifold default is unmeasured.
+\item \textbf{Chamber closure is not converged in the cockpit} (one $0.3$ step
+      per tick) and is three fixed-point passes in the chamber itself.
+\item \textbf{Temperature lags the solve by one step}; no viscous heating; no
+      two-phase or flashing feed; a single pressurant species; GSE fill and
+      bottle fill are commanded rates, not solved. The pressurant bottle
+      is charged on the pad by default (optionally it arrives full and cold
+      at the drawing's pressure, a supplier's cylinder); the charge is
+      adiabatic from a bank at ambient, $T_{\mathrm{end}}\to\gamma T_{\mathrm{bank}}$
+      less what the wall takes, and sags as it cools.
+\item \textbf{One-dimensional, lumped}: no manifold maldistribution, injector
+      internal flow, or acoustics.
+\end{enumerate}
+
+%==============================================================================
+\appendix
+\section{Constants}
+%==============================================================================
+\begin{center}
+\small
+\begin{tabular}{llll}
+\toprule
+Symbol / name & Value & Meaning & Where \\
+\midrule
+$\kappa$ & \SI{e-3}{\pascal\second\per\kilogram} & Jacobian slope floor & \cref{sec:regular} \\
+$\mathcal{K}$ & \SI{e8}{\pascal\second\per\kilogram} & choked-row stiffness & \cref{eq:chokerow} \\
+$R_{\mathrm{rev}}$ & \SI{e10}{\pascal\second\per\kilogram} & regulator reverse stiffness & \cref{sec:regulator} \\
+tol & $10^{-6}/10^{-5}/10^{-4}$ & steady / transient / live & \cref{eq:norm} \\
+$\delta$ & $\max(10^{-6}|\mdot|,10^{-9})$ & FD perturbation & \cref{eq:fd} \\
+$\mdot_0$ & \SI{e-3}{\kilogram\per\second} & initial branch flow & --- \\
+$\sigma_{\mathrm{shut}}$ & $10^{-3}$ & valve isolation travel & \cref{sec:reduce} \\
+iterations & $100$ / $120$ & Newton cap, standalone / live (was 30 live) & \cref{sec:rc} \\
+$\mathrm{Re}_{\mathrm{lam}}$ & $2040$ & laminar--turbulent, friction and Nusselt alike & \cref{eq:darcy} \\
+$x_T$ & $0.7$ & default terminal ratio & \cref{eq:iec} \\
+$K_v/C_v$ & $1.1561$ & flow-coefficient pairing & \cref{sec:choking} \\
+$K_{\mathrm{turn}}$ & $1.3$ & manifold port turn & \cref{sec:manifold} \\
+$K_{\mathrm{end}}$ & $0.5$ & flex-hose end fittings & --- \\
+$C_d^\infty, C_d^{\min}$ & $0.6,\,0.15$ & injector defaults & \cref{eq:cd} \\
+band & $0.005$ & regulator shut / tank supply clamp & \cref{sec:regulator}, \cref{sec:rc} \\
+$t_{\min}$ & \SI{1}{\milli\second} & collapse contact-time floor & \cref{eq:collapse} \\
+$h_{\mathrm{film}}, h_{\mathrm{nuc}}, \Delta T_{\mathrm{Leid}}, \Delta T_{\mathrm{onb}}$ & $100, 3000$ \si{\watt\per\square\metre\per\kelvin}; $40, 2$ \si{\kelvin} & wetted-wall regimes, boiling onset (cockpit) & \cref{eq:regimes,eq:wallboil} \\
+$\delta_s, h_{\mathrm{mix}}$ & \SI{1}{\centi\metre}, \SI{5}{\watt\per\square\metre\per\kelvin} & surface layer, layer--bulk mixing (cockpit) & \cref{eq:strat} \\
+$\rho_s$ & \SI{8000}{\kilogram\per\cubic\metre} & stainless & \cref{sec:wall} \\
+$m_{\mathrm{union}},D_{\mathrm{ref}}$ & \SI{113}{\gram}, \SI{10.92}{\milli\metre} & fitting-mass anchor & \cref{sec:wall} \\
+sweeps, tol, min flow & $12$, \SI{0.05}{\kelvin}, \SI{e-6}{\kilogram\per\second} & enthalpy walk & \cref{eq:enthalpy} \\
+NTU cap & $40$ & effectiveness saturation & \cref{eq:ntu} \\
+$\omega$ & $0.5/0.4$ & chamber relaxation, batch (cockpit is root-solved, tol \SI{0.5}{\psi}, 12 it.) & \cref{sec:engineloop} \\
+secant guard & $f'<0.5$ & take secant step & \cref{sec:engineloop} \\
+$\Lambda$ thresholds & $0.20,\,0.10$ & soft / barely metering & --- \\
+rtol, atol & $10^{-6},10^{-9}$ & stiff integrator & --- \\
+$\Gamma$ & $1$ & RC safety & \cref{eq:rc} \\
+$\Delta t_{\max}$, outer step & \SI{0.25}{\second}, \SI{0.02}{\second} & panel tick cap; live outer step (no wall-clock budget) & \cref{sec:rc} \\
+coupled change, mass, cap & $0.04$, $0.10$, $400$ & coupling-step rules & \cref{sec:rc} \\
+sub-steps & $4$; $2\%$ mass, $3\%$ T; cap $200$; 6 halvings & vessel Euler & \cref{sec:rc} \\
+$t_{\mathrm{travel}}$ & \SI{50}{\milli\second} & default actuator & \cref{sec:rc} \\
+dry & \SI{1}{\gram} (live), \SI{60}{\gram} (study) & tank empty & --- \\
+$p_{\mathrm{amb}}$ & \SI{101325}{\pascal} & ambient & \cref{sec:pid} \\
+fill, bore, volume & $0.95$, \SI{152}{\milli\metre}, \SI{17.5}{\litre} & static-head defaults & \cref{sec:pid} \\
+vessel wall defaults & see L6 & tank / bottle & \cref{sec:limits} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Correlation provenance}
+% EXPAND: fill in editions and page references.
+\begin{center}
+\small
+\begin{tabular}{lll}
+\toprule
+Quantity & Source & Adapter \\
+\midrule
+$f_D$ & Colebrook--White; Clamond (exact); others selectable & \code{fluids.friction} \\
+$f_D^{\mathrm{curved}}$ & curved-pipe friction & \code{fluids.friction\_factor\_curved} \\
+Fitting $K$ & Crane TP-410; Hooper 2K; Darby 3K & \code{fluids.fittings} \\
+$C_v\to K$ & \cref{eq:cvk} & \code{fluids.fittings.Cv\_to\_K} \\
+Gas sizing, $\mathcal{C}$ & IEC 60534-2-1 & \code{fluids.control\_valve} (calibrated) \\
+Liquid choke $F_L$ & IEC 60534-2-1 & \code{fluids.control\_valve} \\
+ISO orifice $C$ & ISO 5167 Reader--Harris/Gallagher & \code{fluids.flow\_meter} \\
+Inherent characteristics & linear / equal-\% / quick-opening & \code{fluids.control\_valve} \\
+$\mathrm{Nu}$ & Dittus--Boelter; laminar $3.66$ & \cref{eq:ntu}; checked vs \code{ht} \\
+$c_w(T)$ & NIST cryogenic material data & piecewise linear \\
+$c^*,C_F,T_c,\gamma$ & NASA CEA & EngineDesign cache \\
+$C_d(\mathrm{Re},d)$ & EngineDesign's model, reproduced & \cref{eq:cd} \\
+EOS & Helmholtz reference equations & CoolProp HEOS / BICUBIC \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}

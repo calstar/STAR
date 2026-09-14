@@ -50,6 +50,7 @@ source "$REPO_ROOT/scripts/setup_common.sh"
 PROJECTS=(
   "pid-designer|P&ID Designer|pid-designer/setup.sh|FastAPI + React P&ID editor (quick)"
   "star-openrocket|STAR OpenRocket|star-openrocket/setup.sh|FastAPI + React/three.js CAD centre-of-mass viewer (quick)"
+  "feed-twin|Feed System Twin|feed-twin/setup.sh|Feed system physics (CoolProp/fluids) + FastAPI + React"
   "engine-design|Engine Design|EngineDesign/setup.sh|Python physics pipeline + FastAPI + React"
   "firmware|Firmware|firmware/setup.sh|PlatformIO for ESP32 board firmware"
   "daq-server|DAQ Server|daq-server/setup.sh|C++ + Rust + Python + Node — the big one"
@@ -81,6 +82,7 @@ show_help() {
     --engine-design      Install EngineDesign
     --pid-designer       Install pid-designer
     --star-openrocket     Install star-openrocket
+    --feed-twin          Install feed-twin
     --list               List projects and exit
     --yes, -y            Accept all prompts (non-interactive)
     --no-hook            Don't offer daq-server pre-push format hook
@@ -110,6 +112,7 @@ while [ $# -gt 0 ]; do
     --engine-design)       SELECTED+=("engine-design") ;;
     --pid-designer)        SELECTED+=("pid-designer") ;;
     --star-openrocket)      SELECTED+=("star-openrocket") ;;
+    --feed-twin)           SELECTED+=("feed-twin") ;;
     --list)          DID_LIST=1 ;;
     --yes|-y)        export SETUP_YES=1; PASSTHRU+=("--yes") ;;
     --no-hook)       PASSTHRU+=("--no-hook") ;;

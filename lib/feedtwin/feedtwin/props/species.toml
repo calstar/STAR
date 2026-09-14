@@ -1,0 +1,55 @@
+# The fluids feed-twin knows about.
+#
+# Data, not code. Adding a propellant is an edit here -- no Python changes, no
+# new branch anywhere. `backend_fluid` is what CoolProp calls it; everything the
+# equation of state already knows (molar mass, critical point, triple point) is
+# deliberately absent, because a second copy of it would eventually disagree
+# with the first.
+#
+# v1 scope is LOX/ethanol with nitrogen or helium pressurant. Methane is here
+# because it costs one entry and the team's other engine work is methalox --
+# but nothing is validated for it yet, so it carries no `roles` claim.
+#
+# `chain` is the ordered list of backends to try. Omit it for the default,
+# ["bicubic", "heos"]: tabulated first for speed, the equation of state behind
+# it for the states the tables do not cover.
+
+[oxygen]
+backend_fluid = "Oxygen"
+aliases = ["lox", "o2", "gox"]
+roles = ["oxidizer"]
+
+[ethanol]
+backend_fluid = "Ethanol"
+aliases = ["etoh", "eth", "c2h5oh"]
+roles = ["fuel"]
+
+[nitrogen]
+backend_fluid = "Nitrogen"
+aliases = ["n2", "gn2", "ln2"]
+roles = ["pressurant"]
+
+# Helium is the awkward one, and the reason the gas side cannot assume ideality.
+# At a 4500 psi COPV it sits near Z = 1.15, so an ideal-gas model over-predicts
+# stored mass by roughly 15%; and unlike nitrogen it will not condense into a
+# cold ullage, which makes ullage collapse (Phase 05) a different problem
+# depending on which of these two is in the bottle.
+[helium]
+backend_fluid = "Helium"
+aliases = ["he", "ghe"]
+roles = ["pressurant"]
+
+[methane]
+backend_fluid = "Methane"
+aliases = ["ch4", "lch4", "lng"]
+
+# Water is here for cold flow, not for flight. A water flow through the real
+# plumbing is the cheapest test there is, and the point of modelling it is that
+# the answer differs: water is 1.6x less dense than LOX and 1.4x more dense than
+# ethanol, so the same hardware at the same tank pressure gives a different flow
+# rate and a different injector dp. Predicting that difference before the test
+# is what makes a cold flow a check on the model rather than just a leak hunt.
+[water]
+backend_fluid = "Water"
+aliases = ["h2o", "deionized water", "di water"]
+roles = ["fuel"]

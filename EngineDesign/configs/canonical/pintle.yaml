@@ -33,7 +33,7 @@ chamber_geometry:
   Cf: 1.5422822280584674
   Lstar: 1.239905396733828
   chamber_diameter: 0.11344154349849075
-  design_MR: 2.55
+  design_MR: 1.4
   design_pressure: 2413166.0
   design_thrust: 7000.0
   exit_diameter: 0.101
@@ -173,11 +173,17 @@ feed_system:
   # under-predicted LOX feed loss by ~3.8x (dP ~ 1/A^2).
   fuel:
     line_size: 3/8_NPT
+    # Tank outlet to injector manifold. Sets the chug-model line inertance (length/area);
+    # 0.305 m is the value the model used to carry hardcoded -- measure it on the vehicle.
+    length: 0.305
     K0: 2.0
     K1: 0.0
     phi_type: none
   oxidizer:
     line_size: 3/8_NPT
+    # Tank outlet to injector manifold. Sets the chug-model line inertance (length/area);
+    # 0.305 m is the value the model used to carry hardcoded -- measure it on the vehicle.
+    length: 0.305
     K0: 2.0
     K1: 0.0
     phi_type: none
@@ -421,7 +427,6 @@ regen_cooling:
   d_outlet: null
   enabled: false
   gas_turbulence_intensity: 0.1
-  hot_gas_cp: 2200.0
   hot_gas_prandtl: 0.7
   hot_gas_thermal_conductivity: 0.12
   hot_gas_viscosity: 4.0e-05

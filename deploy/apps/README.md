@@ -31,7 +31,8 @@ Service URL `http://caddy:80`:
 | *(none / apex)* | `starberkeley.org` → landing | `http://caddy:80` |
 | `engine-design` | `starberkeley.org` | `http://caddy:80` |
 | `pid-designer` | `starberkeley.org` | `http://caddy:80` |
-| `star-openrocket` | `starberkeley.org` | `http://caddy:80` |
+| `openrocket` | `starberkeley.org` | `http://caddy:80` |
+| `feed-twin` | `starberkeley.org` | `http://caddy:80` |
 | `daq-viewer` | `starberkeley.org` | `http://caddy:80` |
 
 Plus one **SSH** route on the same tunnel for remote admin — the `ssh://` scheme

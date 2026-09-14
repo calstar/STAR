@@ -76,7 +76,6 @@ regen_cooling:
   n_segments: 20
   gas_turbulence_intensity: 0.1
   coolant_turbulence_intensity: 0.05
-  hot_gas_cp: 2200.0
   recovery_factor: null
 film_cooling:
   enabled: false

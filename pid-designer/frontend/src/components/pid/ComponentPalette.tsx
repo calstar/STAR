@@ -1,6 +1,6 @@
 import { COMPONENT_DEFS, type ComponentType } from './types';
 
-const GROUP_ORDER = ['Sensors', 'Valves', 'Flow Control', 'Hardware'] as const;
+const GROUP_ORDER = ['Sensors', 'Valves', 'Flow Control', 'Hardware', 'Supplies', 'Annotation'] as const;
 
 function PaletteSymbol({ type }: { type: ComponentType }) {
   switch (type) {
@@ -65,17 +65,51 @@ function PaletteSymbol({ type }: { type: ComponentType }) {
           <ellipse cx="16" cy="36" rx="13" ry="5" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
         </svg>
       );
-    case 'INJECTOR':
+    case 'ENGINE':
       return (
-        <svg width="32" height="44" viewBox="0 0 32 44">
-          <rect x="6" y="2" width="20" height="10" rx="1" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
-          <polygon points="6,12 26,12 20,40 12,40" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
+        <svg width="30" height="44" viewBox="0 0 30 44">
+          <rect x="5" y="2" width="20" height="9" rx="1" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
+          <line x1="5" y1="11" x2="25" y2="11" stroke="#94a3b8" strokeWidth="1" />
+          <path d="M7,11 L7,22 Q7,27 13,30 L17,30 Q23,27 23,22 L23,11" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
+          <path d="M13,30 Q10,36 7,42 L23,42 Q20,36 17,30 Z" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
+        </svg>
+      );
+    case 'MANIFOLD':
+      return (
+        <svg width="34" height="20" viewBox="0 0 34 20">
+          <rect x="1" y="4" width="32" height="12" rx="2" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
+          <line x1="3" y1="10" x2="31" y2="10" stroke="#94a3b8" strokeWidth="1" strokeDasharray="2 2" />
+          {[9, 17, 25].map(x => <line key={x} x1={x} y1="16" x2={x} y2="19" stroke="#94a3b8" strokeWidth="1.2" />)}
         </svg>
       );
     case 'JUNCTION':
       return (
         <svg width="20" height="20" viewBox="0 0 20 20">
           <circle cx="10" cy="10" r="6" fill="#94a3b8" stroke="#94a3b8" strokeWidth="1" />
+        </svg>
+      );
+    case 'KBOTTLE':
+      return (
+        <svg width="22" height="44" viewBox="0 0 22 44">
+          <rect x="8" y="1" width="6" height="5" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.1" />
+          <path d="M3,14 Q3,7 11,6 Q19,7 19,14 L19,41 Q19,43 17,43 L5,43 Q3,43 3,41 Z"
+            fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
+        </svg>
+      );
+    case 'DEWAR':
+      return (
+        <svg width="30" height="40" viewBox="0 0 30 40">
+          <rect x="12" y="1" width="6" height="4" fill="#1e293b" stroke="#94a3b8" strokeWidth="1" />
+          <rect x="2" y="5" width="26" height="33" rx="7" fill="#1e293b" stroke="#94a3b8" strokeWidth="1.2" />
+          <rect x="6" y="9" width="18" height="25" rx="5" fill="none" stroke="#94a3b8" strokeWidth="0.9" strokeDasharray="2 2" />
+        </svg>
+      );
+    case 'REGION':
+      return (
+        <svg width="34" height="26" viewBox="0 0 34 26">
+          <rect x="2" y="5" width="30" height="19" rx="3" fill="#64748b14" stroke="#64748b" strokeWidth="1.2" strokeDasharray="4 2.5" />
+          <rect x="5" y="1" width="16" height="8" rx="1" fill="#0f172a" />
+          <text x="7" y="7.5" fontSize="6" fill="#94a3b8" fontFamily="monospace">GSE</text>
         </svg>
       );
     case 'TEXT':
@@ -96,14 +130,17 @@ export function ComponentPalette() {
     items: COMPONENT_DEFS.filter(d => d.group === group),
   }));
 
-  const onDragStart = (e: React.DragEvent, type: ComponentType) => {
-    e.dataTransfer.setData('application/pid-type', type);
+  // The *entry* id travels, not the component type. "PT (high press)" and
+  // "PT (low press)" are one component with different presets, and the drop
+  // handler needs to know which of the two was picked.
+  const onDragStart = (e: React.DragEvent, id: string) => {
+    e.dataTransfer.setData('application/pid-entry', id);
     e.dataTransfer.effectAllowed = 'copy';
   };
 
   return (
-    <aside className="w-52 shrink-0 bg-[#0f172a] border-r border-[#1e293b] overflow-y-auto flex flex-col">
-      <div className="p-3 border-b border-[#1e293b]">
+    <aside className="w-52 shrink-0 bg-[var(--color-bg-primary)] border-r border-[var(--color-border)] overflow-y-auto flex flex-col">
+      <div className="p-3 border-b border-[var(--color-border)]">
         <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Components</h2>
       </div>
       {grouped.map(({ group, items }) => (
@@ -111,11 +148,11 @@ export function ComponentPalette() {
           <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1 px-1">{group}</p>
           {items.map(def => (
             <div
-              key={def.type}
+              key={def.id}
               draggable
-              onDragStart={e => onDragStart(e, def.type)}
+              onDragStart={e => onDragStart(e, def.id)}
               title={def.fullName}
-              className="flex items-center gap-2 px-2 py-1.5 rounded cursor-grab active:cursor-grabbing hover:bg-[#1e293b] transition-colors"
+              className="flex items-center gap-2 px-2 py-1.5 rounded cursor-grab active:cursor-grabbing hover:bg-[var(--color-bg-tertiary)] transition-colors"
             >
               <div className="flex items-center justify-center w-9 h-9 shrink-0">
                 <PaletteSymbol type={def.type} />

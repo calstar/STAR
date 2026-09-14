@@ -465,9 +465,10 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure }: Resul
         <Section
           title="Stability Analysis"
           icon={
-            stability.is_stable 
-              ? <span className="text-green-400">🟢</span>
-              : <span className="text-red-400">🔴</span>
+            <span
+              className={`inline-block w-2.5 h-2.5 rounded-full ${stability.is_stable ? 'bg-green-400' : 'bg-red-400'}`}
+              aria-hidden
+            />
           }
         >
           <div className="space-y-4">

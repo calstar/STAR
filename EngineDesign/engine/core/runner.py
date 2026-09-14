@@ -472,7 +472,7 @@ class PintleEngineRunner:
             "stability_state": "unstable",
             "stability_score": 0.0,
             "is_stable": False,
-            "chugging": {"frequency": 0.0, "stability_margin": 0.0, "stability_index": 0.0, "period": 0.0, "tau_residence": 0.0, "Lstar": 0.0},
+            "chugging": {"frequency": 0.0, "stability_margin": 0.0, "period": 0.0, "tau_residence": 0.0, "Lstar": 0.0},
             "acoustic": {"stability_margin": 0.0, "modes": {}, "longitudinal_modes": [], "transverse_modes": [], "sound_speed": 0.0},
             "feed_system": {"pogo_frequency": 0.0, "surge_frequency": 0.0, "water_hammer_margin": 0.0, "stability_margin": 0.0, "sound_speed": 0.0},
             "mode_coupling": [],

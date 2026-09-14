@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { PressureProfileForm } from './PressureProfileForm';
 import { SegmentCurveBuilder } from './SegmentCurveBuilder';
 import { PressureCurveChart } from './PressureCurveChart';
@@ -141,6 +141,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
   const [duration, setDuration] = useState(() => getConfigBurnTime(config));
   const [nSteps, setNSteps] = useState(101);
   const [loxProfile, setLoxProfile] = useState<ProfileParams>(defaultLoxProfile);
+  const lastPressureKey = useRef<string | null>(null);
   const [fuelProfile, setFuelProfile] = useState<ProfileParams>(defaultFuelProfile);
 
   // Segment builder state
@@ -231,6 +232,26 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
     }
     if (typeof fuelTank?.initial_pressure_psi === 'number') {
       setFuelInitialPressure(fuelTank.initial_pressure_psi);
+    }
+
+    // The Simple Profile starts from the design's own tank pressures. It used to start from a
+    // 750/600 psi constant regardless of the loaded config, so the first time-series a user ran
+    // was for some other rocket's tanks. Re-seeded only when the config's pressures change, so a
+    // profile the user is editing is not clobbered by an unrelated autosave.
+    const pKey = `${loxTank?.initial_pressure_psi ?? ''}|${fuelTank?.initial_pressure_psi ?? ''}`;
+    if (lastPressureKey.current !== pKey) {
+      lastPressureKey.current = pKey;
+      const seed = (p0: unknown, set: typeof setLoxProfile) => {
+        if (typeof p0 !== 'number' || !(p0 > 0)) return;
+        const start = Math.round(p0 * 10) / 10;
+        set((prev) => ({
+          ...prev,
+          start_pressure_psi: start,
+          end_pressure_psi: prev.end_pressure_psi < start ? prev.end_pressure_psi : Math.round(0.7 * start),
+        }));
+      };
+      seed(loxTank?.initial_pressure_psi, setLoxProfile);
+      seed(fuelTank?.initial_pressure_psi, setFuelProfile);
     }
   }, [config]);
 

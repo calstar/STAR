@@ -31,4 +31,4 @@ export type {
   ReleaseVersion,
   TeamUser,
 } from './api';
-export { WARN_AT_S, secondsLeft, isExpiringSoon, shouldBeat, isUnexpectedLoss, mmss } from './checkoutPolicy';
+export { WARN_AT_S, secondsLeft, isExpiringSoon, shouldBeat, isUnexpectedLoss, mmss, isLocalHost } from './checkoutPolicy';

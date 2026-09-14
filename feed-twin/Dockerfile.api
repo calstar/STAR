@@ -1,0 +1,39 @@
+# Build context is the REPO ROOT, not feed-twin/: the backend is built on
+# lib/feedtwin, the physics core it shares with EngineDesign. See the
+# feed-twin-api service in docker-compose.yml (Phase 09) and the .dockerignore
+# that keeps the context from ballooning.
+FROM python:3.12-slim
+WORKDIR /app
+
+# Env, not CLI flags: pip installs an sdist's build dependencies by spawning a
+# fresh subprocess that inherits no command-line options, so --timeout/--retries
+# there would silently fall back to the stock 15s. Env vars reach it.
+#
+# CoolProp and fluids are large sdists; the generous timeouts matter more here
+# than in the other design tools, whose backends are pure FastAPI.
+ENV PIP_RETRIES=10 \
+    PIP_TIMEOUT=120 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_INPUT=1
+
+COPY feed-twin/requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
+
+# The physics core: properties, components, solvers. Copied before the app so a
+# change to the app alone reuses this layer -- which matters, because installing
+# it pulls CoolProp, fluids, ht, numpy and scipy and is by far the slowest step.
+COPY lib/feedtwin/ /feedtwin/
+RUN --mount=type=cache,target=/root/.cache/pip pip install /feedtwin
+
+# Fail the build rather than the deploy if the physics core did not land. An
+# image that starts and then 500s on every solve is a worse outcome than an
+# image that never builds, and this is the phase whose whole claim is that the
+# import works inside this container.
+RUN python -c "import feedtwin; print('feedtwin', feedtwin.__version__)"
+
+COPY feed-twin/backend/ ./backend/
+
+ENV PYTHONPATH=/app
+EXPOSE 8003
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8003"]

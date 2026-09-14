@@ -337,3 +337,67 @@ describe('losing it', () => {
     expect(view.result.current.held).toBe(true);
   });
 });
+
+describe('on a developer\'s own machine', () => {
+  // There is nobody to hand the design to, so every rule that frees it for a
+  // colleague is friction: the user reported being locked out of their own
+  // diagram every 30 s and having to press Take to keep working. `local` is
+  // the option; on a real page it defaults from the hostname.
+
+  it('takes the design on open', async () => {
+    const api = stubApi();
+    const view = renderHook(() => useCheckout({ api, ref: REF, local: true }));
+    await tick(0);
+    expect(api.takeCheckout).toHaveBeenCalledTimes(1);
+    expect(view.result.current.held).toBe(true);
+  });
+
+  it('deployed, opening never takes it', async () => {
+    // The default, and the reason the default is `false` rather than
+    // `isLocalHost(location.hostname)`: jsdom and every E2E browser run on
+    // localhost, so a hostname default put suites that test the deployed
+    // model into local mode instead.
+    const api = stubApi();
+    const view = renderHook(() => useCheckout({ api, ref: REF }));
+    await tick(0);
+    expect(api.takeCheckout).not.toHaveBeenCalled();
+    expect(view.result.current.held).toBe(false);
+  });
+
+  it('beats every tick with nobody touching anything', async () => {
+    const api = stubApi(MINE);
+    await mountAlreadyHeld(api, { local: true });
+    api.beatCheckout.mockClear();
+
+    await tick(20 * 60_000);
+
+    expect(api.beatCheckout).toHaveBeenCalled();
+  });
+
+  it('takes it straight back when it lapses, and says nothing', async () => {
+    const api = stubApi();
+    const view = renderHook(() => useCheckout({ api, ref: REF, local: true }));
+    await tick(0);
+    expect(view.result.current.held).toBe(true);
+
+    api.set(FREE); // the server let it go
+    await tick(15_000);
+
+    expect(api.takeCheckout).toHaveBeenCalledTimes(2);
+    expect(view.result.current.held).toBe(true);
+    expect(view.result.current.lostUnexpectedly).toBe(false);
+  });
+
+  it('takes it back after a 423 too', async () => {
+    const api = stubApi();
+    const view = renderHook(() => useCheckout({ api, ref: REF, local: true }));
+    await tick(0);
+    api.beatCheckout.mockImplementationOnce(async () => { throw new ApiError('lapsed', 423); });
+
+    await tick(15_000);
+
+    expect(api.takeCheckout).toHaveBeenCalledTimes(2);
+    expect(view.result.current.held).toBe(true);
+    expect(view.result.current.lostUnexpectedly).toBe(false);
+  });
+});

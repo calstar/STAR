@@ -542,7 +542,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
             </button>
             
             <label className="w-full px-6 py-3 bg-green-500 hover:bg-green-600 text-white font-semibold rounded-lg cursor-pointer transition-colors flex items-center justify-center gap-2">
-              📁 Run from Layer 2 Config File
+              Run from Layer 2 Config File
               <input
                 disabled={readOnly}
                 type="file"
@@ -689,7 +689,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                   Thrust Tracking {isLoading && <span className="text-green-400 text-xs">(Live)</span>}
                 </h3>
                 <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
+                  <LineChart margin={{ top: 5, right: 20, left: 10, bottom: 20 }} data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
                     time: t,
                     reference: results ? results.thrust_ref[i] : (realtimeData[i]?.thrust_ref || 0),
                     actual: results ? results.thrust_actual[i] : (realtimeData[i]?.thrust_actual || 0),
@@ -698,7 +698,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                     <XAxis dataKey="time" label={{ value: 'Time [s]', position: 'insideBottom', offset: -5 }} />
                     <YAxis label={{ value: 'Thrust [N]', angle: -90, position: 'insideLeft' }} />
                     <Tooltip />
-                    <Legend />
+                    <Legend verticalAlign="top" height={30} />
                     <Line type="monotone" dataKey="reference" stroke="#8884d8" name="Reference" strokeWidth={2} />
                     <Line type="monotone" dataKey="actual" stroke="#82ca9d" name="Actual" strokeWidth={2} />
                   </LineChart>
@@ -711,7 +711,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                   Pressures {isLoading && <span className="text-green-400 text-xs">(Live)</span>}
                 </h3>
                 <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
+                  <LineChart margin={{ top: 5, right: 20, left: 10, bottom: 20 }} data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
                     time: t,
                     P_copv: (results ? results.P_copv[i] : (realtimeData[i]?.P_copv || 0)) / 6894.76,
                     P_reg: (results ? results.P_reg[i] : (realtimeData[i]?.P_reg || 0)) / 6894.76,
@@ -723,7 +723,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                     <XAxis dataKey="time" label={{ value: 'Time [s]', position: 'insideBottom', offset: -5 }} />
                     <YAxis label={{ value: 'Pressure [psi]', angle: -90, position: 'insideLeft' }} />
                     <Tooltip />
-                    <Legend />
+                    <Legend verticalAlign="top" height={30} />
                     <Line type="monotone" dataKey="P_copv" stroke="#ff7300" name="COPV" strokeWidth={2} />
                     <Line type="monotone" dataKey="P_reg" stroke="#00ff00" name="Regulator" strokeWidth={2} />
                     <Line type="monotone" dataKey="P_u_fuel" stroke="#0088fe" name="Fuel Ullage" strokeWidth={2} />
@@ -739,7 +739,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                   Actuation Commands {isLoading && <span className="text-green-400 text-xs">(Live)</span>}
                 </h3>
                 <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
+                  <LineChart margin={{ top: 5, right: 20, left: 10, bottom: 20 }} data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
                     time: t,
                     duty_F: (results ? results.duty_F[i] : (realtimeData[i]?.duty_F || 0)) * 100,
                     duty_O: (results ? results.duty_O[i] : (realtimeData[i]?.duty_O || 0)) * 100,
@@ -748,7 +748,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                     <XAxis dataKey="time" label={{ value: 'Time [s]', position: 'insideBottom', offset: -5 }} />
                     <YAxis label={{ value: 'Duty Cycle [%]', angle: -90, position: 'insideLeft' }} domain={[0, 100]} />
                     <Tooltip />
-                    <Legend />
+                    <Legend verticalAlign="top" height={30} />
                     <Line type="monotone" dataKey="duty_F" stroke="#ff7300" name="Fuel Duty" strokeWidth={2} />
                     <Line type="monotone" dataKey="duty_O" stroke="#0088fe" name="Ox Duty" strokeWidth={2} />
                   </LineChart>
@@ -761,7 +761,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                   Mixture Ratio {isLoading && <span className="text-green-400 text-xs">(Live)</span>}
                 </h3>
                 <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
+                  <LineChart margin={{ top: 5, right: 20, left: 10, bottom: 20 }} data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
                     time: t,
                     MR: results ? results.MR[i] : (realtimeData[i]?.MR || 0),
                   }))}>
@@ -780,7 +780,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                   Value Function (DDP Objective) {isLoading && <span className="text-green-400 text-xs">(Live)</span>}
                 </h3>
                 <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
+                  <LineChart margin={{ top: 5, right: 20, left: 10, bottom: 20 }} data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
                     time: t,
                     value: results ? (results.value_function?.[i] || 0) : (realtimeData[i]?.value_function || 0),
                   }))}>
@@ -799,7 +799,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                   Control Effort {isLoading && <span className="text-green-400 text-xs">(Live)</span>}
                 </h3>
                 <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
+                  <LineChart margin={{ top: 5, right: 20, left: 10, bottom: 20 }} data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
                     time: t,
                     effort: results ? (results.control_effort?.[i] || 0) : (realtimeData[i]?.control_effort || 0),
                   }))}>
@@ -818,7 +818,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                   Tank States (Ullage Volumes) {isLoading && <span className="text-green-400 text-xs">(Live)</span>}
                 </h3>
                 <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
+                  <LineChart margin={{ top: 5, right: 20, left: 10, bottom: 20 }} data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
                     time: t,
                     V_u_fuel: results ? (results.V_u_fuel?.[i] || 0) : (realtimeData[i]?.V_u_fuel || 0),
                     V_u_ox: results ? (results.V_u_ox?.[i] || 0) : (realtimeData[i]?.V_u_ox || 0),
@@ -827,7 +827,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                     <XAxis dataKey="time" label={{ value: 'Time [s]', position: 'insideBottom', offset: -5 }} />
                     <YAxis label={{ value: 'Volume [m³]', angle: -90, position: 'insideLeft' }} />
                     <Tooltip />
-                    <Legend />
+                    <Legend verticalAlign="top" height={30} />
                     <Line type="monotone" dataKey="V_u_fuel" stroke="#ff7300" name="Fuel Ullage" strokeWidth={2} />
                     <Line type="monotone" dataKey="V_u_ox" stroke="#0088fe" name="Ox Ullage" strokeWidth={2} />
                   </LineChart>
@@ -838,7 +838,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
               <div className="p-5 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
                 <h3 className="text-lg font-semibold mb-4 text-[var(--color-text-primary)]">Mass Flow Rates</h3>
                 <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
+                  <LineChart margin={{ top: 5, right: 20, left: 10, bottom: 20 }} data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
                     time: t,
                     mdot_F: results ? (results.mdot_F?.[i] || 0) : (realtimeData[i]?.mdot_F || 0),
                     mdot_O: results ? (results.mdot_O?.[i] || 0) : (realtimeData[i]?.mdot_O || 0),
@@ -847,7 +847,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                     <XAxis dataKey="time" label={{ value: 'Time [s]', position: 'insideBottom', offset: -5 }} />
                     <YAxis label={{ value: 'Mass Flow [kg/s]', angle: -90, position: 'insideLeft' }} />
                     <Tooltip />
-                    <Legend />
+                    <Legend verticalAlign="top" height={30} />
                     <Line type="monotone" dataKey="mdot_F" stroke="#ff7300" name="Fuel" strokeWidth={2} />
                     <Line type="monotone" dataKey="mdot_O" stroke="#0088fe" name="Oxidizer" strokeWidth={2} />
                   </LineChart>
@@ -859,7 +859,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                 <div className="p-5 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
                   <h3 className="text-lg font-semibold mb-4 text-[var(--color-text-primary)]">Altitude & Velocity</h3>
                   <ResponsiveContainer width="100%" height={300}>
-                    <LineChart data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
+                    <LineChart margin={{ top: 5, right: 20, left: 10, bottom: 20 }} data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
                       time: t,
                       altitude: results ? results.altitude[i] : (realtimeData[i]?.altitude || 0),
                       velocity: results ? results.velocity[i] : (realtimeData[i]?.velocity || 0),
@@ -869,7 +869,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
                       <YAxis yAxisId="left" label={{ value: 'Altitude [m]', angle: -90, position: 'insideLeft' }} />
                       <YAxis yAxisId="right" orientation="right" label={{ value: 'Velocity [m/s]', angle: 90, position: 'insideRight' }} />
                       <Tooltip />
-                      <Legend />
+                      <Legend verticalAlign="top" height={30} />
                       <Line yAxisId="left" type="monotone" dataKey="altitude" stroke="#8884d8" name="Altitude" strokeWidth={2} />
                       <Line yAxisId="right" type="monotone" dataKey="velocity" stroke="#82ca9d" name="Velocity" strokeWidth={2} />
                     </LineChart>

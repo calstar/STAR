@@ -267,6 +267,15 @@ class ControllerConfig:
     # Regulator model
     reg_setpoint: Optional[float] = None  # Regulator setpoint [Pa] (None = derived from COPV)
     reg_ratio: float = 0.8          # P_reg / P_copv ratio if setpoint not specified
+    # Pressurisation-path hardware. Previously literals inside dynamics.step(); surfaced here so
+    # a vehicle with a different regulator or solenoid can be modelled without editing code.
+    # See docs/adr/0001 -- this chain is one of the feed models lib/feedtwin absorbs.
+    gamma_gas: float = 1.4          # Pressurant specific heat ratio (N2)
+    Cd_regulator: float = 0.7       # Discharge coefficient, regulator orifice
+    Cd_valve: float = 0.65          # Discharge coefficient, solenoid valve orifice
+    A_regulator: float = 2e-5       # Regulator orifice area [m^2]
+    A_valve_F: float = 5e-5         # Fuel solenoid valve flow area [m^2]
+    A_valve_O: float = 5e-5         # Oxidiser solenoid valve flow area [m^2]
     
     # Ullage pressurization flow coefficients [1/s]
     alpha_F: float = 10.0           # Fuel pressurization flow coefficient

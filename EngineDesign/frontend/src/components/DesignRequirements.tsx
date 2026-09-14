@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getInjectorSchema } from '../api/client';
+import type { EngineConfig } from '../api/client';
 import { useConfigChanged } from '../lib/configBus';
 import { useReadOnly } from '@stardesign-ui';
 import type { DesignRequirements as DesignRequirementsType, FrozenParameters } from '../api/client';
@@ -34,31 +35,47 @@ interface DesignRequirementsProps {
   requirements: DesignRequirementsType;
   onRequirementsChange: (next: DesignRequirementsType) => void;
   onSave: () => void;
+  /** Live config, for the propellant's CEA table range under the O/F target. */
+  config?: EngineConfig | null;
+}
+
+/** [lo, hi] of the loaded propellant's CEA mixture-ratio table, or null when unknown. */
+function ceaMrRange(config?: EngineConfig | null): [number, number] | null {
+  const cea = (config?.combustion as { cea?: { MR_range?: unknown } } | undefined)?.cea;
+  const r = cea?.MR_range;
+  if (Array.isArray(r) && r.length === 2 && Number.isFinite(Number(r[0])) && Number.isFinite(Number(r[1]))) {
+    return [Number(r[0]), Number(r[1])];
+  }
+  return null;
 }
 
 // Metadata for every injector-specific frozen field (both families). The frozen-injector UI renders
 // ONLY the fields the backend says apply to the current injector type (INJECTOR_PARITY_PLAN W5), so
 // switching to doublet shows doublet freezes — not pintle ones.
 const FROZEN_INJECTOR_META: Record<string, { label: string; def: number; min: number; max: number; step: number; int?: boolean }> = {
-  d_pintle_tip_mm: { label: 'Pintle Tip Ø [mm]', def: 25, min: 10, max: 50, step: 1 },
-  h_gap_mm: { label: 'Gap Height [mm]', def: 1.0, min: 0.2, max: 3.0, step: 0.1 },
-  n_orifices: { label: '# LOX Orifices', def: 16, min: 4, max: 48, step: 2, int: true },
-  d_orifice_mm: { label: 'Orifice Ø [mm]', def: 2.5, min: 0.5, max: 8, step: 0.1 },
-  n_doublets: { label: '# Doublets', def: 20, min: 5, max: 40, step: 1, int: true },
-  d_jet_O_mm: { label: 'LOX Jet Ø [mm]', def: 2.0, min: 0.5, max: 6, step: 0.1 },
-  d_jet_F_mm: { label: 'Fuel Jet Ø [mm]', def: 2.0, min: 0.5, max: 6, step: 0.1 },
-  impingement_angle_O_deg: { label: 'LOX Imp. Angle [°]', def: 50, min: 20, max: 90, step: 1 },
-  impingement_angle_F_deg: { label: 'Fuel Imp. Angle [°]', def: 60, min: 20, max: 90, step: 1 },
-  spacing_O_mm: { label: 'LOX Spacing [mm]', def: 6, min: 1, max: 20, step: 0.5 },
-  spacing_F_mm: { label: 'Fuel Spacing [mm]', def: 6, min: 1, max: 20, step: 0.5 },
+  d_pintle_tip_mm: { label: 'Pintle Tip Ø [mm]', def: 25, min: 1, max: 500, step: 1 },
+  h_gap_mm: { label: 'Gap Height [mm]', def: 1.0, min: 0.05, max: 20, step: 0.1 },
+  n_orifices: { label: '# LOX Orifices', def: 16, min: 1, max: 400, step: 1, int: true },
+  d_orifice_mm: { label: 'Orifice Ø [mm]', def: 2.5, min: 0.1, max: 30, step: 0.1 },
+  n_doublets: { label: '# Doublets', def: 20, min: 1, max: 400, step: 1, int: true },
+  d_jet_O_mm: { label: 'LOX Jet Ø [mm]', def: 2.0, min: 0.1, max: 30, step: 0.1 },
+  d_jet_F_mm: { label: 'Fuel Jet Ø [mm]', def: 2.0, min: 0.1, max: 30, step: 0.1 },
+  impingement_angle_O_deg: { label: 'LOX Imp. Angle [°]', def: 50, min: 1, max: 90, step: 1 },
+  impingement_angle_F_deg: { label: 'Fuel Imp. Angle [°]', def: 60, min: 1, max: 90, step: 1 },
+  spacing_O_mm: { label: 'LOX Spacing [mm]', def: 6, min: 0.5, max: 200, step: 0.5 },
+  spacing_F_mm: { label: 'Fuel Spacing [mm]', def: 6, min: 0.5, max: 200, step: 0.5 },
 };
 
 export function DesignRequirements({
   requirements,
   onRequirementsChange,
   onSave,
+  config,
 }: DesignRequirementsProps) {
   const readOnly = useReadOnly();
+  const mrRange = ceaMrRange(config);
+  const ofOutsideTable = mrRange !== null && Number.isFinite(requirements.optimal_of_ratio)
+    && (requirements.optimal_of_ratio < mrRange[0] || requirements.optimal_of_ratio > mrRange[1]);
   // Which injector-specific frozen fields to show — fetched from the backend authority so the UI
   // matches the live injector type (no hardcoded pintle assumptions).
   const [injectorFrozenFields, setInjectorFrozenFields] = useState<string[]>([]);
@@ -126,7 +143,7 @@ export function DesignRequirements({
 
       {/* Performance Targets */}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">🎯 Performance Targets</h3>
+        <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">Performance Targets</h3>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
@@ -137,8 +154,7 @@ export function DesignRequirements({
               value={requirements.target_thrust}
               onChange={(e) => updateField('target_thrust', parseFloat(e.target.value))}
               className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
-              min="100"
-              max="100000"
+              min="1"
               step="100"
             />
             <p className="text-xs text-[var(--color-text-secondary)] mt-1">Peak thrust during burn. Engine will be sized to achieve this.</p>
@@ -154,8 +170,7 @@ export function DesignRequirements({
               placeholder="leave blank to let Pc float"
               onChange={(e) => updateField('target_chamber_pressure_psi', e.target.value === '' ? null : parseFloat(e.target.value))}
               className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
-              min="50"
-              max="2000"
+              min="1"
               step="25"
             />
             <p className="text-xs text-[var(--color-text-secondary)] mt-1">
@@ -172,8 +187,7 @@ export function DesignRequirements({
               value={requirements.target_apogee || 3048}
               onChange={(e) => updateField('target_apogee', parseFloat(e.target.value))}
               className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
-              min="100"
-              max="200000"
+              min="1"
               step="100"
             />
             <p className="text-xs text-[var(--color-text-secondary)] mt-1">Target altitude above ground level. Optimizer will solve for propellant masses.</p>
@@ -188,13 +202,18 @@ export function DesignRequirements({
               value={requirements.optimal_of_ratio}
               onChange={(e) => updateField('optimal_of_ratio', parseFloat(e.target.value))}
               className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
-              min="1.5"
-              max="4.0"
+              min="0.1"
               step="0.1"
             />
             <p className="text-xs text-[var(--color-text-secondary)] mt-1">
               Target oxidizer-to-fuel mixture ratio from CEA or mission analysis. Layer 1 rescales impinging seed jets to this MR at run start; the optimizer still adjusts jet diameters.
             </p>
+            {mrRange && (
+              <p className={`text-xs mt-1 ${ofOutsideTable ? 'text-red-400' : 'text-[var(--color-text-muted)]'}`}>
+                CEA table for {(config?.propellant_preset as string | undefined) ?? 'this propellant'}: {mrRange[0]}–{mrRange[1]}
+                {ofOutsideTable ? ' — outside the table; Layer 1 will refuse to run' : ''}
+              </p>
+            )}
           </div>
 
           <div>
@@ -206,9 +225,8 @@ export function DesignRequirements({
               value={requirements.target_burn_time}
               onChange={(e) => updateField('target_burn_time', parseFloat(e.target.value))}
               className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
-              min="1"
-              max="60"
-              step="1"
+              min="0.1"
+              step="0.5"
             />
             <p className="text-xs text-[var(--color-text-secondary)] mt-1">Design burn time. Flight sim will truncate if propellant depletes earlier.</p>
           </div>
@@ -217,7 +235,7 @@ export function DesignRequirements({
 
       {/* Tank Pressures */}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">🔋 Tank Pressures</h3>
+        <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">Tank Pressures</h3>
         <div className="mb-4 flex items-center gap-3">
           <input
             type="checkbox"
@@ -257,8 +275,7 @@ export function DesignRequirements({
                 });
               }}
               className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
-              min="100"
-              max="5000"
+              min="1"
               step="25"
             />
             <p className="text-xs text-[var(--color-text-secondary)] mt-1">Maximum operating pressure in LOX tank.</p>
@@ -278,8 +295,7 @@ export function DesignRequirements({
                   ? 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] cursor-not-allowed opacity-50'
                   : 'bg-[var(--color-bg-primary)] border-[var(--color-border)] text-[var(--color-text-primary)]'
               }`}
-              min="100"
-              max="5000"
+              min="1"
               step="25"
             />
             <p className="text-xs text-[var(--color-text-secondary)] mt-1">
@@ -291,7 +307,7 @@ export function DesignRequirements({
 
       {/* Geometry Constraints */}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">📏 Geometry Constraints</h3>
+        <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">Geometry Constraints</h3>
         {/* Stock-size snapping. Ablative sleeve / chamber tube / case come in fixed sizes, so a
             continuous optimum like 4.2" is not purchasable. Snapping INSIDE the search means the
             returned design is already buildable, instead of being rounded afterwards (which moves
@@ -388,8 +404,7 @@ export function DesignRequirements({
               value={requirements.max_engine_length}
               onChange={(e) => updateField('max_engine_length', parseFloat(e.target.value))}
               className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
-              min="0.1"
-              max="3.0"
+              min="0.01"
               step="0.05"
             />
             <p className="text-xs text-[var(--color-text-secondary)] mt-1">Maximum total engine length (chamber + nozzle). Must fit in vehicle.</p>
@@ -404,8 +419,7 @@ export function DesignRequirements({
               value={requirements.max_chamber_outer_diameter}
               onChange={(e) => updateField('max_chamber_outer_diameter', parseFloat(e.target.value))}
               className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
-              min="0.05"
-              max="1.0"
+              min="0.01"
               step="0.01"
             />
             <p className="text-xs text-[var(--color-text-secondary)] mt-1">Maximum chamber outer diameter (including wall thickness and cooling jacket).</p>
@@ -420,8 +434,7 @@ export function DesignRequirements({
               value={requirements.max_nozzle_exit_diameter}
               onChange={(e) => updateField('max_nozzle_exit_diameter', parseFloat(e.target.value))}
               className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
-              min="0.05"
-              max="1.0"
+              min="0.01"
               step="0.01"
             />
             <p className="text-xs text-[var(--color-text-secondary)] mt-1">Maximum nozzle exit outer diameter. Constrains expansion ratio.</p>
@@ -431,7 +444,7 @@ export function DesignRequirements({
 
       {/* L* Constraints */}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">📐 L* (Characteristic Length) Constraints</h3>
+        <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">L* (Characteristic Length) Constraints</h3>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
@@ -442,9 +455,8 @@ export function DesignRequirements({
               value={requirements.min_Lstar}
               onChange={(e) => updateField('min_Lstar', parseFloat(e.target.value))}
               className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
-              min="0.5"
-              max="3.0"
-              step="0.1"
+              min="0.05"
+              step="0.05"
             />
             <p className="text-xs text-[var(--color-text-secondary)] mt-1">Minimum characteristic length. Lower = smaller chamber but less complete combustion. Typical: 0.7-1.0m for LOX/hydrocarbon.</p>
           </div>
@@ -458,9 +470,8 @@ export function DesignRequirements({
               value={requirements.max_Lstar}
               onChange={(e) => updateField('max_Lstar', parseFloat(e.target.value))}
               className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
-              min="0.5"
-              max="3.0"
-              step="0.1"
+              min="0.05"
+              step="0.05"
             />
             <p className="text-xs text-[var(--color-text-secondary)] mt-1">Maximum characteristic length. Higher = better combustion but heavier/longer chamber. Typical: 1.0-2.0m for LOX/hydrocarbon.</p>
           </div>
@@ -469,16 +480,13 @@ export function DesignRequirements({
 
       {/* Stability Requirements */}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">🛡️ Stability Requirements</h3>
+        <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">Stability Requirements</h3>
 
         <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 mb-4">
           <p className="text-sm text-blue-400">
-            <strong>New Comprehensive Stability Analysis:</strong><br />
-            • Uses stability_score (0-1) and stability_state ("stable"/"marginal"/"unstable")<br />
-            • Considers chugging, acoustic modes, feed system, and mode coupling<br />
-            • <strong>Stable</strong>: score ≥ 0.75 (recommended for flight)<br />
-            • <strong>Marginal</strong>: 0.4 ≤ score &lt; 0.75 (acceptable with caution)<br />
-            • <strong>Unstable</strong>: score &lt; 0.4 (not acceptable)
+            Score maps the limiting gate margin (chug gain margin, worst acoustic mode) onto 0–1.
+            A design is <strong>stable</strong> when every margin is at least 1.05 and no mode is driven,
+            <strong> marginal</strong> above 0.95, <strong>unstable</strong> below.
           </p>
         </div>
 
@@ -496,7 +504,7 @@ export function DesignRequirements({
               max="1.0"
               step="0.05"
             />
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">Minimum stability score (0-1). 0.75 = 'stable', 0.4 = 'marginal', &lt;0.4 = 'unstable'</p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">Minimum stability score (0–1) the optimizer must reach; the score is 0.44 at the marginal boundary and 1.0 when every margin is 1.3 or better.</p>
           </div>
 
           <div className="flex items-center">
@@ -589,7 +597,7 @@ export function DesignRequirements({
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
         <details>
           <summary className="cursor-pointer text-lg font-semibold text-[var(--color-text-primary)] flex items-center gap-2">
-            🔒 Frozen Parameters (Optional)
+            Frozen Parameters (Optional)
           </summary>
 
           <div className="mt-4 space-y-4">
@@ -845,7 +853,7 @@ export function DesignRequirements({
 
       {/* Summary */}
       <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-green-400 mb-4">📋 Design Summary</h3>
+        <h3 className="text-lg font-semibold text-green-400 mb-4">Design Summary</h3>
         <div className="grid grid-cols-4 gap-4">
           <div>
             <p className="text-xs text-[var(--color-text-secondary)]">Target Thrust</p>

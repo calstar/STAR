@@ -350,7 +350,8 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
               />
               <Tooltip content={heatFluxTooltip} />
               <Legend 
-                wrapperStyle={{ paddingTop: '10px' }}
+                verticalAlign="top"
+                height={30}
                 formatter={(value) => {
                   const match = value.match(/t_(\d+)/);
                   if (match && time) {
@@ -411,7 +412,8 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
               />
               <Tooltip content={wallTempTooltip} />
               <Legend 
-                wrapperStyle={{ paddingTop: '10px' }}
+                verticalAlign="top"
+                height={30}
                 formatter={(value) => {
                   const match = value.match(/t_(\d+)/);
                   if (match && time) {
@@ -495,7 +497,7 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
                 />
               )}
               <Tooltip content={ablativeTooltip} />
-              <Legend wrapperStyle={{ paddingTop: '10px' }} />
+              <Legend verticalAlign="top" height={30} />
               <Line
                 type="monotone"
                 dataKey="q_incident"
