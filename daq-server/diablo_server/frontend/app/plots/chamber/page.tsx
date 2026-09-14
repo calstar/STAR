@@ -47,7 +47,7 @@ function TcTempCompact({ calEntity, label, color }: { entity: string; calEntity:
 }
 
 function LcKgCompact({ calEntity, label, color }: { entity: string; calEntity: string; label: string; color: string }) {
-  const value = useLoadCellForceKg(calEntity); // offset already applied in store, C++ outputs kg
+  const value = useLoadCellForceKg(calEntity); // absolute kg from the calibration service
   const display = value !== null && Number.isFinite(value) ? value.toFixed(1) : '—';
   return (
     <div className={READOUT_CARD_CLASS}>

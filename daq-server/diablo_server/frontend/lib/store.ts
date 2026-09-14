@@ -76,8 +76,6 @@ interface SensorSystemState {
   boards: Record<number, BoardStatus>;
   /** From config [adc]; used by sense conversions (TC ref, actuator threshold). */
   voltageRefNominals: VoltageRefNominals;
-  /** Load cell zero offsets (lbf) by cal entity e.g. LC_Cal.CH1. Display = raw_lbf - offset. Persisted to localStorage. */
-  loadCellZeroOffsets: Record<string, number>;
   notifications: NotificationEntry[];
   /** Per-board live diagnostic log lines (ring buffer; accumulates while app is open). */
   boardLogs: Record<number, BoardLogLine[]>;
@@ -85,7 +83,6 @@ interface SensorSystemState {
   boardLogStats: Record<number, BoardLogTotals>;
 
   updateSensor: (update: SensorUpdate) => void;
-  setLoadCellZeroOffset: (calEntity: string, offsetLbf: number | null) => void;
   updateActuator: (update: ActuatorUpdate) => void;
   setActuatorState: (entity: string, state: ActuatorState) => void;
   setActuatorCommandedOverride: (entity: string, state: ActuatorState | null) => void;
@@ -109,19 +106,6 @@ interface SensorSystemState {
   pressureHistoryHiddenEntities: Record<string, true>;
   togglePressureHistoryPlotVisibility: (plotEntityKeys: string[]) => void;
   clearPressureHistoryHidden: () => void;
-}
-
-const LC_ZERO_STORAGE_KEY = 'sensor_system_loadCellZeroOffsets';
-
-function loadStoredLcZeroOffsets(): Record<string, number> {
-  try {
-    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LC_ZERO_STORAGE_KEY) : null;
-    if (raw) {
-      const parsed = JSON.parse(raw) as Record<string, number>;
-      if (parsed && typeof parsed === 'object') return parsed;
-    }
-  } catch (_) { /* ignore */ }
-  return {};
 }
 
 // ── Dynamic alias system ─────────────────────────────────────────────────────
@@ -417,7 +401,6 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   boardLogs: {},
   boardLogStats: {},
   voltageRefNominals: { internalV: 2.5, absolute5vV: 5 },
-  loadCellZeroOffsets: loadStoredLcZeroOffsets(),
   notifications: [],
   pressureHistoryHiddenEntities: {},
 
@@ -437,20 +420,6 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   },
 
   clearPressureHistoryHidden: () => set({ pressureHistoryHiddenEntities: {} }),
-
-  setLoadCellZeroOffset: (calEntity: string, offsetLbf: number | null) => {
-    set((s) => {
-      const next = { ...s.loadCellZeroOffsets };
-      if (offsetLbf == null) delete next[calEntity];
-      else next[calEntity] = offsetLbf;
-      if (typeof localStorage !== 'undefined') {
-        try {
-          localStorage.setItem(LC_ZERO_STORAGE_KEY, JSON.stringify(next));
-        } catch (_) { /* ignore */ }
-      }
-      return { loadCellZeroOffsets: next };
-    });
-  },
 
   updateSensor: (update: SensorUpdate) => {
     const key = `${update.entity}.${update.component}`;
@@ -784,12 +753,11 @@ export function useActuatorStateByEntity(entity: string): ActuatorState | null {
   return useSensorStore((s) => s.actuatorStateByEntity[entity] ?? null);
 }
 
-/** Load cell force (kg) with zero offset applied. Use for display: displayKg = raw - offset. */
+/** Load cell force (kg), absolute. The calibration service is the sole source of the value. */
 export function useLoadCellForceKg(calEntity: string): number | null {
   const raw = useSensorValue(calEntity, 'force_kg');
-  const offset = useSensorStore((s) => s.loadCellZeroOffsets[calEntity] ?? 0);
   if (raw == null || !Number.isFinite(raw)) return null;
-  return raw - offset;
+  return raw;
 }
 
 /** @deprecated Use useLoadCellForceKg instead. Legacy alias for backwards compatibility. */

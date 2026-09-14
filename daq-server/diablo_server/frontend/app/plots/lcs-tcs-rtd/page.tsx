@@ -125,7 +125,7 @@ function LCForceReadout({
 }: {
   entity: string; calEntity: string; label: string; color: string;
 }) {
-  const value = useLoadCellForceKg(calEntity); // offset already applied in store, C++ outputs kg
+  const value = useLoadCellForceKg(calEntity); // absolute kg from the calibration service
   return <DerivedReadoutBox label={label} value={value} unit="kg" color={color} decimals={1} />;
 }
 
