@@ -17,6 +17,12 @@ import {
 import {
   slugify, renameScriptSlug, checkScriptNames, isValidScriptFilename,
 } from '@/lib/state-script-names';
+import {
+  completionsAt, applyCompletion, type Completion, type CompletionResult,
+} from '@/lib/state-script-complete';
+import {
+  highlightSpans, TOKEN_CLASS, EDITOR_TEXT, LINE_HEIGHT_PX, EDITOR_PAD_PX,
+} from '@/lib/state-script-highlight';
 
 /** The editor's tabs, left to right. Also the ids a ConfigIssue names, so the session page can
  *  link an issue straight to the page that fixes it. Ordered by usefulness and grouped so related
@@ -463,8 +469,96 @@ function ScriptEditor({
 }) {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const gutterRef = useRef<HTMLDivElement | null>(null);
+  const mirrorRef = useRef<HTMLPreElement | null>(null);
   const [showReference, setShowReference] = useState(false);
+  const [completion, setCompletion] = useState<CompletionResult | null>(null);
+  const [completionIdx, setCompletionIdx] = useState(0);
+  const [completionPos, setCompletionPos] = useState({ left: 0, top: 0 });
+  /** Width of one character. Measured once, because the editor is monospace — which is what makes
+   *  placing the popup arithmetic rather than a hidden-mirror measurement. */
+  const [charWidth, setCharWidth] = useState(0);
   const lines = source.split('\n');
+
+  useEffect(() => {
+    const probe = document.createElement('span');
+    probe.className = 'font-mono text-sm';
+    probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre';
+    probe.textContent = '0'.repeat(100);
+    document.body.appendChild(probe);
+    setCharWidth(probe.getBoundingClientRect().width / 100);
+    probe.remove();
+  }, []);
+
+  const tokenSpans = highlightSpans(source, tables);
+
+  /** Recompute the popup for wherever the caret is now. */
+  const queueComplete = (ta: HTMLTextAreaElement) => {
+    if (!canEdit) return;
+    const caret = ta.selectionStart;
+    // A selection is not a cursor; suggesting into one would replace text the operator highlighted.
+    if (ta.selectionEnd !== caret) { setCompletion(null); return; }
+    const next = completionsAt(ta.value, caret, tables);
+    setCompletion(next);
+    setCompletionIdx(0);
+    if (next) {
+      const upto = ta.value.slice(0, caret);
+      const line = upto.split('\n').length - 1;
+      const col = caret - (upto.lastIndexOf('\n') + 1);
+      setCompletionPos({
+        left: EDITOR_PAD_PX + col * charWidth - ta.scrollLeft,
+        top: EDITOR_PAD_PX + (line + 1) * LINE_HEIGHT_PX - ta.scrollTop,
+      });
+    }
+  };
+
+  const accept = (item: Completion) => {
+    const ta = taRef.current;
+    if (!ta || !completion) return;
+    const { source: next, caret } = applyCompletion(source, completion, item);
+    onSource(next);
+    setCompletion(null);
+    requestAnimationFrame(() => {
+      ta.focus();
+      ta.setSelectionRange(caret, caret);
+      // `open_valve(` is only half the job — reopen so the name list follows immediately.
+      if (item.reopen) queueComplete(ta);
+    });
+  };
+
+  const onEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const ta = e.currentTarget;
+
+    if (completion) {
+      // These keys belong to the popup while it is open. Without preventDefault the caret moves
+      // under it, and the next insert lands somewhere else entirely.
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const n = completion.items.length;
+        setCompletionIdx((i) => (e.key === 'ArrowDown' ? (i + 1) % n : (i - 1 + n) % n));
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        accept(completion.items[completionIdx] ?? completion.items[0]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setCompletion(null);
+        return;
+      }
+    }
+
+    // Tab inserts four spaces. Tab-to-blur in a code box is maddening, and a literal tab is a hard
+    // error in this language — the editor must not be able to type one.
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const { selectionStart: s, selectionEnd: en } = ta;
+      const next = `${source.slice(0, s)}    ${source.slice(en)}`;
+      onSource(next);
+      requestAnimationFrame(() => ta.setSelectionRange(s + 4, s + 4));
+    }
+  };
 
   // Debounced, so the backend is not spawned on every keystroke.
   useEffect(() => {
@@ -590,39 +684,100 @@ function ScriptEditor({
             ))}
           </div>
 
-          <div className="flex border border-gray-700 rounded overflow-hidden bg-gray-950">
+          {/* The editor: a highlighted <pre> UNDER a transparent <textarea>.
+              A textarea cannot colour its own text, so the usual trick applies — paint the tokens
+              on a mirror behind it and make the real text transparent, keeping the caret visible.
+              The two must agree on font, size, line height, padding and wrapping to the pixel, so
+              they share EDITOR_TEXT below; changing one without the other slides the colours off
+              the characters. `white-space: pre` (no wrapping) removes the hardest alignment case
+              and is how a code editor behaves anyway. */}
+          <div className="relative flex border border-gray-700 rounded overflow-hidden bg-gray-950">
             <div ref={gutterRef}
-                 className="select-none text-right text-xs font-mono text-gray-600 bg-gray-900 py-2 px-2 overflow-hidden"
-                 style={{ lineHeight: '1.5rem' }}>
+                 className="select-none text-right text-xs font-mono text-gray-600 bg-gray-900 py-2 px-2 overflow-hidden shrink-0"
+                 style={{ lineHeight: LINE_HEIGHT_PX + 'px' }}>
               {lines.map((_, i) => (
                 <div key={i} className={issues.some((x) => x.line === i + 1) ? 'text-red-400' : ''}>
                   {i + 1}
                 </div>
               ))}
             </div>
-            <textarea
-              ref={taRef}
-              value={source}
-              onChange={(e) => onSource(e.target.value)}
-              onScroll={(e) => { if (gutterRef.current) gutterRef.current.scrollTop = e.currentTarget.scrollTop; }}
-              onKeyDown={(e) => {
-                // Tab inserts four spaces. Tab-to-blur in a code box is maddening, and a literal
-                // tab is a hard error in this language — the editor must not be able to type one.
-                if (e.key !== 'Tab') return;
-                e.preventDefault();
-                const ta = e.currentTarget;
-                const { selectionStart: s, selectionEnd: en } = ta;
-                const next = `${source.slice(0, s)}    ${source.slice(en)}`;
-                onSource(next);
-                requestAnimationFrame(() => ta.setSelectionRange(s + 4, s + 4));
-              }}
-              spellCheck={false}
-              disabled={!canEdit}
-              rows={14}
-              placeholder={placeholderScript}
-              className="flex-1 font-mono text-sm bg-gray-950 text-gray-100 p-2 outline-none resize-y"
-              style={{ lineHeight: '1.5rem' }}
-            />
+
+            <div className="relative flex-1 min-w-0">
+              <pre ref={mirrorRef} aria-hidden
+                   className={`${EDITOR_TEXT} absolute inset-0 overflow-hidden pointer-events-none m-0`}>
+                {tokenSpans}
+              </pre>
+              <textarea
+                ref={taRef}
+                value={source}
+                onChange={(e) => { onSource(e.target.value); queueComplete(e.target); }}
+                onSelect={(e) => queueComplete(e.currentTarget)}
+                onBlur={() => setCompletion(null)}
+                onScroll={(e) => {
+                  // Both followers, every frame: the gutter vertically, the highlight mirror on
+                  // both axes. A missed horizontal sync is invisible until a line is long.
+                  const el = e.currentTarget;
+                  if (gutterRef.current) gutterRef.current.scrollTop = el.scrollTop;
+                  if (mirrorRef.current) {
+                    mirrorRef.current.scrollTop = el.scrollTop;
+                    mirrorRef.current.scrollLeft = el.scrollLeft;
+                  }
+                  setCompletion(null);  // the popup was anchored to the old scroll position
+                }}
+                onKeyDown={onEditorKeyDown}
+                spellCheck={false}
+                disabled={!canEdit}
+                rows={14}
+                placeholder={placeholderScript}
+                className={`${EDITOR_TEXT} relative w-full h-full bg-transparent text-transparent outline-none resize-y placeholder:text-gray-600`}
+                style={{ caretColor: '#e5e7eb' }}
+              />
+
+              {completion && (
+                <ul
+                  className="absolute z-30 max-h-56 w-72 overflow-auto rounded border border-gray-600 bg-gray-900 shadow-xl text-sm"
+                  style={{ left: completionPos.left, top: completionPos.top }}
+                  // The textarea must keep focus, or the caret moves and the insert lands wrong.
+                  onMouseDown={(e) => e.preventDefault()}
+                >
+                  {completion.items.map((item, i) => (
+                    <li key={item.text}>
+                      <button
+                        onClick={() => accept(item)}
+                        onMouseEnter={() => setCompletionIdx(i)}
+                        className={`flex w-full items-baseline gap-2 px-2 py-1 text-left ${
+                          i === completionIdx ? 'bg-gray-700' : 'hover:bg-gray-800'
+                        }`}
+                      >
+                        <code className={`font-mono ${TOKEN_CLASS[item.kind] ?? 'text-gray-100'}`}>
+                          {item.text}
+                        </code>
+                        <span className="ml-auto text-xs text-gray-400 truncate">{item.detail}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          {/* Legend. Small and permanent: the colours only mean anything if you can find out what
+              they mean, and a reader should not have to open the reference popup to do it. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-400">
+            {([
+              ['command', 'command'], ['valve', 'valve'], ['sensor', 'sensor'],
+              ['state', 'state'], ['keyword', 'keyword'], ['number', 'number'],
+              ['comment', 'comment'],
+            ] as const).map(([kind, label]) => (
+              <span key={kind} className="inline-flex items-center gap-1">
+                <span className={`font-mono ${TOKEN_CLASS[kind]}`}>&#9632;</span>
+                {label}
+              </span>
+            ))}
+            <span className="inline-flex items-center gap-1">
+              <span className="font-mono text-amber-300 underline decoration-red-500 decoration-wavy">&#9632;</span>
+              not in this config
+            </span>
           </div>
 
           {issues.length > 0 ? (
