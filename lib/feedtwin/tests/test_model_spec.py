@@ -244,7 +244,9 @@ def test_round_trip_preserves_provenance_and_references() -> None:
 def test_a_component_type_can_be_declared_from_outside(tmp_path: Path) -> None:
     """A project adds a component type without editing this package."""
     table = tmp_path / "extra_components.toml"
-    table.write_text(textwrap.dedent("""
+    table.write_text(
+        textwrap.dedent(
+            """
             [burst_disc]
             description = "A one-shot pressure relief."
             models = ["ideal"]
@@ -256,7 +258,9 @@ def test_a_component_type_can_be_declared_from_outside(tmp_path: Path) -> None:
             dimension = "pressure"
             description = "Differential pressure at which it opens."
             minimum = 0.0
-            """))
+            """
+        )
+    )
 
     loaded = load_component_specs(table)
     assert [s.type for s in loaded] == ["burst_disc"]

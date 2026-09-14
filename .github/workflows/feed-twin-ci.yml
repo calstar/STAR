@@ -123,7 +123,9 @@ jobs:
         # runs them. It arrives transitively with httpx today -- named here
         # anyway, because a transitive dependency that disappears would turn an
         # async test gate into a silent no-op rather than a failure.
-        run: pip install pytest httpx anyio black mypy
+        # black pinned to match lib/feedtwin's dev extra and daq-server-ci;
+        # see lib/feedtwin/pyproject.toml for why a floating formatter broke CI.
+        run: pip install pytest httpx anyio black==25.11.0 mypy
 
       # The app gets the same lint and type gates as the library. It is a small
       # shell today, which is exactly why holding the line is cheap -- the time
