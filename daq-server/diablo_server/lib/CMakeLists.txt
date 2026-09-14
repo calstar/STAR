@@ -101,6 +101,7 @@ add_executable(test_fire_lifecycle
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
 )
@@ -133,6 +134,21 @@ target_include_directories(test_sensor_tables PRIVATE
 target_link_libraries(test_sensor_tables
     fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME sensor_tables COMMAND test_sensor_tables)
+
+add_executable(test_pressure_feed
+    test/test_pressure_feed.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+)
+target_include_directories(test_pressure_feed PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_pressure_feed
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+# The fake db binds an OS-assigned port, so this does not need RUN_SERIAL. The staleness case
+# waits out kMaxAgeMs, which is what sets the timeout.
+add_test(NAME pressure_feed COMMAND test_pressure_feed)
+set_tests_properties(pressure_feed PROPERTIES TIMEOUT 60)
 
 add_executable(test_actuator_delays
     test/test_actuator_delays.cpp
@@ -172,6 +188,7 @@ add_executable(test_sequencer_elodin
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
 )
 target_include_directories(test_sequencer_elodin PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -193,6 +210,7 @@ add_executable(test_hold_rules
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
 )
 target_include_directories(test_hold_rules PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -211,6 +229,7 @@ add_executable(test_script_states
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
 )
 target_include_directories(test_script_states PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -236,6 +255,7 @@ add_executable(test_script_runtime
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
 )
 target_include_directories(test_script_runtime PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -302,6 +322,7 @@ foreach(seq_test test_sequencer_concurrency test_abort_ordering)
         ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
     )
     target_include_directories(${seq_test} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include

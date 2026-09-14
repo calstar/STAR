@@ -17,6 +17,7 @@
 #include "control/AbortBroadcaster.hpp"
 #include "control/ActuatorCommander.hpp"
 #include "control/HoldTimer.hpp"
+#include "control/PressureFeed.hpp"
 #include "control/ScriptRunner.hpp"
 #include "control/ScriptStates.hpp"
 #include "control/StateMachine.hpp"
@@ -215,6 +216,8 @@ private:
     AbortBroadcaster abort_broadcaster_;
     HoldTimer hold_timer_;
     ScriptRunner script_runner_;
+    /** Live calibrated pressures for pressure(), on its own Elodin connection. */
+    PressureFeed pressure_feed_;
     fsw::elodin::ElodinClient elodin_;
 
     /** Build the callbacks a script is allowed to reach the world through. */

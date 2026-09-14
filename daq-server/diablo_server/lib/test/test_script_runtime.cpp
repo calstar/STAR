@@ -141,7 +141,6 @@ int main() {
     const State VENT = static_cast<State>(4);
     const State DYN = static_cast<State>(13);
     const State ENGINE_ABORT = static_cast<State>(17);
-    (void)IDLE;
     (void)DYN;
 
     // ── 1. The vent pulse: open, hold 500 ms, close, leave ────────────────────────────────────
@@ -290,7 +289,11 @@ int main() {
         check(svc.currentState() != VENT, "and NOT on the timeout target");
     }
 
-    // ── 7. pressure() is refused until the subscriber exists, and fails safe ──────────────────
+    // ── 7. A sensor with no fresh reading refuses the transition, before anything moves ───────
+    //
+    // No Elodin is running in this test, so the feed never receives anything. The transition-time
+    // precheck is what turns that into a refusal at the button rather than a script that enters
+    // the state, opens a valve, and only then discovers it cannot read what it needs.
     {
         const std::string path = writeConfig(
             "open_valve(VENT_VALVE)\n"
@@ -303,14 +306,18 @@ int main() {
         svc.init(path);
         BoardListener listener(kActPort);
         listener.start();
-        svc.transitionTo(std::string("Dyn State"));
-        const long long landed = waitForState(svc, VENT, 3000);
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        std::string reason;
+        const bool accepted = svc.transitionTo(std::string("Dyn State"), 0, &reason);
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
         listener.stop();
 
-        check(landed >= 0, "an unavailable pressure aborts the script to its timeout target");
-        check(firstCommand(listener.bursts(), /*ch=*/2, /*hw=*/1) < 0,
-              "and the branch that depended on it never ran");
+        check(!accepted, "a script whose sensor has no fresh reading is refused entry");
+        check(reason.find("Tank Pressure") != std::string::npos,
+              "and the refusal names the sensor (\"" + reason + "\")");
+        check(svc.currentState() == IDLE, "the rig did not move");
+        check(firstCommand(listener.bursts(), /*ch=*/1, /*hw=*/1) < 0,
+              "and not one valve was commanded");
     }
 
     fs::remove_all(g_dir);

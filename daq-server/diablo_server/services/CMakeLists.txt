@@ -20,6 +20,7 @@ add_executable(sequencer_service
     sequencer/HoldTimer.cpp
     sequencer/ScriptStates.cpp
     sequencer/ScriptRunner.cpp
+    sequencer/PressureFeed.cpp
 )
 target_include_directories(sequencer_service PRIVATE ${COMMON_INCLUDES})
 target_link_libraries(sequencer_service

@@ -531,6 +531,18 @@ bool SequencerService::applyConfig(const fsw::config::Config& cfg) {
             std::cout << std::endl;
         }
 
+        // Subscribe to exactly the roles the loaded scripts read, and nothing else. Elodin has no
+        // wildcard, and deriving the list from the ASTs is what makes it structurally impossible
+        // to subscribe to the wrong table for a role — there is no id range to filter, the way
+        // ControllerService filters board 2 out of existence.
+        std::set<std::string> roles;
+        for (const auto& [st, ds] : loaded.dynamic)
+            roles.insert(ds.pressure_roles.begin(), ds.pressure_roles.end());
+        if (!roles.empty()) {
+            pressure_feed_.start(cfg, {roles.begin(), roles.end()}, elodin_host_,
+                                 cfg.database.port);
+        }
+
         std::lock_guard<std::mutex> lk(config_mutex_);
         dynamic_states_ = std::move(loaded.dynamic);
         refused_states_ = std::move(loaded.refused);
@@ -708,6 +720,35 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
                 *refusal_reason = "state script rejected at load";
             publishState();
             return false;
+        }
+    }
+
+    // A script that reads a sensor is checked for a fresh, calibrated reading BEFORE the
+    // transition commits, not when the script first evaluates pressure(). The operator is then
+    // told at the moment they press the button — naming the sensor — instead of twenty-five
+    // seconds into a press that was never going to work. The interpreter's own check stays as the
+    // backstop for a feed that dies while a script is already running.
+    //
+    // This is the house "refuse up front so the valve never opens" pattern, applied to sensors.
+    {
+        std::unique_lock<std::mutex> lk(config_mutex_);
+        const auto it = dynamic_states_.find(to);
+        if (it != dynamic_states_.end()) {
+            const std::vector<std::string> roles = it->second.pressure_roles;
+            const std::string state_name = it->second.name;
+            lk.unlock();
+            for (const auto& role : roles) {
+                double psi = 0.0;
+                const auto status = pressure_feed_.read(role, psi);
+                if (status == PressureFeed::Status::Ok)
+                    continue;
+                std::cerr << "[SequencerService] Refused entry to " << state_name << ": "
+                          << PressureFeed::explain(role, status) << std::endl;
+                if (refusal_reason)
+                    *refusal_reason = role + " has no fresh calibrated reading";
+                publishState();
+                return false;
+            }
         }
     }
 
@@ -1105,9 +1146,16 @@ ScriptEnv SequencerService::makeScriptEnv(const DynamicState& ds) {
         });
     };
 
-    // Wired in the next stage. Until then pressure() parses and validates but cannot run, which is
-    // why a script that reads a sensor fails loudly here instead of reading a stand-in zero.
-    env.read_pressure = nullptr;
+    // Refusing is the whole point of the boolean. An uncalibrated PT publishes a smooth, plausible
+    // 0.0 PSI, and a script that takes 90% of that for a target computes zero and then does
+    // nothing at all — successfully, invisibly, while the operator believes the tank came up.
+    env.read_pressure = [this](const std::string& role, double& psi) {
+        const auto status = pressure_feed_.read(role, psi);
+        if (status == PressureFeed::Status::Ok)
+            return true;
+        std::cerr << "[SequencerService] " << PressureFeed::explain(role, status) << std::endl;
+        return false;
+    };
 
     return env;
 }
