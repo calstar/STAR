@@ -37,6 +37,7 @@ static inline void store_u32(uint8_t* dst, uint32_t v) {
 #include <vector>
 
 #include "config/Config.hpp"
+#include "config/SensorTables.hpp"
 #include "net/DaqInterface.hpp"
 
 namespace {
@@ -261,75 +262,66 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
     std::set<std::string> abort_warnings;
     for (const auto& [sensor_name, threshold_psi] : abort_pts) {
         const std::string tag = "[ConfigBroadcast] abort_pts \"" + sensor_name + "\": ";
-        bool resolved_role = false;
-        for (const auto& b : cfg.boards) {
-            if (b.type != "PT" || !b.enabled || b.board_id <= 0)
-                continue;
-            const std::string board_key =
-                b.section.rfind("boards.", 0) == 0 ? b.section.substr(7) : b.section;
-            const auto* roles = cfg.sensor_roles_for("sensor_roles_" + board_key);
-            if (roles == nullptr)
-                continue;
-            auto rit = roles->find(sensor_name);
-            if (rit == roles->end())
-                continue;  // not on this board — keep looking
-            resolved_role = true;
-            const int channel = rit->second;
-            if (channel < 1 || channel > 255) {
-                abort_warnings.insert(tag + "channel out of range — no board abort threshold");
-                break;
-            }
-            const uint16_t uid = static_cast<uint16_t>(b.board_id * 100 + channel);
-            // Prefer the calibration service's model-correct threshold, as long as the PSI it was
-            // computed for still matches the live config (it re-emits on capture/clear/reload, not
-            // on a bare abort_pts edit). This is the path that covers cubic/robust and operator
-            // cal.
-            {
-                auto cit = cal_thresholds.find(uid);
-                if (cit != cal_thresholds.end() &&
-                    std::abs(cit->second.first - threshold_psi) < 0.5) {
-                    abort_pt_list.push_back(
-                        {ipToU32Le(b.ip), static_cast<uint8_t>(channel), cit->second.second});
-                    break;
-                }
-            }
-            // Fallback (calibration service not up yet, or the abort PSI changed and it hasn't
-            // re-emitted): invert physics inline. Interface + model + full-scale resolved exactly
-            // as calibration_main does, so a physics threshold lands on the same curve the operator
-            // reads.
-            const bool is_loop = b.has_hp_pt_keys || b.pt_type == "4-20 mA absolute";
-            std::string model = is_loop ? "physics" : "cubic";  // interface-aware default
-            if (const auto* models = cfg.calibration_model_for("calibration_model_" + board_key)) {
-                auto mit = models->find(sensor_name);
-                if (mit != models->end())
-                    model = mit->second;
-            }
-            double full_scale = is_loop ? b.hp_pt_full_scale_psi : 1000.0;
-            if (const auto* fss = cfg.full_scale_for("calibration_full_scale_" + board_key)) {
-                auto fit = fss->find(sensor_name);
-                if (fit != fss->end() && fit->second > 0.0)
-                    full_scale = fit->second;
-            }
-
-            if (model != "physics" || is_loop) {
-                abort_warnings.insert(
-                    tag + "model \"" + model + (is_loop ? " (4-20 mA)" : "") +
-                    "\" cannot be inverted for a board trip — set "
-                    "calibration_model = \"physics\", or this sensor has NO trip");
-                break;
-            }
-            if (!(full_scale > 0.0) || !(threshold_psi > 0.0)) {
-                abort_warnings.insert(tag + "non-positive full_scale/threshold — NO board trip");
-                break;
-            }
-            constexpr double ADC_MAX = 2147483648.0;  // 2^31
-            double adc = std::clamp((threshold_psi / full_scale) * ADC_MAX, 0.0, ADC_MAX - 1.0);
-            abort_pt_list.push_back({ipToU32Le(b.ip), static_cast<uint8_t>(channel),
-                                     static_cast<uint32_t>(llround(adc))});
-            break;  // handled on its owning board
-        }
-        if (!resolved_role)
+        // The role -> board -> channel walk lives in fsw::config::find_pt_role now, so the
+        // sequencer's pressure subscriber resolves a sensor by name the same way this does rather
+        // than growing its own copy with its own off-by-one.
+        const auto ref = fsw::config::find_pt_role(cfg, sensor_name);
+        if (!ref) {
             abort_warnings.insert(tag + "no PT sensor_role declares this name — NO board trip");
+            continue;
+        }
+        const auto& b = *ref->board;
+        const std::string& board_key = ref->board_key;
+        const int channel = ref->channel;
+        if (channel < 1 || channel > 255) {
+            abort_warnings.insert(tag + "channel out of range — no board abort threshold");
+            continue;
+        }
+        const uint16_t uid = static_cast<uint16_t>(b.board_id * 100 + channel);
+        // Prefer the calibration service's model-correct threshold, as long as the PSI it was
+        // computed for still matches the live config (it re-emits on capture/clear/reload, not
+        // on a bare abort_pts edit). This is the path that covers cubic/robust and operator
+        // cal.
+        {
+            auto cit = cal_thresholds.find(uid);
+            if (cit != cal_thresholds.end() && std::abs(cit->second.first - threshold_psi) < 0.5) {
+                abort_pt_list.push_back(
+                    {ipToU32Le(b.ip), static_cast<uint8_t>(channel), cit->second.second});
+                continue;
+            }
+        }
+        // Fallback (calibration service not up yet, or the abort PSI changed and it hasn't
+        // re-emitted): invert physics inline. Interface + model + full-scale resolved exactly
+        // as calibration_main does, so a physics threshold lands on the same curve the operator
+        // reads.
+        const bool is_loop = b.has_hp_pt_keys || b.pt_type == "4-20 mA absolute";
+        std::string model = is_loop ? "physics" : "cubic";  // interface-aware default
+        if (const auto* models = cfg.calibration_model_for("calibration_model_" + board_key)) {
+            auto mit = models->find(sensor_name);
+            if (mit != models->end())
+                model = mit->second;
+        }
+        double full_scale = is_loop ? b.hp_pt_full_scale_psi : 1000.0;
+        if (const auto* fss = cfg.full_scale_for("calibration_full_scale_" + board_key)) {
+            auto fit = fss->find(sensor_name);
+            if (fit != fss->end() && fit->second > 0.0)
+                full_scale = fit->second;
+        }
+
+        if (model != "physics" || is_loop) {
+            abort_warnings.insert(tag + "model \"" + model + (is_loop ? " (4-20 mA)" : "") +
+                                  "\" cannot be inverted for a board trip — set "
+                                  "calibration_model = \"physics\", or this sensor has NO trip");
+            continue;
+        }
+        if (!(full_scale > 0.0) || !(threshold_psi > 0.0)) {
+            abort_warnings.insert(tag + "non-positive full_scale/threshold — NO board trip");
+            continue;
+        }
+        constexpr double ADC_MAX = 2147483648.0;  // 2^31
+        double adc = std::clamp((threshold_psi / full_scale) * ADC_MAX, 0.0, ADC_MAX - 1.0);
+        abort_pt_list.push_back(
+            {ipToU32Le(b.ip), static_cast<uint8_t>(channel), static_cast<uint32_t>(llround(adc))});
     }
     // Log each distinct abort-threshold problem once while it persists, and note recovery — never
     // spam the every-cycle rebuild. Dropping resolved entries lets a re-break warn again.

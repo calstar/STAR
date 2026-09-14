@@ -9,6 +9,7 @@ set(FSW_SOURCES
     src/config/SensorAssignment.cpp
     src/config/LoadActiveBoards.cpp
     src/config/Config.cpp
+    src/config/SensorTables.cpp
     src/routing/HeartbeatRouter.cpp
     src/routing/SensorRouter.cpp
     src/time/BoardClockSync.cpp
@@ -103,6 +104,17 @@ target_include_directories(test_fire_lifecycle PRIVATE
 target_link_libraries(test_fire_lifecycle
     fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME fire_lifecycle COMMAND test_fire_lifecycle)
+
+add_executable(test_sensor_tables
+    test/test_sensor_tables.cpp
+)
+target_include_directories(test_sensor_tables PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_sensor_tables
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME sensor_tables COMMAND test_sensor_tables)
 
 add_executable(test_actuator_delays
     test/test_actuator_delays.cpp
