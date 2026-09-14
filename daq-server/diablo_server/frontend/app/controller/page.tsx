@@ -9,22 +9,10 @@ import { MessageType, SystemState } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { getEntityColor } from '@/lib/sensor-colors';
 import { stateNameUpper, stateName, isFireState, isAbortState } from '@/lib/states';
+import { buildSenseRowsFromBoards, type SenseRowConfig } from '@/lib/sensor-info-entities';
 
 const LBF_TO_N = 4.44822;
 
-function buildLcChannels(boards: Record<string, unknown>): number[] {
-  const channels: number[] = [];
-  for (const board of Object.values(boards)) {
-    const b = board as { type?: string; enabled?: boolean; active_connectors?: number[]; num_sensors?: number };
-    if (b.type !== 'LC' || b.enabled === false) continue;
-    const active: number[] =
-      Array.isArray(b.active_connectors) && b.active_connectors.length > 0
-        ? b.active_connectors
-        : Array.from({ length: (b.num_sensors ?? 4) }, (_, i) => i + 1);
-    channels.push(...active);
-  }
-  return Array.from(new Set(channels)).sort((a, b) => a - b);
-}
 
 /** Display follows commanded state only (state machine / user command); no ADC. */
 function ValveStatusRow({ label, entity }: { label: string; entity: string }) {
@@ -43,31 +31,34 @@ function ValveStatusRow({ label, entity }: { label: string; entity: string }) {
 }
 
 function DutyCycleCard({ label, entity, color }: { label: string; entity: string; color: string }) {
-  const raw = useSensorValue(entity, 'duty_cycle') ?? 0;
+  // No `?? 0`: a stopped stream must not render as a confident 0.0% / OFF, which is the
+  // same picture as a closed gate. null carries through to a dash and a neutral pill.
+  const raw = useSensorValue(entity, 'duty_cycle');
   const on = useSensorValue(entity, 'onoff');
+  const noData = raw === null;
   // Backend sends 0–1; display as 0–100%
-  const dc = raw <= 1 && raw >= 0 ? raw * 100 : raw;
+  const dc = raw === null ? 0 : (raw <= 1 && raw >= 0 ? raw * 100 : raw);
 
   return (
     <div className="bg-card rounded-xl border border-gray-800 p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-bold tracking-wider text-text-muted uppercase">{label}</h3>
-        <span className={`text-xs font-bold font-mono px-2 py-0.5 rounded ${on ? 'bg-green-900/50 text-green-400 border border-green-800' :
+        <span className={`text-xs font-bold font-mono px-2 py-0.5 rounded ${on === null ? 'bg-gray-900/50 text-gray-600 border border-gray-800 italic' : on ? 'bg-green-900/50 text-green-400 border border-green-800' :
             'bg-gray-900/50 text-gray-500 border border-gray-800'
           }`}>
-          {on ? 'ON' : 'OFF'}
+          {on === null ? '--' : on ? 'ON' : 'OFF'}
         </span>
       </div>
       <div className="mb-2 flex items-baseline gap-2">
         <span className="text-2xl font-bold font-mono tabular-nums" style={{ color }}>
-          {dc.toFixed(1)}
+          {noData ? '--' : dc.toFixed(1)}
         </span>
         <span className="text-sm text-text-muted">%</span>
       </div>
       <div className="w-full bg-gray-800 rounded-full h-3 overflow-hidden">
         <div
           className="h-3 rounded-full transition-all duration-100"
-          style={{ width: `${Math.min(100, Math.max(0, dc))}%`, background: color }}
+          style={{ width: noData ? '0%' : `${Math.min(100, Math.max(0, dc))}%`, background: color }}
         />
       </div>
     </div>
@@ -81,17 +72,21 @@ export default function ControllerPage() {
   const { actuators } = useActuatorsFromConfig();
   const VALVES = actuators.map((a) => ({ label: a.name, entity: a.entity, ch: a.entity, channel: a.channel }));
 
-  const [lcChannels, setLcChannels] = useState<number[]>([1]);
+  // Board-scoped rows, not channel numbers: two LC boards routinely both report on
+  // connector 1, and the bare key LC_Cal.CH1 resolves through the store's alias table to
+  // whichever of them it finds first — so a channel-number list plots one board twice.
+  const [lcRows, setLcRows] = useState<SenseRowConfig[]>([]);
   const loadLcConfig = useCallback(async () => {
     try {
       const base = getApiBaseUrl();
       const res = await fetch(`${base}/api/config`);
+      // /api/config answers { config, active } — reading cfg.boards here found nothing,
+      // so this plot silently fell back to a hardcoded channel 1 on every rig.
       const cfg = await res.json();
-      const boards = (cfg?.boards ?? {}) as Record<string, unknown>;
-      const chs = buildLcChannels(boards);
-      if (chs.length > 0) setLcChannels(chs);
+      const boards = (cfg?.config?.boards ?? {}) as Record<string, unknown>;
+      setLcRows(buildSenseRowsFromBoards(boards, 'LC'));
     } catch {
-      setLcChannels([1]);
+      setLcRows([]);
     }
   }, []);
 
@@ -103,7 +98,7 @@ export default function ControllerPage() {
     const unsub = ws.on(MessageType.CONFIG_UPDATED, loadLcConfig);
 
     return () => { unsub(); };
-  }, [ws, loadLcConfig, lcChannels]);
+  }, [ws, loadLcConfig]);
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-3">
@@ -199,33 +194,33 @@ export default function ControllerPage() {
           </div>
           <div className="bg-card rounded-xl border border-gray-800 p-3 flex flex-col min-h-[120px] flex-1 min-w-0 overflow-hidden shrink-0">
             <TimeSeriesPlot
-              key={`thrust-${lcChannels.join(',')}`}
+              key={`thrust-${lcRows.map((r) => r.calEntity).join(',')}`}
               title="Thrust (N)"
               component="F_ref"
               entities={[
                 'CONTROLLER.diagnostics',
                 'CONTROLLER.diagnostics',
-                ...lcChannels.map((ch) => `LC_Cal.CH${ch}`),
+                ...lcRows.map((r) => r.calEntity),
               ]}
               components={[
                 'F_ref',
                 'F_estimated',
-                ...lcChannels.map(() => 'force_lbf'),
+                ...lcRows.map(() => 'force_lbf'),
               ]}
               labels={[
                 'Desired',
                 'Estimated',
-                ...lcChannels.map((ch) => `Actual (LC${ch})`),
+                ...lcRows.map((r) => `Actual (${r.label})`),
               ]}
               valueTransforms={[
                 undefined,
                 undefined,
-                ...lcChannels.map(() => (v: number) => (isFinite(v) ? v * LBF_TO_N : v)),
+                ...lcRows.map(() => (v: number) => (isFinite(v) ? v * LBF_TO_N : v)),
               ]}
               colors={[
                 '#60A5FA',
                 '#34D399',
-                ...lcChannels.map((_, i) => ['#F59E0B', '#EC4899', '#8B5CF6'][i % 3] ?? '#F59E0B'),
+                ...lcRows.map((_, i) => ['#F59E0B', '#EC4899', '#8B5CF6'][i % 3] ?? '#F59E0B'),
               ]}
               yLabel="Thrust (N)"
               windowSeconds={60}

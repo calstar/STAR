@@ -27,8 +27,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { loadSensorRoleMap, hpBoardNumbers } from './sensor-config.js';
-import { registerVTables, clearSubscriptionState } from './elodin-vtable-registry.js';
-import { registerControllerVTables } from './legacy/elodin-vtable-controller.js';
+import { registerVTables, clearSubscriptionState, noteSubscriptionRejected } from './elodin-vtable-registry.js';
 import { createAPIHandler } from './api-server.js';
 import { startBoardLogReceiver } from './board-logs.js';
 import { readConfig, readDeployedConfig } from './routes/config.js';
@@ -40,7 +39,8 @@ import {
   EnvelopeAccumulator, parseGuiStreamConfig, envelopeWindowMs, encoderWindowMs,
   type GuiStreamConfig, type EnvelopePoint,
 } from './gui-stream.js';
-import { ClientOutbox, FlushPacer } from './client-outbox.js';
+import { ClientOutbox, FlushPacer, SOCKET_IDLE_BYTES, linkStatus } from './client-outbox.js';
+import { sendBackfill, type HistoryPayload } from './history-backfill.js';
 import { HistoryCache } from './history-cache.js';
 import { startGuiStaticServer } from './static-gui.js';
 import { handleCalibrationCommand, publishCalibrationReload, type CalibrationHost } from './calibration-handler.js';
@@ -189,10 +189,14 @@ function saneSampleTimeMs(tsMs: number, fallbackMs: number): number {
 interface ClientStream {
   outbox: ClientOutbox;
   pacer: FlushPacer;
-  /** Last flush's observations, surfaced to the operator via CONNECTION_STATUS. */
+  /** This link's observations, surfaced to the operator via CONNECTION_STATUS. Recomputed
+   *  every tick from what has actually been delivered — NOT only on a successful flush,
+   *  which is how a starved client used to report itself perfectly healthy. */
   throttled: boolean;
   lagMs: number;
   resolutionPct: number;
+  /** Newest sample put on this socket, or null if nothing ever has been. */
+  lastDeliveredTsMs: number | null;
 }
 const clientStreams = new Map<WebSocket, ClientStream>();
 
@@ -222,6 +226,22 @@ setInterval(() => {
   const now = Date.now();
   for (const [ws, cs] of clientStreams) {
     if (ws.readyState !== WebSocket.OPEN) continue;
+
+    // Status FIRST, before either `continue` below. A client that cannot flush is exactly
+    // the one whose status matters, and it is the one that never reached the old
+    // assignment at the end of this loop.
+    {
+      const st = linkStatus({
+        lastDeliveredTsMs: cs.lastDeliveredTsMs,
+        nowMs: now,
+        resolutionRatio: cs.outbox.resolutionRatio(),
+        squeezeDropped: cs.outbox.squeezeDroppedLast,
+      });
+      cs.throttled = st.throttled;
+      cs.lagMs = st.lagMs;
+      cs.resolutionPct = st.resolutionPct;
+    }
+
     if (!cs.pacer.shouldFlush(ws.bufferedAmount, now)) continue;
 
     const newest = cs.outbox.newestTimestamp();
@@ -241,9 +261,7 @@ setInterval(() => {
       }
     }
     cs.pacer.noteFlush(bytes, now);
-    cs.throttled = cs.outbox.squeezeDroppedLast;
-    cs.lagMs = newest === null ? 0 : Math.max(0, now - newest);
-    cs.resolutionPct = Math.round(cs.outbox.resolutionRatio() * 100);
+    if (newest !== null) cs.lastDeliveredTsMs = newest;
   }
 }, 100);
 
@@ -743,19 +761,51 @@ const apiHandler = createAPIHandler({
     // store file). Ask the calibration service to re-read it so the whole rig's cal switches live.
     publishCalibrationReload(calibrationHost);
   },
-  onConfigUpdated: () => {
-    reloadGuiStreamConfig();
-    // Rebuild sensor-role-derived caches so a Sensor Roles / board_id edit reflects
-    // live (the backend is always-on and isn't restarted by a session start).
-    calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
-    calibrationHost.channelToEntityMap = calChannelToEntityMap;
-    _ptSlotToBoardId.clear();
-    _hpBoardNumbers = hpBoardNumbers();
-    // Tell every open client the config changed so they refetch /api/* live
-    // (sensor-config, pressure-limits, pressure-bars) — no reload/restart.
-    broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
-  },
+  onConfigUpdated: () => applyDeployedConfigChange(),
 });
+
+/**
+ * Everything the always-on backend must redo when new config reaches disk, plus the nudge
+ * that makes open browsers pick it up.
+ *
+ * Named and exported to the session path because SessionManager.start() deploys too. The
+ * api-server edit routes call deployActiveProfile() and then onConfigUpdated(); the session
+ * path called deployActiveProfile() with nothing after it, so a profile edited during a run
+ * landed in config.toml at the next session start and no client was ever told. /api/states
+ * served the new state immediately while every open tab kept the list it had cached at page
+ * load, and the state diagram silently disagreed with the rig until someone hit reload.
+ * Observed on the stand 2026-09-12: "LOX Press" saved 20:06, deployed 20:08, invisible in
+ * the GUI on both sides of it.
+ *
+ * Deliberately NOT fired on a plain save. With a session active a save is a draft — nothing
+ * is deployed and the rig keeps running what it booted with, so the GUI should keep showing
+ * that, not the draft.
+ */
+export function applyDeployedConfigChange(): void {
+  reloadGuiStreamConfig();
+  // Rebuild sensor-role-derived caches so a Sensor Roles / board_id edit reflects
+  // live (the backend is always-on and isn't restarted by a session start).
+  calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
+  calibrationHost.channelToEntityMap = calChannelToEntityMap;
+  _ptSlotToBoardId.clear();
+  _hpBoardNumbers = hpBoardNumbers();
+  // The state CSVs are deployed in the same step, so rebuild what is derived from them too
+  // rather than relying on onStateCsvUpdated, which the session path never fires.
+  try {
+    STATE_ACTUATOR_MAP = getStateActuatorMap();
+  } catch (e) {
+    console.warn('Failed to rebuild STATE_ACTUATOR_MAP:', e);
+  }
+  // The board list too. loadBoardsFromConfig() ran at startup and on session STOP and
+  // nowhere else, so enabling a board in the config editor reached the Boards panel at
+  // neither the edit nor the deploy — an enabled LC board was simply absent until the
+  // backend restarted or a run ended, which reads exactly like the panel hardcoding a list.
+  loadBoardsFromConfig();
+  broadcastBoardStatus();
+  // Tell every open client the config changed so they refetch /api/* live
+  // (states, sensor-config, pressure-limits, pressure-bars) — no reload/restart.
+  broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
+}
 
 const httpServer = http.createServer(async (req, res) => {
   const urlPath = (req.url ?? '').split('?')[0] ?? '';
@@ -869,6 +919,9 @@ wss.on('connection', (ws: WebSocket, req) => {
     throttled: false,
     lagMs: 0,
     resolutionPct: 100,
+    // null, not Date.now(): nothing has been delivered yet, and the flush loop treats
+    // null as the connect race rather than as a stale link.
+    lastDeliveredTsMs: null,
   });
   (ws as WsWithControl).__daqAlive = true;
   ws.on('pong', () => { (ws as WsWithControl).__daqAlive = true; });
@@ -978,10 +1031,12 @@ wss.on('connection', (ws: WebSocket, req) => {
     }
   }
 
-  // Historical data
-  sendHistoricalData(ws);
-  outboundMessages++;
-  lastOutboundAt = Date.now();
+  // Historical data. Fire-and-forget: it now drains in chunks, so awaiting it here
+  // would hold up the rest of the connection setup behind a slow client.
+  void sendHistoricalData(ws, undefined, () => {
+    outboundMessages++;
+    lastOutboundAt = Date.now();
+  });
 
   ws.on('message', (data: Buffer) => {
     inboundMessages++;
@@ -1025,11 +1080,58 @@ wss.on('connection', (ws: WebSocket, req) => {
 /** Historical backfill. Times are epoch ms (same clock as SENSOR_UPDATE
  *  payload timestamps — clients merge by timestamp, no rebasing). Optional
  *  query narrows to specific keys and/or points newer than sinceMs; no query
- *  = full dump (legacy behavior, still used on connect). */
-function sendHistoricalData(ws: WebSocket, query?: QueryHistoricalRequest): void {
+ *  = full dump (legacy behavior, still used on connect).
+ *
+ *  Sent in chunks, each waiting for the socket to drain first, because a full dump
+ *  is MAX_SEND_POINTS *per series*: at 177 live sensors that is ~530k points, ~15 MB,
+ *  and it used to go out as a single ws.send() straight into the socket, outside the
+ *  outbox. On a slow link (an iPad on site Wi-Fi) that wedged the client PERMANENTLY,
+ *  which is worse than merely being slow: ClientOutbox.shouldFlush() only flushes when
+ *  bufferedAmount is below SOCKET_IDLE_BYTES, and a socket holding megabytes never gets
+ *  there again — so the client received its handshake messages and then not one live
+ *  sample, indefinitely. The keepalive ping queued behind the same bytes, so the reaper
+ *  eventually terminated it and the reconnect replayed the whole thing. Measured on the
+ *  stand: every such connection showed exactly 15 outbound messages, even one that
+ *  stayed open 179 s.
+ *
+ *  Chunking lets the socket return to idle between sends, which is what lets live data
+ *  and the ping through. Clients merge HISTORICAL_DATA by timestamp and never wipe
+ *  (frontend/lib/data-cache.ts, pinned by plot-time-cache.test.ts), so N small messages
+ *  are equivalent to one big one. Abandoning the tail on timeout is deliberate: partial
+ *  history plus live data beats complete history and a dead feed. */
+async function sendHistoricalData(
+  ws: WebSocket,
+  query?: QueryHistoricalRequest,
+  onSent?: () => void,
+): Promise<void> {
   const MAX_SEND_POINTS = 3000;
-  const payload = history.buildPayload(query, MAX_SEND_POINTS);
-  send(ws, { type: MessageType.HISTORICAL_DATA, timestamp: Date.now(), payload });
+  const payload = history.buildPayload(query, MAX_SEND_POINTS) as HistoryPayload;
+  if (Object.keys(payload).length === 0) return;
+
+  // Cap unless the query actually NARROWS the range. `!query` is not enough: a client
+  // that holds no data yet sends `{}` (see data-cache.ts — newestServerTsMs() is null on a
+  // fresh or starved client), and `{}` is truthy, so the horizon was switched off for
+  // precisely the client least able to take a full dump. On the stand that was the whole
+  // death spiral: starved -> reaped -> reconnects with {} -> uncapped 19-slice ~10 MB
+  // backfill -> starved harder. An empty query is a connect backfill and is capped.
+  const narrowed = !!(query && (query.sinceMs != null || (query.keys?.length ?? 0) > 0));
+  await sendBackfill(payload, /*capped=*/ !narrowed, {
+    socket: {
+      get bufferedAmount() { return ws.bufferedAmount; },
+      get isOpen() { return ws.readyState === WebSocket.OPEN; },
+    },
+    idleBytes: SOCKET_IDLE_BYTES,
+    sendSlice: (chunk) => {
+      send(ws, { type: MessageType.HISTORICAL_DATA, timestamp: Date.now(), payload: chunk });
+      onSent?.();
+    },
+    onStopped: (sentSlices, totalSlices) => {
+      console.warn(
+        `[ThinServer] Historical backfill stopped after ${sentSlices}/${totalSlices} slices — ` +
+        'socket did not drain. Client keeps live data and the history it received.',
+      );
+    },
+  });
 }
 
 // ── Message handling ─────────────────────────────────────────────────────────
@@ -1050,7 +1152,7 @@ function handleMessage(ws: WebSocket, message: any): void {
       break;
     }
     case MessageType.QUERY_HISTORICAL:
-      sendHistoricalData(ws, message.payload as QueryHistoricalRequest | undefined);
+      void sendHistoricalData(ws, message.payload as QueryHistoricalRequest | undefined);
       break;
     case MessageType.CALIBRATION_COMMAND:
       handleCalibrationCommand(calibrationHost, ws, message.payload);
@@ -1382,8 +1484,23 @@ elodin.on('connected', () => {
   registerVTables(elodin).then(() => {
     scheduleResubscribe(1);
   });
-  registerControllerVTables(elodin);
-  console.log('[ThinServer] Connected to Elodin, registered VTables.');
+  // No VTable REGISTRATION from here. The C++ services own it (sequencer:
+  // "Registered Sequencer/Controller VTables"), and every message this backend sent was
+  // rejected by the DB anyway — measured against elodin-db: 5x "postcard Serde
+  // Deserialization Error" for the controller tables and 20x "Hit the end of buffer" for
+  // the actuator ones. That encoder emitted a VTableMsg this DB version cannot parse, and
+  // the "✅ Registered" it logged only ever meant socket.write() returned true. It has
+  // been deleted (see elodin-vtable-registry.ts); this backend only subscribes.
+  console.log('[ThinServer] Connected to Elodin, subscriptions sent.');
+});
+
+// The DB refuses a subscription for a VTable that does not exist YET — the publisher
+// registers it when that service starts, which on a session start is a few seconds after
+// this backend reconnects. Un-mark the pair and make sure a retry is queued; without this
+// the refusal was silent and permanent, and the GUI sat on a stale state all session.
+elodin.on('dbError', (requestId: number, description: string) => {
+  noteSubscriptionRejected(requestId, description);
+  scheduleResubscribe(1);
 });
 
 elodin.on('disconnected', () => {
@@ -1592,7 +1709,7 @@ httpServer.listen(WS_PORT, () => {
   sessionManager.init(broadcast, broadcastNotification, () => {
     loadBoardsFromConfig();
     broadcastBoardStatus();
-  });
+  }, applyDeployedConfigChange);
   // Board diagnostic logs (type-15 LOGS forwarded by daq_bridge over loopback UDP).
   startBoardLogReceiver(broadcast);
 });

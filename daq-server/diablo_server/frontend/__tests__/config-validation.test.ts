@@ -226,3 +226,67 @@ describe('grouping for the session page', () => {
     expect(ids).toContain('system');   // used by the "profile could not be read" issue
   });
 });
+
+// ── Roles vs active_connectors ───────────────────────────────────────────────
+// active_connectors is wire-level (broadcast to the board, decides what it samples);
+// sensor_roles is naming (display, calibration keying, abort_pts). Only one direction is a
+// fault worth gating on: a role that names a channel the board never samples can never show
+// data. The reverse — a sampled channel with no role — is the normal case for spare
+// channels and is deliberately not reported; on the real rig it produced nine warnings.
+describe('roles vs active_connectors', () => {
+  const withLc = (connectors: number[], roles: Record<string, number>, extra: Record<string, unknown> = {}) => {
+    const cfg: any = cleanConfig();
+    cfg.boards.lc_board_2 = {
+      type: 'LC', board_id: 42, enabled: true, ip: '192.0.2.42',
+      active_connectors: connectors, ...extra,
+    };
+    cfg.sensor_roles_lc_board_2 = roles;
+    return cfg;
+  };
+
+  it('warns when a role names a channel the board is not told to sample', () => {
+    const issues = validateConfigForRun(withLc([1, 2, 6], { Thrust: 1, Ghost: 4 }), cleanCsv());
+    const issue = issues.find((i) => i.message.includes('Ghost'));
+    expect(issue).toBeTruthy();
+    expect(issue!.level).toBe('warn');
+    expect(issue!.page).toBe('boards');
+  });
+
+  it('does not block a run over it — a warning, not an error', () => {
+    const issues = validateConfigForRun(withLc([1], { Thrust: 1, Ghost: 4 }), cleanCsv());
+    expect(issues.every((i) => i.level === 'warn')).toBe(true);
+  });
+
+  it('stays quiet about spare channels — an unnamed channel is the normal case', () => {
+    const issues = validateConfigForRun(withLc([1, 2, 6], { Thrust: 1 }), cleanCsv());
+    expect(issues.some((i) => i.message.includes('lc_board_2'))).toBe(false);
+  });
+
+  it('is quiet when every role names a sampled channel', () => {
+    const issues = validateConfigForRun(withLc([1, 2, 6], { A: 1, B: 2, C: 6 }), cleanCsv());
+    expect(issues.some((i) => i.message.includes('lc_board_2'))).toBe(false);
+  });
+
+  it('says nothing about a DISABLED board — it samples nothing', () => {
+    const issues = validateConfigForRun(
+      withLc([1], { Ghost: 4 }, { enabled: false }), cleanCsv());
+    expect(issues.some((i) => i.message.includes('lc_board_2'))).toBe(false);
+  });
+
+  it('does not judge an ACTUATOR board by the sensor-role map', () => {
+    // Its channels are named in [actuator_roles] as ["NC", channel, board_id]; comparing it
+    // against sensor_roles would flag every channel it has.
+    const cfg: any = cleanConfig();
+    cfg.boards.act_x = {
+      type: 'ACTUATOR', board_id: 13, enabled: true, ip: '192.0.2.13',
+      active_connectors: [1, 2, 3],
+    };
+    const issues = validateConfigForRun(cfg, cleanCsv());
+    expect(issues.some((i) => i.message.includes('act_x'))).toBe(false);
+  });
+
+  it('an empty connector list with roles still warns — empty means no channels now', () => {
+    const issues = validateConfigForRun(withLc([], { Thrust: 1 }), cleanCsv());
+    expect(issues.some((i) => i.message.includes('Thrust'))).toBe(true);
+  });
+});

@@ -41,7 +41,7 @@ inline bool is_current_loop(const PtBoardConfig& b) {
 }
 
 /**
- * Parse [boards.*] sections: enabled boards, board_id, channels / num_sensors / active_connectors.
+ * Parse [boards.*] sections: enabled boards, board_id, channels / active_connectors.
  * Used by daq_bridge (full table registration) and sequencer_service (ACT_CMD registration).
  *
  * Also validates Elodin slot assignment (see check_board_slots) and logs to stderr on conflict.

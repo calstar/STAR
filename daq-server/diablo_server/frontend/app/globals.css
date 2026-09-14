@@ -103,3 +103,17 @@ html {
 .u-title {
   display: none !important;
 }
+
+/* ── Form fields stay selectable ─────────────────────────────────────────────
+   iOS places a caret only where selection is allowed, so an inherited (or stranded)
+   user-select: none makes a field take several taps to focus instead of one — the
+   drag-to-resize handles set exactly that on document.body while dragging. Assert it back on
+   the controls themselves so no ancestor, and no handler that missed its cleanup, can make an
+   input hard to tap. touch-action: manipulation drops the 300ms double-tap-zoom wait with it. */
+input,
+textarea,
+select {
+  -webkit-user-select: text;
+  user-select: text;
+  touch-action: manipulation;
+}

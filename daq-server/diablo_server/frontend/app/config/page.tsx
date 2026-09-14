@@ -265,7 +265,11 @@ function CommitOnBlurName({
 /** A single string that changes whenever any of the three state tables changes — used to detect
  *  unsaved edits without deep-comparing the grids. */
 const csvSignature = (a: CsvGrid | null, d: CsvGrid | null, t: CsvGrid | null): string =>
-  [a, d, t].map((g) => (g ? serializeCsvGrid(g) : '')).join(' ');
+  // '\\0' as an ESCAPE, not a literal NUL byte. A raw NUL in the source makes this file
+  // read as binary to grep/ripgrep, which then reports "no matches" for strings that are
+  // plainly here — silently, with exit 0. That is how a stale num_sensors input survived a
+  // repo-wide sweep for it (2026-09-13). Same separator at runtime, still greppable.
+  [a, d, t].map((g) => (g ? serializeCsvGrid(g) : '')).join('\0');
 
 /** Rows/columns present in `have` but not `want`, and vice versa — the orphan/missing warnings. */
 // Roles are edited in file order (so a row stays put while you type) and re-ordered only on Save:
@@ -1446,9 +1450,11 @@ export default function ConfigPage() {
                   const b = board as any;
                   const open = !!openBoards[boardKey];
                   const toggle = () => setOpenBoards((prev) => ({ ...prev, [boardKey]: !prev[boardKey] }));
+                  // The channel count is the length of active_connectors — the board's only
+                  // statement of which channels exist. There is no separate count any more.
                   const channels = b.type === 'ACTUATOR'
                     ? (b.num_actuators !== undefined ? `${b.num_actuators} act` : null)
-                    : (b.num_sensors !== undefined ? `${b.num_sensors} ch` : null);
+                    : (Array.isArray(b.active_connectors) ? `${b.active_connectors.length} ch` : null);
                   // The board DECLARES its sensor interface via pt_type — the same key the backend
                   // (isCurrentLoopBoard) and the C++ calibration service read, so there is one
                   // source of truth. There is deliberately no type = "HP_PT": the hardware is
@@ -1574,12 +1580,11 @@ export default function ConfigPage() {
                       </FieldSection>
 
                       <FieldSection title="Channels">
-                        {renderField(
-                          'Num Sensors',
-                          (board as any).num_sensors,
-                          (val) => updateBoard(boardKey, 'num_sensors', val),
-                          'number'
-                        )}
+                        {/* No "Num Sensors" field. It was a second, unreconciled statement of the
+                            board's channels beside active_connectors, and this input was rendered
+                            unconditionally — so editing it wrote num_sensors back into a config that
+                            no longer has it. active_connectors is the list the board is actually
+                            sent (build_sensor_config), and its length is the count. */}
                         {(board as any).num_actuators !== undefined && renderField(
                           'Num Actuators',
                           (board as any).num_actuators,
@@ -1755,38 +1760,159 @@ export default function ConfigPage() {
                     from a fixed pt_board/pt2/rtd/tc list so any board (incl. a 3rd PT board or an
                     HP board) gets a panel; the HP board is no longer special (was sensor_roles_pt2). */}
                 {(Object.entries(((config as any).boards || {}) as Record<string, any>)
-                  .filter(([, b]) => ['PT', 'RTD', 'TC', 'ENCODER'].includes(b?.type))
+                  .filter(([, b]) => ['PT', 'RTD', 'TC', 'ENCODER', 'LC'].includes(b?.type))
                   .map(([boardKey, b]) => {
+                    // The rig-wide load-cell defaults the calibration service falls back to when a
+                    // role has no per-sensor override (lc_*_for in calibration_main.cpp).
+                    const lcGlobals = (((config as any).calibration || {}).lc || {}) as Record<string, number>;
                     const isPT = b?.type === 'PT';
+                    const isLC = b?.type === 'LC';
                     const isLoop = isPT && !!(b?.hp_pt_connectors || b?.hp_pt_full_scale_psi != null || b?.pt_type === '4-20 mA absolute');
                     return {
                       key: `sensor_roles_${boardKey}`,
+                      boardKey,
+                      boardType: b.type as string,
                       title: `${b.type} Roles — ${boardKey} (sensor_roles_${boardKey})`,
-                      maxCh: typeof b.num_sensors === 'number' && b.num_sensors > 0 ? b.num_sensors : 10,
+                      // The channels this board is told to sample — the only statement of
+                      // which exist. Adding a role now picks from these rather than from a
+                      // 1..num_sensors range, so a role cannot be created for a channel the
+                      // board will never send.
+                      channels: (Array.isArray(b.active_connectors)
+                        ? b.active_connectors.map(Number).filter((n: number) => Number.isFinite(n))
+                        : []),
                       // cubic/robust/physics applies to every PT (cubic/robust fit the raw ADC; physics
                       // is the datasheet conversion). Default: 4-20 mA -> physics, 0-5 V -> cubic.
                       modelKey: `calibration_model_${boardKey}`,
                       fullScaleKey: `calibration_full_scale_${boardKey}`,
                       resistorKey: `calibration_sense_resistor_${boardKey}`,
-                      showModel: isPT,
+                      // A load cell's physics conversion is force = adc / ((mV/V / 1000) * PGA
+                      // * 2^31) * full_scale (convert_lc_adc_to_force). The calibration service
+                      // reads these two per role and nothing could write them, so an LC's
+                      // physics calibration was only ever settable rig-wide via [calibration.lc].
+                      sensitivityKey: `calibration_sensitivity_${boardKey}`,
+                      pgaKey: `calibration_pga_${boardKey}`,
+                      // Load cells carry a per-role model exactly like PTs — cubic fits the raw
+                      // ADC, physics is the datasheet conversion — so they get the selector too.
+                      // Robust is PT-only (it is an RLS fit over PT captures), and an LC defaults
+                      // to physics because cubic is opt-in per role (see the calibration page).
+                      showModel: isPT || isLC,
+                      isLC,
                       isLoop,
-                      defaultModel: isLoop ? 'physics' : 'cubic',
-                      boardFullScale: isLoop ? (typeof b?.hp_pt_full_scale_psi === 'number' ? b.hp_pt_full_scale_psi : 5000) : 1000,
+                      defaultModel: isLC ? 'physics' : isLoop ? 'physics' : 'cubic',
+                      // An LC's full scale is a FORCE, and its default is the rig-wide
+                      // [calibration.lc] value the service falls back to — not the PT 1000 PSI,
+                      // which is what this column used to offer a load cell.
+                      boardFullScale: isLC
+                        ? (typeof lcGlobals.full_scale_value === 'number' ? lcGlobals.full_scale_value : 300)
+                        : isLoop ? (typeof b?.hp_pt_full_scale_psi === 'number' ? b.hp_pt_full_scale_psi : 5000) : 1000,
                       boardResistor: typeof b?.hp_pt_sense_resistor_ohms === 'number' ? b.hp_pt_sense_resistor_ohms : 120,
+                      boardSensitivity: typeof lcGlobals.sensitivity_mv_per_v === 'number' ? lcGlobals.sensitivity_mv_per_v : 2,
+                      boardPga: typeof lcGlobals.pga_gain === 'number' ? lcGlobals.pga_gain : 32,
+                      fullScaleUnit: isLC ? 'kg' : 'PSI',
                     };
                   })
-                ).map(({ key, title, maxCh, modelKey, fullScaleKey, resistorKey, showModel, isLoop, defaultModel, boardFullScale, boardResistor }) => {
+                ).map(({ key, title, channels, boardKey, boardType, modelKey, fullScaleKey, resistorKey, sensitivityKey, pgaKey, showModel, isLC, isLoop, defaultModel, boardFullScale, boardResistor, boardSensitivity, boardPga, fullScaleUnit }) => {
                   const map = (config as any)[key] as Record<string, number> | undefined;
                   // File (insertion) order so a row stays put while you edit its channel or name —
                   // the map is re-sorted by channel only on Save (see sortRolesForSave), never
                   // mid-edit. Renaming rebuilds the map preserving order, so rows don't jump.
                   const entries = Object.entries(map || {});
+                  // ── Roles vs active_connectors ──────────────────────────────────────────
+                  // Two different facts that are easy to mistake for one. active_connectors is
+                  // WIRE-LEVEL: config_broadcast packs it into the packet sent to the board
+                  // (build_sensor_config), so it decides which channels the hardware samples and
+                  // sends. sensor_roles is NAMING: it maps a role name to a channel, and drives the
+                  // display, calibration keying (cal is filed by role) and abort_pts.
+                  //
+                  // Nothing kept them in step, so the two ways of "removing a channel" did
+                  // different things: drop the role and the board keeps sending it, unnamed; drop
+                  // the connector and the role survives pointing at a channel that is now silent.
+                  // Both are surfaced here, and the fix is offered explicitly rather than applied
+                  // as a side effect — narrowing active_connectors changes what the HARDWARE does,
+                  // which must not happen quietly because someone renamed a row.
+                  const boardCfg = ((config as any).boards || {})[boardKey] || {};
+                  const declared: number[] = Array.isArray(boardCfg.active_connectors)
+                    ? boardCfg.active_connectors.map(Number).filter((n: number) => Number.isFinite(n))
+                    : [];
+                  const roleChannels = [...new Set(entries.map(([, ch]) => Number(ch)).filter(Number.isFinite))]
+                    .sort((a, b) => a - b);
+                  // Only meaningful once the board declares a list. An empty list now means the
+                  // board samples NOTHING — there is no count left to expand into a 1..N range —
+                  // so with nothing declared there is no disagreement to report either.
+                  const rolesWithoutConnector = declared.length ? roleChannels.filter((c) => !declared.includes(c)) : [];
+                  const connectorsWithoutRole = declared.length ? declared.filter((c) => !roleChannels.includes(c)) : [];
+                  const inSync = rolesWithoutConnector.length === 0 && connectorsWithoutRole.length === 0;
+
                   return (
                     <div key={key} className="space-y-4">
                       <h3 className="text-lg font-semibold">{title}</h3>
+
+                      {/* The board's sampled channels, beside the roles that name them. */}
+                      <div className="flex items-end gap-4 flex-wrap">
+                        <div className="space-y-1">
+                          <label className="block text-sm font-semibold">
+                            Active Connectors
+                            <span className="text-xs text-text-muted ml-2">
+                              (channels this {boardType} board is told to sample — sent to the board)
+                            </span>
+                          </label>
+                          <input
+                            type="text"
+                            value={declared.join(', ')}
+                            onChange={(e) => {
+                              const arr = e.target.value.split(',').map((x) => x.trim()).filter(Boolean)
+                                .map(Number).filter((n) => Number.isFinite(n) && n >= 1);
+                              updateBoard(boardKey, 'active_connectors', arr);
+                            }}
+                            disabled={!canEdit}
+                            placeholder="e.g. 1, 2, 6"
+                            className="w-64 px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                          />
+                        </div>
+                        {declared.length > 0 && !inSync && canEdit && (
+                          <button
+                            onClick={() => updateBoard(boardKey, 'active_connectors', roleChannels)}
+                            title="Set active_connectors to exactly the channels these roles name"
+                            className="px-3 py-2 text-sm font-semibold rounded bg-yellow-900/40 border border-yellow-700 text-yellow-200 hover:bg-yellow-800/50"
+                          >
+                            Match to roles ({roleChannels.join(', ') || 'none'})
+                          </button>
+                        )}
+                      </div>
+
+                      {rolesWithoutConnector.length > 0 && (
+                        <InlineIssue level="warn">
+                          <p>
+                            Role{rolesWithoutConnector.length > 1 ? 's' : ''} on channel{' '}
+                            <strong>{rolesWithoutConnector.join(', ')}</strong>, but the board is not told to
+                            sample {rolesWithoutConnector.length > 1 ? 'them' : 'it'} — those roles will show no
+                            data. Add the channel{rolesWithoutConnector.length > 1 ? 's' : ''} above, or remove the
+                            role{rolesWithoutConnector.length > 1 ? 's' : ''}.
+                          </p>
+                        </InlineIssue>
+                      )}
+                      {connectorsWithoutRole.length > 0 && (
+                        <InlineIssue level="warn">
+                          <p>
+                            The board samples channel <strong>{connectorsWithoutRole.join(', ')}</strong> with no
+                            role naming {connectorsWithoutRole.length > 1 ? 'them' : 'it'} — that data arrives and
+                            is unnamed, and cannot be calibrated (cal is filed by role). Name{' '}
+                            {connectorsWithoutRole.length > 1 ? 'them' : 'it'} below, or drop{' '}
+                            {connectorsWithoutRole.length > 1 ? 'them' : 'it'} from Active Connectors to stop the
+                            board sending {connectorsWithoutRole.length > 1 ? 'them' : 'it'}.
+                          </p>
+                        </InlineIssue>
+                      )}
+
+                      {/* The Model selector and the physics params live on a ROLE row, so a board
+                          with no roles yet offered no way to pick a calibration at all — you had to
+                          know that "+ Add Role" below was the way in. Say so, and name the model the
+                          board's channels fall back to meanwhile. */}
                       {entries.length === 0 && (
                         <p className="text-sm text-text-muted">
-                          No entries. Add one to create this section in `config.toml`.
+                          No roles yet, so nothing names {channels.length > 0 ? `channel ${channels.join(', ')}` : 'this board'}.
+                          {' '}Add one below to name a channel{showModel ? ` and choose its calibration model (these channels stream ${defaultModel} until then)` : ''}
+                          {' '}— that also creates <code>{key}</code> in the config.
                         </p>
                       )}
                       {/* Column headers — the row is a flex of fixed-width cells, so each header
@@ -1801,10 +1927,19 @@ export default function ConfigPage() {
                           <span className="w-28 shrink-0">Channel</span>
                           {showModel && <span className="w-32 shrink-0">Model</span>}
                           {showModel && (
-                            <span className="w-24 shrink-0" title="Full-scale pressure (only used in physics-conversion mode)">Max PSI</span>
+                            <span className="w-24 shrink-0" title={`Full-scale ${isLC ? 'force' : 'pressure'} (only used in physics-conversion mode)`}>
+                              Max {fullScaleUnit}
+                            </span>
                           )}
                           {showModel && isLoop && (
                             <span className="w-24 shrink-0" title="Sense resistor for the 4-20 mA shunt (only used in physics-conversion mode)">Sense Ω</span>
+                          )}
+                          {/* The two numbers that actually define a load cell's physics curve. */}
+                          {showModel && isLC && (
+                            <span className="w-24 shrink-0" title="Load cell rated output at full scale, mV per volt of excitation (only used in physics-conversion mode)">mV/V</span>
+                          )}
+                          {showModel && isLC && (
+                            <span className="w-24 shrink-0" title="ADC programmable-gain amplifier setting on the board (only used in physics-conversion mode)">PGA</span>
                           )}
                           <span className="w-24 shrink-0" aria-hidden="true" />
                         </div>
@@ -1832,7 +1967,7 @@ export default function ConfigPage() {
                                 for (const [k, v] of Object.entries(map || {})) rebuilt[k === name ? newName : k] = v;
                                 const patch: any = { ...config, [key]: rebuilt };
                                 // Keep the parallel per-sensor maps (model + physics params) in sync.
-                                for (const pk of [modelKey, fullScaleKey, resistorKey]) {
+                                for (const pk of [modelKey, fullScaleKey, resistorKey, sensitivityKey, pgaKey]) {
                                   const mm = (config as any)[pk];
                                   if (mm && name in mm) {
                                     const rebuiltMap: Record<string, any> = {};
@@ -1878,8 +2013,11 @@ export default function ConfigPage() {
                                   className="w-32 shrink-0 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                                 >
                                   <option value="cubic">Cubic</option>
-                                  <option value="robust">Robust</option>
-                                  <option value="physics">Physics ({isLoop ? '4-20 mA' : '0-5 V'})</option>
+                                  {/* Robust is an RLS fit over PT captures — not defined for a load cell. */}
+                                  {!isLC && <option value="robust">Robust</option>}
+                                  <option value="physics">
+                                    Physics ({isLC ? 'datasheet' : isLoop ? '4-20 mA' : '0-5 V'})
+                                  </option>
                                 </select>
                                 {/* Always rendered so the table structure is stable across model
                                     changes; editable only in physics mode, otherwise it shows the
@@ -1893,7 +2031,9 @@ export default function ConfigPage() {
                                     setConfig({ ...config, [fullScaleKey]: u } as any);
                                   }}
                                   disabled={!isPhysics}
-                                  title={isPhysics ? 'Full-scale PSI (physics mode)' : 'Full-scale PSI — editable when this sensor is in physics mode'}
+                                  title={isPhysics
+                                    ? `Full-scale ${fullScaleUnit} (physics mode)`
+                                    : `Full-scale ${fullScaleUnit} — editable when this sensor is in physics mode`}
                                   className="w-24 shrink-0 px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-40 disabled:cursor-not-allowed"
                                 />
                                 {isLoop && (
@@ -1910,6 +2050,39 @@ export default function ConfigPage() {
                                     className="w-24 shrink-0 px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-40 disabled:cursor-not-allowed"
                                   />
                                 )}
+                                {/* force = adc / ((mV/V / 1000) * PGA * 2^31) * Max kg — the whole LC
+                                    physics conversion. Nothing could write these two, so picking
+                                    "Physics" for a load cell meant accepting whatever [calibration.lc]
+                                    says for the entire rig. That is wrong the moment two load cells
+                                    differ, and two of them is now the normal case. */}
+                                {isLC && (
+                                  <CommitOnBlurNumber
+                                    value={((config as any)[sensitivityKey]?.[name]) ?? boardSensitivity}
+                                    onCommit={(n) => {
+                                      if (n === undefined) return;
+                                      const u = { ...((config as any)[sensitivityKey] || {}) };
+                                      u[name] = n;
+                                      setConfig({ ...config, [sensitivityKey]: u } as any);
+                                    }}
+                                    disabled={!isPhysics}
+                                    title={isPhysics ? 'Rated output, mV/V' : 'Rated output mV/V — editable when this sensor is in physics mode'}
+                                    className="w-24 shrink-0 px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                                  />
+                                )}
+                                {isLC && (
+                                  <CommitOnBlurNumber
+                                    value={((config as any)[pgaKey]?.[name]) ?? boardPga}
+                                    onCommit={(n) => {
+                                      if (n === undefined) return;
+                                      const u = { ...((config as any)[pgaKey] || {}) };
+                                      u[name] = n;
+                                      setConfig({ ...config, [pgaKey]: u } as any);
+                                    }}
+                                    disabled={!isPhysics}
+                                    title={isPhysics ? 'ADC PGA gain' : 'ADC PGA gain — editable when this sensor is in physics mode'}
+                                    className="w-24 shrink-0 px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                                  />
+                                )}
                               </>
                             )}
                             <button
@@ -1918,7 +2091,7 @@ export default function ConfigPage() {
                                 delete updated[name];
                                 const patch: any = { ...config, [key]: updated };
                                 // Drop the sensor's parallel per-sensor entries too.
-                                for (const pk of [modelKey, fullScaleKey, resistorKey]) {
+                                for (const pk of [modelKey, fullScaleKey, resistorKey, sensitivityKey, pgaKey]) {
                                   const mm = (config as any)[pk];
                                   if (mm && name in mm) {
                                     const um = { ...mm };
@@ -1946,12 +2119,16 @@ export default function ConfigPage() {
                       <button
                         onClick={() => {
                           const updated = { ...(map || {}) };
-                          // First free channel 1..maxCh (board's num_sensors). Full → don't add.
+                          // First of the board's active_connectors that has no role yet. If the
+                          // board declares none, there is nothing to name — say so rather than
+                          // inventing channel 1, which the board would never sample.
                           const used = new Set(Object.values(updated).map((v) => Number(v)));
                           let freeCh = 0;
-                          for (let c = 1; c <= maxCh; c++) { if (!used.has(c)) { freeCh = c; break; } }
+                          for (const c of channels) { if (!used.has(c)) { freeCh = c; break; } }
                           if (freeCh === 0) {
-                            setError(`All ${maxCh} channels are in use here — remove a role before adding another.`);
+                            setError(channels.length === 0
+                              ? 'This board has no active connectors — add one above before naming a role.'
+                              : `All ${channels.length} active connectors are in use here — remove a role before adding another.`);
                             setTimeout(() => setError(null), 4000);
                             return;
                           }

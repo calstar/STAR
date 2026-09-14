@@ -121,26 +121,52 @@ export default function CalibrationPage() {
     const saved = Number(window.localStorage.getItem('calibration.sidebarWidth'));
     return Number.isFinite(saved) && saved >= SIDEBAR_MIN && saved <= SIDEBAR_MAX ? saved : 320;
   });
-  const startResize = useCallback((e: React.MouseEvent) => {
+  /**
+   * Drag-to-resize on pointer events, so it works with a finger as well as a mouse.
+   *
+   * This was mouse-only, and it parked `user-select: none` on document.body for the duration of
+   * the drag, undone only by mouseup. On iOS the mouse events are synthesised from touches and a
+   * touch that turns into a scroll never delivers the mouseup — so the body kept user-select:none
+   * for the rest of the page's life, and since iOS only places a caret where selection is allowed,
+   * every input then took several taps to focus. pointerup and pointercancel both restore, and
+   * setPointerCapture guarantees this element receives them wherever the finger ends up.
+   */
+  const startResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     const startX = e.clientX;
     const startW = sidebarWidth;
-    const onMove = (ev: MouseEvent) => {
+    const el = e.currentTarget;
+    const pointerId = e.pointerId;
+    try { el.setPointerCapture(pointerId); } catch { /* not fatal — fall back to window listeners */ }
+
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
       const next = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startW + (ev.clientX - startX)));
       setSidebarWidth(next);
     };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+    const release = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', release);
+      window.removeEventListener('pointercancel', release);
+      try { el.releasePointerCapture(pointerId); } catch { /* already released */ }
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       setSidebarWidth((w) => { try { window.localStorage.setItem('calibration.sidebarWidth', String(w)); } catch { /* ignore */ } return w; });
     };
+
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
   }, [sidebarWidth]);
+
+  // Whatever happens to a drag, the page must not be left unselectable.
+  useEffect(() => () => {
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }, []);
 
   // Full config (for physics params). Boards keyed by config key (e.g. "pt_board").
   const [cfgBoards, setCfgBoards] = useState<Record<string, any>>({});
@@ -279,7 +305,9 @@ export default function CalibrationPage() {
   }, [ws, fetchCubic]);
 
   const handleCaptureSelected = useCallback(() => {
-    if (!selectedChannel || selectedModel === 'physics') return;
+    // Physics captures too. The point is recorded in the shared store and does not change what
+    // physics streams; it is there for when the sensor is switched to cubic or robust.
+    if (!selectedChannel) return;
     const psi = parseFloat(refInput);
     if (isNaN(psi)) return;
     sendCalCmd({ commandType: 'capture_point', sensorId: selectedChannel.id, boardId: selectedChannel.boardId, referencePressure: psi });
@@ -293,8 +321,8 @@ export default function CalibrationPage() {
   }, [selectedChannel, sendCalCmd]);
 
   const handleZeroAll = useCallback(() => {
-    const n = [...ptChannels, ...lcChannels].filter((c) => modelOf(c.boardId * 100 + c.id) !== 'physics').length;
-    if (typeof window !== 'undefined' && !window.confirm(`Capture a 0 reference point on all ${n} cubic/robust PT + LC sensor${n === 1 ? '' : 's'}? Vent PTs to atmosphere and unload load cells first — this adds a real point to each sensor's shared fit.`)) return;
+    const n = ptChannels.length + lcChannels.length;
+    if (typeof window !== 'undefined' && !window.confirm(`Capture a 0 reference point on all ${n} PT + LC sensor${n === 1 ? '' : 's'}? Vent PTs to atmosphere and unload load cells first — this adds a real point to each sensor's shared fit. Physics sensors are included: the point is stored but does not change what they stream.`)) return;
     sendCalCmd({ commandType: 'zero_all' });
   }, [sendCalCmd, ptChannels, lcChannels, modelOf]);
 
@@ -442,7 +470,7 @@ export default function CalibrationPage() {
           <div className="flex-shrink-0 px-4 py-3 border-t border-gray-800">
             <button onClick={handleZeroAll} disabled={!sessionActive}
               title={sessionActive
-                ? "Capture a 0 reference point on every cubic/robust PT + LC sensor. Vent PTs to atmosphere and unload load cells first — this adds a real point to each sensor's shared fit (physics sensors are skipped)."
+                ? "Capture a 0 reference point on every PT + LC sensor. Vent PTs to atmosphere and unload load cells first — this adds a real point to each sensor's shared fit. Physics sensors are included; their points are stored but do not change what they stream."
                 : 'Start a session to calibrate — with no live stream there is nothing to capture.'}
               className="w-full px-4 py-2.5 text-sm font-bold rounded-lg border bg-yellow-900/30 border-yellow-600/60 text-yellow-300 hover:bg-yellow-800/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-yellow-900/30">
               Zero all
@@ -456,7 +484,7 @@ export default function CalibrationPage() {
 
       {/* Drag handle — widen/narrow the sidebar */}
       <div
-        onMouseDown={startResize}
+        onPointerDown={startResize}
         title="Drag to resize"
         className="w-1 flex-shrink-0 cursor-col-resize bg-gray-800 hover:bg-blue-500 active:bg-blue-500 transition-colors"
       />
@@ -479,7 +507,7 @@ export default function CalibrationPage() {
                 </div>
                 <div className="text-sm text-text-muted font-mono mt-1.5">
                   Board {selectedChannel.boardId} · CH{selectedChannel.id}
-                  {selectedModel !== 'physics' && ` · ${selectedState?.numPoints ?? 0} captured point${(selectedState?.numPoints ?? 0) === 1 ? '' : 's'}`}
+                  {` · ${selectedState?.numPoints ?? 0} captured point${(selectedState?.numPoints ?? 0) === 1 ? '' : 's'}`}
                 </div>
                 <div className="text-sm text-text-muted mt-1.5 max-w-2xl">
                   {modelDesc(selectedModel, selectedKind ?? 'PT')}
@@ -489,7 +517,7 @@ export default function CalibrationPage() {
                   {' '}<span className="text-gray-600">Change the model in Config → Roles.</span>
                 </div>
               </div>
-              {selectedModel !== 'physics' && (
+              {(
                 <button onClick={handleNewCalibration} disabled={!sessionActive}
                   className="px-5 py-2.5 text-sm font-bold rounded-lg border border-red-700 bg-red-900/30 text-red-300 hover:bg-red-800/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-red-900/30"
                   title={sessionActive ? 'Drop captured points and reset both cubic and robust to nothing (0)' : 'Start a session to change calibration.'}>
@@ -497,6 +525,20 @@ export default function CalibrationPage() {
                 </button>
               )}
             </div>
+
+            {/* A capture is a mean over a ~1 s window. If the reading was still moving inside
+                it — the button pressed while a load settled — the mean sits between two values
+                and belongs to neither. The point is recorded anyway (losing an operator's
+                capture silently is worse), so say so here and let them delete it. */}
+            {selectedState?.last_capture && !selectedState.last_capture.settled && (
+              <div className="rounded-lg border border-amber-700 bg-amber-900/20 px-4 py-3 text-sm text-amber-200">
+                <strong>Last capture was taken while the reading was still moving.</strong>{' '}
+                It drifted {Math.round(selectedState.last_capture.driftAdc).toLocaleString()} ADC
+                counts across the {selectedState.last_capture.windowMs} ms window
+                ({selectedState.last_capture.driftZ.toFixed(0)}× the noise). The point was still
+                recorded — if the load had not settled, clear the calibration and capture it again.
+              </div>
+            )}
 
             {/* Live readouts */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -506,12 +548,20 @@ export default function CalibrationPage() {
               <Stat label={healthLabel} value={healthValue} className={`text-xl ${healthClass}`} />
             </div>
 
-            {/* Capture — disabled in physics (points are meaningless for a datasheet conversion) */}
+            {/* Capture works in every model, physics included. A physics sensor still streams the
+                datasheet conversion — the point is recorded in the shared store so a calibration
+                can be run in whatever mode the rig happens to be in, and is already there if the
+                sensor is later switched to cubic or robust. Previously the only way to collect
+                points was to change a sensor's model first, mid-campaign. */}
             <div className="rounded-xl border border-gray-700 bg-card p-5">
               <div className="text-sm font-bold text-text mb-3">Capture reference point</div>
-              {selectedModel === 'physics' ? (
-                <div className="text-sm text-text-muted italic">Physics conversion uses datasheet parameters — captured points don't apply.</div>
-              ) : (
+              {selectedModel === 'physics' && (
+                <div className="text-sm text-orange-300/90 mb-3">
+                  This sensor is in physics mode: points are recorded but do not change what it streams.
+                  Switch it to cubic or robust in Config &rarr; Roles to use them.
+                </div>
+              )}
+              {(
                 <div className="flex items-center gap-3 flex-wrap">
                   <input
                     type="number" step="any" placeholder={selectedKind === 'LC' ? 'Reference kg' : 'Reference PSI'}
@@ -522,6 +572,12 @@ export default function CalibrationPage() {
                   />
                   <button
                     onClick={handleCaptureSelected}
+                    // With the soft keyboard up from the field beside it, the first tap on this
+                    // button is spent dismissing the keyboard and never arrives as a click — on a
+                    // tablet that reads as the button ignoring you until the second or third press.
+                    // Preventing the default on press keeps focus (and the keyboard) where it is,
+                    // so the tap lands the first time and the next reading can be typed straight in.
+                    onPointerDown={(e) => e.preventDefault()}
                     disabled={!refInput || !sessionActive}
                     title={sessionActive ? undefined : 'Start a session to calibrate — there is no live stream to capture.'}
                     className="px-6 py-2.5 text-sm font-bold rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-white"
@@ -530,7 +586,7 @@ export default function CalibrationPage() {
                   </button>
                   <span className="text-sm text-text-muted">
                     {sessionActive
-                      ? <>Records the current ADC at this known {selectedKind === 'LC' ? 'weight' : 'pressure'}. Feeds the {selectedKind === 'LC' ? 'cubic' : 'cubic & robust'} fit.</>
+                      ? <>Records the current ADC at this known {selectedKind === 'LC' ? 'weight' : 'pressure'}. Feeds the {selectedKind === 'LC' ? 'cubic' : 'cubic & robust'} fit{selectedModel === 'physics' ? ', for whenever this sensor is switched to one of them' : ''}.</>
                       : <>Start a session to calibrate — there is no live stream to capture.</>}
                   </span>
                 </div>

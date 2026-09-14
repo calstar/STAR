@@ -82,7 +82,6 @@ struct BoardInfo {
     // enable_serial_printing byte; the firmware interprets it as the mode.
     int enable_serial_printing;
     std::vector<int> active_connectors;
-    int num_sensors;
     uint16_t listen_port;
 };
 
@@ -189,16 +188,16 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
     // parser).
     std::vector<BoardInfo> boards;
     for (const auto& b : cfg.boards) {
-        std::vector<int> active = b.active_connectors;
-        if (active.empty())
-            for (int i = 1; i <= b.num_sensors; ++i)
-                active.push_back(i);
+        // active_connectors is the only statement of which channels exist — no expansion
+        // from a config-only num_sensors, which never had a counterpart on the wire. The
+        // packet's num_sensors byte is just this list's length (see build_sensor_config).
+        const std::vector<int>& active = b.active_connectors;
         std::string ip = b.ip;
         if (ip.empty() && b.board_id > 0)
             ip = "192.168.2." + std::to_string(b.board_id);
         boards.push_back({b.board_id, ip, b.type, b.enabled, b.designated_survivor,
                           b.necessary_for_abort, b.voltage_reference, b.enable_serial_printing,
-                          active, b.num_sensors, b.listen_port});
+                          active, b.listen_port});
     }
 
     std::string designated_ip;

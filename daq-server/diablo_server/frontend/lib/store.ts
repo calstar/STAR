@@ -32,7 +32,7 @@ import {
   BoardLogTotals,
 } from './types';
 import type { VoltageRefNominals } from './voltageRef';
-import { recordSensorUpdate, isSensorKeyFresh } from './sensor-rate';
+import { recordSensorUpdate, isSensorKeyFresh, setDeliveryLagAllowanceMs } from './sensor-rate';
 interface SensorData {
   [key: string]: number; // entity.component -> value
 }
@@ -218,7 +218,9 @@ export function buildAliasesFromConfig(config: any): void {
     const activeChannels: number[] =
       Array.isArray(board.active_connectors) && board.active_connectors.length > 0
         ? board.active_connectors.map((v: unknown) => Number(v)).filter((v: number) => Number.isFinite(v) && v >= 1)
-        : Array.from({ length: Math.max(0, Number(board.num_sensors) || 0) }, (_, i) => i + 1);
+        // No num_sensors fallback: active_connectors is the only statement of which channels
+        // exist, and an empty list means none (see Config.hpp).
+        : [];
 
     // Look for sensor_roles_<boardKey> section in config
     const rolesKey = `sensor_roles_${boardKey}`;
@@ -290,6 +292,19 @@ export function buildAliasesFromConfig(config: any): void {
       addAlias(`ENC1.${entityName}.raw_angle`, `ENC1.CH${channel}.raw_angle`);
       addAlias(`ENC1_Cal.${entityName}.position_deg`, `ENC1_Cal.CH${channel}.position_deg`);
     }
+  }
+
+  // A generic key that resolves to more than one board's stream is a coin flip: the
+  // lookup returns whichever candidate has data first, so a pane built on bare channel
+  // numbers renders one board twice. Panes are board-scoped now (buildSenseRowsFromBoards);
+  // say so loudly if one is not, because on the stand this looks like a dead sensor, not
+  // like a naming bug (two LC boards on connector 1, 2026-09-13).
+  const ambiguous = Object.entries(aliases).filter(([, v]) => v.length > 1);
+  if (ambiguous.length > 0) {
+    console.warn(
+      `[Store] ${ambiguous.length} ambiguous generic sensor key(s) — two enabled boards claim the same channel. ` +
+      `Panes must use board-scoped entities. e.g. ${ambiguous[0][0]} → ${ambiguous[0][1].join(', ')}`
+    );
   }
 
   ALIASES = aliases;
@@ -527,6 +542,10 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   },
 
   updateConnectionStatus: (status: ConnectionStatus) => {
+    // Feed this link's measured lag to the staleness rule. A throttled client is paced to
+    // ~1500 ms by design, which is exactly what the readout window called stale — so
+    // without this the numbers dash out on every burst even though the data is current.
+    setDeliveryLagAllowanceMs(status.lagMs);
     set({ connectionStatus: status });
   },
 

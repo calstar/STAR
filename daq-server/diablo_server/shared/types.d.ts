@@ -251,10 +251,28 @@ export interface CubicCalibrationPoint {
  * captured `points` as a scatter and overlays the curve by evaluating `polyCoeffs` over
  * `((adc - adcNormMin)/adcNormScale)^i` — no fitting in the browser.
  */
+/**
+ * How the last capture on a channel went.
+ *
+ * A capture is a mean over a ~1 s window. If the reading was still moving inside it — the
+ * button pressed while a load settled — the mean sits between two values and belongs to
+ * neither. The point is recorded anyway and `settled` is false, so the UI can say so.
+ */
+export interface CubicCaptureQuality {
+    t: number;
+    adc: number;
+    n: number;
+    windowMs: number;
+    spreadAdc: number;
+    driftAdc: number;
+    driftZ: number;
+    settled: boolean;
+}
 export interface CubicCalibrationChannel {
     boardId: number;
     connector: number;
     logicalCh: number;
+    kind?: 'PT' | 'LC';
     role: string;
     active_model: 'cubic' | 'robust' | 'physics';
     numPoints: number;
@@ -277,6 +295,7 @@ export interface CubicCalibrationChannel {
         adc: number;
         psi: number;
     }[];
+    last_capture?: CubicCaptureQuality;
 }
 /** Body of GET /api/cubic_calibration: the service's cubic_calibration.json, keyed by uid. */
 export interface CubicCalibrationPayload {

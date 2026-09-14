@@ -20,6 +20,18 @@ export interface ElodinPacketHeader {
   requestId: number;
 }
 
+/** postcard String: varint byte-length then UTF-8. */
+function decodePostcardString(buf: Buffer): string {
+  let n = 0, shift = 0, i = 0;
+  while (i < buf.length) {
+    const b = buf[i++];
+    n |= (b & 0x7f) << shift;
+    if ((b & 0x80) === 0) break;
+    shift += 7;
+  }
+  return buf.subarray(i, i + n).toString('utf8');
+}
+
 export class ElodinClient extends EventEmitter {
   private socket: Socket | null = null;
   private host: string;
@@ -192,6 +204,19 @@ export class ElodinClient extends EventEmitter {
 
       const payload = packet.subarray(8);
 
+      // ErrorResponse [224,29]: the DB's reply when it refuses a message — a rejected
+      // VTableStream subscription ("invalid msg id") or an unparseable VTableMsg. It was
+      // being dropped by the data-packet filter below, so every refusal in the system was
+      // silent: the sequencer-state subscription sent 3 s before the sequencer registered
+      // its table was rejected, and nothing ever retried it or said so. The header's
+      // requestId is echoed from the message that caused it, which is what lets the
+      // registry work out WHICH subscription was refused.
+      if (header.packetId[0] === 0xE0 && header.packetId[1] === 0x1D) {
+        this.emit('dbError', header.requestId, decodePostcardString(payload));
+        processed++;
+        continue;
+      }
+
       // Elodin can deliver stream rows as ty=TABLE(1) or ty=MSG(0) depending on path/version.
       // Accept TABLE always; accept MSG only for known data packet families to avoid
       // flooding the event loop with registration/control chatter.
@@ -228,13 +253,18 @@ export class ElodinClient extends EventEmitter {
    * Send raw message to Elodin DB
    * Used for VTable registration and other low-level protocol messages
    */
-  sendRawMessage(packetId: [number, number], packetType: ElodinPacketType, payload: Buffer): boolean {
+  sendRawMessage(
+    packetId: [number, number],
+    packetType: ElodinPacketType,
+    payload: Buffer,
+    requestId = 0,
+  ): boolean {
     if (!this.connected || !this.socket) {
       return false;
     }
 
     try {
-      const header = this.createHeader(packetType, payload.length, packetId);
+      const header = this.createHeader(packetType, payload.length, packetId, requestId);
       const packet = Buffer.concat([header, payload]);
 
       // If drain is pending, queue the packet rather than dropping it
@@ -299,14 +329,19 @@ export class ElodinClient extends EventEmitter {
     }
   }
 
-  private createHeader(type: ElodinPacketType, payloadLength: number, packetId: [number, number] = [0, 0]): Buffer {
+  private createHeader(
+    type: ElodinPacketType,
+    payloadLength: number,
+    packetId: [number, number] = [0, 0],
+    requestId = 0,
+  ): Buffer {
     const header = Buffer.alloc(8);
     const totalLen = 8 + payloadLength;
     header.writeUInt32LE(totalLen - 4, 0); // Elodin len = total - 4
     header.writeUInt8(type, 4);
     header.writeUInt8(packetId[0], 5);
     header.writeUInt8(packetId[1], 6);
-    header.writeUInt8(0, 7); // requestId
+    header.writeUInt8(requestId & 0xff, 7);
     return header;
   }
 

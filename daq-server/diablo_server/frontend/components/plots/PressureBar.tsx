@@ -63,6 +63,48 @@ function nonLinearPct(value: number, nop: number, meop: number, maxVal: number):
   }
 }
 
+/** Grey. A no-data bar must never wear a threshold colour: green on an empty bar reads
+ *  as "0 psi and safe", which on a pressurised rig is the most dangerous thing this
+ *  component can draw. */
+export const NO_DATA_COLOR = '#6B7280';
+
+/**
+ * Everything about how one bar draws, as a pure function so the safety property can be
+ * asserted directly (see __tests__/pressure-bar.test.ts) rather than through the DOM.
+ *
+ * `value === null` means "no fresh reading", which is NOT the same as a reading of zero.
+ * This used to start with `value ?? 0`, so a stale sensor produced an empty bar with the
+ * green (below-NOP) colour on both the bar and the readout — indistinguishable from a
+ * genuinely vented tank. Now the null case is carried through as `noData` and coloured
+ * neutral, and the caller hatches the track so it reads as "no data" at a glance.
+ */
+export function pressureBarVisual(
+  value: number | null,
+  nop: number,
+  meop: number,
+  color?: string,
+): {
+  noData: boolean; sane: boolean; valuePct: number; nopPct: number;
+  meopPct: number; displayHeight: number; barColor: string;
+} {
+  const maxVal = Math.max(meop * 1.3, 1000);
+  const noData = value === null || !Number.isFinite(value);
+  // Derived from `value`, never from `value ?? 0` — that substitution is the whole bug.
+  const sane = !noData && Math.abs(value as number) < 100000;
+  const clamped = sane ? Math.max(0, value as number) : 0;
+  const valuePct = sane ? Math.min(Math.max(nonLinearPct(clamped, nop, meop, maxVal), 0), 100) : 0;
+  const nopPct = nonLinearPct(nop, nop, meop, maxVal);
+  const meopPct = nonLinearPct(meop, nop, meop, maxVal);
+  const minVisibleHeight = 2;
+  const displayHeight = sane && value !== 0 ? Math.max(valuePct, minVisibleHeight) : valuePct;
+  const barColor = noData
+    ? NO_DATA_COLOR
+    : (color || (sane && (value as number) > meop ? '#E74C3C'
+      : sane && (value as number) > nop ? '#F39C12' : '#27AE60'));
+
+  return { noData, sane, valuePct, nopPct, meopPct, displayHeight, barColor };
+}
+
 function PressureBar({
   label,
   value,
@@ -73,25 +115,8 @@ function PressureBar({
   showLabels = true,
   compact = false,
 }: PressureBarProps) {
-  const displayValue = value ?? 0;
-
-  // Memoize calculations based on value - will recalculate when value changes
-  // The useSensorValue hook now properly triggers re-renders when values update
-  const { sane, valuePct, nopPct, meopPct, displayHeight, barColor } = useMemo(() => {
-    const maxVal = Math.max(meop * 1.3, 1000);
-    const sane = isFinite(displayValue) && Math.abs(displayValue) < 100000;
-    const clampedDisplayValue = Math.max(0, displayValue);
-    const valuePct = sane ? Math.min(Math.max(nonLinearPct(clampedDisplayValue, nop, meop, maxVal), 0), 100) : 0;
-    const nopPct = nonLinearPct(nop, nop, meop, maxVal);
-    const meopPct = nonLinearPct(meop, nop, meop, maxVal);
-    const minVisibleHeight = 2;
-    const displayHeight = sane && value !== null && value !== 0
-      ? Math.max(valuePct, minVisibleHeight)
-      : valuePct;
-    const barColor = color || (sane && displayValue > meop ? '#E74C3C' : sane && displayValue > nop ? '#F39C12' : '#27AE60');
-
-    return { sane, valuePct, nopPct, meopPct, displayHeight, barColor };
-  }, [displayValue, value, nop, meop, color]);
+  const { noData, sane, valuePct, nopPct, meopPct, displayHeight, barColor } =
+    useMemo(() => pressureBarVisual(value, nop, meop, color), [value, nop, meop, color]);
 
   return (
     <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-visible select-none w-full">
@@ -108,16 +133,28 @@ function PressureBar({
         className="relative w-full flex-1 rounded-xl border border-white/10 overflow-hidden min-h-0 bg-black/40 shadow-inner"
         style={{ maxHeight: '100%', minHeight: compact ? '6vh' : undefined }}
       >
-        {sane && value !== null && (
+        {sane && !noData && (
           <div
             className="absolute bottom-0 w-full rounded-sm"
             style={{
               height: `${displayHeight}%`,
               background: barColor,
               boxShadow: `0 0 15px ${barColor}80`,
-              minHeight: value !== null && value !== 0 ? '2px' : '0px',
+              minHeight: value !== 0 ? '2px' : '0px',
               transition: 'height 0.05s ease-out',
-              opacity: value !== null && value !== 0 ? 0.8 : 0.3,
+              opacity: value !== 0 ? 0.8 : 0.3,
+            }}
+          />
+        )}
+
+        {/* No data: hatch the whole track. An empty bar and a zero bar are the same
+            picture, so the absence of a reading has to be drawn, not implied. */}
+        {noData && (
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              background:
+                'repeating-linear-gradient(45deg, rgba(156,163,175,0.20) 0 6px, transparent 6px 12px)',
             }}
           />
         )}

@@ -161,6 +161,45 @@ export function validateConfigForRun(config: any, csv?: Partial<StateCsvSet>): C
     if (msg) add('boards', 'error', `${boardDisplayName(boards, key)} (${key}): ${msg}`);
   }
 
+  // ── Roles vs active_connectors ────────────────────────────────────────────
+  // active_connectors is wire-level: config_broadcast packs it into the packet sent to the
+  // board (build_sensor_config) and the firmware loops over those ids, so it decides which
+  // channels the hardware samples. sensor_roles_<board> is naming: role -> channel, driving
+  // the display, calibration keying (cal is filed by role) and abort_pts.
+  //
+  // Only ONE direction is reported: a role naming a channel the board is not told to sample.
+  // That role can never show data, which is a real and confusing fault.
+  //
+  // The reverse — a sampled channel with no role — is deliberately NOT reported. Spare
+  // channels are the normal case: a 10-channel board running four sensors has six unnamed,
+  // and on the real rig that rule produced nine warnings, nearly all of them fine. False
+  // positives are expensive here, because this list gates session start: an operator warned
+  // about things that are not wrong learns to click past the list, and then it stops meaning
+  // anything. The config editor still shows unnamed channels inline, where it is context
+  // rather than a gate.
+  for (const key of Object.keys(boards)) {
+    const b = boards[key] ?? {};
+    // A disabled board samples nothing, so nothing about its channels can be wrong.
+    if (b.enabled === false) continue;
+    // An ACTUATOR board names its channels in [actuator_roles], not sensor_roles_<board>.
+    if (String(b.type ?? '').toUpperCase() === 'ACTUATOR') continue;
+
+    const declared: number[] = Array.isArray(b.active_connectors)
+      ? b.active_connectors.map(Number).filter((n: number) => Number.isFinite(n))
+      : [];
+    const roles: Record<string, any> = (config?.[`sensor_roles_${key}`] ?? {}) as Record<string, any>;
+
+    const orphans = Object.entries(roles)
+      .filter(([, ch]) => !declared.includes(Number(ch)))
+      .map(([role, ch]) => `${role} (ch ${ch})`);
+    if (orphans.length > 0) {
+      add('boards', 'warn',
+        `${boardDisplayName(boards, key)} (${key}): ${orphans.join(', ')} name channel(s) the ` +
+        'board is not told to sample, so those roles can never show data. Add them to Active ' +
+        'Connectors, or remove the roles.');
+    }
+  }
+
   // ── Controller PWM assignment ─────────────────────────────────────────────
   // The only statement of which hardware the controller drives. Unresolved means the controller
   // comes up with its fire gate disabled, which an operator otherwise discovers mid-countdown.
@@ -211,9 +250,13 @@ export function validateConfigForRun(config: any, csv?: Partial<StateCsvSet>): C
         add('state', 'error', 'The Transitions table rows do not match the state list — every state must have a row.');
     }
 
+    // There is no fallback to the compiled Engine/GSE/Emergency ids once [[states]] is declared —
+    // StateMachine::isAbort() treats "config declares states but flags none is_abort" as "this rig
+    // has no abort states", not as "use 17/18/19". So flagging none does not leave the built-in
+    // aborts standing in; it leaves the rig with none at all.
     if (stateList.every((s) => !s?.is_abort))
       add('state', 'warn',
-        'No state is flagged Abort. Aborts are not disabled — the controller falls back to its built-in aborts (Engine / GSE / Emergency), which may not match these states.');
+        'No state is flagged Abort, so this rig has no abort states. Nothing falls back to the built-in Engine / GSE / Emergency aborts: entering a state never triggers the sequencer\'s abort broadcast, and any abort control the config declares no state for is disabled in the GUI. The boards\' own independent abort logic is unaffected.');
 
     // The fire timer: on expiry the sequencer commands fire.state → fire.expiry_target. If that
     // move is not allowed, the timer expires into a refused transition and the system stays in fire.

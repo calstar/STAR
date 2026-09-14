@@ -114,7 +114,9 @@ using BoardType = fsw::config::ActiveBoardKind;
 struct BoardConfig {
     BoardType type;
     std::string ip;
-    int num_sensors;
+    /** How many channels this board is told to sample — the length of its
+     *  active_connectors list, which is the only statement of that. Log-only here. */
+    int active_channels;
     bool enabled;
     int board_id;  // Added board_id
 };
@@ -201,7 +203,8 @@ static void load_board_map_from_config(const std::string& config_path,
         BoardType bt = kind(b.type);
         if (bt == BoardType::UNKNOWN)
             continue;
-        BoardConfig bc{bt, b.ip, b.num_sensors, b.enabled, b.board_id};
+        BoardConfig bc{bt, b.ip, static_cast<int>(b.active_connectors.size()), b.enabled,
+                       b.board_id};
         board_map[b.ip] = bc;
         // Index the board by its config-IP host octet for the loopback fallback (see BoardByOctet).
         if (out_board_by_octet && b.enabled) {
@@ -382,7 +385,7 @@ int main(int argc, char* argv[]) {
             default:
                 break;
         }
-        std::cout << "  " << ip << " → " << type_str << " (" << cfg.num_sensors << " sensors)"
+        std::cout << "  " << ip << " → " << type_str << " (" << cfg.active_channels << " channels)"
                   << (cfg.enabled ? " ✅" : " ❌") << std::endl;
     }
 

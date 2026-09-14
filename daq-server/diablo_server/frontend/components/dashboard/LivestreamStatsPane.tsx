@@ -100,10 +100,12 @@ function PressureDial({
     [options, selectedEntity]
   );
   const value = useSensorValue(selected?.entity ?? '', 'pressure_psi');
+  // null (stale) yields null progress, not 0 — an empty bar and a zero bar look the same,
+  // so the caller must be able to tell "no reading" from "vented".
   const progress = useMemo(() => {
+    if (value === null || !Number.isFinite(value)) return null;
     const maxValue = Math.max(selected?.meop ?? 100, 1);
-    const safeValue = Math.max(0, value ?? 0);
-    return Math.min(safeValue / maxValue, 1);
+    return Math.min(Math.max(0, value) / maxValue, 1);
   }, [selected, value]);
 
   useEffect(() => {
@@ -124,6 +126,7 @@ function PressureDial({
     []
   );
   const progressPath = useMemo(() => {
+    if (progress === null) return null;
     const angle = DIAL_START_ANGLE + (DIAL_END_ANGLE - DIAL_START_ANGLE) * progress;
     return describeArc(100, 100, 76, DIAL_START_ANGLE, angle);
   }, [progress]);
@@ -137,7 +140,7 @@ function PressureDial({
       >
         <svg viewBox="0 0 200 200" className="absolute inset-0 h-full w-full">
           <path d={trackPath} fill="none" stroke="#6b7280" strokeWidth="6" strokeLinecap="round" />
-          {progress > 0 && (
+          {progressPath !== null && progress > 0 && (
             <path d={progressPath} fill="none" stroke="#ffffff" strokeWidth="6" strokeLinecap="round" />
           )}
         </svg>

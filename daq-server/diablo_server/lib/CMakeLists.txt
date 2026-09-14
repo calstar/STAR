@@ -19,6 +19,7 @@ set(FSW_SOURCES
     src/control/PressureStateMachine.cpp
     src/calibration/PTCalibration.cpp
     src/calibration/CubicCalibrationStore.cpp
+    src/calibration/CaptureWindow.cpp
     src/calibration/SensorCalibration.cpp
     src/calibration/AllanVariance.cpp
     src/calibration/RobustCalibrationFramework.cpp
@@ -72,6 +73,22 @@ target_include_directories(test_board_clock_sync PRIVATE
 target_link_libraries(test_board_clock_sync
     fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME board_clock_sync COMMAND test_board_clock_sync)
+
+add_executable(test_capture_window test/test_capture_window.cpp)
+target_include_directories(test_capture_window PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(test_capture_window
+    fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME capture_window COMMAND test_capture_window)
+
+add_executable(test_cubic_store_namespace test/test_cubic_store_namespace.cpp)
+target_include_directories(test_cubic_store_namespace PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(test_cubic_store_namespace
+    fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME cubic_store_namespace COMMAND test_cubic_store_namespace)
 
 add_executable(test_fire_lifecycle
     test/test_fire_lifecycle.cpp

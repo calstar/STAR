@@ -172,7 +172,8 @@ def test_a_chain_that_truly_cannot_report_constants_says_so() -> None:
 # --------------------------------------------------- catalogued curves
 
 
-CATALOG = textwrap.dedent("""
+CATALOG = textwrap.dedent(
+    """
     ["hose-8an-600"]
     type = "flex_hose"
     manufacturer = "Aeroquip"
@@ -196,7 +197,8 @@ CATALOG = textwrap.dedent("""
     y_unit = "bar"
     source = "measured"
     reference = "CF-2026-03, 9 points"
-    """)
+    """
+)
 
 
 def test_a_part_can_carry_measured_flow_data(tmp_path: Path) -> None:

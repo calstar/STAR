@@ -70,17 +70,24 @@ export class YAxisHysteresis {
 
   constructor(private intervalMs = 1500) {}
 
-  /** Returns the range to apply via setScale('y', …), or null to keep current. */
-  update(seriesValues: number[][], nowMs: number): [number, number] | null {
+  /** Returns the range to apply via setScale('y', …), or null to keep current.
+   *
+   *  Takes `(number | null)[][]`: plots emit null for "no sample here" so uPlot breaks
+   *  the line (it tests `=== null`; NaN is drawn as a straight segment across the hole).
+   *  The finite check below MUST be Number.isFinite, not the global — `isFinite(null)`
+   *  is true because null coerces to 0, which would drag every y-axis toward zero the
+   *  moment a series has a gap. */
+  update(seriesValues: (number | null)[][], nowMs: number): [number, number] | null {
     if (nowMs - this.lastUpdateMs < this.intervalMs) return null;
     this.lastUpdateMs = nowMs;
 
     let mn = Infinity, mx = -Infinity;
     for (const series of seriesValues) {
       for (const v of series) {
-        if (isFinite(v)) {
-          if (v < mn) mn = v;
-          if (v > mx) mx = v;
+        if (Number.isFinite(v)) {
+          const n = v as number;
+          if (n < mn) mn = n;
+          if (n > mx) mx = n;
         }
       }
     }
