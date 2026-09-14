@@ -25,6 +25,8 @@ import { getConfigPath, readConfig, writeConfig, invalidateDeployedConfigCache }
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const DEFAULT_PROFILE = 'default';
+/** Where a profile keeps its dynamic-state scripts, relative to the profile directory. */
+export const SCRIPTS_SUBDIR = 'scripts';
 
 function assertValidName(name: string): void {
   if (!NAME_RE.test(name)) {
@@ -55,13 +57,32 @@ export function profilePath(name: string): string {
   return join(profileDir(name), 'config.toml');
 }
 
-/** Profile-owned files that deploy alongside config.toml. */
+/**
+ * Profile-owned files that deploy alongside config.toml, as paths relative to the profile dir.
+ *
+ * State scripts (scripts/*.script) are in here for the same reason the CSVs are, and the failure
+ * if they were not is worse than it looks: config.toml and the CSVs would deploy while the script
+ * a `[[states]]` entry names did not, so the sequencer would refuse a state the operator had just
+ * watched save successfully — and it would read as a sequencer bug rather than a deploy bug.
+ *
+ * Filtered by extension rather than listed wholesale so an editor backup or a stray file in the
+ * profile directory cannot ride out to config/.
+ */
 function profileAssets(name: string): string[] {
+  const out: string[] = [];
   try {
-    return readdirSync(profileDir(name)).filter((f) => f.endsWith('.csv')).sort();
+    out.push(...readdirSync(profileDir(name)).filter((f) => f.endsWith('.csv')));
   } catch {
     return [];
   }
+  try {
+    out.push(
+      ...readdirSync(join(profileDir(name), SCRIPTS_SUBDIR))
+        .filter((f) => f.endsWith('.script'))
+        .map((f) => `${SCRIPTS_SUBDIR}/${f}`),
+    );
+  } catch { /* a profile with no scripts/ directory is the normal case */ }
+  return out.sort();
 }
 
 /**
@@ -153,6 +174,7 @@ export function ensureSeeded(): void {
     const target = join(configDir, f);
     if (existsSync(target)) continue;
     try {
+      mkdirSync(dirname(target), { recursive: true });  // scripts/ may not exist yet
       copyFileSync(join(profileDir(activeName), f), target);
       console.log(`🌱 Materialized ${f} from profile "${activeName}"`);
     } catch { /* best-effort */ }
@@ -226,7 +248,12 @@ export function deployActiveProfile(): void {
 
   try {
     copyFileSync(src, configPath);
-    for (const f of assets) copyFileSync(join(profileDir(name), f), join(configDir, f));
+    for (const f of assets) {
+      const dest = join(configDir, f);
+      // Assets may now sit in a subdirectory (scripts/), which need not exist in config/ yet.
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(join(profileDir(name), f), dest);
+    }
     // Drop the cache before the parse below, so the parse itself repopulates it from the file we
     // just wrote rather than handing back the previous deploy's object.
     invalidateDeployedConfigCache();
@@ -321,7 +348,11 @@ export function createProfile(name: string, fromName?: string): void {
   // deployment's, or it would start with a state table that does not match its own roles.
   mkdirSync(destDir, { recursive: true });
   copyFileSync(srcCfg, profilePath(name));
-  for (const f of profileAssets(srcName)) copyFileSync(join(profileDir(srcName), f), join(destDir, f));
+  for (const f of profileAssets(srcName)) {
+    const dest = join(destDir, f);
+    mkdirSync(dirname(dest), { recursive: true });  // scripts/ lives one level down
+    copyFileSync(join(profileDir(srcName), f), dest);
+  }
 }
 
 /** Rename a profile file; if it was active, move the pointer with it. Does not redeploy. */

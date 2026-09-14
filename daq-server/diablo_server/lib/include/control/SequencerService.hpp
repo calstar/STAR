@@ -17,6 +17,7 @@
 #include "control/AbortBroadcaster.hpp"
 #include "control/ActuatorCommander.hpp"
 #include "control/HoldTimer.hpp"
+#include "control/ScriptStates.hpp"
 #include "control/StateMachine.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
@@ -121,6 +122,20 @@ public:
      */
     bool extendFire();
 
+    /**
+     * What this process made of its dynamic states at startup, as newline-terminated text.
+     *
+     * One line per state that declares a script:
+     *   SCRIPT:<id>:<name>:OK:<statements>:<timeout_ms>
+     *   SCRIPT:<id>:<name>:REFUSED:<reason>
+     * terminated by "END\n".
+     *
+     * Read-only and answerable from any thread — the answer was decided once, at config load, and
+     * is fixed for the life of the run. It exists so the panel can show a refused state as dead
+     * with a reason on hover rather than as a button that errors when pressed.
+     */
+    std::string scriptStatusReport() const;
+
     State currentState() const {
         return current_state_.load();
     }
@@ -207,10 +222,26 @@ private:
      *  RELOAD_CONFIG runs on a TCP handler thread while a transition may be running on another,
      *  hence the mutex. */
     std::map<State, HoldRule> hold_rules_;
+
+    /** Dynamic states whose scripts loaded and validated. Guarded by config_mutex_. */
+    std::map<State, DynamicState> dynamic_states_;
+
+    /**
+     * States that declare a script which did NOT hold up, with the reason.
+     *
+     * These are not enterable. doTransitionTo refuses them in its validation block, before the
+     * abort broadcast and before any valve moves, and allowedBitmask() omits them so nothing ever
+     * advertises one as reachable in the first place. Guarded by config_mutex_.
+     */
+    std::map<State, std::string> refused_states_;
+
     mutable std::mutex config_mutex_;
 
     std::string config_path_;
     std::string config_content_;
+
+    /** Directory containing config_path_, or "." — where scripts/ is resolved against. */
+    std::string configDir() const;
 
     /** Local address board-facing UDP leaves from, resolved once in init(). "0.0.0.0" means the
      *  host has no NIC on the board subnet (a dev box) and traffic stays unpinned. */
