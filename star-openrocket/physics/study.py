@@ -21,6 +21,7 @@ import itertools
 
 from pydantic import ValidationError
 
+from physics.budget import checkpoint
 from physics.cases import evaluate
 
 # The run count is the product of the axes, so it grows fast enough that a cap
@@ -227,6 +228,8 @@ def run_points(config, atm=None):
 
     out = []
     for combo in itertools.product(*grids):
+        # Per design point, for the same reason as the corner sweep.
+        checkpoint("the design study")
         cfg = config.model_copy(deep=True)
         for axis, value in zip(axes, combo):
             _apply(cfg, axis, value)
