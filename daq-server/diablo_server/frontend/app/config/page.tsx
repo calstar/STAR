@@ -342,7 +342,7 @@ const ptTypeOf = (board: any): string => {
  */
 function ScriptEditor({
   state, stateNames, source, tables, syntax, allowedTargets, canEdit,
-  onSource, onField, onCheck, onRemove, onClose,
+  onSource, onField, onCheck,
 }: {
   state: { name?: string; script_file?: string; script_timeout_ms?: number; script_return_target?: string; script_timeout_target?: string };
   stateNames: string[];
@@ -354,8 +354,6 @@ function ScriptEditor({
   onSource: (next: string) => void;
   onField: (patch: Record<string, unknown>) => void;
   onCheck: (src: string) => void;
-  onRemove: () => void;
-  onClose: () => void;
 }) {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const gutterRef = useRef<HTMLDivElement | null>(null);
@@ -392,23 +390,14 @@ function ScriptEditor({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-         onClick={onClose}>
-      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-4xl max-h-[90vh] overflow-auto"
-           onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
-          <div>
-            <h3 className="font-semibold text-white">{state.name} — entry script</h3>
-            <p className="text-xs text-text-muted mt-0.5">
-              {state.script_file} · runs after this state&rsquo;s Actuators column is applied
-            </p>
-          </div>
-          <button onClick={onClose} className="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 text-sm">
-            Close
-          </button>
-        </div>
+    <div>
+      <div>
+        <p className="text-xs text-text-muted mb-2">
+          Runs on entry, after <strong>{state.name}</strong>&rsquo;s Actuators column has put every
+          valve in a defined position. Valves the script does not name keep that position.
+        </p>
 
-        <div className="p-4 space-y-3">
+        <div className="space-y-3">
           <div className="flex gap-3 flex-wrap">
             <label className="text-sm">
               <div className="text-text-muted mb-1">Timeout (ms)</div>
@@ -502,18 +491,8 @@ function ScriptEditor({
             <div><strong className="text-gray-300">Commands</strong>: {commanded.length ? commanded.join(', ') : 'none'}</div>
             <div><strong className="text-gray-300">Reads</strong>: {read.length ? read.join(', ') : 'none'}</div>
             <p className="mt-1">
-              Valves this script does not name keep the position its Actuators column gives them.
+              Untick <strong>Dynamic</strong> in the table above to make this an ordinary state again.
             </p>
-          </div>
-
-          <div className="flex justify-between pt-1">
-            <button onClick={onRemove} disabled={!canEdit}
-                    className="px-3 py-1.5 bg-red-700 rounded hover:bg-red-600 text-sm disabled:opacity-50">
-              Make this an ordinary state
-            </button>
-            <span className="text-xs text-text-muted self-center">
-              Saved with <strong>Save Config</strong>.
-            </span>
           </div>
         </div>
       </div>
@@ -1030,8 +1009,10 @@ export default function ConfigPage() {
   // Loaded by filename, edited in memory, and written back on Save alongside the CSVs. Keyed by
   // script_file rather than by state, because two states may legitimately point at one file.
   const [scriptSources, setScriptSources] = useState<Record<string, string>>({});
-  /** Which state's script the editor is open on, by index into stateList. null = closed. */
-  const [scriptEditorIdx, setScriptEditorIdx] = useState<number | null>(null);
+  /** Which state's script the panel below the table is showing. By state ID, not index: indices
+   *  shift when a state is added, removed or moved, and the selection would follow the wrong row. */
+  const [scriptPanelStateId, setScriptPanelStateId] = useState<number | null>(null);
+  const [scriptsOpen, setScriptsOpen] = useState(false);
   /** Syntax diagnostics from state_script_check, keyed by script filename. */
   const [scriptSyntax, setScriptSyntax] = useState<Record<string, { line: number; message: string }[]>>({});
   const [showDelays, setShowDelays] = useState(false);
@@ -1152,25 +1133,36 @@ export default function ConfigPage() {
    * state is unenterable because of two fields the editor never asked about. They are seeded to
    * the boot state, which every rig has and which is always somewhere safe to end up.
    */
-  const openScriptEditor = (idx: number) => {
+  const setDynamic = (idx: number, on: boolean) => {
     const st = stateList[idx];
-    if (!st?.script_file) {
-      const base = slugify(String(st?.name ?? 'state')).toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'state';
-      const file = `${base}.script`;
-      const boot = (config.states || []).find((s) => s.is_boot)?.name
-        ?? (config.states || [])[0]?.name
-        ?? '';
+    if (!on) {
+      // Back to an ordinary state. setState drops the keys rather than blanking them — an empty
+      // script_file still reads as "dynamic" to anything that only checks presence.
       setState(idx, {
-        script_file: file,
-        script_timeout_ms: st?.script_timeout_ms || 30000,
-        script_return_target: st?.script_return_target || boot,
-        script_timeout_target: st?.script_timeout_target || boot,
+        script_file: '', script_timeout_ms: 0,
+        script_return_target: '', script_timeout_target: '',
       });
-      setScriptSources((prev) => (prev[file] !== undefined ? prev : { ...prev, [file]: '' }));
-    } else if (scriptSources[st.script_file] === undefined) {
-      setScriptSources((prev) => ({ ...prev, [st.script_file!]: '' }));
+      if (st?.id === scriptPanelStateId) setScriptPanelStateId(null);
+      return;
     }
-    setScriptEditorIdx(idx);
+
+    const base = slugify(String(st?.name ?? 'state')).toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'state';
+    const file = st?.script_file || `${base}.script`;
+    const boot = (config.states || []).find((s) => s.is_boot)?.name
+      ?? (config.states || [])[0]?.name
+      ?? '';
+    setState(idx, {
+      script_file: file,
+      script_timeout_ms: st?.script_timeout_ms || 30000,
+      script_return_target: st?.script_return_target || boot,
+      script_timeout_target: st?.script_timeout_target || boot,
+    });
+    setScriptSources((prev) => (prev[file] !== undefined ? prev : { ...prev, [file]: '' }));
+    // Show it straight away. Ticking the box with nothing visibly happening below reads as a
+    // no-op, and the two required landing targets are seeded above rather than left blank —
+    // blank is a load-time refusal, and the operator never asked about those fields.
+    if (typeof st?.id === 'number') setScriptPanelStateId(st.id);
+    setScriptsOpen(true);
   };
 
   const setState = (idx: number, patch: Record<string, unknown>) =>
@@ -2915,7 +2907,7 @@ export default function ConfigPage() {
                         <th className="px-3 py-2 text-left font-semibold w-20">Boot</th>
                         <th className="px-3 py-2 text-left font-semibold w-20">Abort</th>
                         <th className="px-3 py-2 text-left font-semibold w-20">Flow</th>
-                        <th className="px-3 py-2 text-left font-semibold w-28">Script</th>
+                        <th className="px-3 py-2 text-left font-semibold w-24">Dynamic</th>
                         <th className="px-3 py-2 w-20" />
                       </tr>
                     </thead>
@@ -2989,22 +2981,14 @@ export default function ConfigPage() {
                             />
                           </td>
                           <td className="px-3 py-1.5">
-                            <button
-                              onClick={() => openScriptEditor(i)}
+                            <input
+                              type="checkbox"
+                              checked={Boolean(String(st.script_file ?? '').trim())}
+                              onChange={(e) => setDynamic(i, e.target.checked)}
                               disabled={!canEdit}
-                              title={st.script_file
-                                ? `Runs ${st.script_file} on entry`
-                                : 'Give this state a script that runs on entry'}
-                              className={`px-2 py-1 rounded text-xs disabled:opacity-40 ${
-                                st.script_file
-                                  ? 'bg-purple-700 hover:bg-purple-600 text-white'
-                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                              }`}
-                            >
-                              {st.script_file
-                                ? `${(scriptSources[st.script_file] ?? '').split('\n').filter((l) => l.trim()).length} lines`
-                                : '—'}
-                            </button>
+                              title="Run a script on entry. The state's Actuators column is applied first, then the script layers on top. Edit it below."
+                              className="w-4 h-4 accent-purple-400"
+                            />
                           </td>
                           <td className="px-3 py-1.5 text-right whitespace-nowrap">
                             <button
@@ -3030,7 +3014,7 @@ export default function ConfigPage() {
                         </tr>
                       ))}
                       {stateList.length === 0 && (
-                        <tr><td colSpan={7} className="px-3 py-3 text-sm text-text-muted">
+                        <tr><td colSpan={9} className="px-3 py-3 text-sm text-text-muted">
                           No [[states]] declared — the built-in list is in use. Add one to start overriding it.
                         </td></tr>
                       )}
@@ -3044,49 +3028,89 @@ export default function ConfigPage() {
                 </p>
               </div>
 
-              {scriptEditorIdx !== null && stateList[scriptEditorIdx] && (
-                <ScriptEditor
-                  state={stateList[scriptEditorIdx]}
-                  stateNames={stateList.map((s) => String(s.name ?? '')).filter(Boolean)}
-                  source={scriptSources[String(stateList[scriptEditorIdx].script_file)] ?? ''}
-                  tables={scriptTablesFor(String(stateList[scriptEditorIdx].name ?? ''))}
-                  syntax={scriptSyntax[String(stateList[scriptEditorIdx].script_file)] ?? []}
-                  allowedTargets={(() => {
-                    const name = String(stateList[scriptEditorIdx].name ?? '');
-                    const row = csvTransitions?.rows.find((r) => r.key === name);
-                    if (!row || !csvTransitions) return stateList.map((s) => String(s.name ?? ''));
-                    return csvTransitions.states.filter(
-                      (_, i) => (row.cells[i] || '0').trim() === '1',
-                    );
-                  })()}
-                  canEdit={canEdit}
-                  onSource={(next) => {
-                    const file = String(stateList[scriptEditorIdx].script_file);
-                    setScriptSources((prev) => ({ ...prev, [file]: next }));
-                  }}
-                  onField={(patch) => setState(scriptEditorIdx, patch)}
-                  onCheck={async (src) => {
-                    const file = String(stateList[scriptEditorIdx].script_file);
-                    const name = String(stateList[scriptEditorIdx].name ?? '');
-                    try {
-                      const r = await fetch(
-                        `${getApiBaseUrl()}/api/state-script/check?state=${encodeURIComponent(name)}`,
-                        { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: src },
-                      );
-                      const b = await r.json().catch(() => ({} as any));
-                      setScriptSyntax((prev) => ({ ...prev, [file]: b?.diagnostics ?? [] }));
-                    } catch { /* the checker is early warning; the sequencer is the authority */ }
-                  }}
-                  onRemove={() => {
-                    setState(scriptEditorIdx, {
-                      script_file: '', script_timeout_ms: 0,
-                      script_return_target: '', script_timeout_target: '',
-                    });
-                    setScriptEditorIdx(null);
-                  }}
-                  onClose={() => setScriptEditorIdx(null)}
-                />
-              )}
+              {/* ── Dynamic-state scripts ──────────────────────────────────────────────────
+                  Collapsed by default: most rigs have no dynamic states, and a permanently open
+                  code editor under the state table would be the loudest thing on the page for
+                  something nobody is editing. Inline rather than a modal so the state list stays
+                  visible while a script is being read — the two are only meaningful together. */}
+              {(() => {
+                const dynamicStates = stateList
+                  .map((s, i) => ({ s, i }))
+                  .filter(({ s }) => String(s.script_file ?? '').trim());
+                if (dynamicStates.length === 0) return null;
+
+                // Fall back to the first dynamic state when the selected one stopped being dynamic
+                // — unticked, removed, reordered. Never render an empty panel.
+                const selected = dynamicStates.find(({ s }) => s.id === scriptPanelStateId)
+                  ?? dynamicStates[0];
+                const st = selected.s;
+                const idx = selected.i;
+                const file = String(st.script_file);
+                const name = String(st.name ?? '');
+
+                return (
+                  <div className="bg-gray-800 rounded-lg border border-gray-700">
+                    <button
+                      onClick={() => setScriptsOpen((v) => !v)}
+                      className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-700/40 rounded-lg"
+                    >
+                      <span className="font-semibold text-white">
+                        Dynamic state scripts
+                        <span className="ml-2 text-xs font-normal text-text-muted">
+                          {dynamicStates.length} state{dynamicStates.length === 1 ? '' : 's'}
+                        </span>
+                      </span>
+                      <span className="text-text-muted text-sm">{scriptsOpen ? '\u25be' : '\u25b8'}</span>
+                    </button>
+
+                    {scriptsOpen && (
+                      <div className="px-4 pb-4 space-y-3 border-t border-gray-700 pt-3">
+                        <label className="flex items-center gap-2 text-sm flex-wrap">
+                          <span className="text-text-muted">Script for</span>
+                          <select
+                            value={String(st.id ?? '')}
+                            onChange={(e) => setScriptPanelStateId(Number(e.target.value))}
+                            className="px-2 py-1 bg-gray-900 border border-gray-600 rounded text-white"
+                          >
+                            {dynamicStates.map(({ s }) => (
+                              <option key={s.id} value={String(s.id ?? '')}>{s.name}</option>
+                            ))}
+                          </select>
+                          <span className="text-xs text-text-muted font-mono">{file}</span>
+                        </label>
+
+                        <ScriptEditor
+                          state={st}
+                          stateNames={stateList.map((s) => String(s.name ?? '')).filter(Boolean)}
+                          source={scriptSources[file] ?? ''}
+                          tables={scriptTablesFor(name)}
+                          syntax={scriptSyntax[file] ?? []}
+                          allowedTargets={(() => {
+                            const row = csvTransitions?.rows.find((r) => r.key === name);
+                            if (!row || !csvTransitions) return stateList.map((s) => String(s.name ?? ''));
+                            return csvTransitions.states.filter(
+                              (_, k) => (row.cells[k] || '0').trim() === '1',
+                            );
+                          })()}
+                          canEdit={canEdit}
+                          onSource={(next) => setScriptSources((prev) => ({ ...prev, [file]: next }))}
+                          onField={(patch) => setState(idx, patch)}
+                          onCheck={async (src) => {
+                            try {
+                              const r = await fetch(
+                                `${getApiBaseUrl()}/api/state-script/check?state=${encodeURIComponent(name)}`,
+                                { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: src },
+                              );
+                              const b = await r.json().catch(() => ({}));
+                              setScriptSyntax((prev) => ({ ...prev, [file]: b?.diagnostics ?? [] }));
+                            } catch { /* early warning only; the sequencer is the authority */ }
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {csvLoading && <p className="text-sm text-text-muted">Loading…</p>}
               {!csvLoading && !csvActuators && (
