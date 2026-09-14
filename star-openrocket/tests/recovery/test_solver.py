@@ -18,6 +18,8 @@ from physics.schema import (
     TriggerKind,
     Vehicle,
 )
+from pydantic import ValidationError
+
 from physics.solver import LOAD_DT, integrate
 
 # ISA temperature at the FAR pad, so the eq (7) re-fit stays the identity
@@ -214,24 +216,46 @@ def test_three_device_configuration_works():
 # --- the work budget -------------------------------------------------------
 
 
-def test_an_unphysical_canopy_is_refused_rather_than_ground_on():
-    """A 313 m drogue must come back as an answer, not as a hung worker.
+def test_a_canopy_that_is_not_a_canopy_is_refused_before_the_solver():
+    """The typo must be refused by the schema, in microseconds, not integrated.
 
-    Reachable by typing: enter the nominal diameter in inches while the box is
-    in metres and D0 becomes a canopy the size of a city block. Nothing
-    bounded the WORK that cost -- T_MAX bounds simulated time, the segment
-    guard bounds event count, but one solve_ivp call between two events takes
-    smaller and smaller steps without limit. It ran 942k derivative
-    evaluations and 25 s for ONE case, `/api/simulate` runs four, and the dev
-    server's single worker then had nothing left for `/api/health` -- so the
-    UI reported the backend as down and the whole app looked dead.
+    Both of these are reachable by typing into the form: a drag area entered
+    where the diameter goes, or a value pasted in the wrong unit. Neither had
+    an upper bound at all -- `CdS` and `D0` were `gt=0.0` and nothing else --
+    so the integrator was asked to find a descent that does not exist. It does
+    not refuse: it takes smaller and smaller steps, for tens of seconds,
+    pinning a core per case while the GUI re-runs on every keystroke.
     """
-    cfg = _cfg([
-        _dev("drogue", 1235.6104320000002, D0=313.5122,
-             kind=TriggerKind.TIME, value=2.0),
-        _dev("main", 2.489, D0=1.601, m_c=0.213,
-             kind=TriggerKind.ALTITUDE, value=76.2),
-    ])
+    # A billion square metres: caught by the absolute cap on CdS.
+    with pytest.raises(ValidationError, match="less than or equal to 20000"):
+        _dev("drogue", 1143851243.2142286, D0=0.6)
+
+    # A 313 m canopy: caught by the absolute cap on D0.
+    with pytest.raises(ValidationError, match="less than or equal to 200"):
+        _dev("drogue", 1235.6104320000002, D0=313.5122)
+
+    # 1000 m^2 on a 0.6 m drogue clears BOTH absolute caps and is still not a
+    # canopy -- 3500x its own projected area. This is the case only the ratio
+    # bound catches, and it is the shape of every real typo: one field wrong,
+    # its neighbour right.
+    with pytest.raises(ValidationError, match="projected area"):
+        _dev("drogue", 1000.0, D0=0.6)
+
+    # The worked example's own devices must still build, or the bound is wrong.
+    assert _dev("drogue", 0.15, D0=0.6).CdS == 0.15
+    assert _dev("main", 2.489, D0=1.601, m_c=0.213).CdS == 2.489
+
+
+def test_the_solver_still_refuses_what_the_schema_lets_through():
+    """The work budget is the backstop, and it has to stay reachable.
+
+    The schema bounds what a canopy can be; it cannot bound how hard the
+    resulting descent is to integrate. A 150 m canopy at the ratio cap is a
+    legal config and still cannot be solved, so the budget -- not the schema
+    -- is what stops it, and this asserts that layer is still load-bearing.
+    """
+    cfg = _cfg([_dev("drogue", 20000.0, D0=150.0,
+                     kind=TriggerKind.TIME, value=2.0)])
     with pytest.raises(ValueError, match="did not converge to a descent"):
         integrate(cfg, "axial")
 
