@@ -944,17 +944,25 @@ bool SequencerService::doSetDebugMode(bool enabled) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-bool SequencerService::manualActuator(const std::string& name, int pos) {
-    return enqueueAndWait([this, name, pos]() {
-        return doManualActuator(name, pos);
+bool SequencerService::manualActuator(const std::string& name, int pos,
+                                      std::string* refusal_reason) {
+    return enqueueAndWait([this, name, pos, refusal_reason]() {
+        return doManualActuator(name, pos, refusal_reason);
     });
 }
 
-bool SequencerService::doManualActuator(const std::string& name, int pos) {
+bool SequencerService::doManualActuator(const std::string& name, int pos,
+                                        std::string* refusal_reason) {
     if (!debug_mode_) {
         std::cerr << "[SequencerService] Manual actuator commands require debug mode" << std::endl;
+        if (refusal_reason)
+            *refusal_reason = "debug mode required";
         return false;
     }
+
+    // Deliberately NOT blocked in a scripted state. A hand command there fights the script for a
+    // valve, and the operator wins (see ActuatorCommander's precedence) — which is the right
+    // answer for the person standing at the panel, even though the script has no way to notice.
     actuator_commander_.setManualOverride(name, pos);
     return actuator_commander_.sendSingleActuator(name, pos);
 }

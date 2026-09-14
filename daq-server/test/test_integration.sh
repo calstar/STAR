@@ -139,6 +139,9 @@ cleanup() {
   rm -rf "$TEST_DB_PATH" 2>/dev/null || true
   rm -f "$TEST_CONFIG" 2>/dev/null || true
   rm -f "$REPO_ROOT"/.tmp/integration_transitions_*.csv "$REPO_ROOT"/.tmp/integration_actuators_*.csv "$REPO_ROOT"/.tmp/integration_delays_*.csv 2>/dev/null || true
+  # The dynamic state's script. Named rather than rm -rf'd on a variable that could be empty.
+  rm -f "$REPO_ROOT/.tmp/scripts/integration.script" 2>/dev/null || true
+  rmdir "$REPO_ROOT/.tmp/scripts" 2>/dev/null || true
   rm -f "$UDP_COMMANDS_FILE" 2>/dev/null || true
   rm -f "$SIM_STATS_FILE" "$SIM_STATS_FILE.tmp" 2>/dev/null || true
   rm -f "$REPO_ROOT/.tmp/integration_adjustments_$$.json" 2>/dev/null || true
@@ -478,6 +481,90 @@ EOF
 export INTEGRATION_FLOW_STATE_ID="$FLOW_STATE_ID"
 export INTEGRATION_FLOW_HOLD_MS="$FLOW_HOLD_MS"
 export INTEGRATION_FLOW_GATE_DELAY_MS=$(python3 -c "print(int(float('$FLOW_GATE_DELAY_S')*1000))")
+
+# ── Script Test: a dynamic state, against the running stack ───────────────────────────────────
+# A dynamic state runs an operator-written script on entry: its Actuators column is applied first
+# (so every valve starts defined), then the script layers on top and leaves of its own accord.
+#
+# The hermetic tests measure this on the wire against a fake board. What only the full stack can
+# show is that the whole chain agrees — profile deploy carries the script file, the sequencer
+# parses it at startup and makes the state enterable, the interpreter runs on its own thread
+# without blocking the command queue, and the transition it requests comes back out through
+# Elodin to the GUI like any other. A script that never deployed, or a state the sequencer refused
+# at load, both look identical from the GUI: a button that does nothing.
+#
+# Built here rather than shipped, same as Flow Test above — a reference stand config should not
+# grow a state just so CI can measure one.
+SCRIPT_STATE_ID=22
+SCRIPT_OPEN_MS=900
+SCRIPT_VALVE='Fuel Vent'
+# The sequencer resolves a script as <dirname(config)>/scripts/<script_file>, so it has to sit
+# beside TEST_CONFIG in .tmp rather than in the profile the deploy copied from.
+SCRIPT_DIR="$REPO_ROOT/.tmp/scripts"
+SCRIPT_OPEN_S=$(python3 -c "print($SCRIPT_OPEN_MS/1000)")
+mkdir -p "$SCRIPT_DIR"
+cat > "$SCRIPT_DIR/integration.script" <<EOF
+open_valve(FUEL_VENT)
+delay($SCRIPT_OPEN_S)
+close_valve(FUEL_VENT)
+transition_to(PRESS_STANDBY)
+EOF
+
+python3 - "$FLOW_TRANS_CSV" "$FLOW_ACTS_CSV" "$FLOW_DELAYS_CSV" <<'PYEOF'
+import csv, sys
+
+# Appended to the CSVs the Flow Test block just wrote, not to the pristine profile — those are the
+# ones TEST_CONFIG now points at, and rebuilding from source here would drop Flow Test's column.
+out_t, out_a, out_d = sys.argv[1:4]
+
+def load(p):
+    with open(p) as f:
+        return [r for r in csv.reader(f)]
+
+def save(p, rows):
+    with open(p, 'w', newline='') as f:
+        csv.writer(f).writerows(rows)
+
+NAME = 'Script Test'
+HUB = 'Press Standby'
+
+# Reachable from the hub and able to get back: a dynamic state whose landing target it cannot
+# reach is refused at load, so this edge is what makes the state enterable at all.
+t = load(out_t)
+t[0].append(NAME)
+for r in t[1:]:
+    r.append('1' if r[0] == HUB else '0')
+t.append([NAME] + ['1' if h in (HUB, NAME) else '0' for h in t[0][1:]])
+save(out_t, t)
+
+# Every valve CLOSED. That is the baseline the script layers onto — and it means the valve the
+# script opens can only have been opened by the script.
+a = load(out_a)
+a[0].append(NAME)
+for r in a[1:]:
+    r.append('CLOSE')
+save(out_a, a)
+
+d = load(out_d)
+d[0].append(NAME)
+for r in d[1:]:
+    r.append('0')
+save(out_d, d)
+PYEOF
+
+cat >> "$TEST_CONFIG" <<EOF
+
+[[states]]
+id = $SCRIPT_STATE_ID
+name = "Script Test"
+script_file = "integration.script"
+script_timeout_ms = 15000
+script_return_target = "Press Standby"
+script_timeout_target = "Press Standby"
+EOF
+
+export INTEGRATION_SCRIPT_STATE_ID="$SCRIPT_STATE_ID"
+export INTEGRATION_SCRIPT_OPEN_MS="$SCRIPT_OPEN_MS"
 
 # Align SERVER_HEARTBEAT UDP with the same port as udp_listener (actuator/control path in CI)
 sedi "s/^broadcast_port = 5005/broadcast_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"

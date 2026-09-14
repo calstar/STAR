@@ -429,7 +429,8 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
 
         // Precedence: a debug manual override beats a running script, which beats the state's CSV
         // column. The operator with their hand on the panel is the last line — and a script that
-        // is being overridden is worth saying out loud, since the two are fighting over one valve.
+        // is being overridden is worth saying out loud, since the two are fighting over one valve
+        // and the script has no way to notice.
         int pos = logical_pos;
         auto sp = script_positions.find(act_name);
         if (sp != script_positions.end())

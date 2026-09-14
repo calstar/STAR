@@ -116,8 +116,17 @@ public:
     /**
      * Debug mode only: manual OPEN/CLOSE for one role. Overrides persist until a state
      * transition (which clears overrides and applies the new state's CSV).
+     *
+     * Allowed in a dynamic state too, where it outranks the running script's position for that
+     * valve. The script cannot notice, and the two will fight over it — but the operator with
+     * their hand on the panel is the last line, and taking that away from them to protect a script
+     * is the wrong trade.
+     *
+     * @param refusal_reason optional; on a false return, set to a short phrase for a protocol
+     *        reply. One validation, one wording — the TCP layer does not get its own copy of these
+     *        rules to drift out of step with.
      */
-    bool manualActuator(const std::string& name, int pos);
+    bool manualActuator(const std::string& name, int pos, std::string* refusal_reason = nullptr);
 
     /**
      * Extend the FIRE window (only valid while in FIRE state).
@@ -178,7 +187,7 @@ private:
     bool doTransitionTo(State to, uint32_t requested_hold_ms = 0,
                         std::string* refusal_reason = nullptr);
     bool doSetDebugMode(bool enabled);
-    bool doManualActuator(const std::string& name, int pos);
+    bool doManualActuator(const std::string& name, int pos, std::string* refusal_reason = nullptr);
     bool doExtendFire();
 
     /**

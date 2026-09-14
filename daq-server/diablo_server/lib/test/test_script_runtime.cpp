@@ -320,6 +320,71 @@ int main() {
               "and not one valve was commanded");
     }
 
+    // ── 8. Debug mode and a scripted state ────────────────────────────────────────────────────
+    //
+    // Three rules, and only the middle one is new — the other two fall out of how transitions
+    // already work, which is exactly why they are worth pinning before someone "simplifies" them.
+    {
+        const std::string path = writeConfig(
+            "open_valve(VENT_VALVE)\n"
+            "delay(4)\n"
+            "close_valve(VENT_VALVE)\n"
+            "transition_to(IDLE)\n",
+            9000, /*return=*/"Idle", /*timeout=*/"Idle");
+
+        SequencerService svc;
+        svc.init(path);
+        svc.setDebugMode(true);
+
+        // (a) Entering clears whatever the operator had commanded by hand. Same as every other
+        // state: the incoming state's column is the truth, and a leftover override would silently
+        // outrank it.
+        BoardListener before(kActPort);
+        before.start();
+        check(svc.manualActuator("Main Valve", 1),
+              "debug can command a valve in an ordinary state");
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        before.stop();
+        check(firstCommand(before.bursts(), /*ch=*/2, /*hw=*/1) >= 0, "and it reaches the board");
+
+        BoardListener listener(kActPort);
+        listener.start();
+        svc.transitionTo(std::string("Dyn State"));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1400));
+
+        // (b) A hand command during a script is ALLOWED, and the operator outranks the script.
+        // They are fighting over a valve and the script cannot notice — but the person at the
+        // panel is the last line, and taking that away to protect a script is the wrong trade.
+        check(svc.manualActuator("Main Valve", 1),
+              "debug can still command a valve while a script is running");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1400));
+        listener.stop();
+
+        const auto b8 = listener.bursts();
+        // Channel 2 is CLOSE in the Dyn State column, so the only thing that can open it is the
+        // operator — and it must stay open across a republish rather than being reverted.
+        const long long op_open = firstCommand(b8, /*ch=*/2, /*hw=*/1);
+        check(op_open >= 0, "the operator's command reaches the board mid-script");
+        int opens = 0;
+        for (const auto& burst : b8) {
+            auto it = burst.state.find(2);
+            if (it != burst.state.end() && it->second == 1)
+                opens++;
+        }
+        check(opens >= 2, "and the republish keeps re-asserting it, not the column's CLOSE");
+        // The override the operator set BEFORE entering was still cleared by the transition —
+        // that part is unchanged, and is what every other state does.
+        check(op_open > 900,
+              "the pre-transition override did not survive entry; this open is the new one");
+
+        // (c) Leaving is unrestricted in debug mode. Dyn State -> Engine Abort is a 0 in this
+        // fixture's matrix, so this only succeeds because debug mode relaxes the transition check
+        // — which is the escape hatch that makes (b) acceptable.
+        check(svc.transitionTo(std::string("Engine Abort")),
+              "debug mode still allows leaving a scripted state by a route the matrix forbids");
+        check(svc.currentState() == ENGINE_ABORT, "and the rig gets there");
+    }
+
     fs::remove_all(g_dir);
     std::cout << (g_failures == 0 ? "\nAll script-runtime checks passed.\n"
                                   : "\nFAILURES: " + std::to_string(g_failures) + "\n");

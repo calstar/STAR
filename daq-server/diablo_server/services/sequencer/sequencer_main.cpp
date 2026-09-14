@@ -134,10 +134,13 @@ void handleCommandLine(int client_fd, const std::string& raw, sequencer::Sequenc
             pos = 0;
         if (pos < 0 || role_name.empty()) {
             sendReply("ERR:bad ACTUATOR value\n");
-        } else if (svc.manualActuator(role_name, pos)) {
-            sendReply("OK\n");
         } else {
-            sendReply("ERR:actuator command failed\n");
+            std::string why;
+            if (svc.manualActuator(role_name, pos, &why))
+                sendReply("OK\n");
+            else
+                sendReply("ERR:" + (why.empty() ? std::string("actuator command failed") : why) +
+                          "\n");
         }
 
         // ── DEBUG_MODE:<0|1> ─────────────────────────────────────────────────

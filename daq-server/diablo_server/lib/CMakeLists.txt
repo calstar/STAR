@@ -162,6 +162,13 @@ target_include_directories(test_actuator_delays PRIVATE
 target_link_libraries(test_actuator_delays
     fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME actuator_delays COMMAND test_actuator_delays)
+# RUN_SERIAL: every assertion here is a wall-clock measurement taken off the wire ("commanded at
+# 1415 ms, want ~1400"), with tolerances in the tens of milliseconds. Run beside another
+# timing-heavy test it overshoots and fails on the machine rather than on the code — which it did,
+# reproducibly, under `ctest --parallel` while passing standalone every time. It also binds a fixed
+# UDP port. Every other test that measures time on the wire was already marked; these two were the
+# holdouts.
+set_tests_properties(actuator_delays PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 
 add_executable(test_script_positions
     test/test_script_positions.cpp
@@ -219,6 +226,10 @@ target_include_directories(test_hold_rules PRIVATE
 target_link_libraries(test_hold_rules
     fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME hold_rules COMMAND test_hold_rules)
+# RUN_SERIAL, for the same reason as actuator_delays: this measures hold windows against
+# millisecond bounds (>= 990 && <= 1100, >= 1490 && <= 1600) off a real SequencerService, and a
+# loaded box pushes it straight past them. It binds a fixed UDP port too.
+set_tests_properties(hold_rules PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
 
 add_executable(test_script_states
     test/test_script_states.cpp
