@@ -605,21 +605,33 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Continuous loop
 // ─────────────────────────────────────────────────────────────────────────────
-void ActuatorCommander::startContinuousLoop(State state, bool allow_delays) {
+void ActuatorCommander::startContinuousLoop(State state, bool allow_delays, bool defer_first_pass) {
     stopContinuousLoop();
 
     loop_running_ = true;
     loop_state_ = state;
-    loop_thread_ = std::thread([this, state, allow_delays]() {
+    loop_thread_ = std::thread([this, state, allow_delays, defer_first_pass]() {
         std::cout << "[ActuatorCommander] Continuous loop started for state "
                   << StateMachine::name(state) << std::endl;
         // Only the FIRST pass is the state entry — that one runs the delay schedule. Every pass
         // after it is the 1 Hz republish and must send settled positions, or each tick would
         // re-arm the pending delays and nothing would ever settle.
         bool entry = allow_delays;
+        bool skip = defer_first_pass;
         while (loop_running_) {
-            applyForState(loop_state_, entry);
-            entry = false;
+            if (skip) {
+                // A dynamic state's script starts commanding valves microseconds after this loop
+                // does, and this pass is redundant anyway — the caller already applied the column.
+                // Running it here is a read-then-send race the script loses: the pass resolves
+                // positions, spends ~2 ms on retransmits, and a stale CLOSE lands on top of the
+                // OPEN the script issued in between. The valve then stays shut for a full
+                // republish period, which is longer than a seating pulse lasts.
+                skip = false;
+                entry = false;
+            } else {
+                applyForState(loop_state_, entry);
+                entry = false;
+            }
             // Sleep in short slices rather than one long one, because stopContinuousLoop() joins
             // this thread and transitionTo() joins BEFORE it commands the new state's valves — so
             // this slice length is a floor on how fast any state change reaches the hardware.

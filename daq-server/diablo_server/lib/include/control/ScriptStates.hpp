@@ -34,6 +34,20 @@ struct DynamicState {
      *  and deriving the list from the AST is what makes it impossible to subscribe to the wrong
      *  table for a role. */
     std::vector<std::string> pressure_roles;
+
+    /**
+     * Parallel to program.slugs — what each slug reference resolves to, decided at load.
+     *
+     * Resolution cannot fail at runtime this way. A lookup performed mid-script would have to have
+     * a failure path, and the only honest thing that path could do is abort a script that is
+     * holding valves; doing it here means an unresolvable name is a state that never becomes
+     * enterable instead.
+     *
+     * `names` holds the canonical config name for actuator and sensor slugs (empty for states);
+     * `states` holds the resolved State for transition targets (UNKNOWN otherwise).
+     */
+    std::vector<std::string> slug_names;
+    std::vector<State> slug_states;
 };
 
 /**

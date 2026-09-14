@@ -743,6 +743,20 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
     if (entering_abort)
         abort_broadcaster_.triggerAbort();
 
+    // Silence the strongest writer first.
+    //
+    // A script is a source of valve commands running on its own thread. If it were still alive
+    // when applyForState() below commands the new state's column, its next open_valve would land
+    // AFTER those positions and strand a valve open in a state whose CSV says CLOSE. Joining here
+    // makes "no script statement can execute past this point" a structural fact rather than a
+    // timing hope.
+    //
+    // After the abort broadcast, though — stop() joins a thread, and the boards' abort packet must
+    // not queue behind the sequencer's own housekeeping (test_abort_ordering asserts < 200 ms).
+    // And after the two validation gates above, which return early: a REFUSED transition must not
+    // kill a script that is running perfectly well.
+    script_runner_.stop();
+
     // New state wins over debug manual actuator overrides, and over the positions a script had
     // taken ownership of. Both are cleared here rather than when the script stops, so a script
     // that ended on its own still has its valves handed back to the incoming state's column.
@@ -830,7 +844,17 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
     // so the board holds its pre-transition position until that role's stage fires.
     // (Abort states got their immediate apply above via isAbortState; an abort must not sit behind
     // a timer. The physical UDP abort broadcast already went out at the top of this function.)
-    actuator_commander_.startContinuousLoop(to, /*allow_delays=*/false);
+    // defer_first_pass for a dynamic state: its script begins commanding valves a moment from now,
+    // and an immediate (redundant) republish pass would race it — losing, because it resolves
+    // positions and only then spends milliseconds on retransmits. The column was already applied
+    // above, so deferring costs nothing and closes the window.
+    bool to_is_dynamic = false;
+    {
+        std::lock_guard<std::mutex> lk(config_mutex_);
+        to_is_dynamic = dynamic_states_.count(to) > 0;
+    }
+    actuator_commander_.startContinuousLoop(to, /*allow_delays=*/false,
+                                            /*defer_first_pass=*/to_is_dynamic);
 
     // Update current state
     current_state_ = to;
@@ -839,6 +863,18 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
     // hold_timer_.start() above, so the fire window no longer needs a branch of its own.
     if (isAbortState(to)) {
         abort_broadcaster_.triggerAbort();
+    }
+
+    // The script starts AFTER current_state_ = to, and that ordering is load-bearing. A script
+    // whose first statement is transition_to(X) posts that move immediately; doTransitionTo then
+    // validates it with isAllowed(from, X), and if current_state_ were still the PREVIOUS state,
+    // it would be checking a transition from somewhere the rig is no longer. Starting here also
+    // makes elapsed() measure from actual state entry rather than from part-way through one.
+    {
+        std::lock_guard<std::mutex> lk(config_mutex_);
+        const auto it = dynamic_states_.find(to);
+        if (it != dynamic_states_.end())
+            script_runner_.start(it->second, makeScriptEnv(it->second));
     }
 
     // Elodin publishing
@@ -1045,6 +1081,35 @@ void SequencerService::publishState() {
                           dbg);
     if (!elodin_.publish(VTABLE_SEQUENCER_STATE, msg))
         std::cerr << "[SequencerService] Failed to publish sequencer state to Elodin" << std::endl;
+}
+
+ScriptEnv SequencerService::makeScriptEnv(const DynamicState& ds) {
+    ScriptEnv env;
+    env.state_name = ds.name;
+
+    // Pair intent with immediacy, exactly as debug manual control does: the script position is
+    // what survives the 1 Hz republish, and the single send is what makes the valve move now
+    // rather than up to a second from now.
+    env.set_valve = [this](const std::string& role, int pos) {
+        actuator_commander_.setScriptPosition(role, pos);
+        actuator_commander_.sendSingleActuator(role, pos);
+    };
+
+    // enqueueDetached, never enqueueAndWait. The worker that handles this transition calls
+    // script_runner_.stop(), which joins the very thread making this call — waiting here would be
+    // a guaranteed deadlock, and it would strand the rig in the dynamic state with the script's
+    // valves wherever it left them. This is the same trap documented for the fire timer's expiry.
+    env.transition = [this](State target) {
+        enqueueDetached([this, target]() {
+            return doTransitionTo(target);
+        });
+    };
+
+    // Wired in the next stage. Until then pressure() parses and validates but cannot run, which is
+    // why a script that reads a sensor fails loudly here instead of reading a stand-in zero.
+    env.read_pressure = nullptr;
+
+    return env;
 }
 
 std::string SequencerService::scriptStatusReport() const {

@@ -238,12 +238,30 @@ ScriptLoadResult load_dynamic_states(const fsw::config::Config& cfg, const std::
         ds.timeout_target = targets[1].resolved;
 
         std::set<std::string> roles;
-        for (const auto& ref : ds.program.slugs) {
-            if (ref.ns != fsw::script::Ns::PtSensor)
-                continue;
-            auto it = tables.sensors.find(ref.slug);
-            if (it != tables.sensors.end())
-                roles.insert(it->second);  // canonical config name, not the slug
+        ds.slug_names.resize(ds.program.slugs.size());
+        ds.slug_states.assign(ds.program.slugs.size(), State::UNKNOWN);
+        for (size_t i = 0; i < ds.program.slugs.size(); ++i) {
+            const auto& ref = ds.program.slugs[i];
+            switch (ref.ns) {
+                case fsw::script::Ns::Actuator: {
+                    auto it = tables.actuators.find(ref.slug);
+                    if (it != tables.actuators.end())
+                        ds.slug_names[i] = it->second;
+                    break;
+                }
+                case fsw::script::Ns::PtSensor: {
+                    auto it = tables.sensors.find(ref.slug);
+                    if (it != tables.sensors.end()) {
+                        ds.slug_names[i] = it->second;  // canonical config name, not the slug
+                        roles.insert(it->second);
+                    }
+                    break;
+                }
+                case fsw::script::Ns::State:
+                    ds.slug_states[i] = StateMachine::fromName(
+                        tables.states.count(ref.slug) ? tables.states.at(ref.slug) : std::string());
+                    break;
+            }
         }
         ds.pressure_roles.assign(roles.begin(), roles.end());
 

@@ -17,6 +17,7 @@
 #include "control/AbortBroadcaster.hpp"
 #include "control/ActuatorCommander.hpp"
 #include "control/HoldTimer.hpp"
+#include "control/ScriptRunner.hpp"
 #include "control/ScriptStates.hpp"
 #include "control/StateMachine.hpp"
 #include "elodin/DatabaseConfig.hpp"
@@ -213,7 +214,11 @@ private:
     ActuatorCommander actuator_commander_;
     AbortBroadcaster abort_broadcaster_;
     HoldTimer hold_timer_;
+    ScriptRunner script_runner_;
     fsw::elodin::ElodinClient elodin_;
+
+    /** Build the callbacks a script is allowed to reach the world through. */
+    ScriptEnv makeScriptEnv(const DynamicState& ds);
 
     std::atomic<State> current_state_{State::IDLE};
     std::atomic<bool> debug_mode_{false};

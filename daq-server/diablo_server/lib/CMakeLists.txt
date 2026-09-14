@@ -100,6 +100,7 @@ add_executable(test_fire_lifecycle
     test/test_fire_lifecycle.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
 )
@@ -170,6 +171,7 @@ add_executable(test_sequencer_elodin
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
 )
 target_include_directories(test_sequencer_elodin PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -190,6 +192,7 @@ add_executable(test_hold_rules
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
 )
 target_include_directories(test_hold_rules PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -207,6 +210,7 @@ add_executable(test_script_states
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
 )
 target_include_directories(test_script_states PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -222,6 +226,26 @@ add_test(NAME script_states COMMAND test_script_states)
 # into a red build.
 set_tests_properties(script_states PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR} TIMEOUT 300 RUN_SERIAL TRUE)
+
+add_executable(test_script_runtime
+    test/test_script_runtime.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
+)
+target_include_directories(test_script_runtime PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_script_runtime
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME script_runtime COMMAND test_script_runtime)
+set_tests_properties(script_runtime PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR} TIMEOUT 180 RUN_SERIAL TRUE)
 
 # test_robust_ddp has been built on every configure since it was added but was never registered
 # with CTest and is not invoked by CI either, so its assertions have never gated anything.
@@ -277,6 +301,7 @@ foreach(seq_test test_sequencer_concurrency test_abort_ordering)
         ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
     )
     target_include_directories(${seq_test} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include

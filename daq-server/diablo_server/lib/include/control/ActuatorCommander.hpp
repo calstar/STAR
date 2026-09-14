@@ -91,7 +91,14 @@ public:
      */
     /** `allow_delays` false makes the entry apply immediately — used for abort states, which must
      *  not sit behind a delay. */
-    void startContinuousLoop(State state, bool allow_delays = true);
+    /**
+     * @param defer_first_pass skip the immediate pass and start republishing one period later.
+     *        For a dynamic state: the caller has already applied the column, so that pass is
+     *        redundant, and running it races the script that is about to start commanding valves —
+     *        a race the script loses, because the pass resolves positions and only then spends a
+     *        couple of milliseconds on retransmits, landing a stale command on top of the script's.
+     */
+    void startContinuousLoop(State state, bool allow_delays = true, bool defer_first_pass = false);
 
     /** Stop the continuous re-send loop (blocks until the thread exits). */
     void stopContinuousLoop();
