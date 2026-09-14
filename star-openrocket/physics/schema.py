@@ -13,6 +13,7 @@ stabilised descent), or a harness stiffness. Carrying any of them as a global
 would be a silent coupling between two independent events.
 """
 
+import math
 from enum import Enum
 from typing import List, Literal, Optional, Union
 
@@ -21,6 +22,28 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from physics.constants import LBF_TO_N
 from physics.site import FAR_ELEV_CONFIRMED, FAR_ELEV_M, FAR_NAME
 from physics.wind import WindProfile
+
+# --- what counts as a canopy at all ------------------------------------------
+#
+# Without an upper bound these fields accept any positive float, and the
+# integrator is then asked to find a descent that does not exist. It does not
+# refuse -- it just takes smaller and smaller steps, for minutes, pinning a
+# core per case while the GUI re-runs on every keystroke. A single mistyped
+# number took the whole app down that way, health checks included.
+#
+# The absolute caps are deliberately far above anything ever flown: the
+# largest recovery canopies are the ~46 m Ares booster mains, and a G-11
+# cluster is a few hundred m^2. Nothing real is refused here.
+D0_MAX = 200.0     # m; ~4x the largest canopy ever flown
+CDS_MAX = 20000.0  # m^2; ~10x the largest cluster ever flown
+
+# The ratio bound is the one that actually catches typos, because a wrong
+# number is usually wrong NEXT TO a right one -- CdS in the D0 box, or a value
+# entered in the wrong unit. Real canopies sit at Cd0 = 0.5-1.3 against their
+# own projected area (the worked example: drogue 0.53, Iris Ultra main 1.24),
+# so this leaves roughly 5x headroom and still refuses a 0.6 m drogue that
+# claims a billion square metres.
+CD0_MAX = 6.0
 
 
 class TriggerKind(str, Enum):
@@ -51,6 +74,26 @@ class Trigger(BaseModel):
         return self
 
 
+def _check_drag_area(name, CdS, D0):
+    """Refuse a drag area that cannot belong to a canopy of this diameter.
+
+    A sanity bound, NOT a factoring of CdS into Cd and S0 -- the symbol stays
+    atomic and this ratio is only ever read in order to reject. It exists
+    because the absolute caps cannot catch the common mistake: a number typed
+    into the wrong box, or in the wrong unit, sitting next to a D0 that is
+    still correct.
+    """
+    s0 = math.pi * D0 * D0 / 4.0
+    if CdS > CD0_MAX * s0:
+        raise ValueError(
+            "%s: a drag area of %.4g m^2 is %.0fx the canopy's own projected "
+            "area (D0 = %.4g m gives S0 = %.4g m^2). Real canopies sit near "
+            "Cd0 = 0.5-1.3. Check that CdS is in m^2, that D0 is in m, and "
+            "that neither was typed into the other's box."
+            % (name, CdS, CdS / s0, D0, s0)
+        )
+
+
 class Device(BaseModel):
     """One recovery device. PLAN.md §4, §6, §8.4."""
 
@@ -59,11 +102,12 @@ class Device(BaseModel):
     name: str = "device"
 
     # --- drag and geometry, eqs (12), (A1)-(A3) ---------------------------
-    CdS: float = Field(gt=0.0, description="Full-open drag area, m^2. One "
-                       "atomic symbol -- do NOT factor it into a coefficient "
-                       "and an area.")
-    D0: float = Field(gt=0.0, description="Nominal diameter, m. Enters the "
-                      "model only through filling distance, eq (9).")
+    CdS: float = Field(gt=0.0, le=CDS_MAX, description="Full-open drag area, "
+                       "m^2. One atomic symbol -- do NOT factor it into a "
+                       "coefficient and an area.")
+    D0: float = Field(gt=0.0, le=D0_MAX, description="Nominal diameter, m. "
+                      "Enters the model only through filling distance, "
+                      "eq (9).")
     m_c: float = Field(ge=0.0, description="Canopy + lines (+ bag) mass, kg. "
                        "The bag rides on the canopy side of the harness, so it "
                        "belongs here and not in body mass.")
@@ -97,6 +141,7 @@ class Device(BaseModel):
     def _check(self):
         if self.j not in (1, 2):
             raise ValueError("j must be 1 (slotted) or 2 (solid cloth)")
+        _check_drag_area(self.name, self.CdS, self.D0)
         return self
 
     @property
@@ -330,8 +375,8 @@ class Canopy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     label: str
-    CdS: float = Field(gt=0.0)
-    D0: float = Field(gt=0.0)
+    CdS: float = Field(gt=0.0, le=CDS_MAX)
+    D0: float = Field(gt=0.0, le=D0_MAX)
     m_c: float = Field(ge=0.0)
     j: int = 2
 
@@ -339,6 +384,7 @@ class Canopy(BaseModel):
     def _check(self):
         if self.j not in (1, 2):
             raise ValueError("j must be 1 (slotted) or 2 (solid cloth)")
+        _check_drag_area(self.label, self.CdS, self.D0)
         return self
 
 

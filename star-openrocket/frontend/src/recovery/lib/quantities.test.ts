@@ -26,6 +26,7 @@ import {
   fromDisplay,
   parsePrecision,
   parsePrefs,
+  snapDisplay,
   toDisplay,
   unitFor,
 } from '../../lib/units/quantities'
@@ -48,6 +49,43 @@ describe('the exact factors stay exact', () => {
     expect(QUANTITIES.pressure.imperial.perUnit).toBeCloseTo(6894.757293168, 8)
     expect(QUANTITIES.density.imperial.perUnit).toBeCloseTo(16.01846337396, 10)
     expect(QUANTITIES.stiffness.imperial.perUnit).toBeCloseTo(175.126835246476, 10)
+  })
+})
+
+describe('a number the user typed reads back as the number they typed', () => {
+  /* The editing box shows `snapDisplay(toDisplay(...))`. Without the snap,
+   * typing 113 into the apogee field stored 34.4424 m -- the correct double
+   * for 113 ft -- and the box immediately rewrote itself to
+   * 112.99999999999999, mid-word. */
+  it('113 ft survives the trip out to metres and back', () => {
+    const ft = QUANTITIES.altitude.imperial
+    const stored = fromDisplay(113, ft)
+    expect(toDisplay(stored, ft)).not.toBe(113)          // the float noise
+    expect(snapDisplay(toDisplay(stored, ft))).toBe(113) // ...and it is gone
+  })
+
+  it('holds for every kind, every system, over the digits people type', () => {
+    for (const kind of KINDS) {
+      for (const system of ['metric', 'imperial'] as const) {
+        const u = QUANTITIES[kind][system]
+        for (const typed of [0, 1, 3, 12.5, 113, 1130, 11309, 0.25, 6.5, 101.3]) {
+          expect([kind, system, typed,
+                  snapDisplay(toDisplay(fromDisplay(typed, u), u))])
+            .toEqual([kind, system, typed, typed])
+        }
+      }
+    }
+  })
+
+  it('snaps noise only -- it is not a rounding setting', () => {
+    // Twelve significant figures, so nothing anyone measures is touched.
+    expect(snapDisplay(0.005690123)).toBe(0.005690123)
+    expect(snapDisplay(101325)).toBe(101325)
+    expect(snapDisplay(1234.56789012)).toBe(1234.56789012)
+    // ...and the non-finite cases do not reach toPrecision.
+    expect(snapDisplay(0)).toBe(0)
+    expect(Number.isNaN(snapDisplay(NaN))).toBe(true)
+    expect(snapDisplay(Infinity)).toBe(Infinity)
   })
 })
 

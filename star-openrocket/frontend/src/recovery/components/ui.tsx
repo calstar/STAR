@@ -124,6 +124,26 @@ const inputClass =
  * Neither focus nor blur calls `onChange`. Formatting is a display event; if
  * it wrote back, `physicsKey(ui)` would move and the simulation would re-run
  * for a number that did not change.
+ *
+ * While the box has focus it shows `draft` -- the characters actually typed --
+ * and not the number they parse to. A controlled `value={number}` is wrong for
+ * a box someone is still typing in, because the round trip out to the store
+ * and back is not the identity on the string:
+ *
+ *  - It is not the identity on the NUMBER, for a unit box. `113` ft stores
+ *    34.4424 m and reads back 112.99999999999999, so the box rewrote itself
+ *    mid-word and, since `<input type="number">` has no caret API, the caret
+ *    went to the end. Typing `11309` got you `112.999999999999990` -- or
+ *    nothing, because React then restored its own value and ate the keystroke.
+ *    `snapDisplay` fixes the number; this is what stops the box moving under
+ *    the caret while it does.
+ *  - It is not the identity on an EMPTY box. Backspacing the last character of
+ *    a `0` sends null, a required field maps that to 0, and `0` was written
+ *    straight back in -- so the zero could not be deleted at all and the field
+ *    could not be retyped. The draft keeps the box empty until blur.
+ *
+ * The draft is per-focus and never authoritative: it is dropped on blur, when
+ * `display` takes over again.
  */
 export function NumberInput({ value, display, onChange, step = 'any', min, max, placeholder, disabled: ownDisabled }: {
   value: number | null
@@ -136,8 +156,11 @@ export function NumberInput({ value, display, onChange, step = 'any', min, max, 
   disabled?: boolean
 }) {
   const disabled = useDisabled(ownDisabled)
-  const [editing, setEditing] = useState(false)
-  const shown = display !== undefined && !editing ? display : (value ?? '')
+  // null means "not being typed in"; '' is a box the user has just cleared.
+  const [draft, setDraft] = useState<string | null>(null)
+  const shown = draft !== null
+    ? draft
+    : display !== undefined ? display : (value ?? '')
   return (
     <input
       type="number"
@@ -148,8 +171,10 @@ export function NumberInput({ value, display, onChange, step = 'any', min, max, 
       max={max}
       placeholder={placeholder}
       disabled={disabled}
-      onFocus={() => setEditing(true)}
-      onBlur={() => setEditing(false)}
+      // Seeded from `value`, not from `display`: focusing still reveals the
+      // full stored number, and an arrow-key step still starts from it.
+      onFocus={() => setDraft(value === null ? '' : String(value))}
+      onBlur={() => setDraft(null)}
       // A value like "159.66" has a "." word boundary, so a double-click grabs
       // only "159" or "66" and you'd need a triple-click for the whole number.
       // Select all of it on double-click instead.
@@ -157,7 +182,10 @@ export function NumberInput({ value, display, onChange, step = 'any', min, max, 
       // Empty means "not supplied", which is a meaningful state in this schema
       // -- Optional[float] on T_pad, p_pad, k_eff and CdS_body all mean
       // "compute a default" rather than "zero".
-      onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
+      onChange={(e) => {
+        setDraft(e.target.value)
+        onChange(e.target.value === '' ? null : Number(e.target.value))
+      }}
     />
   )
 }

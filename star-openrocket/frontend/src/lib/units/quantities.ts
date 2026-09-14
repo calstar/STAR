@@ -210,6 +210,25 @@ export const fromDisplay = (shown: number, u: UnitDef): number =>
   (shown - (u.offset ?? 0)) * u.perUnit
 
 /**
+ * Drop the float noise a conversion leaves behind, for DISPLAY only.
+ *
+ * `perUnit` is not representable in binary -- 0.3048 is not -- so the
+ * round trip is a few ulps short of where it started. Type `113` into a feet
+ * box and it stores 34.4424 m, which is the correct double for 113 ft; divide
+ * that back by 0.3048 and you get 112.99999999999999. The box then shows
+ * that, mid-word, for a number the user typed exactly.
+ *
+ * Twelve significant figures is well inside a double's ~15-17 and far outside
+ * anything this app measures, so it can only ever remove noise. It is NOT
+ * applied to `toDisplay`/`fromDisplay` themselves: those are the conversion,
+ * and a stored value must survive a unit switch and a switch back untouched
+ * (see `physicsKey`). This is what the screen reads, not what the physics
+ * gets.
+ */
+export const snapDisplay = (v: number): number =>
+  Number.isFinite(v) ? Number(v.toPrecision(12)) : v
+
+/**
  * Read a stored preferences object leniently.
  *
  * Unknown keys are dropped and missing ones fall back to the default, so a

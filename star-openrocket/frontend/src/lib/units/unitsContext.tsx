@@ -21,7 +21,7 @@ import type { ReactNode } from 'react'
 import { getSettings, putSettings } from '../../recovery/api/client'
 import {
   DEFAULT_PREFS, DEFAULT_PRECISION, KINDS, decimalsFor, formatForInput,
-  fromDisplay, parsePrecision, parsePrefs, toDisplay, unitFor,
+  fromDisplay, parsePrecision, parsePrefs, snapDisplay, toDisplay, unitFor,
 } from './quantities'
 import type { Kind, Precision, System, UnitDef, UnitPrefs } from './quantities'
 
@@ -183,20 +183,23 @@ export function UnitsProvider({ children }: { children: ReactNode }) {
     const num = (si: number | null | undefined, kind: Kind, digits?: number) => {
       if (si === null || si === undefined || !Number.isFinite(si)) return '-'
       const def = u(kind)
-      return render(toDisplay(si, def), digits ?? def.digits)
+      return render(snapDisplay(toDisplay(si, def)), digits ?? def.digits)
     }
 
     return {
       prefs, setKind, setAll, precision, setPrecision, save, u,
       lab: (kind) => u(kind).label,
-      val: (si, kind) => toDisplay(si, u(kind)),
+      // Snapped: the raw quotient carries float noise the screen must never
+      // show -- 113 ft round-trips to 112.99999999999999. See `snapDisplay`.
+      val: (si, kind) => snapDisplay(toDisplay(si, u(kind))),
       num,
       q: (si, kind, digits) => `${num(si, kind, digits)} ${u(kind).label}`,
       // An unset `digits` means "no natural precision of its own", so the
       // bounds are the only thing shaping it.
       dec: (v, digits) => render(v, digits ?? Infinity),
       dur: (s) => fmtDuration(s, decimalsFor(s, 1, precision)),
-      forInput: (si, kind) => formatForInput(toDisplay(si, u(kind)), precision),
+      forInput: (si, kind) =>
+        formatForInput(snapDisplay(toDisplay(si, u(kind))), precision),
       si: (shown, kind) => fromDisplay(shown, u(kind)),
     }
   }, [prefs, precision, setKind, setAll, setPrecision, save])

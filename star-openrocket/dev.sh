@@ -92,11 +92,18 @@ if command -v lsof >/dev/null 2>&1; then
 fi
 
 echo "Starting backend on http://localhost:8002"
-# --reload-dir for the shared design core too: it is pip-installed from
-# ../lib/stardesign, so uvicorn does not watch it by default and edits there
-# would silently not take effect until a manual restart.
+# One --reload-dir per directory of Python the server actually imports, NOT
+# `.`. Watching the whole app directory means watching .venv (10k files),
+# frontend/node_modules (12k) and cache/ (1k) as well, and the reloader then
+# burns a third of a core walking them forever -- which starves the single
+# worker enough that /api/health times out in the browser and the UI decides
+# the backend is down. The shared design core is listed because it is
+# pip-installed from ../lib/stardesign, so uvicorn would not watch it
+# otherwise and edits there would silently not take effect.
 "$PYTHON_CMD" -m uvicorn backend.main:app --reload \
-  --reload-dir . --reload-dir ../lib/stardesign \
+  --reload-dir backend --reload-dir physics \
+  --reload-dir site-climatology --reload-dir tools \
+  --reload-dir ../lib/stardesign \
   --port 8002 &
 BACKEND_PID=$!
 

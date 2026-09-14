@@ -447,17 +447,28 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
 function Field({ label, value, set, min, max, step = 1 }: { label: string; value: number; set: (n: number) => void; min: number; max: number; step?: number }) {
   // Every use of this writes a flight parameter, which is part of the design.
   const disabled = useDisabled()
+  // The characters typed, while the box has focus. Without it `value={value}`
+  // is written straight back over a cleared box -- `Number('')` is 0, so a
+  // field sitting at 0 could not be backspaced and retyped at all. Blur drops
+  // the draft, so leaving an empty box restores the last committed number
+  // rather than silently storing one this field has no null for.
+  const [draft, setDraft] = useState<string | null>(null)
   return (
     <label className="flex flex-col text-xs text-[var(--color-text-secondary)]">
       {label}
       <input
         type="number"
-        value={value}
+        value={draft ?? value}
         min={min}
         max={max}
         step={step}
         disabled={disabled}
-        onChange={(e) => set(Number(e.target.value))}
+        onFocus={() => setDraft(String(value))}
+        onBlur={() => setDraft(null)}
+        onChange={(e) => {
+          setDraft(e.target.value)
+          if (e.target.value !== '') set(Number(e.target.value))
+        }}
         className="mt-1 w-24 rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-2 py-1 text-sm text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:border-[var(--color-border)] disabled:text-[var(--color-text-muted)]"
       />
     </label>
