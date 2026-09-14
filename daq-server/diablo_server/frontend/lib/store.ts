@@ -156,7 +156,7 @@ export function buildAliasesFromConfig(config: any): void {
   const ptComponents = ['pressure_psi', 'raw_adc_counts', 'raw_adc', 'current_ma', 'sense_voltage', 'excitation_voltage'];
   const tcComponents = ['temperature_c', 'raw_adc_counts', 'raw_adc'];
   const rtdComponents = ['temperature_c', 'raw_adc_counts', 'raw_adc'];
-  const lcComponents = ['force_kg', 'force_n', 'raw_adc_counts', 'raw_adc'];
+  const lcComponents = ['force_kg', 'force_kg_tared', 'force_n', 'raw_adc_counts', 'raw_adc'];
   const actComponents = ['raw_adc_counts', 'actuator_state_commanded', 'current_a', 'status'];
   const actCmdComponents = ['actuator_state_commanded'];
 
@@ -463,6 +463,11 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
 
     // Back-compat for legacy LC panes expecting force_lbf / force_n.
     // Backend now publishes canonical force_kg.
+    //
+    // These stay derived from ABSOLUTE force_kg, never from force_kg_tared. They are
+    // archive-comparable legacy aliases with no consumers outside the alias list, and silently
+    // re-taring them would produce "why does the N readout disagree with the kg readout" with
+    // nothing in the code pointing at the cause.
     if (update.component === 'force_kg') {
       const lbf = update.value * 2.2046226218;
       const n = update.value * 9.80665;
@@ -753,11 +758,19 @@ export function useActuatorStateByEntity(entity: string): ActuatorState | null {
   return useSensorStore((s) => s.actuatorStateByEntity[entity] ?? null);
 }
 
-/** Load cell force (kg), absolute. The calibration service is the sole source of the value. */
+/**
+ * Load cell force (kg) as the operator should read it: tared when a tare is standing, absolute
+ * otherwise. The backend derives `force_kg_tared` and always publishes it — a 0 offset when
+ * untared — so there is no arithmetic here and no way for this to disagree with the plots.
+ *
+ * Use `useSensorValue(calEntity, 'force_kg')` directly where ABSOLUTE weight is required. The
+ * calibration page is the one that must: the operator types the true weight of a known mass, and
+ * a tared reading beside that input is how a false point gets into the fit.
+ */
 export function useLoadCellForceKg(calEntity: string): number | null {
-  const raw = useSensorValue(calEntity, 'force_kg');
-  if (raw == null || !Number.isFinite(raw)) return null;
-  return raw;
+  const v = useSensorValue(calEntity, 'force_kg_tared');
+  if (v == null || !Number.isFinite(v)) return null;
+  return v;
 }
 
 /** @deprecated Use useLoadCellForceKg instead. Legacy alias for backwards compatibility. */

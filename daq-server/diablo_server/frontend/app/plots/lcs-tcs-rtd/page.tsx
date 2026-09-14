@@ -121,12 +121,50 @@ function SectionPlot({
 
 /** Ratiometric LC: ref = excitation, so only sensitivity and PGA set full-scale code. */
 function LCForceReadout({
-  calEntity, label, color,
+  calEntity, label, color, offsetKg, onTare, onClearTare, disabled, disabledReason,
 }: {
   entity: string; calEntity: string; label: string; color: string;
+  /** Live tare from the backend, or null when untared. Never assumed from a click — see poll. */
+  offsetKg: number | null;
+  onTare: () => void; onClearTare: () => void;
+  disabled: boolean; disabledReason: string;
 }) {
-  const value = useLoadCellForceKg(calEntity); // absolute kg from the calibration service
-  return <DerivedReadoutBox label={label} value={value} unit="kg" color={color} decimals={1} />;
+  // Tared when a tare is standing, absolute otherwise. The value is derived by the backend and
+  // published as its own component, so this readout and the plot below it cannot disagree.
+  const value = useLoadCellForceKg(calEntity);
+  const tared = offsetKg != null;
+  return (
+    <div className="flex flex-col gap-1">
+      <DerivedReadoutBox label={label} value={value} unit="kg" color={color} decimals={1} />
+      <div className="flex items-center gap-1.5 px-1">
+        <button
+          onClick={tared ? onClearTare : onTare}
+          disabled={disabled}
+          title={
+            disabled
+              ? disabledReason
+              : tared
+                ? `Remove the tare and show absolute weight again (currently \u2212${offsetKg!.toFixed(1)} kg).`
+                : 'Zero the DISPLAY at the current load. Display only \u2014 does not affect calibration, control, abort, or what is recorded.'
+          }
+          className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+            disabled
+              ? 'border-gray-800 text-gray-600 cursor-not-allowed'
+              : tared
+                ? 'border-amber-600 text-amber-400 hover:bg-amber-900/30'
+                : 'border-gray-600 text-gray-300 hover:bg-gray-700'
+          }`}
+        >
+          {tared ? 'Clear tare' : 'Tare'}
+        </button>
+        {tared && (
+          <span className="text-[10px] text-amber-400 tabular-nums" title="Offset subtracted from the displayed weight.">
+            &minus;{offsetKg!.toFixed(1)} kg
+          </span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default function LCS_TCS_RTDPage() {
@@ -140,6 +178,16 @@ export default function LCS_TCS_RTDPage() {
   const [lcEntities, setLcEntities] = useState<string[]>([]);
   const [lcCalEntities, setLcCalEntities] = useState<string[]>([]);
   const [lcLabels, setLcLabels] = useState<string[]>([]);
+  // uid = boardId * 100 + connector, taken from the config rows. NEVER parsed back out of an
+  // entity string: the number in "LC2_Cal.CH1" is the Elodin slot (board_id % 10), not the board
+  // id, so two boards sharing a slot would resolve to the same uid — the collision that once put
+  // a load cell's curve on a 5000 psi transducer.
+  const [lcUids, setLcUids] = useState<number[]>([]);
+  /** entity -> offset kg, polled from the backend. The source of truth for what is tared. */
+  const [lcTares, setLcTares] = useState<Record<string, number>>({});
+  const [sessionActive, setSessionActive] = useState(false);
+  /** Set when a tare command was sent and the backend has not confirmed it yet. */
+  const [tarePending, setTarePending] = useState(false);
 
   const loadChannelConfig = useCallback(() => {
     Promise.all([
@@ -177,6 +225,7 @@ export default function LCS_TCS_RTDPage() {
         setLcEntities(lc.map((r) => r.entity));
         setLcCalEntities(lc.map((r) => r.calEntity));
         setLcLabels(lc.map((r) => r.label));
+        setLcUids(lc.map((r) => r.boardId * 100 + r.channel));
       }
     }).catch(() => {});
   }, []);
@@ -190,6 +239,59 @@ export default function LCS_TCS_RTDPage() {
     const unsub = ws.on(MessageType.CONFIG_UPDATED, () => loadChannelConfig());
     return () => { unsub(); };
   }, [ws, loadChannelConfig]);
+
+  // A tare is only real once the backend says so. [0x46,0x00] carries no reply, so a click tells
+  // us nothing: the calibration service can refuse a tare outright when the stream is stale, and
+  // an optimistic zero would be a lie about a load cell. Poll the file the subtraction itself
+  // reads, so the badge and the number can never disagree.
+  const fetchTares = useCallback(() => {
+    fetch(`${getApiBaseUrl()}/api/lc_tare`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        const next: Record<string, number> = {};
+        for (const t of (d.tares ?? []) as Array<{ entity: string; offsetKg: number }>) {
+          if (Number.isFinite(t.offsetKg)) next[t.entity] = t.offsetKg;
+        }
+        setLcTares(next);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetchTares();
+    const id = setInterval(fetchTares, 2000);
+    return () => clearInterval(id);
+  }, [fetchTares]);
+
+  // No live stream means no fresh ADC to tare against, so the service would refuse anyway.
+  useEffect(() => {
+    const unsub = ws.on(MessageType.SESSION_UPDATE, (p: unknown) =>
+      setSessionActive(!!(p as { active?: boolean })?.active));
+    fetch(`${getApiBaseUrl()}/api/config/profiles`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setSessionActive(!!d.sessionActive); })
+      .catch(() => {});
+    return () => { unsub(); };
+  }, [ws]);
+
+  const sendTareCmd = useCallback((commandType: 'tare_lc' | 'clear_tare_lc', uid?: number) => {
+    ws.send({
+      type: MessageType.CALIBRATION_COMMAND,
+      timestamp: Date.now(),
+      payload: uid == null
+        ? { commandType }
+        : { commandType, sensorId: uid % 100, boardId: Math.floor(uid / 100) },
+    });
+    // Accelerate the poll rather than assuming an outcome. If nothing changes within ~2 s the
+    // banner says so, instead of a button that looks like it worked.
+    setTarePending(true);
+    const t0 = Date.now();
+    const quick = setInterval(fetchTares, 120);
+    setTimeout(() => { clearInterval(quick); setTarePending(false); void t0; }, 2200);
+  }, [ws, fetchTares]);
+
+  const anyTared = lcCalEntities.some((e) => lcTares[e] != null);
 
   const tcEntities = tcData.map((d) => d.entity);
   // d.calEntity, never a string replace: entities are board-scoped (TC1.CH2), so
@@ -314,9 +416,48 @@ export default function LCS_TCS_RTDPage() {
           <div className="bg-card rounded-xl border border-gray-800 p-4 flex flex-col gap-4 flex-1 min-h-0">
             {lcEntities.length > 0 ? (
               <>
+                <div className="flex items-center justify-between gap-2 flex-shrink-0">
+                  <span className="text-[11px] text-gray-500">
+                    {anyTared
+                      ? 'Tared \u2014 showing weight relative to the tared load. Calibration is unaffected.'
+                      : 'Showing absolute weight.'}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {anyTared && (
+                      <button
+                        onClick={() => sendTareCmd('clear_tare_lc')}
+                        disabled={!sessionActive}
+                        title="Remove every load-cell tare and show absolute weight again."
+                        className="text-[10px] px-2 py-0.5 rounded border border-amber-600 text-amber-400 hover:bg-amber-900/30 disabled:border-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed"
+                      >
+                        Clear all tares
+                      </button>
+                    )}
+                    <button
+                      onClick={() => sendTareCmd('tare_lc')}
+                      disabled={!sessionActive}
+                      title={sessionActive
+                        ? 'Zero the DISPLAY on every load cell at its current load. Display only \u2014 does not affect calibration, control, abort, or what is recorded.'
+                        : 'Start a session to tare \u2014 a tare needs a live stream.'}
+                      className="text-[10px] px-2 py-0.5 rounded border border-gray-600 text-gray-300 hover:bg-gray-700 disabled:border-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed"
+                    >
+                      Tare all
+                    </button>
+                  </div>
+                </div>
+                {tarePending && (
+                  <div className="text-[11px] text-amber-400 flex-shrink-0">
+                    Waiting for the calibration service to confirm\u2026
+                  </div>
+                )}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 flex-shrink-0">
                   {lcEntities.map((entity, i) => (
                     <LCForceReadout
+                      offsetKg={lcTares[lcCalEntities[i]] ?? null}
+                      onTare={() => sendTareCmd('tare_lc', lcUids[i])}
+                      onClearTare={() => sendTareCmd('clear_tare_lc', lcUids[i])}
+                      disabled={!sessionActive || lcUids[i] == null}
+                      disabledReason={sessionActive ? 'No uid for this channel in config.' : 'Start a session to tare \u2014 a tare needs a live stream.'}
                       key={entity}
                       entity={entity}
                       calEntity={lcCalEntities[i]}
@@ -341,7 +482,7 @@ export default function LCS_TCS_RTDPage() {
                 <SectionPlot
                   title="Force (kg)"
                   entities={lcCalEntities}
-                  component="force_kg"
+                  component="force_kg_tared"
                   yLabel="Force (kg)"
                   labels={lcLabels}
                   colors={SENSE_COLORS.slice(0, lcEntities.length)}
