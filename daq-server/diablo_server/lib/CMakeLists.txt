@@ -10,6 +10,11 @@ set(FSW_SOURCES
     src/config/LoadActiveBoards.cpp
     src/config/Config.cpp
     src/config/SensorTables.cpp
+    src/script/Lexer.cpp
+    src/script/Parser.cpp
+    src/script/Validate.cpp
+    src/script/Slug.cpp
+    src/script/ScriptConfig.cpp
     src/routing/HeartbeatRouter.cpp
     src/routing/SensorRouter.cpp
     src/time/BoardClockSync.cpp
@@ -104,6 +109,17 @@ target_include_directories(test_fire_lifecycle PRIVATE
 target_link_libraries(test_fire_lifecycle
     fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME fire_lifecycle COMMAND test_fire_lifecycle)
+
+add_executable(test_state_script
+    test/test_state_script.cpp
+)
+target_include_directories(test_state_script PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_state_script
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME state_script COMMAND test_state_script)
 
 add_executable(test_sensor_tables
     test/test_sensor_tables.cpp
