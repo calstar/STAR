@@ -109,8 +109,8 @@ describe('completion, driven by caret offsets', () => {
     expect(cmd.reopen).toBe(true);
   });
 
-  it('completing a valve replaces only the typed prefix', () => {
-    expect(pick('open_valve(FU|').source).toBe('open_valve(FUEL_VENT');
+  it('completing a valve replaces the typed prefix and closes the call', () => {
+    expect(pick('open_valve(FU|').source).toBe('open_valve(FUEL_VENT)');
   });
 
   it('completing mid-line keeps what follows the caret', () => {
@@ -119,7 +119,7 @@ describe('completion, driven by caret offsets', () => {
 
   it('offers only reachable states in transition_to', () => {
     const r = completionsAt('transition_to(', 14, tables)!;
-    expect(r.items.map((i) => i.text)).toEqual(['IDLE', 'PRESS_STANDBY']);
+    expect(r.items.map((i) => i.label)).toEqual(['IDLE', 'PRESS_STANDBY']);
   });
 
   it('arrow-key selection picks the item that was highlighted', () => {
@@ -127,7 +127,14 @@ describe('completion, driven by caret offsets', () => {
     // SECOND suggestion, not the first.
     const r = completionsAt('open_valve(', 11, tables)!;
     expect(r.items.length).toBeGreaterThan(1);
-    expect(applyCompletion('open_valve(', r, r.items[1]).source).toBe('open_valve(MAIN_VALVE');
+    expect(applyCompletion('open_valve(', r, r.items[1]).source).toBe('open_valve(MAIN_VALVE)');
+  });
+
+  it('a finished line offers nothing further, so Enter starts a new one', () => {
+    // The bug this guards: after completing a call the caret sits at a position that used to fall
+    // through to "expression", so the popup reopened and swallowed Enter — pressing it put a
+    // second command on the same line instead of moving to the next.
+    expect(completionsAt('open_valve(FUEL_VENT)', 21, tables)).toBeNull();
   });
 
   it('suggests nothing inside a comment, so typing prose is not interrupted', () => {

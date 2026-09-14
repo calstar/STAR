@@ -95,7 +95,7 @@ describe('caretContext — works on half-typed text', () => {
   });
 
   it('treats the right-hand side of an assignment as an expression', () => {
-    expect(at('y = x |')).toMatchObject({ kind: 'expr' });
+    expect(at('y = |')).toMatchObject({ kind: 'expr' });
   });
 
   it('suggests nothing inside a comment', () => {
@@ -110,6 +110,63 @@ describe('caretContext — works on half-typed text', () => {
     const ctx = at('open_valve(FUE|')!;
     expect(ctx.to - ctx.from).toBe(3);
   });
+
+  /**
+   * One statement per line is a rule of the grammar, and it decides where the popup may appear.
+   *
+   * After a finished call nothing else can legally go on that line — so suggesting there is not
+   * just noise. The popup swallows Enter, so finishing a call and pressing Enter to start the next
+   * line would insert a second command onto the same one.
+   */
+  describe('a completed line suggests nothing further', () => {
+    it('after a finished call', () => {
+      expect(at('open_valve(FUEL_VENT)|')).toBeNull();
+    });
+
+    it('after a finished call with trailing space', () => {
+      expect(at('open_valve(FUEL_VENT) |')).toBeNull();
+    });
+
+    it('after a finished assignment', () => {
+      expect(at('x = pressure(GN2_HIGH)|')).toBeNull();
+    });
+
+    it('even when a word is being typed after a finished call', () => {
+      expect(at('open_valve(FUEL_VENT) de|')).toBeNull();
+    });
+  });
+
+  describe('but still suggests where a value is genuinely expected', () => {
+    it('after an assignment', () => {
+      expect(at('x = |')).toMatchObject({ kind: 'expr' });
+    });
+
+    it('after an arithmetic operator', () => {
+      expect(at('x = 0.9 * |')).toMatchObject({ kind: 'expr' });
+    });
+
+    it('after a comparison operator', () => {
+      expect(at('while elapsed() < |')).toMatchObject({ kind: 'expr' });
+    });
+
+    it('after a condition keyword', () => {
+      expect(at('if |')).toMatchObject({ kind: 'expr' });
+      expect(at('while |')).toMatchObject({ kind: 'expr' });
+    });
+
+    it('after and / or / not', () => {
+      expect(at('if a and |')).toMatchObject({ kind: 'expr' });
+      expect(at('if not |')).toMatchObject({ kind: 'expr' });
+    });
+
+    it('after an opening paren used for grouping', () => {
+      expect(at('x = (|')).toMatchObject({ kind: 'expr' });
+    });
+
+    it('while a variable name is being typed on the right of an assignment', () => {
+      expect(at('y = tar|')).toMatchObject({ kind: 'expr', prefix: 'tar' });
+    });
+  });
 });
 
 describe('completionsAt — suggests by slot', () => {
@@ -117,7 +174,7 @@ describe('completionsAt — suggests by slot', () => {
     const caret = src.indexOf('|');
     return completionsAt(src.replace('|', ''), caret, tables);
   };
-  const texts = (src: string) => at(src)?.items.map((i) => i.text) ?? [];
+  const texts = (src: string) => at(src)?.items.map((i) => i.label ?? i.text) ?? [];
 
   it('offers only valves in a valve slot — even a word that is also a state', () => {
     const t = texts('open_valve(|');
@@ -164,12 +221,50 @@ describe('completionsAt — suggests by slot', () => {
 });
 
 describe('applyCompletion', () => {
-  it('replaces the partial word, not the whole line', () => {
+  /**
+   * Every name-taking built-in has exactly ONE argument, so choosing the name finishes the call —
+   * there is nothing the paren could still be waiting for. Closing it here saves the operator a
+   * keystroke and, more importantly, removes an unclosed paren that would otherwise be a parse
+   * error they had to come back and fix.
+   */
+  it('closes the call after a valve, leaving the caret past the paren', () => {
     const src = 'open_valve(FU';
     const r = completionsAt(src, src.length, tables)!;
     const out = applyCompletion(src, r, r.items[0]);
-    expect(out.source).toBe('open_valve(FUEL_VENT');
+    expect(out.source).toBe('open_valve(FUEL_VENT)');
     expect(out.caret).toBe(out.source.length);
+  });
+
+  it('closes the call after a sensor and after a state too', () => {
+    const s1 = 'x = pressure(';
+    const r1 = completionsAt(s1, s1.length, tables)!;
+    expect(applyCompletion(s1, r1, r1.items[0]).source).toBe('x = pressure(GN2_HIGH)');
+
+    // items are sorted, so [0] here is FUEL_VENT — which is also a valve, and is exactly the case
+    // that proves the state slot is resolved by position rather than by spelling.
+    const s2 = 'transition_to(';
+    const r2 = completionsAt(s2, s2.length, tables)!;
+    expect(applyCompletion(s2, r2, r2.items[0]).source).toBe('transition_to(FUEL_VENT)');
+  });
+
+  it('does NOT double the paren when one is already there', () => {
+    const src = 'open_valve(FU)';
+    const r = completionsAt(src, src.length - 1, tables)!;
+    expect(applyCompletion(src, r, r.items[0]).source).toBe('open_valve(FUEL_VENT)');
+  });
+
+  it('shows the bare name in the list while inserting the closing paren', () => {
+    const src = 'open_valve(';
+    const r = completionsAt(src, src.length, tables)!;
+    // What the operator reads is the name; what lands is the name plus its paren.
+    expect(r.items[0].label).toBe('FUEL_VENT');
+    expect(r.items[0].text).toBe('FUEL_VENT)');
+  });
+
+  it('filters on the visible name, not on the inserted punctuation', () => {
+    const src = 'open_valve(fuel';
+    const r = completionsAt(src, src.length, tables)!;
+    expect(r.items.map((i) => i.label)).toEqual(['FUEL_VENT']);
   });
 
   it('a command inserts its opening paren and asks to reopen', () => {
@@ -179,9 +274,14 @@ describe('applyCompletion', () => {
     expect(applyCompletion('', r, openValve).source).toBe('open_valve(');
   });
 
-  it('keeps the rest of the line after the caret', () => {
-    const src = 'open_valve(FU)';
-    const r = completionsAt(src, src.length - 1, tables)!;
-    expect(applyCompletion(src, r, r.items[0]).source).toBe('open_valve(FUEL_VENT)');
+  it('the two steps compose into a finished, closed statement', () => {
+    // Pick the command, then the name — the flow an operator actually types.
+    const r1 = completionsAt('', 0, tables)!;
+    const step1 = applyCompletion('', r1, r1.items.find((i) => i.text === 'open_valve(')!);
+    const r2 = completionsAt(step1.source, step1.caret, tables)!;
+    const step2 = applyCompletion(step1.source, r2, r2.items[0]);
+    expect(step2.source).toBe('open_valve(FUEL_VENT)');
+    // And the line is now complete, so nothing further is offered on it — Enter makes a new line.
+    expect(completionsAt(step2.source, step2.caret, tables)).toBeNull();
   });
 });

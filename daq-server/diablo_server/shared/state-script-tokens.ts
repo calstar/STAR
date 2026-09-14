@@ -206,5 +206,17 @@ export function caretContext(src: string, caret: number): CaretContext | null {
   // Statement start — only indentation before the word.
   if (/^\s*$/.test(before)) return { kind: 'command', prefix, from, to: caret };
 
-  return { kind: 'expr', prefix, from, to: caret };
+  // Everything else is a value position ONLY if something before it actually demands a value:
+  // an assignment, an operator, an open paren, or a keyword that introduces a condition.
+  //
+  // Anything else means the line is already complete, and this language allows exactly one
+  // statement per line — so after `open_valve(FUEL_VENT)` there is nothing further that could
+  // legally go there. Suggesting anyway is not merely noise: the popup swallows Enter, so
+  // finishing a call and pressing Enter for a new line would insert a second command on the same
+  // one instead.
+  const expectsValue = /[=+\-*/<>(,]\s*$/.test(before)
+    || /\b(?:if|elif|while|and|or|not)\s+$/.test(before);
+  if (expectsValue) return { kind: 'expr', prefix, from, to: caret };
+
+  return null;
 }

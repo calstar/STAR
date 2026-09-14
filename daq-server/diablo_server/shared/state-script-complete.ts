@@ -13,8 +13,11 @@ import { caretContext, BUILTIN_ARG, type CaretContext } from './state-script-tok
 import type { ScriptNameTables } from './state-script-names.js';
 
 export interface Completion {
-  /** Inserted verbatim. */
+  /** Inserted verbatim. May carry punctuation the list does not show, e.g. a closing paren. */
   text: string;
+  /** What the popup shows. Defaults to `text`. Kept separate so the list reads as names —
+   *  `FUEL_VENT`, not `FUEL_VENT)` — while the insert still closes the call. */
+  label?: string;
   /** Shown beside it — what this is, or where it leads. */
   detail: string;
   kind: 'valve' | 'sensor' | 'state' | 'command' | 'keyword' | 'variable';
@@ -74,13 +77,15 @@ function assignedVariables(src: string): string[] {
  * Case-insensitive on input but not on output — slugs are uppercase, and an operator typing `fu`
  * should still be offered `FUEL_VENT`.
  */
-function filter<T extends { text: string }>(items: T[], prefix: string): T[] {
+function filter<T extends { text: string; label?: string }>(items: T[], prefix: string): T[] {
   if (!prefix) return items;
   const p = prefix.toUpperCase();
   const starts: T[] = [];
   const contains: T[] = [];
   for (const it of items) {
-    const t = it.text.toUpperCase();
+    // Match what the operator sees, not what gets inserted — the auto-closing paren on `text` is
+    // punctuation they never typed and must not have to match against.
+    const t = (it.label ?? it.text).toUpperCase();
     if (t.startsWith(p)) starts.push(it);
     else if (t.includes(p)) contains.push(it);
   }
@@ -95,19 +100,32 @@ export function completionsAt(
   const ctx = caretContext(src, caret);
   if (!ctx) return null; // inside a comment
 
+  /**
+   * Close the call for them.
+   *
+   * open_valve, close_valve, pressure and transition_to all take exactly ONE argument, so once the
+   * name is chosen the call is finished and there is nothing else the paren could be waiting for.
+   * Typing it by hand is pure ceremony, and an unclosed paren is a parse error the operator then
+   * has to go back and fix.
+   *
+   * Unless one is already there — completing into `open_valve(MA|)` must not leave `MAIN_VALVE))`.
+   */
+  const closer = /^\s*\)/.test(src.slice(ctx.to)) ? '' : ')';
+  const name = (t: string, detail: string, kind: 'valve' | 'sensor' | 'state'): Completion =>
+    ({ text: t + closer, label: t, detail, kind });
+
   let pool: Completion[];
   switch (ctx.kind) {
     case 'valve':
-      pool = [...tables.actuators].sort().map((t) => ({ text: t, detail: 'valve', kind: 'valve' as const }));
+      pool = [...tables.actuators].sort().map((t) => name(t, 'valve', 'valve'));
       break;
     case 'sensor':
-      pool = [...tables.sensors].sort().map((t) => ({ text: t, detail: 'sensor', kind: 'sensor' as const }));
+      pool = [...tables.sensors].sort().map((t) => name(t, 'sensor', 'sensor'));
       break;
     case 'state':
       // Only states this one may actually reach. Offering the rest would be offering a config the
       // sequencer refuses at load — the editor should not be able to author that.
-      pool = [...tables.allowedTransitions].sort()
-        .map((t) => ({ text: t, detail: 'state', kind: 'state' as const }));
+      pool = [...tables.allowedTransitions].sort().map((t) => name(t, 'state', 'state'));
       break;
     case 'command':
       pool = COMMANDS;

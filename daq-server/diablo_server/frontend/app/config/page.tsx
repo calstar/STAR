@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { MessageType } from '@/lib/types';
@@ -375,7 +376,12 @@ function ScriptReference({
     </div>
   );
 
-  return (
+  // Portalled to <body>. `position: fixed` is viewport-relative only when no ancestor creates a
+  // containing block — and .bg-card (globals.css) sets backdrop-filter for the glassmorphism
+  // panels, which does exactly that. Inside the config page this modal therefore anchored to the
+  // panel and landed somewhere down the scroll instead of on screen. A portal escapes the whole
+  // ancestor chain, so it stays centred regardless of what the page does above it.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
          onClick={onClose}>
       <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-3xl max-h-[85vh] flex flex-col"
@@ -434,7 +440,8 @@ function ScriptReference({
           </section>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -536,6 +543,13 @@ function ScriptEditor({
         const n = completion.items.length;
         setCompletionIdx((i) => (e.key === 'ArrowDown' ? (i + 1) % n : (i - 1 + n) % n));
         return;
+      }
+      // Shift+Enter is the unconditional escape hatch: always a newline, never an accept. The
+      // popup swallows plain Enter, and without a way past it a suggestion you did not want can
+      // stand between you and the next line.
+      if (e.key === 'Enter' && e.shiftKey) {
+        setCompletion(null);
+        return; // no preventDefault — let the textarea insert the newline itself
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
@@ -749,8 +763,10 @@ function ScriptEditor({
                           i === completionIdx ? 'bg-gray-700' : 'hover:bg-gray-800'
                         }`}
                       >
+                        {/* label, not text: the insert carries a closing paren the list should
+                            not show. */}
                         <code className={`font-mono ${TOKEN_CLASS[item.kind] ?? 'text-gray-100'}`}>
-                          {item.text}
+                          {item.label ?? item.text}
                         </code>
                         <span className="ml-auto text-xs text-gray-400 truncate">{item.detail}</span>
                       </button>
@@ -777,6 +793,11 @@ function ScriptEditor({
             <span className="inline-flex items-center gap-1">
               <span className="font-mono text-amber-300 underline decoration-red-500 decoration-wavy">&#9632;</span>
               not in this config
+            </span>
+            <span className="ml-auto text-gray-500">
+              <kbd className="font-mono">Tab</kbd>/<kbd className="font-mono">Enter</kbd> accept ·{' '}
+              <kbd className="font-mono">Shift</kbd>+<kbd className="font-mono">Enter</kbd> new line ·{' '}
+              <kbd className="font-mono">Esc</kbd> dismiss
             </span>
           </div>
 
