@@ -791,7 +791,7 @@ function ScriptEditor({
               </span>
             ))}
             <span className="inline-flex items-center gap-1">
-              <span className="font-mono text-amber-300 underline decoration-red-500 decoration-wavy">&#9632;</span>
+              <span className="font-mono text-white underline decoration-red-500 decoration-wavy">&#9632;</span>
               not in this config
             </span>
             <span className="ml-auto text-gray-500">

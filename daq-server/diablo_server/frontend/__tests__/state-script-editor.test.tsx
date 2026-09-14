@@ -89,6 +89,15 @@ describe('highlight mirror', () => {
     expect(spans[0].className).toContain('decoration-wavy');
     expect(spans[1].className).not.toContain('decoration-wavy');
   });
+
+  it('paints an unrecognised name white, withholding the colour that would call it a valve', () => {
+    const { container } = render(<Mirror src={'open_valve(FUEL_VNT)\nopen_valve(MAIN_VALVE)\n'} />);
+    const [bad, good] = [...container.querySelectorAll('[data-kind="valve"]')];
+    expect(bad.className).toContain('text-white');
+    expect(bad.className).not.toContain('text-amber-300');
+    // The recognised one still gets the valve colour — this must not have gone white too.
+    expect(good.className).toContain('text-amber-300');
+  });
 });
 
 describe('completion, driven by caret offsets', () => {

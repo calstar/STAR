@@ -46,13 +46,19 @@ export function highlightSpans(src: string, tables: ScriptNameTables): ReactNode
   toks.forEach((t, i) => {
     // Whitespace between tokens goes out verbatim. The tokenizer skips it; the mirror cannot.
     if (t.start > at) out.push(src.slice(at, t.start));
+
+    // A name the config does not declare goes WHITE, not its slot's colour, and keeps the red
+    // squiggle. The colours mean "this is a valve / a sensor / a state" — painting an unrecognised
+    // word amber says it is a valve, which is the one thing it is not. White withholds that claim,
+    // so the word reads as unrecognised at a glance rather than only on close inspection.
     const bad = t.known === false;
+    const colour = bad ? 'text-white' : (TOKEN_CLASS[t.kind] ?? '');
     out.push(
       <span
         key={i}
         data-kind={t.kind}
         data-known={t.known === undefined ? undefined : String(t.known)}
-        className={`${TOKEN_CLASS[t.kind] ?? ''}${bad ? ' underline decoration-red-500 decoration-wavy' : ''}`}
+        className={`${colour}${bad ? ' underline decoration-red-500 decoration-wavy' : ''}`}
       >
         {t.text}
       </span>,
