@@ -333,6 +333,68 @@ export function writeStateCsv(which: StateCsvName, content: string, deploy: bool
   return true;
 }
 
+// ── Dynamic-state scripts ────────────────────────────────────────────────────
+
+/** Reject anything that is not a bare <name>.script. A path here would let the editor write
+ *  outside scripts/, and this value reaches the filesystem. Refused, never sanitised. */
+function assertScriptName(file: string): void {
+  if (!/^[A-Za-z0-9_-]+\.script$/.test(file))
+    throw new Error(`Invalid script name "${file}" (letters, digits, _ and -, ending .script)`);
+}
+
+/** One dynamic-state script from the active profile. Empty string when it does not exist yet. */
+export function readStateScript(file: string): string {
+  assertScriptName(file);
+  ensureSeeded();
+  try {
+    return readFileSync(join(profileDir(getActiveProfileName()), SCRIPTS_SUBDIR, file), 'utf-8');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Write one script into the active profile, and deploy it when idle.
+ *
+ * Same freeze rule as a config save: during a session the profile takes the edit as a draft and
+ * config/ is left alone, so a mid-run edit cannot reach the running sequencer. A script edited
+ * during a run applies at the next session start, exactly like every other config change.
+ *
+ * @return whether the write reached config/.
+ */
+export function writeStateScript(file: string, content: string, deploy: boolean): boolean {
+  assertScriptName(file);
+  ensureSeeded();
+  const dir = join(profileDir(getActiveProfileName()), SCRIPTS_SUBDIR);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, file), content, 'utf-8');
+  if (!deploy) return false;
+  const dest = join(getConfigDir(), SCRIPTS_SUBDIR, file);
+  mkdirSync(dirname(dest), { recursive: true });
+  copyFileSync(join(dir, file), dest);
+  return true;
+}
+
+/** Every script filename the active profile owns. */
+export function listStateScripts(): string[] {
+  ensureSeeded();
+  try {
+    return readdirSync(join(profileDir(getActiveProfileName()), SCRIPTS_SUBDIR))
+      .filter((f) => f.endsWith('.script'))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/** Delete a script from the active profile. Leaves any deployed copy alone — config/ is a
+ *  generated artifact that the next deploy rewrites. */
+export function deleteStateScript(file: string): void {
+  assertScriptName(file);
+  ensureSeeded();
+  rmSync(join(profileDir(getActiveProfileName()), SCRIPTS_SUBDIR, file), { force: true });
+}
+
 // ── Create / rename / delete ─────────────────────────────────────────────────
 
 /** Create a new profile from the active profile (or another named profile). Does NOT switch. */

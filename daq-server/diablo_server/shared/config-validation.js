@@ -23,6 +23,9 @@
  * it that way; the second press runs anyway, and that decision is theirs to make at the pad.
  */
 import { validateControllerPwmActuators } from './types.js';
+import { isValidScriptFilename } from './state-script-names.js';
+/** Ceiling on a dynamic state's script timeout. Mirrors sequencer::kMaxScriptTimeoutMs. */
+const MAX_SCRIPT_TIMEOUT_MS = 600000;
 export const CONFIG_PAGE_LABELS = {
     boards: 'Boards',
     roles: 'Roles',
@@ -209,6 +212,65 @@ export function validateConfigForRun(config, csv) {
         // aborts standing in; it leaves the rig with none at all.
         if (stateList.every((s) => !s?.is_abort))
             add('state', 'warn', 'No state is flagged Abort, so this rig has no abort states. Nothing falls back to the built-in Engine / GSE / Emergency aborts: entering a state never triggers the sequencer\'s abort broadcast, and any abort control the config declares no state for is disabled in the GUI. The boards\' own independent abort logic is unaffected.');
+        // ── Dynamic states ──────────────────────────────────────────────────────
+        //
+        // Every rule here is gated on the state actually declaring a script_file, so a config with no
+        // dynamic states produces no issues at all. Both levels block the first Start press, and an
+        // operator blocked by a false positive learns to press Start twice by reflex.
+        //
+        // This is the same set the sequencer refuses on at load — deliberately duplicated, because the
+        // sequencer's refusal is discovered at session start and this one is discovered at the desk.
+        // The script's SYNTAX is not checked here; state_script_check does that on save.
+        for (const s of stateList) {
+            const file = String(s?.script_file ?? '').trim();
+            if (!file)
+                continue;
+            const name = String(s?.name ?? '(unnamed)');
+            if (!isValidScriptFilename(file))
+                add('state', 'error', `${name}: script file "${file}" must be a bare <name>.script filename (letters, digits, _ and - only). A path here is refused rather than sanitised.`);
+            const timeout = Number(s?.script_timeout_ms ?? 0);
+            if (!Number.isFinite(timeout) || timeout <= 0)
+                add('state', 'error', `${name} runs a script but has no timeout. An unbounded script has no safe degraded mode, so the sequencer will refuse to make this state enterable.`);
+            else if (timeout > MAX_SCRIPT_TIMEOUT_MS)
+                add('state', 'error', `${name}: script timeout ${timeout} ms is above the ${MAX_SCRIPT_TIMEOUT_MS} ms ceiling — a typo must not arm a valve-open window measured in hours.`);
+            // Both targets, neither defaulting to the other: a runaway may want somewhere more
+            // conservative than a clean finish, and a safety landing that appears by default is the
+            // kind that is wrong silently.
+            for (const [key, label, why] of [
+                ['script_return_target', 'end-of-script target', 'where it lands when the script runs off its end'],
+                ['script_timeout_target', 'timeout target', 'where it lands when the timeout expires'],
+            ]) {
+                const t = String(s?.[key] ?? '').trim();
+                if (!t) {
+                    add('state', 'error', `${name} runs a script but has no ${label} — ${why} must be stated, not defaulted.`);
+                    continue;
+                }
+                if (!names.includes(t)) {
+                    add('state', 'error', `${name}: ${label} "${t}" is not in the state list.`);
+                    continue;
+                }
+                if (t === name) {
+                    add('state', 'error', `${name}: ${label} is this state itself — it would re-arm forever with its valves wherever the script left them.`);
+                    continue;
+                }
+                if (gTransitions) {
+                    const row = gTransitions.rows.find((x) => x.key === name);
+                    const col = gTransitions.states.indexOf(t);
+                    if (row && col >= 0 && (row.cells[col] || '0').trim() !== '1')
+                        add('state', 'error', `${name} → ${t} is not an allowed transition, so the ${label} would leave this state with no way out.`);
+                }
+            }
+            if (s?.is_flow)
+                add('state', 'error', `${name} is both the flow-test state and a scripted state. The characterization hold and the script would both own its timer.`);
+            if (s?.is_abort)
+                add('state', 'error', `${name} is an abort state and cannot run a script — an abort must reach the valves immediately, never behind an interpreter.`);
+            if (String(config?.fire?.state ?? '') === name)
+                add('state', 'error', `${name} is the fire state and cannot also run a script.`);
+            // The column is the defined baseline the script layers onto. Without it, entering the state
+            // leaves every valve the script does not name wherever the PREVIOUS state put it.
+            if (gActuators && !gActuators.states.includes(name))
+                add('state', 'error', `${name} runs a script but has no column in the Actuators table. Entry applies that column first, so that every valve starts in a defined position before the script runs.`);
+        }
         // The fire timer: on expiry the sequencer commands fire.state → fire.expiry_target. If that
         // move is not allowed, the timer expires into a refused transition and the system stays in fire.
         const fireState = String(config?.fire?.state ?? '');

@@ -14,6 +14,9 @@ import {
   parseCsvGrid, serializeCsvGrid, diffKeys, boardSlotIssue, boardDisplayName,
   CONFIG_PAGE_LABELS, type CsvGrid, type ConfigPageId,
 } from '@/lib/config-validation';
+import {
+  slugify, renameScriptSlug, checkScriptNames, isValidScriptFilename,
+} from '@/lib/state-script-names';
 
 /** The editor's tabs, left to right. Also the ids a ConfigIssue names, so the session page can
  *  link an issue straight to the page that fixes it. Ordered by usefulness and grouped so related
@@ -103,6 +106,12 @@ interface ConfigData {
     is_abort?: boolean;
     is_boot?: boolean;
     is_flow?: boolean;
+    // Dynamic states. A non-empty script_file is what makes a state dynamic — there is
+    // deliberately no is_dynamic flag that could disagree with the data it describes.
+    script_file?: string;
+    script_timeout_ms?: number;
+    script_return_target?: string;
+    script_timeout_target?: string;
   }>;
   // 4th element assigns the actuator to controller_service ("pwm_fuel" | "pwm_ox"); absent means
   // the sequencer owns it. See validateControllerPwmActuators.
@@ -317,6 +326,201 @@ const ptTypeOf = (board: any): string => {
  * (a board row, a state row, a table) rather than as a scattered banner. `error` = will break the
  * running config; `warn` = a mismatch worth fixing. One look for all of them.
  */
+/**
+ * The dynamic-state script editor.
+ *
+ * This is the first multi-line text input in the app — there is no Monaco, CodeMirror or Ace in
+ * package.json, and adding one for a language with seven statements would be a lot of dependency
+ * for a little syntax colour. A textarea with a synced line-number gutter covers what the operator
+ * actually needs: see the line a diagnostic names, and click to it.
+ *
+ * Two diagnostic sources, deliberately separate:
+ *   - names, checked here, instantly, against the config being edited (no parser needed, because
+ *     names resolve positionally);
+ *   - syntax, checked by the backend spawning the sequencer's own parser, on a debounce.
+ * The sequencer re-checks everything at startup and is the authority over both.
+ */
+function ScriptEditor({
+  state, stateNames, source, tables, syntax, allowedTargets, canEdit,
+  onSource, onField, onCheck, onRemove, onClose,
+}: {
+  state: { name?: string; script_file?: string; script_timeout_ms?: number; script_return_target?: string; script_timeout_target?: string };
+  stateNames: string[];
+  source: string;
+  tables: { actuators: Set<string>; sensors: Set<string>; states: Set<string>; allowedTransitions: Set<string> };
+  syntax: { line: number; message: string }[];
+  allowedTargets: string[];
+  canEdit: boolean;
+  onSource: (next: string) => void;
+  onField: (patch: Record<string, unknown>) => void;
+  onCheck: (src: string) => void;
+  onRemove: () => void;
+  onClose: () => void;
+}) {
+  const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const gutterRef = useRef<HTMLDivElement | null>(null);
+  const lines = source.split('\n');
+
+  // Debounced, so the backend is not spawned on every keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => onCheck(source), 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source]);
+
+  const nameIssues = checkScriptNames(source, tables);
+  const issues = [
+    ...nameIssues.map((i) => ({ ...i, kind: 'name' as const })),
+    ...syntax.map((i) => ({ ...i, kind: 'syntax' as const })),
+  ].sort((a, b) => a.line - b.line);
+
+  /** Everything the script commands, derived from what it names. Under the layered model, the
+   *  dangerous case is a valve the operator EXPECTED to see here and does not. */
+  const commanded = [...new Set(
+    source.split('\n').flatMap((l) => [...l.matchAll(/\b(?:open_valve|close_valve)\s*\(\s*([A-Z][A-Z0-9_]*)\s*\)/g)].map((m) => m[1])),
+  )];
+  const read = [...new Set(
+    source.split('\n').flatMap((l) => [...l.matchAll(/\bpressure\s*\(\s*([A-Z][A-Z0-9_]*)\s*\)/g)].map((m) => m[1])),
+  )];
+
+  const goToLine = (line: number) => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const before = lines.slice(0, line - 1).join('\n').length + (line > 1 ? 1 : 0);
+    ta.focus();
+    ta.setSelectionRange(before, before + (lines[line - 1]?.length ?? 0));
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+         onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-4xl max-h-[90vh] overflow-auto"
+           onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+          <div>
+            <h3 className="font-semibold text-white">{state.name} — entry script</h3>
+            <p className="text-xs text-text-muted mt-0.5">
+              {state.script_file} · runs after this state&rsquo;s Actuators column is applied
+            </p>
+          </div>
+          <button onClick={onClose} className="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 text-sm">
+            Close
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div className="flex gap-3 flex-wrap">
+            <label className="text-sm">
+              <div className="text-text-muted mb-1">Timeout (ms)</div>
+              <input
+                type="number"
+                value={state.script_timeout_ms ?? 0}
+                onChange={(e) => onField({ script_timeout_ms: Number(e.target.value) })}
+                disabled={!canEdit}
+                className="px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white w-32"
+              />
+            </label>
+            {([
+              ['script_return_target', 'When the script ends'],
+              ['script_timeout_target', 'When the timeout fires'],
+            ] as const).map(([key, label]) => (
+              <label key={key} className="text-sm">
+                <div className="text-text-muted mb-1">{label}</div>
+                {/* A select of real states, never free text — and targets the Transitions table
+                    forbids are disabled, so a refusal the sequencer would raise at load cannot be
+                    authored here in the first place. */}
+                <select
+                  value={String(state[key] ?? '')}
+                  onChange={(e) => onField({ [key]: e.target.value })}
+                  disabled={!canEdit}
+                  className="px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white"
+                >
+                  <option value="">— pick a state —</option>
+                  {stateNames.filter((n) => n !== state.name).map((n) => {
+                    const ok = allowedTargets.includes(n);
+                    return (
+                      <option key={n} value={n} disabled={!ok}>
+                        {n}{ok ? '' : ' (not an allowed transition)'}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+            ))}
+          </div>
+
+          <div className="flex border border-gray-700 rounded overflow-hidden bg-gray-950">
+            <div ref={gutterRef}
+                 className="select-none text-right text-xs font-mono text-gray-600 bg-gray-900 py-2 px-2 overflow-hidden"
+                 style={{ lineHeight: '1.5rem' }}>
+              {lines.map((_, i) => (
+                <div key={i} className={issues.some((x) => x.line === i + 1) ? 'text-red-400' : ''}>
+                  {i + 1}
+                </div>
+              ))}
+            </div>
+            <textarea
+              ref={taRef}
+              value={source}
+              onChange={(e) => onSource(e.target.value)}
+              onScroll={(e) => { if (gutterRef.current) gutterRef.current.scrollTop = e.currentTarget.scrollTop; }}
+              onKeyDown={(e) => {
+                // Tab inserts four spaces. Tab-to-blur in a code box is maddening, and a literal
+                // tab is a hard error in this language — the editor must not be able to type one.
+                if (e.key !== 'Tab') return;
+                e.preventDefault();
+                const ta = e.currentTarget;
+                const { selectionStart: s, selectionEnd: en } = ta;
+                const next = `${source.slice(0, s)}    ${source.slice(en)}`;
+                onSource(next);
+                requestAnimationFrame(() => ta.setSelectionRange(s + 4, s + 4));
+              }}
+              spellCheck={false}
+              disabled={!canEdit}
+              rows={14}
+              placeholder={'open_valve(GSE_HIGH_PRESS_VENT)\ndelay(0.5)\nclose_valve(GSE_HIGH_PRESS_VENT)\ntransition_to(PRESS_STANDBY)'}
+              className="flex-1 font-mono text-sm bg-gray-950 text-gray-100 p-2 outline-none resize-y"
+              style={{ lineHeight: '1.5rem' }}
+            />
+          </div>
+
+          {issues.length > 0 ? (
+            <div className="space-y-1">
+              {issues.map((x, i) => (
+                <button key={i} onClick={() => goToLine(x.line)}
+                        className="block w-full text-left text-xs text-red-300 hover:text-red-200">
+                  line {x.line}: {x.message}
+                  <span className="text-gray-600"> ({x.kind})</span>
+                </button>
+              ))}
+            </div>
+          ) : source.trim() ? (
+            <p className="text-xs text-emerald-400">No problems found.</p>
+          ) : null}
+
+          <div className="text-xs text-text-muted border-t border-gray-800 pt-2">
+            <div><strong className="text-gray-300">Commands</strong>: {commanded.length ? commanded.join(', ') : 'none'}</div>
+            <div><strong className="text-gray-300">Reads</strong>: {read.length ? read.join(', ') : 'none'}</div>
+            <p className="mt-1">
+              Valves this script does not name keep the position its Actuators column gives them.
+            </p>
+          </div>
+
+          <div className="flex justify-between pt-1">
+            <button onClick={onRemove} disabled={!canEdit}
+                    className="px-3 py-1.5 bg-red-700 rounded hover:bg-red-600 text-sm disabled:opacity-50">
+              Make this an ordinary state
+            </button>
+            <span className="text-xs text-text-muted self-center">
+              Saved with <strong>Save Config</strong>.
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function InlineIssue({ level = 'error', className = '', children }:
   { level?: 'error' | 'warn'; className?: string; children: ReactNode }) {
   const tone = level === 'warn'
@@ -473,6 +677,23 @@ export default function ConfigPage() {
         if (d.orphan.length || d.missing.length)
           issues.push('Transitions rows do not match the state list');
       }
+      // Dynamic states: the names a script uses, checked against the config being saved. Syntax is
+      // the backend's job (it spawns the sequencer's own parser on save); this is the error people
+      // actually make, and it is answerable here with no round trip.
+      for (const s of stateList) {
+        const file = String(s.script_file ?? '').trim();
+        if (!file) continue;
+        const label = String(s.name ?? '(unnamed)');
+        if (!isValidScriptFilename(file)) {
+          issues.push(`${label}: "${file}" is not a bare <name>.script filename`);
+          continue;
+        }
+        const src = scriptSources[file];
+        if (src === undefined) continue;  // not loaded; the sequencer will judge it at startup
+        for (const issue of checkScriptNames(src, scriptTablesFor(label)))
+          issues.push(`${label} script line ${issue.line}: ${issue.message}`);
+      }
+
       if (issues.length) {
         setError(`Fix the state machine before saving — ${issues.join('; ')}. Use “Regenerate empty” or fix the tables.`);
         setTimeout(() => setError(null), 9000);
@@ -518,6 +739,27 @@ export default function ConfigPage() {
         if (!r.ok) {
           const b = await r.json().catch(() => ({}));
           throw new Error(b.error || `Failed to save the ${name} table (${r.status})`);
+        }
+      }
+
+      // Scripts join the same sequence. The backend syntax-checks each one with the sequencer's
+      // own parser before writing it, so a script that does not parse fails the save here rather
+      // than becoming an unenterable state discovered at the next session start.
+      for (const s of stateList) {
+        const file = String(s.script_file ?? '').trim();
+        const src = file ? scriptSources[file] : undefined;
+        if (!file || src === undefined) continue;
+        const r = await fetch(
+          `${getApiBaseUrl()}/api/state-script?name=${encodeURIComponent(file)}` +
+          `&state=${encodeURIComponent(String(s.name ?? ''))}`,
+          { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: src },
+        );
+        if (!r.ok) {
+          const b = await r.json().catch(() => ({} as any));
+          const first = Array.isArray(b?.diagnostics) && b.diagnostics.length
+            ? ` — line ${b.diagnostics[0].line}: ${b.diagnostics[0].message}`
+            : '';
+          throw new Error(`${s.name}: ${b?.error || `failed to save ${file}`}${first}`);
         }
       }
 
@@ -783,6 +1025,15 @@ export default function ConfigPage() {
   const [csvDelays, setCsvDelays] = useState<CsvGrid | null>(null);
   const [csvTransitions, setCsvTransitions] = useState<CsvGrid | null>(null);
   const [csvLoading, setCsvLoading] = useState(false);
+
+  // ── Dynamic-state scripts ──────────────────────────────────────────────────
+  // Loaded by filename, edited in memory, and written back on Save alongside the CSVs. Keyed by
+  // script_file rather than by state, because two states may legitimately point at one file.
+  const [scriptSources, setScriptSources] = useState<Record<string, string>>({});
+  /** Which state's script the editor is open on, by index into stateList. null = closed. */
+  const [scriptEditorIdx, setScriptEditorIdx] = useState<number | null>(null);
+  /** Syntax diagnostics from state_script_check, keyed by script filename. */
+  const [scriptSyntax, setScriptSyntax] = useState<Record<string, { line: number; message: string }[]>>({});
   const [showDelays, setShowDelays] = useState(false);
 
   const loadStateCsvs = async () => {
@@ -798,6 +1049,21 @@ export default function ConfigPage() {
       setCsvDelays(d);
       setCsvTransitions(t);
       savedCsvRef.current = csvSignature(a, d, t);  // baseline for the unsaved-changes check
+
+      // Scripts ride along with the tables: they belong to the same tab, and fetching them lazily
+      // when the editor opens would make a rename unable to rewrite a transition_to in a script
+      // the operator has not looked at yet.
+      const files = [...new Set(
+        (config.states || []).map((s) => String(s.script_file ?? '').trim()).filter(Boolean),
+      )];
+      const loaded: Record<string, string> = {};
+      await Promise.all(files.map(async (f) => {
+        try {
+          const r = await fetch(`${getApiBaseUrl()}/api/state-script?name=${encodeURIComponent(f)}`);
+          if (r.ok) loaded[f] = String((await r.json())?.source ?? '');
+        } catch { /* a script that will not load is reported by validation, not here */ }
+      }));
+      setScriptSources(loaded);
     } catch (e: any) {
       setError(e?.message || 'Failed to load state CSVs');
       setTimeout(() => setError(null), 4000);
@@ -845,6 +1111,68 @@ export default function ConfigPage() {
   // ── [[states]] editor ──────────────────────────────────────────────────────
   const stateList = (config.states || []) as NonNullable<ConfigData['states']>;
 
+  /**
+   * The three namespaces a script's names resolve in, plus what `stateName` may transition to.
+   *
+   * Built from the config being EDITED, not from what is deployed — so a rename or a newly added
+   * valve is reflected before Save, which is the whole point of checking here rather than waiting
+   * for the sequencer.
+   */
+  const scriptTablesFor = (stateName: string) => {
+    const actuators = new Set(Object.keys(config.actuator_roles ?? {}).map(slugify));
+    const sensors = new Set<string>();
+    for (const [section, roles] of Object.entries(config as Record<string, unknown>)) {
+      if (!section.startsWith('sensor_roles_') || typeof roles !== 'object' || !roles) continue;
+      for (const role of Object.keys(roles as Record<string, unknown>)) sensors.add(slugify(role));
+    }
+    const names = (config.states || []).map((s) => String(s.name ?? '')).filter(Boolean);
+    const states = new Set(names.map(slugify));
+
+    // Reachability comes from the Transitions grid the operator is looking at, so a cell they just
+    // flipped counts immediately.
+    const allowedTransitions = new Set<string>();
+    const row = csvTransitions?.rows.find((r) => r.key === stateName);
+    if (row) {
+      csvTransitions!.states.forEach((target, i) => {
+        if ((row.cells[i] || '0').trim() === '1') allowedTransitions.add(slugify(target));
+      });
+    } else {
+      // No transitions grid loaded: do not invent reachability, or every transition_to would be
+      // reported as forbidden. Fall back to "any declared state" and let the sequencer decide.
+      for (const s of states) allowedTransitions.add(s);
+    }
+    return { actuators, sensors, states, allowedTransitions };
+  };
+
+  /**
+   * Open the script editor for a state, creating the script if it has none.
+   *
+   * A new dynamic state is given both landing targets up front rather than left blank. Blank is a
+   * load-time refusal, and an operator who writes a script and saves it should not be told the
+   * state is unenterable because of two fields the editor never asked about. They are seeded to
+   * the boot state, which every rig has and which is always somewhere safe to end up.
+   */
+  const openScriptEditor = (idx: number) => {
+    const st = stateList[idx];
+    if (!st?.script_file) {
+      const base = slugify(String(st?.name ?? 'state')).toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'state';
+      const file = `${base}.script`;
+      const boot = (config.states || []).find((s) => s.is_boot)?.name
+        ?? (config.states || [])[0]?.name
+        ?? '';
+      setState(idx, {
+        script_file: file,
+        script_timeout_ms: st?.script_timeout_ms || 30000,
+        script_return_target: st?.script_return_target || boot,
+        script_timeout_target: st?.script_timeout_target || boot,
+      });
+      setScriptSources((prev) => (prev[file] !== undefined ? prev : { ...prev, [file]: '' }));
+    } else if (scriptSources[st.script_file] === undefined) {
+      setScriptSources((prev) => ({ ...prev, [st.script_file!]: '' }));
+    }
+    setScriptEditorIdx(idx);
+  };
+
   const setState = (idx: number, patch: Record<string, unknown>) =>
     setConfig((prev) => {
       const list = [...((prev.states || []) as any[])];
@@ -857,6 +1185,14 @@ export default function ConfigPage() {
       if (!list[idx].is_abort) delete list[idx].is_abort;
       if (!list[idx].is_boot) delete list[idx].is_boot;
       if (!list[idx].is_flow) delete list[idx].is_flow;
+      // Clearing a script must remove the key, not leave script_file = "". An empty string would
+      // still read as "this state is dynamic" to a loader that only checks presence, and the
+      // sequencer would then refuse a state the operator believes they just made ordinary again.
+      for (const k of ['script_file', 'script_return_target', 'script_timeout_target']) {
+        if (!String(list[idx][k] ?? '').trim()) delete list[idx][k];
+      }
+      if (!list[idx].script_timeout_ms || Number.isNaN(list[idx].script_timeout_ms))
+        delete list[idx].script_timeout_ms;
       return { ...prev, states: list } as ConfigData;
     });
 
@@ -896,9 +1232,49 @@ export default function ConfigPage() {
         }
         : fire;
       const nextFlow = flow && flow.return_target === from ? { ...flow, return_target: to } : flow;
-      if (nextFire === fire && nextFlow === flow) return prev;
-      return { ...p, ...(nextFire ? { fire: nextFire } : {}), ...(nextFlow ? { flow: nextFlow } : {}) } as ConfigData;
+
+      // A dynamic state's two landing targets are a fourth and fifth place a state is named.
+      const states = (p.states || []).map((s) =>
+        s.script_return_target === from || s.script_timeout_target === from
+          ? {
+            ...s,
+            ...(s.script_return_target === from ? { script_return_target: to } : {}),
+            ...(s.script_timeout_target === from ? { script_timeout_target: to } : {}),
+          }
+          : s,
+      );
+
+      const changed =
+        nextFire !== fire || nextFlow !== flow || states.some((s, i) => s !== (p.states || [])[i]);
+      if (!changed) return prev;
+      return {
+        ...p,
+        states,
+        ...(nextFire ? { fire: nextFire } : {}),
+        ...(nextFlow ? { flow: nextFlow } : {}),
+      } as ConfigData;
     });
+
+    // And the sixth: transition_to(SLUG) inside every script, including other states' scripts.
+    //
+    // Rewritten in the STATE namespace only. A bare replace of the token would also rewrite
+    // open_valve(FUEL_VENT) when renaming the *state* Fuel Vent — and both of those names exist
+    // on the shipped server profile, so an unrelated rename would silently point a valve command
+    // at something that does not exist and make a working state unenterable.
+    const fromSlug = slugify(from);
+    const toSlug = slugify(to);
+    if (fromSlug !== toSlug) {
+      setScriptSources((prev) => {
+        const next: Record<string, string> = {};
+        let changed = false;
+        for (const [file, src] of Object.entries(prev)) {
+          const out = renameScriptSlug(src, 'state', fromSlug, toSlug);
+          next[file] = out;
+          if (out !== src) changed = true;
+        }
+        return changed ? next : prev;
+      });
+    }
   };
 
   const addState = () => {
@@ -2539,6 +2915,7 @@ export default function ConfigPage() {
                         <th className="px-3 py-2 text-left font-semibold w-20">Boot</th>
                         <th className="px-3 py-2 text-left font-semibold w-20">Abort</th>
                         <th className="px-3 py-2 text-left font-semibold w-20">Flow</th>
+                        <th className="px-3 py-2 text-left font-semibold w-28">Script</th>
                         <th className="px-3 py-2 w-20" />
                       </tr>
                     </thead>
@@ -2611,6 +2988,24 @@ export default function ConfigPage() {
                               className="w-4 h-4 accent-emerald-400"
                             />
                           </td>
+                          <td className="px-3 py-1.5">
+                            <button
+                              onClick={() => openScriptEditor(i)}
+                              disabled={!canEdit}
+                              title={st.script_file
+                                ? `Runs ${st.script_file} on entry`
+                                : 'Give this state a script that runs on entry'}
+                              className={`px-2 py-1 rounded text-xs disabled:opacity-40 ${
+                                st.script_file
+                                  ? 'bg-purple-700 hover:bg-purple-600 text-white'
+                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                              }`}
+                            >
+                              {st.script_file
+                                ? `${(scriptSources[st.script_file] ?? '').split('\n').filter((l) => l.trim()).length} lines`
+                                : '—'}
+                            </button>
+                          </td>
                           <td className="px-3 py-1.5 text-right whitespace-nowrap">
                             <button
                               onClick={() => moveState(i, -1)}
@@ -2644,8 +3039,54 @@ export default function ConfigPage() {
                 </div>
                 <p className="text-sm text-text-muted">
                   States are saved with the rest of the config — use <strong>Save Config</strong> at the top.
+                  A state with a <strong>Script</strong> runs it on entry, after its Actuators column
+                  has put every valve in a defined position.
                 </p>
               </div>
+
+              {scriptEditorIdx !== null && stateList[scriptEditorIdx] && (
+                <ScriptEditor
+                  state={stateList[scriptEditorIdx]}
+                  stateNames={stateList.map((s) => String(s.name ?? '')).filter(Boolean)}
+                  source={scriptSources[String(stateList[scriptEditorIdx].script_file)] ?? ''}
+                  tables={scriptTablesFor(String(stateList[scriptEditorIdx].name ?? ''))}
+                  syntax={scriptSyntax[String(stateList[scriptEditorIdx].script_file)] ?? []}
+                  allowedTargets={(() => {
+                    const name = String(stateList[scriptEditorIdx].name ?? '');
+                    const row = csvTransitions?.rows.find((r) => r.key === name);
+                    if (!row || !csvTransitions) return stateList.map((s) => String(s.name ?? ''));
+                    return csvTransitions.states.filter(
+                      (_, i) => (row.cells[i] || '0').trim() === '1',
+                    );
+                  })()}
+                  canEdit={canEdit}
+                  onSource={(next) => {
+                    const file = String(stateList[scriptEditorIdx].script_file);
+                    setScriptSources((prev) => ({ ...prev, [file]: next }));
+                  }}
+                  onField={(patch) => setState(scriptEditorIdx, patch)}
+                  onCheck={async (src) => {
+                    const file = String(stateList[scriptEditorIdx].script_file);
+                    const name = String(stateList[scriptEditorIdx].name ?? '');
+                    try {
+                      const r = await fetch(
+                        `${getApiBaseUrl()}/api/state-script/check?state=${encodeURIComponent(name)}`,
+                        { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: src },
+                      );
+                      const b = await r.json().catch(() => ({} as any));
+                      setScriptSyntax((prev) => ({ ...prev, [file]: b?.diagnostics ?? [] }));
+                    } catch { /* the checker is early warning; the sequencer is the authority */ }
+                  }}
+                  onRemove={() => {
+                    setState(scriptEditorIdx, {
+                      script_file: '', script_timeout_ms: 0,
+                      script_return_target: '', script_timeout_target: '',
+                    });
+                    setScriptEditorIdx(null);
+                  }}
+                  onClose={() => setScriptEditorIdx(null)}
+                />
+              )}
 
               {csvLoading && <p className="text-sm text-text-muted">Loading…</p>}
               {!csvLoading && !csvActuators && (
