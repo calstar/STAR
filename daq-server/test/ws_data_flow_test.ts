@@ -1480,6 +1480,71 @@ async function testStateTransitionDebugMode(ws: WebSocket): Promise<void> {
       }
     }
 
+    // ── Script Test: a dynamic state, end to end ─────────────────────────────────────────────
+    // A dynamic state runs an operator-written script on entry and leaves of its own accord. The
+    // hermetic tests measure the valve timing on the wire; what only the full stack shows is that
+    // the whole chain agrees — the script file deployed with the profile, the sequencer parsed it
+    // at startup and made the state enterable, the interpreter ran on its own thread, and the
+    // transition IT requested came back out through Elodin like any other.
+    //
+    // Both ways of getting this wrong look identical from here: a script that never deployed, and
+    // a state the sequencer refused at load, are both just a button that does nothing. Which is
+    // why the entry check and the auto-return check are separate assertions.
+    {
+      const scriptStateId = Number(process.env.INTEGRATION_SCRIPT_STATE_ID ?? '');
+      const scriptOpenMs = Number(process.env.INTEGRATION_SCRIPT_OPEN_MS ?? '');
+      const hubId = (SystemState as any).PRESS_STANDBY as number | undefined;
+      if (!Number.isFinite(scriptStateId) || !scriptStateId || !hubId) {
+        console.log('  ⚠️  no dynamic state configured for this run — skipping the script check');
+      } else {
+        send(ws, {
+          type: MessageType.SEND_COMMAND,
+          timestamp: Date.now(),
+          payload: { commandType: 'state_transition', data: { state: hubId } },
+        });
+        try {
+          await waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
+            (p) => p.currentState === hubId);
+        } catch { /* asserted below by the entry check */ }
+
+        const enteredScript = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
+          (p) => p.currentState === scriptStateId);
+        send(ws, {
+          type: MessageType.SEND_COMMAND,
+          timestamp: Date.now(),
+          payload: { commandType: 'state_transition', data: { state: scriptStateId } },
+        });
+
+        let enteredAt = 0;
+        try {
+          const { receivedAt } = await enteredScript;
+          enteredAt = receivedAt;
+          // Entering at all is the load-time half: a script that failed to parse, or whose file
+          // did not deploy, leaves the state not enterable and this transition is refused.
+          assert(true, `[Script] entered the dynamic state (script holds ~${scriptOpenMs} ms)`);
+        } catch (err: any) {
+          assert(false, `[Script] could not enter the dynamic state — did the script deploy and parse? ${err.message}`);
+        }
+
+        if (enteredAt) {
+          try {
+            const back = await waitForMessage(ws, MessageType.STATE_UPDATE,
+              scriptOpenMs + 10000, (p) => p.currentState === hubId);
+            const ran = back.receivedAt - enteredAt;
+            // The script's own transition_to brought us back, not the timeout — which is set to
+            // 15 s precisely so the two cannot be confused. Generous upper bound for a loaded CI
+            // runner; the point is that the script RAN and left on its own.
+            assert(ran >= scriptOpenMs - 300 && ran <= scriptOpenMs + 4000,
+              `[Script] the script ran its delay and transitioned itself out: ${ran} ms (script holds ${scriptOpenMs} ms)`);
+            assert(ran < 14000,
+              `[Script] it left via its own transition_to, not by hitting the 15 s timeout (${ran} ms)`);
+          } catch (err: any) {
+            assert(false, `[Script] the dynamic state never returned to the hub: ${err.message}`);
+          }
+        }
+      }
+    }
+
     const fireCfg = readFireConfig();
     if (!fireCfg) {
       console.log('  ⚠️  [fire] section not found in the test config — skipping fire lifecycle');

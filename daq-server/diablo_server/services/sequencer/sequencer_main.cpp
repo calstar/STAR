@@ -9,6 +9,9 @@
  *   ACTUATOR:<role_name>:<0|1>       — manual actuator command (debug mode only)
  *   DEBUG_MODE:<0|1>                 — toggle debug mode
  *   EXTEND_FIRE                      — extend FIRE window
+ *   SCRIPTS                          — read-only: what this process made of its dynamic states
+ *                                      at startup (loaded, or refused and why). A query, not a
+ *                                      push; the answer is fixed for the life of the run.
  *
  * There is deliberately no reload command. Config reaches this process once, at startup: the
  * backend deploys the active profile to config/ at session start and then the pipeline units are
@@ -131,10 +134,13 @@ void handleCommandLine(int client_fd, const std::string& raw, sequencer::Sequenc
             pos = 0;
         if (pos < 0 || role_name.empty()) {
             sendReply("ERR:bad ACTUATOR value\n");
-        } else if (svc.manualActuator(role_name, pos)) {
-            sendReply("OK\n");
         } else {
-            sendReply("ERR:actuator command failed\n");
+            std::string why;
+            if (svc.manualActuator(role_name, pos, &why))
+                sendReply("OK\n");
+            else
+                sendReply("ERR:" + (why.empty() ? std::string("actuator command failed") : why) +
+                          "\n");
         }
 
         // ── DEBUG_MODE:<0|1> ─────────────────────────────────────────────────
@@ -156,6 +162,16 @@ void handleCommandLine(int client_fd, const std::string& raw, sequencer::Sequenc
             sendReply("OK\n");
         else
             sendReply("ERR:not in FIRE state\n");
+
+        // ── SCRIPTS ──────────────────────────────────────────────────────────
+        // Read-only. Reports what this process made of its dynamic states at startup, so the GUI
+        // can render a refused state as visibly dead with the sequencer's own wording rather than
+        // as a normal-looking button that errors when pressed.
+        //
+        // This does NOT reintroduce config push. It is a query: the answer was decided once, at
+        // load, and cannot change for the life of the run.
+    } else if (cmd == "SCRIPTS") {
+        sendReply(svc.scriptStatusReport());
 
     } else {
         sendReply("ERR:unknown command\n");

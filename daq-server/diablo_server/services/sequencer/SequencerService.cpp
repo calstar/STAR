@@ -176,6 +176,16 @@ bool SequencerService::loadConfig(const std::string& path) {
     return true;  // non-fatal: service can start without config
 }
 
+std::string SequencerService::configDir() const {
+    // Scripts live beside the config that names them, so they follow it through whichever fallback
+    // path loadConfig() actually found — resolving them against the cwd instead would work from
+    // build/ and silently fail from anywhere else.
+    const size_t slash = config_path_.find_last_of('/');
+    if (slash == std::string::npos)
+        return ".";
+    return config_path_.substr(0, slash);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Resolve a relative path against a list of candidate prefixes; returns first
 // existing match or the original path (so callers still get the error).
@@ -470,6 +480,74 @@ bool SequencerService::applyConfig(const fsw::config::Config& cfg) {
         }
     }
 
+    // ── Dynamic states: scripts ───────────────────────────────────────────────────────────────
+    //
+    // Resolved last, because every refusal branch needs something the steps above established:
+    // [[states]] adopted (so a name resolves), the transitions CSV loaded (so a transition_to
+    // target can be checked), the actuator CSV loaded (so a state's column can be confirmed), and
+    // [fire] resolved (so a script cannot be attached to the burn).
+    //
+    // A refused state goes into refused_states_ and doTransitionTo rejects it up front, in the
+    // same validation block that rejects a disallowed transition — before the abort broadcast,
+    // before overrides are cleared, before a single valve is commanded. That is the whole point:
+    // a script that does not hold up produces an unavailable button, never an open valve.
+    {
+        ScriptLoadContext sctx;
+        sctx.config_dir = configDir();
+        sctx.state_machine = &state_machine_;
+        sctx.fire_state = fire_state;
+        sctx.has_actuator_column = [this](const std::string& name) {
+            return !actuator_commander_.positionsForState(name).empty();
+        };
+        ScriptLoadResult loaded = load_dynamic_states(cfg, config_content_, sctx);
+
+        for (const auto& [st, why] : loaded.refused)
+            std::cerr << "[SequencerService] ERROR: dynamic state REFUSED — " << why
+                      << ". It is not enterable." << std::endl;
+
+        for (auto& [st, ds] : loaded.dynamic) {
+            // The timeout reuses HoldTimer through hold_rules_ rather than a second timer object.
+            // Three properties fall out free: gui_settable=false refuses a client-supplied
+            // duration on this state, extended_ms=0 means EXTEND_FIRE cannot stretch it, and
+            // re-entering the state restarts the window rather than stacking a second one,
+            // because HoldTimer::start() stops first.
+            HoldRule r;
+            r.default_ms = ds.timeout_ms;
+            r.max_ms = ds.timeout_ms;
+            r.extended_ms = 0;
+            r.return_state = ds.timeout_target;
+            r.gui_settable = false;
+            rules[st] = r;
+
+            std::cout << "[SequencerService] Dynamic state: " << ds.name << " — "
+                      << ds.program.stmts.size() << " statement(s), timeout " << ds.timeout_ms
+                      << " ms -> " << StateMachine::name(ds.timeout_target) << ", ends -> "
+                      << StateMachine::name(ds.return_target);
+            if (!ds.pressure_roles.empty()) {
+                std::cout << ", reads";
+                for (const auto& role : ds.pressure_roles)
+                    std::cout << " \"" << role << "\"";
+            }
+            std::cout << std::endl;
+        }
+
+        // Subscribe to exactly the roles the loaded scripts read, and nothing else. Elodin has no
+        // wildcard, and deriving the list from the ASTs is what makes it structurally impossible
+        // to subscribe to the wrong table for a role — there is no id range to filter, the way
+        // ControllerService filters board 2 out of existence.
+        std::set<std::string> roles;
+        for (const auto& [st, ds] : loaded.dynamic)
+            roles.insert(ds.pressure_roles.begin(), ds.pressure_roles.end());
+        if (!roles.empty()) {
+            pressure_feed_.start(cfg, {roles.begin(), roles.end()}, elodin_host_,
+                                 cfg.database.port);
+        }
+
+        std::lock_guard<std::mutex> lk(config_mutex_);
+        dynamic_states_ = std::move(loaded.dynamic);
+        refused_states_ = std::move(loaded.refused);
+    }
+
     {
         std::lock_guard<std::mutex> lk(config_mutex_);
         hold_rules_ = std::move(rules);
@@ -626,6 +704,54 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
         }
     }
 
+    // A state whose script did not load is not enterable — checked here, beside the other
+    // validations, so a refusal leaves the rig exactly where it was: before the abort broadcast,
+    // before overrides are cleared, before the resend loop stops, before a single valve moves.
+    //
+    // Deliberately NOT gated on debug_mode_. Debug mode relaxes which transitions are allowed; it
+    // does not conjure a script that failed to parse. There is nothing for the sequencer to run.
+    {
+        std::lock_guard<std::mutex> lk(config_mutex_);
+        const auto it = refused_states_.find(to);
+        if (it != refused_states_.end()) {
+            std::cerr << "[SequencerService] Refused entry to " << StateMachine::name(to) << ": "
+                      << it->second << std::endl;
+            if (refusal_reason)
+                *refusal_reason = "state script rejected at load";
+            publishState();
+            return false;
+        }
+    }
+
+    // A script that reads a sensor is checked for a fresh, calibrated reading BEFORE the
+    // transition commits, not when the script first evaluates pressure(). The operator is then
+    // told at the moment they press the button — naming the sensor — instead of twenty-five
+    // seconds into a press that was never going to work. The interpreter's own check stays as the
+    // backstop for a feed that dies while a script is already running.
+    //
+    // This is the house "refuse up front so the valve never opens" pattern, applied to sensors.
+    {
+        std::unique_lock<std::mutex> lk(config_mutex_);
+        const auto it = dynamic_states_.find(to);
+        if (it != dynamic_states_.end()) {
+            const std::vector<std::string> roles = it->second.pressure_roles;
+            const std::string state_name = it->second.name;
+            lk.unlock();
+            for (const auto& role : roles) {
+                double psi = 0.0;
+                const auto status = pressure_feed_.read(role, psi);
+                if (status == PressureFeed::Status::Ok)
+                    continue;
+                std::cerr << "[SequencerService] Refused entry to " << state_name << ": "
+                          << PressureFeed::explain(role, status) << std::endl;
+                if (refusal_reason)
+                    *refusal_reason = role + " has no fresh calibrated reading";
+                publishState();
+                return false;
+            }
+        }
+    }
+
     if (!debug_mode_) {
         if (!state_machine_.isAllowed(from, to)) {
             if (refusal_reason)
@@ -658,8 +784,25 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
     if (entering_abort)
         abort_broadcaster_.triggerAbort();
 
-    // New state wins over debug manual actuator overrides.
+    // Silence the strongest writer first.
+    //
+    // A script is a source of valve commands running on its own thread. If it were still alive
+    // when applyForState() below commands the new state's column, its next open_valve would land
+    // AFTER those positions and strand a valve open in a state whose CSV says CLOSE. Joining here
+    // makes "no script statement can execute past this point" a structural fact rather than a
+    // timing hope.
+    //
+    // After the abort broadcast, though — stop() joins a thread, and the boards' abort packet must
+    // not queue behind the sequencer's own housekeeping (test_abort_ordering asserts < 200 ms).
+    // And after the two validation gates above, which return early: a REFUSED transition must not
+    // kill a script that is running perfectly well.
+    script_runner_.stop();
+
+    // New state wins over debug manual actuator overrides, and over the positions a script had
+    // taken ownership of. Both are cleared here rather than when the script stops, so a script
+    // that ended on its own still has its valves handed back to the incoming state's column.
     actuator_commander_.clearAllManualOverrides();
+    actuator_commander_.clearScriptPositions();
 
     // Stop current continuous loop before applying the new state
     actuator_commander_.stopContinuousLoop();
@@ -742,7 +885,17 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
     // so the board holds its pre-transition position until that role's stage fires.
     // (Abort states got their immediate apply above via isAbortState; an abort must not sit behind
     // a timer. The physical UDP abort broadcast already went out at the top of this function.)
-    actuator_commander_.startContinuousLoop(to, /*allow_delays=*/false);
+    // defer_first_pass for a dynamic state: its script begins commanding valves a moment from now,
+    // and an immediate (redundant) republish pass would race it — losing, because it resolves
+    // positions and only then spends milliseconds on retransmits. The column was already applied
+    // above, so deferring costs nothing and closes the window.
+    bool to_is_dynamic = false;
+    {
+        std::lock_guard<std::mutex> lk(config_mutex_);
+        to_is_dynamic = dynamic_states_.count(to) > 0;
+    }
+    actuator_commander_.startContinuousLoop(to, /*allow_delays=*/false,
+                                            /*defer_first_pass=*/to_is_dynamic);
 
     // Update current state
     current_state_ = to;
@@ -751,6 +904,18 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
     // hold_timer_.start() above, so the fire window no longer needs a branch of its own.
     if (isAbortState(to)) {
         abort_broadcaster_.triggerAbort();
+    }
+
+    // The script starts AFTER current_state_ = to, and that ordering is load-bearing. A script
+    // whose first statement is transition_to(X) posts that move immediately; doTransitionTo then
+    // validates it with isAllowed(from, X), and if current_state_ were still the PREVIOUS state,
+    // it would be checking a transition from somewhere the rig is no longer. Starting here also
+    // makes elapsed() measure from actual state entry rather than from part-way through one.
+    {
+        std::lock_guard<std::mutex> lk(config_mutex_);
+        const auto it = dynamic_states_.find(to);
+        if (it != dynamic_states_.end())
+            script_runner_.start(it->second, makeScriptEnv(it->second));
     }
 
     // Elodin publishing
@@ -779,17 +944,25 @@ bool SequencerService::doSetDebugMode(bool enabled) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-bool SequencerService::manualActuator(const std::string& name, int pos) {
-    return enqueueAndWait([this, name, pos]() {
-        return doManualActuator(name, pos);
+bool SequencerService::manualActuator(const std::string& name, int pos,
+                                      std::string* refusal_reason) {
+    return enqueueAndWait([this, name, pos, refusal_reason]() {
+        return doManualActuator(name, pos, refusal_reason);
     });
 }
 
-bool SequencerService::doManualActuator(const std::string& name, int pos) {
+bool SequencerService::doManualActuator(const std::string& name, int pos,
+                                        std::string* refusal_reason) {
     if (!debug_mode_) {
         std::cerr << "[SequencerService] Manual actuator commands require debug mode" << std::endl;
+        if (refusal_reason)
+            *refusal_reason = "debug mode required";
         return false;
     }
+
+    // Deliberately NOT blocked in a scripted state. A hand command there fights the script for a
+    // valve, and the operator wins (see ActuatorCommander's precedence) — which is the right
+    // answer for the person standing at the panel, even though the script has no way to notice.
     actuator_commander_.setManualOverride(name, pos);
     return actuator_commander_.sendSingleActuator(name, pos);
 }
@@ -935,13 +1108,89 @@ void SequencerService::publishState() {
         return;
 
     const State s = current_state_.load();
-    const uint32_t mask = state_machine_.allowedBitmask(s);
+    uint32_t mask = state_machine_.allowedBitmask(s);
+
+    // Clear every refused state out of the advertised set. A state whose script did not load can
+    // never be entered for the life of this run, so nothing should ever offer it as reachable —
+    // the refusal is carried in data the GUI already receives rather than by a UI check that can
+    // be forgotten. The reason text reaches the panel separately, over the SCRIPTS command, so an
+    // operator can tell "broken" from "not reachable from here".
+    {
+        std::lock_guard<std::mutex> lk(config_mutex_);
+        for (const auto& [st, why] : refused_states_) {
+            const uint8_t id = static_cast<uint8_t>(st);
+            if (id < 32)
+                mask &= ~(1u << id);
+        }
+    }
+
     const uint8_t dbg = debug_mode_ ? 1u : 0u;
 
     SequencerStateMsg msg(now_ns(), static_cast<uint8_t>(s), std::array<uint8_t, 3>{0, 0, 0}, mask,
                           dbg);
     if (!elodin_.publish(VTABLE_SEQUENCER_STATE, msg))
         std::cerr << "[SequencerService] Failed to publish sequencer state to Elodin" << std::endl;
+}
+
+ScriptEnv SequencerService::makeScriptEnv(const DynamicState& ds) {
+    ScriptEnv env;
+    env.state_name = ds.name;
+
+    // Pair intent with immediacy, exactly as debug manual control does: the script position is
+    // what survives the 1 Hz republish, and the single send is what makes the valve move now
+    // rather than up to a second from now.
+    env.set_valve = [this](const std::string& role, int pos) {
+        actuator_commander_.setScriptPosition(role, pos);
+        actuator_commander_.sendSingleActuator(role, pos);
+    };
+
+    // enqueueDetached, never enqueueAndWait. The worker that handles this transition calls
+    // script_runner_.stop(), which joins the very thread making this call — waiting here would be
+    // a guaranteed deadlock, and it would strand the rig in the dynamic state with the script's
+    // valves wherever it left them. This is the same trap documented for the fire timer's expiry.
+    env.transition = [this](State target) {
+        enqueueDetached([this, target]() {
+            return doTransitionTo(target);
+        });
+    };
+
+    // Refusing is the whole point of the boolean. An uncalibrated PT publishes a smooth, plausible
+    // 0.0 PSI, and a script that takes 90% of that for a target computes zero and then does
+    // nothing at all — successfully, invisibly, while the operator believes the tank came up.
+    env.read_pressure = [this](const std::string& role, double& psi) {
+        const auto status = pressure_feed_.read(role, psi);
+        if (status == PressureFeed::Status::Ok)
+            return true;
+        std::cerr << "[SequencerService] " << PressureFeed::explain(role, status) << std::endl;
+        return false;
+    };
+
+    return env;
+}
+
+std::string SequencerService::scriptStatusReport() const {
+    // Colons separate the fields, so a state name containing one would split a line. State names
+    // come from [[states]] and the config editor; none of the shipped profiles contain a colon.
+    // Substituted rather than rejected because a broken report must not be able to hide a refusal.
+    auto sanitize = [](std::string s) {
+        std::replace(s.begin(), s.end(), ':', ' ');
+        std::replace(s.begin(), s.end(), '\n', ' ');
+        return s;
+    };
+
+    std::string out;
+    std::lock_guard<std::mutex> lk(config_mutex_);
+    for (const auto& [st, ds] : dynamic_states_) {
+        out += "SCRIPT:" + std::to_string(static_cast<int>(st)) + ":" + sanitize(ds.name) +
+               ":OK:" + std::to_string(ds.program.stmts.size()) + ":" +
+               std::to_string(ds.timeout_ms) + "\n";
+    }
+    for (const auto& [st, why] : refused_states_) {
+        out += "SCRIPT:" + std::to_string(static_cast<int>(st)) + ":" +
+               sanitize(StateMachine::name(st)) + ":REFUSED:" + sanitize(why) + "\n";
+    }
+    out += "END\n";
+    return out;
 }
 
 void SequencerService::publishStateTransition(State from, State to) {
