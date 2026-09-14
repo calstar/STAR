@@ -48,6 +48,11 @@ if TYPE_CHECKING:  # hints only -- the env is duck-typed off .to_rocketpy()/.T()
 #: Sea-level ISA speed of sound, matching flight.py (Mach for our-margin overlay).
 A_SOUND = 340.29
 #: Number of evenly spaced samples returned to the client.
+#: Bounds on the 6-DOF solve. See the Flight(...) call for why these exist.
+_MAX_FLIGHT_TIME = 600.0   # s of simulated flight
+_MAX_FLIGHT_STEP = 0.5     # s; keeps the adaptive solver from grinding
+_MIN_APOGEE_TIME = 0.1     # s; below this, no apogee was found at all
+
 _N_SAMPLES = 300
 #: Stub drag Cd(Mach): subsonic ~0.45 with a transonic bump. See FUTURE_IMPROVEMENTS.md.
 _STUB_DRAG = [[0.0, 0.45], [0.6, 0.48], [0.9, 0.55], [1.0, 0.62], [1.2, 0.58], [2.0, 0.48], [5.0, 0.40]]
@@ -230,6 +235,17 @@ def run_flight(
     except Exception:
         pass
 
+    # `terminate_on_apogee` bounds this only if apogee is ever REACHED. A
+    # rocket that never leaves the rail, or one given a degenerate thrust
+    # curve, never gets there -- and RocketPy's adaptive solver answers a
+    # badly-conditioned rocket by taking smaller steps, without limit. This
+    # route is the one piece of physics in the app that a compute budget
+    # cannot interrupt: `Flight(...)` is a single opaque call, so its bound has
+    # to be an argument rather than a checkpoint.
+    #
+    # 600 s of flight time is minutes of powered ascent, far past any amateur
+    # trajectory; `max_time_step` keeps the solver from grinding arbitrarily
+    # fine between steps.
     flight = Flight(
         rocket=rocket,
         environment=env,
@@ -237,6 +253,8 @@ def run_flight(
         inclination=inclination,
         heading=heading,
         terminate_on_apogee=True,
+        max_time=_MAX_FLIGHT_TIME,
+        max_time_step=_MAX_FLIGHT_STEP,
         verbose=False,
     )
 
@@ -254,6 +272,17 @@ def _safe(fn, t: float, default: float = 0.0) -> float:
 def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom,
             burnout_time) -> FlightDynamicsResult:
     t_end = float(flight.apogee_time)
+    # A flight that hit `max_time` without an apogee reports one at (or very
+    # near) zero. Sampling that gives `linspace(0, 0, N)` -- a full result
+    # object, every column flat, presented as a successful analysis. Refusing
+    # is the honest answer: this rocket did not fly.
+    if not np.isfinite(t_end) or t_end <= _MIN_APOGEE_TIME:
+        raise ValueError(
+            "this rocket never reached apogee within %g s of flight -- it is "
+            "most likely too heavy for its motor, or unstable off the rail. "
+            "Check the motor selection, the dry mass and the fin geometry."
+            % _MAX_FLIGHT_TIME
+        )
     ts = np.linspace(0.0, t_end, _N_SAMPLES)
 
     # Angle of attack is only physical while there is meaningful airspeed; below this
