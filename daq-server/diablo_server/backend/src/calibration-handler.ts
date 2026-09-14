@@ -70,6 +70,19 @@ export function publishCalibrationReload(host: CalibrationHost): void {
     publishCalibrationCommand(host, 7, 0, 0);
 }
 
+/**
+ * Tell a RUNNING calibration service to drop every load-cell tare (cmd 8, clear, all channels).
+ *
+ * The primary session-start clear is the backend unlinking lc_tare.json while the service is
+ * down — synchronous and verifiable. This is the mock-mode companion, where the pipeline is
+ * already up and a live service would otherwise rewrite the file from memory. Like every
+ * [0x46,0x00] publish it is fire-and-forget: if the service is down the packet is dropped, which
+ * is harmless here because the unlink already did the work.
+ */
+export function publishClearAllTares(host: CalibrationHost): void {
+  publishCalibrationCommand(host, 8, 0, 1);
+}
+
 function getActiveChannels(host: CalibrationHost): number[] {
     const channels = new Set<number>();
 
