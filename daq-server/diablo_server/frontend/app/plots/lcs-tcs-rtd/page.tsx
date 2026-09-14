@@ -286,9 +286,8 @@ export default function LCS_TCS_RTDPage() {
     // Accelerate the poll rather than assuming an outcome. If nothing changes within ~2 s the
     // banner says so, instead of a button that looks like it worked.
     setTarePending(true);
-    const t0 = Date.now();
     const quick = setInterval(fetchTares, 120);
-    setTimeout(() => { clearInterval(quick); setTarePending(false); void t0; }, 2200);
+    setTimeout(() => { clearInterval(quick); setTarePending(false); }, 2200);
   }, [ws, fetchTares]);
 
   const anyTared = lcCalEntities.some((e) => lcTares[e] != null);

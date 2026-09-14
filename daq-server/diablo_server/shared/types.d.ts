@@ -233,7 +233,7 @@ export interface CalibrationStatusPayload {
     calibrationFilePath?: string | null;
 }
 /** Commands the frontend sends to drive the calibration engine */
-export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'save_coefficients' | 'clear_calibration' | 'capture_cubic_point' | 'clear_cubic_channel' | 'capture_point' | 'new_calibration';
+export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'save_coefficients' | 'clear_calibration' | 'capture_cubic_point' | 'clear_cubic_channel' | 'capture_point' | 'new_calibration' | 'tare_lc' | 'clear_tare_lc';
 export interface CalibrationCommand {
     commandType: CalibrationCommandType;
     sensorId?: number;
