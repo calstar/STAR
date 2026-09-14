@@ -209,3 +209,61 @@ def test_three_device_configuration_works():
     ])
     run = integrate(cfg, "axial")
     assert all(s.stretched for s in run.states)
+
+
+# --- the work budget -------------------------------------------------------
+
+
+def test_an_unphysical_canopy_is_refused_rather_than_ground_on():
+    """A 313 m drogue must come back as an answer, not as a hung worker.
+
+    Reachable by typing: enter the nominal diameter in inches while the box is
+    in metres and D0 becomes a canopy the size of a city block. Nothing
+    bounded the WORK that cost -- T_MAX bounds simulated time, the segment
+    guard bounds event count, but one solve_ivp call between two events takes
+    smaller and smaller steps without limit. It ran 942k derivative
+    evaluations and 25 s for ONE case, `/api/simulate` runs four, and the dev
+    server's single worker then had nothing left for `/api/health` -- so the
+    UI reported the backend as down and the whole app looked dead.
+    """
+    cfg = _cfg([
+        _dev("drogue", 1235.6104320000002, D0=313.5122,
+             kind=TriggerKind.TIME, value=2.0),
+        _dev("main", 2.489, D0=1.601, m_c=0.213,
+             kind=TriggerKind.ALTITUDE, value=76.2),
+    ])
+    with pytest.raises(ValueError, match="did not converge to a descent"):
+        integrate(cfg, "axial")
+
+
+def test_the_budget_leaves_a_real_configuration_far_from_the_cap():
+    """The guard must refuse only the unphysical, so assert the headroom.
+
+    The worked example is the canonical run; if it ever lands near the cap,
+    the cap is wrong and this goes red before a user meets it as a 422.
+    """
+    from physics import solver
+
+    calls = [0]
+    real = solver.make_deriv
+
+    def counting(*args, **kwargs):
+        f = real(*args, **kwargs)
+
+        def wrapped(t_, y_):
+            calls[0] += 1
+            return f(t_, y_)
+
+        return wrapped
+
+    solver.make_deriv = counting
+    try:
+        integrate(load_config(), "axial")
+    finally:
+        solver.make_deriv = real
+
+    assert calls[0] > 0, "the counter never ran, so this test proves nothing"
+    assert calls[0] < solver.DERIV_BUDGET / 10, (
+        f"the canonical run costs {calls[0]:,} evaluations against a budget "
+        f"of {solver.DERIV_BUDGET:,} -- less than 10x headroom"
+    )

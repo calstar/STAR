@@ -33,6 +33,27 @@ from physics.wind import WindProfile
 T_MAX = 100000.0  # s; a run that reaches this has not converged
 RTOL = 1e-8
 ATOL = 1e-10
+
+#: Derivative evaluations one descent may spend before it is called unphysical.
+#:
+#: Nothing else bounds the WORK a run costs. `T_MAX` bounds simulated time and
+#: the segment guard below bounds how many events a run may resolve, but a
+#: single `solve_ivp` call between two events can grind arbitrarily long: RK45
+#: answers a stiff derivative by taking smaller steps, without limit.
+#:
+#: That gap is reachable by typing. A 313 m drogue -- a canopy the size of a
+#: city block, which is what the D0 box accepts if you enter inches as metres
+#: -- costs 942k evaluations and 25 s for ONE case, and `/api/simulate` runs
+#: four. Each pins a core in the sync threadpool, the dev server has one
+#: worker, and the frontend re-runs on every edit, so a single bad number in
+#: the form starved the whole app -- `/api/health` included, which made the UI
+#: report the backend as down -- until the process was killed by hand.
+#:
+#: A nominal descent costs ~1.7k evaluations, so this is ~90x headroom: a
+#: genuinely stiff but real configuration still runs. What it refuses is the
+#: configuration that has no descent to find, and it refuses it as a 422
+#: naming the field, which is an answer about the config rather than a hang.
+DERIV_BUDGET = 150_000
 LOAD_DT = 0.005  # s; §8.1 requires <= 5 ms sampling for the tension peak
 
 TRIGGER = "trigger"
@@ -101,6 +122,33 @@ def _resolve_body_drag(vehicle, which, override=None):
     raise ValueError("which must be 'axial' or 'broadside'")
 
 
+def _budgeted(deriv, label=""):
+    """`deriv`, refusing to be called more than `DERIV_BUDGET` times.
+
+    A ValueError rather than a RuntimeError on purpose: the routers already
+    treat ValueError as a physics-level rejection of the config and return it
+    as a 422 with the message, which is what this is. A RuntimeError would
+    become a 500, which reads as "the server broke" for what is really "these
+    numbers do not describe a descent".
+    """
+    n = [0]
+
+    def counted(t_, y_):
+        n[0] += 1
+        if n[0] > DERIV_BUDGET:
+            where = f" in the {label} case" if label else ""
+            raise ValueError(
+                f"this configuration did not converge to a descent within "
+                f"{DERIV_BUDGET:,} derivative evaluations{where}. That is "
+                f"~90x a normal run, so the inputs are almost certainly not "
+                f"physical -- check the canopy sizes (CdS, D0), the vehicle "
+                f"mass and the deployment altitudes."
+            )
+        return deriv(t_, y_)
+
+    return counted
+
+
 def integrate(config, which="axial", devices=None, atm=None, label="",
               CdS_body=None):
     """Run one descent. Returns a RunResult.
@@ -153,7 +201,8 @@ def integrate(config, which="axial", devices=None, atm=None, label="",
     )
 
     segments = []
-    deriv = make_deriv(devices, states, m, CdS_body, atm, wind)
+    deriv = _budgeted(make_deriv(devices, states, m, CdS_body, atm, wind),
+                      label)
 
     def ground_event(t_, y_):
         return y_[0]
