@@ -128,6 +128,23 @@ void LcTareStore::recompute_all(const std::function<Evaluator(uint16_t)>& eval_f
     }
 }
 
+size_t LcTareStore::recompute_stale(const std::function<Evaluator(uint16_t)>& eval_for) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!curves_trusted_ || !eval_for)
+        return 0;
+    size_t stale = 0;
+    for (auto& [uid, t] : tares_) {
+        const Evaluator eval = eval_for(uid);
+        if (fingerprint(eval) == t.curve_fp)
+            continue;
+        ++stale;
+        LcTare probe = t;
+        if (recompute_locked(probe, eval))
+            t = probe;
+    }
+    return stale;
+}
+
 void LcTareStore::set_curves_trusted(bool trusted) {
     std::lock_guard<std::mutex> lock(mutex_);
     curves_trusted_ = trusted;

@@ -14,6 +14,7 @@
  *  4. entity_matches_the_publish_path             — Node keys on this string; slot != board_id
  *  5. loaded_tare_is_corrected_by_recompute       — startup ordering: stale offset must self-heal
  *  6. fingerprint_tracks_what_the_curve_does      — staleness is detectable, not assumed
+ *  7. stale_audit_finds_a_missed_recompute       — a hook nobody added still gets caught
  */
 
 #include <cmath>
@@ -214,6 +215,30 @@ void fingerprint_tracks_what_the_curve_does() {
           "fp must follow a recompute onto a new curve");
 }
 
+// ── 7. the audit that catches a missed recompute hook ───────────────────────
+
+void stale_audit_finds_a_missed_recompute() {
+    LcTareStore s(scratch("audit"));
+    CHECK(s.set(4201, lc_tare_entity(42, 1), 1000.0, linear(0.020)), "set should succeed");
+
+    // Nothing has changed: the audit must report zero, or it would cry wolf on every startup and
+    // the warning would stop meaning anything.
+    CHECK(s.recompute_stale([](uint16_t) { return linear(0.020); }) == 0,
+          "an unchanged curve must not be reported stale");
+    CHECK(std::fabs(s.tare_for(4201)->offset_kg - 20.0) < 1e-9, "and the offset is untouched");
+
+    // Now the curve moves WITHOUT a recompute — the shape of a missed hook, and of reading the
+    // tare file after the startup reload instead of before it.
+    const size_t stale = s.recompute_stale([](uint16_t) { return linear(0.030); });
+    CHECK(stale == 1, "a moved curve must be reported stale, got %zu", stale);
+    CHECK(std::fabs(s.tare_for(4201)->offset_kg - 30.0) < 1e-9,
+          "and must be re-derived, got %f", s.tare_for(4201)->offset_kg);
+
+    // Having fixed it, a second audit is quiet.
+    CHECK(s.recompute_stale([](uint16_t) { return linear(0.030); }) == 0,
+          "the audit must be quiet once it has healed");
+}
+
 // ── round trip ──────────────────────────────────────────────────────────────
 
 void save_load_round_trip() {
@@ -261,6 +286,7 @@ int main() {
     entity_matches_the_publish_path();
     loaded_tare_is_corrected_by_recompute();
     fingerprint_tracks_what_the_curve_does();
+    stale_audit_finds_a_missed_recompute();
     save_load_round_trip();
     unreadable_file_is_not_overwritten();
 

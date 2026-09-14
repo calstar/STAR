@@ -99,6 +99,19 @@ public:
     void recompute_all(const std::function<Evaluator(uint16_t)>& eval_for);
 
     /**
+     * Re-derive only the tares whose recorded fingerprint disagrees with the curve now live, and
+     * return how many those were. Zero is the expected answer: every path that moves a curve is
+     * supposed to recompute already.
+     *
+     * A non-zero answer means one didn't, and the caller should say so loudly — it is the audit
+     * that makes a missed recompute hook visible instead of silently subtracting kilograms
+     * derived from a curve that no longer exists. In particular it catches the startup ordering
+     * mistake of reading this file AFTER the live store reload, where the reload's own recompute
+     * runs over an empty map and every restored offset stays stale.
+     */
+    size_t recompute_stale(const std::function<Evaluator(uint16_t)>& eval_for);
+
+    /**
      * False while the curves cannot be trusted — set when the cubic store failed to load. A
      * recompute then keeps the last good offset rather than replacing it with one computed
      * against a zeroed curve, which would read as a confident wrong number.
