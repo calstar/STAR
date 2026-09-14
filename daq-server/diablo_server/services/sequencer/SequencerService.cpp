@@ -743,8 +743,11 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
     if (entering_abort)
         abort_broadcaster_.triggerAbort();
 
-    // New state wins over debug manual actuator overrides.
+    // New state wins over debug manual actuator overrides, and over the positions a script had
+    // taken ownership of. Both are cleared here rather than when the script stops, so a script
+    // that ended on its own still has its valves handed back to the incoming state's column.
     actuator_commander_.clearAllManualOverrides();
+    actuator_commander_.clearScriptPositions();
 
     // Stop current continuous loop before applying the new state
     actuator_commander_.stopContinuousLoop();

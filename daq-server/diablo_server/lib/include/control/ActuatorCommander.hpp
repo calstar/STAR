@@ -125,6 +125,27 @@ public:
     /** Clear all manual overrides (e.g. leaving debug mode or transitioning state). */
     void clearAllManualOverrides();
 
+    /**
+     * A running script's position for one valve — the script layering on top of its state's CSV
+     * column.
+     *
+     * Deliberately NOT manual_overrides_. That map is cleared on every transition AND whenever
+     * debug mode is switched off (SequencerService::doSetDebugMode), so a script writing there
+     * would have its valve intent silently wiped by an operator leaving debug mode while the
+     * script kept running.
+     *
+     * Setting a position also takes OWNERSHIP of the valve: any staged command still in flight for
+     * it is cancelled, and it stops being skipped by the republish's pending-delay filter. Without
+     * that, the state's own delays column could move the valve seconds after the script already
+     * commanded it, landing last and silently winning.
+     *
+     * Like setManualOverride, this is not debug-gated here — the gate belongs to the caller.
+     */
+    void setScriptPosition(const std::string& name, int pos);
+
+    /** Drop every script position. Called on any transition, beside clearAllManualOverrides. */
+    void clearScriptPositions();
+
     /** Set the Elodin client for publishing commanded state [0x32, ch] to the DB. */
     /**
      * Which state hands PWM actuators to controller_service. During it this commander stops
@@ -166,6 +187,15 @@ private:
 
     std::map<std::string, int> manual_overrides_;
     std::mutex overrides_mutex_;
+
+    /** Valves a running script has taken over, role -> logical position. Its own mutex, and never
+     *  held at the same time as overrides_mutex_ — applyForState snapshots this first and then
+     *  takes the other, so no call path holds both and there is no lock order to get wrong. */
+    std::map<std::string, int> script_positions_;
+    std::mutex script_positions_mutex_;
+
+    /** Warn once per role that a manual override is fighting a running script for a valve. */
+    static void logOverrideShadowingScript(const std::string& role);
 
     std::thread loop_thread_;
     std::atomic<bool> loop_running_{false};

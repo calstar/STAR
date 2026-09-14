@@ -407,6 +407,17 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
         uint8_t logical_pos;
     };
     std::vector<PendingCmd> pending;
+
+    // Snapshot the script's positions BEFORE taking overrides_mutex_, and never hold both. The two
+    // maps have different writers — a script runs on its own thread while the command worker and
+    // this republish thread both come through here — and nesting the locks in one order here while
+    // ScriptRunner takes them in the other is a deadlock waiting for the right interleaving.
+    std::map<std::string, int> script_positions;
+    {
+        std::lock_guard<std::mutex> lk(script_positions_mutex_);
+        script_positions = script_positions_;
+    }
+
     std::unique_lock lock(overrides_mutex_);
     for (const auto& [act_name, logical_pos] : it->second) {
         auto role_it = roles_.find(act_name);
@@ -416,10 +427,19 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
         if (is_fire && role.is_pwm)
             continue;
 
+        // Precedence: a debug manual override beats a running script, which beats the state's CSV
+        // column. The operator with their hand on the panel is the last line — and a script that
+        // is being overridden is worth saying out loud, since the two are fighting over one valve.
         int pos = logical_pos;
+        auto sp = script_positions.find(act_name);
+        if (sp != script_positions.end())
+            pos = sp->second;
         auto ov = manual_overrides_.find(act_name);
-        if (ov != manual_overrides_.end())
+        if (ov != manual_overrides_.end()) {
+            if (sp != script_positions.end() && ov->second != sp->second)
+                logOverrideShadowingScript(act_name);
             pos = ov->second;
+        }
 
         uint8_t hw_state = static_cast<uint8_t>(role.is_no ? (1 - pos) : pos);
         uint8_t global_ch =
@@ -439,12 +459,21 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
 
     // Split into stages by delay. On a republish (is_transition false) everything is stage 0, so
     // the settled positions go out together.
-    std::map<double, std::map<std::string, std::vector<std::pair<uint8_t, uint8_t>>>> staged;
-    std::map<double, std::vector<std::pair<uint8_t, uint8_t>>> staged_logical;
+    //
+    // Stages keep their ROLE NAMES rather than collapsing straight to (board, channel) pairs. A
+    // stage can be armed now and fire seconds later, and in between a script may take ownership of
+    // one of its valves — so the decision "is this command still wanted?" has to be made when the
+    // stage fires, and that needs the role name to still be there.
+    std::map<double, std::vector<PendingCmd>> staged;
     for (size_t i = 0; i < pending.size(); ++i) {
         const auto& pc = pending[i];
+        // A role the script has taken ownership of is never staged behind the delays CSV: the
+        // script has its own delay(), and a stagger the operator never wrote into the script would
+        // be a second, invisible schedule fighting it.
+        const bool script_owned = script_positions.count(pc.role_name) > 0;
+
         double d = 0.0;
-        if (is_transition) {
+        if (is_transition && !script_owned) {
             auto ds = state_actuator_delays_.find(state_name);
             if (ds != state_actuator_delays_.end()) {
                 auto it = ds->second.find(pc.role_name);
@@ -452,22 +481,64 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
                     d = it->second;
             }
         }
-        if (!is_transition) {
+        if (!is_transition && !script_owned) {
             std::lock_guard<std::mutex> lk(pending_roles_mutex_);
             if (pending_roles_.count(pc.role_name))
                 continue;  // still waiting on its delay — leave the board holding its last position
         }
-        staged[d][pc.board_ip].emplace_back(pc.channel, pc.hw_state);
-        staged_logical[d].emplace_back(pc.global_ch, pc.logical_pos);
+        staged[d].push_back(pc);
         if (d > 0.0) {
             std::lock_guard<std::mutex> lk(pending_roles_mutex_);
             pending_roles_.insert(pc.role_name);
         }
     }
 
-    auto emit = [this, state_name](
-                    const std::map<std::string, std::vector<std::pair<uint8_t, uint8_t>>>& by_ip,
-                    const std::vector<std::pair<uint8_t, uint8_t>>& logical, double delay_s) {
+    auto emit = [this, state_name](const std::vector<PendingCmd>& cmds, double delay_s) {
+        // Re-resolve against the script's CURRENT positions, because a stage can be armed now and
+        // fire seconds later. In between, a script may have taken one of these valves: the column
+        // staggers it by two seconds, the script sets it at 50 ms, and without this the stale
+        // stage lands last and leaves the valve opposite to what the script said — silently.
+        //
+        // Corrected rather than dropped. Dropping would also silence stage 0 of every republish,
+        // which is precisely where a script's position has to keep going out.
+        // Both snapshotted, never held together — see the lock-order note in applyForState.
+        std::map<std::string, int> script_positions;
+        {
+            std::lock_guard<std::mutex> lk(script_positions_mutex_);
+            script_positions = script_positions_;
+        }
+        std::map<std::string, int> overrides;
+        {
+            std::lock_guard<std::mutex> lk(overrides_mutex_);
+            overrides = manual_overrides_;
+        }
+
+        std::map<std::string, std::vector<std::pair<uint8_t, uint8_t>>> by_ip;
+        std::vector<std::pair<uint8_t, uint8_t>> logical;
+        for (const auto& pc : cmds) {
+            uint8_t hw = pc.hw_state;
+            uint8_t pos = pc.logical_pos;
+            auto sp = script_positions.find(pc.role_name);
+            // An operator's manual override outranks the script, so a role they hold is left
+            // exactly as applyForState resolved it.
+            if (overrides.count(pc.role_name))
+                sp = script_positions.end();
+            if (sp != script_positions.end() && sp->second != pc.logical_pos) {
+                auto role_it = roles_.find(pc.role_name);
+                if (role_it != roles_.end()) {
+                    pos = static_cast<uint8_t>(sp->second);
+                    hw =
+                        static_cast<uint8_t>(role_it->second.is_no ? (1 - sp->second) : sp->second);
+                    std::cout << "[ActuatorCommander] Staged command for \"" << pc.role_name
+                              << "\" superseded by the running script's position" << std::endl;
+                }
+            }
+            by_ip[pc.board_ip].emplace_back(pc.channel, hw);
+            logical.emplace_back(pc.global_ch, pos);
+        }
+        if (by_ip.empty())
+            return;
+
         if (sendBatch(by_ip)) {
             size_t n = 0;
             for (const auto& [ip, c] : by_ip)
@@ -487,7 +558,7 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
     // Stage 0 goes out on this thread, immediately.
     auto zero = staged.find(0.0);
     if (zero != staged.end())
-        emit(zero->second, staged_logical[0.0], 0.0);
+        emit(zero->second, 0.0);
 
     if (staged.size() <= (zero != staged.end() ? 1u : 0u))
         return;
@@ -510,7 +581,7 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
             roles_by_delay[it->second].push_back(pc.role_name);
     }
 
-    std::thread([this, gen, staged, staged_logical, order, emit, roles_by_delay]() mutable {
+    std::thread([this, gen, staged, order, emit, roles_by_delay]() mutable {
         auto t0 = std::chrono::steady_clock::now();
         for (const auto& [delay_s, _] : order) {
             const auto due = t0 + std::chrono::microseconds(static_cast<long long>(delay_s * 1e6));
@@ -521,7 +592,7 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
             }
             if (schedule_gen_.load() != gen)
                 return;
-            emit(staged[delay_s], staged_logical[delay_s], delay_s);
+            emit(staged[delay_s], delay_s);
             {
                 std::lock_guard<std::mutex> lk(pending_roles_mutex_);
                 for (const auto& r : roles_by_delay[delay_s])
@@ -642,6 +713,57 @@ void ActuatorCommander::setManualOverride(const std::string& name, int pos) {
     }
     std::lock_guard lock(overrides_mutex_);
     manual_overrides_[key] = pos;
+}
+
+void ActuatorCommander::logOverrideShadowingScript(const std::string& role) {
+    // Once per role per process. This is a real condition an operator can create deliberately
+    // (taking a valve back off a running script in debug mode), so it must be visible — but it is
+    // re-evaluated on every 1 Hz republish, and saying it every second would bury everything else.
+    static std::mutex mtx;
+    static std::set<std::string> said;
+    std::lock_guard<std::mutex> lk(mtx);
+    if (said.insert(role).second)
+        std::cerr << "[ActuatorCommander] Manual override on \"" << role
+                  << "\" is overriding a running script's position for it" << std::endl;
+}
+
+void ActuatorCommander::setScriptPosition(const std::string& name, int pos) {
+    // Canonicalise against roles_ so the key matches the CSV spelling, exactly as
+    // setManualOverride does — otherwise applyForState's lookup misses and the position is
+    // silently inert.
+    std::string canonical = name;
+    auto it = roles_.find(name);
+    if (it == roles_.end()) {
+        for (const auto& [rname, r] : roles_) {
+            if (rname.size() == name.size() &&
+                std::equal(rname.begin(), rname.end(), name.begin(), [](char a, char b) {
+                    return std::tolower(static_cast<unsigned char>(a)) ==
+                           std::tolower(static_cast<unsigned char>(b));
+                })) {
+                canonical = rname;
+                break;
+            }
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(script_positions_mutex_);
+        script_positions_[canonical] = pos;
+    }
+
+    // Taking ownership cancels any staged command still in flight for this valve. Without this,
+    // the state's own delays column can schedule the valve to move seconds AFTER the script has
+    // already commanded it, and the stage lands last — so the valve ends up opposite to what the
+    // script said, with nothing logged. Dropping it from pending_roles_ also lets the 1 Hz
+    // republish carry the script's position instead of skipping the role, which is the same
+    // silent-drop hazard from the other direction.
+    std::lock_guard<std::mutex> lk(pending_roles_mutex_);
+    pending_roles_.erase(canonical);
+}
+
+void ActuatorCommander::clearScriptPositions() {
+    std::lock_guard<std::mutex> lk(script_positions_mutex_);
+    script_positions_.clear();
 }
 
 void ActuatorCommander::clearAllManualOverrides() {

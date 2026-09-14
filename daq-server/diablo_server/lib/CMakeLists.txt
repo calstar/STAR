@@ -146,6 +146,22 @@ target_link_libraries(test_actuator_delays
     fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME actuator_delays COMMAND test_actuator_delays)
 
+add_executable(test_script_positions
+    test/test_script_positions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
+)
+target_include_directories(test_script_positions PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_script_positions
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME script_positions COMMAND test_script_positions)
+# RUN_SERIAL: binds a fixed UDP port, and every case is a wall-clock measurement that a loaded
+# box would skew.
+set_tests_properties(script_positions PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+
 add_executable(test_sequencer_elodin
     test/test_sequencer_elodin.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
