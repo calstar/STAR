@@ -26,7 +26,7 @@ import re
 import tomllib
 from pathlib import Path
 
-from . import config
+from . import config, lc_tare
 
 # The state ids as the C++ enum defines them (control/StateMachine.hpp), named the way
 # config_base.toml's [[states]] does. Only a fallback: a snapshot's [[states]] wins.
@@ -205,6 +205,15 @@ def annotate(index: dict, run_id: str) -> dict:
     takes effect on the next open instead of needing the export thrown away.
     """
     cfg = load(run_id)
+    # Tared load-cell channels are synthesised HERE rather than in build_index, for the same
+    # reason names are: the sidecar is a separate file from the parquet cache, so a run exported
+    # before its tare record was written still shows its tared traces on the next open instead of
+    # needing the export thrown away. This is also why INDEX_VERSION does not move for this
+    # feature — bumping it would invalidate every cached export on the box for nothing.
+    comps = index.get("components", [])
+    comps.extend(lc_tare.tared_components(run_id, comps))
+    index["components"] = comps
+
     labels = entity_labels(cfg)
     for comp in index.get("components", []):
         comp["label"] = label_for(comp.get("entity", ""), labels)

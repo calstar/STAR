@@ -26,6 +26,7 @@ import * as http from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
+import { expandWithTare, resetTareState, setRunDir } from './lc-tare.js';
 import { loadSensorRoleMap, hpBoardNumbers } from './sensor-config.js';
 import { registerVTables, clearSubscriptionState, noteSubscriptionRejected } from './elodin-vtable-registry.js';
 import { createAPIHandler } from './api-server.js';
@@ -43,7 +44,7 @@ import { ClientOutbox, FlushPacer, SOCKET_IDLE_BYTES, linkStatus } from './clien
 import { sendBackfill, type HistoryPayload } from './history-backfill.js';
 import { HistoryCache } from './history-cache.js';
 import { startGuiStaticServer } from './static-gui.js';
-import { handleCalibrationCommand, publishCalibrationReload, type CalibrationHost } from './calibration-handler.js';
+import { publishClearAllTares, handleCalibrationCommand, publishCalibrationReload, type CalibrationHost } from './calibration-handler.js';
 import { loadPTCalibration, type CalibrationCoefficients } from './calibration.js';
 import { MessageType, SystemState } from '../../shared/types.js';
 import { isOperator } from './operators.js';
@@ -1530,7 +1531,13 @@ elodin.on('packet', (header: any, payload: Buffer) => {
     }
 
     // ── Parse sensor/actuator/state packets ──────────────────────────────────
-    const parsedList = parseElodinPacket(header.packetId, payload, _hpBoardNumbers);
+    // expandWithTare appends a derived `force_kg_tared` for each calibrated load-cell point and
+    // leaves `force_kg` alone. It belongs HERE rather than inside parseElodinPacket (a pure,
+    // stateless decoder that elodin-query.ts also uses to replay the archive — taring there
+    // would apply today's offset to yesterday's samples) and rather than in the outbox drain
+    // (which would leave the live stream tared and the reconnect backfill gross, because
+    // emitSensorWindow records to history before it stages to any client).
+    const parsedList = expandWithTare(parseElodinPacket(header.packetId, payload, _hpBoardNumbers));
 
     if (parsedList.length === 0) {
       if (high >= 0x40) {
@@ -1709,7 +1716,12 @@ httpServer.listen(WS_PORT, () => {
   sessionManager.init(broadcast, broadcastNotification, () => {
     loadBoardsFromConfig();
     broadcastBoardStatus();
-  }, applyDeployedConfigChange);
+  }, applyDeployedConfigChange, () => {
+  // The run pipeline is up. Every session starts with every load cell reading absolute: the
+  // controller already removed lc_tare.json, and this drops the copy a still-running service
+  // holds in memory (mock mode, where nothing went down to reload it).
+  publishClearAllTares(calibrationHost);
+});
   // Board diagnostic logs (type-15 LOGS forwarded by daq_bridge over loopback UDP).
   startBoardLogReceiver(broadcast);
 });

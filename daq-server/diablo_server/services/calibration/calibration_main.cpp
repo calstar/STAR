@@ -48,6 +48,7 @@
 
 #include "calibration/CaptureWindow.hpp"
 #include "calibration/CubicCalibrationStore.hpp"
+#include "calibration/LcTareStore.hpp"
 #include "calibration/PTCalibration.hpp"
 #include "calibration/RobustCalibrationManager.hpp"
 #include "calibration/SensorCalibration.hpp"
@@ -884,6 +885,12 @@ int main(int argc, char* argv[]) {
     // feeds both this cubic fit and the robust learner.
     fsw::calibration::CubicCalibrationStore cubic_store(
         "scripts/calibration/calibrations/cubic_calibration.json");
+    // Load-cell tares: display-only offsets the backend subtracts on the way to the browser.
+    // Deliberately NOT part of the cubic store — a tare is not a calibration point, and folding
+    // one in as a captured zero would tilt the whole fit rather than shift its intercept.
+    // Cleared by the backend at session start (while this service is down); survives a restart
+    // inside a session. See LcTareStore.hpp.
+    fsw::calibration::LcTareStore lc_tare_store("scripts/calibration/calibrations/lc_tare.json");
     // What a capture records. Bounded in TIME, not in samples: the old 128-sample ring was
     // sized for a 250 Hz PT and spanned 9.3 s on a 13.7 Hz load cell, so a capture taken
     // soon after a load change averaged the old load in. See CaptureWindow.hpp.
@@ -1046,6 +1053,45 @@ int main(int argc, char* argv[]) {
         // boards' vent-to-safe gate tracks the new calibration within a broadcast cycle.
         write_abort_thresholds();
     };
+    // adc -> kg exactly as the LC publish path computes it (see the 0x23 branch): the cubic fit
+    // if this uid streams one, else the datasheet physics conversion. A tare offset is derived
+    // through the SAME model selection the live sample goes through, so flipping a uid between
+    // cubic and physics carries its tare correctly instead of being a fourth special case.
+    auto lc_eval_for = [&](uint16_t uid) -> fsw::calibration::LcTareStore::Evaluator {
+        return [&, uid](double adc) -> double {
+            uint8_t board_number = static_cast<uint8_t>((uid / 100) % 10);
+            if (board_number == 0)
+                board_number = 10;
+            const uint8_t connector = static_cast<uint8_t>(uid % 100);
+            const uint8_t lc_log_ch =
+                fsw::calibration::pt_logical_calibration_channel(board_number, connector);
+            const int32_t code = static_cast<int32_t>(adc);
+            const bool cubic_ok = lc_calibration.is_calibrated(lc_log_ch);
+            const double kg_cubic = cubic_ok ? lc_calibration.calculate(lc_log_ch, code) : 0.0;
+            const double kg_phys =
+                convert_lc_adc_to_force(code, lc_sensitivity_for(uid, lc_sensitivity_mv_per_v),
+                                        lc_pga_gain_for(uid, lc_pga_gain),
+                                        lc_full_scale_for(uid, lc_full_scale_value));
+            return select_lc_kg(uid, kg_cubic, kg_phys, cubic_ok);
+        };
+    };
+    // Re-derive a standing tare's kilograms from the ADC code it was taken at. Called from EVERY
+    // site that can change an LC curve; miss one and the stand carries an offset computed against
+    // a curve that no longer exists — the "tank reads 2 kg after a better fit" bug.
+    //
+    // curves_trusted tracks the cubic store: if its file could not be read, every curve here is a
+    // fallback, and persisting an offset derived from one would replace a good number with a
+    // confident wrong one.
+    auto recompute_tare = [&](uint16_t uid) {
+        lc_tare_store.set_curves_trusted(!cubic_store.load_failed());
+        lc_tare_store.recompute(uid, lc_eval_for(uid));
+        lc_tare_store.save();
+    };
+    auto recompute_all_tares = [&]() {
+        lc_tare_store.set_curves_trusted(!cubic_store.load_failed());
+        lc_tare_store.recompute_all([&](uint16_t u) { return lc_eval_for(u); });
+        lc_tare_store.save();
+    };
     // LC capture: cubic fit only — no robust learner (LC doesn't need drift-learning) and no abort
     // thresholds (a PT-only concept; abort_pts names PT roles).
     auto apply_lc_capture = [&](uint16_t uid, double adc_avg, double ref) {
@@ -1055,6 +1101,8 @@ int main(int argc, char* argv[]) {
             lc_calibration.set_calibration(cch->logical_ch, fsw::calibration::PolynomialCalibration(
                                                                 fit.A, fit.B, fit.C, fit.D, "kg"));
         cubic_store.save();
+        // The curve just moved under any standing tare on this channel.
+        recompute_tare(uid);
     };
     // Every capture/clear is routed by uid kind (g_lc_uids), so cmd_type 0/3/4/5/6 in the
     // CalibrationCommand handler below work unchanged for both PT and LC uids.
@@ -1112,6 +1160,9 @@ int main(int argc, char* argv[]) {
             lc_calibration.clear_calibration(cch->logical_ch);
         cubic_store.clear_channel(uid);
         cubic_store.save();
+        // A cleared channel falls back to the physics conversion, which is a different curve.
+        // The tare survives and re-derives through it, so the same load still reads zero.
+        recompute_tare(uid);
     };
     auto apply_clear = [&](uint16_t uid) {
         if (is_lc_uid(uid))
@@ -1199,6 +1250,10 @@ int main(int argc, char* argv[]) {
         // Whole-rig cal just (re)loaded — startup or a live profile swap (cmd 7). Emit the abort
         // thresholds from it so the boards' vent-to-safe gate matches the newly active calibration.
         write_abort_thresholds();
+        // Every LC curve may have just changed, so every standing tare's kilograms are stale.
+        // This is why the tare file is loaded BEFORE the first call to this lambda: recomputing
+        // an empty map does nothing, and the stale offsets would then survive all session.
+        recompute_all_tares();
         return loaded;
     };
 
@@ -1206,11 +1261,41 @@ int main(int argc, char* argv[]) {
     std::cout << "[Calibration]   (override with --adjustments, CAL_BACKUP_PATH, or "
                  "calibration_backups/calibration_backup_*.json mtime)"
               << std::endl;
+    // Resume standing tares BEFORE the live store reload below, not after.
+    //
+    // Ordering is load-bearing. reload_live_store() ends by recomputing every tare against the
+    // curves it just applied; if the tare file were read after that call, the recompute would run
+    // over an empty map and never happen. The case that bites is a calibration profile swapped on
+    // disk while this service was down: the offsets on disk belong to the old curves, and without
+    // the startup recompute a tared tank reads a wrong nonzero at rest with nothing to explain it.
+    const size_t tares_loaded = lc_tare_store.load();
+    if (tares_loaded > 0)
+        std::cout << "[Calibration] LC tare: resumed " << tares_loaded
+                  << " standing tare(s) from lc_tare.json" << std::endl;
+
     // Resume previously captured points + learned robust state from disk.
     const size_t cubic_loaded = reload_live_store(/*restore_learned=*/true);
     if (cubic_loaded > 0)
         std::cout << "[Calibration] Cubic: resumed " << cubic_loaded
                   << " channel(s) from cubic_calibration.json" << std::endl;
+    // Audit, not a second recompute: by here every restored tare should already have been
+    // re-derived by the reload above, so the expected answer is zero. A non-zero answer means a
+    // curve moved without its recompute running — most likely this file was read after the
+    // reload rather than before it — and the offsets it just fixed were being applied against a
+    // curve that no longer exists. Self-healing, but never silently.
+    {
+        lc_tare_store.set_curves_trusted(!cubic_store.load_failed());
+        const size_t stale =
+            lc_tare_store.recompute_stale([&](uint16_t u) { return lc_eval_for(u); });
+        if (stale > 0) {
+            std::cout << "[Calibration] LC tare: WARNING — " << stale
+                      << " tare(s) were stale against the live curves and have been re-derived. "
+                         "A curve changed without recomputing its tare; check that lc_tare_store"
+                         ".load() still runs BEFORE the first reload_live_store()."
+                      << std::endl;
+            lc_tare_store.save();
+        }
+    }
     // Always persist at startup so the record (with each channel's active_model) exists immediately
     // — the UI / cal_model_select read it before any capture.
     cubic_store.save();
@@ -1488,6 +1573,62 @@ int main(int argc, char* argv[]) {
                     const size_t n = reload_live_store(/*restore_learned=*/false);
                     std::cout << "[Cal] Reloaded live calibration store (" << n
                               << " channel(s)) after profile swap" << std::endl;
+                } else if (cmd_type == 8) {  // LC tare — display only, never touches the fit
+                    // ref_val: 0 = set, 1 = clear. sensor_id 0 = every LC channel.
+                    //
+                    // A tare is NOT a captured zero, and this is the one command where that
+                    // distinction is the whole point. Zero-All (cmd 0) records a real 0 kg
+                    // reference point into the shared fit, which is correct for a vented PT and
+                    // wrong for a load cell holding a tank: that tank is not at 0 kg, so the
+                    // point would be false and, because the fit is least-squares over every
+                    // point, it would tilt the whole cubic rather than shift its intercept.
+                    const bool clearing = ref_val >= 0.5f;
+                    std::vector<uint16_t> targets;
+                    if (sensor_id == 0) {
+                        if (clearing) {
+                            targets = lc_tare_store.uids();
+                        } else {
+                            // Only channels actually streaming can be tared — same rule Zero-All
+                            // uses. A uid in a last-value map may have had its board go away.
+                            for (uint16_t id : capture_window.uids())
+                                if (is_lc_uid(id))
+                                    targets.push_back(id);
+                        }
+                    } else if (is_lc_uid(sensor_id)) {
+                        targets.push_back(sensor_id);
+                    } else {
+                        std::cout << "[Cal] Tare: uid " << static_cast<int>(sensor_id)
+                                  << " is not a load cell — ignored" << std::endl;
+                    }
+
+                    size_t done = 0;
+                    for (uint16_t id : targets) {
+                        if (clearing) {
+                            lc_tare_store.clear(id);
+                            ++done;
+                            continue;
+                        }
+                        // Through the capture window, never last_adc_map: a tare taken from a
+                        // stale code silently biases every reading on the channel for the rest
+                        // of the run, which is the same failure take_capture exists to refuse.
+                        const fsw::calibration::CaptureResult r = take_capture(id, "Tare");
+                        if (!r.ok)
+                            continue;
+                        const uint8_t board_id = static_cast<uint8_t>(id / 100);
+                        const uint8_t connector = static_cast<uint8_t>(id % 100);
+                        if (lc_tare_store.set(id, fsw::calibration::lc_tare_entity(board_id,
+                                                                                   connector),
+                                              r.adc_avg, lc_eval_for(id))) {
+                            ++done;
+                            const fsw::calibration::LcTare* t = lc_tare_store.tare_for(id);
+                            std::cout << "[Cal] Tare uid=" << static_cast<int>(id) << " "
+                                      << capture_detail(r) << " offset="
+                                      << (t != nullptr ? t->offset_kg : 0.0) << "kg" << std::endl;
+                        }
+                    }
+                    lc_tare_store.save();
+                    std::cout << "[Cal] " << (clearing ? "Tare clear" : "Tare") << ": " << done
+                              << " load cell(s)" << std::endl;
                 }
             }
             continue;

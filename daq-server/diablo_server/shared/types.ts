@@ -298,7 +298,9 @@ export type CalibrationCommandType =
   | 'capture_cubic_point' // add one (current ADC, ref PSI) point to a channel's cubic fit
   | 'clear_cubic_channel' // drop a channel's cubic points and revert to the factory cubic
   | 'capture_point'       // unified: add one (current ADC, ref PSI) point; service routes by config model
-  | 'new_calibration';    // unified: start fresh for a channel; service routes clear by config model
+  | 'new_calibration'     // unified: start fresh for a channel; service routes clear by config model
+  | 'tare_lc'             // load cell: display-only zero at the current load; never enters the fit
+  | 'clear_tare_lc';      // load cell: drop the tare, back to absolute
 
 export interface CalibrationCommand {
   commandType: CalibrationCommandType;

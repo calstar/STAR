@@ -141,6 +141,14 @@ public:
     /** Load the JSON record, resume points, and re-fit each channel. Returns channels loaded. */
     size_t load();
 
+    /** True when load() could not read an existing file, so every curve here is a fallback rather
+     *  than the operator's. Callers that DERIVE from a curve (the LC tare recompute) must skip
+     *  rather than persist a number computed against one. */
+    bool load_failed() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return load_failed_;
+    }
+
     static constexpr size_t kMaxPoints = 20;
 
 private:
