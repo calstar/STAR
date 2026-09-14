@@ -46,6 +46,56 @@ CDS_MAX = 20000.0  # m^2; ~10x the largest cluster ever flown
 CD0_MAX = 6.0
 
 
+# --- what every model in this file refuses ------------------------------------
+#
+# `extra="forbid"` was always here: an unknown key is a typo or a version skew,
+# and honouring it silently is how a sweep runs narrower than the caller asked.
+#
+# `allow_inf_nan=False` is the other half, and it was missing. pydantic defaults
+# it to True, and `inf` satisfies every `gt=0` bound in this file -- so `m`,
+# `h_a`, `d_body` and `p_pad` all accepted infinity. Most of those fail fast
+# once scipy sees a non-finite initial state, but `m = inf` runs to completion
+# and returns a descent whose every load is NaN, reported as a successful run.
+# A NaN reaching RK45's error norm makes step selection undefined, which is the
+# other half of the hang. Neither is a number anyone can type on purpose.
+STRICT = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+
+# --- what counts as a rocket, a pad and a sky ---------------------------------
+#
+# Every one of these was `gt=0.0` and nothing else, and the ODE
+# (`dynamics.py`, k = rho*CdS/(2m)*|v_rel|) turns each of them into a stiffness
+# multiplier, so one mistyped number made the integrator grind for minutes.
+# Measured before these existed: `h_a=1e9` ran 428 s, `d_body=1e6` 7.1 s,
+# `p_pad=1e12` 3.5 s -- against 0.07 s for the real vehicle.
+#
+# The numbers are deliberately far outside anything the site flies, so that a
+# refusal is always a typo and never a design. FAR hosts student and amateur
+# high-power including declared 100 km attempts, and none of these refuse that.
+H_A_MAX = 120_000.0    # m; just above the Karman line
+D_BODY_MAX = 2.0       # m; 3x the largest amateur airframe (24 in)
+L_BODY_MAX = 50.0      # m; amateur record rockets are ~10 m, Saturn V was 110
+M_MIN, M_MAX = 0.01, 50_000.0   # kg; 10 g to 50 t
+
+# Fineness ratio. Like CD0_MAX, this is the bound that catches a WRONG number
+# next to a RIGHT one -- a length in millimetres beside a diameter in metres --
+# which no single-field cap can see. A rocket shorter than it is wide is a disc.
+FINENESS_MIN, FINENESS_MAX = 1.0, 100.0
+
+# Pad state. These two are the sneakiest of the lot, because the wrong unit is
+# a plausible-looking number rather than an absurd one: `20` meant as 20 C is
+# 20 K, which is ~14x the air density and a genuinely stiff ODE, and 1013.25
+# meant as millibar is 1013 Pa. Vostok's record is 184 K; sea-level pressure
+# extremes are 87-108.4 kPa; FAR's station pressure is ~94 kPa.
+T_PAD_MIN, T_PAD_MAX = 180.0, 360.0        # K
+P_PAD_MIN, P_PAD_MAX = 30_000.0, 110_000.0  # Pa, a STATION pressure
+
+# Speeds. The highest surface wind ever recorded is 113 m/s; 1000 m/s is ~Mach 3
+# and well past any deployment this model is valid for.
+WIND_MAX = 150.0
+SPEED_MAX = 1000.0
+
+
 class TriggerKind(str, Enum):
     """PLAN.md §6.1. Exactly one per device."""
 
@@ -56,7 +106,7 @@ class TriggerKind(str, Enum):
 class Trigger(BaseModel):
     """When the *charge* fires. Not when the canopy inflates -- see `Device.delay`."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = STRICT
 
     kind: TriggerKind
     value: float = Field(
@@ -97,7 +147,7 @@ def _check_drag_area(name, CdS, D0):
 class Device(BaseModel):
     """One recovery device. PLAN.md §4, §6, §8.4."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = STRICT
 
     name: str = "device"
 
@@ -159,12 +209,17 @@ class Device(BaseModel):
 
 
 class Vehicle(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = STRICT
 
-    m: float = Field(gt=0.0, description="Total descending mass, kg.")
-    h_a: float = Field(gt=0.0, description="Apogee AGL, m.")
-    d_body: float = Field(gt=0.0, description="Airframe diameter, m.")
-    l_body: float = Field(gt=0.0, description="Airframe length, m.")
+    # `m` divides the whole drag term, so unlike every other field here the
+    # dangerous typo is a SMALL one: grams entered as kilograms multiplies the
+    # integrator's step count by a million.
+    m: float = Field(ge=M_MIN, le=M_MAX, description="Total descending mass, kg.")
+    h_a: float = Field(gt=0.0, le=H_A_MAX, description="Apogee AGL, m.")
+    d_body: float = Field(gt=0.0, le=D_BODY_MAX,
+                          description="Airframe diameter, m.")
+    l_body: float = Field(gt=0.0, le=L_BODY_MAX,
+                          description="Airframe length, m.")
 
     # Airframe drag area is DERIVED from d_body and l_body via eqs (14)/(15),
     # never entered. Two reasons, and both matter:
@@ -184,9 +239,11 @@ class Vehicle(BaseModel):
     # anyone with measured or CFD data, but it is not a config field, so the
     # GUI cannot offer it.
 
-    z0: Optional[float] = Field(default=None, description="Initial altitude "
+    z0: Optional[float] = Field(default=None, ge=0.0, le=H_A_MAX,
+                                description="Initial altitude "
                                 "override, m AGL. Defaults to apogee.")
-    v0: Optional[float] = Field(default=None, description="Initial VERTICAL "
+    v0: Optional[float] = Field(default=None, ge=-SPEED_MAX, le=SPEED_MAX,
+                                description="Initial VERTICAL "
                                 "velocity override, m/s (positive up). Defaults "
                                 "to 0. Only meaningful for a device the eq (56) "
                                 "bound says survives an early deployment. NOT "
@@ -198,11 +255,33 @@ class Vehicle(BaseModel):
     # air-relative velocity relaxes it toward the wind. Distinct from v0 (which is
     # vertical). Default None -> 0, which reduces the coupled descent exactly to
     # the 1-D vertical one.
-    v_lat: Optional[float] = Field(default=None, description="Lateral (horizontal) "
+    v_lat: Optional[float] = Field(default=None, ge=0.0, le=SPEED_MAX,
+                                   description="Lateral (horizontal) "
                                    "GROUND speed at apogee, m/s. Default 0.")
-    v_lat_dir: Optional[float] = Field(default=None, description="Compass bearing "
+    v_lat_dir: Optional[float] = Field(default=None, ge=-360.0, le=720.0,
+                                       description="Compass bearing "
                                        "the lateral velocity points TOWARD, deg "
                                        "clockwise from north (0=N, 90=E). Default 0.")
+
+    @model_validator(mode="after")
+    def _check(self):
+        # The ratio bound, for the same reason `_check_drag_area` has one: the
+        # absolute caps above each see one field at a time, and the usual typo
+        # is one field in the wrong unit NEXT TO one that is right. A 1.44 m
+        # airframe entered as 1440 passes `l_body <= 50`? No -- but 0.1016 m
+        # entered as 101.6 does, and a 101.6 x 0.1016 m rocket is a 1000:1
+        # needle. Symmetrically, a diameter in metres beside a length in
+        # millimetres gives a disc.
+        fineness = self.l_body / self.d_body
+        if not FINENESS_MIN <= fineness <= FINENESS_MAX:
+            raise ValueError(
+                "an airframe %.4g m long and %.4g m across is a fineness ratio "
+                "of %.1f, outside %g-%g. Real airframes are 5-25. Check that "
+                "both are in metres."
+                % (self.l_body, self.d_body, fineness,
+                   FINENESS_MIN, FINENESS_MAX)
+            )
+        return self
 
 
 class Site(BaseModel):
@@ -217,13 +296,15 @@ class Site(BaseModel):
     Only the two genuinely per-launch measurements remain.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = STRICT
 
-    T_pad: Optional[float] = Field(default=None, gt=0.0,
+    T_pad: Optional[float] = Field(default=None,
+                                   ge=T_PAD_MIN, le=T_PAD_MAX,
                                    description="Measured pad temperature, K. "
                                    "The one atmospheric input worth an "
                                    "instrument -- worth ~7% in density.")
-    p_pad: Optional[float] = Field(default=None, gt=0.0,
+    p_pad: Optional[float] = Field(default=None,
+                                   ge=P_PAD_MIN, le=P_PAD_MAX,
                                    description="Pad STATION pressure, Pa. "
                                    "Defaults to eq (7a), good to ~2%. Never a "
                                    "raw METAR altimeter setting.")
@@ -278,7 +359,7 @@ class SweepParam(BaseModel):
     applied in common across all of them (see `cases.sweep`).
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = STRICT
 
     key: SweepKey
     enabled: bool = True
@@ -294,6 +375,20 @@ class SweepParam(BaseModel):
             raise ValueError("%s must be positive" % self.key.value)
         if self.key in (SweepKey.delay, SweepKey.v_rel) and self.low < 0.0:
             raise ValueError("%s cannot be negative" % self.key.value)
+        # `CdS_body` is the one corner with NO config field behind it -- it is
+        # handed straight to `solver.integrate` as an override -- so CDS_MAX
+        # never sees it and a corner could put an arbitrary drag area into the
+        # same slot the capped `Device.CdS` occupies. Bound it here, where the
+        # key is known; `Config._hard_errors` additionally checks it against
+        # the vehicle's own band, which is the tighter and more useful test.
+        if self.key is SweepKey.CdS_body and self.high > CDS_MAX:
+            raise ValueError(
+                "CdS_body corner of %.4g m^2 is over the limit of %.4g"
+                % (self.high, CDS_MAX))
+        if self.key is SweepKey.m and not M_MIN <= self.low <= M_MAX:
+            raise ValueError(
+                "mass corner of %.4g kg is outside %g-%g kg"
+                % (self.low, M_MIN, M_MAX))
         return self
 
     @property
@@ -372,7 +467,7 @@ class Canopy(BaseModel):
     to "Iris Ultra 60".
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = STRICT
 
     label: str
     CdS: float = Field(gt=0.0, le=CDS_MAX)
@@ -412,12 +507,15 @@ class PadState(BaseModel):
     is not something a reader can match back to "KNID March normal".
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = STRICT
 
     label: str
-    T_pad: Optional[float] = Field(default=None, gt=0.0)
-    p_pad: Optional[float] = Field(default=None, gt=0.0)
-    lapse: Optional[float] = None
+    T_pad: Optional[float] = Field(default=None, ge=T_PAD_MIN, le=T_PAD_MAX)
+    p_pad: Optional[float] = Field(default=None, ge=P_PAD_MIN, le=P_PAD_MAX)
+    # The same bounds `Site.lapse` carries. A pad state is copied onto the site
+    # wholesale by `study._apply`, so anything this accepts, the site accepts --
+    # and this one was left unbounded while the field it feeds was not.
+    lapse: Optional[float] = Field(default=None, gt=-0.030, lt=0.030)
 
 
 def _list_field(key):
@@ -445,7 +543,7 @@ class StudyAxis(BaseModel):
     better and the answer is usually somewhere in between.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = STRICT
 
     key: StudyKey
     # Required for a per-device key, forbidden for a vehicle one. By NAME, not
@@ -460,9 +558,13 @@ class StudyAxis(BaseModel):
     # --- LINEAR ---
     start: Optional[float] = None
     stop: Optional[float] = None
-    points: Optional[int] = Field(default=None, ge=1)
+    # `MAX_RUNS` (20) already refuses a study this large, and refuses it fast
+    # -- 4,000,000 points is rejected in 0.4 s, so this is not the OOM it looks
+    # like. It is here so the refusal names the FIELD rather than the product,
+    # and so the grid is never built at all.
+    points: Optional[int] = Field(default=None, ge=1, le=100)
     # --- LIST ---
-    values: Optional[List[float]] = None
+    values: Optional[List[float]] = Field(default=None, max_length=100)
     canopies: Optional[List[Canopy]] = None
     pads: Optional[List[PadState]] = None
 
@@ -533,7 +635,7 @@ class Hardware(BaseModel):
     Optional so a run is possible before hardware is chosen.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = STRICT
 
     safety_factor: float = Field(default=1.5, gt=0.0)
     links: dict = Field(
@@ -569,11 +671,12 @@ class Hardware(BaseModel):
 class ConstantWind(BaseModel):
     """A uniform wind: one speed and the bearing it blows FROM (met convention)."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = STRICT
 
     kind: Literal["constant"] = "constant"
-    speed: float = Field(ge=0.0, description="Wind speed, m/s.")
+    speed: float = Field(ge=0.0, le=WIND_MAX, description="Wind speed, m/s.")
     direction: float = Field(
+        ge=-360.0, le=720.0,
         description="Bearing the wind blows FROM, degrees clockwise from north "
                     "(270 = a westerly). The met convention, matching a METAR.")
 
@@ -588,12 +691,16 @@ class ProfileWind(BaseModel):
     posting -- values travel, not the recipe (see `PadState`/`Canopy`).
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = STRICT
 
     kind: Literal["profile"] = "profile"
-    heights_msl: List[float] = Field(min_length=1)
-    u: List[float] = Field(min_length=1)
-    v: List[float] = Field(min_length=1)
+    # Capped in length because every `wind.u(z)` in the derivative is a lookup
+    # against this grid, and the grid is re-sorted once per `integrate` -- up
+    # to 65 times on a corner sweep. A sounding is tens of levels; 1000 is
+    # already far past any real profile.
+    heights_msl: List[float] = Field(min_length=1, max_length=1000)
+    u: List[float] = Field(min_length=1, max_length=1000)
+    v: List[float] = Field(min_length=1, max_length=1000)
 
     def to_profile(self, site_elev):
         if not (len(self.heights_msl) == len(self.u) == len(self.v)):
@@ -610,11 +717,15 @@ WindInput = Union[ConstantWind, ProfileWind]
 class Config(BaseModel):
     """A complete run. This file is what the GUI saves and the CLI accepts."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = STRICT
 
     vehicle: Vehicle
     site: Site = Field(default_factory=Site)
-    devices: List[Device] = Field(min_length=1)
+    # Capped because the cost is super-linear, not because eight is a design
+    # limit: `CdS_total` is O(N) on every derivative call, the solver's segment
+    # guard is 4N+8, and `settle` re-resolves simultaneous events at O(N^2).
+    # Four devices is already an unusual recovery system.
+    devices: List[Device] = Field(min_length=1, max_length=8)
     hardware: Optional[Hardware] = None
 
     # Horizontal wind, promoted from the drift-only request so the WHOLE model is
@@ -655,6 +766,22 @@ class Config(BaseModel):
         """
         h_a = self.vehicle.h_a
         z0 = self.vehicle.z0 if self.vehicle.z0 is not None else h_a
+
+        # The CdS_body corner against THIS vehicle, which `SweepParam._check`
+        # cannot see. The band is derived from the airframe by eqs (14)/(15),
+        # so a corner far outside it is describing a different rocket -- the
+        # exact inconsistency the read-only drag-area field exists to prevent.
+        for p_ in (self.sweep or ()):
+            if p_.key is SweepKey.CdS_body and p_.enabled:
+                from physics.devices import airframe_band
+                broadside = airframe_band(self.vehicle.d_body,
+                                          self.vehicle.l_body)[1]
+                if p_.high > 10.0 * broadside:
+                    raise ValueError(
+                        "CdS_body corner of %.4g m^2 is more than 10x this "
+                        "airframe's broadside area of %.4g m^2 -- that is a "
+                        "different vehicle, not an attitude."
+                        % (p_.high, broadside))
 
         # The ceiling is the highest point the vehicle reaches, not where it
         # starts: with v0 > 0 (§4.0's early-deployment case) it climbs above

@@ -37,6 +37,8 @@ if _APP_ROOT not in _sys.path:
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+
+from .deadline import ComputeBudgetMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -90,6 +92,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="STAR OpenRocket API", version="1.0.0", lifespan=lifespan)
+
+# Added BEFORE CORS so it ends up INSIDE it: add_middleware inserts at position
+# 0 and the stack wraps in reverse, so the last added is outermost. CORS has to
+# stay outermost or a 422 would reach the browser as an opaque network error
+# rather than the message naming the field.
+app.add_middleware(ComputeBudgetMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -304,7 +312,15 @@ def _axis_payload(axis: Axis) -> dict:
 
 
 @app.get("/api/models/{model_id}/outer-surface")
-async def outer_surface(model_id: str):
+# Sync `def`, NOT `async def`, and deliberately so. This is CPU-bound work --
+# a mesh walk, a Barrowman sweep, a 6-DOF flight solve -- and an `async def`
+# route runs it directly ON the event loop, where it blocks every other request
+# in the process for its whole duration. That is what made `/api/health` time
+# out while one bad descent was being integrated, which made the GUI report the
+# backend as down while it was up and busy. FastAPI runs a sync `def` route in
+# a worker thread instead (`run_in_threadpool`), so the loop stays free to
+# answer. There is nothing awaited in the body; the conversion is the keyword.
+def outer_surface(model_id: str):
     """Auto-detected outer airframe faces, for the approval UI to seed from."""
     store = _load_store(_model_dir(model_id))
     try:
@@ -318,7 +334,15 @@ async def outer_surface(model_id: str):
 
 
 @app.get("/api/models/{model_id}/fins")
-async def fins(model_id: str):
+# Sync `def`, NOT `async def`, and deliberately so. This is CPU-bound work --
+# a mesh walk, a Barrowman sweep, a 6-DOF flight solve -- and an `async def`
+# route runs it directly ON the event loop, where it blocks every other request
+# in the process for its whole duration. That is what made `/api/health` time
+# out while one bad descent was being integrated, which made the GUI report the
+# backend as down while it was up and busy. FastAPI runs a sync `def` route in
+# a worker thread instead (`run_in_threadpool`), so the loop stays free to
+# answer. There is nothing awaited in the body; the conversion is the keyword.
+def fins(model_id: str):
     """Auto-detected fin faces + count, for the approval UI to seed from."""
     store = _load_store(_model_dir(model_id))
     try:
@@ -350,7 +374,15 @@ async def fins(model_id: str):
 
 
 @app.post("/api/models/{model_id}/stability")
-async def stability(model_id: str, request: StabilityRequest):
+# Sync `def`, NOT `async def`, and deliberately so. This is CPU-bound work --
+# a mesh walk, a Barrowman sweep, a 6-DOF flight solve -- and an `async def`
+# route runs it directly ON the event loop, where it blocks every other request
+# in the process for its whole duration. That is what made `/api/health` time
+# out while one bad descent was being integrated, which made the GUI report the
+# backend as down while it was up and busy. FastAPI runs a sync `def` route in
+# a worker thread instead (`run_in_threadpool`), so the loop stays free to
+# answer. There is nothing awaited in the body; the conversion is the keyword.
+def stability(model_id: str, request: StabilityRequest):
     """CG, CoP and static margin from an approved outer-surface selection."""
     model_dir = _model_dir(model_id)
     store = _load_store(model_dir)
@@ -423,7 +455,15 @@ async def stability(model_id: str, request: StabilityRequest):
 
 
 @app.post("/api/models/{model_id}/flight")
-async def flight(model_id: str, request: StabilityRequest):
+# Sync `def`, NOT `async def`, and deliberately so. This is CPU-bound work --
+# a mesh walk, a Barrowman sweep, a 6-DOF flight solve -- and an `async def`
+# route runs it directly ON the event loop, where it blocks every other request
+# in the process for its whole duration. That is what made `/api/health` time
+# out while one bad descent was being integrated, which made the GUI report the
+# backend as down while it was up and busy. FastAPI runs a sync `def` route in
+# a worker thread instead (`run_in_threadpool`), so the loop stays free to
+# answer. There is nothing awaited in the body; the conversion is the keyword.
+def flight(model_id: str, request: StabilityRequest):
     """Ascent flight profile (altitude/velocity/acceleration + static margin over time).
 
     A motor is required. 1-DOF, thrust minus weight, no drag yet (see aero/flight.py), so the
@@ -514,7 +554,15 @@ async def flight(model_id: str, request: StabilityRequest):
 
 
 @app.post("/api/models/{model_id}/flight-dynamics")
-async def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
+# Sync `def`, NOT `async def`, and deliberately so. This is CPU-bound work --
+# a mesh walk, a Barrowman sweep, a 6-DOF flight solve -- and an `async def`
+# route runs it directly ON the event loop, where it blocks every other request
+# in the process for its whole duration. That is what made `/api/health` time
+# out while one bad descent was being integrated, which made the GUI report the
+# backend as down while it was up and busy. FastAPI runs a sync `def` route in
+# a worker thread instead (`run_in_threadpool`), so the loop stays free to
+# answer. There is nothing awaited in the body; the conversion is the keyword.
+def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
     """6-DOF ascent via RocketPy: full trajectory, stability, loads and drift to apogee.
 
     Requires a motor and the optional ``rocketpy`` dependency. Aero uses native

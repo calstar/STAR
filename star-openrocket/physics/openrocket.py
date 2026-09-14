@@ -56,6 +56,7 @@ from t=0 if you want the other bound.
 import heapq
 import math
 
+from physics.budget import checkpoint
 from physics.devices import airframe_band
 
 # --- AbstractSimulationStepper / AbstractEulerStepper ------------------------
@@ -422,6 +423,11 @@ def simulate(config, latitude=None, CdS_coast=None, t_max=T_MAX,
     landed = False
     guard = 0
     while not landed and t < t_max:
+        # The existing guard is 200,000 iterations of pure Python, which is
+        # seconds of wall time on its own. This bounds it by the request's
+        # budget as well.
+        if not guard & 0x3FF:
+            checkpoint("the OpenRocket-port descent")
         guard += 1
         if guard > 200000:
             warnings.append("event loop exceeded its budget; aborting")

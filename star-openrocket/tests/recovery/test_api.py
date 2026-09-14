@@ -7,6 +7,7 @@ mode, because nothing else looks at field names.
 """
 
 import json
+import time
 import math
 import os
 import pathlib
@@ -938,3 +939,87 @@ def test_drift_rejects_an_unrunnable_config():
     bad = _drift_body({"kind": "constant", "speed": 5.0, "direction": 0.0})
     bad["config"]["devices"][0]["CdS"] = -1.0
     assert client().post("/api/drift", json=bad).status_code == 422
+
+
+# --- no request hangs, whatever is typed into the form ----------------------
+
+
+#: path -> how that route wants a Config in its body. /api/drift nests it under
+#: "config" and the rest take it bare; getting this wrong produces a 422 that
+#: looks like the guard working when it is really the test being malformed.
+PATHOLOGICAL_ROUTES = {
+    "/api/simulate": lambda cfg: cfg,
+    "/api/simulate/both": lambda cfg: cfg,
+    "/api/sweep": lambda cfg: cfg,
+    "/api/drift": lambda cfg: {"config": cfg},
+    "/api/crosscheck": lambda cfg: cfg,
+}
+
+
+@pytest.mark.parametrize("path", sorted(PATHOLOGICAL_ROUTES))
+def test_every_physics_route_refuses_a_pathological_config_promptly(path):
+    """The test that encodes the whole promise of the guard.
+
+    A mistyped drogue (CdS 1.14e9) made /api/simulate grind for 32 s, and
+    because the GUI re-runs simulate + drift + crosscheck on every keystroke
+    the one-worker dev server had nothing left for /api/health -- so the UI
+    reported the backend as down while it was up and busy.
+
+    Asserts an UPPER bound only. Never "took at least X": that is the flaky
+    direction, and the margin here is wide enough to survive a loaded CI box.
+    """
+    raw = load_fixture()
+    raw["devices"][0]["CdS"] = 1_143_851_243.2142286
+    body = PATHOLOGICAL_ROUTES[path](raw)
+
+    t0 = time.time()
+    with client() as c:
+        res = c.post(path, json=body)
+    elapsed = time.time() - t0
+
+    assert res.status_code == 422, (
+        "%s answered %d for a canopy of a billion square metres" % (
+            path, res.status_code)
+    )
+    assert elapsed < 20.0, "%s took %.1f s to refuse" % (path, elapsed)
+
+
+# There is deliberately no HTTP test for "a descent too long to sample": with
+# `H_A_MAX` in place there is no longer a config the schema accepts that can
+# produce one. The cap still exists as a backstop for callers that bypass
+# validation, and `test_solver.py` tests it there -- which is the only place it
+# can now be reached from.
+
+
+def test_the_canonical_config_still_answers_on_every_route():
+    """Guards all of the above from being a guard that refuses everything."""
+    raw = load_fixture()
+    with client() as c:
+        for path, shape in PATHOLOGICAL_ROUTES.items():
+            assert c.post(path, json=shape(raw)).status_code == 200, path
+
+
+#: The routes that can serve a 120 km flight. /api/sweep is excluded because it
+#: is 32 of these descents and legitimately costs minutes -- the budget refuses
+#: it, correctly, saying so. /api/crosscheck is excluded because it compares
+#: against a spreadsheet that only models the troposphere and stops at 44 km.
+#: Both refusals are answers about the request, not failures of the guard.
+HIGH_ALTITUDE_ROUTES = ["/api/simulate", "/api/simulate/both", "/api/drift"]
+
+
+@pytest.mark.parametrize("path", HIGH_ALTITUDE_ROUTES)
+def test_a_real_high_altitude_flight_is_not_refused(path):
+    """The half of the guard that keeps it honest.
+
+    FAR hosts declared 100 km attempts. A 120 km apogee recovered the normal
+    way -- drogue at apogee, main down low -- must still compute, or the bounds
+    are refusing the users rather than the typos. Its worst off-nominal case is
+    a 43-minute descent under both canopies, and that has to come back with an
+    answer.
+    """
+    raw = load_fixture()
+    raw["vehicle"]["h_a"] = 120_000.0
+    with client() as c:
+        res = c.post(path, json=PATHOLOGICAL_ROUTES[path](raw))
+    assert res.status_code == 200, "%s answered %d for a real 120 km flight" % (
+        path, res.status_code)

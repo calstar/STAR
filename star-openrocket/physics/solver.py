@@ -25,12 +25,18 @@ import math
 import numpy as np
 from scipy.integrate import solve_ivp
 
+from physics.budget import checkpoint
 from physics.devices import CdS_of, CdS_total, DeviceState, airframe_band
 from physics.dynamics import make_deriv
 from physics.schema import TriggerKind
 from physics.wind import WindProfile
 
-T_MAX = 100000.0  # s; a run that reaches this has not converged
+# s; a run that reaches this has not converged. 20,000 s is 5.5 hours of
+# descent: a 120 km apogee under a drogue at 30 m/s is ~4,000 s, so this keeps
+# 5x headroom over the most extreme legitimate case. It used to be 100,000 --
+# 27.8 hours -- which recovers nothing and, because `_resample` grids the whole
+# descent at 5 ms, entitled one run to twenty million samples.
+T_MAX = 20000.0
 RTOL = 1e-8
 ATOL = 1e-10
 
@@ -53,8 +59,37 @@ ATOL = 1e-10
 #: genuinely stiff but real configuration still runs. What it refuses is the
 #: configuration that has no descent to find, and it refuses it as a 422
 #: naming the field, which is an answer about the config rather than a hang.
-DERIV_BUDGET = 150_000
+DERIV_BUDGET = 50_000
 LOAD_DT = 0.005  # s; §8.1 requires <= 5 ms sampling for the tension peak
+
+#: Load samples one descent may need, across all segments.
+#:
+#: This is the bound `DERIV_BUDGET` cannot supply and a compute budget cannot
+#: enforce. RK45 takes LARGE steps on a smooth trajectory, so a descent can be
+#: absurdly long and still cost few derivative evaluations: `h_a = 1e9` ran for
+#: 428 SECONDS and returned success, having passed the evaluation budget and
+#: then built its load grid. The cost is not in the integration at all, it is
+#: here -- `np.linspace` plus `seg.sol(grid)` plus four Python-level callables
+#: per sample -- and it is a handful of single C calls that nothing can
+#: interrupt once entered. The only place to stop it is before the allocation.
+#:
+#: Sized from the worst LEGITIMATE case, measured rather than guessed. The
+#: binding one is `simultaneous` -- both canopies opening at apogee -- and it
+#: saturates with altitude, because above ~30 km the air is too thin to slow
+#: anything: 92k samples from 3 km, 452k from 30 km, and still only 518k from
+#: 120 km. So a million covers every configuration the field bounds permit,
+#: with ~2x headroom over the most extreme, while the pathological `h_a = 1e9`
+#: that started this needs four million and is still refused.
+#:
+#: (An earlier draft used 250,000, which looked generous against the worked
+#: example's 24,000 and quietly refused a real 10 km flight's off-nominal
+#: case. The headroom has to be measured against the worst case somebody might
+#: legitimately ask for, not against the nominal one.)
+#:
+#: Cost at the cap: seven float64 arrays, ~56 MB, and four Python-level
+#: callables per sample. Both this and T_MAX are needed -- T_MAX alone still
+#: permits four million.
+MAX_LOAD_SAMPLES = 1_000_000
 
 TRIGGER = "trigger"
 LINE_STRETCH = "line_stretch"
@@ -135,12 +170,18 @@ def _budgeted(deriv, label=""):
 
     def counted(t_, y_):
         n[0] += 1
+        # Every 1024th call: a clock read is ~50 ns against a ~4 us derivative,
+        # so gating it makes the request budget free while still giving ~4 ms
+        # granularity. `checkpoint` is itself a no-op when nothing installed a
+        # budget, which is the library and CLI case.
+        if not n[0] & 0x3FF:
+            checkpoint("the descent integration")
         if n[0] > DERIV_BUDGET:
             where = f" in the {label} case" if label else ""
             raise ValueError(
                 f"this configuration did not converge to a descent within "
                 f"{DERIV_BUDGET:,} derivative evaluations{where}. That is "
-                f"~90x a normal run, so the inputs are almost certainly not "
+                f"~30x a normal run, so the inputs are almost certainly not "
                 f"physical -- check the canopy sizes (CdS, D0), the vehicle "
                 f"mass and the deployment altitudes."
             )
@@ -250,6 +291,7 @@ def integrate(config, which="axial", devices=None, atm=None, label="",
             warnings.append("event loop exceeded its segment budget; aborting")
             break
 
+        checkpoint("the descent integration")
         settle(t, y)
 
         # --- assemble the three event classes ------------------------------
@@ -360,11 +402,38 @@ def _resample(segments, devices, states, m, m_b, CdS_body, atm, wind):
     segments, because `CdS_of` returns 0 for any t before that device's line
     stretch. There is no need to replay the state machine.
     """
+    # Count first, allocate second. Every line below this is a C call over the
+    # whole grid, and none of them can be interrupted once entered -- so a
+    # descent that would need twenty million samples has to be refused here,
+    # while the cost is still a loop over a handful of segments. See
+    # MAX_LOAD_SAMPLES for the run that made this necessary.
+    wanted = 0
+    for seg in segments:
+        t0, t1 = float(seg.t[0]), float(seg.t[-1])
+        if t1 <= t0:
+            continue
+        wanted += max(2, int(np.ceil((t1 - t0) / LOAD_DT)) + 1)
+    if wanted > MAX_LOAD_SAMPLES:
+        # Refused, NOT coarsened. §8.1 requires <= 5 ms sampling for the tension
+        # peak and the whole load report rests on it, so a grid this run cannot
+        # afford is a run this model cannot answer -- quietly widening the step
+        # would keep reporting a peak while removing the guarantee that it is
+        # the peak. And the configurations that reach this are not near misses:
+        # they describe a descent lasting hours.
+        raise ValueError(
+            "this descent needs %s load samples at %g s, over the limit of "
+            "%s. It lasts %.0f s, which is not a recovery event -- check the "
+            "apogee, the canopy sizes (CdS, D0) and the vehicle mass."
+            % (format(wanted, ","), LOAD_DT, format(MAX_LOAD_SAMPLES, ","),
+               float(segments[-1].t[-1]) if segments else 0.0)
+        )
+
     ts, zs, vs, xs, ys, vxs, vys = [], [], [], [], [], [], []
     for seg in segments:
         t0, t1 = float(seg.t[0]), float(seg.t[-1])
         if t1 <= t0:
             continue
+        checkpoint("sampling the descent for loads")
         n = max(2, int(np.ceil((t1 - t0) / LOAD_DT)) + 1)
         grid = np.linspace(t0, t1, n)
         y = seg.sol(grid)
@@ -389,12 +458,17 @@ def _resample(segments, devices, states, m, m_b, CdS_body, atm, wind):
     t, z, v = t[keep], z[keep], v[keep]
     x, vx, y_pos, vy = x[keep], vx[keep], y_pos[keep], vy[keep]
 
+    # Four Python-level callables, once per sample each. At the cap that is a
+    # million calls, so the budget gets a look between them.
+    checkpoint("evaluating loads")
     CdS = np.array([CdS_total(devices, states, ti, CdS_body) for ti in t])
+    checkpoint("evaluating loads")
     rho_g = np.array([atm.rho_g(zi) for zi in z])
     rho, g = rho_g[:, 0], rho_g[:, 1]
 
     # Resultant air-relative speed drives the drag (|v_rel|=|v| when windless and
     # straight-down, so a/F_T are unchanged in the 1-D case).
+    checkpoint("evaluating loads")
     u = np.array([wind.u(zi) for zi in z])
     w = np.array([wind.v(zi) for zi in z])
     v_rel = np.sqrt((vx - u) ** 2 + (vy - w) ** 2 + v * v)

@@ -291,3 +291,49 @@ def test_the_budget_leaves_a_real_configuration_far_from_the_cap():
         f"the canonical run costs {calls[0]:,} evaluations against a budget "
         f"of {solver.DERIV_BUDGET:,} -- less than 10x headroom"
     )
+
+
+# --- the load-sample cap ---------------------------------------------------
+
+
+def test_a_descent_needing_too_many_load_samples_is_refused():
+    """The backstop for anything that reaches the solver around the schema.
+
+    The measured failure: `h_a = 1e9` ran for 428 SECONDS and returned success.
+    RK45 takes large steps on a smooth trajectory, so it passed the evaluation
+    budget and then built a four-million-sample load grid -- and that grid is a
+    handful of single C calls that nothing can interrupt once entered, so it
+    has to be refused before the allocation.
+
+    `H_A_MAX` now refuses that apogee at the schema, earlier and with a better
+    message, so this cap is no longer reachable over HTTP. It is reachable
+    exactly the way the corner sweep used to reach past `CDS_MAX`: pydantic
+    does not validate assignment, so anything that mutates a built Config --
+    a script, a notebook, `cases.sweep` before it re-validated -- lands here
+    with no field check at all. That is the layer this guards, so that is how
+    it is tested.
+    """
+    cfg = load_config()
+    cfg.vehicle.h_a = 1e9          # exactly what setattr still permits
+    with pytest.raises(ValueError, match="load samples"):
+        integrate(cfg, "axial")
+
+
+def test_the_canonical_run_is_far_under_the_sample_cap():
+    """Guards the cap being set too low -- it must never refuse a real descent."""
+    from physics.solver import LOAD_DT, MAX_LOAD_SAMPLES
+
+    run = integrate(load_config(), "axial")
+    used = run.t_ground / LOAD_DT
+    assert used < MAX_LOAD_SAMPLES / 5, (
+        "the worked example needs %.0f samples against a cap of %s -- under 5x "
+        "headroom" % (used, format(MAX_LOAD_SAMPLES, ","))
+    )
+
+
+def test_t_max_still_covers_the_slowest_descent_anyone_would_fly():
+    """Guards the T_MAX reduction from 100,000 s. A 120 km apogee coming down
+    under drogue alone at ~30 m/s is ~4,000 s."""
+    from physics.solver import T_MAX
+
+    assert T_MAX >= 5.0 * 4_000.0
