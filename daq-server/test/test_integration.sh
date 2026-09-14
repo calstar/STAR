@@ -65,6 +65,28 @@ TEST_CONFIG="$REPO_ROOT/.tmp/integration_config_$$.toml"
 UDP_COMMANDS_FILE="$REPO_ROOT/.tmp/udp_commands_$$.json"
 SIM_STATS_FILE="$REPO_ROOT/.tmp/sim_stats_$$.json"
 
+# Where operator state this run displaces is parked so cleanup can put it back. Nothing outside
+# .tmp/ is ever deleted by this script; things that live elsewhere are MOVED here and restored.
+STASH_DIR="$REPO_ROOT/.tmp/integration_stash_$$"
+
+# The live operator cubic store. This run needs it absent (see the calibration section for why),
+# and on 2026-09-07 deleting it outright cost a day of calibration that only survived because
+# someone happened to have a manual copy. It is moved into STASH_DIR instead and restored on exit.
+CUBIC_STORE="$REPO_ROOT/scripts/calibration/calibrations/cubic_calibration.json"
+
+# Delete only inside .tmp/. Every rm in this script goes through here so a path that came out
+# empty — REPO_ROOT unset, a variable renamed — cannot expand into something outside the scratch
+# directory. Refuses rather than guesses.
+tmp_rm() {
+  local p
+  for p in "$@"; do
+    case "$p" in
+      "$REPO_ROOT"/.tmp/?*) rm -rf "$p" 2>/dev/null || true ;;
+      *) echo "  ⚠️  refusing to delete outside .tmp/: '$p'" >&2 ;;
+    esac
+  done
+}
+
 # PIDs to clean up
 PIDS=()
 
@@ -136,15 +158,21 @@ cleanup() {
     cp "$REPO_ROOT/.tmp/integration_"*"_$$.log" /tmp/integration_logs/ 2>/dev/null || true
     echo "  (INTEGRATION_SAVE_LOGS: copied integration_*.log to /tmp/integration_logs/)"
   fi
-  rm -rf "$TEST_DB_PATH" 2>/dev/null || true
-  rm -f "$TEST_CONFIG" 2>/dev/null || true
-  rm -f "$REPO_ROOT"/.tmp/integration_transitions_*.csv "$REPO_ROOT"/.tmp/integration_actuators_*.csv "$REPO_ROOT"/.tmp/integration_delays_*.csv 2>/dev/null || true
-  # The dynamic state's script. Named rather than rm -rf'd on a variable that could be empty.
-  rm -f "$REPO_ROOT/.tmp/scripts/integration.script" 2>/dev/null || true
-  rmdir "$REPO_ROOT/.tmp/scripts" 2>/dev/null || true
-  rm -f "$UDP_COMMANDS_FILE" 2>/dev/null || true
-  rm -f "$SIM_STATS_FILE" "$SIM_STATS_FILE.tmp" 2>/dev/null || true
-  rm -f "$REPO_ROOT/.tmp/integration_adjustments_$$.json" 2>/dev/null || true
+  # Put back anything this run displaced, BEFORE clearing the scratch directory it is stashed in.
+  # First, so an error in the deletions below cannot strand the operator's calibration in .tmp.
+  if [ -f "$STASH_DIR/cubic_calibration.json" ]; then
+    mkdir -p "$(dirname "$CUBIC_STORE")"
+    mv -f "$STASH_DIR/cubic_calibration.json" "$CUBIC_STORE" \
+      && echo "  📦 restored the operator cubic store" \
+      || echo "  ⚠️  COULD NOT restore the cubic store — it is at $STASH_DIR/cubic_calibration.json"
+  fi
+
+  tmp_rm "$TEST_DB_PATH" "$TEST_CONFIG" "$UDP_COMMANDS_FILE" "$SIM_STATS_FILE" \
+         "$SIM_STATS_FILE.tmp" "$REPO_ROOT/.tmp/integration_adjustments_$$.json" \
+         "$REPO_ROOT/.tmp/scripts" "$STASH_DIR"
+  tmp_rm "$REPO_ROOT"/.tmp/integration_transitions_*.csv \
+         "$REPO_ROOT"/.tmp/integration_actuators_*.csv \
+         "$REPO_ROOT"/.tmp/integration_delays_*.csv
   echo "✅ Cleanup done"
 }
 
@@ -500,10 +528,12 @@ SCRIPT_OPEN_MS=900
 SCRIPT_VALVE='Fuel Vent'
 # The sequencer resolves a script as <dirname(config)>/scripts/<script_file>, so it has to sit
 # beside TEST_CONFIG in .tmp rather than in the profile the deploy copied from.
-SCRIPT_DIR="$REPO_ROOT/.tmp/scripts"
+# NOT "SCRIPT_DIR" — that is already this file's own test/ directory (line 47), and shadowing it
+# sent the tsx runner looking for ws_data_flow_test.ts inside .tmp.
+STATE_SCRIPT_DIR="$REPO_ROOT/.tmp/scripts"
 SCRIPT_OPEN_S=$(python3 -c "print($SCRIPT_OPEN_MS/1000)")
-mkdir -p "$SCRIPT_DIR"
-cat > "$SCRIPT_DIR/integration.script" <<EOF
+mkdir -p "$STATE_SCRIPT_DIR"
+cat > "$STATE_SCRIPT_DIR/integration.script" <<EOF
 open_valve(FUEL_VENT)
 delay($SCRIPT_OPEN_S)
 close_valve(FUEL_VENT)
@@ -644,7 +674,7 @@ kill_stale_integration_processes "Pre-flight"
 # ── Start Elodin DB ──────────────────────────────────────────────────────────
 
 echo "📊 Starting Elodin DB..."
-rm -rf "$TEST_DB_PATH" 2>/dev/null || true
+tmp_rm "$TEST_DB_PATH"
 RUST_LOG=debug "$ELODIN_DB_BIN" run "[::]:$TEST_ELODIN_PORT" "$TEST_DB_PATH" > "$REPO_ROOT/.tmp/integration_elodin_$$.log" 2>&1 &
 PIDS+=($!)
 
@@ -778,11 +808,20 @@ if [ -n "$CALIB_SVC" ]; then
   # the service persists it on shutdown, so without isolation that offset survives into the next run
   # and breaks cal_values (which expects pristine factory). A missing file just seeds from factory.
   CAL_ADJ="$REPO_ROOT/.tmp/integration_adjustments_$$.json"
-  rm -f "$CAL_ADJ" 2>/dev/null || true
+  tmp_rm "$CAL_ADJ"
   # Start from a clean operator-cubic store (physics-or-nothing: uncalibrated cubic reads 0), the way
   # a fresh checkout does — otherwise a stale cubic_calibration.json from a prior local run would
   # carry captured cubics into this run. The service regenerates it at startup.
-  rm -f "$REPO_ROOT/scripts/calibration/calibrations/cubic_calibration.json" 2>/dev/null || true
+  #
+  # MOVED, not deleted. What this run needs is the file ABSENT, which a move achieves identically —
+  # and on 2026-09-07 deleting it outright cost a day of operator calibration, recovered only
+  # because a manual copy happened to exist. cleanup() puts it back, including when the run fails
+  # or is interrupted, because the trap covers both.
+  if [ -f "$CUBIC_STORE" ]; then
+    mkdir -p "$STASH_DIR"
+    mv "$CUBIC_STORE" "$STASH_DIR/cubic_calibration.json"
+    echo "  📦 parked the operator cubic store in .tmp (restored on exit)"
+  fi
   (cd "$REPO_ROOT" && "$CALIB_SVC" --config "$TEST_CONFIG" --adjustments "$CAL_ADJ" \
     --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
     > "$REPO_ROOT/.tmp/integration_calibration_$$.log" 2>&1) &
@@ -861,7 +900,7 @@ open('$BAD_UDP','w').write(str(n))
     echo "  ❌ controller emitted $BAD_PWM_COUNT PWM packet(s) despite an unassigned output"
     UDP_CHECK_FAILED=1
   fi
-  rm -f "$BAD_CFG" "$BAD_UDP"
+  tmp_rm "$BAD_CFG" "$BAD_UDP"
 fi
 
 # ── Start Controller Service ─────────────────────────────────────────────────
@@ -1011,7 +1050,7 @@ if [ -n "$SEQ_SVC" ]; then
   kill "$UDP_PID" 2>/dev/null || true
 fi
 
-rm -f "$RECEIVED_STATS_FILE" 2>/dev/null || true
+tmp_rm "$RECEIVED_STATS_FILE"
 
 # Elodin State Sync is asserted inside ws_data_flow_test.ts (Test 6 + /stats); no duplicate line here.
 
