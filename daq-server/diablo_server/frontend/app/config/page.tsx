@@ -327,6 +327,112 @@ const ptTypeOf = (board: any): string => {
  * running config; `warn` = a mismatch worth fixing. One look for all of them.
  */
 /**
+ * What a script may say, and — for this rig — what it may name.
+ *
+ * `fixed inset-0` with flex centring, so it lands in the middle of the VIEWPORT rather than
+ * wherever the config page happens to be scrolled to. The config page is long; an inline panel
+ * would open somewhere off-screen.
+ *
+ * The name lists come from the config being edited rather than being hardcoded, so this doubles as
+ * "what can I actually write here" — which is the question an operator has, and the one a static
+ * grammar reference does not answer.
+ */
+function ScriptReference({
+  tables, onClose,
+}: {
+  tables: { actuators: Set<string>; sensors: Set<string>; states: Set<string>; allowedTransitions: Set<string> };
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const Row = ({ call, what }: { call: string; what: string }) => (
+    <div className="grid grid-cols-[minmax(0,15rem)_1fr] gap-3 py-1 items-baseline">
+      <code className="font-mono text-purple-300 text-sm break-words">{call}</code>
+      <span className="text-sm text-gray-300">{what}</span>
+    </div>
+  );
+
+  const Names = ({ label, set, empty }: { label: string; set: Set<string>; empty: string }) => (
+    <div className="mb-3">
+      <div className="text-sm text-gray-400 mb-1">{label}</div>
+      {set.size === 0
+        ? <div className="text-sm text-amber-300">{empty}</div>
+        : <div className="flex flex-wrap gap-1">
+            {[...set].sort().map((n) => (
+              <code key={n} className="font-mono text-xs bg-gray-800 text-gray-200 px-1.5 py-0.5 rounded">{n}</code>
+            ))}
+          </div>}
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+         onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-3xl max-h-[85vh] flex flex-col"
+           onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700 shrink-0">
+          <h3 className="font-semibold text-white">Script reference</h3>
+          <button onClick={onClose}
+                  className="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 text-sm text-white">
+            Close
+          </button>
+        </div>
+
+        <div className="overflow-auto px-5 py-4 space-y-5">
+          <section>
+            <h4 className="text-white font-semibold mb-2">Commands</h4>
+            <Row call="open_valve(VALVE)" what="Open a valve, and keep it open." />
+            <Row call="close_valve(VALVE)" what="Close a valve, and keep it closed." />
+            <Row call="delay(seconds)" what="Wait. Accepts a decimal, e.g. delay(0.2)." />
+            <Row call="transition_to(STATE)" what="Leave for another state. Ends the script immediately." />
+          </section>
+
+          <section>
+            <h4 className="text-white font-semibold mb-2">Values</h4>
+            <Row call="pressure(SENSOR)" what="Live calibrated pressure in PSI. Fails the script if the reading is stale or uncalibrated." />
+            <Row call="elapsed()" what="Seconds since this state was entered." />
+            <Row call="x = 0.9 * pressure(P)" what="Variables hold numbers. Assign before use." />
+          </section>
+
+          <section>
+            <h4 className="text-white font-semibold mb-2">Structure</h4>
+            <Row call="if cond:" what="Also elif and else. Indent the body." />
+            <Row call="while cond:" what="Repeats. The body must contain a delay()." />
+            <Row call="# comment" what="To end of line." />
+            <div className="mt-2 text-sm text-gray-300 space-y-1">
+              <p>Comparisons: <code className="font-mono text-purple-300">&lt; &lt;= &gt; &gt;= == !=</code> — one per condition; combine with <code className="font-mono text-purple-300">and</code>, <code className="font-mono text-purple-300">or</code>, <code className="font-mono text-purple-300">not</code>.</p>
+              <p>Arithmetic: <code className="font-mono text-purple-300">+ - * /</code> and parentheses.</p>
+              <p>Indent with spaces, consistently. Tabs are refused, and so is <code className="font-mono text-purple-300">a &lt; b &lt; c</code> — write <code className="font-mono text-purple-300">(a &lt; b) and (b &lt; c)</code>.</p>
+              <p>Names are bare and uppercase: <code className="font-mono text-purple-300">open_valve(FUEL_VENT)</code>, never <code className="font-mono text-purple-300">&quot;Fuel Vent&quot;</code>.</p>
+            </div>
+          </section>
+
+          <section>
+            <h4 className="text-white font-semibold mb-2">Names you can use here</h4>
+            <p className="text-sm text-gray-400 mb-3">
+              From this config. The same name can mean different things in different slots — a valve
+              in <code className="font-mono text-purple-300">open_valve(…)</code> and a state in{' '}
+              <code className="font-mono text-purple-300">transition_to(…)</code> — so what a name
+              means is decided by where it sits.
+            </p>
+            <Names label="Valves — open_valve / close_valve" set={tables.actuators}
+                   empty="No actuator roles are configured." />
+            <Names label="Sensors — pressure()" set={tables.sensors}
+                   empty="No PT sensor roles are configured." />
+            <Names label="States — transition_to()" set={tables.allowedTransitions}
+                   empty="This state cannot reach any other state — check its row in the Transitions table." />
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * The dynamic-state script editor.
  *
  * This is the first multi-line text input in the app — there is no Monaco, CodeMirror or Ace in
@@ -357,6 +463,7 @@ function ScriptEditor({
 }) {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const gutterRef = useRef<HTMLDivElement | null>(null);
+  const [showReference, setShowReference] = useState(false);
   const lines = source.split('\n');
 
   // Debounced, so the backend is not spawned on every keystroke.
@@ -371,6 +478,35 @@ function ScriptEditor({
     ...nameIssues.map((i) => ({ ...i, kind: 'name' as const })),
     ...syntax.map((i) => ({ ...i, kind: 'syntax' as const })),
   ].sort((a, b) => a.line - b.line);
+
+  /**
+   * Placeholder for an empty script.
+   *
+   * Every line is a COMMENT. A greyed-out block of valid-looking script reads as something already
+   * written — the operator's eye sees `open_valve(...)` in a monospace box and moves on, and the
+   * only tell is the colour. Commented out, it cannot be mistaken for content, and it is inert
+   * even if someone selects and pastes it.
+   *
+   * The example uses names from the config actually being edited, so it is worth copying rather
+   * than an illustration of a rig that may not exist. Falls back to generic placeholders only when
+   * the tables are empty.
+   */
+  const placeholderScript = (() => {
+    const valve = [...tables.actuators][0] ?? 'VENT_VALVE';
+    const target = [...tables.allowedTransitions][0] ?? [...tables.states][0] ?? 'IDLE';
+    return [
+      '# This script is empty. Write it here — every line below is a comment.',
+      '#',
+      '# Open a valve for half a second, then leave:',
+      `#   open_valve(${valve})`,
+      '#   delay(0.5)',
+      `#   close_valve(${valve})`,
+      `#   transition_to(${target})`,
+      '#',
+      '# Also available: if / elif / else, while, variables, pressure(SENSOR), elapsed().',
+      '# Names are bare and uppercase — no quotes.',
+    ].join('\n');
+  })();
 
   /** Everything the script commands, derived from what it names. Under the layered model, the
    *  dangerous case is a valve the operator EXPECTED to see here and does not. */
@@ -392,15 +528,31 @@ function ScriptEditor({
   return (
     <div>
       <div>
-        <p className="text-xs text-text-muted mb-2">
-          Runs on entry, after <strong>{state.name}</strong>&rsquo;s Actuators column has put every
-          valve in a defined position. Valves the script does not name keep that position.
-        </p>
+        {/* text-gray-300, not text-text-muted: that token is #888888, which lands around 4:1 on
+            this panel — under AA for normal text, and this is prose people actually need to read
+            rather than a label beside a control they can already see. */}
+        <div className="flex items-start justify-between gap-4 mb-3">
+          <p className="text-sm text-gray-300 leading-relaxed">
+            Runs on entry, after <strong className="text-white">{state.name}</strong>&rsquo;s
+            Actuators column has put every valve in a defined position. Valves the script does not
+            name keep that position.
+          </p>
+          <button
+            onClick={() => setShowReference(true)}
+            className="shrink-0 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm text-white"
+          >
+            What can I write?
+          </button>
+        </div>
+
+        {showReference && (
+          <ScriptReference tables={tables} onClose={() => setShowReference(false)} />
+        )}
 
         <div className="space-y-3">
           <div className="flex gap-3 flex-wrap">
             <label className="text-sm">
-              <div className="text-text-muted mb-1">Timeout (ms)</div>
+              <div className="text-gray-300 mb-1">Timeout (ms)</div>
               <input
                 type="number"
                 value={state.script_timeout_ms ?? 0}
@@ -414,7 +566,7 @@ function ScriptEditor({
               ['script_timeout_target', 'When the timeout fires'],
             ] as const).map(([key, label]) => (
               <label key={key} className="text-sm">
-                <div className="text-text-muted mb-1">{label}</div>
+                <div className="text-gray-300 mb-1">{label}</div>
                 {/* A select of real states, never free text — and targets the Transitions table
                     forbids are disabled, so a refusal the sequencer would raise at load cannot be
                     authored here in the first place. */}
@@ -467,7 +619,7 @@ function ScriptEditor({
               spellCheck={false}
               disabled={!canEdit}
               rows={14}
-              placeholder={'open_valve(GSE_HIGH_PRESS_VENT)\ndelay(0.5)\nclose_valve(GSE_HIGH_PRESS_VENT)\ntransition_to(PRESS_STANDBY)'}
+              placeholder={placeholderScript}
               className="flex-1 font-mono text-sm bg-gray-950 text-gray-100 p-2 outline-none resize-y"
               style={{ lineHeight: '1.5rem' }}
             />
@@ -487,13 +639,28 @@ function ScriptEditor({
             <p className="text-xs text-emerald-400">No problems found.</p>
           ) : null}
 
-          <div className="text-xs text-text-muted border-t border-gray-800 pt-2">
-            <div><strong className="text-gray-300">Commands</strong>: {commanded.length ? commanded.join(', ') : 'none'}</div>
-            <div><strong className="text-gray-300">Reads</strong>: {read.length ? read.join(', ') : 'none'}</div>
-            <p className="mt-1">
-              Untick <strong>Dynamic</strong> in the table above to make this an ordinary state again.
-            </p>
-          </div>
+          {/* Only once the script actually names something. On an empty script this was two lines
+              of "none", which reads as a broken widget rather than an empty summary — and there is
+              nothing to summarise until there is a script. */}
+          {(commanded.length > 0 || read.length > 0) && (
+            <div className="text-sm text-gray-300 border-t border-gray-700 pt-3 space-y-1">
+              {commanded.length > 0 && (
+                <div>
+                  <span className="text-gray-400">Valves this script commands: </span>
+                  <span className="font-mono text-white">{commanded.join(', ')}</span>
+                </div>
+              )}
+              {read.length > 0 && (
+                <div>
+                  <span className="text-gray-400">Sensors it reads: </span>
+                  <span className="font-mono text-white">{read.join(', ')}</span>
+                </div>
+              )}
+              <p className="text-gray-400 pt-1">
+                Every other valve keeps the position {state.name}&rsquo;s Actuators column gives it.
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -3056,17 +3223,17 @@ export default function ConfigPage() {
                     >
                       <span className="font-semibold text-white">
                         Dynamic state scripts
-                        <span className="ml-2 text-xs font-normal text-text-muted">
+                        <span className="ml-2 text-xs font-normal text-gray-400">
                           {dynamicStates.length} state{dynamicStates.length === 1 ? '' : 's'}
                         </span>
                       </span>
-                      <span className="text-text-muted text-sm">{scriptsOpen ? '\u25be' : '\u25b8'}</span>
+                      <span className="text-gray-400 text-sm">{scriptsOpen ? '\u25be' : '\u25b8'}</span>
                     </button>
 
                     {scriptsOpen && (
                       <div className="px-4 pb-4 space-y-3 border-t border-gray-700 pt-3">
                         <label className="flex items-center gap-2 text-sm flex-wrap">
-                          <span className="text-text-muted">Script for</span>
+                          <span className="text-gray-300">Script for</span>
                           <select
                             value={String(st.id ?? '')}
                             onChange={(e) => setScriptPanelStateId(Number(e.target.value))}
@@ -3076,7 +3243,7 @@ export default function ConfigPage() {
                               <option key={s.id} value={String(s.id ?? '')}>{s.name}</option>
                             ))}
                           </select>
-                          <span className="text-xs text-text-muted font-mono">{file}</span>
+                          <span className="text-xs text-gray-400 font-mono">{file}</span>
                         </label>
 
                         <ScriptEditor
