@@ -10,9 +10,10 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from 'recharts';
-import { getChamberGeometry } from '../api/client';
+import { getChamberGeometry, getConfig } from '../api/client';
 import type { ChamberGeometryResponse, EngineConfig } from '../api/client';
 import { ChamberContourPlot } from './ChamberContourPlot';
+import { InjectorPatternPlot } from './InjectorPatternPlot';
 import { ChamberThermalGraphic } from './ChamberThermalGraphic';
 import { useViewState } from '../lib/viewState';
 
@@ -23,21 +24,84 @@ interface ChamberGeometryProps {
 // Convert m to mm for display
 const M_TO_MM = 1000;
 
+/** Requirement values arrive as `unknown` and are frequently null. */
+function num(v: unknown): number {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : 0;
+}
+
 
 export function ChamberGeometry({ config }: ChamberGeometryProps) {
   const [geometry, setGeometry] = useState<ChamberGeometryResponse | null>(null);
+  // The LIVE backend config, refetched alongside the geometry.
+  //
+  // The `config` PROP is App-level state: set once on mount and again when the user edits it
+  // in this app. It does NOT track what the backend holds. /api/geometry does. So after a
+  // Layer 1 run the chamber panel showed the optimised engine (127.0 mm bore, 48.9 mm throat)
+  // while the injector pattern right above it still drew the pre-run element ring
+  // (20 x 2.000 mm on a 38.20 mm circle) -- two different engines on one screen, and the
+  // injector was the stale one every time anybody optimised anything.
+  const [liveConfig, setLiveConfig] = useState<EngineConfig | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showLowerHalf, setShowLowerHalf] = useViewState('chamberGeometry.lowerHalf', true);
+
+  // Injector geometry for the pattern views. Impinging doublets only -- a pintle has no
+  // ring pair and the drawing would be meaningless.
+  const injector = useMemo(() => {
+    // Prefer what the backend actually holds; fall back to the prop before the first fetch.
+    const src = liveConfig ?? config;
+    const cfgInj = src?.injector as Record<string, unknown> | undefined;
+    if (!cfgInj || String(cfgInj.type ?? '').toLowerCase() !== 'impinging') return null;
+    const geom = cfgInj.geometry as Record<string, Record<string, number>> | undefined;
+    const ox = geom?.oxidizer;
+    const fu = geom?.fuel;
+    const cg = src?.chamber_geometry as Record<string, number> | undefined;
+    const bore = Number(cg?.chamber_diameter ?? 0);
+    if (!ox || !fu || !(bore > 0)) return null;
+    const req = src?.design_requirements as Record<string, unknown> | undefined;
+    const outboard = req?.layer1_ring_order_fuel_outboard;
+    return {
+      oxidizer: {
+        n_elements: Number(ox.n_elements), d_jet: Number(ox.d_jet),
+        impingement_angle: Number(ox.impingement_angle), spacing: Number(ox.spacing),
+      },
+      fuel: {
+        n_elements: Number(fu.n_elements), d_jet: Number(fu.d_jet),
+        impingement_angle: Number(fu.impingement_angle), spacing: Number(fu.spacing),
+      },
+      bore,
+      fuelOutboard: outboard === undefined || outboard === null ? true : Boolean(outboard),
+      // Face real-estate requirements, so the drawing dimensions what was actually asked for
+      // rather than a hardcoded house rule.
+      centerClearDiameter: num(req?.layer1_injector_center_clear_dia_m),
+      minWeb: num(req?.layer1_injector_min_web_m),
+      wallClearance: num(req?.layer1_injector_wall_clearance_m),
+      ldMin: num(req?.layer1_impingement_Ld_min) || 5,
+      ldMax: num(req?.layer1_impingement_Ld_max) || 7,
+      plateThickness: num(req?.layer1_injector_plate_thickness_m) || 0.0127,
+      counterboreDiameter: num(req?.layer1_injector_counterbore_dia_m),
+      // The orifice land is what sets Cd, and it lives on the discharge config.
+      orificeLandLOverD: num(
+        (src?.discharge as Record<string, Record<string, unknown>> | undefined)
+          ?.oxidizer?.orifice_l_over_d) || 4,
+    };
+  }, [config, liveConfig]);
 
   // Fetch geometry when component mounts or config changes
   const fetchGeometry = useCallback(async () => {
     setIsLoading(true);
     setError(null);
 
-    const result = await getChamberGeometry();
+    // Both in flight together: the contour and the config it was drawn from must be the
+    // same engine, or the panels disagree (see liveConfig above).
+    const [result, cfgResult] = await Promise.all([getChamberGeometry(), getConfig()]);
 
     setIsLoading(false);
+
+    if (cfgResult.data?.config) {
+      setLiveConfig(cfgResult.data.config);
+    }
 
     if (result.error) {
       setError(result.error);
@@ -395,6 +459,30 @@ export function ChamberGeometry({ config }: ChamberGeometryProps) {
 
       {/* CEA-Solved Chamber Contour */}
       <ChamberContourPlot geometry={geometry} />
+
+      {/* Injector pattern. Drawn from the design variables, not from /api/geometry, which
+          carries only the chamber contour. Two views because the two failure modes are
+          visible in different ones: ring overflow and orifice crowding on the face, jet
+          convergence and standoff in section. */}
+      {injector && (
+        <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
+          <h3 className="text-base font-bold text-[var(--color-text-primary)] mb-3">Injector Pattern</h3>
+          <InjectorPatternPlot
+            oxidizer={injector.oxidizer}
+            fuel={injector.fuel}
+            boreDiameter={injector.bore}
+            fuelOutboard={injector.fuelOutboard}
+            centerClearDiameter={injector.centerClearDiameter}
+            minWeb={injector.minWeb}
+            wallClearance={injector.wallClearance}
+            ldMin={injector.ldMin}
+            ldMax={injector.ldMax}
+            plateThickness={injector.plateThickness}
+            counterboreDiameter={injector.counterboreDiameter}
+            orificeLandLOverD={injector.orificeLandLOverD}
+          />
+        </div>
+      )}
 
       {/* Dimensions Table */}
       {geometry && dimensions && (
