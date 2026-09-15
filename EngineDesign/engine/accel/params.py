@@ -38,10 +38,21 @@ def _ns(**kw):
 
 
 def _discharge(c):
-    """Mirrors native_injector._fill_discharge."""
+    """Mirrors native_injector._fill_discharge.
+
+    When the config declares an orifice INLET geometry, resolve it here and hand the kernel
+    the finished Cd_inf with the diameter scaling switched OFF. The kernel has no notion of
+    inlet treatment, so passing the raw Cd_inf would leave it on the old diameter path while
+    Python used the inlet value -- a fresh Python/kernel divergence of exactly the kind that
+    the x_star evaporation split already cost this codebase 9.7% of thrust.
+    """
+    from engine.core.discharge import cd_inf_from_inlet_geometry
+    _cd_inlet = cd_inf_from_inlet_geometry(c)
+    _cd_inf = float(_cd_inlet) if _cd_inlet is not None else float(c.Cd_inf)
+    _use_geom = 0 if _cd_inlet is not None else int(bool(c.use_geometry_cd))
     return _ns(
-        Cd_inf=float(c.Cd_inf), a_Re=float(c.a_Re), Cd_min=float(c.Cd_min),
-        use_geometry_cd=int(bool(c.use_geometry_cd)),
+        Cd_inf=_cd_inf, a_Re=float(c.a_Re), Cd_min=float(c.Cd_min),
+        use_geometry_cd=_use_geom,
         d_ref_m=float(c.d_ref_m), d_min_m=float(c.d_min_m),
         cd_small_hole_exponent=float(c.cd_small_hole_exponent),
         cd_large_hole_log_gain=float(c.cd_large_hole_log_gain),

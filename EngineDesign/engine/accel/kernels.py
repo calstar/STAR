@@ -166,6 +166,38 @@ def _lefebvre(d_or, We, Oh, C, m, p):
     return C*d_or*We**(-m)*(1.0+Oh)**p
 
 @njit(cache=True)
+def _tau_evap(D32, rho_l, Lv, Tb, Tc, Pc, rho_ch, cp_g, C_ev, ev_model, K_legacy):
+    """Droplet evaporation time [s]. ONE definition, shared by every kernel site.
+
+    The kernel used to hardcode the legacy fixed-K law (tau = K*D32^2) at the impinging and
+    pintle injector-solve sites while the Python reference
+    (engine/core/injectors/impinging.py) used the DERIVED Spalding constant, which is the
+    schema default (spray.evaporation.model = "derived"). x_star gates the Cd-reduction
+    loop, so the two paths disagreed on mass flow: measured 9.7% on thrust and 8.7% on Pc
+    for a shipped config. The A/B parity suite missed it because it sweeps tank pressure at
+    fixed geometry and never diffs x_star.
+
+    Derived branch (matches _evap_k_derived on the Python side):
+        B_M  = cp_g (Tc - Tb) / Lv          Spalding mass-transfer number
+        D_v  = 2e-5 (Tc/300)^1.75 (101325/Pc)   binary diffusivity, same scaling law
+        k_ev = C_ev (8 rho_ch D_v / rho_l) ln(1 + B_M)
+        tau  = D32^2 / k_ev
+    Falls back to the legacy law when the model is off or an input is missing, so a config
+    that does not declare the derived model is bit-identical to before.
+    """
+    if D32 <= 0.0:
+        return 0.0
+    if ev_model > 0.5 and Lv > 0.0 and Tb > 0.0 and rho_l > 0.0 and Pc > 0.0 and Tc > 0.0:
+        D_v = 2.0e-5*(Tc/300.0)**1.75*(101325.0/Pc)
+        if D_v > 0.0:
+            B_M = cp_g*max(0.0, Tc - Tb)/Lv
+            k_ev = C_ev*(8.0*rho_ch*D_v/rho_l)*np.log1p(B_M)
+            if k_ev > 0.0:
+                return (D32*D32)/k_ev
+    return K_legacy*D32*D32
+
+
+@njit(cache=True)
 def _ohnesorge(mu, rho, sigma, d):
     if rho <= 0 or sigma <= 0 or d <= 0:
         return 0.0
@@ -271,7 +303,13 @@ def injector_solve(P, P_tank_O, P_tank_F, Pc):
             Oh_O = _ohnesorge(mu_O, rho_O, sig_O, djo); Oh_F = _ohnesorge(mu_F, rho_F, sig_F, djf)
             D32_O = _lefebvre(djo, weO, Oh_O, P[SP_SMDC], P[SP_SMDM], P[SP_SMDP])
             D32_F = _lefebvre(djf, weF, Oh_F, P[SP_SMDC], P[SP_SMDM], P[SP_SMDP])
-        te_O = P[SP_EVAPK]*D32_O*D32_O; te_F = P[SP_EVAPK]*D32_F*D32_F
+        # Shared with the Python reference via _tau_evap -- see its docstring. rho_gas is
+        # the chamber gas density computed above from P[SP_GASR]*P[SP_GAST].
+        _Tc_ev = P[SP_GAST]
+        te_O = _tau_evap(D32_O, rho_O, P[LAT_O], P[RHO_O_BOIL], _Tc_ev, Pc, rho_gas,
+                         P[EV_CPGAS], P[EV_CEVAP], P[EV_MODEL], P[SP_EVAPK])
+        te_F = _tau_evap(D32_F, rho_F, P[LAT_F], P[RHO_F_BOIL], _Tc_ev, Pc, rho_gas,
+                         P[EV_CPGAS], P[EV_CEVAP], P[EV_MODEL], P[SP_EVAPK])
         # x* is a TRANSPORT length, so it takes the momentum-weighted axial velocity of the
         # collided pair, not u_rel (the jet-to-jet closing speed, which belongs in the Ingebo
         # Weber number). Mirrors spray.spray_axial_velocity() on the Python path; using u_rel
@@ -414,14 +452,9 @@ def _spray_length_frac(P, Pc, Tc, rho_ch, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F
             D32 = D32_F; rho_l = P[RHO_F]; Lv = P[LAT_F]; Tb = P[RHO_F_BOIL]
         if D32 <= 0.0:
             continue
-        k_ev = 0.0
-        if P[EV_MODEL] > 0.5 and Lv > 0.0 and Tb > 0.0 and rho_l > 0.0 and D_v > 0.0:
-            B_M = cp_g*max(0.0, Tc - Tb)/Lv
-            k_ev = C_ev*(8.0*rho_ch*D_v/rho_l)*np.log1p(B_M)
-        if k_ev > 0.0:
-            tau_ev = (D32*D32)/k_ev
-        else:
-            tau_ev = P[SP_EVAPK]*D32*D32      # legacy tau = K*D32^2
+        # Same helper the injector-solve sites use, so all three cannot drift apart again.
+        tau_ev = _tau_evap(D32, rho_l, Lv, Tb, Tc, Pc, rho_ch,
+                           cp_g, C_ev, P[EV_MODEL], P[SP_EVAPK])
         xs = u_ax*tau_ev
         if xs > x_star:
             x_star = xs
@@ -803,7 +836,12 @@ def injector_solve_pintle(P, P_tank_O, P_tank_F, Pc):
         ti_F = 0.16*(Re_F**(-0.125)) if Re_F > 0 else 0.1
         ti_O = _clip(ti_O, 0.02, 0.3); ti_F = _clip(ti_F, 0.02, 0.3)
 
-        te = P[SP_EVAPK]*D32*D32
+        # Shared with the Python reference via _tau_evap. Pintle: one D32 for both streams,
+        # so price it on the FUEL properties (the evaporation-limited stream here).
+        _rho_ch = Pc/(P[SP_GASR]*P[SP_GAST]) if (P[SP_GASR] > 0.0 and P[SP_GAST] > 0.0) else 0.0
+        _rho_ch = _rho_ch if _rho_ch > 1e-6 else 1e-6
+        te = _tau_evap(D32, P[RHO_F], P[LAT_F], P[RHO_F_BOIL], P[SP_GAST], Pc, _rho_ch,
+                       P[EV_CPGAS], P[EV_CEVAP], P[EV_MODEL], P[SP_EVAPK])
         x_star = V_rel*te                       # both streams share D32
         if P[SP_USETURB] != 0.0:
             v_tot = u_O + u_F if u_O + u_F > 1e-6 else 1e-6
