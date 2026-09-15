@@ -18,6 +18,9 @@ fluids:
     boiling_point: 489.0      # constants.py DEFAULT_FUEL_BOILING_POINT_K
     molecular_weight: 170.0   # DRAFT (C12 kerosene surrogate) — TODO verify
     bulk_modulus_pa: 1300000000.0    # DRAFT kerosene — TODO verify
+    critical_temperature: 658.10     # K, CoolProp n-Dodecane, the RP-1 surrogate this repo already
+                                     # uses in spalding.py FUEL_SURROGATES. RP-1 is a cut, not a
+                                     # compound, so this is a pseudo-critical stand-in — DRAFT.
   oxidizer:
     name: LOX
     density: 1140.0
@@ -31,6 +34,7 @@ fluids:
     boiling_point: 90.2
     molecular_weight: 32.0
     bulk_modulus_pa: 1500000000.0
+    critical_temperature: 154.60     # K, CoolProp Oxygen — chug time-lag evaporation constant (Leonardi 2017 eq. 9)
 # Chamber-gas properties for the Ingebo aerodynamic Weber number (rho_g = Pc/(R*T)).
 # Every preset states these explicitly: the SMDConfig schema defaults (R=360, T=3500) are a
 # single hardcoded pair that cannot be right for three different propellants, and leaving a

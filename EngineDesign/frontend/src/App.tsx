@@ -47,25 +47,50 @@ function App() {
   // Keep all tab panels mounted; hide inactive ones to preserve state
   const tabPanelClass = (tab: Tab) => (activeTab === tab ? '' : 'hidden');
 
-  // Check backend health and load config on mount
+  // Check backend health and load config on mount.
+  //
+  // This RETRIES. A single attempt raced the backend on every `dev.sh --restart`:
+  // vite is serving in about a second but importing backend.main takes ~6 s (numba
+  // warm plus the router graph), and dev.sh prints the URLs without waiting for
+  // /api/health. Reload inside that window and the one probe failed, isConnected
+  // latched false, and "Backend not connected" stayed up until a manual reload --
+  // while the backend had in fact come up fine seconds later.
+  //
+  // Backoff caps at ~30 s total, which covers a cold start with a CEA cache build.
+  // isConnected stays null (banner hidden) while retries are in flight, so a slow
+  // start reads as "still loading" rather than a false error.
   useEffect(() => {
-    async function init() {
-      const healthResult = await getHealth();
-      if (healthResult.error) {
-        setIsConnected(false);
-        return;
-      }
-      setIsConnected(true);
+    let cancelled = false;
+    const DELAYS_MS = [250, 500, 1000, 2000, 3000, 4000, 5000, 6000, 8000];
 
-      // The backend always has a config in the caller's session (the default is
-      // loaded lazily per user), so fetch it unconditionally. DesignVersions may
-      // then swap in the active document's working copy.
-      const configResult = await getConfig();
-      if (configResult.data) {
-        setConfig(configResult.data.config);
+    async function init() {
+      for (let attempt = 0; attempt <= DELAYS_MS.length; attempt++) {
+        if (cancelled) return;
+        const healthResult = await getHealth();
+        if (cancelled) return;
+
+        if (!healthResult.error) {
+          setIsConnected(true);
+          // The backend always has a config in the caller's session (the default is
+          // loaded lazily per user), so fetch it unconditionally. DesignVersions may
+          // then swap in the active document's working copy.
+          const configResult = await getConfig();
+          if (!cancelled && configResult.data) {
+            setConfig(configResult.data.config);
+          }
+          return;
+        }
+
+        if (attempt === DELAYS_MS.length) break;   // out of retries
+        await new Promise((r) => setTimeout(r, DELAYS_MS[attempt]));
       }
+      if (!cancelled) setIsConnected(false);
     }
+
     init();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleConfigLoaded = (newConfig: EngineConfig) => {

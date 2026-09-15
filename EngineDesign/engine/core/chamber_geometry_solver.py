@@ -59,6 +59,7 @@ def solve_chamber_geometry_with_cea(
     steps: int = 200,
     export_dxf: Optional[str] = None,
     verbose: bool = False,
+    theta: float = theta_default,
 ) -> Tuple[np.ndarray, list, float, Dict[str, Any]]:
     """
     Solve for chamber geometry using CEA lookup table to find corrected Cf.
@@ -369,6 +370,7 @@ def solve_chamber_geometry_with_cea(
         diameter_inner=diameter_inner,
         diameter_exit=diameter_exit,
         l_star=l_star,
+        theta=theta,
         do_plot=do_plot,
         color_segments=color_segments,
         steps=steps,
@@ -570,6 +572,7 @@ def solved_chamber_plot(
     color_segments: bool = False,
     steps: int = 200,
     export_dxf: Optional[str] = None,
+    theta: float = theta_default,
 ) -> Tuple[np.ndarray, list, Dict[str, float]]:
     """
     Generate chamber geometry plot from fully-constrained parameters.
@@ -621,11 +624,15 @@ def solved_chamber_plot(
     
     # Generate nozzle using the rao function
     from engine.core.chamber_geometry import generate_nozzle
-    nozzle_pts, nozzle_x_first, nozzle_y_first = generate_nozzle(area_throat, area_exit, steps=steps)
+    nozzle_pts, nozzle_x_first, nozzle_y_first = generate_nozzle(
+        area_throat, area_exit, steps=steps, theta=theta)
     
     # Calculate chamber sections
-    # The nozzle entrance radius (nozzle_y_first) is where the contraction cone meets the nozzle
-    theta_contraction = np.pi / 4  # 45 degrees
+    # The nozzle entrance radius (nozzle_y_first) is where the contraction cone meets the nozzle.
+    # This was hardcoded to 45 deg, which made the Chamber Geometry tab's fast path draw a
+    # 45 deg convergent no matter what the config asked for -- a second copy of the contour
+    # that never got the theta-general fix in chamber_geometry.py.
+    theta_contraction = float(theta)
     
     # Calculate contraction length using the helper function
     from engine.core.chamber_geometry import contraction_length_horizontal_calc
@@ -654,18 +661,20 @@ def solved_chamber_plot(
     # Calculate chamber radius
     r_c = np.sqrt(area_chamber / np.pi)
     
-    # Calculate where cylindrical section starts
-    # The 45° contraction line connects (x_cyl_start, r_c) to (nozzle_x_first, nozzle_y_first)
-    x_cyl_start = nozzle_x_first + nozzle_y_first - r_c
+    # Calculate where cylindrical section starts.
+    # The convergent runs from (x_cyl_start, r_c) down to (nozzle_x_first, nozzle_y_first)
+    # over a horizontal run of (r_c - y_first)*cot(theta). At theta = 45 deg this reduces to
+    # the old x_first + y_first - r_c.
+    x_cyl_start = nozzle_x_first - (r_c - nozzle_y_first) * np.tan(np.pi / 2 - theta_contraction)
     
     # Generate cylindrical section (constant radius)
     x_cyl_end = x_cyl_start - cylindrical_length
     x_cyl = np.linspace(x_cyl_end, x_cyl_start, steps)
     y_cyl = np.full_like(x_cyl, r_c)
     
-    # Generate contraction section (45° line)
+    # Generate contraction section at half-angle theta
     x_contraction = np.linspace(x_cyl_start, nozzle_x_first, steps)
-    y_contraction = r_c - x_contraction + x_cyl_start
+    y_contraction = r_c - (x_contraction - x_cyl_start) * np.tan(theta_contraction)
     
     # Combine all sections: cylindrical -> contraction -> nozzle
     chamber_pts = np.vstack([

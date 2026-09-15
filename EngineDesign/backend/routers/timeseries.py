@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
 from pydantic import BaseModel, Field, ValidationError
 from typing import List, Optional, Literal
+import math
 import numpy as np
 import pandas as pd
 import io
@@ -35,8 +36,18 @@ def convert_numpy(obj):
         return [convert_numpy(item) for item in obj]
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
-    elif isinstance(obj, (np.integer, np.floating)):
+    elif isinstance(obj, np.floating):
+        # NaN/Inf are legal model outputs (a lag model that does not define K_v, a margin
+        # that could not be evaluated) but json.dumps rejects them outright --
+        # "Out of range float values are not JSON compliant" -- which surfaced as a blanket
+        # HTTP 500 on forward evaluation. Emit JSON null instead, so a missing number reads
+        # as missing rather than taking the whole response down.
+        v = obj.item()
+        return v if math.isfinite(v) else None
+    elif isinstance(obj, np.integer):
         return obj.item()
+    elif isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
     elif isinstance(obj, np.bool_):
         return bool(obj)
     else:

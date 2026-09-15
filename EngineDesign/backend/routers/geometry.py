@@ -12,6 +12,29 @@ from engine.core.nozzle_solver import rao
 from engine.core.chamber_geometry_solver import solve_chamber_geometry_with_cea
 from engine.pipeline.cea_cache import CEACache
 
+def _configured_convergent_half_angle_rad(config) -> float:
+    """Convergent half-angle [rad] from design_requirements, else the 45 deg default.
+
+    The drawn contour used to be pinned at 45 deg while Layer 1 optimised against
+    ``layer1_contraction_half_angle_deg``, so the geometry tab and the DXF showed a
+    chamber that was not the one being scored.
+    """
+    import numpy as _np
+    from engine.core.chamber_geometry import theta_default as _td
+
+    req = getattr(config, "design_requirements", None)
+    raw = None
+    if req is not None:
+        raw = req.get("layer1_contraction_half_angle_deg") if isinstance(req, dict) \
+            else getattr(req, "layer1_contraction_half_angle_deg", None)
+    try:
+        if raw is not None and _np.isfinite(float(raw)) and 0.0 < float(raw) < 90.0:
+            return float(_np.deg2rad(float(raw)))
+    except (TypeError, ValueError):
+        pass
+    return float(_td)
+
+
 router = APIRouter(prefix="/api/geometry", tags=["geometry"])
 
 
@@ -184,6 +207,7 @@ async def get_chamber_geometry(session: UserSession = Depends(get_session)):
                     length=chamber_geom.length,
                     do_plot=False,
                     steps=200,
+                    theta=_configured_convergent_half_angle_rad(config),
                 )
                 
                 # Extract contour points (x, y)
@@ -249,6 +273,7 @@ async def get_chamber_geometry(session: UserSession = Depends(get_session)):
                         nozzle_efficiency=nozzle_eff,
                         do_plot=False,
                         verbose=False,
+                        theta=_configured_convergent_half_angle_rad(config),
                     )
                     
                     # Extract contour points (x, y)

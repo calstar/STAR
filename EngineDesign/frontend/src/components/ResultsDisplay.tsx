@@ -161,7 +161,7 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure }: Resul
             color="yellow"
           />
           <MetricCard
-            label="Mixture Ratio (O/F)"
+            label="O/F Ratio"
             value={formatNumber(results.MR, 3)}
             unit=""
             color="purple"

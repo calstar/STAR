@@ -96,7 +96,8 @@ def rao(area_throat,
         do_plot=True,
         color_segments=False,
         method="garcia",
-        gamma=1.23):
+        gamma=1.23,
+        convergent_half_angle_rad=np.pi / 4.0):
     """
     method:
       - "top"     : Thrust-Optimized Parabolic (quadratic Bézier N-Q-E)
@@ -117,8 +118,15 @@ def rao(area_throat,
     r_t = np.sqrt(area_throat / np.pi)
     r_e = np.sqrt(area_exit / np.pi)
 
-    # ----- Entrance arc: 1.5 Rt
-    theta1 = np.linspace(deg2rad(-135), deg2rad(-90), steps)
+    # ----- Entrance arc: 1.5 Rt, tangent to the convergent cone
+    # The arc's wall slope at parameter t is -cot(t), and a cone of half-angle
+    # theta_c has slope -tan(theta_c), so the two meet tangentially only when the
+    # arc starts at t = -(90 deg + theta_c). This was hardcoded to -135 deg, which
+    # is tangency with a 45 deg cone and ONLY a 45 deg cone -- any other convergent
+    # angle met the throat arc at a slope discontinuity, i.e. a corner in the wall
+    # right where the gas accelerates hardest. Default is unchanged at 45 deg.
+    _theta_c = float(convergent_half_angle_rad)
+    theta1 = np.linspace(-(np.pi / 2.0 + _theta_c), deg2rad(-90), steps)
     x1 = 1.5 * r_t * np.cos(theta1)
     y1 = 1.5 * r_t * np.sin(theta1) + 1.5 * r_t + r_t
 

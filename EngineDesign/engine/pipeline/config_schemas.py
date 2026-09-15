@@ -22,6 +22,24 @@ class FluidConfig(BaseModel):
     boiling_point: Optional[float] = Field(default=None, gt=0, description="Boiling point at 1 atm [K] (fuel only)")
     molecular_weight: Optional[float] = Field(default=None, gt=0, description="Molecular weight [g/mol] (fuel only)")
     bulk_modulus_pa: Optional[float] = Field(default=None, gt=0, description="Liquid bulk modulus [Pa] — feed acoustics / water-hammer (stability). Preset-supplied; see configs/propellants/.")
+    critical_temperature: Optional[float] = Field(
+        default=None, gt=0,
+        description=(
+            "Liquid critical temperature [K]. Sets the evaporation constant in the chug time-lag "
+            "model (Leonardi 2017 eq. 9) — a PROPELLANT property, so it belongs here rather than in "
+            "a table inside the stability code. None = look it up (CoolProp, then handbook), and the "
+            "lookup is recorded in the assumptions registry."
+        ),
+    )
+    injection_phase: Optional[Literal["liquid", "gas"]] = Field(
+        default=None,
+        description=(
+            "Phase of this propellant AT THE INJECTOR FACE. A gas neither atomizes nor vaporizes, so "
+            "it carries only the mixing lag in the chug model; running a droplet-lifetime model on it "
+            "invents a lag that does not exist. None = infer from temperature vs critical point and "
+            "vapor pressure vs chamber pressure."
+        ),
+    )
 
 
 class PintleLOXConfig(BaseModel):
@@ -116,8 +134,13 @@ FEED_LINE_SIZES: Dict[str, float] = {
     "1/2_NPT": 0.0127000,    # 0.500" through-bore
     "3/4_NPT": 0.0190500,    # 0.750" through-bore
     # Tube ODs quote a wall, so the bore depends on it; these assume 0.035" wall.
-    "3/8_TUBE_035": 0.0078740,   # 0.375" OD - 2(0.035") = 0.305"
-    "1/2_TUBE_035": 0.0110490,   # 0.500" OD - 2(0.035") = 0.435"
+    # Both values encoded a 0.0325" wall, not the 0.035" their names and comments claim
+    # (and the 1/2" comment's own arithmetic was wrong: 0.500 - 2(0.035) = 0.430, not 0.435).
+    # Corrected to the stated wall. The old values overstated flow area 2.3-3.3%, which is
+    # 4.7-6.7% of understated dp -- small, but this table exists to be the one place the
+    # near-miss cannot hide.
+    "3/8_TUBE_035": 0.0077470,   # 0.375" OD - 2(0.035") = 0.305"
+    "1/2_TUBE_035": 0.0109220,   # 0.500" OD - 2(0.035") = 0.430"
 }
 
 
@@ -447,6 +470,43 @@ class DischargeConfig(BaseModel):
         gt=0,
         le=1,
         description="Lower floor on geometry-based Cd_inf for very small holes.",
+    )
+    # --- Orifice inlet geometry: the real, per-orifice Cd knob -------------------------
+    # Cd is set by what the INLET EDGE looks like and by L/d, not by hole diameter. Because
+    # discharge.oxidizer and discharge.fuel are separate blocks, filleting only ONE side's
+    # inlet raises that propellant's Cd and moves the momentum ratio / O/F without touching
+    # hole size, element count or angles. One extra machining op, one tuning knob.
+    # Both default to None => the existing diameter-based Cd_inf path is unchanged.
+    inlet_geometry: Optional[str] = Field(
+        default=None,
+        description=(
+            "Orifice inlet treatment: sharp (0.61) | chamfered (0.74) | conical (0.78) | "
+            "rounded_light (0.82) | rounded (0.88) | bellmouth (0.95). Values are the "
+            "practitioner table (Huzel & Huang) at Re > 1e4 and L/d ~ 2-5. Overrides the "
+            "diameter-scaled Cd_inf when set. Use inlet_radius_ratio instead for a "
+            "continuous r/d."
+        ),
+    )
+    inlet_radius_ratio: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Inlet fillet radius / orifice diameter (r/d). Continuous alternative to "
+            "inlet_geometry: 0 = sharp (Cd 0.61), 0.125 = Cd 0.88, >= 0.2 = Cd 0.95 and "
+            "saturating. Nurick (1976): cavitation inception margin also rises with inlet "
+            "roundness, so this buys flow AND cavitation headroom."
+        ),
+    )
+    orifice_l_over_d: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "Orifice length / diameter. Lichtarowicz et al. (1965): Cd peaks near L/d ~ 2 "
+            "where expansion past the vena contracta recovers dynamic pressure, falls below "
+            "~1 (thin-plate, no recovery) and above ~10 (wall friction). Only applied when "
+            "an inlet geometry is set. None => no length correction."
+        ),
     )
     d_min_m: float = Field(
         default=0.0004,
@@ -847,6 +907,33 @@ class StabilityConfig(BaseModel):
             "Set 0 for the strict alpha < 0 criterion."
         ),
     )
+    time_lag_model: Literal["leonardi_dtl", "d2_law"] = Field(
+        default="leonardi_dtl",
+        description=(
+            "Named model for the injection->heat-release conversion lag that drives the chug loop. "
+            "'leonardi_dtl' is the double-time-lag decomposition tau_atom + tau_vap + tau_mix of "
+            "Leonardi et al., Acta Astronautica 139 (2017); 'd2_law' is STAR's historical quiescent "
+            "droplet lifetime, kept for reproducing older results. See "
+            "scripts/chug_timelag_benchmark.py for the measurement that chose the default."
+        ),
+    )
+    convection_model: Literal["none", "leonardi_eq8", "ranz_marshall"] = Field(
+        default="none",
+        description=(
+            "Convective speed-up applied to the droplet lifetime. Default 'none': the Leonardi eq. 9 "
+            "evaporation constant is already calibrated against real chamber data, and applying "
+            "eq. 8 on top of it triples the chug-frequency error against the reference experiment."
+        ),
+    )
+    mixing_lag_fraction: float = Field(
+        default=0.5, ge=0.0, le=3.0,
+        description=(
+            "Mixing lag as a fraction of the rate-limiting vaporization lag, shared by every stream "
+            "(a gaseous propellant carries this and nothing else). Default 0.5 is Leonardi's own "
+            "calibration for the validation engine: tau_mix = 2.2 ms at tau_vap = 4.4 ms. Set 0 to "
+            "drop the mixing lag entirely."
+        ),
+    )
     regulator_enabled: bool = Field(default=True, description="Model the dome regulator upstream of each tank in the chug loop.")
     regulator_corner_hz: float = Field(default=3.0, gt=0, description="Regulator response corner frequency [Hz].")
     regulator_Z_hf: float = Field(
@@ -923,10 +1010,24 @@ class ClosureConfig(BaseModel):
     """Closure iteration configuration"""
     max_iterations: int = Field(default=6, gt=0, description="Max closure iterations")
     Cd_reduction_factor: float = Field(
-        default=0.95,
+        default=1.0,
         ge=0,
         le=1,
-        description="Cd reduction factor if constraints violated"
+        description=(
+            "Multiplier applied to the injector Cd each time the spray constraints are "
+            "violated. 1.0 = OFF, which is the default and the physical answer. "
+            "WAS 0.95, and that is not a discharge coefficient -- a drilled orifice does "
+            "not flow less because its spray is long. Measured on the 8 kN ethalox point: "
+            "the loop shrank Cd from 0.6017 to 0.4658 (0.6055 * 0.95^5, exactly), a 23% "
+            "error that propagates straight into orifice sizing, and at a realistic Cd the "
+            "same hardware then makes +11.9% thrust with dP/Pc falling to 0.164, under the "
+            "0.20 chug floor. Worse, the feedback has the WRONG SIGN: lower Cd means lower "
+            "jet velocity, larger SMD and a LONGER evaporation length, so x* went from "
+            "0.1256 m to 0.1338 m while the limit it was chasing is 0.05 m. It never "
+            "converged -- it just exhausted max_iterations. An x* violation is an "
+            "infeasibility to report (it is in diagnostics as x_star), not something to "
+            "fudge the discharge coefficient for. Set below 1.0 only to reproduce a legacy run."
+        ),
     )
     tolerance: float = Field(default=1e-4, gt=0, description="Convergence tolerance")
 
@@ -1235,6 +1336,21 @@ class DesignRequirementsConfig(BaseModel):
         gt=0.0,
         lt=180.0,
         description="Preferred lower edge for effective impingement angle hinge [deg] (impinging-only).",
+    )
+    layer1_impinging_jet_angle_min_deg: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        lt=90.0,
+        description=(
+            "HARD lower bound on a SINGLE jet's inclination from the chamber axis [deg]. "
+            "Distinct from layer1_impinging_angle_deg_min, which bounds the INCLUDED angle "
+            "(the sum of the two jets). The per-jet search box is widened by the permitted "
+            "asymmetry and can fall to 10 deg or below, and the optimiser will use it -- the "
+            "8 kN ethalox point returned theta_O = 13 deg, which is not drillable on a flat "
+            "face without a spot-face or jig. Manufacturing, not physics, so nothing in the "
+            "objective knows about it. None => no floor beyond the derived box. 20 deg is a "
+            "reasonable default for conventional drilling."
+        ),
     )
     layer1_impinging_angle_deg_max: Optional[float] = Field(
         default=None,
@@ -1593,6 +1709,38 @@ class DesignRequirementsConfig(BaseModel):
             "Unset/0 ⇒ disabled (metal is free, historical behaviour)."
         ),
     )
+    layer1_contraction_half_angle_deg: Optional[float] = Field(
+        default=None,
+        gt=0,
+        lt=90,
+        description=(
+            "Convergent half-angle [deg] for the chamber contraction. Was hardcoded at 45 deg. "
+            "45 deg is the LENGTH-optimal angle; it is not the MASS-optimal one, because a "
+            "shallower cone is longer but moves volume out of the full-diameter barrel (which "
+            "carries the whole wall stack) into the tapering cone shell. 30 deg measured lighter "
+            "at equal L* on the 8 kN ethalox point. Conventional band 25-45 deg. None = 45."
+        ),
+    )
+    layer1_min_Lcyl_over_D: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Minimum CYLINDRICAL-length-to-bore ratio, enforced as infeasibility (not a penalty). "
+            "layer1_chamber_ld_ratio_min gates TOTAL chamber length, which lets the convergent "
+            "cone masquerade as mixing length; the constant-area section is where impinging "
+            "sprays actually mix. Pair with spray.evaporation.x_star_limit. None = not enforced."
+        ),
+    )
+    layer1_max_element_pitch_m: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Maximum injector element pitch sqrt(A_chamber/n_elements) [m], enforced as "
+            "infeasibility. eta_mixing (Rupe) sees only momentum ratio, so nothing otherwise "
+            "charges for spreading a fixed element count over a larger face -- the optimiser can "
+            "buy chamber diameter for free. None = not enforced."
+        ),
+    )
     layer1_chamber_wall_density_kg_m3: Optional[float] = Field(
         default=None,
         gt=0.0,
@@ -1705,6 +1853,117 @@ class DesignRequirementsConfig(BaseModel):
             "(used together with W_DP_O/W_DP_F in weighted injector ΔP penalty)."
         ),
     )
+    # ------------------------------------------------------------------------------------
+    # Keys Layer 1 ALREADY READS that were never declared here. A pydantic model silently
+    # DROPS unknown keys, so `PUT /api/config` with any of these returned 200 and discarded
+    # them -- and four of them have a labelled control in the Configuration editor that
+    # therefore did nothing at all. Declared here as Optional[...] = None so behaviour is
+    # unchanged (None => the optimizer's own default, quoted in each description), but they
+    # are now settable. Found by diffing _requirement_*/requirements.get() call sites in
+    # layer1_static_optimization.py against this class.
+    W_DP_CENTER: Optional[float] = Field(default=None, ge=0.0,
+        description="Weight pulling injector dP/Pc toward the centre of its band. None => 500.0")
+    W_DP_O_FLOOR: Optional[float] = Field(default=None, ge=0.0,
+        description="Weight on the oxidiser dP/Pc soft floor. None => 0.0 (disabled)")
+    injector_dp_ratio_O_soft_floor: Optional[float] = Field(default=None, gt=0.0, lt=1.0,
+        description="Soft floor on dP_O/Pc, penalised below this. None => not enforced")
+    layer1_A_throat_mm2_min: Optional[float] = Field(default=None, gt=0.0,
+        description="Lower bound on the throat-area search variable [mm^2]. None => derived")
+    layer1_A_throat_mm2_max: Optional[float] = Field(default=None, gt=0.0,
+        description="Upper bound on the throat-area search variable [mm^2]. None => derived")
+    layer1_cf_upper_bound_for_throat_floor: Optional[float] = Field(default=None, gt=0.0,
+        description="Cf ceiling used when deriving the throat-area floor. None => 1.8")
+    layer1_pc_fraction_for_throat_floor: Optional[float] = Field(default=None, gt=0.0, le=1.0,
+        description="Fraction of target Pc used when deriving the throat floor. None => 0.75")
+    layer1_enforce_ring_geometry: Optional[bool] = Field(default=None,
+        description="Enforce doublet ring fit / element gap / impingement standoff from the "
+                    "DESIGN VARIABLES. None => True. Note the older diagnostics-driven term "
+                    "(_impinging_geometry_fit_squared) is inert because the numba accelerator "
+                    "emits none of the keys it reads -- this flag governs the live one.")
+    # ---- INJECTOR FACE REAL ESTATE -------------------------------------------------------
+    # Where the two rings SIT radially was an exactly flat direction in the objective: the
+    # standoff derivation fixes the ring GAP (dr = Ld*d_avg*(tan th_O + tan th_F)) but nothing
+    # fixed the pair's radius, so s_O drifted onto its own lower bound (0.003 m) and parked the
+    # whole element ring against the axis. Measured on ethalox_8kN_FINAL: D_pitch_O 26.90 mm,
+    # every doublet impinging on a 41.79 mm circle inside a 127.00 mm bore -- 10.8 % of the
+    # chamber area, and NARROWER THAN THE 49.57 mm THROAT. These three keys give that direction
+    # an opinion. All are measured against the orifice's ELLIPTICAL trace on the face: a hole of
+    # diameter d inclined th from the chamber axis cuts the face as an ellipse whose RADIAL
+    # (major) axis is d/cos(th), which at th = 69 deg is 2.8x the drill diameter.
+    layer1_injector_spray_radius_frac: Optional[float] = Field(default=None, gt=0.0, le=1.0,
+        description="Target impingement radius as a fraction of the chamber bore RADIUS. Every "
+                    "doublet on one ring collides on the same circle r_imp = r_inner + L_imp * "
+                    "tan(theta_inner), and that circle is where the propellant is actually put "
+                    "into the chamber. Nothing constrained it: the ring pair is free to slide "
+                    "radially (the standoff derivation fixes the ring GAP, not its radius), so "
+                    "it parks on whatever bound it meets. Measured: r_imp/r_wall 0.33, feeding "
+                    "10.8 % of the chamber area through a circle NARROWER THAN THE THROAT; and "
+                    "again at 0.44 once only a lower bound existed. The natural target is the "
+                    "EQUAL-AREA radius 1/sqrt(2) = 0.7071, which splits the chamber cross-"
+                    "section in half. None => inert.")
+    layer1_injector_spray_radius_tol: Optional[float] = Field(default=None, gt=0.0,
+        description="Half-width of the free band around layer1_injector_spray_radius_frac, in "
+                    "the same fraction-of-radius units. None => 0.08.")
+    layer1_injector_plate_thickness_m: Optional[float] = Field(default=None, gt=0.0,
+        description="Injector face plate thickness [m]. An orifice inclined theta from the "
+                    "chamber axis runs t/cos(theta) through it -- 2.79x the plate at 69 deg. "
+                    "Used for the drilled-passage and face-incidence machining checks. "
+                    "None => the checks are inert.")
+    layer1_injector_min_face_incidence_deg: Optional[float] = Field(default=None, ge=0.0, le=90.0,
+        description="Minimum angle between an orifice axis and the face PLANE [deg], i.e. "
+                    "90 - theta. A drill entering a flat at shallow incidence walks; below this "
+                    "the entry needs a spot-face milled normal to the hole axis. None => 0 "
+                    "(inert). NOTE this is a per-jet ceiling on theta, complementary to "
+                    "layer1_impinging_jet_angle_min_deg which is the floor.")
+    layer1_injector_counterbore_dia_m: Optional[float] = Field(default=None, gt=0.0,
+        description="Feed-passage (counterbore) diameter behind each orifice [m]. The orifice "
+                    "itself is only a short LAND of discharge.orifice_l_over_d diameters at the "
+                    "face end; the rest of the passage is this larger bore. Without it the "
+                    "drilled depth reads as if the orifice diameter ran the whole plate, which "
+                    "reported L/d 13.5 on a design whose small drill only goes 6.6 mm. "
+                    "None => the passage check uses the orifice diameter (conservative).")
+    layer1_injector_center_clear_dia_m: Optional[float] = Field(default=None, gt=0.0,
+        description="Clear circle that must remain unobstructed at the centre of the injector "
+                    "face [m] -- igniter boss, centre-body or instrumentation port. The inner "
+                    "edge of the innermost orifice ring must stay outside it. None => 0.0 "
+                    "(no centre reservation). A 3/8-18 NPT spark igniter is 17.15 mm across the "
+                    "thread crest, so ~0.028 m of boss plus clearance is a realistic entry.")
+    layer1_injector_min_web_m: Optional[float] = Field(default=None, ge=0.0,
+        description="Minimum land (web) between adjacent orifices on the SAME ring [m]. The only "
+                    "prior guard was spacing >= d_jet, i.e. a web of exactly zero. None => 0.0.")
+    layer1_injector_wall_clearance_m: Optional[float] = Field(default=None, ge=0.0,
+        description="Minimum radial gap from the outermost orifice's face trace to the chamber "
+                    "bore [m] -- manifold land, and the room a fuel barrier row would need. "
+                    "None => 0.0.")
+    layer1_resultant_tilt_from_reach: Optional[bool] = Field(default=None,
+        description="Derive the permitted outward spray tilt from the design's own geometry "
+                    "instead of taking layer1_resultant_tilt_max_deg as a constant. An outward "
+                    "fan is only a hazard if it REACHES the liner while the spray is still "
+                    "liquid, and the angle at which it does depends on the impingement radius -- "
+                    "which the optimizer is free to move underneath a fixed allowance. When true "
+                    "the limit is atan((r_wall - r_imp) / (margin * L_chamber)). None => False "
+                    "(the constant is used, previous behaviour exactly).")
+    layer1_resultant_tilt_reach_margin: Optional[float] = Field(default=None, gt=0.0,
+        description="Safety factor on chamber length for layer1_resultant_tilt_from_reach. "
+                    "1.5 means the fan may not reach the liner inside 1.5 chamber lengths. "
+                    "None => 1.5.")
+    layer1_impingement_Ld_min: Optional[float] = Field(default=None, gt=0.0,
+        description="Min impingement standoff in orifice diameters. None => Ld_target - Ld_tol")
+    layer1_impingement_Ld_max: Optional[float] = Field(default=None, gt=0.0,
+        description="Max impingement standoff in orifice diameters. None => Ld_target + Ld_tol")
+    layer1_momentum_band_width: Optional[float] = Field(default=None, gt=0.0,
+        description="Half-width of the log-symmetric momentum-ratio preference band. None => 0.05")
+    layer1_momentum_low_side_multiplier: Optional[float] = Field(default=None, ge=0.0,
+        description="Extra weight on momentum-ratio misses below the band. None => 10.0")
+    layer1_generations_per_restart: Optional[float] = Field(default=None, gt=0.0,
+        description="CMA-ES generations per restart. None => 50.0")
+    max_chamber_length_m: Optional[float] = Field(default=None, gt=0.0,
+        description="Hard cap on chamber length (injector face to throat) [m]. None => 0.50")
+    objective_cache_rel: Optional[float] = Field(default=None, gt=0.0,
+        description="Relative tolerance for the objective memo cache. None => 1e-5")
+    report_every_n: Optional[int] = Field(default=None, gt=0,
+        description="Progress reporting stride in evaluations. None => 1")
+    # ------------------------------------------------------------------------------------
     layer1_infeasibility_gate_eps: Optional[float] = Field(
         default=None,
         ge=0.0,
