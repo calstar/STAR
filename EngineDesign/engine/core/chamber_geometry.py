@@ -89,6 +89,25 @@ def chamber_diameter_calc(area_chamber):
     """
     return np.sqrt(4 * area_chamber / np.pi)
 
+def entrance_arc_volume(R_t, theta=theta_default, steps=4000):
+    """Solid-of-revolution volume of the 1.5*R_t nozzle entrance arc, face side of the throat.
+
+    The arc is centred at (0, 2.5*R_t) with radius 1.5*R_t and is swept from
+    t = -(pi/2 + theta) (tangent to the convergent cone) to t = -pi/2 (the throat), so
+
+        x(t) = 1.5 R_t cos t,   y(t) = 1.5 R_t sin t + 2.5 R_t
+
+    and V = integral of pi*y^2 dx over that sweep. Integrated numerically because the closed
+    form is easy to get subtly wrong and this is called once per candidate, not per step.
+    """
+    t0 = -(np.pi / 2.0 + float(theta))
+    t = np.linspace(t0, -np.pi / 2.0, int(steps))
+    x = 1.5 * R_t * np.cos(t)
+    y = 1.5 * R_t * np.sin(t) + 2.5 * R_t
+    trapz = getattr(np, "trapezoid", None) or np.trapz
+    return float(trapz(np.pi * y * y, x))
+
+
 def chamber_length_calc(chamber_volume, area_throat, contraction_ratio, theta = theta_default):
     """
     Calculate the length of the chamber.
@@ -99,11 +118,38 @@ def chamber_length_calc(chamber_volume, area_throat, contraction_ratio, theta = 
     - theta: The angle of the chamber. = 45 degrees from -135deg nozzle entrance
     Calculate the length of the chamber.
     """
-    t1 = (chamber_volume / area_throat)
-    t2 = (1/3)*np.sqrt(area_throat / np.pi) * (1/np.tan(theta)) * (contraction_ratio**(1/3) - 1)
-    t3 = t1 - t2
-    t4 = t3 / contraction_ratio
-    return t4
+    # Exact conical-frustum volume between A_c and A_t at half-angle `theta`:
+    #   h      = (R_c - R_t) * cot(theta)
+    #   V_cone = (pi h / 3)(R_c^2 + R_c R_t + R_t^2)
+    # and with R_c = R_t * sqrt(eps) this closes to
+    #   V_cone = (A_t R_t cot(theta) / 3) * (eps^(3/2) - 1).
+    #
+    # This previously used (eps^(1/3) - 1), which at a typical eps = 6.76 credits the
+    # convergent section with 13.6 cm^3 instead of 252.9 cm^3 -- 18.6x low. The generator
+    # then made the missing volume up in barrel length, so a commanded L* = 1.30 was drawn
+    # as a chamber whose integrated volume is L* = 1.43: 18.9 mm and 0.64 kg of barrel that
+    # the design never asked for. Verified against direct numerical integration of the
+    # generated contour (tests/test_chamber_geometry_volume.py).
+    # SECOND correction (2026-09-14): the cone does not reach R_t. It runs to the tangency
+    # radius of the 1.5*R_t entrance arc, r_tan = R_t*(1 + 1.5*(1 - cos(theta))), and the arc
+    # carries the rest. Crediting a straight frustum all the way to R_t under-counts the
+    # convergent volume by the arc's bulge, and the generator again made it up in barrel
+    # length -- 0.9-2.1% of L* depending on theta. Now: exact frustum R_c -> r_tan, plus the
+    # arc's own solid of revolution.
+    R_t = np.sqrt(area_throat / np.pi)
+    A_c = area_throat * contraction_ratio
+    R_c = np.sqrt(A_c / np.pi)
+    cot_theta = np.tan(np.pi / 2 - theta)
+
+    r_tan = R_t * (1.0 + 1.5 * (1.0 - np.cos(theta)))
+    if r_tan >= R_c:                      # arc alone spans the whole contraction
+        V_cone = 0.0
+    else:
+        h_cone = (R_c - r_tan) * cot_theta
+        V_cone = (np.pi * h_cone / 3.0) * (R_c ** 2 + R_c * r_tan + r_tan ** 2)
+
+    V_cone += entrance_arc_volume(R_t, theta)
+    return (chamber_volume - V_cone) / A_c
 
 
 def contraction_length_horizontal_calc(area_chamber, entrance_arc_start_y, theta=theta_default):
@@ -115,8 +161,9 @@ def contraction_length_horizontal_calc(area_chamber, entrance_arc_start_y, theta
 
 
 
-def generate_nozzle(area_throat, area_exit, steps=200):
-    return rao(area_throat, area_exit, method="top", do_plot=False, steps=steps)
+def generate_nozzle(area_throat, area_exit, steps=200, theta=theta_default):
+    return rao(area_throat, area_exit, method="top", do_plot=False, steps=steps,
+               convergent_half_angle_rad=theta)
 
 
 def chamber_geometry_calc(pc_design, 
@@ -127,7 +174,8 @@ def chamber_geometry_calc(pc_design,
     do_plot=False, 
     color_segments=False, 
     steps=200, 
-    export_dxf=None):
+    export_dxf=None,
+    theta=theta_default):
     """
     Calculate the full chamber geometry including cylindrical section, contraction, and nozzle.
     
@@ -151,9 +199,9 @@ def chamber_geometry_calc(pc_design,
     volume_chamber = chamber_volume_calc(area_throat, l_star)
     area_chamber = area_chamber_calc(diameter_inner)
     contraction_ratio = contraction_ratio_calc(area_chamber, area_throat)
-    nozzle_pts, nozzle_x_first, nozzle_y_first = generate_nozzle(area_throat, area_exit, steps=steps)
-    cylindrical_length = chamber_length_calc(volume_chamber, area_throat, contraction_ratio, theta_default)
-    contraction_length_horizontal = contraction_length_horizontal_calc(area_chamber, nozzle_y_first, theta_default)
+    nozzle_pts, nozzle_x_first, nozzle_y_first = generate_nozzle(area_throat, area_exit, steps=steps, theta=theta)
+    cylindrical_length = chamber_length_calc(volume_chamber, area_throat, contraction_ratio, theta)
+    contraction_length_horizontal = contraction_length_horizontal_calc(area_chamber, nozzle_y_first, theta)
     
     # Calculate total chamber length (cylindrical + contraction) from injector face to throat
     total_chamber_length = cylindrical_length + contraction_length_horizontal
@@ -165,7 +213,12 @@ def chamber_geometry_calc(pc_design,
     # The 45° contraction line connects (x_cyl_start, r_c) to (nozzle_x_first, nozzle_y_first)
     # For 45° line: y = r_c - (x - x_cyl_start) = r_c - x + x_cyl_start
     # At connection: nozzle_y_first = r_c - nozzle_x_first + x_cyl_start
-    x_cyl_start = nozzle_x_first + nozzle_y_first - r_c
+    # General half-angle: the convergent runs from (x_cyl_start, r_c) down to
+    # (nozzle_x_first, nozzle_y_first) over a horizontal run of (r_c - y_first)*cot(theta).
+    # At theta = 45 deg this reduces to the old x_first + y_first - r_c.
+    _cot = np.tan(np.pi/2 - theta)
+    contraction_run = (r_c - nozzle_y_first) * _cot
+    x_cyl_start = nozzle_x_first - contraction_run
     
     # Generate cylindrical section (constant radius)
     x_cyl_end = x_cyl_start - cylindrical_length
@@ -174,8 +227,8 @@ def chamber_geometry_calc(pc_design,
     
     # Generate contraction section (45° line)
     x_contraction = np.linspace(x_cyl_start, nozzle_x_first, steps)
-    # 45° line: y = r_c - (x - x_cyl_start) = r_c - x + x_cyl_start
-    y_contraction = r_c - x_contraction + x_cyl_start
+    # Straight convergent at half-angle theta: y = r_c - (x - x_cyl_start)*tan(theta)
+    y_contraction = r_c - (x_contraction - x_cyl_start) * np.tan(theta)
     
     # Combine all sections: cylindrical -> contraction -> nozzle
     # Note: nozzle_pts already includes all nozzle segments
