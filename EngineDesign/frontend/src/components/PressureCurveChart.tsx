@@ -886,7 +886,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
           <button
             onClick={() => {
               // Generate CSV and download
-              const headers = ['time (s)', 'P_tank_O (psi)', 'P_tank_F (psi)', 'Pc (psi)', 'Thrust (kN)', 'Isp (s)', 'MR', 'mdot_total (kg/s)'];
+              const headers = ['time (s)', 'P_tank_O (psi)', 'P_tank_F (psi)', 'Pc (psi)', 'Thrust (kN)', 'Isp (s)', 'O/F', 'mdot_total (kg/s)'];
               const rows = data.time.map((t, i) => [
                 t.toFixed(4),
                 data.P_tank_O_psi[i].toFixed(2),
