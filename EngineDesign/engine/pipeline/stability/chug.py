@@ -286,11 +286,118 @@ def _dominant_driver(streams: List[ChugStream], s: complex) -> str:
     return max(drivers, key=drivers.get)
 
 
+def damping_ratio(sigma: float, omega: float) -> float:
+    """Damping ratio of a complex pole ``s = sigma + j*omega``: ``zeta = -sigma / |s|``.
+
+    This is the standard definition — the cosine of the pole's angle from the negative real axis —
+    and it is what a constant-zeta ray on a root locus means. (An earlier version of this module
+    reported ``-sigma/omega``, which is ``zeta/sqrt(1-zeta^2)``: indistinguishable below zeta ~ 0.1
+    and 15 % off by zeta = 0.5, so a pole plotted against its own reported zeta did not sit on the
+    ray. Fixed here so the diagram and the number agree.)
+    """
+    mag = float(np.hypot(sigma, omega))
+    if not np.isfinite(mag) or mag <= 0:
+        return float("nan")
+    return float(-sigma / mag)
+
+
+def _solve_root_near(streams: List[ChugStream], chamber: ChugChamber, s0: complex,
+                     *, with_regulator: bool = True) -> Tuple[float, float, float]:
+    """Single-seed Newton solve for the root of F(s)=0 nearest ``s0``. (alpha, omega, |F|).
+
+    The continuation step of the root locus: each point seeds from its predecessor, so one fsolve
+    per point is enough. ``_solve_dominant_root`` fans out over nine seeds because it has no
+    predecessor to start from; doing that per locus point would cost ~40x for no extra accuracy.
+    """
+    from scipy.optimize import fsolve
+
+    def residual(x):
+        F = chug_characteristic(complex(x[0], x[1]), streams, chamber,
+                                with_regulator=with_regulator)
+        return [F.real, F.imag]
+
+    try:
+        sol, _, ier, _ = fsolve(residual, [s0.real, s0.imag], full_output=True)
+    except Exception:
+        return float("nan"), float("nan"), float("inf")
+    if ier != 1:
+        return float("nan"), float("nan"), float("inf")
+    resF = abs(complex(*residual(sol)))
+    if resF > 1e-6 or sol[1] <= 0:
+        return float("nan"), float("nan"), float("inf")
+    return float(sol[0]), float(sol[1]), float(resF)
+
+
+def chug_root_locus(streams: List[ChugStream], chamber: ChugChamber,
+                    *, eta_values: Optional[np.ndarray] = None,
+                    with_regulator: bool = True) -> List[Dict[str, float]]:
+    """Track the dominant chug pole through the s-plane as injector stiffness sweeps.
+
+    This is a root locus in the textbook sense: ``eta_inj = dP_inj/Pc`` is the swept gain, and each
+    returned point is the eigenvalue ``s = sigma + j*omega`` of the closed-loop characteristic
+    equation ``1 + L(s) = 0`` at that gain. The imaginary axis is the stability boundary — the
+    branch crosses it where the loop goes neutrally stable, and the crossing frequency is the chug
+    frequency the engine would ring at.
+
+    Solved by continuation from the softest injector upward, each point seeded on its predecessor,
+    which is the standard way to follow a branch rather than re-discover it. Honest caveat: on every
+    case tried so far (lags 0.8-9 ms, feed runs 0.08-1.5 m, eta from 0.02 to 1.2) a single fixed seed
+    found the same branch, so the continuation is insurance against branch-hopping rather than a
+    demonstrated fix for it. ``test_locus_is_continuous_in_frequency`` checks the OUTPUT is a branch;
+    it does not, and cannot currently, distinguish the two seeding strategies.
+
+    Returns points in ascending ``eta`` with keys ``eta``, ``real``, ``imag``, ``f_hz``, ``zeta``.
+    Points where the branch could not be followed are dropped, so the caller gets a clean polyline.
+    """
+    import copy
+
+    if eta_values is None:
+        eta_values = np.linspace(0.05, 0.60, 28)
+    etas = np.asarray(sorted(float(e) for e in eta_values if np.isfinite(e) and e > 0))
+    if etas.size == 0:
+        return []
+
+    def scaled(eta: float) -> List[ChugStream]:
+        out = []
+        for st in streams:
+            st2 = copy.copy(st)
+            st2.eta_inj = float(eta)
+            out.append(st2)
+        return out
+
+    # Seed the branch from the fast tier's phase crossover at the softest injector, where the loop
+    # is most strongly coupled and the dominant root is least ambiguous.
+    seed_streams = scaled(etas[0])
+    fast = chug_margin_fast(seed_streams, chamber, with_regulator=with_regulator)
+    w0 = 2 * np.pi * fast["f_chug_hz"] if np.isfinite(fast["f_chug_hz"]) else 2 * np.pi * 100.0
+    s_prev = complex(0.0, w0)
+
+    pts: List[Dict[str, float]] = []
+    for eta in etas:
+        st = scaled(eta)
+        a, w, res = _solve_root_near(st, chamber, s_prev, with_regulator=with_regulator)
+        if not (np.isfinite(a) and np.isfinite(w) and w > 0):
+            # Lost the branch: re-acquire from the frequency scan rather than abandoning the sweep.
+            f2 = chug_margin_fast(st, chamber, with_regulator=with_regulator)
+            if not np.isfinite(f2["f_chug_hz"]):
+                continue
+            a, w, res = _solve_root_near(st, chamber, complex(0.0, 2 * np.pi * f2["f_chug_hz"]),
+                                         with_regulator=with_regulator)
+            if not (np.isfinite(a) and np.isfinite(w) and w > 0):
+                continue
+        s_prev = complex(a, w)
+        pts.append({
+            "eta": float(eta), "real": float(a), "imag": float(w),
+            "f_hz": float(w / (2 * np.pi)), "zeta": damping_ratio(a, w),
+        })
+    return pts
+
+
 def chug_growth_rate(streams: List[ChugStream], chamber: ChugChamber,
                      *, with_regulator: bool = True) -> Dict[str, float]:
     """Rich chug analysis: dominant growth rate alpha and frequency from root-find of (3.3).
 
-    Returns dict: ``alpha`` [1/s], ``f_chug_hz``, ``zeta`` (= -alpha/omega), ``margin`` (= 1+zeta),
+    Returns dict: ``alpha`` [1/s], ``f_chug_hz``, ``zeta`` (= -alpha/|s|), ``margin`` (= 1+zeta),
     ``stable``, ``alpha_no_reg`` (Z_reg=0 comparison), ``driver``, ``residual``.
     """
     fast = chug_margin_fast(streams, chamber, with_regulator=with_regulator)
@@ -304,7 +411,7 @@ def chug_growth_rate(streams: List[ChugStream], chamber: ChugChamber,
         "residual": resF,
     }
     if np.isfinite(alpha) and np.isfinite(omega) and omega > 0:
-        zeta = -alpha / omega
+        zeta = damping_ratio(alpha, omega)
         out["zeta"] = float(zeta)
         out["margin"] = float(1.0 + zeta)
         out["stable"] = bool(alpha < 0.0)

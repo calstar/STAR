@@ -17,21 +17,63 @@ const GROUPS: { title: string; entries: Entry[] }[] = [
           'how fast an oscillation grows (α>0, unstable) or decays (α<0, stable). Larger |α| = faster.',
       },
       {
-        sym: 'σ, ω',
-        name: 'chug pole',
+        sym: 's = σ + jω',
+        name: 'chug eigenvalue (pole)',
         meaning:
-          'σ = growth rate [1/s] (same sign rule as α); ω = oscillation rate [rad/s], with ω = 2π·f.',
+          'the root of the chug characteristic equation 1 + L(s) = 0. σ = growth rate [1/s] (same sign rule as α); ω = oscillation rate [rad/s], with f = ω/2π.',
+      },
+      {
+        sym: 'root locus',
+        name: 's-plane branch',
+        meaning:
+          'the path that eigenvalue traces as one design parameter is swept — here injector stiffness η_inj. The vertical σ = 0 line is the stability boundary: left of it the oscillation decays.',
       },
       {
         sym: 'ζ',
         name: 'damping ratio',
-        meaning: 'how damped the chug pole is. ζ>0 decays; larger = more damped.',
+        meaning:
+          'ζ = −σ/|s|, the cosine of the pole angle from the negative real axis. ζ>0 decays; larger = more damped. The dashed rays on the root locus are lines of constant ζ.',
+      },
+      {
+        sym: 'η_crit',
+        name: 'neutral-stability stiffness',
+        meaning:
+          'the η_inj where the locus crosses σ = 0. Stiffen past it and the chug pole moves into the stable half-plane.',
       },
       {
         sym: 'margin',
         name: 'gate margin',
         meaning:
           'the growth rate remapped to a pass/fail scale. ≥ 1.05 clears the gate; higher = safer.',
+      },
+    ],
+  },
+  {
+    title: 'The conversion lag (why the pole sits where it does)',
+    entries: [
+      {
+        sym: 'τ_at',
+        name: 'atomization lag',
+        meaning:
+          'time for the liquid jet to break into drops. Scales with jet diameter and Reynolds number (Leonardi 2017 eq. 6).',
+      },
+      {
+        sym: 'τ_vap',
+        name: 'vaporization lag',
+        meaning:
+          'time for those drops to become vapour. Scales with SMD² — atomization is a quadratic lever on stability.',
+      },
+      {
+        sym: 'τ_mix',
+        name: 'mixing lag',
+        meaning:
+          'time for the vapour to mix before it burns. Shared by both streams and set by the slower one. A gas-phase propellant carries this lag and nothing else.',
+      },
+      {
+        sym: 'θ_c',
+        name: 'chamber residence time',
+        meaning:
+          'L*/(Γ²c*), how long gas stays in the chamber. τ/θ_c is the lag that matters — a long lag is only dangerous relative to this.',
       },
     ],
   },

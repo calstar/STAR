@@ -279,6 +279,17 @@ than a single false-precision "stable/unstable" verdict.
 
 ## 5. The sensitive time lag for an impinging LOX/CH₄ spray
 
+> **SUPERSEDED for the chug transport lag — see [`chug-double-time-lag.md`](chug-double-time-lag.md).**
+> This section's closing simplification, $\tau_{tot}\approx\tau_{vap}$, is the assumption the code
+> shipped, and measuring it against the GH2/LOX chug rig of Leonardi et al. (2017) showed it costs a
+> factor of ~6 in combined frequency and boundary error. The chug loop now uses the double-time-lag
+> decomposition $\tau_{atom}+\tau_{vap}+\tau_{mix}$ with a phase-aware rule (a gaseous propellant
+> carries only $\tau_{mix}$), and $\tau_{vap}$ comes from the L17 eq. 9 evaporation constant rather
+> than the $d^2$-law below. The $d^2$-law remains selectable as `stability.time_lag_model: d2_law`,
+> and §5.1–5.2 still describe it accurately. The **acoustic** sensitive lag $\tau_{sens}$ is
+> unchanged in form, but is now taken off whichever *liquid* stream is rate-limiting rather than off
+> the oxidizer by position.
+
 This is the bridge between the spray/atomization model (already in the code: Ingebo SMD) and
 stability. For a **liquid bipropellant with both propellants injected as liquid jets**, the rate-
 limiting step of the conversion time is almost always **droplet vaporization** (Priem & Heidmann,
@@ -288,8 +299,10 @@ $$
 \tau_{tot} \;=\; \tau_{atomize} + \tau_{vap} + \tau_{mix} + \tau_{chem},
 $$
 
-with $\tau_{chem}\ll$ the others for LOX/CH₄ at chamber conditions, and $\tau_{atomize},\tau_{mix}$
-small for a well-impinged doublet. Thus $\tau_{tot}\approx\tau_{vap}$.
+with $\tau_{chem}\ll$ the others for LOX/CH₄ at chamber conditions. This document previously
+concluded that $\tau_{atomize},\tau_{mix}$ are small for a well-impinged doublet and therefore that
+$\tau_{tot}\approx\tau_{vap}$; the benchmark above contradicts that for $\tau_{mix}$, which is
+comparable to $\tau_{vap}$, not small against it.
 
 ### 5.1 Vaporization time from the $d^2$-law
 

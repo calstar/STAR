@@ -17,6 +17,7 @@ pre-test design guidance, not a substitute for detailed CFD or test data.
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from typing import Dict, Tuple, Optional, List, Any
 import numpy as np
 from engine.pipeline.config_schemas import PintleEngineConfig, StabilityConfig
@@ -264,39 +265,107 @@ def _feed_attr(config, key, attr, default):
 # Handbook thermodynamic fallbacks BY FLUID, used only when the config omits a property. Every use
 # is recorded in the assumptions registry. Previously the fuel fallbacks were methane's (h_fg 510 kJ/kg,
 # T_boil 111.6 K) regardless of which fuel the config named, and the oxidizer's were LOX's.
-#                         density kg/m^3   latent heat J/kg   boiling point K (1 atm)
+#                         density kg/m^3   latent heat J/kg   boiling point K   critical T K
 _FLUID_THERMO_FALLBACKS = {
-    "lox":          (1140.0,  213000.0,  90.2),
-    "methane":      ( 422.6,  510000.0, 111.65),
-    "ethanol":      ( 789.0,  838000.0, 351.4),
-    "rp1":          ( 810.0,  246000.0, 489.0),
-    "ipa":          ( 786.0,  665000.0, 355.6),
-    "nitrousoxide": (1220.0,  376000.0, 184.7),
+    "lox":          (1140.0,  213000.0,  90.2,  154.58),
+    "methane":      ( 422.6,  510000.0, 111.65, 190.56),
+    "ethanol":      ( 789.0,  838000.0, 351.4,  514.0),
+    "rp1":          ( 810.0,  246000.0, 489.0,  678.0),   # n-dodecane surrogate
+    "ipa":          ( 786.0,  665000.0, 355.6,  508.3),
+    "nitrousoxide": (1220.0,  376000.0, 184.7,  309.52),
+    "hydrogen":     (  70.8,  446000.0,  20.3,   33.15),
+    "nitrogen":     ( 806.0,  199000.0,  77.36, 126.19),
 }
-_THERMO_INDEX = {"density": (0, "kg/m^3"), "latent_heat": (1, "J/kg"), "boiling_point": (2, "K")}
-_GENERIC_THERMO = {"fuel": (800.0, 300000.0, 450.0), "oxidizer": (1140.0, 213000.0, 90.2)}
+_THERMO_INDEX = {"density": (0, "kg/m^3"), "latent_heat": (1, "J/kg"),
+                 "boiling_point": (2, "K"), "critical_temperature": (3, "K")}
+_GENERIC_THERMO = {"fuel": (800.0, 300000.0, 450.0, 600.0),
+                   "oxidizer": (1140.0, 213000.0, 90.2, 154.58)}
+
+#: Fluid name -> CoolProp fluid, for properties the config did not supply. Only names whose
+#: thermodynamics CoolProp actually covers; RP-1 is a cut, not a compound, so it is left to the
+#: n-dodecane surrogate in the handbook table above rather than asked of CoolProp under a name
+#: CoolProp would silently resolve to something else.
+_COOLPROP_NAMES = {
+    "lox": "Oxygen", "methane": "Methane", "ethanol": "Ethanol", "ipa": "n-Propanol",
+    "nitrousoxide": "NitrousOxide", "hydrogen": "Hydrogen", "nitrogen": "Nitrogen",
+}
+
+
+@lru_cache(maxsize=32)
+def _coolprop_critical_temperature(canon: str) -> Optional[float]:
+    """Critical temperature [K] from CoolProp for a canonical fluid name, or None.
+
+    Cached: the fast stability tier runs on every optimizer candidate, and a PropsSI call per
+    candidate would be a real cost for a value that cannot change within a process.
+    """
+    name = _COOLPROP_NAMES.get(canon)
+    if not name:
+        return None
+    try:
+        from CoolProp.CoolProp import PropsSI
+        v = float(PropsSI("Tcrit", name))
+        return v if np.isfinite(v) and v > 0 else None
+    except Exception:
+        return None
+
+
+def _fluid_name(config, key: str) -> str:
+    try:
+        f = config.fluids[key] if isinstance(config.fluids, dict) else getattr(config.fluids, key)
+        return str(getattr(f, "name", "") or "")
+    except Exception:
+        return ""
 
 
 def _fluid_thermo(config, key: str, attr: str) -> float:
-    """``fluids[key].attr`` from the config; else the handbook value for that named fluid; else a
-    generic value. Both fallbacks are recorded, and the generic one says the fluid was unrecognised."""
+    """``fluids[key].attr`` from the config; else CoolProp for the named fluid; else the handbook
+    table; else a generic value. Every fallback is recorded, and the generic one says outright that
+    the fluid was unrecognised so it reads as "fix the config", not as a property."""
     v = _fluid_attr(getattr(config, "fluids", None), key, attr, None)
     if v is not None:
         return v
     from engine.pipeline.assumptions import assume
     from engine.pipeline.io import _canon_fluid
     idx, unit = _THERMO_INDEX[attr]
-    try:
-        f = config.fluids[key] if isinstance(config.fluids, dict) else getattr(config.fluids, key)
-        name = getattr(f, "name", "") or ""
-    except Exception:
-        name = ""
+    name = _fluid_name(config, key)
     canon = _canon_fluid(name)
+    if attr == "critical_temperature":
+        cp = _coolprop_critical_temperature(canon)
+        if cp is not None:
+            return assume(f"stability.fluids.{key}.{attr}", cp, unit=unit,
+                          reason=f"fluids.{key}.critical_temperature missing; CoolProp value for {name}")
     if canon in _FLUID_THERMO_FALLBACKS:
         return assume(f"stability.fluids.{key}.{attr}", _FLUID_THERMO_FALLBACKS[canon][idx], unit=unit,
                       reason=f"fluids.{key}.{attr} missing from config; handbook value for {name}")
     return assume(f"stability.fluids.{key}.{attr}", _GENERIC_THERMO["oxidizer" if key == "oxidizer" else "fuel"][idx],
                   unit=unit, reason=f"fluids.{key}.{attr} missing and fluid {name!r} is not in the handbook table -- set it in the config")
+
+
+def _injection_phase(config, key: str) -> str:
+    """``"liquid"`` or ``"gas"`` at the injector face.
+
+    Explicit config wins. Otherwise: supercritical at the tank temperature is gas-like, and a fluid
+    whose vapour pressure at its own bulk temperature exceeds the chamber pressure arrives as vapour.
+    Both inferences are recorded — getting this wrong changes which time lags exist at all, so it
+    must never be a silent guess.
+    """
+    from engine.pipeline.assumptions import assume
+    explicit = None
+    try:
+        f = config.fluids[key] if isinstance(config.fluids, dict) else getattr(config.fluids, key)
+        explicit = getattr(f, "injection_phase", None)
+    except Exception:
+        f = None
+    if explicit in ("liquid", "gas"):
+        return str(explicit)
+    name = _fluid_name(config, key)
+    T = _fluid_attr(getattr(config, "fluids", None), key, "temperature", None)
+    T_crit = _fluid_thermo(config, key, "critical_temperature")
+    if T is not None and np.isfinite(T_crit) and T >= T_crit:
+        return assume(f"stability.fluids.{key}.injection_phase", "gas", unit="-",
+                      reason=f"{name or key} is stored at {T:.0f} K, at or above its critical "
+                             f"temperature {T_crit:.0f} K -- inferred to arrive as a gas")
+    return "liquid"
 
 
 def _feed_geometry(config, side: str) -> Tuple[float, float]:
@@ -343,6 +412,48 @@ def _chamber_dims(config, cg) -> Tuple[float, float]:
     return L, D
 
 
+def _jet_geometry(config, diagnostics: Dict[str, Any], side: str) -> Tuple[float, float]:
+    """(jet/post inner diameter [m], injection velocity [m/s]) for one stream.
+
+    These are Leonardi eq. 6-7's ``D_l`` and ``u_l``. Both come from whichever injector the config
+    actually names -- the solved closure diagnostics first (every injector model publishes ``u_O``/
+    ``u_F``), then the injector's own geometry block. Returns NaN rather than a stand-in when the
+    injector type carries no equivalent dimension; the lag model then drops the atomization term and
+    records it, instead of inventing a jet.
+
+    Impinging -> the jet diameter. Coaxial -> the core port (oxidizer) and the annulus hydraulic
+    diameter (fuel), which is what L17 calls the liquid post. Pintle -> the tip orifice (oxidizer)
+    and the annular gap's hydraulic diameter, 2*h_gap (fuel).
+    """
+    key = "O" if side == "oxidizer" else "F"
+    u = diagnostics.get(f"u_{key}")
+    u = float(u) if (u is not None and np.isfinite(float(u)) and float(u) > 0.0) else float("nan")
+
+    d = diagnostics.get(f"d_jet_{key}")
+    if d is not None and np.isfinite(float(d)) and float(d) > 0.0:
+        return float(d), u
+
+    inj = getattr(config, "injector", None)
+    geom = getattr(inj, "geometry", None)
+    itype = str(getattr(inj, "type", "") or "")
+    try:
+        if itype == "impinging":
+            elem = geom.oxidizer if side == "oxidizer" else geom.fuel
+            return float(elem.d_jet), u
+        if itype == "coaxial":
+            if side == "oxidizer":
+                return float(geom.core.d_port), u
+            # Annulus hydraulic diameter = 2 * gap (outer minus inner diameter).
+            return float(2.0 * geom.annulus.gap_thickness), u
+        if itype == "pintle":
+            if side == "oxidizer":
+                return float(geom.lox.d_orifice), u
+            return float(2.0 * geom.fuel.h_gap), u
+    except Exception:
+        pass
+    return float("nan"), u
+
+
 def _stability_config(config) -> StabilityConfig:
     sc = getattr(config, "stability", None)
     return sc if isinstance(sc, StabilityConfig) else StabilityConfig()
@@ -359,7 +470,7 @@ def build_stability_inputs(config, Pc: float, MR: float, mdot_total: float, csta
     config (``fluids`` for the propellants, ``feed_system`` for the plumbing, ``stability`` for the
     model calibration), and finally recorded assumptions -- never a silent constant.
     """
-    from engine.pipeline.stability import core, chug, acoustic
+    from engine.pipeline.stability import core, chug, acoustic, timelag
     from engine.pipeline.assumptions import assume
 
     sc = _stability_config(config)
@@ -394,8 +505,21 @@ def build_stability_inputs(config, Pc: float, MR: float, mdot_total: float, csta
     dpiF = float(diagnostics.get("delta_p_injector_F") or 0.30 * Pc)
     dpfO = float(diagnostics.get("delta_p_feed_O") or 0.10 * Pc)
     dpfF = float(diagnostics.get("delta_p_feed_F") or 0.10 * Pc)
-    D32_O = float(diagnostics.get("D32_O") or 80e-6)
-    D32_F = float(diagnostics.get("D32_F") or 60e-6)
+    # SMD comes from whichever spray model the config's injector selected (Ingebo for impinging,
+    # Lefebvre for coaxial, the sheet model for pintle) -- this layer must never pick one. When the
+    # closure did not produce one, the substitution is recorded rather than silently applied; it was
+    # a bare 80/60 um, i.e. a LOX/methane impinging spray asserted for every engine.
+    D32_O = diagnostics.get("D32_O")
+    if D32_O is None or not np.isfinite(float(D32_O)) or float(D32_O) <= 0.0:
+        D32_O = assume("stability.D32_oxidizer", 80e-6, unit="m",
+                       reason="closure produced no oxidizer SMD; order-of-magnitude liquid-oxidizer "
+                              "spray. The chug lag scales as SMD^2, so this is a large lever")
+    D32_O = float(D32_O)
+    D32_F = diagnostics.get("D32_F")
+    if D32_F is None or not np.isfinite(float(D32_F)) or float(D32_F) <= 0.0:
+        D32_F = assume("stability.D32_fuel", 60e-6, unit="m",
+                       reason="closure produced no fuel SMD; order-of-magnitude liquid-fuel spray")
+    D32_F = float(D32_F)
     ov = overrides or {}
     if ov.get("smd_um") is not None:
         D32_O = float(ov["smd_um"]) * 1e-6
@@ -416,16 +540,56 @@ def build_stability_inputs(config, Pc: float, MR: float, mdot_total: float, csta
     if K_bulk_O is None:
         K_bulk_O = assume("stability.fluids.oxidizer.bulk_modulus_pa", 1.5e9, unit="Pa",
                           reason="fluids.oxidizer.bulk_modulus_pa missing (set via propellant preset); measure via water-hammer test T5")
-    tau_conv_O, _, K_v_O = core.lags_from_smd(D32_O, k_g=k_g, rho_l=rho_O, cp_g=cp_g, T_inf=Tc,
-                                              T_boil=tbO, h_fg=hfg_O, chi=1.0)
-    tau_conv_F, _, K_v_F = core.lags_from_smd(D32_F, k_g=k_g, rho_l=rho_F, cp_g=cp_g, T_inf=Tc,
-                                              T_boil=tbF, h_fg=hfg_F, chi=1.0)
-    if not np.isfinite(tau_conv_O):
+    tcrO = _fluid_thermo(config, "oxidizer", "critical_temperature")
+    tcrF = _fluid_thermo(config, "fuel", "critical_temperature")
+    muO = _fluid_attr(config.fluids, "oxidizer", "viscosity", float("nan"))
+    muF = _fluid_attr(config.fluids, "fuel", "viscosity", float("nan"))
+    sigO = _fluid_attr(config.fluids, "oxidizer", "surface_tension", float("nan"))
+    sigF = _fluid_attr(config.fluids, "fuel", "surface_tension", float("nan"))
+    phaseO = _injection_phase(config, "oxidizer")
+    phaseF = _injection_phase(config, "fuel")
+    d_jet_O, u_inj_O = _jet_geometry(config, diagnostics, "oxidizer")
+    d_jet_F, u_inj_F = _jet_geometry(config, diagnostics, "fuel")
+
+    # Mean axial gas velocity in the chamber -- the ``u_g`` of the atomization Weber number.
+    u_gas = float(mdot_total / (rho_g * A_c)) if (rho_g > 0 and A_c > 0) else float("nan")
+
+    lag_streams = {
+        "O": timelag.StreamThermo(
+            name=_fluid_name(config, "oxidizer") or "oxidizer", phase=phaseO,
+            rho_l=rho_O, mu_l=muO, sigma_l=sigO, T_boil=tbO, T_crit=tcrO, h_fg=hfg_O,
+            D0=D32_O, u_inj=u_inj_O, d_orifice=d_jet_O),
+        "F": timelag.StreamThermo(
+            name=_fluid_name(config, "fuel") or "fuel", phase=phaseF,
+            rho_l=rho_F, mu_l=muF, sigma_l=sigF, T_boil=tbF, T_crit=tcrF, h_fg=hfg_F,
+            D0=D32_F, u_inj=u_inj_F, d_orifice=d_jet_F),
+    }
+    lag_chamber = timelag.ChamberThermo(Pc=Pc, Tc=Tc, MR=MR, rho_g=rho_g, u_g=u_gas,
+                                        k_g=k_g, cp_g=cp_g)
+    # `or` rather than a dict default: an override dict that carries the key with a None value
+    # (a caller passing model_dump() unfiltered) must fall back to the config, not stringify None
+    # into a model name the registry will reject.
+    lag_model = str(ov.get("time_lag_model") or sc.time_lag_model)
+    convection = str(ov.get("convection_model") or sc.convection_model)
+    # The d^2-law is the historical model; it never carried a mixing lag, so selecting it must not
+    # introduce one. Gate on the model having something to do, not merely on the field being set.
+    mix_fraction = float(sc.mixing_lag_fraction) if lag_model == "leonardi_dtl" else 0.0
+    if ov.get("mixing_lag_fraction") is not None:
+        mix_fraction = float(ov["mixing_lag_fraction"])   # 0.0 is meaningful here, so test for None
+    lags = timelag.compute_lags(
+        lag_streams, lag_chamber, model=lag_model, mix_fraction=mix_fraction,
+        convection=convection,
+        on_fallback=lambda name, value, unit, reason: assume(name, value, unit=unit, reason=reason),
+    )
+    tau_conv_O = float(lags["O"].tau_total)
+    tau_conv_F = float(lags["F"].tau_total)
+    K_v_O, K_v_F = float(lags["O"].K_v), float(lags["F"].K_v)
+    if not np.isfinite(tau_conv_O) or tau_conv_O <= 0.0:
         tau_conv_O = assume("stability.tau_conv_O", 2.0e-3, unit="s",
-                            reason="d^2-law oxidizer lag non-finite (check T_boil < Tc and h_fg)")
-    if not np.isfinite(tau_conv_F):
+                            reason=f"{lag_model} oxidizer lag non-finite (check T_boil < Tc, h_fg, SMD)")
+    if not np.isfinite(tau_conv_F) or tau_conv_F <= 0.0:
         tau_conv_F = assume("stability.tau_conv_F", 1.5e-3, unit="s",
-                            reason="d^2-law fuel lag non-finite (check T_boil < Tc and h_fg)")
+                            reason=f"{lag_model} fuel lag non-finite (check T_boil < Tc, h_fg, SMD)")
 
     L_feed_O, A_feed_O = _feed_geometry(config, "oxidizer")
     L_feed_F, A_feed_F = _feed_geometry(config, "fuel")
@@ -442,7 +606,16 @@ def build_stability_inputs(config, Pc: float, MR: float, mdot_total: float, csta
     chamber = chug.ChugChamber(cstar=cstar, A_t=A_t, Lstar=Lstar, gamma=gamma)
     chi_ac = float(ov.get("chi_acoustic", sc.chi_acoustic))
     n_int = float(ov.get("n_interaction", sc.n_interaction))
-    tau_sens = chi_ac * tau_conv_O      # LOX-side rate-limiting; sensitive lag << transport lag [Phys §5]
+    # Sensitive lag for the acoustic n-tau driving. The rate-limiting stream is whichever LIQUID
+    # stream converts slowest -- not "the oxidizer" (this read tau_conv_O unconditionally, which is
+    # only right when the oxidizer happens to be both liquid and slower; on a gas/liquid pair such as
+    # GOX/ethanol it priced the acoustic driving off a stream that has no droplets at all).
+    # Uses the POST-fallback lags: a liquid stream whose lag was non-finite and got substituted is
+    # still a liquid stream and still competes to be the rate-limiting one.
+    _liquid_taus = [tau for k, tau in (("O", tau_conv_O), ("F", tau_conv_F))
+                    if not lag_streams[k].is_gas and np.isfinite(tau) and tau > 0]
+    tau_rate_limiting = max(_liquid_taus) if _liquid_taus else max(tau_conv_O, tau_conv_F)
+    tau_sens = chi_ac * tau_rate_limiting      # [Phys §5]
 
     # Nozzle-entrance Mach sets the convective (nozzle) damping. Config value if given, else the
     # subsonic isentropic solution for the actual contraction ratio (a fixed 0.2 corresponds to a
@@ -464,6 +637,14 @@ def build_stability_inputs(config, Pc: float, MR: float, mdot_total: float, csta
         "D_ch": D_ch, "L_ch": L_ch, "Lstar": Lstar, "contraction_ratio": contraction_ratio,
         "mach_nozzle_entrance": float(M_ne),
         "tau_conv_O": tau_conv_O, "tau_conv_F": tau_conv_F, "tau_sens": tau_sens,
+        "tau_rate_limiting": float(tau_rate_limiting),
+        "lag_model": lag_model, "convection_model": convection, "mixing_lag_fraction": mix_fraction,
+        "lag_breakdown": {k: v.as_dict() for k, v in lags.items()},
+        "phase_O": phaseO, "phase_F": phaseF,
+        "fluid_name_O": _fluid_name(config, "oxidizer") or "oxidizer",
+        "fluid_name_F": _fluid_name(config, "fuel") or "fuel",
+        "injector_type": str(getattr(getattr(config, "injector", None), "type", "") or "unknown"),
+        "d_jet_O": d_jet_O, "d_jet_F": d_jet_F, "u_inj_O": u_inj_O, "u_inj_F": u_inj_F,
         "chi_acoustic": chi_ac, "n_interaction": n_int,
         "eta_inj_O": eta_O, "eta_inj_F": eta_F,
         "D32_O": D32_O, "D32_F": D32_F, "K_v_O": K_v_O, "K_v_F": K_v_F,
