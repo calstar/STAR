@@ -1,7 +1,10 @@
 """Engine evaluation endpoints."""
 
 from fastapi import APIRouter, HTTPException, Depends
+from typing import Literal
+
 from pydantic import BaseModel, Field
+import math
 import numpy as np
 
 from backend.session import UserSession, get_session
@@ -17,9 +20,20 @@ PA_TO_PSI = 1.0 / PSI_TO_PA
 class StabilityOverrides(BaseModel):
     """Optional forward-mode knobs for rich stability re-evaluation."""
     eta_inj_O: float | None = Field(default=None, gt=0, le=0.6, description="Oxidizer ΔP_inj/Pc")
-    smd_um: float | None = Field(default=None, gt=0, le=200, description="LOX SMD [µm]")
+    smd_um: float | None = Field(default=None, gt=0, le=200, description="Oxidizer spray SMD [µm]")
     n_interaction: float | None = Field(default=None, gt=0, le=2, description="Combustion interaction index n")
     chi_acoustic: float | None = Field(default=None, gt=0, le=1, description="Acoustic sensitive-fraction χ")
+    time_lag_model: Literal["leonardi_dtl", "d2_law"] | None = Field(
+        default=None,
+        description="Conversion-lag model for the chug loop. Overrides stability.time_lag_model for this run only.",
+    )
+    convection_model: Literal["none", "leonardi_eq8", "ranz_marshall"] | None = Field(
+        default=None, description="Convective speed-up applied to the droplet lifetime.",
+    )
+    mixing_lag_fraction: float | None = Field(
+        default=None, ge=0, le=3,
+        description="Mixing lag as a fraction of the rate-limiting vaporization lag.",
+    )
 
 
 class EvaluateRequest(BaseModel):
@@ -39,8 +53,18 @@ def convert_numpy(obj):
         return [convert_numpy(item) for item in obj]
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
-    elif isinstance(obj, (np.integer, np.floating)):
+    elif isinstance(obj, np.floating):
+        # NaN/Inf are legal model outputs (a lag model that does not define K_v, a margin
+        # that could not be evaluated) but json.dumps rejects them outright --
+        # "Out of range float values are not JSON compliant" -- which surfaced as a blanket
+        # HTTP 500 on forward evaluation. Emit JSON null instead, so a missing number reads
+        # as missing rather than taking the whole response down.
+        v = obj.item()
+        return v if math.isfinite(v) else None
+    elif isinstance(obj, np.integer):
         return obj.item()
+    elif isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
     elif isinstance(obj, np.bool_):
         return bool(obj)
     else:
