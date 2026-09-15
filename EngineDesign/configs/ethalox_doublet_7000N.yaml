@@ -112,7 +112,12 @@ design_requirements:
   W_IMPINGING_ANGLE: 400.0
   W_IMPINGING_JET_ASYM: 180.0
   W_IMP_GEOM: 1500.0
-  W_MOM: 120000.0
+  # 75.0 is the code default (layer1_static_optimization.py:5451). The old 30000/120000
+  # dated from when R was the hard ablative guard; that guard was replaced by the spray
+  # resultant-tilt gate, but the weights were never brought back down. At 30000+ the
+  # superseded R band acts as a hard constraint AND outranks W_OF, which manufactured a
+  # fuel-tank requirement of 643 psi for a design point that closes at 582.
+  W_MOM: 75.0
   W_SMD: 0.0
   W_TANK_EQUAL: 30000.0
   W_geom_ao_af_momentum: 3500.0
@@ -288,18 +293,14 @@ environment:
   longitude: -117.8099547
 feed_system:
   fuel:
-    A_hydraulic: 7.316855998167869e-05
     K0: 0.95
     K1: 0.0
-    d_inlet: 0.009652
-    line_size: 3/8_NPT
+    line_size: 3/8_TUBE_035
     phi_type: none
   oxidizer:
-    A_hydraulic: 0.00012667686977437442
     K0: 0.95
     K1: 0.0
-    d_inlet: 0.0127
-    line_size: 1/2_NPT
+    line_size: 1/2_TUBE_035
     phi_type: none
 film_cooling:
   apply_to_fraction_of_length: 0.6
@@ -326,6 +327,7 @@ fluids:
     latent_heat: 838000.0
     molecular_weight: 46.07
     name: Ethanol
+    critical_temperature: 514.71   # K, CoolProp Ethanol — chug time-lag evaporation constant (Leonardi 2017 eq. 9)
     specific_heat: 2440.0
     surface_tension: 0.0223
     temperature: 293.0
@@ -339,6 +341,7 @@ fluids:
     latent_heat: 213000.0
     molecular_weight: 32.0
     name: LOX
+    critical_temperature: 154.60   # K, CoolProp Oxygen — chug time-lag evaporation constant (Leonardi 2017 eq. 9)
     specific_heat: 2300.0
     surface_tension: 0.013
     temperature: 90.0

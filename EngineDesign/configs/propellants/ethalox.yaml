@@ -17,6 +17,7 @@ fluids:
     boiling_point: 351.4
     molecular_weight: 46.07
     bulk_modulus_pa: 1060000000.0   # ethanol @ ~293 K, standard handbook value (stability feed-acoustics)
+    critical_temperature: 514.71   # K, CoolProp Ethanol -- chug time-lag evaporation constant (Leonardi 2017 eq. 9)
   oxidizer:
     name: LOX
     density: 1140.0
@@ -30,6 +31,7 @@ fluids:
     boiling_point: 90.2
     molecular_weight: 32.0
     bulk_modulus_pa: 1500000000.0    # order-of-magnitude LOX; refine via test T5
+    critical_temperature: 154.60   # K, CoolProp Oxygen -- chug time-lag evaporation constant (Leonardi 2017 eq. 9)
 # Chamber-gas properties for the Ingebo aerodynamic Weber number (rho_g = Pc/(R*T)).
 #
 # These are NOT free constants: the schema defaults (R=360, T=3500) are LOX/CH4 values, and

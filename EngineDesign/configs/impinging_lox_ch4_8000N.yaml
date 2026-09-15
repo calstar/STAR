@@ -244,6 +244,7 @@ fluids:
     latent_heat: 510000.0
     molecular_weight: 16.04
     name: Methane
+    critical_temperature: 190.56   # K, CoolProp Methane — chug time-lag evaporation constant (Leonardi 2017 eq. 9)
     specific_heat: 3348.0
     surface_tension: 0.0134
     temperature: 112.0
@@ -256,6 +257,7 @@ fluids:
     latent_heat: null
     molecular_weight: null
     name: LOX
+    critical_temperature: 154.60   # K, CoolProp Oxygen — chug time-lag evaporation constant (Leonardi 2017 eq. 9)
     specific_heat: 2300.0
     surface_tension: 0.013
     temperature: 90.0
