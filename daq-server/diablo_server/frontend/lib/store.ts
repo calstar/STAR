@@ -76,8 +76,6 @@ interface SensorSystemState {
   boards: Record<number, BoardStatus>;
   /** From config [adc]; used by sense conversions (TC ref, actuator threshold). */
   voltageRefNominals: VoltageRefNominals;
-  /** Load cell zero offsets (lbf) by cal entity e.g. LC_Cal.CH1. Display = raw_lbf - offset. Persisted to localStorage. */
-  loadCellZeroOffsets: Record<string, number>;
   notifications: NotificationEntry[];
   /** Per-board live diagnostic log lines (ring buffer; accumulates while app is open). */
   boardLogs: Record<number, BoardLogLine[]>;
@@ -85,7 +83,6 @@ interface SensorSystemState {
   boardLogStats: Record<number, BoardLogTotals>;
 
   updateSensor: (update: SensorUpdate) => void;
-  setLoadCellZeroOffset: (calEntity: string, offsetLbf: number | null) => void;
   updateActuator: (update: ActuatorUpdate) => void;
   setActuatorState: (entity: string, state: ActuatorState) => void;
   setActuatorCommandedOverride: (entity: string, state: ActuatorState | null) => void;
@@ -109,19 +106,6 @@ interface SensorSystemState {
   pressureHistoryHiddenEntities: Record<string, true>;
   togglePressureHistoryPlotVisibility: (plotEntityKeys: string[]) => void;
   clearPressureHistoryHidden: () => void;
-}
-
-const LC_ZERO_STORAGE_KEY = 'sensor_system_loadCellZeroOffsets';
-
-function loadStoredLcZeroOffsets(): Record<string, number> {
-  try {
-    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LC_ZERO_STORAGE_KEY) : null;
-    if (raw) {
-      const parsed = JSON.parse(raw) as Record<string, number>;
-      if (parsed && typeof parsed === 'object') return parsed;
-    }
-  } catch (_) { /* ignore */ }
-  return {};
 }
 
 // ── Dynamic alias system ─────────────────────────────────────────────────────
@@ -172,7 +156,7 @@ export function buildAliasesFromConfig(config: any): void {
   const ptComponents = ['pressure_psi', 'raw_adc_counts', 'raw_adc', 'current_ma', 'sense_voltage', 'excitation_voltage'];
   const tcComponents = ['temperature_c', 'raw_adc_counts', 'raw_adc'];
   const rtdComponents = ['temperature_c', 'raw_adc_counts', 'raw_adc'];
-  const lcComponents = ['force_kg', 'force_n', 'raw_adc_counts', 'raw_adc'];
+  const lcComponents = ['force_kg', 'force_kg_tared', 'force_n', 'raw_adc_counts', 'raw_adc'];
   const actComponents = ['raw_adc_counts', 'actuator_state_commanded', 'current_a', 'status'];
   const actCmdComponents = ['actuator_state_commanded'];
 
@@ -417,7 +401,6 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   boardLogs: {},
   boardLogStats: {},
   voltageRefNominals: { internalV: 2.5, absolute5vV: 5 },
-  loadCellZeroOffsets: loadStoredLcZeroOffsets(),
   notifications: [],
   pressureHistoryHiddenEntities: {},
 
@@ -437,20 +420,6 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   },
 
   clearPressureHistoryHidden: () => set({ pressureHistoryHiddenEntities: {} }),
-
-  setLoadCellZeroOffset: (calEntity: string, offsetLbf: number | null) => {
-    set((s) => {
-      const next = { ...s.loadCellZeroOffsets };
-      if (offsetLbf == null) delete next[calEntity];
-      else next[calEntity] = offsetLbf;
-      if (typeof localStorage !== 'undefined') {
-        try {
-          localStorage.setItem(LC_ZERO_STORAGE_KEY, JSON.stringify(next));
-        } catch (_) { /* ignore */ }
-      }
-      return { loadCellZeroOffsets: next };
-    });
-  },
 
   updateSensor: (update: SensorUpdate) => {
     const key = `${update.entity}.${update.component}`;
@@ -494,6 +463,11 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
 
     // Back-compat for legacy LC panes expecting force_lbf / force_n.
     // Backend now publishes canonical force_kg.
+    //
+    // These stay derived from ABSOLUTE force_kg, never from force_kg_tared. They are
+    // archive-comparable legacy aliases with no consumers outside the alias list, and silently
+    // re-taring them would produce "why does the N readout disagree with the kg readout" with
+    // nothing in the code pointing at the cause.
     if (update.component === 'force_kg') {
       const lbf = update.value * 2.2046226218;
       const n = update.value * 9.80665;
@@ -784,12 +758,19 @@ export function useActuatorStateByEntity(entity: string): ActuatorState | null {
   return useSensorStore((s) => s.actuatorStateByEntity[entity] ?? null);
 }
 
-/** Load cell force (kg) with zero offset applied. Use for display: displayKg = raw - offset. */
+/**
+ * Load cell force (kg) as the operator should read it: tared when a tare is standing, absolute
+ * otherwise. The backend derives `force_kg_tared` and always publishes it — a 0 offset when
+ * untared — so there is no arithmetic here and no way for this to disagree with the plots.
+ *
+ * Use `useSensorValue(calEntity, 'force_kg')` directly where ABSOLUTE weight is required. The
+ * calibration page is the one that must: the operator types the true weight of a known mass, and
+ * a tared reading beside that input is how a false point gets into the fit.
+ */
 export function useLoadCellForceKg(calEntity: string): number | null {
-  const raw = useSensorValue(calEntity, 'force_kg');
-  const offset = useSensorStore((s) => s.loadCellZeroOffsets[calEntity] ?? 0);
-  if (raw == null || !Number.isFinite(raw)) return null;
-  return raw - offset;
+  const v = useSensorValue(calEntity, 'force_kg_tared');
+  if (v == null || !Number.isFinite(v)) return null;
+  return v;
 }
 
 /** @deprecated Use useLoadCellForceKg instead. Legacy alias for backwards compatibility. */

@@ -85,6 +85,12 @@ role = "Low Press"
 limits = ""
 color = "#ff0088"
 
+[[gui.pressure_bars]]
+label = "LOX Upstream"
+role = "LOX Upstream"
+limits = ""
+color = "#888888"
+
 [gui.groups]
 LOX = [ "LOX Upper", "LOX Mid", "LOX Lower", "COPV RTD" ]
 Fuel = [ "Fuel Upstream" ]
@@ -297,12 +303,14 @@ active_connectors = [ 1, 2 ]
 "Fuel Upstream" = 2
 "Dome CTRL" = 3
 "Low Press" = 4
+"LOX Upstream" = 5
 
 [calibration_model_pt_board]
 "Fuel Fill Vent" = "physics"
 "Fuel Upstream" = "cubic"
 "Dome CTRL" = "cubic"
 "Low Press" = "physics"
+"LOX Upstream" = "cubic"
 
 [calibration_full_scale_pt_board]
 "Fuel Fill Vent" = 1000
@@ -673,11 +681,11 @@ is_flow = true
 [actuator_roles]
 "Fuel Upstream" = [ "NC", 1, 12 ]
 "High Press CTRL" = [ "NC", 2, 12 ]
-"Dome CTRL" = [ "NO", 3, 12 ]
+"Dome CTRL" = [ "NC", 3, 12 ]
 "Fuel Main" = [ "NC", 6, 12 ]
-"fuel vent" = [ "NC", 7, 12 ]
-"lox vent" = [ "NC", 9, 12 ]
-"Ox Upstream" = [ "NO", 10, 12 ]
+"fuel vent" = [ "NO", 7, 12 ]
+"lox vent" = [ "NO", 9, 12 ]
+"Ox Upstream" = [ "NC", 10, 12 ]
 "Fuel Fill Press" = [ "NC", 2, 14 ]
 "High Press Vent" = [ "NC", 3, 14 ]
 "Fuel Fill Vent" = [ "NC", 5, 14 ]
@@ -690,3 +698,15 @@ is_flow = true
 "Excitation V" = "physics"
 "Dome Mid" = "cubic"
 "High Press" = "cubic"
+
+[sensor_roles_lc_board]
+"Fuel Scale" = 1
+
+[sensor_roles_lc_board_2]
+"LOX Scale" = 1
+
+[calibration_model_lc_board]
+"Fuel Scale" = "cubic"
+
+[calibration_model_lc_board_2]
+"LOX Scale" = "cubic"

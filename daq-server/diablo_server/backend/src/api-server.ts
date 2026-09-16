@@ -34,6 +34,7 @@ import { otaBuildFlash, otaFlashFirmwareFile } from './ota-service-cmd.js';
 import { ElodinQueryClient, QueryOptions } from './elodin-query.js';
 import { getBoardLogHistory, getBoardLogStats } from './board-logs.js';
 import type { SensorUpdate } from './shared-types.js';
+import { currentTares } from './lc-tare.js';
 
 // ── Sensor config helpers ──────────────────────────────────────────────────
 
@@ -812,6 +813,19 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         } else {
           try { JSON.parse(body); res.end(body); }
           catch { res.end(JSON.stringify({ cubic_state: {} })); }  // partial/corrupt → empty
+        }
+      } else if (url.pathname === '/api/lc_tare' && req.method === 'GET') {
+        // The live load-cell tares, for the UI to badge tared channels and show their offsets.
+        //
+        // Read from the same file the stream subtraction uses, so the badge and the number on
+        // the plot can never disagree. This is the authoritative source for tare UI state — do
+        // NOT let the page assume a tare landed because it sent the command; [0x46,0x00] carries
+        // no reply, so only the file says whether the service accepted it.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        try {
+          res.end(JSON.stringify({ tares: currentTares() }));
+        } catch {
+          res.end(JSON.stringify({ tares: [] }));
         }
       } else if (url.pathname === '/api/feed-char/results') {
         /**

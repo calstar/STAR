@@ -398,6 +398,19 @@ sedi 's/^bind_ip = .*/bind_ip = "127.0.0.1"/' "$TEST_CONFIG"
 # just has to be distinguishable from FireManager's 6000 ms default — no need to sit through a
 # realistic burn on every CI run.
 sedi 's/^duration_ms = .*/duration_ms = 1500/' "$TEST_CONFIG"
+# Put LC board 2 CH1 in CUBIC mode (config_base leaves every load cell on the datasheet physics
+# conversion, where select_lc_kg ignores captures entirely). cal_lc_tare needs a channel whose
+# curve an operator can actually move, because the property it exists to prove is that a tare
+# re-derives its kilograms from the stored ADC code when the curve changes underneath it. The
+# other two connectors (2, 6) stay on physics, so cal_lc_capture and cal_stability are unaffected.
+cat >> "$TEST_CONFIG" <<'LCCUBIC'
+
+[sensor_roles_lc_board_2]
+"Thrust" = 1
+
+[calibration_model_lc_board_2]
+"Thrust" = "cubic"
+LCCUBIC
 sedi 's/^extended_ms = .*/extended_ms = 3000/' "$TEST_CONFIG"
 # ── Flow Test: a gated timed hold, constructed here rather than shipped ───────────────────────
 # The sequencer can time a hold around ONE actuator rather than around the state, adding that
@@ -696,6 +709,11 @@ if [ -n "$CALIB_SVC" ]; then
   # a fresh checkout does — otherwise a stale cubic_calibration.json from a prior local run would
   # carry captured cubics into this run. The service regenerates it at startup.
   rm -f "$REPO_ROOT/scripts/calibration/calibrations/cubic_calibration.json" 2>/dev/null || true
+  # Same isolation for load-cell tares: a tare left by a previous run would be re-applied to this
+  # one's stream, and cal_lc_tare's first assertion (untared trace == absolute trace) would fail
+  # for a reason that has nothing to do with the code under test. The backend clears this at
+  # session start in production; the integration stack has no session, so do it here.
+  rm -f "$REPO_ROOT/scripts/calibration/calibrations/lc_tare.json" 2>/dev/null || true
   (cd "$REPO_ROOT" && "$CALIB_SVC" --config "$TEST_CONFIG" --adjustments "$CAL_ADJ" \
     --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
     > "$REPO_ROOT/.tmp/integration_calibration_$$.log" 2>&1) &

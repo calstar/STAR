@@ -298,6 +298,23 @@ export default function CalibrationPage() {
     return () => clearInterval(id);
   }, [fetchCubic]);
 
+  // Whether any load cell currently has a standing tare. This page always shows ABSOLUTE weight
+  // — the operator types the true weight of a known mass, and a tared reading beside that input
+  // is exactly how a false point gets into the fit — so when a tare is live it has to say so,
+  // or the number here silently disagrees with every other screen.
+  const [anyLcTared, setAnyLcTared] = useState(false);
+  useEffect(() => {
+    const poll = () => {
+      fetch(`${getApiBaseUrl()}/api/lc_tare`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => setAnyLcTared(((d?.tares ?? []) as unknown[]).length > 0))
+        .catch(() => {});
+    };
+    poll();
+    const id = setInterval(poll, 2000);
+    return () => clearInterval(id);
+  }, []);
+
   const sendCalCmd = useCallback((cmd: CalibrationCommand) => {
     ws.send({ type: MessageType.CALIBRATION_COMMAND, timestamp: Date.now(), payload: cmd });
     setTimeout(fetchCubic, 350);
@@ -465,7 +482,14 @@ export default function CalibrationPage() {
         )}
 
         {/* Global action: Zero all — captures a 0 reference point on every cubic/robust PT + LC
-            sensor. It's a real point (feeds the shared fit + persists), not a tare. */}
+            sensor. It's a real point (feeds the shared fit + persists), NOT a tare.
+
+            The distinction, since load cells now have a Tare button on the LC/TC/RTD page: a
+            vented PT genuinely IS at 0 psig, so a zero is a true reference point and belongs in
+            the fit. A load cell holding a tank is NOT at 0 kg — capturing that would inject a
+            false point, and because the fit is least-squares over every point it would tilt the
+            whole cubic rather than shift its intercept. So LC gets a display-only tare that
+            never touches the fit, and this button still means "unloaded". */}
         {(counts.cubic + counts.robust + lcCounts.cubic) > 0 && (
           <div className="flex-shrink-0 px-4 py-3 border-t border-gray-800">
             <button onClick={handleZeroAll} disabled={!sessionActive}
@@ -555,6 +579,12 @@ export default function CalibrationPage() {
                 points was to change a sensor's model first, mid-campaign. */}
             <div className="rounded-xl border border-gray-700 bg-card p-5">
               <div className="text-sm font-bold text-text mb-3">Capture reference point</div>
+              {anyLcTared && selectedKind === 'LC' && (
+                <div className="mb-3 text-xs rounded-lg border border-amber-700/60 bg-amber-900/20 px-3 py-2 text-amber-300">
+                  A load-cell tare is active. This page shows <strong>absolute</strong> weight, so
+                  enter the true weight of the mass on the scale &mdash; not what the other screens read.
+                </div>
+              )}
               {selectedModel === 'physics' && (
                 <div className="text-sm text-orange-300/90 mb-3">
                   This sensor is in physics mode: points are recorded but do not change what it streams.

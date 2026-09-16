@@ -46,6 +46,18 @@ function getCalibrationsDir(): string {
 export function livePath(): string {
   return path.join(getCalibrationsDir(), 'cubic_calibration.json');
 }
+/**
+ * The live load-cell tare state, written by the calibration service and read here to apply the
+ * display subtraction. Lives beside the cubic store on purpose — same directory, same atomic
+ * write discipline, same "read the file to learn the answer" contract, because [0x46,0x00] is
+ * one-way and the service never sends a reply.
+ *
+ * NOT the per-run record: that is <dbDir>/lc_tare.jsonl, appended by lc-tare.ts. This file is
+ * overwritten on every change and removed at session start, so it cannot serve as a record.
+ */
+export function tarePath(): string {
+  return path.join(getCalibrationsDir(), 'lc_tare.json');
+}
 function defaultPath(): string {
   return path.join(getCalibrationsDir(), 'cubic_calibration.default.json');
 }

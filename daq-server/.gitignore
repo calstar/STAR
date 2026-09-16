@@ -2,6 +2,7 @@
 
 # Build artifacts
 build/
+build-ns/
 *.o
 *.a
 *.so
@@ -230,6 +231,10 @@ scripts/calibration/calibrations/adjustments.json
 # Clear. cubic_calibration.default.json (NOT ignored) is the tracked seed the service copies here
 # on first run when this file is missing; promote a good cal into it via promote_default.sh.
 scripts/calibration/calibrations/cubic_calibration.json
+# Live load-cell tare state, written by calibration_service and cleared by the backend at session
+# start. Operator display state for one session on one stand — never a thing to commit, and there
+# is no tracked seed for it (absent == every load cell reads absolute, which is the right default).
+scripts/calibration/calibrations/lc_tare.json
 
 # Raw-ADC abort thresholds the calibration service regenerates from the live cal on every
 # capture/clear/reload (uid target_psi raw_adc), read by config_broadcast. Runtime-derived, per-rig.
