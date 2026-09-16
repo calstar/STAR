@@ -20,8 +20,8 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
-#include <limits>
 #include <fstream>
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <string>
 
@@ -62,7 +62,9 @@ std::string read_text(const std::string& path) {
 
 /** A linear adc->kg curve, standing in for select_lc_kg. */
 LcTareStore::Evaluator linear(double kg_per_count) {
-    return [kg_per_count](double adc) { return adc * kg_per_count; };
+    return [kg_per_count](double adc) {
+        return adc * kg_per_count;
+    };
 }
 
 // ── 1. the 2 kg bug ─────────────────────────────────────────────────────────
@@ -128,11 +130,15 @@ void non_finite_offset_is_never_recorded() {
     // A degenerate one-point fit can evaluate to inf/NaN. Node subtracts offset_kg from every
     // sample; a NaN there is dropped by the finite guard downstream and the whole series simply
     // vanishes from the plot with no error anywhere.
-    const auto blown_up = [](double) { return std::numeric_limits<double>::quiet_NaN(); };
+    const auto blown_up = [](double) {
+        return std::numeric_limits<double>::quiet_NaN();
+    };
     CHECK(!s.set(4201, lc_tare_entity(42, 1), 1000.0, blown_up), "a NaN offset must be refused");
     CHECK(s.tare_for(4201) == nullptr, "nothing may be recorded for a refused tare");
 
-    const auto inf_curve = [](double) { return std::numeric_limits<double>::infinity(); };
+    const auto inf_curve = [](double) {
+        return std::numeric_limits<double>::infinity();
+    };
     CHECK(!s.set(4202, lc_tare_entity(42, 2), 1000.0, inf_curve), "an inf offset must be refused");
     CHECK(s.size() == 0, "store must still be empty, has %zu", s.size());
 
@@ -189,10 +195,11 @@ void loaded_tare_is_corrected_by_recompute() {
 
     // The startup recompute is what corrects it. If the tare file is loaded AFTER the live store
     // reload instead of before, this never runs and the stand carries the stale offset all run.
-    s.recompute_all([](uint16_t) { return linear(0.020); });
+    s.recompute_all([](uint16_t) {
+        return linear(0.020);
+    });
     CHECK(std::fabs(s.tare_for(4201)->offset_kg - 20.0) < 1e-9,
-          "the startup recompute must correct a stale offset, got %f",
-          s.tare_for(4201)->offset_kg);
+          "the startup recompute must correct a stale offset, got %f", s.tare_for(4201)->offset_kg);
 }
 
 // ── 6. the staleness fingerprint ────────────────────────────────────────────
@@ -223,19 +230,25 @@ void stale_audit_finds_a_missed_recompute() {
 
     // Nothing has changed: the audit must report zero, or it would cry wolf on every startup and
     // the warning would stop meaning anything.
-    CHECK(s.recompute_stale([](uint16_t) { return linear(0.020); }) == 0,
+    CHECK(s.recompute_stale([](uint16_t) {
+        return linear(0.020);
+    }) == 0,
           "an unchanged curve must not be reported stale");
     CHECK(std::fabs(s.tare_for(4201)->offset_kg - 20.0) < 1e-9, "and the offset is untouched");
 
     // Now the curve moves WITHOUT a recompute — the shape of a missed hook, and of reading the
     // tare file after the startup reload instead of before it.
-    const size_t stale = s.recompute_stale([](uint16_t) { return linear(0.030); });
+    const size_t stale = s.recompute_stale([](uint16_t) {
+        return linear(0.030);
+    });
     CHECK(stale == 1, "a moved curve must be reported stale, got %zu", stale);
-    CHECK(std::fabs(s.tare_for(4201)->offset_kg - 30.0) < 1e-9,
-          "and must be re-derived, got %f", s.tare_for(4201)->offset_kg);
+    CHECK(std::fabs(s.tare_for(4201)->offset_kg - 30.0) < 1e-9, "and must be re-derived, got %f",
+          s.tare_for(4201)->offset_kg);
 
     // Having fixed it, a second audit is quiet.
-    CHECK(s.recompute_stale([](uint16_t) { return linear(0.030); }) == 0,
+    CHECK(s.recompute_stale([](uint16_t) {
+        return linear(0.030);
+    }) == 0,
           "the audit must be quiet once it has healed");
 }
 
@@ -253,8 +266,8 @@ void save_load_round_trip() {
     CHECK(s2.load() == 2, "two tares should load");
     CHECK(!s2.load_failed(), "a good file is not a failed load");
     CHECK(s2.tare_for(4201)->entity == "LC2_Cal.CH1", "entity round-trips");
-    CHECK(std::fabs(s2.tare_for(4206)->offset_kg + 5.0) < 1e-9, "negative offset round-trips, got %f",
-          s2.tare_for(4206)->offset_kg);
+    CHECK(std::fabs(s2.tare_for(4206)->offset_kg + 5.0) < 1e-9,
+          "negative offset round-trips, got %f", s2.tare_for(4206)->offset_kg);
 
     // A missing file is the normal post-session-start state, not a failure — it must not block
     // the next save the way an unreadable file does.

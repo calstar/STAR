@@ -48,8 +48,8 @@ std::string lc_tare_entity(uint8_t board_id, uint8_t connector);
  * input shifts the slope you get instead of translating its output.
  */
 struct LcTare {
-    uint16_t uid = 0;       // board_id*100 + connector
-    std::string entity;     // publish-path identity, e.g. "LC2_Cal.CH1" — see set()
+    uint16_t uid = 0;          // board_id*100 + connector
+    std::string entity;        // publish-path identity, e.g. "LC2_Cal.CH1" — see set()
     double adc_at_tare = 0.0;  // the truth
     double offset_kg = 0.0;    // derived from adc_at_tare through the live curve; a cache
     double set_at_ms = 0.0;    // unix milliseconds, for "tared 2h ago"

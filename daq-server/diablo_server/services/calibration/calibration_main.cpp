@@ -1068,10 +1068,9 @@ int main(int argc, char* argv[]) {
             const int32_t code = static_cast<int32_t>(adc);
             const bool cubic_ok = lc_calibration.is_calibrated(lc_log_ch);
             const double kg_cubic = cubic_ok ? lc_calibration.calculate(lc_log_ch, code) : 0.0;
-            const double kg_phys =
-                convert_lc_adc_to_force(code, lc_sensitivity_for(uid, lc_sensitivity_mv_per_v),
-                                        lc_pga_gain_for(uid, lc_pga_gain),
-                                        lc_full_scale_for(uid, lc_full_scale_value));
+            const double kg_phys = convert_lc_adc_to_force(
+                code, lc_sensitivity_for(uid, lc_sensitivity_mv_per_v),
+                lc_pga_gain_for(uid, lc_pga_gain), lc_full_scale_for(uid, lc_full_scale_value));
             return select_lc_kg(uid, kg_cubic, kg_phys, cubic_ok);
         };
     };
@@ -1089,7 +1088,9 @@ int main(int argc, char* argv[]) {
     };
     auto recompute_all_tares = [&]() {
         lc_tare_store.set_curves_trusted(!cubic_store.load_failed());
-        lc_tare_store.recompute_all([&](uint16_t u) { return lc_eval_for(u); });
+        lc_tare_store.recompute_all([&](uint16_t u) {
+            return lc_eval_for(u);
+        });
         lc_tare_store.save();
     };
     // LC capture: cubic fit only — no robust learner (LC doesn't need drift-learning) and no abort
@@ -1285,8 +1286,9 @@ int main(int argc, char* argv[]) {
     // curve that no longer exists. Self-healing, but never silently.
     {
         lc_tare_store.set_curves_trusted(!cubic_store.load_failed());
-        const size_t stale =
-            lc_tare_store.recompute_stale([&](uint16_t u) { return lc_eval_for(u); });
+        const size_t stale = lc_tare_store.recompute_stale([&](uint16_t u) {
+            return lc_eval_for(u);
+        });
         if (stale > 0) {
             std::cout << "[Calibration] LC tare: WARNING — " << stale
                       << " tare(s) were stale against the live curves and have been re-derived. "
@@ -1616,14 +1618,15 @@ int main(int argc, char* argv[]) {
                             continue;
                         const uint8_t board_id = static_cast<uint8_t>(id / 100);
                         const uint8_t connector = static_cast<uint8_t>(id % 100);
-                        if (lc_tare_store.set(id, fsw::calibration::lc_tare_entity(board_id,
-                                                                                   connector),
+                        if (lc_tare_store.set(id,
+                                              fsw::calibration::lc_tare_entity(board_id, connector),
                                               r.adc_avg, lc_eval_for(id))) {
                             ++done;
                             const fsw::calibration::LcTare* t = lc_tare_store.tare_for(id);
                             std::cout << "[Cal] Tare uid=" << static_cast<int>(id) << " "
-                                      << capture_detail(r) << " offset="
-                                      << (t != nullptr ? t->offset_kg : 0.0) << "kg" << std::endl;
+                                      << capture_detail(r)
+                                      << " offset=" << (t != nullptr ? t->offset_kg : 0.0) << "kg"
+                                      << std::endl;
                         }
                     }
                     lc_tare_store.save();
