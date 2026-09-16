@@ -68,3 +68,71 @@ def test_zero_flow_cannot_empty_the_tank():
     m_gas, burn = 1.551, 3.918
     assert m_gas - (m_gas / burn) * burn == pytest.approx(0.0, abs=1e-12), "the old model ran it dry"
     assert m_gas - 0.0 * burn == m_gas, "the fixed model leaves the COPV full"
+
+
+# ---------------------------------------------------------------------------------------
+# COPV volume and density are declared, not assumed
+# ---------------------------------------------------------------------------------------
+
+def test_no_hardcoded_copv_density():
+    """Fluid(density=200) was a number with no source on it.
+
+    Real GN2 at 4500 psi / 293 K is 310 kg/m3 (CoolProp, Z = 1.150). At 200 a 5 L COPV
+    caps at 1.0 kg, and the 1.551 kg a 5 L bottle actually holds made RocketPy refuse the
+    tank as "overfilled" -- so the flight sim failed outright on a correctly specified COPV.
+    """
+    src = FLIGHT_SIM.read_text()
+    assert 'Fluid(name="GN2_COPV", density=200)' not in src, "the invented 200 kg/m3 is back"
+    assert "density=m_pressurant/(V_copv*0.999)" in src, (
+        "COPV density must be mass/volume from the config, not a constant "
+        "(the 0.999 is solver ullage -- see test_solver_ullage_is_small_and_conserves_mass)"
+    )
+
+
+def test_copv_geometry_follows_free_volume():
+    """press_radius x press_h and free_volume_L could disagree; free_volume_L wins.
+
+    It is the number the operator specifies and the one a propellant-volume budget counts.
+    """
+    src = FLIGHT_SIM.read_text()
+    block = src[src.index("free_L = getattr"):src.index("press_geom = CylindricalTank", src.index("free_L = getattr"))]
+    assert "V_copv = float(free_L)/1000.0" in block
+    assert "press_h_eff = V_copv/(np.pi*config.press_tank.press_radius**2)" in block
+
+
+def test_a_5L_copv_holds_what_a_5L_copv_holds():
+    """The case that broke it: 5 L, 1.551 kg of GN2 at 4500 psi."""
+    V, m = 0.005, 1.551
+    assert m / V == pytest.approx(310.2, abs=1.0), "5 L at 4500 psi is ~310 kg/m3"
+    assert m > V * 200.0, "at the old hardcoded 200 kg/m3 this tank reads as overfilled"
+    assert V * 200.0 == pytest.approx(1.0, abs=0.01), "the old cap was 1.0 kg"
+
+
+def test_gas_stub_comes_out_of_the_pressurant_mass():
+    """A flat 0.01 kg added ALONGSIDE the liquid over-filled the COPV.
+
+    With density derived as m_pressurant/V, the tank then held m_pressurant + 0.01 kg =
+    0.0050322 m3 in a 0.0050000 m3 bottle, and RocketPy rejected it:
+      "Input Function image (0.00503...) must be within the domain (0.0, 0.005)".
+    """
+    src = FLIGHT_SIM.read_text()
+    assert "initial_gas_mass=0.01," not in src, "the additive 0.01 kg stub is back"
+    assert "initial_liquid_mass=max(0.0, m_pressurant - 1.0e-4)," in src
+    assert "initial_gas_mass=1.0e-4," in src
+
+    # the arithmetic that broke it, on the 5 L / 1.551 kg COPV
+    V, m = 0.005, 1.551
+    rho = m / V
+    assert (m + 0.01) / rho == pytest.approx(0.0050322, abs=1e-6), "the overflow"
+    assert (m + 0.01) / rho > V, "additive stub must exceed the tank"
+    assert m / rho == pytest.approx(V, rel=1e-12), "taking the stub out of m conserves volume"
+
+
+def test_solver_ullage_is_small_and_conserves_mass():
+    """The 0.1 % lives in the density, never in the mass."""
+    src = FLIGHT_SIM.read_text()
+    assert "density=m_pressurant/(V_copv*0.999)" in src
+    V, m = 0.005, 1.551
+    rho = m / (V * 0.999)
+    assert m / rho == pytest.approx(0.999 * V, rel=1e-12), "fluid sits just inside the domain"
+    assert rho * (0.999 * V) == pytest.approx(m, rel=1e-12), "mass is exact"

@@ -680,7 +680,6 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
     # GN2 (gaseous nitrogen) for ullage and pressurant - density varies with pressure
     # Use average density during blowdown (higher at start, lower at end)
     gn2_ullage = Fluid(name="GN2", density=50)  # kg/m³ approximate for ullage
-    gn2_pressurant = Fluid(name="GN2_COPV", density=200)  # kg/m³ higher density in COPV
     
     # Pressurant (COPV) tank setup
     m_pressurant = 0.0
@@ -688,10 +687,33 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
     if config.press_tank:
         m_pressurant = getattr(config.press_tank, 'initial_gas_mass', None) or 0.0
         if m_pressurant > 0:
-            # Create pressurant tank geometry
+            # COPV VOLUME AND DENSITY COME FROM THE CONFIG, NOT FROM A CONSTANT.
+            #
+            # This used to build the tank from press_radius x press_h and fill it with
+            # Fluid(density=200), a number with no source on it. Real GN2 at 4500 psi / 293 K
+            # is 310 kg/m3 (CoolProp, Z = 1.150), so 200 under-states a charged COPV by 35 %
+            # and caps a 5 L bottle at 1.0 kg. A 5 L COPV actually holds 1.551 kg, and
+            # RocketPy then refused the tank outright as "overfilled".
+            #
+            # free_volume_L is the authoritative number: it is what the operator specifies and
+            # what a propellant-volume budget counts. Build the geometry to it and take the
+            # density as mass/volume, which is self-consistent by construction and assumes
+            # nothing about fill pressure or gas species.
+            free_L = getattr(config.press_tank, 'free_volume_L', None)
+            if free_L and free_L > 0:
+                V_copv = float(free_L)/1000.0
+                press_h_eff = V_copv/(np.pi*config.press_tank.press_radius**2)
+            else:
+                press_h_eff = config.press_tank.press_h
+                V_copv = np.pi*config.press_tank.press_radius**2*press_h_eff
+            # 0.1 % of solver ullage. RocketPy composes gas_height through
+            # geometry.inverse_volume, whose domain is exactly [0, V_copv], so a tank filled
+            # to precisely its own volume fails on float equality. Mass is conserved exactly;
+            # only the density carries the 0.1 %.
+            gn2_pressurant = Fluid(name="GN2_COPV", density=m_pressurant/(V_copv*0.999))
             press_geom = CylindricalTank(
-                radius=config.press_tank.press_radius, 
-                height=config.press_tank.press_h, 
+                radius=config.press_tank.press_radius,
+                height=press_h_eff,
                 spherical_caps=False
             )
             
@@ -717,7 +739,8 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
             # way. That is a stability question, not a trajectory one.
             mdot_pressurant_avg = 0.0
 
-            print(f"  Pressurant (N₂): {m_pressurant:.3f} kg, carried as dead mass (not expelled)")
+            print(f"  Pressurant (N₂): {m_pressurant:.3f} kg in {V_copv*1000:.2f} L "
+                  f"({m_pressurant/V_copv:.0f} kg/m3), carried as dead mass (not expelled)")
 
     # Convert mdot_lox and mdot_fuel to RocketPy Functions if they're not already
     # (MassFlowRateBasedTank expects Functions)
@@ -827,8 +850,12 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
             flux_time=effective_burn_time,
             liquid=gn2_pressurant,  # Using "liquid" field for gas (RocketPy limitation)
             gas=gn2_pressurant,
-            initial_liquid_mass=m_pressurant,  # All mass starts as "liquid" (actually high-pressure gas)
-            initial_gas_mass=0.01,  # Small amount
+            # The stub comes OUT OF the pressurant mass, not on top of it. It used to be a
+            # flat 0.01 kg added alongside initial_liquid_mass, so the tank held
+            # m_pressurant + 0.01 kg: with the density derived from m_pressurant/V that is
+            # 0.0050322 m3 in a 0.0050000 m3 bottle, and RocketPy rejected it outright.
+            initial_liquid_mass=max(0.0, m_pressurant - 1.0e-4),
+            initial_gas_mass=1.0e-4,
             liquid_mass_flow_rate_in=0.0,
             liquid_mass_flow_rate_out=mdot_pressurant,  # zero: see the note at mdot_pressurant_avg
             gas_mass_flow_rate_in=0.0,
