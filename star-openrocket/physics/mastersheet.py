@@ -97,6 +97,12 @@ def DIAMIN_AREAFT(cell):
     return ((cell / 24.0) ** 2) * PI
 
 
+#: Where the troposphere fit runs out: the altitude at which its lapse takes
+#: the temperature to absolute zero. Above this the formula returns complex
+#: numbers rather than failing, which is worse than either.
+TROP_CEILING_FT = T_SL / L_TROP
+
+
 def TROP_DENSITY(cell):
     """`LAMBDA(cell, (0.002377*(((288.15-(cell*0.0019812))/288.15)^4.2558)))`.
 
@@ -106,7 +112,26 @@ def TROP_DENSITY(cell):
     anywhere in it. Where PLAN.md §5 re-fits the lowest layer through an
     observation (eq 7), this is the textbook column and nothing else, so it
     carries the full ~7% density error §5 attributes to an assumed T_pad.
+
+    It is a TROPOSPHERE fit and says nothing above the tropopause. Past
+    `T_SL / L_TROP` (~145,442 ft, 44.3 km) the base of the power goes negative,
+    and a negative raised to 4.2558 is a COMPLEX number -- which Python returns
+    without complaint and which then propagates as a density. That reached
+    `terminal_velocity`'s `math.sqrt` and surfaced as
+    `TypeError: must be real number, not complex`, i.e. a 500 on a config the
+    user typed. Refuse at the ceiling instead: the cross-check compares against
+    a spreadsheet that only models the troposphere, so there is no answer to
+    give up there, and saying so is the honest one.
     """
+    if cell >= TROP_CEILING_FT:
+        raise ValueError(
+            "the mastersheet cross-check is a troposphere fit and stops at "
+            "%,.0f ft (%.0f km); this configuration reaches %,.0f ft. Above "
+            "the tropopause it has no density to offer -- use the solver's own "
+            "atmosphere, which models the full column."
+            .replace("%,.0f", "%.0f")
+            % (TROP_CEILING_FT, TROP_CEILING_FT * 0.0003048, cell)
+        )
     return RHO_SL * (((T_SL - (cell * L_TROP)) / T_SL) ** K_MINUS)
 
 

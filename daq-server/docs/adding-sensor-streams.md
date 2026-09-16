@@ -29,6 +29,8 @@ Each sensor type gets a **VTable ID** — a two-byte tuple `[high, low]` that un
 | `0x22` | `0x11-0x14` | RTD calibrated | `temperature_c` | 21 bytes |
 | `0x23` | `0x01-0x14` | LC raw | `raw_adc_counts` | 21 bytes |
 | `0x23` | `0x11-0x24` | LC calibrated | `force_units` | 21 bytes |
+| `0x24` | `0x01-0x14` | Encoder raw | `raw_adc_counts` | 21 bytes |
+| `0x24` | `0x11-0x24` | Encoder calibrated | `position_deg` | 21 bytes |
 | `0x30` | `0x01-0x0A` | Actuator feedback | `raw_adc_counts` | 21 bytes |
 | `0x31` | `0x01-0x14` | Actuator state (current-sense) | `actuator_state` | 10 bytes |
 | `0x32` | `0x01-0x14` | Actuator commanded state | `actuator_state_commanded` | 10 bytes |
@@ -37,11 +39,64 @@ Each sensor type gets a **VTable ID** — a two-byte tuple `[high, low]` that un
 | `0x42` | `0x00` | Controller measurement | - | 80 bytes |
 | `0x43` | `0x00` | PSM state transition | - | 11 bytes |
 | `0x44` | `0x00` | FIRE state | - | 18 bytes |
+| `0x46` | `0x00` | CalibrationCommand (backend → calibration_service) | `type` + `sensor_id` + `reference_value` | 16 bytes |
 | `0x50` | `0x00` | SequencerState | state + bitmask + debug | **17 bytes** (see below) |
 | `0x50` | `0x60-0x66` | PSM actuator commands | - | 15 bytes |
 | `0x60` | `0x01-0xFF` | Self-test results | `sensor_id` + `result` | 10 bytes |
 
 **Raw vs Calibrated convention:** Raw channels use `low = channel_id` (1-based). Calibrated channels use `low = 0x10 + channel_id`. Example: PT channel 3 raw = `[0x20, 0x03]`, calibrated = `[0x20, 0x13]`.
+
+**Free high bytes**, if you need a new stream: `0x25`, `0x45`, `0x47`–`0x4F`, `0x51`–`0x5F`. Anything
+`>= 0x80` is off limits: by convention a high byte of `0x80` or above is a VTable **registration
+ACK** rather than data, and `calibration_main.cpp` reads it that way (see its `type_hi < 0x80`
+packet filter). Add a row here when you take one, or the next person reads a stale map
+(this table sat without `0x24` and `0x46` for a while, which is how you end up debugging a
+collision instead of picking a free byte).
+
+## CalibrationCommand `[0x46, 0x00]`
+
+The one operator-command channel into `calibration_service`. **Strictly one-way**: the service
+subscribes and never publishes a reply, so nothing can wait on an acknowledgement. Callers learn
+what happened by reading the file the service writes — `cubic_calibration.json` for captures,
+`lc_tare.json` for tares — which is also why a UI must never assume a command landed because it
+was sent. A command published while the service is down is silently dropped.
+
+Layout (16 bytes, and note byte 9 is covered by no field, so Elodin zeroes it — `sensor_id` sits at
+the even offset 10 precisely so its high byte survives, since `uid = board_id*100 + connector`
+exceeds 255):
+
+```
+Offset  Size  Type    Field
+0       8     uint64  timestamp_ns
+8       1     uint8   type          (cmd_type, below)
+9       1     -       padding (NOT a field — always arrives 0)
+10      2     uint16  sensor_id     (uid = board_id*100 + connector; 0 = "all")
+12      4     float32 reference_value
+```
+
+| cmd | name | `sensor_id` | `reference_value` | effect |
+|---|---|---|---|---|
+| 0 | Zero / Zero All | uid, or 0 for all | — | Captures a **real** 0 reference point into the shared fit. Correct for a vented PT; see the note below for why it is not a load-cell tare. |
+| 1 | Capture Reference | uid | reference | Feeds the robust learner only (PT). |
+| 2 | Save | — | — | Persists robust adjustments. |
+| 3 | Capture cubic point | uid | reference | Legacy; equivalent to 5 without the capture-quality record. |
+| 4 | Clear channel | uid | — | Drops points + curve. |
+| 5 | Capture point | uid | reference | The unified capture the UI uses; routed by the channel's configured model. |
+| 6 | New calibration | uid | — | Unified clear. |
+| 7 | Reload live store | — | — | Re-read `cubic_calibration.json` after the backend swapped a profile. |
+| 8 | **LC tare** | uid, or 0 for all | `0` = set, `1` = clear | Display-only zero for a load cell. Never enters a fit, never reaches control or abort, never changes what Elodin records. |
+
+**Why a load-cell tare is command 8 and not command 0.** A vented PT genuinely *is* at 0 psig, so
+capturing a zero on one is a true reference point and belongs in the shared fit. A load cell
+holding a tank is *not* at 0 kg: the same capture would inject a false point, and because the fit
+is least-squares over every point it would tilt the whole cubic rather than shift its intercept.
+
+The tare is therefore stored as the **ADC code** it was taken at, never as kilograms — `offset_kg`
+in `lc_tare.json` is a cache the service re-derives on every capture, clear and profile swap. Tare
+a 20 kg tank against a poor two-point fit that reads it as 18, then improve the fit until the same
+tank evaluates to 20, and a frozen 18 kg offset would display 2 kg for a tank that never moved.
+Re-deriving from the code gives 20 − 20 = 0. `test/ws_data_flow_test.ts`'s `cal_lc_tare` check
+proves this through the full stack; `diablo_server/lib/test/test_lc_tare.cpp` pins the store.
 
 ## Standard 21-Byte Sensor Message Layout
 

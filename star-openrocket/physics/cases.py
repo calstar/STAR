@@ -16,8 +16,11 @@ covers them:
 import copy
 import itertools
 
+from pydantic import ValidationError
+
+from physics.budget import checkpoint
 from physics.loads import design_load, device_loads
-from physics.schema import Trigger, TriggerKind
+from physics.schema import Config, Trigger, TriggerKind
 from physics.solver import integrate
 
 CASES = ("nominal", "simultaneous", "no_main", "no_drogue")
@@ -167,6 +170,17 @@ def _attitude(CdS_body, config):
     return "custom"
 
 
+def _first_error(exc):
+    """The first validation problem, as a sentence. Mirrors `study.run_points`:
+    a corner dict plus pydantic's full multi-error dump is unreadable, and it is
+    nearly always one field at one bound."""
+    errs = exc.errors()
+    if not errs:
+        return str(exc)
+    loc = ".".join(str(p) for p in errs[0]["loc"])
+    return "%s: %s" % (loc, errs[0]["msg"])
+
+
 def sweep(config, case="nominal"):
     """Corner-sweep the genuinely-unknown parameters and take the worst.
 
@@ -200,6 +214,10 @@ def sweep(config, case="nominal"):
 
     out = []
     for combo in itertools.product(*(corners[k] for k in keys)):
+        # Per corner, so a 64-corner sweep of an unanswerable config stops at
+        # corner 9 rather than paying for all 64. Without this the per-run
+        # budget multiplies by the corner count and the REQUEST is unbounded.
+        checkpoint("the corner sweep")
         corner = dict(zip(keys, combo))
 
         cfg = config
@@ -214,6 +232,28 @@ def sweep(config, case="nominal"):
             for k in PER_DEVICE_KEYS:
                 if k in corner:
                     setattr(d, k, corner[k])
+
+        # Re-validate the MUTATED config, exactly as `study.run_points` does.
+        # No model here sets `validate_assignment`, so every `setattr` above
+        # writes straight past the field's own bounds -- a corner could put
+        # 1e9 m^2 into CdS despite CDS_MAX, and the sweep runs up to 64 of
+        # them. Validating the result is what makes the bounds mean something
+        # on this path.
+        #
+        # `devices` is a fresh list from `build_case`, NOT cfg.devices, so it
+        # has to be attached before validating: dumping `cfg` on its own would
+        # validate the unmutated devices and quietly check nothing. The
+        # validated devices are then read back, so what runs is what passed.
+        cfg = cfg.model_copy(deep=True)
+        cfg.devices = devices
+        try:
+            cfg = Config.model_validate(cfg.model_dump())
+        except ValidationError as exc:
+            raise ValueError(
+                "corner %s is not a valid vehicle: %s"
+                % (corner, _first_error(exc))
+            ) from exc
+        devices = cfg.devices
 
         CdS_body = corner.get("CdS_body", axial)
         which = _attitude(CdS_body, config)

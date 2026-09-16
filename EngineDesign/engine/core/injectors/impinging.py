@@ -594,12 +594,15 @@ class ImpingingInjector(InjectorModel):
 
             # ---- Impinging-doublet geometry (standoff + ring pitch) -------------------------------
             # Each stream's ``impingement_angle`` is the jet inclination from the chamber axis; the
-            # two jets of a doublet lean toward each other and collide on the bisector. With a
-            # circumferential O-F orifice offset ``s_pair`` at the face, the streams meet a distance
-            #     L_imp = s_pair / (tan θ_O + tan θ_F)
-            # downstream (purely geometric: each jet closes its half of the offset at rate tan θ).
-            # ``spacing`` (a previously inert design variable) sets s_pair AND the pitch-circle
-            # diameter D_pitch = n·spacing/π on which the n elements of each ring are arranged.
+            # two jets of a doublet lean toward each other and collide on the bisector. The offset
+            # they close is RADIAL -- the gap between the two pitch circles --
+            #     dr    = |D_pitch_O - D_pitch_F| / 2,   D_pitch = n·spacing/π
+            #     L_imp = dr / (tan θ_O + tan θ_F)
+            # (purely geometric: each jet closes its half of the offset at rate tan θ). This block
+            # used to say ``s_pair`` -- the average RING DENSITY, 0.5*(s_O + s_F). That is
+            # dimensionally a length and physically the wrong one; see impingement_standoff_m,
+            # which has been computing dr correctly. ``s_pair`` survives below as a diagnostic
+            # only. Nothing reads it for the standoff.
             theta_O = float(np.deg2rad(geometry.oxidizer.impingement_angle))
             theta_F = float(np.deg2rad(geometry.fuel.impingement_angle))
             s_O = float(getattr(geometry.oxidizer, "spacing", 0.0) or 0.0)

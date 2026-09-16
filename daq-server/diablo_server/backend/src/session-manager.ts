@@ -16,6 +16,7 @@ import { ServiceController, getSessionServiceMode } from './service-controller.j
 import { loadSession, saveSession } from './session-state.js';
 import { deployActiveProfile } from './routes/config-profiles.js';
 import { validateActiveProfile, ConfigIssuesError } from './config-validation.js';
+import { resetTareState, setRunDir } from './lc-tare.js';
 
 // Warn the operator at each of these leads before auto-stop. Default: 5 min and
 // 1 min. Override with SESSION_WARN_LEADS_MS (comma-separated ms) to exercise the
@@ -91,6 +92,11 @@ class SessionManager {
    *  its config-derived caches and tell open browsers to refetch. Without it a profile edited
    *  during a run reached config.toml here and no client ever heard about it. */
   private onConfigDeployed: () => void = () => {};
+  /** Fired once the run pipeline is up, so the backend can tell a RUNNING calibration service to
+   *  drop its in-memory load-cell tares. The file itself is already gone by then (the controller
+   *  unlinks it while the service is down), but in mock mode the service never went down and
+   *  would rewrite the file from memory on its next save. */
+  private onSessionStarted: () => void = () => {};
 
   private active = false;
   private dbDir: string | null = null;
@@ -106,11 +112,13 @@ class SessionManager {
     notify: Notify,
     onStopped: () => void = () => {},
     onConfigDeployed: () => void = () => {},
+    onSessionStarted: () => void = () => {},
   ): void {
     this.broadcast = broadcast;
     this.notify = notify;
     this.onStopped = onStopped;
     this.onConfigDeployed = onConfigDeployed;
+    this.onSessionStarted = onSessionStarted;
     if (!this.enabled) return;
     // Recover a session that outlived a backend restart.
     const persisted = loadSession();
@@ -294,6 +302,7 @@ class SessionManager {
       }
     }
     await this.controller.start(this.dbDir, this.simulated);
+    this.onSessionStarted();
     this.active = true;
     this.scheduleTimers();
     this.persist();
@@ -336,6 +345,10 @@ class SessionManager {
     this.simulated = false;
     this.persist();
     this.emit();
+    // Forget the tare: there is no run to record against any more, and a held offset would
+    // otherwise be applied to the next run's first poll interval before the file check notices.
+    setRunDir(null);
+    resetTareState();
     this.onStopped(); // revert board status to the disconnected baseline
   }
 

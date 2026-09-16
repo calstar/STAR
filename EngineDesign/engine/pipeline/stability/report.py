@@ -10,7 +10,7 @@ as comprehensive_stability_analysis and reuses analysis.build_stability_inputs f
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from engine.pipeline.stability import chug, acoustic, analysis
@@ -22,7 +22,21 @@ _PA_PER_PSI = 6894.757
 # Visualization data builders
 # ---------------------------------------------------------------------------
 
-def _chug_boundary_curve(streams, chamber, n_pts: int = 16) -> List[List[float]]:
+def _eta_window(streams, *, lo_frac: float = 0.35, hi_frac: float = 2.2,
+                floor: float = 0.02, ceil: float = 0.90) -> Tuple[float, float]:
+    """(eta_lo, eta_hi) sweep window bracketing THIS design's injector stiffness.
+
+    The window used to be a fixed 0.08..0.45 for every engine, which puts a design at eta = 0.55
+    off the right edge of its own chart and a design at eta = 0.05 off the left. Anchoring it to
+    the design point keeps the operating dot on the plot whatever the injector does."""
+    etas = [float(s.eta_inj) for s in streams if np.isfinite(s.eta_inj) and s.eta_inj > 0]
+    eta0 = float(np.mean(etas)) if etas else 0.25
+    return (float(max(floor, min(eta0 * lo_frac, 0.15))),
+            float(min(ceil, max(eta0 * hi_frac, 0.45))))
+
+
+def _chug_boundary_curve(streams, chamber, n_pts: int = 16,
+                         eta_window: Optional[Tuple[float, float]] = None) -> List[List[float]]:
     """Viz #1: the chug stability boundary in (eta_inj, tau/theta_c). For each eta_inj, bisect on a
     lag-scale factor to find where the fast gain margin crosses 1 (marginal). Uses the FAST margin
     (cheap; ~n_pts*~12 calls)."""
@@ -31,8 +45,9 @@ def _chug_boundary_curve(streams, chamber, n_pts: int = 16) -> List[List[float]]
     if not np.isfinite(theta_c) or theta_c <= 0:
         return []
     tau0 = float(np.mean([s.tau_conv for s in streams]))
+    lo_eta, hi_eta = eta_window if eta_window else _eta_window(streams)
     curve: List[List[float]] = []
-    for eta in np.linspace(0.08, 0.45, n_pts):
+    for eta in np.linspace(lo_eta, hi_eta, n_pts):
         # scale all streams to this eta; bisect lag factor k in [0.1, 8] for GM(k)=1
         def gm_at(kfac: float) -> float:
             sc = []
@@ -62,7 +77,15 @@ def _vaporization_profile(inp: Dict[str, Any], Pc: float, n_pts: int = 40) -> Di
     D32 = inp["D32_O"]
     K_v = inp["K_v_O"]
     L_ch = inp["L_ch"]
-    rho_O = float(inp.get("rho_O", 1140.0))   # config-sourced via build_stability_inputs (P2c)
+    # Config-sourced via build_stability_inputs (P2c). The old `inp.get("rho_O", 1140.0)` put LOX's
+    # density behind every oxidizer as an invisible default; build_stability_inputs always supplies
+    # it now, and a missing one is recorded rather than substituted.
+    rho_O = inp.get("rho_O")
+    if rho_O is None or not np.isfinite(float(rho_O)) or float(rho_O) <= 0.0:
+        from engine.pipeline.assumptions import assume
+        rho_O = assume("stability.viz.rho_oxidizer", 1140.0, unit="kg/m^3",
+                       reason="oxidizer density missing when drawing the vaporization profile")
+    rho_O = float(rho_O)
     eta = inp["eta_inj_O"]
     # Representative droplet axial speed: the solved oxidizer injection velocity when the closure
     # provides it, else Bernoulli with the solved Cd (a fixed Cd of 0.6 used to sit here).
@@ -71,7 +94,12 @@ def _vaporization_profile(inp: Dict[str, Any], Pc: float, n_pts: int = 40) -> Di
         v_drop = float(u_O)
     else:
         Cd = inp.get("Cd_O")
-        Cd = float(Cd) if (Cd is not None and np.isfinite(float(Cd)) and float(Cd) > 0.0) else 0.6
+        if Cd is None or not np.isfinite(float(Cd)) or float(Cd) <= 0.0:
+            from engine.pipeline.assumptions import assume
+            Cd = assume("stability.viz.Cd_oxidizer", 0.6, unit="-",
+                        reason="solved oxidizer discharge coefficient unavailable for the droplet "
+                               "velocity; sharp-edged-orifice value")
+        Cd = float(Cd)
         v_drop = Cd * float(np.sqrt(max(2.0 * eta * Pc / rho_O, 1.0)))
     tau_vap = inp["tau_conv_O"]
     L_vap = v_drop * tau_vap if np.isfinite(tau_vap) else float("nan")
@@ -107,6 +135,23 @@ def _chug_pole(chug_rich: Dict[str, Any]) -> Dict[str, float]:
     if alpha is None or f_hz is None or not np.isfinite(alpha) or not np.isfinite(f_hz):
         return {"real": float("nan"), "imag": float("nan")}
     return {"real": float(alpha), "imag": float(2 * np.pi * f_hz)}
+
+
+def _locus_crossing(locus: List[Dict[str, float]]) -> Dict[str, float]:
+    """Where the locus branch crosses the imaginary axis: the neutral-stability gain and frequency.
+
+    Linear interpolation in ``eta`` on the sign change of ``Re(s)``. This is the number a designer
+    reads off a root locus — "stiffen past here and the pole is in the left half-plane" — so it is
+    computed once on the backend rather than eyeballed off the chart."""
+    out = {"eta": float("nan"), "f_hz": float("nan")}
+    for a, b in zip(locus, locus[1:]):
+        if a["real"] == 0.0 or a["real"] * b["real"] < 0.0:
+            da = b["real"] - a["real"]
+            t = (0.0 - a["real"]) / da if da != 0 else 0.0
+            out["eta"] = float(a["eta"] + t * (b["eta"] - a["eta"]))
+            out["f_hz"] = float(a["f_hz"] + t * (b["f_hz"] - a["f_hz"]))
+            break
+    return out
 
 
 def _radar(chug_margin: float, ac: Dict[str, Any], vap: Dict[str, Any],
@@ -267,15 +312,30 @@ def build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: fl
     chug_rich = chug.chug_growth_rate(streams, chamber)
     chug_margin = analysis._chug_gate_margin(
         chug.chug_margin_fast(streams, chamber).get("gain_margin", float("nan")))
-    boundary = _chug_boundary_curve(streams, chamber)
+    eta_window = _eta_window(streams)
+    boundary = _chug_boundary_curve(streams, chamber, eta_window=eta_window)
     theta_c = chamber.theta_c()
     design_streams = []
+    lag_break = inp.get("lag_breakdown") or {}
     for label, eta, tau in (
         ("O", inp["eta_inj_O"], inp["tau_conv_O"]),
         ("F", inp["eta_inj_F"], inp["tau_conv_F"]),
     ):
         tt = float(tau / theta_c) if (np.isfinite(theta_c) and theta_c > 0) else float("nan")
-        design_streams.append({"stream": label, "eta_inj": float(eta), "tau_theta_c": tt})
+        lb = lag_break.get(label, {})
+        design_streams.append({
+            "stream": label,
+            "fluid": inp.get(f"fluid_name_{label}", label),
+            "phase": inp.get(f"phase_{label}", "liquid"),
+            "eta_inj": float(eta), "tau_theta_c": tt, "tau_s": float(tau),
+            "tau_atom_s": lb.get("tau_atom_s"), "tau_vap_s": lb.get("tau_vap_s"),
+            "tau_mix_s": lb.get("tau_mix_s"),
+        })
+
+    # Root locus: the dominant eigenvalue tracked through the s-plane as injector stiffness sweeps.
+    locus = chug.chug_root_locus(
+        streams, chamber, eta_values=np.linspace(eta_window[0], eta_window[1], 26))
+    eta_critical = _locus_crossing(locus)
 
     # --- acoustic (full mode set with damping budgets) ---
     ac = acoustic.analyze_acoustic_modes(inp["D_ch"], inp["L_ch"], gas,
@@ -317,6 +377,13 @@ def build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: fl
             "boundary_curve": boundary,
             "pole": _chug_pole(chug_rich),
             "design_streams": design_streams,
+            "root_locus": locus,
+            "locus_param": "eta_inj",
+            "eta_window": [float(eta_window[0]), float(eta_window[1])],
+            "eta_critical": eta_critical,
+            "lag_model": inp.get("lag_model"),
+            "convection_model": inp.get("convection_model"),
+            "lag_breakdown": lag_break,
         },
         "acoustic": {"margin": acoustic_margin, "modes": acoustic_modes,
                      "any_unstable": ac["any_unstable"], "limiting_mode": ac["limiting_mode"]},
@@ -332,6 +399,16 @@ def build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: fl
             "contraction_ratio": float(inp["contraction_ratio"]),
             "feed_length_O_m": float(inp["feed_length_O"]), "feed_length_F_m": float(inp["feed_length_F"]),
             "acoustic_gate_alpha_offset": float(inp["acoustic_gate_alpha_offset"]),
+            # Which named models produced this answer, and what the propellants/injector actually
+            # are -- so a report can never be read as if it described a different engine.
+            "time_lag_model": inp.get("lag_model"),
+            "convection_model": inp.get("convection_model"),
+            "mixing_lag_fraction": inp.get("mixing_lag_fraction"),
+            "injector_type": inp.get("injector_type"),
+            "fluid_O": inp.get("fluid_name_O"), "fluid_F": inp.get("fluid_name_F"),
+            "phase_O": inp.get("phase_O"), "phase_F": inp.get("phase_F"),
+            "tau_conv_O_s": float(inp["tau_conv_O"]), "tau_conv_F_s": float(inp["tau_conv_F"]),
+            "lag_breakdown": lag_break,
             # Every recorded silent-default substitution this process has made (P2c registry).
             # Empty list = config fully specified the physics. The hardcoded-Cd bug class, surfaced.
             "fallbacks_used": _fallbacks_used(),

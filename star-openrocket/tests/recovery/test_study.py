@@ -539,3 +539,53 @@ def test_a_month_axis_is_the_same_machinery_under_a_different_name():
     assert body["runs"] == 2
     assert body["axes"][0]["key"] == "pad_month"
     assert body["axes"][0]["labels"] == ["KNID Jan normal", "KNID Jul normal"]
+
+
+# --- the sweep's corners are validated like the study's points --------------
+
+
+def test_a_sweep_corner_is_revalidated_like_a_study_point():
+    """The bypass that made every field bound optional on this path.
+
+    `cases.sweep` applies corner values with bare `setattr`, and no model in
+    the schema sets `validate_assignment` -- so a corner wrote straight past
+    the field's own bounds. Confirmed before the fix: `cfg.devices[0].CdS =
+    1e9` was accepted silently despite CDS_MAX, and the sweep runs up to 64
+    corners. `study.run_points` already re-validated; this is the same
+    guarantee for the other multi-run path.
+    """
+    from physics.cases import sweep
+    from physics.schema import CDS_MAX
+
+    raw = json.load(open(FIXTURE, encoding="utf-8"))
+    cfg = Config.model_validate(raw)
+
+    # Prove the bypass is real: pydantic still does not police assignment.
+    cfg.devices[0].CdS = 1e9
+    assert cfg.devices[0].CdS > CDS_MAX, (
+        "assignment is now validated -- this test's premise has changed"
+    )
+
+    # ...and prove `sweep` no longer passes such a config to the integrator.
+    with pytest.raises(ValueError, match="not a valid vehicle"):
+        sweep(cfg, "nominal")
+
+
+def test_a_cds_body_corner_cannot_describe_a_different_vehicle():
+    """`CdS_body` is the one corner with no config field behind it, so CDS_MAX
+    never saw it -- it went straight to `integrate` as an override, into the
+    same drag slot as the capped `Device.CdS`."""
+    raw = json.load(open(FIXTURE, encoding="utf-8"))
+    raw["sweep"] = [{"key": "CdS_body", "enabled": True,
+                     "low": 1.0e8, "high": 1.0e9}]
+    with pytest.raises(Exception, match="CdS_body"):
+        Config.model_validate(raw)
+
+
+def test_the_canonical_sweep_still_runs_untouched():
+    """Guards the re-validation from rejecting the corners it must allow."""
+    from physics.cases import sweep
+
+    rows = sweep(Config.model_validate(json.load(open(FIXTURE, encoding="utf-8"))),
+                 "nominal")
+    assert len(rows) == 32

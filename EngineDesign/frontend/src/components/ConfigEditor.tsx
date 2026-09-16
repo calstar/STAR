@@ -124,6 +124,14 @@ const FIELD_LABELS: Record<string, string> = {
   layer1_W_MASS: 'Weight: Chamber Dry Mass',
   layer1_chamber_mass_ref_kg: 'Chamber Mass Reference (kg)',
   layer1_chamber_wall_density_kg_m3: 'Chamber Wall Effective Density (kg/m³)',
+  // Geometry/mixing knobs added with the chamber-volume fix. All three default to null,
+  // which is the PRE-FIX behaviour (45 deg cone, no barrel-length floor, no pitch limit) --
+  // so a config that leaves them blank optimises as if the fix were not there. They are the
+  // difference between L* pinning to max_Lstar and landing on a real design point.
+  layer1_contraction_half_angle_deg: 'Contraction Half-Angle (°) — blank = 45° (length-optimal, not mass-optimal)',
+  layer1_min_Lcyl_over_D: 'Min Barrel Length / Bore — blank = unenforced (cone can pose as mixing length)',
+  layer1_max_element_pitch_m: 'Max Injector Element Pitch (m) — blank = unenforced (bore is free to grow)',
+  layer1_infeasibility_gate_eps: 'Infeasibility Gate ε (blank = 0.002; relative residual tolerated as feasible)',
   layer1_generations_per_restart: 'CMA Generations per Restart',
   layer1_impinging_angle_deg_min: 'Included Impingement Angle Min (°)',
   layer1_impinging_angle_deg_max: 'Included Impingement Angle Max (°)',
@@ -173,7 +181,7 @@ const FIELD_LABELS: Record<string, string> = {
   Lstar: 'L* (m)',
   design_pressure: 'Design Pressure (Pa)',
   design_thrust: 'Design Thrust (N)',
-  design_MR: 'Design Mixture Ratio',
+  design_MR: 'Design O/F Ratio',
   A_exit: 'Exit Area (m²)',
   expansion_ratio: 'Expansion Ratio',
   exit_diameter: 'Exit Diameter (m)',
@@ -231,8 +239,24 @@ const FIELD_LABELS: Record<string, string> = {
   date: 'Date',
 };
 
-function getFieldLabel(key: string): string {
-  return FIELD_LABELS[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+// Labels are looked up by bare key, so a key that means different things in different
+// sections gets one of them wrong everywhere else. `length` is the live example: it was
+// showing feed_system.oxidizer.length -- the tank-outlet-to-manifold run, which only sets
+// the chug inertance -- as "Total Chamber Length (m)". Anything ambiguous goes here,
+// keyed by the section it lives under; this map wins over FIELD_LABELS.
+const FIELD_LABELS_BY_SECTION: Record<string, Record<string, string>> = {
+  feed_system: {
+    length: 'Feed Line Length (m) — chug inertance only; does NOT affect ΔP',
+    d_inlet: 'Line Bore (m) — derived from Feed Line Size; blank to re-derive',
+    A_hydraulic: 'Flow Area (m²) — derived from bore; blank to re-derive',
+    K0: 'Loss Coefficient K₀ — lumped for the WHOLE run (valve + fittings + friction)',
+  },
+};
+
+function getFieldLabel(key: string, path?: string[]): string {
+  const section = path && path.length > 0 ? path[0] : undefined;
+  const scoped = section ? FIELD_LABELS_BY_SECTION[section]?.[key] : undefined;
+  return scoped || FIELD_LABELS[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
 interface InputFieldProps {
@@ -424,7 +448,7 @@ function SubSection({ title, data, path, onEdit, defaultExpanded = true }: SubSe
     return (
       <InputField
         key={key}
-        label={getFieldLabel(key)}
+        label={getFieldLabel(key, fieldPath)}
         value={value}
         path={fieldPath}
         onChange={(newValue) => onEdit(fieldPath, newValue)}
@@ -515,7 +539,7 @@ function SectionCard({ sectionKey, data, onEdit }: SectionCardProps) {
     return (
       <InputField
         key={key}
-        label={getFieldLabel(key)}
+        label={getFieldLabel(key, fieldPath)}
         value={value}
         path={fieldPath}
         onChange={(newValue) => onEdit(fieldPath, newValue)}

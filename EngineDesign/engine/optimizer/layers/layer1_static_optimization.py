@@ -370,6 +370,86 @@ def _impinging_resultant_tilt_deg(
     return float(np.degrees(np.arctan2(P_r, P_z)))
 
 
+def _resultant_tilt_breakeven_deg(
+    *, n_elements: float, spacing_O_m: float, spacing_F_m: float,
+    angle_O_deg: float, angle_F_deg: float,
+    D_chamber_inner_m: float, L_chamber_m: float,
+) -> float:
+    """Outward tilt at which the spray fan just reaches the liner at the throat plane [deg].
+
+    ``layer1_resultant_tilt_max_deg`` is a CONSTANT the operator sets, but what makes a given
+    tilt safe is geometry the optimizer is free to move underneath it::
+
+        r_imp   = r_inner + L_imp * tan(theta_inner)      where the fans actually start
+        reach   = (r_wall - r_imp) / tan(alpha)           how far they run before the liner
+        safe    <=>  reach > L_chamber
+
+    so the break-even angle is ``atan2(r_wall - r_imp, L_chamber)``. Sizing the allowance by
+    hand is a trap: an allowance justified at one impingement radius stops being justified
+    when the ring pair moves out. Measured while setting this design up -- 6.0 deg was chosen
+    against r_imp = 37 mm (break-even 9.6 deg) and the converged design landed at r_imp =
+    44.1 mm, where break-even is 7.21 deg. Still inside, but on 1.25x rather than the 1.6x
+    that was intended, and nothing would have said so.
+
+    Returns NaN when the geometry is degenerate. This is a REPORTING aid; it deliberately does
+    not move the gate, which stays exactly where the operator put it.
+    """
+    try:
+        n = float(n_elements)
+        dp_O = n * float(spacing_O_m) / np.pi
+        dp_F = n * float(spacing_F_m) / np.pi
+        tan_sum = float(np.tan(np.deg2rad(float(angle_O_deg)))
+                        + np.tan(np.deg2rad(float(angle_F_deg))))
+        r_wall = 0.5 * float(D_chamber_inner_m)
+        L = float(L_chamber_m)
+    except (TypeError, ValueError):
+        return float("nan")
+    if not (np.isfinite(tan_sum) and tan_sum > 1e-9 and r_wall > 0 and np.isfinite(L) and L > 0):
+        return float("nan")
+    dr = 0.5 * abs(dp_O - dp_F)
+    L_imp = dr / tan_sum
+    inner_is_O = dp_O <= dp_F
+    th_in = float(angle_O_deg) if inner_is_O else float(angle_F_deg)
+    r_imp = 0.5 * (dp_O if inner_is_O else dp_F) + L_imp * float(np.tan(np.deg2rad(th_in)))
+    if not np.isfinite(r_imp) or r_imp >= r_wall:
+        return 0.0
+    return float(np.degrees(np.arctan2(r_wall - r_imp, L)))
+
+
+def _resolve_tilt_allowance_deg(
+    *, from_reach: bool, constant_deg: float, breakeven_deg: float, margin: float,
+) -> float:
+    """The outward tilt this design is allowed, in degrees.
+
+    Two modes, and the default is the old one exactly:
+
+    * ``from_reach = False`` -- the operator's constant. Previous behaviour.
+    * ``from_reach = True``  -- derived from the design's own geometry. ``breakeven_deg`` is the
+      angle at which the fan arrives at the liner exactly at the throat plane; dividing the
+      chamber length by ``margin`` and re-taking the arctangent gives the angle that arrives at
+      ``margin`` chamber lengths instead, which is the same thing as::
+
+          allowed = atan( tan(breakeven) / margin )
+
+    Why this exists: an outward fan is a hazard only if it REACHES the liner, and the angle at
+    which it does is set by ``r_wall - r_imp`` over the chamber length. ``r_imp`` is an output
+    the optimizer moves freely, so a constant allowance silently changes meaning between runs.
+    Measured: 6.0 deg was justified against r_imp = 37 mm (break-even 9.6) and the converged
+    design landed at r_imp = 44.1 mm, where break-even is 7.21 -- still safe, but on 1.25x
+    rather than the 1.6x that was intended, and nothing said so.
+
+    A non-finite or non-positive break-even falls back to the constant rather than to zero: a
+    degenerate geometry should not silently forbid every candidate.
+    """
+    if not from_reach:
+        return float(constant_deg)
+    be = float(breakeven_deg)
+    if not (np.isfinite(be) and be > 0.0):
+        return float(constant_deg)
+    m = float(margin) if (np.isfinite(margin) and margin > 0.0) else 1.5
+    return float(np.degrees(np.arctan(np.tan(np.deg2rad(be)) / m)))
+
+
 def _impinging_resultant_wall_violation(
     tilt_deg: Any,
     *,
@@ -747,6 +827,97 @@ def _layer1_lstar_band_term(Lstar_m: float, target_m: float, deadband_m: float) 
     return float(e2 / (1.0 + e2))
 
 
+def _req_lookup(requirements, key):
+    """Read one requirement from either a dict or the pydantic DesignRequirementsConfig.
+
+    Layer 1 hands this module a plain dict in the worker objective but the model object
+    when the value is pulled off config.design_requirements, so a bare .get() silently
+    returns the default for half the call sites.
+    """
+    if requirements is None:
+        return None
+    getter = getattr(requirements, "get", None)
+    if callable(getter):
+        try:
+            return getter(key)
+        except Exception:
+            pass
+    return getattr(requirements, key, None)
+
+
+DEFAULT_CONTRACTION_HALF_ANGLE_DEG = 45.0
+
+
+def _layer1_contraction_theta(requirements) -> float:
+    """Convergent half-angle [rad], from config.
+
+    Was hardcoded np.pi/4 in three places (here, the worker objective, and
+    chamber_geometry.theta_default). 45 deg is the LENGTH-optimal angle but not the
+    MASS-optimal one: a shallower cone is longer yet moves volume out of the
+    full-diameter barrel -- which carries the whole ablative + structural wall stack --
+    into the tapering cone shell. Measured on the 8 kN ethalox point, 30 deg is the
+    lighter chamber at equal L*. Leaving this pinned hid that trade entirely.
+    """
+    v = _req_lookup(requirements, "layer1_contraction_half_angle_deg")
+    if v is None:
+        v = DEFAULT_CONTRACTION_HALF_ANGLE_DEG
+    try:
+        deg = float(v)
+    except (TypeError, ValueError):
+        deg = DEFAULT_CONTRACTION_HALF_ANGLE_DEG
+    if not np.isfinite(deg):
+        deg = DEFAULT_CONTRACTION_HALF_ANGLE_DEG
+    return np.radians(float(np.clip(deg, 5.0, 85.0)))
+
+
+def _layer1_geometry_infeasibility(requirements, *, L_cylindrical, D_chamber_inner,
+                                   A_chamber, n_elements) -> float:
+    """Hard geometric constraints, as INFEASIBILITY -- never as weighted penalties.
+
+    A weight on a shape preference only moves the fixed point of the scalarised sum; it
+    cannot express "this design cannot be built". These two genuinely cannot:
+
+    * ``layer1_min_Lcyl_over_D`` -- the CONSTANT-AREA length is where impinging sprays
+      actually mix. Only total L_chamber/D was gated, which lets the convergent cone
+      masquerade as mixing length. Paired with spray.evaporation.x_star_limit, which
+      spray.py already raises on.
+    * ``layer1_max_element_pitch_m`` -- element spacing on the injector face. eta_mixing
+      (Rupe) sees only momentum ratio, so nothing charged for spreading a fixed element
+      count over a bigger face. Without this the optimiser buys chamber diameter free.
+
+    Both return 0.0 when unset, so behaviour is unchanged unless configured.
+    """
+    score = 0.0
+    if requirements is None:
+        return score
+    min_ld = _req_lookup(requirements, "layer1_min_Lcyl_over_D")
+    if min_ld is not None and D_chamber_inner > 0 and np.isfinite(L_cylindrical):
+        try:
+            lo = float(min_ld)
+        except (TypeError, ValueError):
+            lo = 0.0
+        if lo > 0:
+            # RELATIVE residual, matching the stability/geometry gates elsewhere in this
+            # function. An absolute squared miss does not scale against
+            # layer1_infeasibility_gate_eps (default 2e-3): an 8 % shortfall on a 0.55 floor
+            # squares to 1.8e-3 and slips under the gate, which is exactly what let Layer 1
+            # return L_cyl/D = 0.507 and call it feasible.
+            ratio = float(L_cylindrical) / float(D_chamber_inner)
+            score += max(0.0, (lo - ratio) / lo) ** 2
+
+    max_pitch = _req_lookup(requirements, "layer1_max_element_pitch_m")
+    if max_pitch is not None and n_elements and A_chamber > 0:
+        try:
+            hi = float(max_pitch)
+            n = int(n_elements)
+        except (TypeError, ValueError):
+            hi, n = 0.0, 0
+        if hi > 0 and n > 0:
+            pitch = float(np.sqrt(A_chamber / n))
+            score += max(0.0, pitch / hi - 1.0) ** 2
+    return score
+
+
 def _layer1_lstar_term(Lstar_m: float, target_m: float) -> float:
     """One-sided SATURATING cost on L* above ``target_m``: e²/(1+e²), e=(L*-target)/target.
 
@@ -782,6 +953,8 @@ def _layer1_chamber_mass_kg(
     L_chamber_m: float,
     total_wall_thickness_m: float,
     wall_density_kg_m3: float,
+    Pc_pa: float = 0.0,
+    closure_yield_pa: float = 205e6,
 ) -> float:
     """Cylindrical-shell dry-mass proxy for the chamber barrel [kg].
 
@@ -805,7 +978,20 @@ def _layer1_chamber_mass_kg(
         return float("nan")
     d_inner = float(np.sqrt(4.0 * float(A_chamber_inner_m2) / np.pi))
     d_mean = d_inner + t_side          # mid-wall diameter of the shell
-    return float(np.pi * d_mean * float(L_chamber_m) * t_side * float(wall_density_kg_m3))
+    m_barrel = float(np.pi * d_mean * float(L_chamber_m) * t_side * float(wall_density_kg_m3))
+
+    # Injector-face closure. A flat plate under Pc thickens as t ~ R*sqrt(k*Pc/sigma), so its
+    # mass goes as R^3 -- the only term in this model that opposes chamber DIAMETER. Without it
+    # the barrel proxy alone is minimised by a short FAT chamber (mass/volume ~ 4t/D), which is
+    # the documented reason a mass penalty was abandoned here. With it the proxy is monotone in
+    # both length and diameter and the L*/bore trade is priced. Zero when Pc is not supplied,
+    # so existing callers are unchanged.
+    m_closure = 0.0
+    if np.isfinite(Pc_pa) and Pc_pa > 0 and closure_yield_pa > 0:
+        r_inner = 0.5 * d_inner
+        t_face = r_inner * float(np.sqrt(0.3 * float(Pc_pa) / float(closure_yield_pa)))
+        m_closure = float(np.pi * r_inner ** 2 * t_face * float(wall_density_kg_m3))
+    return m_barrel + m_closure
 
 
 def _layer1_chamber_mass_term(
@@ -1288,6 +1474,11 @@ def _impinging_ring_geometry_squared(
     Ld_min: float = 3.0,
     Ld_max: float = 10.0,
     ring_order_fuel_outboard: bool = True,
+    center_clear_dia_m: float = 0.0,
+    min_web_m: float = 0.0,
+    wall_clearance_m: float = 0.0,
+    spray_radius_frac: float = 0.0,
+    spray_radius_tol: float = 0.08,
 ) -> float:
     """Doublet ring geometry, computed straight from the DESIGN VARIABLES.
 
@@ -1325,8 +1516,33 @@ def _impinging_ring_geometry_squared(
     variables -- so deriving them here makes the constraint independent of which physics path ran.
     Terms (all relative, one-sided, zero when comfortable):
       * ring fit        -- each D_pitch = n*spacing/pi must stay inside the bore
-      * ring co-location-- an unlike doublet needs BOTH streams on the same circle
-      * no overlap      -- adjacent orifices must not collide (spacing >= d_jet)
+      * no overlap      -- adjacent orifices must not collide (spacing >= d_jet + min web)
+      * standoff        -- L_imp/d_avg inside [Ld_min, Ld_max]
+      * ring order      -- fuel outboard, so wall spillover is fuel-rich
+      * centre clear    -- keep a circle free at the axis (igniter boss / centre port)
+      * wall clearance  -- keep a land between the outer ring and the bore
+      * spray radius    -- put the impingement circle where the propellant is wanted
+
+    WHERE THE RING PAIR SITS was an exactly flat direction until the last three terms existed.
+    ``_layer1_derive_fuel_spacing`` solves s_F so the standoff hits its target, and it does that
+    by fixing the GAP ``|s_F - s_O|``; dr is therefore independent of s_O, the pair slides
+    radially at zero cost, and s_O fell onto its own lower bound (0.003 m). The result on
+    ethalox_8kN_FINAL: D_pitch_O = 26.90 mm, all 28 doublets impinging on a 41.79 mm circle
+    inside a 127.00 mm bore -- 10.8 % of the chamber area, narrower than the 49.57 mm throat,
+    a 1.44 mm LOX web, and no room at the axis for the 3/8 NPT igniter.
+
+    WHERE THE PROPELLANT LANDS. Every doublet on one ring collides on the SAME circle,
+    ``r_imp = r_inner + L_imp*tan(theta_inner)``, and nothing used to constrain it. Bounding the
+    pair only from BELOW (the centre-clear term) is not enough -- the direction is still flat
+    above that bound, and the search parks on it: measured r_imp/r_wall = 0.33 before any of
+    these terms, then 0.44 once only the lower bound existed. The target is the EQUAL-AREA
+    radius, ``r_wall/sqrt(2)``, which splits the chamber cross-section in half.
+
+    RADIAL EXTENT IS ELLIPTICAL. A hole of diameter d inclined ``theta`` from the chamber axis
+    cuts the (axis-normal) face as an ellipse: minor axis d circumferentially, MAJOR axis
+    ``d/cos(theta)`` radially. At theta = 69 deg that is 2.79x the drill diameter, so the
+    centre- and wall-clearance terms use the ellipse while the web term -- a circumferential
+    distance -- correctly uses d.
     """
     bore = float(D_chamber_inner_m)
     n = float(n_elements)
@@ -1343,7 +1559,10 @@ def _impinging_ring_geometry_squared(
         term += max(0.0, d_pitch / bore - 1.0) ** 2          # ring must fit the bore
         d = float(dj)
         if np.isfinite(d) and d > 0:
-            term += max(0.0, (d - s) / bore) ** 2            # orifices must not overlap
+            # Circumferential land between adjacent holes of the same stream. spacing >= d_jet
+            # alone permits a web of exactly zero; min_web_m is the drill/manifold floor.
+            web_min = float(min_web_m) if np.isfinite(min_web_m) and min_web_m > 0 else 0.0
+            term += max(0.0, (d + web_min - s) / bore) ** 2
     # Impingement distance from the RADIAL ring offset. Both rings inside the bore is handled
     # above; here we require the pair to actually meet at a sane standoff.
     if "O" in dp and "F" in dp:
@@ -1355,11 +1574,42 @@ def _impinging_ring_geometry_squared(
         if ring_order_fuel_outboard and dp["F"] < dp["O"]:
             term += ((dp["O"] - dp["F"]) / bore) ** 2
         tO, tF = float(angle_O_deg), float(angle_F_deg)
+        # CENTRE CLEARANCE and WALL CLEARANCE, on the elliptical face trace (major = d/cos th).
+        _half_major = {}
+        for _tag, _d, _th in (("O", d_jet_O_m, tO), ("F", d_jet_F_m, tF)):
+            _dv = float(_d)
+            if not (np.isfinite(_dv) and _dv > 0):
+                continue
+            _c = float(np.cos(np.deg2rad(float(_th)))) if np.isfinite(_th) else 1.0
+            _half_major[_tag] = 0.5 * _dv / max(0.10, abs(_c))
+        if _half_major:
+            _inner_tag = "O" if dp["O"] <= dp["F"] else "F"
+            _outer_tag = "F" if _inner_tag == "O" else "O"
+            _cc = float(center_clear_dia_m)
+            if np.isfinite(_cc) and _cc > 0 and _inner_tag in _half_major:
+                inner_edge = 0.5 * dp[_inner_tag] - _half_major[_inner_tag]
+                term += max(0.0, (0.5 * _cc - inner_edge) / bore) ** 2
+            _wc = float(wall_clearance_m)
+            if np.isfinite(_wc) and _wc >= 0 and _outer_tag in _half_major:
+                outer_edge = 0.5 * dp[_outer_tag] + _half_major[_outer_tag]
+                term += max(0.0, (outer_edge + _wc - 0.5 * bore) / bore) ** 2
         d_avg = 0.5 * (float(d_jet_O_m) + float(d_jet_F_m))
         if np.isfinite(tO) and np.isfinite(tF) and np.isfinite(d_avg) and d_avg > 0:
             tan_sum = float(np.tan(np.deg2rad(tO)) + np.tan(np.deg2rad(tF)))
             if tan_sum > 1e-9:
                 L_imp = dr / tan_sum
+                # SPRAY PLACEMENT. Relative, banded, zero inside the band.
+                _srf = float(spray_radius_frac)
+                if np.isfinite(_srf) and _srf > 0.0:
+                    _th_in = tO if dp["O"] <= dp["F"] else tF
+                    _r_in = 0.5 * min(dp["O"], dp["F"])
+                    _r_imp = _r_in + L_imp * float(np.tan(np.deg2rad(_th_in)))
+                    _frac = _r_imp / (0.5 * bore)
+                    _tol = float(spray_radius_tol) if (
+                        np.isfinite(spray_radius_tol) and spray_radius_tol > 0) else 0.08
+                    _miss = abs(_frac - _srf) - _tol
+                    if _miss > 0.0:
+                        term += (_miss / _srf) ** 2
                 Ld = L_imp / d_avg
                 lo, hi = float(Ld_min), float(Ld_max)
                 if lo > 0 and hi >= lo:
@@ -1439,6 +1689,84 @@ def _impinging_geometry_fit_squared(
     return float(term)
 
 
+def _impinging_face_infeasibility_terms(
+    *,
+    n_elements: float, spacing_O_m: float, spacing_F_m: float,
+    d_jet_O_m: float, d_jet_F_m: float, D_chamber_inner_m: float,
+    angle_O_deg: float, angle_F_deg: float,
+    center_clear_dia_m: float = 0.0, min_web_m: float = 0.0,
+    wall_clearance_m: float = 0.0, spray_radius_frac: float = 0.0,
+    spray_radius_tol: float = 0.08,
+) -> float:
+    """Face real-estate misses as a GRADED infeasibility, for the parallel worker path.
+
+    These limits need three properties at once and only this shape has all three:
+
+    * **Hard.** Routed into ``infeasibility_score``, so any violation ranks below every
+      feasible design instead of being priced against Isp. As a plain objective term at
+      W_IMP_GEOM = 1500 a 0.022 spray-radius miss cost 1.5 points against an objective of
+      ~2690 and every seed simply bought it -- the same way a 2.7 %-over ring once bought
+      orifices outside the bore for 1.1 points.
+    * **Graded.** A binary ``+= 1.0`` was tried and is worse than useless: it puts the whole
+      violating region on one flat 1e6 plateau with no gradient, and 2 of 3 seeds then never
+      found the feasible set at all (converged O/F 2.09 and 25.6). Same failure the
+      per-jet angle box produced once; see the note at the angle bounds.
+    * **In both paths.** The serial loop's ``_impinging_hard_geometry_blocks_eval`` never ran
+      in the parallel CMA workers, where essentially every candidate is scored.
+
+    All terms are relative, one-sided, and exactly zero for a comfortable design, so a config
+    that declares none of these keys contributes nothing.
+    """
+    bore = float(D_chamber_inner_m)
+    n = float(n_elements)
+    if not (np.isfinite(bore) and bore > 0 and np.isfinite(n) and n > 0):
+        return 0.0
+    try:
+        dp_O = n * float(spacing_O_m) / np.pi
+        dp_F = n * float(spacing_F_m) / np.pi
+    except (TypeError, ValueError):
+        return 0.0
+    if not (np.isfinite(dp_O) and np.isfinite(dp_F) and dp_O > 0 and dp_F > 0):
+        return 0.0
+
+    def _half_major(d: float, th: float) -> float:
+        c = float(np.cos(np.deg2rad(float(th)))) if np.isfinite(th) else 1.0
+        return 0.5 * float(d) / max(0.10, abs(c))
+
+    ox_inner = dp_O <= dp_F
+    r_in = 0.5 * (dp_O if ox_inner else dp_F)
+    r_out = 0.5 * (dp_F if ox_inner else dp_O)
+    d_in, th_in = (d_jet_O_m, angle_O_deg) if ox_inner else (d_jet_F_m, angle_F_deg)
+    d_out, th_out = (d_jet_F_m, angle_F_deg) if ox_inner else (d_jet_O_m, angle_O_deg)
+
+    term = 0.0
+    cc = float(center_clear_dia_m)
+    if np.isfinite(cc) and cc > 0.0:
+        inner_edge = r_in - _half_major(d_in, th_in)
+        term += max(0.0, (0.5 * cc - inner_edge) / bore) ** 2
+    wc = float(wall_clearance_m)
+    if np.isfinite(wc) and wc > 0.0:
+        outer_edge = r_out + _half_major(d_out, th_out)
+        term += max(0.0, (outer_edge + wc - 0.5 * bore) / bore) ** 2
+    web = float(min_web_m)
+    if np.isfinite(web) and web > 0.0:
+        for _sp, _dj in ((spacing_O_m, d_jet_O_m), (spacing_F_m, d_jet_F_m)):
+            if float(_sp) > 0:
+                term += max(0.0, (float(_dj) + web - float(_sp)) / bore) ** 2
+    srf = float(spray_radius_frac)
+    if np.isfinite(srf) and srf > 0.0:
+        tan_sum = float(np.tan(np.deg2rad(float(angle_O_deg)))
+                        + np.tan(np.deg2rad(float(angle_F_deg))))
+        if np.isfinite(tan_sum) and tan_sum > 1e-9:
+            L_imp = 0.5 * abs(dp_O - dp_F) / tan_sum
+            r_imp = r_in + L_imp * float(np.tan(np.deg2rad(float(th_in))))
+            frac = r_imp / (0.5 * bore)
+            tol = float(spray_radius_tol) if (
+                np.isfinite(spray_radius_tol) and spray_radius_tol > 0) else 0.08
+            term += max(0.0, abs(frac - srf) - tol) ** 2
+    return float(term)
+
+
 def _impinging_hard_geometry_blocks_eval(
     *,
     d_jet_O: float,
@@ -1449,12 +1777,90 @@ def _impinging_hard_geometry_blocks_eval(
     D_throat_check: float,
     A_chamber_check: float,
     A_throat_check: float,
+    n_elements: float = float("nan"),
+    angle_O_deg: float = float("nan"),
+    angle_F_deg: float = float("nan"),
+    center_clear_dia_m: float = 0.0,
+    min_web_m: float = 0.0,
+    wall_clearance_m: float = 0.0,
+    min_face_incidence_deg: float = 0.0,
+    spray_radius_frac: float = 0.0,
+    spray_radius_tol: float = 0.08,
 ) -> bool:
-    """True when doublet layout is physically impossible — skip ``evaluate()``."""
-    if sp_O > 0.0 and d_jet_O > sp_O:
+    """True when doublet layout is physically impossible — skip ``evaluate()``.
+
+    The face-real-estate checks (centre clearance, web, wall land) are HARD for the same
+    reason ring fit is: as soft terms they get bought for a rounding error against an
+    objective of ~2700. They stay inert unless the corresponding requirement is set, so a
+    config that declares none of them behaves exactly as before.
+    """
+    # FACE INCIDENCE. theta is measured from the chamber AXIS, so the angle the drill makes
+    # with the face PLANE is 90 - theta. A twist drill entering a flat below ~40 deg of
+    # incidence walks off the spot; the fix is a spot-face milled normal to the hole axis, and
+    # whether the shop will cut 2n of those is a decision, not something the optimizer may
+    # assume. This is the per-jet CEILING on theta, complementary to the
+    # layer1_impinging_jet_angle_min_deg floor.
+    _inc = float(min_face_incidence_deg) if np.isfinite(min_face_incidence_deg) else 0.0
+    if _inc > 0.0:
+        for _th in (angle_O_deg, angle_F_deg):
+            if np.isfinite(_th) and (90.0 - float(_th)) < _inc:
+                return True
+    _web = float(min_web_m) if np.isfinite(min_web_m) and min_web_m > 0 else 0.0
+    if sp_O > 0.0 and d_jet_O + _web > sp_O:
         return True
-    if sp_F > 0.0 and d_jet_F > sp_F:
+    if sp_F > 0.0 and d_jet_F + _web > sp_F:
         return True
+    # RING FIT. D_pitch = n*spacing/pi, and the hole has width, so the ring needs
+    # D_pitch + d_jet <= D_chamber_inner or the orifices are drilled outside the chamber
+    # wall. This was only a SOFT term in _impinging_ring_geometry_squared -- a fuel ring
+    # 2.7% over the bore scored (0.0268)^2 * W_IMP_GEOM = 1.1 points against an objective
+    # of ~2700, so the optimiser bought impossible geometry for nothing and every gate
+    # still reported PASS. Measured live: 130.4 mm fuel pitch circle on a 127.0 mm bore.
+    if np.isfinite(n_elements) and n_elements >= 1.0 and D_chamber_inner > 0.0:
+        for _sp, _dj in ((sp_O, d_jet_O), (sp_F, d_jet_F)):
+            if _sp > 0.0:
+                if (float(n_elements) * _sp / np.pi) + _dj > D_chamber_inner:
+                    return True
+    # CENTRE / WALL clearance on the elliptical face trace (radial major axis = d/cos theta).
+    if (np.isfinite(n_elements) and n_elements >= 1.0 and D_chamber_inner > 0.0
+            and sp_O > 0.0 and sp_F > 0.0):
+        _dp_O = float(n_elements) * sp_O / np.pi
+        _dp_F = float(n_elements) * sp_F / np.pi
+        def _half_major(d: float, th: float) -> float:
+            c = float(np.cos(np.deg2rad(float(th)))) if np.isfinite(th) else 1.0
+            return 0.5 * float(d) / max(0.10, abs(c))
+        _in_dp, _in_d, _in_th = ((_dp_O, d_jet_O, angle_O_deg) if _dp_O <= _dp_F
+                                 else (_dp_F, d_jet_F, angle_F_deg))
+        _out_dp, _out_d, _out_th = ((_dp_F, d_jet_F, angle_F_deg) if _dp_O <= _dp_F
+                                    else (_dp_O, d_jet_O, angle_O_deg))
+        _cc = float(center_clear_dia_m)
+        if np.isfinite(_cc) and _cc > 0.0:
+            if 0.5 * _in_dp - _half_major(_in_d, _in_th) < 0.5 * _cc:
+                return True
+        _wc = float(wall_clearance_m)
+        if np.isfinite(_wc) and _wc > 0.0:
+            if 0.5 * _out_dp + _half_major(_out_d, _out_th) + _wc > 0.5 * D_chamber_inner:
+                return True
+    # SPRAY PLACEMENT, hard for the same reason ring fit is. As a soft term it costs
+    # (miss/target)^2 * W_IMP_GEOM, which on a 0.022 miss at W = 1500 is 1.5 points against an
+    # objective of ~2690 -- so every seed bought a spray circle outside its own declared band
+    # for nothing, exactly the way a 2.7 %-over ring once bought orifices outside the bore.
+    if (np.isfinite(n_elements) and n_elements >= 1.0 and D_chamber_inner > 0.0
+            and sp_O > 0.0 and sp_F > 0.0 and np.isfinite(spray_radius_frac)
+            and spray_radius_frac > 0.0):
+        _dpo = float(n_elements) * sp_O / np.pi
+        _dpf = float(n_elements) * sp_F / np.pi
+        _ts = float(np.tan(np.deg2rad(float(angle_O_deg)))
+                    + np.tan(np.deg2rad(float(angle_F_deg))))
+        if np.isfinite(_ts) and _ts > 1e-9:
+            _L = 0.5 * abs(_dpo - _dpf) / _ts
+            _th_in = float(angle_O_deg) if _dpo <= _dpf else float(angle_F_deg)
+            _r_imp = 0.5 * min(_dpo, _dpf) + _L * float(np.tan(np.deg2rad(_th_in)))
+            _frac = _r_imp / (0.5 * D_chamber_inner)
+            _tol = float(spray_radius_tol) if (
+                np.isfinite(spray_radius_tol) and spray_radius_tol > 0) else 0.08
+            if abs(_frac - float(spray_radius_frac)) > _tol:
+                return True
     if D_throat_check > 0.0 and D_chamber_inner > 0.0:
         if D_throat_check > D_chamber_inner * 0.95:
             return True
@@ -1625,6 +2031,7 @@ def _layer1_apply_chamber_geometry_to_config(
     D_chamber_outer: float,
     max_nozzle_exit: float,
     wall_thickness_m: float,
+    requirements=None,
 ) -> float:
     """Update chamber / nozzle fields from the first four Layer-1 DOFs.
 
@@ -1644,8 +2051,18 @@ def _layer1_apply_chamber_geometry_to_config(
         contraction_ratio = A_chamber / A_throat
     else:
         contraction_ratio = 10.0
-    theta_contraction = np.pi / 4
-    nozzle_entrance_radius_est = R_throat
+    if requirements is None:
+        requirements = getattr(config, "design_requirements", None)
+    theta_contraction = _layer1_contraction_theta(requirements)
+    # The convergent cone does NOT run to the throat radius -- it runs to where the 1.5*R_t
+    # entrance arc picks up, which for a cone of half-angle theta is the tangency radius
+    #     r_tan = R_t * (1 + 1.5*(1 - cos(theta)))          (1.43934*R_t at theta = 45 deg)
+    # Passing R_throat here made the contraction run LONGER than the generator draws, and
+    # the surplus became extra full-diameter barrel: chambers came out 3.7-10.2% over the
+    # commanded L*. Same failure mode as the old eps^(1/3) exponent bug.
+    nozzle_entrance_radius_est = R_throat * (
+        1.0 + 1.5 * (1.0 - float(np.cos(theta_contraction)))
+    )
 
     L_cylindrical = chamber_length_calc(
         chamber_volume=V_chamber,
@@ -1687,6 +2104,14 @@ def _layer1_apply_chamber_geometry_to_config(
     cg.volume = V_chamber
     cg.Lstar = Lstar
     cg.length = L_chamber
+    # Write the sub-lengths too. Only cg.length was written, so length_cylindrical and
+    # length_contraction kept whatever the template file happened to carry -- on the shipped
+    # ethalox config, 121.0 mm and 45.1 mm against a real 191.1 / 39.1. That is why the two
+    # L/D code paths disagreed (L_cylindrical + L_contraction = 166.1 mm here vs cg.length =
+    # 230.2 mm at the config-path gate), and why the contraction half-angle appeared to have
+    # no effect: the numbers it changes were computed and then thrown away.
+    cg.length_cylindrical = float(L_cylindrical)
+    cg.length_contraction = float(L_contraction)
     cg.chamber_diameter = D_chamber_inner
     cg.A_exit = A_exit
     cg.exit_diameter = D_exit
@@ -3159,6 +3584,28 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
                 infeasibility_score += max(0.0, area_ratio_error - 0.5) ** 2
 
     elif inj_type == "impinging" and A_throat_check > 0:
+        # SAME HARD BLOCKS THE MAIN LOOP APPLIES. _impinging_hard_geometry_blocks_eval was
+        # wired only into the serial path (skip_physics_eval), so the PARALLEL CMA workers --
+        # which is where essentially every candidate is scored -- never saw it. The face-real-
+        # estate limits that happen to have a search BOUND behind them (centre clearance via
+        # the hole-pitch floor, incidence via the jet-angle box) still held; the spray-radius
+        # band, which has no bound to lean on, did not: two of three seeds converged outside
+        # their own declared band and reported ALL GATES PASS. A hard block that only one path
+        # enforces is not a hard block.
+        infeasibility_score += _impinging_face_infeasibility_terms(
+            n_elements=n_el_O, spacing_O_m=sp_O, spacing_F_m=sp_F,
+            d_jet_O_m=d_jet_O, d_jet_F_m=d_jet_F, D_chamber_inner_m=D_chamber_inner,
+            angle_O_deg=ang_O, angle_F_deg=ang_F,
+            center_clear_dia_m=float(
+                constants.get("layer1_injector_center_clear_dia_m", 0.0) or 0.0),
+            min_web_m=float(constants.get("layer1_injector_min_web_m", 0.0) or 0.0),
+            wall_clearance_m=float(
+                constants.get("layer1_injector_wall_clearance_m", 0.0) or 0.0),
+            spray_radius_frac=float(
+                constants.get("layer1_injector_spray_radius_frac", 0.0) or 0.0),
+            spray_radius_tol=float(
+                constants.get("layer1_injector_spray_radius_tol", 0.08) or 0.08),
+        )
         infeasibility_score += _impinging_infeasibility_layout_terms(
             d_jet_O=d_jet_O,
             d_jet_F=d_jet_F,
@@ -3308,7 +3755,7 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
     R_chamber = D_chamber_inner / 2
     R_throat = np.sqrt(max(0, A_throat / np.pi))
     contraction_ratio = A_chamber_check / A_throat_check if A_throat_check > 0 else 10.0
-    theta_contraction = np.pi / 4  # 45 degrees
+    theta_contraction = _layer1_contraction_theta(constants)
     L_cylindrical = chamber_length_calc(
         chamber_volume=V_chamber,
         area_throat=A_throat,
@@ -3372,10 +3819,33 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
             L_chamber_curr,
             float(TOTAL_WALL_THICKNESS_M),
             float(constants.get("layer1_chamber_wall_density_kg_m3", 2000.0)),
+            Pc_pa=float(Pc_actual) if np.isfinite(Pc_actual) else 0.0,
         )
         mass_term = _layer1_chamber_mass_term(
             chamber_mass_kg, float(constants.get("layer1_chamber_mass_ref_kg", 5.0))
         )
+
+    # Hard geometric constraints -> infeasibility, not the weighted sum. See
+    # _layer1_geometry_infeasibility. No-op unless the two keys are configured.
+    # Element count comes from the DOF vector, NOT from `config` -- this function takes
+    # (result, x, requirements, constants) and has no `config` in scope at all. Reading it
+    # from a config here raised NameError into a bare except, which set the count to 0 and
+    # SILENTLY disabled the pitch constraint: Layer 1 then converged on 6 doublets at a
+    # 45.9 mm pitch against a configured 24 mm ceiling and reported the design valid.
+    # x[4] is n_doublets for the impinging parameterisation (see the DOF map above).
+    _n_el = 0
+    if inj_type == "impinging" and x is not None and len(x) > 4:
+        try:
+            _n_el = int(x[4])
+        except (TypeError, ValueError):
+            _n_el = 0
+    infeasibility_score += _layer1_geometry_infeasibility(
+        constants,
+        L_cylindrical=L_cylindrical,
+        D_chamber_inner=D_chamber_inner,
+        A_chamber=A_chamber_check,
+        n_elements=_n_el,
+    )
 
     # Lexicographic scalarization
     # Lexicographic scalarization (SCALED DOWN)
@@ -3461,7 +3931,15 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
             )
             infeasibility_score += _impinging_resultant_wall_violation(
                 _tilt,
-                max_outward_deg=float(constants.get("layer1_resultant_tilt_max_deg", 0.0)),
+                max_outward_deg=_resolve_tilt_allowance_deg(
+                    from_reach=bool(constants.get("layer1_resultant_tilt_from_reach", False)),
+                    constant_deg=float(constants.get("layer1_resultant_tilt_max_deg", 0.0)),
+                    breakeven_deg=_resultant_tilt_breakeven_deg(
+                        n_elements=n_el_O, spacing_O_m=sp_O, spacing_F_m=sp_F,
+                        angle_O_deg=ang_O, angle_F_deg=ang_F,
+                        D_chamber_inner_m=D_chamber_inner, L_chamber_m=L_chamber_curr),
+                    margin=float(constants.get("layer1_resultant_tilt_reach_margin", 1.5)),
+                ),
                 scale_deg=float(constants.get("layer1_resultant_tilt_scale_deg", 2.0)),
             )
             _infeas_trace(_tr, "wall_tilt", infeasibility_score)
@@ -3588,6 +4066,15 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
             Ld_max=float(constants.get("layer1_impingement_Ld_max", 5.0)),
             ring_order_fuel_outboard=bool(
                 constants.get("layer1_ring_order_fuel_outboard", True)),
+            center_clear_dia_m=float(
+                constants.get("layer1_injector_center_clear_dia_m", 0.0) or 0.0),
+            min_web_m=float(constants.get("layer1_injector_min_web_m", 0.0) or 0.0),
+            wall_clearance_m=float(
+                constants.get("layer1_injector_wall_clearance_m", 0.0) or 0.0),
+            spray_radius_frac=float(
+                constants.get("layer1_injector_spray_radius_frac", 0.0) or 0.0),
+            spray_radius_tol=float(
+                constants.get("layer1_injector_spray_radius_tol", 0.08) or 0.08),
         )
 
     if not np.isfinite(infeasibility_score) or infeasibility_score < 0:
@@ -4583,12 +5070,76 @@ def run_layer1_optimization(
         # plateau after ~1000 of 50016 evaluations. Measured: 2 of 4 random seeds failed.
         imp_angle_lo_bound = min(imp_angle_lo_bound, 15.0)
         imp_angle_hi_bound = max(imp_angle_hi_bound, 85.0)
+        # MANUFACTURING FLOOR on a single jet's inclination. The widening above can drop the
+        # per-jet lower bound to 10 deg or less, and the optimiser will use it: the 8 kN
+        # ethalox point came back with theta_O = 13 deg. A hole that shallow is not drillable
+        # on a flat face without a spot-face or a jig -- the drill walks on entry -- and the
+        # element gets very long for the standoff it buys. This is a HARD bound, not a
+        # preference, because no weight in the objective knows about drilling.
+        _jet_lo = requirements.get("layer1_impinging_jet_angle_min_deg")
+        if _jet_lo is not None:
+            try:
+                _jet_lo = float(_jet_lo)
+                if np.isfinite(_jet_lo) and 0.0 < _jet_lo < imp_angle_hi_bound:
+                    imp_angle_lo_bound = max(imp_angle_lo_bound, _jet_lo)
+            except (TypeError, ValueError):
+                pass
+        # MACHINING CEILING on a single jet's inclination, the mirror of the floor above.
+        # theta is measured from the chamber AXIS, so the drill meets the face PLANE at
+        # (90 - theta). Requiring at least `min_face_incidence` degrees of incidence is exactly
+        # theta <= 90 - min_face_incidence. This has to be applied AFTER the max(..., 85.0)
+        # widening or that line hands the box straight back. Measured why it matters: the
+        # first design to clear every gate put the fuel jet at 69 deg -- 21 deg of incidence,
+        # and 35.4 mm of passage through a 12.7 mm plate.
+        _inc_req = requirements.get("layer1_injector_min_face_incidence_deg")
+        if _inc_req is not None:
+            try:
+                _inc_req = float(_inc_req)
+                if np.isfinite(_inc_req) and _inc_req > 0.0:
+                    _th_ceiling = 90.0 - _inc_req
+                    if _th_ceiling <= imp_angle_lo_bound:
+                        raise ValueError(
+                            f"layer1_injector_min_face_incidence_deg = {_inc_req:g} caps the jet "
+                            f"angle at {_th_ceiling:g} deg, at or below the "
+                            f"layer1_impinging_jet_angle_min_deg floor of {imp_angle_lo_bound:g}. "
+                            f"No jet angle satisfies both."
+                        )
+                    imp_angle_hi_bound = min(imp_angle_hi_bound, _th_ceiling)
+                    layer1_logger.info(
+                        "Face-incidence floor %g deg -> jet angle capped at %.1f deg "
+                        "(drill meets the face at >= %g deg)",
+                        _inc_req, imp_angle_hi_bound, _inc_req)
+            except (TypeError, ValueError) as _e:
+                if isinstance(_e, ValueError) and "min_face_incidence" in str(_e):
+                    raise
         if imp_angle_hi_bound <= imp_angle_lo_bound:
             imp_angle_hi_bound = min(89.0, imp_angle_lo_bound + 1.0)
         layer1_logger.info(
             "Impingement-angle bounds: included [%g, %g] deg (asym <= %g) -> per-jet [%.1f, %.1f]",
             _incl_lo, _incl_hi, _asym, imp_angle_lo_bound, imp_angle_hi_bound,
         )
+        # HOLE-PITCH FLOOR FROM THE RESERVED CENTRE CIRCLE. D_pitch = n*spacing/pi, so a ring
+        # that must clear a centre boss of diameter D_c needs spacing >= pi*D_c/n. Without this
+        # the search box still reaches the old 3 mm floor, the hard block rejects every such
+        # candidate, and CMA burns its budget on a region it can never use. Take n at its CAP:
+        # more elements need LESS pitch for the same circle, so n_hi_int gives the loosest floor
+        # that is still valid for every reachable n.
+        _spacing_lo = 0.003
+        _cc_req = _requirement_float(requirements, "layer1_injector_center_clear_dia_m", 0.0)
+        if np.isfinite(_cc_req) and _cc_req > 0.0 and n_hi_int >= 1:
+            _spacing_lo = max(_spacing_lo, float(np.pi) * float(_cc_req) / float(n_hi_int))
+            if _spacing_lo >= spacing_hi:
+                raise ValueError(
+                    f"layer1_injector_center_clear_dia_m = {_cc_req*1000:.1f} mm needs a hole "
+                    f"pitch of at least {_spacing_lo*1000:.2f} mm at n = {n_hi_int}, but the "
+                    f"pitch ceiling for a {D_inner_bounds*1000:.1f} mm bore is "
+                    f"{spacing_hi*1000:.2f} mm. Reduce the reserved centre circle, or raise "
+                    f"layer1_impinging_n_doublets_max."
+                )
+            layer1_logger.info(
+                "Centre clearance %.1f mm reserved -> hole-pitch floor %.2f mm (was 3.00) at n=%d",
+                _cc_req * 1000.0, _spacing_lo * 1000.0, n_hi_int,
+            )
         layer1_logger.info(
             f"Impinging injector bounds from chamber bore D_inner≈{D_inner_bounds*1000:.2f} mm: "
             f"n_doublets ≤ {n_hi_int} (hard int cap via search box), "
@@ -4602,10 +5153,10 @@ def run_layer1_optimization(
             (5.0, n_hi_upper),
             (0.0005, d_jet_hi),
             (imp_angle_lo_bound, imp_angle_hi_bound),
-            (0.003, spacing_hi),
+            (_spacing_lo, spacing_hi),
             (0.0005, d_jet_hi),
             (imp_angle_lo_bound, imp_angle_hi_bound),
-            (0.003, spacing_hi),
+            (_spacing_lo, spacing_hi),
             (max_lox_P_psi * min_P_ratio, max_lox_P_psi * max_P_ratio),
             (max_fuel_P_psi * min_P_ratio, max_fuel_P_psi * max_P_ratio),
         ]
@@ -5273,7 +5824,10 @@ def run_layer1_optimization(
     )
     
     # Get report_every_n from requirements (default: 1 for real-time)
-    report_every_n = int(requirements.get("report_every_n", 1))
+    # None-safe: the key is now DECLARED in DesignRequirementsConfig, so it arrives
+    # present-with-value-None rather than absent, and .get(k, default) no longer fires.
+    _ren = requirements.get("report_every_n")
+    report_every_n = int(_ren) if _ren is not None else 1
     report_every_n = max(1, report_every_n)  # At least every iteration
     
     # Initialize optimization state
@@ -5423,6 +5977,25 @@ def run_layer1_optimization(
     # so leaving it off just silences a weight the user set and lets impossible rings through.
     layer1_enforce_ring_geometry = _requirement_bool(
         requirements, "layer1_enforce_ring_geometry", True)
+    # Injector face real estate. Default 0.0 => inert, identical to the previous behaviour.
+    layer1_injector_center_clear_dia_m = _requirement_float(
+        requirements, "layer1_injector_center_clear_dia_m", 0.0)
+    layer1_injector_min_web_m = _requirement_float(
+        requirements, "layer1_injector_min_web_m", 0.0)
+    layer1_injector_wall_clearance_m = _requirement_float(
+        requirements, "layer1_injector_wall_clearance_m", 0.0)
+    layer1_injector_spray_radius_frac = _requirement_float(
+        requirements, "layer1_injector_spray_radius_frac", 0.0)
+    layer1_injector_spray_radius_tol = _requirement_float(
+        requirements, "layer1_injector_spray_radius_tol", 0.08)
+    layer1_injector_min_face_incidence_deg = _requirement_float(
+        requirements, "layer1_injector_min_face_incidence_deg", 0.0)
+    layer1_injector_plate_thickness_m = _requirement_float(
+        requirements, "layer1_injector_plate_thickness_m", 0.0)
+    layer1_resultant_tilt_from_reach = _requirement_bool(
+        requirements, "layer1_resultant_tilt_from_reach", False)
+    layer1_resultant_tilt_reach_margin = _requirement_float(
+        requirements, "layer1_resultant_tilt_reach_margin", 1.5)
     layer1_chamber_od_increment_in = _requirement_float(
         requirements, "layer1_chamber_od_increment_in", 0.0
     )
@@ -5586,7 +6159,8 @@ def run_layer1_optimization(
     # - quantize continuous dims to a fraction of their span
     # - keep discrete dims exact (n_orifices)
     # Finer granularity (1e-5 instead of 1e-4) to preserve gradient information for L-BFGS-B
-    cache_rel = float(requirements.get("objective_cache_rel", 1e-5))  # 0.001% of span per bin
+    _ocr = requirements.get("objective_cache_rel")  # None-safe, see report_every_n
+    cache_rel = float(_ocr) if _ocr is not None else 1e-5  # 0.001% of span per bin
     cache_rel = float(np.clip(cache_rel, 1e-6, 1e-3))
     cache_steps = np.maximum(span * cache_rel, 1e-12)
     eval_cache: Dict[Tuple[int, ...], Dict[str, Any]] = {}
@@ -5824,6 +6398,15 @@ def run_layer1_optimization(
                 D_throat_check=D_throat_check,
                 A_chamber_check=A_chamber_check,
                 A_throat_check=A_throat_check,
+                n_elements=float(oxg.n_elements),
+                angle_O_deg=float(oxg.impingement_angle),
+                angle_F_deg=float(fug.impingement_angle),
+                center_clear_dia_m=layer1_injector_center_clear_dia_m,
+                min_web_m=layer1_injector_min_web_m,
+                wall_clearance_m=layer1_injector_wall_clearance_m,
+                min_face_incidence_deg=layer1_injector_min_face_incidence_deg,
+                spray_radius_frac=layer1_injector_spray_radius_frac,
+                spray_radius_tol=layer1_injector_spray_radius_tol,
             )
         elif infeasibility_score > 0.0:
             skip_physics_eval = True
@@ -6192,8 +6775,36 @@ def run_layer1_optimization(
                 L_chamber_curr,
                 wall_total_m,
                 layer1_chamber_wall_density,
+                Pc_pa=float(Pc_actual) if np.isfinite(Pc_actual) else 0.0,
             )
             mass_term = _layer1_chamber_mass_term(chamber_mass_kg, layer1_chamber_mass_ref_kg)
+
+        # Hard geometric constraints -> infeasibility. Lockstep with _compute_objective_value.
+        _n_el_main = 0
+        try:
+            _n_el_main = int(getattr(getattr(config.injector.geometry, "oxidizer", None),
+                                     "n_elements", 0) or 0)
+        except (AttributeError, TypeError, ValueError):
+            _n_el_main = 0
+        if _n_el_main <= 0 and inj_type == "impinging" and x is not None and len(x) > 4:
+            try:
+                _n_el_main = int(x[4])
+            except (TypeError, ValueError):
+                _n_el_main = 0
+        _L_cyl_main = float("nan")
+        try:
+            _L_cyl_main = float(getattr(cg, "length_cylindrical", float("nan")))
+        except Exception:
+            pass
+        if not np.isfinite(_L_cyl_main) and np.isfinite(L_chamber_curr):
+            _L_cyl_main = L_chamber_curr
+        infeasibility_score += _layer1_geometry_infeasibility(
+            requirements,
+            L_cylindrical=_L_cyl_main,
+            D_chamber_inner=D_chamber_inner,
+            A_chamber=float(np.pi) / 4.0 * float(D_chamber_inner) ** 2 if D_chamber_inner > 0 else 0.0,
+            n_elements=_n_el_main,
+        )
 
         chamber_shape_term = 0.0
         chamber_dt_ratio_curr = float("nan")
@@ -6240,7 +6851,16 @@ def run_layer1_optimization(
                 )
                 infeasibility_score += _impinging_resultant_wall_violation(
                     _tilt_curr,
-                    max_outward_deg=layer1_resultant_tilt_max_deg,
+                    max_outward_deg=_resolve_tilt_allowance_deg(
+                        from_reach=layer1_resultant_tilt_from_reach,
+                        constant_deg=layer1_resultant_tilt_max_deg,
+                        breakeven_deg=_resultant_tilt_breakeven_deg(
+                            n_elements=float(x[4]), spacing_O_m=float(x[7]),
+                            spacing_F_m=float(x[10]), angle_O_deg=float(x[6]),
+                            angle_F_deg=float(x[9]), D_chamber_inner_m=D_chamber_inner,
+                            L_chamber_m=L_chamber_curr),
+                        margin=layer1_resultant_tilt_reach_margin,
+                    ),
                     scale_deg=layer1_resultant_tilt_scale_deg,
                 )
                 momentum_term = _impinging_momentum_asymmetric_squared(
@@ -6304,6 +6924,11 @@ def run_layer1_optimization(
                 angle_O_deg=float(x[6]), angle_F_deg=float(x[9]),
                 Ld_min=layer1_impingement_Ld_min, Ld_max=layer1_impingement_Ld_max,
                 ring_order_fuel_outboard=layer1_ring_order_fuel_outboard,
+                center_clear_dia_m=layer1_injector_center_clear_dia_m,
+                min_web_m=layer1_injector_min_web_m,
+                wall_clearance_m=layer1_injector_wall_clearance_m,
+                spray_radius_frac=layer1_injector_spray_radius_frac,
+                spray_radius_tol=layer1_injector_spray_radius_tol,
             )
 
         # Geometry hint: A_O/A_F vs MR/√(ρ_O/ρ_F) for R≈1 (soft, optimizer-only)
@@ -6734,6 +7359,12 @@ def run_layer1_optimization(
                 "chamber_mass_kg": float(chamber_mass_kg),
                 "momentum_ratio_R": _finite_or_none(_R_hist),
                 "resultant_tilt_deg": _finite_or_none(_tilt_curr if has_impinging else float("nan")),
+                "resultant_tilt_breakeven_deg": _finite_or_none(
+                    _resultant_tilt_breakeven_deg(
+                        n_elements=float(x[4]), spacing_O_m=float(x[7]), spacing_F_m=float(x[10]),
+                        angle_O_deg=float(x[6]), angle_F_deg=float(x[9]),
+                        D_chamber_inner_m=D_chamber_inner, L_chamber_m=L_chamber_curr,
+                    ) if has_impinging else float("nan")),
                 "effective_smd_microns": _finite_or_none(smd_eff_um),
                 "impingement_angle_deg": _finite_or_none(imp_angle_deg),
                 "geom_ao_af_momentum_scale": float(geom_ao_af_scale),
@@ -6960,6 +7591,14 @@ def run_layer1_optimization(
     config_dict = _config_to_dict(_worker_cfg_src)
     bounds_array = np.column_stack([lower_bounds, upper_bounds])
     constants_dict = {
+        # Geometry DOFs and hard geometric constraints. constants_dict is a CURATED dict --
+        # a key absent here simply never reaches the worker objective, which silently fell
+        # back to theta = 45 deg while _layer1_apply_chamber_geometry_to_config (reading the
+        # config directly) used the configured angle. The objective was then scoring a
+        # different chamber than the one being built.
+        'layer1_contraction_half_angle_deg': requirements.get('layer1_contraction_half_angle_deg'),
+        'layer1_min_Lcyl_over_D': requirements.get('layer1_min_Lcyl_over_D'),
+        'layer1_max_element_pitch_m': requirements.get('layer1_max_element_pitch_m'),
         'target_thrust': target_thrust,
         'optimal_of': optimal_of,
         'P_ambient': target_P_exit,  # Ambient pressure (atmospheric)
@@ -7038,6 +7677,15 @@ def run_layer1_optimization(
         'lock_P_F_min': lock_P_F_range[0],
         'lock_P_F_max': lock_P_F_range[1],
         'layer1_enforce_ring_geometry': layer1_enforce_ring_geometry,
+        'layer1_injector_center_clear_dia_m': layer1_injector_center_clear_dia_m,
+        'layer1_injector_min_web_m': layer1_injector_min_web_m,
+        'layer1_injector_wall_clearance_m': layer1_injector_wall_clearance_m,
+        'layer1_injector_spray_radius_frac': layer1_injector_spray_radius_frac,
+        'layer1_injector_spray_radius_tol': layer1_injector_spray_radius_tol,
+        'layer1_injector_min_face_incidence_deg': layer1_injector_min_face_incidence_deg,
+        'layer1_injector_plate_thickness_m': layer1_injector_plate_thickness_m,
+        'layer1_resultant_tilt_from_reach': layer1_resultant_tilt_from_reach,
+        'layer1_resultant_tilt_reach_margin': layer1_resultant_tilt_reach_margin,
         'layer1_ring_order_fuel_outboard': layer1_ring_order_fuel_outboard,
         'layer1_momentum_wall_side_multiplier': layer1_momentum_wall_side_multiplier,
         'layer1_resultant_tilt_max_deg': layer1_resultant_tilt_max_deg,
@@ -8238,7 +8886,8 @@ def run_layer1_optimization(
         if (_len_raw is not None and np.isfinite(float(_len_raw)))
         else np.nan
     )
-    max_chamber_length = float(requirements.get("max_chamber_length_m", 0.50))
+    _mcl = requirements.get("max_chamber_length_m")  # None-safe, see report_every_n
+    max_chamber_length = float(_mcl) if _mcl is not None else 0.50
     
     if np.isfinite(L_chamber_final) and max_chamber_length > 0:
         if L_chamber_final > max_chamber_length:
@@ -8310,9 +8959,52 @@ def run_layer1_optimization(
         )
         initial_performance["resultant_tilt_deg"] = (
             float(_tilt_final) if np.isfinite(_tilt_final) else None)
+        # The tilt ALLOWANCE is a constant the operator sets; what makes it safe is geometry
+        # the optimizer moves underneath it. Report the break-even angle for the design that
+        # actually came out, so an allowance that its own impingement radius no longer
+        # justifies is visible instead of silent. See _resultant_tilt_breakeven_deg.
+        _cg_f = getattr(optimized_config, "chamber_geometry", None)
+        _L_cham_f = float("nan")
+        if _cg_f is not None:
+            _lc = getattr(_cg_f, "length_cylindrical", None)
+            _ln = getattr(_cg_f, "length_contraction", None)
+            if _lc is not None and _ln is not None:
+                _L_cham_f = float(_lc) + float(_ln)
+            elif getattr(_cg_f, "length", None) is not None:
+                _L_cham_f = float(_cg_f.length)
+        _be_final = _resultant_tilt_breakeven_deg(
+            n_elements=getattr(_gf.oxidizer, "n_elements", float("nan")) if _gf else float("nan"),
+            spacing_O_m=getattr(_gf.oxidizer, "spacing", float("nan")) if _gf else float("nan"),
+            spacing_F_m=getattr(_gf.fuel, "spacing", float("nan")) if _gf else float("nan"),
+            angle_O_deg=getattr(_gf.oxidizer, "impingement_angle", float("nan")) if _gf else float("nan"),
+            angle_F_deg=getattr(_gf.fuel, "impingement_angle", float("nan")) if _gf else float("nan"),
+            D_chamber_inner_m=float(getattr(_cg_f, "chamber_diameter", float("nan")))
+            if _cg_f is not None else float("nan"),
+            L_chamber_m=_L_cham_f,
+        )
+        initial_performance["resultant_tilt_breakeven_deg"] = (
+            float(_be_final) if np.isfinite(_be_final) else None)
+        _tilt_allow_final = _resolve_tilt_allowance_deg(
+            from_reach=layer1_resultant_tilt_from_reach,
+            constant_deg=layer1_resultant_tilt_max_deg,
+            breakeven_deg=_be_final,
+            margin=layer1_resultant_tilt_reach_margin,
+        )
+        initial_performance["resultant_tilt_allowed_deg"] = float(_tilt_allow_final)
+        if np.isfinite(_be_final) and float(_tilt_allow_final) > _be_final:
+            layer1_logger.warning(
+                "The permitted outward tilt, %.2f deg, exceeds the break-even tilt for this "
+                "design's own geometry (%.2f deg): a fan at the allowed limit would reach the "
+                "liner %.0f mm from the face, inside a %.0f mm chamber. Lower the allowance, or "
+                "move the element ring inboard.",
+                float(_tilt_allow_final), _be_final,
+                1000.0 * _L_cham_f * float(np.tan(np.deg2rad(_be_final)))
+                / max(1e-9, float(np.tan(np.deg2rad(float(_tilt_allow_final))))),
+                1000.0 * _L_cham_f,
+            )
         if np.isfinite(_tilt_final):
             resultant_tilt_gate_passed = bool(
-                _tilt_final <= float(layer1_resultant_tilt_max_deg)
+                _tilt_final <= float(_tilt_allow_final)
                 + float(layer1_resultant_tilt_gate_tol_deg))
     initial_performance["resultant_tilt_gate_passed"] = bool(resultant_tilt_gate_passed)
 

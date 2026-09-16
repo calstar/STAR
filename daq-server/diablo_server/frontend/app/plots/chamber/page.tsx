@@ -47,7 +47,7 @@ function TcTempCompact({ calEntity, label, color }: { entity: string; calEntity:
 }
 
 function LcKgCompact({ calEntity, label, color }: { entity: string; calEntity: string; label: string; color: string }) {
-  const value = useLoadCellForceKg(calEntity); // offset already applied in store, C++ outputs kg
+  const value = useLoadCellForceKg(calEntity); // absolute kg from the calibration service
   const display = value !== null && Number.isFinite(value) ? value.toFixed(1) : '—';
   return (
     <div className={READOUT_CARD_CLASS}>
@@ -163,7 +163,7 @@ export default function ChamberGraphsPage() {
                         <div className="flex-1 min-h-0 flex flex-col">
                             <div className="text-xs font-medium text-gray-500 flex-shrink-0 px-1">LC Forces (kg)</div>
                             {lcData.length > 0 ? (
-                              <TimeSeriesPlot title="" entities={lcCalEntities} component="force_kg" yLabel="Force (kg)" labels={lcData.map((d) => d.label)} colors={lcColors} windowSeconds={WINDOW_SECONDS} />
+                              <TimeSeriesPlot title="" entities={lcCalEntities} component="force_kg_tared" yLabel="Force (kg)" labels={lcData.map((d) => d.label)} colors={lcColors} windowSeconds={WINDOW_SECONDS} />
                             ) : (
                               <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">No LC boards in config</div>
                             )}

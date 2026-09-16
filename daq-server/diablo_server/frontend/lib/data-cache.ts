@@ -327,19 +327,21 @@ class SensorDataCache {
       }
     }
 
-    // Reverse alias: O(1) lookup via pre-built index
+    // Reverse alias: O(1) lookup via pre-built index. `key` is board-scoped here (a pane asked
+    // for LC2_Cal.CH1), and the canonical it maps back to may be a GENERIC name that several
+    // boards claim — LC_Cal.CH1 belongs to both 41 and 42 when they share connector 1.
+    //
+    // Only the canonical itself is worth trying. Walking that canonical's other fallbacks is
+    // never right: the reverse index guarantees `key` is already one of them, so every OTHER
+    // entry is a DIFFERENT BOARD's stream. When the asked-for board was dead and a sibling was
+    // alive, the walk returned the sibling, and the plot drew a live load cell's weight under
+    // the dead one's label and colour while the readout beside it correctly showed nothing.
+    // A dead channel must read as dead. See __tests__/lc-dead-board-alias.test.ts.
     this.ensureReverseAliasIndex();
     const canonical = this.reverseAliasIndex.get(key);
     if (canonical) {
       s = this.cache.get(canonical);
       if (s && s.len > 0) return s;
-      const cFallbacks = ALIASES[canonical];
-      if (cFallbacks) {
-        for (const fb of cFallbacks) {
-          s = this.cache.get(fb);
-          if (s && s.len > 0) return s;
-        }
-      }
     }
     return null;
   }

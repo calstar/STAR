@@ -1154,7 +1154,7 @@ export function OptimizerDemo({ config }: OptimizerDemoProps) {
                   {/* O/F Ratio */}
                   {Array.isArray(layer3Results.performance.MR) && (
                     <div>
-                      <h5 className="text-sm font-medium text-[var(--color-text-primary)] mb-2">Mixture Ratio (O/F)</h5>
+                      <h5 className="text-sm font-medium text-[var(--color-text-primary)] mb-2">O/F Ratio</h5>
                       <div className="h-48 bg-[var(--color-bg-secondary)] rounded-lg p-2">
                         <ResponsiveContainer width="100%" height="100%">
                           <LineChart 

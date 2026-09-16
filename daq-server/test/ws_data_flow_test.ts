@@ -15,7 +15,7 @@
  *   bash test/test_integration.sh --only=sensor_data
  *
  * --only runs a subset of tests (comma-separated). IDs: sensor_config, sensor_data,
- * cal_stability, raw_cal_presence, heartbeat, board_status (Boards pane: all enabled boards connected),
+ * cal_stability, cal_lc_tare, raw_cal_presence, heartbeat, board_status (Boards pane: all enabled boards connected),
  * selftest, state_transition,
  * state_debug, actuator_ws, actuator_udp, elodin_sync, controller, timestamps,
  * conservation, config_validate — or numbers 1–6, 10–12, 14–15
@@ -94,6 +94,7 @@ function parseOnlyTests(): Set<string> | null {
   const allowed = new Set([
     'sensor_config', 'sensor_data', 'cal_stability', 'raw_cal_presence',
     'cal_values', 'cal_model_select', 'cal_robust_learn', 'cal_shared_points', 'cal_clear', 'cal_lc_capture',
+    'cal_lc_tare',
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
     'controller', 'timestamps', 'conservation', 'board_logs', 'board_log_mode',
@@ -2190,6 +2191,136 @@ function readCalRecord(uid: number): Record<string, unknown> | null {
   } catch { return null; }
 }
 
+// Read the service's lc_tare.json entry for a cal entity (fresh on every tare/recompute/clear).
+function readTareRecord(entity: string): Record<string, unknown> | null {
+  const dir = findCalDir();
+  if (!dir) return null;
+  try {
+    const j = JSON.parse(fs.readFileSync(`${dir}/lc_tare.json`, 'utf-8'));
+    const tares = Array.isArray(j?.tares) ? j.tares : [];
+    return (tares.find((t: Record<string, unknown>) => t.entity === entity) as Record<string, unknown>) ?? null;
+  } catch { return null; }
+}
+
+/** Mean of a component's SENSOR_UPDATE values over `ms`, or null if none arrived. */
+async function meanOf(ws: WebSocket, entity: string, component: string, ms: number): Promise<number | null> {
+  const vals: number[] = [];
+  await new Promise<void>((resolve) => {
+    const handler = (data: WebSocket.Data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg.type !== MessageType.SENSOR_UPDATE) return;
+        const p = msg.payload;
+        if (p?.entity === entity && p?.component === component && Number.isFinite(p.value)) vals.push(p.value);
+      } catch { /* ignore */ }
+    };
+    ws.on('message', handler);
+    setTimeout(() => { ws.removeListener('message', handler); resolve(); }, ms);
+  });
+  if (vals.length === 0) return null;
+  return vals.reduce((a, b) => a + b, 0) / vals.length;
+}
+
+// ── Test: the load-cell tare, end to end through every process in the stack ──────────────────
+//
+// This is the only check that exercises the whole loop the feature actually lives in:
+//   WS client → backend → Elodin [0x46,0x00] → calibration_service → lc_tare.json
+//           → backend mtime poll → force_kg_tared over WS → back to this client.
+//
+// Four things are asserted, each of which is a wrong number an operator would otherwise believe:
+//   1. an untared channel's tared trace equals its absolute one (a 0 offset is not a dead stream);
+//   2. after a tare the tared trace sits at ~0 while force_kg KEEPS reading the real load —
+//      Elodin's archive stays absolute, which is the premise the whole design rests on;
+//   3. a capture that moves the curve RE-DERIVES the offset from the stored ADC code rather than
+//      leaving the kilograms it was first computed with. That is the "tank reads 2 kg after a
+//      better fit" bug, and this is the only place it is proved through the real service;
+//   4. clearing returns the tared trace to absolute.
+async function testLcTare(ws: WebSocket): Promise<void> {
+  console.log('\n⚖️  Test 22: LC tare end-to-end (display tared, archive absolute)');
+  const CH = 1, BOARD = 42, UID = BOARD * 100 + CH;       // lc_board_2, active_connectors incl. 1
+  const ENTITY = 'LC2_Cal.CH1';
+  const SETTLE_MS = 2500;
+
+  // This channel is put in CUBIC mode by test_integration.sh. That matters: on the datasheet
+  // physics conversion (every load cell's default) a capture cannot move the curve at all, so
+  // the re-derivation this test exists to prove would be unobservable. Build a curve first.
+  const captureAt = async (ref: number) => {
+    for (let i = 0; i < 10; i++) {
+      send(ws, { type: 'calibration_command', timestamp: Date.now(),
+        payload: { commandType: 'capture_point', sensorId: CH, boardId: BOARD, referencePressure: ref } });
+      await sleep(120);
+    }
+    await sleep(1500);
+  };
+  await captureAt(100);
+
+  // ── 1. untared: the derived trace must equal the absolute one ──────────────
+  const grossBefore = await meanOf(ws, ENTITY, 'force_kg', SETTLE_MS);
+  const taredBefore = await meanOf(ws, ENTITY, 'force_kg_tared', SETTLE_MS);
+  if (grossBefore === null || taredBefore === null) {
+    assert(false, `cal_lc_tare: no ${ENTITY} force_kg/force_kg_tared traffic (gross=${grossBefore} tared=${taredBefore})`);
+    return;
+  }
+  assert(Math.abs(grossBefore - taredBefore) < 0.5,
+    `cal_lc_tare: untared, tared trace tracks absolute (gross ${grossBefore.toFixed(2)} vs tared ${taredBefore.toFixed(2)})`);
+
+  // ── 2. tare: display goes to ~0, archive keeps the real load ───────────────
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'tare_lc', sensorId: CH, boardId: BOARD } });
+  let rec: Record<string, unknown> | null = null;
+  for (let i = 0; i < 12; i++) { rec = readTareRecord(ENTITY); if (rec) break; await sleep(400); }
+  if (!rec) { assert(false, `cal_lc_tare: service wrote no tare for ${ENTITY} (uid ${UID})`); return; }
+  const offset1 = rec.offset_kg as number;
+  const adcAtTare = rec.adc_at_tare as number;
+  console.log(`  tared: offset=${offset1?.toFixed?.(3)}kg adc_at_tare=${adcAtTare}`);
+  assert(Number.isFinite(offset1), `cal_lc_tare: offset is a finite number (${offset1})`);
+
+  const grossAfter = await meanOf(ws, ENTITY, 'force_kg', SETTLE_MS);
+  const taredAfter = await meanOf(ws, ENTITY, 'force_kg_tared', SETTLE_MS);
+  assert(taredAfter !== null && Math.abs(taredAfter) < 0.5,
+    `cal_lc_tare: tared trace reads ~0 at the tared load (${taredAfter?.toFixed(3)} kg)`);
+  assert(grossAfter !== null && Math.abs(grossAfter - grossBefore) < 0.5,
+    `cal_lc_tare: force_kg stays ABSOLUTE — the archive never sees the tare (${grossBefore.toFixed(2)} → ${grossAfter?.toFixed(2)})`);
+
+  // ── 3. the re-cal case: a moved curve must re-derive the offset ────────────
+  // Capture at a reference far from the first batch, so the fit moves and the SAME ADC code now
+  // evaluates to something else. A tare that had stored KILOGRAMS would keep offset1 here, and
+  // the unchanged physical load would stop reading zero — the "tank reads 2 kg after a better
+  // fit" bug, observed through the real service rather than a unit-test stub.
+  await captureAt(250);
+  let rec2: Record<string, unknown> | null = null;
+  for (let i = 0; i < 12; i++) {
+    rec2 = readTareRecord(ENTITY);
+    if (rec2 && (rec2.offset_kg as number) !== offset1) break;
+    await sleep(400);
+  }
+  const offset2 = rec2?.offset_kg as number;
+  console.log(`  after re-cal: offset=${offset2?.toFixed?.(3)}kg adc_at_tare=${rec2?.adc_at_tare}`);
+  assert(rec2 !== null && (rec2.adc_at_tare as number) === adcAtTare,
+    `cal_lc_tare: adc_at_tare is the stored truth and does not move (${adcAtTare} → ${rec2?.adc_at_tare})`);
+  assert(Number.isFinite(offset2) && offset2 !== offset1,
+    `cal_lc_tare: a changed curve RE-DERIVES the offset (${offset1?.toFixed?.(3)} → ${offset2?.toFixed?.(3)} kg) — not a stale kg value`);
+  const taredRecal = await meanOf(ws, ENTITY, 'force_kg_tared', SETTLE_MS);
+  assert(taredRecal !== null && Math.abs(taredRecal) < 0.5,
+    `cal_lc_tare: the same load still reads ~0 under the new curve (${taredRecal?.toFixed(3)} kg)`);
+
+  // ── 4. clear: back to absolute ─────────────────────────────────────────────
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'clear_tare_lc', sensorId: CH, boardId: BOARD } });
+  let gone = false;
+  for (let i = 0; i < 12; i++) { if (!readTareRecord(ENTITY)) { gone = true; break; } await sleep(400); }
+  assert(gone, 'cal_lc_tare: clearing removes the tare from the store');
+  const taredCleared = await meanOf(ws, ENTITY, 'force_kg_tared', SETTLE_MS);
+  const grossCleared = await meanOf(ws, ENTITY, 'force_kg', SETTLE_MS);
+  assert(taredCleared !== null && grossCleared !== null && Math.abs(taredCleared - grossCleared) < 0.5,
+    `cal_lc_tare: cleared, tared trace tracks absolute again (${taredCleared?.toFixed(2)} vs ${grossCleared?.toFixed(2)})`);
+
+  // Leave the shared cubic store as we found it.
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'new_calibration', sensorId: CH, boardId: BOARD } });
+  await sleep(1500);
+}
+
 // ── Test: one capture feeds BOTH the cubic fit and the robust learner (shared points) ─
 // The headline guarantee of the merge. Captures on a CUBIC sensor must land in the cubic store's
 // points AND be fed to the robust learner — the service samples robust into `fitCurve` for any
@@ -3223,6 +3354,7 @@ async function main(): Promise<void> {
     if (IS_THIN && canRunCommandTests && runTest('cal_shared_points')) await testSharedPoints(ws);
     if (IS_THIN && canRunCommandTests && runTest('cal_clear')) await testClearToNothing(ws);
     if (IS_THIN && canRunCommandTests && runTest('cal_lc_capture')) await testLcCapture(ws);
+    if (IS_THIN && canRunCommandTests && runTest('cal_lc_tare')) await testLcTare(ws);
   } finally {
     ws.close();
   }

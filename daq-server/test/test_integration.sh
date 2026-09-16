@@ -74,6 +74,10 @@ STASH_DIR="$REPO_ROOT/.tmp/integration_stash_$$"
 # someone happened to have a manual copy. It is moved into STASH_DIR instead and restored on exit.
 CUBIC_STORE="$REPO_ROOT/scripts/calibration/calibrations/cubic_calibration.json"
 
+# The live operator load-cell tares. Same treatment and same reasoning as the cubic store above:
+# this run needs it absent, and a tare an operator set is their state, not scratch.
+TARE_STORE="$REPO_ROOT/scripts/calibration/calibrations/lc_tare.json"
+
 # Delete only inside .tmp/. Every rm in this script goes through here so a path that came out
 # empty — REPO_ROOT unset, a variable renamed — cannot expand into something outside the scratch
 # directory. Refuses rather than guesses.
@@ -165,6 +169,12 @@ cleanup() {
     mv -f "$STASH_DIR/cubic_calibration.json" "$CUBIC_STORE" \
       && echo "  📦 restored the operator cubic store" \
       || echo "  ⚠️  COULD NOT restore the cubic store — it is at $STASH_DIR/cubic_calibration.json"
+  fi
+  if [ -f "$STASH_DIR/lc_tare.json" ]; then
+    mkdir -p "$(dirname "$TARE_STORE")"
+    mv -f "$STASH_DIR/lc_tare.json" "$TARE_STORE" \
+      && echo "  📦 restored the operator load-cell tares" \
+      || echo "  ⚠️  COULD NOT restore the tares — they are at $STASH_DIR/lc_tare.json"
   fi
 
   tmp_rm "$TEST_DB_PATH" "$TEST_CONFIG" "$UDP_COMMANDS_FILE" "$SIM_STATS_FILE" \
@@ -429,6 +439,19 @@ sedi 's/^bind_ip = .*/bind_ip = "127.0.0.1"/' "$TEST_CONFIG"
 # just has to be distinguishable from FireManager's 6000 ms default — no need to sit through a
 # realistic burn on every CI run.
 sedi 's/^duration_ms = .*/duration_ms = 1500/' "$TEST_CONFIG"
+# Put LC board 2 CH1 in CUBIC mode (config_base leaves every load cell on the datasheet physics
+# conversion, where select_lc_kg ignores captures entirely). cal_lc_tare needs a channel whose
+# curve an operator can actually move, because the property it exists to prove is that a tare
+# re-derives its kilograms from the stored ADC code when the curve changes underneath it. The
+# other two connectors (2, 6) stay on physics, so cal_lc_capture and cal_stability are unaffected.
+cat >> "$TEST_CONFIG" <<'LCCUBIC'
+
+[sensor_roles_lc_board_2]
+"Thrust" = 1
+
+[calibration_model_lc_board_2]
+"Thrust" = "cubic"
+LCCUBIC
 sedi 's/^extended_ms = .*/extended_ms = 3000/' "$TEST_CONFIG"
 # ── Flow Test: a gated timed hold, constructed here rather than shipped ───────────────────────
 # The sequencer can time a hold around ONE actuator rather than around the state, adding that
@@ -821,6 +844,17 @@ if [ -n "$CALIB_SVC" ]; then
     mkdir -p "$STASH_DIR"
     mv "$CUBIC_STORE" "$STASH_DIR/cubic_calibration.json"
     echo "  📦 parked the operator cubic store in .tmp (restored on exit)"
+  fi
+  # Same isolation for load-cell tares: a tare left by a previous run would be re-applied to this
+  # one's stream, and cal_lc_tare's first assertion (untared trace == absolute trace) would fail
+  # for a reason that has nothing to do with the code under test. The backend clears this at
+  # session start in production; the integration stack has no session, so do it here.
+  #
+  # Parked rather than removed, for the same reason as the cubic store: a tare is operator state.
+  if [ -f "$TARE_STORE" ]; then
+    mkdir -p "$STASH_DIR"
+    mv "$TARE_STORE" "$STASH_DIR/lc_tare.json"
+    echo "  📦 parked the operator load-cell tares in .tmp (restored on exit)"
   fi
   (cd "$REPO_ROOT" && "$CALIB_SVC" --config "$TEST_CONFIG" --adjustments "$CAL_ADJ" \
     --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \

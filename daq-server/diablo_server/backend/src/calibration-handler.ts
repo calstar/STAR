@@ -70,6 +70,19 @@ export function publishCalibrationReload(host: CalibrationHost): void {
     publishCalibrationCommand(host, 7, 0, 0);
 }
 
+/**
+ * Tell a RUNNING calibration service to drop every load-cell tare (cmd 8, clear, all channels).
+ *
+ * The primary session-start clear is the backend unlinking lc_tare.json while the service is
+ * down — synchronous and verifiable. This is the mock-mode companion, where the pipeline is
+ * already up and a live service would otherwise rewrite the file from memory. Like every
+ * [0x46,0x00] publish it is fire-and-forget: if the service is down the packet is dropped, which
+ * is harmless here because the unlink already did the work.
+ */
+export function publishClearAllTares(host: CalibrationHost): void {
+  publishCalibrationCommand(host, 8, 0, 1);
+}
+
 function getActiveChannels(host: CalibrationHost): number[] {
     const channels = new Set<number>();
 
@@ -208,6 +221,44 @@ export function handleCalibrationCommand(
             }
             publishCalibrationCommand(host, 4, uniqueId, 0);
             console.log(`🗑️ Cubic clear: CH${sensorId} (Board ${boardId}) → calibration_service`);
+            break;
+        }
+        case 'tare_lc':
+        case 'clear_tare_lc': {
+            // Display-only. Never enters a fit, never reaches control or abort, never changes what
+            // Elodin records — the archive keeps carrying absolute force_kg. That is the whole
+            // reason this is a separate command from 'zero_all', which captures a REAL 0 kg point
+            // into the shared fit: correct for a vented PT, and wrong for a load cell holding a
+            // tank, where the point would be false and would tilt the entire cubic.
+            const clearing = commandType === 'clear_tare_lc';
+            // sensorId 0 (or omitted) means every load cell.
+            const all = sensorId == null || sensorId === 0;
+            if (!all && uniqueId == null) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: `${commandType} requires sensorId and boardId, or neither for all` }
+                });
+                return;
+            }
+            if (!all) {
+                const activeChannels = getActiveChannels(host);
+                if (uniqueId == null || !activeChannels.includes(uniqueId)) {
+                    host.send(ws, {
+                        type: MessageType.ERROR, timestamp: Date.now(),
+                        payload: { message: `Unknown channel for ${commandType}: CH${sensorId} on board ${boardId}` }
+                    });
+                    return;
+                }
+            }
+            if (!host.elodin) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: `Elodin not connected — cannot forward ${commandType}.` }
+                });
+                return;
+            }
+            publishCalibrationCommand(host, 8, all ? 0 : uniqueId!, clearing ? 1 : 0);
+            console.log(`⚖️ LC ${clearing ? 'tare clear' : 'tare'}: ${all ? 'all load cells' : `CH${sensorId} (Board ${boardId})`} → calibration_service`);
             break;
         }
         case 'capture_point': {

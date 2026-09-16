@@ -1,6 +1,7 @@
 fluids:
   fuel:
     name: Methane
+    critical_temperature: 190.56   # K, CoolProp Methane — chug time-lag evaporation constant (Leonardi 2017 eq. 9)
     density: 422.6
     viscosity: 0.00012
     surface_tension: 0.0134
@@ -13,6 +14,7 @@ fluids:
     molecular_weight: 16.04
   oxidizer:
     name: LOX
+    critical_temperature: 154.60   # K, CoolProp Oxygen — chug time-lag evaporation constant (Leonardi 2017 eq. 9)
     density: 1140.0
     viscosity: 0.00018
     surface_tension: 0.013
@@ -434,7 +436,12 @@ design_requirements:
   injector_dp_ratio_F_min: 0.15
   injector_dp_ratio_F_max: 0.35
   W_geom_ao_af_momentum: 3500.0
-  W_MOM: 30000.0
+  # 75.0 is the code default (layer1_static_optimization.py:5451). The old 30000/120000
+  # dated from when R was the hard ablative guard; that guard was replaced by the spray
+  # resultant-tilt gate, but the weights were never brought back down. At 30000+ the
+  # superseded R band acts as a hard constraint AND outranks W_OF, which manufactured a
+  # fuel-tank requirement of 643 psi for a design point that closes at 582.
+  W_MOM: 75.0
   impinging_momentum_R_min: 0.95
   impinging_momentum_R_max: 1.05
   # Sauter mean diameter (atomization) objective: two-sided deadband around the target.
