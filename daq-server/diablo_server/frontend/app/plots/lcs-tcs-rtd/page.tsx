@@ -19,20 +19,49 @@ const WINDOW_SECONDS = 60;
 
 // ── Readout boxes ─────────────────────────────────────────────────────────────
 
+/**
+ * `tareState` colour-codes what the number MEANS, which is not something the value itself can
+ * show: 12.0 kg absolute and 12.0 kg tared look identical. Amber = a tare is subtracted, slate =
+ * absolute. The numeral keeps its channel colour either way, because that colour is the series'
+ * identity in the plot below — recolouring it on tare would make the readout and its own trace
+ * disagree about which load cell is which, which is the confusion this panel already invites
+ * with two boards on connector 1.
+ */
 function DerivedReadoutBox({
-  label, value, unit, color, decimals = 1,
+  label, value, unit, color, decimals = 1, tareState = 'none', offsetKg = null,
 }: {
   label: string; value: number | null; unit: string; color: string; decimals?: number;
+  tareState?: 'none' | 'absolute' | 'tared';
+  offsetKg?: number | null;
 }) {
+  const tared = tareState === 'tared';
   return (
-    <div className="bg-gray-900/60 rounded-xl px-4 py-3 flex flex-col gap-0.5 min-w-0 border border-gray-800/80">
+    <div className={`bg-gray-900/60 rounded-xl px-4 py-3 flex flex-col gap-0.5 min-w-0 border transition-colors ${
+      tared ? 'border-amber-500/70 ring-1 ring-amber-500/25' : 'border-gray-800/80'
+    }`}>
       <span className="text-xl font-bold text-gray-200 uppercase tracking-wider truncate">
         {label}
       </span>
       <span className="text-4xl font-bold font-mono tabular-nums leading-tight" style={{ color }}>
         {value !== null && Number.isFinite(value) ? value.toFixed(decimals) : '—'}
       </span>
-      <span className="text-xs text-gray-500 font-medium">{unit}</span>
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span className="text-xs text-gray-500 font-medium">{unit}</span>
+        {tareState !== 'none' && (
+          <span
+            className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border truncate ${
+              tared
+                ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                : 'bg-gray-700/30 text-gray-400 border-gray-600/50'
+            }`}
+            title={tared
+              ? `A tare of ${offsetKg!.toFixed(1)} kg is subtracted from this reading. Display only.`
+              : 'No tare — this is absolute weight.'}
+          >
+            {tared ? 'Tared' : 'Absolute'}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -134,33 +163,53 @@ function LCForceReadout({
   const value = useLoadCellForceKg(calEntity);
   const tared = offsetKg != null;
   return (
-    <div className="flex flex-col gap-1">
-      <DerivedReadoutBox label={label} value={value} unit="kg" color={color} decimals={1} />
-      <div className="flex items-center gap-1.5 px-1">
+    <div className="flex flex-col gap-1.5 min-w-0">
+      <DerivedReadoutBox
+        label={label} value={value} unit="kg" color={color} decimals={1}
+        tareState={tared ? 'tared' : 'absolute'} offsetKg={offsetKg}
+      />
+      {/* The controls get their own box. Inside the readout the unit, the state chip and two
+          buttons had to share one row, and at three columns the buttons were the first thing
+          to be squeezed \u2014 a control an operator reaches for mid-procedure should not be the
+          part that loses the fight for space. */}
+      <div className="bg-gray-900/60 rounded-xl border border-gray-800/80 p-1.5 flex items-center gap-1.5">
+        {/* Offered tared or not. Re-taring is not "clear then tare": the service takes a fresh
+            capture and derives the offset from the ABSOLUTE ADC code, so it zeroes at the
+            current load whatever was standing before. Requiring a clear first only added a
+            step and left the channel reading gross in between. */}
         <button
-          onClick={tared ? onClearTare : onTare}
+          onClick={onTare}
           disabled={disabled}
           title={
             disabled
               ? disabledReason
               : tared
-                ? `Remove the tare and show absolute weight again (currently \u2212${offsetKg!.toFixed(1)} kg).`
+                ? `Take a NEW tare at the current load, replacing the standing \u2212${offsetKg!.toFixed(1)} kg. No need to clear first.`
                 : 'Zero the DISPLAY at the current load. Display only \u2014 does not affect calibration, control, abort, or what is recorded.'
           }
-          className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+          className={`flex-1 text-sm font-semibold px-2 py-1.5 rounded-lg border transition-colors ${
             disabled
               ? 'border-gray-800 text-gray-600 cursor-not-allowed'
-              : tared
-                ? 'border-amber-600 text-amber-400 hover:bg-amber-900/30'
-                : 'border-gray-600 text-gray-300 hover:bg-gray-700'
+              : 'border-gray-500 text-gray-200 hover:bg-gray-700'
           }`}
         >
-          {tared ? 'Clear tare' : 'Tare'}
+          {tared ? 'Re-tare' : 'Tare'}
         </button>
         {tared && (
-          <span className="text-[10px] text-amber-400 tabular-nums" title="Offset subtracted from the displayed weight.">
-            &minus;{offsetKg!.toFixed(1)} kg
-          </span>
+          <button
+            onClick={onClearTare}
+            disabled={disabled}
+            title={disabled
+              ? disabledReason
+              : `Remove the tare and show absolute weight again (currently \u2212${offsetKg!.toFixed(1)} kg).`}
+            className={`flex-1 text-sm font-semibold px-2 py-1.5 rounded-lg border transition-colors ${
+              disabled
+                ? 'border-gray-800 text-gray-600 cursor-not-allowed'
+                : 'border-amber-500 text-amber-300 hover:bg-amber-900/40'
+            }`}
+          >
+            Clear
+          </button>
         )}
       </div>
     </div>
@@ -224,7 +273,15 @@ export default function LCS_TCS_RTDPage() {
       if (lc.length) {
         setLcEntities(lc.map((r) => r.entity));
         setLcCalEntities(lc.map((r) => r.calEntity));
-        setLcLabels(lc.map((r) => r.label));
+        // Prefer the configured role ("Fuel Scale") over the generated "LC41 Ch1", the way the
+        // RTD rows above already do — a board id and a connector number say nothing about which
+        // tank an operator is looking at. The role stands alone: it is what the operator calls
+        // the channel, and the board id only earns space here if a role goes missing, which is
+        // when the generated label comes back with the board scope already in it.
+        setLcLabels(lc.map((r) => {
+          const role = sensorConfig?.find((s) => s.calEntity === r.calEntity)?.role;
+          return role ?? r.label;
+        }));
         setLcUids(lc.map((r) => r.boardId * 100 + r.channel));
       }
     }).catch(() => {});
@@ -406,44 +463,39 @@ export default function LCS_TCS_RTDPage() {
 
         {/* ── LC (right column) ─────────────────────────────────────────────── */}
         <section className="flex flex-col gap-3 min-w-0 h-full">
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-3 flex-shrink-0">
             <div className="w-1.5 h-10 rounded-full bg-violet-500/90" />
             <h2 className="text-3xl font-bold tracking-widest text-gray-400 uppercase">
               Load cells (LCS)
             </h2>
+            {lcEntities.length > 0 && (
+              <div className="flex items-center gap-2 ml-auto">
+                {anyTared && (
+                  <button
+                    onClick={() => sendTareCmd('clear_tare_lc')}
+                    disabled={!sessionActive}
+                    title="Remove every load-cell tare and show absolute weight again."
+                    className="text-base font-semibold px-4 py-2 rounded-lg border-2 border-amber-500 text-amber-300 hover:bg-amber-900/40 disabled:border-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Clear all tares
+                  </button>
+                )}
+                <button
+                  onClick={() => sendTareCmd('tare_lc')}
+                  disabled={!sessionActive}
+                  title={sessionActive
+                    ? 'Zero the DISPLAY on every load cell at its current load. Display only — does not affect calibration, control, abort, or what is recorded.'
+                    : 'Start a session to tare — a tare needs a live stream.'}
+                  className="text-base font-semibold px-4 py-2 rounded-lg border-2 border-violet-500 text-violet-200 hover:bg-violet-900/40 disabled:border-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed transition-colors"
+                >
+                  Tare all
+                </button>
+              </div>
+            )}
           </div>
           <div className="bg-card rounded-xl border border-gray-800 p-4 flex flex-col gap-4 flex-1 min-h-0">
             {lcEntities.length > 0 ? (
               <>
-                <div className="flex items-center justify-between gap-2 flex-shrink-0">
-                  <span className="text-[11px] text-gray-500">
-                    {anyTared
-                      ? 'Tared \u2014 showing weight relative to the tared load. Calibration is unaffected.'
-                      : 'Showing absolute weight.'}
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    {anyTared && (
-                      <button
-                        onClick={() => sendTareCmd('clear_tare_lc')}
-                        disabled={!sessionActive}
-                        title="Remove every load-cell tare and show absolute weight again."
-                        className="text-[10px] px-2 py-0.5 rounded border border-amber-600 text-amber-400 hover:bg-amber-900/30 disabled:border-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed"
-                      >
-                        Clear all tares
-                      </button>
-                    )}
-                    <button
-                      onClick={() => sendTareCmd('tare_lc')}
-                      disabled={!sessionActive}
-                      title={sessionActive
-                        ? 'Zero the DISPLAY on every load cell at its current load. Display only \u2014 does not affect calibration, control, abort, or what is recorded.'
-                        : 'Start a session to tare \u2014 a tare needs a live stream.'}
-                      className="text-[10px] px-2 py-0.5 rounded border border-gray-600 text-gray-300 hover:bg-gray-700 disabled:border-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed"
-                    >
-                      Tare all
-                    </button>
-                  </div>
-                </div>
                 {tarePending && (
                   <div className="text-[11px] text-amber-400 flex-shrink-0">
                     Waiting for the calibration service to confirm\u2026
