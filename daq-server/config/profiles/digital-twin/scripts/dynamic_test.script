@@ -1,0 +1,5 @@
+while elapsed() < 10:
+    open_valve(DOME_CTRL)
+    delay(1)
+    close_valve(DOME_CTRL)
+    delay(1)
