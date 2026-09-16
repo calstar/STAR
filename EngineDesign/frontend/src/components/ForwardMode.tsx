@@ -203,7 +203,7 @@ export function ForwardMode({ config }: ForwardModeProps) {
       </div>
 
       {/* Results section */}
-      <ResultsDisplay results={results} isLoading={isLoading} targetExitPressure={ambientPressure} />
+      <ResultsDisplay results={results} isLoading={isLoading} targetExitPressure={ambientPressure} config={config} />
 
       <StabilityPanel
         data={results?.stability_rich as import('./stability/types').StabilityRichPayload | undefined}
