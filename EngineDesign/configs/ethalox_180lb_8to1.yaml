@@ -46,17 +46,53 @@
 #   MIDDLE of that list, ~11200 ft. Thrust is pinned at 6405.5 N by the 8:1 requirement,
 #   so a worse eta_c* does not cut thrust -- it raises mdot and shortens the burn.
 #
-# MASS BUDGET -- THE NUMBER TO BUILD TO
-#   propellant        10.646 kg    23.5 lb   fixed by 11 L at O/F 1.50
-#   pressurant GN2     1.551 kg     3.4 lb   fixed by 5 L at 4500 psi (CoolProp, Z = 1.150)
-#   STRUCTURE         69.450 kg   153.1 lb   <-- everything else has to fit in this
-#     engine+plumbing  7.000 kg    15.4 lb
-#     LOX tank         2.000 kg     4.4 lb
-#     fuel tank        1.700 kg     3.7 lb
-#     COPV             3.299 kg     7.3 lb
-#     airframe        55.451 kg   122.2 lb
-#   153.1 lb is derived and binding. The split under it is an ALLOCATION, not a
-#   measurement -- reallocate freely, the total cannot move without breaking 8:1.
+# MASS BUDGET -- FROM COMPONENT HAND CALCS, NOT ALLOCATIONS
+#   propellant              10.646 kg   23.47 lb   11 L at O/F 1.50
+#   pressurant GN2           1.421 kg    3.13 lb   5 L at 4000 psi, 284.1 kg/m3 (CoolProp Z=1.116)
+#   engine + plumbing       13.626 kg   30.04 lb   engine 18.58 + valves/lines 11.46 lb
+#   LOX tank                 4.082 kg    9.00 lb   given
+#   fuel tank                4.082 kg    9.00 lb   given
+#   COPV                     3.300 kg    7.28 lb   5 L carbon-wrapped
+#   airframe + recovery     44.489 kg   98.08 lb   what is left
+#   == WET                  81.647 kg  180.000 lb  -> T/W 8.0001 : 1
+#
+#   ENGINE BREAKDOWN (18.58 lb):
+#     mild steel sleeve 0.250 in   3.204 kg   7.06 lb   O152.4->165.1 x 129 mm
+#     aluminium injector           1.514 kg   3.34 lb   0.5 in face + 30 mm manifold
+#     2 flanges + bolts + seals    1.440 kg   3.18 lb
+#     ablative liner 0.500 in      1.193 kg   2.63 lb   chamber only
+#     nozzle, 12 mm ablative
+#       + 3 mm alu shell           0.731 kg   1.61 lb   see THE NOZZLE below
+#     igniter + instrument bosses  0.250 kg   0.55 lb
+#     graphite throat insert       0.093 kg   0.21 lb   6 mm wall x 44 mm
+#
+#   FEED, DRY (excluding gas)     16.665 kg  36.74 lb
+#     tanks 18.00, COPV 7.28, 2x main valve 3.97, lines+fittings 2.43,
+#     dome regulator 1.76, fill/vent/check 1.54, brackets 1.76
+#
+# THE NOZZLE CANNOT BE BARE ALUMINIUM
+#   Lumped heat sink, dT = q*t_burn/(rho*cp*t_wall), Bartz falling off as (At/A)^0.9 from
+#   19.2 MW/m2 at the throat, 3.854 s burn. A 5 mm aluminium wall reaches:
+#       eps 2.64 (where the graphite insert ends)   1818 K even at 0.6x Bartz
+#       eps 5.61 (the exit)                         1067 K even at 0.6x Bartz
+#   against a 933 K melt. It melts everywhere, with or without discounting Bartz. Holding
+#   400 K of rise would take 16-32 mm of aluminium, and a wall that thick is not lumped --
+#   the bore still runs far hotter than the average. Options priced:
+#       A  aluminium 5 mm                  0.65 lb   MELTS
+#       B  aluminium 20 mm heat sink       2.61 lb   lumped-average only
+#       C  12 mm ablative + 3 mm alu shell 1.61 lb   <- carried here
+#       D  mild steel 5 mm                 1.89 lb   782-1108 K: survives melt, past strength
+#   C costs +0.96 lb over the aluminium that does not work. 12 mm of ablative against a
+#   4.6-7.7 mm recession (before blowing credit) leaves real margin.
+#
+# CHAMBER DIAMETER WAS NOT OPTIMISED FOR THIS THRUST
+#   frozen_parameters.D_chamber_outer_mm = 165.1 pins the OD at 6.5 in; it was inherited
+#   from the 8 kN vehicle, not re-derived at 6405 N. Dc/Dt came out 2.897 against a
+#   [2.2, 3.2] band, so 4.5 in bore / 6.0 in OD is also legal. It is HEAVIER, not lighter:
+#       5.0 in bore  chamber 140 mm   ablative + sleeve + injector  13.79 lb
+#       4.5 in bore  chamber 164 mm   ablative + sleeve + injector  14.08 lb
+#   L* is fixed at 1.0 m, so a narrower bore needs a longer barrel and the extra sleeve
+#   costs more than the diameter saves. The lever on chamber mass is L*, not diameter.
 #
 # PRESSURANT
 #   Dome-regulated. Deliverable gas V_copv*(rho(4500 psi) - rho(582 psi)) = 1.311 kg
@@ -473,19 +509,19 @@ press_tank:
   press_h: 0.27410072797083124
   press_radius: 0.0762
   pres_tank_pos: 3.6
-  dry_mass: 3.2988888888888885
-  initial_gas_mass: 1.551
+  dry_mass: 3.3
+  initial_gas_mass: 1.421
   mass: null
   free_volume_L: 5.0
 rocket:
-  airframe_mass: 55.45109536120796
-  engine_mass: 7.0
-  lox_tank_structure_mass: 2.0
-  fuel_tank_structure_mass: 1.7
+  airframe_mass: 44.489321590096836
+  engine_mass: 13.626000000000001
+  lox_tank_structure_mass: 4.082331330000001
+  fuel_tank_structure_mass: 4.082331330000001
   engine_cm_offset: 0.15
   propulsion_dry_mass: 21.0
   propulsion_cm_offset: 0.4
-  copv_dry_mass: 3.2988888888888885
+  copv_dry_mass: 3.3
   inertia:
   - 8.0
   - 8.0
