@@ -695,16 +695,29 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
                 spherical_caps=False
             )
             
-            # Estimate pressurant mass flow rate
-            # Pressurant flows out to replace consumed propellant volume
-            # Simplified: assume linear depletion over burn time
-            # More accurate would be based on actual ullage volume increase rate
-            if effective_burn_time > 0:
-                mdot_pressurant_avg = m_pressurant / effective_burn_time
-            else:
-                mdot_pressurant_avg = 0.0
-            
-            print(f"  Pressurant (N₂): {m_pressurant:.3f} kg initial, ~{mdot_pressurant_avg:.4f} kg/s avg flow")
+            # PRESSURANT DOES NOT LEAVE THE VEHICLE.
+            #
+            # This used to drain the whole COPV over the burn
+            # (mdot = m_pressurant / burn_time), which RocketPy subtracts from vehicle mass --
+            # i.e. the gas was being flown as propellant. It is not: it moves from the COPV
+            # into the ullage the departing propellant leaves behind, and every gram of it is
+            # still on board at burnout. The comment on the old line even said "flows out to
+            # propellant tanks", which is exactly the reason it must not be expelled.
+            #
+            # What it cost: on the 180 lb / 11 L point, 1.551 kg of N2 out of 81.647 kg wet.
+            # Burnout mass 69.36 kg instead of 70.90, so ln(m0/mf) went 0.1412 -> 0.1631 and
+            # ideal dv was over-stated by 51 m/s, about 13 %. It also drove the tank to
+            # exactly -0.000 kg at burnout, which RocketPy raises on, so the sim would
+            # intermittently fail outright rather than just answer wrongly.
+            #
+            # Only configs that actually declare press_tank.initial_gas_mass were affected;
+            # leaving it unset (the shipped configs) modelled no pressurant at all.
+            #
+            # The COPV -> tank transfer does shift the CG, which is not modelled here either
+            # way. That is a stability question, not a trajectory one.
+            mdot_pressurant_avg = 0.0
+
+            print(f"  Pressurant (N₂): {m_pressurant:.3f} kg, carried as dead mass (not expelled)")
 
     # Convert mdot_lox and mdot_fuel to RocketPy Functions if they're not already
     # (MassFlowRateBasedTank expects Functions)
@@ -817,7 +830,7 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
             initial_liquid_mass=m_pressurant,  # All mass starts as "liquid" (actually high-pressure gas)
             initial_gas_mass=0.01,  # Small amount
             liquid_mass_flow_rate_in=0.0,
-            liquid_mass_flow_rate_out=mdot_pressurant,  # Gas flows out to propellant tanks
+            liquid_mass_flow_rate_out=mdot_pressurant,  # zero: see the note at mdot_pressurant_avg
             gas_mass_flow_rate_in=0.0,
             gas_mass_flow_rate_out=0.0,
             discretize=100,
