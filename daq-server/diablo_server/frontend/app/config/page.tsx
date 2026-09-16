@@ -445,6 +445,73 @@ function ScriptReference({
   );
 }
 
+/** One indent level. A literal tab is a hard error in this language, so the editor never types one. */
+const INDENT = '    ';
+
+/**
+ * Apply an edit through the browser's OWN editing pipeline, so Ctrl+Z can undo it.
+ *
+ * Every edit the editor made used to go through `onSource()`, i.e. React writing the textarea's
+ * value prop. That replaces the text from outside the native pipeline: the browser records no undo
+ * entry for it and, in most engines, discards the undo stack it had. The visible result was that
+ * Ctrl+Z would not undo an autocomplete or a Tab at all, and could jump back past several earlier
+ * edits when it did fire.
+ *
+ * execCommand is deprecated and is still the only way to make a programmatic edit join a
+ * textarea's undo history; every engine implements `insertText`. It also fires a normal `input`
+ * event, so React's onChange runs and component state stays in step by itself.
+ *
+ * Returns false if the engine refuses, so callers can fall back to setting state — an edit that
+ * cannot be undone is much better than an edit that does not happen.
+ */
+function execInsert(ta: HTMLTextAreaElement, from: number, to: number, text: string): boolean {
+  try {
+    ta.focus();
+    ta.setSelectionRange(from, to);
+    // An empty insert is a deletion, and insertText with "" is not reliably treated as one —
+    // `delete` is, and lands on the same undo stack.
+    return text.length > 0
+      ? document.execCommand('insertText', false, text)
+      : document.execCommand('delete');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * How many characters Backspace should take when the caret sits in a line's leading indent.
+ *
+ * Indentation is four spaces, so deleting it one space at a time means four presses to undo one
+ * Tab. Inside the indent, Backspace instead falls back to the previous indent boundary — from
+ * column 8 to 4, from 5 to 4, from 3 to 0. Returns 0 when the caret is not in leading whitespace,
+ * meaning "not our business": the textarea deletes one character, as it should mid-text.
+ */
+function backspaceWidth(src: string, caret: number): number {
+  const lineStart = src.lastIndexOf('\n', caret - 1) + 1;
+  const before = src.slice(lineStart, caret);
+  if (before.length === 0 || !/^ +$/.test(before)) return 0;
+  return ((before.length - 1) % INDENT.length) + 1;
+}
+
+/**
+ * The whole-line span a selection touches — what an indent or outdent has to act on.
+ *
+ * A selection dragged down to the start of the next line does not make that line selected; without
+ * the check, Tab would indent a line the operator never highlighted.
+ */
+function lineSpan(src: string, from: number, to: number): { start: number; end: number } {
+  const start = src.lastIndexOf('\n', from - 1) + 1;
+  const lastTouched = to > from && src[to - 1] === '\n' ? to - 1 : to;
+  const nl = src.indexOf('\n', lastTouched);
+  return { start, end: nl === -1 ? src.length : nl };
+}
+
+/** The leading spaces of the line holding `pos`. */
+function indentAt(src: string, pos: number): string {
+  const start = src.lastIndexOf('\n', pos - 1) + 1;
+  return /^ */.exec(src.slice(start, pos))?.[0] ?? '';
+}
+
 /**
  * The dynamic-state script editor.
  *
@@ -479,7 +546,8 @@ function ScriptEditor({
   const mirrorRef = useRef<HTMLPreElement | null>(null);
   const [showReference, setShowReference] = useState(false);
   const [completion, setCompletion] = useState<CompletionResult | null>(null);
-  const [completionIdx, setCompletionIdx] = useState(0);
+  /** Row highlighted in the popup, or -1 for none — see queueComplete. */
+  const [completionIdx, setCompletionIdx] = useState(-1);
   const [completionPos, setCompletionPos] = useState({ left: 0, top: 0 });
   /** Width of one character. Measured once, because the editor is monospace — which is what makes
    *  placing the popup arithmetic rather than a hidden-mirror measurement. */
@@ -506,7 +574,12 @@ function ScriptEditor({
     if (ta.selectionEnd !== caret) { setCompletion(null); return; }
     const next = completionsAt(ta.value, caret, tables);
     setCompletion(next);
-    setCompletionIdx(0);
+    // [from, to) is the text an accept would replace, so an empty range means nothing has been
+    // typed at this position yet. The list is still worth showing — it is how you learn what the
+    // valves are called — but NOTHING is preselected (-1), because with no prefix every name
+    // matches equally and there is no reason to prefer the first. That also keeps Tab meaning
+    // indent until the operator has either typed a character or picked a row with the arrows.
+    setCompletionIdx(next && next.to > next.from ? 0 : -1);
     if (next) {
       const upto = ta.value.slice(0, caret);
       const line = upto.split('\n').length - 1;
@@ -522,14 +595,40 @@ function ScriptEditor({
     const ta = taRef.current;
     if (!ta || !completion) return;
     const { source: next, caret } = applyCompletion(source, completion, item);
-    onSource(next);
+    // Through the browser's editing pipeline, so the operator can Ctrl+Z an accepted suggestion
+    // like any other typing. Falls back to a state write if the engine refuses.
+    if (!execInsert(ta, completion.from, completion.to, item.text)) onSource(next);
     setCompletion(null);
     requestAnimationFrame(() => {
       ta.focus();
+      // Set explicitly even after execInsert: the caret belongs where the item asks for it
+      // (inside `open_valve(`), not where the inserted text happens to end.
       ta.setSelectionRange(caret, caret);
-      // `open_valve(` is only half the job — reopen so the name list follows immediately.
+      // `open_valve(` is only half the job — reopen so the valve list follows immediately. With
+      // nothing typed inside the paren yet it opens with no row selected, so it reads as a list of
+      // what is available rather than a choice already made.
       if (item.reopen) queueComplete(ta);
     });
+  };
+
+  /**
+   * Enter, carrying the current line's indentation onto the new line.
+   *
+   * Only takes over when there is indentation to carry; an unindented line gets the textarea's own
+   * newline, which is already undoable and already correct.
+   */
+  const newlineKeepingIndent = (
+    e: React.KeyboardEvent<HTMLTextAreaElement>,
+    ta: HTMLTextAreaElement,
+  ) => {
+    const { selectionStart: s, selectionEnd: en } = ta;
+    const indent = indentAt(source, s);
+    if (indent.length === 0) return;
+    e.preventDefault();
+    if (execInsert(ta, s, en, `\n${indent}`)) return;
+    const caret = s + 1 + indent.length;
+    onSource(`${source.slice(0, s)}\n${indent}${source.slice(en)}`);
+    requestAnimationFrame(() => ta.setSelectionRange(caret, caret));
   };
 
   const onEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -541,36 +640,90 @@ function ScriptEditor({
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         const n = completion.items.length;
-        setCompletionIdx((i) => (e.key === 'ArrowDown' ? (i + 1) % n : (i - 1 + n) % n));
+        setCompletionIdx((i) => {
+          // From "nothing selected", down takes the first row and up takes the last, rather than
+          // letting -1 fall through the modulo and land somewhere arbitrary.
+          if (i < 0) return e.key === 'ArrowDown' ? 0 : n - 1;
+          return e.key === 'ArrowDown' ? (i + 1) % n : (i - 1 + n) % n;
+        });
         return;
       }
-      // Shift+Enter is the unconditional escape hatch: always a newline, never an accept. The
-      // popup swallows plain Enter, and without a way past it a suggestion you did not want can
-      // stand between you and the next line.
-      if (e.key === 'Enter' && e.shiftKey) {
-        setCompletion(null);
-        return; // no preventDefault — let the textarea insert the newline itself
-      }
-      if (e.key === 'Enter' || e.key === 'Tab') {
+      // Tab is the ONLY accept key. Enter always means newline — a suggestion can never stand
+      // between the operator and the next line, so the Shift+Enter escape hatch that used to
+      // exist for exactly that has nothing left to escape from.
+      //
+      // With nothing selected the popup does not claim Tab at all: it falls through to the indent
+      // below. An open menu listing every valve is a reference, not a pending choice, and it must
+      // not turn an indent into an insertion of whatever happened to sort first.
+      if (e.key === 'Tab' && completionIdx >= 0) {
         e.preventDefault();
-        accept(completion.items[completionIdx] ?? completion.items[0]);
-        return;
+        const item = completion.items[completionIdx];
+        if (item) {
+          accept(item);
+          return;
+        }
       }
       if (e.key === 'Escape') {
         e.preventDefault();
         setCompletion(null);
         return;
       }
+      // Enter dismisses the popup and falls through to the newline below.
+      if (e.key === 'Enter') setCompletion(null);
     }
 
-    // Tab inserts four spaces. Tab-to-blur in a code box is maddening, and a literal tab is a hard
-    // error in this language — the editor must not be able to type one.
+    if (e.key === 'Enter') {
+      newlineKeepingIndent(e, ta);
+      return;
+    }
+
+    // Backspace inside the leading indent removes a whole level, not one space.
+    if (e.key === 'Backspace') {
+      const { selectionStart: s, selectionEnd: en } = ta;
+      if (s !== en) return; // a selection deletes itself, normally
+      const back = backspaceWidth(source, s);
+      if (back <= 1) return; // nothing special to do — let the textarea delete one character
+      e.preventDefault();
+      if (!execInsert(ta, s - back, s, '')) {
+        const caret = s - back;
+        onSource(source.slice(0, s - back) + source.slice(s));
+        requestAnimationFrame(() => ta.setSelectionRange(caret, caret));
+      }
+      return;
+    }
+
+    // Tab indents. Tab-to-blur in a code box is maddening, and a literal tab is a hard error in
+    // this language — the editor must not be able to type one.
     if (e.key === 'Tab') {
       e.preventDefault();
       const { selectionStart: s, selectionEnd: en } = ta;
-      const next = `${source.slice(0, s)}    ${source.slice(en)}`;
-      onSource(next);
-      requestAnimationFrame(() => ta.setSelectionRange(s + 4, s + 4));
+
+      // A bare caret: insert one level.
+      if (s === en && !e.shiftKey) {
+        if (!execInsert(ta, s, en, INDENT)) {
+          const caret = s + INDENT.length;
+          onSource(`${source.slice(0, s)}${INDENT}${source.slice(en)}`);
+          requestAnimationFrame(() => ta.setSelectionRange(caret, caret));
+        }
+        return;
+      }
+
+      // A selection: shift every line it touches. This used to build the new source as
+      // `slice(0, s) + "    " + slice(en)`, which drops slice(s, en) — so indenting a highlighted
+      // block DELETED it, and because the replacement went through a state write rather than the
+      // browser, Ctrl+Z could not bring it back. Shift+Tab outdents one level.
+      const { start, end } = lineSpan(source, s, en);
+      const block = source.slice(start, end);
+      const next = block
+        .split('\n')
+        .map((l) => (e.shiftKey ? l.replace(/^ {1,4}/, '') : l.length > 0 ? INDENT + l : l))
+        .join('\n');
+      if (next === block) return; // nothing left to outdent — do not touch the undo stack
+      if (!execInsert(ta, start, end, next)) {
+        onSource(source.slice(0, start) + next + source.slice(end));
+      }
+      // Keep the block selected so the operator can press Tab again.
+      requestAnimationFrame(() => ta.setSelectionRange(start, start + next.length));
     }
   };
 
@@ -795,9 +948,11 @@ function ScriptEditor({
               not in this config
             </span>
             <span className="ml-auto text-gray-500">
-              <kbd className="font-mono">Tab</kbd>/<kbd className="font-mono">Enter</kbd> accept ·{' '}
-              <kbd className="font-mono">Shift</kbd>+<kbd className="font-mono">Enter</kbd> new line ·{' '}
-              <kbd className="font-mono">Esc</kbd> dismiss
+              <kbd className="font-mono">↑</kbd>/<kbd className="font-mono">↓</kbd> choose ·{' '}
+              <kbd className="font-mono">Tab</kbd> accept ·{' '}
+              <kbd className="font-mono">Esc</kbd> dismiss ·{' '}
+              <kbd className="font-mono">Tab</kbd>/<kbd className="font-mono">Shift</kbd>+
+              <kbd className="font-mono">Tab</kbd> indent
             </span>
           </div>
 
