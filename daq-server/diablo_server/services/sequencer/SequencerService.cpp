@@ -716,8 +716,11 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
         if (it != refused_states_.end()) {
             std::cerr << "[SequencerService] Refused entry to " << StateMachine::name(to) << ": "
                       << it->second << std::endl;
+            // The stored reason, not a generic one. The caller's copy is what reaches the
+            // operator's notification, and "state script rejected at load" told them nothing
+            // they could act on while the specific fault sat here unused.
             if (refusal_reason)
-                *refusal_reason = "state script rejected at load";
+                *refusal_reason = it->second;
             publishState();
             return false;
         }
@@ -744,8 +747,12 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
                     continue;
                 std::cerr << "[SequencerService] Refused entry to " << state_name << ": "
                           << PressureFeed::explain(role, status) << std::endl;
+                // The same sentence the log gets. This used to flatten all four outcomes —
+                // NoReading, Stale, Uncalibrated, NotSubscribed — into one string, so the
+                // operator could not tell a sensor that never arrived from one that went stale
+                // or was never calibrated, which are three different things to go and fix.
                 if (refusal_reason)
-                    *refusal_reason = role + " has no fresh calibrated reading";
+                    *refusal_reason = PressureFeed::explain(role, status);
                 publishState();
                 return false;
             }
@@ -1115,12 +1122,37 @@ void SequencerService::publishState() {
     // the refusal is carried in data the GUI already receives rather than by a UI check that can
     // be forgotten. The reason text reaches the panel separately, over the SCRIPTS command, so an
     // operator can tell "broken" from "not reachable from here".
+    std::vector<std::pair<State, std::vector<std::string>>> sensor_states;
     {
         std::lock_guard<std::mutex> lk(config_mutex_);
         for (const auto& [st, why] : refused_states_) {
             const uint8_t id = static_cast<uint8_t>(st);
             if (id < 32)
                 mask &= ~(1u << id);
+        }
+        for (const auto& [st, ds] : dynamic_states_)
+            if (!ds.pressure_roles.empty())
+                sensor_states.emplace_back(st, ds.pressure_roles);
+    }
+
+    // Also clear any state the sensor gate would refuse RIGHT NOW. Unlike a load refusal this is
+    // not fixed for the run — a feed can arrive late or go stale — so the mask has to be
+    // recomputed on every publish, which is what makes the button grey out and come back on its
+    // own. Without this the one refusal an operator actually hits was invisible until they
+    // pressed it: the gate is evaluated per press, so nothing advertised it in advance.
+    //
+    // Same check doTransitionTo runs, deliberately: two different notions of "enterable" would
+    // give a button that is grey and works, or lit and refuses.
+    for (const auto& [st, roles] : sensor_states) {
+        const uint8_t id = static_cast<uint8_t>(st);
+        if (id >= 32)
+            continue;
+        for (const auto& role : roles) {
+            double psi = 0.0;
+            if (pressure_feed_.read(role, psi) != PressureFeed::Status::Ok) {
+                mask &= ~(1u << id);
+                break;
+            }
         }
     }
 
@@ -1188,6 +1220,20 @@ std::string SequencerService::scriptStatusReport() const {
     for (const auto& [st, why] : refused_states_) {
         out += "SCRIPT:" + std::to_string(static_cast<int>(st)) + ":" +
                sanitize(StateMachine::name(st)) + ":REFUSED:" + sanitize(why) + "\n";
+    }
+    // BLOCKED is the other half of the story, and the half an operator meets far more often.
+    // REFUSED is fixed at load; this is the live sensor gate, so it can appear and clear while
+    // the rig is running and the reason has to be re-read rather than cached.
+    for (const auto& [st, ds] : dynamic_states_) {
+        for (const auto& role : ds.pressure_roles) {
+            double psi = 0.0;
+            const auto status = pressure_feed_.read(role, psi);
+            if (status == PressureFeed::Status::Ok)
+                continue;
+            out += "SCRIPT:" + std::to_string(static_cast<int>(st)) + ":" + sanitize(ds.name) +
+                   ":BLOCKED:" + sanitize(PressureFeed::explain(role, status)) + "\n";
+            break;  // one reason is enough to explain a greyed button
+        }
     }
     out += "END\n";
     return out;

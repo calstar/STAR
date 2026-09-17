@@ -117,6 +117,73 @@ struct FakeDb {
     }
 };
 
+
+/**
+ * Fake elodin-db that REFUSES the first subscription, the way the real one does when the
+ * calibrated VTable does not exist yet.
+ *
+ * It says nothing back — which is the whole problem: a refusal is invisible to the C++ client,
+ * which sends request id 0 and never reads a reply. Data is published only once a RE-subscribe
+ * arrives, so this passes if and only if PressureFeed asks again.
+ */
+struct FakeDbRefuseFirst {
+    std::thread th;
+    std::atomic<bool> run{true};
+    std::atomic<uint16_t> port{0};
+    std::atomic<int> subscribes{0};
+
+    void start(std::vector<uint8_t> blob, int publishAfterSubscribes) {
+        th = std::thread([this, blob = std::move(blob), publishAfterSubscribes]() {
+            int srv = socket(AF_INET, SOCK_STREAM, 0);
+            int opt = 1;
+            setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+            struct sockaddr_in a{};
+            a.sin_family = AF_INET;
+            a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            a.sin_port = 0;
+            if (bind(srv, reinterpret_cast<struct sockaddr*>(&a), sizeof(a)) < 0) {
+                close(srv);
+                return;
+            }
+            socklen_t sl = sizeof(a);
+            getsockname(srv, reinterpret_cast<struct sockaddr*>(&a), &sl);
+            port = ntohs(a.sin_port);
+            listen(srv, 1);
+
+            int c = accept(srv, nullptr, nullptr);
+            if (c < 0) {
+                close(srv);
+                return;
+            }
+            // Each subscribe_tables() entry is a 10-byte MSG. Count them; publish only once
+            // enough have arrived that at least one must have been a RE-subscribe.
+            bool published = false;
+            uint8_t buf[512];
+            while (run) {
+                const ssize_t n = recv(c, buf, sizeof(buf), MSG_DONTWAIT);
+                if (n > 0)
+                    subscribes += static_cast<int>(n / 10);
+                if (!published && subscribes.load() >= publishAfterSubscribes) {
+                    ssize_t unused = write(c, blob.data(), blob.size());
+                    (void)unused;
+                    published = true;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            close(c);
+            close(srv);
+        });
+        for (int i = 0; i < 500 && port.load() == 0; i++)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+
+    void stop() {
+        run = false;
+        if (th.joinable())
+            th.join();
+    }
+};
+
 /** Two PT boards laid out as the server profile lays them out. */
 static const char* kConfig = R"TOML(
 [boards.pt_board]
@@ -215,6 +282,45 @@ int main() {
         check(feed.read("GN2 Regulated", psi) == PressureFeed::Status::Stale,
               "and stale once it stops arriving — a press loop must not cycle against a frozen "
               "number");
+
+        feed.stop();
+        db.stop();
+    }
+
+
+    // ── A refused subscription is asked for again ────────────────────────────────────────────
+    //
+    // The stand, 2026-09-16: PressureFeed subscribed to the calibrated PT tables 146 ms BEFORE
+    // calibration_service registered them. The db answered "invalid msg id", subscribe_tables
+    // reported success because the socket write worked, and nothing ever retried — so the feed
+    // was blind for the life of the process and every dynamic state reading a pressure was
+    // refused entry with "has produced no reading yet" for the whole session.
+    {
+        std::vector<uint8_t> blob;
+        const auto a = ptFrame(0x16, 6, 250.0f, /*cal=*/1);
+        blob.insert(blob.end(), a.begin(), a.end());
+
+        FakeDbRefuseFirst db;
+        // Two roles subscribe on connect (2 messages); publishing only at 3 means the feed must
+        // have re-sent at least one of them.
+        db.start(blob, /*publishAfterSubscribes=*/3);
+        check(db.port.load() != 0, "refusing fake db is listening");
+
+        PressureFeed feed;
+        feed.start(cfg, {"GN2 Regulated", "GN2 High"}, "127.0.0.1", db.port.load());
+
+        double psi = 0.0;
+        bool got = false;
+        for (int i = 0; i < 400; i++) {  // up to ~4 s; the resubscribe interval is 1 s
+            if (feed.read("GN2 Regulated", psi) == PressureFeed::Status::Ok) {
+                got = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        check(got, "a table refused on first subscribe is re-subscribed and starts delivering");
+        check(got && psi > 249.0 && psi < 251.0, "and the value that arrives is the right one");
+        check(db.subscribes.load() >= 3, "the feed really did send a second subscribe");
 
         feed.stop();
         db.stop();

@@ -17,10 +17,13 @@
  *
  * Hermetic: loopback UDP, [database].port = 2 so no Elodin is needed, controller on TEST-NET-1.
  */
+#include <unistd.h>
+
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <cstdio>
 #include <string>
 #include <thread>
 
@@ -49,6 +52,29 @@ static constexpr uint16_t kActPort = 45919;
 static constexpr uint16_t kAbortPort = 15007;
 
 /** Channel 1 = Vent Valve (column always CLOSE — only a script opens it), 2 = Main Valve. */
+
+/**
+ * Run `body` with stdout redirected to a file, and give back what it printed.
+ *
+ * The diagnostics these tests pin are log lines and nothing else — they exist so an operator can
+ * tell a loop that never ran from one that ran and timed out, which are the two outcomes that
+ * looked identical on the stand. Asserting on the text is the only way to keep them honest.
+ */
+template <typename F>
+static std::string captureStdout(F&& body) {
+    const fs::path out = g_dir / "stdout_capture.txt";
+    std::fflush(stdout);
+    const int saved = dup(fileno(stdout));
+    FILE* redirected = std::freopen(out.string().c_str(), "w", stdout);
+    (void)redirected;
+    body();
+    std::fflush(stdout);
+    dup2(saved, fileno(stdout));
+    close(saved);
+    std::ifstream in(out);
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
 static std::string writeConfig(const std::string& script, uint32_t timeout_ms,
                                const std::string& return_target,
                                const std::string& timeout_target) {
@@ -315,6 +341,21 @@ int main() {
         check(!accepted, "a script whose sensor has no fresh reading is refused entry");
         check(reason.find("Tank Pressure") != std::string::npos,
               "and the refusal names the sensor (\"" + reason + "\")");
+        // The SPECIFIC diagnosis, not a flattened one. This used to reply "<role> has no fresh
+        // calibrated reading" for all four outcomes, so an operator could not tell a sensor that
+        // never arrived from one that went stale or was never calibrated — three different things
+        // to go and fix, and only the log knew which.
+        check(reason.find("produced no reading yet") != std::string::npos,
+              "and says WHICH failure it was, matching the log (\"" + reason + "\")");
+
+        // The same fact, reachable by the GUI: SCRIPTS reports the live gate as BLOCKED so a
+        // greyed button can explain itself. Only load failures were ever reported here before,
+        // and the sensor gate is the one an operator actually meets.
+        const std::string report = svc.scriptStatusReport();
+        check(report.find(":BLOCKED:") != std::string::npos,
+              "the status report calls the state blocked");
+        check(report.find("produced no reading yet") != std::string::npos,
+              "and carries the reason with it");
         check(svc.currentState() == IDLE, "the rig did not move");
         check(firstCommand(listener.bursts(), /*ch=*/1, /*hw=*/1) < 0,
               "and not one valve was commanded");
@@ -385,7 +426,118 @@ int main() {
         check(svc.currentState() == ENGINE_ABORT, "and the rig gets there");
     }
 
+    // ── 9. A loop that never runs says so, with the numbers that decided it ───────────────────
+    //
+    // On the stand this was indistinguishable from a working run: the state entered, exited, and
+    // the journal said only "start" then "script complete". Whether the body executed once or
+    // never was unknowable, and the two mean opposite things.
+    {
+        const std::string path = writeConfig(
+            "while elapsed() > 100:\n"          // false immediately — elapsed() starts at 0
+            "    open_valve(VENT_VALVE)\n"
+            "    delay(0.05)\n",
+            3000, /*return=*/"Idle", /*timeout=*/"Vent");
+
+        SequencerService svc;
+        svc.init(path);
+        const std::string log = captureStdout([&] {
+            svc.transitionTo(std::string("Dyn State"));
+            std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        });
+
+        check(log.find("while false at entry") != std::string::npos,
+              "a loop whose condition is false at entry says so");
+        check(log.find("body never runs, 0 iterations") != std::string::npos,
+              "and reports that the body never ran");
+        check(log.find("script complete after 0 iteration(s)") != std::string::npos,
+              "and the completion line carries the iteration count");
+    }
+
+    // ── 10. A loop that runs reports each pass and how it ended ───────────────────────────────
+    {
+        const std::string path = writeConfig(
+            "while elapsed() < 60:\n"
+            "    open_valve(VENT_VALVE)\n"
+            "    delay(0.05)\n",
+            600, /*return=*/"Idle", /*timeout=*/"Vent");
+
+        SequencerService svc;
+        svc.init(path);
+        const std::string log = captureStdout([&] {
+            svc.transitionTo(std::string("Dyn State"));
+            std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+        });
+
+        check(log.find("while true at entry") != std::string::npos,
+              "a loop that runs announces entering");
+        check(log.find("iteration 1") != std::string::npos, "and numbers each pass");
+        check(log.find("iteration 2") != std::string::npos, "including later ones");
+    }
+
+
+    // ── 11. The script waits for the state's own column before its first command ──────────────
+    //
+    // Both reach the board as UDP, but the boards poll ONE datagram per loop() and
+    // hotfire_config.h sets LOOP_DELAY_MS = 10, so the column's three retransmits take ~30 ms to
+    // drain and the script's first command queues behind them. On the stand this read as a valve
+    // not staying open for as long as the script asked.
+    {
+        const std::string path = writeConfig(
+            "open_valve(VENT_VALVE)\n"
+            "delay(0.3)\n"
+            "close_valve(VENT_VALVE)\n",
+            5000, "Idle", "Idle");
+
+        SequencerService svc;
+        svc.init(path);
+        BoardListener listener(kActPort);
+        listener.start();
+
+        const auto t0 = Clock::now();
+        svc.transitionTo(std::string("Dyn State"));
+        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+        listener.stop();
+
+        const auto b = listener.bursts();
+        const long long open = firstCommand(b, /*ch=*/1, /*hw=*/1);
+        check(open >= 90,
+              "the script's first open waits out the column (" + std::to_string(open) + " ms, want >= ~100)");
+        // Still prompt: a lead-in that drifted into the hundreds would eat a short state's budget.
+        check(open >= 0 && open <= 260,
+              "and does not overshoot the lead-in (" + std::to_string(open) + " ms)");
+        (void)t0;
+    }
+
+    // ── 12. An abort during the lead-in is not delayed by it ──────────────────────────────────
+    //
+    // The wait is spent on the SCRIPT's thread, never the command worker, so a queued abort never
+    // sits behind it. Sleeping in doTransitionTo instead would have put 100 ms straight into the
+    // 200 ms budget test_abort_ordering pins.
+    {
+        const std::string path = writeConfig(
+            "open_valve(VENT_VALVE)\n"
+            "delay(5)\n",
+            9000, "Idle", "Idle");
+
+        SequencerService svc;
+        svc.init(path);
+        svc.transitionTo(std::string("Dyn State"));
+
+        // Land inside the lead-in, before the script has run a single statement.
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+        const auto t0 = Clock::now();
+        svc.transitionTo(std::string("Engine Abort"));
+        const long long ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
+
+        check(ms < 200, "an abort mid-lead-in still lands in under 200 ms (" +
+                            std::to_string(ms) + " ms)");
+        check(svc.currentState() == ENGINE_ABORT, "and the rig is in the abort state");
+    }
+
     fs::remove_all(g_dir);
+
     std::cout << (g_failures == 0 ? "\nAll script-runtime checks passed.\n"
                                   : "\nFAILURES: " + std::to_string(g_failures) + "\n");
     return g_failures == 0 ? 0 : 1;
