@@ -221,6 +221,9 @@ config/config.toml
 config/state_machine_actuators.csv
 config/state_machine_actuator_delays.csv
 config/state_transitions.csv
+# Deployed dynamic-state scripts — copied out of the active profile's scripts/ dir the same
+# way, by the same deploy. The tracked source is config/profiles/<name>/scripts/.
+config/scripts/
 
 # RLS state the calibration service auto-saves next to whatever calibration dir it is
 # reading. tools/calibration/calibrations/adjustments.json is the checked-in seed; the copy

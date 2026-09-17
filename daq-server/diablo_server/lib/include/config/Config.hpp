@@ -159,6 +159,42 @@ struct StateDef {  // one per [[states]]
     /** Marks the state the characterization hold drives. A flag rather than a name in [flow], so
      *  renaming the state cannot break it. First one wins, as with is_boot. */
     bool is_flow = false;
+
+    // ── Dynamic states ────────────────────────────────────────────────────────────────────────
+    //
+    // A state with a script runs it on entry: the CSV column is applied first, putting every valve
+    // in a defined position, and the script then layers on top.
+    //
+    // There is deliberately NO `is_dynamic` flag. A non-empty script_file is what makes a state
+    // dynamic, for the reason [fire] demonstrates the other way: when a flag and the data it
+    // describes are separate, they can disagree, and the disagreement is silent.
+
+    /** Script filename inside the profile's scripts/ directory, e.g. "copv_press.script".
+     *
+     *  A bare filename, never a path — it arrives from operator-editable config and the backend
+     *  writes files at this name, so it must match ^[A-Za-z0-9_-]+\.script$ with no separators and
+     *  no "..". Empty means this state is not dynamic.
+     *
+     *  The script lives beside config.toml rather than inside it because writeConfig() is a full
+     *  TOML re-stringify that destroys every comment and all layout on each save. Out of the TOML,
+     *  a script survives a config save byte-for-byte and diffs cleanly. */
+    std::string script_file;
+
+    /** Wall-clock ceiling for the whole script, in milliseconds. Mandatory for a dynamic state:
+     *  an unbounded script has no safe degraded mode, so config that omits it leaves the state not
+     *  enterable rather than enterable-and-unbounded. */
+    uint32_t script_timeout_ms = 0;
+
+    /** Where the state lands when the script runs off its end without calling transition_to.
+     *  Mandatory. Unreachable when every path ends in an explicit transition_to, and required
+     *  anyway — it is the backstop for the path the author did not think about. */
+    std::string script_return_target;
+
+    /** Where the state lands when script_timeout_ms expires. Mandatory, and deliberately NOT
+     *  defaulted to script_return_target: a runaway may want somewhere more conservative than a
+     *  clean finish, and a safety landing that appears by default is the kind that is wrong
+     *  silently. */
+    std::string script_timeout_target;
 };
 
 // [actuator_roles] value ["NC"|"NO", channel, board_id, controller_role?]
