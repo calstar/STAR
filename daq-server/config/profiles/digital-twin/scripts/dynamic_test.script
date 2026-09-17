@@ -1,5 +1,6 @@
-while elapsed() < 10:
-    open_valve(DOME_CTRL)
-    delay(1)
-    close_valve(DOME_CTRL)
-    delay(1)
+start = pressure(HIGH_PRESS)
+while pressure(GN2_HIGH) < start * 0.7:
+    open_valve(HIGH_PRESS_CTRL)
+    delay(0.4)
+    close_valve(HIGH_PRESS_CTRL)
+    delay(2.5)

@@ -684,9 +684,9 @@ name = "Dynamic Test"
 panel_row = 0
 panel_col = 3
 script_file = "dynamic_test.script"
-script_timeout_ms = 30000
 script_return_target = "Press Standby"
 script_timeout_target = "Press Standby"
+script_timeout_ms = 10000
 
 [actuator_roles]
 "Fuel Upstream" = [ "NC", 1, 12 ]
