@@ -117,7 +117,6 @@ struct FakeDb {
     }
 };
 
-
 /**
  * Fake elodin-db that REFUSES the first subscription, the way the real one does when the
  * calibrated VTable does not exist yet.
@@ -286,7 +285,6 @@ int main() {
         feed.stop();
         db.stop();
     }
-
 
     // ── A refused subscription is asked for again ────────────────────────────────────────────
     //

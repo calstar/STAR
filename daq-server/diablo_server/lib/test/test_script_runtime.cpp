@@ -20,10 +20,10 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <cstdio>
 #include <string>
 #include <thread>
 
@@ -433,7 +433,7 @@ int main() {
     // never was unknowable, and the two mean opposite things.
     {
         const std::string path = writeConfig(
-            "while elapsed() > 100:\n"          // false immediately — elapsed() starts at 0
+            "while elapsed() > 100:\n"  // false immediately — elapsed() starts at 0
             "    open_valve(VENT_VALVE)\n"
             "    delay(0.05)\n",
             3000, /*return=*/"Idle", /*timeout=*/"Vent");
@@ -474,7 +474,6 @@ int main() {
         check(log.find("iteration 2") != std::string::npos, "including later ones");
     }
 
-
     // ── 11. The script waits for the state's own column before its first command ──────────────
     //
     // Both reach the board as UDP, but the boards poll ONE datagram per loop() and
@@ -500,8 +499,8 @@ int main() {
 
         const auto b = listener.bursts();
         const long long open = firstCommand(b, /*ch=*/1, /*hw=*/1);
-        check(open >= 90,
-              "the script's first open waits out the column (" + std::to_string(open) + " ms, want >= ~100)");
+        check(open >= 90, "the script's first open waits out the column (" + std::to_string(open) +
+                              " ms, want >= ~100)");
         // Still prompt: a lead-in that drifted into the hundreds would eat a short state's budget.
         check(open >= 0 && open <= 260,
               "and does not overshoot the lead-in (" + std::to_string(open) + " ms)");
@@ -531,8 +530,8 @@ int main() {
         const long long ms =
             std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
 
-        check(ms < 200, "an abort mid-lead-in still lands in under 200 ms (" +
-                            std::to_string(ms) + " ms)");
+        check(ms < 200,
+              "an abort mid-lead-in still lands in under 200 ms (" + std::to_string(ms) + " ms)");
         check(svc.currentState() == ENGINE_ABORT, "and the rig is in the abort state");
     }
 

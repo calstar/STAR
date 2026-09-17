@@ -3,8 +3,8 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
-#include <sstream>
 #include <map>
+#include <sstream>
 #include <string>
 
 namespace sequencer {
@@ -147,13 +147,20 @@ struct Interp {
     /** Comparison operators, for the condition text in the log. Non-comparisons return null. */
     static const char* opText(Op op) {
         switch (op) {
-            case Op::Lt: return "<";
-            case Op::Le: return "<=";
-            case Op::Gt: return ">";
-            case Op::Ge: return ">=";
-            case Op::Eq: return "==";
-            case Op::Ne: return "!=";
-            default: return nullptr;
+            case Op::Lt:
+                return "<";
+            case Op::Le:
+                return "<=";
+            case Op::Gt:
+                return ">";
+            case Op::Ge:
+                return ">=";
+            case Op::Eq:
+                return "==";
+            case Op::Ne:
+                return "!=";
+            default:
+                return nullptr;
         }
     }
 
@@ -482,8 +489,8 @@ void ScriptRunner::run(DynamicState ds, ScriptEnv env) {
               mtx_,       cv_, t0,  t0 + std::chrono::milliseconds(ds.timeout_ms)};
 
     std::cout << "[ScriptRunner] " << env.state_name << ": start (timeout " << ds.timeout_ms
-              << " ms, " << static_cast<int>(kStartLeadInSeconds * 1000)
-              << " ms lead-in)" << std::endl;
+              << " ms, " << static_cast<int>(kStartLeadInSeconds * 1000) << " ms lead-in)"
+              << std::endl;
 
     // Let the state's actuator column reach the boards before the first script statement.
     in.sleep(kStartLeadInSeconds);
