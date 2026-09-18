@@ -19,19 +19,19 @@ const W = 60, H = 60;
 function BowtieWithActuator({ selected, actuatorLabel, failOpen, rotation }: {
   selected: boolean; actuatorLabel: string; failOpen: boolean; rotation?: number;
 }) {
-  const stroke = selected ? '#3b82f6' : '#94a3b8';
+  const stroke = selected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)';
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
       <polygon points="8,10 52,46 52,10 8,46"
-        fill={failOpen ? 'none' : '#1e293b'} stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
-      <rect x="22" y="2" width="16" height="10" rx="2" fill="#1e293b" stroke={stroke} strokeWidth={1.2} />
+        fill={failOpen ? 'none' : 'var(--color-bg-tertiary)'} stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
+      <rect x="22" y="2" width="16" height="10" rx="2" fill="var(--color-bg-tertiary)" stroke={stroke} strokeWidth={1.2} />
       {/* Anchored on the box's true centre, and centred on it in both
           directions. It used to sit on a baseline at the box's bottom edge,
           which reads as low unturned and lands off the box entirely once the
           letter is spun about that anchor. */}
       <Upright rotation={rotation} x={30} y={7}>
         <text x="30" y="7" textAnchor="middle" dominantBaseline="central"
-          fontSize="7" fill="#cbd5e1" fontFamily="monospace">{actuatorLabel}</text>
+          fontSize="7" fill="var(--color-text-secondary)" fontFamily="monospace">{actuatorLabel}</text>
       </Upright>
       <line x1="30" y1="12" x2="30" y2="20" stroke={stroke} strokeWidth={1.5} />
     </svg>
@@ -39,12 +39,12 @@ function BowtieWithActuator({ selected, actuatorLabel, failOpen, rotation }: {
 }
 
 function ManualValve({ selected }: { selected: boolean }) {
-  const stroke = selected ? '#3b82f6' : '#94a3b8';
+  const stroke = selected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)';
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
-      <polygon points="8,10 52,46 52,10 8,46" fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
+      <polygon points="8,10 52,46 52,10 8,46" fill="var(--color-bg-tertiary)" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
       <rect x="24" y="2" width="12" height="12" rx="2" transform="rotate(45 30 8)"
-        fill="#1e293b" stroke={stroke} strokeWidth={1.2} />
+        fill="var(--color-bg-tertiary)" stroke={stroke} strokeWidth={1.2} />
     </svg>
   );
 }
@@ -88,7 +88,7 @@ export function ValveNode({ id, data, selected }: NodeProps) {
               // covered it.
               position: 'absolute', ...markStyle, fontSize: 8, lineHeight: 1,
               fontFamily: 'monospace', letterSpacing: '0.02em',
-              color: failOpen ? '#f59e0b' : '#64748b',
+              color: failOpen ? 'var(--color-warning)' : 'var(--color-text-muted)',
               whiteSpace: 'nowrap', pointerEvents: 'none',
             }}
           >

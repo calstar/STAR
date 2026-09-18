@@ -19,7 +19,7 @@ const W = 60, H = 60;
  */
 export function CheckValveNode({ id, data, selected }: NodeProps) {
   const { label, labelOffset, rotation } = data as unknown as PIDNodeData;
-  const stroke = selected ? '#3b82f6' : '#94a3b8';
+  const stroke = selected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)';
   // The box once turned, so the tag sits under what is drawn.
   const boxH = (rotation ?? 0) % 180 === 90 ? W : H;
   return (
@@ -32,7 +32,7 @@ export function CheckValveNode({ id, data, selected }: NodeProps) {
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
         {/* seat, and the ball resting against it */}
         <line x1="34" y1="14" x2="34" y2="46" stroke={stroke} strokeWidth={2} />
-        <circle cx="25" cy="30" r="8" fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
+        <circle cx="25" cy="30" r="8" fill="var(--color-bg-tertiary)" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
         {/* the run through the body */}
         <line x1="4" y1="30" x2="17" y2="30" stroke={stroke} strokeWidth={1.5} />
         <line x1="34" y1="30" x2="46" y2="30" stroke={stroke} strokeWidth={1.5} />

@@ -25,10 +25,10 @@ import { NumberField } from '../NumberField';
 type Tool = 'line' | 'bend' | 'dimension' | 'split';
 
 const W = 560, H = 360, PAD = 40;
-const CENTER = '#e2e8f0';
+const CENTER = 'var(--color-text-primary)';
 const WALL = '#38bdf8';
 const DIM = '#f59e0b';
-const MUTED = '#64748b';
+const MUTED = 'var(--color-text-muted)';
 
 const field = 'rounded border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-1.5 py-0.5 text-[11px] text-[var(--color-text-primary)] outline-none focus:border-[var(--color-accent)]';
 const tb = (on: boolean) =>
@@ -240,7 +240,7 @@ export function SketchEditor({ sketch, onChange, readOnly }: {
         onClick={onClick} onDoubleClick={() => setDrawing(false)}>
         <defs>
           <pattern id="sk-grid" width="20" height="20" patternUnits="userSpaceOnUse">
-            <circle cx="1" cy="1" r="0.6" fill="#1e293b" />
+            <circle cx="1" cy="1" r="0.6" fill="var(--color-bg-tertiary)" />
           </pattern>
           <marker id="sk-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" fill={DIM} />
@@ -358,7 +358,7 @@ export function SketchEditor({ sketch, onChange, readOnly }: {
           const has = sketch.bends.some(b => b.atLeg === i);
           return (
             <circle key={`v-${i}`} cx={V.x} cy={V.y} r={tool === 'bend' ? 6 : 3}
-              fill={has ? DIM : '#0f172a'} stroke={tool === 'bend' ? DIM : MUTED} strokeWidth={1.2}
+              fill={has ? DIM : 'var(--color-bg-secondary)'} stroke={tool === 'bend' ? DIM : MUTED} strokeWidth={1.2}
               style={{ cursor: tool === 'bend' && !readOnly ? 'pointer' : 'default' }}
               onClick={e => { if (tool !== 'bend' || readOnly) return; e.stopPropagation();
                 if (has && e.shiftKey) { onChange(removeBend(sketch, i)); return; }

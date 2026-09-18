@@ -17,9 +17,11 @@ import type { Finding, Severity } from './checks';
  */
 
 const TONE: Record<Severity, { dot: string; text: string; label: string }> = {
-  error:   { dot: 'bg-red-500',   text: 'text-red-400',   label: 'Error' },
-  warning: { dot: 'bg-amber-500', text: 'text-amber-400', label: 'Check' },
-  info:    { dot: 'bg-slate-500', text: 'text-slate-400', label: 'Note' },
+  error:   { dot: 'bg-[var(--color-danger)]',      text: 'text-[var(--color-danger)]',      label: 'Error' },
+  warning: { dot: 'bg-[var(--color-warning)]',      text: 'text-[var(--color-warning)]',      label: 'Check' },
+  // A note isn't a state to alarm over, so it gets no color at all -- the
+  // gray it shares with everything else is the point.
+  info:    { dot: 'bg-[var(--color-text-muted)]', text: 'text-[var(--color-text-secondary)]', label: 'Note' },
 };
 
 export function ChecksPanel({ nodes, edges, onSelect }: {

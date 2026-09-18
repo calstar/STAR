@@ -18,7 +18,7 @@ const W = 60, H = 60;
  */
 export function RVNode({ id, data, selected }: NodeProps) {
   const { label, labelOffset, rotation, params } = data as unknown as PIDNodeData;
-  const stroke = selected ? '#3b82f6' : '#94a3b8';
+  const stroke = selected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)';
   const set = params?.set_pressure;
   const reseat = params?.reseat_pressure;
   const spin = ((((rotation ?? 0) % 360) + 360) % 360);
@@ -35,7 +35,7 @@ export function RVNode({ id, data, selected }: NodeProps) {
             position: 'absolute', left: '50%', top: H - 8,
             transform: `translateX(-50%) rotate(${-spin}deg)`,
             fontSize: 9, lineHeight: 1.15, fontFamily: 'monospace',
-            color: '#f59e0b', whiteSpace: 'nowrap', textAlign: 'center',
+            color: 'var(--color-text-primary)', whiteSpace: 'nowrap', textAlign: 'center',
             pointerEvents: 'none',
           }}
         >
@@ -43,7 +43,7 @@ export function RVNode({ id, data, selected }: NodeProps) {
           {reseat && (
             <>
               <br />
-              <span style={{ color: '#64748b' }}>↺ {fmtParam(reseat)}</span>
+              <span style={{ color: 'var(--color-text-muted)' }}>↺ {fmtParam(reseat)}</span>
             </>
           )}
         </span>
@@ -54,7 +54,7 @@ export function RVNode({ id, data, selected }: NodeProps) {
 
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
         <polygon points="6,18 54,42 54,18 6,42"
-          fill="#1e293b" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
+          fill="var(--color-bg-tertiary)" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
         <polyline points="20,18 24,10 28,18 32,10 36,18 40,10"
           fill="none" stroke={stroke} strokeWidth={1.5} strokeLinecap="round" />
         <line x1="30" y1="10" x2="30" y2="18" stroke={stroke} strokeWidth={1.5} />

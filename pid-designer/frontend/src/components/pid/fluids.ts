@@ -68,10 +68,10 @@ export const ROLE_COLORS: Record<FluidRole, string> = {
   oxidizer:   '#60a5fa',
   fuel:       '#f2643f',
   pressurant: '#34d399',
-  unknown:    '#94a3b8',
+  unknown:    '#8f8f8f',
 };
 
-export const UNSET_COLOR = '#64748b';
+export const UNSET_COLOR = '#737373';
 
 export function colorForSpecies(id?: string): string {
   const s = speciesById(id);
