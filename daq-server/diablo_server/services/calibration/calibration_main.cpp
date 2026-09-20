@@ -49,6 +49,7 @@
 #include "calibration/CaptureWindow.hpp"
 #include "calibration/CubicCalibrationStore.hpp"
 #include "calibration/LcTareStore.hpp"
+#include "calibration/LcZeroStore.hpp"
 #include "calibration/PTCalibration.hpp"
 #include "calibration/RobustCalibrationManager.hpp"
 #include "calibration/SensorCalibration.hpp"
@@ -891,6 +892,11 @@ int main(int argc, char* argv[]) {
     // Cleared by the backend at session start (while this service is down); survives a restart
     // inside a session. See LcTareStore.hpp.
     fsw::calibration::LcTareStore lc_tare_store("scripts/calibration/calibrations/lc_tare.json");
+    // Load-cell zeros: which raw ADC code means "nothing on the scale", today. A separate record
+    // beside the calibration, never folded into it — see LcZeroStore.hpp for why translating the
+    // cubic's coefficients was rejected. Unlike the tare file, nothing removes this one at session
+    // start: a zero describes the hardware's drift, not the run.
+    fsw::calibration::LcZeroStore lc_zero_store("scripts/calibration/calibrations/lc_zero.json");
     // What a capture records. Bounded in TIME, not in samples: the old 128-sample ring was
     // sized for a 250 Hz PT and spanned 9.3 s on a 13.7 Hz load cell, so a capture taken
     // soon after a load change averaged the old load in. See CaptureWindow.hpp.
@@ -1057,22 +1063,101 @@ int main(int argc, char* argv[]) {
     // if this uid streams one, else the datasheet physics conversion. A tare offset is derived
     // through the SAME model selection the live sample goes through, so flipping a uid between
     // cubic and physics carries its tare correctly instead of being a fourth special case.
+    // The logical calibration channel a uid's curve lives on, derived from the uid, so every
+    // uid-keyed store (cubic, tare, zero) agrees about which curve it means.
+    //
+    // The 0x23 publish branch derives its own from the PACKET (board_number = type_lo >> 5) and
+    // passes it in rather than using this. The two agree for every configured load cell, and
+    // deliberately are not merged: resolve_lc_sensor_uid falls back to board 1 when no configured
+    // LC board matches the packet's slot, so on an UNCONFIGURED board this returns slot 1 while
+    // the packet says otherwise. That divergence predates the zero and is left exactly as it was —
+    // collapsing it here would quietly change published kilograms on such a channel, which is not
+    // this change's business to do.
+    auto lc_log_ch_for = [&](uint16_t uid) -> uint8_t {
+        uint8_t board_number = static_cast<uint8_t>((uid / 100) % 10);
+        if (board_number == 0)
+            board_number = 10;
+        return fsw::calibration::pt_logical_calibration_channel(board_number,
+                                                                static_cast<uint8_t>(uid % 100));
+    };
+    auto lc_kg_model = [&](uint16_t uid, uint8_t lc_log_ch, double adc) -> double {
+        const int32_t code = static_cast<int32_t>(adc);
+        const bool cubic_ok = lc_calibration.is_calibrated(lc_log_ch);
+        const double kg_cubic = cubic_ok ? lc_calibration.calculate(lc_log_ch, code) : 0.0;
+        const double kg_phys = convert_lc_adc_to_force(
+            code, lc_sensitivity_for(uid, lc_sensitivity_mv_per_v),
+            lc_pga_gain_for(uid, lc_pga_gain), lc_full_scale_for(uid, lc_full_scale_value));
+        return select_lc_kg(uid, kg_cubic, kg_phys, cubic_ok);
+    };
+    // The ONE conversion every load-cell number goes through — the publish path and the tare's
+    // evaluator both call it. They used to open-code the same three lines separately, which is how
+    // a published value and the offset subtracted from it drift apart.
+    //
+    // With no zero recorded shift_for() returns 0.0 and this is bit-identical to what the service
+    // published before the zero store existed. That is what makes the whole feature additive.
+    auto lc_kg = [&](uint16_t uid, uint8_t lc_log_ch, double adc) -> double {
+        return lc_kg_model(uid, lc_log_ch, adc - lc_zero_store.shift_for(uid));
+    };
+    // Where a channel's "0 kg code" comes from. Evaluated against lc_kg_model, NOT lc_kg: the basis
+    // is a property of the static calibration and must not see the shift, or re-zeroing would
+    // measure against its own previous answer and compound. See LcZeroStore.hpp.
+    auto lc_basis_for = [&](uint16_t uid) -> fsw::calibration::ZeroBasis {
+        if (lc_model_for(uid) == LcModel::Physics)
+            return fsw::calibration::physics_zero_basis();
+        const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
+        if (cch == nullptr)
+            return {};
+        std::vector<std::pair<double, double>> pts;
+        pts.reserve(cch->points.size());
+        for (const auto& pt : cch->points)
+            pts.emplace_back(pt.adc, pt.psi);  // psi carries kg on an LC channel
+        return fsw::calibration::zero_basis_from_points(pts, [&](double adc) {
+            return lc_kg_model(uid, lc_log_ch_for(uid), adc);
+        });
+    };
     auto lc_eval_for = [&](uint16_t uid) -> fsw::calibration::LcTareStore::Evaluator {
         return [&, uid](double adc) -> double {
-            uint8_t board_number = static_cast<uint8_t>((uid / 100) % 10);
-            if (board_number == 0)
-                board_number = 10;
-            const uint8_t connector = static_cast<uint8_t>(uid % 100);
-            const uint8_t lc_log_ch =
-                fsw::calibration::pt_logical_calibration_channel(board_number, connector);
-            const int32_t code = static_cast<int32_t>(adc);
-            const bool cubic_ok = lc_calibration.is_calibrated(lc_log_ch);
-            const double kg_cubic = cubic_ok ? lc_calibration.calculate(lc_log_ch, code) : 0.0;
-            const double kg_phys = convert_lc_adc_to_force(
-                code, lc_sensitivity_for(uid, lc_sensitivity_mv_per_v),
-                lc_pga_gain_for(uid, lc_pga_gain), lc_full_scale_for(uid, lc_full_scale_value));
-            return select_lc_kg(uid, kg_cubic, kg_phys, cubic_ok);
+            return lc_kg(uid, lc_log_ch_for(uid), adc);
         };
+    };
+    // A curve just moved, so the code it maps to 0 kg may have moved with it. Called from inside
+    // recompute_tare rather than from each of its call sites: the tare's kilograms are derived
+    // THROUGH the shift, so a zero left stale is silently baked into the tare offset too, and
+    // three separate call sites is three chances to forget one.
+    auto recompute_zero = [&](uint16_t uid) {
+        lc_zero_store.set_curves_trusted(!cubic_store.load_failed());
+        lc_zero_store.recompute(uid, lc_basis_for(uid));
+        lc_zero_store.save();
+    };
+    auto recompute_all_zeros = [&]() {
+        lc_zero_store.set_curves_trusted(!cubic_store.load_failed());
+        lc_zero_store.recompute_all([&](uint16_t u) {
+            return lc_basis_for(u);
+        });
+        lc_zero_store.save();
+    };
+    // Whether a re-zero actually worked, as opposed to producing a different wrong number. A cubic
+    // asked for a code outside the window it was fitted over does not return a slightly-wrong
+    // answer; it returns one dominated by its cubic term. A channel still outside its window after
+    // a re-zero has something a zero cannot fix. Rate-limited — this runs per sample.
+    std::unordered_map<uint16_t, uint64_t> last_domain_warn_ns;
+    auto warn_if_out_of_domain = [&](uint16_t uid, int32_t code) {
+        const fsw::calibration::LcZero* z = lc_zero_store.zero_for(uid);
+        if (z == nullptr || !(z->domain_max > z->domain_min))
+            return;
+        const double shifted = static_cast<double>(code) - z->shift_codes;
+        if (shifted >= z->domain_min && shifted <= z->domain_max)
+            return;
+        const uint64_t now = mono_ns();
+        uint64_t& last = last_domain_warn_ns[uid];
+        if (last != 0 && now - last < 30000000000ull)
+            return;
+        last = now;
+        std::cout << "[LcZero] uid " << static_cast<int>(uid) << " code " << code << " -> "
+                  << shifted << " after its shift, outside the calibrated window [" << z->domain_min
+                  << ", " << z->domain_max
+                  << "] — the cubic is extrapolating and this reading is not trustworthy"
+                  << std::endl;
     };
     // Re-derive a standing tare's kilograms from the ADC code it was taken at. Called from EVERY
     // site that can change an LC curve; miss one and the stand carries an offset computed against
@@ -1082,11 +1167,13 @@ int main(int argc, char* argv[]) {
     // fallback, and persisting an offset derived from one would replace a good number with a
     // confident wrong one.
     auto recompute_tare = [&](uint16_t uid) {
+        recompute_zero(uid);  // load-bearing order: the tare below derives THROUGH this shift
         lc_tare_store.set_curves_trusted(!cubic_store.load_failed());
         lc_tare_store.recompute(uid, lc_eval_for(uid));
         lc_tare_store.save();
     };
     auto recompute_all_tares = [&]() {
+        recompute_all_zeros();  // load-bearing order: see recompute_tare
         lc_tare_store.set_curves_trusted(!cubic_store.load_failed());
         lc_tare_store.recompute_all([&](uint16_t u) {
             return lc_eval_for(u);
@@ -1269,10 +1356,41 @@ int main(int argc, char* argv[]) {
     // over an empty map and never happen. The case that bites is a calibration profile swapped on
     // disk while this service was down: the offsets on disk belong to the old curves, and without
     // the startup recompute a tared tank reads a wrong nonzero at rest with nothing to explain it.
+    //
+    // Zeros load BEFORE tares, one level deeper in the same rule: a tare's kilograms are derived
+    // THROUGH the zero's shift, so a tare recomputed while the zero map is still empty is derived
+    // against an unshifted curve — wrong by exactly the drift the zero was there to correct.
+    const double startup_now_ms = std::chrono::duration<double, std::milli>(
+                                      std::chrono::system_clock::now().time_since_epoch())
+                                      .count();
+    const size_t zeros_loaded = lc_zero_store.load();
+    if (zeros_loaded > 0)
+        std::cout << "[Calibration] LC zero: resumed " << zeros_loaded
+                  << " standing zero(s) from lc_zero.json" << std::endl;
+    // Named one by one, with an age, because nothing clears this file at session start: a standing
+    // zero is state nobody on the pad today necessarily chose, and it shifts every reading.
+    for (uint16_t u : lc_zero_store.uids()) {
+        const fsw::calibration::LcZero* z = lc_zero_store.zero_for(u);
+        if (z == nullptr)
+            continue;
+        std::cout << "[Calibration]   zero uid=" << static_cast<int>(u) << " (" << z->entity
+                  << ") shift=" << z->shift_codes << " codes, set "
+                  << ((startup_now_ms - z->set_at_ms) / 3600000.0) << " h ago" << std::endl;
+    }
+
     const size_t tares_loaded = lc_tare_store.load();
     if (tares_loaded > 0)
         std::cout << "[Calibration] LC tare: resumed " << tares_loaded
                   << " standing tare(s) from lc_tare.json" << std::endl;
+    // Same reason as the zeros above: this file also survives a session start now.
+    for (uint16_t u : lc_tare_store.uids()) {
+        const fsw::calibration::LcTare* t = lc_tare_store.tare_for(u);
+        if (t == nullptr)
+            continue;
+        std::cout << "[Calibration]   tare uid=" << static_cast<int>(u) << " (" << t->entity
+                  << ") offset=" << t->offset_kg << " kg, set "
+                  << ((startup_now_ms - t->set_at_ms) / 3600000.0) << " h ago" << std::endl;
+    }
 
     // Resume previously captured points + learned robust state from disk.
     const size_t cubic_loaded = reload_live_store(/*restore_learned=*/true);
@@ -1284,6 +1402,20 @@ int main(int argc, char* argv[]) {
     // curve moved without its recompute running — most likely this file was read after the
     // reload rather than before it — and the offsets it just fixed were being applied against a
     // curve that no longer exists. Self-healing, but never silently.
+    {
+        lc_zero_store.set_curves_trusted(!cubic_store.load_failed());
+        const size_t stale_zeros = lc_zero_store.recompute_stale([&](uint16_t u) {
+            return lc_basis_for(u);
+        });
+        if (stale_zeros > 0) {
+            std::cout << "[Calibration] LC zero: WARNING — " << stale_zeros
+                      << " zero(s) were stale against the live calibration and have been "
+                         "re-derived. A curve changed without recomputing its zero; check that "
+                         "lc_zero_store.load() still runs BEFORE the first reload_live_store()."
+                      << std::endl;
+            lc_zero_store.save();
+        }
+    }
     {
         lc_tare_store.set_curves_trusted(!cubic_store.load_failed());
         const size_t stale = lc_tare_store.recompute_stale([&](uint16_t u) {
@@ -1632,6 +1764,94 @@ int main(int argc, char* argv[]) {
                     lc_tare_store.save();
                     std::cout << "[Cal] " << (clearing ? "Tare clear" : "Tare") << ": " << done
                               << " load cell(s)" << std::endl;
+                } else if (cmd_type == 9) {  // LC re-zero — shifts the curve's INPUT, in codes
+                    // ref_val: 0 = set, 1 = clear. sensor_id 0 = every streaming LC channel.
+                    //
+                    // The distinction from cmd 8 is the entire point. A TARE says "the load on the
+                    // cell right now is my reference"; it is subtracted after the curve, in
+                    // kilograms, and is right for a cell holding a tank. A ZERO says "the bridge's
+                    // electrical zero has moved"; it shifts the curve's input, in ADC codes, and
+                    // is the only one of the two that answers overnight drift. Subtracting
+                    // kilograms cannot fix a drifted zero, because the cubic is fitted over a
+                    // narrow window of codes: once the operating point leaves that window the
+                    // reading is dominated by the cubic term rather than offset by a constant.
+                    //
+                    // cubic_calibration.json is NOT written here, ever. The zero is a separate
+                    // record, so the calibration keeps describing its own captured points and ten
+                    // re-zeros give the same answer as one. See LcZeroStore.hpp.
+                    const bool clearing = ref_val >= 0.5f;
+                    std::vector<uint16_t> targets;
+                    if (sensor_id == 0) {
+                        if (clearing) {
+                            targets = lc_zero_store.uids();
+                        } else {
+                            // Only channels actually streaming can be zeroed — same rule Zero-All
+                            // and Tare use. A uid in a last-value map may have had its board go
+                            // away, and a zero taken from a stale code shifts every subsequent
+                            // sample on the channel.
+                            for (uint16_t id : capture_window.uids())
+                                if (is_lc_uid(id))
+                                    targets.push_back(id);
+                        }
+                    } else if (is_lc_uid(sensor_id)) {
+                        targets.push_back(sensor_id);
+                    } else {
+                        std::cout << "[Cal] Zero: uid " << static_cast<int>(sensor_id)
+                                  << " is not a load cell — ignored" << std::endl;
+                    }
+
+                    size_t done = 0;
+                    for (uint16_t id : targets) {
+                        if (clearing) {
+                            lc_zero_store.clear(id);
+                            recompute_tare(id);  // a standing tare was derived through that shift
+                            ++done;
+                            continue;
+                        }
+                        const fsw::calibration::CaptureResult r = take_capture(id, "Zero");
+                        if (!r.ok)
+                            continue;
+                        const uint8_t board_id = static_cast<uint8_t>(id / 100);
+                        const uint8_t connector = static_cast<uint8_t>(id % 100);
+                        const fsw::calibration::ZeroBasis basis = lc_basis_for(id);
+                        if (!lc_zero_store.set(
+                                id, fsw::calibration::lc_tare_entity(board_id, connector),
+                                r.adc_avg, basis))
+                            continue;  // set() logs why; nothing was recorded
+                        ++done;
+                        const fsw::calibration::LcZero* z = lc_zero_store.zero_for(id);
+                        const double shift = z != nullptr ? z->shift_codes : 0.0;
+                        // The diagnostic line this whole feature exists to produce. Printing the
+                        // shift in codes alone tells an operator nothing; in kg and as a fraction
+                        // of full scale it separates the two causes that look identical on a
+                        // plot. A few tenths of a percent of FS is ordinary environmental zero
+                        // drift and a re-zero is the whole fix. Several times FS is not drift at
+                        // all — it is a bridge or connector with water in it, the span and
+                        // linearity have gone too, and no software change applies.
+                        const double fs_kg = lc_full_scale_for(id, lc_full_scale_value);
+                        // kg-per-code by probing the datasheet conversion itself rather than
+                        // restating its constant here: the scale factor then cannot drift away
+                        // from the one the physics model actually uses. It is linear and
+                        // unclamped, so one probe is the whole answer.
+                        constexpr int32_t kProbeCodes = 1000000;
+                        const double kg_per_code =
+                            convert_lc_adc_to_force(kProbeCodes,
+                                                    lc_sensitivity_for(id, lc_sensitivity_mv_per_v),
+                                                    lc_pga_gain_for(id, lc_pga_gain), fs_kg) /
+                            static_cast<double>(kProbeCodes);
+                        std::cout << "[Cal] Zero uid=" << static_cast<int>(id) << " "
+                                  << capture_detail(r) << " basis=" << basis.how
+                                  << " cal_zero_adc=" << basis.cal_zero_adc << " shift=" << shift
+                                  << " codes";
+                        if (kg_per_code > 0.0 && fs_kg > 0.0)
+                            std::cout << " (" << (shift * kg_per_code) << " kg, "
+                                      << (100.0 * shift * kg_per_code / fs_kg) << "% FS)";
+                        std::cout << std::endl;
+                        recompute_tare(id);  // its kilograms are derived through the new shift
+                    }
+                    lc_zero_store.save();
+                    std::cout << "[Cal] " << (clearing ? "Zero clear" : "Zero") << ": " << done
+                              << " load cell(s)" << std::endl;
                 }
             }
             continue;
@@ -1806,12 +2026,12 @@ int main(int argc, char* argv[]) {
             const uint8_t lc_log_ch =
                 fsw::calibration::pt_logical_calibration_channel(board_number, ch_eff);
             const bool cubic_ok = lc_calibration.is_calibrated(lc_log_ch);
-            const double kg_cubic = cubic_ok ? lc_calibration.calculate(lc_log_ch, adc_i32) : 0.0;
-            const double kg_phys = convert_lc_adc_to_force(
-                adc_i32, lc_sensitivity_for(uid, lc_sensitivity_mv_per_v),
-                lc_pga_gain_for(uid, lc_pga_gain), lc_full_scale_for(uid, lc_full_scale_value));
 
-            double force_kg = select_lc_kg(uid, kg_cubic, kg_phys, cubic_ok);
+            // One conversion, shared with the tare's evaluator (lc_kg). This branch used to
+            // open-code the cubic/physics selection a second time; the two copies had no reason to
+            // stay in step and the zero shift would only ever have reached one of them.
+            double force_kg = lc_kg(uid, lc_log_ch, adc_i32);
+            warn_if_out_of_domain(uid, adc_i32);
             const bool is_physics_model = lc_model_for(uid) == LcModel::Physics;
             const uint8_t cal_status = is_physics_model ? 1u : (cubic_ok ? 1u : 0u);
             if (!std::isfinite(force_kg))

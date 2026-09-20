@@ -57,7 +57,7 @@ from typing import Iterable, Iterator
 import numpy as np
 import pandas as pd
 
-from . import export_cache, lc_tare, run_config
+from . import export_cache, lc_tare, lc_zero, run_config
 from .naming import classify
 
 
@@ -164,6 +164,17 @@ def load_series(
             raise FileNotFoundError(f"component not in run: {component}")
         component = f"{entity}.{lc_tare.GROSS_FIELD}"
 
+    # The absolute twin of a ZEROED channel is read from raw_adc, not from force_kg. force_kg
+    # already has the shift inside it — the service applied it before the curve — so there is no
+    # subtraction that gets back to the un-zeroed scale. Re-evaluating the run's own snapshotted
+    # calibration at the raw code is the only route, and it is why the snapshot is taken.
+    absolute = component.endswith(lc_zero.ABSOLUTE_SUFFIX)
+    if absolute:
+        entity = component[: -len(lc_zero.ABSOLUTE_SUFFIX)]
+        if not lc_zero.load(run_id).get(entity):
+            raise FileNotFoundError(f"component not in run: {component}")
+        component = f"{entity}.{lc_zero.RAW_FIELD}"
+
     df = pd.read_parquet(_parquet_path(run_id, component))
     value_col = next(c for c in df.columns if c != "time")
     t = _epoch_seconds(df["time"])
@@ -182,6 +193,10 @@ def load_series(
         # the same clock the sensor axis uses. On the DB axis the same instant sits a few ms later
         # (write latency), which shifts where the step lands by less than one sample.
         v = lc_tare.apply(run_id, entity, t, v)
+    if absolute:
+        # No time axis here, unlike the tare: the calibration is never edited by a re-zero, so
+        # one fixed curve covers the whole run however many times the zero moved within it.
+        v = lc_zero.apply_absolute(run_id, entity, v)
     return t, v
 
 

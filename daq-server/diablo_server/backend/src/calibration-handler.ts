@@ -70,19 +70,6 @@ export function publishCalibrationReload(host: CalibrationHost): void {
     publishCalibrationCommand(host, 7, 0, 0);
 }
 
-/**
- * Tell a RUNNING calibration service to drop every load-cell tare (cmd 8, clear, all channels).
- *
- * The primary session-start clear is the backend unlinking lc_tare.json while the service is
- * down — synchronous and verifiable. This is the mock-mode companion, where the pipeline is
- * already up and a live service would otherwise rewrite the file from memory. Like every
- * [0x46,0x00] publish it is fire-and-forget: if the service is down the packet is dropped, which
- * is harmless here because the unlink already did the work.
- */
-export function publishClearAllTares(host: CalibrationHost): void {
-  publishCalibrationCommand(host, 8, 0, 1);
-}
-
 function getActiveChannels(host: CalibrationHost): number[] {
     const channels = new Set<number>();
 
@@ -259,6 +246,51 @@ export function handleCalibrationCommand(
             }
             publishCalibrationCommand(host, 8, all ? 0 : uniqueId!, clearing ? 1 : 0);
             console.log(`⚖️ LC ${clearing ? 'tare clear' : 'tare'}: ${all ? 'all load cells' : `CH${sensorId} (Board ${boardId})`} → calibration_service`);
+            break;
+        }
+        case 'zero_lc':
+        case 'clear_zero_lc': {
+            // A re-zero, which is NOT a tare and NOT 'zero_all'. Three commands that all sound
+            // like "make it read zero" and do different things:
+            //
+            //   zero_all (cmd 0)  captures a real 0 reference point INTO the shared fit. Right for
+            //                     a vented PT; wrong for a load cell holding a tank.
+            //   tare_lc  (cmd 8)  subtracts the current load AFTER the curve, in kilograms. Right
+            //                     for a cell holding a tank; cannot fix a drifted bridge.
+            //   zero_lc  (cmd 9)  shifts the curve's INPUT, in ADC codes, so the code the cell
+            //                     reads empty maps to the code the calibration calls 0 kg. The
+            //                     only one of the three that answers overnight zero drift.
+            //
+            // cmd 9 never writes cubic_calibration.json: the zero is a separate record, so
+            // re-zeroing ten times gives the same answer as once. See LcZeroStore.hpp.
+            const clearing = commandType === 'clear_zero_lc';
+            const all = sensorId == null || sensorId === 0;
+            if (!all && uniqueId == null) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: `${commandType} requires sensorId and boardId, or neither for all` }
+                });
+                return;
+            }
+            if (!all) {
+                const activeChannels = getActiveChannels(host);
+                if (uniqueId == null || !activeChannels.includes(uniqueId)) {
+                    host.send(ws, {
+                        type: MessageType.ERROR, timestamp: Date.now(),
+                        payload: { message: `Unknown channel for ${commandType}: CH${sensorId} on board ${boardId}` }
+                    });
+                    return;
+                }
+            }
+            if (!host.elodin) {
+                host.send(ws, {
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: `Elodin not connected — cannot forward ${commandType}.` }
+                });
+                return;
+            }
+            publishCalibrationCommand(host, 9, all ? 0 : uniqueId!, clearing ? 1 : 0);
+            console.log(`⚖️ LC ${clearing ? 'zero clear' : 're-zero'}: ${all ? 'all load cells' : `CH${sensorId} (Board ${boardId})`} → calibration_service`);
             break;
         }
         case 'capture_point': {

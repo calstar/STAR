@@ -303,11 +303,20 @@ export default function CalibrationPage() {
   // is exactly how a false point gets into the fit — so when a tare is live it has to say so,
   // or the number here silently disagrees with every other screen.
   const [anyLcTared, setAnyLcTared] = useState(false);
+  // And whether any load cell has a standing ZERO. This one is not about the fit — a capture
+  // pairs the operator's typed weight with the RAW ADC code, which no zero touches, so the fit
+  // is correct either way. It is about the number beside the input: unlike the tare, a zero IS
+  // applied to force_kg on this page too, so "absolute" would be a false claim while one stands.
+  const [anyLcZeroed, setAnyLcZeroed] = useState(false);
   useEffect(() => {
     const poll = () => {
       fetch(`${getApiBaseUrl()}/api/lc_tare`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => setAnyLcTared(((d?.tares ?? []) as unknown[]).length > 0))
+        .catch(() => {});
+      fetch(`${getApiBaseUrl()}/api/lc_zero`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => setAnyLcZeroed(((d?.zeros ?? []) as unknown[]).length > 0))
         .catch(() => {});
     };
     poll();
@@ -581,8 +590,17 @@ export default function CalibrationPage() {
               <div className="text-sm font-bold text-text mb-3">Capture reference point</div>
               {anyLcTared && selectedKind === 'LC' && (
                 <div className="mb-3 text-xs rounded-lg border border-amber-700/60 bg-amber-900/20 px-3 py-2 text-amber-300">
-                  A load-cell tare is active. This page shows <strong>absolute</strong> weight, so
-                  enter the true weight of the mass on the scale &mdash; not what the other screens read.
+                  A load-cell tare is active. This page shows weight with the tare
+                  <strong> not</strong> subtracted, so enter the true weight of the mass on the
+                  scale &mdash; not what the other screens read.
+                </div>
+              )}
+              {anyLcZeroed && selectedKind === 'LC' && (
+                <div className="mb-3 text-xs rounded-lg border border-sky-700/60 bg-sky-900/20 px-3 py-2 text-sky-300">
+                  A load-cell zero is active, so the weight shown here is zero-corrected like
+                  everywhere else. It does not affect this capture: the point recorded is the
+                  <strong> raw ADC code</strong> paired with the weight you type, and the zero is
+                  re-derived against the new fit afterwards. Enter the true weight as usual.
                 </div>
               )}
               {selectedModel === 'physics' && (

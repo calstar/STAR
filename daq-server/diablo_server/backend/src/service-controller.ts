@@ -14,7 +14,9 @@ import { writeFileSync, mkdirSync, readFileSync, existsSync, copyFileSync } from
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
-import { clearTareFile, setRunDir } from './lc-tare.js';
+import { setRunDir } from './lc-tare.js';
+import { setRunDir as setZeroRunDir } from './lc-zero.js';
+import { livePath, zeroPath, tarePath } from './routes/calibration-profiles.js';
 
 // daq-server repo root (…/daq-server), from …/daq-server/diablo_server/backend/{src,dist}.
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -44,6 +46,37 @@ function snapshotRunConfig(dbDir: string, simulated: boolean): void {
   } catch (e) {
     // Never block a run on this — a missing snapshot costs readability, not data.
     console.warn(`⚠️ Could not snapshot run config from ${src}:`, e);
+  }
+  snapshotRunCalibration(dbDir);
+}
+
+/**
+ * Snapshot the CALIBRATION this run will read, beside the DB as `<dbDir>.calibration.json` and
+ * `<dbDir>.lc_zero.json`.
+ *
+ * Elodin records a load cell's kilograms and its raw ADC code. Until now nothing archived the
+ * curve that turned one into the other, so an old run's numbers could be read but never
+ * recomputed, re-scaled, or checked. That was tolerable while the mapping from code to kilograms
+ * was the same in every run. It stops being tolerable the moment a re-zero exists: the same code
+ * deliberately means different weights in runs with different zeros, and without these two files
+ * there is nothing in the archive that says by how much.
+ *
+ * Siblings, not files inside the run dir, for the same reason `<dbDir>.toml` is one: at this point
+ * elodin-db has not created the directory yet.
+ *
+ * Both are best-effort. A run with no snapshot reads exactly as runs did before this existed.
+ */
+function snapshotRunCalibration(dbDir: string): void {
+  for (const [src, suffix] of [
+    [livePath(), 'calibration.json'],
+    [zeroPath(), 'lc_zero.json'],
+    [tarePath(), 'lc_tare.json'],
+  ] as const) {
+    try {
+      if (existsSync(src)) copyFileSync(src, `${dbDir}.${suffix}`);
+    } catch (e) {
+      console.warn(`⚠️ Could not snapshot ${src}:`, e);
+    }
   }
 }
 
@@ -169,15 +202,19 @@ export class ServiceController {
       // Never start onto a not-yet-torn-down previous run — a lingering daq_bridge
       // still owns :5006 and the new one would crash-loop. Wait for a clean slate.
       await waitUntilSettled(pipelineUnits(true));
-      // Every session begins with every load cell reading absolute.
+      // A session no longer begins by clearing the load-cell tares.
       //
-      // This must sit between waitUntilSettled and the start below, and nowhere else. Earlier —
-      // beside snapshotRunConfig, say — the PREVIOUS run's calibration_service may still be
-      // alive; it holds its tares in memory and rewrites the file from them on its next periodic
-      // save or clean shutdown, so the unlink silently fails to clear. Only here is every
-      // process confirmed gone and the next one not yet started.
-      clearTareFile();
+      // This used to unlink lc_tare.json here, in the one window where no calibration_service is
+      // alive to rewrite it from memory. Tares and zeros now BOTH persist across sessions, by
+      // request: an operator zeroes an unloaded cell and tares a standing tank once, and every run
+      // that day inherits both rather than re-doing them on each start.
+      //
+      // The safety that the clear used to provide is replaced by visibility, not removed: the
+      // calibration service names every standing tare and zero at startup with its age, and the
+      // GUI shows the same. If you are re-adding a clear here, that window — after
+      // waitUntilSettled, before the start below — is still the only correct place for it.
       setRunDir(dbDir);
+      setZeroRunDir(dbDir);
       await runSystemctl('start', pipelineUnits(simulated));
       // A run isn't real unless the DB actually came up. If elodin-db is missing/broken,
       // sensor-elodin hard-fails (AssertPathExists) or crash-loops — without this check the
@@ -191,15 +228,11 @@ export class ServiceController {
       }
     } else {
       console.log(`[Session] (mock) start pipeline → ${dbDir} (simulated=${simulated})`);
-      // Mock mode is a second lifecycle: the pipeline is already up, so there is no
-      // service-is-down window and the unlink above would race a live writer. Clear the file AND
-      // tell the running service to drop its in-memory tares. The fire-and-forget weakness of
-      // that command is acceptable here precisely because the service IS up to receive it.
-      //
-      // Doing this only in the systemd branch would leave every dev and test session inheriting
-      // the previous session's tares — and mock is the mode the tests run in.
-      clearTareFile();
+      // Mock mode is a second lifecycle: the pipeline is already up. It used to clear the tare
+      // file and tell the live service to drop its in-memory tares; both are gone for the same
+      // reason as the systemd branch above — tares and zeros persist across sessions now.
       setRunDir(dbDir);
+      setZeroRunDir(dbDir);
       // In mock mode the pipeline is already running; only the simulator is ours
       // to start/stop for the run.
       if (simulated) this.spawnSimulator();

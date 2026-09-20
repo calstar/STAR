@@ -711,9 +711,16 @@ if [ -n "$CALIB_SVC" ]; then
   rm -f "$REPO_ROOT/scripts/calibration/calibrations/cubic_calibration.json" 2>/dev/null || true
   # Same isolation for load-cell tares: a tare left by a previous run would be re-applied to this
   # one's stream, and cal_lc_tare's first assertion (untared trace == absolute trace) would fail
-  # for a reason that has nothing to do with the code under test. The backend clears this at
-  # session start in production; the integration stack has no session, so do it here.
+  # for a reason that has nothing to do with the code under test.
+  #
+  # This used to say "the backend clears this at session start in production". It does not any
+  # more — tares and zeros both persist across sessions now, so this rm is the ONLY thing that
+  # isolates one integration run from the last.
   rm -f "$REPO_ROOT/scripts/calibration/calibrations/lc_tare.json" 2>/dev/null || true
+  # And the zeros, which matter more: a leftover zero shifts the curve's INPUT, so every LC
+  # reading in the run is on a different scale and the failure looks like a physics bug rather
+  # than stale state. cal_lc_zero clears up after itself, but only when it reaches its last step.
+  rm -f "$REPO_ROOT/scripts/calibration/calibrations/lc_zero.json" 2>/dev/null || true
   (cd "$REPO_ROOT" && "$CALIB_SVC" --config "$TEST_CONFIG" --adjustments "$CAL_ADJ" \
     --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
     > "$REPO_ROOT/.tmp/integration_calibration_$$.log" 2>&1) &

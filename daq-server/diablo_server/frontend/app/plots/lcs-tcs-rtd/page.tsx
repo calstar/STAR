@@ -29,12 +29,16 @@ const WINDOW_SECONDS = 60;
  */
 function DerivedReadoutBox({
   label, value, unit, color, decimals = 1, tareState = 'none', offsetKg = null,
+  shiftCodes = null,
 }: {
   label: string; value: number | null; unit: string; color: string; decimals?: number;
   tareState?: 'none' | 'absolute' | 'tared';
   offsetKg?: number | null;
+  /** Live zero shift in ADC codes, or null when the channel has no zero. */
+  shiftCodes?: number | null;
 }) {
   const tared = tareState === 'tared';
+  const zeroed = shiftCodes != null;
   return (
     <div className={`bg-gray-900/60 rounded-xl px-4 py-3 flex flex-col gap-0.5 min-w-0 border transition-colors ${
       tared ? 'border-amber-500/70 ring-1 ring-amber-500/25' : 'border-gray-800/80'
@@ -59,6 +63,18 @@ function DerivedReadoutBox({
               : 'No tare — this is absolute weight.'}
           >
             {tared ? 'Tared' : 'Absolute'}
+          </span>
+        )}
+        {/* A separate chip, not a third value of the tare chip, because the two are independent
+            and an operator needs to know which one is in play. A tare is subtracted AFTER the
+            curve, in kilograms; a zero shifts the curve's INPUT, in codes. A channel can carry
+            both, and "why does this read 0?" has a different answer for each. */}
+        {zeroed && (
+          <span
+            className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border truncate bg-sky-500/15 text-sky-300 border-sky-500/40"
+            title={`This channel's zero is shifted by ${shiftCodes!.toFixed(0)} ADC codes: the code it reads empty is mapped to the code the calibration calls 0 kg. The calibration itself is unchanged.`}
+          >
+            Zeroed
           </span>
         )}
       </div>
@@ -150,23 +166,28 @@ function SectionPlot({
 
 /** Ratiometric LC: ref = excitation, so only sensitivity and PGA set full-scale code. */
 function LCForceReadout({
-  calEntity, label, color, offsetKg, onTare, onClearTare, disabled, disabledReason,
+  calEntity, label, color, offsetKg, onTare, onClearTare, shiftCodes, onZero, onClearZero,
+  disabled, disabledReason,
 }: {
   entity: string; calEntity: string; label: string; color: string;
   /** Live tare from the backend, or null when untared. Never assumed from a click — see poll. */
   offsetKg: number | null;
   onTare: () => void; onClearTare: () => void;
+  /** Live zero shift from the backend, or null when the channel has no zero. Same rule. */
+  shiftCodes: number | null;
+  onZero: () => void; onClearZero: () => void;
   disabled: boolean; disabledReason: string;
 }) {
   // Tared when a tare is standing, absolute otherwise. The value is derived by the backend and
   // published as its own component, so this readout and the plot below it cannot disagree.
   const value = useLoadCellForceKg(calEntity);
   const tared = offsetKg != null;
+  const zeroed = shiftCodes != null;
   return (
     <div className="flex flex-col gap-1.5 min-w-0">
       <DerivedReadoutBox
         label={label} value={value} unit="kg" color={color} decimals={1}
-        tareState={tared ? 'tared' : 'absolute'} offsetKg={offsetKg}
+        tareState={tared ? 'tared' : 'absolute'} offsetKg={offsetKg} shiftCodes={shiftCodes}
       />
       {/* The controls get their own box. Inside the readout the unit, the state chip and two
           buttons had to share one row, and at three columns the buttons were the first thing
@@ -212,6 +233,48 @@ function LCForceReadout({
           </button>
         )}
       </div>
+      {/* The zero gets its own row, deliberately not mixed in with the tare buttons. They sound
+          alike and do different things: a tare says "the load on the cell right now is my
+          reference" and is subtracted after the curve; a zero says "the bridge's electrical zero
+          has moved" and shifts the curve's input. Only the second answers a cell that reads a
+          different number every morning. Putting them in one row of four buttons invites the
+          wrong one being pressed under time pressure. */}
+      <div className="bg-gray-900/60 rounded-xl border border-gray-800/80 p-1.5 flex items-center gap-1.5">
+        <button
+          onClick={onZero}
+          disabled={disabled}
+          title={
+            disabled
+              ? disabledReason
+              : zeroed
+                ? `Take a NEW zero at the current EMPTY reading, replacing the standing shift of ${shiftCodes!.toFixed(0)} codes. Measured against the calibration each time, so this never compounds.`
+                : 'With the scale EMPTY: re-establish which ADC code means no load. Shifts the curve\u2019s input \u2014 the calibration itself is never edited. Use this when an unloaded cell does not read 0.'
+          }
+          className={`flex-1 text-sm font-semibold px-2 py-1.5 rounded-lg border transition-colors ${
+            disabled
+              ? 'border-gray-800 text-gray-600 cursor-not-allowed'
+              : 'border-sky-600 text-sky-200 hover:bg-sky-900/40'
+          }`}
+        >
+          {zeroed ? 'Re-zero' : 'Zero'}
+        </button>
+        {zeroed && (
+          <button
+            onClick={onClearZero}
+            disabled={disabled}
+            title={disabled
+              ? disabledReason
+              : `Drop the zero and go back to the calibration\u2019s own 0 kg code (currently shifted by ${shiftCodes!.toFixed(0)} codes).`}
+            className={`flex-1 text-sm font-semibold px-2 py-1.5 rounded-lg border transition-colors ${
+              disabled
+                ? 'border-gray-800 text-gray-600 cursor-not-allowed'
+                : 'border-sky-500 text-sky-300 hover:bg-sky-900/40'
+            }`}
+          >
+            Clear
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -234,6 +297,8 @@ export default function LCS_TCS_RTDPage() {
   const [lcUids, setLcUids] = useState<number[]>([]);
   /** entity -> offset kg, polled from the backend. The source of truth for what is tared. */
   const [lcTares, setLcTares] = useState<Record<string, number>>({});
+  /** entity -> zero shift in ADC codes, polled the same way and for the same reason. */
+  const [lcZeros, setLcZeros] = useState<Record<string, number>>({});
   const [sessionActive, setSessionActive] = useState(false);
   /** Set when a tare command was sent and the backend has not confirmed it yet. */
   const [tarePending, setTarePending] = useState(false);
@@ -315,11 +380,30 @@ export default function LCS_TCS_RTDPage() {
       .catch(() => {});
   }, []);
 
+  // Same contract as the tare, for the same reason: [0x46,0x00] has no reply, and the calibration
+  // service refuses a re-zero outright when the calibration has no 0 kg anchor to measure against.
+  // A button that looked like it worked would be a lie about which code means "empty".
+  const fetchZeros = useCallback(() => {
+    fetch(`${getApiBaseUrl()}/api/lc_zero`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        const next: Record<string, number> = {};
+        for (const z of (d.zeros ?? []) as Array<{ entity: string; shiftCodes: number }>) {
+          if (Number.isFinite(z.shiftCodes)) next[z.entity] = z.shiftCodes;
+        }
+        setLcZeros(next);
+      })
+      .catch(() => {});
+  }, []);
+
+  const refreshLcState = useCallback(() => { fetchTares(); fetchZeros(); }, [fetchTares, fetchZeros]);
+
   useEffect(() => {
-    fetchTares();
-    const id = setInterval(fetchTares, 2000);
+    refreshLcState();
+    const id = setInterval(refreshLcState, 2000);
     return () => clearInterval(id);
-  }, [fetchTares]);
+  }, [refreshLcState]);
 
   // No live stream means no fresh ADC to tare against, so the service would refuse anyway.
   useEffect(() => {
@@ -332,7 +416,10 @@ export default function LCS_TCS_RTDPage() {
     return () => { unsub(); };
   }, [ws]);
 
-  const sendTareCmd = useCallback((commandType: 'tare_lc' | 'clear_tare_lc', uid?: number) => {
+  const sendTareCmd = useCallback((
+    commandType: 'tare_lc' | 'clear_tare_lc' | 'zero_lc' | 'clear_zero_lc',
+    uid?: number,
+  ) => {
     ws.send({
       type: MessageType.CALIBRATION_COMMAND,
       timestamp: Date.now(),
@@ -341,13 +428,16 @@ export default function LCS_TCS_RTDPage() {
         : { commandType, sensorId: uid % 100, boardId: Math.floor(uid / 100) },
     });
     // Accelerate the poll rather than assuming an outcome. If nothing changes within ~2 s the
-    // banner says so, instead of a button that looks like it worked.
+    // banner says so, instead of a button that looks like it worked. Both files are refreshed
+    // whichever command went out: a re-zero moves the standing tare's kilograms too, because the
+    // service re-derives the tare through the new shift.
     setTarePending(true);
-    const quick = setInterval(fetchTares, 120);
+    const quick = setInterval(refreshLcState, 120);
     setTimeout(() => { clearInterval(quick); setTarePending(false); }, 2200);
-  }, [ws, fetchTares]);
+  }, [ws, refreshLcState]);
 
   const anyTared = lcCalEntities.some((e) => lcTares[e] != null);
+  const anyZeroed = lcCalEntities.some((e) => lcZeros[e] != null);
 
   const tcEntities = tcData.map((d) => d.entity);
   // d.calEntity, never a string replace: entities are board-scoped (TC1.CH2), so
@@ -490,6 +580,26 @@ export default function LCS_TCS_RTDPage() {
                 >
                   Tare all
                 </button>
+                {anyZeroed && (
+                  <button
+                    onClick={() => sendTareCmd('clear_zero_lc')}
+                    disabled={!sessionActive}
+                    title="Drop every load-cell zero and go back to each calibration's own 0 kg code."
+                    className="text-base font-semibold px-4 py-2 rounded-lg border-2 border-sky-500 text-sky-300 hover:bg-sky-900/40 disabled:border-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Clear all zeros
+                  </button>
+                )}
+                <button
+                  onClick={() => sendTareCmd('zero_lc')}
+                  disabled={!sessionActive}
+                  title={sessionActive
+                    ? 'With every scale EMPTY: re-establish which ADC code means no load, on all load cells. Shifts each curve\u2019s input; the calibrations themselves are never edited.'
+                    : 'Start a session to re-zero \u2014 a zero needs a live stream.'}
+                  className="text-base font-semibold px-4 py-2 rounded-lg border-2 border-sky-600 text-sky-200 hover:bg-sky-900/40 disabled:border-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed transition-colors"
+                >
+                  Zero all
+                </button>
               </div>
             )}
           </div>
@@ -507,6 +617,9 @@ export default function LCS_TCS_RTDPage() {
                       offsetKg={lcTares[lcCalEntities[i]] ?? null}
                       onTare={() => sendTareCmd('tare_lc', lcUids[i])}
                       onClearTare={() => sendTareCmd('clear_tare_lc', lcUids[i])}
+                      shiftCodes={lcZeros[lcCalEntities[i]] ?? null}
+                      onZero={() => sendTareCmd('zero_lc', lcUids[i])}
+                      onClearZero={() => sendTareCmd('clear_zero_lc', lcUids[i])}
                       disabled={!sessionActive || lcUids[i] == null}
                       disabledReason={sessionActive ? 'No uid for this channel in config.' : 'Start a session to tare \u2014 a tare needs a live stream.'}
                       key={entity}

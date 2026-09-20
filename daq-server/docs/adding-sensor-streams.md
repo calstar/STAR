@@ -85,6 +85,7 @@ Offset  Size  Type    Field
 | 6 | New calibration | uid | — | Unified clear. |
 | 7 | Reload live store | — | — | Re-read `cubic_calibration.json` after the backend swapped a profile. |
 | 8 | **LC tare** | uid, or 0 for all | `0` = set, `1` = clear | Display-only zero for a load cell. Never enters a fit, never reaches control or abort, never changes what Elodin records. |
+| 9 | **LC re-zero** | uid, or 0 for all | `0` = set, `1` = clear | Re-establishes which ADC code means *no load*. Shifts the curve's **input**; never edits the calibration. Changes what Elodin records for `force_kg`. |
 
 **Why a load-cell tare is command 8 and not command 0.** A vented PT genuinely *is* at 0 psig, so
 capturing a zero on one is a true reference point and belongs in the shared fit. A load cell
@@ -97,6 +98,46 @@ a 20 kg tank against a poor two-point fit that reads it as 18, then improve the 
 tank evaluates to 20, and a frozen 18 kg offset would display 2 kg for a tank that never moved.
 Re-deriving from the code gives 20 − 20 = 0. `test/ws_data_flow_test.ts`'s `cal_lc_tare` check
 proves this through the full stack; `diablo_server/lib/test/test_lc_tare.cpp` pins the store.
+
+**Why a re-zero is command 9 and not a tare.** Three commands sound like "make it read zero" and
+do different things. Command 0 captures a real 0 point *into the fit*. Command 8 subtracts a held
+load *after* the curve, in kilograms. Command 9 shifts the curve's *input*, in ADC codes.
+
+Only 9 answers a bridge whose electrical zero has drifted — the load cell that reads 500k codes
+empty one morning and −300k the next. Subtracting kilograms cannot fix that, because the cubic is
+fitted over a narrow window of codes and evaluated in raw ADC space: once the operating point
+leaves the window the reading is *dominated by the cubic term*, not offset by a constant. A real
+stored curve fitted over 57–501 psi reads **10 158 psi** eight fit-windows below its domain.
+Shifting the input puts the operating point back inside the window, which is what actually fixes
+the number.
+
+The calibration is **never edited**. Translating the cubic's coefficients by the shift is exact and
+a one-liner, and it was rejected: it compounds (ten re-zeros translate ten times), it leaves the
+stored points no longer lying on their own curve, and it destroys the drift record. Instead
+`lc_zero.json` holds `adc_at_zero` — the code read with the cell empty — and `shift_codes` is a
+cache re-derived against the *static* calibration on every capture, clear and profile swap. Ten
+re-zeros therefore give the same answer as one, and `adc_at_zero` logged over days against a fixed
+`cal_zero_adc` **is** the drift measurement the re-zero was taken to make.
+
+`cal_zero_adc` comes from the operator's own empty-scale calibration point when one exists (a
+measurement beats a root), else from a bisection restricted to the captured points' span. When
+neither is available the re-zero is **refused and logged** — a channel whose calibration never
+spanned 0 kg has nothing to anchor to, and guessing produces a plausible wrong number on a pad
+display.
+
+**What this changes about the archive.** Unlike the tare, a zero is applied *inside* the conversion,
+so `force_kg` is recorded already zero-corrected and the same ADC code means different weights in
+runs with different zeros. That is the intended behaviour, and it is legible after the fact because
+the backend snapshots `<run_id>.calibration.json` and `<run_id>.lc_zero.json` beside every run and
+appends `<run_id>/lc_zero.jsonl` for mid-run changes. With those plus the `raw_adc` the archive
+already carries, the viewer reconstructs the absolute series, the zeroed series, or any
+hypothetical zero — see `tools/postprocessing/webviewer/backend/lc_zero.py`.
+
+`diablo_server/lib/test/test_lc_zero.cpp` pins the store, including the reported bug itself.
+
+**Tares and zeros both persist across sessions.** Neither file is removed at session start. The
+calibration service names every standing tare and zero at startup with its age, and the GUI shows
+the same, because state that survives unattended has to be visible.
 
 ## Standard 21-Byte Sensor Message Layout
 

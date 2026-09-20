@@ -35,6 +35,7 @@ import { ElodinQueryClient, QueryOptions } from './elodin-query.js';
 import { getBoardLogHistory, getBoardLogStats } from './board-logs.js';
 import type { SensorUpdate } from './shared-types.js';
 import { currentTares } from './lc-tare.js';
+import { currentZeros } from './lc-zero.js';
 
 // ── Sensor config helpers ──────────────────────────────────────────────────
 
@@ -826,6 +827,22 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
           res.end(JSON.stringify({ tares: currentTares() }));
         } catch {
           res.end(JSON.stringify({ tares: [] }));
+        }
+      } else if (url.pathname === '/api/lc_zero' && req.method === 'GET') {
+        // The live load-cell zeros: which raw ADC code each channel currently treats as empty.
+        //
+        // Same contract as /api/lc_tare and for the same reason — [0x46,0x00] carries no reply,
+        // so the file the service wrote is the only thing that says whether a re-zero landed. The
+        // page must not assume one did because it sent the command.
+        //
+        // domainMin/domainMax ride along so the UI can flag a channel whose live raw_adc still
+        // sits outside the window its cubic was fitted over. A re-zero that leaves a channel
+        // extrapolating has not fixed it, and that is exactly the case worth seeing.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        try {
+          res.end(JSON.stringify({ zeros: currentZeros() }));
+        } catch {
+          res.end(JSON.stringify({ zeros: [] }));
         }
       } else if (url.pathname === '/api/feed-char/results') {
         /**

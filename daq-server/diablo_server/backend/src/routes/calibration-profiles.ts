@@ -58,6 +58,20 @@ export function livePath(): string {
 export function tarePath(): string {
   return path.join(getCalibrationsDir(), 'lc_tare.json');
 }
+/**
+ * The live load-cell zero state: which raw ADC code means "nothing on the scale", per channel.
+ * Written by the calibration service, read here to serve the UI and to snapshot per run.
+ *
+ * Beside the cubic store and the tare, same directory and same contract. What is deliberately
+ * NOT here is any write path: cubic_calibration.json is never edited by a re-zero, which is the
+ * design decision the whole feature rests on (see LcZeroStore.hpp). The zero is a second record,
+ * so the calibration keeps describing its own captured points and re-zeroing never compounds.
+ *
+ * Unlike tarePath(), nothing removes this file at session start — nor lc_tare.json any more.
+ */
+export function zeroPath(): string {
+  return path.join(getCalibrationsDir(), 'lc_zero.json');
+}
 function defaultPath(): string {
   return path.join(getCalibrationsDir(), 'cubic_calibration.default.json');
 }

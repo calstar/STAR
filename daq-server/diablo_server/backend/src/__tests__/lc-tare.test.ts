@@ -21,11 +21,12 @@ let TARE_FILE: string;
 
 vi.mock('../routes/calibration-profiles.js', () => ({
   tarePath: () => TARE_FILE,
+  zeroPath: () => path.join(path.dirname(TARE_FILE), 'lc_zero.json'),
   livePath: () => path.join(path.dirname(TARE_FILE), 'cubic_calibration.json'),
   profilesDir: () => path.join(path.dirname(TARE_FILE), 'profiles'),
 }));
 
-const { expandWithTare, loadTareMap, tareOffsetKg, clearTareFile, resetTareState, setRunDir, currentTares } =
+const { expandWithTare, loadTareMap, tareOffsetKg, resetTareState, setRunDir, currentTares } =
   await import('../lc-tare.js');
 
 function writeTares(entries: Array<{ entity: string; uid?: number; adc?: number; kg: number }>): void {
@@ -136,17 +137,15 @@ describe('the tare map', () => {
     expect(tareOffsetKg('LC2_Cal.CH1')).toBe(25);
   });
 
-  it('clearTareFile removes the file and forgets the held map', () => {
+  it('a removed file clears the map, and is the only thing that does', () => {
+    // Nothing in the backend unlinks this file any more — tares persist across sessions. The
+    // path still has to work, because an operator removing it by hand while the service is down
+    // is the remaining way to force every channel back to absolute.
     writeTares([{ entity: 'LC2_Cal.CH1', kg: 20 }]);
     expect(tareOffsetKg('LC2_Cal.CH1')).toBe(20);
-    clearTareFile();
-    expect(fs.existsSync(TARE_FILE)).toBe(false);
+    fs.unlinkSync(TARE_FILE);
     expect(tareOffsetKg('LC2_Cal.CH1')).toBe(0);
     expect(currentTares()).toEqual([]);
-  });
-
-  it('clearTareFile on an already-absent file is not an error', () => {
-    expect(() => clearTareFile()).not.toThrow();
   });
 });
 
@@ -202,31 +201,40 @@ describe('live stream and reconnect backfill agree', () => {
   });
 });
 
-describe('the session-start clear happens in the only safe window', () => {
-  // The trap: unlinking beside snapshotRunConfig looks equivalent and is not. At that point the
-  // PREVIOUS run's calibration_service may still be alive, holding its tares in memory, and it
-  // rewrites the file from them on its next periodic save or clean shutdown — so the session
-  // starts with the last run's offsets and nothing says so.
+describe('a session start does NOT clear the tare', () => {
+  // This describe block used to assert the opposite, and the inversion is the point: tares and
+  // zeros both persist across sessions now, by request. An operator zeroes an unloaded cell and
+  // tares a standing tank once, and every run that day inherits both.
+  //
+  // What the old assertions protected — that a clear, if one exists, happens in the ONE window
+  // where no calibration_service is alive to rewrite the file from memory — is preserved as a
+  // comment in service-controller.ts rather than as behaviour. If a clear is ever re-added, it
+  // belongs between waitUntilSettled and the pipeline start, and nowhere else.
   const controllerSrc = () =>
     fs.readFileSync(path.join(__dirname, '..', 'service-controller.ts'), 'utf8');
 
-  it('clears strictly between waitUntilSettled and the pipeline start', () => {
+  it('neither start branch removes the tare file', () => {
     const src = controllerSrc();
-    const settled = src.indexOf('await waitUntilSettled(pipelineUnits(true))');
-    const cleared = src.indexOf('clearTareFile()');
-    const started = src.indexOf("await runSystemctl('start', pipelineUnits(simulated))");
-
-    expect(settled).toBeGreaterThan(-1);
-    expect(cleared).toBeGreaterThan(settled);
-    expect(cleared).toBeLessThan(started);
-    // And specifically NOT up beside the config snapshot, where a live service could still win.
-    expect(cleared).toBeGreaterThan(src.indexOf('snapshotRunConfig(dbDir, simulated)'));
+    expect(src).not.toContain('clearTareFile');
+    expect(src).not.toContain('unlinkSync');
   });
 
-  it('clears in the mock branch too, which is the mode the tests run in', () => {
+  it('nothing tells a live service to drop its tares at session start', () => {
+    // The mock-mode companion to the unlink: cmd 8 clear-all, published once the pipeline was up.
+    const server = fs.readFileSync(path.join(__dirname, '..', 'server.ts'), 'utf8');
+    expect(server).not.toContain('publishClearAllTares');
+    const handler = fs.readFileSync(path.join(__dirname, '..', 'calibration-handler.ts'), 'utf8');
+    expect(handler).not.toContain('publishClearAllTares');
+  });
+
+  it('snapshots the calibration and the zero beside the run, so the archive stays readable', () => {
+    // force_kg now means different weights for the same ADC code in runs with different zeros.
+    // Without these copies the archive has no record of which zero produced its numbers.
     const src = controllerSrc();
-    const mock = src.slice(src.indexOf('(mock) start pipeline'));
-    expect(mock).toContain('clearTareFile()');
+    const snap = src.slice(src.indexOf('function snapshotRunCalibration'));
+    expect(snap).toContain('calibration.json');
+    expect(snap).toContain('lc_zero.json');
+    expect(src.indexOf('snapshotRunCalibration(dbDir)')).toBeGreaterThan(-1);
   });
 
   it('forgets the held map when the run stops', () => {

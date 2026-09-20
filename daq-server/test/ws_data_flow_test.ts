@@ -15,7 +15,7 @@
  *   bash test/test_integration.sh --only=sensor_data
  *
  * --only runs a subset of tests (comma-separated). IDs: sensor_config, sensor_data,
- * cal_stability, cal_lc_tare, raw_cal_presence, heartbeat, board_status (Boards pane: all enabled boards connected),
+ * cal_stability, cal_lc_tare, cal_lc_zero, raw_cal_presence, heartbeat, board_status (Boards pane: all enabled boards connected),
  * selftest, state_transition,
  * state_debug, actuator_ws, actuator_udp, elodin_sync, controller, timestamps,
  * conservation, config_validate — or numbers 1–6, 10–12, 14–15
@@ -94,7 +94,7 @@ function parseOnlyTests(): Set<string> | null {
   const allowed = new Set([
     'sensor_config', 'sensor_data', 'cal_stability', 'raw_cal_presence',
     'cal_values', 'cal_model_select', 'cal_robust_learn', 'cal_shared_points', 'cal_clear', 'cal_lc_capture',
-    'cal_lc_tare',
+    'cal_lc_tare', 'cal_lc_zero',
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
     'controller', 'timestamps', 'conservation', 'board_logs', 'board_log_mode',
@@ -2137,6 +2137,24 @@ function readTareRecord(entity: string): Record<string, unknown> | null {
   } catch { return null; }
 }
 
+// Read the service's lc_zero.json entry for a cal entity (fresh on every re-zero/recompute/clear).
+function readZeroRecord(entity: string): Record<string, unknown> | null {
+  const dir = findCalDir();
+  if (!dir) return null;
+  try {
+    const j = JSON.parse(fs.readFileSync(`${dir}/lc_zero.json`, 'utf-8'));
+    const zeros = Array.isArray(j?.zeros) ? j.zeros : [];
+    return (zeros.find((z: Record<string, unknown>) => z.entity === entity) as Record<string, unknown>) ?? null;
+  } catch { return null; }
+}
+
+/** The raw bytes of the cubic store, for proving a re-zero does not touch it. */
+function readCubicStoreRaw(): string | null {
+  const dir = findCalDir();
+  if (!dir) return null;
+  try { return fs.readFileSync(`${dir}/cubic_calibration.json`, 'utf-8'); } catch { return null; }
+}
+
 /** Mean of a component's SENSOR_UPDATE values over `ms`, or null if none arrived. */
 async function meanOf(ws: WebSocket, entity: string, component: string, ms: number): Promise<number | null> {
   const vals: number[] = [];
@@ -2251,6 +2269,103 @@ async function testLcTare(ws: WebSocket): Promise<void> {
     `cal_lc_tare: cleared, tared trace tracks absolute again (${taredCleared?.toFixed(2)} vs ${grossCleared?.toFixed(2)})`);
 
   // Leave the shared cubic store as we found it.
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'new_calibration', sensorId: CH, boardId: BOARD } });
+  await sleep(1500);
+}
+
+/**
+ * LC re-zero end-to-end: the one check of the real [0x46,0x00] cmd-9 wire path.
+ *
+ * A re-zero shifts the curve's INPUT, so unlike the tare it DOES change what Elodin records for
+ * force_kg — the same ADC code deliberately means different weights under different zeros. What
+ * must not change is the calibration itself, and that is the assertion this test exists for: the
+ * bytes of cubic_calibration.json before and after. The rejected alternative design (translate
+ * the cubic's coefficients by the shift) passes every other check here and fails that one.
+ *
+ * Runs AFTER cal_lc_tare and clears up after itself. That ordering is load-bearing now that zeros
+ * persist across sessions: a zero left standing would shift force_kg for every later test, and for
+ * every later run on the box.
+ */
+async function testLcZero(ws: WebSocket): Promise<void> {
+  console.log('\n⚖️  Test 23: LC re-zero end-to-end (curve input shifted, calibration untouched)');
+  const CH = 1, BOARD = 42;                                // lc_board_2, as cal_lc_tare uses
+  const ENTITY = 'LC2_Cal.CH1';
+  const SETTLE_MS = 2500;
+
+  // THREE sends, not ten. CubicCalibrationStore caps history at kMaxPoints = 20 and evicts from
+  // the FRONT, and each send lands two points here — so ten sends per reference is forty points,
+  // which silently evicts every ref-0 point before the re-zero and leaves the channel with no
+  // 0 kg anchor at all. The service then correctly refuses. That is not a hypothetical: it is
+  // what this test did on its first run, and it is a real operational trap — an operator who
+  // captures more than twenty points loses their empty-scale capture and can no longer re-zero.
+  const captureAt = async (ref: number) => {
+    for (let i = 0; i < 3; i++) {
+      send(ws, { type: 'calibration_command', timestamp: Date.now(),
+        payload: { commandType: 'capture_point', sensorId: CH, boardId: BOARD, referencePressure: ref } });
+      await sleep(200);
+    }
+    await sleep(1500);
+  };
+  // A re-zero needs a 0 kg anchor in the calibration and refuses without one — so give it the
+  // operator's own empty-scale point, which is the path it takes in the field.
+  await captureAt(0);
+  await captureAt(50);
+
+  const storeBefore = readCubicStoreRaw();
+  if (storeBefore === null) { assert(false, 'cal_lc_zero: cannot read cubic_calibration.json'); return; }
+
+  // ── 1. re-zero: the service records a shift derived from the static calibration ────
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'zero_lc', sensorId: CH, boardId: BOARD } });
+  let rec: Record<string, unknown> | null = null;
+  for (let i = 0; i < 12; i++) { rec = readZeroRecord(ENTITY); if (rec) break; await sleep(400); }
+  if (!rec) { assert(false, `cal_lc_zero: service wrote no zero for ${ENTITY}`); return; }
+  const shift1 = rec.shift_codes as number;
+  const adcAtZero = rec.adc_at_zero as number;
+  const calZeroAdc = rec.cal_zero_adc as number;
+  console.log(`  zeroed: shift=${shift1} adc_at_zero=${adcAtZero} cal_zero_adc=${calZeroAdc}`);
+  assert(Number.isFinite(shift1), `cal_lc_zero: shift is a finite number (${shift1})`);
+  assert(Math.abs((adcAtZero - calZeroAdc) - shift1) < 1e-6,
+    `cal_lc_zero: shift is adc_at_zero - cal_zero_adc (${adcAtZero} - ${calZeroAdc} vs ${shift1})`);
+
+  // ── 2. THE invariant: the calibration is not edited ───────────────────────
+  assert(readCubicStoreRaw() === storeBefore,
+    'cal_lc_zero: cubic_calibration.json is byte-identical after a re-zero');
+
+  // ── 3. the anchor came from the operator's own empty-scale point ──────────
+  // The simulator emits a CONSTANT load-cell code (spread=0), so there is no real shift to make
+  // here and no curve worth evaluating — every captured point sits at the same ADC. The numeric
+  // behaviour of the shift is pinned in diablo_server/lib/test/test_lc_zero.cpp, which can build
+  // an actual drifted cell. What only this test can prove is the wire path and the file
+  // contract, so that is what it asserts.
+  assert(Math.abs(calZeroAdc - adcAtZero) < 1e-6,
+    `cal_lc_zero: against a constant sim code the anchor IS the captured code (${calZeroAdc} vs ${adcAtZero})`);
+  const zeroedKg = await meanOf(ws, ENTITY, 'force_kg', SETTLE_MS);
+  assert(zeroedKg !== null && Number.isFinite(zeroedKg),
+    `cal_lc_zero: force_kg stays finite through a zeroed channel (${zeroedKg})`);
+
+  // ── 4. re-zeroing does not accumulate ─────────────────────────────────────
+  // The whole reason the calibration is a separate record: every shift is measured against the
+  // static curve, so pressing Zero again at the same load must give the same answer, not double.
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'zero_lc', sensorId: CH, boardId: BOARD } });
+  await sleep(2000);
+  const shift2 = readZeroRecord(ENTITY)?.shift_codes as number | undefined;
+  assert(shift2 !== undefined && Math.abs(shift2 - shift1) < Math.max(1e-6, Math.abs(shift1) * 0.05),
+    `cal_lc_zero: a second re-zero at the same load does not compound (${shift1} → ${shift2})`);
+  assert(readCubicStoreRaw() === storeBefore,
+    'cal_lc_zero: still byte-identical after a second re-zero');
+
+  // ── 5. clear ──────────────────────────────────────────────────────────────
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'clear_zero_lc', sensorId: CH, boardId: BOARD } });
+  let gone = false;
+  for (let i = 0; i < 12; i++) { if (!readZeroRecord(ENTITY)) { gone = true; break; } await sleep(400); }
+  assert(gone, 'cal_lc_zero: clearing removes the zero from the store');
+
+  // Leave the shared cubic store as we found it. The zero is already cleared above — and must be,
+  // because nothing clears it at session start any more.
   send(ws, { type: 'calibration_command', timestamp: Date.now(),
     payload: { commandType: 'new_calibration', sensorId: CH, boardId: BOARD } });
   await sleep(1500);
@@ -3290,6 +3405,9 @@ async function main(): Promise<void> {
     if (IS_THIN && canRunCommandTests && runTest('cal_clear')) await testClearToNothing(ws);
     if (IS_THIN && canRunCommandTests && runTest('cal_lc_capture')) await testLcCapture(ws);
     if (IS_THIN && canRunCommandTests && runTest('cal_lc_tare')) await testLcTare(ws);
+    // After cal_lc_tare, deliberately: a standing zero shifts force_kg for every test that
+    // follows, and zeros are no longer cleared at session start.
+    if (IS_THIN && canRunCommandTests && runTest('cal_lc_zero')) await testLcZero(ws);
   } finally {
     ws.close();
   }

@@ -26,7 +26,7 @@ import re
 import tomllib
 from pathlib import Path
 
-from . import config, lc_tare
+from . import config, lc_tare, lc_zero
 
 # The state ids as the C++ enum defines them (control/StateMachine.hpp), named the way
 # config_base.toml's [[states]] does. Only a fallback: a snapshot's [[states]] wins.
@@ -212,6 +212,11 @@ def annotate(index: dict, run_id: str) -> dict:
     # feature — bumping it would invalidate every cached export on the box for nothing.
     comps = index.get("components", [])
     comps.extend(lc_tare.tared_components(run_id, comps))
+    # Zeroed load cells additionally get an ABSOLUTE twin, reconstructed from raw_adc through the
+    # run's snapshotted calibration. Unlike the tare, the zero is already inside force_kg — this
+    # is the only way back to the scale a pre-re-zero run was recorded on, which is what makes
+    # two days' runs comparable at all.
+    comps.extend(lc_zero.absolute_components(run_id, comps))
     index["components"] = comps
 
     labels = entity_labels(cfg)

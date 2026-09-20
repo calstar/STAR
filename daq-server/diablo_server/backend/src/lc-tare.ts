@@ -164,26 +164,6 @@ export function expandWithTare(parsed: ParsedSensorData[]): ParsedSensorData[] {
 }
 
 /**
- * Remove the live tare file. Session start only, and only in the window where the calibration
- * service is confirmed down — a running service holds its tares in memory and would rewrite the
- * file from them on its next periodic save or clean shutdown, so an unlink at the wrong moment
- * silently fails to clear.
- *
- * This is the one place Node writes to a file C++ owns in steady state. It is safe precisely
- * because nothing is running to race with.
- */
-export function clearTareFile(): void {
-  try {
-    fs.unlinkSync(tarePath());
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.warn('[LcTare] could not remove the live tare file:', e);
-    }
-  }
-  resetTareState();
-}
-
-/**
  * Append what changed to <dbDir>/lc_tare.jsonl.
  *
  * The record is written by whoever applies the subtraction, at the instant the applied value

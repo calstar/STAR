@@ -300,7 +300,9 @@ export type CalibrationCommandType =
   | 'capture_point'       // unified: add one (current ADC, ref PSI) point; service routes by config model
   | 'new_calibration'     // unified: start fresh for a channel; service routes clear by config model
   | 'tare_lc'             // load cell: display-only zero at the current load; never enters the fit
-  | 'clear_tare_lc';      // load cell: drop the tare, back to absolute
+  | 'clear_tare_lc'       // load cell: drop the tare, back to absolute
+  | 'zero_lc'             // load cell: re-establish which ADC code means empty; shifts the curve's INPUT
+  | 'clear_zero_lc';      // load cell: drop the zero, back to the calibration's own 0 kg code
 
 export interface CalibrationCommand {
   commandType: CalibrationCommandType;

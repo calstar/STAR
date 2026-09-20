@@ -20,6 +20,7 @@ set(FSW_SOURCES
     src/calibration/PTCalibration.cpp
     src/calibration/CubicCalibrationStore.cpp
     src/calibration/LcTareStore.cpp
+    src/calibration/LcZeroStore.cpp
     src/calibration/CaptureWindow.cpp
     src/calibration/SensorCalibration.cpp
     src/calibration/AllanVariance.cpp
@@ -90,6 +91,14 @@ target_include_directories(test_lc_tare PRIVATE
 target_link_libraries(test_lc_tare
     fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME lc_tare COMMAND test_lc_tare)
+
+add_executable(test_lc_zero test/test_lc_zero.cpp)
+target_include_directories(test_lc_zero PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(test_lc_zero
+    fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME lc_zero COMMAND test_lc_zero)
 
 add_executable(test_cubic_store_namespace test/test_cubic_store_namespace.cpp)
 target_include_directories(test_cubic_store_namespace PRIVATE

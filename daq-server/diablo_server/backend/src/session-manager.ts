@@ -17,6 +17,7 @@ import { loadSession, saveSession } from './session-state.js';
 import { deployActiveProfile } from './routes/config-profiles.js';
 import { validateActiveProfile, ConfigIssuesError } from './config-validation.js';
 import { resetTareState, setRunDir } from './lc-tare.js';
+import { resetZeroState, setRunDir as setZeroRunDir } from './lc-zero.js';
 
 // Warn the operator at each of these leads before auto-stop. Default: 5 min and
 // 1 min. Override with SESSION_WARN_LEADS_MS (comma-separated ms) to exercise the
@@ -349,6 +350,8 @@ class SessionManager {
     // otherwise be applied to the next run's first poll interval before the file check notices.
     setRunDir(null);
     resetTareState();
+    setZeroRunDir(null);
+    resetZeroState();
     this.onStopped(); // revert board status to the disconnected baseline
   }
 

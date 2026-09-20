@@ -58,7 +58,7 @@ _UNIT_BY_FIELD = {
     # resistance (RTD raw)
     "raw_resistance": "Ω", "raw_resistance_counts": "counts",
     # force (load cells + thrust estimate/reference)
-    "force_n": "N", "force_kg": "kg", "force_kg_tared": "kg",
+    "force_n": "N", "force_kg": "kg", "force_kg_tared": "kg", "force_kg_absolute": "kg",
     "f_ref": "N", "f_estimated": "N",
     # current (actuator sense)
     "current_a": "A",

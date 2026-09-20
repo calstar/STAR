@@ -27,6 +27,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { expandWithTare, resetTareState, setRunDir } from './lc-tare.js';
+import { pollZeroChanges } from './lc-zero.js';
 import { loadSensorRoleMap, hpBoardNumbers } from './sensor-config.js';
 import { registerVTables, clearSubscriptionState, noteSubscriptionRejected } from './elodin-vtable-registry.js';
 import { createAPIHandler } from './api-server.js';
@@ -44,7 +45,7 @@ import { ClientOutbox, FlushPacer, SOCKET_IDLE_BYTES, linkStatus } from './clien
 import { sendBackfill, type HistoryPayload } from './history-backfill.js';
 import { HistoryCache } from './history-cache.js';
 import { startGuiStaticServer } from './static-gui.js';
-import { publishClearAllTares, handleCalibrationCommand, publishCalibrationReload, type CalibrationHost } from './calibration-handler.js';
+import { handleCalibrationCommand, publishCalibrationReload, type CalibrationHost } from './calibration-handler.js';
 import { loadPTCalibration, type CalibrationCoefficients } from './calibration.js';
 import { MessageType, SystemState } from '../../shared/types.js';
 import { isOperator } from './operators.js';
@@ -1538,6 +1539,10 @@ elodin.on('packet', (header: any, payload: Buffer) => {
     // (which would leave the live stream tared and the reconnect backfill gross, because
     // emitSensorWindow records to history before it stages to any client).
     const parsedList = expandWithTare(parseElodinPacket(header.packetId, payload, _hpBoardNumbers));
+    // The zero is already inside force_kg — C++ applies it before the curve, because
+    // model(adc - shift) is not model(adc) - k. Nothing is recomputed here; this only notices a
+    // mid-run change in time to write it to the run record. See lc-zero.ts.
+    pollZeroChanges();
 
     if (parsedList.length === 0) {
       if (high >= 0x40) {
@@ -1717,10 +1722,9 @@ httpServer.listen(WS_PORT, () => {
     loadBoardsFromConfig();
     broadcastBoardStatus();
   }, applyDeployedConfigChange, () => {
-  // The run pipeline is up. Every session starts with every load cell reading absolute: the
-  // controller already removed lc_tare.json, and this drops the copy a still-running service
-  // holds in memory (mock mode, where nothing went down to reload it).
-  publishClearAllTares(calibrationHost);
+  // The run pipeline is up. Nothing is cleared here any more: load-cell tares and zeros both
+  // persist across sessions by request, so a session inherits whatever the operator last set
+  // rather than starting absolute. See service-controller.ts's start().
 });
   // Board diagnostic logs (type-15 LOGS forwarded by daq_bridge over loopback UDP).
   startBoardLogReceiver(broadcast);
