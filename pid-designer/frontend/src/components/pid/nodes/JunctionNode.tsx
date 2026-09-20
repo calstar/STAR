@@ -68,25 +68,37 @@ export function JunctionNode({ id, selected }: NodeProps) {
           size of a symbol. */}
       <div style={{ position: 'absolute', left: -7, top: -7, width: 24, height: 24, borderRadius: '50%' }} />
 
-      {/* The ring: pull it to draw a line out of the tee. `nodrag` keeps a
-          press on it from moving the tee instead. */}
+      {/* The ring: pull it to draw a line out of the tee.
+
+          An SVG stroke, not a box. It was a 24 px div over the dot, and a
+          div takes the pointer over its whole square -- so once somebody
+          had hovered, pressing on the dot itself started a pull instead of
+          a drag, which is the inversion this ring exists to remove. With
+          `pointer-events: stroke` only the ring itself is pressable; the
+          dot underneath still drags. `nodrag` keeps the press from moving
+          the tee as well. */}
       {!readOnly && (hover || selected) && (
-        <div
-          className="nodrag"
-          title="Pull to draw a line from here"
-          onPointerDown={e => {
-            if (e.button !== 0) return;
-            e.stopPropagation();
-            e.preventDefault();
-            const pos = getInternalNode(id)?.internals.positionAbsolute;
-            if (!pos) return;
-            begin({ kind: 'node', nodeId: id, at: { x: pos.x + J_HALF, y: pos.y + J_HALF } }, e);
-          }}
-          style={{
-            position: 'absolute', left: -9, top: -9, width: 24, height: 24, borderRadius: '50%',
-            border: `1.5px dashed ${ink}`, cursor: 'crosshair', boxSizing: 'border-box',
-          }}
-        />
+        <svg
+          width={30} height={30} viewBox="0 0 30 30"
+          style={{ position: 'absolute', left: -12, top: -12, overflow: 'visible', pointerEvents: 'none' }}
+        >
+          <circle cx={15} cy={15} r={10.5} fill="none" stroke={ink} strokeWidth={1.5} strokeDasharray="3 2.5" />
+          <circle
+            className="nodrag"
+            cx={15} cy={15} r={10.5} fill="none" stroke="transparent" strokeWidth={7}
+            style={{ pointerEvents: 'stroke', cursor: 'crosshair' }}
+            onPointerDown={e => {
+              if (e.button !== 0) return;
+              e.stopPropagation();
+              e.preventDefault();
+              const pos = getInternalNode(id)?.internals.positionAbsolute;
+              if (!pos) return;
+              begin({ kind: 'node', nodeId: id, at: { x: pos.x + J_HALF, y: pos.y + J_HALF } }, e);
+            }}
+          >
+            <title>Pull to draw a line from here</title>
+          </circle>
+        </svg>
       )}
 
       <Port position={Position.Top}    id="t" className="pid-junction-face" style={faceStyle} />

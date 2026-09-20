@@ -1,7 +1,7 @@
 import type { Edge, Node, XYPosition } from '@xyflow/react';
 import { Position } from '@xyflow/react';
 import {
-  faceTowards, nearestOnPolyline, pathPoints, pointAt, routeOrthogonal, routeThrough,
+  faceTowards, nearestOnPolyline, pathPoints, pointAt, polylineLength, routeOrthogonal, routeThrough,
 } from './route';
 import type { End, Pt } from './route';
 import type { PIDNodeData } from './types';
@@ -99,10 +99,17 @@ const SIDE_OF: Record<Face, Position> = {
  */
 export const J_ANCHOR = J_HALF + 3;
 
+/** What a route has to clear to get round a tee: the dot and a little. */
+export const J_CLEAR = 14;
+/** How far a line runs straight out of a tee before it may turn. */
+export const J_STUB = 6;
+/** The routing an end on a tee carries, measured or not. */
+export const J_END = { clear: J_CLEAR, stub: J_STUB } as const;
+
 export function junctionEnd(position: XYPosition, face: Face): End {
   const c = { x: position.x + J_HALF, y: position.y + J_HALF };
   const off: Record<Face, Pt> = { t: { x: 0, y: -J_ANCHOR }, b: { x: 0, y: J_ANCHOR }, l: { x: -J_ANCHOR, y: 0 }, r: { x: J_ANCHOR, y: 0 } };
-  return { x: c.x + off[face].x, y: c.y + off[face].y, side: SIDE_OF[face] };
+  return { x: c.x + off[face].x, y: c.y + off[face].y, side: SIDE_OF[face], ...J_END };
 }
 
 export const centreOfJunction = (n: Node): Pt => ({ x: n.position.x + J_HALF, y: n.position.y + J_HALF });
@@ -261,11 +268,13 @@ export function repointJunction(
       face = faces.out;
       if (corners) { const c = withRunCorners(e, corners.downstream); if (c !== e) { changed = true; e = c; } }
     } else {
-      const otherId = at.end === 'source' ? e.target : e.source;
-      const other = nodesById.get(otherId);
-      const { w, h } = other ? nodeSize(other) : { w: 0, h: 0 };
-      const otherC = other ? { x: other.position.x + w / 2, y: other.position.y + h / 2 } : centre;
-      face = branchFace(dir, otherC, centre);
+      // A branch. It only has to be off the run's two faces here; which of
+      // the other two it takes is `pointLines`' decision, made from the
+      // route each would produce rather than from where a centre is.
+      const cur = at.handle as Face | null | undefined;
+      const across = ACROSS[faces.in];
+      face = cur && across.includes(cur) ? cur : across[0];
+      void nodesById; void centre;
     }
     const next = withHandle(e, at.end, face);
     if (next !== e) changed = true;
@@ -273,6 +282,89 @@ export function repointJunction(
   });
   return { edges: changed ? out : edges, along: { ...along, in: faces.in, out: faces.out } };
 }
+
+/** The two faces across a run, given the face it enters by. */
+const ACROSS: Record<Face, Face[]> = { l: ['t', 'b'], r: ['t', 'b'], t: ['l', 'r'], b: ['l', 'r'] };
+
+/**
+ * The faces a line may take at a tee: the two across its run, or all four
+ * of an open end. Null for anything that is not a tee -- a symbol's port is
+ * drawn where it is drawn, and is not a choice.
+ */
+function candidateFaces(n: Node | undefined): Face[] | null {
+  if (!n || !isJunction(n)) return null;
+  const along = junctionData(n).along;
+  return along ? ACROSS[along.in] : ['t', 'b', 'l', 'r'];
+}
+
+/** The cost of drawing a line: its length, and a little for every corner. */
+function cost(a: End, b: End, corners: Pt[]): number {
+  const route = corners.length ? routeThrough(a, b, corners) : routeOrthogonal(a, b);
+  const pts = pathPoints(route.d);
+  return polylineLength(pts) + 12 * Math.max(0, pts.length - 2);
+}
+
+/**
+ * Point every line that touches a tee at the faces that draw it best.
+ *
+ * This is what stops the knots. A branch's face used to be picked by
+ * which side of the tee the other end's centre was on -- and for two tees
+ * on runs at nearly the same height that put `t` on one and `b` on the
+ * other, which the router can only join with a five-segment S over one
+ * run and under the other. Both `t` is a three-segment hook. So the
+ * faces of a line are chosen together, by trying each combination and
+ * keeping the shortest route with the fewest corners. The current faces
+ * win a tie, so nothing flips between two equal answers.
+ *
+ * Run lines are not touched: they are the run's, and `repointJunction`
+ * has already set them.
+ */
+export function pointLines(edges: Edge[], nodesById: Map<string, Node>, endOf: EndLookup): Edge[] {
+  let changed = false;
+  const out = edges.map(e => {
+    const s = nodesById.get(e.source), t = nodesById.get(e.target);
+    const sc = candidateFaces(s), tc = candidateFaces(t);
+    if (!sc && !tc) return e;
+    // A run line: the tee's in or out face. Not a choice.
+    const isRun = (n: Node | undefined, handle: string | null | undefined) => {
+      const along = n && isJunction(n) ? junctionData(n).along : undefined;
+      return !!along && (handle === along.in || handle === along.out);
+    };
+    if (isRun(s, e.sourceHandle) || isRun(t, e.targetHandle)) return e;
+
+    const endFor = (n: Node | undefined, handle: string | null | undefined): End | null => {
+      if (!n) return null;
+      if (isJunction(n)) return handle ? junctionEnd(n.position, handle as Face) : null;
+      const m = endOf(n, handle);
+      if (m) return m;
+      return null;   // an unmeasured symbol port: no basis for a choice
+    };
+    const corners = handCornersOf(e);
+    const sOpts = sc ?? [e.sourceHandle as Face];
+    const tOpts = tc ?? [e.targetHandle as Face];
+    let best: { s: Face; t: Face; c: number } | null = null;
+    for (const fs of sOpts) {
+      const a = endFor(s, fs);
+      if (!a) return e;
+      for (const ft of tOpts) {
+        const b = endFor(t, ft);
+        if (!b) return e;
+        let c = cost(a, b, corners);
+        if (fs === e.sourceHandle && ft === e.targetHandle) c -= 1e-6;
+        if (!best || c < best.c) best = { s: fs, t: ft, c };
+      }
+    }
+    if (!best || (best.s === e.sourceHandle && best.t === e.targetHandle)) return e;
+    changed = true;
+    return { ...e, sourceHandle: best.s, targetHandle: best.t };
+  });
+  return changed ? out : edges;
+}
+
+const handCornersOf = (e: Edge): Pt[] => {
+  const d = (e.data ?? {}) as { waypoints?: Pt[]; viaRun?: boolean };
+  return d.viaRun ? [] : (d.waypoints ?? []);
+};
 
 /**
  * Where a tee dragged to `p` may actually go: the nearest point of its run,
@@ -311,7 +403,11 @@ export function reseatJunctions(
 ): { nodes: Node[]; edges: Edge[] } {
   const byId = new Map(nodes.map(n => [n.id, n]));
   const riding = nodes.filter(n => isJunction(n) && !!junctionData(n).along).map(n => n.id);
-  if (riding.length === 0) return { nodes, edges };
+  if (riding.length === 0) {
+    // No tee rides a run, but an open end still has a line to point.
+    const pointed = nodes.some(isJunction) ? pointLines(edges, byId, endOf) : edges;
+    return { nodes, edges: pointed };
+  }
 
   let outNodes = nodes;
   let outEdges = edges;
@@ -379,6 +475,7 @@ export function reseatJunctions(
     for (const id of riding) if (junctionData(byId.get(id)!).along && seat(id)) anyMoved = true;
     if (!anyMoved) break;
   }
+  outEdges = pointLines(outEdges, byId, endOf);
 
   return { nodes: outNodes, edges: outEdges };
 }

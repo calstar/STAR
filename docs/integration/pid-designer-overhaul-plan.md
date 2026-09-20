@@ -312,6 +312,20 @@ run goes there, and each half is handed the run's corners on its side (marked
 pipe ride each other and settle in a few passes. Ports anchor where React Flow
 anchors them — the handle's outer edge, not its centre.
 
+**A line's faces are chosen by the route they make** (`pointLines`). A
+branch's face used to be picked by which side of the tee the other end's
+centre was on, and for two tees on runs at nearly the same height that put
+`t` on one and `b` on the other -- which the router can only join with a
+five-segment S over one run and under the other. That was the knot. Every
+line touching a tee now tries each combination of its candidate faces (the
+two across the run; all four for an open end; a symbol's port is fixed) and
+keeps the shortest route with the fewest corners, current faces winning a
+tie. A tee end also tells the router what it is: a six-pixel stub and a
+fourteen-pixel clearance instead of a symbol's sixteen and forty-four, so
+two tees thirty pixels apart get one crossbar rather than a detour round
+both. A pull released on a symbol's body picks the port by the same cost,
+so a port that faces away is never chosen just for being nearest.
+
 **Pull a line out of a line** (`BranchDrag.tsx`). Press anywhere on a line and
 pull: the dot riding the pointer is where the tee goes; release on a port, a
 symbol (nearest port), another line (a second tee), a tee (the face across its
@@ -323,6 +337,14 @@ Dragging from a port and letting go on nothing also leaves an open end.
 run breaks the run around it, turned to face the way the run goes, upstream
 half to `l` and `r` to the downstream half; corners inside its body are
 dropped. Deleting it heals the run, exactly as deleting a mid-line tee does.
+
+**The ring is a ring.** It was a 24 px square div over the dot, so once
+somebody had hovered, pressing the dot itself started a pull. It is an SVG
+stroke with `pointer-events: stroke`; the dot underneath still drags.
+
+**Corners go with a group.** Hand-placed corners are absolute; when both
+ends of a line move together in a box selection, the corners between them
+move too, so a routed bay survives being picked up.
 
 **Any segment moves** (`routeThrough`, `dragSegment`, `jogSegment`). Grips on
 every segment; a segment touching a port gains a stub and a corner so the

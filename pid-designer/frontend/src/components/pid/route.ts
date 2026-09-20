@@ -20,6 +20,21 @@ export interface End {
   x: number;
   y: number;
   side: Position;
+  /**
+   * How far to the side a detour has to go to clear whatever this end is
+   * on. Unset means a symbol (see `CLEAR`). A tee is a ten-pixel dot and
+   * says so, or every branch between two tees that had to go round went
+   * round by a symbol's width.
+   */
+  clear?: number;
+  /**
+   * How far a line runs straight out of this end before it may turn.
+   * Unset means a symbol's port (see `STUB`). A tee's is shorter: two tees
+   * on runs thirty pixels apart otherwise had no room between their two
+   * sixteen-pixel stubs for the one crossbar that joins them, and the
+   * router went round both instead.
+   */
+  stub?: number;
 }
 
 export interface Route {
@@ -74,6 +89,8 @@ export function routeOrthogonal(a: End, b: End, offset = 0): Route {
   const bH = isHorizontal(b.side);
   const as = facing(a.side);
   const bs = facing(b.side);
+  const sa = a.stub ?? STUB;
+  const sb = b.stub ?? STUB;
 
   const dx = Math.abs(a.x - b.x);
   const dy = Math.abs(a.y - b.y);
@@ -111,8 +128,8 @@ export function routeOrthogonal(a: End, b: End, offset = 0): Route {
     }
     // Otherwise stub out of both ends first and join the stubs. Four segments,
     // and every one of them leaves an end the way that end points.
-    const hx = h.x + hs * STUB;
-    const vy = v.y + vs * STUB;
+    const hx = h.x + hs * (aH ? sa : sb);
+    const vy = v.y + vs * (aH ? sb : sa);
     const d = aH
       ? `M ${a.x},${a.y} L ${hx},${a.y} L ${hx},${vy} L ${b.x},${vy} L ${b.x},${b.y}`
       : `M ${a.x},${a.y} L ${a.x},${vy} L ${hx},${vy} L ${hx},${b.y} L ${b.x},${b.y}`;
@@ -129,34 +146,35 @@ export function routeOrthogonal(a: End, b: End, offset = 0): Route {
   // Two ends pointing the same way and nearly in line have to double back,
   // and doing that at the same coordinate draws the return leg through the
   // symbol. Send those round the side instead.
+  const clear = Math.max(a.clear ?? CLEAR, b.clear ?? CLEAR);
   const perp = aH ? Math.abs(a.y - b.y) : Math.abs(a.x - b.x);
-  const doublesBack = as === bs && perp < CLEAR;
+  const doublesBack = as === bs && perp < clear;
 
   if (aH) {
-    const mid = doublesBack ? null : crossbar(a.x, as, b.x, bs, offset);
+    const mid = doublesBack ? null : crossbar(a.x, as, b.x, bs, offset, sa, sb);
     if (mid) {
       const d = `M ${a.x},${a.y} L ${mid.at},${a.y} L ${mid.at},${b.y} L ${b.x},${b.y}`;
       return { d, grip: mid.free ? { x: mid.at, y: (a.y + b.y) / 2 } : null };
     }
     // Facing apart, with nothing between them: out of both ends, and round.
-    const ax = a.x + as * STUB;
-    const bx = b.x + bs * STUB;
-    const my = aside(a.y, b.y);
+    const ax = a.x + as * sa;
+    const bx = b.x + bs * sb;
+    const my = aside(a.y, b.y, clear);
     return {
       d: `M ${a.x},${a.y} L ${ax},${a.y} L ${ax},${my} L ${bx},${my} L ${bx},${b.y} L ${b.x},${b.y}`,
       grip: null,
     };
   }
-  const mid = doublesBack ? null : crossbar(a.y, as, b.y, bs, offset);
+  const mid = doublesBack ? null : crossbar(a.y, as, b.y, bs, offset, sa, sb);
   if (mid) {
     return {
       d: `M ${a.x},${a.y} L ${a.x},${mid.at} L ${b.x},${mid.at} L ${b.x},${b.y}`,
       grip: mid.free ? { x: (a.x + b.x) / 2, y: mid.at } : null,
     };
   }
-  const ay = a.y + as * STUB;
-  const by = b.y + bs * STUB;
-  const mx = aside(a.x, b.x);
+  const ay = a.y + as * sa;
+  const by = b.y + bs * sb;
+  const mx = aside(a.x, b.x, clear);
   return {
     d: `M ${a.x},${a.y} L ${a.x},${ay} L ${mx},${ay} L ${mx},${by} L ${b.x},${by} L ${b.x},${b.y}`,
     grip: null,
@@ -169,10 +187,10 @@ export function routeOrthogonal(a: End, b: End, offset = 0): Route {
  * Their midpoint, unless they share it -- two symbols stacked exactly would
  * otherwise get a "detour" that retraces the line it just drew.
  */
-function aside(a: number, b: number): number {
+function aside(a: number, b: number, clear = CLEAR): number {
   // Far apart, the midpoint is between the two symbols and clear of both.
   // Close together, it is *inside* them, so go round instead.
-  return Math.abs(a - b) > 2 * CLEAR ? (a + b) / 2 : Math.max(a, b) + CLEAR;
+  return Math.abs(a - b) > 2 * clear ? (a + b) / 2 : Math.max(a, b) + clear;
 }
 
 /**
@@ -185,19 +203,20 @@ function aside(a: number, b: number): number {
  * and the crossbar is pinned just past the further of them.
  */
 function crossbar(
-  a: number, as: number, b: number, bs: number, offset: number,
+  a: number, as: number, b: number, bs: number, offset: number, sa = STUB, sb = STUB,
 ): { at: number; free: boolean } | null {
   // Pointing at each other with room between: anywhere in the gap works, so
   // the midpoint is the default and the reader may slide it.
-  if (as > 0 && bs < 0 && b - a > 2 * STUB) {
+  if (as > 0 && bs < 0 && b - a > sa + sb) {
     return { at: (a + b) / 2 + offset, free: true };
   }
-  if (as < 0 && bs > 0 && a - b > 2 * STUB) {
+  if (as < 0 && bs > 0 && a - b > sa + sb) {
     return { at: (a + b) / 2 + offset, free: true };
   }
   // Pointing the same way: one side of both ends works. Out past the further.
   if (as === bs) {
-    return { at: as > 0 ? Math.max(a, b) + STUB : Math.min(a, b) - STUB, free: false };
+    const s = Math.max(sa, sb);
+    return { at: as > 0 ? Math.max(a, b) + s : Math.min(a, b) - s, free: false };
   }
   // Pointing apart, or at each other with no room. No single crossbar can be
   // ahead of both, and pretending otherwise is what drew a line back through
@@ -317,9 +336,10 @@ export function direction(a: Pt, b: Pt): Pt | null {
 
 /** The point a port's stub ends at: `STUB` out of the port, the way it faces. */
 export function stubOf(e: End): Pt {
+  const s = e.stub ?? STUB;
   return isHorizontal(e.side)
-    ? { x: e.x + facing(e.side) * STUB, y: e.y }
-    : { x: e.x, y: e.y + facing(e.side) * STUB };
+    ? { x: e.x + facing(e.side) * s, y: e.y }
+    : { x: e.x, y: e.y + facing(e.side) * s };
 }
 
 /**

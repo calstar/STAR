@@ -41,7 +41,9 @@ export function crossingsOf(mine: Pt[], others: Pt[][], r = HOP_R): Pt[] {
         if (Math.abs(a.y - b.y) > EPS) continue;       // over horizontal ones
         const y = a.y;
         const x1 = Math.min(a.x, b.x), x2 = Math.max(a.x, b.x);
-        if (x > x1 + r && x < x2 - r && y > y1 + r && y < y2 - r) out.push({ x, y });
+        // Two radii from any corner or end: a hop that touches a corner
+        // reads as the line failing to turn.
+        if (x > x1 + 2 * r && x < x2 - 2 * r && y > y1 + 2 * r && y < y2 - 2 * r) out.push({ x, y });
       }
     }
   }

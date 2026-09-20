@@ -16,7 +16,7 @@ describe('where lines cross', () => {
   it('is not a line ending on another, or one running alongside', () => {
     expect(crossingsOf([P(100, 0), P(100, 100)], [horizontal])).toEqual([]);     // ends on it: a tee's business
     expect(crossingsOf([P(100, 0), P(100, 200)], [[P(100, 50), P(100, 150)]])).toEqual([]);
-    expect(crossingsOf([P(100, 0), P(100, 200)], [[P(97, 100), P(200, 100)]])).toEqual([]); // too near its end for a hop
+    expect(crossingsOf([P(100, 0), P(100, 200)], [[P(93, 100), P(200, 100)]])).toEqual([]); // too near its end for a hop
   });
 
   it('is drawn as a semicircle in the line, bulging the same way both ways up', () => {

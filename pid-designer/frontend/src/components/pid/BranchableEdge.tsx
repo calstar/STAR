@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { BaseEdge, useReactFlow, type EdgeProps } from '@xyflow/react';
+import { BaseEdge, useNodesData, useReactFlow, type EdgeProps } from '@xyflow/react';
+import { J_END } from './junctions';
 import { splitEdgeAt } from './splitEdge';
 import {
   dragSegment, jogSegment, nearestOnPolyline, pathPoints, routeOrthogonal, routeThrough, waypointsOf,
@@ -44,11 +45,20 @@ export { nearestOnPath, faceTowards } from './route';
  */
 export function BranchableEdge(props: EdgeProps) {
   const {
-    id,
+    id, source, target,
     sourceX, sourceY, targetX, targetY,
     sourcePosition, targetPosition,
     style, data, selected,
   } = props;
+
+  // Whether each end is on a tee. The router routes a tee differently -- a
+  // six-pixel stub and a fourteen-pixel clearance, not a symbol's sixteen
+  // and forty-four -- and the faces a line is given were chosen on that
+  // basis (see `pointLines`). Drawing it as if both ends were symbols is
+  // what turned a chosen three-segment Z into a six-segment loop.
+  const endNodes = useNodesData([source, target]);
+  const isTee = (i: number) => (endNodes[i]?.data as { componentType?: string } | undefined)?.componentType === 'JUNCTION';
+  const teeA = isTee(0), teeB = isTee(1);
 
   const { setNodes, setEdges, getNodes, getEdges, screenToFlowPosition } = useReactFlow();
   const readOnly = useReadOnly();
@@ -61,15 +71,15 @@ export function BranchableEdge(props: EdgeProps) {
   const routing = data as { offset?: number; waypoints?: Pt[] } | undefined;
 
   // ── The run ────────────────────────────────────────────────────────────────
-  const a: End = { x: sourceX, y: sourceY, side: sourcePosition };
-  const b: End = { x: targetX, y: targetY, side: targetPosition };
+  const a: End = { x: sourceX, y: sourceY, side: sourcePosition, ...(teeA ? J_END : {}) };
+  const b: End = { x: targetX, y: targetY, side: targetPosition, ...(teeB ? J_END : {}) };
   const waypoints = routing?.waypoints;
   const offset = routing?.offset ?? 0;
   const pts = useMemo(() => {
     const route = waypoints?.length ? routeThrough(a, b, waypoints) : routeOrthogonal(a, b, offset);
     return pathPoints(route.d);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, waypoints, offset]);
+  }, [sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, waypoints, offset, teeA, teeB]);
 
   // Tell the other lines where this one is, and find out where they are.
   useLayoutEffect(() => { publishEdge(id, pts); }, [id, pts]);

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Position } from '@xyflow/react';
 import type { Edge, Node } from '@xyflow/react';
 import { branchFace, junctionEnd, reseatJunctions, runFaces, slideAlong } from './junctions';
+import { pathPoints, routeOrthogonal } from './route';
 import type { Along, EndLookup } from './junctions';
 import { insertInline, splitEdgeAt } from './splitEdge';
 import type { Pt } from './route';
@@ -193,5 +194,95 @@ describe('a tee that rides its run', () => {
     const slid = slideAlong(j, alongOf(j), { x: 295, y: 120 }, split.edges, new Map(split.nodes.map(n => [n.id, n])), endOf)!;
     expect(slid.position).toEqual(P(295, 25));      // back on the pipe
     expect(slid.along.t).toBeCloseTo((300 - 60) / 340);
+  });
+});
+
+describe('the faces a branch takes', () => {
+  /** Two horizontal runs, one tee on each, joined by a branch. */
+  function twoRuns(dy: number, dx = 200) {
+    const nodes: Node[] = [
+      part('A', 0, 0), part('B', 600, 0),
+      part('C', 0, dy), part('D', 600, dy),
+    ];
+    const edges: Edge[] = [
+      { id: 'A-B', source: 'A', sourceHandle: 'r', target: 'B', targetHandle: 'l', type: 'smoothstep', data: {} },
+      { id: 'C-D', source: 'C', sourceHandle: 'r', target: 'D', targetHandle: 'l', type: 'smoothstep', data: {} },
+    ];
+    const s1 = splitEdgeAt(nodes, edges, 'A-B', P(200, 30), undefined, { a: endOf(nodes[0], 'r')!, b: endOf(nodes[1], 'l')! })!;
+    const s2 = splitEdgeAt(s1.nodes, s1.edges, 'C-D', P(200 + dx, 30 + dy), undefined, { a: endOf(nodes[2], 'r')!, b: endOf(nodes[3], 'l')! })!;
+    const branch: Edge = { id: 'br', source: s1.junctionId, sourceHandle: 'b', target: s2.junctionId, targetHandle: 't', type: 'smoothstep', data: {} };
+    return { nodes: s2.nodes, edges: [...s2.edges, branch], j1: s1.junctionId, j2: s2.junctionId };
+  }
+  const faces = (edges: Edge[]) => { const b = edges.find(e => e.id === 'br')!; return [b.sourceHandle, b.targetHandle]; };
+
+  it('takes the same face on both tees when their runs are nearly level, not opposite ones', () => {
+    // The knot: t on one and b on the other joins by an S over one run and
+    // under the other. Both up (or both down) is a hook.
+    const { nodes, edges } = twoRuns(-5);
+    const re = reseatJunctions(nodes, edges, endOf);
+    const [fs, ft] = faces(re.edges);
+    expect(fs).toBe(ft);
+    expect(['t', 'b']).toContain(fs);
+  });
+
+  it('joins two tees thirty pixels apart with one crossbar, not a detour round both', () => {
+    // A symbol's stub is sixteen; two of them left no room in thirty, and
+    // the router went round. A tee's stub is six.
+    const { nodes, edges } = twoRuns(-30);
+    const re = reseatJunctions(nodes, edges, endOf);
+    expect(faces(re.edges)).toEqual(['t', 'b']);
+    const b = re.edges.find(e => e.id === 'br')!;
+    const j1 = re.nodes.find(n => n.id === b.source)!, j2 = re.nodes.find(n => n.id === b.target)!;
+    const d = routeOrthogonal(junctionEnd(j1.position, 't'), junctionEnd(j2.position, 'b')).d;
+    expect(pathPoints(d)).toHaveLength(4);   // out, across, in
+  });
+
+  it('takes opposite faces when one run is well above the other', () => {
+    const { nodes, edges } = twoRuns(-200);
+    const re = reseatJunctions(nodes, edges, endOf);
+    expect(faces(re.edges)).toEqual(['t', 'b']);
+  });
+
+  it('never takes a face the run itself uses', () => {
+    const { nodes, edges } = twoRuns(-200);
+    const wrong = edges.map(e => (e.id === 'br' ? { ...e, sourceHandle: 'l', targetHandle: 'r' } : e));
+    const re = reseatJunctions(nodes, wrong, endOf);
+    const [fs, ft] = faces(re.edges);
+    expect(['t', 'b']).toContain(fs);
+    expect(['t', 'b']).toContain(ft);
+  });
+
+  it('keeps the faces it has when nothing has changed', () => {
+    const { nodes, edges } = twoRuns(-200);
+    const once = reseatJunctions(nodes, edges, endOf);
+    const twice = reseatJunctions(once.nodes, once.edges, endOf);
+    expect(twice.edges).toBe(once.edges);
+  });
+
+  it('chooses an open end\'s face from all four, by the route', () => {
+    const nodes: Node[] = [part('A', 0, 0), { id: 'o', type: 'JUNCTION', position: { x: 295, y: 25 }, measured: { width: 10, height: 10 }, data: { componentType: 'JUNCTION', label: 'o' } }];
+    const edges: Edge[] = [{ id: 'A-o', source: 'A', sourceHandle: 'r', target: 'o', targetHandle: 'b', type: 'smoothstep', data: {} }];
+    const re = reseatJunctions(nodes, edges, endOf);
+    // Level with A's right-hand port and to its right: enter by the left face.
+    expect(re.edges[0].targetHandle).toBe('l');
+  });
+});
+
+describe('a branch between two tees on runs at right angles', () => {
+  it('is the two-corner route, not a four-corner one', () => {
+    // A tee on a horizontal run at (200, 30); a vertical run 40 px to the
+    // right with a tee at (240, -10). Up and right is 64 px; the other
+    // three combinations go round.
+    const nodes: Node[] = [part('A', 0, 0), part('B', 400, 0), part('C', 210, -300), part('D', 210, 300)];
+    const edges: Edge[] = [
+      { id: 'A-B', source: 'A', sourceHandle: 'r', target: 'B', targetHandle: 'l', type: 'smoothstep', data: {} },
+      { id: 'C-D', source: 'C', sourceHandle: 'b', target: 'D', targetHandle: 't', type: 'smoothstep', data: {} },
+    ];
+    const s1 = splitEdgeAt(nodes, edges, 'A-B', P(200, 30), undefined, { a: endOf(nodes[0], 'r')!, b: endOf(nodes[1], 'l')! })!;
+    const s2 = splitEdgeAt(s1.nodes, s1.edges, 'C-D', P(240, -10), undefined, { a: endOf(nodes[2], 'b')!, b: endOf(nodes[3], 't')! })!;
+    const branch: Edge = { id: 'br', source: s1.junctionId, sourceHandle: 'b', target: s2.junctionId, targetHandle: 'r', type: 'smoothstep', data: {} };
+    const re = reseatJunctions(s2.nodes, [...s2.edges, branch], endOf);
+    const b = re.edges.find(e => e.id === 'br')!;
+    expect([b.sourceHandle, b.targetHandle]).toEqual(['t', 'l']);
   });
 });

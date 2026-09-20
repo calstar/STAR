@@ -133,3 +133,16 @@ describe('a point along a run', () => {
     expect(nearestOnPolyline(run, P(104, -3))!.point).toEqual(P(100, 0));
   });
 });
+
+describe('what a route has to clear', () => {
+  it('goes round a tee by the tee, not by a symbol', () => {
+    // Two upward ends nearly in line, both on tees: the return leg steps
+    // aside by a tee's clearance, not a symbol's forty-four.
+    const tee = (x: number, y: number): import('./route').End => ({ x, y, side: Position.Top, clear: 14 });
+    const d = routeThrough(tee(100, 100), tee(110, 100), []).d;
+    const xs = pathPoints(d).map(p => p.x);
+    expect(Math.max(...xs)).toBeLessThan(100 + 44);
+    const dSymbol = routeThrough({ x: 100, y: 100, side: Position.Top }, { x: 110, y: 100, side: Position.Top }, []).d;
+    void dSymbol;
+  });
+});

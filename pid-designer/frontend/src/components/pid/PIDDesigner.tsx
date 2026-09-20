@@ -60,13 +60,14 @@ import { clearOfHost, dragAttached, isInline, isInstrument, isTapped, targetAt }
 import { insertInline, rejoinAfterDelete, splitEdgeAt } from './splitEdge';
 import { drawnLines, lineAt } from './lineHit';
 import {
-  J_HALF, branchFace, isJunction, junctionData, junctionEnd, reseatJunctions, runDirOf, slideAlong,
+  J_ANCHOR, J_END, J_HALF, branchFace, isJunction, junctionData, junctionEnd, reseatJunctions, runDirOf, slideAlong,
 } from './junctions';
 import type { EndLookup, Face } from './junctions';
 import { BranchDragProvider, BranchPreview } from './BranchDrag';
 import type { BranchSource } from './BranchDrag';
-import { faceTowards } from './route';
-import type { Pt } from './route';
+import { faceTowards, pathPoints as pathPointsOf, polylineLength, routeOrthogonal } from './route';
+import type { End, Pt } from './route';
+import { Position } from '@xyflow/react';
 import { alignmentShift } from './snap';
 import type { PortPositions } from './snap';
 import { COMPONENT_SPECS } from './spec';
@@ -285,6 +286,11 @@ function PIDCanvas({
     if (isJunction(node) && handleId) return junctionEnd(node.position, handleId as Face);
     return null;
   }, [getInternalNode]);
+  // A tee's measured handle is still a tee: routes need only clear the dot.
+  const endOfClear = useCallback<EndLookup>((node, handleId) => {
+    const e = endOf(node, handleId);
+    return e && isJunction(node) && e.clear === undefined ? { ...e, ...J_END } : e;
+  }, [endOf]);
 
   /** The point a line from `nodeId`'s `handleId` would start at. */
   const portPoint = useCallback((nodeId: string, handleId: string | null | undefined): Pt | null => {
@@ -660,6 +666,15 @@ function PIDCanvas({
     // React Flow emits position changes faster than React re-renders during a
     // drag, so several arrive against the same stale base and the instruments
     // clipped to a component lag behind it and then jump.
+    // Corners go with a group. A line routed by hand keeps its corners where
+    // they were put, in absolute coordinates, which is right when one end
+    // moves -- the corner is a decision about where the pipe runs. But when
+    // *both* ends move together, as a box-selected bay does, the corners
+    // between them are part of what was picked up, and leaving them behind
+    // turns every hand-routed line in the selection into a zigzag.
+    const movedIds = new Set<string>();
+    for (const c of changes) if (c.type === 'position' && c.position) movedIds.add(c.id);
+    const shifts = new Map<string, Pt>();
     setNodes(current => {
       const before = new Map(current.map(n => [n.id, n.position]));
       let next = applyNodeChanges(changes, current);
@@ -674,7 +689,7 @@ function PIDCanvas({
           const along = moved && isJunction(moved) ? junctionData(moved).along : undefined;
           if (moved && along) {
             const slid = slideAlong(
-              moved, along, c.position, snapshot.current.edges, new Map(next.map(n => [n.id, n])), endOf);
+              moved, along, c.position, snapshot.current.edges, new Map(next.map(n => [n.id, n])), endOfClear);
             if (slid) {
               next = next.map(n => n.id === c.id
                 ? { ...n, position: slid.position, data: { ...n.data, along: slid.along } }
@@ -683,7 +698,7 @@ function PIDCanvas({
           }
           const now = next.find(n => n.id === c.id)?.position ?? c.position;
           const delta = { x: now.x - from.x, y: now.y - from.y };
-          if (delta.x || delta.y) next = dragAttached(next, c.id, delta);
+          if (delta.x || delta.y) { next = dragAttached(next, c.id, delta); shifts.set(c.id, delta); }
           continue;
         }
         // A resize arrives as a `dimensions` change, and React Flow records it
@@ -719,7 +734,22 @@ function PIDCanvas({
       }
       return next;
     });
-  }, [setNodes]);
+    if (movedIds.size > 1) {
+      setEdges(eds => {
+        let changed = false;
+        const out = eds.map(e => {
+          const a = shifts.get(e.source), b = shifts.get(e.target);
+          const pts = (e.data as { waypoints?: Pt[] } | undefined)?.waypoints;
+          if (!a || !b || !pts?.length) return e;
+          // The same shift on both ends, or the corners cannot follow.
+          if (Math.abs(a.x - b.x) > 1e-6 || Math.abs(a.y - b.y) > 1e-6) return e;
+          changed = true;
+          return { ...e, data: { ...e.data, waypoints: pts.map(p => ({ x: p.x + a.x, y: p.y + a.y })) } };
+        });
+        return changed ? out : eds;
+      });
+    }
+  }, [setNodes, setEdges, endOfClear]);
 
   /** Bring one component into view without changing the zoom people chose. */
   const fitViewTo = useCallback(async (node: Node) => {
@@ -858,20 +888,33 @@ function PIDCanvas({
       } else if (n && handleEl?.dataset.handleid) {
         target = { id: n.id, handle: handleEl.dataset.handleid };
       } else if (n) {
-        // The nearest of its ports to where the pointer let go.
+        // The port of it that the line reaches best: by the route, not by
+        // distance to the pointer. A port that faces away from the tee is
+        // near and wrong -- the line has to go round the symbol to enter
+        // it -- and the port on the far side that faces the tee is right.
         const handles = getInternalNode(n.id)?.internals.handleBounds?.source ?? [];
-        let best: { id: string; d: number } | null = null;
+        let best: { id: string; c: number } | null = null;
+        const from: End = source.kind === 'line'
+          ? (Math.abs(source.dir.x) >= Math.abs(source.dir.y)
+            ? { x: source.at.x, y: source.at.y + (at.y < source.at.y ? -J_ANCHOR : J_ANCHOR), side: at.y < source.at.y ? Position.Top : Position.Bottom, ...J_END }
+            : { x: source.at.x + (at.x < source.at.x ? -J_ANCHOR : J_ANCHOR), y: source.at.y, side: at.x < source.at.x ? Position.Left : Position.Right, ...J_END })
+          : { x: source.at.x, y: source.at.y, side: Position.Top, ...J_END };
         for (const h of handles) {
-          const hx = n.position.x + h.x + h.width / 2, hy = n.position.y + h.y + h.height / 2;
-          const d = Math.hypot(hx - at.x, hy - at.y);
-          if (!best || d < best.d) best = { id: h.id ?? '', d };
+          const to = endOf(n, h.id);
+          if (!to) continue;
+          const pts = pathPointsOf(routeOrthogonal(from, to).d);
+          const c = polylineLength(pts) + 12 * Math.max(0, pts.length - 2);
+          if (!best || c < best.c) best = { id: h.id ?? '', c };
         }
         if (best) target = { id: n.id, handle: best.id };
       }
     }
     if (!target) {
       const hit = lineAt(drawnLines(), at, 14, sourceEdgeId ?? undefined);
-      if (hit) {
+      // Not onto a line the tee itself is on: a branch from a tee back into
+      // its own run is a loop with nothing in it.
+      const own = hit && sourceNodeId && es.some(e => e.id === hit.id && (e.source === sourceNodeId || e.target === sourceNodeId));
+      if (hit && !own) {
         const split = splitEdgeAt(ns, es, hit.id, hit.at, page, { points: hit.points });
         if (!split) return;
         ns = split.nodes; es = split.edges;
@@ -1189,10 +1232,10 @@ function PIDCanvas({
       if (burst.length === 31) console.warn('pid-designer: tees would not settle; leaving them where they are');
       return;
     }
-    const re = reseatJunctions(nodes, edges, endOf);
+    const re = reseatJunctions(nodes, edges, endOfClear);
     if (re.nodes !== nodes) setNodes(re.nodes);
     if (re.edges !== edges) setEdges(re.edges);
-  }, [nodes, edges, endOf, setNodes, setEdges, nodesReady]);
+  }, [nodes, edges, endOfClear, setNodes, setEdges, nodesReady]);
 
   const onNodeClick = useCallback((e: React.MouseEvent, node: Node) => {
     if (paintIfArmed('node', node.id)) { e.stopPropagation(); e.preventDefault(); }
