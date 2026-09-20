@@ -406,7 +406,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
       id: 'lines-crossing',
       severity: 'info',
       title: `${crossings} place${crossings === 1 ? '' : 's'} where lines cross`,
-      detail: 'Crossing is not joining. To join them, drag one onto the other; to keep them apart, drag a line’s middle segment.',
+      detail: 'Crossing is not joining, and the drawing says so: the vertical line hops the horizontal one. To join them, pull from one line onto the other; to keep them apart, drag a segment out of the way.',
     });
   }
 

@@ -61,3 +61,16 @@ body {
   font-family: system-ui, -apple-system, sans-serif;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
+
+/* ── Ports and tees ─────────────────────────────────────────────────────────
+   A port shows itself as something you pull a line from the moment the
+   pointer is over its symbol, so "move the symbol" and "draw from its port"
+   stop being the same pixel. A tee's faces anchor lines and are never shown:
+   the tee is dragged by its dot and drawn from by its ring. */
+.react-flow__node:hover .react-flow__handle:not(.pid-junction-face) {
+  box-shadow: 0 0 0 2px var(--color-bg-primary), 0 0 0 3.5px var(--color-text-secondary);
+}
+.react-flow__handle:not(.pid-junction-face):hover {
+  box-shadow: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--color-text-primary);
+  transform-origin: center;
+}

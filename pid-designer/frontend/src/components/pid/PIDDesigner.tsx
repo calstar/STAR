@@ -16,6 +16,7 @@ import {
   SelectionMode,
   ConnectionMode,
   type Connection,
+  type FinalConnectionState,
   type Node,
   type NodeChange,
   type Edge,
@@ -34,7 +35,7 @@ import { designApi, keyOf, refOf } from '../../api/diagrams';
 import type { DiagramMeta, DocRef, MicroVersion, ReleaseVersion, Snapshot } from '../../api/diagrams';
 import { nodeTypes } from './nodes';
 import { BranchableEdge } from './BranchableEdge';
-import { nextNodeId, seedIdsFrom } from './ids';
+import { nextJunctionId, nextNodeId, seedIdsFrom } from './ids';
 import { defFor } from './types';
 import type { PIDNodeData } from './types';
 import { numberTag } from './tags';
@@ -55,9 +56,17 @@ import { ChecksPanel } from './ChecksPanel';
 import { VentLayer } from './VentLayer';
 import { PageBar } from './PageBar';
 import { DEFAULT_PAGE, applyPage, listPages, moveToPage, pageOf } from './pages';
-import { clearOfHost, dragAttached, isInstrument, isTapped, targetAt } from './attach';
-import { rejoinAfterDelete, splitEdgeAt } from './splitEdge';
+import { clearOfHost, dragAttached, isInline, isInstrument, isTapped, targetAt } from './attach';
+import { insertInline, rejoinAfterDelete, splitEdgeAt } from './splitEdge';
 import { drawnLines, lineAt } from './lineHit';
+import {
+  J_HALF, branchFace, isJunction, junctionData, junctionEnd, reseatJunctions, runDirOf, slideAlong,
+} from './junctions';
+import type { EndLookup, Face } from './junctions';
+import { BranchDragProvider, BranchPreview } from './BranchDrag';
+import type { BranchSource } from './BranchDrag';
+import { faceTowards } from './route';
+import type { Pt } from './route';
 import { alignmentShift } from './snap';
 import type { PortPositions } from './snap';
 import { COMPONENT_SPECS } from './spec';
@@ -235,6 +244,7 @@ function PIDCanvas({
   paintRef.current = { on: tool === 'paint', colour };
   const toolRef = useRef(tool);
   toolRef.current = tool;
+  const disarm = useCallback(() => setTool('none'), []);
 
   // Read inside `clearRef`, which is called through a ref from the toolbar and
   // would otherwise close over whichever page was current when it was built.
@@ -249,6 +259,42 @@ function PIDCanvas({
   const { screenToFlowPosition, setCenter, getZoom, fitView, setViewport, getInternalNode } = useReactFlow();
 
   const { undo, redo } = useHistory(nodes, edges, setNodes, setEdges);
+
+  /**
+   * Where a port is and which way it faces, asked with the node's current
+   * position. Read off React Flow's own measured handle bounds rather than a
+   * table of where each symbol keeps its ports: it already knows, it stays
+   * right when a symbol is turned, and a second copy of that geometry is a
+   * second thing to get wrong. A tee's faces are fixed, so they need no
+   * measuring; anything else unmeasured falls back to its centre.
+   */
+  const endOf = useCallback<EndLookup>((node, handleId) => {
+    const hb = getInternalNode(node.id)?.internals.handleBounds?.source?.find(h => h.id === handleId);
+    if (hb) {
+      // The handle's *outer* edge in the direction it faces, which is where
+      // React Flow itself anchors a line (`getHandlePosition`). Its centre
+      // is three pixels short of that, and three pixels was a visible kink
+      // in every run a tee was put back on.
+      const { position: side } = hb;
+      return {
+        x: node.position.x + hb.x + (side === 'right' ? hb.width : side === 'left' ? 0 : hb.width / 2),
+        y: node.position.y + hb.y + (side === 'bottom' ? hb.height : side === 'top' ? 0 : hb.height / 2),
+        side,
+      };
+    }
+    if (isJunction(node) && handleId) return junctionEnd(node.position, handleId as Face);
+    return null;
+  }, [getInternalNode]);
+
+  /** The point a line from `nodeId`'s `handleId` would start at. */
+  const portPoint = useCallback((nodeId: string, handleId: string | null | undefined): Pt | null => {
+    const n = snapshot.current.nodes.find(x => x.id === nodeId);
+    if (!n) return null;
+    const end = endOf(n, handleId);
+    if (end) return { x: end.x, y: end.y };
+    const { w, h } = { w: n.measured?.width ?? 60, h: n.measured?.height ?? 60 };
+    return { x: n.position.x + w / 2, y: n.position.y + h / 2 };
+  }, [endOf]);
 
   // Which diagram the current nodes/edges belong to. Guards autosave from writing
   // the previous diagram's geometry into the newly-selected one before it loads.
@@ -621,7 +667,22 @@ function PIDCanvas({
         if (c.type === 'position' && c.position) {
           const from = before.get(c.id);
           if (!from) continue;
-          const delta = { x: c.position.x - from.x, y: c.position.y - from.y };
+          // A tee dragged by hand slides along its run: the position React
+          // Flow reports is where the pointer put it, and the run is where
+          // it can actually go. See junctions.ts.
+          const moved = next.find(n => n.id === c.id);
+          const along = moved && isJunction(moved) ? junctionData(moved).along : undefined;
+          if (moved && along) {
+            const slid = slideAlong(
+              moved, along, c.position, snapshot.current.edges, new Map(next.map(n => [n.id, n])), endOf);
+            if (slid) {
+              next = next.map(n => n.id === c.id
+                ? { ...n, position: slid.position, data: { ...n.data, along: slid.along } }
+                : n);
+            }
+          }
+          const now = next.find(n => n.id === c.id)?.position ?? c.position;
+          const delta = { x: now.x - from.x, y: now.y - from.y };
           if (delta.x || delta.y) next = dragAttached(next, c.id, delta);
           continue;
         }
@@ -688,44 +749,170 @@ function PIDCanvas({
     connectingFrom.current = params.nodeId ? { nodeId: params.nodeId, handleId: params.handleId } : null;
   }, []);
 
-  const onConnectEnd = useCallback((event: MouseEvent | TouchEvent) => {
-    const from = connectingFrom.current;
+  /** A line id nothing else on the drawing has. */
+  const freshEdgeId = useCallback((source: string, target: string, edges: Edge[]) => {
+    const base = `${source}-${target}`;
+    if (!edges.some(e => e.id === base)) return base;
+    let n = 2;
+    while (edges.some(e => e.id === `${base}-${n}`)) n++;
+    return `${base}-${n}`;
+  }, []);
+
+  /**
+   * A port drag that ended on a line branches the line; one that ended on
+   * nothing leaves an open end.
+   *
+   * The open end is a tee with one line on it -- see JunctionNode -- drawn
+   * hollow, to be picked up later. It is only made when the drag went
+   * somewhere: a port let go of next to itself is a change of mind, not a
+   * stub. A drag that ended on a port is React Flow's, through `onConnect`.
+   */
+  const onConnectEnd = useCallback((event: MouseEvent | TouchEvent, state: FinalConnectionState) => {
+    const from = state.fromNode && state.fromHandle
+      ? { nodeId: state.fromNode.id, handleId: state.fromHandle.id ?? null }
+      : connectingFrom.current;
     connectingFrom.current = null;
     if (!from || readOnlyRef.current) return;
+    if (state.toHandle) return;
 
     const point = 'clientX' in event
       ? { x: event.clientX, y: event.clientY }
       : { x: event.changedTouches[0]?.clientX ?? 0, y: event.changedTouches[0]?.clientY ?? 0 };
-    const flow = screenToFlowPosition(point);
+    const flow = screenToFlowPosition(point, { snapToGrid: false });
+    const origin = portPoint(from.nodeId, from.handleId) ?? flow;
 
     const { nodes: ns, edges: es } = snapshot.current;
-    // Only when it landed on a line. On a component ReactFlow has already made
-    // the connection, and `lineAt` will not claim it.
     const hit = lineAt(drawnLines(), flow);
-    if (!hit) return;
+    if (hit) {
+      // Not onto a line this component is already an end of. That would be
+      // two lines from the same port to the same junction, which is a
+      // parallel path and not what anybody dragging there meant.
+      const line = es.find(e => e.id === hit.id);
+      if (!line || line.source === from.nodeId || line.target === from.nodeId) return;
+      const split = splitEdgeAt(ns, es, hit.id, hit.at, pageRef.current, { points: hit.points });
+      if (!split) return;
+      commitGraph(split.nodes, [
+        ...split.edges,
+        {
+          id: freshEdgeId(from.nodeId, split.junctionId, split.edges),
+          source: from.nodeId,
+          sourceHandle: from.handleId ?? undefined,
+          target: split.junctionId,
+          targetHandle: branchFace(hit.dir, origin, hit.at),
+          type: 'smoothstep',
+          data: {},
+        },
+      ]);
+      return;
+    }
 
-    // Not onto a line this component is already an end of. That would be two
-    // lines from the same port to the same junction, which is a parallel path
-    // and not what anybody dragging there meant.
-    const line = es.find(e => e.id === hit.id);
-    if (!line || line.source === from.nodeId || line.target === from.nodeId) return;
+    if (Math.hypot(flow.x - origin.x, flow.y - origin.y) < 40) return;
+    const at = { x: Math.round(flow.x / SNAP[0]) * SNAP[0], y: Math.round(flow.y / SNAP[1]) * SNAP[1] };
+    const junctionId = nextJunctionId();
+    const open: Node = {
+      id: junctionId, type: 'JUNCTION',
+      position: { x: at.x - J_HALF, y: at.y - J_HALF },
+      data: { componentType: 'JUNCTION', label: junctionId, page: pageRef.current } as unknown as Record<string, unknown>,
+    };
+    commitGraph([...ns, open], [...es, {
+      id: freshEdgeId(from.nodeId, junctionId, es),
+      source: from.nodeId,
+      sourceHandle: from.handleId ?? undefined,
+      target: junctionId,
+      targetHandle: faceTowards(origin.x, origin.y, at.x, at.y),
+      type: 'smoothstep',
+      data: {},
+    }]);
+  }, [screenToFlowPosition, commitGraph, portPoint, freshEdgeId]);
 
-    const split = splitEdgeAt(ns, es, hit.id, hit.at, pageRef.current);
-    if (!split) return;
+  /**
+   * A line pulled out of a line, or out of a tee, let go somewhere.
+   *
+   * What it landed on decides what it joins: a port takes it as drawn; a
+   * component takes it on whichever of its ports is nearest; another line is
+   * teed where it was hit; a tee takes it on the face across its run; and
+   * empty canvas leaves an open end to be picked up later. The line it was
+   * pulled from is teed where the pull began. Every face is chosen from the
+   * geometry, never from which handle a drop happened to land on.
+   */
+  const onBranchDrop = useCallback((source: BranchSource, at: Pt, client: { x: number; y: number }) => {
+    if (readOnlyRef.current) return;
+    let { nodes: ns, edges: es } = snapshot.current;
+    const page = pageRef.current;
 
-    commitGraph(split.nodes, [
-      ...split.edges,
-      {
-        id: `${from.nodeId}-${split.junctionId}`,
-        source: from.nodeId,
-        sourceHandle: from.handleId ?? undefined,
-        target: split.junctionId,
-        targetHandle: undefined,
-        type: 'smoothstep',
-        data: {},
-      },
-    ]);
-  }, [screenToFlowPosition, commitGraph]);
+    // What is under the pointer, by DOM: a handle, a symbol, or nothing.
+    const el = document.elementFromPoint(client.x, client.y) as HTMLElement | null;
+    const handleEl = el?.closest<HTMLElement>('.react-flow__handle');
+    const nodeEl = el?.closest<HTMLElement>('.react-flow__node');
+    const hitId = handleEl?.dataset.nodeid ?? nodeEl?.dataset.id;
+    const sourceNodeId = source.kind === 'node' ? source.nodeId : null;
+    const sourceEdgeId = source.kind === 'line' ? source.edgeId : null;
+
+    let target: { id: string; handle: string } | null = null;
+    if (hitId && hitId !== sourceNodeId) {
+      const n = ns.find(x => x.id === hitId);
+      if (n && isJunction(n)) {
+        const along = junctionData(n).along;
+        const c = { x: n.position.x + J_HALF, y: n.position.y + J_HALF };
+        target = { id: n.id, handle: along ? branchFace(runDirOf(along), source.at, c) : faceTowards(source.at.x, source.at.y, c.x, c.y) };
+      } else if (n && handleEl?.dataset.handleid) {
+        target = { id: n.id, handle: handleEl.dataset.handleid };
+      } else if (n) {
+        // The nearest of its ports to where the pointer let go.
+        const handles = getInternalNode(n.id)?.internals.handleBounds?.source ?? [];
+        let best: { id: string; d: number } | null = null;
+        for (const h of handles) {
+          const hx = n.position.x + h.x + h.width / 2, hy = n.position.y + h.y + h.height / 2;
+          const d = Math.hypot(hx - at.x, hy - at.y);
+          if (!best || d < best.d) best = { id: h.id ?? '', d };
+        }
+        if (best) target = { id: n.id, handle: best.id };
+      }
+    }
+    if (!target) {
+      const hit = lineAt(drawnLines(), at, 14, sourceEdgeId ?? undefined);
+      if (hit) {
+        const split = splitEdgeAt(ns, es, hit.id, hit.at, page, { points: hit.points });
+        if (!split) return;
+        ns = split.nodes; es = split.edges;
+        target = { id: split.junctionId, handle: branchFace(hit.dir, source.at, hit.at) };
+      }
+    }
+    if (!target) {
+      if (Math.hypot(at.x - source.at.x, at.y - source.at.y) < 30) return;
+      const p = { x: Math.round(at.x / SNAP[0]) * SNAP[0], y: Math.round(at.y / SNAP[1]) * SNAP[1] };
+      const junctionId = nextJunctionId();
+      ns = [...ns, {
+        id: junctionId, type: 'JUNCTION',
+        position: { x: p.x - J_HALF, y: p.y - J_HALF },
+        data: { componentType: 'JUNCTION', label: junctionId, page } as unknown as Record<string, unknown>,
+      }];
+      target = { id: junctionId, handle: faceTowards(source.at.x, source.at.y, p.x, p.y) };
+    }
+
+    // Now the end the pull began at.
+    let from: { id: string; handle: string };
+    const targetPoint = portPoint(target.id, target.handle) ?? at;
+    if (source.kind === 'line') {
+      const split = splitEdgeAt(ns, es, source.edgeId, source.at, page, { points: source.points });
+      if (!split) return;
+      ns = split.nodes; es = split.edges;
+      from = { id: split.junctionId, handle: branchFace(source.dir, targetPoint, source.at) };
+    } else {
+      const n = ns.find(x => x.id === source.nodeId);
+      const along = n && isJunction(n) ? junctionData(n).along : undefined;
+      from = { id: source.nodeId, handle: along ? branchFace(runDirOf(along), targetPoint, source.at) : faceTowards(targetPoint.x, targetPoint.y, source.at.x, source.at.y) };
+    }
+    if (from.id === target.id) return;
+
+    commitGraph(ns, [...es, {
+      id: freshEdgeId(from.id, target.id, es),
+      source: from.id, sourceHandle: from.handle,
+      target: target.id, targetHandle: target.handle,
+      type: 'smoothstep',
+      data: {},
+    }]);
+  }, [commitGraph, getInternalNode, portPoint, freshEdgeId]);
 
   const onDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -801,28 +988,54 @@ function PIDCanvas({
      * junction, then draw the line, then remember which of four ports to use
      * is three steps for one intention.
      */
+    /**
+     * A valve, a regulator or a disconnect dropped on a line goes *into* it.
+     *
+     * It used to land on top of the line, unconnected, and the next four
+     * gestures were the ones that made it part of the run. See
+     * `insertInline`: the run breaks around it and the part is turned to
+     * face the way the run goes.
+     */
+    if (isInline(type)) {
+      const hit = lineAt(drawnLines(), flowPos);
+      if (hit) {
+        const part: Node = { id, type, position: flowPos, data: nodeData as unknown as Record<string, unknown> };
+        const ins = insertInline(
+          snapshot.current.nodes, snapshot.current.edges, hit.id, hit.at, part, { points: hit.points });
+        if (ins) { commitGraph(ins.nodes, ins.edges); return; }
+      }
+    }
+
     if (isTapped(type)) {
       const hit = lineAt(drawnLines(), flowPos);
       if (hit) {
         const at = hit.at;
         const split = splitEdgeAt(
-          snapshot.current.nodes, snapshot.current.edges, hit.id, at, pageRef.current);
+          snapshot.current.nodes, snapshot.current.edges, hit.id, at, pageRef.current, { points: hit.points });
         if (split) {
           // Standing off the pipe, on the side the pointer was, so the symbol
-          // does not sit on top of the line it is reading. Below the line it
-          // is turned over, because its one tapping is on its underside and a
-          // tap has to point at the pipe -- the lettering stays upright.
-          const above = flowPos.y <= at.y;
+          // does not sit on top of the line it is reading, and turned so its
+          // one tapping points at the pipe -- the lettering stays upright.
+          // Which side is "off the pipe" depends on which way the pipe runs.
+          const face = branchFace(hit.dir, flowPos, at);
+          const placement: Record<Face, { x: number; y: number; rotation?: number }> = {
+            t: { x: at.x - 30, y: at.y - 90 },
+            b: { x: at.x - 30, y: at.y + 30, rotation: 180 },
+            l: { x: at.x - 90, y: at.y - 30, rotation: 270 },
+            r: { x: at.x + 30, y: at.y - 30, rotation: 90 },
+          };
+          const { rotation, ...position } = placement[face];
           commitGraph(
             [...split.nodes, {
               id, type,
-              position: { x: at.x - 30, y: above ? at.y - 90 : at.y + 30 },
-              data: { ...nodeData, ...(above ? {} : { rotation: 180 }) } as unknown as Record<string, unknown>,
+              position,
+              data: { ...nodeData, ...(rotation ? { rotation } : {}) } as unknown as Record<string, unknown>,
             }],
             [...split.edges, {
               id: `${id}-${split.junctionId}`,
               source: id, sourceHandle: 'b',
               target: split.junctionId,
+              targetHandle: face,
               type: 'smoothstep',
               data: {},
             }]);
@@ -947,6 +1160,40 @@ function PIDCanvas({
     });
   }, [getInternalNode, setNodes]);
 
+  /**
+   * Every tee stays on its run.
+   *
+   * After any change to the drawing, each tee that rides a run is put back at
+   * its fraction of the way along it and its lines re-pointed at the faces
+   * the run now uses there. Done after the render rather than inside the
+   * node-change handler because it needs both the nodes and the lines, and
+   * the handler only has one of them in hand. `reseatJunctions` hands back
+   * the very same arrays when there is nothing to do, which is what stops
+   * this running itself again.
+   */
+  const reseatBurst = useRef<number[]>([]);
+  useEffect(() => {
+    // Not until React Flow has measured every node: before that a port's
+    // position is a guess, and a tee is never seated on a guess. See
+    // `Run.unmeasured` for what happens otherwise.
+    if (!nodesReady) return;
+    // And never as a runaway. Every seat returns the same arrays once the
+    // drawing is settled, so this effect runs itself to a stop within a few
+    // renders; if some future feedback keeps it going, stop and say so rather
+    // than take the page down with "maximum update depth exceeded".
+    const now = performance.now();
+    const burst = reseatBurst.current.filter(t => now - t < 1000);
+    burst.push(now);
+    reseatBurst.current = burst;
+    if (burst.length > 30) {
+      if (burst.length === 31) console.warn('pid-designer: tees would not settle; leaving them where they are');
+      return;
+    }
+    const re = reseatJunctions(nodes, edges, endOf);
+    if (re.nodes !== nodes) setNodes(re.nodes);
+    if (re.edges !== edges) setEdges(re.edges);
+  }, [nodes, edges, endOf, setNodes, setEdges, nodesReady]);
+
   const onNodeClick = useCallback((e: React.MouseEvent, node: Node) => {
     if (paintIfArmed('node', node.id)) { e.stopPropagation(); e.preventDefault(); }
   }, [paintIfArmed]);
@@ -1041,8 +1288,9 @@ function PIDCanvas({
       onClick={() => setColorMenu(null)}
     >
       <div className="relative min-h-0 flex-1">
-      <ToolProvider tool={tool}>
+      <ToolProvider tool={tool} onDone={disarm}>
       <FluidProvider nodes={nodes} edges={edges}>
+      <BranchDragProvider readOnly={readOnly} onDrop={onBranchDrop}>
       <ReactFlow
         nodes={view.nodes} edges={view.edges}
         onNodesChange={handleNodesChange} onEdgesChange={onEdgesChange}
@@ -1081,6 +1329,7 @@ function PIDCanvas({
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-border)" />
         <AttachmentLayer nodes={nodes} edges={edges} />
         <VentLayer nodes={view.nodes} edges={view.edges} />
+        <BranchPreview />
         <Controls />
         <TitleBlock meta={{ ...sheet, page }} />
         {/* One line, and only the gestures nothing else on screen mentions.
@@ -1091,10 +1340,11 @@ function PIDCanvas({
             it stopped taking clicks meant for the canvas underneath. */}
         <Panel position="bottom-center" className="pointer-events-none max-w-full">
           <span className="block truncate whitespace-nowrap text-[10px] text-[var(--color-text-muted)] select-none">
-            Double-click to configure · R rotates · ⌘C ⌘V ⌘D copy, paste, duplicate · Right-click colours
+            Pull from a port or a line to draw · Drop a valve on a line to put it in · Double-click to configure · R rotates
           </span>
         </Panel>
       </ReactFlow>
+      </BranchDragProvider>
       </FluidProvider>
       </ToolProvider>
       </div>
@@ -1150,8 +1400,8 @@ function PIDCanvas({
           disabled={readOnly}
           onClick={() => setTool(t => (t === 'junction' ? 'none' : 'junction'))}
           title={tool === 'junction'
-            ? 'Junction on — click a line to branch it, or press Escape'
-            : 'Junction: click a line to put a branch point on it'}
+            ? 'Click a line to put a tee on it, or press Escape'
+            : 'Tee: click a line to put a branch point on it (or Alt-click the line)'}
           className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
             tool === 'junction'
               ? 'bg-[var(--color-accent)] text-white'

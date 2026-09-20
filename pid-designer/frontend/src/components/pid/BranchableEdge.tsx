@@ -1,241 +1,233 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { flushSync } from 'react-dom';
-import {
-  BaseEdge,
-  useReactFlow,
-  type EdgeProps,
-} from '@xyflow/react';
+import { BaseEdge, useReactFlow, type EdgeProps } from '@xyflow/react';
 import { splitEdgeAt } from './splitEdge';
-import { isHorizontal, routeOrthogonal } from './route';
+import {
+  dragSegment, jogSegment, nearestOnPolyline, pathPoints, routeOrthogonal, routeThrough, waypointsOf,
+} from './route';
+import type { End, Pt } from './route';
+import { crossingsOf, pathWithHops } from './hops';
+import { publishEdge, unpublishEdge, useOtherEdges } from './edgeGeometry';
 import { useEdgeFluidColor } from './FluidContext';
 import { useReadOnly } from '@stardesign-ui';
-import { useTool } from './ToolContext';
+import { useTool, useToolDone } from './ToolContext';
+import { useBranchDrag } from './BranchDrag';
+
+export { nearestOnPath, faceTowards } from './route';
 
 /**
- * A pipe: orthogonal, with a middle segment you can move, and a junction you
- * can drop anywhere along it.
+ * A pipe: orthogonal, every segment of it movable, a tee wherever you want
+ * one, and a hop wherever it crosses another.
  *
  * **Orthogonal, not smoothstep.** A P&ID is drawn with square corners, and the
- * rounded ones React Flow supplies by default read as a flow chart. The path is
- * three segments -- out, across, in -- which is also what makes the middle one
- * a thing you can grab.
+ * rounded ones React Flow supplies by default read as a flow chart.
  *
- * **The middle segment moves.** Automatic routing puts it halfway, which is
+ * **Any segment moves.** Automatic routing puts a crossbar halfway, which is
  * exactly where the next line also wants to be, and a bay with eight lines
  * leaving one tank turns into a stack of overlapping runs nobody can follow.
- * Drag the handle and the crossbar moves; the offset is stored on the edge, so
- * the routing somebody chose survives a reload rather than being recomputed
- * into the same mess.
+ * Each segment has a grip; drag it and the segment moves across, the two
+ * ends stay on their ports, and the corners are stored on the line (see
+ * `routeThrough`) so the routing somebody chose survives a reload. Alt-drag
+ * puts a detour into a segment instead of moving the whole of it. Double-
+ * click a grip and the line routes itself again.
  *
- * **Lines that cross are not joined.** Nothing here infers a connection from
- * two paths overlapping -- a crossing on a drawing is usually one line passing
- * over another, and guessing wrong either invents a leak path or hides a real
- * one. Click a line to put a junction on it where you do mean them to meet;
- * the checks panel counts crossings that have no junction so the distinction is
- * visible rather than assumed.
+ * **Press anywhere on a line and pull, and you are drawing a branch.** The
+ * dot riding the pointer along the run is where the tee will go. A press
+ * that does not move is a click, and still selects the line. Alt-click, or
+ * the Junction tool, puts a tee in without drawing anything from it.
+ *
+ * **Lines that cross are not joined**, and the drawing says so: the vertical
+ * one hops the horizontal one. Nothing here infers a connection from two
+ * paths overlapping -- a crossing on a drawing is usually one line passing
+ * over another, and guessing wrong either invents a leak path or hides a
+ * real one.
  */
 export function BranchableEdge(props: EdgeProps) {
   const {
     id,
     sourceX, sourceY, targetX, targetY,
     sourcePosition, targetPosition,
-    style, data,
+    style, data, selected,
   } = props;
 
-  const { setNodes, setEdges, getNodes, getEdges, getZoom } = useReactFlow();
+  const { setNodes, setEdges, getNodes, getEdges, screenToFlowPosition } = useReactFlow();
   const readOnly = useReadOnly();
-  // A junction only goes in while the tool is armed. See ToolContext.
-  const armed = useTool() === 'junction' && !readOnly;
-  const [hoverAt, setHoverAt] = useState<{ x: number; y: number } | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const dragFrom = useRef<{ pointer: number; offset: number } | null>(null);
+  const tool = useTool();
+  const done = useToolDone();
+  const { begin, active: pulling } = useBranchDrag();
+  const armed = tool === 'junction' && !readOnly;
 
   const strokeColor = useEdgeFluidColor(id, (data as { color?: string })?.color);
-  const offset = ((data as { offset?: number })?.offset ?? 0);
+  const routing = data as { offset?: number; waypoints?: Pt[] } | undefined;
 
-  // The shape of the run, and whether it has a crossbar to drag. See route.ts:
-  // the rule is that every segment touching an end leaves that end the way the
-  // end points, which is what stops a line doubling back over its own symbol.
-  const { d: edgePath, grip } = routeOrthogonal(
-    { x: sourceX, y: sourceY, side: sourcePosition },
-    { x: targetX, y: targetY, side: targetPosition },
-    offset,
-  );
-  // Which way a drag on the crossbar moves it: across the run, so along the
-  // axis the two ends leave on.
-  const horizontal = isHorizontal(sourcePosition);
+  // ── The run ────────────────────────────────────────────────────────────────
+  const a: End = { x: sourceX, y: sourceY, side: sourcePosition };
+  const b: End = { x: targetX, y: targetY, side: targetPosition };
+  const waypoints = routing?.waypoints;
+  const offset = routing?.offset ?? 0;
+  const pts = useMemo(() => {
+    const route = waypoints?.length ? routeThrough(a, b, waypoints) : routeOrthogonal(a, b, offset);
+    return pathPoints(route.d);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, waypoints, offset]);
 
-  // ── Moving the crossbar ────────────────────────────────────────────────────
-  const startDrag = useCallback((e: React.PointerEvent) => {
-    if (readOnly) return;
+  // Tell the other lines where this one is, and find out where they are.
+  useLayoutEffect(() => { publishEdge(id, pts); }, [id, pts]);
+  useEffect(() => () => unpublishEdge(id), [id]);
+  const others = useOtherEdges(id);
+  const hops = useMemo(() => crossingsOf(pts, others), [pts, others]);
+  const drawn = useMemo(() => pathWithHops(pts, hops), [pts, hops]);
+
+  const toFlow = useCallback((e: { clientX: number; clientY: number }) =>
+    screenToFlowPosition({ x: e.clientX, y: e.clientY }, { snapToGrid: false }), [screenToFlowPosition]);
+
+  // ── Hovering: the dot that rides the run ───────────────────────────────────
+  const [hover, setHover] = useState<Pt | null>(null);
+  const [overGrip, setOverGrip] = useState(false);
+  const onMouseMove = useCallback((e: React.MouseEvent<SVGGElement>) => {
+    if (readOnly || pulling) return;
+    const near = nearestOnPolyline(pts, toFlow(e));
+    setHover(near ? near.point : null);
+  }, [readOnly, pulling, pts, toFlow]);
+
+  // ── Moving a segment ───────────────────────────────────────────────────────
+  const [drag, setDrag] = useState<{ segment: number; jog: boolean; start: Pt; at: Pt; base: Pt[] } | null>(null);
+
+  const startSegmentDrag = useCallback((segment: number, e: React.PointerEvent) => {
+    if (readOnly || e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault();
-    dragFrom.current = { pointer: horizontal ? e.clientX : e.clientY, offset };
-    setDragging(true);
-  }, [readOnly, horizontal, offset]);
+    const start = toFlow(e);
+    setDrag({ segment, jog: e.altKey, start, at: start, base: pts });
+  }, [readOnly, pts, toFlow]);
 
   useEffect(() => {
-    if (!dragging) return;
+    if (!drag) return;
     const onMove = (e: PointerEvent) => {
-      const from = dragFrom.current;
-      if (!from) return;
-      // Screen pixels to flow units: at 50% zoom the pointer has to travel
-      // twice as far for the same move, and without this the crossbar lags.
-      const moved = ((horizontal ? e.clientX : e.clientY) - from.pointer) / getZoom();
+      const now = toFlow(e);
+      const delta = { x: now.x - drag.start.x, y: now.y - drag.start.y };
+      const next = drag.jog
+        ? jogSegment(drag.base, drag.segment, drag.at, delta)
+        : dragSegment(drag.base, drag.segment, delta);
       setEdges(eds => eds.map(ed =>
-        ed.id === id ? { ...ed, data: { ...ed.data, offset: from.offset + moved } } : ed));
+        ed.id === id ? { ...ed, data: { ...ed.data, waypoints: waypointsOf(next), offset: 0 } } : ed));
     };
-    const onUp = () => { setDragging(false); dragFrom.current = null; };
+    const onUp = () => setDrag(null);
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [dragging, horizontal, id, getZoom, setEdges]);
+  }, [drag, id, setEdges, toFlow]);
 
-  // ── Dropping a junction on the run ─────────────────────────────────────────
-  /**
-   * Where a junction would go: the nearest point *on the run*, not the pointer.
-   *
-   * It used to take the pointer position straight, so a junction landed
-   * wherever the cursor happened to be within the twelve-pixel hit area -- up
-   * to six pixels off the pipe. The two new edges then ran to a node beside
-   * the line they replaced, which is the kink that made this look broken. The
-   * path is orthogonal, so snapping to it is a clamp per segment.
-   */
-  const onMouseMove = useCallback((e: React.MouseEvent<SVGGElement>) => {
-    if (!armed || dragging) return;
-    const svg = (e.currentTarget as SVGElement).closest('svg');
-    if (!svg) return;
-    const pt = svg.createSVGPoint();
-    pt.x = e.clientX;
-    pt.y = e.clientY;
-    const p = pt.matrixTransform(svg.getScreenCTM()!.inverse());
-    setHoverAt(nearestOnPath(edgePath, p));
-  }, [armed, dragging, edgePath]);
-
-  const onClickBranch = useCallback((e: React.MouseEvent<SVGGElement>) => {
-    if (!armed || !hoverAt || dragging) return;
+  /** Back to routing itself. */
+  const resetRoute = useCallback((e: React.MouseEvent) => {
+    if (readOnly) return;
     e.stopPropagation();
+    e.preventDefault();
+    setEdges(eds => eds.map(ed => {
+      if (ed.id !== id) return ed;
+      const rest = { ...ed.data } as Record<string, unknown>;
+      delete rest.waypoints;
+      delete rest.offset;
+      return { ...ed, data: rest };
+    }));
+  }, [readOnly, id, setEdges]);
 
+  // ── Putting a tee in, or pulling a line out ────────────────────────────────
+  const placeJunction = useCallback((at: Pt) => {
     // The same operation dropping a connection on a line performs -- see
-    // splitEdge.ts. This used to be a second copy of it here, and the two had
-    // already drifted: one stamped a junction the delete-rejoin could
-    // recognise and the other did not.
-    // No page argument: a junction belongs on the page its own pipe is drawn
-    // on, and `splitEdgeAt` reads that off the line's upstream end. Pages live
-    // on components, so asking the edge would be asking the wrong thing.
-    const split = splitEdgeAt(
-      getNodes(), getEdges(), id, hoverAt, undefined,
-      // The exact handle positions, which this edge knows and a caller working
-      // from the node boxes does not.
-      { from: { x: sourceX, y: sourceY }, to: { x: targetX, y: targetY } },
-    );
+    // splitEdge.ts. No page argument: a junction belongs on the page its own
+    // pipe is drawn on, and `splitEdgeAt` reads that off the line's upstream
+    // end. The exact ends and corners go with it, which a caller working from
+    // the node boxes would not have.
+    const split = splitEdgeAt(getNodes(), getEdges(), id, at, undefined, { a, b, points: pts });
     if (!split) return;
-
     flushSync(() => {
       setNodes(split.nodes);
       setEdges(split.edges);
     });
-  }, [armed, hoverAt, dragging, id, getNodes, getEdges, setNodes, setEdges,
-      sourceX, sourceY, targetX, targetY]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, pts, getNodes, getEdges, setNodes, setEdges, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition]);
+
+  const onPointerDown = useCallback((e: React.PointerEvent<SVGGElement>) => {
+    if (readOnly || e.button !== 0 || overGrip) return;
+    const near = nearestOnPolyline(pts, toFlow(e));
+    if (!near) return;
+    // Stop React Flow reading this as a pan or a box-select. Clicks and
+    // double-clicks are separate events and still reach it.
+    e.stopPropagation();
+    e.preventDefault();
+    if (armed || e.altKey) {
+      placeJunction(near.point);
+      if (armed) done();
+      return;
+    }
+    begin({ kind: 'line', edgeId: id, at: near.point, dir: near.dir, points: pts }, e);
+  }, [readOnly, overGrip, pts, toFlow, armed, placeJunction, done, begin, id]);
+
+  // ── Grips: one per segment ─────────────────────────────────────────────────
+  const grips = useMemo(() => {
+    const out: { i: number; x: number; y: number; horizontal: boolean }[] = [];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p = pts[i], q = pts[i + 1];
+      if (Math.hypot(q.x - p.x, q.y - p.y) < 24) continue;   // too short to hold
+      out.push({ i, x: (p.x + q.x) / 2, y: (p.y + q.y) / 2, horizontal: Math.abs(p.y - q.y) < 1e-6 });
+    }
+    return out;
+  }, [pts]);
+  const showGrips = !readOnly && !pulling && (hover !== null || selected || drag !== null);
+  const showDot = !readOnly && !pulling && hover !== null && !overGrip && drag === null;
 
   return (
     <g
       onMouseMove={onMouseMove}
-      onMouseLeave={() => setHoverAt(null)}
-      onClick={onClickBranch}
+      onMouseLeave={() => { setHover(null); setOverGrip(false); }}
+      onPointerDown={onPointerDown}
       style={{ cursor: armed ? 'crosshair' : 'pointer' }}
     >
       {/* Invisible fat hit area, so a 2 px line can be clicked at all. */}
-      <path d={edgePath} fill="none" stroke="transparent" strokeWidth={12} />
-      <BaseEdge path={edgePath} style={{ stroke: strokeColor, strokeWidth: 2, ...style }} />
+      <path d={drawn} fill="none" stroke="transparent" strokeWidth={12} />
+      <BaseEdge path={drawn} style={{ stroke: strokeColor, strokeWidth: 2, ...style }} />
 
-      {armed && hoverAt && !dragging && (
+      {showDot && (
         <circle
-          cx={hoverAt.x} cy={hoverAt.y} r={5}
-          fill={strokeColor} stroke="var(--color-bg-secondary)" strokeWidth={2}
+          cx={hover!.x} cy={hover!.y} r={armed ? 5 : 4}
+          fill={armed ? strokeColor : 'var(--color-bg-primary)'} stroke={strokeColor} strokeWidth={2}
           style={{ pointerEvents: 'none' }}
         />
       )}
 
-      {grip && !readOnly && (
+      {showGrips && grips.map(g => (
         <g
-          onPointerDown={startDrag}
+          key={g.i}
+          onPointerDown={e => startSegmentDrag(g.i, e)}
+          onMouseEnter={() => setOverGrip(true)}
+          onMouseLeave={() => setOverGrip(false)}
           onMouseMove={e => e.stopPropagation()}
           onClick={e => e.stopPropagation()}
+          onDoubleClick={resetRoute}
           // React Flow sets `pointer-events: visibleStroke` on an edge, so a
           // shape with a fill and no stroke is invisible to the pointer no
           // matter how large it is. The grip needs saying explicitly.
-          style={{ cursor: horizontal ? 'ew-resize' : 'ns-resize', pointerEvents: 'all' }}
+          style={{ cursor: g.horizontal ? 'ns-resize' : 'ew-resize', pointerEvents: 'all' }}
         >
           {/* A generous invisible target over a small visible one. */}
           <rect
-            x={grip.x - (horizontal ? 8 : 16)}
-            y={grip.y - (horizontal ? 16 : 8)}
-            width={horizontal ? 16 : 32}
-            height={horizontal ? 32 : 16}
-            fill="transparent"
-            style={{ pointerEvents: 'all' }}
+            x={g.x - (g.horizontal ? 16 : 8)} y={g.y - (g.horizontal ? 8 : 16)}
+            width={g.horizontal ? 32 : 16} height={g.horizontal ? 16 : 32}
+            fill="transparent" style={{ pointerEvents: 'all' }}
           />
           <rect
-            x={grip.x - (horizontal ? 1.5 : 7)}
-            y={grip.y - (horizontal ? 7 : 1.5)}
-            width={horizontal ? 3 : 14}
-            height={horizontal ? 14 : 3}
-            rx={1.5}
-            fill={dragging ? 'var(--color-text-primary)' : strokeColor}
-            opacity={dragging ? 1 : 0.55}
+            x={g.x - (g.horizontal ? 7 : 1.5)} y={g.y - (g.horizontal ? 1.5 : 7)}
+            width={g.horizontal ? 14 : 3} height={g.horizontal ? 3 : 14} rx={1.5}
+            fill={drag?.segment === g.i ? 'var(--color-text-primary)' : strokeColor}
+            opacity={drag?.segment === g.i ? 1 : 0.6}
             style={{ pointerEvents: 'all' }}
           />
         </g>
-      )}
+      ))}
     </g>
   );
-}
-
-/** The corners of an orthogonal path, in order. */
-function pointsOf(d: string): { x: number; y: number }[] {
-  return [...d.matchAll(/[ML]\s*(-?[\d.]+),(-?[\d.]+)/g)]
-    .map(m => ({ x: Number(m[1]), y: Number(m[2]) }));
-}
-
-/**
- * The closest point on a polyline to `p`.
- *
- * Clamped to each segment and the best one kept, so a junction always sits on
- * the pipe -- including exactly on a corner, which is where people aim when
- * they want to branch at a bend.
- */
-export function nearestOnPath(d: string, p: { x: number; y: number }): { x: number; y: number } {
-  const pts = pointsOf(d);
-  let best = pts[0] ?? p;
-  let bestDist = Infinity;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const a = pts[i];
-    const b = pts[i + 1];
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const len = dx * dx + dy * dy;
-    const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len));
-    const q = { x: a.x + t * dx, y: a.y + t * dy };
-    const dist = Math.hypot(p.x - q.x, p.y - q.y);
-    if (dist < bestDist) { bestDist = dist; best = q; }
-  }
-  return best;
-}
-
-/**
- * The face of a junction that points at (fx, fy).
- *
- * A junction is a 10 px dot with four ports, and which one a line attaches to
- * decides which way it leaves. Choosing by direction is what keeps the two
- * halves of a split line collinear with the run they replaced.
- */
-export function faceTowards(fx: number, fy: number, jx: number, jy: number): string {
-  const dx = fx - jx;
-  const dy = fy - jy;
-  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 'r' : 'l';
-  return dy >= 0 ? 'b' : 't';
 }

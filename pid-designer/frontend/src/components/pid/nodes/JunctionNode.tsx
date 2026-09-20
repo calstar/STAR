@@ -1,16 +1,30 @@
-import { Position, type NodeProps } from '@xyflow/react';
+import { useState } from 'react';
+import { Position, useReactFlow, useStore, type NodeProps } from '@xyflow/react';
 import { Port } from './Port';
 import { useNodeFluid } from '../FluidContext';
 import { colorForSpecies } from '../fluids';
+import { useBranchDrag } from '../BranchDrag';
+import { useReadOnly } from '@stardesign-ui';
+import { J_HALF } from '../junctions';
 
 /**
  * A branch point: the tee, as the drawing says it.
  *
  * Small on purpose -- it is a point in a run, not a component -- but it is
  * still a thing people select, move and delete, so it has to behave like one.
- * It carried `nodrag`, which in ReactFlow turns off the pointer handling that
- * *selects* a node as well as the part that moves it: the dot could not be
- * picked at all, and pressing Delete over it did nothing.
+ *
+ * **The dot moves; the ring connects.** A tee is ten pixels across and its
+ * four ports were ten pixels each, on its four faces, so their union covered
+ * the whole of what you could see. Pressing on the dot started a new line;
+ * moving the tee meant finding an invisible halo around it. That inversion
+ * was most of what made tees feel broken. The ports are still there -- lines
+ * have to end on something -- but they no longer take the pointer. Press the
+ * dot and you drag it, which slides it along its run (see junctions.ts);
+ * pull the ring that appears around it and you draw a new line out of it.
+ *
+ * A tee with one line on it is an **open end**: a run somebody started and
+ * has not finished, drawn hollow so it reads as unfinished. Pull its ring to
+ * carry the run on.
  */
 export function JunctionNode({ id, selected }: NodeProps) {
   // A junction is a point *in* a run, so it is drawn in the run's own colour.
@@ -18,39 +32,67 @@ export function JunctionNode({ id, selected }: NodeProps) {
   // pipe rather than a tee in it.
   const fluid = useNodeFluid(id);
   const tint = fluid?.species ? colorForSpecies(fluid.species) : 'var(--color-text-secondary)';
-  const handleStyle = {
-    width: 10,
-    height: 10,
-    background: 'transparent',
-    border: 'none',
+  const readOnly = useReadOnly();
+  const { begin } = useBranchDrag();
+  const { getInternalNode } = useReactFlow();
+  const [hover, setHover] = useState(false);
+  const degree = useStore(s => {
+    let n = 0;
+    for (const e of s.edges) if (e.source === id || e.target === id) n++;
+    return n;
+  });
+  const open = degree <= 1;
+
+  // Faces, not handles: they anchor the lines and take no pointer.
+  const faceStyle = {
+    width: 10, height: 10, background: 'transparent', border: 'none',
+    pointerEvents: 'none' as const, boxShadow: 'none',
   };
+  const ink = selected ? 'var(--color-text-primary)' : tint;
 
   return (
     <div
+      title={open ? 'Open end — pull the ring to carry the line on' : 'Tee — drag to slide it along its run; pull the ring to branch'}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       style={{
-        width: 10,
-        height: 10,
-        borderRadius: '50%',
-        background: selected ? 'var(--color-text-primary)' : tint,
-        border: '2px solid var(--color-bg-secondary)',
-        boxShadow: `0 0 0 2px ${selected ? 'var(--color-text-primary)' : tint}`,
-        position: 'relative',
-        cursor: 'grab',
+        width: 10, height: 10, borderRadius: '50%', position: 'relative',
+        cursor: readOnly ? 'default' : 'grab',
+        background: open ? 'var(--color-bg-primary)' : ink,
+        border: `2px solid ${open ? ink : 'var(--color-bg-secondary)'}`,
+        boxShadow: open ? 'none' : `0 0 0 2px ${ink}`,
       }}
     >
       {/* Ten pixels is a hard thing to hit. This reaches past the dot without
           drawing anything, so aiming at a junction is aiming at a target the
-          size of a symbol -- and it sits under the handles, so a drag that
-          starts on one still draws a line. */}
-      <div style={{
-        position: 'absolute', left: -7, top: -7, width: 24, height: 24,
-        borderRadius: '50%',
-      }} />
+          size of a symbol. */}
+      <div style={{ position: 'absolute', left: -7, top: -7, width: 24, height: 24, borderRadius: '50%' }} />
 
-      <Port position={Position.Top}   id="t" style={handleStyle} />
-      <Port position={Position.Left}  id="l" style={handleStyle} />
-      <Port position={Position.Bottom} id="b" style={handleStyle} />
-      <Port position={Position.Right}  id="r" style={handleStyle} />
+      {/* The ring: pull it to draw a line out of the tee. `nodrag` keeps a
+          press on it from moving the tee instead. */}
+      {!readOnly && (hover || selected) && (
+        <div
+          className="nodrag"
+          title="Pull to draw a line from here"
+          onPointerDown={e => {
+            if (e.button !== 0) return;
+            e.stopPropagation();
+            e.preventDefault();
+            const pos = getInternalNode(id)?.internals.positionAbsolute;
+            if (!pos) return;
+            begin({ kind: 'node', nodeId: id, at: { x: pos.x + J_HALF, y: pos.y + J_HALF } }, e);
+          }}
+          style={{
+            position: 'absolute', left: -9, top: -9, width: 24, height: 24, borderRadius: '50%',
+            border: `1.5px dashed ${ink}`, cursor: 'crosshair', boxSizing: 'border-box',
+          }}
+        />
+      )}
+
+      <Port position={Position.Top}    id="t" className="pid-junction-face" style={faceStyle} />
+      <Port position={Position.Left}   id="l" className="pid-junction-face" style={faceStyle} />
+      <Port position={Position.Bottom} id="b" className="pid-junction-face" style={faceStyle} />
+      <Port position={Position.Right}  id="r" className="pid-junction-face" style={faceStyle} />
     </div>
   );
 }
