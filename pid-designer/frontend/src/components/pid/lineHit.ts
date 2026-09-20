@@ -1,5 +1,6 @@
 import type { XYPosition } from '@xyflow/react';
-import { nearestOnPath } from './BranchableEdge';
+import { nearestOnPolyline, pathPoints } from './route';
+import type { Pt } from './route';
 
 /** One line as it is actually drawn: its id, and its path data. */
 export interface DrawnLine {
@@ -24,6 +25,19 @@ export function drawnLines(): DrawnLine[] {
   return out;
 }
 
+/** Where on a line a point landed. */
+export interface LineHit {
+  id: string;
+  /** The point on the pipe itself, not the pointer. */
+  at: XYPosition;
+  /** Which way the pipe runs there. */
+  dir: Pt;
+  /** How far along the drawn run, as a fraction. */
+  t: number;
+  /** The drawn run's corners. */
+  points: Pt[];
+}
+
 /**
  * The line under a point, and where on it.
  *
@@ -39,13 +53,19 @@ export function lineAt(
   lines: DrawnLine[],
   at: XYPosition,
   tolerance = 14,
-): { id: string; at: XYPosition } | null {
-  let best: { id: string; at: XYPosition } | null = null;
+  except?: string,
+): LineHit | null {
+  let best: LineHit | null = null;
   let bestDist = tolerance;
   for (const line of lines) {
-    const q = nearestOnPath(line.d, at);
-    const dist = Math.hypot(q.x - at.x, q.y - at.y);
-    if (dist < bestDist) { bestDist = dist; best = { id: line.id, at: q }; }
+    if (line.id === except) continue;
+    const points = pathPoints(line.d);
+    const near = nearestOnPolyline(points, at);
+    if (!near) continue;
+    if (near.dist < bestDist) {
+      bestDist = near.dist;
+      best = { id: line.id, at: near.point, dir: near.dir, t: near.t, points };
+    }
   }
   return best;
 }

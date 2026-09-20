@@ -42,6 +42,18 @@ export const TAPPED = new Set(['PT', 'PG']);
 export const isTapped = (type?: string) => !!type && TAPPED.has(type);
 
 /**
+ * Hardware that sits *in* a run: one port in, one port out, and the pipe is
+ * the same pipe on both sides. The same set `feedtwin.pid.document` calls
+ * INLINE_TYPES, and it has to stay the same set, because this is what
+ * decides that dropping one on a line breaks the line around it -- and that
+ * deleting one from a line heals the line -- and feed-twin has to agree that
+ * what it then reads is one run with a part in it.
+ */
+export const INLINE = new Set(['MAN', 'ROT', 'SOL', 'PR', 'RV', 'CV', 'QD']);
+
+export const isInline = (type?: string) => !!type && INLINE.has(type);
+
+/**
  * How big a node is, before ReactFlow has measured it.
  *
  * `measured` arrives a render after a node does, and until then everything

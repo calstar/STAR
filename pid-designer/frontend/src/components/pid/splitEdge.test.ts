@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Edge, Node } from '@xyflow/react';
-import { mergedLineData, rejoinAfterDelete, splitEdgeAt } from './splitEdge';
+import { insertInline, mergedLineData, rejoinAfterDelete, rotationAlong, splitEdgeAt } from './splitEdge';
 import { faceTowards } from './BranchableEdge';
 
 const node = (id: string, x: number, y: number): Node => ({
@@ -171,10 +171,27 @@ describe('what a delete puts back', () => {
     )).toEqual([]);
   });
 
-  it('ignores a delete with no junction in it', () => {
+  it('ignores a delete with nothing mid-run in it', () => {
     expect(rejoinAfterDelete(
+      [{ id: 'T', type: 'TANK', position: { x: 0, y: 0 }, data: { componentType: 'TANK' } }],
+      [wire('a', 'A', 'T'), wire('b', 'T', 'B')],
+    )).toEqual([]);
+  });
+
+  it('heals the run when a valve is taken out of it', () => {
+    // A valve is a part *in* a run, so taking it out leaves the run, exactly
+    // as putting it in left the run. A tank is a place, and is not rejoined.
+    const [back] = rejoinAfterDelete(
       [{ id: 'V', type: 'MAN', position: { x: 0, y: 0 }, data: { componentType: 'MAN' } }],
       [wire('a', 'A', 'V'), wire('b', 'V', 'B')],
+    );
+    expect(back).toMatchObject({ source: 'A', target: 'B' });
+  });
+
+  it('does not heal round a valve that vents: one line is not a run', () => {
+    expect(rejoinAfterDelete(
+      [{ id: 'V', type: 'MAN', position: { x: 0, y: 0 }, data: { componentType: 'MAN' } }],
+      [wire('a', 'A', 'V')],
     )).toEqual([]);
   });
 
@@ -187,5 +204,109 @@ describe('what a delete puts back', () => {
       segments: edges[0].data!.segments,
       params: edges[0].data!.params,
     });
+  });
+});
+
+describe('dropping a part into a line', () => {
+  const part = (id: string) => ({
+    id, type: 'MAN', position: { x: 999, y: 999 }, measured: { width: 60, height: 60 },
+    data: { componentType: 'MAN', label: id },
+  });
+
+  it('breaks the run around it, upstream to the inlet and outlet to downstream', () => {
+    const { nodes, edges } = line();
+    const ins = insertInline(nodes, edges, 'A-B', { x: 200, y: 30 }, part('V'))!;
+    const into = ins.edges.find(e => e.target === 'V')!;
+    const outOf = ins.edges.find(e => e.source === 'V')!;
+    expect(into).toMatchObject({ source: 'A', targetHandle: 'l' });
+    expect(outOf).toMatchObject({ target: 'B', sourceHandle: 'r' });
+    expect(ins.edges.find(e => e.id === 'A-B')).toBeUndefined();
+  });
+
+  it('is centred on the cut, so its ports sit on the pipe', () => {
+    const { nodes, edges } = line();
+    const ins = insertInline(nodes, edges, 'A-B', { x: 200, y: 30 }, part('V'))!;
+    expect(ins.nodes.find(n => n.id === 'V')!.position).toEqual({ x: 170, y: 0 });
+  });
+
+  it('is turned to face the way the run goes', () => {
+    expect(rotationAlong({ x: 1, y: 0 })).toBe(0);
+    expect(rotationAlong({ x: 0, y: 1 })).toBe(90);
+    expect(rotationAlong({ x: -1, y: 0 })).toBe(180);
+    expect(rotationAlong({ x: 0, y: -1 })).toBe(270);
+    const { nodes, edges } = line();
+    const ins = insertInline(nodes, edges, 'A-B', { x: 200, y: 30 }, part('V'))!;
+    expect((ins.nodes.find(n => n.id === 'V')!.data as { rotation: number }).rotation).toBe(0);
+  });
+
+  it('drops a corner its body has swallowed, so the outlet line does not double back', () => {
+    // A run that turns 20 px past where the valve goes in: the corner is
+    // inside the 60 px valve, and a line from the outlet that went back to
+    // it would run through the valve to get there.
+    const nodes = [node('A', 0, 0), node('B', 400, 200)];
+    const edges: Edge[] = [{ id: 'A-B', source: 'A', sourceHandle: 'r', target: 'B', targetHandle: 'l', type: 'smoothstep', data: {} }];
+    const drawn = [{ x: 60, y: 30 }, { x: 220, y: 30 }, { x: 220, y: 230 }, { x: 400, y: 230 }];
+    const ins = insertInline(nodes, edges, 'A-B', { x: 200, y: 30 }, part('V'), { points: drawn })!;
+    const outOf = ins.edges.find(e => e.source === 'V')!.data as { waypoints?: { x: number; y: number }[] };
+    expect(outOf.waypoints).toBeUndefined();
+  });
+
+  it('does not double the pipe either', () => {
+    const { nodes, edges } = line();
+    const ins = insertInline(nodes, edges, 'A-B', { x: 200, y: 30 }, part('V'))!;
+    const outOf = ins.edges.find(e => e.source === 'V')!;
+    expect((outOf.data as { params: Record<string, unknown> }).params.length).toBeUndefined();
+    expect((outOf.data as { segments?: unknown }).segments).toBeUndefined();
+  });
+});
+
+describe('a run routed by hand keeps its corners when it is cut', () => {
+  it('gives each half the corners on its side of the cut', () => {
+    const nodes = [node('A', 0, 0), node('B', 400, 200)];
+    const edges: Edge[] = [{
+      id: 'A-B', source: 'A', sourceHandle: 'r', target: 'B', targetHandle: 'l', type: 'smoothstep',
+      data: { waypoints: [{ x: 100, y: 30 }, { x: 100, y: 230 }] },
+    }];
+    const drawn = [{ x: 60, y: 30 }, { x: 100, y: 30 }, { x: 100, y: 230 }, { x: 400, y: 230 }];
+    const split = splitEdgeAt(nodes, edges, 'A-B', { x: 100, y: 130 }, undefined, { points: drawn })!;
+    const up = split.edges.find(e => e.source === 'A')!.data as { waypoints?: unknown[] };
+    const down = split.edges.find(e => e.target === 'B')!.data as { waypoints?: unknown[] };
+    expect(up.waypoints).toEqual([{ x: 100, y: 30 }]);
+    expect(down.waypoints).toEqual([{ x: 100, y: 230 }]);
+    // Rejoined, the corners a person set come back together, in order.
+    const j = split.nodes.find(n => n.id === split.junctionId)!;
+    const [back] = rejoinAfterDelete([j], split.edges);
+    expect((back.data as { waypoints?: unknown }).waypoints).toEqual([{ x: 100, y: 30 }, { x: 100, y: 230 }]);
+    expect((j.data as { along: { t: number } }).along.t).toBeCloseTo((40 + 100) / (40 + 200 + 300));
+  });
+});
+
+describe('cutting a half that carries the run\'s own corners', () => {
+  it('treats it as routed by the run, not by hand', () => {
+    const nodes = [node('A', 0, 0), node('B', 400, 200)];
+    const edges: Edge[] = [{
+      id: 'A-B', source: 'A', sourceHandle: 'r', target: 'B', targetHandle: 'l', type: 'smoothstep',
+      data: { waypoints: [{ x: 230, y: 30 }, { x: 230, y: 230 }], viaRun: true },
+    }];
+    const drawn = [{ x: 60, y: 30 }, { x: 230, y: 30 }, { x: 230, y: 230 }, { x: 400, y: 230 }];
+    const split = splitEdgeAt(nodes, edges, 'A-B', { x: 230, y: 130 }, undefined, { points: drawn })!;
+    const up = split.edges.find(e => e.source === 'A')!.data as { viaRun?: boolean };
+    const down = split.edges.find(e => e.target === 'B')!.data as { viaRun?: boolean };
+    expect(up.viaRun).toBe(true);
+    expect(down.viaRun).toBe(true);
+  });
+});
+
+describe('healing a run drops the corners the part had made', () => {
+  it('keeps a person\'s corners elsewhere and forgets the ones inside the valve', () => {
+    const valve = { id: 'V', type: 'MAN', position: { x: 170, y: 0 }, measured: { width: 60, height: 60 }, data: { componentType: 'MAN' } };
+    const [back] = rejoinAfterDelete([valve], [
+      { id: 'a', source: 'A', sourceHandle: 'r', target: 'V', targetHandle: 'l', data: { waypoints: [{ x: 100, y: 30 }, { x: 100, y: -40 }, { x: 160, y: -40 }, { x: 160, y: 30 }] } },
+      { id: 'b', source: 'V', sourceHandle: 'r', target: 'B', targetHandle: 'l', data: { waypoints: [{ x: 225, y: 30 }, { x: 300, y: 30 }] } },
+    ]);
+    // (160, 30) is ten pixels short of the valve and stays; (225, 30) was
+    // inside it and goes.
+    expect((back.data as { waypoints: { x: number; y: number }[] }).waypoints)
+      .toEqual([{ x: 100, y: 30 }, { x: 100, y: -40 }, { x: 160, y: -40 }, { x: 160, y: 30 }, { x: 300, y: 30 }]);
   });
 });

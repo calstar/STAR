@@ -258,3 +258,287 @@ export function turnPlacement(
     along: turned === Position.Top || turned === Position.Bottom ? x : y,
   };
 }
+
+// ── Explicit routing ─────────────────────────────────────────────────────────
+//
+// Everything above decides a shape from two ends. Everything below is for a
+// run somebody has taken hold of: the corners it goes through are stored on
+// the line, any segment can be moved, and the two ends still leave their
+// ports the way the ports face.
+
+export type Pt = { x: number; y: number };
+
+const EPS = 1e-6;
+
+const samePt = (a: Pt, b: Pt) => Math.abs(a.x - b.x) < EPS && Math.abs(a.y - b.y) < EPS;
+
+/** The corners of an M/L path, in order. Arcs (hops) are skipped, which is
+ *  right: a hop is drawn on a segment, not a corner in it. */
+export function pathPoints(d: string): Pt[] {
+  return [...d.matchAll(/[ML]\s*(-?[\d.]+),(-?[\d.]+)/g)]
+    .map(m => ({ x: Number(m[1]), y: Number(m[2]) }));
+}
+
+export function pointsToPath(pts: Pt[]): string {
+  return pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x},${p.y}`).join(' ');
+}
+
+/**
+ * Drop repeated points and the middle of any three in a line.
+ *
+ * "In a line" includes a spike -- out along an axis and back along it -- so a
+ * segment dragged until it lies on its neighbour merges into it rather than
+ * leaving a zero-width tooth.
+ */
+export function simplifyPoints(pts: Pt[]): Pt[] {
+  const out: Pt[] = [];
+  for (const p of pts) {
+    if (out.length && samePt(out[out.length - 1], p)) continue;
+    out.push({ x: p.x, y: p.y });
+  }
+  let i = 1;
+  while (i < out.length - 1) {
+    const a = out[i - 1], b = out[i], c = out[i + 1];
+    const sameX = Math.abs(a.x - b.x) < EPS && Math.abs(b.x - c.x) < EPS;
+    const sameY = Math.abs(a.y - b.y) < EPS && Math.abs(b.y - c.y) < EPS;
+    if (sameX || sameY) out.splice(i, 1);
+    else i++;
+  }
+  // A spike can leave two equal neighbours behind; one more pass clears it.
+  for (let k = out.length - 2; k >= 0; k--) if (samePt(out[k], out[k + 1])) out.splice(k + 1, 1);
+  return out;
+}
+
+/** A unit vector from a to b, or null when they coincide. */
+export function direction(a: Pt, b: Pt): Pt | null {
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  return len < EPS ? null : { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
+}
+
+/** The point a port's stub ends at: `STUB` out of the port, the way it faces. */
+export function stubOf(e: End): Pt {
+  return isHorizontal(e.side)
+    ? { x: e.x + facing(e.side) * STUB, y: e.y }
+    : { x: e.x, y: e.y + facing(e.side) * STUB };
+}
+
+/**
+ * The corners between two points that are not in line: one.
+ *
+ * It continues the axis the run arrived on when the next point is ahead on
+ * it, and turns across first when it is behind -- which is what keeps the
+ * run from doubling straight back along a port's stub and out through the
+ * symbol it just left. Horizontal-first when there is no arrival.
+ */
+function elbow(p: Pt, q: Pt, arrived: Pt | null, after?: Pt): Pt[] {
+  const dx = Math.abs(p.x - q.x) > EPS;
+  const dy = Math.abs(p.y - q.y) > EPS;
+  if (!dx && !dy) return [q];
+  const horizontalArrival = arrived ? Math.abs(arrived.x) > Math.abs(arrived.y) : true;
+  const ahead = arrived ? (q.x - p.x) * arrived.x + (q.y - p.y) * arrived.y : 1;
+  if (!dx || !dy) {
+    // In line with the arrival. Straight on if it is ahead; if it is
+    // *behind* -- a corner dragged past the port it leaves from -- step
+    // across by a stub first, or the run would turn round and go back
+    // through the symbol. Across toward wherever the run goes next, and
+    // the corner itself is not visited: it sits in the port's own column,
+    // inside the symbol, and what it meant was the level it was dragged to.
+    if (arrived && ahead < -EPS) {
+      let side = 1;
+      if (after) side = horizontalArrival ? (after.y >= p.y ? 1 : -1) : (after.x >= p.x ? 1 : -1);
+      const c1 = horizontalArrival ? { x: p.x, y: p.y + side * STUB } : { x: p.x + side * STUB, y: p.y };
+      const c2 = horizontalArrival ? { x: q.x, y: c1.y } : { x: c1.x, y: q.y };
+      return [c1, c2];
+    }
+    return [q];
+  }
+  const horizontalFirst = arrived ? (horizontalArrival ? ahead > 0 : ahead <= 0) : true;
+  return horizontalFirst ? [{ x: q.x, y: p.y }, q] : [{ x: p.x, y: q.y }, q];
+}
+
+/**
+ * A run through the corners somebody placed.
+ *
+ * The ends are still the router's business -- each leaves its port along the
+ * port's own axis for `STUB` before anything else is allowed to happen --
+ * and every pair of points after that is joined orthogonally, so a waypoint
+ * that is off both axes of its neighbour gets one corner put in on the way.
+ * The corners people set are honoured exactly; only the joins between them
+ * are computed.
+ */
+export function routeThrough(a: End, b: End, waypoints: Pt[]): Route {
+  const raw: Pt[] = [stubOf(a), ...waypoints, stubOf(b)];
+  const out: Pt[] = [{ x: a.x, y: a.y }];
+  let arrived: Pt | null = isHorizontal(a.side) ? { x: facing(a.side), y: 0 } : { x: 0, y: facing(a.side) };
+  for (let i = 0; i < raw.length; i++) {
+    const q = raw[i];
+    const p = out[out.length - 1];
+    for (const r of elbow(p, q, arrived, raw[i + 1])) {
+      const last = out[out.length - 1];
+      if (samePt(last, r)) continue;
+      arrived = direction(last, r);
+      out.push(r);
+    }
+  }
+  // The last piece is the port's own stub, drawn straight whatever came
+  // before it: a run that reached the stub from the far side -- a tee seated
+  // closer to a port than a stub is long -- is a spike the simplifier folds
+  // away, not a corner to step round.
+  out.push({ x: b.x, y: b.y });
+  return { d: pointsToPath(simplifyPoints(out)), grip: null };
+}
+
+export function polylineLength(pts: Pt[]): number {
+  let len = 0;
+  for (let i = 0; i < pts.length - 1; i++) len += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+  return len;
+}
+
+/** Where a point falls on a polyline: the nearest point, how far along, which
+ *  segment, and which way that segment runs. */
+export interface OnPolyline {
+  point: Pt;
+  /** Fraction of the way along, by length, in [0, 1]. */
+  t: number;
+  /** Index of the segment the point is on. */
+  segment: number;
+  dir: Pt;
+  /** Distance from the query point. */
+  dist: number;
+}
+
+export function nearestOnPolyline(pts: Pt[], p: Pt): OnPolyline | null {
+  if (pts.length === 0) return null;
+  if (pts.length === 1) return { point: pts[0], t: 0, segment: 0, dir: { x: 1, y: 0 }, dist: Math.hypot(p.x - pts[0].x, p.y - pts[0].y) };
+  const total = polylineLength(pts) || 1;
+  let best: OnPolyline | null = null;
+  let before = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    const u = len2 < EPS ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+    const q = { x: a.x + u * dx, y: a.y + u * dy };
+    const dist = Math.hypot(p.x - q.x, p.y - q.y);
+    const len = Math.sqrt(len2);
+    if (!best || dist < best.dist) {
+      best = { point: q, t: (before + u * len) / total, segment: i, dir: direction(a, b) ?? { x: 1, y: 0 }, dist };
+    }
+    before += len;
+  }
+  return best;
+}
+
+/** The point a fraction of the way along a polyline, and the segment it is on. */
+export function pointAt(pts: Pt[], t: number): { point: Pt; segment: number; dir: Pt } | null {
+  if (pts.length === 0) return null;
+  if (pts.length === 1) return { point: pts[0], segment: 0, dir: { x: 1, y: 0 } };
+  const target = Math.max(0, Math.min(1, t)) * polylineLength(pts);
+  let before = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const dir = direction(a, b);
+    if (!dir) continue;
+    if (before + len >= target - EPS || i === pts.length - 2) {
+      const u = len < EPS ? 0 : Math.max(0, Math.min(1, (target - before) / len));
+      return { point: { x: a.x + u * (b.x - a.x), y: a.y + u * (b.y - a.y) }, segment: i, dir };
+    }
+    before += len;
+  }
+  const last = pts[pts.length - 1];
+  return { point: last, segment: pts.length - 2, dir: direction(pts[pts.length - 2], last) ?? { x: 1, y: 0 } };
+}
+
+/**
+ * Move segment `i` across its own axis and keep both ends of the run where
+ * they are.
+ *
+ * Only the component of `delta` across the segment is used: a horizontal
+ * segment moves up or down, never along. A segment that touches one of the
+ * ends cannot simply shift, because the end is a port -- so the port's stub
+ * stays and a corner goes in after it. Drag the one segment of a straight
+ * run and you get a jog with a stub at each end, which is the only shape
+ * that move can have.
+ */
+export function dragSegment(pts: Pt[], i: number, delta: Pt): Pt[] {
+  if (i < 0 || i >= pts.length - 1) return pts;
+  const p = pts[i], q = pts[i + 1];
+  const dir = direction(p, q);
+  if (!dir) return pts;
+  const horizontal = Math.abs(dir.y) < EPS;
+  const shift = horizontal ? { x: 0, y: delta.y } : { x: delta.x, y: 0 };
+  if (Math.abs(shift.x) < EPS && Math.abs(shift.y) < EPS) return pts;
+
+  const first = i === 0;
+  const last = i === pts.length - 2;
+  const moved: Pt[] = [];
+  if (first) {
+    const s = { x: p.x + dir.x * STUB, y: p.y + dir.y * STUB };
+    moved.push(p, s, { x: s.x + shift.x, y: s.y + shift.y });
+  } else {
+    moved.push({ x: p.x + shift.x, y: p.y + shift.y });
+  }
+  if (last) {
+    const s = { x: q.x - dir.x * STUB, y: q.y - dir.y * STUB };
+    moved.push({ x: s.x + shift.x, y: s.y + shift.y }, s, q);
+  } else {
+    moved.push({ x: q.x + shift.x, y: q.y + shift.y });
+  }
+  const out = [...pts];
+  out.splice(i, 2, ...moved);
+  return simplifyPoints(out);
+}
+
+/**
+ * Put a detour into segment `i`: the `2·STUB` of it centred on `at` moves
+ * across by `delta` and the rest stays. For getting a run round something
+ * that is in its way.
+ */
+export function jogSegment(pts: Pt[], i: number, at: Pt, delta: Pt): Pt[] {
+  if (i < 0 || i >= pts.length - 1) return pts;
+  const p = pts[i], q = pts[i + 1];
+  const dir = direction(p, q);
+  if (!dir) return pts;
+  const horizontal = Math.abs(dir.y) < EPS;
+  const shift = horizontal ? { x: 0, y: delta.y } : { x: delta.x, y: 0 };
+  if (Math.abs(shift.x) < EPS && Math.abs(shift.y) < EPS) return pts;
+  const len = Math.hypot(q.x - p.x, q.y - p.y);
+  const along = Math.max(STUB, Math.min(Math.max(STUB, len - STUB),
+    (at.x - p.x) * dir.x + (at.y - p.y) * dir.y));
+  const g1 = { x: p.x + dir.x * (along - STUB), y: p.y + dir.y * (along - STUB) };
+  const g2 = { x: p.x + dir.x * (along + STUB), y: p.y + dir.y * (along + STUB) };
+  const out = [...pts];
+  out.splice(i + 1, 0, g1, { x: g1.x + shift.x, y: g1.y + shift.y }, { x: g2.x + shift.x, y: g2.y + shift.y }, g2);
+  return simplifyPoints(out);
+}
+
+/** The corners of a run between its two ends: what `routeThrough` stores. */
+export function waypointsOf(pts: Pt[]): Pt[] {
+  return pts.slice(1, -1);
+}
+
+/**
+ * The closest point on a path to `p`.
+ *
+ * Clamped to each segment and the best one kept, so a junction always sits on
+ * the pipe -- including exactly on a corner, which is where people aim when
+ * they want to branch at a bend.
+ */
+export function nearestOnPath(d: string, p: Pt): Pt {
+  return nearestOnPolyline(pathPoints(d), p)?.point ?? p;
+}
+
+/**
+ * The face of a junction that points at (fx, fy).
+ *
+ * A junction is a 10 px dot with four ports, and which one a line attaches to
+ * decides which way it leaves. Choosing by direction is what keeps the two
+ * halves of a split line collinear with the run they replaced.
+ */
+export function faceTowards(fx: number, fy: number, jx: number, jy: number): string {
+  const dx = fx - jx;
+  const dy = fy - jy;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 'r' : 'l';
+  return dy >= 0 ? 'b' : 't';
+}
