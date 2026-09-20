@@ -52,9 +52,13 @@ def test_same_seed_same_search():
 def test_different_seed_different_search():
     # A different seed must be allowed to land somewhere else; if it cannot, the seed is
     # not reaching the sampler at all and the previous test passed for the wrong reason.
-    xa, fa, _ = _run(7)
-    xb, fb, _ = _run(8)
-    assert not (fa == fb and np.array_equal(xa, xb)), "seed had no effect on the search"
+    xa, fa, ea = _run(7)
+    xb, fb, eb = _run(8)
+    # Both landing on the start point with f = 4.0 is not "the same answer", it is no
+    # search at all -- say so, with the evaluation count, rather than blaming the seed.
+    assert ea > 0 and eb > 0, f"the search spent no evaluations (evals {ea}, {eb})"
+    assert not (fa == fb and np.array_equal(xa, xb)), \
+        f"seed had no effect on the search (f {fa} vs {fb}, evals {ea} vs {eb})"
 
 
 def test_unseeded_still_runs():
