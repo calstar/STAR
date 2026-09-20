@@ -289,3 +289,52 @@ tables, every ID in the size chart, the Cd→Cv derivation. Each lands with
 a reference string, and anything seeded before it is checked carries
 `verified: false` and shows up in the checks panel, the way the NPT
 engagements do today.
+
+## Phase 6 — Connections (experimental, branch `pid/connections`)
+
+The connection tool was the part users called unintuitive. The data model was
+right — a graph of symbols and lines, a tee as a node because a tee is a mass
+balance — and the interaction layer was wrong. What changed, and why:
+
+**The dot moves; the ring connects.** A tee's four ports covered the whole of
+the visible dot, so pressing on it drew a line and moving it meant finding an
+invisible halo. The ports still anchor lines but take no pointer; the dot
+drags, and a dashed ring on hover pulls a new line out. A tee with one line is
+an *open end*, drawn hollow.
+
+**A tee rides its run** (`junctions.ts`). It sits a fixed fraction of the way
+between whatever is on the far end of each of its two run lines, found from
+adjacency every time. Move an end and it is put back at its fraction; re-route
+a half by hand and it keeps its place; put a valve into a half and its run
+simply got shorter. Its lines are re-pointed at the right faces from where the
+run goes there, and each half is handed the run's corners on its side (marked
+`viaRun`, so a half somebody routed by hand is left alone). Chains along one
+pipe ride each other and settle in a few passes. Ports anchor where React Flow
+anchors them — the handle's outer edge, not its centre.
+
+**Pull a line out of a line** (`BranchDrag.tsx`). Press anywhere on a line and
+pull: the dot riding the pointer is where the tee goes; release on a port, a
+symbol (nearest port), another line (a second tee), a tee (the face across its
+run) or empty canvas (an open end). A press that does not move is a click.
+Alt-click, or the Junction tool, puts a bare tee in; the tool is one-shot.
+Dragging from a port and letting go on nothing also leaves an open end.
+
+**Drop a part into a line** (`insertInline`). Anything in `INLINE` dropped on a
+run breaks the run around it, turned to face the way the run goes, upstream
+half to `l` and `r` to the downstream half; corners inside its body are
+dropped. Deleting it heals the run, exactly as deleting a mid-line tee does.
+
+**Any segment moves** (`routeThrough`, `dragSegment`, `jogSegment`). Grips on
+every segment; a segment touching a port gains a stub and a corner so the
+port still leaves the way it faces; Alt-drag puts a detour in; double-click a
+grip to route the line automatically again. Corners are stored on the line as
+`waypoints`; `offset` is read for old drawings and no longer written.
+
+**Crossings hop** (`hops.ts`, `edgeGeometry.ts`). Every line publishes its
+corners; the vertical line at each crossing draws a semicircle in its own
+path, so it exports with the line. Nothing infers a join from an overlap.
+
+What is deliberately not done: a tee still needs a run of exactly two run
+lines to ride (a cross with four legs keeps its position); the old
+`SegmentPanel` fittings path is untouched; an open end is a tee with one line
+and feed-twin reads it as the dead end it already handled.
