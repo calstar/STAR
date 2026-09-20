@@ -72,48 +72,86 @@ def _chug_boundary_curve(streams, chamber, n_pts: int = 16,
     return curve
 
 
-def _vaporization_profile(inp: Dict[str, Any], Pc: float, n_pts: int = 40) -> Dict[str, Any]:
-    """Viz #5: d^2-law droplet decay along the chamber + vaporization length vs chamber length."""
-    D32 = inp["D32_O"]
-    K_v = inp["K_v_O"]
-    L_ch = inp["L_ch"]
-    # Config-sourced via build_stability_inputs (P2c). The old `inp.get("rho_O", 1140.0)` put LOX's
-    # density behind every oxidizer as an invisible default; build_stability_inputs always supplies
-    # it now, and a missing one is recorded rather than substituted.
-    rho_O = inp.get("rho_O")
-    if rho_O is None or not np.isfinite(float(rho_O)) or float(rho_O) <= 0.0:
-        from engine.pipeline.assumptions import assume
-        rho_O = assume("stability.viz.rho_oxidizer", 1140.0, unit="kg/m^3",
-                       reason="oxidizer density missing when drawing the vaporization profile")
-    rho_O = float(rho_O)
-    eta = inp["eta_inj_O"]
-    # Representative droplet axial speed: the solved oxidizer injection velocity when the closure
-    # provides it, else Bernoulli with the solved Cd (a fixed Cd of 0.6 used to sit here).
-    u_O = inp.get("u_O")
-    if u_O is not None and np.isfinite(float(u_O)) and float(u_O) > 0.0:
-        v_drop = float(u_O)
+def _stream_vaporization(inp: Dict[str, Any], Pc: float, key: str, n_pts: int) -> Dict[str, Any]:
+    """d^2-law droplet decay for ONE stream. ``key`` is "O" or "F"."""
+    from engine.pipeline.assumptions import assume
+
+    D32 = float(inp[f"D32_{key}"])
+    L_ch = float(inp["L_ch"])
+    phase = str(inp.get(f"phase_{key}", "liquid"))
+    fluid = str(inp.get(f"fluid_name_{key}", key))
+    tau_vap = float(inp[f"tau_conv_{key}"])
+    side = "oxidizer" if key == "O" else "fuel"
+
+    if phase.lower().startswith("g"):
+        # A gas has no droplets to track. Say so rather than drawing a decay curve for it.
+        return {"stream": key, "fluid": fluid, "phase": phase, "smd_um": None,
+                "tau_conv_s": tau_vap, "L_vap_m": None, "L_ch_m": L_ch,
+                "vaporized_in_chamber": True, "d2_profile": [],
+                "note": f"{fluid} is injected as a gas — no atomization or vaporization to plot."}
+
+    rho = inp.get(f"rho_{key}")
+    if rho is None or not np.isfinite(float(rho)) or float(rho) <= 0.0:
+        rho = assume(f"stability.viz.rho_{side}", 1140.0 if key == "O" else 800.0, unit="kg/m^3",
+                     reason=f"{side} density missing when drawing the vaporization profile")
+    rho = float(rho)
+    eta = float(inp[f"eta_inj_{key}"])
+
+    # Representative droplet axial speed: the solved injection velocity when the closure provides
+    # it, else Bernoulli with the solved Cd.
+    u = inp.get(f"u_{key}")
+    if u is not None and np.isfinite(float(u)) and float(u) > 0.0:
+        v_drop = float(u)
     else:
-        Cd = inp.get("Cd_O")
+        Cd = inp.get(f"Cd_{key}")
         if Cd is None or not np.isfinite(float(Cd)) or float(Cd) <= 0.0:
-            from engine.pipeline.assumptions import assume
-            Cd = assume("stability.viz.Cd_oxidizer", 0.6, unit="-",
-                        reason="solved oxidizer discharge coefficient unavailable for the droplet "
-                               "velocity; sharp-edged-orifice value")
-        Cd = float(Cd)
-        v_drop = Cd * float(np.sqrt(max(2.0 * eta * Pc / rho_O, 1.0)))
-    tau_vap = inp["tau_conv_O"]
+            Cd = assume(f"stability.viz.Cd_{side}", 0.6, unit="-",
+                        reason=f"solved {side} discharge coefficient unavailable for the droplet "
+                               f"velocity; sharp-edged-orifice value")
+        v_drop = float(Cd) * float(np.sqrt(max(2.0 * eta * Pc / rho, 1.0)))
+
     L_vap = v_drop * tau_vap if np.isfinite(tau_vap) else float("nan")
     x_max = float(max(L_ch, L_vap if np.isfinite(L_vap) else L_ch) * 1.1)
     xs = np.linspace(0.0, x_max, n_pts)
-    # d^2(x)/d0^2 = 1 - x/L_vap (linear in x under d^2-law at constant v_drop), clipped at 0
-    d2 = np.clip(1.0 - xs / L_vap, 0.0, 1.0) if (np.isfinite(L_vap) and L_vap > 0) else np.ones_like(xs)
+    d2 = (np.clip(1.0 - xs / L_vap, 0.0, 1.0)
+          if (np.isfinite(L_vap) and L_vap > 0) else np.ones_like(xs))
     return {
-        "d2_profile": [[float(x), float(y)] for x, y in zip(xs, d2)],
-        "L_vap_m": float(L_vap), "L_ch_m": float(L_ch),
-        "tau_conv_s": float(inp["tau_conv_O"]), "tau_sens_s": float(inp["tau_sens"]),
+        "stream": key, "fluid": fluid, "phase": phase,
         "smd_um": float(D32 * 1e6), "smd_band_um": [float(D32 * 0.8e6), float(D32 * 1.2e6)],
+        "tau_conv_s": float(tau_vap),
+        "L_vap_m": float(L_vap), "L_ch_m": L_ch,
         "vaporized_in_chamber": bool(np.isfinite(L_vap) and L_vap <= L_ch),
+        "d2_profile": [[float(x), float(y)] for x, y in zip(xs, d2)],
     }
+
+
+def _vaporization_profile(inp: Dict[str, Any], Pc: float, n_pts: int = 40) -> Dict[str, Any]:
+    """Viz #5: droplet decay along the chamber, for BOTH streams.
+
+    The top-level keys (``L_vap_m``, ``smd_um``, ``tau_conv_s``, ``vaporized_in_chamber``) describe
+    the **rate-limiting** stream — the one that paces the burn — not the oxidizer. They used to be
+    hardwired to the oxidizer, which is right only when the oxidizer happens to be the slower
+    vaporizer. On LOX/methane it is (3.7 ms vs 2.9 ms) so the card read correctly by luck; on
+    LOX/ethanol it is not (13 ms vs 25 ms), and the card reported a 211 mm vaporization length for
+    LOX while ethanol -- the stream actually setting the lag -- was far worse. The health radar
+    scores off these keys, so it was scoring the wrong stream too.
+    """
+    per_stream = [_stream_vaporization(inp, Pc, k, n_pts) for k in ("O", "F")]
+    rl = str(inp.get("rate_limiting_stream", "O"))
+    lead = next((s for s in per_stream if s["stream"] == rl), per_stream[0])
+    # A gas stream can never be the one to plot; fall back to the liquid if it somehow is.
+    if lead.get("L_vap_m") is None:
+        lead = next((s for s in per_stream if s.get("L_vap_m") is not None), lead)
+
+    out = dict(lead)
+    out.pop("note", None)
+    out["streams"] = per_stream
+    out["rate_limiting_stream"] = lead["stream"]
+    out["tau_sens_s"] = float(inp["tau_sens"])
+    if lead.get("smd_um") is None:
+        out["smd_um"] = float(inp["D32_O"] * 1e6)
+        out["smd_band_um"] = [float(inp["D32_O"] * 0.8e6), float(inp["D32_O"] * 1.2e6)]
+    return out
 
 
 def _sensitivity(inp: Dict[str, Any]) -> Dict[str, Any]:
@@ -188,7 +226,7 @@ _DRIVER_LABEL = {
 
 def _diagnostics(state: str, chug_margin: float, acoustic_margin: float, gate_threshold: float,
                  limiting: Optional[str], chug_rich: Dict[str, Any], ac: Dict[str, Any],
-                 vap: Dict[str, Any]) -> Dict[str, Any]:
+                 vap: Dict[str, Any], fallbacks: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Turn the rich quantities into a verdict, findings, and design actions tied to the
     sensitivity sliders (η_inj, SMD, n, χ). Derived from the SAME numbers the cards render,
     so the headline can never disagree with the charts."""
@@ -274,12 +312,25 @@ def _diagnostics(state: str, chug_margin: float, acoustic_margin: float, gate_th
         headline = (f"Unstable risk — {limiting or 'a mode'} is driven. "
                     "Change the design before hot fire.")
 
-    fb = _fallbacks_used()
+    fb = fallbacks
     if fb:
         names = ", ".join(str(f.get("name", "?")) for f in fb[:3])
         more = "…" if len(fb) > 3 else ""
+        # Say where the missing values live. "Load a propellant preset" was printed for every
+        # fallback including feed-line lengths and chamber geometry, which no propellant preset
+        # supplies -- advice that cannot work reads as noise and gets ignored.
+        kinds = {("propellant" if ".fluids." in str(f.get("name", "")) else
+                  "plumbing" if ".feed." in str(f.get("name", "")) else
+                  "model") for f in fb}
+        hints = []
+        if "propellant" in kinds:
+            hints.append("load a propellant preset for the fluid properties")
+        if "plumbing" in kinds:
+            hints.append("set feed_system lengths/bores for the plumbing")
+        if "model" in kinds:
+            hints.append("the rest are model calibration defaults")
         assumptions_note = (f"{len(fb)} physics input(s) fell back to recorded defaults "
-                            f"({names}{more}). Load a propellant preset for measured values.")
+                            f"({names}{more}). " + "; ".join(hints).capitalize() + ".")
     else:
         assumptions_note = "Config fully specified the stability physics — no fallbacks used."
 
@@ -303,6 +354,17 @@ def build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: fl
                       cg: Any, *, gate_threshold: float = 1.05,
                       overrides: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
     """Assemble the full rich stability payload (plan §A5 schema). <=5 s."""
+    from engine.pipeline import assumptions as _assumptions
+    with _assumptions.scope() as _used_here:
+        return _build_rich_report(config, Pc, MR, mdot_total, cstar, gamma, R, Tc, diagnostics, cg,
+                                  gate_threshold=gate_threshold, overrides=overrides,
+                                  used_here=_used_here)
+
+
+def _build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: float,
+                       gamma: float, R: float, Tc: float, diagnostics: Dict[str, Any],
+                       cg: Any, *, gate_threshold: float, overrides: Optional[Dict[str, float]],
+                       used_here: Dict[str, Any]) -> Dict[str, Any]:
     inp = analysis.build_stability_inputs(
         config, Pc, MR, mdot_total, cstar, gamma, R, Tc, diagnostics, cg, overrides=overrides,
     )
@@ -356,6 +418,7 @@ def build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: fl
 
     vap = _vaporization_profile(inp, Pc)
     sens = _sensitivity(inp)
+    fallbacks = _fallbacks_used(used_here)
     radar = _radar(chug_margin, ac, vap, gate_threshold, inp["acoustic_gate_alpha_offset"])
 
     min_margin = float(min(chug_margin, acoustic_margin))
@@ -364,7 +427,7 @@ def build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: fl
              else "marginal" if min_margin >= 0.95 else "unstable")
     limiting = "chug" if chug_margin <= acoustic_margin else ac.get("limiting_mode")
     diag = _diagnostics(state, chug_margin, acoustic_margin, gate_threshold, limiting,
-                        chug_rich, ac, vap)
+                        chug_rich, ac, vap, fallbacks)
 
     return {
         "summary": {"state": state, "min_margin": min_margin,
@@ -395,6 +458,8 @@ def build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: fl
             "dP_reg_max_psi": float(streams[0].regulator.max_excursion_pa / _PA_PER_PSI),
             "eta_inj_O": inp["eta_inj_O"], "eta_inj_F": inp["eta_inj_F"],
             "smd_O_um": float(inp["D32_O"] * 1e6),
+            "smd_F_um": float(inp["D32_F"] * 1e6),
+            "rate_limiting_stream": inp.get("rate_limiting_stream"),
             "mach_nozzle_entrance": float(inp["mach_nozzle_entrance"]),
             "contraction_ratio": float(inp["contraction_ratio"]),
             "feed_length_O_m": float(inp["feed_length_O"]), "feed_length_F_m": float(inp["feed_length_F"]),
@@ -411,15 +476,25 @@ def build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: fl
             "lag_breakdown": lag_break,
             # Every recorded silent-default substitution this process has made (P2c registry).
             # Empty list = config fully specified the physics. The hardcoded-Cd bug class, surfaced.
-            "fallbacks_used": _fallbacks_used(),
+            "fallbacks_used": fallbacks,
         },
         "sensitivity": sens,
     }
 
 
-def _fallbacks_used():
+def _fallbacks_used(used_here: Optional[Dict[str, Any]] = None):
+    """Substitutions made by THIS evaluation.
+
+    ``used_here`` is the collection from the ``assumptions.scope()`` wrapped around the report. The
+    old form read the process-global registry, so a report inherited every fallback the process had
+    ever recorded -- after a methalox run, an ethalox run with a complete preset still announced the
+    previous propellant's missing fields. Falls back to the global registry only when called without
+    a scope (kept so an external caller does not break).
+    """
     try:
-        from engine.pipeline.assumptions import fallbacks_used
-        return fallbacks_used()
+        from engine.pipeline import assumptions
     except ImportError:
         return []
+    if used_here is not None:
+        return assumptions.as_list(used_here)
+    return assumptions.fallbacks_used()

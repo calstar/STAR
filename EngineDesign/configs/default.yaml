@@ -22,9 +22,14 @@ fluids:
     specific_heat: 2300.0
     thermal_conductivity: 0.15
     temperature: 90.0
-    latent_heat: null
-    boiling_point: null
-    molecular_weight: null
+    # Stability-only inputs (droplet vaporization lag); the forward performance path does not read
+    # them, so filling them in cannot move thrust/Isp or the golden anchors. Left null, the chug
+    # model silently substituted these same handbook numbers on every evaluation of the default
+    # config and reported three fallbacks it should never have needed.
+    latent_heat: 213000.0     # J/kg, NIST oxygen at 1 atm
+    boiling_point: 90.19      # K,    NIST oxygen at 1 atm
+    molecular_weight: 32.0    # g/mol
+    bulk_modulus_pa: 1500000000.0   # order-of-magnitude LOX; refine via water-hammer test T5
 injector:
   type: impinging
   geometry:

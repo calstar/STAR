@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { engineIdentity } from '../lib/engineIdentity';
 import { evaluate } from '../api/client';
 import type { RunnerResults, EngineConfig } from '../api/client';
 import { ResultsDisplay } from './ResultsDisplay';
@@ -37,6 +38,11 @@ export function ForwardMode({ config }: ForwardModeProps) {
     stabilityOverrides: [stabilityOverrides, setStabilityOverrides],
   });
 
+  // What makes a displayed result belong to a DIFFERENT engine (see lib/engineIdentity).
+  // Seeded from the current config, so the first render adopts rather than clearing.
+  const identityKey = engineIdentity(config);
+  const [lastIdentity, setLastIdentity] = useState(identityKey);
+
   // Update defaults when config changes
   useEffect(() => {
     if (config) {
@@ -50,6 +56,28 @@ export function ForwardMode({ config }: ForwardModeProps) {
       }
     }
   }, [config]);
+
+  // Drop a result that describes the previous propellant or injector.
+  //
+  // The tabs stay mounted (hidden, not unmounted), so nothing cleared `results` on a switch: after
+  // methalox -> ethalox the Combustion stability panel kept showing methane's frequencies, lags,
+  // radar and verdict, while the tank pressures beside it had already moved to the new config. It
+  // read as a report about the engine now on screen. The sensitivity overrides survived too, so a
+  // methane-tuned SMD was silently applied to ethanol on the next evaluation.
+  //
+  // Done during render rather than in an effect: this is React's "adjusting state when a prop
+  // changes" pattern, which re-renders before committing instead of painting the stale panel once
+  // and then clearing it. An effect would show the previous propellant's numbers for a frame.
+  if (config && identityKey !== lastIdentity) {
+    setLastIdentity(identityKey);
+    setResults(null);
+    setAmbientPressure(null);
+    setError(null);
+    setStabilityOverrides({});
+    setDesignWarning(
+      'Propellant or injector changed — previous results cleared. Run Evaluate to analyse the new engine.',
+    );
+  }
 
   const handleEvaluate = useCallback(async (overridePatch?: StabilityOverrides) => {
     const lox = parseFloat(loxPressure);

@@ -1,113 +1,76 @@
-# CalSTAR ethalox -- 180 lb, 8:1, O/F 1.50, 24 doublets, MSA G1 45 scf COPV. 2026-09-15.
+# CalSTAR ethalox -- 180 lb wet, 6.500 kN, O/F 1.50, 24 doublets, MSA G1 COPV. 2026-09-16.
 #
-# Audit:      python3 scripts/design_audit.py configs/ethalox_180lb_8to1.yaml
-# Re-run:     python3 scripts/layer1_run.py --config configs/ethalox_180lb_8to1.yaml
+# Audit:      python3 scripts/design_audit.py configs/ethalox_6500N.yaml
+# Re-run:     python3 scripts/layer1_run.py --config configs/ethalox_6500N.yaml
 #             THIS FILE is the design. A re-run is a new candidate, not a reproduction:
-#             the hybrid search ignored layer1_random_seed until 2026-09-18, and the
-#             objective is flat across the injectors it lands on (99.99 % of it is the
-#             chamber-mass shaping term; every requirement term is ~0).
+#             the hybrid search ignored layer1_random_seed until 2026-09-18 (three runs at
+#             seed 37 gave 89 / 87 / 83 deg injectors), and the objective is flat across
+#             those -- 99.99 % of it is the chamber-mass shaping term, every requirement
+#             term is ~0 -- so which one a run lands on is not a quality difference.
 #
-# HARD CONSTRAINTS, ALL EXACT
-#   wet mass              81.6466 kg = 180.0000 lb
-#   thrust                6405.5 N   = 1440.0 lbf   ->  T/W = 8.0000 : 1
-#   liquid 11.3810 L + COPV 4.6190 L = 16.0000 L
+# WHAT CHANGED FROM ethalox_180lb_8to1.yaml
+#   Thrust 6405.5 -> 6500.0 N exactly, for margin. Nothing else was re-optimised: the
+#   SMD blend, the 43/46 deg angles, 24 doublets on a 15.000 deg pitch, the 5.000 in
+#   bore, eps 5.5985, L* 1.000 m and dP/Pc all carry over unchanged.
+#   With Pc held, F = zeta_n*Cf_vac*Pc*At - Pa*Ae is linear in At, so the engine scales
+#   by ONE factor k = 1.015457435, solved (not assumed) because Cf_vac moves with eps:
+#     A_throat, A_exit, chamber volume   x k        -> eps and L* land back on their old values
+#     d_jet (both streams)               x sqrt(k)  -> same injection velocity, same SMD, same dP
+#   mdot follows At, so Pc = mdot*c*/At never moves and the injector keeps its schedule.
+#     D_throat  43.85 -> 44.19 mm      D_exit 103.76 -> 104.56 mm
+#     d_jet     1.536 -> 1.548 mm (O)  1.411 -> 1.421 mm (F)
+#     engine mass +142 g, taken out of the airframe to hold 180.000 lb wet.
 #
-# THE COPV IS NOW A REAL PART, NOT AN ESTIMATE
-#   MSA G1, 45 ft3 / 4500 psi, 30-minute standard carbon cylinder.
-#   The specsheet quotes 10.40 lb FULL, and that is full of breathing AIR, not oxygen:
-#     full                 10.40 lb = 4.717 kg
-#     air charge            3.37 lb = 1.529 kg   (45 ft3 of free air at 1 atm / 70 F)
-#     -> DRY                7.03 lb = 3.188 kg
-#     water volume          4.619 L  (charge mass / real air density at 4500 psi)
-#     + GN2 at 4000 psi     2.89 lb = 1.312 kg  -> installed 9.92 lb = 4.500 kg
-#   This replaces three disagreeing internal numbers: 2.969 kg at 4.5 L in eight
-#   EngineDesign configs (no source field at all), 3.500 kg at 4.687 L in the feed-twin
-#   drawing (tagged "estimated", reference said "weigh it"), and the 3.300 kg at 5.000 L
-#   this design carried. On kg/L those were -4.4 %, +8.2 % and -4.4 % against the real part.
-#   The real bottle being SMALLER than the assumed 5 L frees 0.381 L into propellant.
+# THE 16 L RULE, WITH THE COPV COUNTED INSIDE IT
+#   COPV water volume        4.6190 L   MSA G1 45 scf, specsheet, air backed out
+#   liquid propellant       11.3810 L   = 16.0000 - 4.6190
+#   -> LOX 5.7995 L = 6.6114 kg   ethanol 5.5815 L = 4.4038 kg   at the DELIVERED O/F
+#   The split is set from the delivered 1.5013, not the 1.5000 target, so both tanks
+#   run dry in the same instant: residual 0.0 g on each side.
 #
-#   Dome-regulated: tanks need 0.587 kg, the bottle delivers 1.098 kg -> 1.87x, and it
-#   ends the burn near 2010 psi against a 582 psi setpoint, so the regulator holds.
-#   NOTE a 4500 psi cylinder filled to 4000 is not a lighter cylinder -- you save the
-#   0.29 lb of nitrogen and nothing else.
+# TANKS AT 10 % ULLAGE  (seamlesstanks 6.625 in OD; the length model is fit to their own
+#                        24 in / 2.89 gal point: barrel 30.450 in^2, 2.076 in of end)
+#              mass kg  mass lb  liquid L  liquid gal   TANK L  TANK gal  LENGTH in
+#     LOX       6.6114  14.5757    5.7995      1.5321   6.4439    1.7023     14.99
+#     ethanol   4.4038   9.7087    5.5815      1.4745   6.2017    1.6383     14.50
+#   Buy 15 in of LOX tank and 14.5 in of fuel tank. The shells hold 12.6456 L between
+#   them but only 11.3810 L of that is propellant at T-0, which is what the rule counts.
 #
-# ENGINE
-#   O/F 1.4993   Pc 433.97 psia   Isp 236.90 s   eta_c* 0.9499
-#   24 doublets on a 15.000 deg pitch (360/24 exactly)
-#   theta 43 / 46 deg (included 89), d_jet 1.536 / 1.411 mm
-#   bore 127.000 mm = 5.0000 in, throat 43.85 mm, exit 103.76 mm, L* 1.0000 m
-#   burn 3.994 s, impulse 25581 N.s
-#   LOX-limited with 3 g of residual -- the delivered O/F 1.4993 lands on the 1.5000
-#   load, so essentially nothing is left in either tank. Two other seeds had higher Isp
-#   (237.15 and 237.22) and LESS total impulse, because they delivered O/F 1.511-1.513
-#   against a 1.500 load and stranded 33-39 g of fuel. Isp is not the figure of merit
-#   when the load ratio is fixed.
-#   web 7.47 / 10.64 mm, centre clear O66.73, wall land 16.47 mm
+# BURN, on a FLAT dome-regulated tank curve at 584.27 psi through the time-varying solver
+#   thrust   6500.0 -> 6601.9 N      T/W 8.1181 -> 8.2454, mean 8.1848
+#   Pc        433.65 -> 427.41 psia  (-1.44 %)
+#   mdot      2.7976 -> 2.8550 kg/s  (+2.05 %)
+#   The graphite throat recedes ~0.4 mm radially over the burn; with the regulator holding
+#   tank pressure flat that RAISES dP across the injector, so mdot climbs and Pc sags.
+#   A steady-state point at t=0 does not see this and under-loads the tanks by ~1 %.
+#   BURN TIME 3.8978 s   impulse 25544 N.s   -- burn time is an OUTPUT of the integration
+#   here, not m_prop/mdot at one operating point.
 #
-# TANKS AT 10 % ULLAGE
-#                mass kg   mass lb   liquid L  liquid gal   TANK L   TANK gal
-#     LOX         6.6086    14.570     5.7970      1.5314   6.4412     1.7016
-#     ethanol     4.4057     9.713     5.5840      1.4751   6.2044     1.6390
-#     TOTAL      11.0144    24.283    11.3810      3.0065  12.6456     3.3406
-#   Buy 1.70 gal of LOX tank and 1.64 gal of fuel tank.
+# APOGEE -- ceiling is 15000 ft
+#   12760 ft (3889.3 m) at the modelled eta_c* 0.9499, 2240 ft of margin.
+#   Verified envelope-insensitive: tank fill 0.80 / 0.75 / 0.70 all return 3889.3 m.
+#   Lower eta_c* only lowers it (~2240 ft per 0.10 of eta_c*), so the ceiling is not at
+#   risk in any direction a real engine can go.
+#   The 6.5 kN bump COSTS ~440 ft against the 6405 N build at identical propellant: a
+#   shorter, harder burn spends more of its velocity low in the atmosphere. That is the
+#   price of the thrust margin, and there is room for it.
 #
-# ENGINE MASS 20.28 lb -- SLEEVE RUNS PAST THE GAS BOUNDARY
-#   The injector plugs INTO the sleeve, so the sleeve is longer than the chamber and the
-#   injector is sized to the sleeve BORE, not the engine OD:
-#     gas boundary (face -> throat)  128.97 mm
-#     injector insertion              40.00 mm   0.5 in face + O-ring land + pilot
-#     steel sleeve                   168.97 mm   bore O152.4, OD O165.1
-#     injector OD                     O152.4     it has to fit inside
+# WHAT BINDS, AND THE ONLY LEVER LEFT
+#   Propellant is capped by the 16 L rule, NOT by apogee -- there are 2240 unused feet.
+#   Every litre taken out of the COPV is a litre of propellant, worth roughly 2000 ft.
+#   The bottle currently runs 2.08x on deliverable gas (needs 0.528 kg, delivers ~1.098),
+#   so a smaller bottle is arguable -- but it is a real part and its own analysis.
 #
-#     mild steel sleeve 0.250 in   4.201 kg   9.26 lb
-#     2 flanges + bolts + seals    1.440 kg   3.18 lb
-#     aluminium injector           1.290 kg   2.84 lb
-#     ablative liner 0.500 in      1.194 kg   2.63 lb
-#     nozzle, 12 mm abl + 3 mm alu 0.730 kg   1.61 lb
-#     igniter + instrument bosses  0.250 kg   0.55 lb
-#     graphite throat insert       0.093 kg   0.21 lb
-#     ENGINE                       9.198 kg  20.28 lb
-#
-# MASS BUDGET
-#   propellant            11.014 kg   24.28 lb
-#   pressurant GN2         1.312 kg    2.89 lb   4.619 L at 4000 psi
-#   engine + plumbing     14.398 kg   31.74 lb   engine 20.28 + valves/lines 11.46
-#   LOX tank               4.082 kg    9.00 lb   given
-#   fuel tank              4.082 kg    9.00 lb   given
-#   COPV                   3.188 kg    7.03 lb   MSA G1 specsheet, air backed out
-#   airframe + recovery   43.571 kg   96.05 lb   what is left
-#   == WET                81.647 kg  180.000 lb
-#
-# APOGEE -- READ THIS BEFORE COMMITTING
-#   eta_c* 0.9499 (modelled)   4026 m = 13208 ft   <- 208 ft OVER the 13000 ft ceiling
-#   eta_c* 0.9309              3892 m = 12769 ft
-#   eta_c* 0.9119              3760 m = 12334 ft
-#   eta_c* 0.8929              3628 m = 11904 ft
-#   eta_c* 0.8169              3118 m = 10231 ft
-#   The modelled nominal busts the ceiling by 1.6 %. It only gets there if the engine
-#   performs to a 0.95 eta_c*, which is optimistic against the 0.87 published comparable
-#   -- the realistic 0.88-0.91 band lands 11900-12400 ft, comfortably inside.
-#   If you want the MODELLED nominal under 13000 as well, de-load 0.099 kg (fill the
-#   tanks to 89.2 % instead of 90 %) and it comes to 13000 exactly. 0.194 kg gets 12800.
-#   Sensitivity is 0.908 ft per N.s, so this is a fill-level decision on the pad, not a
-#   redesign.
-#
-#   FILL FACTOR: this file declares 0.90 (the 10 % ullage asked for). RocketPy's tank
-#   model refuses above ~0.80, so the apogee numbers were produced on a larger tank
-#   ENVELOPE at identical propellant mass -- verified insensitive, 0.80/0.75/0.70 all
-#   returned the same apogee, because the trajectory depends on mass and not on how much
-#   empty tank surrounds it.
-#
-# MATERIALS AS DECIDED
-#   Aluminium injector. FUEL plenum against the face with LOX routed through it -- that
-#   one is oxygen compatibility, not thermal. Nozzle is 12 mm of ablative inside a 3 mm
-#   aluminium shell; bare 5 mm aluminium reaches 1067 K at the exit even at 0.6x Bartz
-#   against a 933 K melt. Put two or three thermocouples in the face on the first fire.
+# PRESSURANT
+#   Ground pre-pressurisation charges the initial ullage; the flight COPV only replaces
+#   expelled liquid: 11.3810 L at 46.4 kg/m3 = 0.5281 kg. Independent of tank size.
 #
 # STILL REQUIRES HARDWARE
-#   FLOW-TEST the injector. Cd 0.80 is a correlation. Cd 0.72-0.88 moves thrust -4.5/+3.8 %
-#   and keeps dP/Pc inside 0.20-0.40 throughout.
-#   Spot-face every orifice normal to its own axis -- incidence is 47 / 44 deg.
+#   FLOW-TEST the injector. Cd 0.80 is a correlation, not a measurement.
+#   NOTE: engine/pipeline/time_varying_solver.py hardcodes Pa = 101325 while this config
+#   declares elevation 626.67 m (94070 Pa). The time-series numbers above were corrected
+#   by hand for that (+61.4 N per step). Fix the solver before trusting its raw output.
+#
 propellant_preset: ethalox
 fluids:
   fuel:
@@ -145,12 +108,12 @@ injector:
   geometry:
     oxidizer:
       n_elements: 24
-      d_jet: 0.0015361478255479359
+      d_jet: 0.0015479747499138553
       impingement_angle: 43.0
       spacing: 0.009010387728636004
     fuel:
       n_elements: 24
-      d_jet: 0.0014105372348721397
+      d_jet: 0.0014213970733035063
       impingement_angle: 46.0
       spacing: 0.012046846972657375
 feed_system:
@@ -423,19 +386,19 @@ combustion:
     n_pre_hydrogen: 0.2
 chamber_geometry:
   design_pressure: 2992123.1854115925
-  design_thrust: 6405.486128556911
+  design_thrust: 6500.0
   design_MR: 1.4992994717934465
   chamber_diameter: 0.127
   Lstar: 1.0000002573548417
-  exit_diameter: 0.1037600811326615
+  exit_diameter: 0.10455893825523037
   expansion_ratio: 5.598521540485944
   nozzle_efficiency: 0.95
-  A_throat: 0.0015103483768447478
-  A_exit: 0.008455717921403302
-  volume: 0.001510348765540215
-  length: 0.1289737160011753
-  length_cylindrical: 0.09703298776603714
-  length_contraction: 0.031940728235138174
+  A_throat: 0.001533694488707181
+  A_exit: 0.00858642163155173
+  volume: 0.0015336948834108832
+  length: 0.13096731883297194
+  length_cylindrical: 0.09853286886728646
+  length_contraction: 0.03243444996568549
   Cf: 1.4174100000015877
 chamber: null
 nozzle: null
@@ -483,19 +446,19 @@ optimizer:
     refresh_sigma_scale: 0.2
     num_tracks: 1
 lox_tank:
-  lox_h: 0.42022395489166414
+  lox_h: 0.42040357648186094
   lox_radius: 0.06985
   ox_tank_pos: 0.8
-  mass: 6.608621213686249
+  mass: 6.6114460194537275
   initial_pressure_psi: 584.2669657943025
-  tank_volume_m3: 0.006441151280395955
+  tank_volume_m3: 0.006443904502391548
 fuel_tank:
-  rp1_h: 0.3401263456893168
+  rp1_h: 0.33997541365866535
   rp1_radius: 0.0762
   fuel_tank_pos: 3.0
-  mass: 4.405747475790832
+  mass: 4.403792412851763
   initial_pressure_psi: 584.2669657943025
-  tank_volume_m3: 0.006204404275159601
+  tank_volume_m3: 0.006201651053164008
 press_tank:
   press_h: 0.31334079903733364
   press_radius: 0.0685
@@ -505,8 +468,8 @@ press_tank:
   mass: null
   free_volume_L: 4.619
 rocket:
-  airframe_mass: 43.56959525052292
-  engine_mass: 14.398
+  airframe_mass: 43.427417763392924
+  engine_mass: 14.54017748713
   lox_tank_structure_mass: 4.082331330000001
   fuel_tank_structure_mass: 4.082331330000001
   engine_cm_offset: 0.15
@@ -547,8 +510,9 @@ environment:
   atmosphere_model: standard_atmosphere
 thrust:
   burn_time: 3.994
+  design_thrust: 6500.0
 design_requirements:
-  target_thrust: 6405.439125975119
+  target_thrust: 6500.0
   target_chamber_pressure_psi: 430.0
   target_apogee: 3890.7
   optimal_of_ratio: 1.5
@@ -570,8 +534,8 @@ design_requirements:
   chugging_margin_min: 0.2
   acoustic_margin_min: 0.1
   feed_stability_min: 0.15
-  lox_tank_capacity_kg: 6.608621213686249
-  fuel_tank_capacity_kg: 4.405747475790832
+  lox_tank_capacity_kg: 6.6114460194537275
+  fuel_tank_capacity_kg: 4.403792412851763
   propellant_tank_fill_factor: 0.9
   copv_free_volume_L: 4.619
   copv_free_volume_m3: null

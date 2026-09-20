@@ -69,7 +69,20 @@ export function StabilityPanel({
   }
 
   const eta = overrides.eta_inj_O ?? data.assumptions.eta_inj_O;
+  const etaF = overrides.eta_inj_F ?? data.assumptions.eta_inj_F;
   const smd = overrides.smd_um ?? data.assumptions.smd_O_um;
+  const smdF = overrides.smd_F_um ?? data.assumptions.smd_F_um ?? data.assumptions.smd_O_um;
+  const nameO = data.assumptions.fluid_O ?? 'oxidizer';
+  const nameF = data.assumptions.fluid_F ?? 'fuel';
+  const rateLimiting = data.vaporization?.rate_limiting_stream ?? data.assumptions.rate_limiting_stream;
+  // Slider ranges follow the design's own spray, not a fixed 30-120 um window: an ethanol doublet
+  // atomizes near 180 um and would sit off the end of a methane-shaped slider.
+  const smdRange = (v: number): [number, number] => [
+    Math.max(5, Math.round(v * 0.35)),
+    Math.round(Math.max(v * 1.8, 60)),
+  ];
+  const [smdMin, smdMax] = smdRange(data.assumptions.smd_O_um);
+  const [smdFMin, smdFMax] = smdRange(data.assumptions.smd_F_um ?? data.assumptions.smd_O_um);
   const nVal = overrides.n_interaction ?? data.assumptions.n;
   const chi = overrides.chi_acoustic ?? data.assumptions.chi_acoustic;
   const lagModel = overrides.time_lag_model ?? data.assumptions.time_lag_model ?? 'leonardi_dtl';
@@ -106,11 +119,30 @@ export function StabilityPanel({
       {interactive && onOverridesChange && (
         <div className="p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <SliderRow label="η_inj (O)" value={eta} min={0.15} max={0.45} step={0.01} onChange={(v) => setOverride({ eta_inj_O: v })} />
-            <SliderRow label="SMD [µm]" value={smd} min={30} max={120} step={1} onChange={(v) => setOverride({ smd_um: v })} />
-            <SliderRow label="n" value={nVal} min={0.3} max={0.8} step={0.05} onChange={(v) => setOverride({ n_interaction: v })} />
-            <SliderRow label="χ" value={chi} min={0.05} max={0.35} step={0.01} onChange={(v) => setOverride({ chi_acoustic: v })} />
+            <SliderRow label={`η_inj — O · ${nameO}`} value={eta} min={0.05} max={0.60} step={0.01} onChange={(v) => setOverride({ eta_inj_O: v })} />
+            <SliderRow label={`η_inj — F · ${nameF}`} value={etaF} min={0.05} max={0.60} step={0.01} onChange={(v) => setOverride({ eta_inj_F: v })} />
+            <SliderRow
+              label={`SMD [µm] — O · ${nameO}${rateLimiting === 'O' ? ' ★' : ''}`}
+              value={smd} min={smdMin} max={smdMax} step={1}
+              onChange={(v) => setOverride({ smd_um: v })}
+            />
+            <SliderRow
+              label={`SMD [µm] — F · ${nameF}${rateLimiting === 'F' ? ' ★' : ''}`}
+              value={smdF} min={smdFMin} max={smdFMax} step={1}
+              onChange={(v) => setOverride({ smd_F_um: v })}
+            />
+            <SliderRow label="n (interaction index)" value={nVal} min={0.3} max={0.8} step={0.05} onChange={(v) => setOverride({ n_interaction: v })} />
+            <SliderRow label="χ (sensitive fraction)" value={chi} min={0.05} max={0.35} step={0.01} onChange={(v) => setOverride({ chi_acoustic: v })} />
           </div>
+          <p className="text-[10px] text-[var(--color-text-secondary)] -mt-1">
+            ★ marks the rate-limiting stream — the one whose lag sets the chug and acoustic verdicts.
+            Atomizing the other one finer buys nothing.{' '}
+            <span className="opacity-80">
+              n and χ are combustion-response calibration constants, not propellant data: they do not
+              change when you switch propellants, and χ is the single largest modelling uncertainty
+              here. Sweep them rather than trusting one value.
+            </span>
+          </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-[var(--color-border)]">
             <label className="block text-xs text-[var(--color-text-secondary)]">
               <span className="block mb-1">Conversion-lag model</span>
