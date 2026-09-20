@@ -1,9 +1,13 @@
-import type { RunnerResults } from '../api/client';
+import type { RunnerResults, EngineConfig } from '../api/client';
+import { deriveInjectorLayout } from './InjectorPatternPlot';
 
 interface ResultsDisplayProps {
   results: RunnerResults | null;
   isLoading?: boolean;
   targetExitPressure?: number | null;  // Ambient pressure (target for nozzle exit)
+  /** Needed for the injector-geometry block: pitch circles and standoff are derived from
+   *  the design variables, not returned by /api/evaluate. */
+  config?: EngineConfig | null;
 }
 
 // Unit conversion constants
@@ -84,7 +88,7 @@ function Section({ title, children, icon }: SectionProps) {
   );
 }
 
-export function ResultsDisplay({ results, isLoading, targetExitPressure }: ResultsDisplayProps) {
+export function ResultsDisplay({ results, isLoading, targetExitPressure, config }: ResultsDisplayProps) {
   if (isLoading) {
     return (
       <div className="p-5 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
@@ -609,6 +613,121 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure }: Resul
           </div>
         </Section>
       )}
+
+      {/* ---------------------------------------------------------------------------------
+          INJECTOR AND SPRAY.
+
+          /api/evaluate already returns 61 diagnostic keys; this view rendered a handful of
+          them, so Forward Mode showed a strictly smaller picture of the same engine than
+          Layer 1 did -- no SMD, no Weber numbers, no discharge coefficients, no momentum
+          ratio. Nothing here is recomputed: every number is read straight off the solver,
+          and the effective SMD uses the same mass-flux blend Layer 1 uses
+          (MR/(1+MR)*D32_O + 1/(1+MR)*D32_F, _impinging_smd_penalty_with_angle).
+          --------------------------------------------------------------------------------- */}
+      {(() => {
+        // Values here are mixed number/string/boolean, so keep it unknown and narrow at use.
+        const d = (results as unknown as Record<string, unknown>).diagnostics as
+          Record<string, unknown> | undefined;
+        if (!d) return null;
+        const num = (k: string): number | undefined => {
+          const v = d[k];
+          return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+        };
+        const d32o = num('D32_O');
+        const d32f = num('D32_F');
+        const mr = num('MR') ?? results.MR;
+        const smdEff = (d32o !== undefined && d32f !== undefined && mr && mr > 0)
+          ? (mr / (1 + mr)) * d32o + (1 / (1 + mr)) * d32f
+          : (d32o ?? d32f);
+        const aEff = (num('A_eff_O') ?? 0) + (num('A_eff_F') ?? 0);
+        const areaRatio = results.A_throat ? aEff / results.A_throat : undefined;
+        const um = (m: number | undefined) => (m === undefined ? '—' : formatNumber(m * 1e6, 1));
+        const mm = (m: number | undefined) => (m === undefined ? '—' : formatNumber(m * 1e3, 3));
+        return (
+          <Section
+            title="Injector & Spray"
+            icon={<svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>}
+          >
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <SmallMetric label="Effective SMD (mass-flux weighted)" value={um(smdEff)} unit="µm" colorClass="text-cyan-400" />
+              <SmallMetric label="SMD — oxidizer" value={um(d32o)} unit="µm" colorClass="text-cyan-400" />
+              <SmallMetric label="SMD — fuel" value={um(d32f)} unit="µm" colorClass="text-orange-400" />
+              <SmallMetric label="Impingement Angle (effective)" value={formatNumber(num('impingement_angle_deg'), 1)} unit="deg" colorClass="text-indigo-400" />
+              <SmallMetric label="Momentum Ratio R" value={formatNumber(num('momentum_ratio_R'), 4)} unit="" />
+              <SmallMetric label="Effective Injector Area / A_throat" value={formatNumber(areaRatio, 4)} unit="" />
+              <SmallMetric label="x* (evaporation length)" value={mm(num('x_star'))} unit="mm" />
+              <SmallMetric label="Jet-to-jet relative velocity" value={formatNumber(num('u_rel'), 1)} unit="m/s" />
+              <SmallMetric label="Cd — oxidizer" value={formatNumber(num('Cd_O'), 4)} unit="" colorClass="text-cyan-400" />
+              <SmallMetric label="Cd — fuel" value={formatNumber(num('Cd_F'), 4)} unit="" colorClass="text-orange-400" />
+              <SmallMetric label="d_jet — oxidizer" value={mm(num('d_jet_O'))} unit="mm" colorClass="text-cyan-400" />
+              <SmallMetric label="d_jet — fuel" value={mm(num('d_jet_F'))} unit="mm" colorClass="text-orange-400" />
+              <SmallMetric label="Weber — oxidizer" value={formatNumber(num('We_O'), 0)} unit="" colorClass="text-cyan-400" />
+              <SmallMetric label="Weber — fuel" value={formatNumber(num('We_F'), 0)} unit="" colorClass="text-orange-400" />
+              <SmallMetric label="Bulk velocity — oxidizer" value={formatNumber(num('v_O_bulk'), 1)} unit="m/s" colorClass="text-cyan-400" />
+              <SmallMetric label="Bulk velocity — fuel" value={formatNumber(num('v_F_bulk'), 1)} unit="m/s" colorClass="text-orange-400" />
+              <SmallMetric label="Elements — oxidizer" value={formatNumber(num('momentum_ratio_n_elements_O'), 0)} unit="" />
+              <SmallMetric label="Elements — fuel" value={formatNumber(num('momentum_ratio_n_elements_F'), 0)} unit="" />
+              <SmallMetric label="Spray quality" value={d.spray_quality_good === true ? 'good' : d.spray_quality_good === false ? 'check' : '—'} unit="" colorClass={d.spray_quality_good === true ? 'text-green-400' : 'text-yellow-400'} />
+              <SmallMetric label="Injector type" value={String(d.injector_type ?? '—')} unit="" />
+            </div>
+          </Section>
+        );
+      })()}
+
+      {/* ---------------------------------------------------------------------------------
+          INJECTOR GEOMETRY. Pitch circles, standoff and web are pure geometry from the
+          design variables -- the solver does not return them, so they are derived here with
+          the SAME function the Chamber Geometry drawing uses, rather than a second copy.
+          --------------------------------------------------------------------------------- */}
+      {(() => {
+        const cfgInj = config?.injector as Record<string, unknown> | undefined;
+        if (!cfgInj || String(cfgInj.type ?? '').toLowerCase() !== 'impinging') return null;
+        const geom = cfgInj.geometry as Record<string, Record<string, number>> | undefined;
+        const cg = config?.chamber_geometry as Record<string, number> | undefined;
+        const ox = geom?.oxidizer;
+        const fu = geom?.fuel;
+        const bore = Number(cg?.chamber_diameter ?? 0);
+        if (!ox || !fu || !(bore > 0)) return null;
+        const req = (config?.design_requirements ?? {}) as Record<string, unknown>;
+        const n = (v: unknown) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+        const { g } = deriveInjectorLayout({
+          oxidizer: { n_elements: Number(ox.n_elements), d_jet: Number(ox.d_jet), impingement_angle: Number(ox.impingement_angle), spacing: Number(ox.spacing) },
+          fuel: { n_elements: Number(fu.n_elements), d_jet: Number(fu.d_jet), impingement_angle: Number(fu.impingement_angle), spacing: Number(fu.spacing) },
+          boreDiameter: bore,
+          centerClearDiameter: n(req.layer1_injector_center_clear_dia_m),
+          minWeb: n(req.layer1_injector_min_web_m),
+          wallClearance: n(req.layer1_injector_wall_clearance_m),
+          plateThickness: n(req.layer1_injector_plate_thickness_m) || 0.0127,
+          counterboreDiameter: n(req.layer1_injector_counterbore_dia_m),
+        });
+        const MM = 1000;
+        const f2 = (v: number) => formatNumber(v, 2);
+        return (
+          <Section
+            title="Injector Geometry"
+            icon={<svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" strokeWidth={2} /><circle cx="12" cy="12" r="3.5" strokeWidth={2} /></svg>}
+          >
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <SmallMetric label="Doublets" value={String(g.n)} unit="" />
+              <SmallMetric label="Angular pitch" value={f2(360 / Math.max(1, g.n))} unit="deg" />
+              <SmallMetric label="Included angle" value={f2(g.included)} unit="deg" colorClass={g.included > 90 ? 'text-yellow-400' : 'text-[var(--color-text-primary)]'} />
+              <SmallMetric label="Chamber bore" value={f2(bore * MM)} unit="mm" />
+              <SmallMetric label="Pitch circle — oxidizer" value={f2(g.dPitchO * MM)} unit="mm" colorClass="text-cyan-400" />
+              <SmallMetric label="Pitch circle — fuel" value={f2(g.dPitchF * MM)} unit="mm" colorClass="text-orange-400" />
+              <SmallMetric label="Ring offset dr" value={f2(g.dr * MM)} unit="mm" />
+              <SmallMetric label="Impingement standoff" value={formatNumber(g.lImp * MM, 3)} unit="mm" />
+              <SmallMetric label="Standoff L/d" value={f2(g.lOverD)} unit="" />
+              <SmallMetric label="Impingement circle" value={f2(2 * g.rImp * MM)} unit="mm" />
+              <SmallMetric label="Chamber area fed" value={formatNumber(g.coreFrac * 100, 1)} unit="%" colorClass={g.coreFrac < 0.25 ? 'text-yellow-400' : 'text-[var(--color-text-primary)]'} />
+              <SmallMetric label="Web — oxidizer" value={f2(g.webO * MM)} unit="mm" colorClass="text-cyan-400" />
+              <SmallMetric label="Web — fuel" value={f2(g.webF * MM)} unit="mm" colorClass="text-orange-400" />
+              <SmallMetric label="Centre clear circle" value={f2(g.centreClear * MM)} unit="mm" />
+              <SmallMetric label="Wall land" value={f2(g.wallLand * MM)} unit="mm" />
+              <SmallMetric label="Face incidence (steepest jet)" value={f2(90 - Math.max(g.inner.impingement_angle, g.outer.impingement_angle))} unit="deg" />
+            </div>
+          </Section>
+        );
+      })()}
 
       {/* Additional Thermodynamic Properties */}
       <Section

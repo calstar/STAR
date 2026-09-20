@@ -20,7 +20,9 @@ PA_TO_PSI = 1.0 / PSI_TO_PA
 class StabilityOverrides(BaseModel):
     """Optional forward-mode knobs for rich stability re-evaluation."""
     eta_inj_O: float | None = Field(default=None, gt=0, le=0.6, description="Oxidizer ΔP_inj/Pc")
-    smd_um: float | None = Field(default=None, gt=0, le=200, description="Oxidizer spray SMD [µm]")
+    smd_um: float | None = Field(default=None, gt=0, le=400, description="Oxidizer spray SMD [µm]")
+    smd_F_um: float | None = Field(default=None, gt=0, le=400, description="Fuel spray SMD [µm]")
+    eta_inj_F: float | None = Field(default=None, gt=0, le=0.6, description="Fuel ΔP_inj/Pc")
     n_interaction: float | None = Field(default=None, gt=0, le=2, description="Combustion interaction index n")
     chi_acoustic: float | None = Field(default=None, gt=0, le=1, description="Acoustic sensitive-fraction χ")
     time_lag_model: Literal["leonardi_dtl", "d2_law"] | None = Field(

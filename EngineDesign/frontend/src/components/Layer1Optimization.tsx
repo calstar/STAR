@@ -1714,26 +1714,51 @@ export function Layer1Optimization({
                 </p>
               )}
               <div className="grid grid-cols-2 gap-4 mb-3">
+                {/* This number is NOT a residual. Once every requirement is met it is
+                    the shaping terms that remain -- chamber mass (W_MASS*(m/m_ref)^2),
+                    SMD, tank match -- and those never reach zero, so a fully converged
+                    design floors in the 1e3 range. Colouring it green<=1 / red>10 painted
+                    every real design red and read as "unconverged". Colour and verdict
+                    come from the physics residual instead; the objective is reported
+                    with the term that dominates it named. */}
                 <ResultCard
-                  label="Best Objective (Residual)"
+                  label="Best objective (weighted, includes shaping terms)"
                   value={(() => {
                     const v = results.convergence_info.best_objective;
                     return typeof v === 'number' && Number.isFinite(v) ? formatLayer1ResidualScalar(v) : '-';
                   })()}
                   isText
-                  color={
-                    (results.convergence_info.best_objective ?? 0) <= 1
-                      ? 'green'
-                      : (results.convergence_info.best_objective ?? 0) <= 10
-                        ? 'yellow'
-                        : 'red'
-                  }
+                  color={(() => {
+                    const v = results.convergence_info.best_objective;
+                    if (typeof v !== 'number' || !Number.isFinite(v) || v >= 1e6) return 'red';
+                    const rms = results.convergence_info.primary_relative_residual?.rms_primary;
+                    if (typeof rms === 'number' && Number.isFinite(rms)) {
+                      return rms <= 0.01 ? 'green' : rms <= 0.05 ? 'yellow' : 'red';
+                    }
+                    return 'green';
+                  })()}
                   footnote={(() => {
                     const v = results.convergence_info.best_objective;
                     if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) {
                       return 'Weighted sum of squared penalties; infeasible runs floor at ~1e6.';
                     }
-                    return `Weighted penalty sum (W×term²); log10 ≈ ${Math.log10(v).toFixed(3)}. Sum of breakdown terms ≈ objective when feasible.`;
+                    if (v >= 1e6) return 'Infeasible: no candidate cleared every hard constraint.';
+                    const bd = results.convergence_info.best_objective_breakdown ?? {};
+                    let topKey = '';
+                    let topVal = 0;
+                    for (const [k, raw] of Object.entries(bd)) {
+                      if (!k.endsWith('_penalty') || k === 'infeasibility_penalty') continue;
+                      const x = typeof raw === 'number' ? raw : NaN;
+                      if (Number.isFinite(x) && x > topVal) {
+                        topVal = x;
+                        topKey = k;
+                      }
+                    }
+                    const share =
+                      topKey && topVal > 0
+                        ? ` ${((100 * topVal) / v).toFixed(1)}% of it is ${topKey.replace(/_penalty$/, '').replace(/_/g, ' ')}.`
+                        : '';
+                    return `Not a residual: shaping terms (chamber mass, SMD, tank match) never reach 0, so a converged design floors near 1e3.${share} Convergence is the physics residual below.`;
                   })()}
                 />
                 <ResultCard

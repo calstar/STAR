@@ -159,7 +159,50 @@ the trustworthy output.
 | η sweep fixed at 0.08–0.45 for every engine | window anchored to the design point (`_eta_window`) |
 | `T_crit` absent — no model needed it | `FluidConfig.critical_temperature`, config → CoolProp → handbook, every fallback recorded |
 | frontend legend hardcoded "O (LOX)" / "F (fuel)" | actual fluid names and phases from the payload |
+| vaporization card, radar and SMD slider all oxidizer-only | both streams; headline and radar follow `rate_limiting_stream` (§4b) |
+| `fallbacks_used` accumulated across runs and propellants | `assumptions.scope()` per report (§4b) |
+| Forward Mode kept the previous propellant's stability panel on screen | results and sensitivity overrides cleared when the engine identity changes (`lib/engineIdentity.ts`) |
 | jet diameter unavailable to the lag model | `_jet_geometry` resolves it for impinging / coaxial / pintle, and returns NaN (recorded) rather than a stand-in when the injector type has no equivalent dimension |
+
+## 4b. Reporting the right stream, and the right run
+
+Three reporting defects sat downstream of the physics and survived the §4 pass, because each is
+*correct on methalox* and only wrong on a propellant whose fuel is the slower vaporizer.
+
+**The vaporization card described the oxidizer, not the rate-limiting stream.** `L_vap`,
+`tau_conv`, SMD and the completion percentage were hardwired to the O side. On LOX/CH₄ the oxidizer
+happens to be slower (3.7 ms vs 2.9 ms), so the card read correctly by luck. On LOX/ethanol it does
+not (13 ms vs 25 ms): the card reported LOX needing 211 mm in a 203 mm chamber — marginal — while
+ethanol, the stream actually setting the lag, needed **426 mm**. The one-glance health radar scores
+its "vaporization" axis off those same keys, so it read 0.96 (nearly passing) instead of 0.48.
+`_vaporization_profile` now computes **both** streams and the headline keys follow
+`rate_limiting_stream`; the UI draws both curves and names which one paces the burn.
+
+**The SMD slider could not reach the stream that mattered.** `smd_um` overrode `D32_O` only. On an
+engine whose fuel is rate-limiting, the atomization lever moved a number that was not setting the
+lag. Added `smd_F_um` and `eta_inj_F`; the panel marks the rate-limiting stream with ★ and sizes
+each slider's range off that design's own spray (a fixed 30–120 µm window put an ethanol doublet's
+180 µm spray off the end of its own slider).
+
+**The "fallbacks used" note was cumulative across runs.** `assumptions.py` documented `clear()` at
+the start of an evaluation and nothing called it, so the registry was process-global and monotone:
+after a methalox run recorded "fluids.oxidizer.latent_heat missing", an ethalox run whose preset
+supplies every field still announced *the previous propellant's* gaps. Fixed with
+`assumptions.scope()` — a re-entrant, thread-local collector that the rich report wraps itself in —
+rather than `clear()`, which would have destroyed the process-wide diagnostic record the logs want.
+The note also now says *where* the missing values live; "load a propellant preset" was printed even
+for feed-line lengths, which no preset supplies.
+
+Alongside these, `configs/default.yaml` carried `latent_heat: null` and `boiling_point: null` for
+LOX, so every evaluation of the default config silently substituted handbook values and reported
+three fallbacks it never needed. Those are stability-only inputs — the forward performance path does
+not read them — so filling them in cannot move thrust, Isp, or the golden anchors.
+
+**Still propellant-independent, by choice:** the Crocco interaction index `n` and the sensitive
+fraction `chi_acoustic` are calibration constants, not propellant data. Ethanol, methane and RP-1
+get the same combustion response. Giving each preset its own value would mean inventing three
+numbers where the literature supports none, so instead the panel says outright that they do not
+switch and that `chi` is the largest modelling uncertainty in the card. Sweep them.
 
 ## 5. The root locus
 
@@ -187,6 +230,14 @@ using L17's own lags, (B) each lag model vs the experiment-derived τ_vap, (C) L
 Ranz–Marshall, (D) blast radius on STAR-class engines, (E) the decider — each model end-to-end
 against both measured quantities. Exit code is non-zero if any criterion regresses.
 
-Unit tests live in `tests/test_stability_timelag.py`. **Note that `tests/test_stability_*.py` is
-gitignored repo-wide** (`.gitignore:93`, "local-only tests"), so neither these nor the pre-existing
-stability tests run in CI.
+Unit tests live in `tests/test_stability_timelag.py`, and the multi-propellant regression in
+`tests/test_stability_propellants.py`. The latter exists because every other stability test loads
+`configs/default.yaml` — methalox lineage, where "the oxidizer" and "the rate-limiting stream" are
+the same thing, so a LOX/CH₄ assumption is invisible. It runs the extraction across all three
+shipped presets with each one's real spray, and carries an explicit guard that at least one preset
+actually has a slower fuel: without it the key assertion would pass vacuously against the very bug
+it guards.
+
+**Note that `tests/test_stability_*.py` is gitignored repo-wide** (`.gitignore:93`, "local-only
+tests"), so neither these nor the pre-existing stability tests run in CI.
+`scripts/chug_timelag_benchmark.py` is tracked and is the only enforceable gate.

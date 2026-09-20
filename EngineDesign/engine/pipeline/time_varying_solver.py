@@ -141,9 +141,18 @@ class TimeVaryingCoupledSolver:
         self,
         config: PintleEngineConfig,
         cea_cache: Any,
+        P_ambient: Optional[float] = None,
     ):
         """
         Initialize the coupled time-varying solver.
+
+        ``P_ambient`` is the back pressure the nozzle fires into, in Pa. Explicit wins;
+        otherwise it comes from ``environment.elevation`` through the same standard
+        atmosphere the steady solve uses; only with neither is it sea level. This used to be
+        hardcoded to 101325 Pa inside ``solve_time_step`` while ``PintleEngineRunner.evaluate``
+        derived it from the site, so the two paths disagreed about the same engine by exactly
+        ``(101325 - P_a) * A_exit`` -- 61.35 N on the 6.5 kN ethalox at 626.67 m -- and every
+        time-series thrust, impulse and burn time was low by the pad's altitude.
         
         Parameters:
         -----------
@@ -154,6 +163,15 @@ class TimeVaryingCoupledSolver:
         """
         self.config = config
         self.cea_cache = cea_cache
+        if P_ambient is not None:
+            self.P_ambient = float(P_ambient)
+        else:
+            self.P_ambient = 101325.0
+            env = getattr(config, "environment", None)
+            elevation = getattr(env, "elevation", None) if env is not None else None
+            if elevation is not None and elevation >= 0:
+                from engine.core.runner import compute_ambient_pressure_from_elevation
+                self.P_ambient = float(compute_ambient_pressure_from_elevation(elevation))
         
         # Ensure chamber_geometry exists
         cg = ensure_chamber_geometry(config)
@@ -287,13 +305,8 @@ class TimeVaryingCoupledSolver:
         # as geometry evolves. This was missing before!
         from engine.core.chamber_profiles import calculate_chamber_intrinsics
         # Get ambient pressure from config if available, otherwise use fallback (0.9 * 1 atm)
-        P_back = None
-        if hasattr(self.config, 'environment') and self.config.environment is not None:
-            elevation = getattr(self.config.environment, 'elevation', None)
-            if elevation is not None:
-                # Use standard atmosphere model
-                from engine.core.runner import compute_ambient_pressure_from_elevation
-                P_back = compute_ambient_pressure_from_elevation(elevation)
+        # One ambient for the whole solver -- the intrinsics and the thrust must see the same sky.
+        P_back = self.P_ambient
         # If still None, fallback will be used (0.9 * 1 atm)
         chamber_intrinsics = calculate_chamber_intrinsics(
             Pc=Pc,
@@ -616,7 +629,7 @@ class TimeVaryingCoupledSolver:
         
         # Calculate thrust with shifting equilibrium
         # CRITICAL: Pass reaction progress so shifting equilibrium accounts for time-varying chemistry
-        Pa = 101325.0  # Ambient
+        Pa = self.P_ambient  # site ambient, same source as the steady solve (see __init__)
         
         thrust_results = calculate_thrust(
             Pc,

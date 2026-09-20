@@ -48,12 +48,22 @@ export function ChugRootLocus({ data }: Props) {
   const sPad = Math.max((sMax - sMin) * 0.18, Math.abs(sMax - sMin) < 1e-9 ? 1 : 0);
   const xMin = sMin - sPad;
   const xMax = sMax + sPad;
-  const yMax = Math.max(...omegas, 1) * 1.18;
-  const yMin = 0;
+  // ZOOM OMEGA TO THE DATA. Pinning yMin to 0 put this locus (omega 400-460 rad/s) into the
+  // top 11 % of the frame and left the other 89 % empty, which makes a shallow arc read as a
+  // flat line. Only pull the floor to 0 when the data actually goes near it.
+  const wLo = Math.min(...omegas);
+  const wHi = Math.max(...omegas, 1);
+  const wSpan = Math.max(wHi - wLo, wHi * 0.08, 1);
+  const yFloor = wLo - wSpan * 0.45;
+  const yMin = yFloor < wHi * 0.12 ? 0 : yFloor;
+  const yMax = wHi + wSpan * 0.35;
 
-  const W = 320;
-  const H = 260;
-  const pad = { l: 52, r: 30, t: 22, b: 52 };
+  // Frame. The right margin has to hold BOTH the Hz mirror ticks and the rotated Hz axis
+  // title: at r = 30 the title was laid out from x = 283.8 to x = 346.2 against a 320-wide
+  // viewBox, i.e. 26 px outside it, and got clipped.
+  const W = 348;
+  const H = 264;
+  const pad = { l: 56, r: 54, t: 26, b: 52 };
   const plotW = W - pad.l - pad.r;
   const plotH = H - pad.t - pad.b;
 
@@ -61,6 +71,7 @@ export function ChugRootLocus({ data }: Props) {
   const toY = (w: number) => pad.t + plotH - ((w - yMin) / (yMax - yMin)) * plotH;
 
   const x0 = toX(0); // the stability boundary
+  const clipId = 'locus-plot-clip';
 
   const branch = locus.map((p) => `${toX(p.real)},${toY(p.imag)}`).join(' ');
 
@@ -122,6 +133,11 @@ export function ChugRootLocus({ data }: Props) {
                   orient="auto" markerUnits="strokeWidth">
             <path d="M0,0 L5,2.5 L0,5 z" fill={DESIGN} />
           </marker>
+          {/* Zooming omega means the zeta rays leave from off-frame; clip them to the axes
+              rather than letting them draw across the margins. */}
+          <clipPath id={clipId}>
+            <rect x={pad.l} y={pad.t} width={plotW} height={plotH} />
+          </clipPath>
         </defs>
 
         {/* half-plane shading: the single most important thing on the chart */}
@@ -156,22 +172,25 @@ export function ChugRootLocus({ data }: Props) {
         ))}
 
         {/* constant-zeta rays from the origin */}
-        {rays.map((r) => {
-          const px = toX(r.x);
-          const py = toY(r.y);
-          if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
-          return (
-            <g key={`z${r.z}`}>
-              <line x1={x0} y1={toY(0)} x2={px} y2={py}
+        <g clipPath={`url(#${clipId})`}>
+          {rays.map((r) => {
+            const px = toX(r.x);
+            const py = toY(r.y);
+            if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
+            return (
+              <line key={`z${r.z}`} x1={x0} y1={toY(0)} x2={px} y2={py}
                     stroke={MUTED} strokeWidth={0.7} strokeDasharray="1 5" opacity={0.8} />
-            </g>
-          );
-        })}
+            );
+          })}
+        </g>
+        {/* Ray labels go INSIDE the frame. They used to be placed at pad.t - 3, which is
+            above the plot entirely -- they floated in the gap under the subtitle, detached
+            from the rays they name. */}
         {rays.map((r) => (
           <text
             key={`zl${r.z}`}
-            x={r.exitsTop ? toX(r.x) : pad.l + 3}
-            y={r.exitsTop ? pad.t - 3 : toY(r.y) - 2}
+            x={r.exitsTop ? toX(r.x) : pad.l + 4}
+            y={r.exitsTop ? pad.t + 9 : toY(r.y) - 3}
             fill={MUTED}
             fontSize={7.5}
             opacity={0.9}
@@ -183,7 +202,9 @@ export function ChugRootLocus({ data }: Props) {
 
         {/* THE stability boundary */}
         <line x1={x0} y1={pad.t} x2={x0} y2={pad.t + plotH} stroke={UNSTABLE} strokeWidth={1.8} />
-        <text x={x0 + 3} y={pad.t + 9} fill={UNSTABLE} fontSize={8} fontWeight={600}>
+        {/* At the TOP this sat on the frame line and fought the zeta labels for the same
+            few pixels. The boundary is a full-height line; label it where nothing else is. */}
+        <text x={x0 + 4} y={pad.t + plotH - 5} fill={UNSTABLE} fontSize={8} fontWeight={600}>
           σ = 0
         </text>
 
@@ -203,14 +224,17 @@ export function ChugRootLocus({ data }: Props) {
           <>
             <circle cx={toX(locus[0].real)} cy={toY(locus[0].imag)} r={2.5}
                     fill="none" stroke={DESIGN} strokeWidth={1.2} />
-            <text x={toX(locus[0].real)} y={toY(locus[0].imag) - 6} fill={DESIGN}
-                  fontSize={7.5} textAnchor="middle">
+            {/* Start label goes BELOW its point and end label above: the sweep starts at the
+                top-left where the zeta=0.5 ray label also lives, and the two overlapped by
+                7.5 x 7.1 px. Splitting them vertically separates them for any locus shape. */}
+            <text x={toX(locus[0].real) + 4} y={toY(locus[0].imag) + 11} fill={DESIGN}
+                  fontSize={7.5} textAnchor="start">
               η={locus[0].eta.toFixed(2)}
             </text>
             <text
-              x={toX(locus[locus.length - 1].real)}
-              y={toY(locus[locus.length - 1].imag) - 6}
-              fill={DESIGN} fontSize={7.5} textAnchor="middle"
+              x={toX(locus[locus.length - 1].real) - 4}
+              y={toY(locus[locus.length - 1].imag) - 7}
+              fill={DESIGN} fontSize={7.5} textAnchor="end"
             >
               η={locus[locus.length - 1].eta.toFixed(2)}
             </text>
@@ -238,12 +262,12 @@ export function ChugRootLocus({ data }: Props) {
         <text x={pad.l + plotW / 2} y={H - 5} fill={MUTED} fontSize={8} textAnchor="middle">
           ← decaying · growing →
         </text>
-        <text x={13} y={pad.t + plotH / 2} fill={MUTED} fontSize={9.5} textAnchor="middle"
-              transform={`rotate(-90, 13, ${pad.t + plotH / 2})`}>
+        <text x={14} y={pad.t + plotH / 2} fill={MUTED} fontSize={9.5} textAnchor="middle"
+              transform={`rotate(-90, 14, ${pad.t + plotH / 2})`}>
           Im(s) = ω [rad/s]
         </text>
-        <text x={W - 5} y={pad.t + plotH / 2} fill={MUTED} fontSize={8} textAnchor="middle"
-              opacity={0.8} transform={`rotate(-90, ${W - 5}, ${pad.t + plotH / 2})`}>
+        <text x={W - 12} y={pad.t + plotH / 2} fill={MUTED} fontSize={8} textAnchor="middle"
+              opacity={0.8} transform={`rotate(-90, ${W - 12}, ${pad.t + plotH / 2})`}>
           f = ω/2π [Hz]
         </text>
       </svg>

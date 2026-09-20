@@ -521,14 +521,24 @@ def build_stability_inputs(config, Pc: float, MR: float, mdot_total: float, csta
                        reason="closure produced no fuel SMD; order-of-magnitude liquid-fuel spray")
     D32_F = float(D32_F)
     ov = overrides or {}
+    # The SMD sliders. `smd_um` has always meant the OXIDIZER spray and keeps that meaning for
+    # back-compatibility; `smd_F_um` was missing entirely, so on an engine whose FUEL is the
+    # rate-limiting vaporizer (LOX/ethanol: 25 ms vs 13 ms) the atomization slider could not move
+    # the quantity that sets the lag.
     if ov.get("smd_um") is not None:
         D32_O = float(ov["smd_um"]) * 1e-6
+    if ov.get("smd_F_um") is not None:
+        D32_F = float(ov["smd_F_um"]) * 1e-6
     if ov.get("eta_inj_O") is not None:
         eta_O = float(ov["eta_inj_O"])
         dpiO = eta_O * Pc
     else:
         eta_O = dpiO / Pc if Pc > 0 else 0.3
-    eta_F = dpiF / Pc if Pc > 0 else 0.3
+    if ov.get("eta_inj_F") is not None:
+        eta_F = float(ov["eta_inj_F"])
+        dpiF = eta_F * Pc
+    else:
+        eta_F = dpiF / Pc if Pc > 0 else 0.3
 
     rho_O = _fluid_thermo(config, "oxidizer", "density")
     rho_F = _fluid_thermo(config, "fuel", "density")
@@ -651,6 +661,11 @@ def build_stability_inputs(config, Pc: float, MR: float, mdot_total: float, csta
         "rho_O": rho_O, "rho_F": rho_F, "K_bulk_O": K_bulk_O,
         "feed_length_O": L_feed_O, "feed_length_F": L_feed_F,
         "u_O": diagnostics.get("u_O"), "Cd_O": diagnostics.get("Cd_O"),
+        "u_F": diagnostics.get("u_F"), "Cd_F": diagnostics.get("Cd_F"),
+        # Which stream actually paces the burn. Everything that reports "the" vaporization length,
+        # "the" lag or "the" SMD has to follow this, not the oxidizer by position.
+        "rate_limiting_stream": ("O" if (np.isfinite(tau_conv_O) and tau_conv_O >= tau_conv_F)
+                                 else "F"),
         "Pc": Pc, "wh_pressure_pa": None,
     }
 

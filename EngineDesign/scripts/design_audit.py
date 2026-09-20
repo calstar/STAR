@@ -45,9 +45,18 @@ def audit(f):
         spray_radius_tol=rq.get('layer1_injector_spray_radius_tol') or 0.08)
     PO = c.lox_tank.initial_pressure_psi*6894.757; PF = c.fuel_tank.initial_pressure_psi*6894.757
     dpo, dpf = (PO-r['Pc'])/r['Pc'], (PF-r['Pc'])/r['Pc']
+    # Targets come from the config being audited, not from whatever design happened to be
+    # current when this script was written. Hardcoding 8000 N here made every 6405 N
+    # candidate report FAILS: thrust, which is the tool being stale, not the design.
+    F_tgt = float(rq.get('target_thrust') or 0.0)
+    OF_tgt = float(rq.get('optimal_of_ratio') or 0.0)
     checks = [
-        ("thrust 8000 +/-2%",  abs(r['F']-8000)/8000 <= 0.02,  f"{r['F']:.1f} N"),
-        ("O/F 1.65 +/-5%",     abs(r['MR']-1.65)/1.65 <= 0.05, f"{r['MR']:.4f}"),
+        (f"thrust {F_tgt:.0f} +/-2%",
+         F_tgt > 0 and abs(r['F']-F_tgt)/F_tgt <= 0.02,
+         f"{r['F']:.1f} N" + ("" if F_tgt > 0 else "  (no target_thrust in config)")),
+        (f"O/F {OF_tgt:.3f} +/-5%",
+         OF_tgt > 0 and abs(r['MR']-OF_tgt)/OF_tgt <= 0.05,
+         f"{r['MR']:.4f}" + ("" if OF_tgt > 0 else "  (no optimal_of_ratio in config)")),
         ("dP/Pc O in band",    0.20 <= dpo <= 0.40,            f"{dpo:.3f}"),
         ("dP/Pc F in band",    0.20 <= dpf <= 0.40,            f"{dpf:.3f}"),
         ("n <= 30",            n <= 30,                        f"{n}"),
