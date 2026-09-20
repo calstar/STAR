@@ -22,7 +22,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from engine.core.runner import PintleEngineRunner, compute_ambient_pressure_from_elevation  # noqa: E402
 from engine.pipeline.io import load_config  # noqa: E402
 
-_CFG = os.path.join(os.path.dirname(__file__), "golden", "anchor_A_config_ethalox_pintle.yaml")
+# A shipped config, not a golden one: tests/golden/ is gitignored, so a test
+# that leaned on it errored on every machine but the one it was written on,
+# CI included. What the test needs is the coupled ablative path on an ethalox
+# engine, and the 180 lb point ships with exactly that.
+_CFG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs", "ethalox_180lb_8to1.yaml")
 _PSI = 6894.757
 
 
