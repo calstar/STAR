@@ -152,3 +152,143 @@ std::string getTomlValue(const std::string& content, const std::string& section,
     }
     return fallback;
 }
+
+int main(int argc, char* argv[]) {
+    std::string config_path = "config/config.toml";
+    std::string elodin_host = "127.0.0.1";
+    uint16_t elodin_port = 2240;
+    int interval_ms = 1000; // keepalive resend interval
+    std::string target_ip = "192.168.2.70";   // PLACEHOLDER — update once team assigns a real IP
+    uint16_t target_port = 5006;              // PLACEHOLDER — update once team confirms
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--config" && i + 1 < argc) {
+            config_path = argv[++i];
+        } else if (arg == "--elodin-host" && i + 1 < argc) {
+            elodin_host = argv[++i];
+        } else if (arg == "--elodin-port" && i + 1 < argc) {
+            elodin_port = static_cast<uint16_t>(std::atoi(argv[++i]));
+        } else if (arg == "--interval-ms" && i + 1 < argc) {
+            interval_ms = std::max(100, std::atoi(argv[++i]));
+        } else if (arg == "--target-ip" && i + 1 < argc) {
+            target_ip = argv[++i];
+        } else if (arg == "--target-port" && i + 1 < argc) {
+            target_port = static_cast<uint16_t>(std::atoi(argv[++i]));
+        } else if (arg == "--help" || arg == "-h") {
+            std::cout << "Usage: " << argv[0]
+                      << " [--config PATH] [--elodin-host HOST] [--elodin-port PORT]\n"
+                         "       [--interval-ms MS] [--target-ip IP] [--target-port PORT]\n";
+            return 0;
+        }
+    }
+
+    // Load config file, falling back to a couple of common relative paths
+    std::string config_content;
+    {
+        std::ifstream f(config_path);
+        if (!f.is_open()) {
+            for (const auto& fp : {"config/config.toml", "../config/config.toml"}) {
+                f.open(fp);
+                if (f.is_open()) { config_path = fp; break; }
+            }
+        }
+        if (f.is_open()) {
+            std::ostringstream ss;
+            ss << f.rdbuf();
+            config_content = ss.str();
+        }
+    }
+
+    if (!config_content.empty()) {
+        auto val = getTomlValue(config_content, "stacklight_service", "interval_ms", "");
+        if (!val.empty()) { try { interval_ms = std::max(100, std::stoi(val)); } catch (...) {} }
+
+        val = getTomlValue(config_content, "stacklight_service", "target_ip", "");
+        if (!val.empty()) target_ip = val;
+
+        val = getTomlValue(config_content, "stacklight_service", "target_port", "");
+        if (!val.empty()) { try { target_port = static_cast<uint16_t>(std::stoi(val)); } catch (...) {} }
+
+        val = getTomlValue(config_content, "stacklight_service", "elodin_host", "");
+        if (!val.empty()) elodin_host = val;
+
+        val = getTomlValue(config_content, "stacklight_service", "elodin_port", "");
+        if (!val.empty()) { try { elodin_port = static_cast<uint16_t>(std::stoi(val)); } catch (...) {} }
+    }
+
+    signal(SIGINT, signalHandler);
+    signal(SIGTERM, signalHandler);
+
+    // UDP unicast socket
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        std::cerr << "[StacklightService] socket() failed" << std::endl;
+        return 1;
+    }
+
+    struct sockaddr_in dest;
+    memset(&dest, 0, sizeof(dest));
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(target_port);
+    if (inet_pton(AF_INET, target_ip.c_str(), &dest.sin_addr) != 1) {
+        std::cerr << "[StacklightService] Invalid target IP: " << target_ip << std::endl;
+        close(sock);
+        return 1;
+    }
+
+    std::cout << "[StacklightService] Started — interval=" << interval_ms
+              << "ms target=" << target_ip << ":" << target_port << std::endl;
+    std::cout << "[StacklightService] State from Elodin at " << elodin_host << ":" << elodin_port
+              << " [0x5000]" << std::endl;
+
+    std::thread elodin_thread(elodinThread, elodin_host, elodin_port);
+
+        uint8_t last_sent_state = 0xFF; // sentinel value, forces the very first send
+    unsigned long count = 0;
+    auto last_log = std::chrono::steady_clock::now();
+    auto last_send = std::chrono::steady_clock::now() - std::chrono::milliseconds(interval_ms);
+
+    uint8_t buf[Diablo::MAX_PACKET_SIZE];
+
+    while (g_running) {
+        uint8_t seq_state = g_seq_state.load();
+        auto now = std::chrono::steady_clock::now();
+        bool state_changed = (seq_state != last_sent_state);
+        bool keepalive_due =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_send).count() >= interval_ms;
+
+        if (state_changed || keepalive_due) {
+            Diablo::StacklightCommandPacket cmd = stateToStacklight(seq_state);
+            auto ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count() & 0xFFFFFFFFu;
+
+            size_t len = Diablo::create_stacklight_command_packet(cmd, static_cast<uint32_t>(ts),
+                                                                    buf, sizeof(buf));
+            if (len > 0) {
+                ssize_t sent = sendto(sock, buf, len, 0,
+                                      reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest));
+                if (sent == static_cast<ssize_t>(len)) {
+                    count++;
+                    last_sent_state = seq_state;
+                    last_send = now;
+                }
+            }
+        }
+
+        auto since_log = std::chrono::duration<double>(now - last_log).count();
+        if (since_log >= 10.0) {
+            std::cout << "[StacklightService] Sent " << count
+                      << " commands (seq_state=" << (int)seq_state << ")" << std::endl;
+            last_log = now;
+        }
+
+        usleep(100000); // check 10 times per second
+    }
+
+    close(sock);
+    elodin_thread.join();
+    std::cout << "[StacklightService] Stopped." << std::endl;
+    return 0;
+}
