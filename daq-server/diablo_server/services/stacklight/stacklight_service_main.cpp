@@ -34,3 +34,60 @@ void signalHandler(int /*sig*/) {
     std::cout << "\n[StacklightService] Shutting down..." << std::endl;
     g_running = false;
 }
+
+// ── sequencer::State → StacklightCommandPacket ──────────────────────────────
+// Standard industrial convention: red = danger, yellow = caution,
+// green = safe, buzzer = most urgent states (fire, abort).
+Diablo::StacklightCommandPacket stateToStacklight(uint8_t s) {
+    using sequencer::State;
+    Diablo::StacklightCommandPacket cmd{0, 0, 0, 0};
+
+    switch (static_cast<State>(s)) {
+        case State::IDLE:
+            cmd.green = 1;
+            break;
+        case State::DEBUG:
+        case State::CALIBRATE:
+        case State::GN2_VENT:
+        case State::FUEL_VENT:
+        case State::OX_VENT:
+        case State::GN2_HIGH_VENT:
+        case State::VENT:
+            cmd.yellow = 1;
+            break;
+        case State::ARMED:
+        case State::READY:
+        case State::PRESS_STANDBY:
+            cmd.red = 1;
+            cmd.yellow = 1;
+            break;
+        case State::FUEL_FILL:
+        case State::OX_FILL:
+        case State::GN2_LOW_PRESS:
+        case State::FUEL_PRESS:
+        case State::OX_PRESS:
+        case State::GN2_HIGH_PRESS:
+            cmd.red = 1;
+            break;
+        case State::FIRE:
+            cmd.red = 1;
+            cmd.buzzer = 1;
+            break;
+        case State::ENGINE_ABORT:
+        case State::GSE_ABORT:
+        case State::EMERGENCY_ABORT:
+            cmd.red = 1;
+            cmd.buzzer = 1;
+            break;
+        case State::UNKNOWN:
+        default:
+            cmd.red = 1;
+            cmd.yellow = 1;
+            cmd.green = 1;
+            cmd.buzzer = 1;
+            break;
+    }
+    return cmd;
+}
+
+}
