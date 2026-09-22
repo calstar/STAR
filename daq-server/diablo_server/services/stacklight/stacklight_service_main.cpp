@@ -119,3 +119,36 @@ void elodinThread(std::string host, uint16_t port) {
 }
 
 }
+
+// ── Minimal TOML reader (mirrors heartbeat_service_main.cpp) ────────────────
+std::string trim(const std::string& s) {
+    size_t a = s.find_first_not_of(" \t\r\n\"");
+    size_t b = s.find_last_not_of(" \t\r\n\"");
+    return (a == std::string::npos) ? "" : s.substr(a, b - a + 1);
+}
+
+std::string getTomlValue(const std::string& content, const std::string& section,
+                         const std::string& key, const std::string& fallback = "") {
+    std::string sec_header = "[" + section + "]";
+    auto sec_pos = content.find(sec_header);
+    if (sec_pos == std::string::npos) return fallback;
+
+    auto search_start = sec_pos + sec_header.size();
+    auto next_sec = content.find("\n[", search_start);
+    std::string sec_content = (next_sec == std::string::npos)
+                                  ? content.substr(search_start)
+                                  : content.substr(search_start, next_sec - search_start);
+
+    std::istringstream iss(sec_content);
+    std::string line;
+    while (std::getline(iss, line)) {
+        auto c = line.find('#');
+        if (c != std::string::npos) line = line.substr(0, c);
+        auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = trim(line.substr(0, eq));
+        std::string v = trim(line.substr(eq + 1));
+        if (k == key) return v;
+    }
+    return fallback;
+}
