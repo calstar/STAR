@@ -90,4 +90,32 @@ Diablo::StacklightCommandPacket stateToStacklight(uint8_t s) {
     return cmd;
 }
 
+// ── Elodin subscriber thread ────────────────────────────────────────────────
+void elodinThread(std::string host, uint16_t port) {
+    fsw::elodin::ElodinClient client;
+
+    while (g_running) {
+        if (!client.is_connected()) {
+            if (!client.connect(host, port)) {
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                continue;
+            }
+            client.subscribe_stream();
+            std::cout << "[StacklightService] Elodin connected, subscribed" << std::endl;
+        }
+
+        uint8_t buf[256];
+        ssize_t n = client.read_packet(buf, sizeof(buf));
+        if (n < 0) continue; // reconnect next loop
+
+        if (n < 8) continue;
+
+        // SequencerState VTable: [0x50, 0x00]
+        if (buf[5] == 0x50 && buf[6] == 0x00 && n >= 8 + 9) {
+            const uint8_t seq_state = buf[8 + 8];
+            g_seq_state.store(seq_state);
+        }
+    }
+}
+
 }
