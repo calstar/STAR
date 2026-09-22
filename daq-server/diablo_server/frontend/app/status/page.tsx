@@ -26,6 +26,45 @@ const HP_PT_SENSORS = PRESSURE_SENSORS.filter((s) =>
   ['PT_Cal.GSE_Mid', 'PT_Cal.GSE_High', 'PT_Cal.GN2_High'].includes(s.entity)
 ).map(({ label, entity, color }) => ({ label, entity, color }));
 
+interface StacklightState {
+  red: boolean;
+  yellow: boolean;
+  green: boolean;
+  buzzer: boolean;
+}
+
+/**
+ * Mirrors stateToStacklight() in
+ * daq-server/diablo_server/services/stacklight/stacklight_service_main.cpp
+ * Keep these two in sync manually — no shared source of truth yet.
+ */
+function sequencerStateToStacklight(state: number | null): StacklightState {
+  const off: StacklightState = { red: false, yellow: false, green: false, buzzer: false };
+  if (state === null) return off;
+
+  switch (state) {
+    case 1: // IDLE
+      return { ...off, green: true };
+    case 0: // DEBUG
+    case 14: // CALIBRATE
+    case 6: case 8: case 10: case 12: case 13: // VENT states
+      return { ...off, yellow: true };
+    case 2: // ARMED
+    case 15: // READY
+    case 20: // PRESS_STANDBY
+      return { ...off, red: true, yellow: true };
+    case 3: case 4: // FUEL_FILL, OX_FILL
+    case 5: case 7: case 9: case 11: // PRESS states
+      return { ...off, red: true };
+    case 16: // FIRE
+      return { ...off, red: true, buzzer: true };
+    case 17: case 18: case 19: // ABORT states
+      return { ...off, red: true, buzzer: true };
+    default: // UNKNOWN
+      return { red: true, yellow: true, green: true, buzzer: true };
+  }
+}
+
 function fmtValue(v: number | null): string {
   if (v === null || !isFinite(v)) return '---';
   const abs = Math.abs(v);
@@ -69,7 +108,7 @@ export default function StatusPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Pressure Sensors */}
         <div className="bg-card rounded-lg p-4 border border-gray-800">
           <h2 className="text-lg font-bold text-text-muted uppercase tracking-wider mb-3">Pressure Sensors</h2>
@@ -194,7 +233,37 @@ export default function StatusPage() {
             </div>
           )}
         </div>
-      </div>
+
+        {/* Stacklight */}
+        <div className="bg-card rounded-lg p-4 border border-gray-800">
+          <h2 className="text-lg font-bold text-text-muted uppercase tracking-wider mb-3">Stacklight</h2>
+          {(() => {
+            const light = sequencerStateToStacklight(currentState);
+            const dot = (on: boolean, color: string) =>
+              `w-8 h-8 rounded-full border-2 border-gray-700 ${on ? color : 'bg-gray-900'}`;
+            return (
+              <div className="flex items-center justify-around py-4">
+                <div className="flex flex-col items-center gap-2">
+                  <div className={dot(light.red, 'bg-red-500 shadow-[0_0_12px_2px_rgba(239,68,68,0.7)]')} />
+                  <span className="text-xs text-text-muted font-mono uppercase">Red</span>
+                </div>
+                <div className="flex flex-col items-center gap-2">
+                  <div className={dot(light.yellow, 'bg-yellow-400 shadow-[0_0_12px_2px_rgba(250,204,21,0.7)]')} />
+                  <span className="text-xs text-text-muted font-mono uppercase">Yellow</span>
+                </div>
+                <div className="flex flex-col items-center gap-2">
+                  <div className={dot(light.green, 'bg-green-500 shadow-[0_0_12px_2px_rgba(34,197,94,0.7)]')} />
+                  <span className="text-xs text-text-muted font-mono uppercase">Green</span>
+                </div>
+                <div className="flex flex-col items-center gap-2">
+                  <div className={`text-2xl ${light.buzzer ? 'text-amber-400 animate-pulse' : 'text-gray-700'}`}>🔊</div>
+                  <span className="text-xs text-text-muted font-mono uppercase">Buzzer</span>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+       </div>	
 
       {/* High Pressure PT Sensors Section */}
       <div className="mt-4">
