@@ -15,6 +15,14 @@ interval_ms = 200
 broadcast_ip = "192.168.2.255"
 broadcast_port = 5005
 
+[stacklight_service]
+enabled = true
+interval_ms = 1000
+target_ip = "192.168.2.70"
+target_port = 5005
+elodin_host = "127.0.0.1"
+elodin_port = 2240
+
 [config_broadcast_service]
 enabled = true
 backend_url = "http://127.0.0.1:8082"
@@ -333,6 +341,15 @@ necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 1
 active_connectors = [ 1, 2 ]
+
+[boards.stacklight_board]
+type = "STACKLIGHT"
+ip = "192.168.2.70"
+mac = ""
+listen_port = 5005
+board_id = 70
+enabled = true
+enable_serial_printing = false
 
 [sim_pt_targets]
 1 = 500
