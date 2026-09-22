@@ -48,6 +48,14 @@ target_link_libraries(heartbeat_service
     fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY}
 )
 
+# ── Stacklight Service ────────────────────────────────────────────────────────
+# STACKLIGHT_COMMAND UDP unicast; reads sequencer state from Elodin [0x5000]
+add_executable(stacklight_service stacklight/stacklight_service_main.cpp)
+target_include_directories(stacklight_service PRIVATE ${COMMON_INCLUDES})
+target_link_libraries(stacklight_service
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY}
+)
+
 # ── Config Broadcast Service ──────────────────────────────────────────────────
 # ACTUATOR_CONFIG / SENSOR_CONFIG UDP broadcast
 add_executable(config_broadcast_service config_broadcast/config_broadcast_service_main.cpp)
@@ -86,5 +94,6 @@ endif()
 install(TARGETS
     sequencer_service controller_service calibration_service
     heartbeat_service config_broadcast_service ota_service data_logger_service
+    stacklight_service
     RUNTIME DESTINATION bin
 )
