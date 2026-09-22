@@ -38,6 +38,17 @@ broadcast_ip = "192.168.2.255"
 broadcast_port = 5005
 
 # =============================================================================
+# Stacklight Service - STACKLIGHT_COMMAND to stacklight board (C++)
+# =============================================================================
+[stacklight_service]
+enabled = true
+interval_ms = 1000                  # Keepalive resend interval (state changes send immediately)
+target_ip = "192.168.2.70"          # Should match boards.stacklight_board.ip
+target_port = 5005                  # Should match boards.stacklight_board.listen_port
+elodin_host = "127.0.0.1"
+elodin_port = 2240
+
+# =============================================================================
 # Config Broadcast Service - ACTUATOR_CONFIG / SENSOR_CONFIG to boards (C++ preferred for flight)
 # =============================================================================
 [config_broadcast_service]
@@ -339,6 +350,13 @@ necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 1
 active_connectors = [1, 2]
+[boards.stacklight_board]
+type = "STACKLIGHT"
+ip = "192.168.2.70"          # PLACEHOLDER — update once team assigns a real IP
+listen_port = 5005            # Board listens for STACKLIGHT_COMMAND here
+board_id = 70                  # PLACEHOLDER — update once team confirms
+enabled = true
+enable_serial_printing = false
 
 # =============================================================================
 # Multiple Boards Example (commented out - uncomment to use)
