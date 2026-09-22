@@ -249,7 +249,7 @@ int main(int argc, char* argv[]) {
     auto last_log = std::chrono::steady_clock::now();
     auto last_send = std::chrono::steady_clock::now() - std::chrono::milliseconds(interval_ms);
 
-    uint8_t buf[Diablo::MAX_PACKET_SIZE];
+    uint8_t buf[MAX_PACKET_SIZE];
 
     while (g_running) {
         uint8_t seq_state = g_seq_state.load();
