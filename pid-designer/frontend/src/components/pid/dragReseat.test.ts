@@ -129,12 +129,91 @@ describe('a symbol dragged across a pipe it has nothing to do with', () => {
 
   it('is in the way of the pipe once it is let go of there', () => {
     // Dropped on the pipe, the valve is a symbol like any other, and the pipe
-    // goes round it.
+    // goes round it -- but only the stretch of it the valve lies across. This
+    // used to send the whole pipe round the valve, and the detour, up over it
+    // and along the top all the way to B's stub, took the tee forty-five
+    // pixels up with it. A tee never moves because of something put in
+    // its pipe's way, and the pipe's ends have not moved: so the half the
+    // valve is on goes round it between A and the tee, and the tee and the
+    // other half stay exactly as they were.
     const g0 = bay();
-    const after = drag(g0, 'V', [P(330, 300)], 8);
-    const halves = after.edges.filter(e => e.id !== 'branch');
-    const routes = halves.map(e => drawn(after, e.id));
-    expect(routes.some(r => r.length > 2)).toBe(true);
+    const half = (g: G, end: string) => g.edges.find(e => e.id !== 'branch' && (e.source === end || e.target === end))!;
+    const before = drawn(g0, half(g0, 'B').id);
+    const after = drag(g0, 'V', [P(150, 300)], 8);
+    expect(teeAt(after, g0.tee)).toEqual(P(250, 330));
+    expect(drawn(after, half(after, 'B').id)).toEqual(before);
+    const round = drawn(after, half(after, 'A').id);
+    expect(round.length).toBeGreaterThan(2);
+    expect(round[0]).toEqual(P(60, 330));
+    expect(round[round.length - 1]).toEqual(P(242, 330));
+    const V = { x: 150, y: 300, w: 60, h: 60 };
+    expect(round.some((p, i) => i + 1 < round.length && Math.max(p.x, round[i + 1].x) > V.x && Math.min(p.x, round[i + 1].x) < V.x + V.w
+      && Math.max(p.y, round[i + 1].y) > V.y && Math.min(p.y, round[i + 1].y) < V.y + V.h)).toBe(false);
+    expect(drawn(after, 'branch')).toHaveLength(2);
+  });
+
+  it('keeps the pipe on the face of the open end it ends on, and goes round the valve into it', () => {
+    // A pipe from A to an open end O, the valve put down on it short of O.
+    // Priced afresh, the whole pipe went into O's top face over the valve
+    // more cheaply than round it into the face it had: the line was turned
+    // onto another face, and the pipe was a different pipe. A pipe whose
+    // shape is still its own keeps the faces it ends on as it keeps its tees,
+    // and only the stretch the valve lies across goes round it.
+    const A = part('A', 0, 300), T = part('T', 220, 50), V = part('V', 700, 50);
+    const O: Node = { id: 'O', type: 'JUNCTION', position: { x: 495, y: 325 }, measured: { width: 10, height: 10 }, data: { componentType: 'JUNCTION', label: 'O' } };
+    const split = teeInto(settle({ nodes: [A, O, T, V], edges: [E('run', 'A', 'r', 'O', 'l')] }), 'run', P(250, 330));
+    const g0 = settle({ nodes: split.nodes, edges: [...split.edges, E('branch', split.tee, 't', 'T', 'b')] });
+    const toO = (g: G) => g.edges.find(e => e.target === 'O')!;
+    const toTee = (g: G) => g.edges.find(e => e.source === 'A')!;
+    expect(toO(g0).targetHandle).toBe('l');
+    const after = drag(g0, 'V', [P(400, 300)], 4);
+    expect(toO(after).targetHandle).toBe('l');
+    expect(teeAt(after, split.tee)).toEqual(P(250, 330));
+    expect(drawn(after, toTee(after).id)).toEqual(drawn(g0, toTee(g0).id));
+    const round = drawn(after, toO(after).id);
+    const box = { x: 400, y: 300, w: 60, h: 60 };
+    expect(round.length).toBeGreaterThan(2);
+    expect(round.some((p, i) => i + 1 < round.length && Math.max(p.x, round[i + 1].x) > box.x && Math.min(p.x, round[i + 1].x) < box.x + box.w
+      && Math.max(p.y, round[i + 1].y) > box.y && Math.min(p.y, round[i + 1].y) < box.y + box.h)).toBe(false);
+  });
+
+  it('leaves the tee where it is when the only way round would turn inside its reach', () => {
+    // A tee off the grid, at x = 243.6, and the valve set down just short of
+    // it: the router's way round comes back to the pipe less than a stub out
+    // of the tee's face, where the tee cannot stay -- no tee sits by a bend --
+    // and taken, it pushed the tee along the pipe to clear the bend it had
+    // brought. The half keeps its stretch instead, and the tee its place.
+    const A = part('A', 0, 300), B = part('B', 500, 300), T = part('T', 220, 50);
+    const at = P(243.6, 330);
+    const tee: Node = {
+      id: 'J', type: 'JUNCTION', position: { x: at.x - 5, y: at.y - 5 },
+      data: {
+        componentType: 'JUNCTION', label: 'J',
+        along: { t: (at.x - 60) / 440, in: 'l', out: 'r', from: 'A', to: 'B', ends: { a: P(60, 330), b: P(500, 330) } },
+      },
+    };
+    const g0 = settle({
+      nodes: [A, B, T, part('V', 700, 50), tee],
+      edges: [E('a', 'A', 'r', 'J', 'l'), E('b', 'J', 'r', 'B', 'l'), E('branch', 'J', 't', 'T', 'b')],
+    });
+    expect(teeAt(g0, 'J')).toEqual(at);
+    const after = drag(g0, 'V', [P(160, 300)], 4);
+    expect(teeAt(after, 'J')).toEqual(at);
+    expect(drawn(after, 'b')).toEqual(drawn(g0, 'b'));
+  });
+
+  it('is in the way of only the stretch it lies across after an end of the pipe has moved along it', () => {
+    // B dragged further off along its own axis first: the pipe grows under
+    // the tee, which stays, and its shape -- a straight run -- still fits its
+    // ends. It is still the pipe's own to keep, so the valve put down on it
+    // afterwards sends round only the half it lies across, not the pipe and
+    // the tee with it.
+    const g0 = bay();
+    const moved = drag(g0, 'B', [P(560, 300)], 4);
+    expect(teeAt(moved, g0.tee)).toEqual(P(250, 330));
+    const after = drag(moved, 'V', [P(150, 300)], 8);
+    expect(teeAt(after, g0.tee)).toEqual(P(250, 330));
+    expect(drawn(after, 'branch')).toHaveLength(2);
   });
 });
 
@@ -376,6 +455,48 @@ describe('a bay picked up whole', () => {
     const seen: (string | null | undefined)[] = [];
     dragGroup(g0, ids, [P(0, -40)], 4, g => seen.push(faceAtT(g)));
     expect(seen.every(f => f === 't'), JSON.stringify(seen)).toBe(true);
+  });
+
+  it('let go with its pipe across a symbol, keeps every tee where it put it and sends round only the line that crosses', () => {
+    // Everything but V dragged until the Z's crossbar lies across V, and let
+    // go there. The drag carries the pipe whole, straight through V; letting
+    // go settles it round V. It was routed round V again whole, and its tees
+    // put on the detour: the crossbar went out past V to the end of the
+    // bottom leg, the second tee was put on it, turned, sixteen pixels from
+    // M2's port on a six-pixel stub, and the branch down from it jogged back
+    // to where it had been. The pipe's two ends have not moved relative to
+    // each other, so its shape is still its own: only the crossbar's line
+    // goes round V, between the two tees, and they stay where they were put.
+    const g0 = bay();
+    const ids = g0.nodes.filter(n => n.id !== 'V').map(n => n.id);
+    const d = P(460, -200);
+    const by = (p: Pt) => P(p.x + d.x, p.y + d.y);
+    const after = dragGroup(g0, ids, [d], 6);
+    for (const t of g0.tees) {
+      const was = by(teeAt(g0, t)), is = teeAt(after, t);
+      expect(Math.hypot(is.x - was.x, is.y - was.y), t).toBeLessThan(1e-6);
+    }
+    const V = { x: 870, y: 120, w: 60, h: 60 };
+    const hitsV = (r: Pt[]) => r.some((p, i) => i + 1 < r.length && Math.max(p.x, r[i + 1].x) > V.x && Math.min(p.x, r[i + 1].x) < V.x + V.w
+      && Math.max(p.y, r[i + 1].y) > V.y && Math.min(p.y, r[i + 1].y) < V.y + V.h);
+    const pipe = g0.edges.filter(e => !['up', 'down', 'out'].includes(e.id)).map(e => e.id);
+    const crossing = pipe.filter(id => hitsV(drawn(g0, id).map(by)));
+    expect(crossing).toHaveLength(1);
+    for (const id of pipe) {
+      const was = drawn(g0, id).map(by), is = drawn(after, id);
+      if (id === crossing[0]) {
+        // Round V, from the same face of the one tee to the same face of the other.
+        expect(hitsV(is), id).toBe(false);
+        expect(Math.hypot(is[0].x - was[0].x, is[0].y - was[0].y), id).toBeLessThan(1e-6);
+        const [a, b] = [is[is.length - 1], was[was.length - 1]];
+        expect(Math.hypot(a.x - b.x, a.y - b.y), id).toBeLessThan(1e-6);
+        continue;
+      }
+      expect(is.length, id).toBe(was.length);
+      is.forEach((p, i) => expect(Math.hypot(p.x - was[i].x, p.y - was[i].y), `${id} point ${i}`).toBeLessThan(1e-6));
+    }
+    expect(drawn(after, 'up')).toHaveLength(2);
+    expect(drawn(after, 'down')).toHaveLength(2);
   });
 
   it('still re-routes a pipe whose ends moved apart', () => {

@@ -28,9 +28,10 @@ import type { Box, End, Pt } from './route';
  *
  * - **Only a line that routes itself moves** (`TrackLine.free`: no corners of
  *   its own and not a pipe's). A person's corners are drawn where they were
- *   put, and a pipe's lines draw their slices of the one route their pipe was
- *   given, which the tees on it were seated on. Neither ever moves; the lines
- *   that can, move off them.
+ *   put, a pipe's lines draw their slices of the one route their pipe was
+ *   given, which the tees on it were seated on, and a branch the reseat sent
+ *   round the lines about it draws that way round, which was priced as it
+ *   stands. None of them ever moves; the lines that can, move off them.
  * - **Only its middle moves.** A segment touching an end runs out of its port
  *   the way the port faces, and stays exactly as it was. Each segment between
  *   two others may move across itself by whole grid steps (`GRID`, up to three),

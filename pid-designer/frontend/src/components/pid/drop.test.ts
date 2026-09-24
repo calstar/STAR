@@ -11,6 +11,9 @@ import type { EndLookup, Face } from './junctions';
 import { splitEdgeAt } from './splitEdge';
 import { dragSegment, nearestOnPolyline, pathPoints, pointsToPath, routeOrthogonal, routeThrough, waypointsOf } from './route';
 import { nodeSize } from './attach';
+import { obstaclesByPage } from './routeGrid';
+import { drawnScene } from './tracks';
+import { previewOf } from './preview';
 import type { Pt } from './route';
 import {
   ALIGN_REACH, LINE_REACH, MIN_PULL, MIN_PULL_FLOW, TEE_OUT, canJoin, clientOf, commitDrop, connectLine, lineUnder, minPull,
@@ -383,6 +386,36 @@ describe('a port that already has a line is teed, never stacked', () => {
     const line = made.edges.find(e => e.id === made.lineId)!;
     expect(line.target).toBe('S');
     expect(isJunction(made.nodes.find(n => n.id === line.source))).toBe(true);
+  });
+
+  it('keeps the line it tees in more than two grid steps off the pipe it joins, and previews it where it is drawn', () => {
+    // M's right port has its line to K, along y = 600 and up. A line from
+    // S, down and to the right, let go on that port tees in thirty out and
+    // comes into the tee from below. Every level for its crossbar between
+    // the tee's stub and S is as short as every other, and the router's own
+    // is at the stub: fourteen pixels under the pipe, all the way along it
+    // to where it turns up, which reads as the pipe drawn twice. The
+    // crossbar goes where it is clear, and no further; and the preview is
+    // the line the drop leaves.
+    const onPage = (g: G): G => {
+      let n = g.nodes, e = g.edges;
+      for (let i = 0; i < 10; i++) {
+        const re = reseatJunctions(n, e, endOf, obstaclesByPage(n));
+        if (re.nodes === n && re.edges === e) break;
+        n = re.nodes; e = re.edges;
+      }
+      return { nodes: n, edges: e };
+    };
+    const g = onPage({ nodes: [sym('M', 1000, 570), sym('K', 1200, 340, ['b']), sym('S', 1580, 820, ['r'])], edges: [E('M', 'r', 'K', 'b')] });
+    const plan = connected(drop(g, port('S', 'r'), P(1060, 600), on('M', 'r')));
+    expect(plan.landed).toBe('occupied');
+    const s = onPage(commitDrop(plan, scene(g))!);
+    const line = s.edges.find(e => e.target === 'S' || e.source === 'S')!;
+    const pts = drawnScene(s.nodes, s.edges, endOf, obstaclesByPage(s.nodes)).get(line.id)!;
+    const bar = pts.find((p, i) => i > 0 && pts[i - 1].y === p.y && Math.abs(p.x - pts[i - 1].x) > 100)!;
+    expect(bar.y - 600).toBeGreaterThan(20);
+    expect(bar.y).toBe(630);
+    expect(previewOf(plan, scene(g), { from: P(1640, 850), to: P(1060, 600) }).points).toEqual(pts);
   });
 });
 

@@ -1,6 +1,7 @@
 import type { Node } from '@xyflow/react';
 import {
-  CORNER, STUB, facing, isHorizontal, pathPoints, pointsToPath, routeOrthogonal, segmentEntersBox, simplifyPoints,
+  AXIS_EPS, CORNER, GRID, STUB, facing, isHorizontal, pathPoints, pointsToPath, routeCost, routeOrthogonal, segmentEntersBox,
+  simplifyPoints,
 } from './route';
 import type { Box, End, Pt, Route } from './route';
 import { pageOf } from './pages';
@@ -375,6 +376,269 @@ export function routeAuto(a: End, b: End, obstacles: Box[], offset = 0): Route {
   return found && !routeHitsBoxes(found, boxes) ? { d: pointsToPath(found), grip: null } : fast;
 }
 
+// ── Among the other lines ────────────────────────────────────────────────────
+
+/**
+ * A line a route is looked for among, and what the route pays for what it
+ * does to it: crossing it, lying on it, running near it, running beside it.
+ *
+ * `routeAuto` sees symbols and nothing else, and a line routed by its two
+ * ends and the symbols in between took whatever shape was shortest whatever
+ * else was drawn there: a branch whose pipe's far end had been dragged in
+ * between its tee and the symbol it runs to crossed its own pipe to get
+ * there, and ran along the pipe a tee's clearance off; a crossbar was put at
+ * a tee's stub, fourteen pixels under the pipe, when any level further down
+ * was as short. Those shapes are what the fast
+ * router draws, and are usually right; a line whose fast shape pays for any
+ * of these is looked for again with the other lines on the page as things
+ * it would rather keep its distance from -- soft, where a symbol is hard: a
+ * route may still cross a line, or run beside one, when nothing better is
+ * to be had (`routeAmong`).
+ *
+ * What each thing costs is the caller's to say, in pixels of length, since
+ * it is the caller who prices the route this proposes against the others
+ * it has (`pipes.ts`, which prices a branch's faces): a crossing of another
+ * line is a hop and costs little; one of the pipe the route's own tee rides
+ * costs a great deal; lying on a line reads as one line.
+ *
+ * The search prices by the step, and a stretch along a line is as many steps
+ * as the grid has lines across it: charged at every step, what is meant to
+ * be charged once for the stretch made a long one cost thousands, and the
+ * search went a long way round rather than pay it. So what is charged once
+ * is spread over a grid step's length instead (`softSteps`) -- about the
+ * same for a short stretch, and more for a long one, which is the one worth
+ * avoiding.
+ */
+export interface SoftLine {
+  pts: Pt[];
+  /** Crossing it, once for each time. */
+  cross: number;
+  /** Nearer than `lie.within`: it reads as lying on it. Once for the stretch, and per pixel of it. */
+  lie: { within: number; once: number; px: number };
+  /** Nearer than `near.within`, beyond lying on it: once for the stretch, and per pixel. */
+  near?: { within: number; once: number; px: number };
+  /** No further than `beside.within` from it, beyond nearer: per pixel. */
+  beside: { within: number; px: number };
+}
+
+/**
+ * What each pixel run close alongside a symbol costs a route looked for among
+ * the lines, where `routeAuto` charges `CLOSE`. A route that has to keep its
+ * distance from the lines has more ways to go than one that need not, and
+ * with the symbol's margin nearly free it took the channel between a symbol
+ * and the port beside it, three pixels off the symbol's side for its whole
+ * height -- the lines kept clear of, and the symbol hugged instead.
+ */
+const CLOSE_AMONG = 2;
+
+/**
+ * What a route looked for among the lines pays, per pixel of its length, for
+ * each pixel it runs from the plain route's own levels: next to nothing, and
+ * only there to settle ties. Off a sheet of open canvas every level a
+ * crossbar could be put at costs the same, and the search, which follows
+ * whichever way is further along, put a crossbar a hundred pixels down that
+ * thirty would have cleared -- as good a route, and much less like the one
+ * the line had. A run along a row is as far off as that row is from the
+ * nearest row the plain route runs along, and a run down a column likewise:
+ * counted once per line of the grid (`awayFrom`), not worked out afresh for
+ * every step the search takes.
+ */
+const STAY = 1e-4;
+
+/**
+ * For each of the grid's lines `vs` across one axis, how far it is from the
+ * nearest of the plain route's own on that axis (`at`), in whole grid
+ * steps' worth of pixels -- and a pixel more for a line off the grid, so
+ * that of two levels within one step of each other the one on the grid the
+ * symbols are on is not passed over for the middle of a channel half a
+ * pixel nearer.
+ */
+function awayFrom(vs: number[], at: number[]): Float64Array {
+  const out = new Float64Array(vs.length);
+  vs.forEach((v, i) => {
+    let best = Infinity;
+    for (const a of at) best = Math.min(best, Math.abs(v - a));
+    if (!at.length) best = 0;
+    out[i] = Math.ceil(best / GRID - 1e-9) * GRID + (Math.abs(v - Math.round(v / GRID) * GRID) > 1e-6 ? 1 : 0);
+  });
+  return out;
+}
+
+/**
+ * How many times a search among the lines widens its corridor, and so how
+ * far past the plain route it can look: `REACH`, then twice that. A way
+ * round the lines that has to go further is not worth drawing, and the
+ * search that found it would have had to be shown every line within that
+ * much of the route -- on a crowded page, every line. `AMONG_REACH` is as
+ * far as any line can matter to one, a line's clearance included: what a
+ * caller has to show it.
+ */
+const AMONG_WIDENINGS = 2;
+
+/**
+ * What a search among the lines may spend, in states taken off the heap:
+ * a quarter of what a search round the symbols may. The lines make every
+ * way through cost something, and the estimate, which knows only length and
+ * corners, then leaves the proof that one is the cheapest to trying nearly
+ * every state of the grid; a reseat that asked it for each branch after
+ * each edit spent most of its time there. Past the exact budget the search
+ * heads for the target and settles for a good way, which is all a proposal
+ * the caller prices against the router's own needs to be.
+ */
+const AMONG_EXACT_POPS = 5_000;
+const AMONG_GREEDY_POPS = 4_000;
+export const AMONG_REACH = 2 * REACH + 4 * GRID;
+
+/** Everything a route is looked for among besides the symbols. */
+export interface Soft {
+  lines: SoftLine[];
+  /** The junctions' dots a route may not pass through (not its own ends'), how near is through, and what it costs. */
+  dots: { at: Pt[]; reach: number; cost: number };
+}
+
+/**
+ * The route for a line looked for among the other lines on its page as well
+ * as round the symbols (`Soft`): the cheapest the search finds, by length,
+ * `CORNER` a corner, a little for running close alongside a symbol, and what
+ * each line near it charges. Null when the search finds none clear of the
+ * symbols, or runs out of what it may spend. Deterministic, and remembered
+ * like `routeAuto`'s: the same ends, symbols and lines give the same route.
+ *
+ * Not `routeAuto`: a line that routes itself is drawn from its two ends and
+ * the symbols alone (`lineRoute`), and this answer depends on what else is
+ * on the page. A caller that takes it keeps it as the line's corners.
+ * `plain` is the plain route between the two ends (`routeOrthogonal`), for
+ * a caller that has it already.
+ *
+ * Remembered as `routeAuto`'s searches are (`remembered`): by the two ends,
+ * with the corridors the search looked in and what of the symbols and the
+ * lines reached into them, which is all the answer can depend on. The reseat
+ * asks again on every tick of a drag, and a symbol dragged across the far
+ * side of the sheet costs no line here a search.
+ */
+export function routeAmong(a: End, b: End, obstacles: Box[], soft: Soft, plain?: Pt[]): Pt[] | null {
+  const own = [a.body, b.body].filter((x): x is Box => !!x);
+  const boxes = heldClear([...obstacles, ...own], a, b);
+  const key = `${endKey(a)}|${endKey(b)}`;
+  const kept = amongMemo.get(key);
+  const hit = kept?.find(r => r.seen === seenAmong(boxes, soft, r.tried));
+  if (kept && hit) {
+    amongMemo.delete(key);
+    amongMemo.set(key, kept);
+    freshSearch();
+    return hit.found;
+  }
+  const fast = plain ?? pathPoints(routeOrthogonal(a, b).d);
+  const tried: Box[] = [];
+  const found = searchNear(a, b, boxes, fast, tried, soft);
+  const clear = found && !routeHitsBoxes(found, boxes) ? found : null;
+  const list = [{ tried, seen: seenAmong(boxes, soft, tried), found: clear }, ...(kept ?? [])].slice(0, 4);
+  amongMemo.delete(key);
+  amongMemo.set(key, list);
+  amongKept += list.length - (kept?.length ?? 0);
+  while (amongKept > MEMO && amongMemo.size) {
+    const oldest = amongMemo.keys().next().value!;
+    amongKept -= amongMemo.get(oldest)!.length;
+    amongMemo.delete(oldest);
+  }
+  return clear;
+}
+
+const amongMemo = new Map<string, Remembered[]>();
+let amongKept = 0;
+/**
+ * What of the symbols and the lines reach into the corridors, as one
+ * string: what a remembered answer is checked against. The lines segment by
+ * segment, as a search kept to the corridors meets them (`softWithin`).
+ */
+function seenAmong(boxes: Box[], soft: Soft, tried: Box[]): string {
+  const parts: (string | number)[] = [seenIn(boxes, tried)];
+  const clip = clipTo(tried);
+  for (const l of soft.lines) {
+    const c = clearOf(l);
+    let named = false;
+    for (let i = 0; i + 1 < l.pts.length; i++) {
+      const p = l.pts[i], q = l.pts[i + 1];
+      if (!meets(p, q, c, tried)) continue;
+      if (!named) {
+        parts.push('|', l.cross, l.lie.within, l.lie.once, l.lie.px, l.near?.within ?? '', l.near?.once ?? '', l.near?.px ?? '',
+          l.beside.within, l.beside.px);
+        named = true;
+      }
+      const [u, v] = clip(p, q, c);
+      parts.push(u.x, u.y, v.x, v.y);
+    }
+  }
+  const r = soft.dots.reach;
+  parts.push('|', r, soft.dots.cost);
+  for (const d of soft.dots.at) if (tried.some(x => overlap({ x: d.x - r, y: d.y - r, w: 2 * r, h: 2 * r }, x))) parts.push(d.x, d.y);
+  return parts.join(',');
+}
+const endKey = (e: End) => `${e.x},${e.y},${e.side},${e.stub ?? ''},${e.clear ?? ''},${e.inset ?? ''},${e.body ? boxKey(e.body) : ''}`;
+
+/** How far from it a line stops costing anything: where the search is given a way to run clear of it. */
+const clearOf = (l: SoftLine) => Math.max(l.lie.within, l.near?.within ?? 0, l.beside.within) + GRID;
+
+/** A segment's box grown by `by` every way. */
+const segmentBox = (p: Pt, q: Pt, by: number): Box =>
+  ({ x: Math.min(p.x, q.x) - by, y: Math.min(p.y, q.y) - by, w: Math.abs(p.x - q.x) + 2 * by, h: Math.abs(p.y - q.y) + 2 * by });
+
+/** Does a segment's box grown by `by` meet any of the rectangles, edges touching included? */
+function meets(p: Pt, q: Pt, by: number, rects: Box[]): boolean {
+  const x0 = Math.min(p.x, q.x) - by, x1 = Math.max(p.x, q.x) + by, y0 = Math.min(p.y, q.y) - by, y1 = Math.max(p.y, q.y) + by;
+  for (const r of rects) if (x0 <= r.x + r.w && r.x <= x1 && y0 <= r.y + r.h && r.y <= y1) return true;
+  return false;
+}
+
+/**
+ * The part of `soft` that can reach into any of the rectangles: what a
+ * search kept to them can meet. Segment by segment -- each is priced on its
+ * own (`softSteps`) -- so a line whose far end moves, a long way outside,
+ * is not something a remembered search has to be looked for again for.
+ */
+function softWithin(soft: Soft, rects: Box[]): Soft {
+  const lines: SoftLine[] = [];
+  const clip = clipTo(rects);
+  for (const l of soft.lines) {
+    const c = clearOf(l);
+    for (let i = 0; i + 1 < l.pts.length; i++) {
+      const p = l.pts[i], q = l.pts[i + 1];
+      if (meets(p, q, c, rects)) lines.push({ ...l, pts: clip(p, q, c) });
+    }
+  }
+  const r = soft.dots.reach;
+  const at = soft.dots.at.filter(d => rects.some(x => overlap({ x: d.x - r, y: d.y - r, w: 2 * r, h: 2 * r }, x)));
+  return { lines, dots: { ...soft.dots, at } };
+}
+
+/**
+ * A segment cut back to the rectangles' bounds and a line's clearance and a
+ * grid step more: all of it a search kept to them can meet, its cut ends
+ * further off than any line of the grid, so that what is inside is still
+ * crossed, not touched at its end. A header running the width of the sheet
+ * is one segment, and whole, its far end dragged a step made every branch
+ * off it a search to be done again.
+ */
+function clipTo(rects: Box[]): (p: Pt, q: Pt, c: number) => Pt[] {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const r of rects) { x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y); x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h); }
+  const at = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+  return (p, q, c) => {
+    const m = c + GRID;
+    return [{ x: at(p.x, x0 - m, x1 + m), y: at(p.y, y0 - m, y1 + m) }, { x: at(q.x, x0 - m, x1 + m), y: at(q.y, y0 - m, y1 + m) }];
+  };
+}
+
+/**
+ * How near the plain route a line has to come for the search to be given a
+ * way to run clear of it (`clearOf`). Further off, it is still priced, but
+ * lays no lines of its own across the grid: a grid with a pair of lines for
+ * every line on a crowded page was ten thousand points, and the search
+ * through it a millisecond or two, for ways round lines the route had no
+ * reason to go near.
+ */
+const LANES = REACH / 2;
+
 /**
  * Searches already done, by what they were asked. A line is drawn on every
  * render that touches it, and one that needed a search needs the same one
@@ -446,27 +710,55 @@ function remembered(a: End, b: End, offset: number, boxes: Box[], fast: Pt[]): P
  * is in its way. Twice as wide, and four times, when there is no way through
  * that. Null when there is none even then, or the budget is spent.
  */
-function searchNear(a: End, b: End, boxes: Box[], fast: Pt[], tried: Box[] = []): Pt[] | null {
+function searchNear(a: End, b: End, boxes: Box[], fast: Pt[], tried: Box[] = [], soft?: Soft): Pt[] | null {
   const budget = freshSearch();
+  if (soft) { budget.exact = AMONG_EXACT_POPS; budget.greedy = AMONG_GREEDY_POPS; }
   const xs = fast.map(p => p.x), ys = fast.map(p => p.y);
   const x0 = Math.min(...xs) - REACH, y0 = Math.min(...ys) - REACH;
   const span = [{ x: x0, y: y0, w: Math.max(...xs) + REACH - x0, h: Math.max(...ys) + REACH - y0 }];
   tried.push(...span);
-  const first = searchGrid(a, b, boxes.filter(bx => overlap(bx, span[0])), budget, span, true);
-  if (first) return first;
-  for (let k = 0, reach = REACH; k < WIDENINGS; k++, reach *= 2) {
+  const first = searchGrid(a, b, boxes.filter(bx => overlap(bx, span[0])), budget, span, true, soft && softWithin(soft, span), fast);
+  // Round the symbols, the first route found is the one: the corridors
+  // widen only to find a way at all. Among the lines, a way found in the
+  // first corridor may still pay for crossing a line it should not -- the
+  // way round the symbol at the pipe's far end lying just outside it -- and
+  // the wider corridors are looked in too, and the cheapest taken: each
+  // looking only for a way that comes in under the best found so far.
+  const settled = (f: Found | null) => !!f && (!soft || f.cost - routeCost(f.pts) < WIDEN_PAST);
+  if (settled(first)) return first!.pts;
+  let best = first;
+  for (let k = 0, reach = REACH; k < (soft ? AMONG_WIDENINGS : WIDENINGS); k++, reach *= 2) {
     const corridor = fast.slice(0, -1).map((p, i) => {
       const q = fast[i + 1];
       const x = Math.min(p.x, q.x) - reach, y = Math.min(p.y, q.y) - reach;
       return { x, y, w: Math.max(p.x, q.x) + reach - x, h: Math.max(p.y, q.y) + reach - y };
     });
     tried.push(...corridor);
-    const found = searchGrid(a, b, boxes.filter(bx => corridor.some(c => overlap(bx, c))), budget, corridor);
-    if (found) return found;
+    const found = searchGrid(
+      a, b, boxes.filter(bx => corridor.some(c => overlap(bx, c))), budget, corridor, false, soft && softWithin(soft, corridor), fast,
+      best?.cost ?? Infinity,
+    );
+    if (found && (!best || found.cost < best.cost - 1e-9)) best = found;
+    if (settled(best)) break;
     if (budget.exact <= 0 && budget.greedy <= 0) break;
   }
-  return null;
+  return best?.pts ?? null;
 }
+
+/**
+ * What a route found among the lines may pay beyond its length and corners
+ * -- for running close to a symbol, a stub cut short, a line run beside or
+ * hopped -- and still be taken from the first corridor it was found in.
+ * More than this is a line lain on, a dot run through, or the pipe its own
+ * tee rides crossed, and the search looks wider for a way that does none of
+ * them. Less, and the wider corridors were searched for nothing: on a page
+ * put together at random, most ways round cost a little whatever, and
+ * looking three times for each made every reseat five times slower.
+ */
+const WIDEN_PAST = 500;
+
+/** A route a search found, and what it cost the search. */
+interface Found { pts: Pt[]; cost: number }
 
 /** Do two boxes overlap, edges touching included? */
 const overlap = (p: Box, q: Box) => p.x <= q.x + q.w && q.x <= p.x + p.w && p.y <= q.y + q.h && q.y <= p.y + p.h;
@@ -602,7 +894,7 @@ const SPENT = -2;
  * good route.
  */
 export function gridRoute(a: End, b: End, boxes: Box[]): Pt[] | null {
-  return searchGrid(a, b, boxes, freshSearch());
+  return searchGrid(a, b, boxes, freshSearch())?.pts ?? null;
 }
 
 /**
@@ -635,7 +927,10 @@ function buffers(cells: number) {
  * searches; given a corridor (rectangles), going nowhere outside it; and
  * with `exactOnly`, giving up rather than settling for less than the best.
  */
-function searchGrid(a: End, b: End, boxes: Box[], budget: Budget, corridor?: Box[], exactOnly = false): Pt[] | null {
+function searchGrid(
+  a: End, b: End, boxes: Box[], budget: Budget, corridor?: Box[], exactOnly = false, soft?: Soft, plain?: Pt[],
+  bound = Infinity,
+): Found | null {
   const fa = DIRS[dirIndex(a.side)], fb = DIRS[dirIndex(b.side)];
   const sa = a.stub ?? STUB, sb = b.stub ?? STUB;
   const rawX = [a.x, b.x, a.x + fa.x * sa, b.x + fb.x * sb];
@@ -654,8 +949,48 @@ function searchGrid(a: End, b: End, boxes: Box[], budget: Budget, corridor?: Box
   // ends facing apart had only the ends' own two rows to go round by, and
   // folded back over its own first leg to use them. And the corridor's
   // edges, so that no step of the grid is partly in it and partly out.
-  const xs = lines([...withChannels(rawX), (a.x + b.x) / 2, ...(corridor ?? []).flatMap(r => [r.x, r.x + r.w])]);
-  const ys = lines([...withChannels(rawY), (a.y + b.y) / 2, ...(corridor ?? []).flatMap(r => [r.y, r.y + r.h])]);
+  // Among other lines, a third: where a route runs clear of each of them
+  // (`clearOf`), either side and past either end, and either side of each
+  // dot -- the only places a route that has to keep its distance can go.
+  const clearX: number[] = [], clearY: number[] = [];
+  const lanes = (plain ?? []).slice(0, -1).map((p, i) => segmentBox(p, plain![i + 1], LANES));
+  for (const l of soft?.lines ?? []) {
+    const c = clearOf(l);
+    for (let i = 0; i + 1 < l.pts.length; i++) {
+      const p = l.pts[i], q = l.pts[i + 1];
+      if (plain && !lanes.some(x => overlap(segmentBox(p, q, c), x))) continue;
+      if (Math.abs(p.y - q.y) < AXIS_EPS) {
+        clearY.push(p.y - c, p.y + c);
+        clearX.push(Math.min(p.x, q.x) - c, Math.max(p.x, q.x) + c);
+      } else if (Math.abs(p.x - q.x) < AXIS_EPS) {
+        clearX.push(p.x - c, p.x + c);
+        clearY.push(Math.min(p.y, q.y) - c, Math.max(p.y, q.y) + c);
+      }
+    }
+  }
+  // Two grid steps off a dot: a route turned just short of one points
+  // straight at it.
+  for (const d of soft?.dots.at ?? []) {
+    const c = Math.ceil(soft!.dots.reach / GRID) * GRID + GRID;
+    clearX.push(d.x - c, d.x + c);
+    clearY.push(d.y - c, d.y + c);
+  }
+  const inside = (v: number, lo: number, hi: number) => v >= lo && v <= hi;
+  const inX = (v: number) => !corridor || corridor.some(r => inside(v, r.x, r.x + r.w));
+  const inY = (v: number) => !corridor || corridor.some(r => inside(v, r.y, r.y + r.h));
+  // Among other lines, a line of the grid within half a grid step of an
+  // end's own axis is that axis. Priced by the pixel for running close to a
+  // symbol, a route out of a tee a pixel inside a symbol's margin turned off
+  // its axis for that pixel and turned back, a kink nobody could read.
+  const edges = (corridor ?? []).flatMap(r => [r.x, r.x + r.w, r.y, r.y + r.h]);
+  const axis = (vs: number[], own: number[]) =>
+    (soft ? vs.filter(v => own.includes(v) || edges.includes(v) || own.every(o => Math.abs(v - o) >= GRID / 2)) : vs);
+  const xs = axis(lines([
+    ...withChannels(rawX), (a.x + b.x) / 2, ...(corridor ?? []).flatMap(r => [r.x, r.x + r.w]), ...clearX.filter(inX),
+  ]), lines([a.x, b.x]));
+  const ys = axis(lines([
+    ...withChannels(rawY), (a.y + b.y) / 2, ...(corridor ?? []).flatMap(r => [r.y, r.y + r.h]), ...clearY.filter(inY),
+  ]), lines([a.y, b.y]));
   const nx = xs.length, ny = ys.length;
   lastSearch.rounds++;
   lastSearch.points = Math.max(lastSearch.points, nx * ny);
@@ -702,11 +1037,22 @@ function searchGrid(a: End, b: End, boxes: Box[], budget: Budget, corridor?: Box
     mark(bx.x - MARGIN, bx.x + bx.w + MARGIN, bx.y - MARGIN, bx.y + bx.h + MARGIN, NEAR);
     mark(bx.x + TOUCH, bx.x + bx.w - TOUCH, bx.y + TOUCH, bx.y + bx.h - TOUCH, BLOCKED);
   }
+  // What each step pays for the other lines and the dots, on top of that;
+  // and for running off the plain route, worked out for a step the first
+  // time the search takes it (`STAY`).
+  const extra = soft && (soft.lines.length || soft.dots.at.length) ? softSteps(xs, ys, soft) : null;
+  // The plain route's own rows and columns: where its runs along each axis are.
+  const rowsOff = extra && plain ? awayFrom(ys, plain.slice(0, -1).filter((p, i) => p.y === plain[i + 1].y).map(p => p.y)) : null;
+  const colsOff = extra && plain ? awayFrom(xs, plain.slice(0, -1).filter((p, i) => p.x === plain[i + 1].x).map(p => p.x)) : null;
   const stepCost = (i: number, j: number, i2: number, j2: number): number => {
-    const what = i2 !== i ? across[Math.min(i, i2) * ny + j] : down[i * ny + Math.min(j, j2)];
+    const h = i2 !== i;
+    const k = h ? Math.min(i, i2) * ny + j : i * ny + Math.min(j, j2);
+    const what = h ? across[k] : down[k];
     if (what === BLOCKED) return Infinity;
-    const len = i2 !== i ? Math.abs(xs[i2] - xs[i]) : Math.abs(ys[j2] - ys[j]);
-    return what === NEAR ? len * (1 + CLOSE) : len;
+    const len = h ? Math.abs(xs[i2] - xs[i]) : Math.abs(ys[j2] - ys[j]);
+    if (!extra) return what === NEAR ? len * (1 + CLOSE) : len;
+    const off = rowsOff ? STAY * len * (h ? rowsOff[j] : colsOff![i]) : 0;
+    return (what === NEAR ? len * (1 + CLOSE_AMONG) : len) + (h ? extra.across[k] : extra.down[k]) + off;
   };
   // How far short of its stub a leg out of a port would be, turning here.
   const shortOut = (i: number, j: number) => {
@@ -771,7 +1117,11 @@ function searchGrid(a: End, b: End, boxes: Box[], budget: Budget, corridor?: Box
         if (nd === goalDir && nd !== d) turnCost += SHORT * shortIn(i, j);
         const n2 = key(i2, j2, nd);
         const c2 = c + step + turnCost;
-        if (c2 < dist[n2] - 1e-9) { dist[n2] = c2; prev[n2] = s; heap.push(c2 + weight * estimate(i2, j2, nd), c2, n2); }
+        if (c2 >= dist[n2] - 1e-9) continue;
+        const e2 = estimate(i2, j2, nd);
+        // No way on from here can come in under a route already found.
+        if (c2 + e2 >= bound) continue;
+        dist[n2] = c2; prev[n2] = s; heap.push(c2 + weight * e2, c2, n2);
       }
     }
     return { goal: -1, popped };
@@ -791,6 +1141,7 @@ function searchGrid(a: End, b: End, boxes: Box[], budget: Budget, corridor?: Box
     goal = r.goal;
   }
   if (goal < 0) return null;
+  const cost = dist[goal];
   const chain: Pt[] = [];
   for (let s = goal; s >= 0; s = prev[s]) {
     const d = s % 4, ij = (s - d) / 4, j = ij % ny, i = (ij - j) / ny;
@@ -801,5 +1152,80 @@ function searchGrid(a: End, b: End, boxes: Box[], budget: Budget, corridor?: Box
   // ends back exactly, and the snap in simplifyPoints squares the rest to them.
   chain[0] = { x: a.x, y: a.y };
   chain[chain.length - 1] = { x: b.x, y: b.y };
-  return simplifyPoints(chain);
+  return { pts: simplifyPoints(chain), cost };
+}
+
+/**
+ * What each step of the grid pays for the lines and dots of `soft`, laid
+ * out like the steps themselves: `across[i*ny+j]` for the step (i, j) ->
+ * (i+1, j), `down` for (i, j) -> (i, j+1).
+ *
+ * A step along a line, near enough to it, pays by how near, per pixel of it
+ * the two run together -- what is charged once for a stretch spread over a
+ * grid step (`SoftLine`). A step across a line pays for the crossing; one
+ * that meets the line's end instead, near enough to read as joining it, pays
+ * what lying on it does. A crossing exactly at a point of the grid is paid
+ * by the step leaving that point toward larger coordinates, so a route
+ * straight through it pays once, and one that turns there onto the line pays
+ * for lying on it. And a step through a dot pays for passing through it.
+ */
+function softSteps(xs: number[], ys: number[], soft: Soft): { across: Float64Array; down: Float64Array } {
+  const nx = xs.length, ny = ys.length;
+  const across = new Float64Array(nx * ny), down = new Float64Array(nx * ny);
+  // One segment of a line, at `at` across and from `lo` to `hi` along: the
+  // steps that run with it (`withIt`) and the steps that cross it
+  // (`acrossIt`), the grid's lines along it (`us`) and across it (`vs`), and
+  // where the step between two of them is kept (`idx`).
+  const segment = (
+    l: SoftLine, at: number, lo: number, hi: number,
+    withIt: Float64Array, acrossIt: Float64Array,
+    us: number[], vs: number[], idx: (u: number, v: number) => number,
+  ) => {
+    const reach = Math.max(l.lie.within, l.near?.within ?? 0, l.beside.within);
+    // Steps running with it: on the lines across it within reach.
+    for (let v = Math.max(0, below(vs, at - reach) + 1); v < vs.length && vs[v] <= at + reach + 1e-9; v++) {
+      const d = Math.abs(vs[v] - at);
+      const per = d < l.lie.within ? l.lie : l.near && d < l.near.within ? l.near : null;
+      const px = per ? per.px + per.once / GRID : d <= l.beside.within + 1e-9 ? l.beside.px : 0;
+      if (!px) continue;
+      for (let u = Math.max(0, above(us, lo) - 1); u + 1 < us.length && us[u] < hi; u++) {
+        const o = Math.min(us[u + 1], hi) - Math.max(us[u], lo);
+        if (o > AXIS_EPS) withIt[idx(u, v)] += px * o;
+      }
+    }
+    // Steps across it: on the lines along it, from the grid line at or
+    // before it to the one after.
+    const v = above(vs, at) - 1;
+    if (v < 0 || v + 1 >= vs.length) return;
+    const w = l.lie.within;
+    for (let u = Math.max(0, above(us, lo - w) - 1); u < us.length && us[u] <= hi + w; u++) {
+      const x = us[u];
+      if (x > lo + w && x < hi - w) acrossIt[idx(u, v)] += l.cross;
+      else if (x >= lo - w && x <= hi + w) acrossIt[idx(u, v)] += l.lie.once;
+    }
+  };
+  for (const l of soft.lines) {
+    for (let k = 0; k + 1 < l.pts.length; k++) {
+      const p = l.pts[k], q = l.pts[k + 1];
+      if (Math.abs(p.y - q.y) < AXIS_EPS) {
+        segment(l, p.y, Math.min(p.x, q.x), Math.max(p.x, q.x), across, down, xs, ys, (u, v) => u * ny + v);
+      } else if (Math.abs(p.x - q.x) < AXIS_EPS) {
+        segment(l, p.x, Math.min(p.y, q.y), Math.max(p.y, q.y), down, across, ys, xs, (u, v) => v * ny + u);
+      }
+    }
+  }
+  const r = soft.dots.reach;
+  for (const d of soft.dots.at) {
+    for (let j = Math.max(0, below(ys, d.y - r) + 1); j < ny && ys[j] < d.y + r; j++) {
+      for (let i = Math.max(0, above(xs, d.x - r) - 1); i + 1 < nx && xs[i] < d.x + r; i++) {
+        if (xs[i + 1] > d.x - r) across[i * ny + j] += soft.dots.cost;
+      }
+    }
+    for (let i = Math.max(0, below(xs, d.x - r) + 1); i < nx && xs[i] < d.x + r; i++) {
+      for (let j = Math.max(0, above(ys, d.y - r) - 1); j + 1 < ny && ys[j] < d.y + r; j++) {
+        if (ys[j + 1] > d.y - r) down[i * ny + j] += soft.dots.cost;
+      }
+    }
+  }
+  return { across, down };
 }

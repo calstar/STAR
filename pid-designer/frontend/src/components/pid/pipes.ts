@@ -1,16 +1,17 @@
 import type { Edge, Node, XYPosition } from '@xyflow/react';
 import { Position } from '@xyflow/react';
 import {
-  AXIS_EPS, GRID, arcsOf, crossbarOffsets, pathPoints, pointAtArc, routeCost, routeOrthogonal, routeThrough, segmentEntersBox,
-  simplifyPoints, throughAsStored,
+  AXIS_EPS, GRID, STUB, arcsOf, crossbarOffsets, gridAlong, nearestOnPolyline, pathPoints, pointAtArc, routeCost,
+  routeOrthogonal, routeThrough, segmentEntersBox, simplifyPoints, sliceByArc, throughAsStored,
 } from './route';
 import type { Box, End, Pt } from './route';
 import {
-  NO_BOXES, REACH, avoidable, boundsOf, boxGrid, boxOfNode, perPage, routeAuto, routeHitsBoxes, withinReach,
+  AMONG_REACH, NO_BOXES, REACH, avoidable, boundsOf, boxGrid, boxOfNode, perPage, routeAmong, routeAuto,
+  routeHitsBoxes, withinReach,
 } from './routeGrid';
-import type { Obstacles } from './routeGrid';
+import type { Obstacles, Soft, SoftLine } from './routeGrid';
 import {
-  ACROSS, CORNER_GAP, END_GAP, FACES, J_ANCHOR, J_CLEAR, J_END, J_HALF, TEE_END_GAP, TEE_GAP,
+  ACROSS, CORNER_GAP, END_GAP, FACES, J_ANCHOR, J_CLEAR, J_END, J_HALF, J_STUB, TEE_END_GAP, TEE_GAP,
   branchFace, centreOfJunction, faceOfDir, hasLegalSpot, isJunction, junctionData, junctionEnd, latestSpots, legalSpot,
   onAxisOf, runFaces, withHandle,
 } from './junctions';
@@ -54,7 +55,10 @@ import { pageOf } from './pages';
  * own corners, `freezePipe`). The router's pipe keeps the shape it was drawn
  * with for as long as that shape still fits its two ends (`keptShape`), and
  * routes itself again once it does not; a person's pipe is routed through
- * its corners wherever the ends go (`routeThrough`).
+ * its corners wherever the ends go (`routeThrough`). A symbol that comes to
+ * lie across a pipe whose shape still fits its ends is in the way of the
+ * lines it lies across and nothing else: those go round it, each between its
+ * own two stations, and no tee moves (`keptAround`).
  */
 
 // ── The model ────────────────────────────────────────────────────────────────
@@ -493,9 +497,129 @@ function routeOfPipe(pipe: Pipe, a: End, b: End, obstacles: Box[], m: () => Mode
 }
 
 /**
+ * The shape a pipe was drawn with, as its stored corners say, while it still
+ * fits its two ends -- whatever is in its way. A pipe the router drew with no
+ * corners at all was drawn straight, and is that while its ends are in line.
+ */
+function shapeOf(a: End, b: End, corners: Pt[]): Pt[] | null {
+  if (corners.length) return keptShape(a, b, corners, [], true);
+  const straight = simplifyPoints(pathPoints(routeOrthogonal(a, b).d));
+  return straight.length === 2 ? straight : null;
+}
+
+/**
+ * The shape a pipe keeps when a symbol has come to lie across it while its
+ * ends stayed where they were relative to each other -- left alone, carried
+ * whole, or moved only as far as the shape still fits them: every line of it
+ * as it was, but for the lines whose stretch the symbol lies across, each
+ * routed round it on its own (`routeAuto`), between its own two stations --
+ * the tee or the end either side of it. Null when the pipe is not such a
+ * pipe: its shape no longer fits its ends, a tee is not on it, nothing lies
+ * across it, or the router was told of nothing to go round.
+ *
+ * A tee never moves because of something in its pipe's way. A bay let go of
+ * with its pipe lying across a valve it had nothing to do with was routed
+ * again whole, round the valve, and its tees were put on the detour: one
+ * ended up jammed against the manifold's port on a six-pixel stub, and the
+ * branch into it jogged over to reach it. The tees are where the person who
+ * put them there left them, and the symbol is in the way of the stretch it
+ * lies across and of nothing else -- the other lines keep their corners too.
+ * Only a pipe whose ends moved so that its shape no longer fits them has no
+ * shape to keep, and is the router's to draw again whole (`routeOfPipe`).
+ *
+ * Whether the shape still fits is the whole test of whether the ends have
+ * stayed put, and nothing is recorded to answer it: a record of where the
+ * ends were would have to be rewritten whenever they moved, and a drawing
+ * opened on a screen that measures its ports a few pixels from where they
+ * were written down would be rewritten on opening.
+ *
+ * A line with no way round keeps its stretch through the symbol: one whose
+ * tee was set down inside it or against it, one boxed in, or one whose way
+ * round would cross the pipe itself or could not be drawn again from the
+ * corners it would be handed. Sent round whole instead, the pipe took its
+ * tees with it -- the very move this is here to stop -- for the sake of a
+ * line that went through the symbol anyway.
+ *
+ * `anchors` are where the tees are kept during a drag (`Dragging`); where
+ * they are, otherwise. What it hands back is drawn through again exactly by
+ * the corners its lines are handed, with every tee on it, so the next reseat
+ * keeps it as the shape it is and moves no tee.
+ */
+function keptAround(
+  pipe: Pipe, a: End, b: End, corners: Pt[], nodesById: Map<string, Node>, endOf: EndLookup,
+  sheet: { bodies: Box[]; obstacles: Box[] }, m: () => Model, anchors?: Map<string, Pt>,
+): Pt[] | null {
+  const { bodies, obstacles } = sheet;
+  // Nothing to route round -- the caller told the router of no symbols --
+  // and there is no way round to take.
+  if (!bodies.length || !obstacles.length || !pipe.tees.length) return null;
+  const shape = shapeOf(a, b, corners);
+  const inTheWay = (pts: Pt[]) => routeHitsBoxes(pts, avoidable(boxesNear(pts, bodies), a, b));
+  if (!shape || !inTheWay(shape)) return null;
+  const onIt = (pts: Pt[], c: Pt, s: number) => {
+    const q = pointAtArc(pts, s)?.point;
+    return !!q && Math.abs(q.x - c.x) < MEASURED && Math.abs(q.y - c.y) < MEASURED;
+  };
+  const arcs = arcsOf(shape);
+  const L = arcs[arcs.length - 1];
+  // Each tee exactly on the shape, in order: otherwise it is not the shape
+  // the tees ride, and there is nothing to keep.
+  const at: Pt[] = [], spots: number[] = [];
+  for (const id of pipe.tees) {
+    const tee = nodesById.get(id);
+    if (!tee) return null;
+    const c = anchors?.get(id) ?? centreOfJunction(tee);
+    const s = project(shape, c, recordedArc(tee, pipe, L));
+    if (!onIt(shape, c, s) || (spots.length && s <= spots[spots.length - 1] + SPOT_EPS)) return null;
+    at.push(c);
+    spots.push(s);
+  }
+  // A tee's end of a line: the tee where it is kept, on the face the pipe
+  // runs through it by there -- the face the seat gives the line, which is
+  // not yet the one it is on when the tee has just been slid round a bend.
+  const teeEnd = (i: number, side: 'in' | 'out'): End | null => {
+    const tee = nodesById.get(pipe.tees[i])!;
+    const face = runFaces(pointAtArc(shape, spots[i])!.dir)[side];
+    return endFor({ ...tee, position: { x: at[i].x - J_HALF, y: at[i].y - J_HALF } }, face, endOf);
+  };
+  // The whole pipe from its stretches, and whether it is one the next
+  // reseat keeps: drawn again exactly through its own corners, and every tee
+  // on it where the reseat puts it -- a way round that turns inside a tee's
+  // reach has the tee pushed off the bend it brought (`keepsTees`).
+  const join = (pieces: Pt[][]) => simplifyPoints(pieces.flat());
+  const keeps = (path: Pt[]) => {
+    const again = shapeOf(a, b, path.slice(1, -1));
+    return !!again && samePts(again, path, MEASURED) && keepsTees(pipe, a, b, path, m(), anchors);
+  };
+  const n = pipe.tees.length;
+  const pieces: Pt[][] = [];
+  for (let k = 0; k <= n; k++) pieces.push(sliceByArc(shape, k === 0 ? 0 : spots[k - 1], k === n ? L : spots[k]));
+  let path = shape;
+  for (let k = 0; k <= n; k++) {
+    // The stretch the line draws: from face to face, not under the dots.
+    const lo = k === 0 ? 0 : spots[k - 1] + J_ANCHOR, hi = k === n ? L : spots[k] - J_ANCHOR;
+    const drawn = hi > lo ? sliceByArc(shape, lo, hi) : [];
+    if (drawn.length < 2 || !inTheWay(drawn)) continue;
+    const sa = k === 0 ? a : teeEnd(k - 1, 'out');
+    const sb = k === n ? b : teeEnd(k, 'in');
+    if (!sa || !sb) continue;
+    const round = autoRoute(sa, sb, obstacles);
+    if (inTheWay(round)) continue;
+    const tried = [...pieces];
+    tried[k] = [...(k > 0 ? [at[k - 1]] : []), ...round, ...(k < n ? [at[k]] : [])];
+    const next = join(tried);
+    if (!keeps(next)) continue;
+    pieces[k] = tried[k];
+    path = next;
+  }
+  return path;
+}
+
+/**
  * Where a pipe runs: the route between its two ends, through the corners a
  * person placed, or the shape the router last drew while it still fits, or
- * the router's route (`routeOfPipe`). The two ends can be given, to price the
+ * that shape round a symbol that has come to lie across it (`keptAround`),
+ * or the router's route (`routeOfPipe`). The two ends can be given, to price the
  * pipe on other faces than it has, and, for the tees on it, the drawing they
  * are placed in (`seat.m`, worked out from the two maps when not given) and
  * where they are to be kept during a drag (`seat.anchors`). Null when an end
@@ -523,7 +647,9 @@ export function pipeGeometry(
   const page = pageOfNode(na);
   const pts = simplifyPoints(hand
     ? settledThrough(a, b, corners)
-    : (keptShape(a, b, corners, bodies(page), true) ?? routeOfPipe(pipe, a, b, obstacles(page), model, seat?.anchors)));
+    : (keptShape(a, b, corners, bodies(page), true)
+      ?? keptAround(pipe, a, b, corners, nodesById, endOf, { bodies: bodies(page), obstacles: obstacles(page) }, model, seat?.anchors)
+      ?? routeOfPipe(pipe, a, b, obstacles(page), model, seat?.anchors)));
   const arcs = arcsOf(pts);
   return { a, b, pts, arcs, length: arcs[arcs.length - 1] ?? 0, hand };
 
@@ -756,20 +882,27 @@ function seatPipe(
 // choice of face, and the choice is the route. Each choice is priced as the
 // router prices a shape (length, and CORNER a corner), plus heavily for
 // crossing the tee's own pipe or passing through a symbol, more for lying on
-// the pipe, and a little for running beside it within a tee's clearance. At
-// most one line goes to a face while there are faces to go round, so two
-// lines are never drawn on top of each other out of one face. The faces a
-// line has win an exact tie, so nothing flips between two equal answers.
+// the pipe, less for running near it within a tee's clearance, and by the
+// pixel for running beside it within two grid steps. At most one line goes
+// to a face while there are faces to go round, so two lines are never drawn
+// on top of each other out of one face. The faces a line has win an exact
+// tie, so nothing flips between two equal answers.
 //
 // A line that is no pipe's is priced against the rest of the page too, as
 // it is laid (`Laid`): lying on another line, or passing through another
 // junction's dot, costs what lying on its own pipe does, since either reads
 // as a joint that is not there -- a branch run up an open end's line for
 // ninety pixels and through its dot drew the two as one line with a tee on
-// it. Running beside another line costs nothing: two open ends put down a
-// tee's clearance from a pipe are joined straight, as they were put, not
-// sent round in a U to keep further off it. A person's line is not priced
-// at all: it arrives by the face its corners come in by (`handFace`).
+// it. Running near another line, or beside it, costs as it does beside its
+// own pipe, and crossing one a little (`crowdCost`). A straight line pays
+// for neither: two open ends put down a tee's clearance from a pipe are
+// joined straight, as they were put, not sent round in a U to keep further
+// off it. A person's line is not priced at all: it arrives by the face its
+// corners come in by (`handFace`).
+//
+// Where every way the router draws between the two ends still pays for the
+// lines round it, the line is looked for among them (`routeAmong`), and a way
+// that comes out cheaper is taken and carried as the router's corners.
 //
 // The choices are made in an order that never looks back, each priced only
 // on what is already settled, so the reseat's own output prices exactly as
@@ -825,6 +958,32 @@ const THROUGH_DOT = ON_PIPE;
  * these are, loads this module before it sets them.
  */
 const dotReach = () => J_HALF + 2;
+/**
+ * How near a line a route may run alongside it before the two crowd each
+ * other: two grid steps, the spacing of tees on a run. Nearer, and no
+ * further, the two read as a pair that belong together -- a branch that
+ * turned out of its tee to run twenty pixels down its own pipe's riser, or
+ * a crossbar put fourteen pixels under a pipe it has nothing to do with. It
+ * costs by the pixel (`BESIDE_PX`), so a short stretch is let be and a long
+ * one goes further out when there is a way that does.
+ */
+const BESIDE = 2 * GRID;
+/** What each pixel run beside a line, within `BESIDE` and beyond nearer, costs. */
+const BESIDE_PX = 1;
+/**
+ * What crossing another line costs: a little. A crossing is drawn with a
+ * hop, and says plainly that the two do not meet; a route with one fewer is
+ * better when it costs no more than a corner or so to have.
+ */
+const CROSS_LINE = 20;
+/**
+ * Nearer another line than a grid step, and further than lying on it: the
+ * two are drawn closer than any two lines the canvas spaces apart itself,
+ * and read as a line and its shadow. Once for the stretch, besides the
+ * pixels of it (`NEAR_LINE`).
+ */
+const NEAR_LINE_WITHIN = GRID;
+const NEAR_LINE = 100;
 
 interface UnitEnd { nodeId: string; lineId: string; handle: string | null | undefined; choices: Face[] | null }
 interface Unit {
@@ -896,6 +1055,23 @@ function alongside(p: Pt[], q: Pt[], within: number): number {
   return total;
 }
 
+/**
+ * How far apart segment a-b runs from segment c-d when the two run the same
+ * way, and for how long they run side by side; null when they run across
+ * each other, or not side by side at all.
+ */
+function together(a: Pt, b: Pt, c: Pt, d: Pt): { apart: number; o: number } | null {
+  let apart: number, o: number;
+  if (Math.abs(a.y - b.y) < 1e-6 && Math.abs(c.y - d.y) < 1e-6) {
+    apart = Math.abs(a.y - c.y);
+    o = Math.min(Math.max(a.x, b.x), Math.max(c.x, d.x)) - Math.max(Math.min(a.x, b.x), Math.min(c.x, d.x));
+  } else if (Math.abs(a.x - b.x) < 1e-6 && Math.abs(c.x - d.x) < 1e-6) {
+    apart = Math.abs(a.x - c.x);
+    o = Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y)) - Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y));
+  } else return null;
+  return o > AXIS_EPS ? { apart, o } : null;
+}
+
 /** How long segment a-b runs parallel to segment c-d within `within` px of it. */
 function lying(a: Pt, b: Pt, c: Pt, d: Pt, within: number): number {
   let o = 0;
@@ -954,6 +1130,13 @@ interface Pricing {
   laid: Laid | null;
   /** The junctions whose person's lines have been given their faces to hold (`holdHandFaces`). */
   handHeld: Set<string>;
+  /**
+   * During a drag, what it moves: the nodes it picks up, and the tees on
+   * every pipe that ends on one. A line with an end on none of them is not
+   * looked for again among the other lines until the drag is let go of
+   * (`priced`).
+   */
+  moving?: ReadonlySet<string>;
 }
 
 /**
@@ -961,31 +1144,68 @@ interface Pricing {
  * crossbar a line that routes itself is drawn with (`routeOrthogonal`), the
  * middle unless another prices better.
  */
-interface Price { pts: Pt[] | null; cost: number; offset: number }
+interface Price {
+  pts: Pt[] | null;
+  cost: number;
+  offset: number;
+  /** Its route is not one the router draws from its two ends, and the line is to carry it as the router's corners. */
+  corners?: boolean;
+}
 
 /**
  * One route a unit could be drawn with, and the crossbar it is drawn with;
  * and, once asked, what it costs for everything but what is laid on the page
- * (`ownPrice`), which nothing laid later changes.
+ * (its length and corners, its own pipes and the symbols in its way), which
+ * nothing laid later changes.
  */
 interface Candidate {
   pts: Pt[];
   offset: number;
+  /**
+   * Drawn through its own corners, which the line carries (`viaRun`), not
+   * routed from its two ends: the route looked for among the other lines
+   * (`routeAmong`), or the one the line already carries. Nothing moves its
+   * middle a step aside (`tracks.separate`), so it is priced as it stands.
+   */
+  corners?: boolean;
   own?: number;
+  /** The part of `own` its own pipes charge: what, with `crowd`, says the route pays for the lines round it. */
+  ownLines?: number;
   /** What it costs for what is laid on its page (`crowdCost`), as far as the first `n` lines laid. */
   crowd?: { n: number; cost: number };
 }
 
-/** The routes a unit could be drawn with on a pair of faces; `crossbars` when it is a line that routes itself. */
-interface Candidates { list: Candidate[]; crossbars: boolean }
+/**
+ * The routes a unit could be drawn with on a pair of faces; `crossbars` when
+ * it is a line that routes itself; and, once looked for, the route among the
+ * other lines (`among`: null when there was none to find).
+ */
+interface Candidates {
+  list: Candidate[];
+  crossbars: boolean;
+  among?: Candidate | null;
+  /**
+   * The line carries router's corners on these faces that are not kept
+   * (`candidatesOf`): the way round it was sent, which only the search can
+   * say is still the one, or corners that no longer fit.
+   */
+  lost?: boolean;
+}
+
+/**
+ * Is a line to be looked for again among the other lines this reseat? Always
+ * but during a drag, and then only a line with an end on something the drag
+ * moves (`Pricing.moving`).
+ */
+const looksAgain = (u: Unit, p: Pricing) => !p.moving || u.ends.some(end => p.moving!.has(end.nodeId));
 
 const pricingFor = (
   d: Draft, m: Model, endOf: EndLookup, sheet: PipeSheet, sheetFor: (ids: string[]) => PipeSheet = () => sheet,
-  anchors?: Map<string, Pt>,
+  anchors?: Map<string, Pt>, moving?: ReadonlySet<string>,
 ): Pricing =>
   ({
     d, m, endOf, sheet, sheetFor, anchors, paths: new Map(), held: new Map(), prices: new Map(), routes: new Map(),
-    laid: null, handHeld: new Set(),
+    laid: null, handHeld: new Set(), moving,
   });
 
 /** The nodes at a pipe's two ends and the tees on it. */
@@ -1040,28 +1260,75 @@ function freshRoute(u: Unit, fa: string | null | undefined, fb: string | null | 
 const pipeKey = (pipe: Pipe) => `pipe:${pipe.lines[0]}`;
 
 /**
- * What a unit's route costs but for what is laid on the page: its length and
- * corners, and the penalties for what it runs into -- its own pipes
- * (crossed, as `ownCrossings` counts, lain on, or run beside) and the
- * symbols in its way. A line that is no pipe's is priced for what else is
- * laid on its page besides (`candidateCost`, `crowdCost`).
+ * What a unit's route pays for the symbols it runs through. With its length
+ * and corners and what its own pipes charge (`ownLineCost`), what it costs
+ * but for what is laid on the page (`candidateCost`); a line that is no
+ * pipe's is priced for what else is laid on its page besides (`crowdCost`).
  */
-function ownPrice(u: Unit, pts: Pt[], p: Pricing): number {
-  let c = routeCost(pts);
+function bodyCost(u: Unit, pts: Pt[], p: Pricing): number {
+  const bodies = p.sheetFor(u.pipe ? nodesOfPipe(u.pipe) : u.ends.map(e => e.nodeId)).bodies(pageOfNode(p.d.node(u.ends[0].nodeId)));
+  return bodies.length && pts.length ? PENALTY * entries(pts, avoidable(boxesNear(pts, bodies), pts[0], pts[pts.length - 1])) : 0;
+}
+
+/**
+ * What a unit's route pays for the pipes its own tees ride: crossing one, as
+ * `ownCrossings` counts; lying on it; running near it, within a tee's
+ * clearance; and running beside it, within `BESIDE`.
+ *
+ * Beside is by the pixel, and is what keeps a branch that leaves its tee
+ * across the run from turning straight down alongside it: out of a tee on a
+ * riser to an open end below, the branch ran twenty pixels down the riser
+ * for a hundred, crossed the pipe's lower leg in its last two pixels and
+ * ended in a hop no bigger than the line -- when out past the leg and into
+ * the open end's far side, it crossed the leg with room for its hop and
+ * kept its distance from the riser.
+ *
+ * Where the far end itself was put down within a tee's clearance of the
+ * pipe, its own stub is its doing, not the route's: an open end set just
+ * under the pipe is reached along the pipe for the few pixels of its stub
+ * whichever way the route comes, as it is crossed to (`ownCrossings`).
+ */
+function ownLineCost(u: Unit, pts: Pt[], p: Pricing): number {
+  let c = 0;
   u.ends.forEach((end, i) => {
     if (!end.choices) return;
     const pipe = pipeAtTee(p, end.nodeId);
     if (!pipe) return;
     const far = i === 0 ? pts[pts.length - 1] : pts[0];
     c += PENALTY * ownCrossings(pts, pipe, p.d.node(end.nodeId), end.choices, far);
-    const on = alongside(pts, pipe, ON);
-    const near = alongside(pts, pipe, J_CLEAR) - on;
+    const put = (nearestOnPolyline(pipe, far)?.dist ?? Infinity) <= J_CLEAR + AXIS_EPS;
+    const route = put ? withoutApproach(pts, i === 1, u.ends[1 - i].choices ? J_STUB : STUB) : pts;
+    const on = alongside(route, pipe, ON);
+    const near = alongside(route, pipe, J_CLEAR) - on;
     if (on > 0) c += ON_PIPE + on;
     if (near > 0) c += NEAR_PIPE + near;
+    if (turns(pts)) c += BESIDE_PX * (alongside(route, pipe, BESIDE + AXIS_EPS) - on - near);
   });
-  const bodies = p.sheetFor(u.pipe ? nodesOfPipe(u.pipe) : u.ends.map(e => e.nodeId)).bodies(pageOfNode(p.d.node(u.ends[0].nodeId)));
-  if (bodies.length && pts.length) c += PENALTY * entries(pts, avoidable(boxesNear(pts, bodies), pts[0], pts[pts.length - 1]));
   return c;
+}
+
+/**
+ * Does a route turn? One that does not is a straight line between two ends
+ * that were put in line, and is never charged for running beside a line:
+ * two open ends put down a tee's clearance from a pipe are joined straight,
+ * as they were put, not sent round in a U to keep further off it.
+ */
+const turns = (pts: Pt[]) => simplifyPoints(pts).length > 2;
+
+/**
+ * A route with the last `len` pixels of its leg into one end taken off: the
+ * first leg's when `atStart`, the last leg's otherwise; the whole leg when
+ * it is no longer.
+ */
+function withoutApproach(pts: Pt[], atStart: boolean, len: number): Pt[] {
+  if (pts.length < 2) return pts;
+  const q = atStart ? [...pts].reverse() : pts;
+  const n = q.length, a = q[n - 2], b = q[n - 1];
+  const l = Math.hypot(b.x - a.x, b.y - a.y);
+  const out = l <= len + AXIS_EPS
+    ? q.slice(0, n - 1)
+    : [...q.slice(0, n - 1), { x: a.x + ((b.x - a.x) * (l - len)) / l, y: a.y + ((b.y - a.y) * (l - len)) / l }];
+  return atStart ? out.reverse() : out;
 }
 
 /**
@@ -1070,37 +1337,54 @@ function ownPrice(u: Unit, pts: Pt[], p: Pricing): number {
  * it was last asked added to what the ones before them came to.
  */
 function candidateCost(u: Unit, cand: Candidate, p: Pricing): number {
-  cand.own ??= ownPrice(u, cand.pts, p);
+  if (cand.own === undefined) {
+    cand.ownLines = ownLineCost(u, cand.pts, p);
+    cand.own = routeCost(cand.pts) + cand.ownLines + bodyCost(u, cand.pts, p);
+  }
   const laid = p.laid;
   if (!laid || u.pipe) return cand.own;
-  if (!cand.crowd) cand.crowd = { n: laid.count, cost: crowdCost(u, cand.pts, p, laid) };
+  if (!cand.crowd) cand.crowd = { n: laid.count, cost: crowdCost(u, cand.pts, p, laid, undefined, cand.corners) };
   else if (cand.crowd.n < laid.count) {
-    cand.crowd.cost += crowdCost(u, cand.pts, p, laid, cand.crowd.n);
+    cand.crowd.cost += crowdCost(u, cand.pts, p, laid, cand.crowd.n, cand.corners);
     cand.crowd.n = laid.count;
   }
   return cand.own + cand.crowd.cost;
 }
 
+/** What a candidate pays for the lines round it -- its own pipes and what is laid -- as far as it has been priced. */
+const lineCostOf = (cand: Candidate) => (cand.ownLines ?? 0) + (cand.crowd?.cost ?? 0);
+
 /**
  * What a line's route costs for what else is laid on its page: lying on
- * another line, and passing through the dot of a junction it does not end
- * on. Not its own pipes, which `ownPrice` prices as such, nor itself.
- * Given `since`, only the lines laid from that one on.
+ * another line, running beside one, crossing one, and passing through the
+ * dot of a junction it does not end on. Not its own pipes, which
+ * `ownLineCost` prices as such, nor itself. Given `since`, only the lines
+ * laid from that one on. `fixed` says the route is drawn through its own
+ * corners (`Candidate.corners`), so nothing will move its middle.
  *
- * Only what the pass that moves lines apart cannot undo (`tracks.separate`).
- * That pass moves the middle of a line that routes itself a grid step or
- * two, off every other line and off every dot; what it cannot move is a
- * segment touching an end, or any of a line with corners, or a pipe's. So a
- * middle on either side is its to draw a step apart, as it always has --
- * two branches from tees side by side down to symbols side by side, their
- * crossbars both in the middle of the same gap. Charged for that here, the
- * second one's crossbar was sent out to its tee's stub, and ran along the
- * pipe a tee's clearance under it the whole way across. What is left is a
- * leg out of an end lying on another such leg, or on a line nothing moves --
- * a branch run up an open end's line -- and a leg out of an end through a
- * dot.
+ * Lying on a line is charged only where the pass that moves lines apart
+ * cannot undo it (`tracks.separate`). That pass moves the middle of a line
+ * that routes itself a grid step or two, off every other line and off every
+ * dot; what it cannot move is a segment touching an end, or any of a line
+ * with corners, or a pipe's. So a middle on either side is its to draw a
+ * step apart, as it always has -- two branches from tees side by side down
+ * to symbols side by side, their crossbars both in the middle of the same
+ * gap. Charged for that here, the second one's crossbar was sent out to its
+ * tee's stub, and ran along the pipe a tee's clearance under it the whole
+ * way across. What is left is a leg out of an end lying on another such leg,
+ * or on a line nothing moves -- a branch run up an open end's line -- and a
+ * leg out of an end through a dot.
+ *
+ * Running near a line, closer than a grid step, or beside one, within
+ * `BESIDE`, is what that pass leaves alone -- it moves a middle off a line a
+ * step, no further -- and is charged: near by the stretch and the pixel,
+ * beside by the pixel, a middle it moves off a line included, since a step
+ * off is still beside it. All but two middles side by side, which are the
+ * staircase that pass draws of parallel feeds on purpose. A crossing costs a
+ * little, however it comes: a hop is honest, and the route with fewer is the
+ * plainer one.
  */
-function crowdCost(u: Unit, pts: Pt[], p: Pricing, laid: Laid, since?: number): number {
+function crowdCost(u: Unit, pts: Pt[], p: Pricing, laid: Laid, since?: number, fixed = false): number {
   if (pts.length < 2) return 0;
   if (!u.crowd) {
     const own = new Set<string>([u.line!.id]);
@@ -1111,27 +1395,39 @@ function crowdCost(u: Unit, pts: Pt[], p: Pricing, laid: Laid, since?: number): 
     u.crowd = { page: pageOfNode(p.d.node(u.ends[0].nodeId)), own };
   }
   const { page, own } = u.crowd;
-  const w = ON_LINE_WITHIN;
+  const w = ON_LINE_WITHIN, far = BESIDE + AXIS_EPS;
   const { x0, y0, x1, y1 } = boundsOf(pts);
   // A line being chosen is priced as routing itself: the router's corners on
   // it are priced afresh, as every line's are, and a person's are not chosen.
+  // One that is to carry corners of its own is priced as it stands.
   const middle = (route: Pt[], routesItself: boolean) => (i: number) => routesItself && i > 0 && i < route.length - 2;
-  const oursMoves = middle(pts, true);
+  const oursMoves = middle(pts, !fixed);
+  const turning = turns(pts);
   let c = 0;
   const others = since === undefined
-    ? laid.near(page, x0 - w, y0 - w, x1 + w, y1 + w)
-    : laid.laidSince(since, page, x0 - w, y0 - w, x1 + w, y1 + w);
+    ? laid.near(page, x0 - far, y0 - far, x1 + far, y1 + far)
+    : laid.laidSince(since, page, x0 - far, y0 - far, x1 + far, y1 + far);
   for (const other of others) {
     if (own.has(other.id)) continue;
     const theirsMoves = middle(other.pts, other.free);
-    let on = 0;
+    let on = 0, near = 0, beside = 0;
     for (let i = 0; i + 1 < pts.length; i++) {
-      if (oursMoves(i)) continue;
       for (let j = 0; j + 1 < other.pts.length; j++) {
-        if (!theirsMoves(j)) on += lying(pts[i], pts[i + 1], other.pts[j], other.pts[j + 1], w);
+        const ours = oursMoves(i), theirs = theirsMoves(j);
+        if (ours && theirs) continue;
+        const run = together(pts[i], pts[i + 1], other.pts[j], other.pts[j + 1]);
+        if (!run || run.apart >= far) continue;
+        // Lying on it where one of the two moves is moved a step off it:
+        // beside it, then.
+        if (run.apart < w) { if (ours || theirs) beside += run.o; else on += run.o; }
+        else if (run.apart < NEAR_LINE_WITHIN) near += run.o;
+        else beside += run.o;
       }
     }
     if (on > 0) c += ON_LINE + on;
+    if (near > 0 && turning) c += NEAR_LINE + near;
+    if (turning) c += BESIDE_PX * beside;
+    c += CROSS_LINE * crossingsOf(pts, other.pts).length;
   }
   // The dots are all laid before anything is priced.
   if (since !== undefined) return c;
@@ -1152,14 +1448,31 @@ function crowdCost(u: Unit, pts: Pt[], p: Pricing, laid: Laid, since?: number): 
  */
 const OTHER_CROSSBAR = 1e-3;
 
+/**
+ * By how much the route looked for among the lines has to come out cheaper
+ * than the best the router draws from the two ends before it is taken:
+ * more than every tie-break above. A route the router can draw is drawn by
+ * it, and one it cannot is carried as corners; of two that cost the same,
+ * the router's.
+ */
+const AMONG_WINS = 1e-2;
+
 /** The crossbar a line that routes itself is stored with. */
 const offsetOfLine = (e: Edge) => ((e.data as { offset?: number } | undefined)?.offset ?? 0);
+
+/** The router's corners a line carries: none for a person's line, or a line with none. */
+const runCornersOf = (e: Edge): Pt[] => {
+  const d = (e.data ?? {}) as { waypoints?: Pt[]; viaRun?: boolean };
+  return d.viaRun && d.waypoints?.length ? d.waypoints : [];
+};
 
 /**
  * The routes a unit could be drawn with on these faces: its route drawn
  * afresh, and, for a line that routes itself, the same with each crossbar
  * it could be drawn with besides -- the one it has, and out at the end of
- * either end's stub (`crossbarOffsets`). Worked out once per reseat.
+ * either end's stub (`crossbarOffsets`) -- and, on the faces it is on, the
+ * route through the router's corners it carries, while they still fit it
+ * (`keptShape`) and run through no symbol. Worked out once per reseat.
  */
 function candidatesOf(u: Unit, fa: string | null | undefined, fb: string | null | undefined, p: Pricing): Candidates | null {
   const k = `${u.key}|${fa}|${fb}`;
@@ -1172,10 +1485,20 @@ function candidatesOf(u: Unit, fa: string | null | undefined, fb: string | null 
     const ends = e && !isHand(e) ? endsOf(u, fa, fb, p) : null;
     if (e && ends) {
       out.crossbars = true;
-      const current = fa === u.ends[0].handle && fb === u.ends[1].handle ? offsetOfLine(e) : 0;
+      const here = fa === u.ends[0].handle && fb === u.ends[1].handle;
+      const current = here ? offsetOfLine(e) : 0;
       const offsets = new Set([current, ...crossbarOffsets(ends.a, ends.b)]);
       offsets.delete(0);
       for (const off of offsets) out.list.push({ pts: autoRoute(ends.a, ends.b, ends.obstacles, off), offset: off });
+      // Kept as step 4 keeps the router's corners on a line that is no
+      // pipe's: while they fit, run through no symbol and do not double
+      // back. A way round that does is one only the search could have found,
+      // and the search is asked for it again (`Candidates.lost`).
+      const w = here ? runCornersOf(e) : [];
+      const bodies = p.sheet.bodies(pageOfNode(p.d.node(u.ends[0].nodeId)));
+      const kept = w.length ? keptShape(ends.a, ends.b, w, bodies) : null;
+      if (kept) out.list.push({ pts: throughAsStored(ends.a, ends.b, w) ?? kept, offset: 0, corners: true });
+      else if (w.length) out.lost = true;
     }
   }
   p.routes.set(k, out);
@@ -1193,7 +1516,23 @@ function candidatesOf(u: Unit, fa: string | null | undefined, fb: string | null 
  * pipe or crossed it had to choose between two faces that both did, and one
  * of them wrapped round the pipe -- when a crossbar at the other end's stub,
  * on the face it had, crossed nothing. The middle wins every tie, and the
- * crossbar the line has now wins over both, so nothing moves that need not.
+ * crossbar the line has now wins over both, so nothing moves that need not;
+ * the corners it carries win over all of them.
+ *
+ * And when the best of those still pays for the lines round it -- crosses
+ * its own pipe, runs along or beside it or another line, crosses another,
+ * or passes through a dot -- the route looked for among them is priced too
+ * (`amongOf`), and taken when it comes out cheaper. It is not a shape the
+ * router draws from the two ends, so the line carries it as the router's
+ * corners (`Price.corners`). During a drag, only for a line with an end on
+ * something the drag moves (`looksAgain`), or one carrying corners that are
+ * not kept (`Candidates.lost`) -- a way round that doubles back, which only
+ * the search can say is still the way, and which dropped as a stale bend
+ * had the branch drawn across its own pipe until the drag was let go of.
+ * Every other line keeps what it has, as a pipe the drag does not touch
+ * keeps its shape, and is looked for again when the drag is let go of: a
+ * valve dragged across a crowded stand looked for fresh routes for every
+ * branch whose neighbourhood its lines passed through, on every tick.
  */
 function priced(u: Unit, fa: string | null | undefined, fb: string | null | undefined, p: Pricing): Price {
   const k = `${u.key}|${fa}|${fb}|${p.laid ? p.laid.version : -1}`;
@@ -1203,17 +1542,115 @@ function priced(u: Unit, fa: string | null | undefined, fb: string | null | unde
     if (!cands) v = { pts: null, cost: Infinity, offset: 0 };
     else {
       const e = u.line ? p.d.edge(u.line.id)! : null;
-      const current = e && fa === u.ends[0].handle && fb === u.ends[1].handle ? offsetOfLine(e) : 0;
+      const here = !!e && fa === u.ends[0].handle && fb === u.ends[1].handle;
+      const current = here ? offsetOfLine(e!) : 0;
+      const carrying = here && runCornersOf(e!).length > 0;
       const first = cands.list[0];
-      v = { pts: first.pts, cost: candidateCost(u, first, p) - (cands.crossbars && current === 0 ? 1e-6 : 0), offset: 0 };
+      let best = first;
+      v = { pts: first.pts, cost: candidateCost(u, first, p) - (cands.crossbars && current === 0 && !carrying ? 1e-6 : 0), offset: 0 };
       for (const cand of cands.list.slice(1)) {
-        const cost = candidateCost(u, cand, p) + (cand.offset === current ? -1e-6 : OTHER_CROSSBAR);
-        if (cost < v.cost - 1e-12) v = { pts: cand.pts, cost, offset: cand.offset };
+        const cost = candidateCost(u, cand, p) + (cand.corners || cand.offset === current ? -1e-6 : OTHER_CROSSBAR);
+        if (cost < v.cost - 1e-12) { v = { pts: cand.pts, cost, offset: cand.offset, corners: cand.corners }; best = cand; }
+      }
+      const looking = looksAgain(u, p) || !!cands.lost;
+      const among = cands.crossbars && p.laid && looking && lineCostOf(best) > 0 ? amongOf(u, fa, fb, p, cands) : null;
+      if (among) {
+        const cost = candidateCost(u, among, p);
+        if (cost < v.cost - AMONG_WINS) v = { pts: among.pts, cost, offset: 0, corners: true };
       }
     }
     p.prices.set(k, v);
   }
   return v;
+}
+
+/**
+ * The route for a line that is no pipe's looked for among the other lines
+ * on its page (`routeAmong`), once per reseat and pair of faces: what is
+ * laid when it is first asked for -- the pipes its tees ride, as a great
+ * deal to cross or run along; every other line laid, as a hop to cross and
+ * something to keep its distance from; and every junction's dot but its own
+ * two ends'. Null when there is none, or none the line could carry: the
+ * route has to be drawn again exactly from its own corners (`throughAsStored`)
+ * wherever it is drawn, and a straight line has no corners to carry.
+ *
+ * Round every symbol on the page (`PipeSheet.bodies`), whether or not the
+ * caller has the router go round them: a way round the lines that ran
+ * through a symbol would be no way at all. And the ones a drag is carrying
+ * included: a line routed afresh during a drag goes round a symbol dragged
+ * into its way, and so does this.
+ */
+function amongOf(u: Unit, fa: string | null | undefined, fb: string | null | undefined, p: Pricing, cands: Candidates): Candidate | null {
+  if (cands.among !== undefined) return cands.among;
+  cands.among = null;
+  const ends = endsOf(u, fa, fb, p);
+  if (!ends || !p.laid) return null;
+  const page = pageOfNode(p.d.node(u.ends[0].nodeId));
+  const plain = pathPoints(routeOrthogonal(ends.a, ends.b).d);
+  const b = boundsOf(plain), r = AMONG_REACH;
+  const around = { x0: b.x0 - r, y0: b.y0 - r, x1: b.x1 + r, y1: b.y1 + r };
+  const obstacles = boxGrid(p.sheet.bodies(page)).overlapping(around.x0, around.y0, around.x1, around.y1);
+  const found = routeAmong(ends.a, ends.b, obstacles, softFor(u, p, p.laid, page, around), plain);
+  if (!found) return null;
+  const pts = simplifyPoints(found);
+  const drawn = pts.length > 2 ? throughAsStored(ends.a, ends.b, pts.slice(1, -1)) : null;
+  if (!drawn || !samePts(drawn, pts, MEASURED) || !wellMade(pts, plain, ends.a, ends.b)) return null;
+  cands.among = { pts, offset: 0, corners: true };
+  return cands.among;
+}
+
+/**
+ * Is a route found among the lines one to draw? Not when it shortens a stub
+ * the plain route leaves whole, nor when it turns twice within half a grid
+ * step. The search may do either, at a price, to keep off a line it would
+ * otherwise touch -- and between two ports that face each other across a
+ * narrow gap, each with a line on it, it came into its port by a leg of two
+ * pixels and a half, a wiggle nobody can read as a line arriving. The plain
+ * route, touching the other line, is the plainer drawing of that.
+ */
+function wellMade(pts: Pt[], plain: Pt[], a: End, b: End): boolean {
+  const len = (p: Pt, q: Pt) => Math.abs(p.x - q.x) + Math.abs(p.y - q.y);
+  const n = pts.length, m = plain.length;
+  if (len(pts[0], pts[1]) < Math.min(a.stub ?? STUB, len(plain[0], plain[1])) - AXIS_EPS) return false;
+  if (len(pts[n - 2], pts[n - 1]) < Math.min(b.stub ?? STUB, len(plain[m - 2], plain[m - 1])) - AXIS_EPS) return false;
+  for (let i = 1; i + 2 < n; i++) if (len(pts[i], pts[i + 1]) < GRID / 2) return false;
+  return true;
+}
+
+/**
+ * What a line's route is looked for among (`Soft`), priced as `ownLineCost`
+ * and `crowdCost` price it: the pipes its tees ride, and the lines laid on
+ * its page and the dots inside `around` -- as far as the search can go.
+ */
+function softFor(
+  u: Unit, p: Pricing, laid: Laid, page: string, around: { x0: number; y0: number; x1: number; y1: number },
+): Soft {
+  const lines: SoftLine[] = [];
+  const own = new Set<string>([u.line!.id]);
+  for (const end of u.ends) {
+    if (!end.choices) continue;
+    const pipe = p.m.byTee.get(end.nodeId)?.pipe;
+    const path = pipe && pipeAtTee(p, end.nodeId);
+    if (!pipe || !path || own.has(pipeKey(pipe))) continue;
+    own.add(pipeKey(pipe));
+    lines.push({
+      pts: path, cross: PENALTY,
+      lie: { within: ON, once: ON_PIPE, px: 1 }, near: { within: J_CLEAR, once: NEAR_PIPE, px: 1 },
+      beside: { within: BESIDE, px: BESIDE_PX },
+    });
+  }
+  const { x0, y0, x1, y1 } = around;
+  for (const other of laid.near(page, x0, y0, x1, y1)) {
+    if (own.has(other.id)) continue;
+    lines.push({
+      pts: other.pts, cross: CROSS_LINE,
+      lie: { within: ON_LINE_WITHIN, once: ON_LINE, px: 1 }, near: { within: NEAR_LINE_WITHIN, once: NEAR_LINE, px: 1 },
+      beside: { within: BESIDE, px: BESIDE_PX },
+    });
+  }
+  const at = laid.dotsNear(page, x0, y0, x1, y1)
+    .filter(d => d.id !== u.ends[0].nodeId && d.id !== u.ends[1].nodeId).map(d => d.at);
+  return { lines, dots: { at, reach: dotReach(), cost: THROUGH_DOT } };
 }
 
 /** A unit's two ends on these faces, as the router takes them, and what routes go round there. */
@@ -1338,17 +1775,24 @@ function holdPipeFaces(pipe: Pipe, p: Pricing, pts: Pt[] | null) {
   for (const e of unitOfPipe(pipe, p.d).ends) if (e.choices) hold(p, e.nodeId, e.handle, pts);
 }
 
-/** The shape the router last left on a pipe, while it still fits the faces the pipe's ends are on. */
+/**
+ * The shape the router last left on a pipe, while it still fits the faces the
+ * pipe's ends are on -- taken round a symbol that has come to lie across it
+ * (`keptAround`), since a pipe that keeps its tees where they are keeps the
+ * faces it ends on too.
+ */
 function keptOnFaces(pipe: Pipe, u: Unit, p: Pricing): Pt[] | null {
   const lines = linesNow(pipe, p.d);
   const corners = cornersOfPipe(pipe, lines);
-  if (!corners.length) return null;
   const byId = p.d.byId();
   const na = byId.get(u.ends[0].nodeId), nb = byId.get(u.ends[1].nodeId);
   if (!na || !nb) return null;
   const a = endFor(na, u.ends[0].handle, p.endOf), b = endFor(nb, u.ends[1].handle, p.endOf);
   if (!a || !b) return null;
-  return keptShape(a, b, corners, p.sheetFor(nodesOfPipe(pipe)).bodies(pageOfNode(na)), true);
+  const sheet = p.sheetFor(nodesOfPipe(pipe)), page = pageOfNode(na);
+  return (corners.length ? keptShape(a, b, corners, sheet.bodies(page), true) : null)
+    ?? keptAround(pipe, a, b, corners, byId, p.endOf, { bodies: sheet.bodies(page), obstacles: sheet.obstacles(page) },
+      () => ({ ...p.m, byId }), p.anchors);
 }
 
 /** The lines that are no pipe's and meet a junction with a choice of face, as units. */
@@ -1658,7 +2102,7 @@ function layPage(p: Pricing, units: Unit[]): Laid {
  * they hold the faces and the crossbar they have, and the rest are chosen
  * round them.
  */
-function chooseLineFaces(p: Pricing, keep: ReadonlySet<string> = new Set()) {
+function chooseLineFaces(p: Pricing, keep: ReadonlySet<string> = new Set()): Set<string> {
   faceByHand(p, keep);
   const all = lineUnits(p.m, p.d);
   const laid = layPage(p, all);
@@ -1673,7 +2117,7 @@ function chooseLineFaces(p: Pricing, keep: ReadonlySet<string> = new Set()) {
     laid.add(e.id, pageOfUnit(u), as?.pts ?? null, !!as?.free);
   }
   const units = all.filter(u => !stays(u));
-  if (!units.length) return;
+  if (!units.length) return new Set();
   // The units with a choice to make at each junction. One that meets a
   // junction at both ends is left as it is.
   const at = new Map<string, { u: Unit; end: 0 | 1 }[]>();
@@ -1761,12 +2205,13 @@ function chooseLineFaces(p: Pricing, keep: ReadonlySet<string> = new Set()) {
       if (farDone) done.push(u);
     });
     // The lines whose both ends are now chosen are laid for every line chosen
-    // after them, as they were priced: routing themselves, the router's
-    // corners on any of them priced afresh, as every line's are.
+    // after them, as they were priced: routing themselves, or through the
+    // corners they are to carry.
     for (const u of done) settled.set(u.key, priced(u, decided.get(u.key)![0], decided.get(u.key)![1], p));
-    for (const u of done) laid.add(u.line!.id, pageOfUnit(u), settled.get(u.key)!.pts, true);
+    for (const u of done) laid.add(u.line!.id, pageOfUnit(u), settled.get(u.key)!.pts, !settled.get(u.key)!.corners);
   }
 
+  const routed = new Set<string>();
   for (const u of units) {
     const faces = decided.get(u.key)!;
     u.ends.forEach((end, i) => {
@@ -1774,14 +2219,18 @@ function chooseLineFaces(p: Pricing, keep: ReadonlySet<string> = new Set()) {
       if (!end.choices || !f || f === end.handle) return;
       p.d.setEdge(faceAt(p.d.edge(end.lineId)!, end.nodeId, f as Face));
     });
-    // And the crossbar it was laid with on those faces. Kept by a line the
-    // router's corners are still on, too: priced afresh, as every line is,
-    // and drawn with once the corners stop fitting (step 4 of the reseat),
-    // which may be straight after this.
+    // And the route it was laid with on those faces: the crossbar it routes
+    // itself with, the router's corners it carries off; or, for a route the
+    // router does not draw from two ends, those corners, which the line is
+    // drawn through exactly (`lineRoute`). Either way the choice is this
+    // reseat's, made afresh every time, and step 4 leaves it alone.
     const e = p.d.edge(u.line!.id)!;
     const v = settled.get(u.key) ?? priced(u, faces[0], faces[1], p);
-    if (v.pts) p.d.setEdge(withOffset(e, v.offset));
+    if (!v.pts) continue;
+    routed.add(e.id);
+    p.d.setEdge(v.corners ? withCorners(e, v.pts.slice(1, -1), false) : withOffset(withoutRunCorners(e), v.offset));
   }
+  return routed;
 }
 
 /**
@@ -2253,7 +2702,7 @@ export function reseatJunctions(
   //    is chosen again and nothing it passes over bends it (`Dragging`). Its
   //    tees go with it, so a pipe seated after it that ends on one of them
   //    sees that end carried too.
-  const p = pricingFor(d, m, endOf, sheet, sheetFor, drag?.anchors);
+  const p = pricingFor(d, m, endOf, sheet, sheetFor, drag?.anchors, drag ? touched : undefined);
   const moved = drag ? movedSoFar(d, drag) : null;
   for (const pipe of seatingOrder(m)) {
     const own = nodesOfPipe(pipe);
@@ -2297,8 +2746,8 @@ export function reseatJunctions(
   // 2b. The open ends the tees, where they now are, have come to sit on.
   // 3. The lines' faces. 4. What is left of the router's corners.
   clearOpenEnds(d, m, drag);
-  chooseLineFaces(p, carried);
-  normaliseRunCorners(d, m, endOf, sheetFor, carried);
+  const routed = chooseLineFaces(p, carried);
+  normaliseRunCorners(d, m, endOf, sheetFor, carried, routed);
 
   // Anything that comes back as it was is handed back as the object it was,
   // not an equal copy: an equal copy is a change to React, and a reseat that
@@ -2342,21 +2791,27 @@ function seatingOrder(m: Model): Pipe[] {
 /**
  * Step 4: the router's corners on lines that are not part of a pipe stay
  * only while they fit. A line a drag carries whole (`carried`) keeps them
- * over whatever it passes: nothing it passes over bends it.
+ * over whatever it passes: nothing it passes over bends it -- a way round
+ * that doubles back included, since the corners it carried when the drag
+ * began were already settled. A line whose route the face choice has just
+ * made (`routed`) is not looked at again: its corners, when it has any, are
+ * that choice's.
  */
 function normaliseRunCorners(
   d: Draft, m: Model, endOf: EndLookup, sheetFor: (ids: string[]) => PipeSheet, carried: ReadonlySet<string> = new Set(),
+  routed: ReadonlySet<string> = new Set(),
 ) {
   for (const e0 of m.edgeById.values()) {
-    if (m.byLine.has(e0.id)) continue;
+    if (m.byLine.has(e0.id) || routed.has(e0.id)) continue;
     const e = d.edge(e0.id)!;
     const data = (e.data ?? {}) as { waypoints?: Pt[]; viaRun?: boolean };
     if (!data.viaRun || !data.waypoints?.length) continue;
     const s = d.node(e.source)!, t = d.node(e.target)!;
     const a = endFor(s, e.sourceHandle, endOf), b = endFor(t, e.targetHandle, endOf);
     if (!a || !b) continue;
-    const bodies = carried.has(e.id) ? NO_BOXES : sheetFor([s.id, t.id]).bodies(pageOfNode(s));
-    if (!keptShape(a, b, data.waypoints, bodies)) d.setEdge(withoutRunCorners(e));
+    const whole = carried.has(e.id);
+    const bodies = whole ? NO_BOXES : sheetFor([s.id, t.id]).bodies(pageOfNode(s));
+    if (!keptShape(a, b, data.waypoints, bodies, whole)) d.setEdge(withoutRunCorners(e));
   }
 }
 
@@ -2430,10 +2885,30 @@ function clearOpenEnds(d: Draft, m: Model, drag?: Dragging | null) {
 // ── Tees under a person's hand ───────────────────────────────────────────────
 
 /**
+ * How far a slid tee's centre is nudged toward where it was before it is
+ * put on the grid: enough to break a tie, and nothing a pointer can place.
+ */
+const TOWARD_WAS = 1e-3;
+
+/**
  * Where a tee dragged to `p` (its top-left, as React Flow reports it) may go:
- * the point of its pipe nearest the pointer, moved to a legal spot -- off
- * the bends, clear of the ends, and never past the tees either side of it.
- * Null for a tee that rides nothing, or a pipe that cannot be routed yet.
+ * the point of its pipe nearest the pointer, on the grid along the pipe
+ * there (`gridAlong`), moved to a legal spot -- off the bends, clear of the
+ * ends, and never past the tees either side of it. Null for a tee that
+ * rides nothing, or a pipe that cannot be routed yet.
+ *
+ * On the grid by its centre, not its corner. React Flow snaps the corner of
+ * the ten-pixel dot to the grid, which puts the centre five pixels off it
+ * every time: a tee slid along its pipe could land anywhere but on a grid
+ * line, and a branch from it to a symbol on the grid jogged by the five
+ * pixels, as did the next symbol lined up with it. Split and insert already
+ * put a new tee's centre on the grid; a slide did not.
+ *
+ * The snapped corner is exactly half a step from two grid lines, and says
+ * nothing about which of them the pointer is nearer. The tie goes toward
+ * where the tee was (its record, `Along.t`): the first tick of a drag, which
+ * React Flow reports half a step on, leaves the tee where it is, and a tee
+ * moves a whole step once the pointer has.
  */
 export function slideAlong(
   junction: Node, along: Along, p: XYPosition, edges: Edge[], nodesById: Map<string, Node>, endOf: EndLookup,
@@ -2447,15 +2922,35 @@ export function slideAlong(
   const geo = pipeGeometry(pipe, m.byId, m.edgeById, endOf, pipeSheet(nodes, obstacles), undefined, { m });
   if (!geo || geo.length < 1e-6) return null;
   const arcOf = (id: string) => project(geo.pts, centreOfJunction(m.byId.get(id)!), recordedArc(m.byId.get(id)!, pipe, geo.length));
-  const pointer = project(geo.pts, { x: p.x + J_HALF, y: p.y + J_HALF }, recordedArc(junction, pipe, geo.length));
-  const s = legalSpot(geo.pts, pointer, {
+  const rules = {
     endGapA: endGapAt(pipe.a, m), endGapB: endGapAt(pipe.b, m),
     neighbours: {
       before: i > 0 ? arcOf(pipe.tees[i - 1]) : undefined,
       after: i < pipe.tees.length - 1 ? arcOf(pipe.tees[i + 1]) : undefined,
     },
-  });
+  };
+  const was = recordedArc(junction, pipe, geo.length);
+  const pointer = project(geo.pts, { x: p.x + J_HALF, y: p.y + J_HALF }, was);
+  const on = pointAtArc(geo.pts, pointer)!;
+  const toward = was === undefined || Math.abs(was - pointer) < SPOT_EPS ? 0 : Math.sign(was - pointer) * TOWARD_WAS;
+  const gridded = gridAlong(geo.pts, { x: on.point.x + on.dir.x * toward, y: on.point.y + on.dir.y * toward });
+  // A leg with no grid line on it leaves the pointer where it is, not nudged.
+  const v = Math.abs(on.dir.x) >= Math.abs(on.dir.y) ? gridded.x : gridded.y;
+  const onGrid = Math.abs(v - Math.round(v / GRID) * GRID) < SPOT_EPS;
+  const byPointer = legalSpot(geo.pts, pointer, rules);
+  const gridArc = onGrid ? project(geo.pts, gridded, pointer) : pointer;
+  const byGrid = onGrid ? legalSpot(geo.pts, gridArc, rules) : byPointer;
+  // The grid moves the tee half a step at most. A grid line on a bend is no
+  // spot for a tee, and the legal spot nearest one is on the leg before it,
+  // whichever leg the pointer is on: three pixels down the leg after a
+  // bend, the grid would send the tee back round the bend. Where the grid
+  // takes it further than half a step from where the pointer alone would
+  // put it, the pointer's spot stands.
+  const s = Math.abs(byGrid - byPointer) <= GRID / 2 + SPOT_EPS ? byGrid : byPointer;
   const spot = pointAtArc(geo.pts, s)!;
+  // The grid line itself, not the point a round trip through its arc
+  // position comes back to a few ulps off it.
+  if (onGrid && s === gridArc) spot.point = gridded;
   // `in` and `out` stay the faces its lines are on now: they are how the
   // reseat finds the tee's run lines, and the reseat is what turns them when
   // the tee has slid round a bend (`dir` says which way the pipe runs there).

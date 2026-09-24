@@ -143,6 +143,27 @@ describe('applyMoves', () => {
     expect(pos(r.nodes, bay.tee).x).toBeCloseTo(tee.position.x + 30, 6);
   });
 
+  it('slides a tee dragged by hand onto the grid by its centre, tick after tick', () => {
+    // React Flow snaps the dragged dot's top-left corner to the grid, so
+    // every position it proposes puts the centre five pixels off a grid line
+    // -- and the tee landed there, a branch to a symbol on the grid jogging
+    // by the five. Each tick lands the centre on a grid line along the pipe:
+    // the one the tee is coming from, when the snapped corner leaves it
+    // exactly between two.
+    const bay = handBay();
+    const start = bay.nodes.find(n => n.id === bay.tee)!.position;
+    expect(start).toEqual(P(145, 85));
+    let nodes = bay.nodes;
+    const seen: Pt[] = [];
+    // The pointer 3, 13 and 23 px along: React Flow's snapped corners.
+    for (const x of [150, 160, 170]) {
+      nodes = applyMoves(nodes, [move(bay.tee, P(x, 90))], bay.edges, endOf).nodes;
+      const p = pos(nodes, bay.tee);
+      seen.push(P(p.x + 5, p.y + 5));
+    }
+    expect(seen).toEqual([P(150, 90), P(160, 90), P(170, 90)]);
+  });
+
   it('slides a tee picked up with only one end of its pipe', () => {
     const bay = handBay();
     const tee = bay.nodes.find(n => n.id === bay.tee)!;

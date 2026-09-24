@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Position } from '@xyflow/react';
 import type { Edge, Node } from '@xyflow/react';
 import {
-  CORNER_GAP, END_GAP, J_END, TEE_END_GAP, TEE_GAP, adoptTee, dragging, freezePipe, isJunction, junctionData, junctionEnd, keptShape,
+  ACROSS, CORNER_GAP, END_GAP, J_END, TEE_END_GAP, TEE_GAP, adoptTee, dragging, freezePipe, isJunction, junctionData, junctionEnd, keptShape,
   latestSpots, legalSpot, pipeGeometry, pipeOf, pipesOf, pointLines, reseatJunctions, setHandCorners, slideAlong, splitSpot,
   thawPipe,
 } from './junctions';
@@ -10,7 +10,7 @@ import type { Along, Dragging, EndLookup, Face } from './junctions';
 import { dissolveAfterDelete, insertInline, rejoinChains, splitEdgeAt } from './splitEdge';
 import { migrate } from './migrate';
 import { dragSegment, pathPoints, polylineLength, routeOrthogonal, routeThrough, simplifyPoints, sliceByArc, waypointsOf } from './route';
-import { boxOfNode, obstacleBoxes, routeAuto } from './routeGrid';
+import { REACH, boxOfNode, gridRoute, heldClear, obstacleBoxes, routeAuto } from './routeGrid';
 import { drawnScene } from './tracks';
 import type { End, Pt } from './route';
 
@@ -94,6 +94,38 @@ function along(p: Pt[], q: Pt[], w = 5): number {
     else if (a.x === b.x && c.x === d.x && Math.abs(a.x - c.x) < w) t += Math.max(0, Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y)) - Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y)));
   }
   return t;
+}
+
+/** Two grid steps, the twentieth pixel included: nearer than this, a line runs beside another. */
+const BESIDE = 20.5;
+
+/** How many times one drawn line crosses another at right angles, away from the ends of both. */
+function crossings(p: Pt[], q: Pt[]): number {
+  let n = 0;
+  for (let i = 0; i + 1 < p.length; i++) for (let j = 0; j + 1 < q.length; j++) {
+    const [a, b, c, d] = [p[i], p[i + 1], q[j], q[j + 1]];
+    const [h, v] = a.y === b.y && c.x === d.x ? [[a, b], [c, d]] : a.x === b.x && c.y === d.y ? [[c, d], [a, b]] : [null, null];
+    if (!h || !v) continue;
+    const x = v[0].x, y = h[0].y;
+    if (x > Math.min(h[0].x, h[1].x) && x < Math.max(h[0].x, h[1].x) && y > Math.min(v[0].y, v[1].y) && y < Math.max(v[0].y, v[1].y)) n++;
+  }
+  return n;
+}
+
+/** Does a drawn line pass through the inside of a box (its edge, and a pixel in, excepted)? */
+function through(pts: Pt[], b: { x: number; y: number; w: number; h: number }): boolean {
+  return pts.slice(0, -1).some((p, i) => {
+    const q = pts[i + 1];
+    if (p.y === q.y) return p.y > b.y + 1 && p.y < b.y + b.h - 1 && Math.max(p.x, q.x) > b.x + 1 && Math.min(p.x, q.x) < b.x + b.w - 1;
+    return p.x > b.x + 1 && p.x < b.x + b.w - 1 && Math.max(p.y, q.y) > b.y + 1 && Math.min(p.y, q.y) < b.y + b.h - 1;
+  });
+}
+
+/** How far a point is from the segment p-q. */
+function distanceTo(c: Pt, p: Pt, q: Pt): number {
+  const x = Math.max(Math.min(p.x, q.x), Math.min(Math.max(p.x, q.x), c.x));
+  const y = Math.max(Math.min(p.y, q.y), Math.min(Math.max(p.y, q.y), c.y));
+  return Math.hypot(c.x - x, c.y - y);
 }
 
 /** Does a drawn line pass nearer than `r` to `c`: through the dot of a junction there? */
@@ -917,12 +949,19 @@ describe('the faces lines take at a tee', () => {
     expect(faces[1]).not.toBe('l');
   });
 
-  it('never send a branch across its own pipe when the other face goes clear', () => {
+  it('never send a branch across its own pipe when there is a way that goes clear', () => {
     // An L pipe, a tee on its first leg, a valve below and right of the bend.
+    // Of the shapes the router draws from the two ends, only the top face's,
+    // over the pipe and round its corner, stays off it, and that is the face
+    // this once had to take. Looked for among the lines, the bottom face has
+    // a way too, shorter: down, and through the gap between B and C into C's
+    // port -- crossing nothing of its own pipe, and through no symbol.
     const nodes = [part('A', 0, 0), part('B', 300, 400), part('C', 300, 500)];
     const t = tee(nodes, [E('A', 'r', 'B', 't')], 'A-B', P(120, 30));
     const s = settle(t.nodes, [...t.edges, E(t.id, 'b', 'C', 'r')]);
-    expect(s.edges.find(e => e.target === 'C')!.sourceHandle).toBe('t');
+    const branch = draw(s.edges.find(e => e.target === 'C')!, s.nodes).pts;
+    expect(crossings(branch, [P(60, 30), P(330, 30), P(330, 400)]), JSON.stringify(branch)).toBe(0);
+    for (const id of ['A', 'B', 'C']) expect(through(branch, boxOfNode(s.nodes.find(n => n.id === id)!)), `${id}: ${JSON.stringify(branch)}`).toBe(false);
   });
 
   it('prefer a crossbar in a narrow gap beside the pipe to crossing the pipe', () => {
@@ -939,7 +978,10 @@ describe('the faces lines take at a tee', () => {
     // and shorter; a tee on each, and a branch between the tees. Straight
     // across into the second tee's near face, the branch runs down the gap
     // seven pixels from both pipes, and the three read as one fat pipe. Over
-    // the top of the shorter pipe into its far face is longer, and clear.
+    // the top of the shorter pipe into its far face is longer, and clear --
+    // and clear by more than two grid steps: a way round that ran down
+    // beside that pipe a tee's clearance off it, as this once did, ran
+    // beside it within `BESIDE` for all of its hundred and thirty pixels.
     const nodes = [part('A', 70, 0), part('B', 70, 600), openEnd('O1', 114, 250), openEnd('O2', 114, 420)];
     const t1 = tee(nodes, [E('A', 'b', 'B', 't'), E('O1', 'b', 'O2', 't')], 'A-B', P(100, 200));
     const t2 = tee(t1.nodes, t1.edges, 'O1-O2', P(114, 330));
@@ -947,18 +989,26 @@ describe('the faces lines take at a tee', () => {
       const s = settle(t2.nodes, [...t2.edges, { ...E(t1.id, 'r', t2.id, face), id: 'branch' }]);
       const branch = s.edges.find(e => e.id === 'branch')!;
       expect([branch.sourceHandle, branch.targetHandle], `starting on ${face}`).toEqual(['r', 'r']);
-      expect(draw(branch, s.nodes).pts).toEqual([P(108, 200), P(128, 200), P(128, 330), P(122, 330)]);
+      expect(draw(branch, s.nodes).pts).toEqual([P(108, 200), P(144, 200), P(144, 330), P(122, 330)]);
     }
   });
 
-  it('never lay a branch along its own pipe, even to save a crossing', () => {
+  it('never lay a branch along its own pipe, nor cross it, when there is room to go round', () => {
     // An L pipe; a tee on its vertical leg; the target up and to the left,
-    // beyond the horizontal leg. Leaving to the right runs back along that
-    // leg 2 px from it; leaving to the left crosses it once.
+    // beyond the horizontal leg. Leaving to the right by the router's own
+    // shapes ran back along that leg 2 px from it; leaving to the left
+    // crosses it once, which is what this once chose. Crossing its own pipe
+    // costs a great deal, and there is room round the pipe's corner: out to
+    // the right, and round, clear of both legs by more than two grid steps.
     const nodes = [part('A', 0, 0), part('B', 300, 400), part('C', 100, -100)];
     const t = tee(nodes, [E('A', 'r', 'B', 't')], 'A-B', P(330, 100));
     const s = settle(t.nodes, [...t.edges, E(t.id, 'r', 'C', 'l')]);
-    expect(s.edges.find(e => e.target === 'C')!.sourceHandle).toBe('l');
+    const branch = s.edges.find(e => e.target === 'C')!;
+    expect(branch.sourceHandle).toBe('r');
+    const pipe = [P(60, 30), P(330, 30), P(330, 400)];
+    const pts = draw(branch, s.nodes).pts;
+    expect(crossings(pts, pipe)).toBe(0);
+    expect(along(pts, pipe, BESIDE)).toBe(0);
   });
 
   it('keep two lines on an open end off each other, even with a face each', () => {
@@ -1114,11 +1164,19 @@ describe('the faces lines take at a tee', () => {
     expect(pointLines(once, byIdOf(t.nodes), endOf)).toBe(once);
   });
 
-  it('send a branch straight into an open end its pipe has come to run just above, not round the pipe\'s corner', () => {
+  it('send a branch into an open end its pipe has come to run just above by its near side, not round the pipe\'s corner', () => {
     // A person's pipe from A right to x = 490, down, and on to B, a tee on
     // its lower leg with a branch straight down to an open end. B dragged
     // 100 px down takes the lower leg with it to just above the open end,
     // and the tee, kept where it was, lands on the pipe's vertical leg.
+    //
+    // The branch leaves the tee to the right and comes back into the open
+    // end's right side, crossing the lower leg where it has room for its hop.
+    // Into the open end's top instead, as it once went, it ran down beside
+    // the riser twenty pixels off it for a hundred, and crossed the lower
+    // leg in its last two pixels with a hop shrunk to nothing. Neither way
+    // goes round the pipe's corner, and the open end, where a person put
+    // it, stays where it is.
     const nodes = [part('A', 270, 270), part('B', 570, 420), openEnd('O', 510, 560)];
     const t = tee(nodes, [E('A', 'r', 'B', 'l', { waypoints: [P(490, 300), P(490, 450)], offset: 0 })], 'A-B', P(510, 450));
     let s = settle(t.nodes, [...t.edges, { ...E(t.id, 'b', 'O', 't'), id: 'branch' }]);
@@ -1128,8 +1186,9 @@ describe('the faces lines take at a tee', () => {
     s = settle(s.nodes, s.edges);
     expect(centre(s.nodes.find(n => n.id === t.id)!)).toEqual(P(490, 450));
     const branch = s.edges.find(e => e.id === 'branch')!;
-    expect([branch.sourceHandle, branch.targetHandle]).toEqual(['r', 't']);
-    expect(draw(branch, s.nodes).pts).toEqual([P(498, 450), P(510, 450), P(510, 552)]);
+    expect([branch.sourceHandle, branch.targetHandle]).toEqual(['r', 'r']);
+    expect(draw(branch, s.nodes).pts).toEqual([P(498, 450), P(524, 450), P(524, 560), P(518, 560)]);
+    expect(centre(s.nodes.find(n => n.id === 'O')!)).toEqual(P(510, 560));
   });
 
   it('keep a branch between two runs a tee\'s clearance apart inside the gap, not round the far run', () => {
@@ -1221,6 +1280,342 @@ describe('the faces lines take, against the rest of the page', () => {
   });
 });
 
+describe('the routes lines take among the other lines', () => {
+  /** The faces across a riding tee's run: the ones a branch may leave it by. */
+  const ACROSS_OF = (tee: Node): Face[] => ACROSS[junctionData(tee).along!.in as Face];
+  /** The lines of the pipe tee `id` rides, as drawn. */
+  const pipeLines = (s: { nodes: Node[]; edges: Edge[] }, drawn: Map<string, Pt[]>, id: string) =>
+    pipeOf(s.nodes, s.edges, s.nodes.find(n => n.id === id)!)!.lines.map(l => drawn.get(l)!);
+
+  /**
+   * M5.r to M6.l along y = 680 with a tee T at x = 880; T's branch up to
+   * M7's right port, over to the right; M7 on to S1 above; M6 on to K up and
+   * to the right; and, when `open`, T's bottom face pulled out to an open
+   * end below it. Then M6 dragged 80 px up, so that the pipe rises to it
+   * between T and the branch's way to M7.
+   */
+  function bay(open: boolean) {
+    const nodes = [part('M5', 700, 650), part('M6', 1000, 650), part('M7', 1150, 520), part('S1', 870, 120), part('K', 1200, 340)];
+    const t = tee(nodes, [E('M5', 'r', 'M6', 'l'), E('M7', 'l', 'S1', 'r'), E('M6', 'r', 'K', 'b')], 'M5-M6', P(880, 680));
+    const edges = [...t.edges, { ...E(t.id, 't', 'M7', 'r'), id: 'branch' }, ...(open ? [{ ...E(t.id, 'b', 'O', 't'), id: 'open' }] : [])];
+    let s = settleOnPage([...t.nodes, ...(open ? [openEnd('O', 880, 790)] : [])], edges);
+    const drag = dragging(s.nodes, ['M6'], s.edges);
+    for (let dy = 10; dy <= 80; dy += 10) s = settleOnPage(s.nodes.map(n => (n.id === 'M6' ? { ...n, position: P(1000, 650 - dy) } : n)), s.edges, drag);
+    s = settleOnPage(s.nodes, s.edges);
+    return { ...s, tee: t.id, drawn: drawnScene(s.nodes, s.edges, endOf, obstacleBoxes(s.nodes)) };
+  }
+
+  it('send a branch over the top rather than across its own pipe once the pipe\'s end has moved in its way', () => {
+    // With T's bottom face taken by the open end, the branch leaves by the
+    // top. Every way the router draws from there to M7 crosses the riser the
+    // pipe now has up to M6, and the one it drew ran along the pipe fourteen
+    // pixels above it to get there. Over M6, it crosses nothing of its own.
+    const g = bay(true);
+    const branch = g.drawn.get('branch')!;
+    expect(g.edges.find(e => e.id === 'branch')!.sourceHandle).toBe('t');
+    for (const line of pipeLines(g, g.drawn, g.tee)) {
+      expect(crossings(branch, line)).toBe(0);
+      expect(along(branch, line, BESIDE)).toBe(0);
+    }
+  });
+
+  it('keep a branch more than two grid steps off its own pipe when a way further out is to be had', () => {
+    // The same with T's bottom face free: by the router's own shapes the
+    // branch left by it and ran along under the pipe fourteen pixels off it,
+    // for as far as the pipe went.
+    const g = bay(false);
+    const branch = g.drawn.get('branch')!;
+    for (const line of pipeLines(g, g.drawn, g.tee)) {
+      expect(crossings(branch, line)).toBe(0);
+      expect(along(branch, line, BESIDE)).toBe(0);
+    }
+  });
+
+  it('take a branch round an unrelated line rather than across its own pipe, whichever the drawing lists first', () => {
+    // The page above, listed as a drawing saved from the canvas lists it: T
+    // before the open ends, so the branch is chosen before the line between
+    // them is. Straight up out of T runs up that line and through V2's dot;
+    // out of T's bottom face instead, the branch came back up across its own
+    // pipe. It goes up out of the top, and round.
+    const t = tee([part('M5', 700, 650), part('M6', 1000, 650)], [E('M5', 'r', 'M6', 'l')], 'M5-M6', P(850, 680));
+    const u = tee(
+      [...t.nodes, openEnd('V1', 850, 300), openEnd('V2', 850, 560), part('MA', 570, 420), openEnd('J1', 900, 450)],
+      [...t.edges, E('V1', 'b', 'V2', 't'), E('MA', 'r', 'J1', 'l')], 'MA-J1', P(760, 450),
+    );
+    const s = settleOnPage([...u.nodes, part('M7', 750, 470)], [...u.edges, { ...E(t.id, 't', u.id, 'b'), id: 'branch' }]);
+    const drawn = drawnScene(s.nodes, s.edges, endOf, obstacleBoxes(s.nodes));
+    const branch = drawn.get('branch')!;
+    expect(s.edges.find(e => e.id === 'branch')!.sourceHandle).toBe('t');
+    for (const line of [...pipeLines(s, drawn, t.id), ...pipeLines(s, drawn, u.id)]) expect(crossings(branch, line)).toBe(0);
+    expect(along(branch, drawn.get('V1-V2')!, BESIDE)).toBe(0);
+    expect(passes(branch, P(850, 560), 7)).toBe(false);
+    // Nor turned just short of V2's dot, pointing at it; nor squeezed down
+    // the side of M7 between it and U's port, three pixels off it.
+    expect(Math.min(...branch.slice(0, -1).map((p, i) => distanceTo(P(850, 560), p, branch[i + 1])))).toBeGreaterThanOrEqual(15);
+    const m7 = { x: 750, y: 470, w: 60, h: 60 };
+    for (let i = 0; i + 1 < branch.length; i++) {
+      const p = branch[i], q = branch[i + 1];
+      if (p.x !== q.x || Math.max(p.y, q.y) <= m7.y || Math.min(p.y, q.y) >= m7.y + m7.h) continue;
+      expect(Math.min(Math.abs(p.x - m7.x), Math.abs(p.x - (m7.x + m7.w))), JSON.stringify(branch)).toBeGreaterThanOrEqual(10);
+    }
+  });
+
+  it('keep a crossbar off an unrelated line it would run on, near or beside, when another level is as short', () => {
+    // A pipe along y = 100, a tee on it at x = 200, and a branch from its
+    // bottom face down to S's top port: a Z, its crossbar in the middle of
+    // the gap at y = 254. An unrelated line runs straight across between two
+    // symbols out to either side: two pixels under the crossbar, where the
+    // pass that moves lines apart moved the crossbar a step off it and left
+    // it running beside the line; eight, near enough to read as its shadow;
+    // or ten, beside it -- for four hundred pixels each time. At S's stub
+    // the crossbar is as short, and clear of it, and the router draws it
+    // there itself.
+    for (const y of [256, 262, 264]) {
+      const nodes = [part('A', 0, 70), part('B', 800, 70), part('S', 570, 400), part('C', 50, y - 30), part('D', 700, y - 30)];
+      const t = tee(nodes, [E('A', 'r', 'B', 'l'), E('C', 'r', 'D', 'l')], 'A-B', P(200, 100));
+      const s = settleOnPage(t.nodes, [...t.edges, { ...E(t.id, 'b', 'S', 't'), id: 'branch' }]);
+      const drawn = drawnScene(s.nodes, s.edges, endOf, obstacleBoxes(s.nodes));
+      expect(drawn.get('C-D')).toEqual([P(110, y), P(700, y)]);
+      expect(along(drawn.get('branch')!, drawn.get('C-D')!, BESIDE), `at ${y}: ${JSON.stringify(drawn.get('branch'))}`).toBe(0);
+      expect(dataOf(s.edges.find(e => e.id === 'branch')!).waypoints, `at ${y}`).toBeUndefined();
+    }
+  });
+
+  it('look for a branch\'s way round the lines round every symbol, whether or not the router is told of them', () => {
+    // S's lid up to X1's left port, an L with a tee on its leg up just short
+    // of the bend, and a branch out of it to X2's top port, X2 tucked in under
+    // X1. Every shape the router draws for it runs through X1, and with the
+    // router told of no symbols, the way round the lines was looked for
+    // among the lines alone: through X1 too, and taken, for running beside
+    // nothing. Round the symbols, it runs through none of them.
+    const nodes = [part('S', 0, 200), part('X1', 150, 40), part('X2', 140, 120)];
+    const t = tee(nodes, [E('S', 't', 'X1', 'l')], 'S-X1', P(30, 84));
+    const s = settle(t.nodes, [...t.edges, { ...E(t.id, 'r', 'X2', 't'), id: 'branch' }]);
+    const branch = draw(s.edges.find(e => e.id === 'branch')!, s.nodes).pts;
+    for (const id of ['S', 'X1', 'X2']) {
+      expect(through(branch, boxOfNode(s.nodes.find(n => n.id === id)!)), `${id}: ${JSON.stringify(branch)}`).toBe(false);
+    }
+  });
+
+  it('keep a crossbar where it crosses nothing, when another level is as short', () => {
+    // The same, with the unrelated line short, off to the right only, across
+    // the branch's way down into S: in the middle of the gap, the leg down
+    // from the crossbar hops it. At S's stub, nothing is crossed.
+    const nodes = [part('A', 0, 70), part('B', 800, 70), part('S', 570, 400), part('C', 490, 270), part('D', 700, 270)];
+    const t = tee(nodes, [E('A', 'r', 'B', 'l'), E('C', 'r', 'D', 'l')], 'A-B', P(200, 100));
+    const s = settleOnPage(t.nodes, [...t.edges, { ...E(t.id, 'b', 'S', 't'), id: 'branch' }]);
+    const drawn = drawnScene(s.nodes, s.edges, endOf, obstacleBoxes(s.nodes));
+    expect(drawn.get('C-D')).toEqual([P(550, 300), P(700, 300)]);
+    expect(crossings(drawn.get('branch')!, drawn.get('C-D')!), JSON.stringify(drawn.get('branch'))).toBe(0);
+  });
+
+  it('leave a branch straight down beside its own pipe, as its two ends were put', () => {
+    // An L pipe, along and then down; a tee on its top leg fifteen pixels
+    // short of the bend, and a branch straight down out of it to an open end
+    // put down below, fifteen pixels beside the pipe's leg down. Straight, it
+    // runs beside the pipe; but a straight line between two ends put in line
+    // is what they were put down to be, and sent round in a U to keep further
+    // off, it would be longer and busier.
+    const nodes = [part('A', 0, 0), part('B', 210, 400), openEnd('O', 225, 300)];
+    const t = tee(nodes, [E('A', 'r', 'B', 't')], 'A-B', P(225, 30));
+    expect(draw(t.edges.find(e => e.target === 'B')!, t.nodes).pts).toEqual([P(233, 30), P(240, 30), P(240, 400)]);
+    const s = settleOnPage(t.nodes, [...t.edges, { ...E(t.id, 'b', 'O', 't'), id: 'down' }]);
+    const drawn = drawnScene(s.nodes, s.edges, endOf, obstacleBoxes(s.nodes));
+    expect(drawn.get('down')).toEqual([P(225, 38), P(225, 292)]);
+  });
+
+  it('bring a branch into a port facing another across a narrow gap by its whole stub', () => {
+    // V1's right port and V2's left port face each other across twenty
+    // pixels, V1's line leaving into the gap; a branch from a tee up on a
+    // header comes down into V2's port. The two lines meet in the gap
+    // whatever either does. Kept off V1's line by a stub cut to two pixels
+    // and a half, the branch came into its port with a kink too small to
+    // read as a line arriving at all.
+    const nodes = [part('A', 0, 0), part('B', 800, 0), part('V1', 460, 100), part('V2', 540, 100), part('V3', 540, 300)];
+    const t = tee(nodes, [E('A', 'r', 'B', 'l'), E('V1', 'r', 'V3', 'l')], 'A-B', P(640, 30));
+    const s = settleOnPage(t.nodes, [...t.edges, { ...E(t.id, 'b', 'V2', 'l'), id: 'branch' }]);
+    const pts = drawnScene(s.nodes, s.edges, endOf, obstacleBoxes(s.nodes)).get('branch')!;
+    expect(pts.slice(-2), JSON.stringify(pts)).toEqual([P(524, 130), P(540, 130)]);
+    for (let i = 0; i + 1 < pts.length; i++) {
+      expect(Math.abs(pts[i + 1].x - pts[i].x) + Math.abs(pts[i + 1].y - pts[i].y), JSON.stringify(pts)).toBeGreaterThanOrEqual(6);
+    }
+  });
+
+  it('keep the router\'s corners a branch carries while they are as good as any way it could be drawn', () => {
+    // A branch down from a tee to S, a Z carrying its crossbar as the
+    // router's corners at y = 300 -- a drawing saved when something else was
+    // in the way at the level the router would pick now. Nothing is in the
+    // way of either; the Z it has is as short as the router's own, and it is
+    // drawn as it was: opening a drawing moves nothing that need not move.
+    const nodes = [part('A', 0, 70), part('B', 800, 70), part('S', 570, 400)];
+    const t = tee(nodes, [E('A', 'r', 'B', 'l')], 'A-B', P(200, 100));
+    const corners = [P(200, 300), P(600, 300)];
+    const s = settleOnPage(t.nodes, [...t.edges, { ...E(t.id, 'b', 'S', 't', { waypoints: corners, viaRun: true }), id: 'branch' }]);
+    expect(dataOf(s.edges.find(e => e.id === 'branch')!).waypoints).toEqual(corners);
+    expect(drawnScene(s.nodes, s.edges, endOf, obstacleBoxes(s.nodes)).get('branch')).toEqual([P(200, 108), ...corners, P(600, 400)]);
+  });
+
+  it('give up the corners they were sent round a dot by once the dot is gone', () => {
+    // A branch from a tee up to K's left port: an L, straight up and across.
+    // An open end right in the way up, with its line off to the left, sends
+    // the branch round it on the right, and the branch carries the way round
+    // as corners. The open end deleted, the L is clear again, and the
+    // corners -- which still fit the branch's two ends, and so would be kept
+    // as a line keeps the router's corners while they fit -- go: the branch
+    // routes itself.
+    const nodes = [part('A', 0, 70), part('B', 600, 70), part('K', 500, -200), openEnd('O', 300, -20), part('W', 140, -50)];
+    const t = tee(nodes, [E('A', 'r', 'B', 'l'), E('O', 'l', 'W', 'r')], 'A-B', P(300, 100));
+    const s = settleOnPage(t.nodes, [...t.edges, { ...E(t.id, 't', 'K', 'l'), id: 'up' }]);
+    const round = drawnScene(s.nodes, s.edges, endOf, obstacleBoxes(s.nodes)).get('up')!;
+    expect(dataOf(s.edges.find(e => e.id === 'up')!).waypoints?.length, JSON.stringify(round)).toBeGreaterThan(0);
+    expect(Math.min(...round.slice(0, -1).map((p, i) => distanceTo(P(300, -20), p, round[i + 1])))).toBeGreaterThanOrEqual(7);
+    const g = settleOnPage(s.nodes.filter(n => n.id !== 'O'), s.edges.filter(e => e.id !== 'O-W'));
+    expect(dataOf(g.edges.find(e => e.id === 'up')!).waypoints).toBeUndefined();
+    expect(drawnScene(g.nodes, g.edges, endOf, obstacleBoxes(g.nodes)).get('up')).toEqual([P(300, 92), P(300, -170), P(500, -170)]);
+  });
+
+  it('keep the corners a branch was sent round with while a drag moves nothing it ends on', () => {
+    // The bay of the first test, and S1 -- at the far end of M7's other
+    // line -- dragged off to the right. Nothing the branch ends on moves,
+    // and every tick it is drawn as it was, over the top of M6: its way
+    // round doubles back into M7's port, and dropped as a stale bend while
+    // the drag went on, it was drawn across its own pipe until let go of.
+    const g = bay(true);
+    const was = dataOf(g.edges.find(e => e.id === 'branch')!).waypoints!;
+    expect(was.length).toBeGreaterThan(0);
+    const drag = dragging(g.nodes, ['S1'], g.edges);
+    let s: { nodes: Node[]; edges: Edge[] } = g;
+    for (let k = 1; k <= 3; k++) {
+      s = settleOnPage(s.nodes.map(n => (n.id === 'S1' ? { ...n, position: P(870 + 60 * k, 120) } : n)), s.edges, drag);
+      expect(dataOf(s.edges.find(e => e.id === 'branch')!).waypoints, `tick ${k}`).toEqual(was);
+    }
+  });
+
+  it('carry the corners a branch was sent round with whole when a drag carries the branch whole', () => {
+    // The bay of the first test, its branch over the top of M6 -- a way
+    // round that doubles back into M7's port -- picked up whole and moved.
+    // Every tick of the drag it is the same shape, moved: a line of router's
+    // corners that doubles back is dropped while it sits still, but these
+    // were settled before the drag began, and a drag moves them as they are.
+    const g = bay(true);
+    const was = dataOf(g.edges.find(e => e.id === 'branch')!).waypoints!;
+    expect(was.length).toBeGreaterThan(0);
+    const drag = dragging(g.nodes, g.nodes.map(n => n.id), g.edges);
+    let s: { nodes: Node[]; edges: Edge[] } = g;
+    for (let k = 1; k <= 3; k++) {
+      const by = P(20 * k, 10 * k);
+      s = settleOnPage(g.nodes.map(n => ({ ...n, position: P(n.position.x + by.x, n.position.y + by.y) })), s.edges, drag);
+      expect(dataOf(s.edges.find(e => e.id === 'branch')!).waypoints, `tick ${k}`).toEqual(was.map(p => P(p.x + by.x, p.y + by.y)));
+    }
+  });
+
+  it('never cross the pipe their tee rides when there is a way that does not (randomised)', () => {
+    // A pipe from A to B -- straight, an L or a Z -- a tee somewhere on it,
+    // and a branch from the tee to a symbol or an open end put down anywhere
+    // round it clear of the pipe; half the time the tee's other face taken
+    // by a line out to an open end, as a ring pulled out of it leaves one,
+    // and half the time B then dragged somewhere else, the pipe with it.
+    // Wherever the branch is drawn across its own pipe, there must be no way
+    // from a face it could have -- the one left, when the other is taken --
+    // to the far end, by any of an open end's faces, that keeps off the pipe
+    // and out of every symbol, and is no longer than the branch by more than
+    // the furthest a search looks to either side of it (`REACH`, twice): the
+    // way right round the pipe's far end and the symbol there, half a sheet
+    // long, is not one a hop across the pipe should be traded for.
+    //
+    // Seeds whose walks reach a branch out of a tee a pixel inside a
+    // symbol's margin, which the search once kinked round; and branches
+    // whose only way round, past the symbol at the pipe's far end, lay just
+    // outside the first corridor the search looked in.
+    for (const start of [29, 39608, 134636, 158393]) {
+      let seed = start;
+      const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+      const pick = <T,>(xs: T[]) => xs[Math.floor(rnd() * xs.length)];
+      const grid = (v: number) => Math.round(v / 10) * 10;
+      const faces: Face[] = ['t', 'b', 'l', 'r'];
+      const OUT: Record<Face, Pt> = { t: P(0, -1), b: P(0, 1), l: P(-1, 0), r: P(1, 0) };
+      type Box = { x: number; y: number; w: number; h: number };
+      const route = (s: { nodes: Node[]; edges: Edge[] }, id: string, drawn: Map<string, Pt[]>) => {
+        const pipe = pipeOf(s.nodes, s.edges, s.nodes.find(n => n.id === id)!)!;
+        return simplifyPoints(pipe.lines.flatMap((l, i) => (pipe.forward[i] ? drawn.get(l)! : [...drawn.get(l)!].reverse())));
+      };
+      const clearOf = (pts: Pt[], b: Box, m: number) => pts.slice(0, -1).every((p, i) => {
+        const q = pts[i + 1];
+        return Math.max(p.x, q.x) < b.x - m || Math.min(p.x, q.x) > b.x + b.w + m || Math.max(p.y, q.y) < b.y - m || Math.min(p.y, q.y) > b.y + b.h + m;
+      });
+      const boxOf = (n: Node): Box => (isJunction(n) ? { x: n.position.x, y: n.position.y, w: 10, h: 10 } : boxOfNode(n));
+      const apart = (p: Box, q: Box, m: number) => p.x > q.x + q.w + m || p.x + p.w < q.x - m || p.y > q.y + q.h + m || p.y + p.h < q.y - m;
+      let branches = 0, across = 0;
+      for (let k = 0; k < 160; k++) {
+        const nodes0 = [part('A', 0, 0), part('B', grid(150 + rnd() * 400), grid(rnd() * 500 - 250))];
+        const pipeLine = E('A', 'r', 'B', pick(['l', 't', 'b']));
+        const d = draw(pipeLine, nodes0).pts;
+        const t = tee(nodes0, [pipeLine], 'A-B', sliceByArc(d, 0, (0.2 + 0.6 * rnd()) * polylineLength(d)).pop()!);
+        const teeNode0 = t.nodes.find(n => n.id === t.id)!;
+        const [f0, f1] = ACROSS_OF(teeNode0);
+        // Half the time the other face out to an open end, straight out of it.
+        const taken = rnd() < 0.5 ? pick([f0, f1]) : null;
+        const extra: Node[] = [], lines: Edge[] = [];
+        if (taken) {
+          const c = P(teeNode0.position.x + 5, teeNode0.position.y + 5), u = OUT[taken], r = grid(60 + rnd() * 60);
+          extra.push(openEnd('O', c.x + u.x * r, c.y + u.y * r));
+          lines.push({ ...E(t.id, taken, 'O', ({ t: 'b', b: 't', l: 'r', r: 'l' } as Record<Face, Face>)[taken]), id: 'open' });
+        }
+        const before = route(t, t.id, drawnScene(t.nodes, t.edges, endOf, obstacleBoxes(t.nodes)));
+        const at = P(grid(rnd() * 800 - 150), grid(rnd() * 700 - 350));
+        const open = rnd() < 0.5;
+        const far: Node = open ? openEnd('X', at.x, at.y) : part('X', at.x, at.y);
+        if (!clearOf(before, boxOf(far), 30) || ![...nodes0, ...extra].every(n => apart(boxOf(n), boxOf(far), 30))) continue;
+        const port = open ? pick(faces) : pick(['l', 'r', 't', 'b']);
+        const free = taken ? [taken === f0 ? f1 : f0] : [f0, f1];
+        let s = settleOnPage([...t.nodes, ...extra, far], [...t.edges, ...lines, { ...E(t.id, pick(free), 'X', port), id: 'branch' }]);
+        // Half the time B dragged somewhere else, and let go.
+        if (rnd() < 0.5) {
+          const to = P(grid(150 + rnd() * 400), grid(rnd() * 500 - 250));
+          const drag = dragging(s.nodes, ['B'], s.edges);
+          for (let i = 1; i <= 4; i++) {
+            const b0 = nodes0[1].position;
+            const step = P(grid(b0.x + ((to.x - b0.x) * i) / 4), grid(b0.y + ((to.y - b0.y) * i) / 4));
+            s = settleOnPage(s.nodes.map(n => (n.id === 'B' ? { ...n, position: step } : n)), s.edges, drag);
+          }
+          s = settleOnPage(s.nodes, s.edges);
+        }
+        const drawn = drawnScene(s.nodes, s.edges, endOf, obstacleBoxes(s.nodes));
+        const pipe = route(s, t.id, drawn);
+        const xNode = s.nodes.find(n => n.id === 'X')!, bNode = s.nodes.find(n => n.id === 'B')!;
+        // Only a far end the pipe has not come to lie on or beside, nor B onto.
+        if (!clearOf(pipe, boxOf(xNode), 30) || !apart(boxOf(bNode), boxOf(xNode), 30)) continue;
+        branches++;
+        const branch = drawn.get('branch')!;
+        if (!crossings(branch, pipe)) continue;
+        across++;
+        const teeNode = s.nodes.find(n => n.id === t.id)!;
+        const walls = pipe.slice(0, -1).map((p, i) => {
+          const q = pipe[i + 1];
+          return { x: Math.min(p.x, q.x) - 3, y: Math.min(p.y, q.y) - 3, w: Math.abs(p.x - q.x) + 6, h: Math.abs(p.y - q.y) + 6 };
+        });
+        const others = taken ? [drawn.get('open')!] : [];
+        const lineWalls = others.flatMap(o => o.slice(0, -1).map((p, i) => {
+          const q = o[i + 1];
+          return { x: Math.min(p.x, q.x) - 3, y: Math.min(p.y, q.y) - 3, w: Math.abs(p.x - q.x) + 6, h: Math.abs(p.y - q.y) + 6 };
+        }));
+        const left = taken ? ACROSS_OF(teeNode).filter(f => f !== s.edges.find(e => e.id === 'open')!.sourceHandle) : ACROSS_OF(teeNode);
+        for (const f of left) {
+          for (const g of open ? faces : [port]) {
+            const a: End = { ...junctionEnd(teeNode.position, f), ...J_END };
+            const b: End = open ? { ...junctionEnd(xNode.position, g as Face), ...J_END } : { ...endOf(xNode, g)!, body: boxOfNode(xNode) };
+            const way = gridRoute(a, b, [...heldClear(obstacleBoxes(s.nodes), a, b), ...walls, ...lineWalls]);
+            const worth = way && polylineLength(way) <= polylineLength(branch) + 2 * REACH;
+            expect(worth, `drawing ${k}: ${f} to ${g} keeps off the pipe, ${JSON.stringify(way)}, but the branch was drawn ${JSON.stringify(branch)}`).toBeFalsy();
+          }
+        }
+      }
+      // Enough drawings to mean something.
+      expect(branches, `${across} across`).toBeGreaterThan(60);
+    }
+  }, 60_000);
+});
+
 // ── Under a person's hand ────────────────────────────────────────────────────
 
 describe('a tee dragged along its pipe', () => {
@@ -1300,6 +1695,33 @@ describe('a tee dragged along its pipe', () => {
       ? { ...n, position: P(195, face + 2 - 5), data: { ...n.data, along: { ...alongOf(n), t: alongOf(n).from === t1.id ? 0.01 : 0.99 } } }
       : n));
     expect(centre(settle(knocked, t2.edges).nodes.find(n => n.id === t2.id)!)).toEqual(P(200, face + TEE_END_GAP));
+  });
+
+  it('lands with its centre on the grid, not its corner', () => {
+    // React Flow snaps the dot's top-left corner to the grid, which leaves
+    // its centre half a step off it: a tee slid along its pipe landed
+    // anywhere but on a grid line, and a branch from it to a symbol on the
+    // grid jogged by the difference. The corner says nothing about which
+    // grid line either side the pointer is nearer, so a half step goes back
+    // toward where the tee was -- the first tick of a drag, which React Flow
+    // reports half a step on, leaves the tee where it is.
+    const m = manifold();
+    const corner = (id: string, at: Pt) => {
+      const n = m.nodes.find(x => x.id === id)!;
+      return slideAlong(n, alongOf(n), at, m.edges, byIdOf(m.nodes), endOf)!.position;
+    };
+    // T1's centre is at x = 200: its corner at 195, which React Flow snaps to 200.
+    expect(corner(m.t1, P(200, 20))).toEqual(P(195, 25));
+    expect(corner(m.t1, P(190, 20))).toEqual(P(195, 25));
+    expect(corner(m.t1, P(300, 20))).toEqual(P(295, 25));
+    expect(corner(m.t1, P(180, 20))).toEqual(P(185, 25));
+    // Along a vertical leg by its y, and clear of a bend all the same.
+    const z = zPipe();
+    const t1 = tee(z.nodes, z.edges, 'A-B', P(150, 30));
+    const n = t1.nodes.find(x => x.id === t1.id)!;
+    const slid = (at: Pt) => slideAlong(n, alongOf(n), at, t1.edges, byIdOf(t1.nodes), endOf)!.position;
+    expect(slid(P(230, 250))).toEqual(P(225, 245));
+    expect(slid(P(230, 40))).toEqual(P(225, 30 + CORNER_GAP - 5));
   });
 
   it('is null for a tee that rides nothing', () => {

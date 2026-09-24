@@ -13,7 +13,10 @@ import type { BoxGrid, Obstacles } from './routeGrid';
  * when it chose the faces the line is on.
  *
  * - A line with stored corners is drawn through them (`routeThrough`): a
- *   person's corners, or the slice of its pipe the reseat handed it.
+ *   person's corners, the slice of its pipe the reseat handed it, or the way
+ *   round the lines about it the reseat found for a branch (`routeAmong`),
+ *   which depends on more than its two ends and the symbols, and so is not
+ *   something the line can work out for itself.
  * - A pipe's line without corners is the straight piece of the pipe between
  *   two stations, and is drawn as the router draws two ends in line
  *   (`routeOrthogonal`): the pipe as a whole was routed, round what was in
@@ -30,7 +33,10 @@ import type { BoxGrid, Obstacles } from './routeGrid';
 
 export interface LineData {
   waypoints?: Pt[];
-  /** The waypoints are the router's -- a slice of a pipe, or a bend a part was put into -- not a person's. */
+  /**
+   * The waypoints are the router's -- a slice of a pipe, a bend a part was
+   * put into, or a branch's way round the lines about it -- not a person's.
+   */
   viaRun?: boolean;
   offset?: number;
 }

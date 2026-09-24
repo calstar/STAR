@@ -4,9 +4,10 @@ import type { Node } from '@xyflow/react';
 import { facing, isHorizontal, pathPoints, routeOrthogonal } from './route';
 import type { Box, End, Pt } from './route';
 import {
-  NO_BOXES, avoidable, boxGrid, boxOfNode, gridRoute, heldClear, lastSearch, obstacleBoxes, obstaclesByPage, perPage, routeAuto,
-  routeHitsBoxes, withinReach,
+  NO_BOXES, avoidable, boxGrid, boxOfNode, gridRoute, heldClear, lastSearch, obstacleBoxes, obstaclesByPage, perPage, routeAmong,
+  routeAuto, routeHitsBoxes, withinReach,
 } from './routeGrid';
+import type { Soft, SoftLine } from './routeGrid';
 
 /**
  * A sweep runs thousands of routes: well inside a test's usual five seconds
@@ -428,6 +429,106 @@ describe('a search that is remembered', () => {
     expect(among).not.toBe(routeOrthogonal(a, b).d);
     expect(among).not.toBe(onEnd);
     expect(among).toBe(fresh.routeAuto(a, b, [pump, valve, tank]).d);
+  });
+});
+
+describe('a route looked for among other lines', () => {
+  // Priced as the reseat prices a branch (pipes.ts): the pipe its own tee
+  // rides is a great deal to cross or to run along, nearer than a tee's
+  // clearance a lot, and beside it by the pixel; another line is a hop to
+  // cross and something to keep its distance from.
+  const own = (pts: Pt[]): SoftLine =>
+    ({ pts, cross: 1000, lie: { within: 4, once: 2000, px: 1 }, near: { within: 14, once: 300, px: 1 }, beside: { within: 20, px: 1 } });
+  const other = (pts: Pt[]): SoftLine =>
+    ({ pts, cross: 20, lie: { within: 5, once: 2000, px: 1 }, near: { within: 10, once: 100, px: 1 }, beside: { within: 20, px: 1 } });
+  const among = (lines: SoftLine[], dots: Pt[] = []): Soft => ({ lines, dots: { at: dots, reach: 7, cost: 2000 } });
+  /** How far one drawn line runs alongside another no further than `w` from it. */
+  function beside(p: Pt[], q: Pt[], w: number): number {
+    let t = 0;
+    for (let i = 0; i + 1 < p.length; i++) for (let j = 0; j + 1 < q.length; j++) {
+      const [a, b, c, d] = [p[i], p[i + 1], q[j], q[j + 1]];
+      if (a.y === b.y && c.y === d.y && Math.abs(a.y - c.y) <= w) t += Math.max(0, Math.min(Math.max(a.x, b.x), Math.max(c.x, d.x)) - Math.max(Math.min(a.x, b.x), Math.min(c.x, d.x)));
+      if (a.x === b.x && c.x === d.x && Math.abs(a.x - c.x) <= w) t += Math.max(0, Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y)) - Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y)));
+    }
+    return t;
+  }
+  /** Does one drawn line cross another at right angles? */
+  const crosses = (p: Pt[], q: Pt[]) => p.slice(0, -1).some((a, i) => q.slice(0, -1).some((c, j) => {
+    const b = p[i + 1], d = q[j + 1];
+    const [h, v] = a.y === b.y && c.x === d.x ? [[a, b], [c, d]] : a.x === b.x && c.y === d.y ? [[c, d], [a, b]] : [null, null];
+    return !!h && !!v && v[0].x > Math.min(h[0].x, h[1].x) && v[0].x < Math.max(h[0].x, h[1].x)
+      && h[0].y > Math.min(v[0].y, v[1].y) && h[0].y < Math.max(v[0].y, v[1].y);
+  }));
+
+  it('puts a crossbar the router set under its own pipe at the first level clear of it, and no further', () => {
+    // A tee's bottom face under a pipe along y = 100, to a port facing right
+    // down and across. Every level for the crossbar is as short as every
+    // other; the router's is its tee's stub, fourteen pixels under the pipe.
+    const a: End = { x: 100, y: 108, side: B, ...TEE }, b: End = { x: 500, y: 300, side: R };
+    expect(pathPoints(routeOrthogonal(a, b).d)).toEqual([P(100, 108), P(100, 114), P(516, 114), P(516, 300), P(500, 300)]);
+    const pipe = [P(-100, 100), P(600, 100)];
+    expect(routeAmong(a, b, [], among([own(pipe)]))).toEqual([P(100, 108), P(100, 130), P(516, 130), P(516, 300), P(500, 300)]);
+  });
+
+  it('goes round the end of its own pipe rather than across it', () => {
+    // A tee on a pipe that ends at x = 300, its top face; a port below the
+    // pipe that the line has to come down into. Straight over is across the
+    // pipe; round its end, clear of it by more than two grid steps, is not.
+    const a: End = { x: 200, y: 92, side: T, ...TEE }, b: End = { x: 250, y: 200, side: T };
+    const pipe = [P(0, 100), P(300, 100)];
+    const route = routeAmong(a, b, [], among([own(pipe)]))!;
+    expect(wellFormed(route, a, b), JSON.stringify(route)).toBe(true);
+    expect(crosses(route, pipe), JSON.stringify(route)).toBe(false);
+    expect(beside(route, pipe, 20), JSON.stringify(route)).toBe(0);
+  });
+
+  it('crosses another line when it has to, but never lies along it', () => {
+    // A port facing right and one facing left further along the same row,
+    // with another line along that row between them.
+    const a: End = { x: 0, y: 0, side: R }, b: End = { x: 600, y: 0, side: L };
+    const line = [P(200, 0), P(400, 0)];
+    const route = routeAmong(a, b, [], among([other(line)]))!;
+    expect(wellFormed(route, a, b), JSON.stringify(route)).toBe(true);
+    expect(beside(route, line, 20), JSON.stringify(route)).toBe(0);
+    // And across a line that stands in the way from top to bottom, it goes
+    // straight over it: a hop, where the way round would be a long one.
+    const wall = [P(300, -1000), P(300, 1000)];
+    expect(routeAmong(a, b, [], among([other(wall)]))).toEqual([P(0, 0), P(600, 0)]);
+  });
+
+  it('keeps out of a dot, two grid steps off', () => {
+    const a: End = { x: 0, y: 0, side: R }, b: End = { x: 600, y: 0, side: L };
+    const route = routeAmong(a, b, [], among([], [P(300, 0)]))!;
+    expect(wellFormed(route, a, b), JSON.stringify(route)).toBe(true);
+    for (let i = 0; i + 1 < route.length; i++) {
+      const p = route[i], q = route[i + 1];
+      if (p.y === q.y && Math.min(p.x, q.x) < 300 && Math.max(p.x, q.x) > 300) expect(Math.abs(p.y)).toBeGreaterThanOrEqual(20);
+    }
+  });
+
+  it('is not looked for again until a line or a symbol where it looked moves', () => {
+    const a: End = { x: 20100, y: 108, side: B, ...TEE }, b: End = { x: 20500, y: 300, side: R };
+    const pipe = own([P(19900, 100), P(20600, 100)]);
+    const first = routeAmong(a, b, [], among([pipe]));
+    expect(lastSearch.rounds).toBeGreaterThan(0);
+    // A line and a symbol far off: remembered.
+    expect(routeAmong(a, b, [{ x: 24000, y: 0, w: 60, h: 60 }], among([pipe, other([P(24000, 0), P(25000, 0)])]))).toEqual(first);
+    expect(lastSearch.rounds).toBe(0);
+    // A line across where the crossbar went: looked for again, and kept clear of.
+    const across = other([P(20000, 130), P(20700, 130)]);
+    const again = routeAmong(a, b, [], among([pipe, across]))!;
+    expect(lastSearch.rounds).toBeGreaterThan(0);
+    expect(again).not.toEqual(first);
+    expect(beside(again, across.pts, 9)).toBe(0);
+  });
+
+  it('gives the same route whatever order it is asked in', () => {
+    const a: End = { x: 30100, y: 108, side: B, ...TEE }, b: End = { x: 30500, y: 300, side: R };
+    const lines = [own([P(29900, 100), P(30600, 100)]), other([P(30200, 150), P(30200, 400)]), other([P(30000, 250), P(30700, 250)])];
+    const one = routeAmong(a, b, [], among(lines));
+    expect(routeAmong(a, b, [], among([...lines]))).toEqual(one);
+    vi.resetModules();
+    return import('./routeGrid').then(fresh => expect(fresh.routeAmong(a, b, [], among(lines))).toEqual(one));
   });
 });
 
