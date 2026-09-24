@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Position } from '@xyflow/react';
 import type { Edge, Node } from '@xyflow/react';
-import { branchFace, junctionEnd, reseatJunctions, runFaces, slideAlong } from './junctions';
+import { CORNER_GAP, branchFace, junctionEnd, reseatJunctions, runFaces, slideAlong } from './junctions';
 import { pathPoints, routeOrthogonal } from './route';
 import type { Along, EndLookup } from './junctions';
 import { insertInline, splitEdgeAt } from './splitEdge';
@@ -63,38 +63,86 @@ describe('a tee that rides its run', () => {
     expect(j.position).toEqual(P(155, 25));
   });
 
-  it('is put back at the same fraction when an end of the run moves', () => {
+  it('keeps its place on the drawing when an end of the pipe moves', () => {
+    // It used to keep its fraction of the run instead, and slid to x=400,
+    // halfway along the stretched pipe: a branch dropped straight down from
+    // it grew a jog, and the tee never came back. Where it is is still on
+    // the pipe, so that is where it stays.
     const { nodes, edges } = run();
     const split = splitEdgeAt(nodes, edges, 'A-B', P(230, 30), undefined, drawn(nodes))!;
     const moved = split.nodes.map(n => (n.id === 'B' ? { ...n, position: { x: 740, y: 0 } } : n));
     const re = reseatJunctions(moved, split.edges, endOf);
     const j = re.nodes.find(n => n.id === split.junctionId)!;
-    expect(centre(j).x).toBeCloseTo(400);          // halfway along 60..740
-    expect(centre(j).y).toBeCloseTo(30);
+    expect(centre(j)).toEqual(P(230, 30));
   });
 
-  it('hands each half the run\'s corners on its side, so the halves draw the run', () => {
+  it('goes to the nearest point of the pipe when the pipe moves out from under it', () => {
     const { nodes, edges } = run();
     const split = splitEdgeAt(nodes, edges, 'A-B', P(230, 30), undefined, drawn(nodes))!;
+    // Both ends 40 px lower: the pipe is at y=70 now.
+    const moved = split.nodes.map(n => (n.id === 'A' || n.id === 'B' ? { ...n, position: { x: n.position.x, y: 40 } } : n));
+    const re = reseatJunctions(moved, split.edges, endOf);
+    expect(centre(re.nodes.find(n => n.id === split.junctionId)!)).toEqual(P(230, 70));
+  });
+
+  it('hands each half the pipe\'s corners on its side, so the halves draw the pipe', () => {
+    const { nodes, edges } = run();
+    const split = splitEdgeAt(nodes, edges, 'A-B', P(150, 30), undefined, drawn(nodes))!;
     const moved = split.nodes.map(n => (n.id === 'B' ? { ...n, position: { x: 400, y: 600 } } : n));
     const re = reseatJunctions(moved, split.edges, endOf);
     const into = re.edges.find(e => e.target === split.junctionId)!.data as { waypoints?: Pt[]; viaRun?: boolean };
     const outOf = re.edges.find(e => e.source === split.junctionId)!.data as { waypoints?: Pt[]; viaRun?: boolean };
-    // The run goes right along y=30, down x=230, right along y=630: the tee
-    // is on the vertical leg, so the upstream half owns the first corner and
-    // the downstream half the second.
-    expect(into.viaRun).toBe(true);
-    expect(into.waypoints).toEqual([P(230, 30)]);
+    // The pipe goes right along y=30, down x=230, right along y=630, and
+    // the tee is still on its first leg: the upstream half is straight and
+    // the downstream half has both corners, marked as the pipe's.
+    expect(centre(re.nodes.find(n => n.id === split.junctionId)!)).toEqual(P(150, 30));
+    expect(into.waypoints).toBeUndefined();
     expect(outOf.viaRun).toBe(true);
-    expect(outOf.waypoints).toEqual([P(230, 630)]);
+    expect(outOf.waypoints).toEqual([P(230, 30), P(230, 630)]);
   });
 
-  it('turns its lines when the run turns under it', () => {
+  it('is moved off a bend the pipe puts under it, onto the leg it was on', () => {
+    // The pipe's bend used to be further on; now it is right there. A tee on
+    // a bend draws a hook out of one half, so it moves the fourteen pixels it
+    // reaches -- back along the leg it was on. An L, whose bend has one place
+    // to be: a Z whose crossbar would land on the tee is drawn with the
+    // crossbar that leaves the tee where it is instead (pipes.routeOfPipe).
+    const nodes = [part('A', 0, 0), part('B', 400, 300)];
+    const edges: Edge[] = [{ id: 'A-B', source: 'A', sourceHandle: 'r', target: 'B', targetHandle: 't', type: 'smoothstep', data: {} }];
+    const split = splitEdgeAt(nodes, edges, 'A-B', P(230, 30), undefined, { a: endOf(nodes[0], 'r')!, b: endOf(nodes[1], 't')! })!;
+    expect(centre(split.nodes.find(n => n.id === split.junctionId)!)).toEqual(P(230, 30));
+    const moved = split.nodes.map(n => (n.id === 'B' ? { ...n, position: { x: 200, y: 300 } } : n));
+    const re = reseatJunctions(moved, split.edges, endOf);
+    expect(centre(re.nodes.find(n => n.id === split.junctionId)!)).toEqual(P(230 - CORNER_GAP, 30));
+    const outOf = re.edges.find(e => e.source === split.junctionId)!.data as { waypoints?: Pt[] };
+    expect(outOf.waypoints).toEqual([P(230, 30)]);
+  });
+
+  it('stays where it is when its pipe could bend on it, the crossbar going where it leaves the tee', () => {
+    // The pipe used to be straight through the tee; B moved down makes it a
+    // Z, and the Z's crossbar in the middle is right there. Out at B's stub
+    // it leaves the tee on the long first leg, where it was.
     const { nodes, edges } = run();
     const split = splitEdgeAt(nodes, edges, 'A-B', P(230, 30), undefined, drawn(nodes))!;
     const moved = split.nodes.map(n => (n.id === 'B' ? { ...n, position: { x: 400, y: 600 } } : n));
     const re = reseatJunctions(moved, split.edges, endOf);
+    expect(centre(re.nodes.find(n => n.id === split.junctionId)!)).toEqual(P(230, 30));
+    const outOf = re.edges.find(e => e.source === split.junctionId)!.data as { waypoints?: Pt[] };
+    expect(outOf.waypoints).toEqual([P(384, 30), P(384, 630)]);
+  });
+
+  it('turns its lines when it slides round a bend', () => {
+    const nodes = [part('A', 0, 0), part('B', 400, 600)];
+    const edges: Edge[] = [{ id: 'A-B', source: 'A', sourceHandle: 'r', target: 'B', targetHandle: 'l', type: 'smoothstep', data: {} }];
+    const split = splitEdgeAt(nodes, edges, 'A-B', P(150, 30), undefined, drawn(nodes))!;
+    const seated = reseatJunctions(split.nodes, split.edges, endOf);
+    const j0 = seated.nodes.find(n => n.id === split.junctionId)!;
+    // Dragged down the pipe's vertical leg at x=230.
+    const slid = slideAlong(j0, alongOf(j0), { x: 225, y: 295 }, seated.edges, new Map(seated.nodes.map(n => [n.id, n])), endOf)!;
+    const nodes2 = seated.nodes.map(n => (n.id === j0.id ? { ...n, position: slid.position, data: { ...n.data, along: slid.along } } : n));
+    const re = reseatJunctions(nodes2, seated.edges, endOf);
     const j = re.nodes.find(n => n.id === split.junctionId)!;
+    expect(centre(j)).toEqual(P(230, 300));
     expect(alongOf(j).in).toBe('t');
     expect(alongOf(j).out).toBe('b');
     expect(re.edges.find(e => e.target === j.id)!.targetHandle).toBe('t');
@@ -111,16 +159,17 @@ describe('a tee that rides its run', () => {
     const seated = reseatJunctions(split.nodes, split.edges, endOf);
     const re = reseatJunctions(seated.nodes, byHand, endOf);
     // The corners stay a person's, and the tee stays exactly where it was:
-    // the run's ends did not move, so re-routing one half is not a reason
-    // to move the tee -- it takes a fresh fraction of the longer run instead.
+    // re-routing one half is not a reason to move the tee.
     expect((re.edges.find(e => e.source === 'A')!.data as { waypoints?: Pt[] }).waypoints).toEqual(detour);
     const j = re.nodes.find(n => n.id === split.junctionId)!;
     expect(centre(j)).toEqual(P(230, 30));
-    expect(alongOf(j).t).toBeCloseTo((40 + 80 + 80 + 80 + 50) / 500);
-    // And now that it rides the detoured run, moving B carries it along it.
+    // Moving B leaves both where they are: the detour is the person's, and
+    // the tee is still on the pipe. (It used to keep a fraction of the
+    // detoured run and slide off toward B.)
     const movedB = re.nodes.map(n => (n.id === 'B' ? { ...n, position: { x: 900, y: 0 } } : n));
     const again = reseatJunctions(movedB, re.edges, endOf);
-    expect(centre(again.nodes.find(n => n.id === split.junctionId)!).x).toBeGreaterThan(230);
+    expect(centre(again.nodes.find(n => n.id === split.junctionId)!)).toEqual(P(230, 30));
+    expect((again.edges.find(e => e.source === 'A')!.data as { waypoints?: Pt[] }).waypoints).toEqual(detour);
   });
 
   it('hands back the same arrays when nothing needs doing', () => {
@@ -162,19 +211,17 @@ describe('a tee that rides its run', () => {
     const re = reseatJunctions(moved, settled.edges, endOf);
     const outer = re.nodes.find(n => n.id === first.junctionId)!;
     const inner = re.nodes.find(n => n.id === second.junctionId)!;
-    // The two ride each other's runs -- inner rides A..outer, outer rides
-    // inner..B -- so the answer is the fixed point where both fractions hold
-    // at once, not a number either could give alone. What must be true: both
-    // stretched right with the pipe, in order, on the line.
-    expect(centre(outer).x).toBeGreaterThan(300);
-    expect(centre(outer).x).toBeLessThan(740);
-    expect(centre(inner).x).toBeGreaterThan(120);
-    expect(centre(inner).x).toBeLessThan(centre(outer).x);
-    expect(centre(inner).y).toBeCloseTo(30);
-    expect(centre(outer).y).toBeCloseTo(30);
-    // Stable: a second pass changes nothing.
+    // Both ride one pipe, A to B, and both keep their places on it. They
+    // used to ride each other's runs, so stretching the pipe moved both and
+    // needed several passes to settle.
+    expect(centre(inner)).toEqual(P(120, 30));
+    expect(centre(outer)).toEqual(P(230, 30));
+    expect(alongOf(inner).from).toBe('A');
+    expect(alongOf(outer).to).toBe('B');
+    // Settled in one pass: a second changes nothing.
     const again = reseatJunctions(re.nodes, re.edges, endOf);
     expect(again.nodes).toBe(re.nodes);
+    expect(again.edges).toBe(re.edges);
   });
 
   it('stops riding when a run line is gone, and stays put', () => {

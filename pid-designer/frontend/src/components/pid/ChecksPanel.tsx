@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Edge, Node } from '@xyflow/react';
 import { countProblems, runChecks } from './checks';
 import type { Finding, Severity } from './checks';
@@ -24,13 +24,37 @@ const TONE: Record<Severity, { dot: string; text: string; label: string }> = {
   info:    { dot: 'bg-[var(--color-text-muted)]', text: 'text-[var(--color-text-secondary)]', label: 'Note' },
 };
 
+/** How long the drawing has to sit still before the checks run again. */
+export const CHECKS_IDLE_MS = 250;
+
+/**
+ * `value` once it has stopped changing for `ms`, and the first one at once.
+ *
+ * The checks count every crossing of every pair of lines, among other things,
+ * and the drawing changes on every tick of a drag. Running them per tick spent
+ * a large part of each frame on a badge nobody reads mid-drag; running them
+ * once the drawing is still costs one run per edit, and the badge catches up
+ * a quarter of a second after the pointer stops.
+ */
+function useIdle<T>(value: T, ms = CHECKS_IDLE_MS): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    if (Object.is(settled, value)) return;
+    const timer = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(timer);
+  }, [value, settled, ms]);
+  return settled;
+}
+
 export function ChecksPanel({ nodes, edges, onSelect }: {
   nodes: Node[];
   edges: Edge[];
   onSelect: (nodeIds: string[], edgeIds: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const findings = useMemo(() => runChecks(nodes, edges), [nodes, edges]);
+  const drawing = useMemo(() => ({ nodes, edges }), [nodes, edges]);
+  const still = useIdle(drawing);
+  const findings = useMemo(() => runChecks(still.nodes, still.edges), [still]);
   const problems = countProblems(findings);
   const worst: Severity | null =
     findings.some(f => f.severity === 'error') ? 'error'

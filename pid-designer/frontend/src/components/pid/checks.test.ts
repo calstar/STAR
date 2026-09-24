@@ -107,6 +107,28 @@ describe('instruments', () => {
   it('says nothing about a probe clipped to what it measures', () => {
     const nodes = [node('TK', 'TANK'), node('RTD-1', 'RTD', { attachedTo: 'TK' })];
     expect(ids(nodes).includes('instruments-wired')).toBe(false);
+    // Nor calls it one measuring nothing: the symbol it is clipped to is there.
+    expect(ids(nodes).includes('instruments-floating')).toBe(false);
+  });
+
+  it('says nothing about a probe clipped to a line that is there', () => {
+    const nodes = [node('TK', 'TANK'), node('V', 'SOL'), node('TC-1', 'TC', { attachedTo: 'TK-V', attachedAt: 0.4 })];
+    expect(ids(nodes, [edge('TK-V', 'TK', 'V')]).includes('instruments-floating')).toBe(false);
+  });
+
+  it('counts a probe clipped to something that is gone as measuring nothing', () => {
+    // The line it was dropped on was cut in two by a tee, and the symbol
+    // another one was on has been deleted: neither draws a leader any more,
+    // so the checks cannot stay quiet about them.
+    const nodes = [
+      node('TK', 'TANK'), node('V', 'SOL'),
+      node('TC-1', 'TC', { attachedTo: 'TK-V' }),
+      node('RTD-1', 'RTD', { attachedTo: 'TK-2' }),
+    ];
+    const edges = [edge('TK-j', 'TK', 'j'), edge('j-V', 'j', 'V')];
+    const f = runChecks(nodes, edges).find(x => x.id === 'instruments-floating')!;
+    expect(f.nodeIds).toEqual(['TC-1', 'RTD-1']);
+    expect(f.detail).toContain('2 of them were clipped to something');
   });
 });
 
@@ -261,5 +283,25 @@ describe('what a fresh drawing says about itself', () => {
     expect(f.severity).toBe('info');
     expect(f.title).toMatch(/^2 joints/);
     expect(f.edgeIds).toEqual(['L1']);
+  });
+});
+
+describe('two lines on one port', () => {
+  it('names the port and both lines, as a drawing saved before tees were made there can have', () => {
+    // The oxidiser tank's lid, press line and vent both on `t`.
+    const nodes = [node('OXT', 'TANK'), node('SVOP', 'SOL'), node('SVOV', 'SOL')];
+    const edges = [edge('l_oxp', 'SVOP', 'OXT', 'r', 't'), edge('l_oxv', 'OXT', 'SVOV', 't', 'l')];
+    const f = runChecks(nodes, edges).find(x => x.id.startsWith('lines-share-port'))!;
+    expect(f.severity).toBe('warning');
+    expect(f.title).toContain('OXT');
+    expect(f.nodeIds).toEqual(['OXT']);
+    expect(f.edgeIds).toEqual(['l_oxp', 'l_oxv']);
+  });
+
+  it('says nothing of one line a port, or of a tee, whose faces all carry lines', () => {
+    const nodes = [node('OXT', 'TANK'), node('SVOP', 'SOL'), node('SVOV', 'SOL'), node('j', 'JUNCTION')];
+    const edges = [edge('a', 'SVOP', 'OXT', 'r', 't'), edge('b', 'OXT', 'SVOV', 'b', 'l'),
+      edge('c', 'j', 'SVOP', 'r', 'l'), edge('d', 'SVOV', 'j', 'r', 'r')];
+    expect(ids(nodes, edges).some(id => id.startsWith('lines-share-port'))).toBe(false);
   });
 });

@@ -1,6 +1,7 @@
 import type { Edge, Node } from '@xyflow/react';
 import { propagateFluids, speciesById } from './fluids';
 import { isInstrument } from './attach';
+import { isJunction } from './junctions';
 import { crossPageEdges, listPages, pageOf } from './pages';
 import { findVents } from './vents';
 import { portsOf, portIsDrawn, CV_INLET } from './ports';
@@ -337,6 +338,36 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
     });
   }
 
+  // Two lines on one port of a symbol. Nothing drawn today does that -- a
+  // line let go on a port that has one is teed into it -- but a drawing saved
+  // before can, and draws the two out of the port on top of each other: a T
+  // just off the port with no dot, which reads as two separate connections
+  // until somebody looks hard. Named, so it can be redrawn as a tee.
+  const onPort = new Map<string, Edge[]>();
+  for (const e of edges) {
+    if (e.source === e.target) continue;
+    for (const [nodeId, handle] of [[e.source, e.sourceHandle], [e.target, e.targetHandle]] as const) {
+      const n = byId.get(nodeId);
+      if (!n || !handle || isJunction(n)) continue;
+      const k = `${nodeId}\u0000${handle}`;
+      const list = onPort.get(k);
+      if (list) list.push(e); else onPort.set(k, [e]);
+    }
+  }
+  for (const [k, lines] of onPort) {
+    if (lines.length < 2) continue;
+    const [nodeId, handle] = k.split('\u0000');
+    const n = byId.get(nodeId)!;
+    push({
+      id: `lines-share-port-${nodeId}-${handle}`,
+      severity: 'warning',
+      title: `${lines.length} lines on one port of ${nameOf(n)}`,
+      detail: `They leave port ${handle} on top of each other, which reads as separate connections. Pull a branch out of one of them to tee the other into it.`,
+      nodeIds: [nodeId],
+      edgeIds: lines.map(e => e.id),
+    });
+  }
+
   for (const e of edges) {
     if (!byId.has(e.source) || !byId.has(e.target)) {
       push({
@@ -426,16 +457,31 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
     });
   }
 
+  // Clipped to something that is no longer there counts as clipped to
+  // nothing. A probe keeps the id of what it was dropped on, and a line cut in
+  // two by a tee or healed round a deleted valve, or a symbol deleted outright,
+  // leaves it naming nothing: no leader is drawn, and this used to stay quiet
+  // because the field was filled in. The checks are never allowed to be
+  // quieter than the canvas.
+  const lineIds = new Set(edges.map(e => e.id));
+  const dangling = (n: Node) => {
+    const host = dataOf(n).attachedTo;
+    return !!host && !byId.has(host) && !lineIds.has(host);
+  };
   const floating = nodes.filter(n =>
     isInstrument(dataOf(n)?.componentType) &&
-    !dataOf(n).attachedTo &&
+    (!dataOf(n).attachedTo || dangling(n)) &&
     !edges.some(e => e.source === n.id || e.target === n.id));
   if (floating.length) {
+    const lost = floating.filter(dangling).length;
+    const why = !lost ? ''
+      : floating.length === 1 ? ' It was clipped to something that has since been deleted or redrawn.'
+      : ` ${lost} of them were clipped to something that has since been deleted or redrawn.`;
     push({
       id: 'instruments-floating',
       severity: 'info',
       title: `${floating.length} instrument${floating.length === 1 ? '' : 's'} not measuring anything`,
-      detail: 'Drag each onto the component or line it reads, and it will clip to it.',
+      detail: 'Drag each onto the component or line it reads, and it will clip to it.' + why,
       nodeIds: floating.map(n => n.id),
     });
   }

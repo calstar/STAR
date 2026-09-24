@@ -23,8 +23,9 @@ import { fmtParam } from '../fmt';
  * inference never fires.
  */
 
-const KB_W = 44, KB_H = 96;
-const DW_W = 72, DW_H = 76;
+/** The supplies' boxes, and how far down a K-bottle's side its outlet sits: what a port is placed from before it is measured. */
+export const KB_W = 44, KB_H = 96, KB_OUTLET_ALONG = 22;
+export const DW_W = 72, DW_H = 76;
 
 export function SupplyNode({ id, data, selected }: NodeProps) {
   const { componentType, label, labelOffset, rotation, color, params } = data as unknown as PIDNodeData;
@@ -77,7 +78,7 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
       nodeId={id} w={KB_W} h={KB_H} rotation={rotation}
       extra={<>
         <TurnedPort nodeId={id} id="t" side={Position.Top}   w={KB_W} h={KB_H} rotation={rotation} />
-        <TurnedPort nodeId={id} id="r" side={Position.Right} along={22} w={KB_W} h={KB_H} rotation={rotation} />
+        <TurnedPort nodeId={id} id="r" side={Position.Right} along={KB_OUTLET_ALONG} w={KB_W} h={KB_H} rotation={rotation} />
         {p && (
           <span
             style={{

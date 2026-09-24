@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useMemo } from 'react';
 import type { ReactNode } from 'react';
 
 /**
@@ -24,7 +24,11 @@ const ToolContext = createContext<{ tool: Tool; done: () => void }>({ tool: 'non
  * the job is done.
  */
 export function ToolProvider({ tool, onDone, children }: { tool: Tool; onDone: () => void; children: ReactNode }) {
-  return <ToolContext.Provider value={{ tool, done: onDone }}>{children}</ToolContext.Provider>;
+  // One object per tool, not per render. Every line reads this context, and a
+  // fresh object each time the canvas re-rendered -- which it does once a
+  // second for the checkout clock alone -- re-rendered every line with it.
+  const value = useMemo(() => ({ tool, done: onDone }), [tool, onDone]);
+  return <ToolContext.Provider value={value}>{children}</ToolContext.Provider>;
 }
 
 export const useTool = () => useContext(ToolContext).tool;

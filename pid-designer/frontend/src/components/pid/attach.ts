@@ -1,6 +1,15 @@
 import type { Edge, Node, XYPosition } from '@xyflow/react';
+import { Position } from '@xyflow/react';
 import type { PIDNodeData } from './types';
 import { pageOf } from './pages';
+import { drawnCorners } from './edgeGeometry';
+import { lineAt } from './lineHit';
+import type { DrawnLine } from './lineHit';
+import { nearestOnPolyline, pointAt, pointsToPath } from './route';
+import type { End, Pt } from './route';
+import type { EndLookup } from './junctions';
+import { drawnRoute } from './lineRoute';
+import { unmeasuredEnd } from './unmeasured';
 
 /**
  * Instruments clip to what they are measuring.
@@ -83,32 +92,56 @@ export interface AttachTarget {
 }
 
 /**
- * What is under a point, tested against the graph rather than the DOM.
+ * Where on its host an instrument is clipped.
  *
- * `elementsFromPoint` was the obvious way and is the wrong one here: React
- * Flow paints its drag surface (`.react-flow__pane`) above the node layer, so
- * a hit test at the centre of a tank returns the pane. It also only works for
- * what is currently rendered, which a drop handler cannot rely on.
- *
- * Rectangles and a distance to a segment, in flow coordinates, answer the same
- * question from data that is always there.
+ * `attachedTo` names the host, as it always has, and is what feed-twin reads.
+ * `attachedAt` is new and only the drawing's: on a line, the fraction of the
+ * line's drawn length, from its source end, at which the probe was dropped.
+ * Without it a probe on a line could only be drawn as clipped to the line's
+ * middle, and nothing that cut the line in two could tell which half it was
+ * on.
  */
-export function targetAt(
+export interface ClipData {
+  attachedTo?: string;
+  attachedAt?: number;
+}
+
+const clipOf = (n: Node) => n.data as unknown as PIDNodeData & ClipData;
+
+/** A host, and for a line, how far along it the clip is. */
+export interface Clip extends AttachTarget {
+  /** Fraction of the line's drawn length from its source end. Lines only. */
+  at?: number;
+}
+
+/** How near the pipe a drop has to land to clip to it, in flow px. */
+const TOLERANCE = 14;
+
+/**
+ * What a probe dropped at `point` clips to, and where on it.
+ *
+ * Lines used to be tested against the straight chord between the two end
+ * symbols' centres. On a straight run that is the pipe; on an L, a Z or a U
+ * it is empty canvas. A probe dropped on the drawn pipe of a bent line missed
+ * it and was reported floating, while one dropped in the empty space inside
+ * the bend clipped -- and drew its leader to a dot a hundred pixels off the
+ * pipe. So the test is `lineAt` over the lines as drawn, the same hit test a
+ * valve or a transducer dropped on a line uses, and the answer includes how
+ * far along the line the drop landed, for the leader to land there too.
+ */
+export function clipAt(
   point: XYPosition,
   nodes: Node[],
   edges: Edge[],
   selfId?: string,
-  /**
-   * The page being looked at.
-   *
-   * Without it this hit-tests the whole document, and the graph is whole on
-   * purpose -- so a drop on empty canvas could clip a probe to, or put a
-   * junction in, something on a page that is not even on screen. The caller
-   * passes the state before `applyPage`, so `hidden` is not set on it yet and
-   * the page has to be asked for directly.
-   */
   page?: string,
-): AttachTarget | null {
+  /**
+   * The lines as rendered. Without them each line is taken from what it last
+   * published (`drawnCorners`), or routed here the way it routes itself --
+   * which is what a caller with no DOM gets.
+   */
+  lines?: DrawnLine[],
+): Clip | null {
   const here = (n: Node) =>
     !page || pageOf(n.data as unknown as PIDNodeData) === page;
 
@@ -129,31 +162,18 @@ export function targetAt(
     }
   }
 
-  // Then lines, within a few pixels of the run. The real edge is a smoothstep
-  // path and this is the straight line between its ends -- close enough to pick
-  // a line out at the scale a P&ID is drawn, and it never disagrees about
-  // *which* line, only about exactly where along it.
-  const TOLERANCE = 14;
-  for (const e of edges) {
-    const a = nodes.find(n => n.id === e.source);
-    const b = nodes.find(n => n.id === e.target);
-    if (!a || !b) continue;
-    if (!here(a) || !here(b)) continue;
-    if (distanceToSegment(point, centreOf(a), centreOf(b)) <= TOLERANCE) {
-      return { id: e.id, kind: 'edge' };
-    }
-  }
-  return null;
-}
-
-function distanceToSegment(p: XYPosition, a: XYPosition, b: XYPosition): number {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const lengthSquared = dx * dx + dy * dy;
-  if (lengthSquared === 0) return Math.hypot(p.x - a.x, p.y - a.y);
-  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared;
-  t = Math.max(0, Math.min(1, t));
-  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  // Then lines on this page: both ends on it, as for drawing one.
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const onPage = edges.filter(e => {
+    const a = byId.get(e.source), b = byId.get(e.target);
+    return !!a && !!b && here(a) && here(b);
+  });
+  const ids = new Set(onPage.map(e => e.id));
+  const candidates = lines
+    ? lines.filter(l => ids.has(l.id))
+    : [...lineRoutes(nodes, onPage)].map(([id, pts]) => ({ id, d: pointsToPath(pts) }));
+  const hit = lineAt(candidates, point, TOLERANCE);
+  return hit ? { id: hit.id, kind: 'edge', at: hit.t } : null;
 }
 
 /** Everything clipped to one host. */
@@ -183,34 +203,83 @@ export function dragAttached(
   );
 }
 
+// ── Lines as drawn ───────────────────────────────────────────────────────────
+
+/**
+ * A line that has not drawn yet, routed here as the canvas will draw it
+ * (`drawnRoute`: round the symbols on its page when it routes itself, through
+ * its corners when it has them), between its ports where the symbols draw
+ * them before anything is measured (`unmeasuredEnd`). A route of its own --
+ * plain, between ports guessed at from the side facing the other end -- ran
+ * through a symbol the canvas goes round, and landed a leader somewhere the
+ * line would not be.
+ */
+function routeOfEdge(e: Edge, byId: Map<string, Node>): Pt[] | null {
+  const s = byId.get(e.source), t = byId.get(e.target);
+  if (!s || !t) return null;
+  // A line that names no port on an end, as some old ones do, is drawn from
+  // the middle of the side facing its other end.
+  const endOf: EndLookup = (n, h) => unmeasuredEnd(n, h) ?? sideFacing(n, centreOf(n.id === s.id ? t : s));
+  return drawnRoute(e, byId, endOf);
+}
+
+/** The middle of the side of `node` facing `towards`, a handle's width out. */
+function sideFacing(node: Node, towards: Pt): End {
+  const { w, h } = nodeSize(node);
+  const c = { x: node.position.x + w / 2, y: node.position.y + h / 2 };
+  const dx = towards.x - c.x, dy = towards.y - c.y;
+  const out = 3;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? { x: node.position.x + w + out, y: c.y, side: Position.Right } : { x: node.position.x - out, y: c.y, side: Position.Left };
+  }
+  return dy >= 0 ? { x: c.x, y: node.position.y + h + out, side: Position.Bottom } : { x: c.x, y: node.position.y - out, side: Position.Top };
+}
+
+/**
+ * Every line's corners, as drawn.
+ *
+ * What a line published the last time it drew (`drawnCorners`, or a snapshot
+ * of it the caller passes) wins; a line that has not drawn -- it was added in
+ * this batch, or there is no canvas -- is routed here the way it will route
+ * itself. Either way the answer is the pipe, not the chord between two
+ * centres.
+ */
+export function lineRoutes(
+  nodes: Node[],
+  edges: Edge[],
+  drawn: ReadonlyMap<string, Pt[]> = drawnCorners(),
+): Map<string, Pt[]> {
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const out = new Map<string, Pt[]>();
+  for (const e of edges) {
+    const pts = drawn.get(e.id) ?? routeOfEdge(e, byId);
+    if (pts && pts.length >= 2) out.set(e.id, pts);
+  }
+  return out;
+}
+
 /**
  * Where the leader line from an instrument should land.
  *
- * The host's centre for a component; the midpoint of the run for a line. Both
- * are approximations that read correctly at the scale a P&ID is drawn at, and
- * neither needs the edge path re-derived.
+ * The host's centre for a component. For a line, the point `at` of the way
+ * along the line as drawn, or half way along it for a probe clipped before
+ * the position was kept -- on the pipe, whatever shape the pipe is. The
+ * midpoint of the chord between the two ends' centres, which is what this
+ * used to answer, is on the pipe only when the pipe is straight.
  */
 export function leaderTarget(
   attachedTo: string,
   nodes: Node[],
   edges: Edge[],
+  at?: number,
+  drawn?: ReadonlyMap<string, Pt[]>,
 ): XYPosition | null {
   const host = nodes.find(n => n.id === attachedTo);
-  if (host) {
-    return {
-      x: host.position.x + (host.measured?.width ?? 60) / 2,
-      y: host.position.y + (host.measured?.height ?? 60) / 2,
-    };
-  }
+  if (host) return centreOf(host);
   const edge = edges.find(e => e.id === attachedTo);
   if (!edge) return null;
-  const a = nodes.find(n => n.id === edge.source);
-  const b = nodes.find(n => n.id === edge.target);
-  if (!a || !b) return null;
-  return {
-    x: (a.position.x + (a.measured?.width ?? 60) / 2 + b.position.x + (b.measured?.width ?? 60) / 2) / 2,
-    y: (a.position.y + (a.measured?.height ?? 60) / 2 + b.position.y + (b.measured?.height ?? 60) / 2) / 2,
-  };
+  const pts = lineRoutes(nodes, [edge], drawn).get(edge.id);
+  return pts ? pointAt(pts, at ?? 0.5)?.point ?? null : null;
 }
 
 /** Instrument size, for placing one clear of its host. */
@@ -229,6 +298,8 @@ export function clearOfHost(
   dropped: XYPosition,
   nodes: Node[],
   edges: Edge[],
+  /** Where along the line it clipped, for a line. */
+  at?: number,
 ): XYPosition {
   if (host.kind === 'node') {
     const n = nodes.find(x => x.id === host.id);
@@ -238,7 +309,55 @@ export function clearOfHost(
       y: n.position.y - GAP,
     };
   }
-  const to = leaderTarget(host.id, nodes, edges);
+  const to = leaderTarget(host.id, nodes, edges, at);
   if (!to) return dropped;
   return { x: to.x + GAP, y: to.y - PROBE - GAP };
+}
+
+/**
+ * Probes clipped to a line that has just been replaced, re-clipped to the
+ * line that now holds their clip point.
+ *
+ * Splitting a line round a tee, putting a valve into it, or healing it when a
+ * tee or valve comes out, all replace it with lines under new ids. A probe
+ * still naming the old id measured nothing and drew no leader, and nothing
+ * said so. This sends each such probe to whichever new line passes nearest
+ * the point it was clipped at, and records how far along that line it now is.
+ *
+ * `newEdges` are the replacement lines with their drawn corners, in order
+ * from the old line's source end to its target end. `oldPoints` is the old
+ * line as it was drawn; when it is not given the replacements laid end to end
+ * stand in for it, which is exact for a split and near enough for a part put
+ * into the line. A line healed from two must be given `oldPoints`, because
+ * the healed line alone does not say where the old half lay along it.
+ *
+ * Returns the same array when no probe was clipped to `oldEdgeId`.
+ */
+export function remapAttachments(
+  nodes: Node[],
+  oldEdgeId: string,
+  newEdges: { id: string; points: Pt[] }[],
+  oldPoints?: Pt[],
+): Node[] {
+  if (!newEdges.length || !nodes.some(n => clipOf(n)?.attachedTo === oldEdgeId)) return nodes;
+  const drawnNew = newEdges.filter(e => e.points.length >= 2);
+  const before = oldPoints && oldPoints.length >= 2 ? oldPoints : drawnNew.flatMap(e => e.points);
+  return nodes.map(n => {
+    const clip = clipOf(n);
+    if (clip?.attachedTo !== oldEdgeId) return n;
+    const p = before.length >= 2 ? pointAt(before, clip.attachedAt ?? 0.5)?.point : undefined;
+    let host = newEdges[0].id;
+    let at: number | undefined;
+    if (p) {
+      let best = Infinity;
+      for (const e of drawnNew) {
+        const near = nearestOnPolyline(e.points, p);
+        if (near && near.dist < best) { best = near.dist; host = e.id; at = near.t; }
+      }
+    }
+    const data: Record<string, unknown> = { ...n.data, attachedTo: host };
+    if (at === undefined) delete data.attachedAt;
+    else data.attachedAt = at;
+    return { ...n, data };
+  });
 }

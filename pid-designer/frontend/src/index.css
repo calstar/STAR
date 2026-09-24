@@ -74,3 +74,20 @@ body {
   box-shadow: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--color-text-primary);
   transform-origin: center;
 }
+
+/* ── Sections ───────────────────────────────────────────────────────────────
+   A section is scenery: empty canvas inside one has to behave like empty
+   canvas outside it -- box-select in Select mode, pan in Pan mode -- and a
+   near miss of a line inside one must not grab the box. React Flow writes
+   `pointer-events: all` inline on every selectable node's wrapper, and a
+   section's wrapper is the size of the section, so only an !important rule
+   here takes it back. The title bar sets its own pointer-events and is where
+   a section is pressed, dragged and renamed (RegionNode.tsx); the resize
+   handles, shown while it is selected, have to say so too, because
+   pointer-events is inherited. */
+.react-flow__node-REGION {
+  pointer-events: none !important;
+}
+.react-flow__node-REGION .react-flow__resize-control {
+  pointer-events: all;
+}

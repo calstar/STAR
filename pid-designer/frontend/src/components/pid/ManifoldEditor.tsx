@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useReadOnly } from '@stardesign-ui';
-import { portId, portIds } from './ports';
 import type { PortInfo, PortKind } from './ports';
 import { NumberField } from './NumberField';
+import { defaultPositions, fractionOf, nearestFraction, perimeterPoint } from './manifoldGeometry';
+import type { ManifoldGeometry } from './manifoldGeometry';
+import { manifoldLayout, manifoldPortIds } from './nodes/ManifoldNode';
+
+export { defaultPositions, nearestFraction, perimeterPoint } from './manifoldGeometry';
+export type { ManifoldGeometry } from './manifoldGeometry';
 
 /**
  * Where a manifold's ports actually are.
@@ -23,50 +28,97 @@ import { NumberField } from './NumberField';
  * a version in somebody's history.
  */
 
-export interface ManifoldGeometry {
-  width: number;
-  height: number;
-  /** Port id → fraction of the perimeter, clockwise from the top-left. */
-  positions: Record<string, number>;
-}
-
 const W = 260, H = 190, PAD = 34;
 
-/** Point on the block's perimeter at fraction `t`, clockwise from top-left. */
-export function perimeterPoint(t: number, w: number, h: number) {
-  const per = 2 * (w + h);
-  let d = ((t % 1) + 1) % 1 * per;
-  if (d <= w) return { x: d, y: 0, side: 'top' as const };
-  d -= w;
-  if (d <= h) return { x: w, y: d, side: 'right' as const };
-  d -= h;
-  if (d <= w) return { x: w - d, y: h, side: 'bottom' as const };
-  d -= w;
-  return { x: 0, y: h - d, side: 'left' as const };
+/**
+ * The layout the editor opens on: the manifold exactly as it is drawn.
+ *
+ * A saved layout comes back as it was saved, key for key, with any port it
+ * does not mention put where the drawing puts it. Without one, the drawn
+ * default is turned into perimeter fractions, so saving it unchanged draws
+ * every port where it already was.
+ */
+export function drawnGeometry(
+  outlets: number,
+  orientation: string | undefined,
+  geometry?: ManifoldGeometry,
+): ManifoldGeometry {
+  const ids = manifoldPortIds(outlets);
+  if (geometry) {
+    const spare = defaultPositions(ids);
+    const positions = { ...geometry.positions };
+    for (const id of ids) if (positions[id] === undefined) positions[id] = spare[id];
+    return { width: geometry.width, height: geometry.height, positions };
+  }
+  const layout = manifoldLayout(outlets, orientation);
+  const positions: Record<string, number> = {};
+  for (const id of ids) positions[id] = fractionOf(layout.ports[id], layout.width, layout.height);
+  return { width: layout.width, height: layout.height, positions };
 }
 
-/** The fraction nearest an arbitrary point — what a drag lands on. */
-export function nearestFraction(px: number, py: number, w: number, h: number): number {
-  const per = 2 * (w + h);
-  const cands: [number, number][] = [
-    [Math.min(w, Math.max(0, px)) / per, Math.hypot(px - Math.min(w, Math.max(0, px)), py)],
-    [(w + Math.min(h, Math.max(0, py))) / per, Math.hypot(px - w, py - Math.min(h, Math.max(0, py)))],
-    [(w + h + (w - Math.min(w, Math.max(0, px)))) / per, Math.hypot(px - Math.min(w, Math.max(0, px)), py - h)],
-    [(2 * w + h + (h - Math.min(h, Math.max(0, py)))) / per, Math.hypot(px, py - Math.min(h, Math.max(0, py)))],
-  ];
-  cands.sort((a, b) => a[1] - b[1]);
-  return ((cands[0][0] % 1) + 1) % 1;
+const sameGeometry = (a: ManifoldGeometry, b: ManifoldGeometry, ids: string[]) =>
+  a.width === b.width && a.height === b.height && ids.every(id => a.positions[id] === b.positions[id]);
+
+/**
+ * Fraction `t` of a `w` x `h` block, moved onto a `toW` x `toH` one by where
+ * it is drawn: the same side, the same whole number of px along it, pulled in
+ * to the corner if the side is now shorter than that.
+ *
+ * Not the same fraction. A fraction is a share of the whole perimeter, so on
+ * a block that has grown at one end it slides every port towards that end --
+ * and a manifold given more outlets grows at the far end, leaving the ones it
+ * had where they were.
+ */
+function carry(t: number, w: number, h: number, toW: number, toH: number): number {
+  if (w === toW && h === toH) return t;
+  const p = perimeterPoint(t, w, h);
+  const across = p.side === 'top' || p.side === 'bottom';
+  const along = Math.min(across ? toW : toH, Math.max(0, Math.round(across ? p.x : p.y)));
+  return fractionOf({ side: p.side, along }, toW, toH);
 }
 
-/** Evenly round the perimeter — what a fresh manifold looks like. */
-export function defaultPositions(ids: string[]): Record<string, number> {
-  const out: Record<string, number> = {};
-  ids.forEach((id, i) => { out[id] = (i + 0.5) / Math.max(1, ids.length); });
-  return out;
+/**
+ * A draft with edits in it, laid on a drawing that has changed under it.
+ *
+ * The draft is the drawing as it was when the editor last looked (`base`)
+ * plus what has been done to it here. When the drawing changes -- the outlet
+ * count or direction is changed in the dialog -- those edits are laid on the
+ * new drawing (`seed`) rather than the draft being kept as it is: a draft
+ * kept whole keeps the old block's size, and the new outlets, placed as
+ * shares of the new block's perimeter, landed on the old one between the
+ * outlets it already had.
+ *
+ * A size typed here is kept. A port dragged here stays where it was dragged
+ * to. Every other port goes where the new drawing puts it. Where the block
+ * the draft ends up on is not the one a port was placed on, it is carried
+ * across by where it is drawn (`carry`).
+ */
+export function rebaseDraft(
+  draft: ManifoldGeometry,
+  base: ManifoldGeometry,
+  seed: ManifoldGeometry,
+  ids: string[],
+): ManifoldGeometry {
+  if (sameGeometry(draft, base, Object.keys(base.positions))) return seed;
+  const width = draft.width !== base.width ? draft.width : seed.width;
+  const height = draft.height !== base.height ? draft.height : seed.height;
+  const positions: Record<string, number> = {};
+  for (const id of ids) {
+    const moved = draft.positions[id] !== undefined && draft.positions[id] !== base.positions[id];
+    positions[id] = moved
+      ? carry(draft.positions[id], draft.width, draft.height, width, height)
+      : carry(seed.positions[id], seed.width, seed.height, width, height);
+  }
+  return { width, height, positions };
 }
 
-export function ManifoldEditor({ outlets, geometry, ports, onSave }: {
+const geometryKey = (g: ManifoldGeometry) =>
+  `${g.width}x${g.height}:` + Object.keys(g.positions).sort().map(id => `${id}=${g.positions[id]}`).join(',');
+
+export function ManifoldEditor({ outlets, orientation, geometry, ports, onSave }: {
   outlets: number;
+  /** The block's direction, which decides its default shape. */
+  orientation?: string;
   geometry: ManifoldGeometry | undefined;
   ports: Record<string, PortInfo>;
   onSave: (g: ManifoldGeometry) => void;
@@ -75,31 +127,31 @@ export function ManifoldEditor({ outlets, geometry, ports, onSave }: {
   const svgRef = useRef<SVGSVGElement>(null);
   const [drag, setDrag] = useState<string | null>(null);
 
-  const ids = ['in', ...portIds('p', outlets)];
-  void portId;
+  const ids = manifoldPortIds(outlets);
 
-  const [draft, setDraft] = useState<ManifoldGeometry>(() => ({
-    width: geometry?.width ?? 120,
-    height: geometry?.height ?? 26,
-    positions: { ...defaultPositions(ids), ...(geometry?.positions ?? {}) },
-  }));
+  // What the drawing shows now. The draft starts as it, and `dirty` is
+  // measured against it: opening the editor is not an edit, so "Save layout"
+  // stays off until a port has actually been moved.
+  const seed = useMemo(
+    () => drawnGeometry(outlets, orientation, geometry),
+    [outlets, orientation, geometry],
+  );
+  const [draft, setDraft] = useState<ManifoldGeometry>(seed);
+  const [base, setBase] = useState<ManifoldGeometry>(seed);
 
-  // A port that has appeared since last time needs somewhere to be.
+  // The drawing changed under the editor -- the outlet count or direction was
+  // changed in the dialog, or a layout was just saved. An untouched draft
+  // follows it; one with edits in it has them laid on the new drawing (see
+  // `rebaseDraft`), and a port that has gone is dropped. Keyed by content, so
+  // a seed that is merely a new object changes nothing.
+  const seedKey = geometryKey(seed);
   useEffect(() => {
-    setDraft(d => {
-      const next = { ...d.positions };
-      let changed = false;
-      const spare = defaultPositions(ids);
-      for (const id of ids) if (next[id] === undefined) { next[id] = spare[id]; changed = true; }
-      for (const id of Object.keys(next)) if (!ids.includes(id)) { delete next[id]; changed = true; }
-      return changed ? { ...d, positions: next } : d;
-    });
-  }, [outlets]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (geometryKey(base) === seedKey) return;
+    setDraft(d => rebaseDraft(d, base, seed, ids));
+    setBase(seed);
+  }, [seedKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const dirty =
-    draft.width !== (geometry?.width ?? 120) ||
-    draft.height !== (geometry?.height ?? 26) ||
-    ids.some(id => draft.positions[id] !== geometry?.positions?.[id]);
+  const dirty = !sameGeometry(draft, seed, ids);
 
   // Block drawn centred in the panel, scaled to fit.
   const k = Math.min((W - PAD * 2) / Math.max(1, draft.width), (H - PAD * 2) / Math.max(1, draft.height), 2.2);
@@ -111,9 +163,13 @@ export function ManifoldEditor({ outlets, geometry, ports, onSave }: {
     const r = svgRef.current.getBoundingClientRect();
     const px = ((e.clientX - r.left) / r.width) * W - ox;
     const py = ((e.clientY - r.top) / r.height) * H - oy;
-    const t = nearestFraction(px, py, bw, bh);
+    // Landed on a whole pixel of the real block, not wherever the panel's
+    // scale put it: a port at 61.6 px is a line that can never be drawn
+    // straight into anything standing on the grid.
+    const per = 2 * (draft.width + draft.height);
+    const t = Math.round(nearestFraction(px, py, bw, bh) * per) / per;
     setDraft(d => ({ ...d, positions: { ...d.positions, [drag]: t } }));
-  }, [drag, readOnly, ox, oy, bw, bh]);
+  }, [drag, readOnly, ox, oy, bw, bh, draft.width, draft.height]);
 
   // `NumberField` rather than a bare input for the reason given in that file:
   // re-deriving the text from the model each keystroke makes the field

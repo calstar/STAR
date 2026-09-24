@@ -84,6 +84,10 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   const [segments, setSegments] = useState<LineSegment[]>([]);
   const [geometry, setGeometry] = useState<ManifoldGeometry | undefined>(undefined);
   const [sketch, setSketch] = useState<Sketch | null>(null);
+  // How many times the fields above have been filled from `data`. Zero means
+  // not yet: they start empty and an effect fills them after the first render,
+  // so anything that reads them once, on mount, has to wait for this.
+  const [loaded, setLoaded] = useState(0);
 
   const spec: ComponentSpec | undefined =
     kind === 'edge' ? LINE_SPECS.pipe : COMPONENT_SPECS[type];
@@ -97,6 +101,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
     setSegments(data.segments ? structuredClone(data.segments) : []);
     setGeometry(data.geometry ? structuredClone(data.geometry) : undefined);
     setSketch(data.sketch ? structuredClone(data.sketch) : null);
+    setLoaded(n => n + 1);
   }, [open, data]);
 
   useEffect(() => {
@@ -404,9 +409,17 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
           </div>
         )}
 
-        {type === 'MANIFOLD' && (
+        {/* Mounted once the dialog holds this manifold's own geometry and
+            options, and afresh each time it is filled from the drawing. The
+            editor starts its draft from what it is given on mount; mounted on
+            the dialog's first render it was given nothing, started from a
+            default block that was not the one drawn, and so opened with
+            "Save layout" lit and a save that moved every port. */}
+        {type === 'MANIFOLD' && loaded > 0 && (
           <ManifoldEditor
+            key={loaded}
             outlets={Number(options.outlets ?? 4)}
+            orientation={options.orientation}
             geometry={geometry}
             ports={ports}
             onSave={setGeometry}

@@ -55,6 +55,13 @@ export function listPages(nodes: Node[], declared: string[] = []): string[] {
  * `hidden` rather than filtering the array: React Flow keeps a node's measured
  * size, so switching pages and back does not re-measure everything, and an edge
  * whose ends are hidden hides itself without any bookkeeping here.
+ *
+ * Nothing hidden is handed over selected. React Flow's own selection readers
+ * do not ask whether a node is hidden: Backspace deletes every selected node
+ * in its store, and the box-select rectangle is drawn round every selected
+ * one, so a selection left on another page was deleted by a Backspace
+ * pressed here and framed by a rectangle over this page's symbols. The
+ * components keep their flag; only the view drops it.
  */
 export function applyPage(nodes: Node[], edges: Edge[], page: string): {
   nodes: Node[];
@@ -64,16 +71,120 @@ export function applyPage(nodes: Node[], edges: Edge[], page: string): {
   const shown = nodes.map(n => {
     const on = pageOf(n.data as unknown as PIDNodeData) === page;
     if (on) visible.add(n.id);
-    return n.hidden === !on ? n : { ...n, hidden: !on };
+    return shownAs(n, on);
   });
 
   const shownEdges = edges.map(e => {
     // Both ends, so a line never runs to somewhere the reader cannot see.
-    const on = visible.has(e.source) && visible.has(e.target);
-    return e.hidden === !on ? e : { ...e, hidden: !on };
+    return shownAs(e, visible.has(e.source) && visible.has(e.target));
   });
 
   return { nodes: shown, edges: shownEdges };
+}
+
+/**
+ * One node or line as the page shows it: the same object when nothing changes.
+ *
+ * A missing flag reads as shown. The drawing never stores `hidden` -- nothing
+ * loaded, dropped or pasted carries it -- so writing `hidden: false` onto
+ * every visible object handed React Flow a new copy of each on every change,
+ * and React Flow re-renders a node or line whenever its object is new: one
+ * symbol dragged a tick re-rendered every line and symbol on the page. Every
+ * reader of the flag asks whether it is set, so absent and false agree.
+ */
+function shownAs<T extends { hidden?: boolean; selected?: boolean }>(x: T, on: boolean): T {
+  if (on) return x.hidden ? { ...x, hidden: false } : x;
+  return x.hidden === true && !x.selected ? x : { ...x, hidden: true, selected: false };
+}
+
+/**
+ * Everything unselected, and the same array back when nothing was selected.
+ *
+ * What a page switch does to the selection. Selection is how every action
+ * below the page bar finds its subject -- R, Backspace, Cmd+C and Cmd+D, the
+ * move-to-page menu -- and a subject the reader cannot see is not one they
+ * chose. Clearing it on the way out means nothing picked on one page is
+ * still live on the next.
+ */
+export function clearSelection<T extends { selected?: boolean }>(items: T[]): T[] {
+  if (!items.some(x => x.selected)) return items;
+  return items.map(x => (x.selected ? { ...x, selected: false } : x));
+}
+
+/**
+ * Which page to show for a set of components and lines -- the page of the
+ * first component, or when there is no component, of the first line's
+ * source, or of its target when the source is gone -- or null when none of
+ * them is on the drawing.
+ *
+ * An item in the checks panel names its subjects across the whole diagram,
+ * because the checks see the whole diagram. Picking one has to take the
+ * reader to where it is, or the selection lands somewhere they cannot see
+ * and the view is centred on empty canvas.
+ */
+export function pageOfSubjects(
+  nodes: Node[],
+  edges: Edge[],
+  nodeIds: string[],
+  edgeIds: string[] = [],
+): string | null {
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  for (const id of nodeIds) {
+    const n = byId.get(id);
+    if (n) return pageOf(n.data as unknown as PIDNodeData);
+  }
+  for (const id of edgeIds) {
+    const e = edges.find(x => x.id === id);
+    // A line that hangs off nothing at its source still hangs off something
+    // at its target, and that is where the reader can find it.
+    const n = e && (byId.get(e.source) ?? byId.get(e.target));
+    if (n) return pageOf(n.data as unknown as PIDNodeData);
+  }
+  return null;
+}
+
+/**
+ * Select exactly `nodeIds` and `edgeIds` that lie on `page`, and nothing else.
+ *
+ * A check can name things on two pages -- a disconnect and its mate -- and
+ * only the half the reader is taken to can be selected: the other is on a
+ * sheet they are not looking at, and a selection there is one R or
+ * Backspace would act on unseen. A line counts as on the page when both its
+ * ends are, as it does for drawing it.
+ *
+ * A named line that no page draws -- its ends on two pages, or one end gone
+ * -- is picked by the components it hangs off on this page instead. Selected
+ * itself it would be selected nowhere the reader can see, so picking the
+ * check that is about it would do nothing at all; the component is on the
+ * sheet in front of them, and it is where the line leaves from.
+ */
+export function selectOnPage(
+  nodes: Node[],
+  edges: Edge[],
+  page: string,
+  nodeIds: string[],
+  edgeIds: string[] = [],
+): { nodes: Node[]; edges: Edge[] } {
+  const wantNodes = new Set(nodeIds);
+  const wantEdges = new Set(edgeIds);
+  const pageById = new Map(nodes.map(n => [n.id, pageOf(n.data as unknown as PIDNodeData)]));
+  const here = (id: string) => pageById.get(id) === page;
+  for (const e of edges) {
+    if (!wantEdges.has(e.id)) continue;
+    const a = pageById.get(e.source);
+    const b = pageById.get(e.target);
+    if (a !== undefined && a === b) continue;          // drawn, on one page or another
+    // Its ends stand in for it; which of them is on this page is settled
+    // below, with everything else named.
+    wantNodes.add(e.source);
+    wantNodes.add(e.target);
+  }
+  const pick = <T extends { id: string; selected?: boolean }>(x: T, on: boolean): T =>
+    !!x.selected === on ? x : { ...x, selected: on };
+  return {
+    nodes: nodes.map(n => pick(n, wantNodes.has(n.id) && here(n.id))),
+    edges: edges.map(e => pick(e, wantEdges.has(e.id) && here(e.source) && here(e.target))),
+  };
 }
 
 /** Lines whose two ends are on different pages. */

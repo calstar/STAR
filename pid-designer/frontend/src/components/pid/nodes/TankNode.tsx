@@ -8,11 +8,43 @@ import { Upright } from './Upright';
 import { portId, portKind } from '../ports';
 import { useEffect } from 'react';
 import { fmtParam } from '../fmt';
+import { GRID } from '../route';
 
-const TANK_W = 60, TANK_H = 100;
+/** The tank's box: what its end ports are placed from before they are measured. */
+export const TANK_W = 60, TANK_H = 100;
+
 
 /**
- * Ports across one end of the tank, evenly spaced.
+ * Where `n` ports go across an end `w` wide, in px from its left.
+ *
+ * Evenly spaced, and then moved to the nearest grid line. A symbol stands on
+ * the 10 px grid, so a port on the grid is one a partner standing on the grid
+ * can be dead in line with. Evenly spaced alone put a three-port lid's outer
+ * ports at 15 and 45 -- half a grid step off, too far for the router to call
+ * it in line and too near to fit a jog in -- so every line into them drew a
+ * 5 px kink at mid-height, and no grid position of the partner took it out.
+ * Four ports sat at 12/24/36/48.
+ *
+ * Ties go away from the middle, which keeps the layout symmetric, so a tank
+ * turned half a turn still has its ports on the grid: 10/30/50 for three,
+ * 10/20/40/50 for four. One and two ports were already on it and do not
+ * move. An end too narrow to hold its ports on separate grid lines keeps the
+ * even spacing rather than stacking two ports on one line.
+ */
+export function endPortOffsets(n: number, w: number): number[] {
+  const even = Array.from({ length: n }, (_, i) => (w * (i + 1)) / (n + 1));
+  const snapped = even.map(a => {
+    const lo = Math.floor(a / GRID) * GRID, hi = Math.ceil(a / GRID) * GRID;
+    if (lo === hi) return a;
+    if (Math.abs((a - lo) - (hi - a)) < 1e-9) return a < w / 2 ? lo : a > w / 2 ? hi : a;
+    return a - lo < hi - a ? lo : hi;
+  });
+  const fits = snapped.every((a, i) => a > 0 && a < w && (i === 0 || a > snapped[i - 1]));
+  return fits ? snapped : even;
+}
+
+/**
+ * Ports across one end of the tank.
  *
  * A tank lid carries a pressurant inlet, a vent, a burst disc and whatever
  * instrumentation is tapped into it. Drawing one port forces all of that onto a
@@ -26,7 +58,8 @@ function endPorts(
   data: PIDNodeData, nodeId: string, rotation: number,
 ) {
   const count = Math.max(1, Math.min(4, n));
-  return Array.from({ length: count }, (_, i) => {
+  const along = endPortOffsets(count, w);
+  return along.map((at, i) => {
     const pid = portId(prefix, i);
     // Only `plug` is authored. Whether a port is an instrument tapping is
     // something the port works out from what is on it.
@@ -37,7 +70,7 @@ function endPorts(
         id={pid}
         nodeId={nodeId}
         side={side}
-        along={(w * (i + 1)) / (count + 1)}
+        along={at}
         w={w} h={h}
         rotation={rotation}
       />

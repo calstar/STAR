@@ -5,7 +5,9 @@ import { DraggableLabel } from './DraggableLabel';
 import { Upright } from './Upright';
 import { fmtParam } from '../fmt';
 
-const W = 72, H = 120;
+/** The engine's box, and how far down each side its two inlets sit: what a port is placed from before it is measured. */
+export const ENGINE_W = 72, ENGINE_H = 120, ENGINE_INLET_ALONG = 18;
+const W = ENGINE_W, H = ENGINE_H;
 
 /**
  * Injector and chamber as one symbol.
@@ -30,8 +32,8 @@ export function EngineNode({ id, data, selected }: NodeProps) {
     <Frame
       nodeId={id} w={W} h={H} rotation={rotation}
       extra={<>
-        <TurnedPort nodeId={id} id="fuel" side={Position.Left}  along={18} w={W} h={H} rotation={rotation} />
-        <TurnedPort nodeId={id} id="ox"   side={Position.Right} along={18} w={W} h={H} rotation={rotation} />
+        <TurnedPort nodeId={id} id="fuel" side={Position.Left}  along={ENGINE_INLET_ALONG} w={W} h={H} rotation={rotation} />
+        <TurnedPort nodeId={id} id="ox"   side={Position.Right} along={ENGINE_INLET_ALONG} w={W} h={H} rotation={rotation} />
         <TurnedPort nodeId={id} id="t"    side={Position.Top}              w={W} h={H} rotation={rotation} />
         <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: boxH + 2 }} />
       </>}
