@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Edge, Node } from '@xyflow/react';
 import { runChecks, countProblems } from './checks';
+import { reseatJunctions } from './junctions';
+import { splitEdgeAt } from './splitEdge';
+import { translateSubgraph } from './graphOps';
+import { unmeasuredEnd } from './unmeasured';
 
 const node = (id: string, componentType: string, data: Record<string, unknown> = {}): Node =>
   ({ id, position: { x: 0, y: 0 }, data: { componentType, label: id, ...data } }) as unknown as Node;
@@ -303,5 +307,81 @@ describe('two lines on one port', () => {
     const edges = [edge('a', 'SVOP', 'OXT', 'r', 't'), edge('b', 'OXT', 'SVOV', 'b', 'l'),
       edge('c', 'j', 'SVOP', 'r', 'l'), edge('d', 'SVOV', 'j', 'r', 'r')];
     expect(ids(nodes, edges).some(id => id.startsWith('lines-share-port'))).toBe(false);
+  });
+});
+
+describe('a line drawn through a symbol it does not join', () => {
+  // Symbols where they stand on the sheet, as the canvas has them measured.
+  const at = (id: string, componentType: string, x: number, y: number, page = 'Main'): Node => ({
+    id, type: componentType, position: { x, y },
+    measured: componentType === 'TANK' ? { width: 60, height: 100 } : { width: 60, height: 60 },
+    data: { componentType, label: id, page },
+  });
+  const line = (id: string, source: string, sourceHandle: string, target: string, targetHandle: string): Edge =>
+    ({ id, source, sourceHandle, target, targetHandle, type: 'smoothstep', data: {} });
+
+  /**
+   * A bay made as the canvas makes one -- MAN-1 to MAN-2, teed at x = 300
+   * with a branch down to TK-1, settled -- and then picked up whole and let
+   * go `by`, rigidly, as a group move puts it down.
+   */
+  function bay(by: { x: number; y: number }, others: Node[] = []) {
+    const nodes = [at('MAN-1', 'MAN', 100, 100), at('MAN-2', 'MAN', 500, 100), at('TK-1', 'TANK', 270, 300)];
+    const split = splitEdgeAt(nodes, [line('run', 'MAN-1', 'r', 'MAN-2', 'l')], 'run', { x: 300, y: 130 }, undefined,
+      { points: [{ x: 163, y: 130 }, { x: 497, y: 130 }] })!;
+    const settled = reseatJunctions(split.nodes, [...split.edges, line('branch', split.junctionId, 'b', 'TK-1', 't')], unmeasuredEnd);
+    const moved = translateSubgraph(settled.nodes, settled.edges, settled.nodes.map(n => n.id), by);
+    return { nodes: [...moved.nodes, ...others], edges: moved.edges, tee: split.junctionId };
+  }
+  const through = (g: { nodes: Node[]; edges: Edge[] }) => runChecks(g.nodes, g.edges).filter(f => f.id.startsWith('drawn-through'));
+
+  it('names the symbol, the pipe and the branch through it, and the tee inside it, when a bay is let go onto a valve', () => {
+    // The tee lands at (890, 150), inside SOL-1's box, 870..930 by 120..180.
+    const g = bay({ x: 590, y: 20 }, [at('SOL-1', 'SOL', 870, 120)]);
+    const [f, ...more] = through(g);
+    expect(more).toEqual([]);
+    expect(f).toMatchObject({ id: 'drawn-through-SOL-1', severity: 'warning' });
+    expect(f.title).toBe('2 lines run through SOL-1 without joining it');
+    expect(f.detail).toContain('MAN-1 to MAN-2');
+    expect(f.detail).toContain('TK-1 to a tee');
+    expect(f.detail).toContain('a tee inside it');
+    expect(f.nodeIds).toEqual(['SOL-1', g.tee]);
+    // Both halves of the pipe and the branch: what a click selects.
+    expect([...f.edgeIds!].sort()).toEqual([...g.edges.map(e => e.id)].sort());
+    expect(countProblems(runChecks(g.nodes, g.edges))).toBeGreaterThan(0);
+  });
+
+  it('says so of a single line across a symbol, with no tee in it', () => {
+    // SOL-1 down on the pipe between MAN-1 and the tee.
+    const g = bay({ x: 0, y: 0 }, [at('SOL-1', 'SOL', 200, 100)]);
+    const [f, ...more] = through(g);
+    expect(more).toEqual([]);
+    expect(f.title).toBe('A line runs through SOL-1 without joining it');
+    expect(f.nodeIds).toEqual(['SOL-1']);
+    expect(f.edgeIds).toHaveLength(1);
+  });
+
+  it('says nothing of the same bay let go clear of the valve, or of a line into the valve\'s own port', () => {
+    expect(through(bay({ x: 590, y: 20 }, [at('SOL-1', 'SOL', 1000, 250)]))).toEqual([]);
+    const joined = bay({ x: 0, y: 0 }, [at('SOL-1', 'SOL', 600, 100)]);
+    expect(through({ ...joined, edges: [...joined.edges, line('on', 'MAN-2', 'r', 'SOL-1', 'l')] })).toEqual([]);
+  });
+
+  it('says nothing of a line routed round a symbol in its way, or run along the edge of one', () => {
+    // MAN-1 to MAN-2 straight across, with SOL-1 in the way: the line goes round it.
+    const nodes = [at('MAN-1', 'MAN', 100, 100), at('MAN-2', 'MAN', 500, 100), at('SOL-1', 'SOL', 270, 100)];
+    expect(through({ nodes, edges: [line('run', 'MAN-1', 'r', 'MAN-2', 'l')] })).toEqual([]);
+    // Held by a person's corners along the top edge of a symbol: touching it,
+    // not in it. Two pixels further down, it is in it.
+    const hand = { ...line('run', 'MAN-1', 'r', 'MAN-2', 'l'), data: { waypoints: [{ x: 230, y: 130 }, { x: 400, y: 130 }] } };
+    const beside = (y: number) => [at('MAN-1', 'MAN', 100, 100), at('MAN-2', 'MAN', 500, 100), at('SOL-1', 'SOL', 270, y)];
+    expect(through({ nodes: beside(130), edges: [hand] })).toEqual([]);
+    expect(through({ nodes: beside(128), edges: [hand] }).map(f => f.title)).toEqual(['A line runs through SOL-1 without joining it']);
+  });
+
+  it('says nothing of a section box or a probe over a line, or a symbol on another page', () => {
+    for (const other of [at('GSE', 'REGION', 250, 100), at('RTD-1', 'RTD', 280, 110), at('SOL-1', 'SOL', 870, 120, 'Vehicle')]) {
+      expect(through(bay({ x: 590, y: 20 }, [other])), other.id).toEqual([]);
+    }
   });
 });

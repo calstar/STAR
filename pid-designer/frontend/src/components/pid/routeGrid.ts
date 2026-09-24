@@ -129,15 +129,23 @@ export function boxOfNode(n: Node): Box {
  * block anything, nor text; and neither is anything on another page.
  */
 export function obstacleBoxes(nodes: Node[]): Box[] {
-  const out: Box[] = [];
+  return obstaclesOf(nodes).boxes;
+}
+
+/** `obstacleBoxes`, and which of them are symbols a drag has picked up (React Flow's `dragging`). */
+function obstaclesOf(nodes: Node[]): { boxes: Box[]; lifted: Set<Box> } {
+  const boxes: Box[] = [];
+  const lifted = new Set<Box>();
   for (const n of nodes) {
     if (n.hidden) continue;
     // Either says so: a tee from an old drawing has its node type and no
     // component type, or a component type its node type does not repeat.
     if (NOT_OBSTACLES.has(typeOf(n)) || NOT_OBSTACLES.has(n.type ?? '')) continue;
-    out.push(boxOfNode(n));
+    const bx = boxOfNode(n);
+    boxes.push(bx);
+    if (n.dragging) lifted.add(bx);
   }
-  return out;
+  return { boxes, lifted };
 }
 
 /**
@@ -212,9 +220,17 @@ const CELL = 200;
 export class BoxGrid {
   private readonly cells = new Map<string, number[]>();
   readonly boxes: Box[];
+  /**
+   * Those of `boxes` that are symbols a drag has picked up, while it is on
+   * (`obstacleGrid`): in the way only of a line with an end on one of them
+   * (`lineRoute.inTheWay`).
+   */
+  readonly lifted: ReadonlySet<Box>;
+  private without?: BoxGrid;
 
-  constructor(boxes: Box[]) {
+  constructor(boxes: Box[], lifted: ReadonlySet<Box> = NOTHING_LIFTED) {
     this.boxes = boxes;
+    this.lifted = lifted;
     boxes.forEach((b, i) => {
       for (let cx = Math.floor(b.x / CELL); cx <= Math.floor((b.x + b.w) / CELL); cx++) {
         for (let cy = Math.floor(b.y / CELL); cy <= Math.floor((b.y + b.h) / CELL); cy++) {
@@ -237,15 +253,44 @@ export class BoxGrid {
     return [...hit].sort((i, j) => i - j).map(i => this.boxes[i])
       .filter(b => b.x < x1 && b.x + b.w > x0 && b.y < y1 && b.y + b.h > y0);
   }
+
+  /** The grid without the symbols a drag has picked up (`lifted`): itself when there are none. Filed once. */
+  withoutLifted(): BoxGrid {
+    if (!this.lifted.size) return this;
+    this.without ??= new BoxGrid(this.boxes.filter(b => !this.lifted.has(b)));
+    return this.without;
+  }
 }
+
+const NOTHING_LIFTED: ReadonlySet<Box> = new Set();
 
 const grids = new WeakMap<object, BoxGrid>();
 
-/** The obstacles among a set of nodes -- those `obstacleBoxes` counts, the hidden ones not -- filed once per array. */
+/**
+ * The obstacles among a set of nodes -- those `obstacleBoxes` counts, the
+ * hidden ones not -- filed once per array, with the ones React Flow is
+ * dragging marked (`BoxGrid.lifted`).
+ */
 export function obstacleGrid(nodes: Node[]): BoxGrid {
   let g = grids.get(nodes);
-  if (!g) { g = new BoxGrid(obstacleBoxes(nodes)); grids.set(nodes, g); }
+  if (!g) {
+    const { boxes, lifted } = obstaclesOf(nodes);
+    g = new BoxGrid(boxes, lifted);
+    grids.set(nodes, g);
+  }
   return g;
+}
+
+/**
+ * Is `e` a port of the symbol in box `bx`: within its ports' reach of the
+ * box, and facing out of it? A tee's face that happens to stand as near a
+ * symbol faces into it, or along it, and is not.
+ */
+export function portOf(e: End, bx: Box): boolean {
+  if (distanceTo(e, bx) > PORT_REACH + 0.5) return false;
+  const out = facing(e.side);
+  if (isHorizontal(e.side)) return out < 0 ? e.x <= bx.x + AXIS_EPS : e.x >= bx.x + bx.w - AXIS_EPS;
+  return out < 0 ? e.y <= bx.y + AXIS_EPS : e.y >= bx.y + bx.h - AXIS_EPS;
 }
 
 /** The same for a list of boxes already made, filed once per list. */
@@ -417,9 +462,26 @@ export interface SoftLine {
   lie: { within: number; once: number; px: number };
   /** Nearer than `near.within`, beyond lying on it: once for the stretch, and per pixel. */
   near?: { within: number; once: number; px: number };
-  /** No further than `beside.within` from it, beyond nearer: per pixel. */
+  /**
+   * Nearer than `beside.within`, beyond nearer: per pixel. A run exactly
+   * that far off is clear of it (`besideOf`).
+   */
   beside: { within: number; px: number };
 }
+
+/**
+ * Is a run `d` px off a line beside it, for a line whose beside reaches
+ * `within`? Nearer than that is; exactly that far is not, and neither is
+ * anything within half a pixel of it, which is measuring noise.
+ *
+ * A route that has to keep two grid steps off a line keeps them by running
+ * two grid steps off it: charged for the twentieth pixel, a riser up to a
+ * tee exactly twenty pixels from a line beside it paid for its whole height,
+ * and the search bought five more pixels of clearance with a half-step jog
+ * under the tee; and a crossbar between two lines forty pixels apart had no
+ * level clear of both, and ran ten pixels beside one of them.
+ */
+export const besideOf = (d: number, within: number) => d < within - AXIS_EPS;
 
 /**
  * What each pixel run close alongside a symbol costs a route looked for among
@@ -444,6 +506,25 @@ const CLOSE_AMONG = 2;
  * every step the search takes.
  */
 const STAY = 1e-4;
+
+/**
+ * The same tie-break for a route looked for round the symbols alone, but
+ * small enough never to be anything else: a ten-thousandth of what one among
+ * the lines pays, so that across a whole sheet it comes to less than a tenth
+ * of a pixel.
+ *
+ * Without it, which of several equally short levels a detour took was
+ * whichever the search happened to reach first, and that depended on which
+ * lines the grid had -- which is every edge of every symbol in the corridor
+ * round the plain route. A copy pasted a few hundred pixels off, across the
+ * corridor from where the route ran, gave the grid a level of its own, the
+ * search took it, and a branch that had nothing to do with the copy moved;
+ * undone, it moved back. Priced by how far it runs from the plain route,
+ * the level a detour takes is the nearest one clear of what is in its way:
+ * where the symbols next to it put it, and nowhere a symbol further off can
+ * reach.
+ */
+const TIE = 1e-8;
 
 /**
  * For each of the grid's lines `vs` across one axis, how far it is from the
@@ -536,7 +617,7 @@ export function routeAmong(a: End, b: End, obstacles: Box[], soft: Soft, plain?:
   amongMemo.delete(key);
   amongMemo.set(key, list);
   amongKept += list.length - (kept?.length ?? 0);
-  while (amongKept > MEMO && amongMemo.size) {
+  while (amongKept > AMONG_MEMO && amongMemo.size) {
     const oldest = amongMemo.keys().next().value!;
     amongKept -= amongMemo.get(oldest)!.length;
     amongMemo.delete(oldest);
@@ -546,6 +627,17 @@ export function routeAmong(a: End, b: End, obstacles: Box[], soft: Soft, plain?:
 
 const amongMemo = new Map<string, Remembered[]>();
 let amongKept = 0;
+/**
+ * How many searches among the lines are remembered: several times as many
+ * as round the symbols (`MEMO`). The reseat looks for a route among the
+ * lines for every face of every line that pays for the lines round it, and
+ * asks for them all again, in the same order, on the next reseat -- on a
+ * stand of a hundred and thirty symbols, four hundred of them. Remembering
+ * fewer than one reseat asks for, each was forgotten just before it was
+ * asked for again, and every reseat searched afresh for every one: half a
+ * second, on every change to the drawing. Each is a few kilobytes.
+ */
+const AMONG_MEMO = 1024;
 /**
  * What of the symbols and the lines reach into the corridors, as one
  * string: what a remembered answer is checked against. The lines segment by
@@ -952,19 +1044,27 @@ function searchGrid(
   // Among other lines, a third: where a route runs clear of each of them
   // (`clearOf`), either side and past either end, and either side of each
   // dot -- the only places a route that has to keep its distance can go.
+  // And the nearest of those places: exactly as far off a line as running
+  // beside it reaches (`besideOf`), either side and past either end. Offered
+  // only the lanes a grid step further out, a crossbar between two lines
+  // forty pixels apart had one ten pixels off either line to choose from,
+  // when the level half-way between is twenty pixels clear of both.
   const clearX: number[] = [], clearY: number[] = [];
   const lanes = (plain ?? []).slice(0, -1).map((p, i) => segmentBox(p, plain![i + 1], LANES));
   for (const l of soft?.lines ?? []) {
     const c = clearOf(l);
+    const offs = [c, l.beside.within];
     for (let i = 0; i + 1 < l.pts.length; i++) {
       const p = l.pts[i], q = l.pts[i + 1];
       if (plain && !lanes.some(x => overlap(segmentBox(p, q, c), x))) continue;
-      if (Math.abs(p.y - q.y) < AXIS_EPS) {
-        clearY.push(p.y - c, p.y + c);
-        clearX.push(Math.min(p.x, q.x) - c, Math.max(p.x, q.x) + c);
-      } else if (Math.abs(p.x - q.x) < AXIS_EPS) {
-        clearX.push(p.x - c, p.x + c);
-        clearY.push(Math.min(p.y, q.y) - c, Math.max(p.y, q.y) + c);
+      for (const o of offs) {
+        if (Math.abs(p.y - q.y) < AXIS_EPS) {
+          clearY.push(p.y - o, p.y + o);
+          clearX.push(Math.min(p.x, q.x) - o, Math.max(p.x, q.x) + o);
+        } else if (Math.abs(p.x - q.x) < AXIS_EPS) {
+          clearX.push(p.x - o, p.x + o);
+          clearY.push(Math.min(p.y, q.y) - o, Math.max(p.y, q.y) + o);
+        }
       }
     }
   }
@@ -978,19 +1078,26 @@ function searchGrid(
   const inside = (v: number, lo: number, hi: number) => v >= lo && v <= hi;
   const inX = (v: number) => !corridor || corridor.some(r => inside(v, r.x, r.x + r.w));
   const inY = (v: number) => !corridor || corridor.some(r => inside(v, r.y, r.y + r.h));
-  // Among other lines, a line of the grid within half a grid step of an
-  // end's own axis is that axis. Priced by the pixel for running close to a
-  // symbol, a route out of a tee a pixel inside a symbol's margin turned off
-  // its axis for that pixel and turned back, a kink nobody could read.
+  // Among other lines, a line of the grid within a grid step of an end's
+  // own axis is that axis -- all but the end of its stub, where it turns.
+  // Priced by the pixel for running close to a symbol, a route out of a tee
+  // a pixel inside a symbol's margin turned off its axis for that pixel and
+  // turned back, a kink nobody could read; and one six pixels inside it, or
+  // a riser up to a tee that could be twenty pixels off a line beside it and
+  // wanted twenty-five, stepped over by a jog under the tee as short as the
+  // tee's own stub. Lines a grid step apart and more are the only steps a
+  // drawing on the grid can show.
   const edges = (corridor ?? []).flatMap(r => [r.x, r.x + r.w, r.y, r.y + r.h]);
-  const axis = (vs: number[], own: number[]) =>
-    (soft ? vs.filter(v => own.includes(v) || edges.includes(v) || own.every(o => Math.abs(v - o) >= GRID / 2)) : vs);
+  const axis = (vs: number[], own: number[], stubs: number[]) =>
+    (soft
+      ? vs.filter(v => own.includes(v) || stubs.includes(v) || edges.includes(v) || own.every(o => Math.abs(v - o) >= GRID - AXIS_EPS))
+      : vs);
   const xs = axis(lines([
     ...withChannels(rawX), (a.x + b.x) / 2, ...(corridor ?? []).flatMap(r => [r.x, r.x + r.w]), ...clearX.filter(inX),
-  ]), lines([a.x, b.x]));
+  ]), lines([a.x, b.x]), lines(rawX.slice(2, 4)));
   const ys = axis(lines([
     ...withChannels(rawY), (a.y + b.y) / 2, ...(corridor ?? []).flatMap(r => [r.y, r.y + r.h]), ...clearY.filter(inY),
-  ]), lines([a.y, b.y]));
+  ]), lines([a.y, b.y]), lines(rawY.slice(2, 4)));
   const nx = xs.length, ny = ys.length;
   lastSearch.rounds++;
   lastSearch.points = Math.max(lastSearch.points, nx * ny);
@@ -1041,17 +1148,19 @@ function searchGrid(
   // and for running off the plain route, worked out for a step the first
   // time the search takes it (`STAY`).
   const extra = soft && (soft.lines.length || soft.dots.at.length) ? softSteps(xs, ys, soft) : null;
-  // The plain route's own rows and columns: where its runs along each axis are.
-  const rowsOff = extra && plain ? awayFrom(ys, plain.slice(0, -1).filter((p, i) => p.y === plain[i + 1].y).map(p => p.y)) : null;
-  const colsOff = extra && plain ? awayFrom(xs, plain.slice(0, -1).filter((p, i) => p.x === plain[i + 1].x).map(p => p.x)) : null;
+  // The plain route's own rows and columns: where its runs along each axis
+  // are. What running off them costs settles ties (`STAY`, `TIE`).
+  const rowsOff = plain ? awayFrom(ys, plain.slice(0, -1).filter((p, i) => p.y === plain[i + 1].y).map(p => p.y)) : null;
+  const colsOff = plain ? awayFrom(xs, plain.slice(0, -1).filter((p, i) => p.x === plain[i + 1].x).map(p => p.x)) : null;
+  const stay = extra ? STAY : TIE;
   const stepCost = (i: number, j: number, i2: number, j2: number): number => {
     const h = i2 !== i;
     const k = h ? Math.min(i, i2) * ny + j : i * ny + Math.min(j, j2);
     const what = h ? across[k] : down[k];
     if (what === BLOCKED) return Infinity;
     const len = h ? Math.abs(xs[i2] - xs[i]) : Math.abs(ys[j2] - ys[j]);
-    if (!extra) return what === NEAR ? len * (1 + CLOSE) : len;
-    const off = rowsOff ? STAY * len * (h ? rowsOff[j] : colsOff![i]) : 0;
+    const off = rowsOff ? stay * len * (h ? rowsOff[j] : colsOff![i]) : 0;
+    if (!extra) return (what === NEAR ? len * (1 + CLOSE) : len) + off;
     return (what === NEAR ? len * (1 + CLOSE_AMONG) : len) + (h ? extra.across[k] : extra.down[k]) + off;
   };
   // How far short of its stub a leg out of a port would be, turning here.
@@ -1186,7 +1295,7 @@ function softSteps(xs: number[], ys: number[], soft: Soft): { across: Float64Arr
     for (let v = Math.max(0, below(vs, at - reach) + 1); v < vs.length && vs[v] <= at + reach + 1e-9; v++) {
       const d = Math.abs(vs[v] - at);
       const per = d < l.lie.within ? l.lie : l.near && d < l.near.within ? l.near : null;
-      const px = per ? per.px + per.once / GRID : d <= l.beside.within + 1e-9 ? l.beside.px : 0;
+      const px = per ? per.px + per.once / GRID : besideOf(d, l.beside.within) ? l.beside.px : 0;
       if (!px) continue;
       for (let u = Math.max(0, above(us, lo) - 1); u + 1 < us.length && us[u] < hi; u++) {
         const o = Math.min(us[u + 1], hi) - Math.max(us[u], lo);

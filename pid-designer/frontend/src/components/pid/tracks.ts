@@ -110,6 +110,25 @@ const TOUCH = 1000;
 const CROSS = 40;
 const BODY = 100000;
 
+/**
+ * How near a line that is drawn as it is given -- a pipe's, one with
+ * corners of its own -- a moved segment may run alongside it before the two
+ * crowd each other: two grid steps, as the reseat keeps a line it chooses
+ * off another (`pipes.BESIDE`). And what each pixel nearer costs: what the
+ * reseat charges, in proportion to a crossing.
+ *
+ * Moved off a line only as far as it had to be, a feed between two tanks
+ * whose crossbar fell on a header was put a grid step off it, or two, where
+ * a branch the reseat had kept two grid steps off the feed's own crossbar
+ * already ran -- ten pixels from it for eighty, a pair that read as one
+ * line and its shadow, when a level clear of both was a step further on.
+ * Only against a line that cannot move, so that lines that can still step
+ * down in a staircase a grid step apart, and nest out of one side of a
+ * symbol, as they always have.
+ */
+const BESIDE_FIXED = 2 * GRID;
+const BESIDE_FIXED_PX = 2;
+
 /** One line, as it routes itself or as it is stored. */
 export interface TrackLine {
   id: string;
@@ -205,6 +224,8 @@ interface Seg extends Span {
   seq: number;
   /** Is it part of a line drawn somewhere other than its own route? */
   moved: boolean;
+  /** Is it part of a line that is drawn as it is given, and never moves (`BESIDE_FIXED`)? */
+  fixed: boolean;
   /** Taken away: a line's stubs, once the whole line is placed. */
   gone: boolean;
   /** The last look that found it, so a look finds each segment once. */
@@ -253,8 +274,8 @@ class Segments {
   private seq = 0;
   private look = 0;
 
-  add(line: string, s: Span, moved: boolean): Seg {
-    const seg: Seg = { h: s.h, at: s.at, lo: s.lo, hi: s.hi, line, moved, seq: this.seq++, gone: false, seen: 0 };
+  add(line: string, s: Span, moved: boolean, fixed = false): Seg {
+    const seg: Seg = { h: s.h, at: s.at, lo: s.lo, hi: s.hi, line, moved, fixed, seq: this.seq++, gone: false, seen: 0 };
     const x0 = s.h ? s.lo : s.at, x1 = s.h ? s.hi : s.at, y0 = s.h ? s.at : s.lo, y1 = s.h ? s.at : s.hi;
     for (let cx = Math.floor(x0 / CELL); cx <= Math.floor(x1 / CELL); cx++) {
       for (let cy = Math.floor(y0 / CELL); cy <= Math.floor(y1 / CELL); cy++) {
@@ -312,8 +333,12 @@ interface Plan {
   boxes: Box[][];
   /** The dots near each segment that it may not pass through: every one but those the line ends on. */
   dots: Dot[][];
-  /** What each segment can meet at each offset: `near`, `boxes` and `dots`, cut down to that line across. */
-  at: Map<number, { segs: Seg[]; boxes: Box[]; dots: Dot[] }>[];
+  /**
+   * What each segment can meet at each offset: `near`, `boxes` and `dots`,
+   * cut down to that line across, and the lines that cannot move it would
+   * run beside (`BESIDE_FIXED`).
+   */
+  at: Map<number, { segs: Seg[]; boxes: Box[]; dots: Dot[]; beside: Seg[] }>[];
 }
 
 const sign = (v: number) => (v > 0 ? 1 : v < 0 ? -1 : 0);
@@ -372,6 +397,8 @@ function within(plan: Plan, i: number, o: number) {
       : t.at >= lo && t.at <= hi && pos >= t.lo - APART && pos <= t.hi + APART)),
     boxes: plan.boxes[i].filter(bx => (s.h ? pos > bx.y && pos < bx.y + bx.h : pos > bx.x && pos < bx.x + bx.w)),
     dots: plan.dots[i].filter(d => (s.h ? pos > d.y && pos < d.y + d.h : pos > d.x && pos < d.x + d.w)),
+    beside: plan.near[i].filter(t => t.fixed && t.h === s.h && Math.abs(t.at - pos) >= APART
+      && Math.abs(t.at - pos) < BESIDE_FIXED - TOL && t.hi >= lo && t.lo <= hi),
   };
   plan.at[i].set(o, here);
   return here;
@@ -385,6 +412,7 @@ function segmentCost(plan: Plan, i: number, before: number, o: number, after: nu
   const here = within(plan, i, o);
   let c = 0;
   for (const t of here.segs) c += relation(s, t).cost;
+  for (const t of here.beside) c += BESIDE_FIXED_PX * Math.max(0, Math.min(s.hi, t.hi) - Math.max(s.lo, t.lo));
   for (const bx of here.boxes) if (segmentEntersBox(P, Q, bx, 1)) c += BODY;
   for (const d of here.dots) if (throughDot(P, Q, d)) c += TOUCH;
   return c;
@@ -446,7 +474,7 @@ function remembered(plan: Plan): number[] {
   let key = `${plan.p.map(q => `${q.x},${q.y}`).join(' ')}|${plan.min.join(',')}`;
   plan.near.forEach((segs, i) => {
     key += `|${i}:`;
-    for (const t of segs) key += `${t.h ? 'h' : 'v'}${t.at},${t.lo},${t.hi},${t.moved ? 1 : 0};`;
+    for (const t of segs) key += `${t.h ? 'h' : 'v'}${t.at},${t.lo},${t.hi},${t.moved ? 1 : 0}${t.fixed ? 1 : 0};`;
     for (const bx of plan.boxes[i]) key += `b${bx.x},${bx.y},${bx.w},${bx.h};`;
     for (const d of plan.dots[i]) key += `d${d.x},${d.y};`;
   });
@@ -510,7 +538,7 @@ export function separate(lines: readonly TrackLine[], sheet?: Sheet | Box[]): Ma
       const p = simplifyPoints(line.pts);
       for (let i = 0; i + 1 < p.length; i++) {
         const s = spanOf(p[i], p[i + 1]);
-        if (s) segs.add(line.id, s, false);
+        if (s) segs.add(line.id, s, false, true);
       }
       continue;
     }
@@ -543,7 +571,7 @@ export function separate(lines: readonly TrackLine[], sheet?: Sheet | Box[]): Ma
   /** Where a line's middle goes, placed against everything filed now. */
   const place = (plan: Plan): Pt[] => {
     const id = plan.line.id;
-    plan.near = plan.spans.map(s => segs.around(s, REACH + APART, id));
+    plan.near = plan.spans.map(s => segs.around(s, REACH + BESIDE_FIXED, id));
     plan.boxes = plan.spans.map(s => round<Box>(grid, s, REACH));
     plan.dots = plan.spans.map(s => dotsRound(s, REACH, id));
     plan.at = plan.spans.map(() => new Map());

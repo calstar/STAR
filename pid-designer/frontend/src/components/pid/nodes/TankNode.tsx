@@ -103,9 +103,16 @@ export function TankNode({ id, data, selected }: NodeProps) {
   const assigned = useNodeFluid(id);
   const species = speciesById(assigned?.species ?? undefined);
   const fluidColor = color ?? (species ? colorForSpecies(species.id) : UNSET_COLOR);
-  // The box each symbol occupies once turned, so the tag stays under it.
+  // Where the tag goes, which is wherever the ports are not. A tank's ports
+  // are on its heads, so upright the tag stands beside the barrel: under it,
+  // it sat on the bottom port, over the first stretch of the line leaving
+  // it and over the anchor that line's end is picked up by -- a press there
+  // took the tag, and the end could not be carried anywhere. Turned a
+  // quarter, the heads face sideways, and under the turned box is clear.
   const quarter = (rotation ?? 0) % 180 === 90;
-  const tankBoxH = quarter ? TANK_W : TANK_H;
+  const tagOffset = quarter
+    ? { x: -4, y: TANK_W + 2 }
+    : { x: TANK_W + 4, y: TANK_H / 2 - 8 };
 
   return (
     <Frame
@@ -113,7 +120,7 @@ export function TankNode({ id, data, selected }: NodeProps) {
       extra={<>
         {endPorts(Number(options?.portsTop ?? 1), 't', Position.Top, TANK_W, TANK_H, data as unknown as PIDNodeData, id, rotation ?? 0)}
         {endPorts(Number(options?.portsBottom ?? 1), 'b', Position.Bottom, TANK_W, TANK_H, data as unknown as PIDNodeData, id, rotation ?? 0)}
-        <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: tankBoxH + 2 }} />
+        <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={tagOffset} />
       </>}
     >
 

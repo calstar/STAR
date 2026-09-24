@@ -233,7 +233,9 @@ describe('a line drawn with the lines around it', () => {
     other(first);
     const drawn = drawnOf(await drawTwice(hand));
     expect(drawn.map(p => p.x)).toEqual([63, 180, 180, 297]);
-    expect(lineView(first.id)!.pts.map(p => p.x)).toEqual([63, 190, 190, 297]);
+    // Two grid steps off it, not one: a line moved off one that cannot move
+    // keeps as far from it as a line the reseat chooses would.
+    expect(lineView(first.id)!.pts.map(p => p.x)).toEqual([63, 200, 200, 297]);
   });
 
   it('when it moves, draws where it routed at once, not where it was drawn before', async () => {

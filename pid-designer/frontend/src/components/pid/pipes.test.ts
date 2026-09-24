@@ -96,8 +96,12 @@ function along(p: Pt[], q: Pt[], w = 5): number {
   return t;
 }
 
-/** Two grid steps, the twentieth pixel included: nearer than this, a line runs beside another. */
-const BESIDE = 20.5;
+/**
+ * Two grid steps: nearer than this, a line runs beside another. Exactly
+ * this far off is clear of it -- where a line that keeps its distance runs
+ * (`routeGrid.besideOf`) -- and so it is not counted.
+ */
+const BESIDE = 20;
 
 /** How many times one drawn line crosses another at right angles, away from the ends of both. */
 function crossings(p: Pt[], q: Pt[]): number {
@@ -979,9 +983,11 @@ describe('the faces lines take at a tee', () => {
     // across into the second tee's near face, the branch runs down the gap
     // seven pixels from both pipes, and the three read as one fat pipe. Over
     // the top of the shorter pipe into its far face is longer, and clear --
-    // and clear by more than two grid steps: a way round that ran down
-    // beside that pipe a tee's clearance off it, as this once did, ran
-    // beside it within `BESIDE` for all of its hundred and thirty pixels.
+    // and clear by two grid steps: a way round that ran down beside that
+    // pipe a tee's clearance off it, as this once did, ran beside it within
+    // `BESIDE` for all of its hundred and thirty pixels. Two grid steps off
+    // is as far as it has to go, and it goes no further: it once went
+    // three, when the twentieth pixel still counted as beside.
     const nodes = [part('A', 70, 0), part('B', 70, 600), openEnd('O1', 114, 250), openEnd('O2', 114, 420)];
     const t1 = tee(nodes, [E('A', 'b', 'B', 't'), E('O1', 'b', 'O2', 't')], 'A-B', P(100, 200));
     const t2 = tee(t1.nodes, t1.edges, 'O1-O2', P(114, 330));
@@ -989,7 +995,7 @@ describe('the faces lines take at a tee', () => {
       const s = settle(t2.nodes, [...t2.edges, { ...E(t1.id, 'r', t2.id, face), id: 'branch' }]);
       const branch = s.edges.find(e => e.id === 'branch')!;
       expect([branch.sourceHandle, branch.targetHandle], `starting on ${face}`).toEqual(['r', 'r']);
-      expect(draw(branch, s.nodes).pts).toEqual([P(108, 200), P(144, 200), P(144, 330), P(122, 330)]);
+      expect(draw(branch, s.nodes).pts).toEqual([P(108, 200), P(134, 200), P(134, 330), P(122, 330)]);
     }
   });
 
@@ -999,7 +1005,7 @@ describe('the faces lines take at a tee', () => {
     // shapes ran back along that leg 2 px from it; leaving to the left
     // crosses it once, which is what this once chose. Crossing its own pipe
     // costs a great deal, and there is room round the pipe's corner: out to
-    // the right, and round, clear of both legs by more than two grid steps.
+    // the right, and round, clear of both legs by two grid steps or more.
     const nodes = [part('A', 0, 0), part('B', 300, 400), part('C', 100, -100)];
     const t = tee(nodes, [E('A', 'r', 'B', 't')], 'A-B', P(330, 100));
     const s = settle(t.nodes, [...t.edges, E(t.id, 'r', 'C', 'l')]);
@@ -1164,19 +1170,22 @@ describe('the faces lines take at a tee', () => {
     expect(pointLines(once, byIdOf(t.nodes), endOf)).toBe(once);
   });
 
-  it('send a branch into an open end its pipe has come to run just above by its near side, not round the pipe\'s corner', () => {
+  it('send a branch into an open end its pipe has come to run just above round the pipe\'s corner, clear of it, not across it beside the open end', () => {
     // A person's pipe from A right to x = 490, down, and on to B, a tee on
     // its lower leg with a branch straight down to an open end. B dragged
-    // 100 px down takes the lower leg with it to just above the open end,
-    // and the tee, kept where it was, lands on the pipe's vertical leg.
+    // 100 px down takes the lower leg with it to ten pixels above the open
+    // end, and the tee, kept where it was, lands on the pipe's vertical leg.
     //
-    // The branch leaves the tee to the right and comes back into the open
-    // end's right side, crossing the lower leg where it has room for its hop.
-    // Into the open end's top instead, as it once went, it ran down beside
-    // the riser twenty pixels off it for a hundred, and crossed the lower
-    // leg in its last two pixels with a hop shrunk to nothing. Neither way
-    // goes round the pipe's corner, and the open end, where a person put
-    // it, stays where it is.
+    // Out of the tee to the right, the branch has to cross the lower leg to
+    // reach the open end, and it did: a hop five pixels before it turned
+    // into the open end's side, a knot under the pipe. Into the open end's
+    // top, as it once went, it ran down beside the riser and crossed the leg
+    // in its last two pixels. The way that crosses nothing leaves by the
+    // tee's other side, runs down two grid steps off the riser, and comes up
+    // into the open end from below, clear of the leg -- not a tee's
+    // clearance off the riser and under the corner, the hook that crossing
+    // the pipe was once preferred to. The open end, where a person put it,
+    // stays where it is.
     const nodes = [part('A', 270, 270), part('B', 570, 420), openEnd('O', 510, 560)];
     const t = tee(nodes, [E('A', 'r', 'B', 'l', { waypoints: [P(490, 300), P(490, 450)], offset: 0 })], 'A-B', P(510, 450));
     let s = settle(t.nodes, [...t.edges, { ...E(t.id, 'b', 'O', 't'), id: 'branch' }]);
@@ -1186,8 +1195,12 @@ describe('the faces lines take at a tee', () => {
     s = settle(s.nodes, s.edges);
     expect(centre(s.nodes.find(n => n.id === t.id)!)).toEqual(P(490, 450));
     const branch = s.edges.find(e => e.id === 'branch')!;
-    expect([branch.sourceHandle, branch.targetHandle]).toEqual(['r', 'r']);
-    expect(draw(branch, s.nodes).pts).toEqual([P(498, 450), P(524, 450), P(524, 560), P(518, 560)]);
+    expect([branch.sourceHandle, branch.targetHandle]).toEqual(['l', 'b']);
+    const pts = draw(branch, s.nodes).pts;
+    expect(pts).toEqual([P(482, 450), P(470, 450), P(470, 574), P(510, 574), P(510, 568)]);
+    const pipe = [P(330, 300), P(490, 300), P(490, 550), P(570, 550)];
+    expect(crossings(pts, pipe)).toBe(0);
+    expect(along(pts, pipe, BESIDE)).toBe(0);
     expect(centre(s.nodes.find(n => n.id === 'O')!)).toEqual(P(510, 560));
   });
 
@@ -1319,7 +1332,7 @@ describe('the routes lines take among the other lines', () => {
     }
   });
 
-  it('keep a branch more than two grid steps off its own pipe when a way further out is to be had', () => {
+  it('keep a branch at least two grid steps off its own pipe when a way further out is to be had', () => {
     // The same with T's bottom face free: by the router's own shapes the
     // branch left by it and ran along under the pipe fourteen pixels off it,
     // for as far as the pipe went.
@@ -1407,6 +1420,25 @@ describe('the routes lines take among the other lines', () => {
     const drawn = drawnScene(s.nodes, s.edges, endOf, obstacleBoxes(s.nodes));
     expect(drawn.get('C-D')).toEqual([P(550, 300), P(700, 300)]);
     expect(crossings(drawn.get('branch')!, drawn.get('C-D')!), JSON.stringify(drawn.get('branch'))).toBe(0);
+  });
+
+  it('keep a crossbar two grid steps off another line\'s crossbar beside it, when a level clear of both is to be had', () => {
+    // The branch of the first test down to S, and a feed from C's bottom
+    // port to D's top that starts before the branch and ends past it: a Z
+    // too, its crossbar ten pixels under the branch's for four hundred
+    // pixels. Both are middles the pass that moves lines apart may move, and
+    // it moves neither: they lie on nothing. Every level the branch's
+    // crossbar could take crosses the feed once, so the middle won, and the
+    // two were drawn ten pixels apart, one line and its shadow, when a level
+    // two grid steps or more from the feed's is as short.
+    const nodes = [part('A', 0, 70), part('B', 800, 70), part('S', 570, 400), part('C', 120, 150), part('D', 620, 318)];
+    const t = tee(nodes, [E('A', 'r', 'B', 'l'), E('C', 'b', 'D', 't')], 'A-B', P(200, 100));
+    const s = settleOnPage(t.nodes, [...t.edges, { ...E(t.id, 'b', 'S', 't'), id: 'branch' }]);
+    const drawn = drawnScene(s.nodes, s.edges, endOf, obstacleBoxes(s.nodes));
+    expect(drawn.get('C-D')).toEqual([P(150, 210), P(150, 264), P(650, 264), P(650, 318)]);
+    const branch = drawn.get('branch')!;
+    expect(along(branch, drawn.get('C-D')!, BESIDE), JSON.stringify(branch)).toBe(0);
+    expect(crossings(branch, drawn.get('C-D')!), JSON.stringify(branch)).toBe(1);
   });
 
   it('leave a branch straight down beside its own pipe, as its two ends were put', () => {
@@ -1618,6 +1650,73 @@ describe('the routes lines take among the other lines', () => {
 
 // ── Under a person's hand ────────────────────────────────────────────────────
 
+describe('a tee whose pipe is moved out from under it', () => {
+  /** A.r(60,200) -> B.l(800,200), tees at x = 480 and 550 with branches up to T1 and T2. */
+  function header() {
+    const nodes = [part('A', 0, 170), part('B', 800, 170), part('T1', 450, 20), part('T2', 520, 20)];
+    const t1 = tee(nodes, [E('A', 'r', 'B', 'l')], 'A-B', P(480, 200));
+    const half = t1.edges.find(e => e.target === 'B')!;
+    const t2 = tee(t1.nodes, t1.edges, half.id, P(550, 200));
+    const s = settle(t2.nodes, [...t2.edges, E(t1.id, 't', 'T1', 'b'), E(t2.id, 't', 'T2', 'b')]);
+    return { nodes: s.nodes, edges: s.edges, tees: [t1.id, t2.id] };
+  }
+  type Header = ReturnType<typeof header>;
+  const at = (h: Header) => h.tees.map(id => centre(h.nodes.find(n => n.id === id)!));
+
+  /** `ids` dragged tick by tick to where `to` says, the reseat told of the drag on every tick; then let go. */
+  function drag(h: Header, to: Record<string, Pt>, ticks = 10): Header {
+    const moving = dragging(h.nodes, Object.keys(to), h.edges);
+    const from = new Map(h.nodes.map(n => [n.id, n.position]));
+    let s = { nodes: h.nodes, edges: h.edges };
+    for (let k = 1; k <= ticks; k++) {
+      const nodes = s.nodes.map(n => {
+        const p = to[n.id], q = from.get(n.id)!;
+        return p ? { ...n, position: P(q.x + ((p.x - q.x) * k) / ticks, q.y + ((p.y - q.y) * k) / ticks) } : n;
+      });
+      s = settle(nodes, s.edges, moving);
+    }
+    const done = settle(s.nodes, s.edges);
+    return { ...h, nodes: done.nodes, edges: done.edges };
+  }
+
+  it('keeps its distance along the pipe from the end that stayed, when the new path is nowhere near it', () => {
+    // B dragged down and back under the header: the pipe is drawn right,
+    // down and back along the bottom to B's port at (460, 350). The point of
+    // that nearest either tee was the end of it, and both tees went there,
+    // two grid steps apart with a four-pixel line between them. They keep
+    // their places along the pipe from A instead -- 420 and 490 pixels --
+    // and so their order and their spacing.
+    const h = header();
+    expect(at(h)).toEqual([P(480, 200), P(550, 200)]);
+    const there = drag(h, { B: P(460, 320) });
+    expect(at(there)).toEqual([P(330, 350), P(400, 350)]);
+    // And they are back where they were once B is.
+    const back = drag(there, { B: P(800, 170) });
+    expect(at(back)).toEqual([P(480, 200), P(550, 200)]);
+  });
+
+  it('keeps it the same way when the end has been moved without a drag', () => {
+    // The drawing handed to the reseat already has B where it went: the
+    // lines and the tees still say where the pipe ran, and that it still
+    // leaves A along A's axis and no longer arrives at B along B's.
+    const h = header();
+    const moved = settle(h.nodes.map(n => (n.id === 'B' ? { ...n, position: P(460, 320) } : n)), h.edges);
+    expect(at({ ...h, ...moved })).toEqual([P(330, 350), P(400, 350)]);
+  });
+
+  it('keeps its fraction of the pipe when both ends have moved', () => {
+    // Both ends taken down 250 and B in to x = 400: nothing of the pipe is
+    // where it was, and the tees keep the fractions of it they were at.
+    const h = header();
+    const moved = settle(h.nodes.map(n => (n.id === 'A' ? { ...n, position: P(0, 420) } : n.id === 'B' ? { ...n, position: P(400, 420) } : n)), h.edges);
+    const [p, q] = at({ ...h, ...moved });
+    expect(p.y).toBe(450);
+    expect(q.y).toBe(450);
+    expect(p.x).toBeCloseTo(60 + (420 / 740) * 340, 6);
+    expect(q.x).toBeCloseTo(60 + (490 / 740) * 340, 6);
+  });
+});
+
 describe('a tee dragged along its pipe', () => {
   function manifold() {
     const nodes = [part('A', 0, 0), part('B', 600, 0)];
@@ -1657,11 +1756,38 @@ describe('a tee dragged along its pipe', () => {
     const z = zPipe();
     const t1 = tee(z.nodes, z.edges, 'A-B', P(150, 30));
     const n = t1.nodes.find(x => x.id === t1.id)!;
-    // Pointer 3 px short of the bend on the first leg, then 3 px past it on the second.
+    // Pointer 3 px short of the bend on the first leg, then 3 px past it on
+    // the second. Held a tee's reach off the bend, and then on the grid line
+    // on that leg nearest where it was held that is still that far off it:
+    // x = 210, not 216, and y = 50, not 44. (It stopped at the reach itself,
+    // on no grid line, and its branch jogged by the difference.)
     const before = slideAlong(n, alongOf(n), { x: 222, y: 24 }, t1.edges, byIdOf(t1.nodes), endOf)!;
-    expect(before.position).toEqual(P(230 - CORNER_GAP - 5, 25));
+    expect(before.position).toEqual(P(210 - 5, 25));
+    expect(230 - 210).toBeGreaterThanOrEqual(CORNER_GAP);
     const past = slideAlong(n, alongOf(n), { x: 225, y: 28 }, t1.edges, byIdOf(t1.nodes), endOf)!;
-    expect(past.position).toEqual(P(225, 30 + CORNER_GAP - 5));
+    expect(past.position).toEqual(P(225, 50 - 5));
+  });
+
+  it('is put on the grid line nearest where the bend stopped it, beside a corner off the grid too', () => {
+    // A's port at y = 34, so the pipe's first leg runs off the grid and the
+    // bend is at (230, 34): held off it at y = 48, the nearest grid line that
+    // is still a tee's reach off the bend is 50.
+    const nodes = [part('A', 0, 4), part('B', 400, 300)];
+    const t1 = tee(nodes, [E('A', 'r', 'B', 'l')], 'A-B', P(150, 34));
+    const n = t1.nodes.find(x => x.id === t1.id)!;
+    const past = slideAlong(n, alongOf(n), { x: 225, y: 32 }, t1.edges, byIdOf(t1.nodes), endOf)!;
+    expect(past.position).toEqual(P(225, 45));
+  });
+
+  it('stays where the rule stopped it when no grid line beside the stop is a legal spot', () => {
+    // A Z whose middle leg is 28 px, from y = 30 down to 58: the only spot on
+    // it a tee's reach from both bends is y = 44, and the grid lines either
+    // side, 40 and 50, are each ten pixels from a bend.
+    const nodes = [part('A', 0, 0), part('B', 400, 28)];
+    const t1 = tee(nodes, [E('A', 'r', 'B', 'l')], 'A-B', P(150, 30));
+    const n = t1.nodes.find(x => x.id === t1.id)!;
+    const slid = slideAlong(n, alongOf(n), { x: 225, y: 39 }, t1.edges, byIdOf(t1.nodes), endOf)!;
+    expect(slid.position).toEqual(P(225, 44 - 5));
   });
 
   it('stays on the leg it was on when the pointer is as near another', () => {
@@ -1681,15 +1807,19 @@ describe('a tee dragged along its pipe', () => {
     // own. T1's face is not a port: T1 keeps a stub of its own there, and
     // its dot is half a dot beyond. So T2 keeps TEE_END_GAP from that face,
     // where from C's port it keeps END_GAP -- slid there, or left there by a
-    // drag and put back by the reseat.
+    // drag and put back by the reseat. Slid, it then goes to the grid line
+    // beyond the stop, which is as far off as it has to be and further: 60
+    // rather than 58, and 180 rather than 186.
     const t1 = tee([part('A', 0, 0), part('B', 400, 0), part('C', 170, 200)], [E('A', 'r', 'B', 'l')], 'A-B', P(200, 30));
     const s1 = settle(t1.nodes, [...t1.edges, E(t1.id, 'b', 'C', 't')]);
     const t2 = tee(s1.nodes, s1.edges, `${t1.id}-C`, P(200, 120));
     const face = 30 + 8;
     const T2 = t2.nodes.find(n => n.id === t2.id)!;
     const slid = slideAlong(T2, alongOf(T2), P(195, 20), t2.edges, byIdOf(t2.nodes), endOf)!;
-    expect(slid.position).toEqual(P(195, face + TEE_END_GAP - 5));
-    expect(slideAlong(T2, alongOf(T2), P(195, 300), t2.edges, byIdOf(t2.nodes), endOf)!.position).toEqual(P(195, 200 - END_GAP - 5));
+    expect(slid.position).toEqual(P(195, 60 - 5));
+    expect(60 - face).toBeGreaterThanOrEqual(TEE_END_GAP);
+    expect(slideAlong(T2, alongOf(T2), P(195, 300), t2.edges, byIdOf(t2.nodes), endOf)!.position).toEqual(P(195, 180 - 5));
+    expect(200 - 180).toBeGreaterThanOrEqual(END_GAP);
     // Left 2 px off T1's face, recorded as there, and reseated.
     const knocked = t2.nodes.map(n => (n.id === t2.id
       ? { ...n, position: P(195, face + 2 - 5), data: { ...n.data, along: { ...alongOf(n), t: alongOf(n).from === t1.id ? 0.01 : 0.99 } } }
@@ -1715,13 +1845,15 @@ describe('a tee dragged along its pipe', () => {
     expect(corner(m.t1, P(190, 20))).toEqual(P(195, 25));
     expect(corner(m.t1, P(300, 20))).toEqual(P(295, 25));
     expect(corner(m.t1, P(180, 20))).toEqual(P(185, 25));
-    // Along a vertical leg by its y, and clear of a bend all the same.
+    // Along a vertical leg by its y, and clear of a bend all the same: held
+    // a tee's reach below the bend at y = 30, on the grid line past the
+    // reach, 50, not at the reach, 44.
     const z = zPipe();
     const t1 = tee(z.nodes, z.edges, 'A-B', P(150, 30));
     const n = t1.nodes.find(x => x.id === t1.id)!;
     const slid = (at: Pt) => slideAlong(n, alongOf(n), at, t1.edges, byIdOf(t1.nodes), endOf)!.position;
     expect(slid(P(230, 250))).toEqual(P(225, 245));
-    expect(slid(P(230, 40))).toEqual(P(225, 30 + CORNER_GAP - 5));
+    expect(slid(P(230, 40))).toEqual(P(225, 50 - 5));
   });
 
   it('is null for a tee that rides nothing', () => {

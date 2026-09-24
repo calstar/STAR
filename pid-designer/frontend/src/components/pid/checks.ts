@@ -1,12 +1,18 @@
 import type { Edge, Node } from '@xyflow/react';
 import { propagateFluids, speciesById } from './fluids';
 import { isInstrument } from './attach';
-import { isJunction } from './junctions';
+import { centreOfJunction, isJunction } from './junctions';
 import { crossPageEdges, listPages, pageOf } from './pages';
 import { findVents } from './vents';
 import { portsOf, portIsDrawn, CV_INLET } from './ports';
 import { toPa } from './params';
 import { overlapOf } from './segments';
+import { drawnRoute } from './lineRoute';
+import { pipesOf } from './pipes';
+import type { Pipe } from './pipes';
+import { boxOfNode, routeHitsBoxes } from './routeGrid';
+import type { Box } from './route';
+import { unmeasuredEnd } from './unmeasured';
 import type { PIDNodeData, PIDEdgeData } from './types';
 
 /**
@@ -441,6 +447,16 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
     });
   }
 
+  // ── Lines drawn through a symbol ──────────────────────────────────────────
+  // A line reaches a symbol only through its ports, and the router keeps the
+  // lines it routes out of every symbol's body. But a pipe keeps the shape it
+  // was put down with: a bay let go across a valve, or a valve put down on a
+  // pipe's stored corners, leaves the pipe -- and a tee on it -- drawn
+  // straight through a symbol it has nothing to do with. On the page that is
+  // a valve in the line, or a branch joined at the valve, and neither is
+  // there; nothing on the drawing says otherwise. Named, so it can be moved.
+  for (const f of drawnThrough(nodes, edges, byId)) push(f);
+
   // ── Instruments ───────────────────────────────────────────────────────────
   const wired = nodes.filter(n => {
     if (!isInstrument(dataOf(n)?.componentType)) return false;
@@ -614,6 +630,116 @@ function hopsFromSources(nodes: Node[], edges: Edge[]): Map<string, number> {
     }
   }
   return dist;
+}
+
+/**
+ * Every symbol with a line drawn through its body, or a tee or an open end
+ * inside it, that is not joined to it: one row for each such symbol,
+ * naming what runs through it.
+ *
+ * The lines are read as the canvas draws them (`drawnRoute`), from where each
+ * symbol draws its ports (`unmeasuredEnd`), since the checks have no screen
+ * to measure them on; and "through" is what the router keeps its own routes
+ * out of (`routeHitsBoxes`): into the box, not along its edge. A line's own
+ * two ends are what it is joined to; anything else it crosses, it is not.
+ */
+function drawnThrough(nodes: Node[], edges: Edge[], byId: Map<string, Node>): Finding[] {
+  const pageOfNode = (n: Node) => pageOf(dataOf(n));
+  // What a line can be drawn through: a symbol with ports, which a line
+  // across it reads as joined to. Not a section box, a note or a probe.
+  const onPage = new Map<string, { n: Node; box: Box }[]>();
+  for (const n of nodes) {
+    if (n.hidden || isJunction(n) || portsOf(n).length === 0) continue;
+    const page = pageOfNode(n);
+    const list = onPage.get(page) ?? onPage.set(page, []).get(page)!;
+    list.push({ n, box: boxOfNode(n) });
+  }
+  if (!onPage.size) return [];
+
+  const linesOn = new Map<string, number>();
+  for (const e of edges) for (const id of new Set([e.source, e.target])) linesOn.set(id, (linesOn.get(id) ?? 0) + 1);
+  const pipeOfLine = new Map<string, Pipe>();
+  for (const p of pipesOf(nodes, edges)) for (const id of p.lines) pipeOfLine.set(id, p);
+  // A line by what a reader finds at the ends of the run it is part of: a
+  // tag, or a tee or an open end, which have none worth reading.
+  const endName = (id: string) => {
+    const n = byId.get(id);
+    if (n && !isJunction(n)) return nameOf(n);
+    return (linesOn.get(id) ?? 0) === 1 ? 'an open end' : 'a tee';
+  };
+  const nameOfLine = (e: Edge) => {
+    const p = pipeOfLine.get(e.id);
+    const ends = p ? [p.a.nodeId, p.b.nodeId] : [e.source, e.target];
+    const named = ends.map(id => ({ name: endName(id), tag: !isJunction(byId.get(id)) }));
+    // A tag first: "TK-1 to a tee", not "a tee to TK-1".
+    if (!named[0].tag && named[1].tag) named.reverse();
+    return `${named[0].name} to ${named[1].name}`;
+  };
+
+  const through = new Map<string, { lines: Edge[]; names: string[]; tees: Node[] }>();
+  const at = (id: string) => through.get(id) ?? through.set(id, { lines: [], names: [], tees: [] }).get(id)!;
+  // Whether a box and a line's bounds meet at all: a line nowhere near a
+  // symbol is not asked about it.
+  const near = (b: Box, x0: number, y0: number, x1: number, y1: number) =>
+    b.x <= x1 && x0 <= b.x + b.w && b.y <= y1 && y0 <= b.y + b.h;
+
+  for (const e of edges) {
+    const s = byId.get(e.source), t = byId.get(e.target);
+    if (!s || !t || e.source === e.target || pageOfNode(s) !== pageOfNode(t)) continue;
+    const symbols = onPage.get(pageOfNode(s));
+    if (!symbols) continue;
+    const pts = drawnRoute(e, byId, unmeasuredEnd);
+    if (!pts || pts.length < 2) continue;
+    const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    for (const { n, box } of symbols) {
+      if (n.id === e.source || n.id === e.target || !near(box, x0, y0, x1, y1)) continue;
+      if (!routeHitsBoxes(pts, [box])) continue;
+      const f = at(n.id);
+      f.lines.push(e);
+      const name = nameOfLine(e);
+      if (!f.names.includes(name)) f.names.push(name);
+    }
+  }
+
+  // A tee or an open end inside a symbol, not joined to it: a joint drawn at
+  // the symbol that is not one.
+  const joined = (a: string, b: string) => edges.some(e => (e.source === a && e.target === b) || (e.source === b && e.target === a));
+  for (const j of nodes) {
+    if (!isJunction(j)) continue;
+    const c = centreOfJunction(j);
+    for (const { n, box } of onPage.get(pageOfNode(j)) ?? []) {
+      const inside = c.x > box.x + 1 && c.x < box.x + box.w - 1 && c.y > box.y + 1 && c.y < box.y + box.h - 1;
+      if (inside && !joined(j.id, n.id)) at(n.id).tees.push(j);
+    }
+  }
+
+  const found: Finding[] = [];
+  for (const [id, f] of through) {
+    const n = byId.get(id)!;
+    const tag = nameOf(n);
+    const k = f.names.length;
+    const tees = f.tees.filter(j => (linesOn.get(j.id) ?? 0) !== 1).length;
+    const opens = f.tees.length - tees;
+    const inside = [
+      ...(tees ? [tees === 1 ? 'a tee inside it' : `${tees} tees inside it`] : []),
+      ...(opens ? [opens === 1 ? 'an open end inside it' : `${opens} open ends inside it`] : []),
+    ];
+    const said = [...f.names, ...inside];
+    const list = said.length === 1 ? said[0] : `${said.slice(0, -1).join(', ')} and ${said[said.length - 1]}`;
+    const title = k
+      ? `${k === 1 ? 'A line runs' : `${k} lines run`} through ${tag} without joining it`
+      : `${f.tees.length === 1 ? (tees ? 'A tee sits' : 'An open end sits') : `${f.tees.length} junctions sit`} inside ${tag} without joining it`;
+    found.push({
+      id: `drawn-through-${id}`,
+      severity: 'warning',
+      title,
+      detail: `Drawn across ${tag} without joining it: ${list}. On the page that reads as piped through ${tag}, and it is not. Move ${tag}, or what runs through it, clear.`,
+      nodeIds: [id, ...f.tees.map(j => j.id)],
+      edgeIds: f.lines.map(e => e.id),
+    });
+  }
+  return found;
 }
 
 /** What the badge shows: things that are actually wrong. */

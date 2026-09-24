@@ -181,6 +181,13 @@ export const drawnPortsOf = (node: Node) =>
  */
 export const measured = (v: number) => Math.round(v * 1000) / 1000;
 
+/**
+ * A place on the drawing to a thousandth of a pixel (`measured`): for
+ * whatever writes one worked out from a line as drawn, which React Flow
+ * draws from the handles as it measured them, noise and all.
+ */
+export const measuredAt = (p: XYPosition): XYPosition => ({ x: measured(p.x), y: measured(p.y) });
+
 /** A handle as React Flow measured it: relative to its node, and the side it is on. */
 export interface HandleBox { x: number; y: number; width: number; height: number; position: Position }
 

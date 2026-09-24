@@ -19,6 +19,7 @@ import {
 import type { Box, End, Pt } from './route';
 import { boxOfNode, perPage, routeAuto } from './routeGrid';
 import type { Obstacles } from './routeGrid';
+import { measuredAt } from './ports';
 
 /**
  * Where a drag is let go, and what it makes there.
@@ -410,7 +411,13 @@ function originOf(source: DropSource, cx: Cx): Origin | null {
       const edge = cx.edgeById.get(source.edgeId);
       if (!edge) return null;
       const points = source.points.length >= 2 ? simplifyPoints(source.points) : cx.points(edge.id);
-      return points ? lineOrigin(cx, edge, points, source.at, source.at) : null;
+      // The pull is measured from the press; the line starts where its tee
+      // goes, on the grid along the leg (`gridAlong`), as the hover dot
+      // showed it. Judged from the press itself, an open end let go below
+      // it was put level with the press, a fraction of a pixel off the grid
+      // at any zoom but one and a few pixels off at one, and the tee was
+      // then put at its foot, off the grid with it.
+      return points ? lineOrigin(cx, edge, points, gridAlong(points, source.at), source.at) : null;
     }
     case 'port': {
       const node = cx.byId.get(source.nodeId);
@@ -831,6 +838,42 @@ export function resolveDrop(source: DropSource, at: Pt, under: Under, scene: Dro
 
 // ── Making it ────────────────────────────────────────────────────────────────
 
+/**
+ * `after`, with every place a drop wrote in it to a thousandth of a pixel
+ * (`measuredAt`): the position of each node it made or changed, the ends a
+ * tee's pipe was put down between, and each line's corners.
+ *
+ * A drop reads the lines as the page draws them, and the page draws them
+ * from React Flow's handles as it measured them: read off the screen and
+ * divided by the zoom, a hundred-thousandth of a pixel out at any zoom but
+ * one, and at one under a pan a fit left fractional. The canvas's own port
+ * lookups are rid of that (`handleEnd`); a tee put on a drawn line, the ends
+ * its pipe was put down between and the corners of the two halves it cut
+ * were not, and the noise was saved -- and a stored shape no longer fitted
+ * the ports once they were measured again at another zoom. What was in the
+ * drawing already, and not touched by the drop, is left exactly as it was.
+ */
+function placedClean(before: { nodes: Node[]; edges: Edge[] }, after: { nodes: Node[]; edges: Edge[] }): { nodes: Node[]; edges: Edge[] } {
+  const had = new Set<object>([...before.nodes, ...before.edges]);
+  const same = (p: Pt, q: Pt) => p.x === q.x && p.y === q.y;
+  const node = (n: Node): Node => {
+    if (had.has(n)) return n;
+    const position = measuredAt(n.position);
+    const along = isJunction(n) ? junctionData(n).along : undefined;
+    const ends = along?.ends ? { a: measuredAt(along.ends.a), b: measuredAt(along.ends.b) } : null;
+    const endsMoved = !!ends && (!same(ends.a, along!.ends!.a) || !same(ends.b, along!.ends!.b));
+    if (same(position, n.position) && !endsMoved) return n;
+    return { ...n, position, ...(endsMoved ? { data: { ...n.data, along: { ...along!, ends: ends! } } } : {}) };
+  };
+  const line = (e: Edge): Edge => {
+    if (had.has(e)) return e;
+    const corners = (e.data as { waypoints?: unknown } | undefined)?.waypoints;
+    if (!Array.isArray(corners) || (corners as Pt[]).every(p => same(measuredAt(p), p))) return e;
+    return { ...e, data: { ...e.data, waypoints: (corners as Pt[]).map(measuredAt) } };
+  };
+  return { nodes: after.nodes.map(node), edges: after.edges.map(line) };
+}
+
 /** Is a symbol's port on this drawing already carrying a line (other than `except`)? */
 function portTaken(nodes: Node[], edges: Edge[], nodeId: string, handle: string, except?: string): boolean {
   const n = nodes.find(x => x.id === nodeId);
@@ -931,8 +974,18 @@ function carriedOn(line: Edge, open: string, via: Pt, to: { id: string; handle: 
  * A free junction with lines of its own that the new line gives a straight
  * continuation -- a tee somebody put down -- rides it from then on
  * (`adoptTee`), exactly as a tee split into a line does.
+ *
+ * Every place it writes is to a thousandth of a pixel (`placedClean`), as
+ * every port the canvas reads is: a drop is worked out on the lines as the
+ * page draws them, which carry React Flow's measuring noise.
  */
 export function commitDrop(plan: DropPlan, scene: DropScene): { nodes: Node[]; edges: Edge[]; lineId: string } | null {
+  const made = connected(plan, scene);
+  return made && { ...placedClean(scene, made), lineId: made.lineId };
+}
+
+/** What `commitDrop` makes, as worked out: off the lines as drawn, noise and all. */
+function connected(plan: DropPlan, scene: DropScene): { nodes: Node[]; edges: Edge[]; lineId: string } | null {
   if (plan.kind !== 'connect') return null;
   const cx = contextOf(scene);
   let nodes = scene.nodes, edges = scene.edges;
@@ -1084,9 +1137,14 @@ export function partOnLine(
   const hit = lineAt(lines, at);
   if (!hit) return null;
   const cut = gridAlong(hit.points, hit.at);
-  if (isInline(type)) return insertInline(graph.nodes, graph.edges, hit.id, cut, part, { points: hit.points });
-  return tapLine(graph.nodes, graph.edges, hit.id, cut, at, part,
-    { points: hit.points, endOf: geometry.endOf, obstacles: geometry.obstacles }, geometry.page);
+  // Across the line, the cut is where the line is drawn -- React Flow's
+  // measuring noise included -- so what is put in is placed clean, as a drop
+  // is (`placedClean`).
+  const made = isInline(type)
+    ? insertInline(graph.nodes, graph.edges, hit.id, cut, part, { points: hit.points })
+    : tapLine(graph.nodes, graph.edges, hit.id, cut, at, part,
+      { points: hit.points, endOf: geometry.endOf, obstacles: geometry.obstacles }, geometry.page);
+  return made && placedClean(graph, made);
 }
 
 // ── For the designer ─────────────────────────────────────────────────────────

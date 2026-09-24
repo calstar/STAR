@@ -298,6 +298,20 @@ describe('what may move', () => {
     expect(overlap(drawn)).toBe(0);
   });
 
+  it('a line moved off one that cannot move goes two grid steps off it, not one, when that is clear', () => {
+    // The feeds between two columns, the first a person's now. The second is
+    // moved off it, as ever -- but a grid step off it, it ran beside the
+    // first's crossbar ten pixels away, and two grid steps off, as short, it
+    // runs clear. Two lines that may both move still step down a grid step
+    // apart, a staircase (above).
+    const lines = [line('HV1-SV1', port(0, 0, 'r'), port(300, 120, 'l'), false), line('HV2-SV2', port(0, 100, 'r'), port(300, 220, 'l'))];
+    const drawn = draw(lines);
+    expect(drawn.get('HV1-SV1')).toBe(lines[0].pts);
+    expect(drawn.get('HV2-SV2')!.map(p => p.x)).toEqual([63, 160, 160, 297]);
+    expect(overlap(drawn)).toBe(0);
+    expect(hops(drawn)).toBe(0);
+  });
+
   it('two lines neither of which may move stay where they are, on top of each other', () => {
     const [a, b] = two();
     const drawn = draw([{ ...a, free: false }, { ...b, free: false }]);

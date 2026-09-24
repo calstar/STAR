@@ -185,6 +185,46 @@ describe('a preview is the line letting go draws', () => {
     sweep(true);
   }, SWEEP_MS);
 
+  it('shows a line let go from one port to another where the page draws it once the lines round it are chosen again', () => {
+    // Five valves; a tee on the top run with a branch down out of it and
+    // across into an open end's side at y = 110, and a tee on the bottom run
+    // with a branch up into another open end. A line from the right-hand
+    // valve's bottom port let go on the bottom-left valve: its crossbar,
+    // routed at the middle of its drop, lies along the first branch's leg
+    // into its open end. The reseat that follows the drop chooses that
+    // branch again round the new line -- out of its tee and into the open
+    // end's top instead -- and the page moves the new line off the branch
+    // where it now is, not where it was. Settled only when the line ended on
+    // a tee, the preview drew it moved off the branch where it had been.
+    const along = (from: string, to: string, t: number, a: Pt, b: Pt) =>
+      ({ t, in: 'l', out: 'r', from, to, ends: { a, b } });
+    const tee = (id: string, cx: number, cy: number, a?: ReturnType<typeof along>): Node => ({
+      id, type: 'JUNCTION', position: { x: cx - J_HALF, y: cy - J_HALF }, measured: { width: 10, height: 10 },
+      data: { componentType: 'JUNCTION', label: id, ...(a ? { along: a } : {}) },
+    });
+    const g0: G = {
+      nodes: [
+        sym('P0', 0, 0), sym('P1', 140, 0), sym('P2', 290, 0), sym('P3', 0, 160), sym('P4', 140, 160),
+        tee('T1', 214, 30, along('P1', 'P2', 0.15555555555555556, P(200, 30), P(290, 30))), tee('O1', -10, 110),
+        tee('T2', 74, 190, along('P3', 'P4', 0.175, P(60, 190), P(140, 190))), tee('T3', 100, 190, along('P3', 'P4', 0.5, P(60, 190), P(140, 190))),
+        tee('O2', 280, 110),
+      ],
+      edges: [
+        E('P0', 'r', 'P1', 'l'), { ...E('P1', 'r', 'T1', 'l'), data: { offset: 0 } }, { ...E('T1', 'r', 'P2', 'l'), data: { offset: 0 } },
+        E('T1', 'b', 'O1', 'r'), { ...E('P3', 'r', 'T2', 'l'), data: { offset: 0 } }, { ...E('T2', 'r', 'T3', 'l'), data: { offset: 0 } },
+        { ...E('T3', 'r', 'P4', 'l'), data: { offset: 0 } }, E('T2', 't', 'O2', 'b'),
+      ],
+    };
+    const g = settle(g0);
+    expect(drawn(g.edges.find(e => e.id === 'T1-O1')!, g)).toEqual([P(214, 38), P(214, 110), P(-2, 110)]);
+    const plan = connect(resolveDrop({ kind: 'port', nodeId: 'P2', handle: 'b' }, P(35, 208), { line: null, node: 'P3' }, scene(g)));
+    const made = commitDrop(plan, scene(g))!;
+    const after = settle(made);
+    expect(after.edges.find(e => e.id === 'T1-O1')!.targetHandle).toBe('t');
+    const line = after.edges.find(e => e.id === made.lineId)!;
+    expect(previewOf(plan, scene(g), { from: P(320, 60), to: P(35, 208) }).points).toEqual(drawn(line, after));
+  });
+
   it('shows a line let go beside another where the page will draw it, a grid step off, not where it routes itself', () => {
     // Two columns: HV1 already feeds SV1; a line from HV2 to SV2 routes its
     // crossbar at the same midpoint, and the page moves it over.

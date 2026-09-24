@@ -4,7 +4,7 @@ import type { Along, EndLookup } from './junctions';
 import { pageOf } from './pages';
 import { pathPoints, routeOrthogonal, routeThrough, throughAsStored } from './route';
 import type { Box, End, Pt } from './route';
-import { NO_BOXES, PORT_REACH, REACH, boundsOf, boxGrid, perPage, routeAuto, withinReach } from './routeGrid';
+import { NO_BOXES, PORT_REACH, REACH, boundsOf, boxGrid, perPage, portOf, routeAuto, withinReach } from './routeGrid';
 import type { BoxGrid, Obstacles } from './routeGrid';
 
 /**
@@ -147,8 +147,18 @@ const told = new WeakMap<Pt[], Told>();
  * price of one remembered answer from the router (`routeAuto`) -- what the
  * line re-rendering would have cost -- plus its answer for the near symbols
  * when they have changed too.
+ *
+ * While a drag is on, the symbols it has picked up (`BoxGrid.lifted`) are in
+ * the way of a line only when the line ends on one of them (`portOf`), as
+ * the reseat routes it (`Pricing.lineSheetFor`). A line that ends on none of
+ * them is part of the drawing being dragged over, as a pipe the drag does
+ * not touch is: routed round a valve dragged across it, a branch on the far
+ * side of a stand swung out into a detour and back as the valve went by, a
+ * new shape on every tick for a symbol it has nothing to do with. It is
+ * routed round the symbol, if the symbol is let go of in its way, when it is.
  */
 export function inTheWay(plain: Pt[], grid: BoxGrid, a: End, b: End, offset = 0): Box[] {
+  if (grid.lifted.size && ![...grid.lifted].some(bx => portOf(a, bx) || portOf(b, bx))) grid = grid.withoutLifted();
   const reach = withinReach(plain, grid, a, b);
   if (reach === NO_BOXES) return NO_BOXES;
   let last = told.get(plain);

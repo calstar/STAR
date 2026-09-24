@@ -388,15 +388,16 @@ describe('a port that already has a line is teed, never stacked', () => {
     expect(isJunction(made.nodes.find(n => n.id === line.source))).toBe(true);
   });
 
-  it('keeps the line it tees in more than two grid steps off the pipe it joins, and previews it where it is drawn', () => {
+  it('keeps the line it tees in at least two grid steps off the pipe it joins, and previews it where it is drawn', () => {
     // M's right port has its line to K, along y = 600 and up. A line from
     // S, down and to the right, let go on that port tees in thirty out and
     // comes into the tee from below. Every level for its crossbar between
     // the tee's stub and S is as short as every other, and the router's own
     // is at the stub: fourteen pixels under the pipe, all the way along it
     // to where it turns up, which reads as the pipe drawn twice. The
-    // crossbar goes where it is clear, and no further; and the preview is
-    // the line the drop leaves.
+    // crossbar goes where it is clear -- two grid steps under the pipe,
+    // which is clear of it -- and no further; and the preview is the line
+    // the drop leaves.
     const onPage = (g: G): G => {
       let n = g.nodes, e = g.edges;
       for (let i = 0; i < 10; i++) {
@@ -413,8 +414,8 @@ describe('a port that already has a line is teed, never stacked', () => {
     const line = s.edges.find(e => e.target === 'S' || e.source === 'S')!;
     const pts = drawnScene(s.nodes, s.edges, endOf, obstaclesByPage(s.nodes)).get(line.id)!;
     const bar = pts.find((p, i) => i > 0 && pts[i - 1].y === p.y && Math.abs(p.x - pts[i - 1].x) > 100)!;
-    expect(bar.y - 600).toBeGreaterThan(20);
-    expect(bar.y).toBe(630);
+    expect(bar.y - 600).toBeGreaterThanOrEqual(20);
+    expect(bar.y).toBe(620);
     expect(previewOf(plan, scene(g), { from: P(1640, 850), to: P(1060, 600) }).points).toEqual(pts);
   });
 });
@@ -655,11 +656,14 @@ describe('empty canvas leaves an open end, straight when it nearly is', () => {
     expect(connected(drop(g, port('A', 'l'), P(103, 44))).to.centre).toEqual(P(100, 40));
   });
 
-  it('a pull out of a line leaves its open end square across the line from its tee', () => {
+  it('a pull out of a line leaves its open end square across the line from its tee, on the grid line the hover dot showed', () => {
+    // Pressed off a grid line: the tee goes in where the dot was, on the
+    // grid along the line, and the open end square across from the tee --
+    // not level with the press, which took the tee off the grid with it.
     const g = run();
     const plan = connected(drop(g, press(g, 'A-B', P(154.6, 31)), P(157, 200)));
-    expect(plan.to.centre).toEqual(P(154.6, 200));
-    expect(plan.from.centre.x).toBeCloseTo(154.6, 9);
+    expect(plan.to.centre).toEqual(P(150, 200));
+    expect(plan.from.centre).toEqual(P(150, 30));
   });
 });
 

@@ -172,7 +172,9 @@ describe('what a line says of itself', () => {
     publish('HV2', { pts: feed2().pts, info: { ...feed2().info, free: false } });
     await settled();
     expect(lineView('HV2')!.pts[1].x).toBe(180);
-    expect(lineView('HV1')!.pts[1].x).toBe(190);
+    // Two grid steps off it, not one: a line moved off one that cannot move
+    // keeps as far from it as a line the reseat chooses would.
+    expect(lineView('HV1')!.pts[1].x).toBe(200);
     expect(w.calls.get('HV1')).toBe(1);
     expect(w.calls.get('HV2')).toBe(1);
     w.stop();

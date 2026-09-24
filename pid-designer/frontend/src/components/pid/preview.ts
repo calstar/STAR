@@ -47,9 +47,6 @@ export interface PreviewShape {
 const cancelled = (pull: { from: Pt; to: Pt }): PreviewShape =>
   ({ points: [pull.from, pull.to], tees: [], ring: null, cancel: true });
 
-/** Can the reseat change the face a line ends on here? Not at a symbol's port, which is where it was put. */
-const turns = (e: PlanEnd) => e.kind !== 'port';
-
 /**
  * A plan, as the preview draws it: the line it makes, as the canvas will draw
  * it once the reseat has chosen its faces and the page has moved it off the
@@ -65,9 +62,13 @@ export function previewOf(plan: DropPlan, scene: DropScene, pull: { from: Pt; to
   // drawing (`obstaclesByPage`): a drag previews against the same scene frame
   // after frame, and the boxes are the same until the drawing changes.
   const sheet = perPage(made.nodes, scene.obstacles);
-  const { nodes, edges } = turns(plan.from) || turns(plan.to)
-    ? reseatJunctions(made.nodes, made.edges, scene.endOf, sheet)
-    : made;
+  // Settled as the real drop is, whatever it joins. Not only for the faces
+  // of a line that ends on a tee: a line between two ports is laid among the
+  // lines the reseat chooses, which are chosen round it -- a branch whose
+  // leg the new line's crossbar fell along takes another face -- and the
+  // page moves the new line off them where they go. The reseat hands back
+  // what it was given when nothing needs to move.
+  const { nodes, edges } = reseatJunctions(made.nodes, made.edges, scene.endOf, sheet);
   const line = edges.find(e => e.id === made.lineId);
   // On the page it is drawn on, with the rest of that page as it has them.
   const upstream = line && nodes.find(n => n.id === line.source);

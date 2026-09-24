@@ -102,6 +102,28 @@ describe('a line that routes itself', () => {
 });
 
 describe('inTheWay', () => {
+  it('leaves a symbol being dragged out of the way of a line that does not end on it, and in the way of one that does', () => {
+    // A line straight from A across to B, and V and W dragged across it
+    // together. The line stands still, and is drawn as it was while they go
+    // over it -- routed round them on every tick, it swung out into a
+    // detour and back for symbols it has nothing to do with -- and is routed
+    // round them if they are let go of there. V's own line on to C, with W
+    // in its way, goes round W.
+    const A = part('A', 0, 0), B = part('B', 500, 0), C = part('C', 700, -20);
+    const V = { ...part('V', 150, -20), dragging: true }, W = { ...part('W', 320, -20), dragging: true };
+    const a = endOf(A, 'r')!, b = endOf(B, 'l')!;
+    const plain = pathPoints(routeOrthogonal(a, b).d);
+    expect(through(plain, [box(V), box(W)])).toHaveLength(2);
+    expect(inTheWay(plain, obstacleGrid([A, B, C, V, W]), a, b)).toBe(NO_BOXES);
+    const still = inTheWay(plain, obstacleGrid([A, B, C, { ...V, dragging: false }, { ...W, dragging: false }]), a, b);
+    expect(still).toContainEqual(box(V));
+    expect(still).toContainEqual(box(W));
+    const v = endOf(V, 'r')!, c = endOf(C, 'l')!;
+    const own = pathPoints(routeOrthogonal(v, c).d);
+    expect(through(own, [box(W)])).toEqual([box(W)]);
+    expect(inTheWay(own, obstacleGrid([A, B, C, V, W]), v, c)).toContainEqual(box(W));
+  });
+
   it('is none -- the same array every time -- for a line whose plain route runs into nothing', () => {
     const grid = obstacleGrid([part('A', 0, 0), part('B', 300, 0), part('Far', 1000, 1000)]);
     const ea = endOf(part('A', 0, 0), 'r')!, eb = endOf(part('B', 300, 0), 'l')!;
@@ -159,12 +181,16 @@ describe('inTheWay', () => {
 
   it('is told of everything within reach when its route round what is in its way depends on a symbol further off', () => {
     // A wall across the run taller than the search's first corridor: the way
-    // round it runs three hundred pixels off the run, where a symbol changes
-    // it. Told only of the symbols near the run, the router would route
-    // without that one; the answer is checked, and is everything in reach.
+    // round it runs three hundred pixels off the run, over the top, where a
+    // symbol lying just above the wall squeezes it down between the two.
+    // Told only of the symbols near the run, the router would route without
+    // that one; the answer is checked, and is everything in reach. (The wall
+    // reaches further below the run than above it, so that the way over the
+    // top is the router's whichever levels up there it has to choose from: a
+    // symbol nowhere near the way it takes changes nothing.)
     const a: End = { x: 63, y: 30, side: Position.Right }, b: End = { x: 897, y: 30, side: Position.Left };
-    const far: Box = { x: 380, y: -420, w: 200, h: 60 };
-    const sheet: Box[] = [{ x: 0, y: 0, w: 60, h: 60 }, { x: 900, y: 0, w: 60, h: 60 }, { x: 450, y: -300, w: 60, h: 660 }, far];
+    const far: Box = { x: 380, y: -345, w: 200, h: 30 };
+    const sheet: Box[] = [{ x: 0, y: 0, w: 60, h: 60 }, { x: 900, y: 0, w: 60, h: 60 }, { x: 450, y: -300, w: 60, h: 680 }, far];
     expect(routeAuto(a, b, sheet.filter(bx => bx !== far)).d).not.toBe(routeAuto(a, b, sheet).d);
     const boxes = inTheWay(pathPoints(routeOrthogonal(a, b).d), boxGrid(sheet), a, b);
     expect(boxes).toContain(far);
