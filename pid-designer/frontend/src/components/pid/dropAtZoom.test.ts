@@ -136,14 +136,18 @@ function canvas(start: { nodes: Node[]; edges: Edge[] }, view: View) {
   };
 }
 
-/** Every number the drawing places something with: positions, where each tee's pipe was put down between, and corners. */
+/**
+ * Every number the drawing places something with: positions, where each
+ * tee's pipe was put down between, each tee's home, and corners.
+ */
 function placesIn(g: { nodes: Node[]; edges: Edge[] }): { what: string; v: number }[] {
   const out: { what: string; v: number }[] = [];
   const pt = (what: string, p: Pt) => { out.push({ what: `${what}.x`, v: p.x }, { what: `${what}.y`, v: p.y }); };
   for (const n of g.nodes) {
     pt(`${n.id} position`, n.position);
-    const ends = isJunction(n) ? junctionData(n).along?.ends : undefined;
-    if (ends) { pt(`${n.id} along.ends.a`, ends.a); pt(`${n.id} along.ends.b`, ends.b); }
+    const along = isJunction(n) ? junctionData(n).along : undefined;
+    if (along?.ends) { pt(`${n.id} along.ends.a`, along.ends.a); pt(`${n.id} along.ends.b`, along.ends.b); }
+    if (along?.home) { pt(`${n.id} along.home.a`, along.home.a); pt(`${n.id} along.home.b`, along.home.b); pt(`${n.id} along.home.at`, along.home.at); }
   }
   for (const e of g.edges) {
     ((e.data as { waypoints?: Pt[] } | undefined)?.waypoints ?? []).forEach((w, i) => pt(`${e.id} waypoint ${i}`, w));

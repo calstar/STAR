@@ -94,16 +94,19 @@ describe('the default layout', () => {
 
 describe('the manifold as drawn', () => {
   it('puts the feed mid-way across the near end and the outlets down the long side', () => {
+    // On the 10 px grid: a block 20 thick and a pitch per outlet long, the
+    // outlets a pitch apart from 10 in. It was 26 by 118, with the feed at
+    // 13 and the outlets at 14, 40, 66 and 92, none of them on the grid.
     const h = manifoldLayout(4, 'horizontal');
-    expect({ w: h.width, h: h.height }).toEqual({ w: 118, h: 26 });
-    expect(h.ports.in).toEqual({ side: 'left', along: 13 });
+    expect({ w: h.width, h: h.height }).toEqual({ w: 120, h: 20 });
+    expect(h.ports.in).toEqual({ side: 'left', along: 10 });
     expect(['p', 'p2', 'p3', 'p4'].map(id => h.ports[id])).toEqual(
-      [14, 40, 66, 92].map(along => ({ side: 'bottom', along })));
+      [10, 40, 70, 100].map(along => ({ side: 'bottom', along })));
 
     const v = manifoldLayout(4, 'vertical');
-    expect({ w: v.width, h: v.height }).toEqual({ w: 26, h: 118 });
-    expect(v.ports.in).toEqual({ side: 'top', along: 13 });
-    expect(v.ports.p4).toEqual({ side: 'right', along: 92 });
+    expect({ w: v.width, h: v.height }).toEqual({ w: 20, h: 120 });
+    expect(v.ports.in).toEqual({ side: 'top', along: 10 });
+    expect(v.ports.p4).toEqual({ side: 'right', along: 100 });
   });
 
   it('takes a saved layout over the default', () => {
@@ -152,9 +155,9 @@ describe('the Geometry editor opens on the manifold as drawn', () => {
     const button = /<button[^>]*>(Save layout|Saved)<\/button>/.exec(html)!;
     expect(button[1]).toBe('Saved');
     expect(button[0]).toContain('disabled');
-    // And the block it shows is the one drawn: 26 wide, 118 long.
-    expect(html).toContain('value="26"');
-    expect(html).toContain('value="118"');
+    // And the block it shows is the one drawn: 20 wide, 120 long.
+    expect(html).toContain('value="20"');
+    expect(html).toContain('value="120"');
   });
 
   it('is not mounted until the dialog holds the manifold it is editing', () => {

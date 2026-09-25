@@ -116,6 +116,17 @@ export function migrate(d: { nodes: Node[]; edges: Edge[] }): { nodes: Node[]; e
   // first reseat to touch it -- on opening, after the baseline.
   nodes = recordPipes(nodes, edges, portEnd);
 
+  // 2026-09: the K-bottle, the dewar and a manifold with no saved layout were
+  // resized so their ports sit on the 10 px grid (SupplyNode, ManifoldNode).
+  // No rule here, on purpose. A saved drawing keeps a symbol's position and
+  // not its size, so nothing tells a manifold placed before the change from
+  // one placed after it, and moving either to make up the difference would
+  // move the other wrongly on every opening. Nor is one needed: the lines on
+  // a port are routed from where it is, and a tee on them stays where it was
+  // on the drawing. A supply's port moved at most four pixels across its
+  // line and a four-outlet manifold's at most eight; a longer block's far
+  // outlets, four more for each outlet before them.
+
   // What nothing touched is handed back as it came, so a caller comparing
   // by identity sees only what changed.
   const unchanged = <T,>(xs: T[], was: T[]) => xs.length === was.length && xs.every((x, i) => x === was[i]);

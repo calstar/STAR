@@ -4,7 +4,7 @@ import type { Along, EndLookup } from './junctions';
 import { pageOf } from './pages';
 import { pathPoints, routeOrthogonal, routeThrough, throughAsStored } from './route';
 import type { Box, End, Pt } from './route';
-import { NO_BOXES, PORT_REACH, REACH, boundsOf, boxGrid, perPage, portOf, routeAuto, withinReach } from './routeGrid';
+import { NO_BOXES, PORT_REACH, REACH, boundsOf, boxGrid, dotsByPage, perPage, portOf, routeAuto, withDots, withinReach } from './routeGrid';
 import type { BoxGrid, Obstacles } from './routeGrid';
 
 /**
@@ -28,7 +28,9 @@ import type { BoxGrid, Obstacles } from './routeGrid';
  *   third outlet to a valve down the row ran through the valve beside it and
  *   left over that valve's port, which reads as a series connection that is
  *   not there. The reseat prices a branch's faces with this same route, so a
- *   face chosen to go round a symbol is drawn going round it.
+ *   face chosen to go round a symbol is drawn going round it. The dots of
+ *   the junctions it does not end on are in its way too, as small symbols
+ *   (`routeGrid.lineGrid`): a line through a tee's dot reads as teed in.
  */
 
 export interface LineData {
@@ -196,7 +198,8 @@ export function sameBoxes(p: Box[], q: Box[]): boolean {
  * its ends looked up with `endOf` (a tee's carrying J_END, as BranchableEdge
  * gives it), and, for a line that routes itself, the symbols on its page in
  * its way -- `obstacles` as given, or every visible symbol on the page of its
- * source. Null when an end cannot be looked up.
+ * source -- and the dots of the junctions there (`dotsByPage`). Null when an
+ * end cannot be looked up.
  *
  * Not always where the canvas draws it: a line that routes itself and would
  * lie along another is drawn with its middle a grid step or so over, which
@@ -216,7 +219,8 @@ export function drawnRoute(
   const b: End = isJunction(t) ? { ...b0, ...J_END } : b0;
   const data = edge.data as LineData | undefined;
   if (!routesItself(data, s, edge.sourceHandle, t, edge.targetHandle)) return routeOfLine(a, b, data, null);
-  const boxes = perPage(nodesById, obstacles)(pageOf(s.data as { page?: string }));
+  const page = pageOf(s.data as { page?: string });
+  const boxes = withDots(perPage(nodesById, obstacles)(page), dotsByPage(nodesById)(page));
   // Everything within reach, rather than `inTheWay`'s fewest: nothing
   // subscribes to this answer, and the router gives the same route from both.
   const plain = pathPoints(routeOrthogonal(a, b, data?.offset ?? 0).d);

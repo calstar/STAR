@@ -9,8 +9,9 @@ import type { PIDNodeData } from './types';
  * A drawing stores geometry in more than one place. A symbol's position is
  * obvious; less obvious are the corners a line was routed through
  * (`data.waypoints`, hand corners and the `viaRun` corners a pipe hands its
- * halves alike) and where a tee last saw the two ends of its pipe
- * (`data.along.ends`). All of them are absolute flow coordinates. Every edit
+ * halves alike), where a tee last saw the two ends of its pipe
+ * (`data.along.ends`) and where it was put down on purpose
+ * (`data.along.home`). All of them are absolute flow coordinates. Every edit
  * that picks part of the drawing up and puts it down somewhere else -- a
  * paste, a group drag, a snap on release -- has to move all of them together,
  * and each one used to write its own transform and forget a different piece:
@@ -33,7 +34,9 @@ const shift = (p: Pt, d: Pt): Pt => ({ x: p.x + d.x, y: p.y + d.y });
  *   corners where they are: a corner is a decision about where the pipe runs,
  *   and moving one end does not unmake it;
  * - a tee in `ids` has the pipe ends it last saw (`along.ends`) moved with it,
- *   so the reseat sees a pipe that was moved, not one that was re-routed.
+ *   so the reseat sees a pipe that was moved, not one that was re-routed;
+ *   and so has its home (`along.home`), so a bay picked up and put down
+ *   elsewhere has its tees at home there, as they were where it came from.
  *
  * Nothing else is touched, and anything unchanged comes back as the same
  * object -- the same arrays when nothing moved at all -- so React can skip it.
@@ -52,13 +55,22 @@ export function translateSubgraph(
   const nextNodes = nodes.map(n => {
     if (!moving.has(n.id)) return n;
     nodesChanged = true;
-    const data = n.data as { along?: { ends?: { a: Pt; b: Pt } } } | undefined;
-    const ends = data?.along?.ends;
+    const data = n.data as { along?: { ends?: { a: Pt; b: Pt }; home?: { a: Pt; b: Pt; at: Pt } } } | undefined;
+    const ends = data?.along?.ends, home = data?.along?.home;
     return {
       ...n,
       position: shift(n.position, delta),
-      ...(ends
-        ? { data: { ...n.data, along: { ...data!.along, ends: { a: shift(ends.a, delta), b: shift(ends.b, delta) } } } }
+      ...(ends || home
+        ? {
+          data: {
+            ...n.data,
+            along: {
+              ...data!.along,
+              ...(ends ? { ends: { a: shift(ends.a, delta), b: shift(ends.b, delta) } } : {}),
+              ...(home ? { home: { a: shift(home.a, delta), b: shift(home.b, delta), at: shift(home.at, delta) } } : {}),
+            },
+          },
+        }
         : {}),
     };
   });

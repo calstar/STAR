@@ -202,7 +202,7 @@ describe('a line an old tee saved with no port on its symbol end', () => {
 
   it('is put on a manifold\'s nearest outlet, which is named for no side', () => {
     const man: Node = { id: 'M', type: 'MANIFOLD', position: { x: 400, y: 200 }, data: { componentType: 'MANIFOLD', label: 'M', options: { outlets: 4 } } };
-    // Outlets down the bottom at 14, 40, 66 and 92 across; the tee is under the third.
+    // Outlets down the bottom at 10, 40, 70 and 100 across; the tee is under the third.
     const below: Node = { id: 'junc_1', type: 'JUNCTION', position: { x: 461, y: 295 }, data: {} };
     const out = migrate({ nodes: [man, below], edges: [{ id: 'j-M', source: 'junc_1', sourceHandle: 't', target: 'M', data: {} }] });
     expect(out.edges[0].targetHandle).toBe('p3');

@@ -1,10 +1,12 @@
-import type { Node } from '@xyflow/react';
+import type { Edge, Node } from '@xyflow/react';
+import { Position } from '@xyflow/react';
 import {
   AXIS_EPS, CORNER, GRID, STUB, facing, isHorizontal, pathPoints, pointsToPath, routeCost, routeOrthogonal, segmentEntersBox,
-  simplifyPoints,
+  simplifyPoints, turnPlacement,
 } from './route';
 import type { Box, End, Pt, Route } from './route';
 import { pageOf } from './pages';
+import { findVents } from './vents';
 
 export type { Box } from './route';
 
@@ -127,38 +129,300 @@ export function boxOfNode(n: Node): Box {
  * obstacles (a branch meets a tee on purpose, and a tee is smaller than the
  * margin anyway), nor are section boxes, which frame symbols rather than
  * block anything, nor text; and neither is anything on another page.
+ *
+ * Given the drawing's lines, a valve that vents is in the way as far out as
+ * the mark drawn on its open port (`ventedBox`).
  */
-export function obstacleBoxes(nodes: Node[]): Box[] {
-  return obstaclesOf(nodes).boxes;
+export function obstacleBoxes(nodes: Node[], edges?: Edge[]): Box[] {
+  return obstaclesOf(nodes, edges ? ventsOf(nodes, edges).sides : NO_VENTS).boxes;
 }
 
 /** `obstacleBoxes`, and which of them are symbols a drag has picked up (React Flow's `dragging`). */
-function obstaclesOf(nodes: Node[]): { boxes: Box[]; lifted: Set<Box> } {
+function obstaclesOf(nodes: Node[], vents: ReadonlyMap<string, Position> = NO_VENTS): { boxes: Box[]; lifted: Set<Box> } {
   const boxes: Box[] = [];
   const lifted = new Set<Box>();
   for (const n of nodes) {
     if (n.hidden) continue;
     // Either says so: a tee from an old drawing has its node type and no
     // component type, or a component type its node type does not repeat.
-    if (NOT_OBSTACLES.has(typeOf(n)) || NOT_OBSTACLES.has(n.type ?? '')) continue;
-    const bx = boxOfNode(n);
+    if (isNotObstacle(n)) continue;
+    const bx = ventedBox(boxOfNode(n), vents.get(n.id));
     boxes.push(bx);
     if (n.dragging) lifted.add(bx);
   }
   return { boxes, lifted };
 }
 
+const isNotObstacle = (n: Node) => NOT_OBSTACLES.has(typeOf(n)) || NOT_OBSTACLES.has(n.type ?? '');
+const isDot = (n: Node) => typeOf(n) === 'JUNCTION' || n.type === 'JUNCTION';
+
+// ── Vents ────────────────────────────────────────────────────────────────────
+
+/**
+ * How far the mark on a venting valve's open port stands out of the valve:
+ * the stub and the open triangle at its end, as VentLayer draws them -- a
+ * line fourteen pixels out and the triangle's tip ten beyond.
+ */
+export const VENT_REACH = 24;
+
+const NO_VENTS: ReadonlyMap<string, Position> = new Map();
+
+/**
+ * The side of a valve's box its open port's mark is drawn out of, turned
+ * with the valve: worked out as VentLayer places the mark, from the valve's
+ * box as measured (turned) and its rotation.
+ */
+function ventSide(n: Node, handle: string): Position {
+  const rotation = (n.data as { rotation?: number } | undefined)?.rotation ?? 0;
+  const quarter = Math.round(((rotation % 360) + 360) % 360 / 90) % 2 === 1;
+  const { w: bw, h: bh } = boxOfNode(n);
+  const w = quarter ? bh : bw, h = quarter ? bw : bh;
+  return turnPlacement(handle === 'r' ? Position.Right : Position.Left, h / 2, w, h, rotation).side;
+}
+
+/**
+ * A symbol's box, grown on `side` by the vent mark drawn there; the box as it
+ * is when it has none.
+ *
+ * The mark is part of the drawing a line has to keep out of as much as the
+ * valve is. A branch sent round a valve dropped on it went fifteen pixels
+ * clear of the valve's body and straight up through the triangle on its open
+ * port, and at any zoom read as plumbed into the valve's outlet.
+ */
+export function ventedBox(bx: Box, side: Position | undefined): Box {
+  switch (side) {
+    case Position.Right: return { ...bx, w: bx.w + VENT_REACH };
+    case Position.Left: return { ...bx, x: bx.x - VENT_REACH, w: bx.w + VENT_REACH };
+    case Position.Bottom: return { ...bx, h: bx.h + VENT_REACH };
+    case Position.Top: return { ...bx, y: bx.y - VENT_REACH, h: bx.h + VENT_REACH };
+    default: return bx;
+  }
+}
+
+/** Which valves vent and out of which side (`ventSide`), and that as a key two answers can be compared by. */
+interface Vents { sides: ReadonlyMap<string, Position>; key: string }
+const ventsKept = new WeakMap<object, WeakMap<object, Vents>>();
+
+/**
+ * Every valve among `nodes` that vents (`vents.findVents`), by id, with the
+ * side its mark is drawn out of. Worked out once for a pair of arrays.
+ *
+ * A valve has two ports, and vents out of one when its line is on the other;
+ * a line on a port no valve has is not a valve's, and says nothing about
+ * which side is open.
+ */
+export function ventsOf(nodes: Node[], edges: Edge[]): Vents {
+  let byEdges = ventsKept.get(nodes);
+  if (!byEdges) { byEdges = new WeakMap(); ventsKept.set(nodes, byEdges); }
+  let v = byEdges.get(edges);
+  if (!v) {
+    const byId = new Map(nodes.map(n => [n.id, n]));
+    const used = new Set<string>();
+    for (const e of edges) { used.add(`${e.source}\u0000${e.sourceHandle ?? ''}`); used.add(`${e.target}\u0000${e.targetHandle ?? ''}`); }
+    const sides = new Map<string, Position>();
+    for (const vent of findVents(nodes, edges)) {
+      const n = byId.get(vent.nodeId);
+      const plumbed = `${vent.nodeId}\u0000${vent.handle === 'r' ? 'l' : 'r'}`;
+      if (n && used.has(plumbed)) sides.set(n.id, ventSide(n, vent.handle));
+    }
+    v = { sides, key: [...sides].map(([id, s]) => `${id}:${s}`).join(';') };
+    byEdges.set(edges, v);
+  }
+  return v;
+}
+
+/**
+ * What `of` says is in the way on each page, with the box of every valve
+ * that vents grown on its open side (`ventedBox`): its own boxes as they are
+ * when no valve vents. A box is known by where it is, since a sheet's boxes
+ * carry no names -- as the reseat takes the symbols a drag picks up off one.
+ */
+export function withVents(of: (page: string) => Box[], nodes: Node[], edges: Edge[]): (page: string) => Box[] {
+  const { sides } = ventsOf(nodes, edges);
+  if (!sides.size) return of;
+  const grown = new Map<string, Map<string, Box>>();
+  for (const n of nodes) {
+    const side = sides.get(n.id);
+    if (!side || n.hidden) continue;
+    const page = pageOf(n.data as { page?: string });
+    const bx = boxOfNode(n);
+    let list = grown.get(page);
+    if (!list) { list = new Map(); grown.set(page, list); }
+    list.set(boxKey(bx), ventedBox(bx, side));
+  }
+  const kept = new Map<string, Box[]>();
+  return (page: string) => {
+    let out = kept.get(page);
+    if (!out) {
+      const g = grown.get(page);
+      const boxes = of(page);
+      out = g ? boxes.map(b => g.get(boxKey(b)) ?? b) : boxes;
+      kept.set(page, out);
+    }
+    return out;
+  };
+}
+
+// ── Dots ─────────────────────────────────────────────────────────────────────
+
+/**
+ * How far across a junction's dot is drawn (junctions.J_HALF either side of
+ * its centre), which is the box it is in a line's way by. Grown by a port's
+ * reach, as everything a line does not end on is (`heldClear`), a line has
+ * to pass more than seven pixels from the centre -- the dot and the ring its
+ * shadow draws -- to be clear of it; ten pixels off is a line passing by.
+ */
+export const DOT = 10;
+
+/**
+ * How far off a dot's centre a way round it runs: two grid steps, on the
+ * grid for a dot on it, and a grid step clear of the dot (`DOT_CLEAR`).
+ */
+export const LIFT = 2 * GRID;
+
+/**
+ * Nearer a dot's centre than this, a way round it is not clear of it: the
+ * dot and a grid step. A header carried down onto another line's open end
+ * was lifted round it one grid step, ten pixels off its centre, and the
+ * dot's ring sat four pixels under the line: at most zooms the open end
+ * read as hung off the header.
+ */
+export const DOT_CLEAR = DOT / 2 + GRID;
+
+/** The boxes that are dots (`dotBox`), by identity: a box carries no name. */
+const dotBoxes = new WeakSet<Box>();
+
+/** The box a junction's dot is in a line's way by, from its node's position (its top-left). */
+export const dotBox = (n: Node): Box => {
+  const bx = { x: n.position.x, y: n.position.y, w: DOT, h: DOT };
+  dotBoxes.add(bx);
+  return bx;
+};
+
+/** Is this one of the boxes `dotBox` made: a dot, not a symbol? */
+export const isDotBox = (bx: Box) => dotBoxes.has(bx);
+
+/**
+ * A route lifted round each of the dots it runs through, nearer their
+ * centres than `reach`: off the leg it runs through a dot on `LIFT` short of
+ * the dot, along `LIFT` off its centre, and back onto the leg `LIFT` past it
+ * -- dots close together on one leg lifted round as one -- and exactly as it
+ * was everywhere else. Each lift goes to the side `score` prices lower
+ * (Infinity: not at all), toward the smaller coordinate when both are as
+ * good. Null when a dot is where two legs meet, or so near a corner or an
+ * end of the route that its leg has no room for a lift -- a port's stub, or
+ * half a grid step from a corner -- or neither side will do.
+ *
+ * The one way round a dot there is for a leg that runs through it, and the
+ * one that leaves the route where it was everywhere else. A way looked for
+ * over the whole route took whichever of the ways as short as each other the
+ * search found cheapest: a header next to a row of valves was cheapest
+ * lifted all along the row, clear of their margins, ten pixels over the port
+ * level of every valve on it.
+ */
+export function liftRound(pts: Pt[], dots: Pt[], a: End, b: End, reach: number, score: (lift: Pt[]) => number): Pt[] | null {
+  let path = simplifyPoints(pts);
+  if (path.length < 2) return null;
+  // Each dot it runs through, on the one leg it runs through it on.
+  const onLeg = new Map<number, Pt[]>();
+  for (const d of dots) {
+    const box = { x: d.x - reach, y: d.y - reach, w: 2 * reach, h: 2 * reach };
+    const legs = path.slice(0, -1).map((_, i) => i).filter(i => segmentEntersBox(path[i], path[i + 1], box, 0));
+    if (legs.length > 1) return null;
+    if (legs.length) onLeg.set(legs[0], [...(onLeg.get(legs[0]) ?? []), d]);
+  }
+  if (!onLeg.size) return path;
+  // From the last leg back, so the legs before keep their places.
+  for (const i of [...onLeg.keys()].sort((u, v) => v - u)) {
+    const p = path[i], q = path[i + 1];
+    const level = Math.abs(p.y - q.y) < AXIS_EPS;
+    const along = (c: Pt) => (level ? c.x : c.y), across = (c: Pt) => (level ? c.y : c.x);
+    const at = (u: number, v: number): Pt => (level ? { x: u, y: v } : { x: v, y: u });
+    const way = Math.sign(along(q) - along(p));
+    const keep = (j: number) => (j === 0 ? a.stub ?? STUB : j === path.length - 1 ? b.stub ?? STUB : GRID / 2);
+    const lo = Math.min(along(p), along(q)), hi = Math.max(along(p), along(q));
+    const loKeep = keep(way > 0 ? i : i + 1), hiKeep = keep(way > 0 ? i + 1 : i);
+    // The dots on this leg in order along it, lifted round together where
+    // their lifts would come within a grid step of each other.
+    const windows: { u0: number; u1: number; dots: Pt[] }[] = [];
+    for (const d of [...onLeg.get(i)!].sort((u, v) => along(u) - along(v))) {
+      const last = windows[windows.length - 1];
+      if (last && along(d) - LIFT <= last.u1 + GRID) { last.u1 = along(d) + LIFT; last.dots.push(d); }
+      else windows.push({ u0: along(d) - LIFT, u1: along(d) + LIFT, dots: [d] });
+    }
+    const lifts: Pt[] = [];
+    for (const w of way > 0 ? windows : [...windows].reverse()) {
+      if (w.u0 < lo + loKeep - AXIS_EPS || w.u1 > hi - hiKeep + AXIS_EPS) return null;
+      const v0 = across(p);
+      const [enter, leave] = way > 0 ? [w.u0, w.u1] : [w.u1, w.u0];
+      const sides = [Math.min(...w.dots.map(across)) - LIFT, Math.max(...w.dots.map(across)) + LIFT].map(v => {
+        const lift = [at(enter, v0), at(enter, v), at(leave, v), at(leave, v0)];
+        return { lift, cost: score(lift) };
+      });
+      const best = sides[1].cost < sides[0].cost ? sides[1] : sides[0];
+      if (best.cost === Infinity) return null;
+      lifts.push(...best.lift);
+    }
+    path = [...path.slice(0, i + 1), ...lifts, ...path.slice(i + 1)];
+  }
+  return simplifyPoints(path);
+}
+
+/** The dots of the junctions among `nodes` that are in a line's way (`lineGrid`). */
+const dotsOf = (nodes: Iterable<Node>): Box[] => {
+  const out: Box[] = [];
+  for (const n of nodes) if (!n.hidden && !n.dragging && isDot(n)) out.push(dotBox(n));
+  return out;
+};
+
+/**
+ * The dots in a line's way on each page (`lineGrid`), for a drawing: the
+ * same function every time it is asked for that collection of nodes.
+ */
+export function dotsByPage(nodes: Node[] | ReadonlyMap<string, Node>): (page: string) => Box[] {
+  let by = dotsByDrawing.get(nodes);
+  if (by) return by;
+  const onPage = new Map<string, Box[]>();
+  for (const n of Array.isArray(nodes) ? nodes : nodes.values()) {
+    if (n.hidden || n.dragging || !isDot(n)) continue;
+    const page = pageOf(n.data as { page?: string });
+    const list = onPage.get(page);
+    if (list) list.push(dotBox(n)); else onPage.set(page, [dotBox(n)]);
+  }
+  by = (page: string) => onPage.get(page) ?? NO_BOXES;
+  dotsByDrawing.set(nodes, by);
+  return by;
+}
+const dotsByDrawing = new WeakMap<object, (page: string) => Box[]>();
+
+/**
+ * Symbols and dots together, as one list: the same array every time it is
+ * asked for the same two, so what is filed by it (`boxGrid`) is filed once.
+ */
+export function withDots(boxes: Box[], dots: Box[]): Box[] {
+  if (!dots.length) return boxes;
+  let byDots = together.get(boxes);
+  if (!byDots) { byDots = new WeakMap(); together.set(boxes, byDots); }
+  let out = byDots.get(dots);
+  if (!out) { out = [...boxes, ...dots]; byDots.set(dots, out); }
+  return out;
+}
+const together = new WeakMap<object, WeakMap<object, Box[]>>();
+
 /**
  * What automatic routes go round, page by page: every visible symbol on the
- * page -- not tees, section boxes or text (`obstacleBoxes`). One function for
- * one drawing -- the same one every time it is asked for that array of
- * nodes -- each page's boxes worked out when first asked for.
+ * page -- not tees, section boxes or text (`obstacleBoxes`), and, given the
+ * drawing's lines, each valve that vents as far as its mark. One function
+ * for one drawing -- the same one every time it is asked for that array of
+ * nodes, and of lines -- each page's boxes worked out when first asked for.
  *
  * By page because the pages of a drawing share one plane: a symbol on another
  * page can stand exactly where a line on this one runs, and is not in its way.
  */
-export function obstaclesByPage(nodes: Node[] | ReadonlyMap<string, Node>): (page: string) => Box[] {
-  let by = byDrawing.get(nodes);
+export function obstaclesByPage(nodes: Node[] | ReadonlyMap<string, Node>, edges?: Edge[]): (page: string) => Box[] {
+  let kept = byDrawing.get(nodes);
+  if (!kept) { kept = new WeakMap(); byDrawing.set(nodes, kept); }
+  let by = kept.get(edges ?? NO_LINES);
   if (by) return by;
   const onPage = new Map<string, Node[]>();
   for (const n of Array.isArray(nodes) ? nodes : nodes.values()) {
@@ -169,13 +433,14 @@ export function obstaclesByPage(nodes: Node[] | ReadonlyMap<string, Node>): (pag
   const boxes = new Map<string, Box[]>();
   by = (page: string) => {
     let b = boxes.get(page);
-    if (!b) { b = obstacleBoxes(onPage.get(page) ?? []); boxes.set(page, b); }
+    if (!b) { b = obstacleBoxes(onPage.get(page) ?? [], edges); boxes.set(page, b); }
     return b;
   };
-  byDrawing.set(nodes, by);
+  kept.set(edges ?? NO_LINES, by);
   return by;
 }
-const byDrawing = new WeakMap<object, (page: string) => Box[]>();
+const byDrawing = new WeakMap<object, WeakMap<object, (page: string) => Box[]>>();
+const NO_LINES: Edge[] = [];
 
 /**
  * What automatic routes go round, as a caller gives it: one list for the
@@ -269,14 +534,54 @@ const grids = new WeakMap<object, BoxGrid>();
 /**
  * The obstacles among a set of nodes -- those `obstacleBoxes` counts, the
  * hidden ones not -- filed once per array, with the ones React Flow is
- * dragging marked (`BoxGrid.lifted`).
+ * dragging marked (`BoxGrid.lifted`). Given the drawing's lines, a valve that
+ * vents is in the way as far as its mark (`ventedBox`); filed once per array
+ * and set of valves that vent, so a change to the lines that leaves those as
+ * they were hands back the grid it had.
  */
-export function obstacleGrid(nodes: Node[]): BoxGrid {
+export function obstacleGrid(nodes: Node[], edges?: Edge[]): BoxGrid {
+  const vents = edges ? ventsOf(nodes, edges) : null;
+  if (vents?.sides.size) return filed(ventedGrids, nodes, vents, false);
   let g = grids.get(nodes);
   if (!g) {
     const { boxes, lifted } = obstaclesOf(nodes);
     g = new BoxGrid(boxes, lifted);
     grids.set(nodes, g);
+  }
+  return g;
+}
+
+/**
+ * What is in the way of a line that routes itself among a set of nodes:
+ * `obstacleGrid`'s symbols, vented when given the lines, and the dots of the
+ * junctions. Filed as `obstacleGrid` files its boxes.
+ *
+ * A line drawn from its two ends alone ran wherever those put it, through
+ * whatever dot was there: a tee carried onto a line between two tanks sat on
+ * it, the line straight through its dot, and at any zoom the two tanks read
+ * as teed into the header the tee rides. A dot is a small symbol to a line
+ * that does not end on it, and the line goes round it (`roundTheDots`). Its
+ * own two ends' dots are no hindrance: it leaves a tee's face three pixels
+ * outside the dot and never comes back through it. A junction a drag has
+ * picked up is in nobody's way until it is let go of, as a symbol the drag
+ * carries is in the way only of the lines on it (`lineRoute.inTheWay`).
+ */
+export function lineGrid(nodes: Node[], edges?: Edge[]): BoxGrid {
+  return filed(lineGrids, nodes, edges ? ventsOf(nodes, edges) : null, true);
+}
+
+const ventedGrids = new WeakMap<object, Map<string, BoxGrid>>();
+const lineGrids = new WeakMap<object, Map<string, BoxGrid>>();
+
+function filed(kept: WeakMap<object, Map<string, BoxGrid>>, nodes: Node[], vents: Vents | null, dots: boolean): BoxGrid {
+  let byVents = kept.get(nodes);
+  if (!byVents) { byVents = new Map(); kept.set(nodes, byVents); }
+  const key = vents?.key ?? '';
+  let g = byVents.get(key);
+  if (!g) {
+    const { boxes, lifted } = obstaclesOf(nodes, vents?.sides);
+    g = new BoxGrid(dots ? [...boxes, ...dotsOf(nodes)] : boxes, lifted);
+    byVents.set(key, g);
   }
   return g;
 }
@@ -418,7 +723,93 @@ export function routeAuto(a: End, b: End, obstacles: Box[], offset = 0): Route {
   const found = remembered(a, b, offset, boxes, pts);
   // Clear by construction (`searchNear`); checked all the same, since a line
   // drawn through a symbol is the one thing this is here to prevent.
-  return found && !routeHitsBoxes(found, boxes) ? { d: pointsToPath(found), grip: null } : fast;
+  const searched = found && !routeHitsBoxes(found, boxes) ? found : null;
+  const round = roundTheDots(a, b, obstacles, boxes, pts, searched);
+  return round ? { d: pointsToPath(round), grip: null } : fast;
+}
+
+/**
+ * Of the ways round what is in a line's way, the one to draw, when dots are
+ * among it (`isDotBox`): the search's (`searched`); or, when dots are all the
+ * plain route `pts` runs into, that route with each crossbar that runs
+ * through one moved to either side of it, two grid steps off its centre
+ * (`LIFT`), or lifted round the dots where it runs through them
+ * (`liftRound`). Whichever runs into nothing and keeps `DOT_CLEAR` off every
+ * dot the line does not end on, and of those, the shortest by length and
+ * corners; the search's when none does.
+ *
+ * A dot is a small symbol to a line that does not end on it, and the search
+ * goes round one as round a symbol -- down the channel between the dot and
+ * the next grid line, too, as good a way round it as any to the search: a
+ * line between two tanks a tee was let go on ran seven pixels off the tee's
+ * centre, through its ring. A crossbar moved clear of a dot is the plainer
+ * drawing when it can be; a lift round the dot where the line runs through
+ * it, when nothing plainer keeps clear of it.
+ */
+function roundTheDots(a: End, b: End, obstacles: Box[], boxes: Box[], pts: Pt[], searched: Pt[] | null): Pt[] | null {
+  const ends = (bx: Box) => distanceTo(a, bx) <= PORT_REACH + 0.5 || distanceTo(b, bx) <= PORT_REACH + 0.5;
+  const dots = obstacles.filter(bx => isDotBox(bx) && !ends(bx));
+  if (!dots.length) return searched;
+  const centre = (bx: Box): Pt => ({ x: bx.x + bx.w / 2, y: bx.y + bx.h / 2 });
+  const clearOfDots = (q: Pt[]) => dots.every(bx => nearest(q, centre(bx)) >= DOT_CLEAR - AXIS_EPS);
+  const ways: Pt[][] = searched ? [searched] : [];
+  const hit = dots.filter(bx => routeHitsBoxes(pts, heldClear([bx], a, b)));
+  const own = [a.body, b.body].filter((x): x is Box => !!x);
+  if (hit.length && !routeHitsBoxes(pts, heldClear([...obstacles.filter(bx => !isDotBox(bx)), ...own], a, b))) {
+    // A crossbar -- a leg touching neither end -- through a dot, moved clear.
+    const n = pts.length;
+    for (let i = 1; i + 2 < n; i++) {
+      const p = pts[i], q = pts[i + 1];
+      const level = Math.abs(p.y - q.y) < AXIS_EPS;
+      const on = hit.filter(bx => routeHitsBoxes([p, q], heldClear([bx], a, b)));
+      if (!on.length) continue;
+      const across = (c: Pt) => (level ? c.y : c.x);
+      for (const v of [Math.min(...on.map(bx => across(centre(bx)))) - LIFT, Math.max(...on.map(bx => across(centre(bx)))) + LIFT]) {
+        const moved = pts.map((c, j) => (j === i || j === i + 1 ? (level ? { x: c.x, y: v } : { x: v, y: c.y }) : c));
+        // The legs either side still run the way they did, and the legs out
+        // of the ends are still their ports' stubs at least.
+        const same = (j: number) => Math.sign(moved[j + 1].x - moved[j].x) === Math.sign(pts[j + 1].x - pts[j].x)
+          && Math.sign(moved[j + 1].y - moved[j].y) === Math.sign(pts[j + 1].y - pts[j].y);
+        const long = (u: Pt, w: Pt) => Math.abs(u.x - w.x) + Math.abs(u.y - w.y);
+        if (!same(i - 1) || !same(i + 1)) continue;
+        if (long(moved[0], moved[1]) < (a.stub ?? STUB) - AXIS_EPS || long(moved[n - 2], moved[n - 1]) < (b.stub ?? STUB) - AXIS_EPS) continue;
+        ways.push(simplifyPoints(moved));
+      }
+    }
+    const lifted = liftRound(pts, hit.map(centre), a, b, DOT / 2 + PORT_REACH - TOUCH, lift => (routeHitsBoxes(lift, boxes) ? Infinity : 0));
+    if (lifted) ways.push(lifted);
+  }
+  let best: Pt[] | null = null, cost = Infinity;
+  for (const q of ways) {
+    if (q !== searched && (routeHitsBoxes(q, boxes) || selfCrossing(q))) continue;
+    if (!clearOfDots(q)) continue;
+    const c = routeCost(q);
+    if (c < cost - 1e-9) { best = q; cost = c; }
+  }
+  return best ?? searched;
+}
+
+/** How near a path comes to a point. */
+function nearest(pts: Pt[], c: Pt): number {
+  let best = Infinity;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const p = pts[i], q = pts[i + 1];
+    const x = Math.max(Math.min(p.x, q.x), Math.min(Math.max(p.x, q.x), c.x));
+    const y = Math.max(Math.min(p.y, q.y), Math.min(Math.max(p.y, q.y), c.y));
+    best = Math.min(best, Math.hypot(c.x - x, c.y - y));
+  }
+  return best;
+}
+
+/** Does a square path cross or touch itself anywhere but where one leg meets the next? */
+function selfCrossing(pts: Pt[]): boolean {
+  const e = AXIS_EPS / 2;
+  for (let i = 0; i + 1 < pts.length; i++) for (let j = i + 2; j + 1 < pts.length; j++) {
+    const [p1, p2, q1, q2] = [pts[i], pts[i + 1], pts[j], pts[j + 1]];
+    if (Math.max(p1.x, p2.x) + e >= Math.min(q1.x, q2.x) && Math.max(q1.x, q2.x) + e >= Math.min(p1.x, p2.x)
+      && Math.max(p1.y, p2.y) + e >= Math.min(q1.y, q2.y) && Math.max(q1.y, q2.y) + e >= Math.min(p1.y, p2.y)) return true;
+  }
+  return false;
 }
 
 // ── Among the other lines ────────────────────────────────────────────────────
@@ -573,9 +964,22 @@ export const AMONG_REACH = 2 * REACH + 4 * GRID;
 /** Everything a route is looked for among besides the symbols. */
 export interface Soft {
   lines: SoftLine[];
-  /** The junctions' dots a route may not pass through (not its own ends'), how near is through, and what it costs. */
-  dots: { at: Pt[]; reach: number; cost: number };
+  /**
+   * The junctions' dots a route may not pass through (not its own ends'), how
+   * near is through, and what it costs; and how far off a dot the search is
+   * given a lane to run clear of it by, when not the grid step past the first
+   * grid line clear of `reach` (`dotLane`).
+   */
+  dots: { at: Pt[]; reach: number; cost: number; lane?: number };
 }
+
+/**
+ * How far off a dot a search among the lines is given a lane either side of
+ * it: the one it is told, or else two grid steps off a dot seven pixels
+ * across -- a grid step past the first grid line clear of it, since a route
+ * turned just short of a dot points straight at it.
+ */
+const dotLane = (dots: Soft['dots']) => dots.lane ?? Math.ceil(dots.reach / GRID) * GRID + GRID;
 
 /**
  * The route for a line looked for among the other lines on its page as well
@@ -662,7 +1066,7 @@ function seenAmong(boxes: Box[], soft: Soft, tried: Box[]): string {
     }
   }
   const r = soft.dots.reach;
-  parts.push('|', r, soft.dots.cost);
+  parts.push('|', r, soft.dots.cost, dotLane(soft.dots));
   for (const d of soft.dots.at) if (tried.some(x => overlap({ x: d.x - r, y: d.y - r, w: 2 * r, h: 2 * r }, x))) parts.push(d.x, d.y);
   return parts.join(',');
 }
@@ -1068,10 +1472,9 @@ function searchGrid(
       }
     }
   }
-  // Two grid steps off a dot: a route turned just short of one points
-  // straight at it.
+  // Clear of each dot by its lane (`dotLane`).
   for (const d of soft?.dots.at ?? []) {
-    const c = Math.ceil(soft!.dots.reach / GRID) * GRID + GRID;
+    const c = dotLane(soft!.dots);
     clearX.push(d.x - c, d.x + c);
     clearY.push(d.y - c, d.y + c);
   }

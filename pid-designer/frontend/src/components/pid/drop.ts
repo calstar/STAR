@@ -841,7 +841,7 @@ export function resolveDrop(source: DropSource, at: Pt, under: Under, scene: Dro
 /**
  * `after`, with every place a drop wrote in it to a thousandth of a pixel
  * (`measuredAt`): the position of each node it made or changed, the ends a
- * tee's pipe was put down between, and each line's corners.
+ * tee's pipe was put down between and its home, and each line's corners.
  *
  * A drop reads the lines as the page draws them, and the page draws them
  * from React Flow's handles as it measured them: read off the screen and
@@ -862,8 +862,11 @@ function placedClean(before: { nodes: Node[]; edges: Edge[] }, after: { nodes: N
     const along = isJunction(n) ? junctionData(n).along : undefined;
     const ends = along?.ends ? { a: measuredAt(along.ends.a), b: measuredAt(along.ends.b) } : null;
     const endsMoved = !!ends && (!same(ends.a, along!.ends!.a) || !same(ends.b, along!.ends!.b));
-    if (same(position, n.position) && !endsMoved) return n;
-    return { ...n, position, ...(endsMoved ? { data: { ...n.data, along: { ...along!, ends: ends! } } } : {}) };
+    const home = along?.home ? { a: measuredAt(along.home.a), b: measuredAt(along.home.b), at: measuredAt(along.home.at) } : null;
+    const homeMoved = !!home && (!same(home.a, along!.home!.a) || !same(home.b, along!.home!.b) || !same(home.at, along!.home!.at));
+    if (same(position, n.position) && !endsMoved && !homeMoved) return n;
+    const record = { ...(endsMoved ? { ends: ends! } : {}), ...(homeMoved ? { home: home! } : {}) };
+    return { ...n, position, ...(endsMoved || homeMoved ? { data: { ...n.data, along: { ...along!, ...record } } } : {}) };
   };
   const line = (e: Edge): Edge => {
     if (had.has(e)) return e;

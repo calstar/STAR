@@ -254,7 +254,13 @@ export function splitEdgeAt(
 
   const junctionId = nextJunctionId();
   const faces = runFaces(spot.dir);
-  const along = alongFor(nodes, edges, edge, points, spot.s, spot.dir);
+  // Put down on purpose, here, with its pipe's ends where they are: its home
+  // (`Along.home`). On a longer pipe, whose ends only the reseat knows, the
+  // first seat records it.
+  const found = alongFor(nodes, edges, edge, points, spot.s, spot.dir);
+  const along: Along = found.ends
+    ? { ...found, home: { a: { ...found.ends.a }, b: { ...found.ends.b }, at: { x: spot.point.x, y: spot.point.y } } }
+    : found;
   const byHand = routedByHand(nodes, edges, edge);
 
   const junction: Node = {

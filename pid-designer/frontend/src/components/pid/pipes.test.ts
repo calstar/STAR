@@ -10,7 +10,7 @@ import type { Along, Dragging, EndLookup, Face } from './junctions';
 import { dissolveAfterDelete, insertInline, rejoinChains, splitEdgeAt } from './splitEdge';
 import { migrate } from './migrate';
 import { dragSegment, pathPoints, polylineLength, routeOrthogonal, routeThrough, simplifyPoints, sliceByArc, waypointsOf } from './route';
-import { REACH, boxOfNode, gridRoute, heldClear, obstacleBoxes, routeAuto } from './routeGrid';
+import { DOT_CLEAR, REACH, boxOfNode, gridRoute, heldClear, obstacleBoxes, routeAuto } from './routeGrid';
 import { drawnScene } from './tracks';
 import type { End, Pt } from './route';
 
@@ -503,8 +503,12 @@ describe('the reseat', () => {
     const t1 = tee(nodes, [E('A', 'r', 'B', 'l')], 'A-B', P(200, 30));
     const half = t1.edges.find(e => e.source === t1.id)!;
     const t2 = tee(t1.nodes, t1.edges, half.id, P(300, 30));
-    // Knock the second tee onto the first, as a stale drag might leave it.
-    const knocked = t2.nodes.map(n => (n.id === t2.id ? { ...n, position: { x: 200, y: 25 } } : n));
+    // Knock the second tee onto the first, as a stale drag might leave it:
+    // put down there, as its record says (`Along.home`), so it is the rules
+    // that move it and not its home.
+    const knocked = t2.nodes.map(n => (n.id === t2.id
+      ? { ...n, position: { x: 200, y: 25 }, data: { ...n.data, along: { ...alongOf(n), home: { ...alongOf(n).home!, at: P(200, 30) } } } }
+      : n));
     const s = settle(knocked, t2.edges);
     expect(centre(s.nodes.find(n => n.id === t2.id)!)).toEqual(P(200 + TEE_GAP, 30));
   });
@@ -673,17 +677,18 @@ describe('the reseat', () => {
   });
 
   it('moves a branch off a face the tee has turned to run through, even one it cannot price yet', () => {
-    // T rides A to B, on a pipe a person has bent down at x=270; a branch
-    // leaves T's top face for C, whose port has not been measured, and comes
-    // first on the tee. B is moved down, the bend follows it, and T, kept
-    // where it is, lands on the pipe's vertical leg: its run now comes in by
-    // its top face. A branch left there was taken for the run by the next
-    // reseat, and the pipe went through C. (A pipe the router draws no
-    // longer brings a bend onto a tee when another of its crossbars leaves
-    // the tee where it is, so the bend here is a person's.)
+    // T rides A to B, on a pipe a person has bent down at x=270, fifteen
+    // pixels past the bend; a branch leaves T's top face for C, whose port
+    // has not been measured, and comes first on the tee. B is moved down,
+    // the bend follows it, and T, kept where it is, lands on the pipe's
+    // vertical leg: its run now comes in by its top face. A branch left
+    // there was taken for the run by the next reseat, and the pipe went
+    // through C. (A pipe the router draws no longer brings a bend onto a tee
+    // when another of its crossbars leaves the tee where it is, so the bend
+    // here is a person's.)
     const nodes = [part('A', 80, -300), part('B', 400, 0), part('C', 100, 100)];
     const bent = E('A', 'r', 'B', 'l', { waypoints: [P(270, -270), P(270, 30)], offset: 0 });
-    const t = tee(nodes, [bent], 'A-B', P(330, 30));
+    const t = tee(nodes, [bent], 'A-B', P(285, 30));
     expect([alongOf(t.nodes.find(n => n.id === t.id)!).in]).toEqual(['l']);
     const edges = [E(t.id, 't', 'C', 'unmeasured'), ...t.edges];
     const moved = t.nodes.map(n => (n.id === 'B' ? { ...n, position: { x: 400, y: 100 } } : n));
@@ -1108,7 +1113,8 @@ describe('the faces lines take at a tee', () => {
   it('route a pipe to where the tee it ends on is put, in the same reseat', () => {
     // T1 on A-B, 20 px from A; a branch pipe from T1 down to C, with a tee of
     // its own that comes first in the drawing. A moves right onto T1, which
-    // is pushed along the run, and the branch pipe has to follow it.
+    // is pushed along the run -- a tee's reach clear of A's port, and on to
+    // the grid line past that -- and the branch pipe has to follow it.
     const nodes = [part('A', 0, 0), part('B', 400, 0), part('C', 250, 300)];
     const t1 = tee(nodes, [E('A', 'r', 'B', 'l')], 'A-B', P(80, 30));
     const branch = E(t1.id, 'b', 'C', 't');
@@ -1116,8 +1122,9 @@ describe('the faces lines take at a tee', () => {
     const order = [...t2.nodes].sort((x, y) => (x.id === t2.id ? -1 : y.id === t2.id ? 1 : 0));
     const moved = order.map(n => (n.id === 'A' ? { ...n, position: { x: 20, y: 0 } } : n));
     const once = reseatJunctions(moved, t2.edges, endOf);
-    expect(centre(once.nodes.find(n => n.id === t1.id)!)).toEqual(P(80 + END_GAP, 30));
-    expect(centre(once.nodes.find(n => n.id === t2.id)!).x).toBe(80 + END_GAP);
+    expect(80 + END_GAP).toBeLessThanOrEqual(100);
+    expect(centre(once.nodes.find(n => n.id === t1.id)!)).toEqual(P(100, 30));
+    expect(centre(once.nodes.find(n => n.id === t2.id)!).x).toBe(100);
     const twice = reseatJunctions(once.nodes, once.edges, endOf);
     expect(twice.nodes).toBe(once.nodes);
     expect(twice.edges).toBe(once.edges);
@@ -1490,8 +1497,9 @@ describe('the routes lines take among the other lines', () => {
   it('give up the corners they were sent round a dot by once the dot is gone', () => {
     // A branch from a tee up to K's left port: an L, straight up and across.
     // An open end right in the way up, with its line off to the left, sends
-    // the branch round it on the right, and the branch carries the way round
-    // as corners. The open end deleted, the L is clear again, and the
+    // the branch round it on the right, two grid steps clear of its centre
+    // -- a grid step clear of its ring -- and the branch carries the way
+    // round as corners. The open end deleted, the L is clear again, and the
     // corners -- which still fit the branch's two ends, and so would be kept
     // as a line keeps the router's corners while they fit -- go: the branch
     // routes itself.
@@ -1500,7 +1508,8 @@ describe('the routes lines take among the other lines', () => {
     const s = settleOnPage(t.nodes, [...t.edges, { ...E(t.id, 't', 'K', 'l'), id: 'up' }]);
     const round = drawnScene(s.nodes, s.edges, endOf, obstacleBoxes(s.nodes)).get('up')!;
     expect(dataOf(s.edges.find(e => e.id === 'up')!).waypoints?.length, JSON.stringify(round)).toBeGreaterThan(0);
-    expect(Math.min(...round.slice(0, -1).map((p, i) => distanceTo(P(300, -20), p, round[i + 1])))).toBeGreaterThanOrEqual(7);
+    expect(Math.min(...round.slice(0, -1).map((p, i) => distanceTo(P(300, -20), p, round[i + 1]))), JSON.stringify(round))
+      .toBeGreaterThanOrEqual(DOT_CLEAR);
     const g = settleOnPage(s.nodes.filter(n => n.id !== 'O'), s.edges.filter(e => e.id !== 'O-W'));
     expect(dataOf(g.edges.find(e => e.id === 'up')!).waypoints).toBeUndefined();
     expect(drawnScene(g.nodes, g.edges, endOf, obstacleBoxes(g.nodes)).get('up')).toEqual([P(300, 92), P(300, -170), P(500, -170)]);
@@ -1539,6 +1548,46 @@ describe('the routes lines take among the other lines', () => {
       s = settleOnPage(g.nodes.map(n => ({ ...n, position: P(n.position.x + by.x, n.position.y + by.y) })), s.edges, drag);
       expect(dataOf(s.edges.find(e => e.id === 'branch')!).waypoints, `tick ${k}`).toEqual(was.map(p => P(p.x + by.x, p.y + by.y)));
     }
+  });
+
+  it('send a pipe round an open end the same way whichever face the open end\'s line had before it was chosen again', () => {
+    // A drawing a run of random edits left: the pipe from S2 to S3 runs its
+    // crossbar two pixels under the open end o7, whose line comes from a tee
+    // on a pipe running into S2's; and that line's faces are to be chosen
+    // again. The pipe is sent round the open end, the way round priced
+    // against the open end's line -- where it was drawn before the choice
+    // moved it, so the reseat after, which saw it elsewhere, sent the pipe
+    // round again another way. Priced against the way the line comes from
+    // its far end, which no choice of face moves, it goes round once.
+    const tee = (id: string, x: number, y: number, along?: Along): Node => ({
+      id, type: 'JUNCTION', position: { x, y }, measured: { width: 10, height: 10 },
+      data: { componentType: 'JUNCTION', label: id, ...(along ? { along } : {}) },
+    });
+    const nodes = [
+      part('S0', 670, 450), part('S1', 410, 410), part('S2', 540, 400), part('S3', 410, 280),
+      tee('t8', 389, 455, { t: 0.9296875, in: 'b', out: 't', from: 'S0', to: 'S1', ends: { a: P(730, 480), b: P(410, 440) } }),
+      tee('t9', 523, 375.75848028657884, { t: 0.409736683725725, in: 'b', out: 't', from: 'S2', to: 'S3', ends: { a: P(570, 460), b: P(410, 310) } }),
+      tee('t12', 695.221252813068, 519, { t: 0.20659911559947663, in: 'r', out: 'l', from: 'S0', to: 'S1', ends: { a: P(730, 480), b: P(410, 440) } }),
+      tee('o2', 605, 525),
+      tee('t13', 471.10691588280093, 375.75848028657884,
+        { t: 0.8149856560933336, in: 'l', out: 'r', from: 't8', to: 't9', ends: { a: P(386, 460), b: P(520, 380.75848028657884) } }),
+      tee('o7', 395, 345),
+    ];
+    const edges = [
+      E('t8', 't', 'S1', 'l', { offset: 0, waypoints: [P(394, 440)], viaRun: true }),
+      E('t9', 't', 'S3', 'l', { offset: 0, waypoints: [P(528, 352), P(394, 352), P(394, 310)], viaRun: true }),
+      E('S0', 'r', 't12', 'r', { offset: 0, waypoints: [P(746, 480), P(746, 524)], viaRun: true }),
+      E('t12', 'b', 'o2', 'b'),
+      E('S2', 'b', 't9', 'b', { offset: 0, waypoints: [P(570, 476), P(528, 476)], viaRun: true }),
+      E('t12', 'l', 't8', 'b', { offset: 0, waypoints: [P(394, 524)], viaRun: true }),
+      E('t8', 'l', 't13', 'l', { offset: 0, waypoints: [P(374, 460), P(374, 380.75848028657884)], viaRun: true }),
+      E('t13', 'r', 't9', 'l', { offset: 0 }),
+      E('t13', 'b', 'o7', 'r'),
+    ];
+    const once = reseatJunctions(nodes, edges, endOf, obstacleBoxes(nodes));
+    const twice = reseatJunctions(once.nodes, once.edges, endOf, obstacleBoxes(once.nodes));
+    expect(twice.edges).toBe(once.edges);
+    expect(twice.nodes).toBe(once.nodes);
   });
 
   it('never cross the pipe their tee rides when there is a way that does not (randomised)', () => {
@@ -1715,6 +1764,80 @@ describe('a tee whose pipe is moved out from under it', () => {
     expect(p.x).toBeCloseTo(60 + (420 / 740) * 340, 6);
     expect(q.x).toBeCloseTo(60 + (490 / 740) * 340, 6);
   });
+
+  /** A.r(330,300) -> B.l(520,450): a Z bending at x = 425, a tee on its first leg at x = 390, and its branch straight up to T. */
+  function nudged(): Header {
+    const nodes = [part('A', 270, 270), part('B', 520, 420), part('T', 360, 90)];
+    const t = tee(nodes, [E('A', 'r', 'B', 'l')], 'A-B', P(390, 300));
+    const s = settle(t.nodes, [...t.edges, E(t.id, 't', 'T', 'b')]);
+    return { nodes: s.nodes, edges: s.edges, tees: [t.id] };
+  }
+  const branch = (h: Header) => draw(h.edges.find(e => e.target === 'T')!, h.nodes).pts;
+
+  it('goes straight across onto the leg it sat on when an end is moved across the pipe, and its branch stays straight', () => {
+    // A nudged forty pixels down takes the first leg forty pixels down with
+    // it: twice as far as a tee keeps its place by, so the tee kept its
+    // distance along the pipe from B instead -- which the move had shortened
+    // by the forty, in the upright leg -- and slid forty pixels along its leg
+    // to x = 350, and its branch, straight up to T, took a Z to reach it.
+    // Nudged up, the tee went round the bend onto the upright leg.
+    const h = nudged();
+    expect(at(h)).toEqual([P(390, 300)]);
+    expect(branch(h)).toEqual([P(390, 292), P(390, 150)]);
+    const down = drag(h, { A: P(270, 310) });
+    expect(at(down)).toEqual([P(390, 340)]);
+    expect(branch(down)).toEqual([P(390, 332), P(390, 150)]);
+    const up = drag(h, { A: P(270, 230) });
+    expect(at(up)).toEqual([P(390, 260)]);
+    expect(branch(up)).toEqual([P(390, 252), P(390, 150)]);
+    // However far the leg goes, and without a drag as with one.
+    expect(at(drag(h, { A: P(270, 370) }))).toEqual([P(390, 400)]);
+    const moved = settle(h.nodes.map(n => (n.id === 'A' ? { ...n, position: P(270, 310) } : n)), h.edges);
+    expect(at({ ...h, ...moved })).toEqual([P(390, 340)]);
+    // And back where it was once A is.
+    expect(at(drag(down, { A: P(270, 270) }))).toEqual([P(390, 300)]);
+  });
+});
+
+describe('where the reseat puts a tee it moves', () => {
+  it('lands on the grid line on its leg nearest where the rule stops it, and exactly on it', () => {
+    // A tee on the upright leg of a Z at y = 100, and B brought up until the
+    // lower bend is ten pixels under it. Held a tee's reach off the bend it
+    // stopped at y = 96, on no grid line, and a branch from it to a symbol on
+    // the grid jogged by the four. It goes on to y = 90, the grid line on its
+    // leg nearest the stop that is still a tee's reach off the bend.
+    const z = zPipe();
+    const t = tee(z.nodes, z.edges, 'A-B', P(230, 100));
+    expect(centre(t.nodes.find(n => n.id === t.id)!)).toEqual(P(230, 100));
+    const s = settle(t.nodes.map(n => (n.id === 'B' ? { ...n, position: P(400, 80) } : n)), t.edges);
+    const T = s.nodes.find(n => n.id === t.id)!;
+    expect(T.position).toEqual(P(225, 85));
+    expect(110 - 90).toBeGreaterThanOrEqual(CORNER_GAP);
+    // Where it is then is a legal spot, and the next reseat leaves it there.
+    expect(s.runs).toBe(1);
+  });
+
+  it('lands exactly where the rule stops it when no grid line beside that is a legal spot', () => {
+    // B brought up until the upright leg is 28 px long, from y = 30 down to
+    // 58: the only spot on it a tee's reach from both bends is y = 44, and
+    // the grid lines either side, 40 and 50, are each ten pixels from one.
+    const z = zPipe();
+    const t = tee(z.nodes, z.edges, 'A-B', P(230, 70));
+    const s = settle(t.nodes.map(n => (n.id === 'B' ? { ...n, position: P(400, 28) } : n)), t.edges);
+    expect(s.nodes.find(n => n.id === t.id)!.position).toEqual(P(225, 39));
+  });
+
+  it('is the pixel it means, not a few ulps off it', () => {
+    // A tee's place is worked out as a distance along its pipe and turned
+    // back into a point: along a run 622 px long, a tee split in at x = 421
+    // came back at 421.00000000000006, and one put back on the run from five
+    // pixels off it at 420.99999999999994 -- and was saved there.
+    const nodes = [part('A', 40, 170), part('B', 722, 170)];
+    const t = tee(nodes, [E('A', 'r', 'B', 'l')], 'A-B', P(421, 200));
+    expect(t.nodes.find(n => n.id === t.id)!.position).toEqual(P(416, 195));
+    const knocked = t.nodes.map(n => (n.id === t.id ? { ...n, position: P(416, 200) } : n));
+    expect(settle(knocked, t.edges).nodes.find(n => n.id === t.id)!.position).toEqual(P(416, 195));
+  });
 });
 
 describe('a tee dragged along its pipe', () => {
@@ -1807,9 +1930,9 @@ describe('a tee dragged along its pipe', () => {
     // own. T1's face is not a port: T1 keeps a stub of its own there, and
     // its dot is half a dot beyond. So T2 keeps TEE_END_GAP from that face,
     // where from C's port it keeps END_GAP -- slid there, or left there by a
-    // drag and put back by the reseat. Slid, it then goes to the grid line
-    // beyond the stop, which is as far off as it has to be and further: 60
-    // rather than 58, and 180 rather than 186.
+    // drag and put back by the reseat. Either way it then goes to the grid
+    // line beyond the stop, which is as far off as it has to be and further:
+    // 60 rather than 58, and 180 rather than 186.
     const t1 = tee([part('A', 0, 0), part('B', 400, 0), part('C', 170, 200)], [E('A', 'r', 'B', 'l')], 'A-B', P(200, 30));
     const s1 = settle(t1.nodes, [...t1.edges, E(t1.id, 'b', 'C', 't')]);
     const t2 = tee(s1.nodes, s1.edges, `${t1.id}-C`, P(200, 120));
@@ -1820,11 +1943,15 @@ describe('a tee dragged along its pipe', () => {
     expect(60 - face).toBeGreaterThanOrEqual(TEE_END_GAP);
     expect(slideAlong(T2, alongOf(T2), P(195, 300), t2.edges, byIdOf(t2.nodes), endOf)!.position).toEqual(P(195, 180 - 5));
     expect(200 - 180).toBeGreaterThanOrEqual(END_GAP);
-    // Left 2 px off T1's face, recorded as there, and reseated.
+    // Left 2 px off T1's face, recorded as there -- put down there, its
+    // home -- and reseated.
     const knocked = t2.nodes.map(n => (n.id === t2.id
-      ? { ...n, position: P(195, face + 2 - 5), data: { ...n.data, along: { ...alongOf(n), t: alongOf(n).from === t1.id ? 0.01 : 0.99 } } }
+      ? {
+        ...n, position: P(195, face + 2 - 5),
+        data: { ...n.data, along: { ...alongOf(n), t: alongOf(n).from === t1.id ? 0.01 : 0.99, home: { ...alongOf(n).home!, at: P(200, face + 2) } } },
+      }
       : n));
-    expect(centre(settle(knocked, t2.edges).nodes.find(n => n.id === t2.id)!)).toEqual(P(200, face + TEE_END_GAP));
+    expect(centre(settle(knocked, t2.edges).nodes.find(n => n.id === t2.id)!)).toEqual(P(200, 60));
   });
 
   it('lands with its centre on the grid, not its corner', () => {
@@ -1891,6 +2018,19 @@ describe('a hand edit on a pipe', () => {
     const re = reseatJunctions(s.nodes, edges, endOf);
     expect(dataOf(re.edges.find(e => e.id === s.down)!).waypoints).toEqual(moved);
     expect(centre(re.nodes.find(n => n.id === s.id)!)).toEqual(P(150, 30));
+  });
+
+  it('writes a drag\'s corners to a thousandth of a pixel, without the noise in the ports as measured', () => {
+    // The line as the page draws it at half zoom: every point of it where
+    // React Flow measured the ports, a few hundred-thousandths of a pixel
+    // off them. The drag carries the crossbar sixty pixels over, noise and
+    // all, and leaves its ends at the ports' levels; each corner is saved on
+    // the pixel it means.
+    const s = teedZ();
+    const clean = draw(s.edges.find(e => e.id === s.down)!, s.nodes).pts;
+    const noisy = clean.map(p => P(p.x - 3.61689815e-5, p.y + 9.0422453e-6));
+    const edges = setHandCorners(s.nodes, s.edges, s.down, waypointsOf(dragSegment(noisy, 1, P(60, 0))));
+    expect(dataOf(edges.find(e => e.id === s.down)!).waypoints).toEqual(waypointsOf(dragSegment(clean, 1, P(60, 0))));
   });
 
   it('gives a hand-routed pipe\'s corners to whichever line a tee leaves them on', () => {

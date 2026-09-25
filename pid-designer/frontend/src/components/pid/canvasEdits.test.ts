@@ -70,6 +70,11 @@ describe('applyMoves', () => {
     expect(r.shifts.get(bay.tee)).toEqual(P(20, 10));
     const ends = junctionData(r.nodes.find(n => n.id === bay.tee)!).along!.ends!;
     expect(ends).toEqual({ a: P(ends0.a.x + 20, ends0.a.y + 10), b: P(ends0.b.x + 20, ends0.b.y + 10) });
+    // Its home goes with it: at home where the bay is put down, as it was
+    // where the bay was picked up.
+    const home0 = junctionData(tee).along!.home!;
+    const by = (p: Pt) => P(p.x + 20, p.y + 10);
+    expect(junctionData(r.nodes.find(n => n.id === bay.tee)!).along!.home).toEqual({ a: by(home0.a), b: by(home0.b), at: by(home0.at) });
   });
 
   it('moves a bay with a tee on a hand-routed pipe as one piece', () => {
@@ -123,6 +128,8 @@ describe('applyMoves', () => {
     expect(r.shifts.get(bay.tee)).toEqual(P(20, 10));
     const ends = junctionData(r.nodes.find(n => n.id === bay.tee)!).along!.ends!;
     expect(ends).toEqual({ a: P(ends0.a.x + 20, ends0.a.y + 10), b: P(ends0.b.x + 20, ends0.b.y + 10) });
+    const home0 = junctionData(tee).along!.home!;
+    expect(junctionData(r.nodes.find(n => n.id === bay.tee)!).along!.home!.at).toEqual(P(home0.at.x + 20, home0.at.y + 10));
     for (const e of followCorners(bay.edges, r.shifts)) {
       if (e.source === 'C' || e.target === 'C') continue;
       expect(wp(e) ?? []).toEqual((wp(bay.edges.find(x => x.id === e.id)!) ?? []).map(p => P(p.x + 20, p.y + 10)));

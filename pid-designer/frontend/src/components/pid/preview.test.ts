@@ -173,8 +173,10 @@ describe('a preview is the line letting go draws', () => {
       expect(landings.has(kind), kind).toBe(true);
     }
     // And among them, lines the page draws somewhere else than they route
-    // themselves: what a preview of the route alone got wrong.
-    expect(moved).toBeGreaterThan(10);
+    // themselves: what a preview of the route alone got wrong. Fewer than
+    // before lines went round the dots they do not end on themselves, when
+    // the page moved every one of those off the dot.
+    expect(moved).toBeGreaterThan(5);
   }
 
   it('whatever is let go wherever: the route, and every tee, exactly where the drawing has them after the drop has settled', () => {
@@ -196,6 +198,10 @@ describe('a preview is the line letting go draws', () => {
     // end's top instead -- and the page moves the new line off the branch
     // where it now is, not where it was. Settled only when the line ended on
     // a tee, the preview drew it moved off the branch where it had been.
+    // (The second open end stands clear of that crossbar's level: put down
+    // on it, as it once was, the new line goes round its dot at another
+    // level, as a line does round any dot it does not end on, and lies on
+    // nothing.)
     const along = (from: string, to: string, t: number, a: Pt, b: Pt) =>
       ({ t, in: 'l', out: 'r', from, to, ends: { a, b } });
     const tee = (id: string, cx: number, cy: number, a?: ReturnType<typeof along>): Node => ({
@@ -207,7 +213,7 @@ describe('a preview is the line letting go draws', () => {
         sym('P0', 0, 0), sym('P1', 140, 0), sym('P2', 290, 0), sym('P3', 0, 160), sym('P4', 140, 160),
         tee('T1', 214, 30, along('P1', 'P2', 0.15555555555555556, P(200, 30), P(290, 30))), tee('O1', -10, 110),
         tee('T2', 74, 190, along('P3', 'P4', 0.175, P(60, 190), P(140, 190))), tee('T3', 100, 190, along('P3', 'P4', 0.5, P(60, 190), P(140, 190))),
-        tee('O2', 280, 110),
+        tee('O2', 360, 110),
       ],
       edges: [
         E('P0', 'r', 'P1', 'l'), { ...E('P1', 'r', 'T1', 'l'), data: { offset: 0 } }, { ...E('T1', 'r', 'P2', 'l'), data: { offset: 0 } },

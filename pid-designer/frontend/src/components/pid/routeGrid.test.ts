@@ -4,8 +4,8 @@ import type { Node } from '@xyflow/react';
 import { facing, isHorizontal, pathPoints, routeOrthogonal } from './route';
 import type { Box, End, Pt } from './route';
 import {
-  NO_BOXES, avoidable, boxGrid, boxOfNode, gridRoute, heldClear, lastSearch, obstacleBoxes, obstaclesByPage, perPage, routeAmong,
-  routeAuto, routeHitsBoxes, withinReach,
+  DOT_CLEAR, LIFT, NO_BOXES, VENT_REACH, avoidable, boxGrid, boxOfNode, dotBox, gridRoute, heldClear, lastSearch, lineGrid,
+  obstacleBoxes, obstacleGrid, obstaclesByPage, perPage, routeAmong, routeAuto, routeHitsBoxes, withinReach,
 } from './routeGrid';
 import type { Soft, SoftLine } from './routeGrid';
 
@@ -833,4 +833,110 @@ describe('what a route has to be shown of the sheet', () => {
     expect(searched).toBeGreaterThan(30);
     expect(ownOnly).toBeGreaterThan(0);
   }, SWEEP_MS);
+});
+
+describe('a line with a junction\'s dot in its way', () => {
+  const dot = (id: string, c: Pt, extra: Partial<Node> = {}): Node =>
+    ({ id, type: 'JUNCTION', position: { x: c.x - 5, y: c.y - 5 }, measured: { width: 10, height: 10 }, data: { componentType: 'JUNCTION', label: id }, ...extra });
+  /** How near a run comes to a point. */
+  const nearest = (run: Pt[], c: Pt) => Math.min(...run.slice(0, -1).map((p, i) => {
+    const q = run[i + 1];
+    return Math.hypot(c.x - Math.max(Math.min(p.x, q.x), Math.min(Math.max(p.x, q.x), c.x)), c.y - Math.max(Math.min(p.y, q.y), Math.min(Math.max(p.y, q.y), c.y)));
+  }));
+
+  it('is lifted round it two grid steps off its centre, and is as it was everywhere else', () => {
+    // A line straight down from one tank to another, and a tee let go on it
+    // at (570, 160). Round the dot as round a small symbol, the search went
+    // down the channel between the dot and the next grid line, seven and a
+    // half pixels off the tee's centre, through its ring.
+    const a: End = { x: 570, y: -97, side: B }, b: End = { x: 570, y: 637, side: T };
+    const tee = dot('T', P(570, 160));
+    const run = pathPoints(routeAuto(a, b, [dotBox(tee)]).d);
+    expect(run, JSON.stringify(run)).toEqual([
+      P(570, -97), P(570, 160 - LIFT), P(570 - LIFT, 160 - LIFT), P(570 - LIFT, 160 + LIFT), P(570, 160 + LIFT), P(570, 637),
+    ]);
+    expect(nearest(run, P(570, 160))).toBeGreaterThanOrEqual(DOT_CLEAR);
+  });
+
+  it('keeps two grid steps off it among other symbols and dots, on the grid', () => {
+    // The same, with a symbol off to one side and another dot on the line's
+    // level beside it: what the search is given lanes by.
+    const a: End = { x: 570, y: -97, side: B }, b: End = { x: 570, y: 637, side: T };
+    const boxes = [dotBox(dot('T', P(570, 160))), dotBox(dot('O', P(520, 160))), ...obstacleBoxes([node('V', 'MAN', 600, 300)])];
+    const run = pathPoints(routeAuto(a, b, boxes).d);
+    expect(nearest(run, P(570, 160)), JSON.stringify(run)).toBeGreaterThanOrEqual(DOT_CLEAR);
+    expect(nearest(run, P(520, 160)), JSON.stringify(run)).toBeGreaterThanOrEqual(7);
+    for (const p of run) expect([p.x % 10, p.y % 10], JSON.stringify(run)).toEqual([0, a.y === p.y || b.y === p.y ? p.y % 10 : 0]);
+  });
+
+  it('moves a crossbar that would run through it to a level clear of it, rather than lifting the crossbar round it', () => {
+    const a: End = { x: 60, y: 30, side: R }, b: End = { x: 400, y: 330, side: L };
+    const plain = pathPoints(routeOrthogonal(a, b).d);
+    const bar = plain[1].x;
+    const run = pathPoints(routeAuto(a, b, [dotBox(dot('O', P(bar, 180)))]).d);
+    expect(run, JSON.stringify(run)).toHaveLength(4);
+    expect(nearest(run, P(bar, 180))).toBeGreaterThanOrEqual(DOT_CLEAR);
+  });
+
+  it('is in the way of a line that routes itself, but not of one that ends on it, and not while a drag carries it', () => {
+    const a: End = { x: 570, y: -97, side: B }, b: End = { x: 570, y: 637, side: T };
+    const plain = pathPoints(routeOrthogonal(a, b).d);
+    const tee = dot('T', P(570, 160));
+    expect(withinReach(plain, lineGrid([tee]), a, b)).not.toBe(NO_BOXES);
+    expect(withinReach(plain, obstacleGrid([tee]), a, b)).toBe(NO_BOXES);
+    expect(withinReach(plain, lineGrid([{ ...tee, dragging: true }]), a, b)).toBe(NO_BOXES);
+    // A line out of the tee's own face leaves it three pixels outside its dot.
+    const own: End = { x: 570, y: 168, side: B, clear: 14, stub: 6 };
+    expect(pathPoints(routeAuto(own, b, [dotBox(tee)]).d)).toEqual(pathPoints(routeOrthogonal(own, b).d));
+    // Ten pixels off its centre a line passes by it.
+    const by: End = { x: 580, y: -97, side: B }, to: End = { x: 580, y: 637, side: T };
+    expect(pathPoints(routeAuto(by, to, [dotBox(tee)]).d)).toEqual([P(580, -97), P(580, 637)]);
+  });
+});
+
+describe('a valve that vents', () => {
+  const E = (id: string, source: string, sh: string, target: string, th: string) =>
+    ({ id, source, sourceHandle: sh, target, targetHandle: th });
+
+  it('is in the way as far out as the mark on its open port, on the side the mark is drawn', () => {
+    const V = node('V', 'SOL', 100, 100), W = node('W', 'MAN', 300, 100), K = node('K', 'TANK', -200, 100, 60, 100);
+    const U = node('U', 'MAN', 100, 300, 60, 60, { data: { componentType: 'MAN', label: 'U', rotation: 90 } });
+    // V plumbed on its left port vents right; W on its right port vents left;
+    // U, turned a quarter, vents out of its bottom; K is no valve.
+    const edges = [E('kv', 'K', 'b', 'V', 'l'), E('wk', 'W', 'r', 'K', 't'), E('ku', 'K', 'b2', 'U', 'l')];
+    const boxes = obstacleBoxes([V, W, K, U], edges);
+    expect(boxes).toEqual([
+      { x: 100, y: 100, w: 60 + VENT_REACH, h: 60 },
+      { x: 300 - VENT_REACH, y: 100, w: 60 + VENT_REACH, h: 60 },
+      { x: -200, y: 100, w: 60, h: 100 },
+      { x: 100, y: 300, w: 60, h: 60 + VENT_REACH },
+    ]);
+    // Plumbed on both sides, on neither, or on a port no valve has: no mark.
+    expect(obstacleBoxes([V], [E('a', 'K', 'b', 'V', 'l'), E('b', 'V', 'r', 'W', 'l')])).toEqual([boxOfNode(V)]);
+    expect(obstacleBoxes([V], [])).toEqual([boxOfNode(V)]);
+    expect(obstacleBoxes([V], [E('a', 'K', 'b', 'V', 't')])).toEqual([boxOfNode(V)]);
+    // Without the lines, the symbols as they are.
+    expect(obstacleBoxes([V, W, K, U])).toEqual([V, W, K, U].map(boxOfNode));
+    expect(obstaclesByPage([V, W, K, U], edges)('Main')).toEqual(boxes);
+  });
+
+  it('sends a line that would run through the mark round it, as the canvas draws the line', () => {
+    // A line straight down twelve pixels off V's open side: clear of V's
+    // body, and through the triangle on its port.
+    const V = node('V', 'SOL', 100, 100), K = node('K', 'TANK', -200, 100, 60, 100);
+    const edges = [E('kv', 'K', 'b', 'V', 'l')];
+    const a: End = { x: 172, y: -100, side: B }, b: End = { x: 172, y: 400, side: T };
+    const plain = pathPoints(routeOrthogonal(a, b).d);
+    const mark = { x: 160, y: 124, w: VENT_REACH, h: 12 };
+    const nodes = [V, K];
+    const run = pathPoints(routeAuto(a, b, withinReach(plain, lineGrid(nodes, edges), a, b)).d);
+    expect(through(run, mark), JSON.stringify(run)).toBe(false);
+    // Round it on the open side, a port's reach and a margin clear of the tip.
+    const risers = run.slice(0, -1).filter((p, i) => p.x === run[i + 1].x && p.x !== a.x).map(p => p.x);
+    expect(risers.length, JSON.stringify(run)).toBeGreaterThan(0);
+    for (const x of risers) expect(x, JSON.stringify(run)).toBeGreaterThanOrEqual(160 + VENT_REACH + 3);
+    // And the grid it asks is the same one while the lines change and no
+    // valve starts or stops venting.
+    expect(lineGrid(nodes, [...edges])).toBe(lineGrid(nodes, edges));
+  });
 });

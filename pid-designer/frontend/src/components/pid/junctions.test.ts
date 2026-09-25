@@ -104,16 +104,18 @@ describe('a tee that rides its run', () => {
   it('is moved off a bend the pipe puts under it, onto the leg it was on', () => {
     // The pipe's bend used to be further on; now it is right there. A tee on
     // a bend draws a hook out of one half, so it moves the fourteen pixels it
-    // reaches -- back along the leg it was on. An L, whose bend has one place
-    // to be: a Z whose crossbar would land on the tee is drawn with the
-    // crossbar that leaves the tee where it is instead (pipes.routeOfPipe).
+    // reaches -- back along the leg it was on -- and on to the grid line past
+    // that. An L, whose bend has one place to be: a Z whose crossbar would
+    // land on the tee is drawn with the crossbar that leaves the tee where it
+    // is instead (pipes.routeOfPipe).
     const nodes = [part('A', 0, 0), part('B', 400, 300)];
     const edges: Edge[] = [{ id: 'A-B', source: 'A', sourceHandle: 'r', target: 'B', targetHandle: 't', type: 'smoothstep', data: {} }];
     const split = splitEdgeAt(nodes, edges, 'A-B', P(230, 30), undefined, { a: endOf(nodes[0], 'r')!, b: endOf(nodes[1], 't')! })!;
     expect(centre(split.nodes.find(n => n.id === split.junctionId)!)).toEqual(P(230, 30));
     const moved = split.nodes.map(n => (n.id === 'B' ? { ...n, position: { x: 200, y: 300 } } : n));
     const re = reseatJunctions(moved, split.edges, endOf);
-    expect(centre(re.nodes.find(n => n.id === split.junctionId)!)).toEqual(P(230 - CORNER_GAP, 30));
+    expect(230 - CORNER_GAP).toBeGreaterThanOrEqual(210);
+    expect(centre(re.nodes.find(n => n.id === split.junctionId)!)).toEqual(P(210, 30));
     const outOf = re.edges.find(e => e.source === split.junctionId)!.data as { waypoints?: Pt[] };
     expect(outOf.waypoints).toEqual([P(230, 30)]);
   });

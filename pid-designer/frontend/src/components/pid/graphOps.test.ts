@@ -42,6 +42,17 @@ describe('moving part of the drawing', () => {
     expect(along.from).toBe('a');
   });
 
+  it('moves a tee\'s home, and where its pipe\'s ends were then, along with it', () => {
+    // Picked up and put down elsewhere, a bay's tees are at home there: an
+    // end dragged out and back finds its way back to where the bay now is.
+    const home = { a: { x: 60, y: 30 }, b: { x: 140, y: 30 }, at: { x: 100, y: 30 } };
+    const tee = node('j', 95, 25, { componentType: 'JUNCTION', along: { t: 0.5, in: 'l', out: 'r', from: 'a', to: 'b', home } }, { type: 'JUNCTION' });
+    const out = translateSubgraph([tee], [], ['j'], d);
+    const along = (out.nodes[0].data as { along: { home: unknown; ends?: unknown } }).along;
+    expect(along.home).toEqual({ a: { x: 100, y: 50 }, b: { x: 180, y: 50 }, at: { x: 140, y: 50 } });
+    expect(along.ends).toBeUndefined();
+  });
+
   it('hands back the very same arrays when nothing moves', () => {
     const nodes = [node('a', 0, 0)], edges = [line('a', 'a', [{ x: 1, y: 1 }])];
     const still = translateSubgraph(nodes, edges, ['a'], { x: 0, y: 0 });

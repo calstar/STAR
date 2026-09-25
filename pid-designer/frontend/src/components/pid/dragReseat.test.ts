@@ -9,11 +9,11 @@
 import { describe, expect, it } from 'vitest';
 import { Position } from '@xyflow/react';
 import type { Edge, Node, NodeChange } from '@xyflow/react';
-import { J_END, centreOfJunction, dragging, isJunction, junctionEnd, reseatJunctions } from './junctions';
+import { J_END, centreOfJunction, dragging, isJunction, junctionData, junctionEnd, reseatJunctions } from './junctions';
 import type { Dragging, EndLookup, Face } from './junctions';
 import { splitEdgeAt } from './splitEdge';
 import { applyMoves, followCorners } from './canvasEdits';
-import { obstacleGrid, obstaclesByPage } from './routeGrid';
+import { DOT_CLEAR, LIFT, VENT_REACH, lineGrid, obstacleGrid, obstaclesByPage } from './routeGrid';
 import { drawnRoute, inTheWay, routeOfLine } from './lineRoute';
 import type { LineData } from './lineRoute';
 import { pathPoints, routeOrthogonal } from './route';
@@ -70,6 +70,44 @@ function drag(g0: G, id: string, path: Pt[], ticks: number, watch?: (g: G) => vo
 }
 
 const teeAt = (g: G, id: string) => centreOfJunction(g.nodes.find(n => n.id === id)!);
+
+/** How far two drawn lines run side by side nearer than `within` px. */
+function runBeside(p: Pt[], q: Pt[], within: number): number {
+  let t = 0;
+  const over = (u0: number, u1: number, v0: number, v1: number) =>
+    Math.max(0, Math.min(Math.max(u0, u1), Math.max(v0, v1)) - Math.max(Math.min(u0, u1), Math.min(v0, v1)));
+  for (let i = 0; i + 1 < p.length; i++) for (let j = 0; j + 1 < q.length; j++) {
+    const [a, b, c, d] = [p[i], p[i + 1], q[j], q[j + 1]];
+    if (a.y === b.y && c.y === d.y && Math.abs(a.y - c.y) < within) t += over(a.x, b.x, c.x, d.x);
+    else if (a.x === b.x && c.x === d.x && Math.abs(a.x - c.x) < within) t += over(a.y, b.y, c.y, d.y);
+  }
+  return t;
+}
+
+/** How near a drawn line comes to a point. */
+const nearest = (run: Pt[], c: Pt) => Math.min(...run.slice(0, -1).map((p, i) => {
+  const q = run[i + 1];
+  return Math.hypot(c.x - Math.max(Math.min(p.x, q.x), Math.min(Math.max(p.x, q.x), c.x)), c.y - Math.max(Math.min(p.y, q.y), Math.min(Math.max(p.y, q.y), c.y)));
+}));
+
+/** Does a drawn line pass through the inside of a box (its edge, and a pixel in, excepted)? */
+const through = (run: Pt[], b: { x: number; y: number; w: number; h: number }) => run.slice(0, -1).some((p, i) => {
+  const q = run[i + 1];
+  if (p.y === q.y) return p.y > b.y + 1 && p.y < b.y + b.h - 1 && Math.max(p.x, q.x) > b.x + 1 && Math.min(p.x, q.x) < b.x + b.w - 1;
+  return p.x > b.x + 1 && p.x < b.x + b.w - 1 && Math.max(p.y, q.y) > b.y + 1 && Math.min(p.y, q.y) < b.y + b.h - 1;
+});
+
+/** The drawing with the drag let go of: React Flow's `dragging` taken off what it picked up, and settled. */
+const letGo = (g: G): G => settle({ nodes: g.nodes.map(n => (n.dragging ? { ...n, dragging: false } : n)), edges: g.edges });
+
+/** A line that routes itself as the canvas draws it (BranchableEdge): round the symbols, vent marks and dots in its way. */
+function onCanvas(g: G, id: string): Pt[] {
+  const e = g.edges.find(x => x.id === id)!;
+  const byId = new Map(g.nodes.map(n => [n.id, n]));
+  const a = endOf(byId.get(e.source)!, e.sourceHandle)!, b = endOf(byId.get(e.target)!, e.targetHandle)!;
+  const plain = pathPoints(routeOrthogonal(a, b).d);
+  return routeOfLine(a, b, e.data as LineData, inTheWay(plain, lineGrid(g.nodes, g.edges), a, b));
+}
 const drawn = (g: G, id: string) => drawnRoute(g.edges.find(e => e.id === id)!, new Map(g.nodes.map(n => [n.id, n])), endOf)!;
 
 /** A tee put into line `id` at `at`, as a pull out of the line as drawn puts it. */
@@ -105,6 +143,69 @@ describe('a tee a drag sweeps a bend past', () => {
     const there = drag(g0, 'M2', [P(420, 270)], 30);
     const back = drag(there, 'M2', [P(570, 420)], 30);
     expect(teeAt(back, g0.tee)).toEqual(P(390, 300));
+  });
+});
+
+describe('a pipe end dragged far out and exactly back', () => {
+  // M2 dragged 250 left and 200 down, past M1's port, and then back by as
+  // much. Out there the pipe is routed down past M1 and the tee is carried
+  // onto the leg the drag bent it into, off the grid. Every tick of the way
+  // back kept the tee where that drag had left it -- the crossbar out at
+  // M1's stub keeps it exactly there -- and let go at home the pipe still
+  // dropped sixteen pixels out of M1 and the branch jogged over to the tee.
+  // The tee's home (`Along.home`) is where it was put with the pipe's ends
+  // as they are again, and it goes back there, and the pipe with it.
+  const lines = (g: G) => g.edges.map(e => drawn(g, e.id));
+  const record = (g: G, id: string) => {
+    const n = g.nodes.find(x => x.id === id)!;
+    return { position: n.position, along: junctionData(n).along };
+  };
+
+  it('puts the tee, its pipe and its branch back as they were, however the end came back', () => {
+    const g0 = teedZ();
+    for (const ticks of [1, 15]) {
+      const far = drag(g0, 'M2', [P(320, 620)], ticks);
+      expect(teeAt(far, g0.tee), `${ticks} ticks, far`).not.toEqual(P(390, 300));
+      // Straight back; and back up first and then along M2's own axis, which
+      // leaves the far drag's shape still fitting the ends when it arrives.
+      for (const way of [[P(570, 420)], [P(470, 420), P(570, 420)], [P(320, 420), P(570, 420)]]) {
+        const back = letGo(drag(far, 'M2', way, ticks));
+        const at = `${ticks} ticks, back by ${JSON.stringify(way)}`;
+        expect(teeAt(back, g0.tee), at).toEqual(P(390, 300));
+        expect(lines(back), at).toEqual(lines(g0));
+        expect(drawn(back, 'branch'), at).toHaveLength(2);
+        expect(record(back, g0.tee), at).toEqual(record(g0, g0.tee));
+      }
+    }
+  });
+
+  it('puts back a tee saved before it had a home, from where its record says it was put', () => {
+    // A drawing saved without `home`: the tee's place, and where its pipe's
+    // ends were when it was put there (`ends`), are its home until the first
+    // seat that moves it away writes that down.
+    const g0 = teedZ();
+    const bare = {
+      ...g0,
+      nodes: g0.nodes.map(n => {
+        if (n.id !== g0.tee) return n;
+        const { home: _home, ...rest } = junctionData(n).along!;
+        void _home;
+        return { ...n, data: { ...n.data, along: rest } };
+      }),
+    };
+    const far = drag(bare, 'M2', [P(320, 620)], 15);
+    const back = letGo(drag(far, 'M2', [P(570, 420)], 15));
+    expect(teeAt(back, g0.tee)).toEqual(P(390, 300));
+    expect(lines(back)).toEqual(lines(g0));
+  });
+
+  it('leaves a tee the drag never moved, and a pipe it never bent, exactly as they were', () => {
+    // M2 nudged down and back: the pipe's crossbar moves under the tee's
+    // leg, not the tee, whose record is not written at all.
+    const g0 = teedZ();
+    const back = letGo(drag(drag(g0, 'M2', [P(570, 460)], 4), 'M2', [P(570, 420)], 4));
+    expect(back.nodes.find(n => n.id === g0.tee)).toBe(g0.nodes.find(n => n.id === g0.tee));
+    expect(lines(back)).toEqual(lines(g0));
   });
 });
 
@@ -379,6 +480,25 @@ describe('a bay picked up whole', () => {
     }
   });
 
+  it('takes its tees\' homes with it: an end dragged far out and back where the bay was put finds its tee there', () => {
+    // A tee's home is where it was put with its pipe's ends where they were
+    // (`Along.home`). Carried whole, the bay is put down with the tee at home
+    // where it lands; were the home left where the bay was picked up, the
+    // ends would never be back at it, and the tee would stay where a far
+    // drag of M2 left it.
+    const g0 = teedZ();
+    const ids = g0.nodes.map(n => n.id);
+    for (const d of [P(-100, 100), P(300, 50)]) {
+      const carried = dragGroup(g0, ids, [d], 6);
+      expect(teeAt(carried, g0.tee)).toEqual(P(390 + d.x, 300 + d.y));
+      const far = drag(carried, 'M2', [P(570 + d.x - 250, 420 + d.y + 200)], 6);
+      expect(teeAt(far, g0.tee)).not.toEqual(teeAt(carried, g0.tee));
+      const back = letGo(drag(far, 'M2', [P(570 + d.x, 420 + d.y)], 6));
+      expect(teeAt(back, g0.tee), `carried by ${d.x},${d.y}`).toEqual(P(390 + d.x, 300 + d.y));
+      expect(back.edges.map(e => drawn(back, e.id)), `carried by ${d.x},${d.y}`).toEqual(carried.edges.map(e => drawn(carried, e.id)));
+    }
+  });
+
   it('carries the tees of a pipe whose two ends are picked up without them', () => {
     // Only the symbols and open ends selected: the tees ride the pipe, and
     // go with it as they would if they had been selected too.
@@ -553,13 +673,13 @@ describe('a bay picked up whole', () => {
    * under the header -- up into O from S below it, or down into it from S
    * above.
    */
-  function header(from: 'below' | 'above' = 'below'): G & { tee: string } {
-    const M11 = part('M11', 100, 100), M12 = part('M12', 700, 100), TK = part('TK', 300, -100);
+  function header(from: 'below' | 'above' = 'below', teeX = 330): G & { tee: string } {
+    const M11 = part('M11', 100, 100), M12 = part('M12', 700, 100), TK = part('TK', teeX - 30, -100);
     const S = part('S', 490, from === 'below' ? 300 : -40);
     const O = junction('O', P(520, 160));
     const so = from === 'below' ? E('so', 'S', 't', 'O', 'b') : E('so', 'S', 'b', 'O', 't');
     const g0 = settle({ nodes: [M11, M12, TK, S, O], edges: [E('h1', 'M11', 'r', 'M12', 'l'), so] });
-    const split = teeInto(g0, 'h1', P(330, 130));
+    const split = teeInto(g0, 'h1', P(teeX, 130));
     const g = settle({ nodes: split.nodes, edges: [...split.edges, E('br', split.tee, 't', 'TK', 'b')] });
     return { ...g, tee: split.tee };
   }
@@ -601,6 +721,89 @@ describe('a bay picked up whole', () => {
     }
   });
 
+  it('lifts the pipe round the open end two grid steps off its centre, a grid step clear of its ring', () => {
+    // Lifted one grid step, ten pixels off the open end's centre, the header
+    // ran four pixels over the dot's ring, and at most zooms the open end
+    // read as hung off it.
+    for (const from of ['below', 'above'] as const) {
+      const g0 = header(from);
+      const after = dragGroup(g0, ['M11', 'M12', g0.tee, 'TK'], [P(0, 30)], 3);
+      const round = drawn(after, after.edges.find(e => e.target === 'M12')!.id);
+      const lift = from === 'below' ? 160 - LIFT : 160 + LIFT;
+      expect(round, from).toEqual([P(338, 160), P(520 - LIFT, 160), P(520 - LIFT, lift), P(520 + LIFT, lift), P(520 + LIFT, 160), P(700, 160)]);
+      expect(nearest(round, teeAt(after, 'O')), from).toBeGreaterThanOrEqual(DOT_CLEAR);
+    }
+  });
+
+  it('sends the pipe round an open end too near its tee for a lift a grid step clear of the ring, clear of the dot itself', () => {
+    // The tee twenty-five pixels past the open end: a way round the dot a
+    // grid step clear of its ring would turn inside the tee's reach, and
+    // push the tee off the bend it brought. Offered only that, the pipe
+    // kept its stretch straight through the dot. It goes round as near as
+    // it may, clear of the dot and its shadow, and the tee stays put.
+    for (const teeX of [545, 495]) {
+      const g0 = header('below', teeX);
+      const after = dragGroup(g0, ['M11', 'M12', g0.tee, 'TK'], [P(0, 30)], 3);
+      expect(teeAt(after, g0.tee), `${teeX}`).toEqual(P(teeX, 160));
+      const O = teeAt(after, 'O');
+      for (const e of after.edges.filter(x => x.id !== 'so' && x.id !== 'br')) {
+        const run = drawn(after, e.id);
+        expect(nearest(run, O), `${teeX} ${e.id}: ${JSON.stringify(run)}`).toBeGreaterThan(7);
+      }
+    }
+  });
+
+  it('keeps the lift round the open end where the open end is when the bay is carried on along the header', () => {
+    // The tee on the header's far side of the open end, and a valve just
+    // under the header's near end. Carried down onto the open end, the
+    // header is lifted round it; carried a hundred pixels on along itself,
+    // it was lifted again over its whole first line, from the valve's stub
+    // to the tee -- as short a way round the dot as any, and further off
+    // the valve under it -- and ran ten pixels over its valves' port level
+    // for four hundred and fifty pixels. It is lifted where the open end is
+    // and nowhere else.
+    const g0 = header('below', 680);
+    const g1 = settle({ nodes: [...g0.nodes, part('M13', 100, 170)], edges: g0.edges });
+    const ids = ['M11', 'M12', g0.tee, 'TK'];
+    const first = dragGroup(g1, ids, [P(0, 30)], 3);
+    const second = dragGroup(first, ids, [P(-100, 0)], 3);
+    const line = second.edges.find(e => e.source === 'M11')!.id;
+    const round = drawn(second, line).map(p => P(Math.round(p.x * 1e6) / 1e6, p.y));
+    expect(round).toEqual([P(60, 160), P(520 - LIFT, 160), P(520 - LIFT, 160 - LIFT), P(520 + LIFT, 160 - LIFT), P(520 + LIFT, 160), P(572, 160)]);
+  });
+
+  it('let go with its tee on a line between two symbols, sends that line round the dot and carries what it picked up whole', () => {
+    // A line straight down from TT to TU crosses the header. The bay is
+    // picked up and let go with its tee exactly on that line: drawn from its
+    // two ends, the line ran straight through the tee's dot, and at any zoom
+    // TT and TU read as teed into the header. The bay goes where it is put;
+    // the line goes round the dot, a grid step clear of its ring, as it
+    // would round any small symbol it does not end on.
+    const M11 = part('M11', 100, 100), M12 = part('M12', 700, 100), TK = part('TK', 430, -100);
+    const TT = part('TT', 540, -300), TU = part('TU', 540, 400);
+    const g0 = settle({ nodes: [M11, M12, TK, TT, TU], edges: [E('h1', 'M11', 'r', 'M12', 'l'), E('tt-tu', 'TT', 'b', 'TU', 't')] });
+    const split = teeInto(g0, 'h1', P(330, 130));
+    const g = settle({ nodes: split.nodes, edges: [...split.edges, E('br', split.tee, 't', 'TK', 'b')] });
+    expect(drawn(g, 'tt-tu')).toEqual([P(570, -240), P(570, 400)]);
+    const ids = ['M11', 'M12', split.tee, 'TK'];
+    const d = P(240, 0);
+    const after = letGo(dragGroup(g, ids, [d], 4));
+    for (const n of g.nodes) {
+      if (!ids.includes(n.id)) continue;
+      const now = after.nodes.find(x => x.id === n.id)!.position;
+      expect(now, n.id).toEqual(P(n.position.x + d.x, n.position.y + d.y));
+    }
+    const tee = teeAt(after, split.tee);
+    expect(tee).toEqual(P(570, 130));
+    for (const run of [onCanvas(after, 'tt-tu'), drawn(after, 'tt-tu')]) {
+      expect(nearest(run, tee), JSON.stringify(run)).toBeGreaterThanOrEqual(DOT_CLEAR);
+      expect(run[0], JSON.stringify(run)).toEqual(P(570, -240));
+      expect(run[run.length - 1], JSON.stringify(run)).toEqual(P(570, 400));
+    }
+    // The branch out of the tee's top is not drawn along the line either.
+    expect(runBeside(drawn(after, 'br'), drawn(after, 'tt-tu'), 5)).toBe(0);
+  });
+
   it('does not send a pipe round the open end of its own tee\'s branch', () => {
     // The tee's branch taken to an open end put down against the header,
     // three pixels under it: the branch's end is the branch's business, and
@@ -616,13 +819,14 @@ describe('a bay picked up whole', () => {
     // M2 and its open ends picked up without M1: the pipe's two ends move
     // relative to each other, and the pipe is the router's to draw again.
     // The second tee is left thirty pixels off the new path, further than a
-    // tee is put on the nearest point of it: it keeps its distance along the
-    // pipe from M1, which did not move -- 330 pixels, 30 of them along the
-    // bottom leg past the bend -- where it was once put on the point of the
-    // new path nearest where it had been, (510, 480).
+    // tee is put on the nearest point of it; but M2 went straight across the
+    // leg the tee is on, which went thirty pixels down with it, and the tee
+    // goes straight down onto it, its branch to O1 still straight. (It kept
+    // its distance along the pipe from M1, and slid thirty pixels along the
+    // bottom leg, to x = 480.)
     const g0 = bay();
     const after = dragGroup(g0, ['M2', 'O1', 'O2'], [P(0, 30)], 6);
-    expect(teeAt(after, g0.tees[1])).toEqual(P(480, 480));
+    expect(teeAt(after, g0.tees[1])).toEqual(P(510, 480));
     // And put back where it was when M2 is.
     const back = dragGroup(after, ['M2', 'O1', 'O2'], [P(0, -30)], 6);
     expect(teeAt(back, g0.tees[1])).toEqual(P(510, 450));
@@ -676,5 +880,58 @@ describe('a branch a drag carries past a symbol it does not end on', () => {
       const plain = pathPoints(routeOrthogonal(a, b).d);
       expect(routeOfLine(a, b, branch.data as LineData, inTheWay(plain, obstacleGrid(g.nodes), a, b)), `tick ${k}`).toEqual(plain);
     }
+  });
+});
+
+describe('a pipe whose end is dragged away from the rest of it', () => {
+  it('is drawn clear of the other lines, not along another line\'s leg into a valve', () => {
+    // S1 feeds TK through a tee; P0's line comes down and across into V's
+    // inlet at y = 160. TK dragged under V: the pipe, routed again whole by
+    // its two ends and the symbols alone, ran along y = 160 into V's margin
+    // and down, on top of P0's leg into V for a hundred and thirty pixels --
+    // both of them legs out of an end, which nothing that moves lines apart
+    // may part -- and read as TK fed from V. Looked for among the other
+    // lines, it turns down a grid step or two before P0's line comes down.
+    const S1 = part('S1', 100, 130), TK = part('TK', 400, 300), P0 = part('P0', 460, 20), V = part('V', 640, 130);
+    const g0 = settle({ nodes: [S1, TK, P0, V], edges: [E('run', 'S1', 'r', 'TK', 't'), E('pv', 'P0', 'b', 'V', 'l')] });
+    const t = teeInto(g0, 'run', P(250, 160));
+    const g = settle({ nodes: t.nodes, edges: t.edges });
+    const pipe = (x: G) => x.edges.filter(e => e.id !== 'pv').map(e => drawn(x, e.id));
+    const clear = (x: G, at: string) => {
+      for (const run of pipe(x)) {
+        expect(runBeside(run, drawn(x, 'pv'), 20), `${at}: ${JSON.stringify(run)}`).toBe(0);
+      }
+    };
+    let ticks = 0;
+    const after = drag(g, 'TK', [P(660, 250)], 8, x => clear(x, `tick ${++ticks}`));
+    clear(after, 'let go');
+    expect(teeAt(after, t.tee)).toEqual(P(250, 160));
+    expect(drawn(after, 'pv')).toEqual([P(490, 80), P(490, 160), P(640, 160)]);
+    // It stays as it is let go: the next reseat keeps it.
+    const again = reseatJunctions(after.nodes, after.edges, endOf, obstaclesByPage(after.nodes));
+    expect(again.edges).toBe(after.edges);
+    expect(again.nodes).toBe(after.nodes);
+  });
+});
+
+describe('a valve dropped on a pipe, venting out of its free port', () => {
+  it('has the pipe sent round the mark on its open port as well as round its body', () => {
+    // A pipe straight up from B0 to T0 with a tee on it, and V, fed from W
+    // on its left port and venting out of its right. V dragged over until
+    // its right edge is on the pipe: the pipe's stretch below the tee went
+    // round V fifteen pixels off its body -- straight up through the
+    // triangle drawn on V's open port -- and at any zoom read as plumbed
+    // into V's outlet.
+    const B0 = part('B0', 650, 450), T0 = part('T0', 650, 0), C = part('C', 800, 170), W = part('W', 300, 330), V = part('V', 450, 330);
+    const g0 = settle({ nodes: [B0, T0, C, W, V], edges: [E('up', 'B0', 't', 'T0', 'b'), E('wv', 'W', 'r', 'V', 'l')] });
+    const t = teeInto(g0, 'up', P(680, 200));
+    const g = settle({ nodes: t.nodes, edges: [...t.edges, E('br', t.tee, 'r', 'C', 'l')] });
+    const after = letGo(drag(g, 'V', [P(620, 330)], 6));
+    const vented = { x: 620, y: 330, w: 60 + VENT_REACH, h: 60 };
+    const below = after.edges.find(e => e.source === 'B0')!.id;
+    const round = drawn(after, below);
+    expect(through(round, vented), JSON.stringify(round)).toBe(false);
+    expect(round[0]).toEqual(P(680, 450));
+    expect(teeAt(after, t.tee)).toEqual(P(680, 200));
   });
 });

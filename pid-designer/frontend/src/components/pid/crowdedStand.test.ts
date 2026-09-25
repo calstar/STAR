@@ -138,8 +138,11 @@ describe('a crowded stand', () => {
     // The search the second branch is looked for among the other lines by
     // settles, on a page this crowded, for a good way rather than the best:
     // one that ran up beside the tank and stepped ten pixels over at its top
-    // to run up the next column, for nothing. The step is taken out.
-    expect(d.get('sy-junc_10')).toEqual([P(997, 590), P(535, 590), P(535, 291), P(470, 291), P(470, 240), P(460, 240), P(460, 168)]);
+    // to run up the next column, for nothing. The step is taken out. It
+    // rises past MAN-14 (b2), whose right port is open and drawn with a vent
+    // mark twenty-four pixels out of it: up x = 535 it ran through the mark,
+    // and it keeps its margin clear of it instead.
+    expect(d.get('sy-junc_10')).toEqual([P(997, 590), P(559, 590), P(559, 291), P(470, 291), P(470, 240), P(460, 240), P(460, 168)]);
     const three = ['tt-tu', 'junc_5-junc_4', 'sy-junc_10'];
     for (const p of three) for (const q of three) {
       if (p < q) expect(beside(d.get(p)!, d.get(q)!), `${p}: ${JSON.stringify(d.get(p))}, ${q}: ${JSON.stringify(d.get(q))}`).toBeLessThanOrEqual(10);

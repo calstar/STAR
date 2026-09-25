@@ -10,7 +10,7 @@ import {
 } from './route';
 import type { Box, End, Pt } from './route';
 import { inTheWay, routeOfLine, routesItself, sameBoxes } from './lineRoute';
-import { NO_BOXES, obstacleGrid, obstaclesByPage } from './routeGrid';
+import { NO_BOXES, lineGrid, obstacleGrid, obstaclesByPage } from './routeGrid';
 import type { BoxGrid } from './routeGrid';
 import { crossingsOf, pathWithHops } from './hops';
 import { NO_LINES, publishEdge, sameRoute, unpublishEdge, useLineView } from './edgeGeometry';
@@ -250,8 +250,10 @@ export function BranchableEdge(props: EdgeProps) {
   // asks React Flow's store only which symbols are in the way of its plain
   // route (none, nearly always), compared by what they are, so it is drawn
   // again when a symbol comes into its way or goes out of it, not whenever
-  // anything on the sheet moves. A pipe's lines draw their slices of the
-  // pipe as stored, and ask nothing.
+  // anything on the sheet moves. What is in its way is the symbols, grown by
+  // the mark on a venting valve's open port, and the junctions' dots
+  // (`lineGrid`). A pipe's lines draw their slices of the pipe as stored,
+  // and ask nothing.
   const selfRouted = routesItself(routing, endNodes[0], sourceHandleId, endNodes[1], targetHandleId);
   const plain = useMemo(() => (selfRouted ? { pts: pathPoints(routeOrthogonal(a, b, offset).d), a, b } : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -263,7 +265,7 @@ export function BranchableEdge(props: EdgeProps) {
   const inWay = useStore(
     useCallback(s => {
       if (!plain) return NO_BOXES;
-      const grid = obstacleGrid(s.nodes);
+      const grid = lineGrid(s.nodes, s.edges);
       const last = asked.current;
       if (last && last.grid === grid && last.plain === plain) return last.boxes;
       const boxes = inTheWay(plain.pts, grid, plain.a, plain.b);
@@ -288,7 +290,7 @@ export function BranchableEdge(props: EdgeProps) {
   // the pass has caught up with a route that changed, the line draws its
   // route as it routed it.
   const flow = useStoreApi();
-  const sheet = useCallback(() => obstacleGrid(flow.getState().nodes), [flow]);
+  const sheet = useCallback(() => { const st = flow.getState(); return obstacleGrid(st.nodes, st.edges); }, [flow]);
   useLayoutEffect(() => { publishEdge(id, base, { a, b, free: selfRouted, sheet, watchSheet: flow.subscribe }); },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [id, base, selfRouted, sheet, flow, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, teeA, teeB]);

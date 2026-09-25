@@ -5,6 +5,11 @@ import { reseatJunctions } from './junctions';
 import { splitEdgeAt } from './splitEdge';
 import { translateSubgraph } from './graphOps';
 import { unmeasuredEnd } from './unmeasured';
+import { drawnRoute } from './lineRoute';
+import { drawnScene } from './tracks';
+import { DOT_CLEAR } from './routeGrid';
+import { pathPoints, routeOrthogonal } from './route';
+import type { Pt } from './route';
 
 const node = (id: string, componentType: string, data: Record<string, unknown> = {}): Node =>
   ({ id, position: { x: 0, y: 0 }, data: { componentType, label: id, ...data } }) as unknown as Node;
@@ -310,16 +315,16 @@ describe('two lines on one port', () => {
   });
 });
 
-describe('a line drawn through a symbol it does not join', () => {
-  // Symbols where they stand on the sheet, as the canvas has them measured.
-  const at = (id: string, componentType: string, x: number, y: number, page = 'Main'): Node => ({
-    id, type: componentType, position: { x, y },
-    measured: componentType === 'TANK' ? { width: 60, height: 100 } : { width: 60, height: 60 },
-    data: { componentType, label: id, page },
-  });
-  const line = (id: string, source: string, sourceHandle: string, target: string, targetHandle: string): Edge =>
-    ({ id, source, sourceHandle, target, targetHandle, type: 'smoothstep', data: {} });
+// Symbols where they stand on the sheet, as the canvas has them measured.
+const at = (id: string, componentType: string, x: number, y: number, page = 'Main'): Node => ({
+  id, type: componentType, position: { x, y },
+  measured: componentType === 'TANK' ? { width: 60, height: 100 } : { width: 60, height: 60 },
+  data: { componentType, label: id, page },
+});
+const line = (id: string, source: string, sourceHandle: string, target: string, targetHandle: string): Edge =>
+  ({ id, source, sourceHandle, target, targetHandle, type: 'smoothstep', data: {} });
 
+describe('a line drawn through a symbol it does not join', () => {
   /**
    * A bay made as the canvas makes one -- MAN-1 to MAN-2, teed at x = 300
    * with a branch down to TK-1, settled -- and then picked up whole and let
@@ -383,5 +388,161 @@ describe('a line drawn through a symbol it does not join', () => {
     for (const other of [at('GSE', 'REGION', 250, 100), at('RTD-1', 'RTD', 280, 110), at('SOL-1', 'SOL', 870, 120, 'Vehicle')]) {
       expect(through(bay({ x: 590, y: 20 }, [other])), other.id).toEqual([]);
     }
+  });
+});
+
+describe('a line drawn through a tee or an open end it does not join', () => {
+  const dot = (id: string, x: number, y: number, page = 'Main'): Node => ({
+    id, type: 'JUNCTION', position: { x, y }, measured: { width: 10, height: 10 },
+    data: { componentType: 'JUNCTION', label: id, page },
+  });
+
+  /**
+   * MAN-1 to MAN-2 across the sheet at y = 130, teed at x = 300 as the
+   * canvas tees one -- with a branch down to `branchTo` when given -- and
+   * settled.
+   */
+  function header(branchTo?: Node) {
+    const nodes = [at('MAN-1', 'MAN', 100, 100), at('MAN-2', 'MAN', 500, 100), ...(branchTo ? [branchTo] : [])];
+    const split = splitEdgeAt(nodes, [line('run', 'MAN-1', 'r', 'MAN-2', 'l')], 'run', { x: 300, y: 130 }, undefined,
+      { points: [{ x: 163, y: 130 }, { x: 497, y: 130 }] })!;
+    const edges = branchTo ? [...split.edges, line('branch', split.junctionId, 'b', branchTo.id, 't')] : split.edges;
+    return { ...reseatJunctions(split.nodes, edges, unmeasuredEnd), tee: split.junctionId };
+  }
+  /**
+   * TK-A over TK-B, the line between them held by a person's corners
+   * straight down at `x`. A line that routes itself goes around the dot of a
+   * junction it does not end on (`routeGrid.lineGrid`), so it is never the
+   * one drawn through a tee; a person's corners are drawn where they were
+   * put, and a line held by them runs wherever they run.
+   */
+  const down = (x: number, page = 'Main') => ({
+    nodes: [at('TK-A', 'TANK', x - 30, -200, page), at('TK-B', 'TANK', x - 30, 300, page)],
+    edges: [{ ...line('down', 'TK-A', 'b', 'TK-B', 't'), data: { waypoints: [{ x, y: 0 }, { x, y: 250 }] } }],
+  });
+  /**
+   * TK-14 to TK-15 straight down at x = 570, teed near its foot at y = 450
+   * with a branch across to SOL-1, as the canvas makes one, and settled: a
+   * pipe, whose lines draw their slices of the one route it was seated on.
+   */
+  function riser() {
+    const nodes = [at('TK-14', 'TANK', 540, -200), at('TK-15', 'TANK', 540, 500), at('SOL-1', 'SOL', 440, 420)];
+    const split = splitEdgeAt(nodes, [line('tt-tu', 'TK-14', 'b', 'TK-15', 't')], 'tt-tu', { x: 570, y: 450 }, undefined,
+      { points: [{ x: 570, y: -97 }, { x: 570, y: 497 }] })!;
+    const edges = [...split.edges, line('off', split.junctionId, 'l', 'SOL-1', 'r')];
+    return { ...reseatJunctions(split.nodes, edges, unmeasuredEnd), tee: split.junctionId };
+  }
+  const plus = (g: { nodes: Node[]; edges: Edge[] }, more: { nodes: Node[]; edges: Edge[] }) =>
+    ({ nodes: [...g.nodes, ...more.nodes], edges: [...g.edges, ...more.edges] });
+  const onDots = (g: { nodes: Node[]; edges: Edge[] }) => runChecks(g.nodes, g.edges).filter(f => f.id.startsWith('on-junction'));
+  /** How near a drawn line comes to a point. */
+  const nearest = (run: Pt[], c: Pt) => Math.min(...run.slice(0, -1).map((p, i) => {
+    const q = run[i + 1];
+    return Math.hypot(c.x - Math.max(Math.min(p.x, q.x), Math.min(Math.max(p.x, q.x), c.x)), c.y - Math.max(Math.min(p.y, q.y), Math.min(Math.max(p.y, q.y), c.y)));
+  }));
+
+  it('names the line and the pipe the tee rides when a line is drawn through the tee', () => {
+    const h = header();
+    const g = plus(h, down(300));
+    const [f, ...more] = onDots(g);
+    expect(more).toEqual([]);
+    expect(f).toMatchObject({ id: `on-junction-${h.tee}`, severity: 'warning' });
+    expect(f.title).toBe('TK-A to TK-B runs through the tee on MAN-1 to MAN-2 without joining it');
+    expect(f.detail).toContain('The tee on MAN-1 to MAN-2 is drawn on TK-A to TK-B');
+    expect(f.nodeIds).toEqual([h.tee]);
+    expect(f.edgeIds).toEqual(['down']);
+    expect(countProblems(runChecks(g.nodes, g.edges))).toBeGreaterThan(0);
+  });
+
+  it('says so when a group move lets a bay go with its tee on another pipe', () => {
+    // The bay's tee lands at (570, 160), on the pipe from TK-14 down to
+    // TK-15, whose line then runs straight through its dot: a four-way joint
+    // on the page, and nothing joins them. The pipe's line is where its pipe
+    // was seated, and a tee let go on it does not move it; it is named by the
+    // pipe's two ends, and it is the one line of the pipe through the dot.
+    const bay = header(at('TK-1', 'TANK', 370, 300));
+    const pipe = riser();
+    expect(onDots(plus(bay, pipe))).toEqual([]);
+    const moved = translateSubgraph(bay.nodes, bay.edges, bay.nodes.map(n => n.id), { x: 270, y: 30 });
+    const [f, ...more] = onDots(plus(moved, pipe));
+    expect(more).toEqual([]);
+    expect(f.title).toBe('TK-14 to TK-15 runs through the tee on MAN-1 to MAN-2 without joining it');
+    expect(f.nodeIds).toEqual([bay.tee]);
+    expect(f.edgeIds).toEqual(pipe.edges.filter(e => e.source === 'TK-14').map(e => e.id));
+  });
+
+  it('takes a line nearer the dot than a line joined to it ends, and not one a grid step off', () => {
+    for (const x of [300, 296, 305, 309]) expect(onDots(plus(header(), down(x))), `line at x = ${x}`).toHaveLength(1);
+    // Ten pixels off the tee's centre is a crossing beside it, hopped as
+    // any crossing is; further off it is nothing to do with the tee at all.
+    for (const x of [310, 290, 320, 400]) expect(onDots(plus(header(), down(x))), `line at x = ${x}`).toEqual([]);
+  });
+
+  it('names an open end by where its line comes from', () => {
+    // MAN-1's line ends in an open end at (400, 130), and TK-A to TK-B runs down through it.
+    const g = {
+      nodes: [at('MAN-1', 'MAN', 100, 100), dot('end', 395, 125), ...down(400).nodes],
+      edges: [line('run', 'MAN-1', 'r', 'end', 'l'), ...down(400).edges],
+    };
+    const [f, ...more] = onDots(g);
+    expect(more).toEqual([]);
+    expect(f.title).toBe('TK-A to TK-B runs through the open end of the line from MAN-1 without joining it');
+    expect(f.nodeIds).toEqual(['end']);
+  });
+
+  it('says a line ends on a tee when its open end is put down on the tee\'s ring, and that the pipe runs through the open end', () => {
+    // TK-A's line comes down to an open end whose dot is 8 px over the tee's:
+    // its anchor is on the far side of its own dot, and it still reads as a
+    // line into the tee.
+    const h = header();
+    const g = plus(h, { nodes: [at('TK-A', 'TANK', 270, -200), dot('O', 295, 117)], edges: [line('down', 'TK-A', 'b', 'O', 't')] });
+    const found = onDots(g);
+    expect(found.map(f => f.title).sort()).toEqual([
+      'MAN-1 to MAN-2 runs through the open end of the line from TK-A without joining it',
+      'TK-A to an open end ends on the tee on MAN-1 to MAN-2 without joining it',
+    ]);
+    expect(found.find(f => f.nodeIds![0] === 'O')!.edgeIds!.sort()).toEqual(h.edges.map(e => e.id).sort());
+  });
+
+  it('names a tee that rides no pipe by what its lines join', () => {
+    // A corner tee from MAN-1 up to an open end, and TK-B's line brought up
+    // to an open end whose dot is 8 px under it.
+    const g = {
+      nodes: [at('MAN-1', 'MAN', 100, 100), dot('j', 295, 125), dot('up', 295, 40), at('TK-B', 'TANK', 270, 300), dot('low', 295, 133)],
+      edges: [line('in', 'MAN-1', 'r', 'j', 'l'), line('rise', 'j', 't', 'up', 'b'), line('from-below', 'TK-B', 't', 'low', 'b')],
+    };
+    const f = onDots(g).find(x => x.nodeIds![0] === 'j')!;
+    expect(f.title).toBe('TK-B to an open end ends on the tee joining MAN-1 and an open end without joining it');
+    expect(f.detail).toContain('Move the tee or the line clear.');
+  });
+
+  it('judges a line that routes itself where the page draws it, clear of a dot its plain route would cross', () => {
+    // SOL-A to SOL-B is a Z whose crossbar, drawn by its two ends alone, is
+    // at x = 300, straight through the tee. That line can no longer be drawn
+    // through the dot: a line that routes itself goes around the dots it does
+    // not end on (`routeGrid.lineGrid`), and the page draws its crossbar two
+    // grid steps over. So what is asserted is that the router keeps it clear
+    // of the dot -- as far as a way around a dot keeps (`DOT_CLEAR`), on the
+    // page and in the check's reading of it alike -- and that the check,
+    // reading it there, says nothing.
+    const g = plus(header(), {
+      nodes: [at('SOL-A', 'SOL', 100, 70), at('SOL-B', 'SOL', 440, 300)],
+      edges: [line('z', 'SOL-A', 'r', 'SOL-B', 'l')],
+    });
+    const byId = new Map(g.nodes.map(n => [n.id, n]));
+    const z = g.edges.find(e => e.id === 'z')!;
+    const plain = pathPoints(routeOrthogonal(unmeasuredEnd(byId.get('SOL-A')!, 'r')!, unmeasuredEnd(byId.get('SOL-B')!, 'l')!).d);
+    expect(plain.some(p => p.x === 300)).toBe(true);
+    const tee = { x: 300, y: 130 };
+    for (const drawn of [drawnRoute(z, byId, unmeasuredEnd)!, drawnScene(g.nodes, g.edges, unmeasuredEnd).get('z')!]) {
+      expect(nearest(drawn, tee), JSON.stringify(drawn)).toBeGreaterThanOrEqual(DOT_CLEAR);
+    }
+    expect(onDots(g)).toEqual([]);
+  });
+
+  it('says nothing of the lines on the tee, of a bay on its own, or of a line on another page', () => {
+    expect(onDots(header())).toEqual([]);
+    expect(onDots(header(at('TK-1', 'TANK', 270, 300)))).toEqual([]);
+    expect(onDots(plus(header(), down(300, 'Vehicle')))).toEqual([]);
   });
 });

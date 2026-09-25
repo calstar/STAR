@@ -23,13 +23,39 @@ import { turnPlacement } from '../route';
  * ports a block has is a property of that block, not of manifolds.
  */
 
-const BODY = 26;
-const PITCH = 26;
-const PAD = 14;
+/**
+ * The block's thickness, the spacing of its outlets, and how far the first
+ * outlet is from the end the feed comes in at.
+ *
+ * All of them whole grid steps, and the feed half the thickness in, so a
+ * manifold standing on the 10 px grid has every port on the grid -- which is
+ * what lets a valve standing on the grid under an outlet be dead in line
+ * with it. The block was 26 thick with outlets every 26 from 14 in, so the
+ * feed sat at 13 and the outlets at 14, 40, 66 and 92: a line from a
+ * regulator into the feed drew a 3 px jog, and a valve under each outlet
+ * drew a different one. Thirty is the grid pitch nearest the old one, so the
+ * outlets stay evenly spaced and a four-outlet block's move at most eight
+ * pixels, the feed three.
+ */
+const BODY = 20;
+const PITCH = 30;
+const PAD = 10;
 
-/** How long the block is for `outlets` outlets down one side. */
+/**
+ * How long the block is for `outlets` outlets down one side: a pitch per
+ * outlet, which leaves the last one two grid steps from the far end.
+ *
+ * A whole number of grid steps, and that matters as much as where the
+ * outlets are: turned half a turn, an outlet is measured from the far end,
+ * and it is on the grid only when the block's length is. The old length, 118
+ * for four, put a turned block's outlets as far off as an unturned one's;
+ * and 120 rather than 130 keeps them within six pixels of where they were.
+ * It also means a block given more outlets grows by whole grid steps, so the
+ * move that keeps a turned block's feed put (`manifoldShift`) leaves it on
+ * the grid.
+ */
 function manifoldLength(outlets: number): number {
-  return Math.max(2, outlets) * PITCH + PAD;
+  return Math.max(2, outlets) * PITCH;
 }
 
 /** The ids of a manifold's ports: the feed, then the outlets. */

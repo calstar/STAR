@@ -345,6 +345,19 @@ the whole pipe, `from`/`to` the pipe's end nodes, and `ends` where they were
 when the tee was last put down; a pipe re-routed under a tee that stays put
 does not rewrite them, so opening a drawing is not an edit.
 
+A tee also records its *home* (`along.home`): its centre, and its pipe's two
+end anchors, when it was last put down on purpose -- split in, slid by hand,
+or seated while the ends were those. Every seat keeps a tee where it is and
+draws the pipe to keep it there, so an end dragged far out and then exactly
+back left the tee where the far drag had put it, off the grid, with the pipe
+in its far shape and the branch jogged over to it. While both ends are back
+within half a pixel of the home's, `placeTees` puts the tee back at the home's
+centre when that is a legal spot on the path, and the pipe is drawn through
+the homes when the router's route passes through them and the shape it was
+left in does not. A tee saved without a home takes its place and `ends` as
+one; rigid moves, drag carries and paste move the home with the tee. Nothing
+else about placement changed.
+
 A pipe is either the router's or a person's. The router's pipe's lines carry
 their slices marked `viaRun`, and it keeps the shape it was drawn with while
 that shape still fits its two ends: drawn through exactly, first and last

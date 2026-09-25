@@ -129,7 +129,8 @@ describe('the Geometry editor follows the dialog round it', () => {
     ed.size('width', 200);
     ed.set({ outlets: 6 });
     const after = drawn(6, 'horizontal', ed.draft());
-    expect(after.size).toEqual([200, 26]);
+    // Twenty thick: the block as the drawing has it, a whole number of grid steps.
+    expect(after.size).toEqual([200, 20]);
     expect(after.ports).toEqual(drawn(6, 'horizontal').ports);
   });
 
@@ -155,11 +156,14 @@ describe('laying a draft on a changed drawing', () => {
 
   it('lands every port on a whole px', () => {
     const base = drawnGeometry(4, 'horizontal');
-    // 0.8 of the way round is 31.6 px along the bottom: dragged in an older
-    // editor, or saved by hand.
-    const draft = { ...base, positions: { ...base.positions, p2: 0.8 } };
+    // 0.81 of the way round the 120 x 20 block is 33.2 px along the bottom:
+    // dragged in an older editor, or saved by hand.
+    const draft = { ...base, positions: { ...base.positions, p2: 0.81 } };
     const out = rebaseDraft(draft, base, drawnGeometry(7, 'horizontal'), ids(7));
-    expect(out.width).toBe(196);
+    expect(out.width).toBe(210);
+    const p2 = perimeterPoint(out.positions.p2, out.width, out.height);
+    expect(p2.side).toBe('bottom');
+    expect(p2.x).toBeCloseTo(33, 9);
     const per = 2 * (out.width + out.height);
     for (const [id, t] of Object.entries(out.positions)) expect(Math.abs(t * per - Math.round(t * per)), id).toBeLessThan(1e-9);
   });
@@ -168,9 +172,9 @@ describe('laying a draft on a changed drawing', () => {
     const base = drawnGeometry(4, 'horizontal');
     const draft = { ...base, positions: { ...base.positions, p3: fractionOf({ side: 'bottom', along: 100 }, base.width, base.height) } };
     const out = rebaseDraft(draft, base, drawnGeometry(4, 'vertical'), ids(4));
-    // 100 px along a bottom 26 px wide: its far corner.
+    // 100 px along a bottom 20 px wide: its far corner.
     const p3 = perimeterPoint(out.positions.p3, out.width, out.height);
-    expect({ x: p3.x, y: p3.y }).toEqual({ x: 26, y: 118 });
+    expect({ x: p3.x, y: p3.y }).toEqual({ x: 20, y: 120 });
   });
 });
 

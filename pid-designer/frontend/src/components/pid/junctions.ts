@@ -52,6 +52,22 @@ export interface Along {
    * it -- the tee keeps its place on the drawing, not a fraction of a pipe.
    */
   ends?: { a: Pt; b: Pt };
+  /**
+   * Where the tee was last put down on purpose -- split into a line, slid by
+   * hand, or seated while its pipe's ends were where they were then -- and
+   * where the pipe's two end anchors were at the time, `a` at `from` as in
+   * `ends`. While the pipe's ends are back there, the tee goes back there
+   * too, when that is a legal spot on its pipe (`pipes.placeTees`).
+   *
+   * `ends` cannot say this: every seat that moves the tee rewrites it. An end
+   * dragged far out and then exactly back found its tee where the far drag
+   * had left it -- off the grid, on a leg the drag had bent the pipe into --
+   * and the pipe drawn around it in its far shape, because each seat keeps a
+   * tee where it is and draws the pipe to keep it there. A drawing put back
+   * as it was is drawn as it was. Moved with the tee by whatever picks it up
+   * whole, as `ends` is.
+   */
+  home?: { a: Pt; b: Pt; at: Pt };
 }
 
 /** Half the junction dot: its position is its top-left, its centre is +5. */

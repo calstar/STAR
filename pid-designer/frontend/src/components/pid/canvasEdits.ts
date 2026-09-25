@@ -38,7 +38,8 @@ const ZERO = 1e-9;
  *   the drag began every tick and put back on the pipe by a different
  *   amount than the rest, so its lines no longer moved as one and the hand
  *   corners on them were left behind as zigzags. Where the pipe's ends last
- *   stood (`along.ends`) moves with it, as `translateSubgraph` moves it.
+ *   stood (`along.ends`), and the tee's home (`along.home`), move with it,
+ *   as `translateSubgraph` moves them.
  * - So does a tee left out of the selection whose pipe's two ends are both
  *   picked up by one delta: it rides that pipe, and the pipe is moving
  *   whole. React Flow proposes nothing for it, and left where it was it
@@ -113,14 +114,19 @@ export function applyMoves(
       // leave the corners between it and the rest of the bay behind.
       const delta = rigid ?? { x: now.x - from.x, y: now.y - from.y };
       if (Math.abs(delta.x) < ZERO && Math.abs(delta.y) < ZERO) continue;
-      if (rigid && along?.ends) {
-        const { a, b } = along.ends;
+      if (rigid && (along?.ends || along?.home)) {
+        const by = (p: Pt): Pt => ({ x: p.x + delta.x, y: p.y + delta.y });
+        const { ends, home } = along;
         next = next.map(n => (n.id === c.id
           ? {
             ...n,
             data: {
               ...n.data,
-              along: { ...along, ends: { a: { x: a.x + delta.x, y: a.y + delta.y }, b: { x: b.x + delta.x, y: b.y + delta.y } } },
+              along: {
+                ...along,
+                ...(ends ? { ends: { a: by(ends.a), b: by(ends.b) } } : {}),
+                ...(home ? { home: { a: by(home.a), b: by(home.b), at: by(home.at) } } : {}),
+              },
             },
           }
           : n));

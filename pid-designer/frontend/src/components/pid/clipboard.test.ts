@@ -111,7 +111,7 @@ describe('a paste is the original, moved', () => {
       at('A', 0, 0), at('B', 300, 100), at('C', 100, 200),
       at('junc_7', 145, 25, { type: 'JUNCTION' }, {
         componentType: 'JUNCTION',
-        along: { t: 0.4, in: 'l', out: 'r', from: 'A', to: 'B', ends: { a: P(60, 30), b: P(300, 130) } },
+        along: { t: 0.4, in: 'l', out: 'r', from: 'A', to: 'B', ends: { a: P(60, 30), b: P(300, 130) }, home: { a: P(60, 30), b: P(300, 130), at: P(150, 30) } },
       }),
     ];
     const edges = [
@@ -123,7 +123,7 @@ describe('a paste is the original, moved', () => {
   };
   const shifted = (p: { x: number; y: number }, k = 1) => P(p.x + PASTE_OFFSET.x * k, p.y + PASTE_OFFSET.y * k);
 
-  it('moves every symbol, every stored corner and every tee\'s record of its pipe by the offset', () => {
+  it('moves every symbol, every stored corner and every tee\'s record of its pipe and its home by the offset', () => {
     const { nodes, edges } = bay();
     // A bay lands beside itself (see 'where a paste lands'): whatever the
     // offset, everything goes by it.
@@ -139,8 +139,11 @@ describe('a paste is the original, moved', () => {
     });
     // The pipe-given corners stay pipe-given: the reseat still owns them.
     expect((out.edges[1].data as { viaRun?: boolean }).viaRun).toBe(true);
-    const along = (copyOf.get('junc_7')!.data as { along: { ends: unknown; from: string; to: string; t: number } }).along;
+    const along = (copyOf.get('junc_7')!.data as { along: { ends: unknown; home: unknown; from: string; to: string; t: number } }).along;
     expect(along.ends).toEqual({ a: by(P(60, 30)), b: by(P(300, 130)) });
+    // Its home too: the copy's pipe, with its ends where the copies of A and
+    // B are, has the copy of the tee at home where it is.
+    expect(along.home).toEqual({ a: by(P(60, 30)), b: by(P(300, 130)), at: by(P(150, 30)) });
     // Its pipe ends at the copies of A and B, not at the originals.
     expect(along.from).toBe(copyOf.get('A')!.id);
     expect(along.to).toBe(copyOf.get('B')!.id);
