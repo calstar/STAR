@@ -1,0 +1,6 @@
+start = pressure(HIGH_PRESS)
+while pressure(GN2_HIGH) < start * 0.7:
+    open_valve(HIGH_PRESS_CTRL)
+    delay(0.4)
+    close_valve(HIGH_PRESS_CTRL)
+    delay(2.5)

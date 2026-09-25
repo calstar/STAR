@@ -62,6 +62,10 @@ interface SensorSystemState {
   lastSensorFlushMs?: number; // Date.now() at last flush — for latency/freshness display
   actuators: Map<number, ActuatorUpdate>;
   currentState: SystemState | null;
+  /** Bit N set = the sequencer will currently accept state id N. null until it first publishes. */
+  allowedStateMask: number | null;
+  /** State id -> why it cannot be entered right now. */
+  stateRefusalReasons: Record<number, string>;
   connectionStatus: ConnectionStatus;
   debugMode: boolean;
   missionStartTime: number | null; // T+0 from first packet (backend)
@@ -389,6 +393,8 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   // asserted a state the rig had not reported and named the wrong one on a rig that renumbered.
   // Consumers already fall back through bootStateId().
   currentState: null,
+  allowedStateMask: null,
+  stateRefusalReasons: {},
   connectionStatus: { connected: false, elodinConnected: false },
   debugMode: false,
   missionStartTime: null,
@@ -511,6 +517,11 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
     set((s) => ({
       currentState: update.currentState,
       debugMode: update.debugMode !== undefined ? update.debugMode : get().debugMode,
+      // Undefined means "this publish carried no opinion", not "nothing is allowed" — an older
+      // backend or a client that connected before the sequencer's first publish must not have
+      // every button greyed out. Keep what we had.
+      allowedStateMask: update.allowedBitmask !== undefined ? update.allowedBitmask : s.allowedStateMask,
+      stateRefusalReasons: update.stateRefusalReasons ?? s.stateRefusalReasons,
       actuatorCommandedOverrides: {}, // clear overrides on state change so new state's expected positions apply
     }));
   },

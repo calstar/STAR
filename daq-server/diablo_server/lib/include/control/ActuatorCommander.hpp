@@ -91,7 +91,14 @@ public:
      */
     /** `allow_delays` false makes the entry apply immediately — used for abort states, which must
      *  not sit behind a delay. */
-    void startContinuousLoop(State state, bool allow_delays = true);
+    /**
+     * @param defer_first_pass skip the immediate pass and start republishing one period later.
+     *        For a dynamic state: the caller has already applied the column, so that pass is
+     *        redundant, and running it races the script that is about to start commanding valves —
+     *        a race the script loses, because the pass resolves positions and only then spends a
+     *        couple of milliseconds on retransmits, landing a stale command on top of the script's.
+     */
+    void startContinuousLoop(State state, bool allow_delays = true, bool defer_first_pass = false);
 
     /** Stop the continuous re-send loop (blocks until the thread exits). */
     void stopContinuousLoop();
@@ -124,6 +131,27 @@ public:
 
     /** Clear all manual overrides (e.g. leaving debug mode or transitioning state). */
     void clearAllManualOverrides();
+
+    /**
+     * A running script's position for one valve — the script layering on top of its state's CSV
+     * column.
+     *
+     * Deliberately NOT manual_overrides_. That map is cleared on every transition AND whenever
+     * debug mode is switched off (SequencerService::doSetDebugMode), so a script writing there
+     * would have its valve intent silently wiped by an operator leaving debug mode while the
+     * script kept running.
+     *
+     * Setting a position also takes OWNERSHIP of the valve: any staged command still in flight for
+     * it is cancelled, and it stops being skipped by the republish's pending-delay filter. Without
+     * that, the state's own delays column could move the valve seconds after the script already
+     * commanded it, landing last and silently winning.
+     *
+     * Like setManualOverride, this is not debug-gated here — the gate belongs to the caller.
+     */
+    void setScriptPosition(const std::string& name, int pos);
+
+    /** Drop every script position. Called on any transition, beside clearAllManualOverrides. */
+    void clearScriptPositions();
 
     /** Set the Elodin client for publishing commanded state [0x32, ch] to the DB. */
     /**
@@ -166,6 +194,15 @@ private:
 
     std::map<std::string, int> manual_overrides_;
     std::mutex overrides_mutex_;
+
+    /** Valves a running script has taken over, role -> logical position. Its own mutex, and never
+     *  held at the same time as overrides_mutex_ — applyForState snapshots this first and then
+     *  takes the other, so no call path holds both and there is no lock order to get wrong. */
+    std::map<std::string, int> script_positions_;
+    std::mutex script_positions_mutex_;
+
+    /** Warn once per role that a manual override is fighting a running script for a valve. */
+    static void logOverrideShadowingScript(const std::string& role);
 
     std::thread loop_thread_;
     std::atomic<bool> loop_running_{false};

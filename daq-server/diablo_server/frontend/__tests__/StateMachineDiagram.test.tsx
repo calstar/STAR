@@ -90,16 +90,20 @@ describe('StateMachineDiagram', () => {
 
         // IDLE cannot transition directly to FIRE
         const fireNode = screen.getByText('FIRE');
-        // Suppress window.alert for this test
-        const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => { });
 
         fireEvent.click(fireNode);
 
         expect(mockSendCommand).not.toHaveBeenCalled();
         expect(useSensorStore.getState().currentState).toBe(SystemState.IDLE); // unchanged
-        expect(alertMock).toHaveBeenCalled();
 
-        alertMock.mockRestore();
+        // The refusal goes to the notification panel, not window.alert. A modal stole focus
+        // mid-procedure and read nothing like the refusals the sequencer sends for the same
+        // class of mistake, so one rejection looked like two different failures depending on
+        // which side caught it.
+        const notes = useSensorStore.getState().notifications;
+        expect(notes).toHaveLength(1);
+        expect(notes[0].category).toBe('error');
+        expect(notes[0].message).toContain('Cannot go from IDLE to FIRE');
     });
 
     it('should allow invalid transitions if debug mode is active', () => {

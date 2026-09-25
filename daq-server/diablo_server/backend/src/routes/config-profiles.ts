@@ -25,6 +25,8 @@ import { getConfigPath, readConfig, writeConfig, invalidateDeployedConfigCache }
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const DEFAULT_PROFILE = 'default';
+/** Where a profile keeps its dynamic-state scripts, relative to the profile directory. */
+export const SCRIPTS_SUBDIR = 'scripts';
 
 function assertValidName(name: string): void {
   if (!NAME_RE.test(name)) {
@@ -55,13 +57,32 @@ export function profilePath(name: string): string {
   return join(profileDir(name), 'config.toml');
 }
 
-/** Profile-owned files that deploy alongside config.toml. */
+/**
+ * Profile-owned files that deploy alongside config.toml, as paths relative to the profile dir.
+ *
+ * State scripts (scripts/*.script) are in here for the same reason the CSVs are, and the failure
+ * if they were not is worse than it looks: config.toml and the CSVs would deploy while the script
+ * a `[[states]]` entry names did not, so the sequencer would refuse a state the operator had just
+ * watched save successfully — and it would read as a sequencer bug rather than a deploy bug.
+ *
+ * Filtered by extension rather than listed wholesale so an editor backup or a stray file in the
+ * profile directory cannot ride out to config/.
+ */
 function profileAssets(name: string): string[] {
+  const out: string[] = [];
   try {
-    return readdirSync(profileDir(name)).filter((f) => f.endsWith('.csv')).sort();
+    out.push(...readdirSync(profileDir(name)).filter((f) => f.endsWith('.csv')));
   } catch {
     return [];
   }
+  try {
+    out.push(
+      ...readdirSync(join(profileDir(name), SCRIPTS_SUBDIR))
+        .filter((f) => f.endsWith('.script'))
+        .map((f) => `${SCRIPTS_SUBDIR}/${f}`),
+    );
+  } catch { /* a profile with no scripts/ directory is the normal case */ }
+  return out.sort();
 }
 
 /**
@@ -153,6 +174,7 @@ export function ensureSeeded(): void {
     const target = join(configDir, f);
     if (existsSync(target)) continue;
     try {
+      mkdirSync(dirname(target), { recursive: true });  // scripts/ may not exist yet
       copyFileSync(join(profileDir(activeName), f), target);
       console.log(`🌱 Materialized ${f} from profile "${activeName}"`);
     } catch { /* best-effort */ }
@@ -226,7 +248,12 @@ export function deployActiveProfile(): void {
 
   try {
     copyFileSync(src, configPath);
-    for (const f of assets) copyFileSync(join(profileDir(name), f), join(configDir, f));
+    for (const f of assets) {
+      const dest = join(configDir, f);
+      // Assets may now sit in a subdirectory (scripts/), which need not exist in config/ yet.
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(join(profileDir(name), f), dest);
+    }
     // Drop the cache before the parse below, so the parse itself repopulates it from the file we
     // just wrote rather than handing back the previous deploy's object.
     invalidateDeployedConfigCache();
@@ -306,6 +333,68 @@ export function writeStateCsv(which: StateCsvName, content: string, deploy: bool
   return true;
 }
 
+// ── Dynamic-state scripts ────────────────────────────────────────────────────
+
+/** Reject anything that is not a bare <name>.script. A path here would let the editor write
+ *  outside scripts/, and this value reaches the filesystem. Refused, never sanitised. */
+function assertScriptName(file: string): void {
+  if (!/^[A-Za-z0-9_-]+\.script$/.test(file))
+    throw new Error(`Invalid script name "${file}" (letters, digits, _ and -, ending .script)`);
+}
+
+/** One dynamic-state script from the active profile. Empty string when it does not exist yet. */
+export function readStateScript(file: string): string {
+  assertScriptName(file);
+  ensureSeeded();
+  try {
+    return readFileSync(join(profileDir(getActiveProfileName()), SCRIPTS_SUBDIR, file), 'utf-8');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Write one script into the active profile, and deploy it when idle.
+ *
+ * Same freeze rule as a config save: during a session the profile takes the edit as a draft and
+ * config/ is left alone, so a mid-run edit cannot reach the running sequencer. A script edited
+ * during a run applies at the next session start, exactly like every other config change.
+ *
+ * @return whether the write reached config/.
+ */
+export function writeStateScript(file: string, content: string, deploy: boolean): boolean {
+  assertScriptName(file);
+  ensureSeeded();
+  const dir = join(profileDir(getActiveProfileName()), SCRIPTS_SUBDIR);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, file), content, 'utf-8');
+  if (!deploy) return false;
+  const dest = join(getConfigDir(), SCRIPTS_SUBDIR, file);
+  mkdirSync(dirname(dest), { recursive: true });
+  copyFileSync(join(dir, file), dest);
+  return true;
+}
+
+/** Every script filename the active profile owns. */
+export function listStateScripts(): string[] {
+  ensureSeeded();
+  try {
+    return readdirSync(join(profileDir(getActiveProfileName()), SCRIPTS_SUBDIR))
+      .filter((f) => f.endsWith('.script'))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/** Delete a script from the active profile. Leaves any deployed copy alone — config/ is a
+ *  generated artifact that the next deploy rewrites. */
+export function deleteStateScript(file: string): void {
+  assertScriptName(file);
+  ensureSeeded();
+  rmSync(join(profileDir(getActiveProfileName()), SCRIPTS_SUBDIR, file), { force: true });
+}
+
 // ── Create / rename / delete ─────────────────────────────────────────────────
 
 /** Create a new profile from the active profile (or another named profile). Does NOT switch. */
@@ -321,7 +410,11 @@ export function createProfile(name: string, fromName?: string): void {
   // deployment's, or it would start with a state table that does not match its own roles.
   mkdirSync(destDir, { recursive: true });
   copyFileSync(srcCfg, profilePath(name));
-  for (const f of profileAssets(srcName)) copyFileSync(join(profileDir(srcName), f), join(destDir, f));
+  for (const f of profileAssets(srcName)) {
+    const dest = join(destDir, f);
+    mkdirSync(dirname(dest), { recursive: true });  // scripts/ lives one level down
+    copyFileSync(join(profileDir(srcName), f), dest);
+  }
 }
 
 /** Rename a profile file; if it was active, move the pointer with it. Does not redeploy. */

@@ -261,6 +261,13 @@ Config from_table(const toml::table& t) {
                 s.is_abort = (*st)["is_abort"].value<bool>().value_or(false);
                 s.is_boot = (*st)["is_boot"].value<bool>().value_or(false);
                 s.is_flow = (*st)["is_flow"].value<bool>().value_or(false);
+                s.script_file = (*st)["script_file"].value<std::string>().value_or("");
+                s.script_timeout_ms =
+                    static_cast<uint32_t>((*st)["script_timeout_ms"].value<int64_t>().value_or(0));
+                s.script_return_target =
+                    (*st)["script_return_target"].value<std::string>().value_or("");
+                s.script_timeout_target =
+                    (*st)["script_timeout_target"].value<std::string>().value_or("");
                 c.states.push_back(s);
             }
 

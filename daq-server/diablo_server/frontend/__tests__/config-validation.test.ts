@@ -290,3 +290,132 @@ describe('roles vs active_connectors', () => {
     expect(issues.some((i) => i.message.includes('Thrust'))).toBe(true);
   });
 });
+
+/**
+ * Dynamic states.
+ *
+ * Every rule is gated on the state actually declaring a script_file, so the clean case above —
+ * which has no dynamic states — must stay at zero issues. Both levels block the first Start press,
+ * and the module's own header records why false positives are expensive: an operator blocked by
+ * one learns to press Start twice by reflex.
+ *
+ * These duplicate the sequencer's load-time refusals on purpose. The sequencer's version is
+ * discovered at session start; this one is discovered at the desk.
+ */
+describe('validateConfigForRun — dynamic states', () => {
+  /** cleanConfig plus a Press state that runs a script, with everything set correctly. */
+  const dyn = () => {
+    const cfg: any = cleanConfig();
+    cfg.states.push({
+      id: 4,
+      name: 'Press',
+      script_file: 'press.script',
+      script_timeout_ms: 30000,
+      script_return_target: 'Idle',
+      script_timeout_target: 'Armed',
+    });
+    return cfg;
+  };
+  const dynCsv = () => ({
+    actuators: [
+      ',Idle,Armed,Fire,Press',
+      'Fuel Press,CLOSE,CLOSE,OPEN,CLOSE',
+      'LOX Press,CLOSE,CLOSE,OPEN,CLOSE',
+    ].join('\n'),
+    delays: [
+      ',Idle,Armed,Fire,Press',
+      'Fuel Press,0,0,0,0',
+      'LOX Press,0,0,0,0',
+    ].join('\n'),
+    transitions: [
+      ',Idle,Armed,Fire,Press',
+      'Idle,1,1,0,1',
+      'Armed,1,1,1,1',
+      'Fire,0,1,1,0',
+      'Press,1,1,0,1',
+    ].join('\n'),
+  });
+
+  it('a correctly configured dynamic state raises nothing', () => {
+    expect(validateConfigForRun(dyn(), dynCsv())).toEqual([]);
+  });
+
+  it('a config with no dynamic states is unaffected', () => {
+    expect(validateConfigForRun(cleanConfig(), cleanCsv())).toEqual([]);
+  });
+
+  it('refuses a script with no timeout — unbounded has no safe degraded mode', () => {
+    const cfg = dyn();
+    delete cfg.states[3].script_timeout_ms;
+    const issues = validateConfigForRun(cfg, dynCsv());
+    expect(messages(issues)).toContain('no timeout');
+  });
+
+  it('refuses a timeout above the ceiling', () => {
+    const cfg = dyn();
+    cfg.states[3].script_timeout_ms = 600001;
+    expect(messages(validateConfigForRun(cfg, dynCsv()))).toContain('above the');
+  });
+
+  it('requires BOTH landing targets — neither defaults to the other', () => {
+    for (const key of ['script_return_target', 'script_timeout_target']) {
+      const cfg = dyn();
+      delete cfg.states[3][key];
+      expect(messages(validateConfigForRun(cfg, dynCsv()))).toMatch(/target/);
+    }
+  });
+
+  it('refuses a landing target that is not a state', () => {
+    const cfg = dyn();
+    cfg.states[3].script_return_target = 'Nowhere';
+    expect(messages(validateConfigForRun(cfg, dynCsv()))).toContain('not in the state list');
+  });
+
+  it('refuses a landing target that is the state itself', () => {
+    const cfg = dyn();
+    cfg.states[3].script_timeout_target = 'Press';
+    expect(messages(validateConfigForRun(cfg, dynCsv()))).toContain('re-arm forever');
+  });
+
+  it('refuses a landing target the transitions table forbids', () => {
+    const cfg = dyn();
+    cfg.states[3].script_return_target = 'Fire';  // Press -> Fire is 0
+    expect(messages(validateConfigForRun(cfg, dynCsv()))).toContain('not an allowed transition');
+  });
+
+  it('refuses a path-shaped script filename', () => {
+    const cfg = dyn();
+    cfg.states[3].script_file = '../../etc/passwd';
+    expect(messages(validateConfigForRun(cfg, dynCsv()))).toContain('bare <name>.script');
+  });
+
+  it('refuses a dynamic state that is also the flow state', () => {
+    const cfg = dyn();
+    cfg.states[3].is_flow = true;
+    expect(messages(validateConfigForRun(cfg, dynCsv()))).toContain('flow-test state');
+  });
+
+  it('refuses a dynamic state that is also an abort state', () => {
+    const cfg = dyn();
+    cfg.states[3].is_abort = true;
+    expect(messages(validateConfigForRun(cfg, dynCsv()))).toContain('abort state');
+  });
+
+  it('refuses a script on the fire state', () => {
+    const cfg = dyn();
+    cfg.fire.state = 'Press';
+    expect(messages(validateConfigForRun(cfg, dynCsv()))).toContain('fire state');
+  });
+
+  it('requires an Actuators column — it is the baseline the script layers onto', () => {
+    const cfg = dyn();
+    const csv = dynCsv();
+    // Drop the Press column from the Actuators table only.
+    csv.actuators = [
+      ',Idle,Armed,Fire',
+      'Fuel Press,CLOSE,CLOSE,OPEN',
+      'LOX Press,CLOSE,CLOSE,OPEN',
+    ].join('\n');
+    expect(messages(validateConfigForRun(cfg, csv))).toContain('no column in the Actuators table');
+  });
+});
