@@ -45,7 +45,9 @@ export type DiagramMeta = DesignMeta;
 export function toStored(data: Snapshot): Snapshot {
   return {
     nodes: data.nodes.map(({ selected: _s, dragging: _d, measured: _m, ...node }) => node) as Node[],
-    edges: data.edges.map(({ selected: _s, ...edge }) => edge) as Edge[],
+    // `reconnectable` is the canvas's too: which ends of a line may be
+    // carried elsewhere, worked out afresh for every view of it.
+    edges: data.edges.map(({ selected: _s, reconnectable: _r, ...edge }) => edge) as Edge[],
   };
 }
 

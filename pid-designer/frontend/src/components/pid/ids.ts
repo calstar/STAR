@@ -43,3 +43,48 @@ export function seedIdsFrom(nodes: Node[]): void {
 
 export const nextNodeId = () => `node_${++_node}`;
 export const nextJunctionId = () => `junc_${++_junction}`;
+
+/**
+ * Run `f`, and give back what it made with the counters where they were.
+ *
+ * For a drawing that is only looked at and never kept: a drag's preview makes
+ * the drop it shows, frame after frame, to draw it exactly as it will be --
+ * and the tees it puts in must not use up the ids the one drawing that is
+ * kept will be given, or every tee drawn after a long drag is numbered in the
+ * hundreds for nothing.
+ */
+export function withoutSpendingIds<T>(f: () => T): T {
+  const node = _node, junction = _junction;
+  try {
+    return f();
+  } finally {
+    _node = node;
+    _junction = junction;
+  }
+}
+
+/**
+ * A line id nothing in `taken` has: `base` itself when it is free, otherwise
+ * `base-2`, `base-3`, and so on.
+ *
+ * Line ids are keyed on exactly as hard as node ids. React Flow looks a line
+ * up by its id, last write wins, so two lines sharing one draw as the same
+ * line twice and the other never, and a select or a delete of one hits both;
+ * feed-twin refuses a network with two branches of one name. And the natural
+ * name, `source-target`, is not unique: two lines can join the same pair of
+ * symbols through different ports, and several lines can be named in one
+ * operation -- a paste, a delete that heals several runs -- so `taken` has to
+ * include the ids handed out earlier in the same operation, not just the ones
+ * already on the drawing. That is why it is a set or a question the caller
+ * answers, rather than the drawing.
+ */
+export function freshEdgeId(
+  base: string,
+  taken: ReadonlySet<string> | ((id: string) => boolean),
+): string {
+  const has = typeof taken === 'function' ? taken : (id: string) => taken.has(id);
+  if (!has(base)) return base;
+  let n = 2;
+  while (has(`${base}-${n}`)) n++;
+  return `${base}-${n}`;
+}

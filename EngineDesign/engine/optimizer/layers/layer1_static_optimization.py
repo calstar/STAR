@@ -7922,6 +7922,8 @@ def run_layer1_optimization(
                         eval_cache=eval_cache,
                         make_cache_key_fn=_make_eval_cache_key,
                         stop_event=stop_event,
+                        seed=int((layer1_seed_base + track_i * 7919) % (2 ** 31)),
+                        popsize=popsize,
                     )
                     
                     if t_f < best_f_global:
@@ -7950,6 +7952,8 @@ def run_layer1_optimization(
                     eval_cache=eval_cache,
                     make_cache_key_fn=_make_eval_cache_key,
                     stop_event=stop_event,
+                    seed=int(layer1_seed_base),
+                    popsize=popsize,
                 )
 
         else:
@@ -9970,9 +9974,22 @@ def run_hybrid_optimization(
     eval_cache: Optional[dict] = None,
     make_cache_key_fn: Optional[Callable[[np.ndarray], Tuple[int, ...]]] = None,
     stop_event: Optional[Any] = None,  # threading.Event for stop signal
+    seed: Optional[int] = None,
+    popsize: int = 16,
 ) -> Tuple[np.ndarray, float, int]:
     """
     Run Hybrid CMA-ES + Block Re-optimization.
+
+    ``seed`` makes the whole search a deterministic function of its inputs. It was not:
+    this function built ``np.random.default_rng()`` with no seed and called ``run_cma_core``
+    without ``seed=`` in Stage A, in every block and in every refresh, so CMA seeded itself
+    from the clock. ``layer1_random_seed`` reached the warm start and nothing after it --
+    measured, three runs of one config at seed 37 gave three different injectors (included
+    angle 89 / 87 / 83 deg). Every ``run_cma_core`` call below now takes a seed derived from
+    this one, distinct per stage so no two stages replay the same sample stream.
+
+    ``popsize`` is the Stage A / refresh population. It was hardcoded to 16 while the caller
+    computed and logged 48; the block stage keeps its own smaller population.
     
     Logic:
     1. Stage A: Global Exploration (Standard CMA-ES)
@@ -10001,6 +10018,13 @@ def run_hybrid_optimization(
     
     # 1. Initialize Elite Pool
     elite_pool = ElitePool(k=hybrid_config.elite_k)
+
+    # One generator for everything this function samples (Stage A kick, block partition),
+    # and one derived CMA seed per stage. ``None`` keeps the old fresh-entropy behaviour.
+    rng = np.random.default_rng(seed)
+
+    def _sub_seed(k: int) -> Optional[int]:
+        return None if seed is None else int((int(seed) + k * 1_000_003) % (2 ** 31))
     
     # 2. Budget allocation
     # Reserve slice for Stage A
@@ -10042,7 +10066,7 @@ def run_hybrid_optimization(
     # Run 1
     x_res, f_res, evs = run_cma_core(
         objective, x0, sigma0, bounds, budget_a1,
-        popsize=16, cma_stds=cma_stds, elite_pool=elite_pool,
+        popsize=popsize, cma_stds=cma_stds, elite_pool=elite_pool, seed=_sub_seed(1),
         valley_escape_tracker=valley_escape_tracker, logger=logger,
         # Parallel evaluation
         executor=executor, integer_dims=integer_dims, eval_cache=eval_cache,
@@ -10055,15 +10079,25 @@ def run_hybrid_optimization(
         best_f_global = f_res
         best_x_global = x_res
 
-    # Run 2 (Restart from best or random?)
-    # Valid restart: Perturb best logic
-    rng = np.random.default_rng()
-    x0_2 = best_x_global + rng.standard_normal(dim) * (0.01 * span)  # Small perturbation
+    # Run 2: GLOBAL re-exploration, not a second polish of run 1.
+    #
+    # This used to restart from the incumbent with a 1 % kick and half the step size -- a
+    # local refine -- and nothing downstream (blocks, refreshes) ever leaves the incumbent's
+    # neighbourhood either. So after run 1 stagnated (typically ~5k of a 25k Stage A budget)
+    # the entire remaining budget polished one basin, and the objective's flat directions
+    # (injector angle, O/F inside its band) were settled by whichever basin run 1 happened
+    # to stop in. The legacy CMA path's odd restarts kick 30 % of each dimension's span off
+    # the incumbent at full sigma -- anchored so the start is not almost-surely infeasible,
+    # wide enough to leave the basin -- and that is what run 2 does now.
+    x0_2 = np.clip(best_x_global + rng.standard_normal(dim) * (0.30 * span),
+                   lower_bounds, upper_bounds)
+    if logger:
+        logger.info("Stage A run 2: global re-exploration, 30 %% span kick off f=%.5f", best_f_global)
 
     if budget_a2 > 100:
         x_res, f_res, evs = run_cma_core(
-            objective, x0_2, sigma0 * 0.5, bounds, budget_a2,
-            popsize=16, cma_stds=cma_stds, elite_pool=elite_pool,
+            objective, x0_2, sigma0, bounds, budget_a2,
+            popsize=popsize, cma_stds=cma_stds, elite_pool=elite_pool, seed=_sub_seed(2),
             valley_escape_tracker=valley_escape_tracker, logger=logger,
             # Parallel evaluation
             executor=executor, integer_dims=integer_dims, eval_cache=eval_cache,
@@ -10170,6 +10204,7 @@ def run_hybrid_optimization(
             z_best, z_f, z_evals = run_cma_core(
                 block_obj_fn, z0, z_sigma, block_bounds, budget_per_block,
                 popsize=max(8, 4 + int(3 * np.log(len(z0)+1))), # Smaller pop for blocks
+                seed=_sub_seed(100 + 10 * cycle_idx + b_i),
                 elite_pool=None, 
                 true_objective_fn=block_obj_fn,
                 valley_escape_tracker=valley_escape_tracker, logger=logger,
@@ -10218,7 +10253,8 @@ def run_hybrid_optimization(
                 # refresh walk element counts and jet angles off their integer grid.
                 x_ref_res, f_ref_res, evs_ref = run_cma_core(
                     objective, x_ref, sigma_ref, bounds, ref_budget,
-                    popsize=16, cma_stds=cma_stds, elite_pool=elite_pool,
+                    popsize=popsize, cma_stds=cma_stds, elite_pool=elite_pool,
+                    seed=_sub_seed(1000 + cycle_idx),
                     valley_escape_tracker=valley_escape_tracker, logger=logger,
                     executor=executor, integer_dims=integer_dims,
                     od_index=od_index, od_step_m=od_step_m, fixed_variables=fixed_variables,

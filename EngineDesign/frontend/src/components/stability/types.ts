@@ -81,6 +81,7 @@ export interface StabilityRichPayload {
   };
   phase: Array<{ mode: string; omega_tau: number }>;
   vaporization: {
+    /** Headline figures describe the RATE-LIMITING stream, not the oxidizer. */
     d2_profile: [number, number][];
     L_vap_m: number;
     L_ch_m: number;
@@ -88,6 +89,21 @@ export interface StabilityRichPayload {
     smd_band_um: [number, number];
     tau_conv_s?: number;
     tau_sens_s?: number;
+    vaporized_in_chamber?: boolean;
+    rate_limiting_stream?: string;
+    streams?: Array<{
+      stream: string;
+      fluid: string;
+      phase: string;
+      smd_um: number | null;
+      smd_band_um?: [number, number];
+      tau_conv_s: number;
+      L_vap_m: number | null;
+      L_ch_m: number;
+      vaporized_in_chamber: boolean;
+      d2_profile: [number, number][];
+      note?: string;
+    }>;
   };
   radar: {
     axes: string[];
@@ -100,6 +116,8 @@ export interface StabilityRichPayload {
     eta_inj_O: number;
     eta_inj_F: number;
     smd_O_um: number;
+    smd_F_um?: number;
+    rate_limiting_stream?: string;
     dP_reg_max_psi?: number;
     /** Named models that produced this answer — printed so a report can't be misread. */
     time_lag_model?: string;
@@ -123,7 +141,9 @@ export interface StabilityRichPayload {
 
 export interface StabilityOverrides {
   eta_inj_O?: number;
+  eta_inj_F?: number;
   smd_um?: number;
+  smd_F_um?: number;
   n_interaction?: number;
   chi_acoustic?: number;
   /** Swap the conversion-lag model for this run without editing the config. */

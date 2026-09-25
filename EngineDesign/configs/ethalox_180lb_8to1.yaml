@@ -1,0 +1,718 @@
+# CalSTAR ethalox -- 180 lb, 8:1, O/F 1.50, 24 doublets, MSA G1 45 scf COPV. 2026-09-15.
+#
+# Audit:      python3 scripts/design_audit.py configs/ethalox_180lb_8to1.yaml
+# Re-run:     python3 scripts/layer1_run.py --config configs/ethalox_180lb_8to1.yaml
+#             THIS FILE is the design. A re-run is a new candidate, not a reproduction:
+#             the hybrid search ignored layer1_random_seed until 2026-09-18, and the
+#             objective is flat across the injectors it lands on (99.99 % of it is the
+#             chamber-mass shaping term; every requirement term is ~0).
+#
+# HARD CONSTRAINTS, ALL EXACT
+#   wet mass              81.6466 kg = 180.0000 lb
+#   thrust                6405.5 N   = 1440.0 lbf   ->  T/W = 8.0000 : 1
+#   liquid 11.3810 L + COPV 4.6190 L = 16.0000 L
+#
+# THE COPV IS NOW A REAL PART, NOT AN ESTIMATE
+#   MSA G1, 45 ft3 / 4500 psi, 30-minute standard carbon cylinder.
+#   The specsheet quotes 10.40 lb FULL, and that is full of breathing AIR, not oxygen:
+#     full                 10.40 lb = 4.717 kg
+#     air charge            3.37 lb = 1.529 kg   (45 ft3 of free air at 1 atm / 70 F)
+#     -> DRY                7.03 lb = 3.188 kg
+#     water volume          4.619 L  (charge mass / real air density at 4500 psi)
+#     + GN2 at 4000 psi     2.89 lb = 1.312 kg  -> installed 9.92 lb = 4.500 kg
+#   This replaces three disagreeing internal numbers: 2.969 kg at 4.5 L in eight
+#   EngineDesign configs (no source field at all), 3.500 kg at 4.687 L in the feed-twin
+#   drawing (tagged "estimated", reference said "weigh it"), and the 3.300 kg at 5.000 L
+#   this design carried. On kg/L those were -4.4 %, +8.2 % and -4.4 % against the real part.
+#   The real bottle being SMALLER than the assumed 5 L frees 0.381 L into propellant.
+#
+#   Dome-regulated: tanks need 0.587 kg, the bottle delivers 1.098 kg -> 1.87x, and it
+#   ends the burn near 2010 psi against a 582 psi setpoint, so the regulator holds.
+#   NOTE a 4500 psi cylinder filled to 4000 is not a lighter cylinder -- you save the
+#   0.29 lb of nitrogen and nothing else.
+#
+# ENGINE
+#   O/F 1.4993   Pc 433.97 psia   Isp 236.90 s   eta_c* 0.9499
+#   24 doublets on a 15.000 deg pitch (360/24 exactly)
+#   theta 43 / 46 deg (included 89), d_jet 1.536 / 1.411 mm
+#   bore 127.000 mm = 5.0000 in, throat 43.85 mm, exit 103.76 mm, L* 1.0000 m
+#   burn 3.994 s, impulse 25581 N.s
+#   LOX-limited with 3 g of residual -- the delivered O/F 1.4993 lands on the 1.5000
+#   load, so essentially nothing is left in either tank. Two other seeds had higher Isp
+#   (237.15 and 237.22) and LESS total impulse, because they delivered O/F 1.511-1.513
+#   against a 1.500 load and stranded 33-39 g of fuel. Isp is not the figure of merit
+#   when the load ratio is fixed.
+#   web 7.47 / 10.64 mm, centre clear O66.73, wall land 16.47 mm
+#
+# TANKS AT 10 % ULLAGE
+#                mass kg   mass lb   liquid L  liquid gal   TANK L   TANK gal
+#     LOX         6.6086    14.570     5.7970      1.5314   6.4412     1.7016
+#     ethanol     4.4057     9.713     5.5840      1.4751   6.2044     1.6390
+#     TOTAL      11.0144    24.283    11.3810      3.0065  12.6456     3.3406
+#   Buy 1.70 gal of LOX tank and 1.64 gal of fuel tank.
+#
+# ENGINE MASS 20.28 lb -- SLEEVE RUNS PAST THE GAS BOUNDARY
+#   The injector plugs INTO the sleeve, so the sleeve is longer than the chamber and the
+#   injector is sized to the sleeve BORE, not the engine OD:
+#     gas boundary (face -> throat)  128.97 mm
+#     injector insertion              40.00 mm   0.5 in face + O-ring land + pilot
+#     steel sleeve                   168.97 mm   bore O152.4, OD O165.1
+#     injector OD                     O152.4     it has to fit inside
+#
+#     mild steel sleeve 0.250 in   4.201 kg   9.26 lb
+#     2 flanges + bolts + seals    1.440 kg   3.18 lb
+#     aluminium injector           1.290 kg   2.84 lb
+#     ablative liner 0.500 in      1.194 kg   2.63 lb
+#     nozzle, 12 mm abl + 3 mm alu 0.730 kg   1.61 lb
+#     igniter + instrument bosses  0.250 kg   0.55 lb
+#     graphite throat insert       0.093 kg   0.21 lb
+#     ENGINE                       9.198 kg  20.28 lb
+#
+# MASS BUDGET
+#   propellant            11.014 kg   24.28 lb
+#   pressurant GN2         1.312 kg    2.89 lb   4.619 L at 4000 psi
+#   engine + plumbing     14.398 kg   31.74 lb   engine 20.28 + valves/lines 11.46
+#   LOX tank               4.082 kg    9.00 lb   given
+#   fuel tank              4.082 kg    9.00 lb   given
+#   COPV                   3.188 kg    7.03 lb   MSA G1 specsheet, air backed out
+#   airframe + recovery   43.571 kg   96.05 lb   what is left
+#   == WET                81.647 kg  180.000 lb
+#
+# APOGEE -- READ THIS BEFORE COMMITTING
+#   eta_c* 0.9499 (modelled)   4026 m = 13208 ft   <- 208 ft OVER the 13000 ft ceiling
+#   eta_c* 0.9309              3892 m = 12769 ft
+#   eta_c* 0.9119              3760 m = 12334 ft
+#   eta_c* 0.8929              3628 m = 11904 ft
+#   eta_c* 0.8169              3118 m = 10231 ft
+#   The modelled nominal busts the ceiling by 1.6 %. It only gets there if the engine
+#   performs to a 0.95 eta_c*, which is optimistic against the 0.87 published comparable
+#   -- the realistic 0.88-0.91 band lands 11900-12400 ft, comfortably inside.
+#   If you want the MODELLED nominal under 13000 as well, de-load 0.099 kg (fill the
+#   tanks to 89.2 % instead of 90 %) and it comes to 13000 exactly. 0.194 kg gets 12800.
+#   Sensitivity is 0.908 ft per N.s, so this is a fill-level decision on the pad, not a
+#   redesign.
+#
+#   FILL FACTOR: this file declares 0.90 (the 10 % ullage asked for). RocketPy's tank
+#   model refuses above ~0.80, so the apogee numbers were produced on a larger tank
+#   ENVELOPE at identical propellant mass -- verified insensitive, 0.80/0.75/0.70 all
+#   returned the same apogee, because the trajectory depends on mass and not on how much
+#   empty tank surrounds it.
+#
+# MATERIALS AS DECIDED
+#   Aluminium injector. FUEL plenum against the face with LOX routed through it -- that
+#   one is oxygen compatibility, not thermal. Nozzle is 12 mm of ablative inside a 3 mm
+#   aluminium shell; bare 5 mm aluminium reaches 1067 K at the exit even at 0.6x Bartz
+#   against a 933 K melt. Put two or three thermocouples in the face on the first fire.
+#
+# STILL REQUIRES HARDWARE
+#   FLOW-TEST the injector. Cd 0.80 is a correlation. Cd 0.72-0.88 moves thrust -4.5/+3.8 %
+#   and keeps dP/Pc inside 0.20-0.40 throughout.
+#   Spot-face every orifice normal to its own axis -- incidence is 47 / 44 deg.
+propellant_preset: ethalox
+fluids:
+  fuel:
+    name: Ethanol
+    density: 789.0
+    viscosity: 0.0012
+    surface_tension: 0.0223
+    vapor_pressure: 5800.0
+    specific_heat: 2440.0
+    thermal_conductivity: 0.17
+    temperature: 293.0
+    latent_heat: 838000.0
+    boiling_point: 351.4
+    molecular_weight: 46.07
+    bulk_modulus_pa: 1060000000.0
+    critical_temperature: 514.71
+    injection_phase: null
+  oxidizer:
+    name: LOX
+    density: 1140.0
+    viscosity: 0.00018
+    surface_tension: 0.013
+    vapor_pressure: 101325.0
+    specific_heat: 2300.0
+    thermal_conductivity: 0.15
+    temperature: 90.0
+    latent_heat: 213000.0
+    boiling_point: 90.2
+    molecular_weight: 32.0
+    bulk_modulus_pa: 1500000000.0
+    critical_temperature: 154.6
+    injection_phase: null
+injector:
+  type: impinging
+  geometry:
+    oxidizer:
+      n_elements: 24
+      d_jet: 0.0015361478255479359
+      impingement_angle: 43.0
+      spacing: 0.009010387728636004
+    fuel:
+      n_elements: 24
+      d_jet: 0.0014105372348721397
+      impingement_angle: 46.0
+      spacing: 0.012046846972657375
+feed_system:
+  fuel:
+    line_size: 1/2_TUBE_035
+    d_inlet: 0.010922
+    A_hydraulic: 9.369021288512731e-05
+    K0: 2.019
+    K1: 0.0
+    phi_type: none
+    length: 0.9144
+  oxidizer:
+    line_size: 1/2_TUBE_035
+    d_inlet: 0.010922
+    A_hydraulic: 9.369021288512731e-05
+    K0: 0.643
+    K1: 0.0
+    phi_type: none
+    length: 0.1016
+regen_cooling:
+  enabled: false
+  d_inlet: 0.009525
+  L_inlet: 0.5
+  n_channels: 100
+  channel_width: 0.0009
+  channel_height: 0.001
+  channel_length: 0.18162
+  d_outlet: null
+  L_outlet: 0.1
+  roughness: 0.0
+  K_manifold_split: 0.5
+  K_manifold_merge: 0.3
+  Cd_entrance_inf: 0.8
+  a_Re_entrance: 0.1
+  Cd_entrance_min: 0.6
+  Cd_exit_inf: 0.9
+  a_Re_exit: 0.1
+  Cd_exit_min: 0.7
+  use_heat_transfer: true
+  wall_thickness: 0.002
+  wall_thermal_conductivity: 320.0
+  chamber_inner_diameter: 0.08491
+  hot_gas_prandtl: 0.7
+  hot_gas_viscosity: 4.0e-05
+  hot_gas_thermal_conductivity: 0.12
+  radiation_emissivity_hot: 0.85
+  radiation_view_factor: 1.0
+  n_segments: 20
+  gas_turbulence_intensity: 0.1
+  coolant_turbulence_intensity: 0.05
+  recovery_factor: null
+film_cooling:
+  enabled: false
+  mass_fraction: 0.05
+  injection_temperature: null
+  effectiveness_ref: 0.45
+  decay_length: 0.05
+  apply_to_fraction_of_length: 0.6
+  slot_height: 0.00035
+  reference_blowing_ratio: 0.6
+  blowing_exponent: 0.62
+  turbulence_reference_intensity: 0.08
+  turbulence_sensitivity: 1.0
+  turbulence_exponent: 1.0
+  turbulence_min_multiplier: 0.5
+  reference_wall_temperature: 1100.0
+  density_override: null
+  cp_override: null
+ablative_cooling:
+  enabled: true
+  material_density: 1600.0
+  heat_of_ablation: 2500000.0
+  thermal_conductivity: 0.35
+  specific_heat: 1500.0
+  initial_thickness: 0.0127
+  surface_temperature_limit: 1200.0
+  coverage_fraction: 0.9
+  pyrolysis_temperature: 950.0
+  blowing_efficiency: 0.75
+  use_physics_based_blowing: true
+  blowing_coefficient: 0.5
+  blowing_min_reduction_factor: 0.1
+  turbulence_reference_intensity: 0.08
+  turbulence_sensitivity: 1.5
+  turbulence_exponent: 1.0
+  turbulence_max_multiplier: 3.0
+  throat_recession_multiplier: null
+  char_layer_conductivity: 0.2
+  char_layer_thickness: 0.001
+  surface_emissivity: 0.85
+  ambient_temperature: 300.0
+  radiative_sink_minimum_threshold: 400.0
+  radiative_sink_fallback_temperature: 600.0
+  track_geometry_evolution: true
+  nozzle_ablative: false
+graphite_insert:
+  enabled: true
+  material_density: 2260.0
+  heat_of_ablation: 15000000.0
+  thermal_conductivity: 100.0
+  specific_heat: 710.0
+  initial_thickness: 0.006
+  surface_temperature_limit: 2500.0
+  oxidation_temperature: 800.0
+  oxidation_rate: 1.0e-06
+  activation_energy: 190000.0
+  oxidation_reference_temperature: 973.0
+  oxidation_reference_pressure: 21000.0
+  recession_multiplier: null
+  sizing_only_mode: false
+  simplified_graphite_oxidation: false
+  simplified_oxidation_rate: 1.0e-05
+  sizing_recession_rate: 1.0e-08
+  axial_half_length_ratio: 0.75
+  axial_half_length: null
+  char_layer_conductivity: 5.0
+  char_layer_thickness: 0.0005
+  coverage_fraction: 1.0
+  emissivity: 0.8
+  ambient_temperature: 300.0
+  feedback_fraction_min: 0.0
+  feedback_fraction_max: 0.2
+  oxidation_enthalpy: 32800000.0
+  ablation_surface_temperature: 3000.0
+  ablation_transition_width: 200.0
+  oxidation_pressure_exponent: 0.5
+  oxidation_pre_exponential: null
+  mixture_mw: 0.024
+  oxidation_stoichiometry_ratio: 1.0
+  oxygen_mass_fraction: 0.05
+  oxygen_mole_fraction: null
+  friction_coefficient_override: null
+  reference_diffusivity: null
+  reference_diffusivity_temperature: 1500.0
+  reference_diffusivity_pressure: 1000000.0
+stainless_steel_case: null
+discharge:
+  fuel:
+    Cd_inf: 0.6
+    a_Re: 0.18
+    Cd_min: 0.35
+    use_geometry_cd: true
+    d_ref_m: 0.002
+    cd_small_hole_exponent: 0.2
+    cd_large_hole_log_gain: 0.015
+    cd_inf_max: 0.62
+    cd_inf_min_geom: 0.48
+    inlet_geometry: sharp
+    inlet_radius_ratio: null
+    orifice_l_over_d: 4.0
+    d_min_m: 0.0004
+    use_pressure_correction: false
+    P_ref: 5000000.0
+    a_P: 0.0
+    use_temperature_correction: false
+    T_ref: 300.0
+    a_T: 0.0
+  oxidizer:
+    Cd_inf: 0.6
+    a_Re: 0.18
+    Cd_min: 0.35
+    use_geometry_cd: true
+    d_ref_m: 0.002
+    cd_small_hole_exponent: 0.2
+    cd_large_hole_log_gain: 0.015
+    cd_inf_max: 0.62
+    cd_inf_min_geom: 0.48
+    inlet_geometry: sharp
+    inlet_radius_ratio: null
+    orifice_l_over_d: 4.0
+    d_min_m: 0.0004
+    use_pressure_correction: false
+    P_ref: 5000000.0
+    a_P: 0.0
+    use_temperature_correction: false
+    T_ref: 90.0
+    a_T: 0.0
+spray:
+  momentum_flux_ratio: true
+  spray_angle:
+    model: TMR
+    k: 0.5
+    n: 0.5
+  weber:
+    We_min: 15
+  smd:
+    model: ingebo
+    C: 0.5
+    m: 0.6
+    p: 0.0
+    C_ingebo: 3.9
+    chamber_gas_R: 389.0
+    chamber_gas_T: 3094.0
+    we_corr_max: null
+  pintle:
+    C: 15.0
+    B: 2.0
+    n: 0.5
+    p: 0.2
+  evaporation:
+    model: derived
+    C_evap: 1.562
+    cp_gas: 2200.0
+    apply_tau_res_correction: false
+    K: 300000.0
+    x_star_limit: 0.05
+    use_constraint: true
+  use_turbulence_corrections: false
+  turbulence_breakup_gain: 1.0
+  turbulence_penetration_gain: 0.5
+combustion:
+  cea:
+    use_parallel_cea_build: false
+    cea_parallel_workers: null
+    ox_name: LOX
+    fuel_name: Ethanol
+    expansion_ratio: 5.598521540485944
+    cache_file: output/cache/cea_cache_LOX_Ethanol_3D.npz
+    Pc_range:
+    - 1000000.0
+    - 9000000.0
+    MR_range:
+    - 1.0
+    - 2.5
+    eps_range:
+    - 4.0
+    - 15.0
+    n_points: 34
+  efficiency:
+    model: exponential
+    C: 0.3
+    K: 0.15
+    use_spray_correction: false
+    spray_penalty_factor: 0.8
+    use_mixture_coupling: false
+    use_cooling_coupling: true
+    use_turbulence_coupling: true
+    Em_peak: 0.96
+    mixing_sigma: 1.5
+    R_opt: null
+    mixture_efficiency_floor: 0.25
+    cooling_efficiency_floor: 0.25
+    turbulence_efficiency_floor: 0.3
+    target_turbulence_intensity: null
+    turbulence_penalty_exponent: null
+    target_smd_microns: null
+    xstar_limit_mm: null
+    xstar_penalty_exponent: null
+    we_reference: null
+    we_penalty_exponent: null
+    smd_penalty_exponent: null
+    use_advanced_model: true
+    Pc_gate: 1000000.0
+    use_finite_rate_chemistry: true
+    use_shifting_equilibrium: true
+    tau_ref: 1.0e-05
+    tau_ref_P: 4000000.0
+    tau_ref_T: 3500.0
+    n_pressure: 0.8
+    tau_Tc_floor_K: null
+    T_star_fuel_cap_K: 500.0
+    A0_hydrocarbon: 10000000.0
+    Ea_hydrocarbon: 80000.0
+    n_pre_hydrocarbon: 0.3
+    A0_ethanol: 50000000.0
+    Ea_ethanol: 140000.0
+    n_pre_ethanol: 0.25
+    A0_hydrogen: 1000000000.0
+    Ea_hydrogen: 40000.0
+    n_pre_hydrogen: 0.2
+chamber_geometry:
+  design_pressure: 2992123.1854115925
+  design_thrust: 6405.486128556911
+  design_MR: 1.4992994717934465
+  chamber_diameter: 0.127
+  Lstar: 1.0000002573548417
+  exit_diameter: 0.1037600811326615
+  expansion_ratio: 5.598521540485944
+  nozzle_efficiency: 0.95
+  A_throat: 0.0015103483768447478
+  A_exit: 0.008455717921403302
+  volume: 0.001510348765540215
+  length: 0.1289737160011753
+  length_cylindrical: 0.09703298776603714
+  length_contraction: 0.031940728235138174
+  Cf: 1.4174100000015877
+chamber: null
+nozzle: null
+solver:
+  method: brentq
+  Pc_bounds:
+  - 100000.0
+  - 8000000.0
+  tolerance: 1.0e-06
+  max_iterations: 100
+  closure:
+    max_iterations: 6
+    Cd_reduction_factor: 1.0
+    tolerance: 0.0001
+stability:
+  n_interaction: 0.5
+  chi_acoustic: 0.15
+  mach_nozzle_entrance: null
+  damping_injector_frac: 0.02
+  damping_twophase_frac: 0.03
+  droplet_loading: 1.0
+  acoustic_gate_alpha_offset: 350.0
+  time_lag_model: leonardi_dtl
+  convection_model: none
+  mixing_lag_fraction: 0.5
+  regulator_enabled: true
+  regulator_corner_hz: 3.0
+  regulator_Z_hf: 0.0
+  regulator_max_excursion_psi: 0.0
+optimizer:
+  mode: hybrid_cma_blocks
+  hybrid:
+    elite_k: 50
+    block_method: corr_greedy
+    num_blocks: 3
+    overlap_fraction: 0.0
+    cycles: 3
+    lambda0: 0.001
+    lambda_mult: 10.0
+    lambda_max: 1.0
+    lambda_normalize: true
+    per_block_budget_fraction: 0.5
+    refresh_every_pass: true
+    refresh_budget_fraction: 0.1
+    refresh_sigma_scale: 0.2
+    num_tracks: 1
+lox_tank:
+  lox_h: 0.42022395489166414
+  lox_radius: 0.06985
+  ox_tank_pos: 0.8
+  mass: 6.608621213686249
+  initial_pressure_psi: 584.2669657943025
+  tank_volume_m3: 0.006441151280395955
+fuel_tank:
+  rp1_h: 0.3401263456893168
+  rp1_radius: 0.0762
+  fuel_tank_pos: 3.0
+  mass: 4.405747475790832
+  initial_pressure_psi: 584.2669657943025
+  tank_volume_m3: 0.006204404275159601
+press_tank:
+  press_h: 0.31334079903733364
+  press_radius: 0.0685
+  pres_tank_pos: 3.6
+  dry_mass: 3.188
+  initial_gas_mass: 1.312
+  mass: null
+  free_volume_L: 4.619
+rocket:
+  airframe_mass: 43.56959525052292
+  engine_mass: 14.398
+  lox_tank_structure_mass: 4.082331330000001
+  fuel_tank_structure_mass: 4.082331330000001
+  engine_cm_offset: 0.15
+  propulsion_dry_mass: 21.0
+  propulsion_cm_offset: 0.4
+  copv_dry_mass: 3.188
+  inertia:
+  - 8.0
+  - 8.0
+  - 0.5
+  radius: 0.078359
+  rocket_length: 6.432614614439114
+  motor_position: 0.0
+  fins:
+    no_fins: 4
+    root_chord: 0.626872
+    tip_chord: 0.20066
+    fin_span: 0.20066
+    fin_position: 1.054535
+  nose_kind: vonKarman
+  nose_fineness_ratio: 4.5
+  nose_length: null
+  avionics_payload_length_m: 4.0
+  mass: null
+  cm_wo_motor: 3.861725449
+  dry_mass: null
+  motor_inertia: null
+  motor: null
+environment:
+  date:
+  - 2026
+  - 1
+  - 30
+  - 18
+  latitude: 35.34722
+  longitude: -117.8099547
+  elevation: 626.67
+  atmosphere_model: standard_atmosphere
+thrust:
+  burn_time: 3.994
+design_requirements:
+  target_thrust: 6405.439125975119
+  target_chamber_pressure_psi: 430.0
+  target_apogee: 3890.7
+  optimal_of_ratio: 1.5
+  target_burn_time: 3.994
+  max_lox_tank_pressure_psi: 600.0
+  max_fuel_tank_pressure_psi: 600.0
+  max_P_tank_O: null
+  max_P_tank_F: null
+  max_engine_length: 0.4
+  max_chamber_outer_diameter: 0.1651
+  metal_wall_thickness_per_side_m: 0.00635
+  max_nozzle_exit_diameter: 0.2032
+  min_Lstar: 1.0
+  max_Lstar: 1.0
+  min_stability_score: 0.58
+  require_stable_state: false
+  stability_margin_handicap: 0.0
+  min_stability_margin: 1.05
+  chugging_margin_min: 0.2
+  acoustic_margin_min: 0.1
+  feed_stability_min: 0.15
+  lox_tank_capacity_kg: 6.608621213686249
+  fuel_tank_capacity_kg: 4.405747475790832
+  propellant_tank_fill_factor: 0.9
+  copv_free_volume_L: 4.619
+  copv_free_volume_m3: null
+  injector_dp_ratio_O_min: 0.2
+  injector_dp_ratio_O_max: 0.4
+  injector_dp_ratio_F_min: 0.2
+  injector_dp_ratio_F_max: 0.4
+  feed_pressure_model: dome_regulated
+  W_geom_ao_af_momentum: 3500.0
+  W_MOM: 75.0
+  impinging_momentum_R_min: 0.95
+  impinging_momentum_R_max: 1.05
+  layer1_momentum_log_deadband_rel: null
+  layer1_impinging_angle_deg_min: 80.0
+  layer1_impinging_jet_angle_min_deg: 40.0
+  layer1_impinging_angle_deg_max: 90.0
+  W_IMPINGING_ANGLE: 400.0
+  W_IMPINGING_JET_ASYM: 180.0
+  layer1_impinging_jet_angle_max_asym_deg: 10.0
+  W_SMD: 0.0
+  target_smd_microns: 50.0
+  layer1_smd_rel_tol: 0.2
+  W_TANK_EQUAL: 800.0
+  layer1_tank_equal_scale_psi: 100.0
+  layer1_chamber_od_increment_in: 0.5
+  layer1_lock_tank_pressures: null
+  layer1_thrust_deadband_rel: null
+  layer1_derive_tank_from_dp_ratio: null
+  layer1_dp_ratio_target: null
+  layer1_derive_fuel_jet_from_of: null
+  layer1_tank_equal_inband_frac: null
+  layer1_chamber_od_snap_target: null
+  layer1_Lstar_from_smd: null
+  layer1_Lstar_smd_ref_um: null
+  layer1_Lstar_ref_m: null
+  layer1_Lstar_smd_exponent: null
+  layer1_Lstar_deadband_m: null
+  layer1_impingement_Ld_target: 4.0
+  layer1_resultant_tilt_max_deg: null
+  layer1_resultant_tilt_gate_tol_deg: 0.5
+  layer1_resultant_tilt_scale_deg: null
+  layer1_momentum_wall_side_multiplier: null
+  layer1_momentum_scale: null
+  layer1_momentum_gate_safe_slack: null
+  layer1_derive_impingement_spacing: null
+  layer1_impingement_Ld_tol: 1.0
+  layer1_ring_order_fuel_outboard: null
+  layer1_integer_jet_angles: null
+  layer1_derive_expansion_ratio: null
+  layer1_derive_throat_from_thrust: null
+  layer1_derive_max_iters: null
+  layer1_derive_thrust_tol_rel: null
+  layer1_tank_equal_tol_psi: null
+  layer1_of_deadband_rel: null
+  layer1_exit_pressure_deadband_rel: null
+  layer1_W_LSTAR: null
+  layer1_Lstar_target_m: null
+  layer1_W_MASS: 3000.0
+  layer1_contraction_half_angle_deg: null
+  layer1_min_Lcyl_over_D: null
+  layer1_max_element_pitch_m: 0.0225
+  layer1_chamber_wall_density_kg_m3: 3400.0
+  layer1_chamber_mass_ref_kg: 5.0
+  layer1_W_EXIT: null
+  W_IMP_GEOM: 1500.0
+  layer1_exit_pressure_inside_quad_scale: 0.38
+  layer1_impinging_n_doublets_max: 30
+  layer1_random_seed: 37
+  layer1_cma_warmstart_trials: 16
+  layer1_cma_warmstart_sigma_frac: 0.04
+  layer1_cma_restart0_sigma_scale: 0.48
+  layer1_lbfgs_gtol: 1.0e-09
+  layer1_lbfgs_second_pass: true
+  W_DP: 800.0
+  W_DP_O: 12000.0
+  W_DP_F: 175000.0
+  W_DP_HIGH: 25000.0
+  W_DP_CENTER: null
+  W_DP_O_FLOOR: null
+  injector_dp_ratio_O_soft_floor: null
+  layer1_A_throat_mm2_min: null
+  layer1_A_throat_mm2_max: null
+  layer1_cf_upper_bound_for_throat_floor: null
+  layer1_pc_fraction_for_throat_floor: null
+  layer1_enforce_ring_geometry: true
+  layer1_injector_spray_radius_frac: 0.7071
+  layer1_injector_spray_radius_tol: 0.08
+  layer1_injector_plate_thickness_m: 0.0127
+  layer1_injector_min_face_incidence_deg: 40.0
+  layer1_injector_counterbore_dia_m: 0.004
+  layer1_injector_center_clear_dia_m: 0.0381
+  layer1_injector_min_web_m: 0.002
+  layer1_injector_wall_clearance_m: 0.008
+  layer1_resultant_tilt_from_reach: true
+  layer1_resultant_tilt_reach_margin: 1.5
+  layer1_impingement_Ld_min: 3.0
+  layer1_impingement_Ld_max: 5.0
+  layer1_momentum_band_width: null
+  layer1_momentum_low_side_multiplier: null
+  layer1_generations_per_restart: null
+  max_chamber_length_m: null
+  objective_cache_rel: null
+  report_every_n: null
+  layer1_infeasibility_gate_eps: 0.002
+  layer1_W_THRUST: 60000.0
+  layer1_W_PC: null
+  layer1_W_OF: 20000.0
+  layer1_W_OF_low_MR_scale: 1.0
+  layer1_W_OF_high_MR_scale: 1.0
+  layer1_of_validation_tol: null
+  layer1_thrust_validation_rel_tol: null
+  W_CHAMBER_SHAPE: 2500.0
+  layer1_chamber_dt_ratio_min: 2.2
+  layer1_chamber_dt_ratio_max: 3.2
+  layer1_chamber_ld_ratio_min: 1.0
+  layer1_chamber_ld_ratio_max: 3.2
+  layer1_stagnation_pressure_frac_min: 0.35
+  layer1_stagnation_pressure_frac_max: 1.0
+  layer1_expansion_ratio_min: 3.0
+  layer1_expansion_ratio_max: 14.0
+  layer1_P_O_start_psi_min: null
+  layer1_P_O_start_psi_max: null
+  layer1_P_F_start_psi_min: null
+  layer1_P_F_start_psi_max: null
+  frozen_parameters:
+    A_throat_mm2: null
+    Lstar_mm: null
+    expansion_ratio: null
+    D_chamber_outer_mm: 165.1
+    d_pintle_tip_mm: null
+    h_gap_mm: null
+    n_orifices: null
+    d_orifice_mm: null
+    n_doublets: 24
+    d_jet_O_mm: null
+    d_jet_F_mm: null
+    impingement_angle_O_deg: null
+    impingement_angle_F_deg: null
+    spacing_O_mm: null
+    spacing_F_mm: null
+    P_O_start_psi: null
+    P_F_start_psi: null
+pressure_curves: null
+design_valid_for: null

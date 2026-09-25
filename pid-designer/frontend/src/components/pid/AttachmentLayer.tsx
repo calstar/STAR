@@ -1,6 +1,11 @@
+import { cloneElement, useMemo } from 'react';
+import type { ReactElement } from 'react';
 import { ViewportPortal, type Edge, type Node } from '@xyflow/react';
-import { leaderTarget } from './attach';
-import type { PIDNodeData } from './types';
+import { centreOf, lineRoutes } from './attach';
+import type { ClipData } from './attach';
+import { drawnCorners, useDrawnRoutes } from './edgeGeometry';
+import { pointAt } from './route';
+import type { Pt } from './route';
 
 /**
  * The leaders from instruments to what they measure.
@@ -12,15 +17,50 @@ import type { PIDNodeData } from './types';
  * centre: a line drawn from the middle crosses the symbol and its text, which
  * looked like a pipe running through the probe.
  *
+ * It lands where the probe is clipped: the centre of a component, or the
+ * point on a line as it is drawn -- round its bends, not on the chord between
+ * its two ends -- that the probe was dropped on.
+ *
+ * Only what is on the page in view. This is handed the page's view, in which
+ * everything on other pages is still present and only marked `hidden`, so a
+ * probe that is hidden, or whose host is, is skipped -- as `VentLayer` skips
+ * vents. Otherwise another page's leaders floated over this one, landing
+ * their dots on this page's pipes, and were baked into its exported image.
+ *
  * Faint and behind everything, so it never reads as flow.
+ *
+ * No hooks, so it is a plain function of what it is given; `DrawnRoutes`
+ * below is what keeps it in step with the lines as they draw.
  */
-export function AttachmentLayer({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) {
+export interface AttachmentLayerProps {
+  nodes: Node[];
+  edges: Edge[];
+  /** The host lines' drawn corners. Read from `drawnCorners` when not given. */
+  routes?: ReadonlyMap<string, Pt[]>;
+}
+
+export function AttachmentLayer({ nodes, edges, routes }: AttachmentLayerProps) {
   const leaders: { id: string; x1: number; y1: number; x2: number; y2: number }[] = [];
+  const nodeById = new Map(nodes.map(n => [n.id, n]));
+  const edgeById = new Map(edges.map(e => [e.id, e]));
+  // Only the lines something is clipped to are worth routing.
+  const clipped = new Set(nodes.map(n => (n.data as ClipData)?.attachedTo).filter(Boolean));
+  const drawn = lineRoutes(nodes, edges.filter(e => clipped.has(e.id)), routes ?? drawnCorners());
 
   for (const n of nodes) {
-    const host = (n.data as unknown as PIDNodeData)?.attachedTo;
-    if (!host) continue;
-    const to = leaderTarget(host, nodes, edges);
+    const { attachedTo: host, attachedAt } = (n.data ?? {}) as ClipData;
+    if (!host || n.hidden) continue;
+    let to: Pt | null = null;
+    const hostNode = nodeById.get(host);
+    if (hostNode) {
+      if (hostNode.hidden) continue;
+      to = centreOf(hostNode);
+    } else {
+      const hostEdge = edgeById.get(host);
+      if (!hostEdge || hostEdge.hidden) continue;
+      const pts = drawn.get(host);
+      to = pts ? pointAt(pts, attachedAt ?? 0.5)?.point ?? null : null;
+    }
     if (!to) continue;
     const w = n.measured?.width ?? 60;
     const h = n.measured?.height ?? 60;
@@ -65,4 +105,35 @@ export function AttachmentLayer({ nodes, edges }: { nodes: Node[]; edges: Edge[]
       </svg>
     </ViewportPortal>
   );
+}
+
+/**
+ * Keeps a leader on its line while the line moves.
+ *
+ * Each line routes itself inside its own render and publishes that route
+ * after the render commits; how it is then drawn -- moved a grid step off a
+ * line it would lie on (tracks.ts) -- is worked out from every line's route
+ * together, and can change when some other line moves. The leaders are drawn
+ * in the same render as the lines, so reading the routes then got the ones
+ * from the render before: a symbol dragged and let go left every leader on
+ * its lines where the line had been one step earlier. And a line can move
+ * without the drawing changing at all -- a turned symbol's ports are measured
+ * a moment after the turn, and a neighbour moving can move where it is drawn.
+ *
+ * So this wraps the layer and hands it the drawn routes of just the lines
+ * that have probes on them (`useDrawnRoutes`), and draws it again whenever
+ * one of those, and only one of those, is drawn somewhere new.
+ */
+export function DrawnRoutes({ children }: { children: ReactElement<AttachmentLayerProps> }) {
+  const { nodes, edges } = children.props;
+  const ids = useMemo(() => {
+    const clipped = new Set<string>();
+    for (const n of nodes) {
+      const host = (n.data as ClipData)?.attachedTo;
+      if (host) clipped.add(host);
+    }
+    return edges.filter(e => clipped.has(e.id)).map(e => e.id);
+  }, [nodes, edges]);
+  const routes = useDrawnRoutes(ids);
+  return cloneElement(children, { routes });
 }

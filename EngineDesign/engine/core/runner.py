@@ -763,7 +763,11 @@ class PintleEngineRunner:
             try:
                 from engine.pipeline.time_varying_solver import TimeVaryingCoupledSolver
                 
-                solver = TimeVaryingCoupledSolver(self.config, self.cea_cache)
+                # Same ambient resolution as evaluate(): explicit, else the site elevation.
+                solver = TimeVaryingCoupledSolver(
+                    self.config, self.cea_cache,
+                    P_ambient=self._get_ambient_pressure(P_ambient),
+                )
                 states = solver.solve_time_series(times, P_tank_O, P_tank_F)
                 results = solver.get_results_dict()
                 

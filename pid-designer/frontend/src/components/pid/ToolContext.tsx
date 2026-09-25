@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useMemo } from 'react';
 import type { ReactNode } from 'react';
 
 /**
@@ -15,10 +15,21 @@ import type { ReactNode } from 'react';
  */
 export type Tool = 'none' | 'paint' | 'junction';
 
-const ToolContext = createContext<Tool>('none');
+const ToolContext = createContext<{ tool: Tool; done: () => void }>({ tool: 'none', done: () => {} });
 
-export function ToolProvider({ tool, children }: { tool: Tool; children: ReactNode }) {
-  return <ToolContext.Provider value={tool}>{children}</ToolContext.Provider>;
+/**
+ * `done` is how a one-shot tool puts itself down. The Junction tool used to
+ * stay armed until Escape, so the click after placing one -- meant to select
+ * something -- put in another. Placing one is the job; the tool disarms when
+ * the job is done.
+ */
+export function ToolProvider({ tool, onDone, children }: { tool: Tool; onDone: () => void; children: ReactNode }) {
+  // One object per tool, not per render. Every line reads this context, and a
+  // fresh object each time the canvas re-rendered -- which it does once a
+  // second for the checkout clock alone -- re-rendered every line with it.
+  const value = useMemo(() => ({ tool, done: onDone }), [tool, onDone]);
+  return <ToolContext.Provider value={value}>{children}</ToolContext.Provider>;
 }
 
-export const useTool = () => useContext(ToolContext);
+export const useTool = () => useContext(ToolContext).tool;
+export const useToolDone = () => useContext(ToolContext).done;

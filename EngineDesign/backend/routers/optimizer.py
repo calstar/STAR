@@ -42,6 +42,43 @@ def layer1_design_is_valid(results: Dict[str, Any]) -> tuple[bool, list]:
         if (key.endswith("_check_passed") or key.endswith("_gate_passed")) and passed is False:
             reasons.append(f"{key} = False")
     return (not reasons), reasons
+
+
+def merge_design_requirements(
+    old: Optional[Dict[str, Any]], incoming: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Lay a (possibly partial) requirements payload over the requirements already loaded.
+
+    A key ABSENT from ``incoming`` keeps its current value. A key sent as an explicit
+    ``None`` is cleared. Those are different intents -- a form that only knows a dozen
+    fields must not, by not mentioning them, reset the ~100 ``layer1_*`` knobs, the injector
+    face limits and the pinned seed to schema defaults. It did: the save route rebuilt
+    ``design_requirements`` from the payload alone, and the next run optimised a different
+    problem than the one the file described. ``frozen_parameters`` merges key by key with the
+    same null-clears rule, as it already did.
+    """
+    merged: Dict[str, Any] = dict(old or {})
+    prev_fp = merged.get("frozen_parameters")
+    old_fp: Dict[str, Any] = (
+        {k: v for k, v in prev_fp.items() if v is not None} if isinstance(prev_fp, dict) else {}
+    )
+    for key, value in incoming.items():
+        if key != "frozen_parameters":
+            merged[key] = value
+    if "frozen_parameters" in incoming:
+        new_fp = incoming.get("frozen_parameters")
+        fp = dict(old_fp)
+        for k, v in (new_fp.items() if isinstance(new_fp, dict) else ()):
+            if v is None:
+                fp.pop(k, None)
+            else:
+                fp[k] = v
+        merged["frozen_parameters"] = fp if fp else None
+    elif old_fp:
+        merged["frozen_parameters"] = old_fp
+    elif "frozen_parameters" in merged:
+        merged["frozen_parameters"] = None
+    return merged
 from engine.pipeline.config_schemas import DesignRequirementsConfig
 from engine.optimizer.layers.layer1_static_optimization import run_layer1_optimization
 from engine.optimizer.layers.layer2_pressure import run_layer2_pressure
@@ -132,26 +169,12 @@ async def save_design_requirements(
         )
     
     try:
-        # Merge frozen_parameters so a partial UI payload cannot silently drop YAML pins.
-        req_in = dict(request.requirements)
+        # Overlay the payload on what is loaded; a partial payload must not reset the rest.
         old_dr = session.app_state.config.design_requirements
-        old_fp: dict = {}
-        if old_dr is not None and old_dr.frozen_parameters is not None:
-            old_fp = old_dr.frozen_parameters.model_dump(exclude_none=True)
-        if "frozen_parameters" not in req_in:
-            if old_fp:
-                req_in["frozen_parameters"] = old_fp
-        else:
-            new_fp = req_in.get("frozen_parameters")
-            if not isinstance(new_fp, dict):
-                new_fp = {}
-            merged_fp = dict(old_fp)
-            for k, v in new_fp.items():
-                if v is None:
-                    merged_fp.pop(k, None)
-                else:
-                    merged_fp[k] = v
-            req_in["frozen_parameters"] = merged_fp if merged_fp else None
+        req_in = merge_design_requirements(
+            old_dr.model_dump() if old_dr is not None else None,
+            dict(request.requirements),
+        )
 
         # Validate requirements using Pydantic
         requirements = DesignRequirementsConfig(**req_in)

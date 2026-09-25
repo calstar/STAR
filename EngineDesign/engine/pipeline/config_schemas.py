@@ -2158,8 +2158,14 @@ class HybridOptimizerConfig(BaseModel):
     
     cycles: int = Field(default=3, gt=0, description="Number of re-optimization cycles")
     
-    # Soft freezing / Penalty parameters
-    lambda0: float = Field(default=1e-3, gt=0, description="Initial penalty weight base")
+    # Soft freezing / Penalty parameters.
+    #
+    # NOT WIRED. ``run_hybrid_optimization`` computes ``base_lambda`` and ``f_scale`` from
+    # these every cycle and then never applies them: the block objective stitches the block's
+    # coordinates into the incumbent and evaluates the plain objective, with no penalty on
+    # leaving the incumbent. Blocks are therefore hard-frozen, and changing any of these four
+    # fields changes nothing. Kept so shipped configs still validate; do not tune them.
+    lambda0: float = Field(default=1e-3, gt=0, description="Initial penalty weight base (currently unused -- see note above)")
     lambda_mult: float = Field(default=10.0, gt=1.0, description="Multiplier for lambda per cycle")
     lambda_max: float = Field(default=1.0, gt=0, description="Maximum lambda (relative to f-scale)")
     lambda_normalize: bool = Field(default=True, description="Normalize lambda using objective function scale magnitude")

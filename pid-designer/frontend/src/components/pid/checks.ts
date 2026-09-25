@@ -1,11 +1,20 @@
 import type { Edge, Node } from '@xyflow/react';
 import { propagateFluids, speciesById } from './fluids';
 import { isInstrument } from './attach';
+import { J_ANCHOR, centreOfJunction, isJunction } from './junctions';
 import { crossPageEdges, listPages, pageOf } from './pages';
 import { findVents } from './vents';
 import { portsOf, portIsDrawn, CV_INLET } from './ports';
 import { toPa } from './params';
 import { overlapOf } from './segments';
+import { drawnRoute, routesItself } from './lineRoute';
+import type { LineData } from './lineRoute';
+import { pipesOf } from './pipes';
+import type { Pipe } from './pipes';
+import { boxOfNode, routeHitsBoxes } from './routeGrid';
+import type { Box } from './route';
+import { drawnScene } from './tracks';
+import { unmeasuredEnd } from './unmeasured';
 import type { PIDNodeData, PIDEdgeData } from './types';
 
 /**
@@ -337,6 +346,36 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
     });
   }
 
+  // Two lines on one port of a symbol. Nothing drawn today does that -- a
+  // line let go on a port that has one is teed into it -- but a drawing saved
+  // before can, and draws the two out of the port on top of each other: a T
+  // just off the port with no dot, which reads as two separate connections
+  // until somebody looks hard. Named, so it can be redrawn as a tee.
+  const onPort = new Map<string, Edge[]>();
+  for (const e of edges) {
+    if (e.source === e.target) continue;
+    for (const [nodeId, handle] of [[e.source, e.sourceHandle], [e.target, e.targetHandle]] as const) {
+      const n = byId.get(nodeId);
+      if (!n || !handle || isJunction(n)) continue;
+      const k = `${nodeId}\u0000${handle}`;
+      const list = onPort.get(k);
+      if (list) list.push(e); else onPort.set(k, [e]);
+    }
+  }
+  for (const [k, lines] of onPort) {
+    if (lines.length < 2) continue;
+    const [nodeId, handle] = k.split('\u0000');
+    const n = byId.get(nodeId)!;
+    push({
+      id: `lines-share-port-${nodeId}-${handle}`,
+      severity: 'warning',
+      title: `${lines.length} lines on one port of ${nameOf(n)}`,
+      detail: `They leave port ${handle} on top of each other, which reads as separate connections. Pull a branch out of one of them to tee the other into it.`,
+      nodeIds: [nodeId],
+      edgeIds: lines.map(e => e.id),
+    });
+  }
+
   for (const e of edges) {
     if (!byId.has(e.source) || !byId.has(e.target)) {
       push({
@@ -406,9 +445,32 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
       id: 'lines-crossing',
       severity: 'info',
       title: `${crossings} place${crossings === 1 ? '' : 's'} where lines cross`,
-      detail: 'Crossing is not joining. To join them, drag one onto the other; to keep them apart, drag a line’s middle segment.',
+      detail: 'Crossing is not joining, and the drawing says so: the vertical line hops the horizontal one. To join them, pull from one line onto the other; to keep them apart, drag a segment out of the way.',
     });
   }
+
+  // ── Lines drawn through a symbol ──────────────────────────────────────────
+  // A line reaches a symbol only through its ports, and the router keeps the
+  // lines it routes out of every symbol's body. But a pipe keeps the shape it
+  // was put down with: a bay let go across a valve, or a valve put down on a
+  // pipe's stored corners, leaves the pipe -- and a tee on it -- drawn
+  // straight through a symbol it has nothing to do with. On the page that is
+  // a valve in the line, or a branch joined at the valve, and neither is
+  // there; nothing on the drawing says otherwise. Named, so it can be moved.
+  const sheet = sheetOf(nodes, edges, byId);
+  for (const f of drawnThrough(nodes, edges, byId, sheet)) push(f);
+
+  // ── Lines drawn through a junction ────────────────────────────────────────
+  // The same false joint, at a tee instead of a symbol. A dot on a line is
+  // how this drawing says "joined here", so a line drawn through a dot it
+  // has nothing to do with -- or up to it, where a line joined to it would
+  // end -- reads as a four-way joint that is not there. The reseat sends a
+  // pipe it routes round such a dot, and the page moves a line's middle off
+  // one; but neither moves a tee a group move let go on another line, the
+  // legs a line leaves and reaches its ports by, or corners a person put
+  // down. Named by the line and by the pipe the tee rides, so both can be
+  // found.
+  for (const f of onJunctions(nodes, edges, byId, sheet)) push(f);
 
   // ── Instruments ───────────────────────────────────────────────────────────
   const wired = nodes.filter(n => {
@@ -426,16 +488,31 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
     });
   }
 
+  // Clipped to something that is no longer there counts as clipped to
+  // nothing. A probe keeps the id of what it was dropped on, and a line cut in
+  // two by a tee or healed round a deleted valve, or a symbol deleted outright,
+  // leaves it naming nothing: no leader is drawn, and this used to stay quiet
+  // because the field was filled in. The checks are never allowed to be
+  // quieter than the canvas.
+  const lineIds = new Set(edges.map(e => e.id));
+  const dangling = (n: Node) => {
+    const host = dataOf(n).attachedTo;
+    return !!host && !byId.has(host) && !lineIds.has(host);
+  };
   const floating = nodes.filter(n =>
     isInstrument(dataOf(n)?.componentType) &&
-    !dataOf(n).attachedTo &&
+    (!dataOf(n).attachedTo || dangling(n)) &&
     !edges.some(e => e.source === n.id || e.target === n.id));
   if (floating.length) {
+    const lost = floating.filter(dangling).length;
+    const why = !lost ? ''
+      : floating.length === 1 ? ' It was clipped to something that has since been deleted or redrawn.'
+      : ` ${lost} of them were clipped to something that has since been deleted or redrawn.`;
     push({
       id: 'instruments-floating',
       severity: 'info',
       title: `${floating.length} instrument${floating.length === 1 ? '' : 's'} not measuring anything`,
-      detail: 'Drag each onto the component or line it reads, and it will clip to it.',
+      detail: 'Drag each onto the component or line it reads, and it will clip to it.' + why,
       nodeIds: floating.map(n => n.id),
     });
   }
@@ -569,6 +646,290 @@ function hopsFromSources(nodes: Node[], edges: Edge[]): Map<string, number> {
   }
   return dist;
 }
+
+/**
+ * What the checks that read the drawing's geometry share: where each line is
+ * drawn, and what a reader would call each line and each junction.
+ *
+ * The lines are read as the canvas draws them (`drawnRoute`), from where each
+ * symbol draws its ports (`unmeasuredEnd`), since the checks have no screen
+ * to measure them on. Each is routed once, when first asked for.
+ */
+interface Sheet {
+  routeOf: (e: Edge) => Pt[] | null;
+  /** How many lines end on each node. */
+  linesOn: Map<string, number>;
+  nameOfLine: (e: Edge) => string;
+  /** What a reader calls a junction, and what kind of one it is. */
+  nameOfJunction: (j: Node) => { name: string; kind: 'tee' | 'open end' | 'junction' };
+}
+
+function sheetOf(nodes: Node[], edges: Edge[], byId: Map<string, Node>): Sheet {
+  const routes = new Map<Edge, Pt[] | null>();
+  const routeOf = (e: Edge) => {
+    if (!routes.has(e)) routes.set(e, drawnRoute(e, byId, unmeasuredEnd));
+    return routes.get(e)!;
+  };
+
+  const linesOn = new Map<string, number>();
+  const linesAt = new Map<string, Edge[]>();
+  for (const e of edges) {
+    for (const id of new Set([e.source, e.target])) {
+      linesOn.set(id, (linesOn.get(id) ?? 0) + 1);
+      (linesAt.get(id) ?? linesAt.set(id, []).get(id)!).push(e);
+    }
+  }
+  const pipeOfLine = new Map<string, Pipe>();
+  const pipeOfTee = new Map<string, Pipe>();
+  for (const p of pipesOf(nodes, edges)) {
+    for (const id of p.lines) pipeOfLine.set(id, p);
+    for (const id of p.tees) pipeOfTee.set(id, p);
+  }
+  // A line by what a reader finds at the ends of the run it is part of: a
+  // tag, or a tee or an open end, which have none worth reading.
+  const endName = (id: string) => {
+    const n = byId.get(id);
+    if (n && !isJunction(n)) return nameOf(n);
+    return (linesOn.get(id) ?? 0) === 1 ? 'an open end' : 'a tee';
+  };
+  const nameOfEnds = (a: string, b: string) => {
+    const named = [a, b].map(id => ({ name: endName(id), tag: !isJunction(byId.get(id)) }));
+    // A tag first: "TK-1 to a tee", not "a tee to TK-1".
+    if (!named[0].tag && named[1].tag) named.reverse();
+    return `${named[0].name} to ${named[1].name}`;
+  };
+  const nameOfLine = (e: Edge) => {
+    const p = pipeOfLine.get(e.id);
+    return p ? nameOfEnds(p.a.nodeId, p.b.nodeId) : nameOfEnds(e.source, e.target);
+  };
+
+  // A junction has no tag, so it is named by what it is on: a tee by the
+  // pipe it rides, which is what a reader follows to find it; an open end by
+  // where its line comes from; any other tee by what its lines join.
+  const nameOfJunction = (j: Node): { name: string; kind: 'tee' | 'open end' | 'junction' } => {
+    const pipe = pipeOfTee.get(j.id);
+    if (pipe) return { name: `the tee on ${nameOfEnds(pipe.a.nodeId, pipe.b.nodeId)}`, kind: 'tee' };
+    const lines = linesAt.get(j.id) ?? [];
+    if (lines.length === 1) {
+      const e = lines[0], p = pipeOfLine.get(e.id);
+      const far = p ? (p.a.nodeId === j.id ? p.b.nodeId : p.a.nodeId) : (e.source === j.id ? e.target : e.source);
+      const from = byId.get(far);
+      const off = pipeOfTee.get(far);
+      const name = from && !isJunction(from) ? `the open end of the line from ${nameOf(from)}`
+        : off ? `the open end of a branch off ${nameOfEnds(off.a.nodeId, off.b.nodeId)}` : 'an open end';
+      return { name, kind: 'open end' };
+    }
+    if (!lines.length) return { name: 'a junction with no lines on it', kind: 'junction' };
+    const joins = [...new Set(lines.map(e => endName(e.source === j.id ? e.target : e.source)))];
+    return { name: `the tee joining ${listed(joins)}`, kind: 'tee' };
+  };
+
+  return { routeOf, linesOn, nameOfLine, nameOfJunction };
+}
+
+/** "a", "a and b", "a, b and c". */
+const listed = (said: string[]) =>
+  said.length <= 1 ? said.join('') : `${said.slice(0, -1).join(', ')} and ${said[said.length - 1]}`;
+
+/**
+ * Every symbol with a line drawn through its body, or a tee or an open end
+ * inside it, that is not joined to it: one row for each such symbol,
+ * naming what runs through it.
+ *
+ * "Through" is what the router keeps its own routes out of
+ * (`routeHitsBoxes`): into the box, not along its edge. A line's own two
+ * ends are what it is joined to; anything else it crosses, it is not.
+ */
+function drawnThrough(nodes: Node[], edges: Edge[], byId: Map<string, Node>, sheet: Sheet): Finding[] {
+  const pageOfNode = (n: Node) => pageOf(dataOf(n));
+  // What a line can be drawn through: a symbol with ports, which a line
+  // across it reads as joined to. Not a section box, a note or a probe.
+  const onPage = new Map<string, { n: Node; box: Box }[]>();
+  for (const n of nodes) {
+    if (n.hidden || isJunction(n) || portsOf(n).length === 0) continue;
+    const page = pageOfNode(n);
+    const list = onPage.get(page) ?? onPage.set(page, []).get(page)!;
+    list.push({ n, box: boxOfNode(n) });
+  }
+  if (!onPage.size) return [];
+
+  const { linesOn, nameOfLine } = sheet;
+  const through = new Map<string, { lines: Edge[]; names: string[]; tees: Node[] }>();
+  const at = (id: string) => through.get(id) ?? through.set(id, { lines: [], names: [], tees: [] }).get(id)!;
+  // Whether a box and a line's bounds meet at all: a line nowhere near a
+  // symbol is not asked about it.
+  const near = (b: Box, x0: number, y0: number, x1: number, y1: number) =>
+    b.x <= x1 && x0 <= b.x + b.w && b.y <= y1 && y0 <= b.y + b.h;
+
+  for (const e of edges) {
+    const s = byId.get(e.source), t = byId.get(e.target);
+    if (!s || !t || e.source === e.target || pageOfNode(s) !== pageOfNode(t)) continue;
+    const symbols = onPage.get(pageOfNode(s));
+    if (!symbols) continue;
+    const pts = sheet.routeOf(e);
+    if (!pts || pts.length < 2) continue;
+    const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    for (const { n, box } of symbols) {
+      if (n.id === e.source || n.id === e.target || !near(box, x0, y0, x1, y1)) continue;
+      if (!routeHitsBoxes(pts, [box])) continue;
+      const f = at(n.id);
+      f.lines.push(e);
+      const name = nameOfLine(e);
+      if (!f.names.includes(name)) f.names.push(name);
+    }
+  }
+
+  // A tee or an open end inside a symbol, not joined to it: a joint drawn at
+  // the symbol that is not one.
+  const joined = (a: string, b: string) => edges.some(e => (e.source === a && e.target === b) || (e.source === b && e.target === a));
+  for (const j of nodes) {
+    if (!isJunction(j)) continue;
+    const c = centreOfJunction(j);
+    for (const { n, box } of onPage.get(pageOfNode(j)) ?? []) {
+      const inside = c.x > box.x + 1 && c.x < box.x + box.w - 1 && c.y > box.y + 1 && c.y < box.y + box.h - 1;
+      if (inside && !joined(j.id, n.id)) at(n.id).tees.push(j);
+    }
+  }
+
+  const found: Finding[] = [];
+  for (const [id, f] of through) {
+    const n = byId.get(id)!;
+    const tag = nameOf(n);
+    const k = f.names.length;
+    const tees = f.tees.filter(j => (linesOn.get(j.id) ?? 0) !== 1).length;
+    const opens = f.tees.length - tees;
+    const inside = [
+      ...(tees ? [tees === 1 ? 'a tee inside it' : `${tees} tees inside it`] : []),
+      ...(opens ? [opens === 1 ? 'an open end inside it' : `${opens} open ends inside it`] : []),
+    ];
+    const said = [...f.names, ...inside];
+    const list = listed(said);
+    const title = k
+      ? `${k === 1 ? 'A line runs' : `${k} lines run`} through ${tag} without joining it`
+      : `${f.tees.length === 1 ? (tees ? 'A tee sits' : 'An open end sits') : `${f.tees.length} junctions sit`} inside ${tag} without joining it`;
+    found.push({
+      id: `drawn-through-${id}`,
+      severity: 'warning',
+      title,
+      detail: `Drawn across ${tag} without joining it: ${list}. On the page that reads as piped through ${tag}, and it is not. Move ${tag}, or what runs through it, clear.`,
+      nodeIds: [id, ...f.tees.map(j => j.id)],
+      edgeIds: f.lines.map(e => e.id),
+    });
+  }
+  return found;
+}
+
+/**
+ * How near a junction's centre a line may come before it reads as joined
+ * there: where a line that is joined to it ends -- its face's anchor,
+ * `J_ANCHOR` out -- and a pixel for the width of the line. Nearer, the line
+ * runs into the dot, or stops against it as a joined one does. A line a grid
+ * step off passes it, the way a riser beside a header's tee does on any
+ * crowded sheet, and says nothing.
+ */
+const ON_DOT = J_ANCHOR + 1;
+
+/** How far `p` is from the nearest point of the segment `a`-`b`. */
+function offSegment(p: Pt, a: Pt, b: Pt): number {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+/** How far `p` is from the nearest point of a route. */
+function offRoute(p: Pt, pts: Pt[]): number {
+  let best = Infinity;
+  for (let i = 0; i + 1 < pts.length; i++) best = Math.min(best, offSegment(p, pts[i], pts[i + 1]));
+  return best;
+}
+
+/**
+ * Every junction -- a tee or an open end -- with a line drawn through its dot,
+ * or ending on it, that is not one of its own: one row for each, naming the
+ * junction and every line on it.
+ *
+ * A line into a junction is read on into the middle of its dot, since that is
+ * where it looks to go: an open end put down with its dot on a tee's ring is
+ * a line ending on the tee, though its anchor is on the far side of its own
+ * dot. A line that routes itself is judged where it is drawn, once the lines
+ * of its page are moved off one another (`drawnScene`), since that pass moves
+ * a line's middle off a dot it would cross; it is worked out only when some
+ * such line is near a dot at all.
+ */
+function onJunctions(nodes: Node[], edges: Edge[], byId: Map<string, Node>, sheet: Sheet): Finding[] {
+  const pageOfNode = (n: Node) => pageOf(dataOf(n));
+  const dots = new Map<string, { j: Node; at: Pt }[]>();
+  for (const j of nodes) {
+    if (!isJunction(j) || j.hidden) continue;
+    const page = pageOfNode(j);
+    (dots.get(page) ?? dots.set(page, []).get(page)!).push({ j, at: centreOfJunction(j) });
+  }
+  if (!dots.size) return [];
+
+  let scene: Map<string, Pt[]> | null = null;
+  const asDrawn = (e: Edge) => (scene ??= drawnScene(nodes, edges, unmeasuredEnd)).get(e.id) ?? null;
+
+  const on = new Map<string, { j: Node; lines: Edge[]; names: string[]; through: boolean }>();
+  for (const e of edges) {
+    const s = byId.get(e.source), t = byId.get(e.target);
+    if (!s || !t || e.source === e.target || s.hidden || t.hidden) continue;
+    const page = pageOfNode(s);
+    if (pageOfNode(t) !== page || !dots.has(page)) continue;
+    const route = sheet.routeOf(e);
+    if (!route || route.length < 2) continue;
+    const read = (pts: Pt[]) => [
+      ...(isJunction(s) ? [centreOfJunction(s)] : []), ...pts, ...(isJunction(t) ? [centreOfJunction(t)] : []),
+    ];
+    const dotsOn = (pts: Pt[]) => {
+      const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+      const [x0, x1, y0, y1] = [Math.min(...xs) - ON_DOT, Math.max(...xs) + ON_DOT, Math.min(...ys) - ON_DOT, Math.max(...ys) + ON_DOT];
+      return dots.get(page)!.filter(({ j, at }) => j.id !== e.source && j.id !== e.target
+        && at.x >= x0 && at.x <= x1 && at.y >= y0 && at.y <= y1 && offRoute(at, pts) <= ON_DOT);
+    };
+    let pts = read(route);
+    let hit = dotsOn(pts);
+    if (hit.length && routesItself(e.data as LineData | undefined, s, e.sourceHandle, t, e.targetHandle)) {
+      const drawn = asDrawn(e);
+      if (drawn && drawn.length >= 2) { pts = read(drawn); hit = dotsOn(pts); }
+    }
+    // Ending on it, or running through: whether the line stops at the dot.
+    // A line stops at a symbol or an open end; at a tee the run it is part
+    // of carries on, so a pipe cut in two by a tee beside the dot still runs
+    // through it.
+    const stops = ([[s, pts[0]], [t, pts[pts.length - 1]]] as const)
+      .filter(([n]) => !isJunction(n) || (sheet.linesOn.get(n.id) ?? 0) <= 1)
+      .map(([, p]) => p);
+    for (const { j, at } of hit) {
+      const ends = stops.some(p => Math.hypot(p.x - at.x, p.y - at.y) <= ON_DOT);
+      const f = on.get(j.id) ?? on.set(j.id, { j, lines: [], names: [], through: false }).get(j.id)!;
+      f.lines.push(e);
+      f.through ||= !ends;
+      const name = sheet.nameOfLine(e);
+      if (!f.names.includes(name)) f.names.push(name);
+    }
+  }
+
+  const found: Finding[] = [];
+  for (const [id, f] of on) {
+    const { name: junction, kind } = sheet.nameOfJunction(f.j);
+    const k = f.names.length;
+    const lines = k === 1 ? f.names[0] : `${k} lines`;
+    const verb = f.through ? (k === 1 ? 'runs through' : 'run through') : (k === 1 ? 'ends on' : 'end on');
+    found.push({
+      id: `on-junction-${id}`,
+      severity: 'warning',
+      title: `${capital(lines)} ${verb} ${junction} without joining it`,
+      detail: `${capital(junction)} is drawn on ${listed(f.names)}, which ${k === 1 ? 'is' : 'are'} not joined to it. On the page that reads as a joint, and there is none. Move the ${kind} or ${k === 1 ? 'the line' : 'the lines'} clear.`,
+      nodeIds: [id],
+      edgeIds: f.lines.map(e => e.id),
+    });
+  }
+  return found;
+}
+
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** What the badge shows: things that are actually wrong. */
 export const countProblems = (findings: Finding[]) =>
