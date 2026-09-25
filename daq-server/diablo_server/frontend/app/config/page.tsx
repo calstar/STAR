@@ -1538,7 +1538,7 @@ export default function ConfigPage() {
                           (board as any).type,
                           (val) => updateBoard(boardKey, 'type', val),
                           'select',
-                          ['PT', 'ACTUATOR', 'LC', 'TC', 'RTD', 'ENCODER']
+                          ['PT', 'ACTUATOR', 'LC', 'TC', 'RTD', 'ENCODER', 'ENVIRONMENTAL']
                         )}
                         <div className="space-y-1">
                           {renderField(

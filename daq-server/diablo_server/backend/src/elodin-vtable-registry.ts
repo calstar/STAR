@@ -54,17 +54,18 @@ export function computeMsgId(typeName: string): [number, number] {
  *  That distinction is what makes retry safe: a REJECTED subscription spawned no stream,
  *  so re-sending it cannot duplicate anything. Rejected pairs are removed from this set by
  *  noteSubscriptionRejected() and re-sent by the next scheduled pass. */
-const subscribedVTableStreamPairs = new Set<string>();
-
-/** requestId → pair key, for subscriptions whose reply has not come back yet. */
-const pendingSubscriptionReqIds = new Map<number, string>();
-/** Rotating 1..255 (0 is the default for everything else, so it means "not tracked"). */
-let nextSubscriptionReqId = 1;
+function freshSubscriptionState() {
+    return {
+        subscribed: new Set<string>(),
+        pending: new Map<number, string>(),
+        running: null as Promise<boolean> | null,
+    };
+}
+let subscriptionState = freshSubscriptionState();
 
 /** Call on Elodin disconnect so the next connect re-sends all streams cleanly. */
 export function clearSubscriptionState(): void {
-    subscribedVTableStreamPairs.clear();
-    pendingSubscriptionReqIds.clear();
+    subscriptionState = freshSubscriptionState();
 }
 
 /**
@@ -79,10 +80,10 @@ export function clearSubscriptionState(): void {
  * table exists.
  */
 export function noteSubscriptionRejected(requestId: number, description: string): void {
-    const key = pendingSubscriptionReqIds.get(requestId);
+    const key = subscriptionState.pending.get(requestId);
     if (key === undefined) return;
-    pendingSubscriptionReqIds.delete(requestId);
-    if (!subscribedVTableStreamPairs.delete(key)) return;
+    subscriptionState.pending.delete(requestId);
+    if (!subscriptionState.subscribed.delete(key)) return;
     const [high, low] = key.split(',').map(Number);
     console.warn(
         `[Elodin] subscription refused for [0x${high.toString(16).padStart(2, '0')}, ` +
@@ -149,6 +150,11 @@ function buildVTableStreamSubscriptionList(): Array<[number, number]> {
             const active = rawConnectors.map((x) => Number(x)).filter((x) => Number.isFinite(x) && x >= 1 && x <= 10);
             if (active.length === 0) continue;
 
+            if (t === 'ENVIRONMENTAL') {
+                if (Number.isInteger(id) && id <= 255 && active.includes(1)) addUnique(0x25, id);
+                continue;
+            }
+
             const typeHi =
                 t === 'PT' ? 0x20
                     : t === 'TC' ? 0x21
@@ -205,7 +211,14 @@ function buildVTableStreamSubscriptionList(): Array<[number, number]> {
  * Register VTableStream interest with Elodin (MSG to VTableStream). DAQ/calibration
  * services own VTableMsg schema registration; we only subscribe to packet IDs.
  */
-export async function registerVTables(client: ElodinClient): Promise<boolean> {
+export function registerVTables(client: ElodinClient): Promise<boolean> {
+    const state = subscriptionState;
+    if (state.running) return state.running;
+    state.running = subscribeVTables(client, state).finally(() => { state.running = null; });
+    return state.running;
+}
+
+async function subscribeVTables(client: ElodinClient, state: ReturnType<typeof freshSubscriptionState>): Promise<boolean> {
     if (!client.isConnected()) {
         console.warn('⚠️ Cannot subscribe VTableStreams — Elodin client not connected');
         return false;
@@ -218,45 +231,55 @@ export async function registerVTables(client: ElodinClient): Promise<boolean> {
         const vtableStreamMsgId = computeMsgId('VTableStream');
         console.log(`   VTableStream msg_id: [0x${vtableStreamMsgId[0].toString(16).padStart(2, '0')}, 0x${vtableStreamMsgId[1].toString(16).padStart(2, '0')}]`);
 
-        // Do NOT clear subscribedVTableStreamPairs here — calling registerVTables every 5s
-        // (via scheduleResubscribe) would otherwise re-send all 276 subscriptions, causing
-        // Elodin to replay all stored data on every retry and flooding the event loop.
-        // Subscriptions are only cleared on disconnect (clearSubscriptionState), so each
-        // retry only sends subscriptions not yet successfully sent this connection.
+        // Request IDs are one byte. Use 1..254 once per batch, reserving 255 for an
+        // ordered fence. Do not reuse IDs until all errors from that batch arrived.
+        // Successful subscriptions stay deduplicated even if their table is quiet.
 
         let successCount = 0;
         let skippedCount = 0;
+        let requestId = 1;
+        const flush = async () => {
+            await client.flushSubscriptionRequests();
+            state.pending.clear();
+            requestId = 1;
+        };
         for (const [high, low] of subscriptions) {
+            if (state !== subscriptionState || !client.isConnected()) return false;
             const key = `${high},${low}`;
-            if (subscribedVTableStreamPairs.has(key)) {
+            if (state.subscribed.has(key)) {
                 skippedCount++;
                 continue;
             }
             const payload = Buffer.alloc(2);
             payload.writeUInt8(high, 0);
             payload.writeUInt8(low, 1);
-            // Unique-ish requestId so an ErrorResponse can be traced back to THIS pair —
-            // the DB echoes req_id on the error (PacketTx::send_msg).
-            const reqId = nextSubscriptionReqId;
-            nextSubscriptionReqId = (nextSubscriptionReqId % 255) + 1;
-            pendingSubscriptionReqIds.set(reqId, key);
+            const reqId = requestId++;
+            state.pending.set(reqId, key);
+            state.subscribed.add(key);
             const ok = client.sendRawMessage(vtableStreamMsgId, ElodinPacketType.MSG, payload, reqId);
             if (ok) {
-                subscribedVTableStreamPairs.add(key);
                 successCount++;
                 if (successCount <= 5) {
                     console.log(`   ✅ VTableStream subscription sent: [0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}]`);
                 }
             } else {
-                console.error(`   ❌ VTableStream send failed: [0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}]`);
+                throw new Error(`VTableStream send failed: [${high}, ${low}]`);
             }
+            if (requestId === 255) await flush();
         }
+        if (requestId > 1) await flush();
 
         console.log(`   ✅ VTableStream: sent ${successCount} new, skipped ${skippedCount} already subscribed (${subscriptions.length} total)`);
         console.log('   (Heartbeats [0x10] and sensor rows are TABLE packets once daq_bridge / calibration_service publish.)');
         return successCount > 0;
     } catch (error) {
         console.error('❌ VTableStream subscription error:', error);
+        // A missing fence leaves acceptance ambiguous. Close the connection (and
+        // its stream tasks) before retrying; never guess using a timeout alone.
+        if (state === subscriptionState) {
+            clearSubscriptionState();
+            client.disconnect();
+        }
         return false;
     }
 }

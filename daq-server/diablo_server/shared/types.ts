@@ -42,6 +42,7 @@ export enum SensorType {
   ACT = 'ACT',
   TC = 'TC',
   RTD = 'RTD',
+  ENV = 'ENV',
   LC = 'LC',
 }
 

@@ -109,6 +109,7 @@ export class ElodinClient extends EventEmitter {
           this._connected = false;
           this.writeQueue = [];
           this.drainPending = false;
+          this.buffer = Buffer.alloc(0);
           this.emit('disconnected');
           this.scheduleReconnect();
         });
@@ -203,6 +204,14 @@ export class ElodinClient extends EventEmitter {
       }
 
       const payload = packet.subarray(8);
+
+      // GetEarliestTimestamp is an ordered, read-only fence for subscription batches.
+      if (header.ty === ElodinPacketType.MSG && header.requestId === 255 &&
+          header.packetId[0] === 0xE0 && header.packetId[1] === 0x17) {
+        this.emit('subscriptionFence');
+        processed++;
+        continue;
+      }
 
       // ErrorResponse [224,29]: the DB's reply when it refuses a message — a rejected
       // VTableStream subscription ("invalid msg id") or an unparseable VTableMsg. It was
@@ -301,6 +310,36 @@ export class ElodinClient extends EventEmitter {
    */
   publishTable(packetId: [number, number], payload: Buffer): boolean {
     return this.sendRawMessage(packetId, ElodinPacketType.TABLE, payload);
+  }
+
+  /**
+   * Elodin 0.16.1 handles requests serially and writes subscription errors before
+   * answering GetEarliestTimestamp. Its reply proves all preceding requests were
+   * handled, including successful subscriptions that have not produced data yet.
+   * Request ID 255 is reserved for this fence; callers must serialize batches.
+   */
+  flushSubscriptionRequests(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const finish = (error?: Error) => {
+        clearTimeout(timer);
+        this.off('subscriptionFence', onFence);
+        this.off('dbError', onError);
+        this.off('disconnected', onDisconnect);
+        if (error) reject(error); else resolve();
+      };
+      const onFence = () => finish();
+      const onError = (id: number, description: string) => {
+        if (id === 255) finish(new Error(`Subscription fence rejected: ${description}`));
+      };
+      const onDisconnect = () => finish(new Error('Disconnected during subscription batch'));
+      const timer = setTimeout(() => finish(new Error('Subscription fence timed out')), 5000);
+      this.once('subscriptionFence', onFence);
+      this.on('dbError', onError);
+      this.once('disconnected', onDisconnect);
+      if (!this.sendRawMessage([0xE0, 0x16], ElodinPacketType.MSG, Buffer.alloc(0), 255)) {
+        finish(new Error('Could not send subscription fence'));
+      }
+    });
   }
 
   sendCommand(commandType: 'state_transition' | 'actuator', data: unknown): boolean {

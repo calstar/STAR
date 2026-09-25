@@ -31,6 +31,7 @@ Each sensor type gets a **VTable ID** — a two-byte tuple `[high, low]` that un
 | `0x23` | `0x11-0x24` | LC calibrated | `force_units` | 21 bytes |
 | `0x24` | `0x01-0x14` | Encoder raw | `raw_adc_counts` | 21 bytes |
 | `0x24` | `0x11-0x24` | Encoder calibrated | `position_deg` | 21 bytes |
+| `0x25` | `0x01-0xFF` (full board ID) | Environmental BME280 | `temperature_c`, `pressure_pa`, `humidity_rh` | 24 bytes |
 | `0x30` | `0x01-0x0A` | Actuator feedback | `raw_adc_counts` | 21 bytes |
 | `0x31` | `0x01-0x14` | Actuator state (current-sense) | `actuator_state` | 10 bytes |
 | `0x32` | `0x01-0x14` | Actuator commanded state | `actuator_state_commanded` | 10 bytes |
@@ -46,12 +47,46 @@ Each sensor type gets a **VTable ID** — a two-byte tuple `[high, low]` that un
 
 **Raw vs Calibrated convention:** Raw channels use `low = channel_id` (1-based). Calibrated channels use `low = 0x10 + channel_id`. Example: PT channel 3 raw = `[0x20, 0x03]`, calibrated = `[0x20, 0x13]`.
 
-**Free high bytes**, if you need a new stream: `0x25`, `0x45`, `0x47`–`0x4F`, `0x51`–`0x5F`. Anything
+**Free high bytes**, if you need a new stream: `0x45`, `0x47`–`0x4F`, `0x51`–`0x5F`. Anything
 `>= 0x80` is off limits: by convention a high byte of `0x80` or above is a VTable **registration
 ACK** rather than data, and `calibration_main.cpp` reads it that way (see its `type_hi < 0x80`
 packet filter). Add a row here when you take one, or the next person reads a stale map
 (this table sat without `0x24` and `0x46` for a while, which is how you end up debugging a
 collision instead of picking a free byte).
+
+## Environmental board `[0x25, board_id]`
+
+The BME280 firmware sends packet type 13 to UDP port 5006 at 5 Hz. `lib/daq-protocol/src/DiabloPacketUtils.h` provides the parser. `SensorFramePipeline` decodes the packet, and `daq_bridge` resolves its source IP against enabled `ENVIRONMENTAL` boards before publishing it. Unknown sources, disabled boards, wrong protocol versions, incorrect packet lengths, non-finite values, humidity outside 0–100 %RH, and zero pressure do not produce rows.
+
+Each board has one BME280 on logical connector 1. Configure `active_connectors = [1]`; an empty list disables its data stream. The firmware streams on its own and does not use `SENSOR_CONFIG` or ADC calibration. The readings already use °C, absolute Pa, and %RH. The bridge preserves the pressure as `uint32`, including its units.
+
+Environmental tables use the **full board ID** as the low byte, rather than the channel-slot scheme. Board 25 publishes `[0x25, 0x19]` under entity `ENV25`. Board 35 publishes a separate `ENV35` entity. There is no raw/calibrated pair.
+
+Enabled environmental boards need distinct integer IDs from 1 to 255. The shared configuration validator reports invalid IDs and duplicate IDs as errors. The C++ loader rejects them before narrowing an ID to a byte, and the bridge exits with a configuration error before connecting to the database. Disabled environmental boards do not claim IDs.
+
+| Offset | Type | Component |
+|--------|------|-----------|
+| 0 | `u64` | `timestamp_ns` (server arrival time, Unix epoch) |
+| 8 | `f32` | `temperature_c` |
+| 12 | `u32` | `pressure_pa` (absolute) |
+| 16 | `f32` | `humidity_rh` |
+| 20 | `u32` | `sample_ts_ms` (firmware clock) |
+
+`EnvironmentalMessage`, `DatabaseConfig::register_environmental_tables()`, and `parseElodinPacket()` must agree on this 24-byte layout. The bridge registers the schema at startup and after reconnecting. The backend and relay subscribe using enabled boards in the deployed configuration, then emit three `SENSOR_UPDATE` values with a shared timestamp.
+
+The tracked `config/config_base.toml` and `config/profiles/default/config.toml` include board 25 at `192.168.2.25`, matching `firmware/Environmental Tracker/src/main.h`. `config/config.toml` is a generated, gitignored runtime file. For an existing installation, copy `[boards.environmental_board]` into its active profile and deploy that profile. The Environmental view is available under **All Views → Environmental**, at `/environmental`, and can be pinned with `environmental` in `[gui].tabs`. It shows separate readouts and plots for each measurement; stale readouts show “Waiting for fresh data.” Heartbeats appear in Boards.
+
+The board simulator supports `--only-type ENVIRONMENTAL` with the firmware's 5 Hz default rate. Use a loopback simulation config for local testing. To test the real database and backend path without hardware, build `daq_bridge`, install the backend dependencies, then run from `diablo_server/backend`:
+
+```sh
+ELODIN_DB=/absolute/path/to/elodin-db \
+DAQ_BRIDGE=/absolute/path/to/daq_bridge \
+npx tsx test/environmental.integration.ts
+```
+
+This test starts an isolated Elodin database, bridge, and backend on local ports. The bridge also requires its existing UDP config port 5008 to be free. The test verifies UDP-to-WebSocket values, units, epoch timestamps, heartbeat attribution, and malformed packet rejection, then stops its processes. Run the backend unit tests with `npm test -- --exclude 'dist/**'` to exclude the repository's compiled test copies. Run the frontend tests with `npm test` from `diablo_server/frontend`.
+
+Set `BACKEND_FIRST=1` for the startup-order and recovery test. It waits for Elodin to reject the environmental subscription before starting the bridge, verifies that readings arrive after a retry, then replaces the database with a fresh instance and checks that readings resume without restarting the bridge or backend. Both modes check that invalid and duplicate environmental IDs make the bridge exit with status 1. These tests use simulated packets, not physical hardware.
 
 ## CalibrationCommand `[0x46, 0x00]`
 
@@ -364,19 +399,15 @@ This means the backend ingests data at full rate (100+ Hz per sensor) but only s
 
 ## How the Relay Subscription Works
 
-When the relay connects to Elodin, it calls `registerVTables()` which:
+The backend and relay call `registerVTables()` when they connect to Elodin. It builds a deduplicated list from board configuration and fallback streams, then sends each two-byte stream ID in a `VTableStream` message.
 
-1. Computes a message ID: `fnv1a_hash_16_xor("VTableStream")` → `[low, high]`
-2. For each `[high, low]` in `SENSOR_SUBSCRIPTIONS`:
-   - Creates a 2-byte `Buffer` with `[high, low]`
-   - Sends it as a MSG packet to Elodin via `sendRawMessage()`
-3. Elodin begins streaming TABLE packets for those VTable IDs
+Elodin 0.16.1 rejects a subscription if the publisher has not registered its table. The registry matches the error to the requested stream and makes that stream eligible for the next five-second retry. Accepted subscriptions stay deduplicated even when no data arrives. Concurrent registration passes share one operation.
 
-If a VTable isn't registered by the DAQ bridge yet when the relay subscribes, the subscription is silently ignored. The relay has retry logic (every 5 seconds, up to 24 attempts) that re-sends subscriptions for any VTable groups that haven't delivered data yet.
+The wire request ID is one byte. Each batch uses IDs 1 through 254 once, followed by a read-only `GetEarliestTimestamp` request on reserved ID 255. Elodin processes these requests in order and sends errors before the timestamp reply. That reply acts as a fence: the registry can reuse request IDs after receiving it without confusing delayed errors with a later batch. If the fence fails or times out, the client closes the connection so retries cannot duplicate subscriptions whose acceptance is unknown.
 
 ## Common Pitfalls
 
-1. **Forgot to register VTable schema AND/OR subscribe** — Both are required in `elodin-vtable-registry.ts`. If the schema isn't registered, Elodin silently ignores both publishes and subscriptions — no errors logged anywhere. If the schema is registered but you forgot to subscribe, the relay won't receive the data. This is the hardest bug to find because everything appears to work (publisher says OK, no errors) but data never arrives.
+1. **Missing schema or subscription**: C++ publishers register VTable schemas; `elodin-vtable-registry.ts` subscribes to those tables. Both are required. Check the backend or relay log for subscription rejections. A successful socket write alone does not prove that Elodin accepted the request.
 
    **This applies to the C++ subscribers too, and it has already bitten one.** `heartbeat_service`
    read `[0x50, 0x00]` and subscribed with a helper called `subscribe_stream()` whose doc comment

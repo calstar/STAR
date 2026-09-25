@@ -139,6 +139,7 @@ class SimulatedBoard:
             "ACTUATOR": BOARD_TYPE_ACTUATOR,
             # Diablo::BoardType has no ENCODER yet — wire UNKNOWN(0); config drives routing.
             "ENCODER": 0,
+            "ENVIRONMENTAL": 7,
         }
         self.board_type = type_map.get(self.board_type_str, BOARD_TYPE_PT)
 
@@ -160,6 +161,8 @@ class SimulatedBoard:
         # State machine (matches SensorHotfireCore.h lifecycle)
         self.skip_startup = skip_startup
         self.board_state = BOARD_STATE_ACTIVE if skip_startup else BOARD_STATE_SETUP
+        if self.board_type_str == "ENVIRONMENTAL":
+            self.board_state = BOARD_STATE_ACTIVE  # BME280 firmware streams without SENSOR_CONFIG.
         self.can_receive = False  # whether socket is bound to listen_port
         # With --skip-startup we never bind listen_port (no SENSOR_CONFIG) so the normal
         # SETUP→SELF_TEST→ACTIVE path never runs — self-test UDP is never sent unless we
@@ -277,7 +280,7 @@ class SimulatedBoard:
             sensor_interval = 1.0 / self.sensor_hz
             actuator_current_interval = sensor_interval
         else:
-            sensor_interval = 0.02 if self.board_type_str == "ENCODER" else 0.1  # 50 Hz for ENCODER, 10 Hz default
+            sensor_interval = {"ENCODER": 0.02, "ENVIRONMENTAL": 0.2}.get(self.board_type_str, 0.1)
             actuator_current_interval = 0.1  # Explicitly keep actuator current-sense packets at 10 Hz
 
         while self.running:
@@ -305,6 +308,7 @@ class SimulatedBoard:
             # --- skip-startup: no CONFIG, so emit one SELF_TEST pass burst (DAQ→Elodin→thin→WS) ---
             if (
                 self.skip_startup
+                and self.board_type_str != "ENVIRONMENTAL"
                 and self.board_state == BOARD_STATE_ACTIVE
                 and not self._skip_startup_self_test_sent
                 and now - run_started >= 2.0
@@ -385,6 +389,8 @@ class SimulatedBoard:
         the adc_good field. The DAQ bridge publishes adc_good as a sensor_id=0
         Elodin row, then publishes each per-channel result separately.
         """
+        if self.board_type_str == "ENVIRONMENTAL":
+            return  # Environmental firmware has no ADC self-test packet.
         active_connectors = self.active_connectors
 
         ts_ms = self._board_ms(time.time())
@@ -435,6 +441,18 @@ class SimulatedBoard:
         """Collect one chunk (one scan of all channels, stamped with the board
         clock); send a packet once chunks_per_packet chunks are accumulated —
         matching real firmware batching (SENSOR_MAX_CHUNKS_BEFORE_SEND)."""
+        if self.board_type_str == "ENVIRONMENTAL":
+            if 1 not in self.active_connectors:
+                return
+            wave = 0.0 if self.low_noise else math.sin(time.time() * 0.1)
+            payload = struct.pack("<BBIfIf", 13, 0, ts_ms,
+                                  22.5 + wave, int(101325 + 100 * wave), 45.0 + wave)
+            try:
+                self.sock.sendto(payload, (self.target_ip, self.target_port))
+                self.packets_sent += 1
+            except OSError:
+                pass
+            return
         active_connectors = self.active_connectors
 
         chunk_data = struct.pack("<I", ts_ms)

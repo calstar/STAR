@@ -295,6 +295,19 @@ designated_survivor = false
 voltage_reference = 0
 active_connectors = [ 1, 2, 3, 4 ]
 
+# One BME280 supplies temperature, absolute pressure, and humidity on logical connector 1.
+[boards.environmental_board]
+type = "ENVIRONMENTAL"
+ip = "192.168.2.25"
+send_port = 5005
+board_id = 25
+enabled = true
+enable_serial_printing = 0
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 0
+active_connectors = [ 1 ]
+
 [boards.encoder_board]
 type = "ENCODER"
 ip = "192.168.2.61"

@@ -64,6 +64,9 @@ constexpr std::pair<uint8_t, uint8_t> kTableCalibrationCommand{0x46, 0x00};
  */
 class DatabaseConfig {
 public:
+    static bool register_environmental_tables(ElodinClient& client,
+                                              const std::vector<BoardChannels>& boards);
+
     /**
      * @brief Register RAW sensor / actuator VTables.
      *
