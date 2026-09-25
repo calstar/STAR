@@ -2359,7 +2359,8 @@ describe('the reseat, whatever a person does to a drawing', () => {
         expect(twice.edges, log).toBe(once.edges);
       });
     }
-    // A few hundred random edits: slower than a unit test under a full parallel run.
-  }, 30_000);
+    // A few hundred random edits, each reseated twice: over thirty seconds on a
+    // shared CI runner, so the limit is generous rather than tight.
+  }, 120_000);
 
 });
