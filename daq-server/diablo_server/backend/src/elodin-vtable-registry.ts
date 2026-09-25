@@ -72,7 +72,9 @@ const subscribedVTableStreamPairs = new Set<string>();
 const pendingSubscriptionReqIds = new Map<number, string>();
 
 /** One wire byte, so this is the whole id space — see pendingSubscriptionReqIds. */
-export const SUBSCRIPTION_REQ_ID_SPACE = 255;
+export const SUBSCRIPTION_REQ_ID_SPACE = 254; // Reserve 255 for the response fence.
+let subscriptionGeneration = 0;
+let runningPass: Promise<SubscriptionPassResult> | null = null;
 /** Attempts before a pair is parked as "no publisher is ever going to register this". */
 export const MAX_PAIR_ATTEMPTS = 12;
 
@@ -108,6 +110,8 @@ export function notePairDelivered(high: number, low: number): void {
 
 /** Call on Elodin disconnect so the next connect re-sends all streams cleanly. */
 export function clearSubscriptionState(): void {
+    subscriptionGeneration++;
+    runningPass = null;
     subscribedVTableStreamPairs.clear();
     pendingSubscriptionReqIds.clear();
     deliveredPairs.clear();
@@ -216,7 +220,7 @@ export function buildVTableStreamSubscriptionList(cfgIn?: unknown): Array<[numbe
             if (b.enabled === false) continue;
             const t = String(b.type ?? '').toUpperCase();
             const id = Number(b.board_id ?? b.id ?? 0);
-            if (!Number.isFinite(id) || id <= 0) continue;
+            if (!Number.isInteger(id) || id <= 0 || id > 255) continue;
             const mod = id % 10;
             const boardNumberRaw = mod === 0 ? 10 : mod;
             const boardNumber = ((boardNumberRaw - 1) % 8) + 1;
@@ -232,6 +236,11 @@ export function buildVTableStreamSubscriptionList(cfgIn?: unknown): Array<[numbe
             if (active.length === 0) continue;
             // Heartbeat/self-test are registered per CONFIG board id, whatever the type.
             configBoardIds.push(id);
+
+            if (t === 'ENVIRONMENTAL') {
+                if (active.includes(1)) addUnique(0x25, id);
+                continue;
+            }
 
             const typeHi =
                 t === 'PT' ? 0x20
@@ -322,7 +331,16 @@ export interface SubscriptionPassResult {
 }
 
 /** `cfg` is for tests: omitted, the deployed config is read (see buildVTableStreamSubscriptionList). */
-export async function registerVTables(client: ElodinClient, cfg?: unknown): Promise<SubscriptionPassResult> {
+export function registerVTables(client: ElodinClient, cfg?: unknown): Promise<SubscriptionPassResult> {
+    if (runningPass) return runningPass;
+    const generation = subscriptionGeneration;
+    runningPass = subscribeVTables(client, cfg, generation).finally(() => {
+        if (generation === subscriptionGeneration) runningPass = null;
+    });
+    return runningPass;
+}
+
+async function subscribeVTables(client: ElodinClient, cfg: unknown, generation: number): Promise<SubscriptionPassResult> {
     const empty: SubscriptionPassResult = { sent: 0, skipped: 0, parked: parkedPairs.size, remaining: 0, nextAttemptMs: null };
     if (!client.isConnected()) {
         console.warn('⚠️ Cannot subscribe VTableStreams — Elodin client not connected');
@@ -373,15 +391,19 @@ export async function registerVTables(client: ElodinClient, cfg?: unknown): Prom
             payload.writeUInt8(low, 1);
             const thisId = reqId++;
             pendingSubscriptionReqIds.set(thisId, key);
+            subscribedVTableStreamPairs.add(key);
             const ok = client.sendRawMessage(vtableStreamMsgId, ElodinPacketType.MSG, payload, thisId);
             if (ok) {
-                subscribedVTableStreamPairs.add(key);
                 successCount++;
             } else {
-                pendingSubscriptionReqIds.delete(thisId);
-                console.error(`   ❌ VTableStream send failed: [0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}]`);
+                throw new Error(`VTableStream send failed: [${high}, ${low}]`);
             }
         }
+
+        // The DB processes this fence after every subscription in the batch.
+        // No later pass may reuse request IDs until that response arrives.
+        if (batch.length > 0) await client.flushSubscriptionRequests();
+        if (generation !== subscriptionGeneration) return empty;
 
         // One aggregated line. Per-rejection warns produced 1.1M journal lines in four hours.
         const refused = takeRefusalSummary();
@@ -411,6 +433,10 @@ export async function registerVTables(client: ElodinClient, cfg?: unknown): Prom
         return { sent: successCount, skipped: skippedCount, parked: parkedPairs.size, remaining, nextAttemptMs };
     } catch (error) {
         console.error('❌ VTableStream subscription error:', error);
+        if (generation === subscriptionGeneration) {
+            clearSubscriptionState();
+            client.disconnect();
+        }
         return empty;
     }
 }

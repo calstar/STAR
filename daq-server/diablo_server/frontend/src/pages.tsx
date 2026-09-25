@@ -14,6 +14,7 @@ export const CubicCalPage       = lazy(() => import('@/app/calibration-cubic/pag
 export const ConfigPage         = lazy(() => import('@/app/config/page'));
 export const ControllerPage     = lazy(() => import('@/app/controller/page'));
 export const EncodersPage       = lazy(() => import('@/app/encoders/page'));
+export const EnvironmentalPage  = lazy(() => import('@/app/environmental/page'));
 export const FlashPage          = lazy(() => import('@/app/flash/page'));
 export const LivestreamPage     = lazy(() => import('@/app/livestream/page'));
 export const SelfTestsPage      = lazy(() => import('@/app/self-tests/page'));

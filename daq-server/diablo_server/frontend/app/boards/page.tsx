@@ -86,7 +86,7 @@ export default function BoardsPage() {
     }).catch(() => {});
   }, []);
 
-  const TYPE_ORDER = ['ACTUATOR', 'PT', 'LC', 'TC', 'RTD', 'ENCODER'];
+  const TYPE_ORDER = ['ACTUATOR', 'PT', 'LC', 'TC', 'RTD', 'ENCODER', 'ENVIRONMENTAL'];
 
   const boardsByType = useMemo(() => {
     const map = boardsMap ?? {};
