@@ -522,6 +522,25 @@ function shapeOf(a: End, b: End, corners: Pt[]): Pt[] | null {
 }
 
 /**
+ * The shape a pipe keeps while it fits its ends and runs into no symbol:
+ * through its stored corners (`keptShape`), or, for one the router drew with
+ * none, straight while its ends are in line (`shapeOf`).
+ *
+ * A straight pipe had no shape to keep. With no corners stored it was routed
+ * afresh on every reseat, and the router holds a route a port's reach clear
+ * of every symbol, where a kept shape need only stay out of them. A pipe a
+ * symbol had come across, sent round it on that stretch (`keptAround`), came
+ * out straight along the symbol's bottom edge -- in no symbol, and a port's
+ * reach from none -- and the very next reseat routed it afresh, off the edge
+ * and round the symbol, and carried its tee fifteen pixels down with it.
+ */
+function keptPipe(a: End, b: End, corners: Pt[], bodies: Box[]): Pt[] | null {
+  if (corners.length) return keptShape(a, b, corners, bodies, true);
+  const straight = shapeOf(a, b, corners);
+  return straight && !routeHitsBoxes(straight, avoidable(boxesNear(straight, bodies), a, b)) ? straight : null;
+}
+
+/**
  * The shape a pipe keeps when a symbol has come to lie across it while its
  * ends stayed where they were relative to each other -- left alone, carried
  * whole, or moved only as far as the shape still fits them: every line of it
@@ -827,7 +846,7 @@ export function pipeGeometry(
   const page = pageOfNode(na);
   const pts = simplifyPoints(hand
     ? settledThrough(a, b, corners)
-    : (homeward(keptShape(a, b, corners, bodies(page), true)
+    : (homeward(keptPipe(a, b, corners, bodies(page))
       ?? keptAround(pipe, a, b, corners, nodesById, endOf, { bodies: bodies(page), obstacles: obstacles(page) }, model, seat?.anchors))
       ?? routedAgain()));
   const arcs = arcsOf(pts);
@@ -952,8 +971,9 @@ interface PipeWas {
   /**
    * The axis of the leg each tee sat on, as its run faces said -- `x` for a
    * level run, `y` for an upright one -- where that leg can only have moved
-   * sideways under it: no end of the pipe went further along that axis than
-   * across it. Null where one did, or where how far it went cannot be said.
+   * sideways under it: an end of the pipe moved, and none went further along
+   * that axis than across it. Null where one did, where how far it went
+   * cannot be said, or where no end moved at all.
    *
    * An end dragged down and back under a header went further along the
    * header than across it, and dragged back again it goes as far the other
@@ -1051,8 +1071,15 @@ function pipeWas(pipe: Pipe, geo: PipeGeometry, before: Before, endOf: EndLookup
     ...(stayedA ? [] : [went(a0 ?? recorded?.a, geo.a)]),
     ...(stayedB ? [] : [went(b0 ?? recorded?.b, geo.b)]),
   ];
-  const sideways = (axis: 'x' | 'y') =>
-    moves.every(d => !!d && Math.abs(axis === 'x' ? d.x : d.y) <= Math.abs(axis === 'x' ? d.y : d.x));
+  // Sideways only when an end did move, and every end that moved went across
+  // the leg more than along it. With no end moved, "no end went further along
+  // the leg than across it" holds of no end at all, and nothing has moved the
+  // leg. Taken as sideways, it sent a tee a drag had left more than two grid
+  // steps from its pipe straight across onto whatever leg spanned it, round a
+  // bend from where the tick before had put it -- and, read again from there,
+  // back onto the leg it had come from.
+  const sideways = (axis: 'x' | 'y') => moves.length > 0
+    && moves.every(d => !!d && Math.abs(axis === 'x' ? d.x : d.y) <= Math.abs(axis === 'x' ? d.y : d.x));
   const across = pipe.tees.map(id => {
     const face = junctionData(before.node(id)!).along?.in;
     const axis: 'x' | 'y' | null = face === 'l' || face === 'r' ? 'x' : face === 't' || face === 'b' ? 'y' : null;
@@ -1392,8 +1419,31 @@ const faceAt = (e: Edge, nodeId: string, face: Face) => withHandle(e, e.source =
  * (an end not yet measured), in which case nothing of it is touched.
  * `before` is the drawing as it was, for the tees the new path moves out
  * from under (`pipeWas`); without it the drawing as the draft has it.
+ *
+ * A pipe the router has drawn again whole straight through a symbol -- its
+ * search walled off at an end boxed in by its neighbours, and the plain
+ * route taken, since some line is better than none -- is seated a second
+ * time, on what it was just handed. Once its tees are on it, that route is
+ * a shape they ride, with a symbol across it, and a shape is kept with each
+ * stretch the symbol lies across sent round it on its own (`keptAround`),
+ * which the whole-pipe search could not do. Seated once, the pipe was drawn
+ * through the symbol and the next reseat sent it round: a reseat whose
+ * answer the next one changes is no projection, and the canvas runs the
+ * reseat on its own answer.
  */
 function seatPipe(
+  pipe: Pipe, d: Draft, m: Model, endOf: EndLookup, sheet: PipeSheet, anchors?: Map<string, Pt>, before?: Before, among?: AmongLines,
+): { geo: PipeGeometry; spots: number[] } | null {
+  const first = seatPipeOnce(pipe, d, m, endOf, sheet, anchors, before, among);
+  if (!first || first.geo.hand) return first;
+  const { a, b, pts } = first.geo;
+  const bodies = sheet.bodies(pageOfNode(d.node(pipe.a.nodeId)));
+  if (!bodies.length || !routeHitsBoxes(pts, avoidable(boxesNear(pts, bodies), a, b))) return first;
+  return seatPipeOnce(pipe, d, m, endOf, sheet, anchors, before, among) ?? first;
+}
+
+/** One seat of a pipe (`seatPipe`), from the drawing as the draft has it. */
+function seatPipeOnce(
   pipe: Pipe, d: Draft, m: Model, endOf: EndLookup, sheet: PipeSheet, anchors?: Map<string, Pt>, before?: Before, among?: AmongLines,
 ): { geo: PipeGeometry; spots: number[] } | null {
   const nodesById = d.byId();
@@ -1790,7 +1840,8 @@ interface Candidate {
 interface Candidates {
   list: Candidate[];
   crossbars: boolean;
-  among?: Candidate | null;
+  /** The route looked for among the lines (`amongOf`), by the state of what was laid (`Laid.version`) it was looked for among. */
+  among?: Map<number, Candidate | null>;
   /**
    * The line carries router's corners on these faces that are not kept
    * (`candidatesOf`): the way round it was sent, which only the search can
@@ -2221,25 +2272,38 @@ function priced(u: Unit, fa: string | null | undefined, fb: string | null | unde
 
 /**
  * The route for a line that is no pipe's looked for among the other lines
- * on its page (`routeAmong`), once per reseat and pair of faces: what is
- * laid when it is first asked for -- the pipes its tees ride, as a great
- * deal to cross or run along; every other line laid, as a hop to cross and
- * something to keep its distance from; and every junction's dot but its own
- * two ends'. Null when there is none, or none the line could carry: the
- * route has to be drawn again exactly from its own corners (`throughAsStored`)
- * wherever it is drawn, and a straight line has no corners to carry.
+ * on its page (`routeAmong`), once per pair of faces and state of what is
+ * laid: the pipes its tees ride, as a great deal to cross or run along;
+ * every other line laid, as a hop to cross and something to keep its
+ * distance from; and every junction's dot but its own two ends'. Null when
+ * there is none, or none the line could carry: the route has to be drawn
+ * again exactly from its own corners (`throughAsStored`) wherever it is
+ * drawn, and a straight line has no corners to carry.
  *
  * Round every symbol on the page (`PipeSheet.bodies`), whether or not the
  * caller has the router go round them: a way round the lines that ran
  * through a symbol would be no way at all. During a drag, the symbols it
  * carries only for a line with an end on one of them, as the line routed
  * afresh goes round them (`Pricing.lineSheetFor`).
+ *
+ * Looked for among what is laid when it is priced, not when it was first
+ * asked for. Kept from the first asking, the route a line was priced on
+ * depended on whether anything had asked for it before the lines it is
+ * chosen after were laid -- which the corners the line already carried
+ * decided, since a line clear of every line laid so far is not looked for
+ * among them at all. A branch let go of with no corners was looked for
+ * early, among fewer lines, and took a crossbar beside a line laid after
+ * that; the next reseat, finding it carrying that crossbar, looked for its
+ * way only once that line was laid, and moved the crossbar a grid step over.
  */
 function amongOf(u: Unit, fa: string | null | undefined, fb: string | null | undefined, p: Pricing, cands: Candidates): Candidate | null {
-  if (cands.among !== undefined) return cands.among;
-  cands.among = null;
+  if (!p.laid) return null;
+  const version = p.laid.version;
+  const had = cands.among?.get(version);
+  if (had !== undefined) return had;
+  (cands.among ??= new Map()).set(version, null);
   const ends = endsOf(u, fa, fb, p);
-  if (!ends || !p.laid) return null;
+  if (!ends) return null;
   const page = pageOfNode(p.d.node(u.ends[0].nodeId));
   const plain = pathPoints(routeOrthogonal(ends.a, ends.b).d);
   const b = boundsOf(plain), r = AMONG_REACH;
@@ -2270,7 +2334,7 @@ function amongOf(u: Unit, fa: string | null | undefined, fb: string | null | und
     if (!next || next === at) break;
     at = next;
   }
-  cands.among = best;
+  cands.among.set(version, best);
   return best;
 }
 

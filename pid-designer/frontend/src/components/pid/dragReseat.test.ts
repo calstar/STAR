@@ -841,6 +841,44 @@ describe('a bay picked up whole', () => {
     const after = dragGroup(g0, ['M2', 'O1', 'O2'], [P(0, 20)], 6);
     expect(teeAt(after, g0.tees[1])).toEqual(P(510, 470));
   });
+
+  it('settles every step of an end dragged far from it in one reseat, with the lines as the drag found them or without', () => {
+    // M2 taken 250 left and 200 down in six steps. Told only where the tees
+    // were when the drag began, not how the pipe then ran, each tick reads
+    // the pipe as the tick before left it (`pipeWas`). On the fourth step the
+    // first tee went round the bend onto the upright leg. Run again on that
+    // answer, the reseat found the pipe leaving both its ends as it did --
+    // neither end had moved -- and took the leg under the tee to have moved
+    // only sideways, since no end had gone further along it than across:
+    // true of no end at all. So the tee was taken straight across, onto the
+    // bend and off it back onto the level leg; from there straight across
+    // onto the bottom leg and round the bend up the upright one; and back.
+    // Two answers, each the other's reseat: run on its own answer, as the
+    // canvas runs it, the reseat flickered the tee between them until the
+    // guard on the effect gave up. The same reading had the first step take a
+    // second run to settle the other tee. A drag told how the lines ran when
+    // it began reads the pipe as it was then, and is held to the same.
+    const g0 = bay();
+    for (const lines of [false, true]) {
+      const moving = dragging(g0.nodes, ['M2'], lines ? g0.edges : undefined);
+      let g: G = g0;
+      for (let k = 1; k <= 6; k++) {
+        const at = `step ${k}, ${lines ? 'with' : 'without'} the lines`;
+        const change: NodeChange<Node> = { id: 'M2', type: 'position', position: P(570 - (250 * k) / 6, 420 + (200 * k) / 6), dragging: true };
+        const moved = applyMoves(g.nodes, [change], g.edges, endOf, obstaclesByPage(g.nodes));
+        const once = reseatJunctions(moved.nodes, g.edges, endOf, obstaclesByPage(moved.nodes), moving);
+        const twice = reseatJunctions(once.nodes, once.edges, endOf, obstaclesByPage(once.nodes), moving);
+        expect(twice.nodes, at).toBe(once.nodes);
+        expect(twice.edges, at).toBe(once.edges);
+        g = once;
+      }
+      const let0 = { nodes: g.nodes.map(n => (n.dragging ? { ...n, dragging: false } : n)), edges: g.edges };
+      const once = reseatJunctions(let0.nodes, let0.edges, endOf, obstaclesByPage(let0.nodes));
+      const twice = reseatJunctions(once.nodes, once.edges, endOf, obstaclesByPage(once.nodes));
+      expect(twice.nodes).toBe(once.nodes);
+      expect(twice.edges).toBe(once.edges);
+    }
+  });
 });
 
 describe('a branch a drag carries past a symbol it does not end on', () => {
@@ -933,5 +971,178 @@ describe('a valve dropped on a pipe, venting out of its free port', () => {
     expect(through(round, vented), JSON.stringify(round)).toBe(false);
     expect(round[0]).toEqual(P(680, 450));
     expect(teeAt(after, t.tee)).toEqual(P(680, 200));
+  });
+});
+
+describe('the reseat, run on its own answer', () => {
+  // The canvas runs the reseat after every change and again on whatever it
+  // hands back, and stops when it hands back the very arrays it was given.
+  // So what it hands back has to be what it would hand back again: a
+  // drawing it would change on a second run is a tee or a crossbar that
+  // moves a second time after the pointer has stopped, and two answers that
+  // are each the other's reseat flicker between them until the guard on the
+  // effect gives up (`reseat.RUNAWAY`).
+  const junction = (id: string, c: Pt): Node =>
+    ({ id, type: 'JUNCTION', position: { x: c.x - 5, y: c.y - 5 }, data: { componentType: 'JUNCTION', label: id } });
+  function rng(seed: number) {
+    let s = seed >>> 0;
+    return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 2 ** 32; };
+  }
+  const grid = (v: number) => Math.round(v / 10) * 10;
+
+  /** A tee put into line `id` of `g` a fraction `f` of the way along it as drawn, or null when it has no room for one. */
+  function teeAtFraction(g: G, id: string, f: number) {
+    const pts = drawn(g, id);
+    let s = f * pts.slice(1).reduce((sum, q, i) => sum + Math.hypot(q.x - pts[i].x, q.y - pts[i].y), 0);
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const len = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+      if (s <= len) {
+        const at = P(pts[i].x + ((pts[i + 1].x - pts[i].x) * s) / len, pts[i].y + ((pts[i + 1].y - pts[i].y) * s) / len);
+        const split = splitEdgeAt(g.nodes, g.edges, id, at, undefined, { points: pts, endOf, obstacles: obstaclesByPage(g.nodes) });
+        return split && { nodes: split.nodes, edges: split.edges, tee: split.junctionId };
+      }
+      s -= len;
+    }
+    return null;
+  }
+
+  /**
+   * M1.r -> M2.l with one to three tees on it at random, each with a branch
+   * up or down to a symbol or an open end, and up to two symbols standing
+   * about on nothing.
+   */
+  function randomBay(r: () => number): G {
+    const M2 = part('M2', 270 + grid(200 + r() * 300), 270 + grid(r() * 300 - 150));
+    let g = settle({ nodes: [part('M1', 270, 270), M2], edges: [E('run', 'M1', 'r', 'M2', 'l')] });
+    const n = 1 + Math.floor(r() * 3);
+    for (let k = 0; k < n; k++) {
+      const runs = g.edges.filter(e => !e.id.startsWith('b'));
+      const t = teeAtFraction(g, runs[Math.floor(r() * runs.length)].id, r());
+      if (!t) continue;
+      const c = teeAt(t, t.tee);
+      const up = r() < 0.5;
+      const far = r() < 0.5
+        ? part(`T${k}`, grid(c.x - 30 + r() * 200 - 100), grid(up ? c.y - 200 - r() * 100 : c.y + 100 + r() * 100))
+        : junction(`O${k}`, P(grid(c.x + r() * 200 - 100), grid(up ? c.y - 150 : c.y + 150)));
+      const run = (t.nodes.find(x => x.id === t.tee)!.data as { along: { in: string } }).along.in;
+      const face = run === 'l' || run === 'r' ? (up ? 't' : 'b') : (r() < 0.5 ? 'l' : 'r');
+      g = settle({ nodes: [...t.nodes, far], edges: [...t.edges, E(`b${k}`, t.tee, face, far.id, up ? 'b' : 't')] });
+    }
+    const strays = Math.floor(r() * 3);
+    for (let k = 0; k < strays; k++) g = settle({ nodes: [...g.nodes, part(`V${k}`, grid(250 + r() * 400), grid(150 + r() * 400))], edges: g.edges });
+    return g;
+  }
+
+  /**
+   * Two or three headers, one above another, with two to five tees put into
+   * them at random and branches from each: to a tee on another header (a
+   * pipe of its own between the two), to a symbol, or to an open end; and
+   * three symbols standing about among them.
+   */
+  function randomSheet(r: () => number): G {
+    const nodes: Node[] = [], edges: Edge[] = [];
+    const H = 2 + Math.floor(r() * 2);
+    for (let h = 0; h < H; h++) {
+      const y = 200 + h * grid(80 + r() * 80);
+      nodes.push(part(`A${h}`, grid(100 + r() * 60), y), part(`B${h}`, grid(500 + r() * 200), grid(y + r() * 120 - 60)));
+      edges.push(E(`run${h}`, `A${h}`, 'r', `B${h}`, 'l'));
+    }
+    for (let k = 0; k < 3; k++) nodes.push(part(`V${k}`, grid(200 + r() * 400), grid(100 + r() * 400)));
+    let g = settle({ nodes, edges });
+    const tees: string[] = [];
+    const T = 2 + Math.floor(r() * 4);
+    for (let k = 0; k < T; k++) {
+      const runs = g.edges.filter(e => !e.id.startsWith('br'));
+      const t = teeAtFraction(g, runs[Math.floor(r() * runs.length)].id, r());
+      if (!t) continue;
+      tees.push(t.tee);
+      g = settle({ nodes: t.nodes, edges: t.edges });
+    }
+    const runOf = (id: string) => (g.nodes.find(n => n.id === id)!.data as { along?: { in: string } }).along;
+    const taken = (id: string, face: string) => g.edges.some(e => (e.source === id && e.sourceHandle === face) || (e.target === id && e.targetHandle === face));
+    let b = 0;
+    for (const t of tees) {
+      const run = runOf(t);
+      if (!run) continue;
+      const faces = run.in === 'l' || run.in === 'r' ? ['t', 'b'] : ['l', 'r'];
+      const face = faces[Math.floor(r() * 2)];
+      const c = teeAt(g, t);
+      const kind = r();
+      const others = tees.filter(o => o !== t);
+      if (kind < 0.35 && others.length) {
+        const o = others[Math.floor(r() * others.length)];
+        const orun = runOf(o);
+        if (!orun) continue;
+        const of = orun.in === 'l' || orun.in === 'r' ? (r() < 0.5 ? 't' : 'b') : (r() < 0.5 ? 'l' : 'r');
+        if (taken(o, of)) continue;
+        g = { nodes: g.nodes, edges: [...g.edges, E(`br${b++}`, t, face, o, of)] };
+      } else if (kind < 0.7) {
+        const k = part(`K${b}`, grid(c.x - 30 + r() * 160 - 80), grid(face === 't' ? c.y - 200 : c.y + 140));
+        g = { nodes: [...g.nodes, k], edges: [...g.edges, E(`br${b++}`, t, face, k.id, face === 't' ? 'b' : 't')] };
+      } else {
+        const o = junction(`O${b}`, P(grid(c.x + r() * 160 - 80), grid(c.y + (face === 't' ? -120 : 120))));
+        g = { nodes: [...g.nodes, o], edges: [...g.edges, E(`br${b++}`, t, face, o.id, face === 't' ? 'b' : 't')] };
+      }
+      g = settle(g);
+    }
+    return g;
+  }
+
+  /** The reseat run once on `g` and once on its answer, which has to come back as the same arrays. */
+  function settlesInOne(g: G, drag: Dragging | null, at: string): G {
+    const once = reseatJunctions(g.nodes, g.edges, endOf, obstaclesByPage(g.nodes), drag);
+    const twice = reseatJunctions(once.nodes, once.edges, endOf, obstaclesByPage(once.nodes), drag);
+    expect(twice.nodes, at).toBe(once.nodes);
+    expect(twice.edges, at).toBe(once.edges);
+    return once;
+  }
+
+  /**
+   * `id` moved `steps` times by `by`, a tick each, as the canvas moves it: in
+   * a drag that keeps the lines as it found them, in one that keeps only
+   * where the tees were (`drag` above), or a nudge at a time with no drag.
+   * Every tick, and letting go, settles in one reseat.
+   */
+  function stepThrough(g0: G, id: string, by: Pt, steps: number, how: 'lines' | 'tees' | 'nudges', at: string) {
+    const moving = how === 'nudges' ? null : dragging(g0.nodes, [id], how === 'lines' ? g0.edges : undefined);
+    const p0 = g0.nodes.find(n => n.id === id)!.position;
+    let g = g0;
+    for (let k = 1; k <= steps; k++) {
+      const change: NodeChange<Node> = { id, type: 'position', position: P(p0.x + by.x * k, p0.y + by.y * k), dragging: how !== 'nudges' };
+      const moved = applyMoves(g.nodes, [change], g.edges, endOf, obstaclesByPage(g.nodes));
+      g = settlesInOne({ nodes: moved.nodes, edges: g.edges }, moving, `${at}, step ${k}`);
+    }
+    settlesInOne({ nodes: g.nodes.map(n => (n.dragging ? { ...n, dragging: false } : n)), edges: g.edges }, null, `${at}, let go`);
+  }
+
+  it('settles every tick of a drag of a bay with one to three tees in one reseat (randomised)', { timeout: 30_000 }, () => {
+    for (let seed = 1; seed <= 16; seed++) {
+      const r = rng(seed);
+      const g0 = randomBay(r);
+      const movers = g0.nodes.filter(n => !isJunction(n)).map(n => n.id);
+      const id = movers[Math.floor(r() * movers.length)];
+      const by = P(grid(r() * 40 - 20), grid(r() * 40 - 20));
+      const steps = 5 + Math.floor(r() * 25);
+      for (const how of ['tees', 'lines', 'nudges'] as const) stepThrough(g0, id, by, steps, how, `seed ${seed}, ${id} by ${by.x},${by.y}, ${how}`);
+    }
+  });
+
+  it('settles a sheet of headers teed into one another, nudged a step at a time, in one reseat', { timeout: 30_000 }, () => {
+    // Sheets on which one of these took two runs to settle: a pipe the
+    // router could only draw through a symbol, straight past an end boxed in
+    // by its neighbours, and which the next run sent round the symbol on the
+    // one stretch the symbol lay across (`seatPipe`); a pipe sent round a
+    // symbol that came out straight along the symbol's edge, which the next
+    // run routed afresh off the edge, tee and all (`keptPipe`); and a branch
+    // looked for among fewer lines than it was then priced against, whose
+    // crossbar the next run moved a grid step over (`amongOf`).
+    for (const seed of [22, 472, 573, 576, 1118, 1177]) {
+      const r = rng(seed * 31 + 7);
+      const g0 = randomSheet(r);
+      const movers = g0.nodes.filter(n => !isJunction(n) || (!junctionData(n).along && r() < 0.3)).map(n => n.id);
+      const id = movers[Math.floor(r() * movers.length)];
+      const by = P(grid(r() * 40 - 20), grid(r() * 40 - 20));
+      stepThrough(g0, id, by, 5 + Math.floor(r() * 20), 'nudges', `seed ${seed}, ${id} by ${by.x},${by.y}`);
+    }
   });
 });
