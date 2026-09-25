@@ -277,7 +277,8 @@ struct Config {
     const std::map<std::string, double>* pga_gain_for(const std::string& section_key) const;
 };
 
-/** Parse config.toml at `path`. On any error, logs and returns a default-constructed Config. */
+/** Parse config.toml. Invalid environmental identities throw std::invalid_argument;
+ * other read/parse errors log and return a default-constructed Config. */
 Config load(const std::string& path);
 
 /** Parse config from an in-memory TOML string (SequencerService / ActuatorCommander hold it so). */

@@ -94,6 +94,7 @@ export const diffKeys = (have: string[], want: string[]) => ({
 
 const BOARD_TYPE_LABEL: Record<string, string> = {
   PT: 'PT', ACTUATOR: 'Actuator', LC: 'LC', TC: 'TC', RTD: 'RTD', ENCODER: 'Encoder',
+  ENVIRONMENTAL: 'Environmental',
 };
 
 /**
@@ -121,7 +122,18 @@ export const boardDisplayName = (boards: Record<string, any>, boardKey: string):
  */
 export const boardSlotIssue = (boards: Record<string, any>, boardKey: string): string | null => {
   const board = boards?.[boardKey];
-  if (!board || board.enabled === false || typeof board.board_id !== 'number') return null;
+  if (!board || board.enabled === false) return null;
+  if (board.type === 'ENVIRONMENTAL') {
+    const id = board.board_id ?? board.id;
+    if (!Number.isInteger(id) || id < 1 || id > 255) {
+      return 'Environmental board ID must be an integer from 1 to 255.';
+    }
+    const clash = Object.keys(boards).find((k) => k !== boardKey
+      && boards[k]?.enabled !== false && boards[k]?.type === 'ENVIRONMENTAL'
+      && (boards[k]?.board_id ?? boards[k]?.id) === id);
+    return clash ? `Environmental board ID ${id} is also claimed by ${clash} — their readings would merge.` : null;
+  }
+  if (typeof board.board_id !== 'number') return null;
   const slotOf = (id: number) => (id % 10 === 0 ? 10 : id % 10);
   const slot = slotOf(board.board_id);
   if (slot > 8) {

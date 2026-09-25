@@ -40,6 +40,7 @@ export var SensorType;
     SensorType["ACT"] = "ACT";
     SensorType["TC"] = "TC";
     SensorType["RTD"] = "RTD";
+    SensorType["ENV"] = "ENV";
     SensorType["LC"] = "LC";
 })(SensorType || (SensorType = {}));
 // State machine states

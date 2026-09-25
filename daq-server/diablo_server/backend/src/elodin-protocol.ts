@@ -131,6 +131,24 @@ export function parseElodinPacket(
 ): ParsedSensorData[] {
   const [high, low] = packetId;
 
+  // Environmental packet: u64 epoch ns, f32 C, u32 Pa, f32 %RH, u32 board ms.
+  // The low byte is the full board ID; ENV has one BME280 per board.
+  if (high === 0x25) {
+    if (low < 1 || low > 255 || payload.length !== 24) return [];
+    const temperature = payload.readFloatLE(8);
+    const pressure = payload.readUInt32LE(12);
+    const humidity = payload.readFloatLE(16);
+    if (!Number.isFinite(temperature) || !Number.isFinite(humidity) ||
+        humidity < 0 || humidity > 100 || pressure === 0) return [];
+    const entity = `ENV${low}`;
+    const timestamp = Number(payload.readBigUInt64LE(0) / 1000000n);
+    return [
+      { entity, component: 'temperature_c', value: temperature, timestamp },
+      { entity, component: 'pressure_pa', value: pressure, timestamp },
+      { entity, component: 'humidity_rh', value: humidity, timestamp },
+    ];
+  }
+
   // ── Generic sensor type decoder ──────────────────────────────────────────
   // New packet ID scheme: low byte = (board_number - 1) * 0x20 + channel (raw)
   //                                   (board_number - 1) * 0x20 + 0x10 + channel (calibrated)

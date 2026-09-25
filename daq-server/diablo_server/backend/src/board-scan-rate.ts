@@ -31,6 +31,7 @@ export type BoardScanGroupId = string;
  * board is grouped like any other. Exported for the integration test's per-group breakdown.
  */
 export function mapEntityToGroup(entity: string): BoardScanGroupId | null {
+  if (/^ENV\d+$/.test(entity)) return entity.toLowerCase();
   const pt = entity.match(/^PT(\d+)(?:_Cal)?\.CH/);
   if (pt) return `pt${pt[1]}`;
   if (/^TC\d+(_Cal)?\.CH/.test(entity)) return 'tc';
@@ -47,6 +48,7 @@ export function mapEntityToGroup(entity: string): BoardScanGroupId | null {
  * the simulator's sent-sample ground truth in the integration test.
  */
 export function isPrimaryPhysicalStream(entity: string, component: string): boolean {
+  if (/^ENV\d+$/.test(entity)) return component === 'temperature_c';
   if (component === 'raw_adc_counts') {
     return /^PT\d+(_Cal)?\.CH|^TC\d+(_Cal)?\.CH|^LC\d+(_Cal)?\.CH|^ACT\d+(_Cal)?\.CH/.test(entity);
   }

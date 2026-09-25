@@ -11,7 +11,7 @@ namespace fsw {
 namespace config {
 
 /** Board kinds from [boards.*] in config.toml (order matches prior daq_bridge enum). */
-enum class ActiveBoardKind : uint8_t { PT, LC, TC, RTD, ACTUATOR, ENCODER, UNKNOWN };
+enum class ActiveBoardKind : uint8_t { PT, LC, TC, RTD, ACTUATOR, ENCODER, ENVIRONMENTAL, UNKNOWN };
 
 /**
  * Sensor interface of a PT board, declared by `pt_type` in its [boards.*] section.

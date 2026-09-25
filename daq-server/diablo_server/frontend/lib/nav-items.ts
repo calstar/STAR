@@ -67,6 +67,8 @@ export const NAV_ITEMS: NavItem[] = [
     description: 'PWM duty cycle & frequency for solenoid performance' },
   { id: 'encoders', name: 'Encoders', path: '/encoders', accent: '#7C3AED',
     description: 'Encoder board angles and connection status' },
+  { id: 'environmental', name: 'Environmental', path: '/environmental', accent: '#38BDF8',
+    description: 'Temperature, relative humidity, and absolute pressure' },
   { id: 'self-tests', name: 'Board Self Tests', path: '/self-tests', accent: '#A855F7',
     description: 'Detailed pass/fail diagnostics per hotfire frame' },
   { id: 'boards-flash', name: 'Ethernet OTA Flash', path: '/flash', accent: '#06B6D4',
