@@ -6,6 +6,48 @@
       "ip": "192.168.2.11",
       "board_id": 11,
       "label": "actuator_board"
+    },
+    {
+      "mac": "3e:84:27:cc:20:9d",
+      "ip": "192.168.2.12",
+      "board_id": 12,
+      "label": "actuator_board_2"
+    },
+    {
+      "mac": "da:3b:da:4d:fe:b5",
+      "ip": "192.168.2.14",
+      "board_id": 14,
+      "label": "actuator_board_4"
+    },
+    {
+      "mac": "4a:27:e2:3a:d5:49",
+      "ip": "192.168.2.21",
+      "board_id": 21,
+      "label": "pt_board"
+    },
+    {
+      "mac": "da:3b:da:4c:fb:6d",
+      "ip": "192.168.2.22",
+      "board_id": 22,
+      "label": "pt_board_2"
+    },
+    {
+      "mac": "4a:27:e2:3a:ad:71",
+      "ip": "192.168.2.31",
+      "board_id": 31,
+      "label": "rtd_board"
+    },
+    {
+      "mac": "46:1b:f6:91:06:ed",
+      "ip": "192.168.2.41",
+      "board_id": 41,
+      "label": "lc_board"
+    },
+    {
+      "mac": "36:85:18:70:fd:31",
+      "ip": "192.168.2.42",
+      "board_id": 42,
+      "label": "lc_board_2"
     }
   ]
 }
