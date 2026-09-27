@@ -1,0 +1,30 @@
+{
+  "name": "star-parts-hub",
+  "version": "0.1.0",
+  "private": true,
+  "description": "STAR Parts Hub: central CAD parts library + Onshape insert panel",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/server.ts",
+    "dev": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env --watch src/server.ts",
+    "mock": "MOCK_ONSHAPE=1 AUTH_MODE=dev DATA_DIR=./data-mock node --disable-warning=ExperimentalWarning --env-file-if-exists=.env --watch src/server.ts",
+    "check": "tsc",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 \"test/*.test.ts\"",
+    "smoke-test": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env scripts/smoke-test.ts",
+    "backup": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env scripts/backup.ts"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "multer": "^2.0.2",
+    "occt-import-js": "^0.0.23"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  }
+}

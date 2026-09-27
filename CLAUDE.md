@@ -20,6 +20,7 @@ sim.** A run that converges, plots smoothly and violates no assertion is not evi
 | `EngineDesign` | liquid engine design + optimizer (Layers 1–4) | API 8000, UI 5173 |
 | `pid-designer` | the P&ID drawing tool | API 8001, UI 5174 |
 | `feed-twin` | the feed-system digital twin / cockpit | API 8003, UI 5177 |
+| `parts-hub` | CAD parts library + the "STAR Parts" insert panel in Onshape (Node/TS) | 8080 (`npm run mock`) |
 | `daq-server` | the real stand's DAQ | — |
 | `lib/feedtwin` | the physics library both EngineDesign and feed-twin import | — |
 | `lib/stardesign` | the shared document store (checkout, versions, sharing) | — |

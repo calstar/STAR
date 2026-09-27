@@ -70,6 +70,7 @@ services:
       - feed-twin-frontend
       - star-openrocket-api
       - star-openrocket-frontend
+      - parts-hub
       - daq-viewer
       - landing
 
@@ -340,6 +341,41 @@ services:
     mem_limit: 512m
     memswap_limit: 512m   # == mem_limit -> no swap; OOM this container alone
 
+  # ── STAR Parts Hub ───────────────────────────────────────────────────────
+  # The team's CAD parts library, plus the "STAR Parts" panel inside Onshape
+  # assemblies. One container: Node serves the hub UI, its API and the panel.
+  # The hub sits behind the usual gate; /panel/* deliberately does not (it runs
+  # inside Onshape's iframe and authenticates with Onshape OAuth) -- see the
+  # Caddyfile. Setup runbook: parts-hub/DEPLOY.md.
+  parts-hub:
+    image: ghcr.io/calstar/star-parts-hub:${STAR_IMAGE_TAG:-latest}
+    build:
+      context: ./parts-hub
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Drawing thumbnails of big STEP files briefly needs a lot of memory.
+    mem_limit: 2g
+    memswap_limit: 2g   # == mem_limit -> no swap; OOM this container alone
+    environment:
+      # Always https: Cloudflare terminates TLS even when Caddy runs SCHEME=http.
+      PUBLIC_BASE_URL: https://parts.${BASE_DOMAIN:-starberkeley.org}
+      OAUTH_REDIRECT_URL: https://parts.${BASE_DOMAIN:-starberkeley.org}/panel/oauth/callback
+      # Read + Write key pair: the hub imports parts and creates versions in the
+      # library document. A read-only pair fails with "Invalid API key state".
+      ONSHAPE_ACCESS_KEY: ${PARTS_ONSHAPE_ACCESS_KEY:-${ONSHAPE_ACCESS_KEY:-}}
+      ONSHAPE_SECRET_KEY: ${PARTS_ONSHAPE_SECRET_KEY:-${ONSHAPE_SECRET_KEY:-}}
+      # The "STAR Parts" OAuth app (Onshape Enterprise settings -> Developer).
+      ONSHAPE_CLIENT_ID: ${PARTS_ONSHAPE_CLIENT_ID:-}
+      ONSHAPE_CLIENT_SECRET: ${PARTS_ONSHAPE_CLIENT_SECRET:-}
+      LIBRARY_DOCUMENT_ID: ${PARTS_LIBRARY_DOCUMENT_ID:-}
+      # Same reasoning as JWT_SECRET: no required-variable guard here, it would
+      # break every other compose command. The app exits with a clear list of
+      # what is missing instead.
+      SESSION_SECRET: ${PARTS_SESSION_SECRET:-}
+    volumes:
+      # SQLite + original CAD files + thumbnails. Back this up.
+      - parts_data:/data
+
   # ── DAQ Run Viewer ───────────────────────────────────────────────────────
   # Read-only web viewer for PAST Elodin runs (browse, plot, export CSV). One
   # container: FastAPI serves both /api and the built SPA on 8420. It reads the
@@ -406,3 +442,6 @@ volumes:
   # Keyed by X-Auth-Email inside. See */backend/userdata.py and the sharing
   # section of */backend/routers/documents.py.
   userdata:
+  # STAR Parts Hub: its SQLite database, the uploaded CAD files and thumbnails.
+  # Not a cache -- back it up (parts-hub/README.md, "Data and backups").
+  parts_data:
