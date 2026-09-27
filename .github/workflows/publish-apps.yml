@@ -25,6 +25,7 @@ name: Publish app images
       - 'daq-server/tools/postprocessing/webviewer/**'
       - 'landing/**'
       - 'starproject/**'
+      - 'parts-hub/**'
       - '.github/workflows/publish-apps.yml'
   workflow_dispatch:
 
@@ -68,6 +69,7 @@ jobs:
           - { name: daq-viewer,                   context: ./daq-server/tools/postprocessing/webviewer, dockerfile: ./daq-server/tools/postprocessing/webviewer/Dockerfile }
           # STARProject: one Next.js image serves pages + /api and runs migrations on start.
           - { name: starproject,                  context: ./starproject,               dockerfile: ./starproject/Dockerfile }
+          - { name: parts-hub,                    context: ./parts-hub,                 dockerfile: ./parts-hub/Dockerfile }
     steps:
       - uses: actions/checkout@v4
 

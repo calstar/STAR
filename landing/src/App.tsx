@@ -225,6 +225,18 @@ const APPS: AppCard[] = [
     iconColor: '#fdba74',
   },
   {
+    id: 'parts-hub',
+    href: 'https://parts.starberkeley.org',
+    label: 'STAR Parts Hub',
+    subdomain: 'parts.starberkeley.org',
+    description:
+      'The team parts library: upload vendor CAD with part numbers, costs, links and specs, then search and insert parts straight into Onshape assemblies from the STAR Parts panel.',
+    icon: <IconCAD />,
+    colorClass: 'card-green',
+    iconBg: 'linear-gradient(135deg, #15803d 0%, #22c55e 100%)',
+    iconColor: '#86efac',
+  },
+  {
     id: 'starproject',
     href: 'https://project.starberkeley.org',
     label: 'STAR Project',

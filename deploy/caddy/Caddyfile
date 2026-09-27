@@ -160,6 +160,26 @@
 	}
 }
 
+# ── STAR Parts Hub ───────────────────────────────────────────────────────────
+# The hub is gated like every other app. /panel/* is the one exception, on
+# purpose: it is the Onshape right-panel extension, loaded inside Onshape's
+# iframe where the STAR session cookie is never sent (third-party context), so
+# the gate could only ever refuse it. It authenticates members with Onshape OAuth
+# instead and exposes nothing but the read-only catalog and "insert" (see
+# parts-hub/src/auth/panel.ts). It never trusts an identity header, and we strip
+# them anyway. check_gate_order.py allows exactly this prefix (PUBLIC_PATHS).
+{$SCHEME:https}://parts.{$BASE_DOMAIN:starberkeley.org} {
+	route {
+		handle /panel/* {
+			request_header -X-Auth-Email
+			request_header -X-Auth-User
+			reverse_proxy parts-hub:8080
+		}
+		import protected
+		reverse_proxy parts-hub:8080
+	}
+}
+
 # ── DAQ Run Viewer ───────────────────────────────────────────────────────────
 # Read-only viewer for past Elodin runs. Unlike the apps above it is a single
 # container: FastAPI serves both /api and the built SPA, so one reverse_proxy
