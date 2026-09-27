@@ -53,7 +53,7 @@ Do all of this signed in with an **enterprise admin** account (your own is fine 
 
 ### 1. API keys (server side)
 
-The hub talks to the library document with an API key pair that needs **Read and Write** scopes (it imports parts and creates versions). Set it as `PARTS_ONSHAPE_ACCESS_KEY` / `PARTS_ONSHAPE_SECRET_KEY` in the stack's root `.env`. Without those it falls back to the shared `ONSHAPE_ACCESS_KEY` / `ONSHAPE_SECRET_KEY`, but that pair (used by OpenRocket) is read-only today, and writes fail with "Invalid API key state".
+The hub talks to the library document with an API key pair that needs **Read and Write** scopes (it imports parts and creates versions). Set it as `PARTS_ONSHAPE_ACCESS_KEY` / `PARTS_ONSHAPE_SECRET_KEY` in the stack's root `.env`. Without those it falls back to the shared `ONSHAPE_ACCESS_KEY` / `ONSHAPE_SECRET_KEY`, which currently has Write scope. A read-only pair fails with "Invalid API key state".
 
 The current pair belongs to a person's account. Uploads therefore show that person as the author of each import and version, and the integration stops working if that account loses access. When convenient, create a dedicated enterprise user (e.g. `star-bot@…`) with its own key pair (read + write scope) and swap it in.
 

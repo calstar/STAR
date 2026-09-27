@@ -19,6 +19,16 @@ You are setting up **STAR Parts Hub** on STAR's apps machine. It is a new app in
 
 **Why `/panel/*` is public:** it's loaded inside Onshape's iframe, where the STAR session cookie is never sent, so the normal gate would always refuse it. Instead it authenticates members with Onshape OAuth, never reads `X-Auth-Email`, and only offers the read-only catalog and "insert". The Caddyfile strips identity headers on that path, and `deploy/caddy/tests/check_gate_order.py` allows exactly that prefix (`PUBLIC_PATHS`). Everything else on the host is gated like every other app.
 
+## Status (2026-09-27)
+
+Already done on the apps machine and in Onshape:
+
+- `/opt/STAR/.env` has `PARTS_ONSHAPE_CLIENT_ID`, `PARTS_ONSHAPE_CLIENT_SECRET`, `PARTS_SESSION_SECRET` and `PARTS_LIBRARY_DOCUMENT_ID` (backup: `.env.bak-20260927-1648`). `docker compose config` validates.
+- No separate key pair is needed: the stack's `ONSHAPE_ACCESS_KEY`/`ONSHAPE_SECRET_KEY` (Aidan's) has Write scope, and the hub falls back to it.
+- The **STAR Parts Library** document exists: `https://starberkeley.onshape.com/documents/64c6e9b3f2e516c1dd98bdf9`.
+
+Still to do: share the library document with the Enterprise (step 1), the Onshape extension and assignment (step 1), the Cloudflare hostname (step 3), and merging the PR (step 4).
+
 ## 0. Order matters: configure before merging
 
 Merging to `main` makes CI publish the image, and `star-auto-update` deploys it. If the `PARTS_*` values aren't in `/opt/STAR/.env` yet, the container exits at startup with a list of what's missing. The rest of the stack is unaffected, but the auto-update tick is marked failed. So do steps 1–3 first, then merge (step 4).
@@ -27,8 +37,8 @@ Merging to `main` makes CI publish the image, and `star-auto-update` deploys it.
 
 Walk Carlos through these; you can't do them from the server.
 
-- [ ] **API key with Read + Write.** The pair currently in `.env` (`ONSHAPE_ACCESS_KEY` / `ONSHAPE_SECRET_KEY`, used by STAR OpenRocket) is **read-only**: writes fail with `Invalid API key state`. The hub has to import parts and create versions. At https://dev-portal.onshape.com → API keys, create a new pair with **Application can read your documents** and **Application can write to your documents** checked (nothing else). Ideally do it from a team/bot account rather than a person's. The values become `PARTS_ONSHAPE_ACCESS_KEY` / `PARTS_ONSHAPE_SECRET_KEY` (*from Carlos*).
-- [ ] **Library document.** In Onshape, create a document named **STAR Parts Library** in the Enterprise. Share it **Can view** with the whole Enterprise (every member needs view access or inserts fail). Keep edit access to admins and the key's owner. Its id is the 24-character value in the URL `https://starberkeley.onshape.com/documents/<id>/w/...` → `PARTS_LIBRARY_DOCUMENT_ID`. (Onshape adds an empty "Part Studio 1" and "Assembly 1"; they can stay, the hub ignores default-named tabs.)
+- [x] **API key with Read + Write.** The hub imports parts and creates versions, so its key pair needs Write scope. The stack's `ONSHAPE_ACCESS_KEY` / `ONSHAPE_SECRET_KEY` has it, and the hub uses it unless `PARTS_ONSHAPE_ACCESS_KEY` / `PARTS_ONSHAPE_SECRET_KEY` are set. A read-only pair fails with `Invalid API key state`. If that pair is ever replaced, give the hub its own Read + Write pair (ideally from a team/bot account).
+- [ ] **Library document.** *Created:* `64c6e9b3f2e516c1dd98bdf9`. Still needed: share it **Can view** with the whole Enterprise (every member needs view access or inserts fail). Keep edit access to admins and the key's owner. Its id is the 24-character value in the URL `https://starberkeley.onshape.com/documents/<id>/w/...` → `PARTS_LIBRARY_DOCUMENT_ID`. (Onshape adds an empty "Part Studio 1" and "Assembly 1"; they can stay, the hub ignores default-named tabs.)
 - [ ] **OAuth app settings** (Enterprise settings → Developer → OAuth applications → the app):
   - Redirect URLs: `https://parts.starberkeley.org/panel/oauth/callback`
   - OAuth URL: `https://parts.starberkeley.org/panel/`
