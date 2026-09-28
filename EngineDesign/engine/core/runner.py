@@ -466,6 +466,23 @@ class PintleEngineRunner:
         # Extract discharge coefficients
         Cd_O = diagnostics.get("Cd_O", np.nan)
         Cd_F = diagnostics.get("Cd_F", np.nan)
+
+        # Orifice cavitation margin (Nurick 1976). Reporting only: it flags an orifice whose
+        # vena contracta reaches vapour pressure, where Cd and the momentum ratio stop being
+        # what the solve assumed. Vapour pressure is the configured fluid's.
+        injector_cavitation: Dict[str, Any] = {}
+        try:
+            from engine.core.discharge import cavitation_margin, inlet_radius_ratio_of
+            for side, key, cd in (("oxidizer", "O", Cd_O), ("fuel", "F", Cd_F)):
+                p_in = diagnostics.get(f"P_injector_{key}")
+                pv = getattr(self.config.fluids[side], "vapor_pressure", None)
+                if p_in is None or pv is None:
+                    continue
+                injector_cavitation[key] = cavitation_margin(
+                    P_in=float(p_in), Pc=float(Pc), Pv=float(pv), Cd=float(cd),
+                    r_over_d=inlet_radius_ratio_of(self.config.discharge[side]))
+        except Exception as e:  # never let a report break an evaluation
+            injector_cavitation = {"error": str(e)}
         
         # Calculate stability analysis if enabled
         stability_results = {
@@ -501,6 +518,7 @@ class PintleEngineRunner:
         
         # Compile results
         results = {
+            "injector_cavitation": injector_cavitation,
             "Pc": Pc,
             "mdot_O": mdot_O,
             "mdot_F": mdot_F,
@@ -774,9 +792,7 @@ class PintleEngineRunner:
                 # Add additional metrics for compatibility
                 results["mdot_O"] = results["mdot_total"] * results["MR"] / (1.0 + results["MR"])
                 results["mdot_F"] = results["mdot_total"] / (1.0 + results["MR"])
-                results["cstar_actual"] = results["Pc"] * results["A_throat"] / results["mdot_total"]
-                results["cstar_ideal"] = results["cstar_actual"] / 0.85  # Approximate
-                results["eta_cstar"] = results["cstar_actual"] / results["cstar_ideal"]
+                # cstar_ideal / cstar_actual / eta_cstar come from the chamber solve at each step.
                 results["gamma"] = results["gamma_chamber"]
                 results["R"] = results["R_chamber"]
                 # diagnostics now comes from get_results_dict() - contains ablative heat flux profiles

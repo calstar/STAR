@@ -39,10 +39,21 @@ ROOT = Path(__file__).resolve().parents[1]
 PSI_TO_PA = 6894.76
 PA_AMBIENT = 101325.0
 
-pytestmark = pytest.mark.skipif(
+# The chamber-level classes are slow (whole Python chamber solves per point), so they run in the
+# accel-parity CI job or with ED_AB_PARITY=1. The injector-solve, chug and default-path checks
+# below them are cheap and run in every suite: those kernels sit on the DEFAULT Python path too
+# (closure.flows -> accel.solve, stability._chug_fast -> accel.chug_margin_fast), so a drift there
+# changes what every user sees, not just the optimizer.
+_ab_parity = pytest.mark.skipif(
     os.environ.get("ED_REQUIRE_ACCEL") != "1" and os.environ.get("ED_AB_PARITY") != "1",
     reason="A/B parity runs in the accel-parity CI job; set ED_AB_PARITY=1 to run locally",
 )
+
+
+def _chamber_gate():
+    """Python chamber physics the kernels do not mirror yet (empty => chamber kernels in use)."""
+    from engine import accel
+    return tuple(accel.chamber_physics_not_mirrored())
 
 POINTS_PSI = [(563.467, 567.644), (518.4, 550.6), (597.3, 584.7)]
 
@@ -118,7 +129,10 @@ def _rig(cfg_rel):
         pytest.skip("numba unavailable")
 
     config = load_config(str(ROOT / cfg_rel))
-    assert accel.can_handle_chamber(config), f"accelerator cannot handle {cfg_rel}"
+    # With the chamber gate closed, can_handle_chamber is False BY DESIGN (the kernels would
+    # compute other physics); the classes below then pin the fallback instead of the kernel.
+    assert accel.can_handle_chamber(config) == (not _chamber_gate()), (
+        f"accelerator chamber routing for {cfg_rel} disagrees with the mirror gate")
     runner = PintleEngineRunner(config)
     points = [(po * PSI_TO_PA, pf * PSI_TO_PA) for po, pf in POINTS_PSI]
     with _python_only():
@@ -130,6 +144,18 @@ def _rig(cfg_rel):
     return rig
 
 
+def _default_path(r, p):
+    """What Layer 1 actually consumes: accel.evaluate, else (None) the runner on the DEFAULT,
+    accelerator-enabled path -- which still routes the injector through accel.solve and the chug
+    scan through the kernel."""
+    from engine import accel
+    got = accel.evaluate(r["config"], r["cache"], p[0], p[1], PA_AMBIENT)
+    if got is None and _chamber_gate():
+        got = r["runner"].evaluate(p[0], p[1], P_ambient=PA_AMBIENT, silent=True)
+    return got
+
+
+@_ab_parity
 @pytest.mark.parametrize("cfg_rel,ablative", CONFIGS, ids=lambda v: str(v).split("/")[-1])
 class TestAccelMatchesPython:
     """The contract: what the optimizer consumes must match the authoritative path."""
@@ -139,7 +165,10 @@ class TestAccelMatchesPython:
         r = _rig(cfg_rel)
         for p in r["points"]:
             ref = r["reference"][p]
-            got = accel.evaluate(r["config"], r["cache"], p[0], p[1], PA_AMBIENT)
+            if _chamber_gate():
+                # Gate closed: the chamber kernels must refuse (not compute other physics) ...
+                assert accel.evaluate(r["config"], r["cache"], p[0], p[1], PA_AMBIENT) is None
+            got = _default_path(r, p)
             assert got is not None, f"accelerator bailed where Python converged at {p}"
             for k in CORE_FIELDS:
                 want = _py_field(ref, k)
@@ -151,7 +180,7 @@ class TestAccelMatchesPython:
         r = _rig(cfg_rel)
         for p in r["points"]:
             pd = (r["reference"][p].get("diagnostics") or {})
-            gd = accel.evaluate(r["config"], r["cache"], p[0], p[1], PA_AMBIENT)["diagnostics"]
+            gd = _default_path(r, p)["diagnostics"]
             for k in DIAG_FIELDS:
                 if pd.get(k) and k in gd:
                     _assert_close(f"diag[{k}]", gd[k], pd[k])
@@ -165,6 +194,10 @@ class TestAccelMatchesPython:
         """
         from engine.accel import kernels, params
         r = _rig(cfg_rel)
+        if _chamber_gate():
+            # Strict: once the kernels are ported this XPASSes and fails, which is the prompt to
+            # empty accel._CHAMBER_PHYSICS_NOT_MIRRORED and let the kernels back in.
+            pytest.xfail("chamber kernels do not mirror: " + " | ".join(_chamber_gate()))
         P = params.extract_params(r["config"])
         arr = kernels.cea_arrays(r["cache"])
         for p in r["points"]:
@@ -177,6 +210,7 @@ class TestAccelMatchesPython:
             _assert_close("kernel MR", raw[4], _py_field(ref, "MR"))
 
 
+@_ab_parity
 @pytest.mark.parametrize("cfg_rel,ablative", CONFIGS, ids=lambda v: str(v).split("/")[-1])
 class TestRandomizedSweep:
     """Breadth the three fixed points cannot give. Fixed seed, so failures repeat."""
@@ -184,14 +218,19 @@ class TestRandomizedSweep:
     N = 60
 
     def test_sweep(self, cfg_rel, ablative):
-        from engine import accel
         r = _rig(cfg_rel)
         rng = np.random.default_rng(20260904)
         matched = 0
         worst = 0.0
-        for _ in range(self.N):
+        # Gate closed: both sides are Python chamber solves, so fewer points buy the same breadth
+        # of injector/chug coverage at a fraction of the cost.
+        n = self.N if not _chamber_gate() else 12
+        for _ in range(n):
             p_o = float(rng.uniform(3.0e6, 5.5e6)); p_f = float(rng.uniform(3.0e6, 5.5e6))
-            got = accel.evaluate(r["config"], r["cache"], p_o, p_f, PA_AMBIENT)
+            try:
+                got = _default_path(r, (p_o, p_f))
+            except Exception:
+                got = None
             with _python_only():
                 try:
                     ref = r["runner"].evaluate(p_o, p_f, P_ambient=PA_AMBIENT, silent=True)
@@ -208,10 +247,11 @@ class TestRandomizedSweep:
                 want = _py_field(ref, k)
                 if want:
                     worst = max(worst, _rel(got[k], want))
-        assert matched > self.N // 2, f"only {matched}/{self.N} points converged"
+        assert matched > n // 2, f"only {matched}/{n} points converged"
         assert worst <= RTOL, f"worst accel-vs-Python divergence {worst:.3e} over {matched} points"
 
 
+@_ab_parity
 class TestCoolingIsActuallyApplied:
     """Pins the Tc_ideal / Tc_effective distinction.
 
@@ -224,6 +264,8 @@ class TestCoolingIsActuallyApplied:
     def test_effective_tc_differs_and_is_reported(self):
         from engine import accel
         from engine.accel import kernels, params
+        if _chamber_gate():
+            pytest.skip("chamber kernels gated off; the wrapper this pins does not run")
         r = _rig("configs/canonical/impinging.yaml")
         P = params.extract_params(r["config"])
         arr = kernels.cea_arrays(r["cache"])
@@ -242,6 +284,7 @@ class TestCoolingIsActuallyApplied:
         )
 
 
+@_ab_parity
 @pytest.mark.parametrize("cfg_rel,ablative", CONFIGS, ids=lambda v: str(v).split("/")[-1])
 class TestDeliveredIspInvariant:
     """Delivered Isp must sit at/below eta_cstar * the ideal ceiling.
@@ -267,3 +310,160 @@ class TestDeliveredIspInvariant:
                 f"delivered Isp {ref['Isp']:.2f}s exceeds eta_cstar*Isp_vac_ideal "
                 f"{ceiling:.2f}s — an efficiency term has been dropped from the thrust path"
             )
+
+
+# ---------------------------------------------------------------------------------------------
+# Cheap checks, run in every suite (no ED_AB_PARITY needed).
+# ---------------------------------------------------------------------------------------------
+
+def _need_numba():
+    from engine import accel
+    if not accel.available():
+        pytest.skip("numba unavailable")
+
+
+class TestChugKernelMatchesPython:
+    """accel.chug_margin_fast is what stability._chug_fast runs whenever the accelerator is on,
+    so it must be chug.chug_margin_fast to rounding -- including every negative-real-axis
+    crossing (phases -pi, -3pi, ...), not only the unwrapped -pi one."""
+
+    # STAB-5 counterexample (tests/test_combustion_stability_audit.py): the worst crossing is the
+    # -3pi one at ~102 Hz. The -pi-only kernel read GM 4.27 (stable) on a loop that is unstable.
+    PC = 3.61e6
+    O = dict(mdot=0.9907, eta=0.3745, dPf=648654.0, L=0.6093, A=1.534e-4, tau=1.638e-3)
+    F = dict(mdot=0.7122, eta=0.1775, dPf=625208.0, L=0.9913, A=3.534e-4, tau=13.85e-3)
+
+    def _case(self, O, F, Z_hf=0.0):
+        from engine.pipeline.stability.chug import ChugChamber, ChugStream, Regulator
+        mk = lambda n, d: ChugStream(n, mdot=d["mdot"], eta_inj=d["eta"], Pc=self.PC,  # noqa: E731
+                                     dP_feed=d["dPf"], feed_length=d["L"], feed_area=d["A"],
+                                     tau_conv=d["tau"], regulator=Regulator(Z_hf=Z_hf))
+        return [mk("O", O), mk("F", F)], ChugChamber(1872.7, 4.353e-4, 1.093, 1.178)
+
+    @staticmethod
+    def _same(a, b):
+        for k in ("gain_margin", "f_chug_hz", "phase_margin_deg"):
+            x, y = float(a[k]), float(b[k])
+            if np.isnan(x) and np.isnan(y):
+                continue
+            assert _rel(x, y) <= 1e-9, f"{k}: accel={x!r} python={y!r}"
+        assert a["stable"] == b["stable"]
+        assert np.allclose(a["crossings_hz"], b["crossings_hz"], rtol=1e-9, atol=0.0)
+
+    def test_minus_3pi_crossing(self):
+        _need_numba()
+        from engine.accel.stability import chug_margin_fast as fast
+        from engine.pipeline.stability.chug import chug_margin_fast as ref
+        streams, ch = self._case(self.O, self.F)
+        got, want = fast(streams, ch), ref(streams, ch)
+        assert want["gain_margin"] < 1.0 and not want["stable"]     # the case is what it claims
+        self._same(got, want)
+
+    def test_randomised_loops(self):
+        _need_numba()
+        from engine.accel.stability import chug_margin_fast as fast
+        from engine.pipeline.stability.chug import chug_margin_fast as ref
+        rng = np.random.default_rng(20260926)
+        for i in range(150):
+            O, F = dict(self.O), dict(self.F)
+            for d in (O, F):
+                d["eta"] *= rng.uniform(0.3, 2.0)
+                d["tau"] *= rng.uniform(0.2, 5.0)
+                d["L"] *= rng.uniform(0.2, 5.0)
+            streams, ch = self._case(O, F, Z_hf=float(rng.choice([0.0, 2.0e5])))
+            self._same(fast(streams, ch), ref(streams, ch))
+
+
+_INJ_CONFIGS = ["configs/ethalox_6500N.yaml", "configs/canonical/impinging.yaml",
+                "configs/impinging_lox_ch4_8000N.yaml", "configs/canonical/pintle.yaml"]
+_INJ_CORE_KEYS = 18     # the first 18 are published by both injector types
+_INJ_KEYS = ["Cd_O", "Cd_F", "delta_p_feed_O", "delta_p_feed_F", "delta_p_injector_O",
+             "delta_p_injector_F", "D32_O", "D32_F", "x_star", "u_O", "u_F", "We_O", "We_F",
+             "momentum_ratio_R", "rupe_M", "u_axial_spray", "iterations",
+             "constraints_satisfied",
+             # spray/doublet geometry Layer 1 reads out of the diagnostics (geometry-fit term,
+             # final report); None on the accelerated path until the extras were added
+             "L_imp", "D_pitch_O", "D_pitch_F", "element_gap_O", "element_gap_F", "s_pair",
+             "vaporization_length_total", "L_sheet_breakup", "k_evap_O", "k_evap_F",
+             "tau_evap_O", "tau_evap_F", "J", "TMR", "theta", "Oh_O", "Oh_F", "rho_gas_breakup"]
+
+
+@pytest.mark.parametrize("cfg_rel", _INJ_CONFIGS, ids=lambda v: v.split("/")[-1])
+def test_injector_solve_matches_python(cfg_rel):
+    """closure.flows runs accel.solve on the DEFAULT path, on every residual of the Python chamber
+    solve. It must reproduce the Python injector: one closure pass with Cd untouched (impinging),
+    the feed exit dump K_exit on d_exit, the passage at A_hydraulic, pintle's fixed-K x*."""
+    _need_numba()
+    from engine import accel
+    from engine.core.injectors import get_injector_model
+    from engine.pipeline.io import load_config
+    config = load_config(str(ROOT / cfg_rel))
+    assert accel.can_handle(config)
+    model = get_injector_model(config)
+    for P_tank in (584.27 * PSI_TO_PA, 520.0 * PSI_TO_PA, 650.0 * PSI_TO_PA):
+        for Pc in (2.0e6, 2.6e6, 3.0e6):
+            got = accel.solve(config, P_tank, P_tank, Pc)
+            assert got is not None, f"accel.solve bailed at {P_tank:.0f}/{Pc:.0f}"
+            mO, mF, want = model.solve(P_tank, P_tank, Pc)
+            _assert_close("mdot_O", got[0], mO, rtol=1e-9)
+            _assert_close("mdot_F", got[1], mF, rtol=1e-9)
+            keys = _INJ_KEYS if config.injector.type == "impinging" else _INJ_KEYS[:_INJ_CORE_KEYS]
+            for k in keys:
+                if k in want and want[k] is not None:
+                    assert k in got[2], f"accel diagnostics lack {k!r}, which Python publishes"
+                    w = float(want[k])
+                    if np.isnan(w):
+                        assert np.isnan(float(got[2][k])), f"diag[{k}]: python NaN, accel {got[2][k]}"
+                        continue
+                    _assert_close(f"diag[{k}]", float(got[2][k]), w, rtol=1e-9)
+            assert list(got[2].get("violations", [])) == list(want.get("violations", [])) or \
+                "violations" not in want
+
+
+def test_default_path_matches_python_on_the_shipped_engine():
+    """The shipped 6.5 kN at its tank pressure and pad ambient: what the default (accelerated)
+    path returns -- the thing Layer 1 and the UI read -- must be the ED_ACCEL=off answer."""
+    _need_numba()
+    from engine import accel
+    from engine.core.runner import PintleEngineRunner
+    from engine.pipeline.io import load_config
+    config = load_config(str(ROOT / "configs/ethalox_6500N.yaml"))
+    runner = PintleEngineRunner(config)
+    P = 584.27 * PSI_TO_PA
+    Pa = 94070.0
+    got = accel.evaluate(config, runner.cea_cache, P, P, Pa)
+    if got is None:
+        got = runner.evaluate(P, P, P_ambient=Pa, silent=True)
+    with _python_only():
+        want = runner.evaluate(P, P, P_ambient=Pa, silent=True)
+    for k in ("F", "Pc", "MR", "Isp", "mdot_O", "mdot_F"):
+        _assert_close(k, got[k], want[k])
+    _assert_close("eta_cstar", _py_field(got, "eta_cstar"), _py_field(want, "eta_cstar"))
+    # The chug verdict runs the chug kernel on the accelerated side (stability._chug_fast).
+    st_got, st_want = got["stability"]["chugging"], want["stability"]["chugging"]
+    for k in ("chug_gain_margin", "stability_margin", "frequency"):
+        assert np.isfinite(st_want[k]), f"reference chug {k} is not finite"
+        _assert_close(f"chug {k}", st_got[k], st_want[k])
+
+
+def test_chamber_fallback_is_loud_while_physics_is_unmirrored(caplog):
+    """A closed gate must refuse (NOT_HANDLED, never NO_SOLUTION or a number) and say why."""
+    _need_numba()
+    import logging
+
+    from engine import accel
+    from engine.core.runner import PintleEngineRunner
+    from engine.pipeline.io import load_config
+    reasons = accel.chamber_physics_not_mirrored()
+    if not reasons:
+        pytest.skip("chamber kernels mirror the Python physics; nothing is gated")
+    config = load_config(str(ROOT / "configs/ethalox_6500N.yaml"))
+    runner = PintleEngineRunner(config)
+    accel._warned_chamber_fallback = False
+    with caplog.at_level(logging.WARNING, logger="engine.accel"):
+        res, oc = accel.evaluate_ex(config, runner.cea_cache, 4.0e6, 4.0e6, 94070.0)
+    assert res is None and oc is accel.Outcome.NOT_HANDLED
+    assert accel.chamber_solve_ex(config, runner.cea_cache, 4.0e6, 4.0e6)[1] is accel.Outcome.NOT_HANDLED
+    assert any("falls back to the Python solve" in m for m in caplog.messages)
+    # the injector-only surface stays accelerated: it IS mirrored
+    assert accel.solve_ex(config, 4.0e6, 4.0e6, 2.6e6)[1] is accel.Outcome.OK

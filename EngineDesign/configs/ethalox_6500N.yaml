@@ -116,6 +116,16 @@ injector:
       d_jet: 0.0014213970733035063
       impingement_angle: 46.0
       spacing: 0.012046846972657375
+  # How the plug is machined (operator, 2026-09-25): the face turned with an annular groove so
+  # each orifice leaves square to its flank; the back flat with one channel per ring that the
+  # passages break into. Seals, the manifold cover and retention are designed separately.
+  plate:
+    face: contoured
+    back: channels
+    channel_floor: flat
+  # Centre spark igniter, 1/2 NPT at most (operator, 2026-09-25).
+  igniter:
+    thread: 1/2 NPT
 feed_system:
   fuel:
     line_size: 1/2_TUBE_035
@@ -626,7 +636,7 @@ design_requirements:
   layer1_injector_plate_thickness_m: 0.0127
   layer1_injector_min_face_incidence_deg: 40.0
   layer1_injector_counterbore_dia_m: 0.004
-  layer1_injector_center_clear_dia_m: 0.0381
+  layer1_injector_center_clear_dia_m: null   # set by injector.igniter (was a bare 0.0381)
   layer1_injector_min_web_m: 0.002
   layer1_injector_wall_clearance_m: 0.008
   layer1_resultant_tilt_from_reach: true

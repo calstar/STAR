@@ -249,51 +249,80 @@ def segments_from_optimizer_vars_pressure(
     return segments
 
 
+def layer2_flight_vehicle(config: PintleEngineConfig) -> Dict[str, Any]:
+    """What the required-impulse flight needs from the config, built once per run: the flight
+    sim's Cd(M) and body area (engine/pipeline/vehicle_drag), the pad, the thrust curve's
+    reference pressure and nozzle exit, and the pressurant carried on top of the dry mass.
+
+    A config with no vehicle to fly (no rocket, tanks or environment) gets no drag, and the
+    returned "model" says so, so the summary can show it.
+    """
+    from engine.pipeline.config_schemas import ensure_chamber_geometry
+    from engine.pipeline.vehicle_drag import resolve_drag_curves
+    from engine.core.runner import compute_ambient_pressure_from_elevation
+
+    gas = 0.0
+    press = getattr(config, "press_tank", None)
+    if press is not None and getattr(press, "initial_gas_mass", None):
+        gas = float(press.initial_gas_mass)  # on board, not propellant
+    if any(getattr(config, k, None) is None for k in ("rocket", "lox_tank", "fuel_tank", "environment")):
+        return {"flight": {}, "gas_on_board_kg": gas, "model": "flight_1dof, no drag: the config has no vehicle"}
+    A_e = float(ensure_chamber_geometry(config).A_exit)
+    drag = resolve_drag_curves(config, A_e)
+    elevation = float(config.environment.elevation)
+    p_ref = getattr(getattr(config, "thrust", None), "reference_pressure_pa", None)
+    if p_ref is None:
+        p_ref = float(compute_ambient_pressure_from_elevation(elevation))
+    return {
+        "flight": {
+            "area_m2": float(np.pi * float(config.rocket.radius) ** 2),
+            "drag": drag,
+            "elevation_m": elevation,
+            "reference_pressure_pa": float(p_ref),
+            "nozzle_exit_area_m2": A_e,
+        },
+        "gas_on_board_kg": gas,
+        "model": f"flight_1dof, drag {drag.model}",
+    }
+
+
 def calculate_required_impulse_from_mass(
     target_apogee_m: float,
     rocket_dry_mass_kg: float,
     total_propellant_mass_kg: float,
     target_burn_time_s: float,
-    g: float = 9.80665,
+    *,
+    time_s: Optional[np.ndarray] = None,
+    mdot_kg_s: Optional[np.ndarray] = None,
+    thrust_n: Optional[np.ndarray] = None,
+    vehicle: Optional[Dict[str, Any]] = None,
 ) -> float:
+    """Total impulse [N s] that reaches target_apogee_m (above the pad) with this propellant, burn
+    time and mass-flow shape: the vertical 1-DOF of engine/pipeline/flight_1dof with the flight
+    sim's drag (``vehicle`` from layer2_flight_vehicle; none given, no drag).
+
+    This was (1.15 sqrt(2 g h) + 0.5 g t_b) (m_dry + m_p): delta-v times the lift-off mass where
+    the rocket equation gives c m_p, half the gravity loss, burnout altitude ignored and a flat
+    15 % for drag. The errors happened to cancel near 6.5 kN (27,094 N s against 25,025 N s at Cd
+    0.45) and not elsewhere: +18 % at 40 kg / 40 kg / 15 s. With no drag this reduces to Sutton &
+    Biblarz's vertical flight exactly.
+
+    rocket_dry_mass_kg is airframe + engine + tank and COPV structures; the pressurant gas is
+    added from the vehicle (press_tank.initial_gas_mass).
     """
-    Calculate minimum required total impulse to reach target apogee.
-    
-    Uses actual propellant mass consumed to calculate initial mass.
-    Uses energy conservation with approximations for gravity and drag losses.
-    
-    Args:
-        target_apogee_m: Target apogee altitude [m]
-        rocket_dry_mass_kg: Rocket dry mass (no propellant) [kg]
-            Should include: airframe + engine + lox_tank_structure + fuel_tank_structure + copv_structure
-        total_propellant_mass_kg: Total propellant mass consumed [kg]
-            Should be: LOX propellant + fuel propellant (from integrating mdot_O and mdot_F)
-        target_burn_time_s: Target burn time [s]
-        g: Gravitational acceleration [m/s²]
-    
-    Returns:
-        Required total impulse [N·s]
-    """
-    # Calculate initial mass from actual propellant consumption
-    # rocket_dry_mass_kg = airframe + engine + all tank structures (no propellant)
-    # total_propellant_mass_kg = LOX propellant + fuel propellant consumed during burn
-    initial_mass = rocket_dry_mass_kg + total_propellant_mass_kg
-    
-    # Minimum delta-v for vertical launch (energy conservation)
-    # v_burnout^2 / 2 = g * h_apogee (ignoring losses)
-    min_delta_v = np.sqrt(2.0 * g * target_apogee_m)
-    
-    # Account for losses:
-    # - Gravity loss: ~g * t_burn (velocity lost to gravity during burn)
-    # - Drag loss: ~10-20% of ideal delta-v (depends on rocket, simplified here)
-    gravity_loss = g * target_burn_time_s * 0.5  # Average over burn
-    drag_loss_factor = 1.15  # 15% drag loss approximation
-    total_delta_v = min_delta_v * drag_loss_factor + gravity_loss
-    
-    # Required impulse = delta_v * initial_mass
-    required_impulse = total_delta_v * initial_mass
-    
-    return required_impulse
+    from engine.pipeline.flight_1dof import required_impulse
+
+    vehicle = vehicle or {}
+    return required_impulse(
+        target_apogee_m,
+        rocket_dry_mass_kg + float(vehicle.get("gas_on_board_kg", 0.0)),
+        total_propellant_mass_kg,
+        target_burn_time_s,
+        time_s=time_s,
+        mdot_kg_s=mdot_kg_s,
+        thrust_n=thrust_n,
+        **vehicle.get("flight", {}),
+    )
 
 
 # Fixed segment configuration for Layer 2 optimization
@@ -384,6 +413,7 @@ def run_layer2a_minimum_pressures(
 
     runner_layer2a = PintleEngineRunner(config_layer2a)
     time_array = np.linspace(0.0, target_burn_time, n_time_points)
+    flight_vehicle = layer2_flight_vehicle(optimized_config)
 
     initial_ratio = initial_lox_pressure_pa / max(initial_fuel_pressure_pa, 1e-9)
 
@@ -431,6 +461,10 @@ def run_layer2a_minimum_pressures(
             rocket_dry_mass_kg,
             total_propellant_mass,
             target_burn_time,
+            time_s=time_hist,
+            mdot_kg_s=mdot_O_hist + mdot_F_hist,
+            thrust_n=thrust_hist,
+            vehicle=flight_vehicle,
         )
         total_impulse = float(np.trapezoid(thrust_hist, time_hist))
 
@@ -719,6 +753,7 @@ def run_layer2_pressure(
 
     # Create a single PintleEngineRunner instance for this layer and reuse it
     runner_layer2 = PintleEngineRunner(config_layer2)
+    flight_vehicle = layer2_flight_vehicle(optimized_config)
     
     # Calculate initial chamber pressure to establish stability floor
     try:
@@ -1449,6 +1484,10 @@ def run_layer2_pressure(
                 rocket_dry_mass_kg,
                 total_propellant_mass,
                 target_burn_time,
+                time_s=time_hist,
+                mdot_kg_s=mdot_O_hist + mdot_F_hist,
+                thrust_n=thrust_hist,
+                vehicle=flight_vehicle,
             )
             
             # Check 1: Total impulse must be >= required impulse
@@ -2250,6 +2289,10 @@ def run_layer2_pressure(
                 rocket_dry_mass_kg,
                 total_propellant_mass,
                 target_burn_time,
+                time_s=time_array,
+                mdot_kg_s=mdot_O_final + mdot_F_final,
+                thrust_n=thrust_final,
+                vehicle=flight_vehicle,
             )
             
             # Log final results
@@ -2505,6 +2548,7 @@ def run_layer2_pressure(
             "lox_capacity_ratio": total_lox_mass_final / max(max_lox_tank_capacity_kg, 1e-9),
             "fuel_capacity_ratio": total_fuel_mass_final / max(max_fuel_tank_capacity_kg, 1e-9),
             "required_impulse": required_impulse_final,
+            "required_impulse_model": flight_vehicle.get("model"),
             "total_impulse_actual": total_impulse_actual,
             "impulse_ratio": total_impulse_actual / max(required_impulse_final, 1e-9),
             # COPV pressurization data

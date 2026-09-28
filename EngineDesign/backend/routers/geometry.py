@@ -385,3 +385,40 @@ async def get_chamber_geometry(session: UserSession = Depends(get_session)):
             detail=f"Failed to calculate geometry: {str(e)}"
         )
 
+
+
+# ---------------------------------------------------------------------------------------------
+# Injector layout. The drawing, Layer 1 and scripts/design_audit.py all read this one
+# derivation (engine/core/injectors/layout.py); the frontend used to carry its own copy.
+# ---------------------------------------------------------------------------------------------
+
+from engine.core.injectors.layout import layout_from_config as _layout_from_config
+
+
+def _injector_layout_or_404(cfg) -> dict:
+    out = _layout_from_config(cfg)
+    if out is None:
+        raise HTTPException(status_code=404, detail="No impinging injector in this config.")
+    return out
+
+
+@router.get("/injector")
+async def get_injector_layout(session: UserSession = Depends(get_session)):
+    """Face, passage and back-face geometry of the session's impinging injector."""
+    if not session.app_state.has_config():
+        raise HTTPException(status_code=404, detail="No config loaded.")
+    return _injector_layout_or_404(session.app_state.config)
+
+
+@router.post("/injector")
+async def post_injector_layout(body: dict):
+    """The same, for a config the caller holds (e.g. a Forward-mode result's config).
+
+    Takes ``{"config": {...}}`` as a plain dict and needs only the injector, chamber
+    diameter, discharge and design-requirements sections -- no full validation, so a
+    partial config still draws.
+    """
+    cfg = body.get("config") if isinstance(body, dict) else None
+    if not isinstance(cfg, dict):
+        raise HTTPException(status_code=422, detail="Expected {\"config\": {...}}.")
+    return _injector_layout_or_404(cfg)

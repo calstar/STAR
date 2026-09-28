@@ -107,7 +107,14 @@ class ImpingingElementConfig(BaseModel):
     """Geometry parameters for a single impinging jet element"""
     n_elements: int = Field(gt=0, description="Number of elements (pairs or triplets)")
     d_jet: float = Field(gt=0, description="Jet diameter [m]")
-    impingement_angle: float = Field(gt=0, le=180, description="Included impingement angle [deg]")
+    impingement_angle: float = Field(
+        gt=0, lt=90,
+        description=(
+            "This stream's jet angle from the chamber AXIS [deg], not the included angle. "
+            "The included angle of an unlike doublet is theta_O + theta_F; the face "
+            "incidence the drill sees is 90 - theta."
+        ),
+    )
     spacing: float = Field(gt=0, description="Center-to-center spacing between jets [m]")
 
 
@@ -117,10 +124,69 @@ class ImpingingInjectorGeometry(BaseModel):
     fuel: ImpingingElementConfig
 
 
+class IgniterPortConfig(BaseModel):
+    """The igniter port through the centre of the injector plate.
+
+    Hardware, not a requirement: the thread is what was bought, and every keep-out follows from
+    it (engine/core/injectors/hardware_tables.NPT). Declaring this derives the centre keep-out
+    that ``layer1_injector_center_clear_dia_m`` used to be typed in as a bare number (1.5 in on
+    the shipped designs, against the ~25 mm a 1/2 NPT port needs); an explicit value for that
+    key still wins and the layout reports both.
+    """
+    thread: Literal["1/8 NPT", "1/4 NPT", "3/8 NPT", "1/2 NPT", "3/4 NPT"] = Field(
+        description="Igniter thread callout. ASME B1.20.1 dimensions are looked up from it.")
+    hub_thickness: Optional[float] = Field(default=None, gt=0.0,
+        description="Plate thickness AT the port [m] when the centre is left thicker than the "
+                    "field -- a raised hub on the back, machined integral ('tall port'), as wide "
+                    "as the port's keep-out (thread OD + 2 x layer1_injector_min_web_m). The "
+                    "thread needs its effective length L2 of engagement (13.56 mm for 1/2 NPT). "
+                    "None => the field thickness layer1_injector_plate_thickness_m.")
+
+
+class InjectorPlateConfig(BaseModel):
+    """The injector as a plug in the chamber sleeve: how its face and back are machined.
+    Geometry only -- structure (FEA), seals, the manifold cover and the plug's retention are the
+    designer's; engine/core/injectors/layout.py reports the lands they get. The holes' L/d is
+    discharge.<side>.orifice_l_over_d: one number sets both the Cd and, with channels, how deep
+    the channels sit."""
+    face: Literal["flat", "contoured"] = Field(default="contoured",
+        description="flat: orifices leave an axis-normal face at the jet angle (elliptical exits, "
+                    "the drill enters off square). contoured: the face is turned with an annular "
+                    "groove whose flanks are normal to the jets, so each orifice leaves square and "
+                    "round (SP-8089 p.43, 'local grooving ... to increase the effective angle').")
+    exit_land: Optional[float] = Field(default=None, ge=0.0,
+        description="Metal between a round exit and the edge of its flank, and between a passage "
+                    "and its channel wall [m]. None => 0.5 mm (assumed).")
+    groove_bottom: Literal["flat", "v"] = Field(default="flat",
+        description="Contoured face: flat-bottomed groove just deep enough for each exit's land "
+                    "(default), or the sharp V where the flanks meet.")
+    back: Literal["plenum", "channels"] = Field(default="channels",
+        description="plenum: passages run through to a flat back face (a manifold volume behind "
+                    "it). channels: the back face is flat with one annular channel per ring; each "
+                    "passage runs from its exit to its channel floor and the channel is centred on "
+                    "where the passage meets it.")
+    channel_width: Optional[float] = Field(default=None, gt=0.0,
+        description="Channels back: channel width [m]. None or narrower than the passage footprint "
+                    "=> footprint + 2 x exit_land.")
+    channel_floor: Literal["flat", "coned"] = Field(default="flat",
+        description="Channels back: flat floor (holes break through off square; deburr and "
+                    "flow-test) or a floor turned as a cone normal to the passages (square "
+                    "breakthrough).")
+    channel_inlets: int = Field(default=1, ge=1,
+        description="Channels back: feed ports into each channel. Each splits two ways around "
+                    "the ring, so a branch carries mdot / (2 x inlets) at the port; the layout "
+                    "checks that branch's velocity head against the injector drop.")
+
+
 class ImpingingInjectorConfig(InjectorBaseConfig):
     """Impinging-element injector configuration"""
     type: Literal["impinging"] = "impinging"
     geometry: ImpingingInjectorGeometry
+    igniter: Optional[IgniterPortConfig] = Field(default=None,
+        description="Igniter port through the plate centre. None => no port modelled.")
+    plate: Optional[InjectorPlateConfig] = Field(default=None,
+        description="How the plug's face and back are machined, and its stress-check material. "
+                    "None => drawn as a contoured face with a channel back (the defaults); Layer 1 applies the plug's constraints only when declared.")
 
 
 #: Named feed-line sizes -> flow bore [m]. A line size is a NAME, not a diameter: "3/8 NPT"
@@ -189,6 +255,24 @@ class FeedSystemConfig(BaseModel):
             "0.305 m assumption instead of using it silently."
         ),
     )
+    K_exit: float = Field(
+        default=1.0,
+        ge=0,
+        description=(
+            "Loss where the line discharges into the injector manifold, in velocity heads of the "
+            "exit bore (d_exit). 1.0: a plenum takes the whole velocity head (Borda-Carnot, "
+            "(1 - A_exit/A_manifold)^2 -> 1; Crane TP-410 pipe exit K = 1.0). Set 0 only when K0 "
+            "already counts it."
+        ),
+    )
+    d_exit: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Bore that discharges into the manifold [m], e.g. the 1/2 NPT fitting after a 1/2 in "
+            "tube run. None => the line itself (A_hydraulic)."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -226,6 +310,9 @@ class FeedSystemConfig(BaseModel):
         di = d.get("d_inlet")
         if di is not None and d.get("A_hydraulic") is None:
             d["A_hydraulic"] = float(np.pi) / 4.0 * float(di) ** 2
+        elif di is None and d.get("A_hydraulic") is not None:
+            # Area alone (twin line, non-circular passage): the equal-area bore.
+            d["d_inlet"] = float(np.sqrt(4.0 * float(d["A_hydraulic"]) / np.pi))
         return d
 
     @model_validator(mode="after")
@@ -301,6 +388,14 @@ class FilmCoolingConfig(BaseModel):
     cp_override: Optional[float] = Field(default=None, gt=0, description="Override specific heat for film coolant if different from bulk fuel [J/(kg·K)]")
 
 
+class SurfaceReactionConfig(BaseModel):
+    """Heterogeneous carbon-oxidiser rate A T^b exp(-E/RT) p^n [kg C/(m^2 s)], p in atm."""
+    A: float = Field(gt=0, description="Pre-exponential factor [kg/(m^2 s atm^n K^b)]")
+    E: float = Field(ge=0, description="Activation energy [J/mol]")
+    n: float = Field(ge=0, description="Pressure exponent on the oxidiser partial pressure [-]")
+    T_exponent: float = Field(default=0.0, description="Temperature exponent b [-]")
+
+
 class GraphiteInsertConfig(BaseModel):
     """Graphite throat insert configuration (separate from chamber ablator)"""
     enabled: bool = Field(default=False, description="Enable graphite throat insert")
@@ -311,7 +406,7 @@ class GraphiteInsertConfig(BaseModel):
     initial_thickness: float = Field(default=0.005, gt=0, description="Initial graphite insert thickness [m]")
     surface_temperature_limit: float = Field(default=2500.0, gt=0, description="Maximum surface temperature before failure [K]")
     oxidation_temperature: float = Field(default=800.0, gt=0, description="Onset temperature for oxidation [K]")
-    oxidation_rate: float = Field(default=1e-6, ge=0, description="Oxidation recession rate [m/s] at reference conditions")
+    oxidation_rate: float = Field(default=1e-6, ge=0, description="Unused by the species model (kept so old configs load)")
     activation_energy: Optional[float] = Field(default=180e3, gt=0, description="Activation energy for Arrhenius oxidation rate [J/mol]. Typical: 150-200 kJ/mol")
     oxidation_reference_temperature: float = Field(default=1500.0, gt=0, description="Reference temperature where oxidation_rate is defined [K]. Typical: 1500-1800 K")
     oxidation_reference_pressure: float = Field(default=1.0e6, gt=0, description="Reference pressure where oxidation_rate is defined [Pa]. Typical: 1 MPa")
@@ -356,7 +451,7 @@ class GraphiteInsertConfig(BaseModel):
     ambient_temperature: Optional[float] = Field(default=None, gt=0, description="Ambient temperature for radiation [K] (default: 300 K)")
     feedback_fraction_min: Optional[float] = Field(default=None, ge=0, le=1, description="Minimum oxidation heat feedback fraction (default: 0.0)")
     feedback_fraction_max: Optional[float] = Field(default=None, ge=0, le=1, description="Maximum oxidation heat feedback fraction (default: 0.2)")
-    oxidation_enthalpy: Optional[float] = Field(default=None, gt=0, description="Oxidation reaction enthalpy [J/kg C]. If None, auto-selected: 32.8e6 for CO2 (ratio=1.0), 10.1e6 for CO (ratio=2.0)")
+    oxidation_enthalpy: Optional[float] = Field(default=None, gt=0, description="Unused: reaction enthalpies are per species (graphite_cooling.CARBON_OXIDISERS)")
     ablation_surface_temperature: Optional[float] = Field(default=None, gt=0, description="Surface temperature at which thermal ablation pins T_s [K] (default: 3000 K). Above this, T_s is fixed and m_dot_th balances energy.")
     ablation_transition_width: float = Field(default=200.0, gt=0, description="Temperature width [K] for smooth transition to thermal ablation regime.")
     oxidation_pressure_exponent: Optional[float] = Field(default=None, ge=0, description="Pressure exponent for oxidation kinetics (default: 0.5)")
@@ -367,18 +462,29 @@ class GraphiteInsertConfig(BaseModel):
         default=None,
         ge=0,
         le=1,
-        description="Free-stream oxygen mass fraction at throat for oxidation model [-].",
+        description="Unused: the throat composition comes from CEA.",
     )
     oxygen_mole_fraction: Optional[float] = Field(
         default=None,
         ge=0,
         le=1,
-        description="Free-stream oxygen mole fraction at throat. If provided, overrides oxygen_mass_fraction conversion.",
+        description="Unused: the throat composition comes from CEA.",
     )
     friction_coefficient_override: Optional[float] = Field(default=None, gt=0, description="Override skin friction coefficient Cf for blowing parameter calculation.")
     reference_diffusivity: Optional[float] = Field(default=None, gt=0, description="Reference O2 diffusivity [m²/s] at reference temperature and pressure.")
     reference_diffusivity_temperature: float = Field(default=1500.0, gt=0, description="Reference temperature [K] for oxygen diffusivity scaling.")
     reference_diffusivity_pressure: float = Field(default=1.0e6, gt=0, description="Reference pressure [Pa] for oxygen diffusivity scaling.")
+    # Carbon oxidation by the throat gas (H2O, CO2, OH kinetic; O2, O diffusion-limited). Rates
+    # of Bradley et al. 1984, as tabulated by Thakre & Yang, J. Propulsion Power 24(4), 2008.
+    oxidation_H2O: SurfaceReactionConfig = Field(
+        default_factory=lambda: SurfaceReactionConfig(A=4.8e5, E=288.0e3, n=0.5),
+        description="C + H2O -> CO + H2 surface rate (Bradley 1984 via Thakre & Yang 2008)")
+    oxidation_CO2: SurfaceReactionConfig = Field(
+        default_factory=lambda: SurfaceReactionConfig(A=9.0e3, E=285.0e3, n=0.5),
+        description="C + CO2 -> 2 CO surface rate (Bradley 1984 via Thakre & Yang 2008)")
+    oxidation_OH: SurfaceReactionConfig = Field(
+        default_factory=lambda: SurfaceReactionConfig(A=361.0, E=0.0, n=1.0, T_exponent=-0.5),
+        description="C + OH -> CO + H surface rate (Bradley 1984 via Thakre & Yang 2008)")
 
 
 class StainlessSteelCaseConfig(BaseModel):
@@ -396,28 +502,29 @@ class AblativeCoolingConfig(BaseModel):
     """Ablative cooling configuration for chamber liner (phenolic)"""
     enabled: bool = Field(default=False, description="Enable ablative cooling model")
     material_density: float = Field(default=1600.0, gt=0, description="Ablator (phenolic) density [kg/m³]")
-    heat_of_ablation: float = Field(default=2.5e6, gt=0, description="Effective heat of ablation [J/kg]")
+    heat_of_ablation: float = Field(default=2.5e6, gt=0, description="Heat of ablation [J/kg]: energy per kg consumed beyond the sensible heat from ambient_temperature to ablation_surface_temperature (quasi-steady Landau balance)")
     thermal_conductivity: float = Field(default=0.35, gt=0, description="Ablator (phenolic) thermal conductivity [W/(m·K)]")
     specific_heat: float = Field(default=1500.0, gt=0, description="Ablator (phenolic) specific heat [J/(kg·K)]")
     initial_thickness: float = Field(default=0.01, gt=0, description="Initial ablative (phenolic) thickness [m]")
-    surface_temperature_limit: float = Field(default=1200.0, gt=0, description="Allowable surface temperature [K]")
+    surface_temperature_limit: float = Field(default=1200.0, gt=0, description="Allowable surface temperature [K]. A check only; the thermal model runs at ablation_surface_temperature")
+    ablation_surface_temperature: float = Field(default=1986.0, gt=0, description="Char surface temperature while the liner ablates [K]. Default 1986 K is the SiO2 melting point (CRC Handbook), the bound on a silica-phenolic char surface; set it for the reinforcement actually used")
     coverage_fraction: float = Field(default=1.0, gt=0, le=1.0, description="Fraction of chamber surface protected by ablative liner")
     pyrolysis_temperature: float = Field(default=900.0, gt=0, description="Characteristic pyrolysis temperature of ablator [K]")
     blowing_efficiency: float = Field(default=0.8, ge=0, le=1, description="Effectiveness of ablative gases in blocking convective heat flux (legacy constant factor, used if use_physics_based_blowing=False)")
     use_physics_based_blowing: bool = Field(default=True, description="If True, use physics-based blowing parameter B = m_dot_pyrolysis/m_dot_external. If False, use constant blowing_efficiency factor.")
     blowing_coefficient: float = Field(default=0.5, gt=0, description="Blowing coefficient c in empirical function f(B) = 1/(1 + c*B). Typical range: 0.3-0.8. Higher values = stronger blowing effect.")
     blowing_min_reduction_factor: float = Field(default=0.1, ge=0, le=1, description="Minimum convective reduction factor (maximum blowing effectiveness). Prevents blowing from reducing convective heat transfer below this fraction. Default 0.1 means maximum 90% reduction. Lower values allow stronger blowing effect.")
-    turbulence_reference_intensity: float = Field(default=0.08, gt=0, description="Reference turbulence intensity for ablative augmentation")
-    turbulence_sensitivity: float = Field(default=1.5, ge=0, description="Sensitivity of ablative heat flux to turbulence")
-    turbulence_exponent: float = Field(default=1.0, gt=0, description="Exponent on turbulence intensity for ablative response")
-    turbulence_max_multiplier: float = Field(default=3.0, gt=0, description="Maximum multiplier applied to convective heat flux due to turbulence")
+    turbulence_reference_intensity: float = Field(default=0.08, gt=0, description="Unused: Bartz already carries the chamber's turbulence (kept so old configs load)")
+    turbulence_sensitivity: float = Field(default=1.5, ge=0, description="Unused: Bartz already carries the chamber's turbulence (kept so old configs load)")
+    turbulence_exponent: float = Field(default=1.0, gt=0, description="Unused: Bartz already carries the chamber's turbulence (kept so old configs load)")
+    turbulence_max_multiplier: float = Field(default=3.0, gt=0, description="Unused: Bartz already carries the chamber's turbulence (kept so old configs load)")
     throat_recession_multiplier: Optional[float] = Field(default=None, gt=0, description="Throat recession multiplier vs chamber (if None, calculated from flow conditions). Typically 1.2-2.0")
     char_layer_conductivity: float = Field(default=0.2, gt=0, description="Thermal conductivity of char layer [W/(m·K)]")
     char_layer_thickness: float = Field(default=0.001, gt=0, description="Thickness of protective char layer [m]")
     surface_emissivity: float = Field(default=0.85, ge=0, le=1, description="Surface emissivity for radiative heat transfer (0-1, typical 0.8-0.9 for charred ablators)")
-    ambient_temperature: float = Field(default=300.0, gt=0, description="Ambient/surrounding temperature for radiative heat transfer [K]. For radiation to space, use ~300K. For radiation exchange with gas, use gas temperature.")
-    radiative_sink_minimum_threshold: float = Field(default=400.0, gt=0, description="Minimum ambient temperature threshold [K]. If ambient_temperature is below this, radiative_sink_fallback_temperature is used instead.")
-    radiative_sink_fallback_temperature: float = Field(default=600.0, gt=0, description="Fallback radiative sink temperature [K] used when ambient_temperature is too low. Represents approximate heated steel layer temperature behind ablator.")
+    ambient_temperature: float = Field(default=300.0, gt=0, description="Liner temperature at ignition [K] (the wall starts at ambient)")
+    radiative_sink_minimum_threshold: float = Field(default=400.0, gt=0, description="Unused: the hot face radiates only to the gas (kept so old configs load)")
+    radiative_sink_fallback_temperature: float = Field(default=600.0, gt=0, description="Unused: the hot face radiates only to the gas (kept so old configs load)")
     track_geometry_evolution: bool = Field(default=True, description="Enable time-varying geometry tracking (L* evolution)")
     nozzle_ablative: bool = Field(default=False, description="If True, nozzle exit also recedes (A_exit grows). If False, only throat recedes (expansion ratio decreases)")
 
@@ -447,11 +554,13 @@ class DischargeConfig(BaseModel):
         description="Reference hole diameter [m] where Cd_inf equals the Cd_inf baseline (default 2 mm).",
     )
     cd_small_hole_exponent: float = Field(
-        default=0.20,
+        default=0.0,
         ge=0.0,
         le=1.0,
         description=(
-            "For d < d_ref: Cd_inf scales as Cd_inf * (d/d_ref)^exponent (small-hole manufacturing / L/t penalty)."
+            "For d < d_ref: Cd_inf scales as Cd_inf * (d/d_ref)^exponent. 0 (default): the thin-plate "
+            "asymptote holds below d_ref; ISO 5167 and Sutton & Biblarz Table 8-2 have small sharp "
+            "holes flowing slightly more, not less, so the old 0.2 penalty had the wrong sign."
         ),
     )
     cd_large_hole_log_gain: float = Field(
@@ -480,9 +589,10 @@ class DischargeConfig(BaseModel):
     inlet_geometry: Optional[str] = Field(
         default=None,
         description=(
-            "Orifice inlet treatment: sharp (0.61) | chamfered (0.74) | conical (0.78) | "
-            "rounded_light (0.82) | rounded (0.88) | bellmouth (0.95). Values are the "
-            "practitioner table (Huzel & Huang) at Re > 1e4 and L/d ~ 2-5. Overrides the "
+            "Orifice inlet treatment: sharp (0.80) | chamfered (0.84) | conical (0.86) | "
+            "rounded_light (0.85) | rounded (0.88) | bellmouth (0.95). Short-tube values at "
+            "Re > 1e4 and L/d ~ 2-5 (engine.core.discharge.INLET_GEOMETRY_CD); the thin-plate "
+            "0.61 is recovered by orifice_l_over_d -> 0. Overrides the "
             "diameter-scaled Cd_inf when set. Use inlet_radius_ratio instead for a "
             "continuous r/d."
         ),
@@ -493,7 +603,7 @@ class DischargeConfig(BaseModel):
         le=1.0,
         description=(
             "Inlet fillet radius / orifice diameter (r/d). Continuous alternative to "
-            "inlet_geometry: 0 = sharp (Cd 0.61), 0.125 = Cd 0.88, >= 0.2 = Cd 0.95 and "
+            "inlet_geometry: 0 = sharp (Cd 0.80 short tube), 0.125 = Cd 0.88, >= 0.2 = Cd 0.95 and "
             "saturating. Nurick (1976): cavitation inception margin also rises with inlet "
             "roundness, so this buys flow AND cavitation headroom."
         ),
@@ -505,7 +615,38 @@ class DischargeConfig(BaseModel):
             "Orifice length / diameter. Lichtarowicz et al. (1965): Cd peaks near L/d ~ 2 "
             "where expansion past the vena contracta recovers dynamic pressure, falls below "
             "~1 (thin-plate, no recovery) and above ~10 (wall friction). Only applied when "
-            "an inlet geometry is set. None => no length correction."
+            "an inlet geometry is set. None => no length correction. With "
+            "l_over_d_source='plate' this is the LAND the counterbore leaves, and the L/d the "
+            "Cd model uses is what the plate actually gives."
+        ),
+    )
+    l_over_d_source: Literal["declared", "plate"] = Field(
+        default="declared",
+        description=(
+            "Where the orifice L/d comes from. 'declared' (default, previous behaviour): "
+            "orifice_l_over_d as typed. 'plate': derived from the injector plate -- "
+            "layer1_injector_plate_thickness_m and layer1_injector_counterbore_dia_m -- for the "
+            "current hole: with a counterbore the land is min(orifice_l_over_d * d, t/cos theta); "
+            "without one the small drill runs the whole passage, L/d = t / (d cos theta). Also "
+            "applies the counterbore's velocity of approach and entrance loss (approach_beta)."
+        ),
+    )
+    length_model: Literal["piecewise", "lichtarowicz"] = Field(
+        default="lichtarowicz",
+        description=(
+            "Cd vs L/d. 'lichtarowicz' (default): the published sharp-inlet fit Cd_u = 0.827 - "
+            "0.0085 L/d (Lichtarowicz, Duggins & Markland 1965, valid 2 <= L/d <= 10), "
+            "normalised so the inlet table's short-tube value sits at L/d 3.18. 'piecewise' "
+            "(legacy, unsourced): flat over L/d 2-5, linear roll-off above."
+        ),
+    )
+    approach_beta: Optional[float] = Field(
+        default=None, gt=0.0, lt=1.0,
+        description=(
+            "Orifice / feed-passage diameter ratio d/D when the orifice is fed from a "
+            "counterbore, not a plenum. Applies the velocity of approach and a sharp entrance "
+            "(K = 0.5, Idelchik) into the counterbore: Cd_eff = 1/sqrt((1-b^4)/Cd^2 + "
+            "b^4 (1+K)). Set by l_over_d_source='plate'; None => fed from a plenum."
         ),
     )
     d_min_m: float = Field(
@@ -611,12 +752,10 @@ class EvaporationConfig(BaseModel):
     apply_tau_res_correction: bool = Field(
         default=False,
         description=(
-            "Apply the spray-zone residence-time correction inside the ACCELERATED chamber "
-            "solve. Off by default: shrinking tau_res inside the Pc bracketing shrinks eta, "
-            "which shrinks c*, which raises demanded flow — and the spray fraction grows with "
-            "Pc — so the supply/demand root can vanish. Measured effect: accelerator fallback "
-            "35% → 91% of candidates, roughly a 3x slowdown. The correction is always applied "
-            "on the Python path, where it sits outside the bracketing."
+            "[DEPRECATED — no effect on c*] The vaporization march (combustion_physics) follows "
+            "the drops from the face and integrates their evaporation, so taking the spray length "
+            "off the stay time would count it twice. Still read by the numba kernel until it is "
+            "mirrored."
         ),
     )
     K: float = Field(
@@ -678,52 +817,68 @@ class CEAConfig(BaseModel):
 
 
 class CombustionEfficiencyConfig(BaseModel):
-    """Combustion efficiency (L* correction) configuration
-    
-    NOTE: CEA uses EQUILIBRIUM flow (not frozen). The efficiency correction
-    accounts for finite chamber effects that prevent perfect equilibrium.
-    
-    Two models available:
-    1. Simple model: Exponential L* correction (backward compatible)
-    2. Advanced model: Physics-based with kinetics, mixing, turbulence
-    """
+    """c* efficiency: eta_c* = eta_vap * eta_mix * eta_HL (engine/pipeline/combustion_physics.py,
+    combustion_eff.py). Chemical kinetics carry no chamber c* loss."""
     model: Literal["constant", "linear", "exponential"] = Field(
         default="exponential",
-        description="Efficiency model type"
+        description="Vaporization term. exponential (legacy name): the Priem-Heidmann spray march, "
+                    "eta_vap = fraction vaporized at the throat. constant: eta_vap = 1 - C. "
+                    "linear: eta_vap = 1 - C (1 - L*/1 m)."
     )
-    C: float = Field(default=0.3, ge=0, le=1, description="Efficiency loss parameter (for exponential/linear models)")
-    K: float = Field(default=0.15, ge=0, description="Recovery rate parameter (for exponential model)")
-    use_spray_correction: bool = Field(default=False, description="Apply spray quality penalty")
-    spray_penalty_factor: float = Field(default=0.8, ge=0, le=1, description="Efficiency penalty if spray constraints violated")
+    C: float = Field(default=0.3, ge=0, le=1, description="Vaporization loss for the constant and linear models only.")
+    K: float = Field(default=0.15, ge=0, description="[DEPRECATED — no effect] Read by no model.")
+    use_spray_correction: bool = Field(default=False, description="[DEPRECATED — no effect] Read by no model.")
+    spray_penalty_factor: float = Field(default=0.8, ge=0, le=1, description="[DEPRECATED — no effect] Read by no model.")
     use_mixture_coupling: bool = Field(
         default=False,
         description="[DIAGNOSTICS ONLY] Enable mixture diagnostics logging (does NOT affect efficiency calculation)"
     )
-    use_cooling_coupling: bool = Field(default=True, description="Apply cooling efficiency corrections")
+    use_cooling_coupling: bool = Field(
+        default=True,
+        description="Charge heat lost through the chamber wall to c*: eta_HL = sqrt(1 - Q/(mdot cp Tc)) "
+                    "(c* ~ sqrt(T0), Sutton eq. 3-32). Regenerative and film heat stay with the propellant."
+    )
     use_turbulence_coupling: bool = Field(
         default=False,
         description="[DEPRECATED] Turbulence is folded into eta_mixing; the standalone eta_turbulence penalty was removed (non-physical/double-counted)."
     )
-    # --- Mixing efficiency (Rupe momentum-ratio model) ---
-    # Replaces the old k-e near-field mixing model + the eta_turbulence step-function.
-    # eta_mix = Em_peak * exp(-(ln(R/R_opt))^2 / (2*sigma^2)), R = injector momentum ratio.
+    # --- Mixing: eta_mix = Em_peak exp(-(ln sqrt(M/M_opt))^2 / (2 sigma^2)) ---
+    # M = rho_O v_O^2 d_O / (rho_F v_F^2 d_F), Elverum & Morey (JPL Memo 30-5) eq. 1.
     Em_peak: float = Field(
         default=0.96, ge=0.5, le=1.0,
-        description="Peak (best-achievable) mixing efficiency at the balanced momentum ratio. "
-                    "0.96 ~ well-built collegiate impinging doublet with adequate L*; calibrate to hot-fire c* if available."
+        description="ASSUMED c* mixing efficiency at M = rupe_M_opt; no correlation predicts it. "
+                    "0.96 puts a well-atomized, balanced design in the 0.90-0.97 c* efficiency band "
+                    "SP-8089 and Sutton report for unlike doublets. Replace it with hot-fire c*."
     )
     mixing_sigma: float = Field(
         default=1.5, gt=0.0,
-        description="Log-Gaussian width of the momentum-ratio mixing penalty (in ln(R) space). "
-                    "Smaller = sharper falloff away from R_opt."
+        description="ASSUMED log-Gaussian width of the mixing falloff in ln sqrt(M) (the scale of "
+                    "the old momentum-ratio model, sqrt(M) = R sqrt(d_O/d_F)); 1.5 costs 1 % at "
+                    "M = 0.65 or 1.53. Not from data: Rupe's and Elverum & Morey's curves fix the "
+                    "optimum, not the width."
+    )
+    rupe_M_opt: float = Field(
+        default=1.0, gt=0.0,
+        description="Elverum-Morey mixing parameter at which mixing is best: 1.0 for a 1-on-1 unlike "
+                    "doublet (SP-8089 Table IV; 2-on-1 1.6, 3-on-1 3.5)."
     )
     R_opt: Optional[float] = Field(
         default=None,
-        description="Momentum-ratio optimum for peak mixing. None => derive from injector geometry "
-                    "(impinging: sqrt(sin(theta_F)/sin(theta_O)); pintle/coaxial: 1.0)."
+        description="[DEPRECATED — no effect] The mixing optimum is rupe_M_opt; the resultant-tilt "
+                    "momentum ratio no longer enters c*."
+    )
+    spray_size_spread_q: float = Field(
+        default=3.0, gt=1.0,
+        description="ASSUMED Rosin-Rammler spread q of each stream's drop sizes (volume basis, "
+                    "X = D32 Gamma(1 - 1/q)) in the vaporization march. Lefebvre: 1.5-4 for most "
+                    "sprays; larger q is a narrower spray."
     )
     mixture_efficiency_floor: float = Field(default=0.25, ge=0, le=1, description="[DEPRECATED] No longer used")
-    cooling_efficiency_floor: float = Field(default=0.25, ge=0, le=1, description="Minimum cooling efficiency")
+    cooling_efficiency_floor: float = Field(
+        default=0.25, ge=0, le=1,
+        description="Floor on the chamber solver's legacy cooling_efficiency diagnostic only; the c* "
+                    "heat-loss factor has none."
+    )
     turbulence_efficiency_floor: float = Field(default=0.3, ge=0, le=1, description="[DEPRECATED] No longer used")
     target_turbulence_intensity: Optional[float] = Field(
         default=None,
@@ -759,17 +914,18 @@ class CombustionEfficiencyConfig(BaseModel):
     )
     use_advanced_model: bool = Field(
         default=False,
-        description="Use advanced physics-based efficiency model (kinetics, mixing, turbulence)"
+        description="Lets the numba accelerator run the chamber solve (engine/accel can_handle_chamber). "
+                    "The physics is the same either way."
     )
     Pc_gate: float = Field(
         default=1000000.0,
         ge=0,
-        description="Chamber pressure gate for advanced model [Pa]. Below this pressure, simple model is used for stability."
+        description="[DEPRECATED — no effect] Read by no model."
     )
-    # Finite-rate chemistry and reaction modeling
     use_finite_rate_chemistry: bool = Field(
         default=True,
-        description="Model finite-rate chemistry in chamber (reaction progress tracking)"
+        description="[DEPRECATED — no effect] Chamber kinetics carry no c* loss (products relax in "
+                    "~1 us against a ~1 ms stay time); nozzle kinetics are bracketed by CEA's Cf."
     )
     use_shifting_equilibrium: bool = Field(
         default=True,
@@ -777,88 +933,63 @@ class CombustionEfficiencyConfig(BaseModel):
                     "exit-composition shift is captured exactly by CEA's Cf_vac table "
                     "(RPA delivered thrust). Kept for config compatibility only."
     )
-    # Kinetics timescale calibration (for calculate_reaction_time_scale)
-    tau_ref: float = Field(
-        default=1e-5,
-        gt=0,
-        description="Reference chemical reaction time [s] at tau_ref_P and tau_ref_T. Default 10 μs for LOX/RP-1."
-    )
-    tau_ref_P: float = Field(
-        default=4.0e6,
-        gt=0,
-        description="Reference pressure for tau_ref [Pa]. Default 4 MPa."
-    )
-    tau_ref_T: float = Field(
-        default=3500.0,
-        gt=0,
-        description="Reference temperature for tau_ref [K]. Default 3500 K."
-    )
-    n_pressure: float = Field(
-        default=0.8,
-        ge=0,
-        description="Pressure exponent for kinetics scaling: tau_chem ~ (P_ref/Pc)^n. Default 0.8."
-    )
-    tau_Tc_floor_K: Optional[float] = Field(
-        default=None,
-        description=(
-            "Optional floor applied to CEA chamber temperature when evaluating the global τ_chem scaling "
-            "in ``calculate_reaction_time_scale`` (finite-rate η_kinetics path). "
-            "CEA equilibrium Tc can be artificially low for some propellant/MR/Pc combinations, which "
-            "blows up the Arrhenius-like temperature factor and makes η_kinetics unrealistically small. "
-            "When set, uses Tc_eff = max(Tc, tau_Tc_floor_K) only for τ_chem (not for equilibrium properties)."
-        ),
-    )
-    # Gasification model transition temperature
+    # Retired RP-1 kinetics surrogate (tau_chem switched on O/F plateaus); read by no model.
+    tau_ref: float = Field(default=1e-5, gt=0, description="[DEPRECATED — no effect] Retired kinetics surrogate [s].")
+    tau_ref_P: float = Field(default=4.0e6, gt=0, description="[DEPRECATED — no effect] Retired kinetics surrogate [Pa].")
+    tau_ref_T: float = Field(default=3500.0, gt=0, description="[DEPRECATED — no effect] Retired kinetics surrogate [K].")
+    n_pressure: float = Field(default=0.8, ge=0, description="[DEPRECATED — no effect] Retired kinetics surrogate.")
+    tau_Tc_floor_K: Optional[float] = Field(default=None, description="[DEPRECATED — no effect] Retired kinetics surrogate [K].")
     T_star_fuel_cap_K: float = Field(
         default=1000.0,
         gt=0,
-        description="Effective fuel interface temperature cap for gasification model [K]. Represents wet-bulb/pyrolysis onset scale, NOT gas temperature tracking. Default 1000K for RP-1."
+        description="[DEPRECATED — no effect] Drops now evaporate at their saturation temperature at Pc "
+                    "(Clausius-Clapeyron from fluids.*.boiling_point) [K]."
     )
     # Arrhenius kinetics parameters (fuel-specific, can be overridden per fuel type)
     A0_hydrocarbon: float = Field(
         default=1e7,
         gt=0,
-        description="Pre-exponential factor for hydrocarbon fuels (RP-1, Kerosene) [1/s]. Default 1e7."
+        description="[Progress diagnostic only: reaction_chemistry, time-varying solver; no effect on c*] Pre-exponential factor for hydrocarbon fuels (RP-1, Kerosene) [1/s]. Default 1e7."
     )
     Ea_hydrocarbon: float = Field(
         default=80000.0,
         gt=0,
-        description="Activation energy for hydrocarbon fuels (RP-1, Kerosene) [J/mol]. Default 80 kJ/mol."
+        description="[Progress diagnostic only: reaction_chemistry, time-varying solver; no effect on c*] Activation energy for hydrocarbon fuels (RP-1, Kerosene) [J/mol]. Default 80 kJ/mol."
     )
     n_pre_hydrocarbon: float = Field(
         default=0.3,
         ge=0,
-        description="Pre-exponential pressure exponent for hydrocarbons. Default 0.3."
+        description="[Progress diagnostic only: reaction_chemistry, time-varying solver; no effect on c*] Pre-exponential pressure exponent for hydrocarbons. Default 0.3."
     )
     A0_ethanol: float = Field(
         default=5e7,
         gt=0,
-        description="Pre-exponential factor for ethanol [1/s]. Default 5e7 (faster than RP-1)."
+        description="[Progress diagnostic only: reaction_chemistry, time-varying solver; no effect on c*] Pre-exponential factor for ethanol [1/s]. Default 5e7 (faster than RP-1)."
     )
     Ea_ethanol: float = Field(
         default=140000.0,
         gt=0,
-        description="Activation energy for ethanol [J/mol]. Default 140 kJ/mol (higher than RP-1)."
+        description="[Progress diagnostic only: reaction_chemistry, time-varying solver; no effect on c*] Activation energy for ethanol [J/mol]. Default 140 kJ/mol (higher than RP-1)."
     )
     n_pre_ethanol: float = Field(
         default=0.25,
         ge=0,
-        description="Pre-exponential pressure exponent for ethanol. Default 0.25."
+        description="[Progress diagnostic only: reaction_chemistry, time-varying solver; no effect on c*] Pre-exponential pressure exponent for ethanol. Default 0.25."
     )
     A0_hydrogen: float = Field(
         default=1e9,
         gt=0,
-        description="Pre-exponential factor for hydrogen [1/s]. Default 1e9 (much faster than hydrocarbons)."
+        description="[Progress diagnostic only: reaction_chemistry, time-varying solver; no effect on c*] Pre-exponential factor for hydrogen [1/s]. Default 1e9 (much faster than hydrocarbons)."
     )
     Ea_hydrogen: float = Field(
         default=40000.0,
         gt=0,
-        description="Activation energy for hydrogen [J/mol]. Default 40 kJ/mol (lower than hydrocarbons)."
+        description="[Progress diagnostic only: reaction_chemistry, time-varying solver; no effect on c*] Activation energy for hydrogen [J/mol]. Default 40 kJ/mol (lower than hydrocarbons)."
     )
     n_pre_hydrogen: float = Field(
         default=0.2,
         ge=0,
-        description="Pre-exponential pressure exponent for hydrogen. Default 0.2."
+        description="[Progress diagnostic only: reaction_chemistry, time-varying solver; no effect on c*] Pre-exponential pressure exponent for hydrogen. Default 0.2."
     )
 
 
@@ -889,11 +1020,11 @@ class StabilityConfig(BaseModel):
     )
     damping_injector_frac: float = Field(
         default=0.02, ge=0,
-        description="Injector-face acoustic damping as a fraction of pi*f [-]. First-cut; calibrate against a cold ring-down test.",
+        description="Injector-face acoustic damping as a fraction of pi*f [-]. ASSUMED, uncalibrated (no source); calibrate against a cold ring-down test (T7).",
     )
     damping_twophase_frac: float = Field(
         default=0.03, ge=0,
-        description="Two-phase (droplet) acoustic damping as a fraction of pi*f*droplet_loading [-]. First-cut.",
+        description="Two-phase (droplet) acoustic damping as a fraction of pi*f*droplet_loading [-]. ASSUMED, uncalibrated (no source).",
     )
     droplet_loading: float = Field(
         default=1.0, ge=0,
@@ -902,9 +1033,19 @@ class StabilityConfig(BaseModel):
     acoustic_gate_alpha_offset: float = Field(
         default=350.0, ge=0,
         description=(
-            "Calibration allowance for the acoustic gate [1/s]: a mode growing slower than this still "
-            "maps to a neutral gate margin because the a-priori damping coefficients are un-measured. "
-            "Set 0 for the strict alpha < 0 criterion."
+            "UNUSED. Was an allowance that let a mode growing at up to this rate [1/s] pass the old "
+            "tanh-remapped acoustic gate. The acoustic margin is now damping/driving (1 = neutral) and "
+            "stability.acoustic_gate decides whether it gates. Kept so older configs still load."
+        ),
+    )
+    acoustic_gate: Literal["report_only", "nominal_phase", "worst_phase"] = Field(
+        default="report_only",
+        description=(
+            "Which acoustic (HF) margin reaches the stability gate. 'report_only': none -- the modes, "
+            "damping budget and margins are reported but gate nothing, because the injector-face and "
+            "two-phase damping are uncalibrated and omega*tau_sens spans many periods of 2*pi (Harrje & "
+            "Reardon SP-194 rate HF stability by test). 'nominal_phase': damping/driving at the model's "
+            "tau_sens. 'worst_phase': damping/driving at omega*tau = pi (Crocco's n_min/n)."
         ),
     )
     time_lag_model: Literal["leonardi_dtl", "d2_law"] = Field(
@@ -936,9 +1077,26 @@ class StabilityConfig(BaseModel):
     )
     regulator_enabled: bool = Field(default=True, description="Model the dome regulator upstream of each tank in the chug loop.")
     regulator_corner_hz: float = Field(default=3.0, gt=0, description="Regulator response corner frequency [Hz].")
+    chug_band_mixing_lag_fraction_min: Optional[float] = Field(
+        default=0.0, ge=0.0, le=3.0,
+        description=(
+            "Low end of the mixing-lag fraction band the chug gate must hold over. The fraction's only "
+            "source is Leonardi 2017's GH2/LOX coaxial rig (0.5); nothing measures it for this "
+            "propellant or injector, so the gate takes the lowest gain margin over [min, max]. Set both "
+            "ends null to gate on mixing_lag_fraction alone once it is measured. leonardi_dtl only."
+        ),
+    )
+    chug_band_mixing_lag_fraction_max: Optional[float] = Field(
+        default=1.0, ge=0.0, le=3.0,
+        description="High end of the chug gate's mixing-lag fraction band (see the _min field).",
+    )
     regulator_Z_hf: float = Field(
         default=0.0, ge=0,
-        description="Regulator high-frequency series impedance [Pa*s/kg]. 0 = ideal pressure source (optimistic); measure via a step test.",
+        description=(
+            "Regulator high-frequency series impedance [Pa*s/kg]. 0 = regulator NOT MODELLED: the feed "
+            "sees an ideal pressure source, and the report says so instead of printing a with/without "
+            "pair. Set it only from a measured step response (T6)."
+        ),
     )
     regulator_max_excursion_psi: float = Field(
         default=0.0, ge=0,
@@ -1059,6 +1217,11 @@ class LOXTankConfig(BaseModel):
     mass: Optional[float] = Field(default=None, gt=0, description="Initial LOX PROPELLANT mass [kg] (liquid only, not tank structure). Depletes during burn.")
     initial_pressure_psi: Optional[float] = Field(default=None, gt=0, description="Initial LOX tank pressure [psi]")
     tank_volume_m3: Optional[float] = Field(default=None, gt=0, description="LOX tank volume [m³]. If not provided, will be calculated from lox_h and lox_radius using π×r²×h")
+    # The T-0 ullage: V_tank - m/rho_liquid of gas at initial_pressure_psi (absolute, as the engine
+    # solver reads it) and this temperature, from CoolProp. Ground pre-pressurisation charges it, so
+    # it is carried on top of press_tank.initial_gas_mass; the COPV then only refills what drains.
+    ullage_gas: str = Field(default="Nitrogen", description="CoolProp name of the pressurant in the ullage (GN2 system)")
+    ullage_gas_temperature_K: float = Field(default=293.15, gt=0, description="Ullage gas temperature [K] at T-0 and as the regulator refills it. Default: pressurant at ambient (bottle) temperature, not a measured ullage; gas chilled by LOX is denser.")
 
 
 class FuelTankConfig(BaseModel):
@@ -1069,6 +1232,11 @@ class FuelTankConfig(BaseModel):
     mass: Optional[float] = Field(default=None, gt=0, description="Initial fuel PROPELLANT mass [kg] (liquid only, not tank structure). Depletes during burn.")
     initial_pressure_psi: Optional[float] = Field(default=None, gt=0, description="Initial fuel tank pressure [psi]")
     tank_volume_m3: Optional[float] = Field(default=None, gt=0, description="Fuel tank volume [m³]. If not provided, will be calculated from rp1_h and rp1_radius using π×r²×h (field names are legacy)")
+    # The T-0 ullage: V_tank - m/rho_liquid of gas at initial_pressure_psi (absolute, as the engine
+    # solver reads it) and this temperature, from CoolProp. Ground pre-pressurisation charges it, so
+    # it is carried on top of press_tank.initial_gas_mass; the COPV then only refills what drains.
+    ullage_gas: str = Field(default="Nitrogen", description="CoolProp name of the pressurant in the ullage (GN2 system)")
+    ullage_gas_temperature_K: float = Field(default=293.15, gt=0, description="Ullage gas temperature [K] at T-0 and as the regulator refills it. Default: pressurant at ambient (bottle) temperature, not a measured ullage; gas chilled by LOX is denser.")
 
 
 class PressTankConfig(BaseModel):
@@ -1149,7 +1317,35 @@ class RocketConfig(BaseModel):
     nose_fineness_ratio: float = Field(default=4.5, gt=0, description="Nose length / body diameter (von Kármán ~4.5:1 is near-optimal transonic). Used when nose_length is unset.")
     nose_length: Optional[float] = Field(default=None, gt=0, description="Explicit nosecone length [m]. Overrides nose_fineness_ratio when set.")
     avionics_payload_length_m: float = Field(default=4.0, ge=0, description="Length of avionics/payload/recovery section ABOVE the propulsion stack, before the nosecone [m].")
-    
+
+    # Drag. Either Cd(M) tables with their source (OpenRocket / RASAero export, wind tunnel, flight
+    # data), or the component build-up of engine/pipeline/vehicle_drag.py on the vehicle the sim
+    # assembles. There is no constant Cd. The three build-up inputs default to OpenRocket's own
+    # component defaults, not to this vehicle's drawing; the flight report lists them.
+    drag_curve_power_off: Optional[List[List[float]]] = Field(default=None, description="Axial Cd with the motor off, [[Mach, Cd], ...]. Replaces the build-up; needs drag_curve_power_on and drag_curve_source.")
+    drag_curve_power_on: Optional[List[List[float]]] = Field(default=None, description="Axial Cd while thrusting, [[Mach, Cd], ...]. Give the power-off table again if the source has only one.")
+    drag_curve_source: Optional[str] = Field(default=None, description="Where the drag tables came from: tool and version, file, test.")
+    surface_roughness_m: float = Field(default=60e-6, ge=0, description="Skin roughness height for the drag build-up [m]. Default 60 um is OpenRocket's default finish, 'regular paint' (Niskanen 2013 table 3.2); 20 um smooth paint, 0 hydraulically smooth.")
+    fin_thickness_m: float = Field(default=0.003, gt=0, description="Fin thickness for the drag build-up [m]. Default 3 mm is OpenRocket's default fin, not the drawing.")
+    fin_profile: Literal["square", "rounded", "airfoil"] = Field(default="square", description="Fin edge profile for the drag build-up (Niskanen 2013 sec. 3.4.4). Default 'square' is OpenRocket's default, not the drawing.")
+    rail_button_upper_pos_m: Optional[float] = Field(default=None, description="Forward rail button, distance from the tail [m]. With the lower button set, rail exit is when this one leaves the rail; unset, the full rail length is flown.")
+    rail_button_lower_pos_m: Optional[float] = Field(default=None, description="Aft rail button, distance from the tail [m].")
+
+    @model_validator(mode="after")
+    def _drag_tables_complete(self):
+        tables = (self.drag_curve_power_off, self.drag_curve_power_on)
+        if all(t is None for t in tables):
+            return self
+        if any(t is None for t in tables) or not (self.drag_curve_source or "").strip():
+            raise ValueError("rocket.drag_curve_power_off, drag_curve_power_on and drag_curve_source go together")
+        for name, table in zip(("drag_curve_power_off", "drag_curve_power_on"), tables):
+            if len(table) < 2 or any(len(row) != 2 for row in table):
+                raise ValueError(f"rocket.{name} must be at least two [Mach, Cd] rows")
+            mach = [row[0] for row in table]
+            if mach[0] < 0 or any(b <= a for a, b in zip(mach, mach[1:])) or any(row[1] <= 0 for row in table):
+                raise ValueError(f"rocket.{name}: Mach must start >= 0 and increase, Cd must be > 0")
+        return self
+
     # LEGACY fields - kept for backward compatibility
     mass: Optional[float] = Field(default=None, gt=0, description="LEGACY: Airframe mass. Use airframe_mass instead.")
     cm_wo_motor: Optional[float] = Field(default=None, description="LEGACY: CM without motor. Now auto-calculated from airframe_mass and propulsion positions.")
@@ -1169,11 +1365,16 @@ class EnvironmentConfig(BaseModel):
     atmosphere_model: Literal["standard_atmosphere", "forecast"] = Field(
         default="standard_atmosphere",
         description="Atmospheric model: 'standard_atmosphere' (ISA, offline, deterministic) or 'forecast' (live GFS)")
+    # Launch. Defaults are the literals the flight sim flew before these fields existed, not the FAR rail.
+    rail_length_m: float = Field(default=3.35, gt=0, description="Launch rail length [m]. Default 3.35 m is the old hardcoded value, not a measured rail.")
+    launch_inclination_deg: float = Field(default=90.0, gt=0, le=90, description="Rail elevation from horizontal [deg]; 90 is vertical.")
+    launch_heading_deg: float = Field(default=0.0, ge=0, lt=360, description="Rail azimuth [deg from north].")
 
 
 class ThrustConfig(BaseModel):
     """Thrust configuration for flight simulation"""
     burn_time: float = Field(gt=0, description="Burn time [s]")
+    reference_pressure_pa: Optional[float] = Field(default=None, gt=0, description="Ambient pressure the thrust curve was computed at [Pa]; the flight adds (p_ref - p(z))*A_exit. Unset: compute_ambient_pressure_from_elevation(environment.elevation), the engine solver's own reference.")
 
 
 class FrozenParametersConfig(BaseModel):
@@ -1199,8 +1400,8 @@ class FrozenParametersConfig(BaseModel):
     n_doublets: Optional[int] = Field(default=None, gt=0, description="[impinging] Frozen number of paired unlike doublets")
     d_jet_O_mm: Optional[float] = Field(default=None, gt=0, description="[impinging] Frozen LOX jet diameter [mm]")
     d_jet_F_mm: Optional[float] = Field(default=None, gt=0, description="[impinging] Frozen fuel jet diameter [mm]")
-    impingement_angle_O_deg: Optional[float] = Field(default=None, gt=0, le=180, description="[impinging] Frozen LOX included impingement angle [deg]")
-    impingement_angle_F_deg: Optional[float] = Field(default=None, gt=0, le=180, description="[impinging] Frozen fuel included impingement angle [deg]")
+    impingement_angle_O_deg: Optional[float] = Field(default=None, gt=0, le=180, description="[impinging] Frozen LOX jet angle from the chamber axis [deg] (not the included angle)")
+    impingement_angle_F_deg: Optional[float] = Field(default=None, gt=0, le=180, description="[impinging] Frozen fuel jet angle from the chamber axis [deg] (not the included angle)")
     spacing_O_mm: Optional[float] = Field(default=None, gt=0, description="[impinging] Frozen LOX element spacing [mm]")
     spacing_F_mm: Optional[float] = Field(default=None, gt=0, description="[impinging] Frozen fuel element spacing [mm]")
     
@@ -1220,6 +1421,22 @@ class DesignRequirementsConfig(BaseModel):
                     "drives tank pressure to land Pc near this value and sizes the throat for the thrust target, "
                     "instead of pushing Pc higher to make thrust. Leave null to let Pc float freely.")
     target_apogee: Optional[float] = Field(default=3048.0, gt=0, description="Target apogee above ground level [m]")
+    # Flight limits. Unset means reported, not checked: no waiver or range rule is assumed here.
+    max_apogee_m: Optional[float] = Field(default=None, gt=0, description="Apogee ceiling (waiver) [m], in max_apogee_datum. Checked on a vertical, windless flight at the low-drag end of the finish.")
+    max_apogee_datum: Optional[Literal["AGL", "MSL"]] = Field(default=None, description="Datum of max_apogee_m: 'AGL' above the pad or 'MSL' above sea level. Required with max_apogee_m.")
+    min_rail_exit_velocity_m_s: Optional[float] = Field(default=None, gt=0, description="Minimum velocity leaving the rail [m/s] (e.g. 30.48 = 100 ft/s, Spaceport America Cup DTEG).")
+    min_static_margin_cal: Optional[float] = Field(default=None, description="Minimum static margin [cal], at rail exit and at burnout.")
+    max_static_margin_cal: Optional[float] = Field(default=None, description="Maximum static margin [cal]; above it the vehicle weathercocks hard into wind.")
+
+    @model_validator(mode="after")
+    def _apogee_ceiling_has_datum(self):
+        if self.max_apogee_m is not None and self.max_apogee_datum is None:
+            raise ValueError("design_requirements.max_apogee_m needs max_apogee_datum ('AGL' or 'MSL')")
+        lo, hi = self.min_static_margin_cal, self.max_static_margin_cal
+        if lo is not None and hi is not None and hi <= lo:
+            raise ValueError("max_static_margin_cal must exceed min_static_margin_cal")
+        return self
+
     optimal_of_ratio: float = Field(default=2.3, gt=0, description="Target oxidizer-to-fuel mixture ratio")
     target_burn_time: float = Field(default=10.0, gt=0, description="Target burn time [s]")
     
@@ -1252,7 +1469,14 @@ class DesignRequirementsConfig(BaseModel):
     stability_margin_handicap: float = Field(default=0.0, ge=0, le=1, description="Stability requirement relaxation factor (0=strict, 1=any)")
     
     # Stability requirements (legacy margins)
-    min_stability_margin: float = Field(default=1.2, gt=0, description="Legacy minimum overall stability margin")
+    min_stability_margin: float = Field(
+        default=1.2, gt=0,
+        description=(
+            "Minimum combustion-stability gain margin [-], 1 = neutral: the chug loop's Nyquist gain "
+            "margin (low end of the mixing-lag band), and the acoustic damping/driving ratio when "
+            "stability.acoustic_gate gates it. 2.0 = 6 dB. Not the flight static margin."
+        ),
+    )
     chugging_margin_min: float = Field(default=0.2, ge=0, description="Minimum chugging stability margin")
     acoustic_margin_min: float = Field(default=0.1, ge=0, description="Minimum acoustic stability margin")
     feed_stability_min: float = Field(default=0.15, ge=0, description="Minimum feed system stability margin")
@@ -1296,6 +1520,25 @@ class DesignRequirementsConfig(BaseModel):
         default="dome_regulated",
         description="Tank pressure time model: blowdown (decaying segments) or dome_regulated (eq. 6.2)",
     )
+    regulator_supply_pressure_effect: Optional[float] = Field(
+        default=None, ge=0.0,
+        description=(
+            "Dome regulator supply-pressure effect: outlet rise per unit inlet drop [psi/psi]. A property "
+            "of the regulator: Aqua 1092 datasheet 0.010, TB 1031 ~0.017. Unset = 0.010 (Aqua 1092), "
+            "recorded as an assumption until the regulator is confirmed."
+        ),
+    )
+    regulator_supply_pressure_effect_source: Optional[str] = Field(
+        default=None,
+        description="Where regulator_supply_pressure_effect came from (datasheet, flow test).",
+    )
+    regulator_min_differential_psi: Optional[float] = Field(
+        default=None, ge=0.0,
+        description=(
+            "Inlet-minus-outlet pressure below which the regulator can no longer hold its outlet [psi]; "
+            "the dome-regulated curve raises instead of drawing through it. Unset = 0 (outlet <= inlet)."
+        ),
+    )
     W_geom_ao_af_momentum: float = Field(
         default=0.0,
         ge=0.0,
@@ -1328,7 +1571,8 @@ class DesignRequirementsConfig(BaseModel):
         ge=0.0,
         description=(
             "Multiplicative deadband for Layer-1 log-space momentum pull toward R=1 "
-            "(optimizer soft term; code default 0.008 when unset)."
+            "(optimizer soft term). Default when unset: 0.0 "
+            "(layer1_static_optimization._LAYER1_DEFAULT_MOMENTUM_LOG_DEADBAND_REL)."
         ),
     )
     layer1_impinging_angle_deg_min: Optional[float] = Field(
@@ -1557,6 +1801,19 @@ class DesignRequirementsConfig(BaseModel):
         default=None, gt=0.0,
         description="Normalizing scale [deg] for the resultant-tilt violation. Unset ⇒ 2.",
     )
+    layer1_W_TILT: Optional[float] = Field(
+        default=None, ge=0.0,
+        description=(
+            "Weight of the resultant-spray-tilt preference: W (tilt/scale)^2 around 0 deg, with the "
+            "outward (wall) side multiplied by layer1_resultant_tilt_outward_multiplier. Inward lean "
+            "is allowed at a mild cost; the hard wall guard (layer1_resultant_tilt_max_deg / reach) "
+            "still applies. Unset or 0 = off."
+        ),
+    )
+    layer1_resultant_tilt_outward_multiplier: Optional[float] = Field(
+        default=None, ge=1.0,
+        description="Outward-side multiplier on the tilt preference (layer1_W_TILT). Unset ⇒ 25.",
+    )
     layer1_momentum_wall_side_multiplier: Optional[float] = Field(
         default=None, ge=1.0,
         description=(
@@ -1573,8 +1830,8 @@ class DesignRequirementsConfig(BaseModel):
     layer1_momentum_gate_safe_slack: Optional[float] = Field(
         default=None, ge=1.0,
         description=(
-            "Widens the momentum validation band on the safe (core-ward) side only, as a "
-            "multiple of the configured half-width. Unset ⇒ 3."
+            "Widens the momentum validation band symmetrically about 1, as a multiple of the "
+            "configured half-width. Unset ⇒ 1 (the gate is the configured band)."
         ),
     )
     layer1_derive_impingement_spacing: Optional[bool] = Field(
@@ -1638,9 +1895,9 @@ class DesignRequirementsConfig(BaseModel):
         default=None,
         ge=1.0,
         description=(
-            "Root-find iterations allowed per candidate when solving the derived DOFs. Each "
-            "costs a full extra evaluate() for every candidate. Unset ⇒ 2, which still lands "
-            "thrust exactly; 4 nearly doubles run time for no measurable gain."
+            "Cap on root-find iterations per candidate when solving the derived DOFs; the solve "
+            "exits once thrust is within layer1_derive_thrust_tol_rel and eps has stopped moving. "
+            "Unset ⇒ 8. (2 fixed steps left a 0.4-0.9 % thrust miss that depended on the start.)"
         ),
     )
     layer1_derive_thrust_tol_rel: Optional[float] = Field(
@@ -1703,10 +1960,21 @@ class DesignRequirementsConfig(BaseModel):
         default=None,
         ge=0.0,
         description=(
-            "Layer 1 weight on chamber dry mass, (m/layer1_chamber_mass_ref_kg)². L* otherwise "
-            "carries NO cost anywhere in the objective — more volume is pure reward (residence "
-            "time → vaporisation → c*) — so every run pinned L* to its configured maximum. "
-            "Unset/0 ⇒ disabled (metal is free, historical behaviour)."
+            "Layer 1 weight on chamber dry mass, (m/layer1_chamber_mass_ref_kg)², the "
+            "counterweight to layer1_W_ISP. Unset ⇒ priced like propellant: at the reference mass "
+            "1 kg of chamber costs what 1 kg of propellant does at fixed total impulse, "
+            "W_MASS = W_ISP·m_ref/(2·m_prop_ideal). 0 ⇒ disabled."
+        ),
+    )
+    layer1_W_ISP: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Layer 1 figure of merit: weight on the propellant the delivered Isp costs beyond an "
+            "ideal engine for the required total impulse, W_ISP·(Isp_ideal/Isp − 1) (Sutton & "
+            "Biblarz ch. 2: m_prop = F·t_b/(g0·Isp)). O/F and a Pc target are held at their "
+            "requirement inside it, so it cannot pull them off target. Reported as isp_penalty "
+            "(1000 ⇒ tenths of a percent of the ideal propellant). Unset ⇒ 1000; 0 ⇒ off."
         ),
     )
     layer1_contraction_half_angle_deg: Optional[float] = Field(
@@ -1928,6 +2196,13 @@ class DesignRequirementsConfig(BaseModel):
                     "edge of the innermost orifice ring must stay outside it. None => 0.0 "
                     "(no centre reservation). A 3/8-18 NPT spark igniter is 17.15 mm across the "
                     "thread crest, so ~0.028 m of boss plus clearance is a realistic entry.")
+    layer1_injector_min_back_web_m: Optional[float] = Field(default=None, ge=0.0,
+        description="Minimum land between neighbouring passage entries on the BACK (manifold) "
+                    "face of the plate [m]. An inclined hole walks t*tan(theta) radially through "
+                    "the plate and the inner ring's entries crowd toward the axis: on "
+                    "ethalox_8kN_SHIP the LOX counterbores leave 1.61 mm on the back against a "
+                    "6.40 mm face web. Needs layer1_injector_plate_thickness_m. None => inert "
+                    "(the drawing still warns against the face web floor).")
     layer1_injector_min_web_m: Optional[float] = Field(default=None, ge=0.0,
         description="Minimum land (web) between adjacent orifices on the SAME ring [m]. The only "
                     "prior guard was spacing >= d_jet, i.e. a web of exactly zero. None => 0.0.")
@@ -2051,14 +2326,16 @@ class DesignRequirementsConfig(BaseModel):
         description=(
             "Layer 1 search-box lower edge as a fraction of each tank cap: "
             "P_O ∈ [max_lox×f_min, max_lox×f_max], P_F similarly (unless overridden below). "
-            "Default when unset: 0.65."
+            "Default when unset: 0.35 (the cap is the limit; the old 0.65 left the bottom of "
+            "the band unsearched)."
         ),
     )
     layer1_stagnation_pressure_frac_max: Optional[float] = Field(
         default=None,
         ge=0.0,
         le=1.0,
-        description="Companion upper fraction for stagnation-pressure box (default when unset: 0.85).",
+        description="Companion upper fraction for stagnation-pressure box. Default when unset: 1.0 "
+                    "(the search reaches the cap itself).",
     )
     layer1_expansion_ratio_min: Optional[float] = Field(
         default=None,
@@ -2104,14 +2381,25 @@ class DesignRequirementsConfig(BaseModel):
         # the optimizer migrated this (injector_dp_bands_from_requirements), while the frontend read
         # the raw [0.15, 0.35] from the config -> a design that passed at 0.2-0.4 showed an X against
         # the stale 0.15-0.35 display.
+        # DEF-10: this rewrites a band a user can type on purpose. The shipped configs are migrated
+        # (default.yaml carries 0.20/0.40 as used); removing the rewrite needs the optimizer's copy
+        # (injector_dp_penalty.injector_dp_bands_from_requirements) removed in the same change, or
+        # the UI and the optimizer disagree again. Until then it is at least not silent.
+        import logging
         _LEGACY = (0.15, 0.35)
         _NEW = (0.20, 0.40)
         if (abs(self.injector_dp_ratio_O_min - _LEGACY[0]) < 1e-9
                 and abs(self.injector_dp_ratio_O_max - _LEGACY[1]) < 1e-9):
             self.injector_dp_ratio_O_min, self.injector_dp_ratio_O_max = _NEW
+            logging.getLogger(__name__).warning(
+                "injector_dp_ratio_O band 0.15-0.35 read as the legacy default and replaced by "
+                "0.20-0.40; the optimizer applies the same rewrite")
         if (abs(self.injector_dp_ratio_F_min - _LEGACY[0]) < 1e-9
                 and abs(self.injector_dp_ratio_F_max - _LEGACY[1]) < 1e-9):
             self.injector_dp_ratio_F_min, self.injector_dp_ratio_F_max = _NEW
+            logging.getLogger(__name__).warning(
+                "injector_dp_ratio_F band 0.15-0.35 read as the legacy default and replaced by "
+                "0.20-0.40; the optimizer applies the same rewrite")
         if self.injector_dp_ratio_O_max <= self.injector_dp_ratio_O_min:
             raise ValueError("injector_dp_ratio_O_max must exceed injector_dp_ratio_O_min")
         if self.injector_dp_ratio_F_max <= self.injector_dp_ratio_F_min:

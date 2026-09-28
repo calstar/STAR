@@ -50,6 +50,8 @@ const NOT_EDITING: Record<string, string> = {
   'ChamberGeometry.tsx': 'reads geometry from the config',
   'ChamberContourPlot.tsx': 'chart controls (half view, units)',
   'ChamberThermalGraphic.tsx': 'chart controls (half view, units)',
+  'InjectorPatternPlot.tsx': 'view controls (section cut, DXF units) and DXF download',
+  'InjectorDrawing.tsx': 'draws primitives; hover only',
   'HeatFluxProfileChart.tsx': 'chart controls (which time slices to draw)',
   'StabilityPanel.tsx': 'sensitivity sliders feeding one evaluate() call',
 
@@ -78,6 +80,11 @@ const MUST_GATE: Record<string, string> = {
 const VIEW_ONLY: Record<string, string> = {
   'ConfigEditor.tsx:setSearchQuery': 'filters which sections are shown',
   'ConfigEditor.tsx:setIsExpanded': 'expand/collapse a section',
+  'ParametersWorkspace.tsx:setQuery(e.target.value)': 'search box; filters which parameters are shown',
+  'ParametersWorkspace.tsx:setSection(s.key)': 'which section is shown',
+  'ParametersWorkspace.tsx:setSection(CODE)': 'shows the constants that live in code',
+  'ParametersWorkspace.tsx:setFilter(f)': 'all / changed-from-default filter',
+  'ParametersWorkspace.tsx:setOpen(open': 'expands a row to show its description',
   'ConfigUpload.tsx:label': 'the drop zone wrapper, not a control',
   'ErrorBoundary.tsx:this.reset': 'clears a caught render error; touches no design state',
   'Layer1Optimization.tsx:setShowParameterPlots': 'chart visibility',

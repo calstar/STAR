@@ -12,9 +12,11 @@ against.
 from __future__ import annotations
 
 import enum
+import logging
 import os
 
 __all__ = ["available", "enabled", "can_handle", "can_handle_chamber",
+           "chamber_physics_not_mirrored",
            "evaluate", "solve", "chamber_solve", "warmup", "require",
            "chug_margin_fast", "Outcome",
            "evaluate_ex", "solve_ex", "chamber_solve_ex"]
@@ -91,8 +93,55 @@ def can_handle(config) -> bool:
     return True
 
 
+# Python chamber physics that kernels.evaluate_core does NOT reproduce yet. While any entry is
+# listed, every chamber-level call (evaluate / chamber_solve) is NOT_HANDLED and the caller runs
+# the authoritative Python solve: slower, never different physics. Layer 1 takes F and Pc from
+# evaluate(), so computing the old physics here would have the optimizer search one engine and
+# sign off another. The injector solve (solve) and the chug scan ARE mirrored and stay fast.
+#
+# Remove an entry only together with its kernel port, and only once
+# tests/test_numba_ab_parity.py (ED_AB_PARITY=1) passes at 1e-6 with the tuple empty.
+_CHAMBER_PHYSICS_NOT_MIRRORED = (
+    "combustion efficiency: eta_c* = eta_vap x eta_mix x eta_HL (combustion_physics."
+    "spray_vaporization_march Rosin-Rammler/Heun spray march, Rupe M mixing, "
+    "sqrt(1 - Q/(mdot cp Tc)) heat loss); the kernel still runs gasification x kinetics x "
+    "R-based mixing",
+    "nozzle: Rayleigh stagnation loss P0 = Pc/kappa in the demand and the thrust, and the "
+    "CEA-equilibrium exit state from the aux tables; the kernel still runs the isentrope at Pc",
+    "ablative liner: Bartz profile over the drawn contour with Leckner/Hottel gas radiation and "
+    "the blowing fixed point (thermal.gas_side / ablative_cooling.liner_response); the kernel "
+    "still runs Dittus-Boelter with a fixed emissivity",
+)
+
+_log = logging.getLogger(__name__)
+_warned_chamber_fallback = False
+
+
+def chamber_physics_not_mirrored(config=None) -> tuple:
+    """Why the chamber kernels cannot stand in for the Python solve (empty => they can).
+
+    Every entry applies to every config the chamber path would otherwise take: combustion and
+    the nozzle loss touch all of them, whether or not the liner is ablative.
+    """
+    return _CHAMBER_PHYSICS_NOT_MIRRORED
+
+
+def _warn_chamber_fallback_once(reasons) -> None:
+    global _warned_chamber_fallback
+    if _warned_chamber_fallback:
+        return
+    _warned_chamber_fallback = True
+    _log.warning(
+        "accelerator: chamber evaluation falls back to the Python solve (correct, slower): "
+        "the kernels do not yet mirror %s", "; ".join(reasons))
+
+
 def can_handle_chamber(config) -> bool:
     """Adds the chamber-solve gates on top of can_handle().
+
+    False while chamber_physics_not_mirrored() is non-empty: the chamber kernels would compute
+    different physics from the Python path, and a fast wrong answer is worse than a slow right
+    one. The fallback is logged once per process.
 
     No ablative gate: ablative IS ported (kernels._cooling_evaluate). No graphite
     gate either -- graphite never enters the chamber residual; it lives in the
@@ -105,6 +154,10 @@ def can_handle_chamber(config) -> bool:
         return False
     eff = config.combustion.efficiency
     if not getattr(eff, "use_advanced_model", True):
+        return False
+    reasons = chamber_physics_not_mirrored(config)
+    if reasons:
+        _warn_chamber_fallback_once(reasons)
         return False
     return True
 
@@ -142,7 +195,7 @@ def evaluate_ex(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
     sol = _k._solve_injector(P, float(P_tank_O), float(P_tank_F), float(Pc))
     if not sol[0]:
         return None, Outcome.NO_SOLUTION
-    diag = _diag.build_diag(P, sol)
+    diag = _diag.build_diag(P, sol, config, Pc)
     diag.update({
         "mdot_O": mO, "mdot_F": mF, "mdot_total": mdt, "Pc": Pc, "MR": MR,
         "cstar_ideal": cs_id, "cstar_actual": csa, "eta_cstar": eta,
@@ -199,7 +252,7 @@ def solve_ex(config, P_tank_O, P_tank_F, Pc):
     sol = _k._solve_injector(P, float(P_tank_O), float(P_tank_F), float(Pc))
     if not sol[0]:
         return None, Outcome.NO_SOLUTION
-    return (float(sol[1]), float(sol[2]), _diag.build_diag(P, sol)), Outcome.OK
+    return (float(sol[1]), float(sol[2]), _diag.build_diag(P, sol, config, Pc)), Outcome.OK
 
 
 def chamber_solve(config, cache, P_tank_O, P_tank_F):

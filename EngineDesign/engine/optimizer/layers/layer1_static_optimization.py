@@ -26,6 +26,21 @@ from concurrent.futures import ProcessPoolExecutor
 from engine.pipeline.config_schemas import PintleEngineConfig, HybridOptimizerConfig
 from engine.core.runner import PintleEngineRunner
 from engine.core.discharge import discharge_cd_inf_ratio
+from engine.core.injectors.layout import (
+    IMPINGEMENT_LD_TARGET_DEFAULT,
+    EXIT_LAND_DEFAULT,
+    FREE_JET_MAX_D,
+    PLATE_THICKNESS_DEFAULT,
+    channel_for_ring,
+    channel_lands,
+    igniter_keepouts,
+    impingement_ld_band,
+    passage_back_entry,
+    ring_face_reach,
+)
+
+#: Standoff band when a caller hands over no requirements at all.
+_LD_BAND_DEFAULT = impingement_ld_band(None)
 from engine.core.injectors.flow_capacity import (
     effective_flow_areas_from_cd,
     merge_effective_area_warnings,
@@ -97,12 +112,16 @@ _LAYER1_DEFAULT_INFEASIBILITY_GATE_EPS = 0.002
 # Zero = always-on (log R)^2 gradient toward R=1.
 _LAYER1_DEFAULT_MOMENTUM_LOG_DEADBAND_REL = 0.0
 
-# Secondary terms (SMD, impingement geom, chamber shape, …) are disabled until
-# |log R| is within this squared tolerance so thrust/O-F/momentum can converge first.
-_LAYER1_SECONDARY_MOMENTUM_GATE = 0.002
-
 _LAYER1_BASE_INFEAS = 1e6
 _LAYER1_W_INFEAS = 1e5
+
+# Cap on the per-candidate derived-DOF solve; it exits on tolerance well before this.
+_LAYER1_DERIVE_MAX_ITERS_DEFAULT = 8
+
+# Chamber-pressure target: sign-off band and the objective's interior aim band (80 % of it,
+# the same convention as the dP/Pc and momentum bands -- penalty and gate never share an edge).
+_LAYER1_PC_GATE_REL = 0.01
+_LAYER1_PC_AIM_REL = 0.8 * _LAYER1_PC_GATE_REL
 
 
 class _LocalSerialExecutor:
@@ -166,6 +185,34 @@ def _layer1_thrust_deadband(req: Any) -> float:
     return 0.001 if derived else 0.02
 
 
+def _layer1_igniter_keepouts(config_obj: Any, requirements: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The declared igniter port's keep-outs (engine.core.injectors.layout), or None."""
+    ign = getattr(getattr(config_obj, "injector", None), "igniter", None)
+    if ign is None:
+        return None
+    return igniter_keepouts(
+        ign.model_dump() if hasattr(ign, "model_dump") else dict(ign),
+        plate_thickness=_requirement_float(requirements, "layer1_injector_plate_thickness_m", 0.0),
+        min_web=_requirement_float(requirements, "layer1_injector_min_web_m", 0.0))
+
+
+def _layer1_plate(config_obj: Any) -> Dict[str, Any]:
+    """The injector.plate block as a dict ({} when undeclared): how the plug is machined."""
+    pl = getattr(getattr(config_obj, "injector", None), "plate", None)
+    if pl is None:
+        return {}
+    return pl.model_dump() if hasattr(pl, "model_dump") else dict(pl)
+
+
+def _layer1_centre_clear_m(config_obj: Any, requirements: Dict[str, Any]) -> float:
+    """Centre keep-out diameter: the explicit reservation if set, else the igniter's, else 0."""
+    cc = _requirement_float(requirements, "layer1_injector_center_clear_dia_m", 0.0)
+    if cc > 0.0:
+        return cc
+    ign = _layer1_igniter_keepouts(config_obj, requirements)
+    return float(ign["face_keepout_dia"]) if ign is not None else 0.0
+
+
 def _requirement_bool(requirements: Dict[str, Any], key: str, default: bool) -> bool:
     """Parse a checkbox-style flag from Layer-1 ``requirements``.
 
@@ -213,50 +260,6 @@ def _layer1_feasible_for_primary_objective(
     return _layer1_inf_residual(infeasibility_score, requirements) <= 0.0
 
 
-def _layer1_secondary_weight_scale(
-    momentum_term: float,
-    *,
-    gate: float = _LAYER1_SECONDARY_MOMENTUM_GATE,
-) -> float:
-    """Scale cosmetic/tertiary penalties down until jet momentum is near R=1."""
-    if not np.isfinite(momentum_term) or float(momentum_term) <= float(gate):
-        return 1.0
-    hi = max(float(gate) * 4.0, float(gate) + 0.004)
-    if float(momentum_term) >= hi:
-        return 0.0
-    return float(1.0 - (float(momentum_term) - float(gate)) / (hi - float(gate)))
-
-
-def _layer1_candidate_rank_tuple(
-    *,
-    obj: float,
-    inf_residual: float,
-    momentum_term: float,
-    thrust_error: float,
-    of_error: float,
-    thrust_tol: float,
-    of_tol: float,
-    length_violation: bool = False,
-) -> Tuple[float, ...]:
-    """Lexicographic sort key: feasibility → momentum → primary errors → scalar obj."""
-    if length_violation or float(inf_residual) > 0.0:
-        return (
-            1.0,
-            float(inf_residual),
-            float(momentum_term),
-            float(thrust_error),
-            float(of_error),
-            float(obj),
-        )
-    return (
-        0.0,
-        float(momentum_term),
-        max(0.0, float(thrust_error) - float(thrust_tol)),
-        max(0.0, float(of_error) - float(of_tol)),
-        float(obj),
-    )
-
-
 def _layer1_inf_residual_from_objective(obj: float) -> float:
     """Infer feasibility residual from scalar objective (parallel worker path)."""
     if not np.isfinite(obj) or float(obj) < _LAYER1_BASE_INFEAS:
@@ -267,6 +270,26 @@ def _layer1_inf_residual_from_objective(obj: float) -> float:
 def _layer1_feasible_scalar_objective(obj: float) -> bool:
     """True when ``obj`` is on the feasible (weighted-sum) branch, not the 1e6 infeasibility floor."""
     return bool(np.isfinite(obj) and float(obj) < _LAYER1_BASE_INFEAS)
+
+
+def _layer1_valley_escape_tier(evals: int, best_f: float, stagnation: int) -> int:
+    """Sigma-boost tier for a search stuck on the infeasible plateau (0 = none).
+
+    Only while no feasible design has been found. The tiers used to fire on absolute
+    objective magnitudes (best > 100/150/300), which a shaping floor that never reaches zero
+    -- the chamber-mass or performance term -- always exceeds, so every feasible run was
+    kicked 4-7 times mid-convergence and blank ones never. Once feasible, restarts and
+    refreshes do the exploring.
+    """
+    if _layer1_feasible_scalar_objective(best_f):
+        return 0
+    if evals > 5000 and stagnation > 1000:
+        return 3
+    if evals > 3000 and stagnation > 500:
+        return 2
+    if evals > 1500 and stagnation > 300:
+        return 1
+    return 0
 
 
 def _x_solved_or(res: Dict[str, Any], fallback: np.ndarray) -> np.ndarray:
@@ -450,6 +473,29 @@ def _resolve_tilt_allowance_deg(
     return float(np.degrees(np.arctan(np.tan(np.deg2rad(be)) / m)))
 
 
+def _impinging_resultant_tilt_preference(
+    tilt_deg: Any,
+    *,
+    scale_deg: float = 2.0,
+    outward_multiplier: float = 25.0,
+) -> float:
+    """Preference for a spray fan aimed straight down the chamber: ``(tilt/scale)^2``.
+
+    ``tilt_deg`` is the resultant tilt, positive OUTWARD (toward the liner). Inward lean costs the
+    plain quadratic, outward lean ``outward_multiplier`` times it. This is a preference priced in
+    the objective; the wall guard (:func:`_impinging_resultant_wall_violation`) stays the hard limit.
+    """
+    try:
+        a = float(tilt_deg)
+    except (TypeError, ValueError):
+        return 0.0
+    if not np.isfinite(a):
+        return 0.0
+    sc = float(scale_deg) if (np.isfinite(scale_deg) and scale_deg > 0) else 2.0
+    k = max(1.0, float(outward_multiplier)) if a > 0.0 else 1.0
+    return float(k * (a / sc) ** 2)
+
+
 def _impinging_resultant_wall_violation(
     tilt_deg: Any,
     *,
@@ -534,8 +580,13 @@ def _impinging_momentum_asymmetric_squared(
     band_width: float = 0.05,
     safe_side_is_below_one: bool = True,
     scale: float = 0.10,
+    band_lo: Optional[float] = None,
+    band_hi: Optional[float] = None,
 ) -> float:
     """Mild symmetric cost on the momentum ratio: free in the band, quadratic outside.
+
+    ``band_lo``/``band_hi`` (the configured impinging_momentum_R_min/max, or their aim band)
+    set the free band when given; otherwise it is [1/(1+band_width), 1+band_width].
 
     A doublet's resultant is the vector sum of its two streams. With LOX inboard its jet
     travels radially outward to the collision and the fuel jet travels inward, so R > 1 means
@@ -572,6 +623,9 @@ def _impinging_momentum_asymmetric_squared(
     w = abs(float(band_width)) if np.isfinite(band_width) else 0.025
     hi = 1.0 + w
     lo = 1.0 / hi
+    if (band_lo is not None and band_hi is not None and np.isfinite(band_lo)
+            and np.isfinite(band_hi) and 0.0 < float(band_lo) < float(band_hi)):
+        lo, hi = float(band_lo), float(band_hi)
     if lo <= r <= hi:
         return 0.0
 
@@ -954,16 +1008,13 @@ def _layer1_chamber_mass_kg(
     total_wall_thickness_m: float,
     wall_density_kg_m3: float,
     Pc_pa: float = 0.0,
-    closure_yield_pa: float = 205e6,
+    closure_yield_pa: float = 205e6,   # 304 stainless, annealed, minimum yield (ASTM A240)
 ) -> float:
     """Cylindrical-shell dry-mass proxy for the chamber barrel [kg].
 
-    Why this exists: L* carried NO cost anywhere in the Layer-1 objective. More chamber volume
-    means more residence time, which means better vaporisation, higher delivered c* and more
-    thrust -- all reward, no penalty -- so every run pinned L* to its configured maximum
-    (observed: 1.4908-1.5000 against a 1.5 cap, in every single cycle) while total engine length
-    still had headroom. That is not the optimizer finding a long chamber to be optimal; it is the
-    optimizer being told metal is free.
+    Why this exists: chamber volume carried no cost. More residence time only helps delivered
+    c*, so with nothing opposing it L* either pinned to its maximum or, once the objective hit
+    zero, wandered with the seed. This is the counterweight to the Isp term.
 
     Deliberately a barrel-only shell, not a full stack mass: it is a monotone proxy whose whole
     job is to make L* trade against something. ``wall_density_kg_m3`` is an EFFECTIVE density for
@@ -989,7 +1040,9 @@ def _layer1_chamber_mass_kg(
     m_closure = 0.0
     if np.isfinite(Pc_pa) and Pc_pa > 0 and closure_yield_pa > 0:
         r_inner = 0.5 * d_inner
-        t_face = r_inner * float(np.sqrt(0.3 * float(Pc_pa) / float(closure_yield_pa)))
+        # Roark (Table 11.2, fixed edge, uniform load): sigma_max = 3 p a^2 / (4 t^2). The 0.3
+        # used here had no source and sized the plate 37 % thin.
+        t_face = r_inner * float(np.sqrt(0.75 * float(Pc_pa) / float(closure_yield_pa)))
         m_closure = float(np.pi * r_inner ** 2 * t_face * float(wall_density_kg_m3))
     return m_barrel + m_closure
 
@@ -1005,6 +1058,257 @@ def _layer1_chamber_mass_term(
     if not np.isfinite(ref) or ref <= 0:
         return 0.0
     return float((float(chamber_mass_kg) / ref) ** 2)
+
+
+# nozzle_solver.rao's bell_percent: the contour Layer 1 emits is an 80 % Rao bell.
+_LAYER1_BELL_FRACTION = 0.8
+_G0 = 9.80665
+
+
+def _layer1_chamber_od_floor_m(
+    max_od_m: float, wall_total_m: float, A_throat_lo_m2: float, dt_ratio_min: float,
+) -> float:
+    """Smallest chamber OD worth searching [m]: wall + (D/Dt)_min x Dt at the smallest throat.
+
+    Any bore below that sits under the chamber-shape band for every reachable throat.
+    """
+    dt_lo = float(np.sqrt(4.0 * max(float(A_throat_lo_m2), 0.0) / np.pi))
+    return float(wall_total_m) + max(float(dt_ratio_min), 1.05) * dt_lo
+
+
+def _layer1_chamber_lengths(
+    A_throat: float, Lstar: float, D_chamber_inner: float, theta: float,
+) -> Dict[str, float]:
+    """Axial lengths of the chamber Layer 1 builds [m].
+
+    One source for the objective, the config writer and validation, so all three score the
+    chamber that is drawn. The cone runs to the tangency of the 1.5 R_t entrance arc,
+    r_tan = R_t (1 + 1.5 (1 - cos theta)); the arc then covers 1.5 R_t sin(theta) to the
+    throat plane (nozzle_solver.rao)::
+
+        length          = L_cyl + L_cone                 (cg.length: mass proxy, L/D band)
+        face_to_throat  = length + 1.5 R_t sin(theta)    (injector face to throat plane)
+    """
+    A_t = float(A_throat)
+    V = float(Lstar) * A_t
+    D_in = float(D_chamber_inner)
+    A_c = np.pi * (D_in / 2.0) ** 2 if D_in > 0 else 0.0
+    R_t = float(np.sqrt(max(0.0, A_t / np.pi)))
+    cr = A_c / A_t if (A_t > 0 and A_c > 0) else 10.0
+    r_tan = R_t * (1.0 + 1.5 * (1.0 - float(np.cos(theta))))
+    L_cyl = chamber_length_calc(
+        chamber_volume=V, area_throat=A_t, contraction_ratio=cr, theta=theta)
+    L_con = contraction_length_horizontal_calc(
+        area_chamber=A_c, entrance_arc_start_y=r_tan, theta=theta)
+    L = L_cyl + L_con
+    if L <= 0 or L_cyl <= 0 or not np.isfinite(L):
+        L = V / A_c if A_c > 0 else 0.2
+        L_cyl = max(L * 0.5, 0.05)
+    L = max(float(L), 0.005)
+    L_arc = 1.5 * R_t * float(np.sin(theta))
+    return {
+        "length": L,
+        "length_cylindrical": float(L_cyl),
+        "length_contraction": float(L_con),
+        "length_entrance_arc": float(L_arc),
+        "face_to_throat": float(L + L_arc),
+    }
+
+
+def _layer1_bell_length_m(A_throat: float, eps: float) -> float:
+    """Rao 80 % bell length from the throat [m]: 0.8 (sqrt(eps) - 1) R_t / tan 15 deg.
+
+    Huzel & Huang ch. 4; the same L_noz nozzle_solver.rao draws.
+    """
+    R_t = float(np.sqrt(max(0.0, float(A_throat) / np.pi)))
+    e = float(eps)
+    if not (np.isfinite(e) and e > 1.0 and R_t > 0):
+        return 0.0
+    return float(_LAYER1_BELL_FRACTION * (np.sqrt(e) - 1.0) * R_t / np.tan(np.radians(15.0)))
+
+
+def _layer1_cea_ok(cea_cache: Any) -> bool:
+    try:
+        from engine.pipeline.cea_cache import CEACache
+    except Exception:  # pragma: no cover
+        return False
+    return isinstance(cea_cache, CEACache)
+
+
+def _layer1_ideal_isp_s(cea_cache: Any, MR: float, Pc_pa: float, Pa: float, eps: float) -> float:
+    """Ideal ambient Isp from the CEA table [s]: c* (Cf_vac - eps Pa/Pc) / g0.
+
+    Shifting equilibrium, the same table the thrust model integrates. NaN when unavailable.
+    """
+    if not _layer1_cea_ok(cea_cache):
+        return float("nan")
+    try:
+        MR, Pc_pa, Pa, eps = float(MR), float(Pc_pa), float(Pa), float(eps)
+        if not (MR > 0 and Pc_pa > 0 and Pa >= 0 and eps > 1.0):
+            return float("nan")
+        out = cea_cache.eval(MR, Pc_pa, Pa, eps)
+        cf = float(out["Cf_vac"]) - eps * Pa / Pc_pa
+        isp = float(out["cstar_ideal"]) * cf / _G0
+    except Exception:
+        return float("nan")
+    return isp if np.isfinite(isp) and isp > 0 else float("nan")
+
+
+def _layer1_isp_merit_s(result: Any, constants: dict, cea_cache: Any = None) -> float:
+    """Delivered Isp with the requirement-pinned operating point held at its requirement [s].
+
+    O/F, and Pc when a target is set, are specifications with their own deadbands; the figure
+    of merit must not buy Isp by moving them. Ideal Isp is re-evaluated with O/F clamped to its
+    deadband and Pc to its aim band, and the delivered efficiency is kept::
+
+        Isp_merit = Isp * Isp_ideal(Pc', O/F') / Isp_ideal(Pc, O/F)
+
+    Inside both bands this is the delivered Isp exactly. Without a CEA table it is the
+    delivered Isp.
+    """
+    if not isinstance(result, dict):
+        return float("nan")
+    try:
+        isp = float(result.get("Isp", np.nan))
+        mr = float(result.get("MR", np.nan))
+        pc = float(result.get("Pc", np.nan))
+    except (TypeError, ValueError):
+        return float("nan")
+    if not (np.isfinite(isp) and isp > 0):
+        return float("nan")
+    of_t = float(constants.get("optimal_of", 0.0) or 0.0)
+    tol = max(0.0, float(constants.get("layer1_of_deadband_rel", 0.0) or 0.0))
+    mr_h = float(np.clip(mr, of_t * (1.0 - tol), of_t * (1.0 + tol))) if of_t > 0 else mr
+    pc_t = constants.get("layer1_target_Pc_pa")
+    pc_h = (float(np.clip(pc, (1.0 - _LAYER1_PC_AIM_REL) * float(pc_t),
+                          (1.0 + _LAYER1_PC_AIM_REL) * float(pc_t)))
+            if pc_t and float(pc_t) > 0 else pc)
+    if (mr_h == mr and pc_h == pc) or not (np.isfinite(mr) and np.isfinite(pc)):
+        return isp
+    try:
+        eps = float(result.get("eps", np.nan))
+    except (TypeError, ValueError):
+        eps = float("nan")
+    Pa = float(constants.get("P_ambient", 101325.0))
+    num = _layer1_ideal_isp_s(cea_cache, mr_h, pc_h, Pa, eps)
+    den = _layer1_ideal_isp_s(cea_cache, mr, pc, Pa, eps)
+    if not (np.isfinite(num) and np.isfinite(den) and den > 0):
+        return isp
+    return float(isp * num / den)
+
+
+def _layer1_isp_term(isp_merit_s: float, isp_ref_s: float) -> float:
+    """Propellant this engine needs beyond an ideal one, as a fraction: Isp_ref/Isp - 1.
+
+    At fixed total impulse I = F t_b the propellant is I/(g0 Isp) (Sutton & Biblarz ch. 2), so
+    this equals (m_prop - m_prop_ideal)/m_prop_ideal: linear in the propellant the delivered Isp
+    costs, the same currency as the chamber-mass term. 0 when either Isp is unavailable.
+    """
+    try:
+        a, r = float(isp_merit_s), float(isp_ref_s)
+    except (TypeError, ValueError):
+        return 0.0
+    if not (np.isfinite(a) and np.isfinite(r) and a > 0 and r > 0):
+        return 0.0
+    return float(r / a - 1.0)
+
+
+def _layer1_isp_reference(
+    cea_cache: Any, MR: float, Pc_pa: float, Pa: float, eps_lo: float, eps_hi: float,
+) -> Tuple[float, float]:
+    """(Isp_ref [s], eps_ref): ideal ambient Isp at the requirement point, expanded to Pe = Pa.
+
+    The normaliser of the performance term -- an ideal engine at the target O/F and reference
+    Pc, with the expansion ratio where the table's own exit pressure is ambient (the maximum of
+    Cf_vac - eps Pa/Pc), clamped to the searchable eps range.
+    """
+    if not _layer1_cea_ok(cea_cache) or not (eps_hi > eps_lo > 1.0):
+        return float("nan"), float("nan")
+    e = _layer1_eps_for_exit_pressure_cea(cea_cache, MR, Pc_pa, Pa, 0.5 * (eps_lo + eps_hi))
+    e = float(np.clip(e if e is not None else eps_lo, eps_lo, eps_hi))
+    isp = _layer1_ideal_isp_s(cea_cache, MR, Pc_pa, Pa, e)
+    return (isp, e) if np.isfinite(isp) else (float("nan"), float("nan"))
+
+
+def _layer1_merit_weights(
+    requirements: dict, cea_cache: Any, optimal_of: float, Pc_ref_pa: float, Pa: float,
+    eps_range: Tuple[float, float], target_thrust: float, burn_time_s: float,
+    W_MASS_config: float, mass_ref_kg: float,
+) -> Dict[str, float]:
+    """Weights of the figure of merit: {W_ISP, W_MASS, Isp_ref_s, eps_ref, m_prop_ref_kg}.
+
+    ``layer1_W_ISP`` defaults to 1000, so the isp penalty reads in tenths of a percent of an
+    ideal engine's propellant. An unset ``layer1_W_MASS`` prices chamber mass at the same rate
+    per kg as that propellant, (W_ISP / m_prop_ref) = 2 W_MASS / m_ref at the reference mass --
+    the fixed-total-impulse exchange. No CEA table: both terms keep their configured values
+    and the Isp term is off.
+    """
+    W_ISP = _requirement_float(requirements, "layer1_W_ISP", 1000.0)
+    isp_ref, eps_ref = _layer1_isp_reference(
+        cea_cache, optimal_of, Pc_ref_pa, Pa, float(eps_range[0]), float(eps_range[1]))
+    m_ref = (float(target_thrust) * float(burn_time_s) / (_G0 * isp_ref)
+             if (burn_time_s > 0 and np.isfinite(isp_ref)) else float("nan"))
+    if not np.isfinite(isp_ref):
+        W_ISP = 0.0
+    W_MASS = float(W_MASS_config)
+    if (requirements.get("layer1_W_MASS") is None and W_ISP > 0
+            and np.isfinite(m_ref) and m_ref > 0 and mass_ref_kg > 0):
+        W_MASS = W_ISP * float(mass_ref_kg) / (2.0 * m_ref)
+    return {"W_ISP": float(W_ISP), "W_MASS": float(W_MASS), "Isp_ref_s": float(isp_ref),
+            "eps_ref": float(eps_ref), "m_prop_ref_kg": float(m_ref)}
+
+
+def _layer1_eps_for_exit_pressure_cea(
+    cea_cache: Any, MR: float, Pc_pa: float, Pa: float, eps_guess: Optional[float] = None,
+) -> Optional[float]:
+    """Expansion ratio at which the CEA table's own exit pressure equals ``Pa``.
+
+    For an isentropic (shifting) expansion dCf_vac/deps = Pe/Pc, so the secant slope of the
+    table's Cf_vac between eps nodes is Pe/Pc at the interval midpoint. Interpolating
+    ln(Pe/Pc) in ln(eps) between midpoints and solving Pe = Pa inverts the table the thrust
+    model integrates -- not an isentrope at the chamber gamma. None when the table cannot say
+    (2-D table, or Pa outside its eps range).
+    """
+    if not _layer1_cea_ok(cea_cache) or not getattr(cea_cache, "use_3d", False):
+        return None
+    grid = getattr(cea_cache, "eps_grid", None)
+    try:
+        MR, Pc_pa, Pa = float(MR), float(Pc_pa), float(Pa)
+    except (TypeError, ValueError):
+        return None
+    if grid is None or len(grid) < 3 or not (MR > 0 and Pc_pa > Pa > 0):
+        return None
+    grid = np.asarray(grid, dtype=float)
+    target = np.log(Pa / Pc_pa)
+    # Local window around the guess: six nodes are enough and keep the call cheap.
+    k0 = int(np.searchsorted(grid, float(eps_guess))) if (
+        eps_guess is not None and np.isfinite(eps_guess)) else len(grid) // 2
+    lo_i, hi_i = max(0, k0 - 3), min(len(grid), k0 + 3)
+    for _ in range(len(grid)):
+        nodes = grid[lo_i:hi_i]
+        try:
+            cf = np.array([cea_cache.eval_cf_vac(MR, Pc_pa, e) for e in nodes], dtype=float)
+        except Exception:
+            return None
+        slope = np.diff(cf) / np.diff(nodes)           # Pe/Pc at the midpoints
+        if not np.all(np.isfinite(slope)) or np.any(slope <= 0):
+            return None
+        mids = np.sqrt(nodes[:-1] * nodes[1:])
+        y = np.log(slope)                               # decreasing in eps
+        inside = y[0] >= target >= y[-1]
+        # Past the outer midpoints but inside the table: extend the end segment to the node.
+        edge = (target > y[0] and lo_i == 0) or (target < y[-1] and hi_i == len(grid))
+        if inside or edge:
+            j = int(np.searchsorted(-y, -target))
+            j = min(max(j, 1), len(y) - 1)
+            t = (target - y[j - 1]) / (y[j] - y[j - 1])
+            e = float(np.exp(np.log(mids[j - 1]) + t * (np.log(mids[j]) - np.log(mids[j - 1]))))
+            return e if grid[0] <= e <= grid[-1] else None
+        if target > y[0]:
+            lo_i = max(0, lo_i - 3)
+        else:
+            hi_i = min(len(grid), hi_i + 3)
+    return None
 
 
 def _layer1_exit_pressure_sq_term(
@@ -1461,6 +1765,17 @@ def _tank_pressure_equal_squared(
     return float((excess / s) ** 2 + inband)
 
 
+def _face_halves(*, r_in: float, d_in: float, th_in: float, r_out: float, d_out: float,
+                 th_out: float, face_contoured: bool, exit_land: float) -> Tuple[float, float]:
+    """How far the ring pair reaches in from the inner pitch circle and out from the outer one on
+    the face datum: the elliptical exit traces on a flat face, the groove edges on a contoured one
+    (engine.core.injectors.layout.ring_face_reach -- the drawing's own rule)."""
+    reach_in, reach_out = ring_face_reach(
+        contoured=bool(face_contoured), r_in=r_in, d_in=float(d_in), th_in=float(th_in),
+        r_out=r_out, d_out=float(d_out), th_out=float(th_out), exit_land=float(exit_land))
+    return r_in - reach_in, reach_out - r_out
+
+
 def _impinging_ring_geometry_squared(
     *,
     n_elements: float,
@@ -1471,14 +1786,16 @@ def _impinging_ring_geometry_squared(
     D_chamber_inner_m: float,
     angle_O_deg: float = float("nan"),
     angle_F_deg: float = float("nan"),
-    Ld_min: float = 3.0,
-    Ld_max: float = 10.0,
+    Ld_min: float = 0.0,
+    Ld_max: float = 0.0,
     ring_order_fuel_outboard: bool = True,
     center_clear_dia_m: float = 0.0,
     min_web_m: float = 0.0,
     wall_clearance_m: float = 0.0,
     spray_radius_frac: float = 0.0,
     spray_radius_tol: float = 0.08,
+    face_contoured: bool = False,
+    exit_land: float = EXIT_LAND_DEFAULT,
 ) -> float:
     """Doublet ring geometry, computed straight from the DESIGN VARIABLES.
 
@@ -1495,8 +1812,10 @@ def _impinging_ring_geometry_squared(
     That is a face-eroding non-injector, and it was wrong.
 
     The real constraint is on the impingement DISTANCE, not on the ring separation itself.
-    Published practice for unlike impinging elements puts L_imp at 5-7 orifice diameters (up to
-    ~10 when geometry forces it), with ~60 deg included angle. Too short and the jets collide on
+    Published practice for unlike impinging elements puts L_imp at roughly 3-7 orifice diameters
+    (5-7 as SP-8089 is usually quoted), with ~60 deg included angle. The band itself comes
+    from ``engine.core.injectors.layout.impingement_ld_band``; the defaults here (0, 0) leave
+    the standoff term off for a caller that passes no band. Too short and the jets collide on
     the face; too long and the free jets wander before they meet, so the pair stops mixing.
 
     This exists because ``_impinging_geometry_fit_squared`` reads its inputs out of the physics
@@ -1585,12 +1904,21 @@ def _impinging_ring_geometry_squared(
         if _half_major:
             _inner_tag = "O" if dp["O"] <= dp["F"] else "F"
             _outer_tag = "F" if _inner_tag == "O" else "O"
+            if face_contoured and len(_half_major) == 2 and np.isfinite(tO) and np.isfinite(tF):
+                # Contoured face: the ring pair ends at the groove edges, not the hole traces.
+                _dd = {"O": float(d_jet_O_m), "F": float(d_jet_F_m)}
+                _tt = {"O": tO, "F": tF}
+                _half_major[_inner_tag], _half_major[_outer_tag] = _face_halves(
+                    r_in=0.5 * dp[_inner_tag], d_in=_dd[_inner_tag], th_in=_tt[_inner_tag],
+                    r_out=0.5 * dp[_outer_tag], d_out=_dd[_outer_tag], th_out=_tt[_outer_tag],
+                    face_contoured=True, exit_land=exit_land)
             _cc = float(center_clear_dia_m)
             if np.isfinite(_cc) and _cc > 0 and _inner_tag in _half_major:
                 inner_edge = 0.5 * dp[_inner_tag] - _half_major[_inner_tag]
                 term += max(0.0, (0.5 * _cc - inner_edge) / bore) ** 2
             _wc = float(wall_clearance_m)
-            if np.isfinite(_wc) and _wc >= 0 and _outer_tag in _half_major:
+            _wc = max(0.0, _wc) if np.isfinite(_wc) else 0.0
+            if _outer_tag in _half_major:
                 outer_edge = 0.5 * dp[_outer_tag] + _half_major[_outer_tag]
                 term += max(0.0, (outer_edge + _wc - 0.5 * bore) / bore) ** 2
         d_avg = 0.5 * (float(d_jet_O_m) + float(d_jet_F_m))
@@ -1689,6 +2017,176 @@ def _impinging_geometry_fit_squared(
     return float(term)
 
 
+def _impinging_free_jet_ld(
+    *, n_elements: float, spacing_O_m: float, spacing_F_m: float,
+    d_jet_O_m: float, d_jet_F_m: float, angle_O_deg: float, angle_F_deg: float,
+) -> float:
+    """Longest free jet to the impingement point, in that stream's own orifice diameters.
+
+    SP-8089 criterion 3.1.1.1.4 measures the impingement distance ALONG each jet:
+    L_k / d_k = L_imp,axial / (d_k cos theta_k). Layer 1's standoff target is axial over the
+    mean diameter, so the same target means a longer free jet at steep angles and for the
+    smaller hole. NaN when the geometry is degenerate.
+    """
+    try:
+        n = float(n_elements)
+        dr = 0.5 * abs(n * (float(spacing_F_m) - float(spacing_O_m)) / np.pi)
+        tO, tF = np.deg2rad(float(angle_O_deg)), np.deg2rad(float(angle_F_deg))
+        dO, dF = float(d_jet_O_m), float(d_jet_F_m)
+    except (TypeError, ValueError):
+        return float("nan")
+    tan_sum = float(np.tan(tO) + np.tan(tF))
+    if not (np.isfinite(dr) and tan_sum > 1e-9 and dO > 0 and dF > 0):
+        return float("nan")
+    L_ax = dr / tan_sum
+    return float(max(L_ax / (dO * max(1e-6, np.cos(tO))), L_ax / (dF * max(1e-6, np.cos(tF)))))
+
+
+def _impinging_free_jet_violation(**kw) -> float:
+    """Squared relative excess of the longest free jet over SP-8089's 7 d (0 inside)."""
+    ld = _impinging_free_jet_ld(**kw)
+    if not np.isfinite(ld):
+        return 0.0
+    return float(max(0.0, ld / FREE_JET_MAX_D - 1.0) ** 2)
+
+
+def _layer1_stability_gate(
+    state: str, score: float, chug: float, acoustic: float, feed: float,
+    stability_results: Any, requirements: dict, min_stability: float,
+) -> Tuple[bool, List[str]]:
+    """Final stability sign-off: (passed, reasons).
+
+    ``require_stable_state`` means 'stable', not 'stable or marginal'. Margins are checked at
+    face value -- a hidden 5 % let a chug gate margin of 0.9975 (Nyquist gain margin 0.998, an
+    unstable loop) pass -- and an unknown chug gain margin is a failure, not a pass.
+    """
+    handicap = float(requirements.get("stability_margin_handicap", 0.0) or 0.0)
+    eff_score = float(requirements.get("min_stability_score", 0.75)) * max(0.0, 1.0 - handicap)
+    eff_margin = float(min_stability) * max(0.0, 1.0 - handicap)
+    parts: List[str] = []
+    if bool(requirements.get("require_stable_state", True)):
+        if state != "stable":
+            parts.append(f"state == 'stable' (got '{state}')")
+    elif state == "unstable":
+        parts.append("state!='unstable'")
+    chug_sr = (stability_results.get("chugging") or {}) if isinstance(stability_results, dict) else {}
+    if "chug_gain_margin" in chug_sr:
+        try:
+            gm_known = bool(np.isfinite(float(chug_sr["chug_gain_margin"])))
+        except (TypeError, ValueError):
+            gm_known = False
+        if not gm_known:
+            parts.append("chug gain margin unknown")
+    if score < eff_score:
+        parts.append(f"score>={eff_score:.2f} (got {score:.2f})")
+    for name, m in (("chugging", chug), ("acoustic", acoustic), ("feed", feed)):
+        if not (m >= eff_margin):
+            parts.append(f"{name}_margin>={eff_margin:.3f} (got {m:.4f})")
+    return (not parts), parts
+
+
+def _layer1_momentum_gate(R: float, R_min: Optional[float], R_max: Optional[float],
+                          slack: float = 1.0) -> Tuple[bool, Tuple[Optional[float], Optional[float]]]:
+    """Momentum-ratio sign-off on the configured band (``slack`` > 1 widens it about 1)."""
+    if R_min is None or R_max is None or not (np.isfinite(R) and R > 0):
+        return True, (R_min, R_max)
+    lo = max(0.0, 1.0 - (1.0 - float(R_min)) * float(slack))
+    hi = 1.0 + (float(R_max) - 1.0) * float(slack)
+    return bool(lo <= R <= hi), (lo, hi)
+
+
+def _layer1_declared_limit_gates(
+    config: Any, requirements: dict, constants: dict,
+) -> Dict[str, Tuple[bool, str]]:
+    """Every declared geometric limit, checked on the emitted design at face value.
+
+    {gate: (passed, reason)}. Only limits the configuration declares are checked (plus the
+    SP-8089 free-jet length and the bore, which always apply to a doublet).
+    """
+    gates: Dict[str, Tuple[bool, str]] = {}
+    cg = getattr(config, "chamber_geometry", None)
+    if cg is None:
+        return gates
+    try:
+        At = float(cg.A_throat or 0.0)
+        D = float(cg.chamber_diameter or 0.0)
+        Lstar = float(cg.Lstar or 0.0)
+        eps = float(cg.expansion_ratio or 0.0)
+    except (TypeError, ValueError):
+        return gates
+    if not (At > 0 and D > 0 and Lstar > 0):
+        return gates
+    A_c = np.pi * D * D / 4.0
+    lens = _layer1_chamber_lengths(At, Lstar, D, _layer1_contraction_theta(constants))
+    inj = getattr(config, "injector", None)
+    geom = getattr(inj, "geometry", None)
+    n = 0
+    if getattr(inj, "type", None) == "impinging" and geom is not None:
+        n = int(getattr(geom.oxidizer, "n_elements", 0) or 0)
+
+    max_pitch = _req_lookup(requirements, "layer1_max_element_pitch_m")
+    if max_pitch is not None and float(max_pitch) > 0 and n > 0:
+        pitch = float(np.sqrt(A_c / n))
+        gates["element_pitch"] = (
+            pitch <= float(max_pitch),
+            f"Element pitch {pitch * 1e3:.2f} mm > limit {float(max_pitch) * 1e3:.2f} mm "
+            f"({n} elements in a {D * 1e3:.1f} mm bore)")
+    min_ld = _req_lookup(requirements, "layer1_min_Lcyl_over_D")
+    if min_ld is not None and float(min_ld) > 0:
+        r = lens["length_cylindrical"] / D
+        gates["lcyl_over_d"] = (r >= float(min_ld),
+                                f"L_cyl/D {r:.3f} < minimum {float(min_ld):.3f}")
+    max_len = _req_lookup(requirements, "max_engine_length")
+    if max_len is not None and float(max_len) > 0:
+        L_eng = lens["face_to_throat"] + _layer1_bell_length_m(At, eps)
+        gates["engine_length"] = (L_eng <= float(max_len),
+                                  f"Engine length {L_eng * 1e3:.1f} mm (face to exit) > "
+                                  f"max_engine_length {float(max_len) * 1e3:.1f} mm")
+    if n > 0:
+        g = dict(n_elements=n, spacing_O_m=float(geom.oxidizer.spacing),
+                 spacing_F_m=float(geom.fuel.spacing), d_jet_O_m=float(geom.oxidizer.d_jet),
+                 d_jet_F_m=float(geom.fuel.d_jet), angle_O_deg=float(geom.oxidizer.impingement_angle),
+                 angle_F_deg=float(geom.fuel.impingement_angle))
+        fj = _impinging_free_jet_ld(**g)
+        if np.isfinite(fj):
+            gates["free_jet"] = (fj <= FREE_JET_MAX_D,
+                                 f"Free jet {fj:.2f} d to impingement > SP-8089's {FREE_JET_MAX_D:g} d")
+        c = constants
+        face = _impinging_face_infeasibility_terms(
+            **g, D_chamber_inner_m=D,
+            center_clear_dia_m=float(c.get("layer1_injector_center_clear_dia_m", 0.0) or 0.0),
+            min_web_m=float(c.get("layer1_injector_min_web_m", 0.0) or 0.0),
+            wall_clearance_m=float(c.get("layer1_injector_wall_clearance_m", 0.0) or 0.0),
+            spray_radius_frac=float(c.get("layer1_injector_spray_radius_frac", 0.0) or 0.0),
+            spray_radius_tol=float(c.get("layer1_injector_spray_radius_tol", 0.08) or 0.08),
+            min_face_incidence_deg=float(c.get("layer1_injector_min_face_incidence_deg", 0.0) or 0.0),
+            face_contoured=bool(c.get("layer1_injector_face_contoured", False)),
+            exit_land=float(c.get("layer1_injector_exit_land", EXIT_LAND_DEFAULT)))
+        gates["injector_face"] = (face <= 0.0, f"Injector face limits violated (score {face:.3g})")
+        back = _impinging_back_face_terms(
+            **g, D_chamber_inner_m=D,
+            plate_thickness_m=float(c.get("layer1_injector_plate_thickness_m", 0.0) or 0.0),
+            counterbore_dia_m=float(c.get("layer1_injector_counterbore_dia_m", 0.0) or 0.0),
+            land_ld_O=float(c.get("layer1_injector_land_ld_O", 4.0) or 4.0),
+            land_ld_F=float(c.get("layer1_injector_land_ld_F", 4.0) or 4.0),
+            min_back_web_m=float(c.get("layer1_injector_min_back_web_m", 0.0) or 0.0),
+            back_keepout_dia_m=float(c.get("layer1_injector_back_keepout_dia_m", 0.0) or 0.0),
+            back_keepout_wall_m=float(c.get("layer1_injector_back_keepout_wall_m", 0.0) or 0.0),
+            face_contoured=bool(c.get("layer1_injector_face_contoured", False)),
+            exit_land=float(c.get("layer1_injector_exit_land", EXIT_LAND_DEFAULT)),
+            back_channels=bool(c.get("layer1_injector_back_channels", False)),
+            passage_ld_O=float(c.get("layer1_injector_land_ld_O", 4.0) or 4.0),
+            passage_ld_F=float(c.get("layer1_injector_land_ld_F", 4.0) or 4.0),
+            channel_width_m=float(c.get("layer1_injector_channel_width_m", 0.0) or 0.0),
+            channel_floor=str(c.get("layer1_injector_channel_floor", "flat")),
+            r_plate_m=float(c.get("layer1_injector_r_plate_m", 0.0) or 0.0),
+            r_port_m=float(c.get("layer1_injector_r_port_m", 0.0) or 0.0),
+            liner_thickness_m=float(c.get("layer1_injector_liner_thickness_m", 0.0) or 0.0))
+        gates["injector_back_face"] = (back <= 0.0,
+                                       f"Injector back-face limits violated (score {back:.3g})")
+    return gates
+
+
 def _impinging_face_infeasibility_terms(
     *,
     n_elements: float, spacing_O_m: float, spacing_F_m: float,
@@ -1696,7 +2194,8 @@ def _impinging_face_infeasibility_terms(
     angle_O_deg: float, angle_F_deg: float,
     center_clear_dia_m: float = 0.0, min_web_m: float = 0.0,
     wall_clearance_m: float = 0.0, spray_radius_frac: float = 0.0,
-    spray_radius_tol: float = 0.08,
+    spray_radius_tol: float = 0.08, min_face_incidence_deg: float = 0.0,
+    face_contoured: bool = False, exit_land: float = EXIT_LAND_DEFAULT,
 ) -> float:
     """Face real-estate misses as a GRADED infeasibility, for the parallel worker path.
 
@@ -1715,7 +2214,10 @@ def _impinging_face_infeasibility_terms(
       in the parallel CMA workers, where essentially every candidate is scored.
 
     All terms are relative, one-sided, and exactly zero for a comfortable design, so a config
-    that declares none of these keys contributes nothing.
+    that declares none of these keys contributes nothing -- except the bore itself: an
+    orifice whose elliptical trace crosses the chamber wall is drilled into the liner whether
+    or not a wall land was declared, so that check runs at a clearance of 0 too. The soft
+    term and the serial hard block apply the same rule.
     """
     bore = float(D_chamber_inner_m)
     n = float(n_elements)
@@ -1738,16 +2240,28 @@ def _impinging_face_infeasibility_terms(
     r_out = 0.5 * (dp_F if ox_inner else dp_O)
     d_in, th_in = (d_jet_O_m, angle_O_deg) if ox_inner else (d_jet_F_m, angle_F_deg)
     d_out, th_out = (d_jet_F_m, angle_F_deg) if ox_inner else (d_jet_O_m, angle_O_deg)
+    if face_contoured and np.isfinite(th_in) and np.isfinite(th_out):
+        h_in, h_out = _face_halves(r_in=r_in, d_in=d_in, th_in=th_in, r_out=r_out, d_out=d_out,
+                                   th_out=th_out, face_contoured=True, exit_land=exit_land)
+    else:
+        h_in, h_out = _half_major(d_in, th_in), _half_major(d_out, th_out)
 
     term = 0.0
     cc = float(center_clear_dia_m)
     if np.isfinite(cc) and cc > 0.0:
-        inner_edge = r_in - _half_major(d_in, th_in)
+        inner_edge = r_in - h_in
         term += max(0.0, (0.5 * cc - inner_edge) / bore) ** 2
     wc = float(wall_clearance_m)
-    if np.isfinite(wc) and wc > 0.0:
-        outer_edge = r_out + _half_major(d_out, th_out)
-        term += max(0.0, (outer_edge + wc - 0.5 * bore) / bore) ** 2
+    wc = max(0.0, wc) if np.isfinite(wc) else 0.0
+    outer_edge = r_out + h_out
+    term += max(0.0, (outer_edge + wc - 0.5 * bore) / bore) ** 2
+    # FACE INCIDENCE (90 - theta against the declared floor). The jet-angle search box already
+    # holds this for free variables; a frozen or seeded angle does not pass through that box.
+    inc = float(min_face_incidence_deg)
+    if np.isfinite(inc) and inc > 0.0:
+        for _th in (angle_O_deg, angle_F_deg):
+            if np.isfinite(_th):
+                term += max(0.0, (inc - (90.0 - float(_th))) / 90.0) ** 2
     web = float(min_web_m)
     if np.isfinite(web) and web > 0.0:
         for _sp, _dj in ((spacing_O_m, d_jet_O_m), (spacing_F_m, d_jet_F_m)):
@@ -1764,6 +2278,153 @@ def _impinging_face_infeasibility_terms(
             tol = float(spray_radius_tol) if (
                 np.isfinite(spray_radius_tol) and spray_radius_tol > 0) else 0.08
             term += max(0.0, abs(frac - srf) - tol) ** 2
+    return float(term)
+
+
+def _impinging_channel_terms(
+    *,
+    n_elements: float, spacing_O_m: float, spacing_F_m: float,
+    d_jet_O_m: float, d_jet_F_m: float, D_chamber_inner_m: float,
+    angle_O_deg: float, angle_F_deg: float, plate_thickness_m: float,
+    face_contoured: bool, exit_land: float, passage_ld_O: float, passage_ld_F: float,
+    channel_width_m: float, channel_floor: str, r_plate_m: float, r_port_m: float,
+    min_land_m: float = 0.0, back_keepout_dia_m: float = 0.0, back_keepout_wall_m: float = 0.0,
+) -> float:
+    """Channel-back misses as a graded infeasibility. Active whenever the back is channels.
+
+    The same geometry the drawing uses (``engine.core.injectors.layout.channel_for_ring``):
+    each passage runs its L/d from the exit to its channel floor. Infeasible when a passage would
+    run out through the back face before its length, when the two channels overlap (or leave less
+    than ``min_land_m`` between them), when the inner channel reaches the centre port or the
+    igniter's thick centre, or when the outer channel runs off the plug.
+    """
+    import math as _m
+    from engine.core.injectors.layout import exit_recess as _exit_recess
+    bore = float(D_chamber_inner_m)
+    n = int(round(float(n_elements))) if np.isfinite(n_elements) else 0
+    if not (np.isfinite(bore) and bore > 0 and n >= 1):
+        return 0.0
+    r_O = n * float(spacing_O_m) / np.pi / 2.0
+    r_F = n * float(spacing_F_m) / np.pi / 2.0
+    ox_inner = r_O <= r_F
+    thO, thF = float(angle_O_deg), float(angle_F_deg)
+    if not (np.isfinite(thO) and np.isfinite(thF)):
+        return 0.0
+    dO, dF = float(d_jet_O_m), float(d_jet_F_m)
+    if face_contoured:
+        d_in, th_in, d_out, th_out = (dO, thO, dF, thF) if ox_inner else (dF, thF, dO, thO)
+        z_E = -_exit_recess(d_in=d_in, th_in=th_in, d_out=d_out, th_out=th_out,
+                            exit_land=float(exit_land))
+    else:
+        z_E = 0.0
+    w = float(channel_width_m) if np.isfinite(channel_width_m) and channel_width_m > 0 else None
+    t = float(plate_thickness_m)
+    chO = channel_for_ring(r_exit=r_O, z_exit=z_E, d=dO, theta_deg=thO, is_inner=ox_inner,
+                           plate_thickness=t, passage_ld=float(passage_ld_O), width=w,
+                           floor=channel_floor, exit_land=float(exit_land))
+    chF = channel_for_ring(r_exit=r_F, z_exit=z_E, d=dF, theta_deg=thF, is_inner=not ox_inner,
+                           plate_thickness=t, passage_ld=float(passage_ld_F), width=w,
+                           floor=channel_floor, exit_land=float(exit_land))
+    term = 0.0
+    for ch in (chO, chF):
+        if ch["pierces_back"]:
+            term += ((ch["length_wanted"] - ch["length"]) / bore) ** 2
+    ch_in, ch_out = (chO, chF) if ox_inner else (chF, chO)
+    r_plate = float(r_plate_m) if np.isfinite(r_plate_m) and r_plate_m > 0 else 0.5 * bore
+    lands = channel_lands(ch_in=ch_in, ch_out=ch_out, r_centre_hole=float(r_port_m or 0.0),
+                          r_plate=r_plate)
+    need = max(0.0, float(min_land_m) if _m.isfinite(min_land_m) else 0.0)
+    term += max(0.0, (need - lands["between"]) / bore) ** 2
+    term += max(0.0, -lands["inner"] / bore) ** 2
+    term += max(0.0, -lands["outer"] / bore) ** 2
+    keep = float(back_keepout_dia_m) if np.isfinite(back_keepout_dia_m) else 0.0
+    if keep > 0.0:
+        wall = float(back_keepout_wall_m) if np.isfinite(back_keepout_wall_m) else 0.0
+        term += max(0.0, (0.5 * keep + wall - ch_in["r_lo"]) / bore) ** 2
+    return float(term)
+
+
+def _impinging_back_face_terms(
+    *,
+    n_elements: float, spacing_O_m: float, spacing_F_m: float,
+    d_jet_O_m: float, d_jet_F_m: float, D_chamber_inner_m: float,
+    angle_O_deg: float, angle_F_deg: float,
+    plate_thickness_m: float = 0.0, counterbore_dia_m: float = 0.0,
+    land_ld_O: float = 4.0, land_ld_F: float = 4.0,
+    min_back_web_m: float = 0.0,
+    back_keepout_dia_m: float = 0.0, back_keepout_wall_m: float = 0.0,
+    face_contoured: bool = False, exit_land: float = EXIT_LAND_DEFAULT,
+    back_channels: bool = False, passage_ld_O: float = 4.0, passage_ld_F: float = 4.0,
+    channel_width_m: float = 0.0, channel_floor: str = "flat",
+    r_plate_m: float = 0.0, r_port_m: float = 0.0, liner_thickness_m: float = 0.0,
+) -> float:
+    """Back-face (manifold side) misses as a graded infeasibility.
+
+    Always on, when a plate thickness is known: passages that overlap at the back face, cross the
+    axis, or open into the centre port -- none of those can be built. The declared limits
+    (``min_back_web_m``, the igniter's back keep-out) add to that.
+
+    Each passage walks ``t tan(theta)`` radially through the plate, the two rings walking
+    APART, so a face that fits can leave entries that crowd each other (inner ring) or leave
+    no room for the wall between the two manifolds. The geometry is
+    ``engine.core.injectors.layout.passage_back_entry`` -- the same call the drawing makes.
+    Relative to the bore and squared, like the face terms, so CMA has a gradient home.
+    """
+    t = float(plate_thickness_m)
+    if back_channels and not (np.isfinite(t) and t > 0.0):
+        t = PLATE_THICKNESS_DEFAULT            # the layout's own fallback, so both agree
+    web_req = float(min_back_web_m) if np.isfinite(min_back_web_m) else 0.0
+    land_req = 0.0          # the LOX and fuel entries may not overlap; the seal land is the user's
+    keep = float(back_keepout_dia_m) if np.isfinite(back_keepout_dia_m) else 0.0
+    # The plug fills the sleeve bore: bore + liner, from THIS candidate's bore.
+    liner = float(liner_thickness_m) if np.isfinite(liner_thickness_m) else 0.0
+    if np.isfinite(D_chamber_inner_m) and D_chamber_inner_m > 0:
+        r_plate_m = 0.5 * float(D_chamber_inner_m) + liner
+    if back_channels and np.isfinite(t) and t > 0.0:
+        return _impinging_channel_terms(
+            n_elements=n_elements, spacing_O_m=spacing_O_m, spacing_F_m=spacing_F_m,
+            d_jet_O_m=d_jet_O_m, d_jet_F_m=d_jet_F_m, D_chamber_inner_m=D_chamber_inner_m,
+            angle_O_deg=angle_O_deg, angle_F_deg=angle_F_deg, plate_thickness_m=t,
+            face_contoured=face_contoured, exit_land=exit_land,
+            passage_ld_O=passage_ld_O, passage_ld_F=passage_ld_F,
+            channel_width_m=channel_width_m, channel_floor=channel_floor,
+            r_plate_m=r_plate_m, r_port_m=r_port_m, min_land_m=land_req,
+            back_keepout_dia_m=keep, back_keepout_wall_m=back_keepout_wall_m)
+    if not (np.isfinite(t) and t > 0.0):
+        return 0.0
+    bore = float(D_chamber_inner_m)
+    n = int(round(float(n_elements))) if np.isfinite(n_elements) else 0
+    thO, thF = float(angle_O_deg), float(angle_F_deg)
+    if not (np.isfinite(bore) and bore > 0 and n >= 1 and np.isfinite(thO) and np.isfinite(thF)):
+        return 0.0
+    r_O = n * float(spacing_O_m) / np.pi / 2.0
+    r_F = n * float(spacing_F_m) / np.pi / 2.0
+    ox_inner = r_O <= r_F
+    dE = 0.0
+    if face_contoured:
+        from engine.core.injectors.layout import exit_recess as _exit_recess
+        d_in, th_in, d_out, th_out = ((float(d_jet_O_m), thO, float(d_jet_F_m), thF) if ox_inner
+                                      else (float(d_jet_F_m), thF, float(d_jet_O_m), thO))
+        dE = _exit_recess(d_in=d_in, th_in=th_in, d_out=d_out, th_out=th_out, exit_land=float(exit_land))
+    cb = float(counterbore_dia_m) if np.isfinite(counterbore_dia_m) else 0.0
+    eO = passage_back_entry(r_face=r_O, d=float(d_jet_O_m), theta_deg=thO,
+                            plate_thickness=t, counterbore_dia=cb, land_ld=float(land_ld_O),
+                            is_inner=ox_inner, n=n, exit_depth=dE)
+    eF = passage_back_entry(r_face=r_F, d=float(d_jet_F_m), theta_deg=thF,
+                            plate_thickness=t, counterbore_dia=cb, land_ld=float(land_ld_F),
+                            is_inner=not ox_inner, n=n, exit_depth=dE)
+    term = 0.0
+    for e in (eO, eF):                            # never buildable: entries that overlap
+        term += max(0.0, (max(web_req, 0.0) - e.web) / bore) ** 2
+    inner, outer = (eO, eF) if ox_inner else (eF, eO)
+    # ... or cross, or reach the axis / the centre port
+    term += max(0.0, (max(land_req, 0.0) - (outer.inner_edge - inner.outer_edge)) / bore) ** 2
+    r_port = float(r_port_m) if np.isfinite(r_port_m) else 0.0
+    term += max(0.0, (r_port - inner.inner_edge) / bore) ** 2
+    if keep > 0.0:
+        # The igniter's hub / socket on the back: the inner ring's entries must clear it.
+        wall = float(back_keepout_wall_m) if np.isfinite(back_keepout_wall_m) else 0.0
+        term += max(0.0, (0.5 * keep + wall - inner.inner_edge) / bore) ** 2
     return float(term)
 
 
@@ -1786,6 +2447,23 @@ def _impinging_hard_geometry_blocks_eval(
     min_face_incidence_deg: float = 0.0,
     spray_radius_frac: float = 0.0,
     spray_radius_tol: float = 0.08,
+    plate_thickness_m: float = 0.0,
+    counterbore_dia_m: float = 0.0,
+    land_ld_O: float = 4.0,
+    land_ld_F: float = 4.0,
+    min_back_web_m: float = 0.0,
+    back_keepout_dia_m: float = 0.0,
+    back_keepout_wall_m: float = 0.0,
+    face_contoured: bool = False,
+    exit_land: float = EXIT_LAND_DEFAULT,
+    back_channels: bool = False,
+    passage_ld_O: float = 4.0,
+    passage_ld_F: float = 4.0,
+    channel_width_m: float = 0.0,
+    channel_floor: str = "flat",
+    r_plate_m: float = 0.0,
+    r_port_m: float = 0.0,
+    liner_thickness_m: float = 0.0,
 ) -> bool:
     """True when doublet layout is physically impossible — skip ``evaluate()``.
 
@@ -1816,7 +2494,9 @@ def _impinging_hard_geometry_blocks_eval(
     # 2.7% over the bore scored (0.0268)^2 * W_IMP_GEOM = 1.1 points against an objective
     # of ~2700, so the optimiser bought impossible geometry for nothing and every gate
     # still reported PASS. Measured live: 130.4 mm fuel pitch circle on a 127.0 mm bore.
-    if np.isfinite(n_elements) and n_elements >= 1.0 and D_chamber_inner > 0.0:
+    # (A flat-face rule: on a contoured face the ring pair ends at the groove edges, which the
+    # clearance check below measures; D_pitch + d is not a face extent there.)
+    if np.isfinite(n_elements) and n_elements >= 1.0 and D_chamber_inner > 0.0 and not face_contoured:
         for _sp, _dj in ((sp_O, d_jet_O), (sp_F, d_jet_F)):
             if _sp > 0.0:
                 if (float(n_elements) * _sp / np.pi) + _dj > D_chamber_inner:
@@ -1833,14 +2513,21 @@ def _impinging_hard_geometry_blocks_eval(
                                  else (_dp_F, d_jet_F, angle_F_deg))
         _out_dp, _out_d, _out_th = ((_dp_F, d_jet_F, angle_F_deg) if _dp_O <= _dp_F
                                     else (_dp_O, d_jet_O, angle_O_deg))
+        if face_contoured and np.isfinite(_in_th) and np.isfinite(_out_th):
+            _h_in, _h_out = _face_halves(r_in=0.5 * _in_dp, d_in=_in_d, th_in=_in_th,
+                                         r_out=0.5 * _out_dp, d_out=_out_d, th_out=_out_th,
+                                         face_contoured=True, exit_land=exit_land)
+        else:
+            _h_in, _h_out = _half_major(_in_d, _in_th), _half_major(_out_d, _out_th)
         _cc = float(center_clear_dia_m)
         if np.isfinite(_cc) and _cc > 0.0:
-            if 0.5 * _in_dp - _half_major(_in_d, _in_th) < 0.5 * _cc:
+            if 0.5 * _in_dp - _h_in < 0.5 * _cc:
                 return True
+        # Runs at a declared clearance of 0 too: a trace across the bore is never buildable.
         _wc = float(wall_clearance_m)
-        if np.isfinite(_wc) and _wc > 0.0:
-            if 0.5 * _out_dp + _half_major(_out_d, _out_th) + _wc > 0.5 * D_chamber_inner:
-                return True
+        _wc = max(0.0, _wc) if np.isfinite(_wc) else 0.0
+        if 0.5 * _out_dp + _h_out + _wc > 0.5 * D_chamber_inner:
+            return True
     # SPRAY PLACEMENT, hard for the same reason ring fit is. As a soft term it costs
     # (miss/target)^2 * W_IMP_GEOM, which on a 0.022 miss at W = 1500 is 1.5 points against an
     # objective of ~2690 -- so every seed bought a spray circle outside its own declared band
@@ -1861,6 +2548,21 @@ def _impinging_hard_geometry_blocks_eval(
                 np.isfinite(spray_radius_tol) and spray_radius_tol > 0) else 0.08
             if abs(_frac - float(spray_radius_frac)) > _tol:
                 return True
+    # BACK FACE. Same graded function the worker path scores, used here as a block.
+    if np.isfinite(n_elements) and _impinging_back_face_terms(
+            n_elements=n_elements, spacing_O_m=sp_O, spacing_F_m=sp_F,
+            d_jet_O_m=d_jet_O, d_jet_F_m=d_jet_F, D_chamber_inner_m=D_chamber_inner,
+            angle_O_deg=angle_O_deg, angle_F_deg=angle_F_deg,
+            plate_thickness_m=plate_thickness_m, counterbore_dia_m=counterbore_dia_m,
+            land_ld_O=land_ld_O, land_ld_F=land_ld_F,
+            min_back_web_m=min_back_web_m,
+            back_keepout_dia_m=back_keepout_dia_m,
+            back_keepout_wall_m=back_keepout_wall_m,
+            face_contoured=face_contoured, exit_land=exit_land, back_channels=back_channels,
+            passage_ld_O=passage_ld_O, passage_ld_F=passage_ld_F,
+            channel_width_m=channel_width_m, channel_floor=channel_floor,
+            r_plate_m=r_plate_m, r_port_m=r_port_m, liner_thickness_m=liner_thickness_m) > 0.0:
+        return True
     if D_throat_check > 0.0 and D_chamber_inner > 0.0:
         if D_throat_check > D_chamber_inner * 0.95:
             return True
@@ -2054,36 +2756,12 @@ def _layer1_apply_chamber_geometry_to_config(
     if requirements is None:
         requirements = getattr(config, "design_requirements", None)
     theta_contraction = _layer1_contraction_theta(requirements)
-    # The convergent cone does NOT run to the throat radius -- it runs to where the 1.5*R_t
-    # entrance arc picks up, which for a cone of half-angle theta is the tangency radius
-    #     r_tan = R_t * (1 + 1.5*(1 - cos(theta)))          (1.43934*R_t at theta = 45 deg)
-    # Passing R_throat here made the contraction run LONGER than the generator draws, and
-    # the surplus became extra full-diameter barrel: chambers came out 3.7-10.2% over the
-    # commanded L*. Same failure mode as the old eps^(1/3) exponent bug.
-    nozzle_entrance_radius_est = R_throat * (
-        1.0 + 1.5 * (1.0 - float(np.cos(theta_contraction)))
-    )
-
-    L_cylindrical = chamber_length_calc(
-        chamber_volume=V_chamber,
-        area_throat=A_throat,
-        contraction_ratio=contraction_ratio,
-        theta=theta_contraction,
-    )
-    L_contraction = contraction_length_horizontal_calc(
-        area_chamber=A_chamber,
-        entrance_arc_start_y=nozzle_entrance_radius_est,
-        theta=theta_contraction,
-    )
-    L_chamber = L_cylindrical + L_contraction
-
-    if L_chamber <= 0 or L_cylindrical <= 0 or not np.isfinite(L_chamber):
-        L_chamber = V_chamber / A_chamber if A_chamber > 0 else 0.2
-        L_cylindrical = max(L_chamber * 0.5, 0.05)
-
-    # Positivity guard only. The old clip also capped the chamber at 1.0 m, a size limit no
-    # requirement asked for; engine length is constrained by max_engine_length elsewhere.
-    L_chamber = max(float(L_chamber), 0.005)
+    # The cone runs to the 1.5 R_t entrance-arc tangency, not to R_t; see
+    # _layer1_chamber_lengths, which the objective scores with too.
+    _lens = _layer1_chamber_lengths(A_throat, Lstar, D_chamber_inner, theta_contraction)
+    L_chamber = _lens["length"]
+    L_cylindrical = _lens["length_cylindrical"]
+    L_contraction = _lens["length_contraction"]
 
     if config.chamber_geometry is None:
         cg = ensure_chamber_geometry(config)
@@ -2112,6 +2790,8 @@ def _layer1_apply_chamber_geometry_to_config(
     # no effect: the numbers it changes were computed and then thrown away.
     cg.length_cylindrical = float(L_cylindrical)
     cg.length_contraction = float(L_contraction)
+    if "length_face_to_throat" in getattr(type(cg), "model_fields", {}):
+        cg.length_face_to_throat = float(_lens["face_to_throat"])
     cg.chamber_diameter = D_chamber_inner
     cg.A_exit = A_exit
     cg.exit_diameter = D_exit
@@ -2305,6 +2985,23 @@ def _layer1_eps_for_exit_pressure(Pc_Pa: float, gamma: float, Pe_Pa: float):
     return float(eps)
 
 
+def _layer1_matched_eps(result: Any, Pa: float, cea_cache: Any = None,
+                       eps_guess: Optional[float] = None) -> Optional[float]:
+    """Expansion ratio that expands to ``Pa`` at this result's Pc and O/F.
+
+    The CEA table's own exit pressure (shifting equilibrium, what the thrust model
+    integrates) when a 3-D table is at hand; the chamber-gamma isentrope otherwise, which
+    over-expands (Pe/Pa 0.93 at the 6.5 kN point).
+    """
+    if not isinstance(result, dict):
+        return None
+    eps = _layer1_eps_for_exit_pressure_cea(
+        cea_cache, result.get("MR"), result.get("Pc"), Pa, eps_guess)
+    if eps is not None:
+        return eps
+    return _layer1_eps_for_exit_pressure(result.get("Pc"), result.get("gamma"), Pa)
+
+
 def _layer1_derive_matched_tank_pressure(x: np.ndarray, constants: dict) -> None:
     """Slave the fuel tank pressure to the LOX tank pressure when they must match.
 
@@ -2377,7 +3074,7 @@ def _layer1_derive_fuel_spacing(x: np.ndarray, constants: dict) -> None:
         s_O = float(x[7])
     except (TypeError, ValueError):
         return
-    k = float(constants.get("layer1_impingement_Ld_target", 4.0))
+    k = float(constants.get("layer1_impingement_Ld_target", IMPINGEMENT_LD_TARGET_DEFAULT))
     if not (np.isfinite(d_avg) and d_avg > 0 and np.isfinite(tan_sum) and tan_sum > 1e-9
             and np.isfinite(s_O) and s_O > 0 and k > 0):
         return
@@ -2495,7 +3192,12 @@ def _layer1_rebuild_final_config(
         c["layer1_derive_thrust_tol_rel"] = 1.0e-4
         # Solve on the runner's config (which evaluate() reads), then mirror onto ``config``.
         x_first = x.copy()
-        result = _layer1_solve_derived_geometry(x, runner.config, c, _ev, first)
+        try:
+            from engine.pipeline.cea_cache import CEACache
+            _rb_cea = CEACache(_runner_cfg.combustion.cea)
+        except Exception:
+            _rb_cea = None
+        result = _layer1_solve_derived_geometry(x, runner.config, c, _ev, first, cea_cache=_rb_cea)
         if not isinstance(result, dict):
             return None
         # eps/thrust POLISH. The solve loop updates eps and A_throat from the SAME result and
@@ -2526,8 +3228,8 @@ def _layer1_rebuild_final_config(
         _pol_x0 = x.copy()
         _pol_result0 = result
         for _ in range(6):
-            _eps_now = _layer1_eps_for_exit_pressure(
-                result.get("Pc"), result.get("gamma"), float(c.get("P_ambient", 101325.0)))
+            _eps_now = _layer1_matched_eps(
+                result, float(c.get("P_ambient", 101325.0)), _rb_cea, float(x[2]))
             _moved = False
             if _eps_now is not None:
                 _eps_now = float(np.clip(_eps_now, float(c.get("derive_eps_min", 1.5)),
@@ -2686,7 +3388,8 @@ def _layer1_finalize_derived_geometry(
         # Converge properly here: this runs once, not per candidate.
         c["layer1_derive_max_iters"] = max(6, int(c.get("layer1_derive_max_iters", 2)))
         c["layer1_derive_thrust_tol_rel"] = 1.0e-4
-        _layer1_solve_derived_geometry(x, runner.config, c, _ev, first)
+        _layer1_solve_derived_geometry(x, runner.config, c, _ev, first,
+                                       cea_cache=getattr(runner, "cea_cache", None))
         if abs(float(x[0]) - At) <= 1e-12 and abs(float(x[2]) - eps) <= 1e-12:
             return
         _layer1_apply_chamber_geometry_to_config(
@@ -2720,6 +3423,7 @@ def _layer1_solve_derived_geometry(
     constants: dict,
     evaluate: Callable[[], Optional[dict]],
     result: Optional[dict],
+    cea_cache: Any = None,
 ) -> Optional[dict]:
     """Replace searched ``A_throat`` / ``expansion_ratio`` with solved values.
 
@@ -2804,9 +3508,7 @@ def _layer1_solve_derived_geometry(
         _snap_x = x.copy()
 
         if derive_eps:
-            eps_new = _layer1_eps_for_exit_pressure(
-                result.get("Pc"), result.get("gamma"), Pa
-            )
+            eps_new = _layer1_matched_eps(result, Pa, cea_cache, float(x[2]))
             if eps_new is not None:
                 eps_new = float(np.clip(eps_new, eps_lo, eps_hi))
                 if abs(eps_new - float(x[2])) > 1e-4 * max(1.0, abs(float(x[2]))):
@@ -3434,39 +4136,44 @@ def _infeas_trace(entry: Optional[Dict[str, float]], label: str, value: float) -
         entry[label] = float(value)
 
 
-def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, constants: dict) -> float:
-    """Compute objective value from evaluation result.
+def _compute_objective_value(
+    result: Any,
+    x: np.ndarray,
+    requirements: dict,
+    constants: dict,
+    cea_cache: Any = None,
+    *,
+    eval_error: Optional[str] = None,
+    return_terms: bool = False,
+) -> Any:
+    """The Layer-1 objective; with ``return_terms`` every weighted term and the values behind it.
 
-    Pure function: no state mutation.
-    Extracted from main objective() to ensure same logic in workers.
-    
-    This implements the full lexicographic objective with:
-    - Geometric validation
-    - Injector validation
-    - Stability checks
-    - Lexicographic scalarization
-    
-    Args:
-        result: Evaluation result dict from runner.evaluate()
-        x: Candidate vector (already snapped and bounded)
-        requirements: Requirements dict
-        constants: Constants dict
-    
-    Returns:
-        Objective value (float)
+    The ONE scoring function. The worker pool (``_eval_candidate``) and the inline
+    ``objective()`` closure both call it on the SOLVED vector, so CMA, the block stage,
+    L-BFGS-B and the reported breakdown rank the same surface. It used to exist twice and the
+    two drifted by ~300 points on the same design (chamber length, ΔP centre term, L* keys).
+
+    Structure: infeasibility (BASE_INFEAS + W_INFEAS x residual) dominates; below it the
+    requirement terms (thrust, Pc, O/F with deadbands), the preference bands, and the
+    figure of merit -- delivered Isp (``isp_penalty``) against chamber mass
+    (``chamber_mass_penalty``).
+
+    Returns the scalar, or with ``return_terms`` a dict: ``objective``, ``terms`` (weighted;
+    sums to ``objective`` on a feasible design) and the context values.
     """
     inj_type = constants.get("injector_type", "pintle")
+    x = np.asarray(x, dtype=float)
     _layer1_derive_matched_tank_pressure(x, constants)
     idx_P_O = int(constants.get("idx_P_O", 8))
     idx_P_F = int(constants.get("idx_P_F", 9))
 
-    target_thrust = constants.get('target_thrust', 1000)
-    optimal_of = constants.get('optimal_of', 2.5)
-    target_P_exit = constants.get('P_ambient', 101325.0)
-    max_lox_P_psi = constants.get('max_lox_P_psi', 500)
-    max_fuel_P_psi = constants.get('max_fuel_P_psi', 500)
-    TOTAL_WALL_THICKNESS_M = constants.get('TOTAL_WALL_THICKNESS_M', 0.0254)
-    max_nozzle_exit = constants.get('max_nozzle_exit', 1.0)
+    target_thrust = float(constants.get("target_thrust", 1000))
+    optimal_of = float(constants.get("optimal_of", 2.5))
+    target_P_exit = float(constants.get("P_ambient", 101325.0))
+    max_lox_P_psi = float(constants.get("max_lox_P_psi", 500))
+    max_fuel_P_psi = float(constants.get("max_fuel_P_psi", 500))
+    TOTAL_WALL_THICKNESS_M = float(constants.get("TOTAL_WALL_THICKNESS_M", 0.0254))
+    max_nozzle_exit = float(constants.get("max_nozzle_exit", 1.0))
     min_stability = float(requirements.get("min_stability_margin", _LAYER1_DEFAULT_MIN_STABILITY_MARGIN))
 
     A_throat = float(x[0])
@@ -3479,24 +4186,16 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
     )
 
     d_pintle_tip = 0.0
-    h_gap = 0.0
-    n_orifices = 0
-    d_orifice = 0.0
-
+    n_el_O = 0
+    d_jet_O = d_jet_F = ang_O = ang_F = sp_O = sp_F = float("nan")
     if inj_type == "impinging":
-        # Impinging Layer-1 vector uses shared paired-doublet count:
-        # [4]=n_doublets, [5:8]=LOX jet vars, [8:11]=fuel jet vars, [11:13]=tank pressures.
+        # [4]=n_doublets, [5:8]=LOX jet, [8:11]=fuel jet, [11:13]=tank pressures.
         _layer1_derive_fuel_spacing(x, constants)
         n_el_O = int(x[4])
-        d_jet_O = float(x[5])
-        ang_O = float(x[6])
-        sp_O = float(x[7])
-        n_el_F = n_el_O
-        d_jet_F = float(x[8])
-        ang_F = float(x[9])
-        sp_F = float(x[10])
+        d_jet_O, ang_O, sp_O = float(x[5]), float(x[6]), float(x[7])
+        d_jet_F, ang_F, sp_F = float(x[8]), float(x[9]), float(x[10])
         A_lox_injector = float(n_el_O * np.pi * (d_jet_O / 2.0) ** 2)
-        A_fuel_injector = float(n_el_F * np.pi * (d_jet_F / 2.0) ** 2)
+        A_fuel_injector = float(n_el_O * np.pi * (d_jet_F / 2.0) ** 2)
     else:
         d_pintle_tip = float(x[4])
         h_gap = float(x[5])
@@ -3504,14 +4203,11 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
         d_orifice = float(x[7])
         A_lox_injector = float(n_orifices * np.pi * (d_orifice / 2.0) ** 2)
         R_inner = float(d_pintle_tip / 2.0)
-        R_outer = float(R_inner + h_gap)
-        A_fuel_injector = float(np.pi * (R_outer ** 2 - R_inner ** 2))
+        A_fuel_injector = float(np.pi * ((R_inner + h_gap) ** 2 - R_inner ** 2))
 
-    V_chamber = Lstar * A_throat
     D_chamber_inner = D_chamber_outer - TOTAL_WALL_THICKNESS_M
     if D_chamber_inner <= 0:
         D_chamber_inner = max(D_chamber_outer * 0.3, 0.01)
-
     A_chamber_check = np.pi * (D_chamber_inner / 2.0) ** 2
     A_throat_check = A_throat
 
@@ -3521,20 +4217,17 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
     D_exit_check = np.sqrt(max(0.0, 4.0 * A_exit / np.pi))
     if D_exit_check > max_nozzle_exit:
         D_exit_check = max_nozzle_exit
-
     D_throat_check = np.sqrt(4.0 * A_throat_check / np.pi) if A_throat_check > 0 else 0.0
 
-    # Flow-capacity ratios use A_eff = Cd × A_geom when diagnostics supply Cd (post-evaluate)
-    A_lox_flow = A_lox_injector
-    A_fuel_flow = A_fuel_injector
-    if inj_type in ("impinging", "pintle"):
-        diag_r = result.get("diagnostics") if isinstance(result, dict) else {}
+    out: Dict[str, Any] = {"eval_success": False, "terms": {}}
+
+    # Flow-capacity ratios use A_eff = Cd x A_geom when diagnostics supply Cd (post-evaluate)
+    A_lox_flow, A_fuel_flow = A_lox_injector, A_fuel_injector
+    if inj_type in ("impinging", "pintle") and isinstance(result, dict):
         A_lox_flow, A_fuel_flow, eff_w = effective_flow_areas_from_cd(
-            diag_r, A_lox_injector, A_fuel_injector
-        )
+            result.get("diagnostics"), A_lox_injector, A_fuel_injector)
         if eff_w and isinstance(result.get("diagnostics"), dict):
             merge_effective_area_warnings(result["diagnostics"], eff_w)
-
     lox_ratio = A_lox_flow / A_throat_check if A_throat_check > 0 else np.nan
     fuel_ratio = A_fuel_flow / A_throat_check if A_throat_check > 0 else np.nan
 
@@ -3544,25 +4237,22 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
     P_F_ratio = P_F_psi / max_fuel_P_psi if max_fuel_P_psi > 0 else 0.0
 
     infeasibility_score = 0.0
+    geom_hard = 0.0          # face / back-face limits: not forgiven by the gate
     _tr = {} if _INFEAS_TRACE_ON else None
     if _tr is not None:
         _INFEAS_TRACE.append(_tr)
 
     if A_chamber_check > 0 and A_throat_check > 0:
-        contraction_ratio_check = A_chamber_check / A_throat_check
+        cr_check = A_chamber_check / A_throat_check
         infeasibility_score += max(0.0, (A_throat_check * 1.1) / A_chamber_check - 1.0) ** 2
-
-        if contraction_ratio_check < 1.5:
-            infeasibility_score += (1.5 - contraction_ratio_check) ** 2
-        elif contraction_ratio_check > 15.0:
-            infeasibility_score += (contraction_ratio_check - 15.0) ** 2
-
+        if cr_check < 1.5:
+            infeasibility_score += (1.5 - cr_check) ** 2
+        elif cr_check > 15.0:
+            infeasibility_score += (cr_check - 15.0) ** 2
     if inj_type == "pintle" and D_chamber_inner > 0:
         infeasibility_score += max(0.0, (d_pintle_tip * 1.1) / D_chamber_inner - 1.0) ** 2
-
     if D_throat_check > 0 and D_chamber_inner > 0:
         infeasibility_score += max(0.0, D_throat_check - D_chamber_inner * 0.95) ** 2 * 10.0
-
     if D_exit_check > 0 and D_throat_check > 0:
         infeasibility_score += max(0.0, D_throat_check / D_exit_check - 1.0) ** 2
 
@@ -3574,570 +4264,478 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
             Cd_ratio = float(constants.get("discharge_cd_inf_ratio", 1.0))
             rho_ratio = np.sqrt(
                 max(float(constants.get("rho_oxidizer", 1140.0)), 1e-9)
-                / max(float(constants.get("rho_fuel", 780.0)), 1e-9)
-            )
-            delta_p_ratio_est = np.sqrt(1.2)
-            area_ratio_factor = Cd_ratio * rho_ratio * delta_p_ratio_est
-            required_area_ratio = optimal_of / area_ratio_factor if area_ratio_factor > 0 else np.inf
-            if required_area_ratio > 0 and np.isfinite(required_area_ratio):
-                area_ratio_error = abs(area_ratio - required_area_ratio) / required_area_ratio
-                infeasibility_score += max(0.0, area_ratio_error - 0.5) ** 2
-
+                / max(float(constants.get("rho_fuel", 780.0)), 1e-9))
+            area_ratio_factor = Cd_ratio * rho_ratio * np.sqrt(1.2)
+            required = optimal_of / area_ratio_factor if area_ratio_factor > 0 else np.inf
+            if required > 0 and np.isfinite(required):
+                infeasibility_score += max(0.0, abs(area_ratio - required) / required - 0.5) ** 2
     elif inj_type == "impinging" and A_throat_check > 0:
-        # SAME HARD BLOCKS THE MAIN LOOP APPLIES. _impinging_hard_geometry_blocks_eval was
-        # wired only into the serial path (skip_physics_eval), so the PARALLEL CMA workers --
-        # which is where essentially every candidate is scored -- never saw it. The face-real-
-        # estate limits that happen to have a search BOUND behind them (centre clearance via
-        # the hole-pitch floor, incidence via the jet-angle box) still held; the spray-radius
-        # band, which has no bound to lean on, did not: two of three seeds converged outside
-        # their own declared band and reported ALL GATES PASS. A hard block that only one path
-        # enforces is not a hard block.
-        infeasibility_score += _impinging_face_infeasibility_terms(
+        # Face and back-face real estate: hard limits, scored on every path.
+        geom_hard += _impinging_face_infeasibility_terms(
             n_elements=n_el_O, spacing_O_m=sp_O, spacing_F_m=sp_F,
             d_jet_O_m=d_jet_O, d_jet_F_m=d_jet_F, D_chamber_inner_m=D_chamber_inner,
             angle_O_deg=ang_O, angle_F_deg=ang_F,
-            center_clear_dia_m=float(
-                constants.get("layer1_injector_center_clear_dia_m", 0.0) or 0.0),
+            center_clear_dia_m=float(constants.get("layer1_injector_center_clear_dia_m", 0.0) or 0.0),
             min_web_m=float(constants.get("layer1_injector_min_web_m", 0.0) or 0.0),
-            wall_clearance_m=float(
-                constants.get("layer1_injector_wall_clearance_m", 0.0) or 0.0),
-            spray_radius_frac=float(
-                constants.get("layer1_injector_spray_radius_frac", 0.0) or 0.0),
-            spray_radius_tol=float(
-                constants.get("layer1_injector_spray_radius_tol", 0.08) or 0.08),
+            wall_clearance_m=float(constants.get("layer1_injector_wall_clearance_m", 0.0) or 0.0),
+            spray_radius_frac=float(constants.get("layer1_injector_spray_radius_frac", 0.0) or 0.0),
+            spray_radius_tol=float(constants.get("layer1_injector_spray_radius_tol", 0.08) or 0.08),
+            min_face_incidence_deg=float(
+                constants.get("layer1_injector_min_face_incidence_deg", 0.0) or 0.0),
+            face_contoured=bool(constants.get("layer1_injector_face_contoured", False)),
+            exit_land=float(constants.get("layer1_injector_exit_land", EXIT_LAND_DEFAULT)),
         )
+        geom_hard += _impinging_back_face_terms(
+            n_elements=n_el_O, spacing_O_m=sp_O, spacing_F_m=sp_F,
+            d_jet_O_m=d_jet_O, d_jet_F_m=d_jet_F, D_chamber_inner_m=D_chamber_inner,
+            angle_O_deg=ang_O, angle_F_deg=ang_F,
+            plate_thickness_m=float(constants.get("layer1_injector_plate_thickness_m", 0.0) or 0.0),
+            counterbore_dia_m=float(constants.get("layer1_injector_counterbore_dia_m", 0.0) or 0.0),
+            land_ld_O=float(constants.get("layer1_injector_land_ld_O", 4.0) or 4.0),
+            land_ld_F=float(constants.get("layer1_injector_land_ld_F", 4.0) or 4.0),
+            min_back_web_m=float(constants.get("layer1_injector_min_back_web_m", 0.0) or 0.0),
+            back_keepout_dia_m=float(constants.get("layer1_injector_back_keepout_dia_m", 0.0) or 0.0),
+            back_keepout_wall_m=float(constants.get("layer1_injector_back_keepout_wall_m", 0.0) or 0.0),
+            face_contoured=bool(constants.get("layer1_injector_face_contoured", False)),
+            exit_land=float(constants.get("layer1_injector_exit_land", EXIT_LAND_DEFAULT)),
+            back_channels=bool(constants.get("layer1_injector_back_channels", False)),
+            # One L/d per hole: the Cd's L/d is also the passage to the channel floor.
+            passage_ld_O=float(constants.get("layer1_injector_land_ld_O", 4.0) or 4.0),
+            passage_ld_F=float(constants.get("layer1_injector_land_ld_F", 4.0) or 4.0),
+            channel_width_m=float(constants.get("layer1_injector_channel_width_m", 0.0) or 0.0),
+            channel_floor=str(constants.get("layer1_injector_channel_floor", "flat")),
+            r_plate_m=float(constants.get("layer1_injector_r_plate_m", 0.0) or 0.0),
+            r_port_m=float(constants.get("layer1_injector_r_port_m", 0.0) or 0.0),
+            liner_thickness_m=float(constants.get("layer1_injector_liner_thickness_m", 0.0) or 0.0),
+        )
+        # SP-8089: impingement no further than 7 d along either jet.
+        geom_hard += _impinging_free_jet_violation(
+            n_elements=n_el_O, spacing_O_m=sp_O, spacing_F_m=sp_F,
+            d_jet_O_m=d_jet_O, d_jet_F_m=d_jet_F, angle_O_deg=ang_O, angle_F_deg=ang_F)
         infeasibility_score += _impinging_infeasibility_layout_terms(
-            d_jet_O=d_jet_O,
-            d_jet_F=d_jet_F,
-            sp_O=sp_O,
-            sp_F=sp_F,
-            n_el_O=n_el_O,
-            n_el_F=n_el_F,
-            D_chamber_inner=D_chamber_inner,
-        )
+            d_jet_O=d_jet_O, d_jet_F=d_jet_F, sp_O=sp_O, sp_F=sp_F,
+            n_el_O=n_el_O, n_el_F=n_el_O, D_chamber_inner=D_chamber_inner)
         infeasibility_score += _impinging_infeasibility_flow_capacity_terms(
-            A_lox_flow=A_lox_flow,
-            A_fuel_flow=A_fuel_flow,
-            A_throat_check=A_throat_check,
-        )
+            A_lox_flow=A_lox_flow, A_fuel_flow=A_fuel_flow, A_throat_check=A_throat_check)
 
     _infeas_trace(_tr, "geometry", infeasibility_score)
-    # --- Evaluation Results ---
-    eval_success = result.get('success', False) if isinstance(result, dict) else False
-    # Runner.evaluate typically omits success; infer from finite thrust/Pc when absent
+
+    # --- Evaluation ---
+    eval_success = bool(result.get("success", False)) if isinstance(result, dict) else False
     if isinstance(result, dict) and not eval_success:
-        F_guess = result.get("F", np.nan)
-        Pc_guess = result.get("Pc", np.nan)
-        eval_success = bool(np.isfinite(F_guess) and np.isfinite(Pc_guess))
+        eval_success = bool(np.isfinite(float(result.get("F", np.nan)))
+                            and np.isfinite(float(result.get("Pc", np.nan))))
+    out.update({
+        "lox_ratio": lox_ratio, "fuel_ratio": fuel_ratio,
+        "D_chamber_inner": D_chamber_inner, "D_throat": D_throat_check,
+    })
 
     if not eval_success:
-        # Evaluation failed - return high penalty
+        # Directional guidance only: which way out of the unevaluable region.
         infeasibility_score += 1.0
-        # Add directional guidance based on pressure ratios
-        infeasibility_score += max(0.0, 0.90 - P_O_ratio) ** 2 + max(0.0, 0.90 - P_F_ratio) ** 2
-        
-        # SCALED DOWN: Max penalty ~1e7
-        BASE_INFEAS = 1e6
-        W_INFEAS = 1e5
-        return BASE_INFEAS + W_INFEAS * float(infeasibility_score)
-    
-    # Extract performance metrics
-    F_actual = float(result.get('F', np.nan))
-    MR_actual = float(result.get('MR', np.nan))
-    Cf_actual = float(result.get('Cf_actual', result.get('Cf', np.nan)))
-    P_exit_actual = float(result.get('P_exit', np.nan))
-    stability = result.get('stability_results', {})
-    
-    # Primary errors
-    thrust_error = abs(F_actual - target_thrust) / target_thrust if (target_thrust > 0 and np.isfinite(F_actual)) else 1.0
-    # O/F deadband: hitting the target to within tolerance IS success and must cost zero.
-    # Previously any deviation was squared, so O/F 1.6646 against a 1.65 target (+0.9%,
-    # well inside the 15% validation gate) still carried 4.7 objective points.
-    _of_tol = float(constants.get("layer1_of_deadband_rel", 0.0))
-    of_error = abs(MR_actual - optimal_of) / optimal_of if (optimal_of > 0 and np.isfinite(MR_actual)) else 1.0
-    of_error = max(0.0, of_error - _of_tol)
-    
-    # Thrust penalty with 2% deadband (no penalty if within 2% error)
+        err = (eval_error or "").lower()
+        if ("supply > demand" in err) or ("invalid bracket" in err) or ("no solution" in err):
+            if np.isfinite(lox_ratio):
+                infeasibility_score += max(0.0, lox_ratio - 0.90) ** 2
+            if np.isfinite(fuel_ratio):
+                infeasibility_score += max(0.0, fuel_ratio - 0.90) ** 2
+        else:
+            infeasibility_score += max(0.0, 0.90 - P_O_ratio) ** 2 + max(0.0, 0.90 - P_F_ratio) ** 2
+        if np.isfinite(geom_hard) and geom_hard > 0.0:
+            infeasibility_score += float(geom_hard)
+        out.update({
+            "objective": float(_LAYER1_BASE_INFEAS + _LAYER1_W_INFEAS * float(infeasibility_score)),
+            "infeasibility_score": float(infeasibility_score),
+            "inf_residual": float(infeasibility_score),
+            "length_violation": False,
+            "thrust_error": 1.0, "of_error": 1.0,
+            "stability_state": "unstable", "stability_score": 0.0,
+            "chugging_margin": 0.0, "acoustic_margin": 0.0, "feed_margin": 0.0,
+        })
+        return out if return_terms else float(out["objective"])
+
+    F_actual = float(result.get("F", np.nan))
+    MR_actual = float(result.get("MR", np.nan))
+    Pc_actual = float(result.get("Pc", np.nan))
+    Isp_actual = float(result.get("Isp", np.nan))
+    Cf_actual = float(result.get("Cf_actual", result.get("Cf", np.nan)))
+    P_exit_actual = float(result.get("P_exit", np.nan))
+    stability = result.get("stability_results", {}) or {}
+    diagnostics = result.get("diagnostics") if isinstance(result.get("diagnostics"), dict) else {}
+
+    thrust_error = (abs(F_actual - target_thrust) / target_thrust
+                    if (target_thrust > 0 and np.isfinite(F_actual)) else 1.0)
+    # O/F deadband: hitting the target to within tolerance IS success and costs zero.
+    _of_tol = float(constants.get("layer1_of_deadband_rel", 0.0) or 0.0)
+    of_error_raw = (abs(MR_actual - optimal_of) / optimal_of
+                    if (optimal_of > 0 and np.isfinite(MR_actual)) else 1.0)
+    of_error = max(0.0, of_error_raw - _of_tol)
+
     thrust_penalty_sq_term = 0.0
     if target_thrust > 0 and np.isfinite(F_actual):
-        rel_error = abs(F_actual - target_thrust) / target_thrust
-        deadband = _layer1_thrust_deadband(requirements)
-
-        if rel_error > deadband:
-            # Strong penalty for exceeding deadband
-            excess = rel_error - deadband
-            thrust_penalty_sq_term += excess ** 2
+        excess = thrust_error - _layer1_thrust_deadband(requirements)
+        if excess > 0:
+            thrust_penalty_sq_term = excess ** 2
     else:
-        # Failed evaluation gets full penalty
         thrust_penalty_sq_term = 1.0
 
-    # Optional chamber-pressure target. Pin Pc so the optimizer sizes the throat for thrust
-    # instead of pushing Pc higher. Inert unless target_chamber_pressure_psi is set.
-    # EXACT (L1) penalty outside a ±1% deadband. Unlike a squared penalty (whose gradient
-    # vanishes at the target, so it parks "near"), a linear penalty keeps a constant pull,
-    # so Pc lands within 1% of target (exact-penalty method); the deadband then hands the
-    # gradient back to the weaker quadratic terms (see inner comment). There are enough
-    # DOF (throat + both tank pressures) to hit thrust, MR and Pc simultaneously.
+    # Chamber-pressure target: exact L1 outside the interior aim band (80 % of the +/-1 %
+    # sign-off band, so the search never parks on the gate's edge). The L1 shape keeps a
+    # constant pull; inside, the quadratic terms get the gradient.
     pc_penalty_term = 0.0
     pc_target_pa = constants.get("layer1_target_Pc_pa")
     if pc_target_pa and float(pc_target_pa) > 0:
-        Pc_actual = float(result.get("Pc", np.nan))
         if np.isfinite(Pc_actual):
-            # Exact L1 outside a ±1% deadband. Inside ±1% the term is SILENT so the weaker
-            # quadratic thrust/O-F terms get the gradient back — a deadband-free L1 at 1e4
-            # dominates them near the solution and the optimizer sacrifices percent-level
-            # thrust error to polish fraction-of-a-percent Pc error.
-            _pc_rel = abs(Pc_actual - float(pc_target_pa)) / float(pc_target_pa)
-            pc_penalty_term = max(0.0, _pc_rel - 0.01)
+            pc_penalty_term = max(0.0, abs(Pc_actual - float(pc_target_pa)) / float(pc_target_pa)
+                                  - _LAYER1_PC_AIM_REL)
         else:
             pc_penalty_term = 1.0
 
     _ins_q_raw = constants.get("layer1_exit_pressure_inside_quad_scale")
-    exit_pressure_inside_quad_worker = (
-        float(_ins_q_raw)
-        if _ins_q_raw is not None and np.isfinite(float(_ins_q_raw))
-        else _LAYER1_DEFAULT_EXIT_PRESSURE_INSIDE_QUAD
-    )
-    exit_pressure_sq_term = float(
-        _layer1_exit_pressure_sq_term(
-            float(P_exit_actual),
-            float(target_P_exit),
-            deadband_rel=float(constants.get("layer1_exit_pressure_deadband_rel", 0.05)),
-            inside_rel_quad_scale=exit_pressure_inside_quad_worker,
-        )
-    )
-    
-    # Stability checks
-    stability_state = stability.get('stability_state', 'unstable')
-    stability_score = float(stability.get('stability_score', 0.0))
-    chugging_margin = max(0.0, float(stability.get('chugging', {}).get('stability_margin', 0.0)))
-    acoustic_margin = max(0.0, float(stability.get('acoustic', {}).get('stability_margin', 0.0)))
-    feed_margin = max(0.0, float(stability.get('feed_system', {}).get('stability_margin', 0.0)))
-    
-    min_stability_score_raw = float(requirements.get('min_stability_score', 0.75))
-    stability_margin_handicap = float(requirements.get('stability_margin_handicap', 0.0))
-    score_factor = max(0.0, 1.0 - stability_margin_handicap)
-    margin_factor = max(0.0, 1.0 - stability_margin_handicap)
-    effective_min_score = min_stability_score_raw * score_factor
-    effective_margin = float(min_stability) * margin_factor
-    
-    require_stable_state = bool(requirements.get('require_stable_state', True))
-    allowed_states = {'stable', 'marginal'}
-    state_ok = (stability_state in allowed_states) if require_stable_state else (stability_state != 'unstable')
-    
+    _ins_q = (float(_ins_q_raw) if _ins_q_raw is not None and np.isfinite(float(_ins_q_raw))
+              else _LAYER1_DEFAULT_EXIT_PRESSURE_INSIDE_QUAD)
+    exit_pressure_sq_term = float(_layer1_exit_pressure_sq_term(
+        P_exit_actual, target_P_exit,
+        deadband_rel=float(constants.get("layer1_exit_pressure_deadband_rel", 0.05)),
+        inside_rel_quad_scale=_ins_q))
+
+    # Stability. require_stable_state means 'stable', not 'stable or marginal'.
+    stability_state = stability.get("stability_state", "unstable")
+    stability_score = float(stability.get("stability_score", 0.0))
+    chugging_margin = max(0.0, float(stability.get("chugging", {}).get("stability_margin", 0.0)))
+    acoustic_margin = max(0.0, float(stability.get("acoustic", {}).get("stability_margin", 0.0)))
+    feed_margin = max(0.0, float(stability.get("feed_system", {}).get("stability_margin", 0.0)))
+    handicap = float(requirements.get("stability_margin_handicap", 0.0))
+    effective_min_score = float(requirements.get("min_stability_score", 0.75)) * max(0.0, 1.0 - handicap)
+    effective_margin = float(min_stability) * max(0.0, 1.0 - handicap)
+    require_stable_state = bool(requirements.get("require_stable_state", True))
+    state_ok = (stability_state == "stable") if require_stable_state else (stability_state != "unstable")
     if not state_ok:
         infeasibility_score += 1.0
     if effective_min_score > 0:
         infeasibility_score += max(0.0, (effective_min_score - stability_score) / effective_min_score) ** 2
     if effective_margin > 0:
-        infeasibility_score += max(0.0, (effective_margin - chugging_margin) / effective_margin) ** 2
-        infeasibility_score += max(0.0, (effective_margin - acoustic_margin) / effective_margin) ** 2
-        infeasibility_score += max(0.0, (effective_margin - feed_margin) / effective_margin) ** 2
+        for _m in (chugging_margin, acoustic_margin, feed_margin):
+            infeasibility_score += max(0.0, (effective_margin - _m) / effective_margin) ** 2
     _infeas_trace(_tr, "stability", infeasibility_score)
-    
-    # Regularization: Cf band
-    def _hinge_band(val, lo, hi, scale=1.0):
-        if val < lo:
-            return ((lo - val) / scale) ** 2
-        elif val > hi:
-            return ((val - hi) / scale) ** 2
-        return 0.0
-    
-    Cf_min_acceptable = 1.3
-    Cf_max_acceptable = 1.8
-    cf_hinge = _hinge_band(float(Cf_actual) if np.isfinite(Cf_actual) else 0.0,
-                           Cf_min_acceptable, Cf_max_acceptable,
-                           scale=(Cf_max_acceptable - Cf_min_acceptable))
-    
-    # Chamber length penalty
-    # Compute L_chamber from geometry (same as in apply_x_to_config)
-    from engine.core.chamber_geometry import chamber_length_calc, contraction_length_horizontal_calc
-    R_chamber = D_chamber_inner / 2
-    R_throat = np.sqrt(max(0, A_throat / np.pi))
-    contraction_ratio = A_chamber_check / A_throat_check if A_throat_check > 0 else 10.0
+
+    Cf_lo, Cf_hi = 1.3, 1.8
+    _cf = float(Cf_actual) if np.isfinite(Cf_actual) else 0.0
+    cf_hinge = (max(0.0, Cf_lo - _cf) ** 2 + max(0.0, _cf - Cf_hi) ** 2) / (Cf_hi - Cf_lo) ** 2
+
+    # Chamber lengths: the SAME helper _layer1_apply_chamber_geometry_to_config uses.
     theta_contraction = _layer1_contraction_theta(constants)
-    L_cylindrical = chamber_length_calc(
-        chamber_volume=V_chamber,
-        area_throat=A_throat,
-        contraction_ratio=contraction_ratio,
-        theta=theta_contraction,
-    )
-    L_contraction = contraction_length_horizontal_calc(
-        area_chamber=A_chamber_check,
-        entrance_arc_start_y=R_throat,  # nozzle entrance radius estimate
-        theta=theta_contraction,
-    )
-    L_chamber_curr = L_cylindrical + L_contraction
-    if L_chamber_curr <= 0 or not np.isfinite(L_chamber_curr):
-        L_chamber_curr = V_chamber / A_chamber_check if A_chamber_check > 0 else 0.2
-    # Keep identical to ``_layer1_apply_chamber_geometry_to_config`` (evaluate/config path).
-    L_chamber_curr = float(np.clip(L_chamber_curr, 0.005, 1.0))
-    
-    # Total engine length = chamber (cylindrical + contraction) + estimated nozzle (divergent).
-    # The requirement is "max total engine length (chamber + nozzle)". This previously read a
-    # non-existent key ("max_chamber_length_m") so it ALWAYS fell back to 0.50 m and the user's
-    # max_engine_length was silently ignored. Nozzle length uses the standard bell estimate
-    # L_nozzle ≈ 0.8 * D_exit (same approximation as reaction_chemistry.py).
-    L_nozzle_est = 0.8 * float(D_exit_check) if np.isfinite(D_exit_check) else 0.0
-    L_engine_curr = L_chamber_curr + L_nozzle_est
-    max_engine_length = float(requirements.get("max_engine_length", 0.50))
+    _lens = _layer1_chamber_lengths(A_throat, Lstar, D_chamber_inner, theta_contraction)
+    L_chamber_curr = _lens["length"]
+    L_cylindrical = _lens["length_cylindrical"]
+    eps_eff = (np.pi * D_exit_check ** 2 / 4.0) / A_throat if A_throat > 0 else expansion_ratio
+    # Face to exit plane: face-to-throat plus the 80 % Rao bell the contour draws.
+    L_engine_curr = _lens["face_to_throat"] + _layer1_bell_length_m(A_throat, eps_eff)
+    max_engine_length = float(requirements.get("max_engine_length", 0.50) or 0.50)
     length_term = 0.0
     length_violation = False
     if np.isfinite(L_engine_curr) and max_engine_length > 0:
         if L_engine_curr > max_engine_length:
-            # Hard constraint: treat as infeasibility
             length_violation = True
             length_term = ((L_engine_curr - max_engine_length) / max_engine_length) ** 2
         else:
-            # Soft penalty to guide optimizer away from the boundary
-            length_term = max(0.0, (L_engine_curr - max_engine_length * 0.9) / (max_engine_length * 0.1)) ** 2
-    chamber_shape_term = 0.0
+            length_term = max(0.0, (L_engine_curr - max_engine_length * 0.9)
+                              / (max_engine_length * 0.1)) ** 2
 
-    # L* cost: the ONLY thing that opposes chamber growth. See _layer1_lstar_term for why a
-    # mass penalty does not substitute. MUST stay in lockstep with the objective() closure.
-    W_LSTAR = float(constants.get("layer1_W_LSTAR", 0.0))
+    smd_eff_um = _effective_smd_um(diagnostics, MR_actual if np.isfinite(MR_actual) else None)
+
+    # L* band around a target (SMD-derived by default). Every key from the requirements, with
+    # the resolved L* search bounds from constants -- the worker used to read the keys from a
+    # curated constants dict that lacked them and scored a different target.
+    W_LSTAR = float(constants.get("layer1_W_LSTAR", 0.0) or 0.0)
     lstar_term = 0.0
     lstar_target_curr = float("nan")
     if W_LSTAR > 0.0:
-        _smd_for_lstar = _effective_smd_um(
-            result.get("diagnostics") if isinstance(result, dict) else None,
-            result.get("MR") if isinstance(result, dict) else None,
-        )
+        def _lstar_get(k):
+            if k in ("min_Lstar", "max_Lstar") and constants.get(k) is not None:
+                return constants.get(k)
+            return requirements.get(k)
         lstar_target_curr, _lstar_db = _layer1_resolve_lstar_target(
-            _smd_for_lstar, constants, constants.get,
-            float(constants.get("layer1_Lstar_target_m", 1.0)),
-        )
+            smd_eff_um, requirements, _lstar_get,
+            float(constants.get("layer1_Lstar_target_m", 1.0) or 1.0))
         lstar_term = _layer1_lstar_band_term(Lstar, lstar_target_curr, _lstar_db)
 
-    # Chamber dry-mass cost. See _layer1_chamber_mass_kg.
-    W_MASS = float(constants.get("layer1_W_MASS", 0.0))
-    chamber_mass_kg = float("nan")
-    mass_term = 0.0
-    if W_MASS > 0.0:
-        chamber_mass_kg = _layer1_chamber_mass_kg(
-            A_chamber_check,
-            L_chamber_curr,
-            float(TOTAL_WALL_THICKNESS_M),
-            float(constants.get("layer1_chamber_wall_density_kg_m3", 2000.0)),
-            Pc_pa=float(Pc_actual) if np.isfinite(Pc_actual) else 0.0,
-        )
-        mass_term = _layer1_chamber_mass_term(
-            chamber_mass_kg, float(constants.get("layer1_chamber_mass_ref_kg", 5.0))
-        )
+    # Figure of merit: delivered Isp, as the propellant it costs for the required impulse,
+    # against the chamber it takes (both priced per kg; see run_layer1_optimization).
+    W_ISP = float(constants.get("layer1_W_ISP", 0.0) or 0.0)
+    isp_merit = _layer1_isp_merit_s(result, constants, cea_cache)
+    isp_ref = float(constants.get("layer1_Isp_ref_s", np.nan) or np.nan)
+    isp_term = _layer1_isp_term(isp_merit, isp_ref) if W_ISP > 0.0 else 0.0
 
-    # Hard geometric constraints -> infeasibility, not the weighted sum. See
-    # _layer1_geometry_infeasibility. No-op unless the two keys are configured.
-    # Element count comes from the DOF vector, NOT from `config` -- this function takes
-    # (result, x, requirements, constants) and has no `config` in scope at all. Reading it
-    # from a config here raised NameError into a bare except, which set the count to 0 and
-    # SILENTLY disabled the pitch constraint: Layer 1 then converged on 6 doublets at a
-    # 45.9 mm pitch against a configured 24 mm ceiling and reported the design valid.
-    # x[4] is n_doublets for the impinging parameterisation (see the DOF map above).
-    _n_el = 0
-    if inj_type == "impinging" and x is not None and len(x) > 4:
-        try:
-            _n_el = int(x[4])
-        except (TypeError, ValueError):
-            _n_el = 0
+    W_MASS = float(constants.get("layer1_W_MASS", 0.0) or 0.0)
+    chamber_mass_kg = _layer1_chamber_mass_kg(
+        A_chamber_check, L_chamber_curr, TOTAL_WALL_THICKNESS_M,
+        float(constants.get("layer1_chamber_wall_density_kg_m3", 2000.0)),
+        Pc_pa=float(Pc_actual) if np.isfinite(Pc_actual) else 0.0)
+    mass_term = (_layer1_chamber_mass_term(
+        chamber_mass_kg, float(constants.get("layer1_chamber_mass_ref_kg", 5.0)))
+        if W_MASS > 0.0 else 0.0)
+
+    # Hard geometric constraints (element pitch, L_cyl/D) -> infeasibility.
     infeasibility_score += _layer1_geometry_infeasibility(
-        constants,
-        L_cylindrical=L_cylindrical,
-        D_chamber_inner=D_chamber_inner,
-        A_chamber=A_chamber_check,
-        n_elements=_n_el,
-    )
+        constants, L_cylindrical=L_cylindrical, D_chamber_inner=D_chamber_inner,
+        A_chamber=A_chamber_check, n_elements=n_el_O if inj_type == "impinging" else 0)
 
-    # Lexicographic scalarization
-    # Lexicographic scalarization (SCALED DOWN)
-    BASE_INFEAS = 1e6
-    W_INFEAS = 1e5
     W_THRUST = float(constants.get("layer1_W_THRUST", 1e4))
-    W_PC = float(constants.get("layer1_W_PC", 0.0))  # 0 unless a Pc target is set
+    W_PC = float(constants.get("layer1_W_PC", 0.0))
     W_OF = float(constants.get("layer1_W_OF", 1e4))
     w_of_low_mr = max(1.0, float(constants.get("layer1_W_OF_low_MR_scale", 1.0)))
     w_of_high_mr = max(1.0, float(constants.get("layer1_W_OF_high_MR_scale", 1.0)))
     W_CF = 1e2
-    # Config-driven (was hardcoded 2.0e2 here AND in the objective() closure below). At 2e2
-    # against layer1_W_THRUST=6e4 the exit term is ~300x weaker than thrust, so a 20% exit-
-    # pressure miss cost the same as a 1% thrust miss and P_exit never landed on ambient.
     W_EXIT = float(constants.get("layer1_W_EXIT", 2.0e2))
-    W_LEN = 1e4  # Chamber length constraint (same weight as thrust/O/F)
+    W_LEN = 1e4
     W_MOM = float(constants.get("W_MOM", 75.0))
-    _mom_lo_c = constants.get("impinging_momentum_R_min")
-    _mom_hi_c = constants.get("impinging_momentum_R_max")
-    _ang_lo_c = constants.get("layer1_impinging_angle_deg_min")
-    _ang_hi_c = constants.get("layer1_impinging_angle_deg_max")
     W_DP = float(constants.get("W_DP", 160.0))
-    W_DP_O = float(constants.get("W_DP_O", W_DP))
-    W_DP_F = float(constants.get("W_DP_F", W_DP))
-    W_DP_HIGH = float(constants.get("W_DP_HIGH", 480.0))
-    # Pull toward the CENTRE of the ΔP/Pc band (~0.33 for [0.20,0.40] instead of the 0.40 edge).
-    # ~50 is needed to counter the SMD/atomization benefit of high ΔP; still small vs band/thrust.
-    W_DP_CENTER = float(constants.get("W_DP_CENTER", 500.0))
-    W_geom_ao_af = float(constants.get("W_geom_ao_af_momentum", 0.0))
-    rho_ox_c = float(constants.get("rho_oxidizer", 1140.0))
-    rho_fu_c = float(constants.get("rho_fuel", 422.6))
-    dp_o_band = (
-        float(constants.get("injector_dp_ratio_O_min", _LAYER1_DEFAULT_DP_O_BAND[0])),
-        float(constants.get("injector_dp_ratio_O_max", _LAYER1_DEFAULT_DP_O_BAND[1])),
-    )
-    dp_f_band = (
-        float(constants.get("injector_dp_ratio_F_min", _LAYER1_DEFAULT_DP_F_BAND[0])),
-        float(constants.get("injector_dp_ratio_F_max", _LAYER1_DEFAULT_DP_F_BAND[1])),
-    )
-    _c_sf_raw = constants.get("injector_dp_ratio_O_soft_floor")
-    dp_o_soft_floor_worker: Optional[float] = (
-        float(_c_sf_raw)
-        if _c_sf_raw is not None and np.isfinite(float(_c_sf_raw))
-        else None
-    )
-    W_DP_O_FLOOR_worker = float(constants.get("W_DP_O_FLOOR", 0.0))
     W_SMD = float(constants.get("W_SMD", 0.0))
     W_ANGLE = float(constants.get("W_IMPINGING_ANGLE", 0.0))
     W_JET_ASYM = float(constants.get("W_IMPINGING_JET_ASYM", 0.0))
     _jet_asym_mx = constants.get("layer1_impinging_jet_angle_max_asym_deg")
     jet_asym_max = float(_jet_asym_mx) if _jet_asym_mx is not None else 28.0
     W_CHAMBER_SHAPE = float(constants.get("W_CHAMBER_SHAPE", 2500.0))
-    CH_DT_MIN = float(constants.get("layer1_chamber_dt_ratio_min", 2.2))
-    CH_DT_MAX = float(constants.get("layer1_chamber_dt_ratio_max", 3.2))
-    CH_LD_MIN = float(constants.get("layer1_chamber_ld_ratio_min", 1.0))
-    CH_LD_MAX = float(constants.get("layer1_chamber_ld_ratio_max", 3.2))
-    target_smd_um = float(constants.get("target_smd_microns", 50.0))
-    smd_rel_tol = float(constants.get("layer1_smd_rel_tol", 0.20))
     W_TANK_EQUAL = float(constants.get("W_TANK_EQUAL", 0.0))
-    tank_equal_scale_psi = float(constants.get("layer1_tank_equal_scale_psi", 100.0))
     W_IMP_GEOM = float(constants.get("W_IMP_GEOM", 0.0))
+    W_geom_ao_af = float(constants.get("W_geom_ao_af_momentum", 0.0))
 
-    momentum_term = 0.0
-    angle_term = 0.0
-    jet_asym_term = 0.0
-    if inj_type == "impinging" and isinstance(result, dict):
-        diagnostics = result.get("diagnostics", {}) if isinstance(result.get("diagnostics"), dict) else {}
-        R_val = diagnostics.get("momentum_ratio_R")
-        if R_val is not None and np.isfinite(R_val) and float(R_val) > 0:
-            _mom_lo = float(_mom_lo_c) if _mom_lo_c is not None and np.isfinite(float(_mom_lo_c)) else None
-            _mom_hi = float(_mom_hi_c) if _mom_hi_c is not None and np.isfinite(float(_mom_hi_c)) else None
-            # Wall-side excess is a CONSTRAINT (see _impinging_momentum_wall_violation):
-            # it goes to infeasibility, not into a quality term whose magnitude would
-            # otherwise swamp BASE_INFEAS and flatten the landscape.
-            # Wall guard: the RESULTANT TILT, not the flux ratio. R = 1 is not balance
-            # (p_O/p_F = R^2*A_O/A_F), and banning R > 1 was selecting the most
-            # outward-tilted design. See _impinging_resultant_tilt_deg.
-            _tilt = _impinging_resultant_tilt_deg(
+    momentum_term = angle_term = jet_asym_term = tilt_term = 0.0
+    W_TILT = float(constants.get("layer1_W_TILT", 0.0) or 0.0)
+    R_val = float("nan")
+    tilt_deg = float("nan")
+    tilt_breakeven = float("nan")
+    imp_angle_deg = float("nan")
+    if inj_type == "impinging":
+        try:
+            imp_angle_deg = float(diagnostics.get("impingement_angle_deg", np.nan))
+        except (TypeError, ValueError):
+            imp_angle_deg = float("nan")
+        tilt_breakeven = _resultant_tilt_breakeven_deg(
+            n_elements=n_el_O, spacing_O_m=sp_O, spacing_F_m=sp_F,
+            angle_O_deg=ang_O, angle_F_deg=ang_F,
+            D_chamber_inner_m=D_chamber_inner, L_chamber_m=L_chamber_curr)
+        _Rv = diagnostics.get("momentum_ratio_R")
+        if _Rv is not None and np.isfinite(float(_Rv)) and float(_Rv) > 0:
+            R_val = float(_Rv)
+            # Wall guard: the RESULTANT TILT, a constraint. R = 1 is not balance.
+            tilt_deg = _impinging_resultant_tilt_deg(
                 result.get("mdot_O"), result.get("mdot_F"),
                 constants.get("rho_O", 1141.0), constants.get("rho_F", 789.0),
                 n_el_O, d_jet_O, d_jet_F, ang_O, ang_F,
-                lox_inboard=bool(constants.get("layer1_ring_order_fuel_outboard", True)),
-            )
+                lox_inboard=bool(constants.get("layer1_ring_order_fuel_outboard", True)))
             infeasibility_score += _impinging_resultant_wall_violation(
-                _tilt,
+                tilt_deg,
                 max_outward_deg=_resolve_tilt_allowance_deg(
                     from_reach=bool(constants.get("layer1_resultant_tilt_from_reach", False)),
                     constant_deg=float(constants.get("layer1_resultant_tilt_max_deg", 0.0)),
-                    breakeven_deg=_resultant_tilt_breakeven_deg(
-                        n_elements=n_el_O, spacing_O_m=sp_O, spacing_F_m=sp_F,
-                        angle_O_deg=ang_O, angle_F_deg=ang_F,
-                        D_chamber_inner_m=D_chamber_inner, L_chamber_m=L_chamber_curr),
-                    margin=float(constants.get("layer1_resultant_tilt_reach_margin", 1.5)),
-                ),
-                scale_deg=float(constants.get("layer1_resultant_tilt_scale_deg", 2.0)),
-            )
+                    breakeven_deg=tilt_breakeven,
+                    margin=float(constants.get("layer1_resultant_tilt_reach_margin", 1.5))),
+                scale_deg=float(constants.get("layer1_resultant_tilt_scale_deg", 2.0)))
             _infeas_trace(_tr, "wall_tilt", infeasibility_score)
-            _infeas_trace(_tr, "tilt_deg", _tilt)
+            _infeas_trace(_tr, "tilt_deg", tilt_deg)
+            if W_TILT > 0.0:
+                tilt_term = _impinging_resultant_tilt_preference(
+                    tilt_deg,
+                    scale_deg=float(constants.get("layer1_resultant_tilt_scale_deg", 2.0)),
+                    outward_multiplier=float(
+                        constants.get("layer1_resultant_tilt_outward_multiplier", 25.0) or 25.0))
+            # The configured R band (its interior aim band, see run_layer1_optimization).
+            _mlo = constants.get("impinging_momentum_R_min")
+            _mhi = constants.get("impinging_momentum_R_max")
             momentum_term = _impinging_momentum_asymmetric_squared(
                 R_val,
-                wall_side_multiplier=float(
-                    constants.get("layer1_momentum_wall_side_multiplier", 1.0)),
-                low_side_multiplier=float(
-                    constants.get("layer1_momentum_low_side_multiplier", 10.0)),
-                band_width=float(constants.get("layer1_momentum_band_width", 0.025)),
-                safe_side_is_below_one=bool(
-                    constants.get("layer1_ring_order_fuel_outboard", True)),
+                wall_side_multiplier=float(constants.get("layer1_momentum_wall_side_multiplier", 1.0)),
+                low_side_multiplier=float(constants.get("layer1_momentum_low_side_multiplier", 10.0)),
+                band_width=float(constants.get("layer1_momentum_band_width", 0.05)),
+                safe_side_is_below_one=bool(constants.get("layer1_ring_order_fuel_outboard", True)),
                 scale=float(constants.get("layer1_momentum_scale", 0.10)),
+                band_lo=float(_mlo) if _mlo is not None else None,
+                band_hi=float(_mhi) if _mhi is not None else None,
             )
         if W_ANGLE > 0.0:
-            _alo = float(_ang_lo_c) if _ang_lo_c is not None else None
-            _ahi = float(_ang_hi_c) if _ang_hi_c is not None else None
+            _alo = constants.get("layer1_impinging_angle_deg_min")
+            _ahi = constants.get("layer1_impinging_angle_deg_max")
             angle_term = _impinging_angle_hinge_squared(
-                diagnostics.get("impingement_angle_deg"),
-                angle_band_lo_deg=_alo,
-                angle_band_hi_deg=_ahi,
-            )
+                imp_angle_deg,
+                angle_band_lo_deg=float(_alo) if _alo is not None else None,
+                angle_band_hi_deg=float(_ahi) if _ahi is not None else None)
         if W_JET_ASYM > 0.0:
             jet_asym_term = _impinging_jet_pair_asymmetry_squared(
-                ang_O,
-                ang_F,
-                max_delta_deg=jet_asym_max,
-            )
-    if D_chamber_inner > 0 and D_throat_check > 0:
+                ang_O, ang_F, max_delta_deg=jet_asym_max)
+
+    chamber_shape_term = 0.0
+    dt_ratio = D_chamber_inner / D_throat_check if (D_chamber_inner > 0 and D_throat_check > 0) else float("nan")
+    ld_ratio = L_chamber_curr / D_chamber_inner if (D_chamber_inner > 0 and L_chamber_curr > 0) else float("nan")
+    if np.isfinite(dt_ratio):
         chamber_shape_term += _relative_hinge_band_squared(
-            D_chamber_inner / D_throat_check,
-            CH_DT_MIN,
-            CH_DT_MAX,
-        )
-    if D_chamber_inner > 0 and np.isfinite(L_chamber_curr) and L_chamber_curr > 0:
+            dt_ratio, float(constants.get("layer1_chamber_dt_ratio_min", 2.2)),
+            float(constants.get("layer1_chamber_dt_ratio_max", 3.2)))
+    if np.isfinite(ld_ratio):
         chamber_shape_term += _relative_hinge_band_squared(
-            L_chamber_curr / D_chamber_inner,
-            CH_LD_MIN,
-            CH_LD_MAX,
-        )
+            ld_ratio, float(constants.get("layer1_chamber_ld_ratio_min", 1.0)),
+            float(constants.get("layer1_chamber_ld_ratio_max", 3.2)))
 
     geom_ao_af_term = 0.0
-    if inj_type == "impinging" and eval_success and W_geom_ao_af > 0.0 and A_fuel_injector > 0:
-        geom_ao_af_term, _, _ = _geom_ao_af_momentum_hint_squared(
-            float(A_lox_injector),
-            float(A_fuel_injector),
-            float(optimal_of),
-            rho_ox_c,
-            rho_fu_c,
-        )
-    # AO/AF geometry term is a guidance aid; taper it as O/F approaches target so it doesn't
-    # dominate residual after core requirements are already satisfied.
-    _of_tol_for_geom = float(constants.get("layer1_of_validation_tol", 0.15))
-    _of_tol_for_geom = max(0.05, _of_tol_for_geom)
-    _of_err_for_geom = of_error if np.isfinite(of_error) else 1.0
-    geom_ao_af_scale = min(1.0, float(_of_err_for_geom / _of_tol_for_geom) ** 2)
+    geom_ao_af_ratio = expected_ao_af = float("nan")
+    if inj_type == "impinging" and W_geom_ao_af > 0.0 and A_fuel_injector > 0:
+        geom_ao_af_term, geom_ao_af_ratio, expected_ao_af = _geom_ao_af_momentum_hint_squared(
+            float(A_lox_injector), float(A_fuel_injector), float(optimal_of),
+            float(constants.get("rho_oxidizer", 1140.0)), float(constants.get("rho_fuel", 422.6)))
+    # A guidance aid: taper it as O/F approaches target.
+    _of_tol_for_geom = max(0.05, float(constants.get("layer1_of_validation_tol", 0.15)))
+    geom_ao_af_scale = min(1.0, float(of_error / _of_tol_for_geom) ** 2)
     geom_ao_af_weighted = W_geom_ao_af * geom_ao_af_term * geom_ao_af_scale
 
     injector_dp_weighted = 0.0
-    if isinstance(result, dict):
-        _pc_obj = float(result.get("Pc", np.nan))
-        if np.isfinite(_pc_obj) and _pc_obj > 0:
-            _ro, _rf = injector_dp_ratios_from_eval_result(_pc_obj, result)
-            injector_dp_weighted = injector_dp_ratio_penalty_weighted(
-                _ro,
-                _rf,
-                W_DP,
-                W_DP_HIGH,
-                o_band=dp_o_band,
-                f_band=dp_f_band,
-                w_dp_o=W_DP_O,
-                w_dp_f=W_DP_F,
-                o_soft_floor=dp_o_soft_floor_worker,
-                w_dp_o_floor=W_DP_O_FLOOR_worker,
-                w_dp_center=W_DP_CENTER,
-            )
+    ratio_o = ratio_f = None
+    if np.isfinite(Pc_actual) and Pc_actual > 0:
+        ratio_o, ratio_f = injector_dp_ratios_from_eval_result(Pc_actual, result)
+        injector_dp_weighted = injector_dp_ratio_penalty_weighted(
+            ratio_o, ratio_f, W_DP, float(constants.get("W_DP_HIGH", 480.0)),
+            o_band=(float(constants.get("injector_dp_ratio_O_min", _LAYER1_DEFAULT_DP_O_BAND[0])),
+                    float(constants.get("injector_dp_ratio_O_max", _LAYER1_DEFAULT_DP_O_BAND[1]))),
+            f_band=(float(constants.get("injector_dp_ratio_F_min", _LAYER1_DEFAULT_DP_F_BAND[0])),
+                    float(constants.get("injector_dp_ratio_F_max", _LAYER1_DEFAULT_DP_F_BAND[1]))),
+            w_dp_o=float(constants.get("W_DP_O", W_DP)),
+            w_dp_f=float(constants.get("W_DP_F", W_DP)),
+            o_soft_floor=(float(constants["injector_dp_ratio_O_soft_floor"])
+                          if constants.get("injector_dp_ratio_O_soft_floor") is not None else None),
+            w_dp_o_floor=float(constants.get("W_DP_O_FLOOR", 0.0) or 0.0),
+            w_dp_center=float(constants.get("W_DP_CENTER", 500.0)),
+        )
 
     smd_term = 0.0
-    if inj_type == "impinging" and eval_success and W_SMD > 0.0 and isinstance(result, dict):
-        _mr_smd = float(MR_actual) if np.isfinite(MR_actual) and MR_actual > 0 else None
+    if inj_type == "impinging" and W_SMD > 0.0:
         smd_term, _, _ = _impinging_smd_penalty_with_angle(
-            result.get("diagnostics", {}) or {},
-            target_smd_microns=target_smd_um,
-            smd_rel_tol=smd_rel_tol,
-            mr_mass=_mr_smd,
-        )
+            diagnostics,
+            target_smd_microns=float(constants.get("target_smd_microns", 50.0)),
+            smd_rel_tol=float(constants.get("layer1_smd_rel_tol", 0.20)),
+            mr_mass=float(MR_actual) if np.isfinite(MR_actual) and MR_actual > 0 else None)
 
     tank_equal_term = 0.0
     if W_TANK_EQUAL > 0.0:
         tank_equal_term = _tank_pressure_equal_squared(
-            P_O_psi, P_F_psi, scale_psi=tank_equal_scale_psi,
-            tol_psi=float(constants.get("layer1_tank_equal_tol_psi", 0.0)),
-            inband_frac=float(constants.get("layer1_tank_equal_inband_frac", 0.0)),
-        )
+            P_O_psi, P_F_psi, scale_psi=float(constants.get("layer1_tank_equal_scale_psi", 100.0)),
+            tol_psi=float(constants.get("layer1_tank_equal_tol_psi", 0.0) or 0.0),
+            inband_frac=float(constants.get("layer1_tank_equal_inband_frac", 0.0) or 0.0))
 
     geom_fit_term = 0.0
-    if inj_type == "impinging" and eval_success and W_IMP_GEOM > 0.0 and isinstance(result, dict):
+    if inj_type == "impinging" and W_IMP_GEOM > 0.0:
         geom_fit_term = _impinging_geometry_fit_squared(
-            result.get("diagnostics", {}) or {},
-            D_chamber_inner_m=D_chamber_inner,
-            L_chamber_m=L_chamber_curr,
-        )
-    # Ring geometry from the DESIGN VARIABLES, not from diagnostics -- the accelerator does not
-    # emit the keys the call above needs, so that term is identically 0. See
-    # _impinging_ring_geometry_squared. Keep in lockstep with the objective() closure.
-    # OPT-IN. W_IMP_GEOM is 1500 in every shipped config, but the term it multiplied has been
-    # returning 0.0 on every candidate since the C->numba port (the accelerator emits none of the
-    # diagnostics it read), so no config has ever actually been optimised against it. Switching it
-    # on by default therefore introduced a 1500-weighted constraint nothing was tuned for, and it
-    # is tight enough that a random start often never reaches a feasible point: CMA then sits on
-    # the flat 1e6 infeasible plateau, tolstagnation trips, and 50016 evaluations collapse to
-    # ~1000. Measured on one config across 4 random seeds: 4/4 converge with this off, 1/4 at
-    # weight 150, 2/4 at 400, 2/4 at 1500 -- not a magnitude problem, a landscape one.
-    # The geometry it checks is real (see _impinging_ring_geometry_squared); it needs the search
-    # to be seeded into the feasible region before it can be enforced, not a different weight.
-    if (inj_type == "impinging" and W_IMP_GEOM > 0.0
-            and constants.get("layer1_enforce_ring_geometry", True)):
-        geom_fit_term += _impinging_ring_geometry_squared(
-            n_elements=n_el_O, spacing_O_m=sp_O, spacing_F_m=sp_F,
-            d_jet_O_m=d_jet_O, d_jet_F_m=d_jet_F, D_chamber_inner_m=D_chamber_inner,
-            angle_O_deg=ang_O, angle_F_deg=ang_F,
-            Ld_min=float(constants.get("layer1_impingement_Ld_min", 3.0)),
-            Ld_max=float(constants.get("layer1_impingement_Ld_max", 5.0)),
-            ring_order_fuel_outboard=bool(
-                constants.get("layer1_ring_order_fuel_outboard", True)),
-            center_clear_dia_m=float(
-                constants.get("layer1_injector_center_clear_dia_m", 0.0) or 0.0),
-            min_web_m=float(constants.get("layer1_injector_min_web_m", 0.0) or 0.0),
-            wall_clearance_m=float(
-                constants.get("layer1_injector_wall_clearance_m", 0.0) or 0.0),
-            spray_radius_frac=float(
-                constants.get("layer1_injector_spray_radius_frac", 0.0) or 0.0),
-            spray_radius_tol=float(
-                constants.get("layer1_injector_spray_radius_tol", 0.08) or 0.08),
-        )
+            diagnostics, D_chamber_inner_m=D_chamber_inner, L_chamber_m=L_chamber_curr)
+        # Ring geometry from the design variables (the accelerator emits none of the keys
+        # the diagnostics fit reads).
+        if constants.get("layer1_enforce_ring_geometry", True):
+            geom_fit_term += _impinging_ring_geometry_squared(
+                n_elements=n_el_O, spacing_O_m=sp_O, spacing_F_m=sp_F,
+                d_jet_O_m=d_jet_O, d_jet_F_m=d_jet_F, D_chamber_inner_m=D_chamber_inner,
+                angle_O_deg=ang_O, angle_F_deg=ang_F,
+                Ld_min=float(constants.get("layer1_impingement_Ld_min", _LD_BAND_DEFAULT.lo)),
+                Ld_max=float(constants.get("layer1_impingement_Ld_max", _LD_BAND_DEFAULT.hi)),
+                ring_order_fuel_outboard=bool(constants.get("layer1_ring_order_fuel_outboard", True)),
+                center_clear_dia_m=float(constants.get("layer1_injector_center_clear_dia_m", 0.0) or 0.0),
+                min_web_m=float(constants.get("layer1_injector_min_web_m", 0.0) or 0.0),
+                wall_clearance_m=float(constants.get("layer1_injector_wall_clearance_m", 0.0) or 0.0),
+                spray_radius_frac=float(constants.get("layer1_injector_spray_radius_frac", 0.0) or 0.0),
+                spray_radius_tol=float(constants.get("layer1_injector_spray_radius_tol", 0.08) or 0.08),
+                face_contoured=bool(constants.get("layer1_injector_face_contoured", False)),
+                exit_land=float(constants.get("layer1_injector_exit_land", EXIT_LAND_DEFAULT)),
+            )
 
     if not np.isfinite(infeasibility_score) or infeasibility_score < 0:
         infeasibility_score = 1.0
-
-    # Tiny squared stability/packing residuals can leave infeasibility_score > 0 while still being
-    # practically feasible; that lexicographically masks thrust/O‑F/ΔP shaping (BASE_INFEAS plateaus).
-    gate_eps = _layer1_infeasibility_gate_eps(requirements)
     inf_residual = _layer1_inf_residual(infeasibility_score, requirements)
-    
-    # Always compute the design-quality objective, feasible or not -- see below.
+    # Face and back-face geometry are hard limits, not numerical residuals: they bypass the gate.
+    if np.isfinite(geom_hard) and geom_hard > 0.0:
+        inf_residual = float(inf_residual) + float(geom_hard)
+
     of_sq = float(of_error) ** 2
-    if eval_success and np.isfinite(MR_actual) and optimal_of > 0:
+    if np.isfinite(MR_actual) and optimal_of > 0:
         if MR_actual < optimal_of:
             of_sq *= w_of_low_mr
         elif MR_actual > optimal_of:
             of_sq *= w_of_high_mr
 
-    # INFEASIBILITY CARRIES A GRADIENT, not a plateau.
-    #
-    # This used to return BASE_INFEAS + W_INFEAS*residual and nothing else, so every infeasible
-    # candidate scored ~1e6 and told the optimizer NOTHING about thrust, O/F, exit pressure or
-    # geometry -- only how badly one constraint was violated. When a random start lands entirely
-    # in the infeasible region (which happens often once real geometry constraints are enforced),
-    # CMA sees a flat plateau, tolstagnation trips, and every restart dies after a handful of
-    # generations: 50016 evaluations collapsing to ~1000, reported as "it just stops".
-    #
-    # Adding the quality objective inside the infeasible branch keeps feasibility lexicographic --
-    # BASE_INFEAS (1e6) still dwarfs any quality term (~10-1000), so ANY feasible point beats
-    # EVERY infeasible one -- while giving the search a direction to descend while it is still
-    # infeasible. It now prefers an infeasible design that is nearly on-thrust over one that is
-    # not, which is the information it needs to walk to the boundary and cross it.
-    obj_quality = (
-        W_THRUST * thrust_penalty_sq_term +
-        W_PC * pc_penalty_term +
-        W_OF * of_sq +
-        W_CF * cf_hinge +
-        W_EXIT * exit_pressure_sq_term +
-        W_LEN * length_term +
-        W_CHAMBER_SHAPE * chamber_shape_term +
-        W_MASS * mass_term +
-        W_LSTAR * lstar_term +
-        W_MOM * momentum_term +
-        W_ANGLE * angle_term +
-        W_JET_ASYM * jet_asym_term +
-        geom_ao_af_weighted +
-        W_SMD * smd_term +
-        W_TANK_EQUAL * tank_equal_term +
-        W_IMP_GEOM * geom_fit_term +
-        injector_dp_weighted
-    )
+    terms = {
+        "thrust_penalty": float(W_THRUST * thrust_penalty_sq_term),
+        "pc_target_penalty": float(W_PC * pc_penalty_term),
+        "of_penalty": float(W_OF * of_sq),
+        "cf_penalty": float(W_CF * cf_hinge),
+        "exit_pressure_penalty": float(W_EXIT * exit_pressure_sq_term),
+        "injector_dp_penalty": float(injector_dp_weighted),
+        "length_penalty": float(W_LEN * length_term),
+        "chamber_shape_penalty": float(W_CHAMBER_SHAPE * chamber_shape_term),
+        "lstar_penalty": float(W_LSTAR * lstar_term),
+        "isp_penalty": float(W_ISP * isp_term),
+        "chamber_mass_penalty": float(W_MASS * mass_term),
+        "momentum_balance_penalty": float(W_MOM * momentum_term),
+        "resultant_tilt_penalty": float(W_TILT * tilt_term),
+        "impingement_angle_penalty": float(W_ANGLE * angle_term),
+        "jet_angle_asymmetry_penalty": float(W_JET_ASYM * jet_asym_term),
+        "smd_penalty": float(W_SMD * smd_term),
+        "tank_pressure_equal_penalty": float(W_TANK_EQUAL * tank_equal_term),
+        "impinging_geometry_fit_penalty": float(W_IMP_GEOM * geom_fit_term),
+        "geom_ao_af_momentum_penalty": float(geom_ao_af_weighted),
+    }
+    obj_quality = float(sum(terms.values()))
 
+    # Infeasibility carries a gradient, not a plateau: the quality terms ride on top so an
+    # infeasible start can still descend toward thrust/O-F while it crosses the boundary.
     if length_violation:
-        obj = BASE_INFEAS + W_INFEAS * length_term + obj_quality
+        obj = _LAYER1_BASE_INFEAS + _LAYER1_W_INFEAS * length_term + obj_quality
     elif inf_residual > 0.0:
-        obj = BASE_INFEAS + W_INFEAS * float(inf_residual) + obj_quality
+        obj = _LAYER1_BASE_INFEAS + _LAYER1_W_INFEAS * float(inf_residual) + obj_quality
     else:
         obj = obj_quality
-
     if not np.isfinite(obj):
-        obj = BASE_INFEAS
+        obj = _LAYER1_BASE_INFEAS
 
-    return float(obj)
+    t_b = float(constants.get("target_burn_time", 0.0) or 0.0)
+    out.update({
+        "objective": float(obj),
+        "objective_quality": obj_quality,
+        "terms": terms,
+        "eval_success": True,
+        "infeasibility_score": float(infeasibility_score),
+        "inf_residual": float(inf_residual),
+        "length_violation": bool(length_violation),
+        "F": F_actual, "MR": MR_actual, "Pc": Pc_actual, "Isp": Isp_actual,
+        "Cf": Cf_actual, "P_exit": P_exit_actual,
+        "thrust_error": float(thrust_error), "of_error": float(of_error),
+        "thrust_penalty_sq": float(thrust_penalty_sq_term),
+        "cf_hinge": float(cf_hinge),
+        "stability_results": stability, "stability_state": stability_state,
+        "stability_score": stability_score, "state_ok": bool(state_ok),
+        "chugging_margin": chugging_margin, "acoustic_margin": acoustic_margin,
+        "feed_margin": feed_margin, "effective_min_score": effective_min_score,
+        "effective_margin": effective_margin,
+        "injector_dp_ratio_O": ratio_o, "injector_dp_ratio_F": ratio_f,
+        "momentum_ratio_R": R_val, "resultant_tilt_deg": tilt_deg,
+        "resultant_tilt_breakeven_deg": tilt_breakeven,
+        "effective_smd_microns": smd_eff_um, "impingement_angle_deg": imp_angle_deg,
+        "chamber_D_over_Dt": dt_ratio, "chamber_L_over_D": ld_ratio,
+        "L_chamber": L_chamber_curr, "L_cylindrical": L_cylindrical,
+        "L_face_to_throat": _lens["face_to_throat"], "L_engine": float(L_engine_curr),
+        "Lstar_m": Lstar, "Lstar_target_m": lstar_target_curr,
+        "chamber_mass_kg": float(chamber_mass_kg),
+        "Isp_merit_s": isp_merit, "Isp_ref_s": isp_ref,
+        "propellant_mass_kg": (float(target_thrust * t_b / (_G0 * isp_merit))
+                               if (t_b > 0 and np.isfinite(isp_merit) and isp_merit > 0) else float("nan")),
+        "geom_ao_af_momentum_scale": float(geom_ao_af_scale),
+        "geom_ao_af": geom_ao_af_ratio, "expected_ao_af_for_R1": expected_ao_af,
+    })
+    return out if return_terms else float(obj)
+
+
+def _layer1_objective_terms(
+    result: Any, x: np.ndarray, requirements: dict, constants: dict, *,
+    cea_cache: Any = None, eval_error: Optional[str] = None,
+) -> Dict[str, Any]:
+    """:func:`_compute_objective_value` with its terms and context."""
+    return _compute_objective_value(result, x, requirements, constants, cea_cache,
+                                    eval_error=eval_error, return_terms=True)
 
 
 def _native_fast_eval_enabled() -> bool:
@@ -4250,40 +4848,20 @@ def _eval_candidate(x_raw):
         # Solve the derived DOFs (expansion ratio, throat area) and re-evaluate.
         # Mutates x in place so _compute_objective_value and the cached design
         # below both see the geometry that was actually evaluated.
+        _cea = getattr(_worker_runner, "cea_cache", None)
         result = _layer1_solve_derived_geometry(
-            x, _worker_runner.config, _worker_constants, _evaluate_once, result
+            x, _worker_runner.config, _worker_constants, _evaluate_once, result,
+            cea_cache=_cea,
         )
 
-        # Compute objective value (pure function)
-        obj_value = _compute_objective_value(result, x, _worker_requirements, _worker_constants)
-        
+        _terms = _layer1_objective_terms(
+            result, x, _worker_requirements, _worker_constants, cea_cache=_cea)
+        obj_value = float(_terms["objective"])
         _f = float(result.get("F", 0))
         _mr = float(result.get("MR", 0))
-        _tgt = float(_worker_constants.get("target_thrust", 7000.0))
-        _oof = float(_worker_constants.get("optimal_of", 2.3))
-        thr_e = abs(_f - _tgt) / _tgt if _tgt > 0 and np.isfinite(_f) else 1.0
-        of_e = abs(_mr - _oof) / _oof if _oof > 0 and np.isfinite(_mr) else 1.0
-        _mom_term = 0.0
-        if _worker_constants.get("injector_type") == "impinging":
-            _diag = result.get("diagnostics") if isinstance(result, dict) else {}
-            _Rv = (_diag or {}).get("momentum_ratio_R")
-            if _Rv is not None and np.isfinite(_Rv) and float(_Rv) > 0:
-                _wml = _worker_constants.get("impinging_momentum_R_min")
-                _wmh = _worker_constants.get("impinging_momentum_R_max")
-                _mom_lo = float(_wml) if _wml is not None and np.isfinite(float(_wml)) else None
-                _mom_hi = float(_wmh) if _wmh is not None and np.isfinite(float(_wmh)) else None
-                _mom_term = _impinging_momentum_asymmetric_squared(
-                    _Rv,
-                    wall_side_multiplier=float(_worker_constants.get(
-                        "layer1_momentum_wall_side_multiplier", 1.0)),
-                    low_side_multiplier=float(_worker_constants.get(
-                        "layer1_momentum_low_side_multiplier", 10.0)),
-                    band_width=float(_worker_constants.get(
-                        "layer1_momentum_band_width", 0.025)),
-                    safe_side_is_below_one=bool(_worker_constants.get(
-                        "layer1_ring_order_fuel_outboard", True)),
-                    scale=float(_worker_constants.get("layer1_momentum_scale", 0.10)),
-                )
+        thr_e = float(_terms.get("thrust_error", 1.0))
+        of_e = float(_terms.get("of_error", 1.0))
+        _mom_term = float(_terms["terms"].get("momentum_balance_penalty", 0.0))
         return {
             'value': float(obj_value),
             'success': True,
@@ -4678,6 +5256,45 @@ def _layer1_check_of_target_in_cea_range(config_obj: Any, optimal_of: Any) -> No
         )
 
 
+def _layer1_resolve_of_target(
+    config_obj: Any, optimal_of: Any, cea_cache: Any = None, Pc_pa: float = 3.0e6,
+    Pa: float = 101325.0,
+) -> Tuple[float, Optional[str]]:
+    """The O/F Layer 1 designs to, and a warning when it is not the one requested.
+
+    A target outside the propellant's CEA table (a blank template keeps the previous
+    propellant's O/F) cannot be evaluated. Rather than abort, design to the O/F of peak ideal
+    ambient Isp at ``Pc_pa`` inside the table -- the conventional starting point (Sutton &
+    Biblarz ch. 5) -- or, without a table, the nearest table edge, and say so.
+    """
+    try:
+        lo, hi = (float(v) for v in config_obj.combustion.cea.MR_range)
+    except (AttributeError, TypeError, ValueError):
+        return float(optimal_of), None
+    try:
+        of = float(optimal_of)
+    except (TypeError, ValueError):
+        of = float("nan")
+    if np.isfinite(of) and lo <= of <= hi:
+        return of, None
+    preset = getattr(config_obj, "propellant_preset", None) or "this propellant"
+    grid = np.linspace(lo, hi, 121)
+    isp = np.array([_layer1_ideal_isp_s(
+        cea_cache, m, Pc_pa, Pa,
+        _layer1_eps_for_exit_pressure_cea(cea_cache, m, Pc_pa, Pa) or getattr(cea_cache, "eps_min", 4.0))
+        for m in grid]) if _layer1_cea_ok(cea_cache) else np.full(grid.shape, np.nan)
+    if np.any(np.isfinite(isp)):
+        new = float(grid[int(np.nanargmax(isp))])
+        why = f"the peak ideal Isp O/F at {Pc_pa / 6894.757:.0f} psia"
+    else:
+        new = float(np.clip(of if np.isfinite(of) else 0.5 * (lo + hi), lo, hi))
+        why = "the nearest table edge"
+    msg = (f"Design target O/F {of:.2f} is outside the CEA table for {preset} "
+           f"(MR_range [{lo:.2f}, {hi:.2f}]); designing to O/F {new:.3f}, {why}. Set "
+           f"optimal_of_ratio in Design Requirements -- switching propellant keeps the previous target.")
+    return new, msg
+
+
 def run_layer1_optimization(
     config_obj: PintleEngineConfig,
     runner: PintleEngineRunner,
@@ -4733,7 +5350,8 @@ def run_layer1_optimization(
     # Ensure output/logs directory exists
     output_logs_dir = Path(__file__).resolve().parents[3] / "output" / "logs"
     output_logs_dir.mkdir(parents=True, exist_ok=True)
-    log_file_path = output_logs_dir / f"layer1_static_{timestamp}.log"
+    # PID too: two runs started in the same second (a sweep) wrote one interleaved file.
+    log_file_path = output_logs_dir / f"layer1_static_{timestamp}_{os.getpid()}.log"
     
     # Create logger for Layer 1
     layer1_logger = logging.getLogger('layer1_static')
@@ -4778,7 +5396,7 @@ def run_layer1_optimization(
     # Extract requirements
     target_thrust = requirements.get("target_thrust", 7000.0)
     optimal_of = requirements.get("optimal_of_ratio", 2.3)
-    _layer1_check_of_target_in_cea_range(config_obj, optimal_of)
+    layer1_warnings: List[str] = []
     min_stability = float(requirements.get("min_stability_margin", _LAYER1_DEFAULT_MIN_STABILITY_MARGIN))
 
     def _resolve_Lstar_bounds_from_req_and_config() -> Tuple[float, float]:
@@ -4850,6 +5468,23 @@ def run_layer1_optimization(
     else:
         layer1_logger.info(f"Environment config not available, using default sea level pressure: {target_P_exit:.1f} Pa")
     
+    # An O/F the propellant's table cannot evaluate (a blank template keeps the previous
+    # propellant's) is replaced, with a warning, rather than aborting the run.
+    _caps = [v for v in (requirements.get("max_lox_tank_pressure_psi"),
+                         requirements.get("max_fuel_tank_pressure_psi")) if v]
+    _of_pc_pa = (float(requirements.get("target_chamber_pressure_psi") or 0.0)
+                 or (min(float(v) for v in _caps) / 1.3 if _caps else 435.0)) * 6894.757
+    _of_cea = getattr(runner, "cea_cache", None)
+    optimal_of, _of_msg = _layer1_resolve_of_target(
+        config_obj, optimal_of, _of_cea if _layer1_cea_ok(_of_cea) else None, _of_pc_pa,
+        float(target_P_exit))
+    if _of_msg:
+        requirements = dict(requirements)
+        requirements["optimal_of_ratio"] = optimal_of
+        layer1_warnings.append(_of_msg)
+        layer1_logger.warning(_of_msg)
+        log_status("warning", _of_msg)
+
     layer1_logger.info(f"Target thrust: {target_thrust:.1f} N")
     layer1_logger.info(f"Target O/F ratio: {optimal_of:.2f}")
     layer1_logger.info(f"Min stability margin: {min_stability:.2f}")
@@ -4952,7 +5587,7 @@ def run_layer1_optimization(
     Pc_est = Pc_est_psi * psi_to_Pa
     Cf_est = 1.5
     A_throat_init = target_thrust / (Cf_est * Pc_est) if Pc_est > 0 else 0.001
-    A_throat_init = np.clip(A_throat_init, 5e-5, 3.0e-3)
+    A_throat_init = max(float(A_throat_init), 5e-5)
     
     # Calculate bounds ensuring injector area < throat area (pintle) or manufacturable jets (impinging)
     min_A_throat_safe = 5e-5
@@ -5022,7 +5657,22 @@ def run_layer1_optimization(
                 _pc_cap_psi,
                 _cf_hi_for_floor,
             )
-    min_outer_diameter = max_chamber_od * 0.5
+    # OD floor from the smallest reachable throat, not from the envelope cap: below
+    # wall + (D/Dt)_min * Dt_min every reachable throat violates the chamber-shape band.
+    # 0.5 x cap put a 73 mm bore floor under a 1 kN engine that wants ~40 mm (DEF-09).
+    min_outer_diameter = _layer1_chamber_od_floor_m(
+        max_chamber_od, wall_total_m, min_A_throat_safe,
+        _requirement_float(requirements, "layer1_chamber_dt_ratio_min", 2.2))
+    if not (min_outer_diameter < max_chamber_od):
+        layer1_logger.warning(
+            "Chamber OD cap %.1f mm cannot hold the %.1f mm wall plus a bore at the D/Dt floor "
+            "for the smallest reachable throat; the chamber-shape term will report it.",
+            max_chamber_od * 1e3, wall_total_m * 1e3)
+        min_outer_diameter = max_chamber_od * 0.5
+    # Throat ceiling from thrust at the lowest Cf / stagnation fraction the search allows
+    # (was a flat 4000 mm^2, which binds above ~15 kN).
+    A_throat_hi = max(4.0e-3, float(target_thrust) / (
+        1.3 * max(min_P_ratio, 0.05) * min(max_lox_P_psi, max_fuel_P_psi) * psi_to_Pa))
 
     if l1_injector_type == "impinging":
         D_inner_bounds = impinging_chamber_inner_diameter_for_bounds(
@@ -5092,6 +5742,15 @@ def run_layer1_optimization(
         # first design to clear every gate put the fuel jet at 69 deg -- 21 deg of incidence,
         # and 35.4 mm of passage through a 12.7 mm plate.
         _inc_req = requirements.get("layer1_injector_min_face_incidence_deg")
+        _pl = _layer1_plate(config_obj)
+        if _inc_req is not None and _pl.get("face") == "contoured" and _pl.get("back") == "channels":
+            # Every exit leaves its flank square on a contoured face, and with channels the
+            # passage length is set by the hole's L/d rather than t / cos(theta): the ceiling
+            # has nothing left to protect. (With a plenum back it still bounds the passage.)
+            layer1_logger.info(
+                "Contoured injector face: layer1_injector_min_face_incidence_deg (%s) not applied",
+                _inc_req)
+            _inc_req = None
         if _inc_req is not None:
             try:
                 _inc_req = float(_inc_req)
@@ -5125,7 +5784,7 @@ def run_layer1_optimization(
         # more elements need LESS pitch for the same circle, so n_hi_int gives the loosest floor
         # that is still valid for every reachable n.
         _spacing_lo = 0.003
-        _cc_req = _requirement_float(requirements, "layer1_injector_center_clear_dia_m", 0.0)
+        _cc_req = _layer1_centre_clear_m(config_obj, requirements)
         if np.isfinite(_cc_req) and _cc_req > 0.0 and n_hi_int >= 1:
             _spacing_lo = max(_spacing_lo, float(np.pi) * float(_cc_req) / float(n_hi_int))
             if _spacing_lo >= spacing_hi:
@@ -5146,7 +5805,7 @@ def run_layer1_optimization(
             f"d_jet ≤ {d_jet_hi*1000:.2f} mm, spacing ≤ {spacing_hi*1000:.2f} mm"
         )
         bounds = [
-            (min_A_throat_safe, 4.0e-3),
+            (min_A_throat_safe, A_throat_hi),
             (min_Lstar, max_Lstar),
             (exp_ratio_lo, exp_ratio_hi),
             (min_outer_diameter, max_chamber_od),
@@ -5172,7 +5831,7 @@ def run_layer1_optimization(
         max_injector_area = max(max_LOX_area, max_fuel_area)
 
         bounds = [
-            (min_A_throat_safe, 4.0e-3),
+            (min_A_throat_safe, A_throat_hi),
             (min_Lstar, max_Lstar),
             (exp_ratio_lo, exp_ratio_hi),
             (min_outer_diameter, max_chamber_od),
@@ -5395,7 +6054,7 @@ def run_layer1_optimization(
             outer_diameter_init = np.clip(max_chamber_od * 0.55, min_outer_diameter, max_chamber_od)
 
     # Clean up variables for array creation
-    A_throat_init = np.clip(A_throat_init, 5e-5, 3.0e-3)
+    A_throat_init = float(np.clip(A_throat_init, bounds[0][0], bounds[0][1]))
 
     P_O_start_init = max_lox_P_psi * 0.80
     P_F_start_init = max_fuel_P_psi * 0.80
@@ -5615,13 +6274,13 @@ def run_layer1_optimization(
         requirements, "layer1_derive_expansion_ratio", True)
     derive_throat_from_thrust = _requirement_bool(
         requirements, "layer1_derive_throat_from_thrust", True)
-    # 2 iterations, not 4. Each one costs a full extra evaluate() for EVERY candidate, and
-    # the secant is accurate enough that the third and fourth buy nothing measurable:
-    # measured on the live design, 4 iters = 7.4 evaluate()/candidate and 73 s, 2 iters =
-    # 2.3 evaluate()/candidate and 40 s, and BOTH land thrust at 7200.0 N. The un-derived
-    # path costs 2.08 evaluate()/candidate, so this is nearly free.
+    # Solved to tolerance, not for a fixed count: the loop exits once thrust is within
+    # layer1_derive_thrust_tol_rel and eps has stopped moving. Two fixed iterations left a
+    # 0.4-0.9 % thrust miss that depended on where CMA proposed the throat, and the search
+    # traded that miss against the chamber-mass term (L1-04). The cap only bounds a
+    # non-converging secant.
     derive_max_iters = max(1, int(_requirement_float(
-        requirements, "layer1_derive_max_iters", 2.0)))
+        requirements, "layer1_derive_max_iters", float(_LAYER1_DERIVE_MAX_ITERS_DEFAULT))))
     derive_thrust_tol = float(_requirement_float(
         requirements, "layer1_derive_thrust_tol_rel", 1.0e-3))
 
@@ -5710,7 +6369,7 @@ def run_layer1_optimization(
         _pinned_msgs.append("tank pressure (solved from dP/Pc = %.2f)" % dp_ratio_target)
         _pinned_msgs.append(
             "fuel ring pitch (solved so the jets meet at %.2f jet diameters)"
-            % _requirement_float(requirements, "layer1_impingement_Ld_target", 4.0)
+            % _requirement_float(requirements, "layer1_impingement_Ld_target", IMPINGEMENT_LD_TARGET_DEFAULT)
         )
     if _pinned_msgs:
         layer1_logger.info(
@@ -5763,7 +6422,7 @@ def run_layer1_optimization(
         "layer1_derive_impingement_spacing": _requirement_bool(
             requirements, "layer1_derive_impingement_spacing", True),
         "layer1_impingement_Ld_target": _requirement_float(
-            requirements, "layer1_impingement_Ld_target", 4.0),
+            requirements, "layer1_impingement_Ld_target", IMPINGEMENT_LD_TARGET_DEFAULT),
         "layer1_ring_order_fuel_outboard": _requirement_bool(
             requirements, "layer1_ring_order_fuel_outboard", True),
         "derive_spacing_F_min": derive_spacing_F_range[0],
@@ -5909,8 +6568,7 @@ def run_layer1_optimization(
     layer1_exit_pressure_deadband_rel = _requirement_float(
         requirements, "layer1_exit_pressure_deadband_rel", 0.05
     )
-    # Chamber dry-mass cost. Default 0 = OFF, so this commit changes no existing design until a
-    # config opts in; without it L* has no cost at all and pins to its maximum every run.
+    # Chamber dry-mass cost. Unset, it is priced against the performance term below.
     layer1_W_MASS = _requirement_float(requirements, "layer1_W_MASS", 0.0)
     layer1_W_LSTAR = _requirement_float(requirements, "layer1_W_LSTAR", 0.0)
     layer1_Lstar_target_m = _requirement_float(requirements, "layer1_Lstar_target_m", 1.0)
@@ -5957,6 +6615,32 @@ def run_layer1_optimization(
 
     layer1_dp_o_aim = _interior_band(layer1_dp_o_band)
     layer1_dp_f_aim = _interior_band(layer1_dp_f_band)
+
+    # Figure of merit: delivered Isp against chamber mass, both priced per kg. At fixed total
+    # impulse I = F t_b the propellant is I/(g0 Isp); the isp term is the propellant beyond an
+    # ideal engine's, as a fraction of it (W_ISP per unit fraction, so W_ISP/m_prop_ref per kg).
+    # Unset, the chamber-mass weight takes the same price per kg at its reference mass.
+    _l1_cea_cache = getattr(runner, "cea_cache", None)
+    if not _layer1_cea_ok(_l1_cea_cache):
+        _l1_cea_cache = None
+    _pc_ref_psi = (float(_pc_tgt_seed) if (_pc_tgt_seed is not None and float(_pc_tgt_seed) > 0)
+                   else min(max_lox_P_psi, max_fuel_P_psi) * max_P_ratio
+                   / (1.0 + 0.25 * (sum(layer1_dp_o_band) + sum(layer1_dp_f_band))))
+    _t_b = float(target_burn_time or 0.0)
+    _mw = _layer1_merit_weights(
+        requirements, _l1_cea_cache, float(optimal_of), _pc_ref_psi * psi_to_Pa,
+        float(target_P_exit), (float(exp_ratio_lo), float(exp_ratio_hi)),
+        float(target_thrust), _t_b, layer1_W_MASS, layer1_chamber_mass_ref_kg)
+    layer1_W_ISP, layer1_W_MASS = _mw["W_ISP"], _mw["W_MASS"]
+    layer1_Isp_ref_s, _eps_ref, layer1_m_prop_ref_kg = _mw["Isp_ref_s"], _mw["eps_ref"], _mw["m_prop_ref_kg"]
+    if not np.isfinite(layer1_Isp_ref_s) and _requirement_float(requirements, "layer1_W_ISP", 1.0) > 0:
+        layer1_logger.warning("Layer 1: no CEA table for the Isp reference; performance term off.")
+    layer1_logger.info(
+        "Layer 1 figure of merit: W_ISP=%g on Isp_ref %.2f s (ideal, O/F %.3f, Pc %.0f psi, eps %.3f); "
+        "m_prop_ref %.3f kg for %.0f N x %.2f s; W_MASS=%g (%s)",
+        layer1_W_ISP, layer1_Isp_ref_s, float(optimal_of), _pc_ref_psi, _eps_ref,
+        layer1_m_prop_ref_kg, float(target_thrust), _t_b, layer1_W_MASS,
+        "config" if requirements.get("layer1_W_MASS") is not None else "priced like propellant")
     _lio_sf_raw = requirements.get("injector_dp_ratio_O_soft_floor")
     layer1_dp_o_soft_floor: Optional[float] = (
         float(_lio_sf_raw)
@@ -5992,6 +6676,49 @@ def run_layer1_optimization(
         requirements, "layer1_injector_min_face_incidence_deg", 0.0)
     layer1_injector_plate_thickness_m = _requirement_float(
         requirements, "layer1_injector_plate_thickness_m", 0.0)
+    layer1_injector_counterbore_dia_m = _requirement_float(
+        requirements, "layer1_injector_counterbore_dia_m", 0.0)
+    layer1_injector_min_back_web_m = _requirement_float(
+        requirements, "layer1_injector_min_back_web_m", 0.0)
+    # Orifice land length (diameters) per side, which decides whether the back-face entry is
+    # the counterbore or the orifice itself. Same source the Cd model reads.
+    def _land_ld(side: str) -> float:
+        try:
+            v = getattr(config_obj.discharge[side], "orifice_l_over_d", None)
+        except (KeyError, TypeError, AttributeError):
+            v = None
+        return float(v) if v is not None and np.isfinite(float(v)) and float(v) > 0 else 4.0
+    layer1_injector_land_ld_O = _land_ld("oxidizer")
+    try:
+        _fuel_ld = getattr(config_obj.discharge["fuel"], "orifice_l_over_d", None)
+    except (KeyError, TypeError, AttributeError):
+        _fuel_ld = None
+    # The layout falls back to the oxidiser's L/d, not 4.0; so does this.
+    layer1_injector_land_ld_F = _land_ld("fuel") if _fuel_ld is not None else layer1_injector_land_ld_O
+    # How the plug is machined (injector.plate). Nothing declared => flat face, plenum back:
+    # exactly the constraints this optimizer had before.
+    _plate = _layer1_plate(config_obj)
+    layer1_injector_face_contoured = _plate.get("face") == "contoured"
+    layer1_injector_back_channels = _plate.get("back") == "channels"
+    layer1_injector_exit_land = (float(_plate["exit_land"]) if _plate.get("exit_land") is not None
+                                 else EXIT_LAND_DEFAULT)
+    layer1_injector_channel_width_m = float(_plate.get("channel_width") or 0.0)
+    layer1_injector_channel_floor = str(_plate.get("channel_floor") or "flat")
+    if layer1_injector_face_contoured and layer1_injector_back_channels:
+        # Square exits AND passage length set by the channel: nothing left for the ceiling.
+        layer1_injector_min_face_incidence_deg = 0.0
+    from engine.core.injectors.layout import assembly_envelope as _assembly_envelope
+    _env = _assembly_envelope(config_obj)
+    layer1_injector_r_plate_m = float(_env["r_sleeve_id"])      # fallback; per candidate below
+    layer1_injector_liner_thickness_m = float(_env["liner_thickness"])
+    # A declared igniter port sets the centre keep-out from its thread when no explicit
+    # reservation is given, and its hub / socket becomes a back-face keep-out. Nothing
+    # declared => nothing changes.
+    layer1_injector_center_clear_dia_m = _layer1_centre_clear_m(config_obj, requirements)
+    _ign = _layer1_igniter_keepouts(config_obj, requirements)
+    layer1_injector_back_keepout_dia_m = float(_ign["back_keepout_dia"]) if _ign else 0.0
+    layer1_injector_back_keepout_wall_m = float(_ign["face_wall"]) if _ign else 0.0
+    layer1_injector_r_port_m = 0.5 * float(_ign["thread_od"]) if _ign else 0.0
     layer1_resultant_tilt_from_reach = _requirement_bool(
         requirements, "layer1_resultant_tilt_from_reach", False)
     layer1_resultant_tilt_reach_margin = _requirement_float(
@@ -6021,6 +6748,9 @@ def run_layer1_optimization(
         requirements, "layer1_resultant_tilt_max_deg", 0.0)
     layer1_resultant_tilt_scale_deg = _requirement_float(
         requirements, "layer1_resultant_tilt_scale_deg", 2.0)
+    layer1_W_TILT = _requirement_float(requirements, "layer1_W_TILT", 0.0)
+    layer1_resultant_tilt_outward_multiplier = _requirement_float(
+        requirements, "layer1_resultant_tilt_outward_multiplier", 25.0)
     layer1_resultant_tilt_gate_tol_deg = _requirement_float(
         requirements, "layer1_resultant_tilt_gate_tol_deg", 1.0)
     layer1_momentum_low_side_multiplier = _requirement_float(
@@ -6028,25 +6758,21 @@ def run_layer1_optimization(
     layer1_momentum_band_width = _requirement_float(
         requirements, "layer1_momentum_band_width", 0.05)
     layer1_momentum_scale = _requirement_float(requirements, "layer1_momentum_scale", 0.10)
+    # The gate is the configured band; >1 widens it on purpose, never by default.
     layer1_momentum_gate_safe_slack = max(1.0, _requirement_float(
-        requirements, "layer1_momentum_gate_safe_slack", 3.0))
+        requirements, "layer1_momentum_gate_safe_slack", 1.0))
     # The user states ONE number -- how many jet diameters off the face the jets should meet --
     # and the free window is that target +/- tol. Explicit Ld_min/Ld_max still win, so an
     # existing config that set the band keeps its behaviour.
-    _ld_target = _requirement_float(requirements, "layer1_impingement_Ld_target", 4.0)
     layer1_derive_impingement_spacing = _requirement_bool(
         requirements, "layer1_derive_impingement_spacing", True)
     # With the spacing DERIVED, L/d lands on the target exactly, so the band is the target --
     # zero width. It is not a preference to negotiate; the only way to miss it is the fuel
-    # ring clamping at the bore, and that is exactly what should be reported. ``_ld_tol``
+    # ring clamping at the bore, and that is exactly what should be reported. The tolerance
     # remains for anyone who turns the derivation off and wants a search window instead.
-    _ld_tol = max(0.0, _requirement_float(
-        requirements, "layer1_impingement_Ld_tol",
-        0.0 if layer1_derive_impingement_spacing else 1.0))
-    layer1_impingement_Ld_min = _requirement_float(
-        requirements, "layer1_impingement_Ld_min", max(0.0, _ld_target - _ld_tol))
-    layer1_impingement_Ld_max = _requirement_float(
-        requirements, "layer1_impingement_Ld_max", _ld_target + _ld_tol)
+    # One resolver (engine.core.injectors.layout) so the drawing and audit agree with this.
+    _ld_target, layer1_impingement_Ld_min, layer1_impingement_Ld_max = impingement_ld_band(
+        requirements)
     layer1_W_IMP_GEOM = _requirement_float(requirements, "W_IMP_GEOM", 0.0)
     layer1_W_geom_ao_af = float(requirements.get("W_geom_ao_af_momentum", 0.0))
     # With the tanks locked, dP_O ~= dP_F, so R ~= Cd_O/Cd_F ~= 1 by construction and the
@@ -6182,44 +6908,10 @@ def run_layer1_optimization(
             key_parts.append(int(round((float(v) - float(lower_bounds[i])) / step)))
         return tuple(key_parts)
     
-    def _hinge_band(x_val: float, lo: float, hi: float, scale: float = 1.0) -> float:
-        """Dimensionless squared hinge penalty outside [lo, hi]."""
-        if scale <= 0:
-            scale = 1.0
-        below = max(0.0, (lo - x_val) / scale)
-        above = max(0.0, (x_val - hi) / scale)
-        return below * below + above * above
-    
     def _check_valley_escape_tier() -> int:
-        """Determine if we are in a 'valley' and should boost exploration."""
-        evals = opt_state["function_evaluations"]
-        best_f = opt_state["best_objective"]
-        stagnation = evals - opt_state["last_best_eval"]
-        
-        # Tier 3: Full (evals > 5000, best > 100, stagnation > 1000)
-        if evals > 5000 and best_f > 100.0 and stagnation > 1000:
-            return 3
-        # Tier 2: Medium (evals > 3000, best > 150, stagnation > 500)
-        if evals > 3000 and best_f > 150.0 and stagnation > 500:
-            return 2
-        # Tier 1: Mild (evals > 1500, best > 300, stagnation > 300)
-        if evals > 1500 and best_f > 300.0 and stagnation > 300:
-            return 1
-        return 0
-    
-    # Optional chamber-pressure target for the PARENT objective. MUST mirror the workers'
-    # _compute_objective_value exactly: the parent closure scores warm-start, best-tracking
-    # and the L-BFGS-B refinement — if it lacks a term the workers have, refinement will
-    # happily walk the design off that target after CMA converged onto it (seen live:
-    # Pc target 350 → CMA hit it → L-BFGS-B drifted the final design to ~430).
-    _pc_target_pa_obj = None
-    _W_PC_obj = 0.0
-    _pc_t_req = requirements.get("target_chamber_pressure_psi")
-    if _pc_t_req is not None and float(_pc_t_req) > 0:
-        _pc_target_pa_obj = float(_pc_t_req) * 6894.757293168
-        # None => default 1e4; an explicit 0.0 stays 0.0 (penalty off, seeding
-        # effects kept). MUST mirror constants_dict['layer1_W_PC'] below.
-        _W_PC_obj = _requirement_float(requirements, "layer1_W_PC", 1.0e4)
+        return _layer1_valley_escape_tier(
+            opt_state["function_evaluations"], opt_state["best_objective"],
+            opt_state["function_evaluations"] - opt_state["last_best_eval"])
 
     # Define objective function
     def objective(x: np.ndarray) -> float:
@@ -6407,6 +7099,23 @@ def run_layer1_optimization(
                 min_face_incidence_deg=layer1_injector_min_face_incidence_deg,
                 spray_radius_frac=layer1_injector_spray_radius_frac,
                 spray_radius_tol=layer1_injector_spray_radius_tol,
+                plate_thickness_m=layer1_injector_plate_thickness_m,
+                counterbore_dia_m=layer1_injector_counterbore_dia_m,
+                land_ld_O=layer1_injector_land_ld_O,
+                land_ld_F=layer1_injector_land_ld_F,
+                min_back_web_m=layer1_injector_min_back_web_m,
+                back_keepout_dia_m=layer1_injector_back_keepout_dia_m,
+                back_keepout_wall_m=layer1_injector_back_keepout_wall_m,
+                face_contoured=layer1_injector_face_contoured,
+                exit_land=layer1_injector_exit_land,
+                back_channels=layer1_injector_back_channels,
+                passage_ld_O=layer1_injector_land_ld_O,
+                passage_ld_F=layer1_injector_land_ld_F,
+                channel_width_m=layer1_injector_channel_width_m,
+                channel_floor=layer1_injector_channel_floor,
+                r_plate_m=layer1_injector_r_plate_m,
+                r_port_m=layer1_injector_r_port_m,
+                liner_thickness_m=layer1_injector_liner_thickness_m,
             )
         elif infeasibility_score > 0.0:
             skip_physics_eval = True
@@ -6473,25 +7182,56 @@ def run_layer1_optimization(
                 
                 test_runner = PintleEngineRunner(config_runner)
 
+                _last_err = [None]
+
                 def _evaluate_once_slow():
+                    # The worker pool's evaluation path (accelerator first, Python when it
+                    # declines), so the inline objective scores exactly what the pool scores.
                     try:
+                        if _native_fast_eval_enabled():
+                            from engine import accel as _accel
+                            _r = _accel.evaluate(test_runner.config, test_runner.cea_cache,
+                                                 P_O_test, P_F_test, target_P_exit)
+                            if _r is not None:
+                                return _r
                         return test_runner.evaluate(
                             P_O_test, P_F_test, P_ambient=target_P_exit, silent=True)
-                    except Exception:
+                    except Exception as _e:
+                        _last_err[0] = str(_e)
                         return None
 
-                _first = _evaluate_once_slow()
+                # Same first-evaluation recovery as the worker: "Supply < Demand" is a throat
+                # too small to bracket a Pc, which the derived-throat solve fixes once it has
+                # a result -- grow it and retry before calling the candidate dead.
+                _first = None
+                _prev_grow = 1.0
+                for _grow in (1.0, 1.3, 1.7, 2.2):
+                    if _grow != 1.0:
+                        x_clipped[0] = float(min(x_clipped[0] * (_grow / _prev_grow),
+                                                 derive_At_range[1]))
+                        _layer1_apply_chamber_geometry_to_config(
+                            config_runner, A_throat=float(x_clipped[0]),
+                            Lstar=float(x_clipped[1]), expansion_ratio=float(x_clipped[2]),
+                            D_chamber_outer=_quantize_chamber_od_m(
+                                float(x_clipped[3]), _od_increment_in,
+                                wall_m=wall_total_m, snap_target=_od_snap_target),
+                            max_nozzle_exit=max_nozzle_exit, wall_thickness_m=wall_total_m)
+                    _prev_grow = _grow
+                    _first = _evaluate_once_slow()
+                    _err = (_last_err[0] or "")
+                    if (_first is not None or not derive_throat_from_thrust
+                            or not ("Supply < Demand" in _err or "Insufficient mass flow" in _err)):
+                        break
                 if _first is None:
                     eval_success = False
-                    eval_error_str = "evaluate() raised"
+                    eval_error_str = _last_err[0] or "evaluate() raised"
                     final_results = {}
                 else:
-                    # Same derived-DOF solve as the worker path -- the two
-                    # objectives must stay in lockstep or the warm start and the
-                    # population disagree about what geometry a vector means.
+                    # Same derived-DOF solve as the worker path.
                     _solved = _layer1_solve_derived_geometry(
                         x_clipped, config_runner, _derive_constants,
                         _evaluate_once_slow, _first,
+                        cea_cache=getattr(test_runner, "cea_cache", None),
                     )
                     final_results = _solved if isinstance(_solved, dict) else _first
                     eval_success = True
@@ -6517,19 +7257,43 @@ def run_layer1_optimization(
                         "x_solved": x_clipped.tolist(),
                     }
         
-        # Defaults when evaluation fails / skipped
-        F_actual = float(final_results.get("F", np.nan)) if eval_success else np.nan
-        Isp_actual = float(final_results.get("Isp", np.nan)) if eval_success else np.nan
-        MR_actual = float(final_results.get("MR", np.nan)) if eval_success else np.nan
-        Pc_actual = float(final_results.get("Pc", np.nan)) if eval_success else np.nan
-        Cf_actual = float(final_results.get("Cf_actual", final_results.get("Cf", np.nan))) if eval_success else np.nan
-        stability = final_results.get("stability_results", {}) if eval_success else {}
-        
-        # Primary errors (dimensionless)
-        thrust_error = abs(F_actual - target_thrust) / target_thrust if (eval_success and target_thrust > 0 and np.isfinite(F_actual)) else 1.0
-        # Same O/F deadband as the worker objective -- keep in lockstep.
-        of_error = abs(MR_actual - optimal_of) / optimal_of if (eval_success and optimal_of > 0 and np.isfinite(MR_actual)) else 1.0
-        of_error = max(0.0, of_error - layer1_of_deadband_rel)
+        # Score with THE objective -- the one the worker pool uses -- on the solved vector.
+        if eval_success and isinstance(final_results, dict):
+            final_results["eps"] = float(final_results.get("eps", x_clipped[2]))
+        _T = _layer1_objective_terms(
+            final_results if eval_success else None, x_clipped, requirements, constants_dict,
+            cea_cache=_l1_cea_cache, eval_error=eval_error_str)
+        obj = float(_T["objective"])
+        _tw = _T["terms"]
+        infeasibility_score = float(_T.get("infeasibility_score", 1.0))
+        inf_residual = float(_T.get("inf_residual", infeasibility_score))
+        length_violation = bool(_T.get("length_violation", False))
+        raw_feasible_obj = obj if (eval_success and inf_residual <= 0.0 and not length_violation) else float("nan")
+
+        F_actual = float(_T.get("F", np.nan))
+        Isp_actual = float(_T.get("Isp", np.nan))
+        MR_actual = float(_T.get("MR", np.nan))
+        Pc_actual = float(_T.get("Pc", np.nan))
+        Cf_actual = float(_T.get("Cf", np.nan))
+        thrust_error = float(_T.get("thrust_error", 1.0))
+        of_error = float(_T.get("of_error", 1.0))
+        stability = _T.get("stability_results", {}) or {}
+        stability_state = _T.get("stability_state", "unstable")
+        stability_score = float(_T.get("stability_score", 0.0))
+        chugging_margin = float(_T.get("chugging_margin", 0.0))
+        acoustic_margin = float(_T.get("acoustic_margin", 0.0))
+        feed_margin = float(_T.get("feed_margin", 0.0))
+        state_ok = bool(_T.get("state_ok", False))
+        effective_min_score = float(_T.get("effective_min_score", 0.0))
+        effective_margin = float(_T.get("effective_margin", 0.0))
+        ratio_o_obj = _T.get("injector_dp_ratio_O")
+        ratio_f_obj = _T.get("injector_dp_ratio_F")
+        L_chamber_curr = float(_T.get("L_chamber", np.nan))
+        smd_eff_um = float(_T.get("effective_smd_microns", np.nan))
+        imp_angle_deg = float(_T.get("impingement_angle_deg", np.nan))
+        cf_hinge = float(_T.get("cf_hinge", 0.0))
+        W_CF = 1e2
+
         if eval_success and isinstance(final_results, dict) and np.isfinite(F_actual):
             opt_state["last_good_eval_bundle"] = {
                 "results": copy.deepcopy(final_results),
@@ -6538,491 +7302,10 @@ def run_layer1_optimization(
                 "thrust_error": float(thrust_error),
                 "of_error": float(of_error),
             }
-        of_sq = float(of_error) ** 2
-        if eval_success and np.isfinite(MR_actual) and optimal_of > 0:
-            if MR_actual < optimal_of:
-                of_sq *= layer1_W_OF_low_MR_scale
-            elif MR_actual > optimal_of:
-                of_sq *= layer1_W_OF_high_MR_scale
 
-        # Thrust penalty with 2% deadband (no penalty if within 2% error)
-        thrust_penalty_sq_term = 0.0
-        if eval_success and target_thrust > 0 and np.isfinite(F_actual):
-            rel_error = abs(F_actual - target_thrust) / target_thrust
-            deadband = _layer1_thrust_deadband(requirements)
-            if rel_error > deadband:
-                # Only penalize error beyond the deadband
-                excess = rel_error - deadband
-                thrust_penalty_sq_term = excess ** 2
-        elif not eval_success or not np.isfinite(F_actual):
-            # Failed evaluation gets full penalty
-            thrust_penalty_sq_term = 1.0
-        
-        # Exit pressure preference (dimensionless)
-        # Asymmetric penalty with deadband: Overexpansion (P < target) is worse than underexpansion
-        # Option A: Deadband + asymmetric quadratic
-        P_exit_actual = float(final_results.get("P_exit", np.nan)) if eval_success else np.nan
-        
-        exit_pressure_sq_term = float(
-            _layer1_exit_pressure_sq_term(
-                float(P_exit_actual) if eval_success else float("nan"),
-                float(target_P_exit),
-                deadband_rel=layer1_exit_pressure_deadband_rel,
-                inside_rel_quad_scale=float(layer1_exit_pressure_inside_quad),
-            )
-        )
-
-        # Injector pressure-drop ratio penalty (ΔP_inj / Pc): piecewise hinge; matches worker _compute_objective_value
-        injector_dp_weighted = 0.0
-        ratio_o_obj: Optional[float] = None
-        ratio_f_obj: Optional[float] = None
-        if eval_success and np.isfinite(Pc_actual) and Pc_actual > 0:
-            ratio_o_obj, ratio_f_obj = injector_dp_ratios_from_eval_result(float(Pc_actual), final_results)
-            injector_dp_weighted = injector_dp_ratio_penalty_weighted(
-                ratio_o_obj,
-                ratio_f_obj,
-                layer1_W_DP,
-                layer1_W_DP_HIGH,
-                o_band=layer1_dp_o_aim,
-                f_band=layer1_dp_f_aim,
-                w_dp_o=layer1_W_DP_O,
-                w_dp_f=layer1_W_DP_F,
-                o_soft_floor=layer1_dp_o_soft_floor,
-                w_dp_o_floor=layer1_W_DP_O_FLOOR,
-            )
-        
-        # Injector flow capacity vs throat: use A_eff = Cd × A_geom from evaluated diagnostics
-        if has_pintle and A_throat_check > 0 and geom is not None:
-            lox_geom = geom.lox
-            fuel_geom = geom.fuel
-            A_lox_g = float(lox_geom.n_orifices * np.pi * (lox_geom.d_orifice / 2) ** 2)
-            R_inner_g = float(fuel_geom.d_pintle_tip / 2)
-            R_outer_g = float(R_inner_g + fuel_geom.h_gap)
-            A_fuel_g = float(np.pi * (R_outer_g ** 2 - R_inner_g ** 2))
-            if eval_success:
-                diag_ev = final_results.get("diagnostics") or {}
-                A_eff_O, A_eff_F, eff_warns = effective_flow_areas_from_cd(diag_ev, A_lox_g, A_fuel_g)
-                if eff_warns:
-                    fd = final_results.setdefault("diagnostics", {})
-                    if isinstance(fd, dict):
-                        merge_effective_area_warnings(fd, eff_warns)
-                lox_ratio = A_eff_O / A_throat_check
-                fuel_ratio = A_eff_F / A_throat_check
-                infeasibility_score += max(0.0, lox_ratio - 1.0) ** 2
-                infeasibility_score += max(0.0, fuel_ratio - 1.0) ** 2
-                if A_eff_F > 0:
-                    area_ratio = A_eff_O / A_eff_F
-                    Cd_ratio = discharge_cd_inf_ratio(
-                        float(lox_geom.d_orifice),
-                        max(2.0 * float(fuel_geom.h_gap), 1e-9),
-                        config.discharge["oxidizer"],
-                        config.discharge["fuel"],
-                    )
-                    rho_ratio = np.sqrt(
-                        max(float(config.fluids["oxidizer"].density), 1e-9)
-                        / max(float(config.fluids["fuel"].density), 1e-9)
-                    )
-                    delta_p_ratio_est = np.sqrt(1.2)
-                    area_ratio_factor = Cd_ratio * rho_ratio * delta_p_ratio_est
-                    required_area_ratio = optimal_of / area_ratio_factor if area_ratio_factor > 0 else np.inf
-                    if required_area_ratio > 0 and np.isfinite(required_area_ratio):
-                        area_ratio_error = abs(area_ratio - required_area_ratio) / required_area_ratio
-                        infeasibility_score += max(0.0, area_ratio_error - 0.5) ** 2
-            else:
-                lox_ratio = A_lox_g / A_throat_check
-                fuel_ratio = A_fuel_g / A_throat_check
-                if A_fuel_g > 0:
-                    area_ratio = A_lox_g / A_fuel_g
-                    Cd_ratio = discharge_cd_inf_ratio(
-                        float(lox_geom.d_orifice),
-                        max(2.0 * float(fuel_geom.h_gap), 1e-9),
-                        config.discharge["oxidizer"],
-                        config.discharge["fuel"],
-                    )
-                    rho_ratio = np.sqrt(
-                        max(float(config.fluids["oxidizer"].density), 1e-9)
-                        / max(float(config.fluids["fuel"].density), 1e-9)
-                    )
-                    delta_p_ratio_est = np.sqrt(1.2)
-                    area_ratio_factor = Cd_ratio * rho_ratio * delta_p_ratio_est
-                    required_area_ratio = optimal_of / area_ratio_factor if area_ratio_factor > 0 else np.inf
-                    if required_area_ratio > 0 and np.isfinite(required_area_ratio):
-                        area_ratio_error = abs(area_ratio - required_area_ratio) / required_area_ratio
-
-        elif has_impinging and A_throat_check > 0 and geom is not None:
-            oxg = geom.oxidizer
-            fug = geom.fuel
-            A_lox_g = float(oxg.n_elements * np.pi * (oxg.d_jet / 2.0) ** 2)
-            A_fuel_g = float(fug.n_elements * np.pi * (fug.d_jet / 2.0) ** 2)
-            if eval_success:
-                diag_ev = final_results.get("diagnostics") or {}
-                A_eff_O, A_eff_F, eff_warns = effective_flow_areas_from_cd(diag_ev, A_lox_g, A_fuel_g)
-                if eff_warns:
-                    fd = final_results.setdefault("diagnostics", {})
-                    if isinstance(fd, dict):
-                        merge_effective_area_warnings(fd, eff_warns)
-                lox_ratio = A_eff_O / A_throat_check
-                fuel_ratio = A_eff_F / A_throat_check
-                infeasibility_score += _impinging_infeasibility_flow_capacity_terms(
-                    A_lox_flow=A_eff_O,
-                    A_fuel_flow=A_eff_F,
-                    A_throat_check=A_throat_check,
-                )
-            else:
-                lox_ratio = A_lox_g / A_throat_check
-                fuel_ratio = A_fuel_g / A_throat_check
-                infeasibility_score += _impinging_infeasibility_flow_capacity_terms(
-                    A_lox_flow=A_lox_g,
-                    A_fuel_flow=A_fuel_g,
-                    A_throat_check=A_throat_check,
-                )
-        
-        # Stability gates contribute to feasibility (lexicographic stage 1)
-        stability_state = stability.get("stability_state", "unstable")
-        stability_score = float(stability.get("stability_score", 0.0))
-        chugging_margin = max(0.0, float(stability.get("chugging", {}).get("stability_margin", 0.0)))
-        acoustic_margin = max(0.0, float(stability.get("acoustic", {}).get("stability_margin", 0.0)))
-        feed_margin = max(0.0, float(stability.get("feed_system", {}).get("stability_margin", 0.0)))
-        
-        min_stability_score_raw = float(requirements.get("min_stability_score", 0.75))
-        stability_margin_handicap = float(requirements.get("stability_margin_handicap", 0.0))
-        score_factor = max(0.0, 1.0 - stability_margin_handicap)
-        margin_factor = max(0.0, 1.0 - stability_margin_handicap)
-        effective_min_score = min_stability_score_raw * score_factor
-        effective_margin = float(min_stability) * margin_factor
-        
-        require_stable_state = bool(requirements.get("require_stable_state", True))
-        allowed_states = {"stable", "marginal"}
-        state_ok = (stability_state in allowed_states) if require_stable_state else (stability_state != "unstable")
-        if eval_success:
-            if not state_ok:
-                infeasibility_score += 1.0
-            if effective_min_score > 0:
-                infeasibility_score += max(0.0, (effective_min_score - stability_score) / effective_min_score) ** 2
-            if effective_margin > 0:
-                infeasibility_score += max(0.0, (effective_margin - chugging_margin) / effective_margin) ** 2
-                infeasibility_score += max(0.0, (effective_margin - acoustic_margin) / effective_margin) ** 2
-                infeasibility_score += max(0.0, (effective_margin - feed_margin) / effective_margin) ** 2
-        else:
-            # If solver fails, treat as infeasible and try to provide directional guidance.
-            # This avoids "constant penalty with no gradient" behavior.
-            infeasibility_score += 1.0
-            if eval_error_str is not None:
-                err_lower = eval_error_str.lower()
-                # Supply < Demand → encourage higher pressures and/or larger injector area
-                if ("supply < demand" in err_lower) or ("insufficient mass flow" in err_lower):
-                    infeasibility_score += max(0.0, 0.90 - P_O_ratio) ** 2 + max(0.0, 0.90 - P_F_ratio) ** 2
-                # Supply > Demand / bracket issues → encourage reducing injector oversupply or increasing throat
-                if ("supply > demand" in err_lower) or ("invalid bracket" in err_lower) or ("no solution" in err_lower):
-                    if np.isfinite(lox_ratio):
-                        infeasibility_score += max(0.0, lox_ratio - 0.90) ** 2
-                    if np.isfinite(fuel_ratio):
-                        infeasibility_score += max(0.0, fuel_ratio - 0.90) ** 2
-            # Pintle-only: area-ratio mismatch from Cd/ρ heuristic when evaluate() fails
-            if has_pintle and np.isfinite(area_ratio_error):
-                infeasibility_score += max(0.0, area_ratio_error - 0.25) ** 2
-        
-        # Regularization terms (dimensionless squared)
-        Cf_min_acceptable = 1.3
-        Cf_max_acceptable = 1.8
-        cf_hinge = _hinge_band(float(Cf_actual) if np.isfinite(Cf_actual) else 0.0,
-                               Cf_min_acceptable, Cf_max_acceptable,
-                               scale=(Cf_max_acceptable - Cf_min_acceptable))
-        
-        # Total engine length penalty (chamber + nozzle): matches the worker path in
-        # _compute_objective_value. Previously this read a non-existent key ("max_chamber_length_m")
-        # AND a non-existent attribute (config.chamber -> None), so it was doubly dead and the user's
-        # max_engine_length was ignored. Use cg.length (chamber) + 0.8*D_exit (standard bell estimate).
-        max_engine_length = float(requirements.get("max_engine_length", 0.50))
-        L_chamber_curr = float(cg.length) if (getattr(cg, "length", None) is not None and np.isfinite(cg.length)) else np.nan
-        L_nozzle_est = 0.8 * float(D_exit_check) if np.isfinite(D_exit_check) else 0.0
-        L_engine_curr = (L_chamber_curr + L_nozzle_est) if np.isfinite(L_chamber_curr) else np.nan
-        length_term = 0.0
-        length_violation = False
-        if np.isfinite(L_engine_curr) and max_engine_length > 0:
-            if L_engine_curr > max_engine_length:
-                # Hard constraint: treat as infeasibility
-                length_violation = True
-                length_term = ((L_engine_curr - max_engine_length) / max_engine_length) ** 2
-            else:
-                # Soft penalty to guide optimizer away from the boundary
-                length_term = max(0.0, (L_engine_curr - max_engine_length * 0.9) / (max_engine_length * 0.1)) ** 2
-        # L* cost -- kept in lockstep with _compute_objective_value above.
-        _lstar_curr = (float(cg.volume) / float(cg.A_throat)
-                       if (getattr(cg, "volume", None) and getattr(cg, "A_throat", None)
-                           and float(cg.A_throat) > 0) else float("nan"))
-        # L* target correlated to SMD -- lockstep with _compute_objective_value above.
-        lstar_term = 0.0
-        lstar_target_curr = float("nan")
-        if layer1_W_LSTAR > 0.0:
-            _smd_for_lstar = _effective_smd_um(
-                (final_results.get("diagnostics") or {}) if eval_success else None,
-                MR_actual if np.isfinite(MR_actual) else None,
-            )
-            lstar_target_curr, _lstar_db = _layer1_resolve_lstar_target(
-                _smd_for_lstar, requirements, requirements.get, layer1_Lstar_target_m,
-            )
-            lstar_term = _layer1_lstar_band_term(_lstar_curr, lstar_target_curr, _lstar_db)
-
-        # Chamber dry-mass cost. Kept in lockstep with
-        # _compute_objective_value above; adding it to one objective only is how CMA converges
-        # on one design and L-BFGS-B refinement then walks off it.
-        chamber_mass_kg = float("nan")
-        mass_term = 0.0
-        if layer1_W_MASS > 0.0 and D_chamber_inner > 0 and np.isfinite(L_chamber_curr):
-            chamber_mass_kg = _layer1_chamber_mass_kg(
-                float(np.pi) / 4.0 * float(D_chamber_inner) ** 2,
-                L_chamber_curr,
-                wall_total_m,
-                layer1_chamber_wall_density,
-                Pc_pa=float(Pc_actual) if np.isfinite(Pc_actual) else 0.0,
-            )
-            mass_term = _layer1_chamber_mass_term(chamber_mass_kg, layer1_chamber_mass_ref_kg)
-
-        # Hard geometric constraints -> infeasibility. Lockstep with _compute_objective_value.
-        _n_el_main = 0
-        try:
-            _n_el_main = int(getattr(getattr(config.injector.geometry, "oxidizer", None),
-                                     "n_elements", 0) or 0)
-        except (AttributeError, TypeError, ValueError):
-            _n_el_main = 0
-        if _n_el_main <= 0 and inj_type == "impinging" and x is not None and len(x) > 4:
-            try:
-                _n_el_main = int(x[4])
-            except (TypeError, ValueError):
-                _n_el_main = 0
-        _L_cyl_main = float("nan")
-        try:
-            _L_cyl_main = float(getattr(cg, "length_cylindrical", float("nan")))
-        except Exception:
-            pass
-        if not np.isfinite(_L_cyl_main) and np.isfinite(L_chamber_curr):
-            _L_cyl_main = L_chamber_curr
-        infeasibility_score += _layer1_geometry_infeasibility(
-            requirements,
-            L_cylindrical=_L_cyl_main,
-            D_chamber_inner=D_chamber_inner,
-            A_chamber=float(np.pi) / 4.0 * float(D_chamber_inner) ** 2 if D_chamber_inner > 0 else 0.0,
-            n_elements=_n_el_main,
-        )
-
-        chamber_shape_term = 0.0
-        chamber_dt_ratio_curr = float("nan")
-        chamber_ld_ratio_curr = float("nan")
-        if D_chamber_inner > 0 and D_throat_check > 0:
-            chamber_dt_ratio_curr = D_chamber_inner / D_throat_check
-            chamber_shape_term += _relative_hinge_band_squared(
-                chamber_dt_ratio_curr,
-                layer1_chamber_dt_ratio_min,
-                layer1_chamber_dt_ratio_max,
-            )
-        if D_chamber_inner > 0 and np.isfinite(L_chamber_curr) and L_chamber_curr > 0:
-            chamber_ld_ratio_curr = L_chamber_curr / D_chamber_inner
-            chamber_shape_term += _relative_hinge_band_squared(
-                chamber_ld_ratio_curr,
-                layer1_chamber_ld_ratio_min,
-                layer1_chamber_ld_ratio_max,
-            )
-        
-        # Impinging jet momentum balance (hinge; matches worker _compute_objective_value)
-        momentum_term = 0.0
-        smd_term = 0.0
-        angle_term = 0.0
-        jet_asym_term = 0.0
-        smd_eff_um = float("nan")
-        imp_angle_deg = float("nan")
-        _tilt_curr = float("nan")
-        if has_impinging and eval_success:
-            R_m = final_results.get("diagnostics", {}).get("momentum_ratio_R")
-            if R_m is not None and np.isfinite(R_m) and float(R_m) > 0:
-                # Read the geometry off the CONFIG that was just evaluated -- the *_curr
-                # locals are derived from x_clipped further down, after this block.
-                _g_t = getattr(getattr(config, "injector", None), "geometry", None)
-                _tilt_curr = _impinging_resultant_tilt_deg(
-                    final_results.get("mdot_O"), final_results.get("mdot_F"),
-                    float(config.fluids["oxidizer"].density),
-                    float(config.fluids["fuel"].density),
-                    getattr(_g_t.oxidizer, "n_elements", float("nan")) if _g_t else float("nan"),
-                    getattr(_g_t.oxidizer, "d_jet", float("nan")) if _g_t else float("nan"),
-                    getattr(_g_t.fuel, "d_jet", float("nan")) if _g_t else float("nan"),
-                    getattr(_g_t.oxidizer, "impingement_angle", float("nan")) if _g_t else float("nan"),
-                    getattr(_g_t.fuel, "impingement_angle", float("nan")) if _g_t else float("nan"),
-                    lox_inboard=layer1_ring_order_fuel_outboard,
-                )
-                infeasibility_score += _impinging_resultant_wall_violation(
-                    _tilt_curr,
-                    max_outward_deg=_resolve_tilt_allowance_deg(
-                        from_reach=layer1_resultant_tilt_from_reach,
-                        constant_deg=layer1_resultant_tilt_max_deg,
-                        breakeven_deg=_resultant_tilt_breakeven_deg(
-                            n_elements=float(x[4]), spacing_O_m=float(x[7]),
-                            spacing_F_m=float(x[10]), angle_O_deg=float(x[6]),
-                            angle_F_deg=float(x[9]), D_chamber_inner_m=D_chamber_inner,
-                            L_chamber_m=L_chamber_curr),
-                        margin=layer1_resultant_tilt_reach_margin,
-                    ),
-                    scale_deg=layer1_resultant_tilt_scale_deg,
-                )
-                momentum_term = _impinging_momentum_asymmetric_squared(
-                    R_m,
-                    wall_side_multiplier=layer1_momentum_wall_side_multiplier,
-                    low_side_multiplier=layer1_momentum_low_side_multiplier,
-                    band_width=layer1_momentum_band_width,
-                    safe_side_is_below_one=layer1_ring_order_fuel_outboard,
-                    scale=layer1_momentum_scale,
-                )
-            if layer1_W_SMD > 0.0:
-                _mr_smd_main = float(MR_actual) if np.isfinite(MR_actual) and MR_actual > 0 else None
-                smd_term, smd_eff_um, imp_angle_deg = _impinging_smd_penalty_with_angle(
-                    final_results.get("diagnostics", {}) or {},
-                    target_smd_microns=layer1_target_smd_microns,
-                    smd_rel_tol=layer1_smd_rel_tol,
-                    mr_mass=_mr_smd_main,
-                )
-            else:
-                try:
-                    imp_angle_deg = float(final_results.get("diagnostics", {}).get("impingement_angle_deg", np.nan))
-                except (TypeError, ValueError):
-                    imp_angle_deg = float("nan")
-            if layer1_W_impinging_angle > 0.0:
-                angle_term = _impinging_angle_hinge_squared(
-                    imp_angle_deg,
-                    angle_band_lo_deg=layer1_impinging_angle_deg_lo,
-                    angle_band_hi_deg=layer1_impinging_angle_deg_hi,
-                )
-            if layer1_W_impinging_jet_asym > 0.0 and geom is not None:
-                jet_asym_term = _impinging_jet_pair_asymmetry_squared(
-                    getattr(getattr(geom, "oxidizer", None), "impingement_angle", np.nan),
-                    getattr(getattr(geom, "fuel", None), "impingement_angle", np.nan),
-                    max_delta_deg=float(layer1_impinging_jet_max_asym_deg),
-                )
-
-        # Equal-tank-pressure objective and impinging element-geometry fit (couples `spacing`)
-        tank_equal_term = 0.0
-        if layer1_W_TANK_EQUAL > 0.0:
-            _P_O_tank = float(np.clip(x_clipped[idx_P_O], bounds[idx_P_O][0], bounds[idx_P_O][1]))
-            _P_F_tank = float(np.clip(x_clipped[idx_P_F], bounds[idx_P_F][0], bounds[idx_P_F][1]))
-            tank_equal_term = _tank_pressure_equal_squared(
-                _P_O_tank, _P_F_tank, scale_psi=layer1_tank_equal_scale_psi,
-                tol_psi=layer1_tank_equal_tol_psi,
-                inband_frac=layer1_tank_equal_inband_frac,
-            )
-        geom_fit_term = 0.0
-        if has_impinging and eval_success and layer1_W_IMP_GEOM > 0.0:
-            geom_fit_term = _impinging_geometry_fit_squared(
-                final_results.get("diagnostics", {}) or {},
-                D_chamber_inner_m=D_chamber_inner,
-                L_chamber_m=L_chamber_curr,
-            )
-        # Design-variable ring geometry -- lockstep with _compute_objective_value above.
-        # Opt-in, in lockstep with _compute_objective_value above.
-        if has_impinging and layer1_W_IMP_GEOM > 0.0 and layer1_enforce_ring_geometry:
-            geom_fit_term += _impinging_ring_geometry_squared(
-                n_elements=float(x[4]), spacing_O_m=float(x[7]), spacing_F_m=float(x[10]),
-                d_jet_O_m=float(x[5]), d_jet_F_m=float(x[8]),
-                D_chamber_inner_m=D_chamber_inner,
-                angle_O_deg=float(x[6]), angle_F_deg=float(x[9]),
-                Ld_min=layer1_impingement_Ld_min, Ld_max=layer1_impingement_Ld_max,
-                ring_order_fuel_outboard=layer1_ring_order_fuel_outboard,
-                center_clear_dia_m=layer1_injector_center_clear_dia_m,
-                min_web_m=layer1_injector_min_web_m,
-                wall_clearance_m=layer1_injector_wall_clearance_m,
-                spray_radius_frac=layer1_injector_spray_radius_frac,
-                spray_radius_tol=layer1_injector_spray_radius_tol,
-            )
-
-        # Geometry hint: A_O/A_F vs MR/√(ρ_O/ρ_F) for R≈1 (soft, optimizer-only)
-        geom_ao_af_term = 0.0
-        geom_ao_af_ratio_curr = float("nan")
-        expected_ao_af_for_R1_curr = float("nan")
-        if has_impinging and eval_success and geom is not None and layer1_W_geom_ao_af > 0.0:
-            oxgg = geom.oxidizer
-            fugg = geom.fuel
-            Aog_h = float(oxgg.n_elements * np.pi * (oxgg.d_jet / 2.0) ** 2)
-            Afg_h = float(fugg.n_elements * np.pi * (fugg.d_jet / 2.0) ** 2)
-            rho_o_v = float(config.fluids["oxidizer"].density)
-            rho_f_v = float(config.fluids["fuel"].density)
-            if Afg_h > 0:
-                geom_ao_af_term, geom_ao_af_ratio_curr, expected_ao_af_for_R1_curr = (
-                    _geom_ao_af_momentum_hint_squared(Aog_h, Afg_h, optimal_of, rho_o_v, rho_f_v)
-                )
-        _of_tol_for_geom = max(0.05, float(layer1_of_validation_tol))
-        _of_err_for_geom = of_error if np.isfinite(of_error) else 1.0
-        geom_ao_af_scale = min(1.0, float(_of_err_for_geom / _of_tol_for_geom) ** 2)
-        geom_ao_af_weighted = layer1_W_geom_ao_af * geom_ao_af_term * geom_ao_af_scale
-        
-        # ------------------------------------------------------------------
-        # Lexicographic-ish scalarization with normalized weights
-        # Each priority level is 100× the next for clear separation
-        # SCALED DOWN: Max penalty ~1e7 instead of 1e10
-        # ------------------------------------------------------------------
-        BASE_INFEAS = 1e6        # Infeasibility baseline (was 1e10)
-        W_INFEAS = 1e5           # Level 0: Hard constraints (was 1e8)
-        W_THRUST = layer1_W_THRUST_obj
-        W_OF = layer1_W_OF_obj
-        W_CF = 1e2               # Level 2: Secondary objectives (was 1e4)
-        # Config-driven — MUST stay in lockstep with _compute_objective_value above, or CMA
-        # converges on one exit-pressure weighting and L-BFGS-B refinement walks off it.
-        W_EXIT = layer1_W_EXIT
-        W_LEN = 1e4              # Level 2: Chamber length constraint (increased from 1.0 to enforce max length)
-        W_MOM = layer1_W_MOM     # Impinging momentum-balance hinge (same default as constants_dict W_MOM)
-        W_GEOM_AO_AF = layer1_W_geom_ao_af
-        
-        if (not np.isfinite(infeasibility_score)) or infeasibility_score < 0:
-            infeasibility_score = 1.0
-
-        gate_eps = _layer1_infeasibility_gate_eps(requirements)
-        inf_residual = _layer1_inf_residual(infeasibility_score, requirements)
-        raw_feasible_obj = float("nan")
-
-        # Chamber-pressure target penalty — exact L1 outside a ±1% deadband, identical to the
-        # workers' _compute_objective_value (keep in lockstep or refinement diverges from CMA).
-        pc_penalty_term = 0.0
-        if _pc_target_pa_obj is not None:
-            if eval_success and np.isfinite(Pc_actual) and Pc_actual > 0:
-                _pc_rel = abs(float(Pc_actual) - _pc_target_pa_obj) / _pc_target_pa_obj
-                pc_penalty_term = max(0.0, _pc_rel - 0.01)
-            else:
-                pc_penalty_term = 1.0
-
-        # Quality objective computed unconditionally; infeasible candidates carry it too, so the
-        # search has a direction to descend instead of a flat 1e6 plateau. Lockstep with
-        # _compute_objective_value -- see the long note there.
-        obj_quality = (
-            W_THRUST * thrust_penalty_sq_term +
-            W_OF * of_sq +
-            W_CF * cf_hinge +
-            W_EXIT * exit_pressure_sq_term +
-            injector_dp_weighted +
-            W_LEN * length_term +
-            layer1_W_chamber_shape * chamber_shape_term +
-            layer1_W_MASS * mass_term +
-            layer1_W_LSTAR * lstar_term +
-            W_MOM * momentum_term +
-            layer1_W_impinging_angle * angle_term +
-            layer1_W_impinging_jet_asym * jet_asym_term +
-            geom_ao_af_weighted
-            + layer1_W_SMD * smd_term
-            + layer1_W_TANK_EQUAL * tank_equal_term
-            + layer1_W_IMP_GEOM * geom_fit_term
-            + _W_PC_obj * pc_penalty_term
-        )
-
-        if length_violation:
-            obj = BASE_INFEAS + W_INFEAS * length_term + obj_quality
-        elif inf_residual > 0.0:
-            obj = BASE_INFEAS + W_INFEAS * float(inf_residual) + obj_quality
-        else:
-            obj = obj_quality
-            raw_feasible_obj = float(obj)
-
-        if not np.isfinite(obj):
-            obj = BASE_INFEAS
-        
-        # Check for early stopping (pure feasibility + primary objective satisfaction)
+        # "Acceptable" uses the final validation gates (configured bands, not aim bands).
         thrust_tol_validation = float(layer1_gate_thrust_tol)
         of_tol_validation = float(layer1_of_validation_tol)
-        # Keep "acceptable" criteria aligned with final validation gates.
         dp_gate_obj = True
         _ok_o_dp = injector_dp_ratio_within_gate(ratio_o_obj, layer1_dp_o_band[0], layer1_dp_o_band[1])
         if _ok_o_dp is not None:
@@ -7031,46 +7314,29 @@ def run_layer1_optimization(
         if _ok_f_dp is not None:
             dp_gate_obj &= bool(_ok_f_dp)
         momentum_gate_obj = True
-        _R_m_gate = np.nan
-        if "R_m" in locals() and R_m is not None:
-            try:
-                _R_m_gate = float(R_m)
-            except (TypeError, ValueError):
-                _R_m_gate = np.nan
-        if (
-            has_impinging
-            and np.isfinite(_R_m_gate)
-            and layer1_impinging_R_mom_lo is not None
-            and layer1_impinging_R_mom_hi is not None
-        ):
+        _R_m_gate = float(_T.get("momentum_ratio_R", np.nan))
+        if (has_impinging and np.isfinite(_R_m_gate)
+                and layer1_impinging_R_mom_lo is not None and layer1_impinging_R_mom_hi is not None):
             momentum_gate_obj = (
-                float(layer1_impinging_R_mom_lo) <= _R_m_gate <= float(layer1_impinging_R_mom_hi)
-            )
+                float(layer1_impinging_R_mom_lo) <= _R_m_gate <= float(layer1_impinging_R_mom_hi))
         errors_acceptable = (
-            _layer1_feasible_for_primary_objective(infeasibility_score, requirements)
+            eval_success
+            and _layer1_feasible_for_primary_objective(infeasibility_score, requirements)
             and (thrust_error <= thrust_tol_validation + 1e-12)
             and (of_error <= of_tol_validation + 1e-12)
             and (stability_score >= effective_min_score * 0.8)
             and dp_gate_obj
             and momentum_gate_obj
         )
-        
-        # Track that we found an acceptable solution, but don't force stop
-        # (let optimizer continue to find even better solutions)
         if errors_acceptable:
-            if eval_success and final_pressures is not None:
+            if final_pressures is not None:
                 opt_state["best_pressures"] = final_pressures
                 opt_state["best_results_for_validation"] = {
-                    "F": F_actual,
-                    "MR": MR_actual,
-                    "thrust_error": thrust_error,
-                    "of_error": of_error,
-                    "stability_score": stability_score,
-                    "stability_state": stability_state,
-                    "chugging_margin": chugging_margin,
-                    "acoustic_margin": acoustic_margin,
-                    "feed_margin": feed_margin,
-                    "stability_results": stability,
+                    "F": F_actual, "MR": MR_actual,
+                    "thrust_error": thrust_error, "of_error": of_error,
+                    "stability_score": stability_score, "stability_state": stability_state,
+                    "chugging_margin": chugging_margin, "acoustic_margin": acoustic_margin,
+                    "feed_margin": feed_margin, "stability_results": stability,
                 }
             if not opt_state.get('acceptable_found_logged', False):
                 log_status("Layer 1", f"✓ Acceptable solution found! Obj={obj:.6e}, Thrust err: {thrust_error*100:.2f}%, O/F err: {of_error*100:.2f}% (continuing optimization...)")
@@ -7080,16 +7346,14 @@ def run_layer1_optimization(
                 if obj < float(opt_state.get("satisfied_obj", float("inf"))):
                     opt_state["satisfied_obj"] = float(obj)
                 opt_state["satisfied_eval_count"] = int(opt_state.get("satisfied_eval_count", 0)) + 1
-        
-        # Track valid evaluations
+
+        # A failed evaluation already scores >= BASE_INFEAS; never hand back anything better.
         if eval_success and np.isfinite(obj):
             opt_state['consecutive_failures'] = 0
             opt_state['last_valid_obj'] = obj
         else:
             opt_state['consecutive_failures'] += 1
-            if opt_state['consecutive_failures'] > 200:
-                return 1e5
-        
+
         # Record history with all parameterization variables
         def _finite_or_none(v: Any) -> Optional[float]:
             try:
@@ -7215,7 +7479,7 @@ def run_layer1_optimization(
             "Pc": _finite_or_none(Pc_actual),
             "Cf": _finite_or_none(Cf_actual),
             "Cf_error": float(np.sqrt(cf_hinge)) if np.isfinite(cf_hinge) else 1.0,
-            "Cf_penalty": float(W_CF * cf_hinge),
+            "Cf_penalty": float(_tw.get("cf_penalty", 0.0)),
             # Stability metrics
             "stability_margin": combined_stability_margin,
             "stability_state": stability_state,
@@ -7237,24 +7501,26 @@ def run_layer1_optimization(
             "injector_dp_ratio_F": _finite_or_none(ratio_f_obj),
             "momentum_ratio_R": _finite_or_none(_R_hist),
             "raw_feasible_objective": _finite_or_none(raw_feasible_obj),
-            "penalty_thrust": float(W_THRUST * thrust_penalty_sq_term),
-            "penalty_pc_target": float(_W_PC_obj * pc_penalty_term),
-            "penalty_of": float(W_OF * of_sq),
-            "penalty_cf": float(W_CF * cf_hinge),
-            "penalty_exit": float(W_EXIT * exit_pressure_sq_term),
-            "penalty_injector_dp": float(injector_dp_weighted),
-            "penalty_length": float(W_LEN * length_term),
-            "penalty_chamber_shape": float(layer1_W_chamber_shape * chamber_shape_term),
-            "penalty_chamber_mass": float(layer1_W_MASS * mass_term),
-            "penalty_lstar": float(layer1_W_LSTAR * lstar_term),
-            "chamber_mass_kg": float(chamber_mass_kg),
-            "penalty_momentum": float(W_MOM * momentum_term),
-            "penalty_impingement_angle": float(layer1_W_impinging_angle * angle_term),
-            "penalty_jet_asymmetry": float(layer1_W_impinging_jet_asym * jet_asym_term),
-            "penalty_smd": float(layer1_W_SMD * smd_term),
-            "penalty_tank_equal": float(layer1_W_TANK_EQUAL * tank_equal_term),
-            "penalty_geom_fit": float(layer1_W_IMP_GEOM * geom_fit_term),
-            "penalty_geom_ao_af": float(geom_ao_af_weighted),
+            "penalty_thrust": float(_tw.get("thrust_penalty", 0.0)),
+            "penalty_pc_target": float(_tw.get("pc_target_penalty", 0.0)),
+            "penalty_of": float(_tw.get("of_penalty", 0.0)),
+            "penalty_cf": float(_tw.get("cf_penalty", 0.0)),
+            "penalty_exit": float(_tw.get("exit_pressure_penalty", 0.0)),
+            "penalty_injector_dp": float(_tw.get("injector_dp_penalty", 0.0)),
+            "penalty_length": float(_tw.get("length_penalty", 0.0)),
+            "penalty_chamber_shape": float(_tw.get("chamber_shape_penalty", 0.0)),
+            "penalty_chamber_mass": float(_tw.get("chamber_mass_penalty", 0.0)),
+            "penalty_isp": float(_tw.get("isp_penalty", 0.0)),
+            "Isp_merit": _finite_or_none(_T.get("Isp_merit_s")),
+            "penalty_lstar": float(_tw.get("lstar_penalty", 0.0)),
+            "chamber_mass_kg": float(_T.get("chamber_mass_kg", float("nan"))),
+            "penalty_momentum": float(_tw.get("momentum_balance_penalty", 0.0)),
+            "penalty_impingement_angle": float(_tw.get("impingement_angle_penalty", 0.0)),
+            "penalty_jet_asymmetry": float(_tw.get("jet_angle_asymmetry_penalty", 0.0)),
+            "penalty_smd": float(_tw.get("smd_penalty", 0.0)),
+            "penalty_tank_equal": float(_tw.get("tank_pressure_equal_penalty", 0.0)),
+            "penalty_geom_fit": float(_tw.get("impinging_geometry_fit_penalty", 0.0)),
+            "penalty_geom_ao_af": float(_tw.get("geom_ao_af_momentum_penalty", 0.0)),
             "band_violation_Lstar_sq": float(
                 _relative_hinge_band_squared(Lstar_curr, _lstar_lo_hist, _lstar_hi_hist)
             ) if np.isfinite(Lstar_curr) else None,
@@ -7322,25 +7588,7 @@ def run_layer1_optimization(
             # feasible design the sum should reproduce ``objective`` to rounding.
             # (L* and chamber-mass were missing here, which hid a 3000 x L*-term
             # contribution -- ~95% of the reported objective -- from the plots.)
-            _breakdown_terms = {
-                "thrust_penalty": float(W_THRUST * thrust_penalty_sq_term),
-                "pc_target_penalty": float(_W_PC_obj * pc_penalty_term),
-                "of_penalty": float(W_OF * of_sq),
-                "cf_penalty": float(W_CF * cf_hinge),
-                "exit_pressure_penalty": float(W_EXIT * exit_pressure_sq_term),
-                "injector_dp_penalty": float(injector_dp_weighted),
-                "length_penalty": float(W_LEN * length_term),
-                "chamber_shape_penalty": float(layer1_W_chamber_shape * chamber_shape_term),
-                "lstar_penalty": float(layer1_W_LSTAR * lstar_term),
-                "chamber_mass_penalty": float(layer1_W_MASS * mass_term),
-                "momentum_balance_penalty": float(W_MOM * momentum_term),
-                "impingement_angle_penalty": float(layer1_W_impinging_angle * angle_term),
-                "jet_angle_asymmetry_penalty": float(layer1_W_impinging_jet_asym * jet_asym_term),
-                "smd_penalty": float(layer1_W_SMD * smd_term),
-                "tank_pressure_equal_penalty": float(layer1_W_TANK_EQUAL * tank_equal_term),
-                "impinging_geometry_fit_penalty": float(layer1_W_IMP_GEOM * geom_fit_term),
-                "geom_ao_af_momentum_penalty": float(geom_ao_af_weighted),
-            }
+            _breakdown_terms = dict(_tw)
             _penalty_sum = float(sum(_breakdown_terms.values()))
             opt_state["best_objective_breakdown"] = {
                 "objective": float(obj),
@@ -7352,25 +7600,26 @@ def run_layer1_optimization(
                 # Context values (not penalties -- excluded from the sum)
                 "injector_dp_ratio_O": ratio_o_obj,
                 "injector_dp_ratio_F": ratio_f_obj,
-                "chamber_D_over_Dt": chamber_dt_ratio_curr,
-                "chamber_L_over_D": chamber_ld_ratio_curr,
+                "chamber_D_over_Dt": _finite_or_none(_T.get("chamber_D_over_Dt")),
+                "chamber_L_over_D": _finite_or_none(_T.get("chamber_L_over_D")),
                 "Lstar_m": _finite_or_none(Lstar_curr),
-                "Lstar_target_m": _finite_or_none(lstar_target_curr),
-                "chamber_mass_kg": float(chamber_mass_kg),
+                "Lstar_target_m": _finite_or_none(_T.get("Lstar_target_m")),
+                "chamber_mass_kg": _finite_or_none(_T.get("chamber_mass_kg")),
+                "Isp_s": _finite_or_none(Isp_actual),
+                "Isp_merit_s": _finite_or_none(_T.get("Isp_merit_s")),
+                "Isp_ref_s": _finite_or_none(_T.get("Isp_ref_s")),
+                "propellant_mass_kg": _finite_or_none(_T.get("propellant_mass_kg")),
+                "L_face_to_throat_m": _finite_or_none(_T.get("L_face_to_throat")),
+                "L_engine_m": _finite_or_none(_T.get("L_engine")),
                 "momentum_ratio_R": _finite_or_none(_R_hist),
-                "resultant_tilt_deg": _finite_or_none(_tilt_curr if has_impinging else float("nan")),
-                "resultant_tilt_breakeven_deg": _finite_or_none(
-                    _resultant_tilt_breakeven_deg(
-                        n_elements=float(x[4]), spacing_O_m=float(x[7]), spacing_F_m=float(x[10]),
-                        angle_O_deg=float(x[6]), angle_F_deg=float(x[9]),
-                        D_chamber_inner_m=D_chamber_inner, L_chamber_m=L_chamber_curr,
-                    ) if has_impinging else float("nan")),
+                "resultant_tilt_deg": _finite_or_none(_T.get("resultant_tilt_deg")),
+                "resultant_tilt_breakeven_deg": _finite_or_none(_T.get("resultant_tilt_breakeven_deg")),
                 "effective_smd_microns": _finite_or_none(smd_eff_um),
                 "impingement_angle_deg": _finite_or_none(imp_angle_deg),
-                "geom_ao_af_momentum_scale": float(geom_ao_af_scale),
-                "geom_ao_af": geom_ao_af_ratio_curr,
-                "expected_ao_af_for_R1": expected_ao_af_for_R1_curr,
-                "infeasibility_penalty": float(BASE_INFEAS + W_INFEAS * inf_residual) if inf_residual > 0.0 or length_violation else 0.0,
+                "geom_ao_af_momentum_scale": _finite_or_none(_T.get("geom_ao_af_momentum_scale")),
+                "geom_ao_af": _finite_or_none(_T.get("geom_ao_af")),
+                "expected_ao_af_for_R1": _finite_or_none(_T.get("expected_ao_af_for_R1")),
+                "infeasibility_penalty": float(obj - _penalty_sum) if (inf_residual > 0.0 or length_violation or not eval_success) else 0.0,
                 "length_violation": bool(length_violation),
                 "is_infeasible": not _layer1_feasible_for_primary_objective(
                     infeasibility_score, requirements, length_violation=length_violation
@@ -7684,12 +7933,28 @@ def run_layer1_optimization(
         'layer1_injector_spray_radius_tol': layer1_injector_spray_radius_tol,
         'layer1_injector_min_face_incidence_deg': layer1_injector_min_face_incidence_deg,
         'layer1_injector_plate_thickness_m': layer1_injector_plate_thickness_m,
+        'layer1_injector_counterbore_dia_m': layer1_injector_counterbore_dia_m,
+        'layer1_injector_min_back_web_m': layer1_injector_min_back_web_m,
+        'layer1_injector_land_ld_O': layer1_injector_land_ld_O,
+        'layer1_injector_land_ld_F': layer1_injector_land_ld_F,
+        'layer1_injector_back_keepout_dia_m': layer1_injector_back_keepout_dia_m,
+        'layer1_injector_back_keepout_wall_m': layer1_injector_back_keepout_wall_m,
+        'layer1_injector_face_contoured': layer1_injector_face_contoured,
+        'layer1_injector_back_channels': layer1_injector_back_channels,
+        'layer1_injector_exit_land': layer1_injector_exit_land,
+        'layer1_injector_channel_width_m': layer1_injector_channel_width_m,
+        'layer1_injector_channel_floor': layer1_injector_channel_floor,
+        'layer1_injector_r_plate_m': layer1_injector_r_plate_m,
+        'layer1_injector_r_port_m': layer1_injector_r_port_m,
+        'layer1_injector_liner_thickness_m': layer1_injector_liner_thickness_m,
         'layer1_resultant_tilt_from_reach': layer1_resultant_tilt_from_reach,
         'layer1_resultant_tilt_reach_margin': layer1_resultant_tilt_reach_margin,
         'layer1_ring_order_fuel_outboard': layer1_ring_order_fuel_outboard,
         'layer1_momentum_wall_side_multiplier': layer1_momentum_wall_side_multiplier,
         'layer1_resultant_tilt_max_deg': layer1_resultant_tilt_max_deg,
         'layer1_resultant_tilt_scale_deg': layer1_resultant_tilt_scale_deg,
+        'layer1_W_TILT': layer1_W_TILT,
+        'layer1_resultant_tilt_outward_multiplier': layer1_resultant_tilt_outward_multiplier,
         'rho_O': float(config_base.fluids["oxidizer"].density),
         'rho_F': float(config_base.fluids["fuel"].density),
         'layer1_momentum_low_side_multiplier': layer1_momentum_low_side_multiplier,
@@ -7705,6 +7970,11 @@ def run_layer1_optimization(
         'layer1_W_EXIT': layer1_W_EXIT,
         'layer1_exit_pressure_deadband_rel': layer1_exit_pressure_deadband_rel,
         'layer1_W_MASS': layer1_W_MASS,
+        'layer1_W_ISP': layer1_W_ISP,
+        'layer1_Isp_ref_s': layer1_Isp_ref_s,
+        'target_burn_time': float(target_burn_time or 0.0),
+        'min_Lstar': min_Lstar,
+        'max_Lstar': max_Lstar,
         'layer1_W_LSTAR': layer1_W_LSTAR,
         'layer1_Lstar_target_m': layer1_Lstar_target_m,
         'layer1_chamber_wall_density_kg_m3': layer1_chamber_wall_density,
@@ -7852,6 +8122,8 @@ def run_layer1_optimization(
                     float(opt_state.get("best_objective", _ws_best_f)),
                 )
 
+        # Element count n, jet diameters, hole pitches (the fuel pitch is derived).
+        _l1_iso_area = (4, (5, 8), (7, 10)) if l1_injector_type == "impinging" else None
         if effective_mode == "hybrid_cma_blocks" and hasattr(config_obj.optimizer, "hybrid"):
             layer1_logger.info("Using Hybrid CMA + Block Re-optimization mode.")
             hybrid_config = config_obj.optimizer.hybrid
@@ -7924,6 +8196,7 @@ def run_layer1_optimization(
                         stop_event=stop_event,
                         seed=int((layer1_seed_base + track_i * 7919) % (2 ** 31)),
                         popsize=popsize,
+                        iso_area=_l1_iso_area,
                     )
                     
                     if t_f < best_f_global:
@@ -7954,6 +8227,7 @@ def run_layer1_optimization(
                     stop_event=stop_event,
                     seed=int(layer1_seed_base),
                     popsize=popsize,
+                    iso_area=_l1_iso_area,
                 )
 
         else:
@@ -8400,6 +8674,26 @@ def run_layer1_optimization(
             None if opt_state.get("best_x") is None else len(opt_state["best_x"]), len(bounds))
     if _rebuilt is not None:
         optimized_config, _rb_x_solved, _rb_result = _rebuilt
+        # The breakdown describes the EMITTED design (full-fidelity result of the rebuild),
+        # not whichever in-loop candidate last set a new inline best.
+        try:
+            _rbT = _layer1_objective_terms(
+                _rb_result, np.asarray(_rb_x_solved, dtype=float).copy(), requirements,
+                constants_dict, cea_cache=_l1_cea_cache)
+            _bd = {"objective": float(_rbT["objective"]), **_rbT["terms"]}
+            _bd["penalty_sum"] = float(sum(_rbT["terms"].values()))
+            _bd["penalty_unaccounted"] = _bd["objective"] - _bd["penalty_sum"]
+            for _k in ("injector_dp_ratio_O", "injector_dp_ratio_F", "chamber_D_over_Dt",
+                       "chamber_L_over_D", "Lstar_m", "Lstar_target_m", "chamber_mass_kg",
+                       "Isp", "Isp_merit_s", "Isp_ref_s", "propellant_mass_kg",
+                       "L_face_to_throat", "L_engine", "momentum_ratio_R", "resultant_tilt_deg",
+                       "resultant_tilt_breakeven_deg", "effective_smd_microns",
+                       "impingement_angle_deg", "infeasibility_score", "length_violation"):
+                _bd[_k] = _rbT.get(_k)
+            _bd["source"] = "emitted design (final rebuild)"
+            opt_state["best_objective_breakdown"] = _bd
+        except Exception as _bd_exc:
+            layer1_logger.warning("Breakdown of the emitted design failed: %s", _bd_exc)
         # Everything downstream that reads a vector for this design must see the solved one.
         opt_state["best_config"] = copy.deepcopy(optimized_config)
         opt_state["best_config_x"] = np.asarray(_rb_x_solved, dtype=float).copy()
@@ -8486,36 +8780,39 @@ def run_layer1_optimization(
         po: float,
         pf: float,
     ) -> Tuple[Dict[str, Any], float]:
-        """Run final ``evaluate``; if marginally supply-starved, retry with mild tank-pressure boost."""
+        """Evaluate the emitted design at its OWN tank pressures.
+
+        If it does not close there, find -- for the report only, never the verdict -- the
+        smallest tank boost inside the tank limits at which it would. Any scale other than 1.0
+        makes the design invalid (see validation_replay_ok below).
+        """
         po0, pf0 = float(po), float(pf)
-        last_exc: Optional[Exception] = None
-        for scale in (1.0, 1.03, 1.06, 1.09, 1.14, 1.20, 1.28, 1.40, 1.55, 1.72):
+        try:
+            return runner.evaluate(po0, pf0, P_ambient=target_P_exit, silent=True), 1.0
+        except ValueError as exc:
+            if "Supply < Demand" not in str(exc) and "Insufficient mass flow" not in str(exc):
+                raise
+            first_exc = exc
+        _cap = min(max_lox_P_psi * psi_to_Pa / max(po0, 1.0),
+                   max_fuel_P_psi * psi_to_Pa / max(pf0, 1.0))
+        for scale in (1.03, 1.06, 1.09, 1.14, 1.20, 1.28, 1.40, 1.55, 1.72):
+            if scale > _cap:
+                break
             try:
-                return (
-                    runner.evaluate(
-                        po0 * scale,
-                        pf0 * scale,
-                        P_ambient=target_P_exit,
-                        silent=True,
-                    ),
-                    scale,
-                )
+                return runner.evaluate(po0 * scale, pf0 * scale, P_ambient=target_P_exit,
+                                       silent=True), scale
             except ValueError as exc:
-                last_exc = exc
                 if "Supply < Demand" not in str(exc) and "Insufficient mass flow" not in str(exc):
                     raise
-            except Exception as exc:
-                last_exc = exc
-                raise
-        assert last_exc is not None
-        raise last_exc
+        raise first_exc
 
     def _validation_evaluate_or_bundle(
         runner: PintleEngineRunner,
         po: float,
         pf: float,
     ) -> Tuple[Dict[str, Any], float]:
-        """Replay validation evaluate; fall back to the last optimizer ``evaluate`` payload if the solver diverges."""
+        """Replay validation evaluate; fall back to the last optimizer ``evaluate`` payload if the
+        solver diverges -- for the report only; the design is then invalid."""
         try:
             return _validation_evaluate_boost(runner, po, pf)
         except ValueError as exc:
@@ -8523,10 +8820,12 @@ def run_layer1_optimization(
             if not isinstance(b, dict) or not isinstance(b.get("results"), dict):
                 raise
             layer1_logger.warning(
-                "Layer 1 validation replay failed (%s); using last-good in-loop evaluate payload.", exc
+                "Layer 1 validation replay failed (%s); reporting the last in-loop evaluate "
+                "payload, and the design is INVALID.", exc
             )
             perf = copy.deepcopy(b["results"])
             perf["layer1_validation_used_last_good_bundle"] = True
+            perf["layer1_validation_replay_error"] = str(exc)[:200]
             return perf, 1.0
     
     # Validation
@@ -8580,11 +8879,11 @@ def run_layer1_optimization(
     # Use stored validation results if available
     if "best_results_for_validation" in opt_state and opt_state["best_results_for_validation"] is not None:
         stored_results = opt_state["best_results_for_validation"]
+        # No placeholder Isp/Pc (this used to seed 250 s / 2 MPa): they come from the replay
+        # below or not at all.
         initial_performance = {
             "F": stored_results["F"],
             "MR": stored_results["MR"],
-            "Isp": 250.0,
-            "Pc": 2e6,
             "stability_results": stored_results.get("stability_results", {}),
         }
         initial_thrust_error = stored_results["thrust_error"]
@@ -8634,7 +8933,11 @@ def run_layer1_optimization(
             if "chamber_intrinsics" in eval_results and eval_results["chamber_intrinsics"]:
                 initial_performance["chamber_intrinsics"] = eval_results["chamber_intrinsics"]
             _merge_runner_eval_into_performance(initial_performance, eval_results)
-        except Exception:
+            for _vk in ("layer1_validation_used_last_good_bundle", "layer1_validation_replay_error"):
+                if _vk in eval_results:
+                    initial_performance[_vk] = eval_results[_vk]
+        except Exception as _replay_exc:
+            initial_performance["layer1_validation_replay_error"] = str(_replay_exc)[:200]
             # If re-evaluation fails, calculate Cf from available data
             F_val = initial_performance.get("F", 0)
             Pc_val = initial_performance.get("Pc", 0)
@@ -8816,23 +9119,10 @@ def run_layer1_optimization(
     initial_stability = min(chugging_margin, acoustic_margin, feed_margin)
     
     # Validation checks
-    min_stability_score = requirements.get("min_stability_score", 0.75)
+    stability_check_passed, stability_parts = _layer1_stability_gate(
+        stability_state, stability_score, chugging_margin, acoustic_margin, feed_margin,
+        stability_results, requirements, min_stability)
     require_stable_state = requirements.get("require_stable_state", True)
-    handicap = float(requirements.get("stability_margin_handicap", 0.0))
-    score_factor = max(0.0, 1.0 - handicap)
-    margin_factor = max(0.0, 1.0 - handicap)
-    effective_min_score = min_stability_score * score_factor
-    effective_margin = min_stability * margin_factor
-    
-    state_ok = (stability_state in {"stable", "marginal"}) if require_stable_state else (stability_state != "unstable")
-    margin_tolerance = 0.05
-    stability_check_passed = (
-        state_ok and
-        (stability_score >= effective_min_score) and
-        (chugging_margin >= effective_margin * (1.0 - margin_tolerance)) and
-        (acoustic_margin >= effective_margin * (1.0 - margin_tolerance)) and
-        (feed_margin >= effective_margin * (1.0 - margin_tolerance))
-    )
     
     _thr_v = requirements.get("layer1_thrust_validation_rel_tol")
     thrust_tol_valid = float(_thr_v) if _thr_v is not None else float(thrust_tol)
@@ -8926,6 +9216,7 @@ def run_layer1_optimization(
 
     # Impinging momentum-ratio gate (optional).
     momentum_gate_passed = True
+    momentum_gate_band = (layer1_impinging_R_mom_lo, layer1_impinging_R_mom_hi)
     momentum_r_val = float(initial_performance.get("momentum_ratio_R", np.nan))
     if (
         getattr(optimized_config.injector, "type", None) == "impinging"
@@ -8940,10 +9231,9 @@ def run_layer1_optimization(
         # designs sit at R ~ 1.05 -- passing every other check and failing this one, which
         # marked a good engine invalid (measured: R = 1.0508 against a 1.05 ceiling,
         # momentum_gate_passed False, pressure_candidate_valid False).
-        _mom_slack = float(layer1_momentum_gate_safe_slack)
-        _lo = max(0.0, 1.0 - (1.0 - float(layer1_impinging_R_mom_lo)) * _mom_slack)
-        _hi = 1.0 + (float(layer1_impinging_R_mom_hi) - 1.0) * _mom_slack
-        momentum_gate_passed = (_lo <= momentum_r_val <= _hi)
+        momentum_gate_passed, momentum_gate_band = _layer1_momentum_gate(
+            momentum_r_val, layer1_impinging_R_mom_lo, layer1_impinging_R_mom_hi,
+            layer1_momentum_gate_safe_slack)
 
     # The real ablative gate: where the spray fan actually points.
     resultant_tilt_gate_passed = True
@@ -9012,14 +9302,64 @@ def run_layer1_optimization(
                 + float(layer1_resultant_tilt_gate_tol_deg))
     initial_performance["resultant_tilt_gate_passed"] = bool(resultant_tilt_gate_passed)
 
+    # Every declared geometric limit, re-checked on the emitted design at face value. In the
+    # search these share one sum-of-squares tolerance (gate_eps), which lets a single 4.5 %
+    # violation through; sign-off does not.
+    limit_gates = _layer1_declared_limit_gates(optimized_config, requirements, constants_dict)
+    for _gname, (_gok, _gmsg) in limit_gates.items():
+        initial_performance[f"{_gname}_gate_passed"] = bool(_gok)
+        if not _gok:
+            geometry_check_passed = False
+            geometry_failure_reasons.append(_gmsg)
+
+    # The design must close at its OWN tank pressures, evaluated as emitted. A replay that only
+    # solves with the tanks boosted, or that fell back to an earlier in-loop evaluation, does
+    # not describe this design.
+    _sc_v = float(initial_performance.get("layer1_validation_tank_pressure_scale", 1.0) or 1.0)
+    validation_replay_ok = True
+    if abs(_sc_v - 1.0) > 1e-9:
+        validation_replay_ok = False
+        failure_reasons_replay = (
+            f"Design does not close at its own tank pressures (needs x{_sc_v:.2f}: "
+            f"{float(P_O_initial) / psi_to_Pa * _sc_v:.0f}/{float(P_F_initial) / psi_to_Pa * _sc_v:.0f} psi)")
+    elif initial_performance.get("layer1_validation_used_last_good_bundle"):
+        validation_replay_ok = False
+        failure_reasons_replay = (
+            "Validation replay failed ("
+            + str(initial_performance.get("layer1_validation_replay_error", "evaluate() raised"))
+            + "); the numbers shown are an earlier in-loop evaluation")
+    elif initial_performance.get("layer1_validation_replay_error"):
+        validation_replay_ok = False
+        failure_reasons_replay = ("Validation replay failed: "
+                                  + str(initial_performance["layer1_validation_replay_error"]))
+    else:
+        failure_reasons_replay = ""
+    initial_performance["validation_replay_ok"] = bool(validation_replay_ok)
+
+    # A chamber-pressure target is a requirement: the emitted design must meet it.
+    pc_gate_passed = True
+    pc_gate_reason = ""
+    _pc_t_v = requirements.get("target_chamber_pressure_psi")
+    _pc_v = float(initial_performance.get("Pc", np.nan))
+    if _pc_t_v is not None and float(_pc_t_v) > 0:
+        _pc_miss = abs(_pc_v / (float(_pc_t_v) * 6894.757293168) - 1.0) if np.isfinite(_pc_v) else np.inf
+        pc_gate_passed = bool(_pc_miss <= _LAYER1_PC_GATE_REL)
+        if not pc_gate_passed:
+            pc_gate_reason = (
+                f"Chamber pressure {_pc_v / 6894.757293168:.1f} psia is {100 * _pc_miss:.2f} % off "
+                f"the {float(_pc_t_v):.0f} psia target (limit {100 * _LAYER1_PC_GATE_REL:.0f} %)")
+    initial_performance["pc_gate_passed"] = bool(pc_gate_passed)
+
     pressure_candidate_valid = (
         thrust_check_passed
+        and pc_gate_passed
         and of_check_passed
         and resultant_tilt_gate_passed
         and stability_check_passed
         and geometry_check_passed
         and dp_gate_passed
         and momentum_gate_passed
+        and validation_replay_ok
     )
     # Surface truth to API/UI: mid-optimization ``converged`` can latch True from soft thresholds;
     # overrides only when final hard gates settle.
@@ -9027,6 +9367,10 @@ def run_layer1_optimization(
     
     # Build failure reasons
     failure_reasons = []
+    if not validation_replay_ok:
+        failure_reasons.append(failure_reasons_replay)
+    if not pc_gate_passed:
+        failure_reasons.append(pc_gate_reason)
     if not thrust_check_passed:
         failure_reasons.append(f"Thrust error {initial_thrust_error*100:.1f}% > {thrust_tol_valid*100:.1f}% limit")
     if not of_check_passed:
@@ -9034,25 +9378,7 @@ def run_layer1_optimization(
     if not geometry_check_passed:
         failure_reasons.extend(geometry_failure_reasons)
     if not stability_check_passed:
-        required_parts = []
-        if require_stable_state:
-            if stability_state not in {"stable", "marginal"}:
-                required_parts.append(f"state ∈ {{stable,marginal}} (got '{stability_state}')")
-        else:
-            if stability_state == "unstable":
-                required_parts.append("state!='unstable'")
-        _sfloor = effective_margin * (1.0 - margin_tolerance)
-        if stability_score < effective_min_score:
-            required_parts.append(f"score>={effective_min_score:.2f} (got {stability_score:.2f})")
-        if chugging_margin < _sfloor:
-            required_parts.append(f"chugging_margin>={_sfloor:.2f} (got {chugging_margin:.2f})")
-        if acoustic_margin < _sfloor:
-            required_parts.append(f"acoustic_margin>={_sfloor:.2f} (got {acoustic_margin:.2f})")
-        if feed_margin < _sfloor:
-            required_parts.append(f"feed_margin>={_sfloor:.2f} (got {feed_margin:.2f})")
-        if not required_parts:
-            required_parts.append("stability gate mismatch")
-        failure_reasons.append(f"Stability failed: {'; '.join(required_parts)}")
+        failure_reasons.append(f"Stability failed: {'; '.join(stability_parts)}")
     if not dp_gate_passed:
         dp_parts = []
         if np.isfinite(ratio_o_val):
@@ -9066,8 +9392,8 @@ def run_layer1_optimization(
         failure_reasons.append("Injector ΔP ratio failed: " + "; ".join(dp_parts))
     if not momentum_gate_passed:
         failure_reasons.append(
-            f"Momentum ratio R not in [{float(layer1_impinging_R_mom_lo):.3f},"
-            f"{float(layer1_impinging_R_mom_hi):.3f}] (got {momentum_r_val:.3f})"
+            f"Momentum ratio R not in [{float(momentum_gate_band[0]):.3f},"
+            f"{float(momentum_gate_band[1]):.3f}] (got {momentum_r_val:.3f})"
         )
     
     if not pressure_candidate_valid and not failure_reasons:
@@ -9189,6 +9515,7 @@ def run_layer1_optimization(
                 _gvf = float("nan")
             final_performance[_gk] = _gvf if np.isfinite(_gvf) else None
     final_performance["failure_reasons"] = failure_reasons
+    final_performance["layer1_warnings"] = list(layer1_warnings)
     # Add individual stability margins at root level for easy access
     final_performance["chugging_margin"] = chugging_margin
     final_performance["acoustic_margin"] = acoustic_margin
@@ -9551,9 +9878,17 @@ def run_cma_core(
     eval_cache: Optional[dict] = None,
     make_cache_key_fn: Optional[Callable[[np.ndarray], Tuple[int, ...]]] = None,
     stop_event: Optional[Any] = None,  # threading.Event for stop signal
+    embed_base: Optional[np.ndarray] = None,
+    embed_idx: Optional[List[int]] = None,
+    full_objective_fn: Optional[Callable[[np.ndarray], float]] = None,
 ) -> Tuple[np.ndarray, float, int]:
     """
     Core re-usable CMA-ES wrapper with optional parallel evaluation.
+
+    ``embed_base``/``embed_idx``: the search is over a sub-vector (a block); each candidate is
+    written into a copy of ``embed_base`` at ``embed_idx`` and the FULL vector is scored by the
+    worker pool, so a block ranks on the same objective as Stage A. ``full_objective_fn`` is
+    the full-vector parent objective used for best-tracking sync.
     
     Args:
         objective_fn: The function CMA-ES optimizes (could include penalties).
@@ -9626,8 +9961,13 @@ def run_cma_core(
     evals = 0
     best_x = x0_clamped.copy()
     
-    # Initial eval
-    if true_objective_fn:
+    # Initial eval (through the pool when embedded, so every value compared below is scored
+    # the same way)
+    if executor is not None and embed_base is not None and embed_idx is not None:
+        _full0 = np.asarray(embed_base, dtype=np.float64).copy()
+        _full0[list(embed_idx)] = _snap_integer_dims(best_x.astype(np.float64), integer_dims or [])
+        best_f = float(list(executor.map(_eval_candidate, [_full0]))[0].get("value", float("inf")))
+    elif true_objective_fn:
         best_f = true_objective_fn(best_x)
     else:
         best_f = objective_fn(best_x)
@@ -9655,10 +9995,7 @@ def run_cma_core(
             current_tier = valley_escape_tracker.get("valley_escape_tier", 0)
             cooldown = valley_escape_tracker.get("cooldown_until", 0)
             
-            target_tier = 0
-            if evals_now > 5000 and best_f_tracker > 100.0 and stagnation > 1000: target_tier = 3
-            elif evals_now > 3000 and best_f_tracker > 150.0 and stagnation > 500: target_tier = 2
-            elif evals_now > 1500 and best_f_tracker > 300.0 and stagnation > 300: target_tier = 1
+            target_tier = _layer1_valley_escape_tier(evals_now, best_f_tracker, stagnation)
             
             if target_tier > current_tier and evals_now > cooldown:
                 # Apply boost
@@ -9696,6 +10033,18 @@ def run_cma_core(
                 _snap_integer_dims(np.asarray(c, dtype=np.float64), integer_dims)
                 for c in candidates
             ]
+            if embed_base is not None and embed_idx is not None:
+                _sub = candidates_snapped
+                candidates_snapped = []
+                for c in _sub:
+                    _full = np.asarray(embed_base, dtype=np.float64).copy()
+                    _full[list(embed_idx)] = c
+                    candidates_snapped.append(_full)
+
+            def _out(v):
+                # What CMA and the caller see: the block sub-vector when embedded.
+                v = np.asarray(v, dtype=float)
+                return v[list(embed_idx)].copy() if (embed_base is not None and embed_idx is not None) else v
             
             # Parent-side caching if cache provided
             if eval_cache is not None and make_cache_key_fn is not None:
@@ -9754,7 +10103,7 @@ def run_cma_core(
                                 # carried the seed throat: measured, A_throat was handed in
                                 # at 1568 mm2 every time, solved across 1190-4000 mm2, and
                                 # the final design still reported ~1556 mm2.
-                                best_x = _x_solved_or(res, candidates_snapped[idx])
+                                best_x = _out(_x_solved_or(res, candidates_snapped[idx]))
                             
                             if elite_pool:
                                 elite_pool.add(candidates_snapped[idx], obj_val)
@@ -9782,7 +10131,7 @@ def run_cma_core(
                     if res['success']:
                         if obj_val < best_f:
                             best_f = obj_val
-                            best_x = _x_solved_or(res, candidates_snapped[i])
+                            best_x = _out(_x_solved_or(res, candidates_snapped[i]))
                         
                         if elite_pool:
                             elite_pool.add(candidates_snapped[i], obj_val)
@@ -9803,7 +10152,8 @@ def run_cma_core(
                         valley_escape_tracker,
                         candidates_snapped[_gi],
                         _gen_best,
-                        parent_objective=objective_fn,
+                        parent_objective=(full_objective_fn if full_objective_fn is not None
+                                          else objective_fn),
                     )
         else:
             # SEQUENTIAL EVALUATION PATH (original code)
@@ -9840,6 +10190,69 @@ def run_cma_core(
         
     return best_x, best_f, evals
 
+
+
+def _layer1_iso_area_count_scan(
+    x: np.ndarray,
+    f: float,
+    bounds: list,
+    executor: Any,
+    integer_dims: list,
+    iso_area: Tuple[int, Tuple[int, ...], Tuple[int, ...]],
+    logger=None,
+    eval_cache: Optional[dict] = None,
+    make_cache_key_fn: Optional[Callable[[np.ndarray], Any]] = None,
+) -> Tuple[np.ndarray, float, int]:
+    """Exhaustive search over the element count along the iso-area path.
+
+    ``iso_area = (i_n, (i_d, ...), (i_s, ...))``: moving the count n -> n' at fixed jet
+    diameters changes the injector flow area by n'/n, so every neighbouring count is a
+    different injector (dP, O/F, Pc all move) and CMA, stepping one integer at a time, rarely
+    crosses between them -- four seeds ended at n = 5, 5, 7 and 13 with objectives 20 % apart.
+    Scaling d by sqrt(n/n') and the hole pitch by n/n' keeps the flow areas and both pitch
+    circles, so each count is scored as the same injector re-divided. Every reachable count
+    is evaluated through the pool (one parallel batch per round); the best improvement is
+    taken and the scan repeats from it.
+    """
+    i_n, i_d, i_s = iso_area
+    lo_n = int(np.ceil(float(bounds[i_n][0]) - 1e-9))
+    hi_n = int(np.floor(float(bounds[i_n][1]) + 1e-9))
+    if executor is None or hi_n <= lo_n:
+        return x, f, 0
+    best_x = np.asarray(x, dtype=float).copy()
+    best_f = float(f)
+    evals = 0
+    for _ in range(4):
+        n0 = int(round(best_x[i_n]))
+        cands = []
+        for n in range(lo_n, hi_n + 1):
+            if n == n0:
+                continue
+            c = best_x.copy()
+            c[i_n] = float(n)
+            for i in i_d:
+                c[i] = c[i] * np.sqrt(n0 / n)
+            for i in i_s:
+                c[i] = c[i] * n0 / n
+            if all(bounds[i][0] <= c[i] <= bounds[i][1] for i in (*i_d, *i_s)):
+                cands.append(_snap_integer_dims(c, integer_dims))
+        if not cands:
+            break
+        results = list(executor.map(_eval_candidate, cands))
+        evals += len(results)
+        vals = [float(r["value"]) if r.get("success") else float("inf") for r in results]
+        k = int(np.argmin(vals))
+        if eval_cache is not None and make_cache_key_fn is not None:
+            for c, r in zip(cands, results):
+                eval_cache[make_cache_key_fn(c)] = {"value": r["value"], "success": r.get("success", True)}
+        if not (vals[k] < best_f):
+            break
+        if logger:
+            logger.info("Element-count scan: n %d -> %d (iso-area), f %.5f -> %.5f",
+                        n0, int(round(cands[k][i_n])), best_f, vals[k])
+        best_f = vals[k]
+        best_x = _x_solved_or(results[k], cands[k])
+    return best_x, best_f, evals
 
 
 def compute_blocks_from_elites(
@@ -9976,9 +10389,13 @@ def run_hybrid_optimization(
     stop_event: Optional[Any] = None,  # threading.Event for stop signal
     seed: Optional[int] = None,
     popsize: int = 16,
+    iso_area: Optional[Tuple[int, Tuple[int, ...], Tuple[int, ...]]] = None,
 ) -> Tuple[np.ndarray, float, int]:
     """
     Run Hybrid CMA-ES + Block Re-optimization.
+
+    ``iso_area`` (impinging): after Stage A and before every refresh, every element count is
+    scored along the iso-area path (see _layer1_iso_area_count_scan) and the best is taken.
 
     ``seed`` makes the whole search a deterministic function of its inputs. It was not:
     this function built ``np.random.default_rng()`` with no seed and called ``run_cma_core``
@@ -10111,6 +10528,19 @@ def run_hybrid_optimization(
             best_x_global = x_res
 
     if logger: logger.info(f"Stage A Complete. Best f: {best_f_global:.5f}")
+
+    def _count_scan():
+        nonlocal best_x_global, best_f_global, evals_used
+        if iso_area is None or executor is None:
+            return
+        _x, _f, _ev = _layer1_iso_area_count_scan(
+            best_x_global, best_f_global, bounds, executor, integer_dims or [], iso_area,
+            logger=logger, eval_cache=eval_cache, make_cache_key_fn=make_cache_key_fn)
+        evals_used += _ev
+        if _f < best_f_global:
+            best_x_global, best_f_global = np.asarray(_x, dtype=float), float(_f)
+
+    _count_scan()
     
     # --- CYCLES ---
     current_x = best_x_global.copy()
@@ -10133,6 +10563,22 @@ def run_hybrid_optimization(
             rng=rng
         )
         
+        # Derived DOFs are solved inside the objective, never searched: a block that proposes
+        # them freely feeds the solve a random start (L1-07). Drop them, and fold any block
+        # left with one coordinate into its neighbour (cma does not run a 1-D problem).
+        blocks = [[int(i) for i in b if not (fixed_variables and int(i) in fixed_variables)]
+                  for b in blocks]
+        blocks = [b for b in blocks if b]
+        _merged: List[List[int]] = []
+        for b in blocks:
+            if _merged and len(b) < 2:
+                _merged[-1].extend(b)
+            else:
+                _merged.append(list(b))
+        if len(_merged) > 1 and len(_merged[0]) < 2:
+            _merged[1].extend(_merged.pop(0))
+        blocks = _merged
+
         if logger: logger.info(f"Cycle {cycle_idx+1}: Created {len(blocks)} blocks using {hybrid_config.block_method} (Overlap: {hybrid_config.overlap_fraction})")
         
         # Calculate penalty weight
@@ -10158,6 +10604,10 @@ def run_hybrid_optimization(
         
         for b_i, block_indices in enumerate(blocks):
             if budget_per_block < 20: continue # Skip if too small
+            # Derived DOFs are solved inside the objective, never searched: a block that
+            # proposes them freely feeds the solve a random start (L1-07).
+            if len(block_indices) < 2:
+                continue            # cma does not run a 1-D problem
             
             non_block_indices = [i for i in range(dim) if i not in block_indices]
             
@@ -10181,10 +10631,11 @@ def run_hybrid_optimization(
                 full_x = np.clip(full_x, lower_bounds, upper_bounds)
                 return objective(full_x)
                 
-            # Run CMA on block
-            # Scaling: use same heuristic (25% of block range)
-            z_span = block_upper - block_lower
-            z_sigma = 0.2 * np.median(z_span) # Slightly smaller for local block
+            # Same per-coordinate scaling as Stage A. One isotropic sigma over coordinates
+            # whose ranges differ by 1e5 (m^2 next to psi) sampled the small ones uniformly
+            # across their bounds and moved the large ones by a fraction of a unit.
+            z_stds = np.asarray(cma_stds, dtype=float)[block_indices]
+            z_sigma = sigma0
             # Apply additional boost to block sigma if valley escape is active
             if valley_escape_tracker is not None:
                 tier = valley_escape_tracker.get("valley_escape_tier", 0)
@@ -10201,23 +10652,38 @@ def run_hybrid_optimization(
             _blk = list(block_indices)
             _blk_int_dims = [j for j, g in enumerate(_blk) if g in set(integer_dims or [])]
             _blk_od_index = _blk.index(od_index) if od_index in _blk else -1
+            # Scored by the worker pool on the stitched full vector -- the same objective
+            # and evaluation path as Stage A and the refreshes, so the comparisons below
+            # never mix two scorings.
             z_best, z_f, z_evals = run_cma_core(
                 block_obj_fn, z0, z_sigma, block_bounds, budget_per_block,
                 popsize=max(8, 4 + int(3 * np.log(len(z0)+1))), # Smaller pop for blocks
+                cma_stds=z_stds,
                 seed=_sub_seed(100 + 10 * cycle_idx + b_i),
                 elite_pool=None, 
                 true_objective_fn=block_obj_fn,
                 valley_escape_tracker=valley_escape_tracker, logger=logger,
+                executor=executor,
                 integer_dims=_blk_int_dims,
                 od_index=_blk_od_index, od_step_m=od_step_m,
+                eval_cache=eval_cache if executor is not None else None,
                 make_cache_key_fn=make_cache_key_fn,
                 stop_event=stop_event,
+                embed_base=current_x.copy() if executor is not None else None,
+                embed_idx=list(block_indices) if executor is not None else None,
+                full_objective_fn=objective,
             )
             
             evals_used += z_evals
             
-            # Update current_x if improved
-            if z_f < objective(current_x): # Re-eval current_x or use trusted value?
+            # Update current_x if improved (current_x scored the same way z_f was)
+            if executor is not None:
+                _cur = _snap_integer_dims(np.asarray(current_x, dtype=np.float64), integer_dims or [])
+                _cur_res = list(executor.map(_eval_candidate, [_cur]))[0]
+                f_current = float(_cur_res.get("value", float("inf")))
+            else:
+                f_current = objective(current_x)
+            if z_f < f_current:
                  current_x[block_indices] = z_best
                  if z_f < best_f_global:
                      best_f_global = z_f
@@ -10227,6 +10693,9 @@ def run_hybrid_optimization(
             # Also add the new best to elite pool
             elite_pool.add(current_x, z_f)
             
+        _count_scan()
+        current_x = best_x_global.copy()
+
         # --- STAGE D: Global Refresh ---
         if hybrid_config.refresh_every_pass:
             ref_budget = int(total_budget * hybrid_config.refresh_budget_fraction)
@@ -10270,4 +10739,5 @@ def run_hybrid_optimization(
                     current_x = x_ref_res # Update incumbent for next cycle
                     if logger: logger.info(f"    Refresh improved global best -> {best_f_global:.5f}")
 
+    _count_scan()
     return best_x_global, best_f_global, evals_used

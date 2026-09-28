@@ -271,6 +271,11 @@ export async function getConfig(): Promise<ApiResponse<ConfigResponse>> {
   return request<ConfigResponse>('/config');
 }
 
+/** Every parameter of the loaded config, and the physics constants that live in code. */
+export async function getParameters(): Promise<ApiResponse<import('../lib/parameters').ParametersResponse>> {
+  return request('/config/parameters');
+}
+
 export async function updateConfig(updates: Partial<EngineConfig>): Promise<ApiResponse<ConfigResponse>> {
   return request<ConfigResponse>('/config', {
     method: 'PUT',
@@ -800,6 +805,157 @@ export async function getChamberGeometry(): Promise<ApiResponse<ChamberGeometryR
   return request<ChamberGeometryResponse>('/geometry');
 }
 
+// ============================================================================
+// Injector layout -- engine/core/injectors/layout.py, the one derivation of the face
+// ============================================================================
+
+export interface InjectorStreamGeometry {
+  n_elements: number;
+  d_jet: number;              // m
+  impingement_angle: number;  // deg from the chamber axis
+  spacing: number;            // m, arc between neighbours on its own pitch circle
+}
+
+export interface InjectorGroove {
+  groove_edge_in: number; groove_edge_out: number;   // where the flanks reach the face datum [m]
+  groove_depth: number; groove_v_depth: number; groove_v_r: number;
+  groove_is_v: boolean; groove_short_of_land: boolean; groove_width: number;
+  flank_included: number;                            // deg
+  exit_depth: number;                                // exits sit this far below the datum [m]
+}
+
+export interface InjectorFace {
+  n: number;
+  r_bore: number;
+  r_O: number; r_F: number;
+  d_pitch_O: number; d_pitch_F: number;
+  dr: number;
+  l_imp: number;          // axial, exits -> impingement [m]
+  l_over_d: number;       // l_imp / mean d (what Layer 1's standoff band means)
+  free_jet_O: number; free_jet_F: number;            // along each jet (SP-8089's definition) [m]
+  free_jet_ld_O: number; free_jet_ld_F: number; free_jet_ld_avg: number;
+  z_exit: number;         // exit plane relative to the face datum [m]
+  z_imp: number;          // impingement point in front of the datum [m]
+  included: number;
+  web_O: number; web_F: number;
+  ox_is_inner: boolean;
+  r_inner: number; r_outer: number;
+  r_imp: number;
+  centre_clear: number;
+  wall_land: number;
+  core_frac: number;
+  overflow: boolean;
+  degenerate: boolean;
+  contoured: boolean;
+  profile: [number, number][];
+  groove: InjectorGroove | null;
+  exit_land: number;
+}
+
+export interface InjectorChannel {
+  exit: [number, number]; end: [number, number];
+  length: number; length_wanted: number; l_over_d: number; pierces_back: boolean;
+  r_center: number; width: number; width_min: number; width_widened: boolean;
+  r_lo: number; r_hi: number;
+  floor: 'flat' | 'coned'; floor_slope: number; floor_z_lo: number; floor_z_hi: number;
+  depth: number; depth_min: number; footprint: number; breakthrough: string;
+}
+
+export interface InjectorPassage {
+  exit: [number, number];    // (r, z) of the exit centre [m]
+  end: [number, number];     // (r, z) where the passage ends (channel floor or back face) [m]
+  thru: number;              // passage length along the hole axis [m]
+  land: number;              // length drilled at the orifice diameter [m]
+  land_ld: number;
+  bore: number;              // counterbore diameter (= orifice when none) [m]
+  bore_len: number;
+  bore_ld: number;
+  entry_off_square: number;  // deg the drill enters off square (0 on a contoured face)
+  r_back: number;            // radius where the passage ends [m]
+  entry_d: number;
+  back_inner_edge: number;
+  back_outer_edge: number;
+  back_web: number;
+  cd_l_over_d: number;       // the orifice L/d the Cd model is fed
+  cd_ld_source: 'declared' | 'plate';
+  plate_l_over_d: number;    // what the plug as drawn gives
+  beta: number | null;
+  channel: InjectorChannel | null;
+  /** High-Re Cd from the solver's discharge model at the L/d it uses (layout._report_cd). */
+  cd: InjectorHoleCd | null;
+}
+
+export interface InjectorHoleCd {
+  value: number;
+  l_over_d: number | null;
+  model: 'piecewise' | 'lichtarowicz';
+  inlet: string | null;          // null => diameter-scaled Cd_inf, and L/d does not enter Cd
+  inlet_cd: number | null;       // the inlet's short-tube Cd
+  length_factor: number | null;  // x this for L/d
+  approach: number | null;       // x this for a counterbore's velocity of approach
+  uses_ld: boolean;
+}
+
+export interface InjectorLayoutWarning {
+  level: 'info' | 'warn' | 'bad';
+  code: string;
+  text: string;
+}
+
+export interface InjectorEnvelope {
+  r_bore: number; liner_thickness: number; r_sleeve_id: number; r_sleeve_od: number;
+  sleeve_wall: number; sleeve_declared: boolean; liner_gap: number;
+}
+
+export interface InjectorLayout {
+  face: InjectorFace;
+  passages: { O: InjectorPassage; F: InjectorPassage };
+  back: {
+    mode: 'plenum' | 'channels';
+    o_f_land: number; inner_edge: number; outer_edge: number;
+    lands?: { inner: number; between: number; outer: number };
+  };
+  warnings: InjectorLayoutWarning[];
+  envelope: InjectorEnvelope;
+  /** Igniter port from injector.igniter; null when none is declared. */
+  igniter: {
+    thread: string; thread_od: number; l2: number; tap_drill: number; face_wall: number;
+    face_keepout_dia: number; engaged_thickness: number; hub_thickness: number | null;
+    hub_diameter: number | null; back_keepout_dia: number; source: string;
+  } | null;
+  /** The centre keep-out actually enforced, and what set it. */
+  centre_keepout: { dia: number; source: string | null };
+  inputs: {
+    oxidizer: InjectorStreamGeometry;
+    fuel: InjectorStreamGeometry;
+    bore_diameter: number;
+    fuel_outboard: boolean;
+    center_clear_dia: number;
+    min_web: number;
+    wall_clearance: number;
+    ld_min: number;
+    ld_max: number;
+    plate_thickness: number;
+    counterbore_dia: number;
+    land_ld_O: number;
+    land_ld_F: number;
+    plate: Record<string, unknown>;
+  };
+}
+
+/** Layout of the session's injector, or of `config` when given. 404 = not an impinging doublet. */
+export async function getInjectorLayout(
+  config?: Record<string, unknown> | null,
+): Promise<ApiResponse<InjectorLayout>> {
+  if (config) {
+    return request<InjectorLayout>('/geometry/injector', {
+      method: 'POST',
+      body: JSON.stringify({ config }),
+    });
+  }
+  return request<InjectorLayout>('/geometry/injector');
+}
+
 
 // ============================================================================
 // Optimizer Types and API
@@ -824,8 +980,8 @@ export interface FrozenParameters {
   n_doublets?: number | null;          // Number of paired unlike doublets
   d_jet_O_mm?: number | null;          // LOX jet diameter [mm]
   d_jet_F_mm?: number | null;          // Fuel jet diameter [mm]
-  impingement_angle_O_deg?: number | null; // LOX included impingement angle [deg]
-  impingement_angle_F_deg?: number | null; // Fuel included impingement angle [deg]
+  impingement_angle_O_deg?: number | null; // LOX jet angle from the chamber axis [deg]
+  impingement_angle_F_deg?: number | null; // Fuel jet angle from the chamber axis [deg]
   spacing_O_mm?: number | null;        // LOX element spacing [mm]
   spacing_F_mm?: number | null;        // Fuel element spacing [mm]
 

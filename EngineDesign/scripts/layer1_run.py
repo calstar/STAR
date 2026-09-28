@@ -45,9 +45,26 @@ def main():
       "imp_angle": perf.get("impingement_angle_deg_effective"),
       "smd_um": perf.get("effective_smd_microns"),
       "D_over_Dt": (ci.get("best_objective_breakdown") or {}).get("chamber_D_over_Dt"),
+      "Isp_merit": (ci.get("best_objective_breakdown") or {}).get("Isp_merit_s"),
+      "isp_penalty": (ci.get("best_objective_breakdown") or {}).get("isp_penalty"),
+      "chamber_mass_kg": (ci.get("best_objective_breakdown") or {}).get("chamber_mass_kg"),
+      "L_engine_m": (ci.get("best_objective_breakdown") or {}).get("L_engine_m"),
+      "angle_O": perf.get("impingement_angle_O_deg"), "angle_F": perf.get("impingement_angle_F_deg"),
       "best_objective": ci.get("best_objective"),
+      "valid": perf.get("pressure_candidate_valid"),
+      # the replay must close at the emitted tank pressures (scale 1.0), on this design
+      "validation_tank_pressure_scale": perf.get("layer1_validation_tank_pressure_scale"),
+      "validation_replay_ok": perf.get("validation_replay_ok"),
+      "warnings": list(perf.get("layer1_warnings") or []),
+      "final_rebuild_diag": results.get("final_rebuild_diag"),
       "breakdown": ci.get("best_objective_breakdown"),
     }
+    try:
+        g = opt_cfg.injector.geometry
+        out["angle_O"] = float(g.oxidizer.impingement_angle)
+        out["angle_F"] = float(g.fuel.impingement_angle)
+    except AttributeError:
+        pass
     # emit the optimised config too -- this is the artifact, not the summary.
     # No try/except: if this cannot be written I want to know why, loudly.
     import yaml as _yaml
@@ -56,7 +73,8 @@ def main():
                     open(a.out.replace('.json', '_config.yaml'), 'w'),
                     sort_keys=False, default_flow_style=False)
     json.dump(out, open(a.out, 'w'), indent=1, default=str)
-    print("RESULT " + json.dumps({k: v for k, v in out.items() if k != "breakdown"}, default=str))
+    print("RESULT " + json.dumps({k: v for k, v in out.items()
+                                  if k not in ("breakdown", "final_rebuild_diag")}, default=str))
 
 if __name__ == '__main__':
     main()

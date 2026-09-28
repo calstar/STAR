@@ -1,8 +1,8 @@
 """Generalized feed system pressure loss model with K_eff(P)
 
 For twin balanced parallel runs each with nominal diameter ``d_line``, set YAML
-``d_inlet`` to ``√2 × d_line`` (or equivalently ``A_hydraulic = 2 × π (d_line/2)²``
-with ``d_inlet`` omitted) so bulk velocity halves vs a single tube at fixed ṁ.
+``A_hydraulic = 2 × π (d_line/2)²`` with ``d_inlet`` omitted (the schema derives the equal-area
+bore) so bulk velocity halves vs a single tube at fixed ṁ.
 
 See constants: ``FEED_LINE_DUAL_3_8_EQUIVALENT_D_INLET_M`` and
 ``FEED_LINE_DUAL_3_8_EQUIVALENT_A_HYDRAULIC_M2`` for two 3/8″ lines.
@@ -20,11 +20,13 @@ def delta_p_feed(
 ) -> float:
     """
     Calculate feed system pressure loss using generalized K_eff(P) model.
-    
-    Δp_feed = K_eff(P) × (ρ/2) × (ṁ/(ρ×A_hyd))²
-    
-    where K_eff(P) = K0 + K1 × φ(P)
-    
+
+    Δp_feed = K_eff(P) × (ρ/2) × (ṁ/(ρ×A_hyd))²  +  K_exit × (ρ/2) × (ṁ/(ρ×A_exit))²
+
+    where K_eff(P) = K0 + K1 × φ(P), and the second term is the exit bore's velocity head
+    dumped into the manifold (Borda-Carnot; K_exit = 1 for a plenum). P_tank minus this is the
+    still-manifold pressure that drives the orifices.
+
     Parameters:
     -----------
     mdot : float
@@ -35,7 +37,7 @@ def delta_p_feed(
         Feed system configuration
     P_tank : float
         Tank pressure [Pa] (used for pressure-dependent K_eff)
-    
+
     Returns:
     --------
     delta_p : float
@@ -51,28 +53,14 @@ def delta_p_feed(
         K_eff = config.K0 + config.K1 * np.log(P_tank)
     else:
         raise ValueError(f"Unknown phi_type: {config.phi_type}")
-    
-    # Calculate area from inlet diameter if A_hydraulic not explicitly set
-    # A_hydraulic should be calculated from d_inlet if not provided
-    # Check both attribute access and dict access (config might be dict or object)
-    d_inlet = None
-    if hasattr(config, 'd_inlet'):
-        d_inlet = config.d_inlet
-    elif isinstance(config, dict) and 'd_inlet' in config:
-        d_inlet = config['d_inlet']
-    
-    if d_inlet is not None and d_inlet > 0:
-        A_area = np.pi * (d_inlet / 2) ** 2
-    else:
-        # Use A_hydraulic if available
-        if hasattr(config, 'A_hydraulic'):
-            A_area = config.A_hydraulic
-        elif isinstance(config, dict) and 'A_hydraulic' in config:
-            A_area = config['A_hydraulic']
-        else:
-            # Fallback: calculate from d_inlet if it exists but wasn't caught above
-            raise ValueError(f"Feed system config must have either d_inlet > 0 or A_hydraulic > 0. Got: d_inlet={d_inlet}, config={config}")
-    
+
+    # The passage is A_hydraulic (the schema derives it from d_inlet when omitted); the same
+    # area sets the chug model's line inertance.
+    A_area = float(config.A_hydraulic)
+    d_exit = getattr(config, "d_exit", None)
+    A_exit = np.pi * (float(d_exit) / 2.0) ** 2 if d_exit else A_area
+    K_exit = float(getattr(config, "K_exit", 0.0) or 0.0)
+
     # Validate inputs
     if A_area <= 0:
         raise ValueError(f"Invalid feed system area: A_area={A_area:.6e} m². Must be > 0. Check d_inlet or A_hydraulic in config.")
@@ -83,11 +71,10 @@ def delta_p_feed(
     
     # Calculate velocity
     velocity = mdot / (rho * A_area)
-    
-    # Calculate pressure loss
-    # Δp_feed = K_eff × (ρ/2) × v²
-    # This is the standard form for minor losses in pipe flow
-    delta_p = K_eff * (rho / 2) * velocity**2
+    v_exit = mdot / (rho * A_exit)
+
+    # Δp_feed = K_eff × (ρ/2) × v² along the line, plus the exit dump at the exit bore
+    delta_p = K_eff * (rho / 2) * velocity**2 + K_exit * (rho / 2) * v_exit**2
     
     # Ensure non-negative (pressure loss can't be negative)
     delta_p = max(0.0, delta_p)

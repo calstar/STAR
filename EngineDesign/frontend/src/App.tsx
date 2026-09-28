@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ConfigUpload } from './components/ConfigUpload';
 import { ConfigEditor } from './components/ConfigEditor';
+import { ParametersWorkspace } from './components/ParametersWorkspace';
 import { ForwardMode } from './components/ForwardMode';
 import { TimeSeriesMode } from './components/TimeSeriesMode';
 import { CustomPlotter } from './components/CustomPlotter';
@@ -37,6 +38,7 @@ function App() {
   // Which tab you were on is yours, not the design's -- remembered locally so
   // a reload puts you back without it counting as an edit to a shared design.
   const [activeTab, setActiveTab] = useViewState<Tab>('activeTab', 'forward');
+  const [configView, setConfigView] = useViewState<'parameters' | 'sections'>('configView', 'parameters');
   const [config, setConfig] = useState<EngineConfig | null>(null);
   // A design is editable only while it is checked out to you. The editor reads
   // this through ReadOnlyProvider, so a new input cannot accidentally stay live
@@ -324,7 +326,7 @@ function App() {
                   <ConfigUpload onConfigLoaded={handleConfigLoaded} />
                 </div>
               )}
-              <ChamberGeometry config={config} />
+              <ChamberGeometry config={config} onConfigUpdated={handleConfigLoaded} />
             </div>
           </ErrorBoundary>
         </div>
@@ -391,9 +393,20 @@ function App() {
                 </div>
               </div>
 
-              {/* Editor section - full width */}
+              {/* Parameters: every field the design carries, searchable, with defaults and units.
+                  The section editor is kept as the second view. */}
+              <div className="flex gap-1 text-[12px]">
+                {(['parameters', 'sections'] as const).map((v) => (
+                  <button key={v} type="button" onClick={() => setConfigView(v)}
+                          className={`px-3 py-1 rounded border ${configView === v ? 'border-blue-500 text-blue-400' : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}>
+                    {v === 'parameters' ? 'Parameters' : 'Section editor'}
+                  </button>
+                ))}
+              </div>
               <div className="rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] overflow-hidden" style={{ height: 'calc(100vh - 280px)', minHeight: '500px' }}>
-                <ConfigEditor config={config} onConfigUpdated={handleConfigLoaded} />
+                {configView === 'parameters'
+                  ? <ParametersWorkspace config={config} onConfigUpdated={handleConfigLoaded} />
+                  : <ConfigEditor config={config} onConfigUpdated={handleConfigLoaded} />}
               </div>
             </div>
           </ErrorBoundary>

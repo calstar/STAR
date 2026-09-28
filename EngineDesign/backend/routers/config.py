@@ -96,6 +96,23 @@ async def load_config_json(body: dict, session: UserSession = Depends(get_sessio
     return {"status": "success", "config": config_to_dict(config)}
 
 
+@router.get("/parameters")
+async def get_parameters(session: UserSession = Depends(get_session)):
+    """Every parameter of the loaded config -- value, schema default, units, description -- and the
+    physics constants that live in code (engine/pipeline/parameter_registry.py). Edits go through
+    PUT /api/config like any other change."""
+    if not session.app_state.has_config():
+        raise HTTPException(status_code=404, detail="No config loaded. Upload a config file first.")
+    from engine.pipeline.parameter_registry import config_parameters
+    out = config_parameters(session.app_state.config)
+    try:
+        from engine.pipeline.code_constants import CODE_CONSTANTS
+        out["constants"] = CODE_CONSTANTS
+    except ImportError:
+        out["constants"] = []
+    return out
+
+
 @router.get("/options")
 async def get_switch_options(session: UserSession = Depends(get_session)):
     """Available injector types and propellant presets for the UI selectors (UNIFICATION P6)."""

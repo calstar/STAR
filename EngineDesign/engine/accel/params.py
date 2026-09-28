@@ -27,6 +27,8 @@ import numpy as np
 from operator import attrgetter as _attrgetter
 from types import SimpleNamespace
 
+from engine.core.injectors.layout import effective_discharge
+
 # Enum mappings -- mirror native_injector._PHI / _INJ / _EFF_MODEL.
 _PHI = {"none": 0, "sqrtP": 1, "logP": 2}
 _INJ = {"pintle": 0, "impinging": 1, "coaxial": 2}
@@ -38,6 +40,7 @@ def _ns(**kw):
 
 
 def _discharge(c):
+    # (resolved by engine.core.injectors.layout.effective_discharge before it gets here)
     """Mirrors native_injector._fill_discharge.
 
     When the config declares an orifice INLET geometry, resolve it here and hand the kernel
@@ -70,6 +73,9 @@ def _feed(c):
         d_inlet=float(getattr(c, "d_inlet", 0.0) or 0.0),
         A_hydraulic=float(getattr(c, "A_hydraulic", 0.0) or 0.0),
         K0=float(c.K0), K1=float(c.K1), phi_type=_PHI[c.phi_type],
+        # Exit dump into the manifold (feed_loss.delta_p_feed): same falsy reads as Python.
+        K_exit=float(getattr(c, "K_exit", 0.0) or 0.0),
+        d_exit=float(getattr(c, "d_exit", None) or 0.0),
     )
 
 
@@ -286,8 +292,9 @@ def build_state(config):
     return _ns(
         injector=_ns(type=inj_type, imp_O=imp_O, imp_F=imp_F),
         pin=pin,
-        discharge_O=_discharge(config.discharge["oxidizer"]),
-        discharge_F=_discharge(config.discharge["fuel"]),
+        # Same resolution the Python injector uses, so Cd cannot diverge between the paths.
+        discharge_O=_discharge(effective_discharge(config, "oxidizer")),
+        discharge_F=_discharge(effective_discharge(config, "fuel")),
         feed_O=_feed(config.feed_system["oxidizer"]),
         feed_F=_feed(config.feed_system["fuel"]),
         fluid_O=_fluid(config.fluids["oxidizer"]),
@@ -365,6 +372,8 @@ _NAMES = [
     "RHO_O_BOIL", "RHO_F_BOIL",      # boiling points, for the Spalding transfer number
     "LAT_O",                         # oxidiser latent heat (LAT_F already present)
     "EV_MODEL", "EV_CEVAP", "EV_CPGAS", "EV_APPLY_TAURES",
+    # feed-line exit dump (K_exit on the d_exit bore; feed_loss.delta_p_feed)
+    "FO_KX", "FO_DEX", "FF_KX", "FF_DEX",
 ]
 _IDX = {n: i for i, n in enumerate(_NAMES)}
 globals().update(_IDX)                      # module-level int constants for njit
@@ -434,7 +443,8 @@ def _build_path_table():
                          ("UTC","use_temperature_correction"),("TREF","T_ref"),("AT","a_T")):
             paths[f"{pre}_{suf}"] = f"{side}.{fld}"
     for pre, side in (("FO", "feed_O"), ("FF", "feed_F")):
-        for suf, fld in (("DIN","d_inlet"),("AH","A_hydraulic"),("K0","K0"),("K1","K1"),("PHI","phi_type")):
+        for suf, fld in (("DIN","d_inlet"),("AH","A_hydraulic"),("K0","K0"),("K1","K1"),("PHI","phi_type"),
+                         ("KX","K_exit"),("DEX","d_exit")):
             paths[f"{pre}_{suf}"] = f"{side}.{fld}"
     for suf, fld in (("SMDMODEL","smd_model"),("SMDC","smd_C"),("SMDM","smd_m"),("SMDP","smd_p"),
                      ("SMDCING","smd_C_ingebo"),("SMDWECORR","smd_we_corr_max"),("GASR","chamber_gas_R"),

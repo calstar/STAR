@@ -357,9 +357,13 @@ FEET_TO_METERS = 0.3048
 # T_Rankine = T_Kelvin × RANKINE_PER_KELVIN
 RANKINE_PER_KELVIN = 1.8
 
-# Viscosity unit conversion: lb·s/in² to Pa·s
-# Formula from Huzel uses lb·s/in², need to convert to Pa·s
-# 1 lb·s/in² = 6894.76 Pa·s
+# Viscosity unit conversion for Huzel & Huang's gas-viscosity fit (eq. 4-16),
+# mu = 46.6e-10 M^0.5 T[R]^0.6, which is in lbm/(in*s) -- MASS pounds, not lbf*s/in^2.
+# 1 lbm/(in*s) = 0.45359237 kg / 0.0254 m / s = 17.857967 Pa*s.
+# (Treating it as lbf*s/in^2, 6894.76, made the viscosity g_c = 386x too high and the
+# Bartz convective coefficient ~117x too low -- the long-standing "convection 283x low".)
+LBM_PER_IN_S_TO_PA_S = 0.45359237 / 0.0254
+#: lbf*s/in^2 -> Pa*s. Not the unit of the Huzel fit; kept for anything genuinely in lbf*s/in^2.
 LB_S_PER_IN2_TO_PA_S = 6894.76
 
 # ============================================================================

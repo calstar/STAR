@@ -1,42 +1,38 @@
-"""Fully-coupled time-varying solver for complete engine analysis.
+"""Time-varying engine solve over a burn.
 
-This module provides comprehensive time-varying analysis with full coupling between:
-1. Reaction chemistry (time-varying reaction progress)
-2. Shifting equilibrium (affected by reaction chemistry changes)
-3. Chamber dynamics (L*, efficiency, pressure)
-4. Ablative recession (geometry evolution)
-5. Graphite recession (throat area evolution)
-6. Nozzle dynamics (expansion ratio changes)
-7. Stability analysis (over time with all changes)
-
-All systems are integrated simultaneously - no decoupling or approximations.
+Each step advances the wall -- liner stations along the chamber, the throat (graphite insert
+or liner) and the exit when it ablates -- by transient conduction under the gas-side loads of
+the previous step (Bartz convection, H2O/CO2 radiation, carbon oxidation at the throat), then
+rebuilds the geometry from the cumulative recession and solves Pc and thrust on it. Reaction
+progress and stability are evaluated at every step on the same geometry.
 """
 
 from __future__ import annotations
 
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 import numpy as np
 import copy
 
-from engine.pipeline.config_schemas import PintleEngineConfig, ensure_chamber_geometry, ChamberGeometryConfig
+from engine.pipeline.config_schemas import PintleEngineConfig, ensure_chamber_geometry
 from engine.core.chamber_solver import ChamberSolver
 from engine.core.nozzle import calculate_thrust
 from engine.pipeline.reaction_chemistry import (
     calculate_chamber_reaction_progress,
 )
-from engine.pipeline.thermal.ablative_cooling import compute_ablative_response
-from engine.pipeline.thermal.ablative_geometry import (
-    update_chamber_geometry_from_ablation,
-    update_nozzle_exit_from_ablation,
-    calculate_throat_heuristic_multiplier,
-)
-from engine.pipeline.thermal.graphite_cooling import compute_graphite_recession
+from engine.pipeline.thermal import gas_side
+from engine.pipeline.thermal.graphite_cooling import carbon_oxidation
+from engine.pipeline.thermal.wall_conduction import Layer, WallModel
+from engine.pipeline.constants import STEFAN_BOLTZMANN_W_M2_K4
 from engine.pipeline.stability.analysis import (
     calculate_chugging_frequency,
     calculate_acoustic_modes,
 )
-from engine.pipeline.thermal.regen_cooling import estimate_hot_wall_heat_flux
+
+#: Implicit sub-step of the wall conduction [s]. The liner surface reaches its ablation
+#: temperature in a few tenths of a second; this resolves that rise to ~1 % (checked against
+#: the constant-flux semi-infinite solution in tests/test_wall_conduction.py).
+WALL_SUBSTEP_S = 0.01
 
 
 @dataclass
@@ -108,19 +104,24 @@ class TimeVaryingState:
     reynolds_number: float  # Reynolds number
     residence_time: float  # [s]
     
-    # Multi-layer thermal analysis
-    T_ablative_surface: float  # [K] - Phenolic ablator surface temperature
-    T_stainless_chamber: float  # [K] - Stainless steel back-face (chamber)
-    T_graphite_surface: float  # [K] - Graphite surface temperature
-    T_stainless_throat: float  # [K] - Stainless steel back-face (throat)
-    
-    # Nozzle dynamics
-    nozzle_efficiency: float  # Nozzle efficiency (0-1)
-    nozzle_max_heat_flux: float  # [W/m²] - Maximum heat flux in nozzle
-    nozzle_max_wall_temp: float  # [K] - Maximum wall temperature in nozzle
-    nozzle_is_melting: bool  # Whether nozzle is melting
-    nozzle_hotspot_count: int  # Number of hotspots detected
-    
+    # Wall thermal state (transient conduction, engine.pipeline.thermal.wall_conduction)
+    T_liner_surface: float  # [K] barrel char surface
+    char_depth_chamber: float  # [m] pyrolysis isotherm below the barrel surface
+    T_bondline: float  # [K] back of the liner, barrel station
+    recession_liner_peak: float  # [m] cumulative, liner station that has receded most
+    char_depth_peak: float  # [m] pyrolysis depth at that station
+    T_bondline_peak: float  # [K] hottest liner back face along the liner
+    x_liner_peak: float  # [m] throat-frame axial position of that station
+    q_conv_chamber: float  # [W/m^2] barrel, at the current surface temperature
+    q_rad_chamber: float  # [W/m^2]
+    q_conv_throat: float  # [W/m^2] throat, blown, at the current surface temperature
+    q_rad_throat: float  # [W/m^2]
+    q_chem_throat: float  # [W/m^2] absorbed by the carbon-oxidiser reactions
+    T_graphite_surface: float  # [K]
+    T_graphite_back: float  # [K] insert back face (adiabatic: backing undeclared)
+    cstar_ideal: float  # [m/s]
+    cstar_actual: float  # [m/s]
+
     # Full diagnostics from ChamberSolver (includes ablative heat flux profiles)
     # Must be at end since it has a default value
     diagnostics: Optional[Dict[str, Any]] = None
@@ -190,7 +191,160 @@ class TimeVaryingCoupledSolver:
         
         # Initialize state history
         self.state_history: List[TimeVaryingState] = []
-    
+        self._contour0 = gas_side.contour_for(cg)
+        self._walls: Optional[Dict[str, Dict[str, Any]]] = None
+        self._loads: Optional[Dict[str, Any]] = None
+
+    # ------------------------------------------------------------------ walls
+    def _liner_layers(self) -> List[Layer]:
+        abl = self.config.ablative_cooling
+        layers = [Layer(abl.initial_thickness, abl.thermal_conductivity, abl.material_density,
+                        abl.specific_heat, "liner")]
+        case = getattr(self.config, "stainless_steel_case", None)
+        if case is not None and case.enabled:
+            layers.append(Layer(case.thickness, case.thermal_conductivity, case.density,
+                                case.specific_heat, "case"))
+        return layers
+
+    def _graphite_layers(self) -> List[Layer]:
+        gr = self.config.graphite_insert
+        layers = [Layer(gr.initial_thickness, gr.thermal_conductivity, gr.material_density,
+                        gr.specific_heat, "graphite")]
+        case = getattr(self.config, "stainless_steel_case", None)
+        if case is not None and case.enabled:
+            layers.append(Layer(case.thickness, case.thermal_conductivity, case.density,
+                                case.specific_heat, "case"))
+        return layers
+
+    def liner_end(self) -> float:
+        """Throat-frame x where the liner meets the graphite insert (0 without one)."""
+        gr = getattr(self.config, "graphite_insert", None)
+        if gr is None or not gr.enabled:
+            return 0.0
+        return -float(gr.axial_half_length or gr.axial_half_length_ratio * 2.0 * self._contour0.R_t)
+
+    def _build_walls(self) -> Dict[str, Dict[str, Any]]:
+        """Wall stations: liner along the chamber, the throat, and the exit if it ablates."""
+        c = self._contour0
+        abl = self.config.ablative_cooling
+        gr = getattr(self.config, "graphite_insert", None)
+        walls: Dict[str, Dict[str, Any]] = {}
+        if abl is not None and abl.enabled:
+            x_end = self.liner_end()
+            xs = [0.5 * (c.x_face + c.x_cone_start), c.x_cone_start,
+                  0.5 * (c.x_cone_start + x_end), x_end]
+            for i, x in enumerate(xs):
+                walls[f"liner{i}"] = {"x": float(x), "kind": "liner",
+                                      "model": WallModel(self._liner_layers(), abl.ambient_temperature)}
+        if gr is not None and gr.enabled:
+            walls["throat"] = {"x": 0.0, "kind": "graphite",
+                               "model": WallModel(self._graphite_layers(), gr.ambient_temperature or 300.0,
+                                                  n_first=40, first_cell=2e-5)}
+        elif abl is not None and abl.enabled:
+            walls["throat"] = {"x": 0.0, "kind": "liner",
+                               "model": WallModel(self._liner_layers(), abl.ambient_temperature)}
+        if abl is not None and abl.enabled and abl.nozzle_ablative:
+            walls["exit"] = {"x": float(c.x[-1]), "kind": "liner",
+                             "model": WallModel(self._liner_layers(), abl.ambient_temperature)}
+        return walls
+
+    def _station_loads(self, gas: "gas_side.HotGasState", contour, blow: float,
+                       throat_comp: Optional[Dict[str, float]]) -> Dict[str, Any]:
+        """Gas-side load functions q_in(T_s) per wall station, frozen over the next interval."""
+        abl = self.config.ablative_cooling
+        gr = getattr(self.config, "graphite_insert", None)
+        loads: Dict[str, Any] = {}
+        for name, w in (self._walls or {}).items():
+            model = w["model"]
+            Ts_now = float(model.T[0])
+            eps_w = (gr.emissivity or 0.8) if w["kind"] == "graphite" else abl.surface_emissivity
+            st = gas_side.station_flux(gas, contour, w["x"], Ts_now, eps_w)
+            M = st["M"]
+            h_ref = st["h"] / gas_side.bartz_sigma(Ts_now, gas.T0, gas.gamma, M)
+            Taw, Tg, eg, ag = st["Taw"], st["T_static"], st["eps_gas"], st["alpha_gas"]
+            F_rad = eps_w / (1.0 - (1.0 - eps_w) * (1.0 - ag))
+            sig = STEFAN_BOLTZMANN_W_M2_K4
+
+            def h_of(s, h_ref=h_ref, M=M):
+                return h_ref * gas_side.bartz_sigma(s, gas.T0, gas.gamma, M)
+
+            def q_rad(s, F_rad=F_rad, eg=eg, ag=ag, Tg=Tg):
+                return F_rad * sig * (eg * Tg ** 4 - ag * s ** 4)
+
+            if w["kind"] == "graphite":
+                P_t = st["P_static"]
+
+                def chem(s, h_of=h_of, P_t=P_t):
+                    return carbon_oxidation(s, P_t, throat_comp, throat_comp["MW"], h_of(s) / gas.cp, gr)
+
+                def q_in(s, h_of=h_of, Taw=Taw, q_rad=q_rad, chem=chem):
+                    ox = chem(s)
+                    return ox["blowing_factor"] * h_of(s) * (Taw - s) + q_rad(s) - ox["q_chem"]
+
+                loads[name] = {"q_in": q_in, "chem": chem, "h_of": h_of, "Taw": Taw, "q_rad": q_rad}
+            else:
+                def q_in(s, h_of=h_of, Taw=Taw, q_rad=q_rad):
+                    return blow * h_of(s) * (Taw - s) + q_rad(s)
+
+                loads[name] = {"q_in": q_in, "h_of": h_of, "Taw": Taw, "q_rad": q_rad}
+        return loads
+
+    def _advance_walls(self, dt: float) -> Dict[str, float]:
+        """Advance every wall station over dt under the loads of the previous state."""
+        rates: Dict[str, float] = {}
+        if not self._walls or self._loads is None or dt <= 0:
+            return {name: 0.0 for name in (self._walls or {})}
+        abl = self.config.ablative_cooling
+        gr = getattr(self.config, "graphite_insert", None)
+        n_sub = int(np.ceil(dt / WALL_SUBSTEP_S - 1e-9))
+        for name, w in self._walls.items():
+            L = self._loads[name]
+            model = w["model"]
+            if w["kind"] == "graphite":
+                if gr.sizing_only_mode:
+                    out = model.advance(dt, n_sub, q_in=L["q_in"])
+                else:
+                    out = model.advance(dt, n_sub, q_in=L["q_in"],
+                                        chemical_mass_flux=lambda s, L=L: L["chem"](s)["mass_flux"],
+                                        rho_surface=gr.material_density)
+                rates[name] = out["mass_flux"] / gr.material_density
+            else:
+                out = model.advance(dt, n_sub, q_in=L["q_in"], T_ablation=abl.ablation_surface_temperature,
+                                    H_surface=abl.heat_of_ablation, rho_surface=abl.material_density)
+                rates[name] = out["mass_flux"] / abl.material_density
+        return rates
+
+    def _geometry(self) -> Dict[str, float]:
+        """Geometry from the cumulative wall recession: bore, volume, throat and exit."""
+        c = self._contour0
+        abl = self.config.ablative_cooling
+        walls = self._walls or {}
+        liner = sorted([(w["x"], w["model"].receded) for n, w in walls.items() if n.startswith("liner")])
+        s_throat = walls["throat"]["model"].receded if "throat" in walls else 0.0
+        s_exit = walls["exit"]["model"].receded if "exit" in walls else 0.0
+        dV = 0.0
+        s_barrel = 0.0
+        if liner:
+            xs = np.array([p[0] for p in liner])
+            ss = np.array([p[1] for p in liner])
+            s_barrel = float(ss[0])
+            dA = c.area_elements()
+            x_end = self.liner_end()
+            lined = (c.x <= x_end + 1e-12)
+            cov = float(np.clip(abl.coverage_fraction, 0.0, 1.0))
+            dV += float(np.sum(np.interp(c.x[lined], xs, ss) * dA[lined])) * cov
+            insert = (c.x > x_end + 1e-12) & (c.x <= 0.0)
+            dV += float(np.sum(dA[insert])) * s_throat
+        D_chamber = self.D_chamber_initial + 2.0 * s_barrel
+        D_throat = self.D_throat_initial + 2.0 * s_throat
+        A_throat = np.pi * D_throat ** 2 / 4.0
+        D_exit = self.D_exit_initial + 2.0 * s_exit
+        A_exit = np.pi * D_exit ** 2 / 4.0 if s_exit > 0 else self.A_exit_initial
+        V = self.V_chamber_initial + dV
+        return {"V_chamber": V, "A_throat": A_throat, "A_exit": A_exit, "D_chamber": D_chamber,
+                "D_throat": D_throat, "D_exit": D_exit, "recession_chamber": s_barrel,
+                "recession_throat": s_throat, "recession_exit": s_exit}
+
     def solve_time_step(
         self,
         time: float,
@@ -200,97 +354,39 @@ class TimeVaryingCoupledSolver:
         previous_state: Optional[TimeVaryingState] = None,
     ) -> TimeVaryingState:
         """
-        Solve one time step with full coupling.
-        
-        This method:
-        1. Updates geometry from previous recession
-        2. Solves chamber pressure with updated geometry
-        3. Calculates reaction progress (time-varying)
-        4. Calculates heat flux
-        5. Calculates recession rates
-        6. Updates geometry
-        7. Calculates thrust with shifting equilibrium (using reaction progress)
-        8. Calculates stability
-        9. Returns complete state
-        
-        Parameters:
-        -----------
-        time : float
-            Current time [s]
-        dt : float
-            Time step [s]
-        P_tank_O : float
-            Oxidizer tank pressure [Pa]
-        P_tank_F : float
-            Fuel tank pressure [Pa]
-        previous_state : TimeVaryingState, optional
-            Previous time step state (for cumulative recession)
-        
-        Returns:
-        --------
-        state : TimeVaryingState
-            Complete engine state at this time step
+        Solve one time step (explicit in the wall, exact in the chamber):
+
+        1. advance the wall conduction over [t - dt, t] under the previous state's gas loads;
+        2. rebuild the geometry from the cumulative recession;
+        3. solve Pc, and compute thrust, on that same geometry;
+        4. evaluate the gas-side loads at this state for the next interval.
+
+        ``previous_state`` None starts the walls cold (ambient) at the initial geometry.
         """
-        # Initialize geometry from previous state or initial
-        if previous_state is not None:
-            V_chamber = previous_state.V_chamber
-            A_throat = previous_state.A_throat  # CRITICAL: Throat area stays constant with graphite
-            A_exit = previous_state.A_exit
-            recession_chamber = previous_state.recession_chamber
-            recession_throat = previous_state.recession_throat
-            recession_exit = previous_state.recession_exit
-            recession_graphite = previous_state.recession_graphite
-            graphite_thickness_remaining = previous_state.graphite_thickness_remaining
-        else:
-            V_chamber = self.V_chamber_initial
-            A_throat = self.A_throat_initial  # Initial throat area (defined by graphite insert)
-            A_exit = self.A_exit_initial
-            recession_chamber = 0.0
-            recession_throat = 0.0
-            recession_exit = 0.0
-            recession_graphite = 0.0
-            # Initialize graphite thickness
-            graphite_cfg = getattr(self.config, 'graphite_insert', None)
-            graphite_thickness_remaining = (
-                graphite_cfg.initial_thickness 
-                if graphite_cfg and graphite_cfg.enabled 
-                else 0.0
-            )
-        
-        # Update config with current geometry
+        if previous_state is None or self._walls is None:
+            self._walls = self._build_walls()
+            self._loads = None
+            dt = 0.0
+        rates = self._advance_walls(dt)
+        geo = self._geometry()
+        A_throat = geo["A_throat"]
+        A_exit = geo["A_exit"]
+        V_chamber = geo["V_chamber"]
+        eps = A_exit / A_throat
+        Lstar = V_chamber / A_throat
+
         config_current = copy.deepcopy(self.config)
-        
-        # Ensure chamber_geometry exists in current config
-        if config_current.chamber_geometry is None:
-            # Create from legacy sections if they exist
-            cg = ensure_chamber_geometry(config_current)
-        else:
-            cg = config_current.chamber_geometry
-        
-        # Update chamber_geometry with current geometry
+        cg = ensure_chamber_geometry(config_current)
         cg.volume = V_chamber
         cg.A_throat = A_throat
         cg.A_exit = A_exit
-        cg.expansion_ratio = A_exit / A_throat if A_throat > 0 else cg.expansion_ratio
-        
-        # Calculate and update current lengths
-        # For simplicity, we assume lengths don't change much during ablation 
-        # (mostly diameter and volume change), but we keep them in sync
-        cg.length = self.L_chamber
-        cg.length_cylindrical = self.L_cylindrical
-        cg.length_contraction = self.L_contraction
-        
-        # Calculate and update current L*
-        Lstar = V_chamber / A_throat if A_throat > 0 else cg.Lstar
-        cg.Lstar = Lstar  # CRITICAL: Update Lstar so ChamberSolver uses it correctly
-        
-        # Update chamber solver with current geometry
+        cg.expansion_ratio = eps
+        cg.Lstar = Lstar
+        cg.chamber_diameter = geo["D_chamber"]
+
         solver = ChamberSolver(config_current, self.cea_cache)
-        
-        # Solve chamber pressure with updated geometry
         Pc, diagnostics = solver.solve(P_tank_O, P_tank_F, Pc_guess=None)
-        
-        # Extract diagnostics
+
         MR = diagnostics["MR"]
         mdot_total = diagnostics["mdot_total"]
         Tc = diagnostics["Tc"]
@@ -298,498 +394,71 @@ class TimeVaryingCoupledSolver:
         R_chamber = diagnostics["R"]
         cstar_actual = diagnostics["cstar_actual"]
         cstar_ideal = diagnostics["cstar_ideal"]
-        # CRITICAL FIX: Remove arbitrary 0.85 default - use physics-based fallback
-        eta_cstar = diagnostics.get("eta_cstar", cstar_actual / cstar_ideal if cstar_ideal > 0 else 0.90)
-        
-        # CRITICAL: Calculate chamber intrinsics (Mach number, etc.) - these should change over time
-        # as geometry evolves. This was missing before!
+        eta_cstar = diagnostics["eta_cstar"]
+
         from engine.core.chamber_profiles import calculate_chamber_intrinsics
-        # Get ambient pressure from config if available, otherwise use fallback (0.9 * 1 atm)
-        # One ambient for the whole solver -- the intrinsics and the thrust must see the same sky.
-        P_back = self.P_ambient
-        # If still None, fallback will be used (0.9 * 1 atm)
         chamber_intrinsics = calculate_chamber_intrinsics(
-            Pc=Pc,
-            Tc=Tc,
-            mdot_total=mdot_total,
-            gamma=gamma_chamber,
-            R=R_chamber,
-            V_chamber=V_chamber,
-            A_throat=A_throat,
-            Lstar=Lstar,
-            MR=MR,
-            P_back=P_back,  # Pass ambient pressure if available, None uses fallback
+            Pc=Pc, Tc=Tc, mdot_total=mdot_total, gamma=gamma_chamber, R=R_chamber,
+            V_chamber=V_chamber, A_throat=A_throat, Lstar=Lstar, MR=MR, P_back=self.P_ambient,
         )
-        mach_number = chamber_intrinsics["mach_number"]  # Now calculated dynamically, not hardcoded
-        
-        # Calculate reaction progress (TIME-VARYING - depends on current L*)
-        # Use conservative "Worst of Both Worlds" temperatures:
-        # Tc_ideal for residence time (shortest time), effective_Tc for kinetics (slowest reactions)
+        mach_number = chamber_intrinsics["mach_number"]
+
+        # Residence time at the ideal Tc (shortest), kinetics at the effective Tc (slowest).
         reaction_progress_dict = calculate_chamber_reaction_progress(
-            Lstar,
-            Pc,
-            diagnostics["Tc_ideal"], # Ideal Tc (Residence Time)
-            cstar_ideal,             # Ideal cstar (Residence Time)
-            gamma_chamber,
-            R_chamber,
-            MR,
-            self.config,
-            spray_diagnostics=diagnostics.get("spray_diagnostics"),
-            Tc_kinetics=Tc,          # Actual/Effective Tc (Kinetics)
+            Lstar, Pc, diagnostics["Tc_ideal"], cstar_ideal, gamma_chamber, R_chamber, MR,
+            self.config, spray_diagnostics=diagnostics.get("spray_diagnostics"), Tc_kinetics=Tc,
         )
-        
-        # Extract reaction progress
-        progress_throat = reaction_progress_dict["progress_throat"]
-        progress_mid = reaction_progress_dict["progress_mid"]
-        progress_injection = reaction_progress_dict["progress_injection"]
-        
-        # Calculate current chamber diameter (for heat flux and area)
-        if previous_state is not None:
-            D_chamber_current = previous_state.D_chamber
-        else:
-            D_chamber_current = self.D_chamber_initial
-            
-        A_chamber_current = np.pi * (D_chamber_current / 2.0) ** 2
 
-        # Calculate heat flux for ablation/graphite
-        # Chamber heat flux
-        gas_props_chamber = {
-            "Pc": Pc,
-            "Tc": Tc,
-            "gamma": gamma_chamber,
-            "R": R_chamber,
-            "chamber_length": self.L_chamber,
-            "chamber_area": A_chamber_current,
-        }
-        heat_flux_chamber_dict = estimate_hot_wall_heat_flux(
-            gas_props_chamber,
-            None,  # No regen config
-            wall_temperature=1200.0,  # Typical ablative surface temp
-            mdot_total=mdot_total,
-        )
-        heat_flux_chamber = heat_flux_chamber_dict["heat_flux_total"]
-        h_hot_chamber = heat_flux_chamber_dict.get("h_g", 50000.0)  # Convective coefficient
-        
-        # Throat heat flux using physics-based Bartz correlation
-        from engine.pipeline.physics_based_replacements import calculate_throat_heat_flux_physics
-        
-        # Calculate chamber velocity (CRITICAL FIX: Don't overwrite V_chamber volume!)
-        rho_chamber = Pc / (R_chamber * Tc)
-        A_chamber = np.pi * (D_chamber_current / 2.0) ** 2
-        chamber_velocity = mdot_total / (rho_chamber * A_chamber)  # FIXED: Use chamber_velocity, not V_chamber
-        
-        # Throat velocity (sonic)
-        throat_velocity = np.sqrt(gamma_chamber * R_chamber * Tc * 2.0 / (gamma_chamber + 1.0))  # FIXED: Use throat_velocity, not V_throat
-        
-        # Current throat diameter (use previous state or initial)
-        if previous_state is not None:
-            D_throat_current = previous_state.D_throat
-        else:
-            D_throat_current = self.D_throat_initial
-        
-        # Physics-based throat heat flux
-        heat_flux_throat = calculate_throat_heat_flux_physics(
-            heat_flux_chamber=heat_flux_chamber,
-            Pc=Pc,
-            V_chamber=chamber_velocity,  # FIXED: Pass velocity, not volume
-            V_throat=throat_velocity,  # FIXED: Pass velocity, not volume
-            gamma=gamma_chamber,
-            D_chamber=D_chamber_current,
-            D_throat=D_throat_current,
-        )
-        
-        # Convective coefficient scales with heat flux (h = q / (T_gas - T_wall))
-        h_hot_throat = h_hot_chamber * (heat_flux_throat / (heat_flux_chamber + 1e-10))
-        
-        # Calculate ablative recession rate
-        ablative_cfg = self.config.ablative_cooling
-        if ablative_cfg.enabled:
-            # Surface area for chamber
-            A_surface_chamber = np.pi * self.D_chamber_initial * self.L_chamber * ablative_cfg.coverage_fraction
-            
-            ablative_response = compute_ablative_response(
-                net_heat_flux=heat_flux_chamber,
-                surface_temperature=1200.0,  # Typical ablative surface
-                ablative_config=ablative_cfg,
-                surface_area=A_surface_chamber,
-                turbulence_intensity=0.1,  # Typical
-            )
-            recession_rate_ablative = ablative_response["recession_rate"]
-        else:
-            recession_rate_ablative = 0.0
-        
-        # Calculate graphite recession rate (and breakdown for diagnostics)
-        graphite_cfg = getattr(self.config, 'graphite_insert', None)
-        if graphite_cfg and graphite_cfg.enabled:
-            # Check for simplified mode - try multiple ways to be robust to config loading issues
-            simplified_mode = False
-            if hasattr(graphite_cfg, "simplified_graphite_oxidation"):
-                simplified_mode = bool(graphite_cfg.simplified_graphite_oxidation)
-            elif isinstance(graphite_cfg, dict):
-                simplified_mode = bool(graphite_cfg.get("simplified_graphite_oxidation", False))
-            
-            # Also check root config in case it was put there by mistake
-            if not simplified_mode:
-                simplified_mode = bool(getattr(self.config, "simplified_graphite_oxidation", False))
-            
-            gas_viscosity = None
-            T_backside = None
-            
-            if not simplified_mode:
-                # STRICT graphite oxidation inputs: no hidden defaults in compute_graphite_recession
-                # - gas_density: use chamber density (good throat approximation for diffusion scaling)
-                # - gas_viscosity: require an explicit config value (thermal_analysis.hot_gas_viscosity or regen_cooling.hot_gas_viscosity)
-                
-                # Check for hot_gas_viscosity in multiple possible locations
-                gas_viscosity = None
-                
-                # 1. thermal_analysis section
-                thermal_analysis_cfg = getattr(self.config, "thermal_analysis", None)
-                if thermal_analysis_cfg:
-                    gas_viscosity = getattr(thermal_analysis_cfg, "hot_gas_viscosity", None)
-                
-                # 2. Fallback to regen_cooling section
-                if gas_viscosity is None:
-                    regen_cfg = getattr(self.config, "regen_cooling", None)
-                    if regen_cfg:
-                        gas_viscosity = getattr(regen_cfg, "hot_gas_viscosity", None)
-                
-                if gas_viscosity is None:
-                    raise ValueError(
-                        "Graphite oxidation strict mode requires hot_gas_viscosity to be set in either "
-                        "config.thermal_analysis or config.regen_cooling. "
-                        "Set 'simplified_graphite_oxidation: true' in graphite_insert to use a constant recession rate instead."
-                    )
-                gas_viscosity = float(gas_viscosity)
+        # Thrust on the geometry the Pc was solved with.
+        thrust_results = calculate_thrust(Pc, MR, mdot_total, self.cea_cache, config_current,
+                                          self.P_ambient, reaction_progress=reaction_progress_dict)
 
-                # Backside temperature should come from the multi-layer thermal model; require it.
-                if 'T_stainless_throat' not in locals() or T_stainless_throat is None:
-                    # In some cases T_stainless_throat might not be calculated yet or fail
-                    # Fallback to T_backside_thermal if available, or 300K
-                    T_backside = 300.0
-                else:
-                    T_backside = float(T_stainless_throat)
-            else:
-                # In simplified mode, these are not used for recession but we provide placeholders
-                gas_viscosity = 4e-5 
-                T_backside = 300.0
+        # Gas-side loads at this state: reported at the current wall temperatures, and frozen
+        # as the loads for the next interval.
+        cool = diagnostics.get("cooling", {}) or {}
+        abl_diag = cool.get("ablative", {}) or {}
+        blow = float(abl_diag.get("blowing_reduction", 1.0))
+        tr = self.cea_cache.aux.transport(MR, Pc, "chamber")
+        comp_c = self.cea_cache.aux.composition(MR, Pc, "chamber")
+        comp_t = self.cea_cache.aux.composition(MR, Pc, "throat")
+        gas = gas_side.HotGasState(T0=float(diagnostics["Tc_ideal"]), P0=float(Pc), gamma=float(gamma_chamber),
+                                   mass_flux_throat=float(mdot_total) / A_throat, mu=tr["mu"],
+                                   cp=tr["cp"], Pr=tr["Pr"], x_H2O=comp_c["H2O"], x_CO2=comp_c["CO2"])
+        contour_now = gas_side.contour_for(cg)
+        self._loads = self._station_loads(gas, contour_now, blow, comp_t)
+        report = self._wall_report(rates)
 
-            graphite_response = compute_graphite_recession(
-                net_heat_flux=heat_flux_throat,
-                throat_temperature=2000.0,  # Typical graphite surface
-                gas_temperature=Tc,
-                graphite_config=graphite_cfg,
-                throat_area=A_throat,
-                pressure=Pc,
-                gas_density=float(rho_chamber),
-                gas_viscosity=gas_viscosity,
-                oxygen_mass_fraction=getattr(graphite_cfg, "oxygen_mass_fraction", None),
-                characteristic_length=float(D_throat_current),
-                gas_velocity=float(throat_velocity),
-                heat_transfer_coefficient=float(h_hot_throat),
-                backside_temperature=T_backside,
-                effective_thickness=float(graphite_thickness_remaining),
-            )
-            recession_rate_graphite = graphite_response["recession_rate"]
-            throat_oxidation_rate = float(graphite_response.get("oxidation_rate", 0.0) or 0.0)
-            # "recession_rate_thermal" is the thermal/sublimation component in compute_graphite_recession()
-            throat_ablation_rate = float(graphite_response.get("recession_rate_thermal", 0.0) or 0.0)
-        else:
-            recession_rate_graphite = 0.0
-            throat_oxidation_rate = 0.0
-            throat_ablation_rate = 0.0
-        
-        # Calculate throat recession multiplier (heuristic-based)
-        if ablative_cfg.enabled and ablative_cfg.throat_recession_multiplier is None:
-            # Calculate from flow conditions (use already computed velocities)
-            # chamber_velocity and throat_velocity already computed above
-            throat_multiplier = calculate_throat_heuristic_multiplier(
-                Pc,
-                chamber_velocity,  # Use already computed chamber_velocity
-                throat_velocity,  # Use already computed throat_velocity
-                heat_flux_chamber,
-                gamma_chamber,
-            )
-        elif ablative_cfg.enabled:
-            throat_multiplier = ablative_cfg.throat_recession_multiplier
-        else:
-            throat_multiplier = 1.0
-        
-        # Update recession (cumulative)
-        recession_chamber_new = recession_chamber + recession_rate_ablative * dt
-        recession_exit_new = recession_exit + recession_rate_ablative * dt  # Simplified
-        
-        # CRITICAL: Graphite insert behavior
-        # Graphite DOES erode, which means throat area DOES grow (just slower than ablative)
-        # Graphite does NOT ablate if sizing_only_mode=True
-        if graphite_cfg and graphite_cfg.enabled and graphite_thickness_remaining > 0:
-            # Graphite insert is present
-            # If sizing_only_mode=True, suppress recession to keep throat constant
-            sizing_only_mode = getattr(graphite_cfg, 'sizing_only_mode', False)
-            
-            if sizing_only_mode:
-                # Graphite doesn't recede - throat area stays CONSTANT
-                recession_graphite_new = recession_graphite  # Graphite doesn't recede
-                graphite_thickness_remaining_new = graphite_thickness_remaining  # Constant
-                
-                # PHYSICS: THROAT AREA STAYS CONSTANT in sizing mode
-                D_throat_current = np.sqrt(max(0, 4.0 * A_throat / np.pi)) if A_throat > 0 else 0.015
-                D_throat_new = D_throat_current  # NO CHANGE
-                A_throat_new = A_throat  # NO CHANGE
-            else:
-                # Recession allowed (physical behavior)
-                # Graphite oxidation in strict mode is complex - the time-varying solver 
-                # integrates these changes into the geometry.
-                
-                # Throat area grows with graphite recession
-                D_throat_current = np.sqrt(max(0, 4.0 * A_throat / np.pi)) if A_throat > 0 else 0.015
-                D_throat_new = D_throat_current + 2.0 * recession_rate_graphite * dt
-                A_throat_new = np.pi * (D_throat_new / 2.0) ** 2
-                
-                recession_graphite_new = recession_graphite + recession_rate_graphite * dt
-                graphite_thickness_remaining_new = graphite_thickness_remaining - recession_rate_graphite * dt
-                graphite_thickness_remaining_new = max(graphite_thickness_remaining_new, 0.0)
-            
-            # DEFINE THROAT RECESSION CONSISTENTLY:
-            # While graphite is present, the physical throat surface is graphite.
-            # Therefore, "recession_throat" should reflect graphite surface recession
-            # (oxidation + thermal ablation), not the hypothetical ablative recession
-            # behind the insert. The ablative recession is already captured in
-            # recession_chamber; recession_graphite tracks the graphite thickness loss.
-            recession_throat_new = recession_graphite_new
-            
-            # Update chamber volume (ablative recession still affects chamber)
-            # Use INITIAL diameter as the reference and apply cumulative recession once.
-            if ablative_cfg.enabled:
-                D_chamber_new = self.D_chamber_initial + 2.0 * recession_chamber_new * ablative_cfg.coverage_fraction
-                V_chamber_new = np.pi * (D_chamber_new / 2.0) ** 2 * self.L_chamber
-            else:
-                # No ablative - keep previous volume/diameter (or initial if first step)
-                D_chamber_new = self.D_chamber_initial if previous_state is None else previous_state.D_chamber
-                V_chamber_new = V_chamber  # Volume carried over
-        elif graphite_cfg and graphite_cfg.enabled and graphite_thickness_remaining <= 0:
-            # Graphite insert fully consumed - now ablative recession affects throat area
-            recession_graphite_new = recession_graphite  # No more graphite to erode
-            graphite_thickness_remaining_new = 0.0
-            recession_throat_new = recession_throat + recession_rate_ablative * throat_multiplier * dt
-            
-            # Now update geometry from ablative recession (throat area can change)
-            V_chamber_new, A_throat_new, D_chamber_new, D_throat_new, geom_diagnostics = (
-                update_chamber_geometry_from_ablation(
-                    self.V_chamber_initial,
-                    self.A_throat_initial,
-                    self.D_chamber_initial,
-                    self.D_throat_initial,
-                    self.L_chamber,
-                    recession_chamber_new,
-                    recession_thickness_throat=recession_throat_new,
-                    coverage_fraction=ablative_cfg.coverage_fraction if ablative_cfg.enabled else 1.0,
-                    throat_recession_multiplier=throat_multiplier,
-                )
-            )
-        else:
-            # No graphite insert - ablative recession directly affects throat area
-            recession_graphite_new = recession_graphite
-            graphite_thickness_remaining_new = 0.0
-            recession_throat_new = recession_throat + recession_rate_ablative * throat_multiplier * dt
-            
-            # Update geometry from ablative recession (throat area changes)
-            V_chamber_new, A_throat_new, D_chamber_new, D_throat_new, geom_diagnostics = (
-                update_chamber_geometry_from_ablation(
-                    self.V_chamber_initial,
-                    self.A_throat_initial,
-                    self.D_chamber_initial,
-                    self.D_throat_initial,
-                    self.L_chamber,
-                    recession_chamber_new,
-                    recession_thickness_throat=recession_throat_new,
-                    coverage_fraction=ablative_cfg.coverage_fraction if ablative_cfg.enabled else 1.0,
-                    throat_recession_multiplier=throat_multiplier,
-                )
-            )
-        
-        # Update exit area (if nozzle is ablative)
-        A_exit_new, D_exit_new, exit_diagnostics = update_nozzle_exit_from_ablation(
-            self.A_exit_initial,
-            self.D_exit_initial,
-            recession_exit_new,
-            coverage_fraction=ablative_cfg.coverage_fraction if ablative_cfg.enabled else 1.0,
-        )
-        
-        # Calculate new expansion ratio
-        cg = ensure_chamber_geometry(self.config)
-        eps_new = A_exit_new / A_throat_new if A_throat_new > 0 else cg.expansion_ratio
-        Lstar_new = V_chamber_new / A_throat_new if A_throat_new > 0 else Lstar
-        
-        # Update config with current time-varying geometry
-        config_current.chamber_geometry.A_throat = A_throat_new
-        config_current.chamber_geometry.A_exit = A_exit_new
-        config_current.chamber_geometry.expansion_ratio = eps_new
-        config_current.chamber_geometry.volume = V_chamber_new
-        
-        # Calculate thrust with shifting equilibrium
-        # CRITICAL: Pass reaction progress so shifting equilibrium accounts for time-varying chemistry
-        Pa = self.P_ambient  # site ambient, same source as the steady solve (see __init__)
-        
-        thrust_results = calculate_thrust(
-            Pc,
-            MR,
-            mdot_total,
-            self.cea_cache,
-            config_current,
-            Pa,
-            reaction_progress=reaction_progress_dict,  # TIME-VARYING reaction progress
-        )
-        
-        F = thrust_results["F"]
-        Isp = thrust_results["Isp"]
-        v_exit = thrust_results["v_exit"]
-        P_exit = thrust_results["P_exit"]
-        T_exit = thrust_results["T_exit"]
-        M_exit = thrust_results["M_exit"]
-        gamma_exit = thrust_results["gamma_exit"]
-        R_exit = thrust_results["R_exit"]
-        equilibrium_factor = thrust_results["equilibrium_factor"]
-        
-        # Calculate nozzle dynamics (efficiency, melting, hotspots)
-        try:
-            from engine.pipeline.nozzle_dynamics import (
-                calculate_nozzle_exit_velocity,
-                calculate_nozzle_heat_flux,
-                detect_nozzle_hotspots,
-                calculate_nozzle_melting,
-            )
-            
-            # Get nozzle efficiency from config
-            nozzle_eff_config = getattr(config_current.chamber_geometry, 'nozzle_efficiency', 0.92)
-            
-            # Nozzle exit velocity and efficiency (now geometry-driven)
-            nozzle_velocity_results = calculate_nozzle_exit_velocity(
-                Pc=Pc,
-                Tc=Tc,
-                gamma=gamma_exit,
-                R=R_exit,
-                expansion_ratio=eps_new,
-                nozzle_efficiency=nozzle_eff_config,
-                P_ambient=101325.0,
-            )
-            nozzle_efficiency = nozzle_velocity_results["efficiency"]
-            
-            # Nozzle heat flux distribution
-            # Nozzle length is not yet in ChamberGeometryConfig, using 0.1 as default
-            L_nozzle = 0.1
-            n_nozzle_points = 50
-            nozzle_positions = np.linspace(0.0, L_nozzle, n_nozzle_points)
-            
-            nozzle_heat_flux_results = calculate_nozzle_heat_flux(
-                positions=nozzle_positions,
-                Pc=Pc,
-                Tc=Tc,
-                mdot=mdot_total,
-                gamma=gamma_exit,
-                R=R_exit,
-                D_throat=D_throat_new,
-                expansion_ratio=eps_new,
-            )
-            
-            # Detect hotspots
-            hotspots = detect_nozzle_hotspots(
-                heat_flux=nozzle_heat_flux_results["heat_flux"],
-                positions=nozzle_positions,
-            )
-            
-            # Check for melting
-            material_melting_temp = 2000.0  # K, typical nozzle material
-            melting_results = calculate_nozzle_melting(
-                heat_flux=nozzle_heat_flux_results["heat_flux"],
-                positions=nozzle_positions,
-                material_melting_temp=material_melting_temp,
-            )
-            
-            nozzle_dynamics = {
-                "efficiency": nozzle_efficiency,
-                "max_heat_flux": float(np.max(nozzle_heat_flux_results["heat_flux"])),
-                "avg_heat_flux": float(np.mean(nozzle_heat_flux_results["heat_flux"])),
-                "max_wall_temp": melting_results["max_temperature"],
-                "is_melting": bool(np.any(melting_results["is_melting"])),
-                "hotspot_count": int(np.sum(hotspots["is_hotspot"])),
-                "hotspot_max_intensity": float(np.max(hotspots["hotspot_intensity"])),
-            }
-        except Exception as e:
-            import warnings
-            warnings.warn(f"Nozzle dynamics calculation failed: {e}")
-            # CRITICAL FIX: Remove arbitrary 0.95 default - use config value or calculate
-            nozzle_efficiency = getattr(config_current.chamber_geometry, 'nozzle_efficiency', 0.92)  # Use config or typical value
-            nozzle_dynamics = {
-                "efficiency": nozzle_efficiency,
-                "max_heat_flux": 0.0,
-                "avg_heat_flux": 0.0,
-                "max_wall_temp": 0.0,
-                "is_melting": False,
-                "hotspot_count": 0,
-                "hotspot_max_intensity": 1.0,
-            }
-        
-        # Stability. The injector-agnostic comprehensive analysis below is authoritative; these
-        # are the placeholders it overwrites, kept so the state record is always populated even
-        # when that analysis raises. (The old pintle-only "enhanced" spatial model that used to
-        # run here was fed hardcoded 50/30 m/s injection velocities and invented damping
-        # constants, and every scalar it produced was overwritten anyway -- removed.)
-        chugging = calculate_chugging_frequency(
-            V_chamber_new,
-            A_throat_new,
-            cstar_actual,
-            gamma_chamber,
-            Pc,
-            R=R_chamber,
-            Tc=Tc,
-        )
+        # Hand the transient rates to the per-step diagnostics the UI reads.
+        if abl_diag:
+            abl_diag["recession_rate_quasi_steady"] = abl_diag.get("recession_rate")
+            abl_diag["recession_rate"] = report["rate_barrel"]
+        gr_cfg = getattr(self.config, "graphite_insert", None)
+        if gr_cfg is not None and gr_cfg.enabled:
+            cool["graphite"] = {"enabled": True, "oxidation_rate": report["rate_throat"],
+                                "recession_rate_thermal": 0.0,
+                                "surface_temperature": report["T_graphite_surface"],
+                                "q_chemical": report["q_chem_throat"]}
+            diagnostics["cooling"] = cool
+
+        chugging = calculate_chugging_frequency(V_chamber, A_throat, cstar_actual, gamma_chamber, Pc,
+                                                R=R_chamber, Tc=Tc)
         chugging_freq = chugging["frequency"]
         stability_margin = float("nan")
-        acoustic = calculate_acoustic_modes(
-            self.L_chamber,
-            D_chamber_new,
-            Tc,
-            gamma_chamber,
-            R_chamber,
-        )
-        feed_stability = {
-            "pogo_frequency": np.nan,
-            "surge_frequency": np.nan,
-            "stability_margin": np.nan,
-        }
-        
-        # Use comprehensive stability analysis if available
+        acoustic = calculate_acoustic_modes(self.L_chamber, geo["D_chamber"], Tc, gamma_chamber, R_chamber)
+        feed_stability = {"pogo_frequency": np.nan, "surge_frequency": np.nan, "stability_margin": np.nan}
         comprehensive_stability = None
         try:
             from engine.pipeline.stability.analysis import comprehensive_stability_analysis
-            
-            # Create stability diagnostics dict for comprehensive analysis
-            # (separate from solver diagnostics to avoid overwriting ablative profiles)
-            # Calculate component mass flows
-            mdot_O = mdot_total * MR / (1.0 + MR)
-            mdot_F = mdot_total / (1.0 + MR)
-            
             stability_diag = {
-                "mdot_O": mdot_O,
-                "mdot_F": mdot_F,
+                "mdot_O": mdot_total * MR / (1.0 + MR),
+                "mdot_F": mdot_total / (1.0 + MR),
                 "P_tank_O": P_tank_O,
                 "P_tank_F": P_tank_F,
             }
-            
             comprehensive_stability = comprehensive_stability_analysis(
-                config=self.config,
-                Pc=Pc,
-                MR=MR,
-                mdot_total=mdot_total,
-                cstar=cstar_actual,
-                gamma=gamma_chamber,
-                R=R_chamber,
-                Tc=Tc,
-                diagnostics=stability_diag,
+                config=self.config, Pc=Pc, MR=MR, mdot_total=mdot_total, cstar=cstar_actual,
+                gamma=gamma_chamber, R=R_chamber, Tc=Tc, diagnostics=stability_diag,
             )
-            
-            # The comprehensive analysis owns every stability scalar in the state record.
             stability_margin = comprehensive_stability.get("chugging", {}).get("stability_margin", stability_margin)
             chugging_freq = comprehensive_stability.get("chugging", {}).get("frequency", chugging_freq)
             acoustic = comprehensive_stability.get("acoustic", acoustic)
@@ -798,141 +467,29 @@ class TimeVaryingCoupledSolver:
             import warnings
             warnings.warn(f"Comprehensive stability analysis failed: {e}")
             comprehensive_stability = None
-        
-        # Multi-layer thermal analysis (phenolic → stainless steel)
-        # Calculate temperature profile through wall to check stainless steel temperature
-        from engine.pipeline.thermal_analysis import (
-            calculate_steady_state_temperature_profile,
-            MaterialLayer,
-            ThermalBoundaryConditions,
-        )
-        
-        # Get stainless steel case config (user input)
-        stainless_cfg = getattr(self.config, 'stainless_steel_case', None)
-        if stainless_cfg is None or not stainless_cfg.enabled:
-            # Default stainless steel properties
-            stainless_cfg = type('obj', (object,), {
-                'enabled': True,
-                'thickness': 0.003,  # 3mm
-                'thermal_conductivity': 15.0,
-                'density': 8000.0,
-                'specific_heat': 500.0,
-                'max_temperature': 1000.0,
-                'emissivity': 0.8,  # CRITICAL FIX: Use typical ablative emissivity, not arbitrary 0.3
-            })()
-        
-        # Calculate thermal profile for chamber wall (phenolic → stainless)
-        T_stainless_chamber = np.nan
-        T_ablative_surface = np.nan
-        if ablative_cfg.enabled and stainless_cfg.enabled:
-            # Layers: Hot gas → Phenolic ablator → Stainless steel → Ambient
-            ablative_layer = MaterialLayer(
-                name="Phenolic Ablator",
-                thickness=max(ablative_cfg.initial_thickness - recession_chamber_new, 0.0001),  # Current thickness (min 0.1mm)
-                thermal_conductivity=ablative_cfg.thermal_conductivity,
-                density=ablative_cfg.material_density,
-                specific_heat=ablative_cfg.specific_heat,
-                emissivity=ablative_cfg.surface_emissivity,
-                pyrolysis_temp=ablative_cfg.pyrolysis_temperature,
-            )
-            
-            stainless_layer = MaterialLayer(
-                name="Stainless Steel Case",
-                thickness=stainless_cfg.thickness,
-                thermal_conductivity=stainless_cfg.thermal_conductivity,
-                density=stainless_cfg.density,
-                specific_heat=stainless_cfg.specific_heat,
-                emissivity=stainless_cfg.emissivity,
-            )
-            
-            layers = [ablative_layer, stainless_layer]
-            
-            # Boundary conditions
-            bc_chamber = ThermalBoundaryConditions(
-                T_hot_gas=Tc,
-                h_hot_gas=h_hot_chamber,
-                q_rad_hot=heat_flux_chamber_dict.get("heat_flux_radiative", 0.0),
-                T_ambient=300.0,
-                h_ambient=10.0,  # Natural convection
-            )
-            
-            try:
-                thermal_profile_chamber = calculate_steady_state_temperature_profile(
-                    layers,
-                    bc_chamber,
-                    n_points_per_layer=10,
-                )
-                T_ablative_surface = thermal_profile_chamber["T_surface_hot"]
-                T_stainless_chamber = thermal_profile_chamber["T_surface_cold"]  # Back-face of stainless
-            except Exception as e:
-                import warnings
-                warnings.warn(f"Chamber thermal profile calculation failed: {e}")
-        
-        # Calculate thermal profile for throat (graphite → stainless)
-        T_stainless_throat = np.nan
-        T_graphite_surface = np.nan
-        if graphite_cfg and graphite_cfg.enabled and stainless_cfg.enabled and graphite_thickness_remaining > 0:
-            graphite_layer = MaterialLayer(
-                name="Graphite Insert",
-                thickness=max(graphite_thickness_remaining, 0.0001),  # Current thickness (min 0.1mm)
-                thermal_conductivity=graphite_cfg.thermal_conductivity,
-                density=graphite_cfg.material_density,
-                specific_heat=graphite_cfg.specific_heat,
-                emissivity=0.8,  # Graphite emissivity
-            )
-            
-            stainless_throat_layer = MaterialLayer(
-                name="Stainless Steel Case (Throat)",
-                thickness=stainless_cfg.thickness,
-                thermal_conductivity=stainless_cfg.thermal_conductivity,
-                density=stainless_cfg.density,
-                specific_heat=stainless_cfg.specific_heat,
-                emissivity=stainless_cfg.emissivity,
-            )
-            
-            layers_throat = [graphite_layer, stainless_throat_layer]
-            
-            # Throat boundary conditions (higher heat flux)
-            bc_throat = ThermalBoundaryConditions(
-                T_hot_gas=Tc,
-                h_hot_gas=h_hot_throat,
-                q_rad_hot=heat_flux_throat * 0.2,  # Estimate radiative component
-                T_ambient=300.0,
-                h_ambient=10.0,
-            )
-            
-            try:
-                thermal_profile_throat = calculate_steady_state_temperature_profile(
-                    layers_throat,
-                    bc_throat,
-                    n_points_per_layer=10,
-                )
-                T_graphite_surface = thermal_profile_throat["T_surface_hot"]
-                T_stainless_throat = thermal_profile_throat["T_surface_cold"]
-            except Exception as e:
-                import warnings
-                warnings.warn(f"Throat thermal profile calculation failed: {e}")
-        
-        # Build complete state
-        state = TimeVaryingState(
+
+        gr_thick = (self._walls["throat"]["model"].thickness_first
+                    if (self._walls and "throat" in self._walls and self._walls["throat"]["kind"] == "graphite")
+                    else 0.0)
+        return TimeVaryingState(
             time=time,
-            V_chamber=V_chamber_new,
-            A_throat=A_throat_new,  # CRITICAL: This stays constant with graphite, grows without graphite
-            A_exit=A_exit_new,
-            Lstar=Lstar_new,
-            D_chamber=D_chamber_new,
-            D_throat=D_throat_new,  # CRITICAL: This stays constant with graphite, grows without graphite
-            D_exit=D_exit_new,
-            eps=eps_new,
-            recession_chamber=recession_chamber_new,
-            recession_throat=recession_throat_new,
-            recession_exit=recession_exit_new,
-            recession_graphite=recession_graphite_new,
-            graphite_thickness_remaining=graphite_thickness_remaining_new,
+            V_chamber=V_chamber,
+            A_throat=A_throat,
+            A_exit=A_exit,
+            Lstar=Lstar,
+            D_chamber=geo["D_chamber"],
+            D_throat=geo["D_throat"],
+            D_exit=geo["D_exit"],
+            eps=eps,
+            recession_chamber=geo["recession_chamber"],
+            recession_throat=geo["recession_throat"],
+            recession_exit=geo["recession_exit"],
+            recession_graphite=geo["recession_throat"] if (gr_cfg is not None and gr_cfg.enabled) else 0.0,
+            graphite_thickness_remaining=gr_thick,
             reaction_progress={
-                "progress_injection": progress_injection,
-                "progress_mid": progress_mid,
-                "progress_throat": progress_throat,
+                "progress_injection": reaction_progress_dict["progress_injection"],
+                "progress_mid": reaction_progress_dict["progress_mid"],
+                "progress_throat": reaction_progress_dict["progress_throat"],
             },
             tau_residence=reaction_progress_dict["tau_residence"],
             tau_effective=reaction_progress_dict["tau_effective"],
@@ -940,49 +497,108 @@ class TimeVaryingCoupledSolver:
             Tc=Tc,
             MR=MR,
             mdot_total=mdot_total,
-            F=F,
-            Isp=Isp,
-            mach_number=mach_number,  # TIME-VARYING - calculated dynamically
-            eta_cstar=eta_cstar,  # TIME-VARYING - calculated from actual/ideal c*
-            reynolds_number=chamber_intrinsics.get("reynolds_number", 10000.0),
-            residence_time=chamber_intrinsics.get("residence_time", 0.001),
-            v_exit=v_exit,
-            P_exit=P_exit,
-            T_exit=T_exit,
-            M_exit=M_exit,
+            F=thrust_results["F"],
+            Isp=thrust_results["Isp"],
+            v_exit=thrust_results["v_exit"],
+            P_exit=thrust_results["P_exit"],
+            T_exit=thrust_results["T_exit"],
+            M_exit=thrust_results["M_exit"],
             gamma_chamber=gamma_chamber,
-            gamma_exit=gamma_exit,
+            gamma_exit=thrust_results["gamma_exit"],
             R_chamber=R_chamber,
-            R_exit=R_exit,
-            equilibrium_factor=equilibrium_factor,
+            R_exit=thrust_results["R_exit"],
+            equilibrium_factor=thrust_results["equilibrium_factor"],
             chugging_frequency=chugging_freq,
             chugging_stability_margin=stability_margin,
             stability_state=comprehensive_stability.get("stability_state", "unstable") if comprehensive_stability else "unstable",
             stability_score=comprehensive_stability.get("stability_score", 0.0) if comprehensive_stability else 0.0,
             acoustic_modes=acoustic,
             feed_stability=feed_stability,
-            heat_flux_chamber=heat_flux_chamber,
-            heat_flux_throat=heat_flux_throat,
-            ablative_recession_rate=recession_rate_ablative,
-            graphite_recession_rate=recession_rate_graphite,
-            throat_oxidation_recession_rate=throat_oxidation_rate,
-            throat_ablation_recession_rate=throat_ablation_rate,
-            T_ablative_surface=T_ablative_surface,
-            T_stainless_chamber=T_stainless_chamber,
-            T_graphite_surface=T_graphite_surface,
-            T_stainless_throat=T_stainless_throat,
-            # Nozzle dynamics
-            nozzle_efficiency=nozzle_dynamics["efficiency"],
-            nozzle_max_heat_flux=nozzle_dynamics["max_heat_flux"],
-            nozzle_max_wall_temp=nozzle_dynamics["max_wall_temp"],
-            nozzle_is_melting=nozzle_dynamics["is_melting"],
-            nozzle_hotspot_count=nozzle_dynamics["hotspot_count"],
-            # Full diagnostics from ChamberSolver (includes ablative heat flux profiles)
+            heat_flux_chamber=report["q_conv_chamber"] + report["q_rad_chamber"],
+            heat_flux_throat=report["q_conv_throat"] + report["q_rad_throat"],
+            ablative_recession_rate=report["rate_barrel"],
+            graphite_recession_rate=report["rate_throat"] if (gr_cfg is not None and gr_cfg.enabled) else 0.0,
+            throat_oxidation_recession_rate=report["rate_throat"] if (gr_cfg is not None and gr_cfg.enabled) else 0.0,
+            throat_ablation_recession_rate=0.0,
+            mach_number=mach_number,
+            eta_cstar=eta_cstar,
+            reynolds_number=chamber_intrinsics.get("reynolds_number", float("nan")),
+            residence_time=chamber_intrinsics.get("residence_time", float("nan")),
+            T_liner_surface=report["T_liner_surface"],
+            char_depth_chamber=report["char_depth_chamber"],
+            T_bondline=report["T_bondline"],
+            recession_liner_peak=report["recession_liner_peak"],
+            char_depth_peak=report["char_depth_peak"],
+            T_bondline_peak=report["T_bondline_peak"],
+            x_liner_peak=report["x_liner_peak"],
+            q_conv_chamber=report["q_conv_chamber"],
+            q_rad_chamber=report["q_rad_chamber"],
+            q_conv_throat=report["q_conv_throat"],
+            q_rad_throat=report["q_rad_throat"],
+            q_chem_throat=report["q_chem_throat"],
+            T_graphite_surface=report["T_graphite_surface"],
+            T_graphite_back=report["T_graphite_back"],
+            cstar_ideal=cstar_ideal,
+            cstar_actual=cstar_actual,
             diagnostics=diagnostics,
         )
-        
-        return state
-    
+
+    def _wall_report(self, rates: Dict[str, float]) -> Dict[str, float]:
+        """Wall read-outs at the current time, fluxes at the current surface temperatures."""
+        nan = float("nan")
+        out = {k: nan for k in ("T_liner_surface", "char_depth_chamber", "T_bondline",
+                                "recession_liner_peak", "char_depth_peak", "T_bondline_peak",
+                                "x_liner_peak", "T_graphite_surface", "T_graphite_back")}
+        out.update({"q_conv_chamber": 0.0, "q_rad_chamber": 0.0, "q_conv_throat": 0.0,
+                    "q_rad_throat": 0.0, "q_chem_throat": 0.0, "rate_barrel": 0.0, "rate_throat": 0.0})
+        walls, loads = self._walls or {}, self._loads or {}
+        abl = self.config.ablative_cooling
+        liners = [(n, w) for n, w in walls.items() if n.startswith("liner")]
+        if liners:
+            n0, w0 = liners[0]
+            m0 = w0["model"]
+            Ts = float(m0.T[0])
+            out["T_liner_surface"] = Ts
+            out["char_depth_chamber"] = m0.depth_of_isotherm(abl.pyrolysis_temperature)
+            out["T_bondline"] = m0.interface_temperature(0)
+            out["rate_barrel"] = float(rates.get(n0, 0.0))
+            if n0 in loads:
+                L = loads[n0]
+                out["q_conv_chamber"] = float(L["h_of"](Ts) * (L["Taw"] - Ts))
+                out["q_rad_chamber"] = float(L["q_rad"](Ts))
+            npk, wpk = max(liners, key=lambda nw: nw[1]["model"].receded)
+            out["recession_liner_peak"] = float(wpk["model"].receded)
+            out["char_depth_peak"] = wpk["model"].depth_of_isotherm(abl.pyrolysis_temperature)
+            out["x_liner_peak"] = float(wpk["x"])
+            out["T_bondline_peak"] = max(w["model"].interface_temperature(0) for _, w in liners)
+        if "throat" in walls:
+            m = walls["throat"]["model"]
+            Ts = float(m.T[0])
+            out["rate_throat"] = float(rates.get("throat", 0.0))
+            if walls["throat"]["kind"] == "graphite":
+                out["T_graphite_surface"] = Ts
+                out["T_graphite_back"] = m.T_back
+            if "throat" in loads:
+                L = loads["throat"]
+                q_rad = float(L["q_rad"](Ts))
+                if "chem" in L:
+                    ox = L["chem"](Ts)
+                    out["q_conv_throat"] = float(ox["blowing_factor"] * L["h_of"](Ts) * (L["Taw"] - Ts))
+                    out["q_chem_throat"] = float(ox["q_chem"])
+                else:
+                    out["q_conv_throat"] = float(L["h_of"](Ts) * (L["Taw"] - Ts))
+                out["q_rad_throat"] = q_rad
+        return out
+
+    def soak_back(self, duration: float = 120.0) -> Dict[str, Dict[str, float]]:
+        """Peak back-face and bondline temperatures while each wall's stored heat soaks back
+        after shutdown (hot face adiabatic). Run after solve_time_series; the walls are copied."""
+        out: Dict[str, Dict[str, float]] = {}
+        for name, w in (self._walls or {}).items():
+            m = copy.deepcopy(w["model"])
+            out[name] = {"x": w["x"], **m.soak(duration)}
+        return out
+
     def solve_time_series(
         self,
         times: np.ndarray,
@@ -1089,16 +705,22 @@ class TimeVaryingCoupledSolver:
             "eta_cstar": np.array([s.eta_cstar for s in self.state_history]),  # TIME-VARYING n* - changes with L*
             "reynolds_number": np.array([s.reynolds_number for s in self.state_history]),
             "residence_time": np.array([s.residence_time for s in self.state_history]),
-            "T_ablative_surface": np.array([s.T_ablative_surface for s in self.state_history]),
-            "T_stainless_chamber": np.array([s.T_stainless_chamber for s in self.state_history]),
+            "T_liner_surface": np.array([s.T_liner_surface for s in self.state_history]),
+            "char_depth_chamber": np.array([s.char_depth_chamber for s in self.state_history]),
+            "T_bondline": np.array([s.T_bondline for s in self.state_history]),
+            "recession_liner_peak": np.array([s.recession_liner_peak for s in self.state_history]),
+            "char_depth_peak": np.array([s.char_depth_peak for s in self.state_history]),
+            "T_bondline_peak": np.array([s.T_bondline_peak for s in self.state_history]),
+            "x_liner_peak": np.array([s.x_liner_peak for s in self.state_history]),
+            "q_conv_chamber": np.array([s.q_conv_chamber for s in self.state_history]),
+            "q_rad_chamber": np.array([s.q_rad_chamber for s in self.state_history]),
+            "q_conv_throat": np.array([s.q_conv_throat for s in self.state_history]),
+            "q_rad_throat": np.array([s.q_rad_throat for s in self.state_history]),
+            "q_chem_throat": np.array([s.q_chem_throat for s in self.state_history]),
             "T_graphite_surface": np.array([s.T_graphite_surface for s in self.state_history]),
-            "T_stainless_throat": np.array([s.T_stainless_throat for s in self.state_history]),
-            # Nozzle dynamics
-            "nozzle_efficiency": np.array([s.nozzle_efficiency for s in self.state_history]),
-            "nozzle_max_heat_flux": np.array([s.nozzle_max_heat_flux for s in self.state_history]),
-            "nozzle_max_wall_temp": np.array([s.nozzle_max_wall_temp for s in self.state_history]),
-            "nozzle_is_melting": np.array([s.nozzle_is_melting for s in self.state_history]),
-            "nozzle_hotspot_count": np.array([s.nozzle_hotspot_count for s in self.state_history]),
+            "T_graphite_back": np.array([s.T_graphite_back for s in self.state_history]),
+            "cstar_ideal": np.array([s.cstar_ideal for s in self.state_history]),
+            "cstar_actual": np.array([s.cstar_actual for s in self.state_history]),
         }
         
         # Extract reaction progress arrays

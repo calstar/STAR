@@ -15,7 +15,7 @@ import {
   getChamberGeometry,
   stopLayer1Optimization,
   getConfig,
-  updateConfig,
+  switchConfig,
 } from '../api/client';
 import type {
   Layer1Settings,
@@ -30,110 +30,10 @@ import { useDesignSlice } from '../lib/designState';
 import { ChamberContourPlot } from './ChamberContourPlot';
 import { stableStringify } from '../utils/stableStringify';
 import { useViewState } from '../lib/viewState';
+import { emitConfigChanged } from '../lib/configBus';
 
-/** Fill missing Design Requirements keys only; never overwrite user-saved values. */
-function withDefaults(user: Record<string, unknown>, defaults: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...user };
-  for (const [k, v] of Object.entries(defaults)) {
-    const cur = out[k];
-    if (cur === undefined || cur === null || (typeof cur === 'number' && !Number.isFinite(cur))) {
-      out[k] = v;
-    }
-  }
-  return out;
-}
 
-/** Fill missing keys when switching pintle → impinging; mirrors configs/default.yaml. */
-const IMPINGING_BASELINE_DEFAULTS: Record<string, unknown> = {
-  max_chamber_outer_diameter: 0.2032,
-  max_nozzle_exit_diameter: 0.2032,
-  layer1_stagnation_pressure_frac_min: 0.65,
-  layer1_stagnation_pressure_frac_max: 0.95,
-  layer1_expansion_ratio_min: 3.0,
-  layer1_expansion_ratio_max: 14.0,
-  injector_dp_ratio_O_min: 0.2,
-  injector_dp_ratio_O_max: 0.4,
-  injector_dp_ratio_F_min: 0.2,
-  injector_dp_ratio_F_max: 0.4,
-  layer1_W_THRUST: 6.0e4,
-  layer1_W_OF: 2.0e4,
-  layer1_W_OF_low_MR_scale: 1.0,
-  layer1_W_OF_high_MR_scale: 1.0,
-  W_MOM: 30000.0,
-  impinging_momentum_R_min: 0.9,
-  impinging_momentum_R_max: 1.1,
-  W_DP: 800.0,
-  W_DP_O: 12000.0,
-  W_DP_F: 175000.0,
-  W_DP_HIGH: 25000.0,
-  W_IMPINGING_ANGLE: 400.0,
-  layer1_impinging_angle_deg_min: 55.0,
-  // Keep in sync with configs/default.yaml. 90 made this band outrank the O/F target, and
-  // contradicted the 50/60 deg seed below (110 deg included) that this same function installs.
-  layer1_impinging_angle_deg_max: 100.0,
-  W_IMPINGING_JET_ASYM: 180.0,
-  layer1_impinging_jet_angle_max_asym_deg: 26.0,
-  layer1_exit_pressure_inside_quad_scale: 0.38,
-  W_SMD: 2000.0,
-  W_CHAMBER_SHAPE: 2500.0,
-  layer1_chamber_dt_ratio_min: 2.2,
-  layer1_chamber_dt_ratio_max: 3.2,
-  layer1_chamber_ld_ratio_min: 1.0,
-  layer1_chamber_ld_ratio_max: 3.2,
-  target_smd_microns: 50.0,
-  layer1_smd_rel_tol: 0.20,
-};
-
-const IMPINGING_FROZEN_RESETS: Record<string, unknown> = {
-  D_chamber_outer_mm: null,
-  A_throat_mm2: null,
-  Lstar_mm: null,
-  expansion_ratio: null,
-  P_O_start_psi: null,
-  P_F_start_psi: null,
-  d_pintle_tip_mm: null,
-  h_gap_mm: null,
-  n_orifices: null,
-  d_orifice_mm: null,
-};
-
-/** A_O/A_F for R≈1 at the given MR and bulk densities (matches Layer-1 backend). */
-function expectedGeomAoAfForUnitMomentumRatio(
-  optimalOf: number,
-  rhoO: number,
-  rhoF: number,
-): number {
-  if (!(optimalOf > 0 && rhoO > 0 && rhoF > 0)) return NaN;
-  return optimalOf / Math.sqrt(rhoO / rhoF);
-}
-
-/** Rescale template jet diameters to optimal_of before impinging seed geometry is saved. */
-function rescaleImpingingJetDiametersForMr(
-  dJetO: number,
-  dJetF: number,
-  nElementsO: number,
-  nElementsF: number,
-  optimalOf: number,
-  rhoO: number,
-  rhoF: number,
-): { dJetO: number; dJetF: number } {
-  const expAf = expectedGeomAoAfForUnitMomentumRatio(optimalOf, rhoO, rhoF);
-  if (!Number.isFinite(expAf) || expAf <= 0) return { dJetO, dJetF };
-  const nO = Math.max(1, Math.round(nElementsO));
-  const nF = Math.max(1, Math.round(nElementsF));
-  const aO = nO * Math.PI * (dJetO / 2) ** 2;
-  const aF = nF * Math.PI * (dJetF / 2) ** 2;
-  if (!(aF > 0)) return { dJetO, dJetF };
-  const actualAf = aO / aF;
-  const ratioScale = expAf / actualAf;
-  if (Math.abs(ratioScale - 1) < 0.02) return { dJetO, dJetF };
-  const aONew = aO * Math.sqrt(ratioScale);
-  const aFNew = aF / Math.sqrt(ratioScale);
-  return {
-    dJetO: Math.sqrt((4 * aONew) / (nO * Math.PI)),
-    dJetF: Math.sqrt((4 * aFNew) / (nF * Math.PI)),
-  };
-}
+// Jet sizes are not seeded here: Layer 1 rescales the jets to optimal_of_ratio at run start.
 
 interface Layer1OptimizationProps {
   requirements: DesignRequirements;
@@ -978,110 +878,40 @@ export function Layer1Optimization({
   };
 
   const ensureImpingingMode = async (): Promise<boolean> => {
-    // Writes injector.* + design_requirements through PUT /api/config. Reached
-    // only from handleRun, which is already gated, but this is the call that
-    // actually mutates the design -- so it refuses on its own too.
+    // Changing the injector type goes through the ONE reconciling path the header dropdown uses,
+    // POST /api/config/switch. It loads the canonical doublet (drilled-hole Cd, Ingebo SMD, the
+    // injector-face guards) and carries the propellant and the user's own requirements across.
+    // This used to be a raw PUT that kept the pintle's Cd 0.40/0.65 on drilled holes and filled
+    // every unset requirement from a table of its own (W_MOM 30000, W_SMD 2000 at an unreachable
+    // 50 um, a 0.65-0.95 tank box) that matched no config (DEF-01, DEF-08).
     if (readOnly) {
       setError('Take the design before switching the injector.');
       return false;
     }
     const cfg = await getConfig();
     const injector = (cfg.data?.config?.injector as Record<string, unknown> | undefined) ?? {};
-    const designReq = (cfg.data?.config?.design_requirements as Record<string, unknown> | undefined) ?? {};
-    const frozen = (designReq.frozen_parameters as Record<string, unknown> | undefined) ?? {};
     const injectorType = String(injector.type ?? 'unknown').toLowerCase();
-    const userMinLstar = Number(designReq.min_Lstar);
-    const userMaxLstar = Number(designReq.max_Lstar);
-    const preservedMinLstar = Number.isFinite(userMinLstar) && userMinLstar > 0 ? userMinLstar : 0.76;
-    const preservedMaxLstar = Number.isFinite(userMaxLstar) && userMaxLstar > preservedMinLstar ? userMaxLstar : 1.5;
-    const userNDoubletsMax = Number(designReq.layer1_impinging_n_doublets_max);
-    const preservedNDoubletsMax =
-      Number.isFinite(userNDoubletsMax) && userNDoubletsMax >= 5
-        ? Math.round(userNDoubletsMax)
-        : 20;
-    // Do not treat conservative tank caps (<850 psi) as "needs baseline": users may intentionally
-    // cap lower; forcing 900 here overwrote Design Requirements before every Layer 1 run.
-    const needImpingingBaseline =
-      Number(designReq.max_chamber_outer_diameter ?? 0) < 0.20 ||
-      Number(designReq.max_nozzle_exit_diameter ?? 0) < 0.20 ||
-      Number(designReq.layer1_W_OF ?? 1.0e4) > 2.0e5 ||
-      frozen.d_pintle_tip_mm != null ||
-      frozen.h_gap_mm != null ||
-      frozen.n_orifices != null ||
-      frozen.d_orifice_mm != null;
-
-    const mergedDesignRequirements: Record<string, unknown> = {
-      ...withDefaults(
-        { ...(designReq as Record<string, unknown>) },
-        {
-          ...IMPINGING_BASELINE_DEFAULTS,
-          min_Lstar: preservedMinLstar,
-          max_Lstar: preservedMaxLstar,
-          layer1_impinging_n_doublets_max: preservedNDoubletsMax,
-        }
-      ),
-      frozen_parameters: {
-        ...(frozen as Record<string, unknown>),
-        ...IMPINGING_FROZEN_RESETS,
-      },
-    };
-
     if (injectorType === 'impinging') {
-      if (needImpingingBaseline) {
-        setMessage(
-          'Injector is already impinging. Keeping your saved design requirements/feed settings as-is (no auto-baseline override).'
-        );
-      }
       setActiveInjectorType('impinging');
       return true;
     }
-    const impingingUpdate: Record<string, unknown> = {
-      injector: {
-        ...(injector as Record<string, unknown>),
-        type: 'impinging',
-        geometry: (() => {
-          const fluids = (cfg.data?.config?.fluids as Record<string, Record<string, unknown>> | undefined) ?? {};
-          const rhoO = Number(fluids.oxidizer?.density ?? 1140);
-          const rhoF = Number(fluids.fuel?.density ?? 422.6);
-          const optimalOf = Number(
-            designReq.optimal_of_ratio ?? mergedDesignRequirements.optimal_of_ratio ?? 3.5
-          );
-          const nElements = 20;
-          const templateJet = 0.002;
-          const scaled = rescaleImpingingJetDiametersForMr(
-            templateJet,
-            templateJet,
-            nElements,
-            nElements,
-            optimalOf,
-            rhoO,
-            rhoF
-          );
-          return {
-            oxidizer: {
-              n_elements: nElements,
-              d_jet: scaled.dJetO,
-              impingement_angle: 50.0,
-              spacing: 0.006,
-            },
-            fuel: {
-              n_elements: nElements,
-              d_jet: scaled.dJetF,
-              impingement_angle: 60.0,
-              spacing: 0.006,
-            },
-          };
-        })(),
-      },
-      design_requirements: mergedDesignRequirements,
-    };
-    const upd = await updateConfig(impingingUpdate);
-    if (upd.error) {
-      setError(`Failed to auto-switch injector to impinging: ${upd.error}`);
+    const res = await switchConfig({ injector_type: 'impinging' });
+    if (res.error || !res.data) {
+      setError(`Failed to switch the injector to impinging: ${res.error ?? 'no response'}`);
       return false;
     }
+    emitConfigChanged(res.data.config);
     setActiveInjectorType('impinging');
-    setMessage('Auto-switched injector mode to impinging for Layer 1 optimization.');
+    const warnings = res.data.binding_warnings ?? [];
+    if (warnings.length > 0) {
+      // A doublet solved with another injector's bindings is not a result: stop here.
+      setError(`Switched to impinging, but the config is inconsistent: ${warnings.join('; ')}`);
+      return false;
+    }
+    setMessage(
+      'Switched the injector to impinging (canonical doublet, your propellant and requirements kept).' +
+        (res.data.design_warning ? ` ${res.data.design_warning}` : '')
+    );
     return true;
   };
 

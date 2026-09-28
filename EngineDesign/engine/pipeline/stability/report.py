@@ -154,16 +154,35 @@ def _vaporization_profile(inp: Dict[str, Any], Pc: float, n_pts: int = 40) -> Di
     return out
 
 
-def _sensitivity(inp: Dict[str, Any]) -> Dict[str, Any]:
-    """n / chi sensitivity bands for the acoustic limiting-mode growth rate (cheap sweep)."""
+def _sensitivity(inp: Dict[str, Any], nominal_gm: float) -> Dict[str, Any]:
+    """Sensitivity of both verdicts to the inputs nobody has measured (cheap sweeps).
+
+    Acoustic: alpha of the limiting mode over n and chi (chi scales the RATE-LIMITING stream's lag,
+    which is what tau_sens is built from). Chug: GM over the feed lengths (x0.5, x2) and over a
+    uniform scale on every conversion lag (x0.5, x2). The liquid bulk modulus does not enter the
+    lumped chug loop at all (no line compliance), so the chug verdict cannot move with it."""
+    import copy
     D_ch, L_ch, gas, coeffs = inp["D_ch"], inp["L_ch"], inp["gas"], inp["damping_coeffs"]
-    tv = inp["tau_conv_O"]
+    tv = inp["tau_rate_limiting"]
     a_n = [acoustic.fast_acoustic(D_ch, L_ch, gas, n=nn, tau_sens=inp["tau_sens"], coeffs=coeffs)["alpha_max"]
            for nn in (0.3, 0.6)]
     a_chi = [acoustic.fast_acoustic(D_ch, L_ch, gas, n=inp["n_interaction"], tau_sens=cc * tv, coeffs=coeffs)["alpha_max"]
              for cc in (0.05, 0.30)]
+
+    def gm_scaled(attr: str, k: float) -> float:
+        st = []
+        for s0 in inp["streams"]:
+            s1 = copy.copy(s0)
+            setattr(s1, attr, float(getattr(s0, attr)) * k)
+            st.append(s1)
+        return float(chug.chug_margin_fast(st, inp["chamber"])["gain_margin"])
+
     return {"acoustic_alpha_vs_n": [float(min(a_n)), float(max(a_n))],
-            "acoustic_alpha_vs_chi": [float(min(a_chi)), float(max(a_chi))]}
+            "acoustic_alpha_vs_chi": [float(min(a_chi)), float(max(a_chi))],
+            "chug_gm_nominal": float(nominal_gm),
+            "chug_gm_vs_feed_length": {"x0.5": gm_scaled("feed_length", 0.5), "x2": gm_scaled("feed_length", 2.0)},
+            "chug_gm_vs_lag_scale": {"x0.5": gm_scaled("tau_conv", 0.5), "x2": gm_scaled("tau_conv", 2.0)},
+            "chug_bulk_modulus": "not an input: the lumped chug loop has no line compliance"}
 
 
 def _chug_pole(chug_rich: Dict[str, Any]) -> Dict[str, float]:
@@ -193,21 +212,21 @@ def _locus_crossing(locus: List[Dict[str, float]]) -> Dict[str, float]:
 
 
 def _radar(chug_margin: float, ac: Dict[str, Any], vap: Dict[str, Any],
-           gate_threshold: float, alpha_offset: float) -> Dict[str, Any]:
-    """Viz #7: one-glance health radar."""
-    def mode_alpha(name):
+           gate_threshold: float) -> Dict[str, Any]:
+    """Viz #7: one-glance health radar. Every axis is a ratio that is 1 at neutral stability:
+    chug GM, acoustic damping/driving per mode (nominal phase, report-only unless gated), and
+    L_ch/L_vap for vaporization. Plot caps: 3 for the margins, 1.3 for vaporization (an infinite
+    damping/driving would otherwise serialize as null)."""
+    def mode_margin(name):
         for m in ac["modes"]:
             if m["mode"] == name:
-                return m["alpha"]
-        return float("-inf")
-    a1L, a1T = mode_alpha("1L"), mode_alpha("1T")
-    # normalize alphas to a 0..1.3 "margin-like" scale via the same acoustic gate mapping
-    v1L = analysis._acoustic_gate_margin(a1L, alpha_offset)
-    v1T = analysis._acoustic_gate_margin(a1T, alpha_offset)
+                return m["margin"]
+        return float("nan")
     vap_complete = float(np.clip(vap["L_ch_m"] / vap["L_vap_m"], 0.0, 1.3)) if (
         np.isfinite(vap["L_vap_m"]) and vap["L_vap_m"] > 0) else 1.3
     axes = ["chug", "1L", "1T", "vaporization"]
-    values = [float(chug_margin), float(v1L), float(v1T), vap_complete]
+    cap = lambda v: float(np.clip(v, 0.0, 3.0)) if not np.isnan(v) else float("nan")
+    values = [cap(chug_margin), cap(mode_margin("1L")), cap(mode_margin("1T")), vap_complete]
     return {"axes": axes, "values": values, "threshold": [gate_threshold] * len(axes)}
 
 
@@ -226,24 +245,27 @@ _DRIVER_LABEL = {
 
 def _diagnostics(state: str, chug_margin: float, acoustic_margin: float, gate_threshold: float,
                  limiting: Optional[str], chug_rich: Dict[str, Any], ac: Dict[str, Any],
-                 vap: Dict[str, Any], fallbacks: List[Dict[str, Any]]) -> Dict[str, Any]:
+                 vap: Dict[str, Any], fallbacks: List[Dict[str, Any]],
+                 acoustic_gate: str = "report_only") -> Dict[str, Any]:
     """Turn the rich quantities into a verdict, findings, and design actions tied to the
     sensitivity sliders (η_inj, SMD, n, χ). Derived from the SAME numbers the cards render,
     so the headline can never disagree with the charts."""
     findings: List[Dict[str, str]] = []
     actions: List[Dict[str, Optional[str]]] = []
+    ac_gated = acoustic_gate != "report_only"
 
     # --- chug (low-frequency, feed-coupled) ---
     chug_stable = chug_rich.get("stable", True)
     chug_f = chug_rich.get("f_chug_hz")
     driver = chug_rich.get("driver", "unknown")
     driver_lbl = _DRIVER_LABEL.get(driver, driver)
-    if not chug_stable or chug_margin < gate_threshold:
+    if not chug_stable or not (chug_margin >= gate_threshold):
         txt = "Chug (low-frequency, feed-coupled) loop is "
-        txt += "growing" if not chug_stable else "near the stability boundary"
+        txt += "growing" if not chug_stable else "short of the required gain margin"
         if chug_f is not None and np.isfinite(chug_f) and chug_f > 0:
             txt += f" around {chug_f:.0f} Hz"
-        txt += f"; dominant driver is {driver_lbl} (margin {chug_margin:.2f})."
+        txt += (f"; dominant driver is {driver_lbl} (gain margin {chug_margin:.2f}, "
+                f"{analysis.gain_margin_db(chug_margin):.1f} dB, required {gate_threshold:.2f}).")
         findings.append({"severity": "critical" if not chug_stable else "warn", "text": txt})
         actions.append({
             "text": "Stiffen the injector — raise ΔP_inj/Pc (η_inj).",
@@ -261,12 +283,21 @@ def _diagnostics(state: str, chug_margin: float, acoustic_margin: float, gate_th
     ac_modes = ac.get("modes", [])
     lim_name = ac.get("limiting_mode")
     lim = next((m for m in ac_modes if m.get("mode") == lim_name), ac_modes[0] if ac_modes else None)
-    if ac.get("any_unstable") or acoustic_margin < gate_threshold:
+    if not ac_gated:
+        txt = "High-frequency (acoustic) stability is not assessed a priori: the injector-face and " \
+              "two-phase damping are uncalibrated, and ω·τ_sens spans many periods of 2π, so the " \
+              "model's modes are shown but gate nothing."
+        if lim is not None:
+            txt += (f" At the nominal lag {lim.get('mode')} ({lim.get('f_hz', 0):.0f} Hz) has "
+                    f"damping/driving {lim.get('margin', float('nan')):.2f}.")
+        txt += " Rate it on the stand: ≥ 25 kHz Pc and a pulse or bomb test (Harrje & Reardon SP-194)."
+        findings.append({"severity": "warn", "text": txt})
+    elif ac.get("any_unstable") or not (acoustic_margin >= gate_threshold):
         if lim is not None:
             driven = lim.get("alpha", 0.0) > 0
             txt = (f"Acoustic mode {lim.get('mode')} ({lim.get('f_hz', 0):.0f} Hz) is "
                    f"{'driven' if driven else 'only lightly damped'} "
-                   f"(α={lim.get('alpha', 0):.0f} 1/s, margin {acoustic_margin:.2f}).")
+                   f"(α={lim.get('alpha', 0):.0f} 1/s, damping/driving {acoustic_margin:.2f}).")
         else:
             txt = f"Acoustic margin is low ({acoustic_margin:.2f})."
         findings.append({"severity": "critical" if ac.get("any_unstable") else "warn", "text": txt})
@@ -302,12 +333,16 @@ def _diagnostics(state: str, chug_margin: float, acoustic_margin: float, gate_th
         findings.append({"severity": "ok",
                          "text": "No driven modes — chug, acoustic, and vaporization all clear the gate."})
 
+    gm_txt = (f"chug gain margin {chug_margin:.2f} ({analysis.gain_margin_db(chug_margin):.1f} dB) "
+              f"against {gate_threshold:.2f} required")
+    hf_txt = "" if ac_gated else " High-frequency stability is not assessed a priori."
     if state == "stable":
-        headline = (f"Stable — every mode clears the gate "
-                    f"(min margin {min(chug_margin, acoustic_margin):.2f}). Still monitor on hot fire.")
+        headline = f"Stable — {gm_txt}.{hf_txt} Still monitor on hot fire."
     elif state == "marginal":
-        headline = (f"Marginal — {limiting or 'a mode'} sits near the boundary. "
-                    "Instrument heavily and ramp up cautiously.")
+        headline = (f"Marginal — {limiting or 'a mode'} is predicted stable but short of the "
+                    f"requirement ({gm_txt}).{hf_txt} Instrument heavily and ramp up cautiously.")
+    elif state == "unknown":
+        headline = "Unknown — the stability model could not be evaluated at this point."
     else:
         headline = (f"Unstable risk — {limiting or 'a mode'} is driven. "
                     "Change the design before hot fire.")
@@ -351,10 +386,15 @@ def _diagnostics(state: str, chug_margin: float, acoustic_margin: float, gate_th
 
 def build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: float,
                       gamma: float, R: float, Tc: float, diagnostics: Dict[str, Any],
-                      cg: Any, *, gate_threshold: float = 1.05,
+                      cg: Any, *, gate_threshold: Optional[float] = None,
                       overrides: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
-    """Assemble the full rich stability payload (plan §A5 schema). <=5 s."""
+    """Assemble the full rich stability payload (plan §A5 schema). <=5 s.
+
+    ``gate_threshold`` defaults to design_requirements.min_stability_margin (as Layer 1 relaxes
+    it), so the report and the optimizer gate on the same number."""
     from engine.pipeline import assumptions as _assumptions
+    if gate_threshold is None:
+        gate_threshold = analysis._stability_requirement(config)
     with _assumptions.scope() as _used_here:
         return _build_rich_report(config, Pc, MR, mdot_total, cstar, gamma, R, Tc, diagnostics, cg,
                                   gate_threshold=gate_threshold, overrides=overrides,
@@ -370,10 +410,12 @@ def _build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: f
     )
     streams, chamber, gas = inp["streams"], inp["chamber"], inp["gas"]
 
-    # --- chug (rich root-find + with/without regulator + boundary) ---
+    # --- chug (rich root-find + boundary + band over the unmeasured mixing lag) ---
     chug_rich = chug.chug_growth_rate(streams, chamber)
-    chug_margin = analysis._chug_gate_margin(
-        chug.chug_margin_fast(streams, chamber).get("gain_margin", float("nan")))
+    chug_fast = chug.chug_margin_fast(streams, chamber)
+    gm_nominal = float(chug_fast.get("gain_margin", float("nan")))
+    band = analysis.chug_band(inp, gm_nominal)
+    chug_margin = band["min"] if band is not None else gm_nominal
     eta_window = _eta_window(streams)
     boundary = _chug_boundary_curve(streams, chamber, eta_window=eta_window)
     theta_c = chamber.theta_c()
@@ -403,11 +445,16 @@ def _build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: f
     ac = acoustic.analyze_acoustic_modes(inp["D_ch"], inp["L_ch"], gas,
                                          n=inp["n_interaction"], tau_sens=inp["tau_sens"],
                                          coeffs=inp["damping_coeffs"])
-    ac_alpha_max = ac["modes"][0]["alpha"] if ac["modes"] else float("nan")
-    acoustic_margin = analysis._acoustic_gate_margin(ac_alpha_max, inp["acoustic_gate_alpha_offset"])
+    ac_gate_mode = inp["acoustic_gate"]
+    ac_gated = ac_gate_mode != "report_only"
+    m_key = "margin_worst_phase" if ac_gate_mode == "worst_phase" else "margin"
+    ac_margins = [m[m_key] for m in ac["modes"]]
+    acoustic_margin_model = float(min(ac_margins)) if ac_margins else float("nan")
+    acoustic_margin = acoustic_margin_model if ac_gated else float("inf")
     acoustic_modes = [{
         "name": m["mode"], "freq_hz": m["f_hz"], "alpha": m["alpha"],
-        "driving": m["driving"],
+        "driving": m["driving"], "driving_max": m["driving_max"],
+        "margin": m["margin"], "margin_worst_phase": m["margin_worst_phase"], "n_min": m["n_min"],
         "damping": {"noz": m["damping"]["nozzle"], "visc": m["damping"]["viscous"],
                     "inj": m["damping"]["injector"], "twophase": m["damping"]["twophase"]},
     } for m in ac["modes"]]
@@ -417,25 +464,36 @@ def _build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: f
              for m in ac["modes"]]
 
     vap = _vaporization_profile(inp, Pc)
-    sens = _sensitivity(inp)
+    sens = _sensitivity(inp, gm_nominal)
     fallbacks = _fallbacks_used(used_here)
-    radar = _radar(chug_margin, ac, vap, gate_threshold, inp["acoustic_gate_alpha_offset"])
+    radar = _radar(chug_margin, ac, vap, gate_threshold)
 
+    ac_alpha_nominal = ac["modes"][0]["alpha"] if ac["modes"] else float("nan")
+    state = analysis.classify_stability(gm_nominal, chug_margin, acoustic_margin,
+                                        ac_alpha_nominal, ac_gated, gate_threshold)
+    if chug_rich.get("stable") is False and state in ("stable", "marginal"):
+        state = "unstable"          # the root-find found a growing pole the scan did not
     min_margin = float(min(chug_margin, acoustic_margin))
-    state = ("stable" if (chug_margin >= gate_threshold and acoustic_margin >= gate_threshold
-                          and chug_rich.get("stable", True) and not ac["any_unstable"])
-             else "marginal" if min_margin >= 0.95 else "unstable")
-    limiting = "chug" if chug_margin <= acoustic_margin else ac.get("limiting_mode")
+    limiting = "chug" if (not ac_gated or chug_margin <= acoustic_margin) else ac.get("limiting_mode")
     diag = _diagnostics(state, chug_margin, acoustic_margin, gate_threshold, limiting,
-                        chug_rich, ac, vap, fallbacks)
+                        chug_rich, ac, vap, fallbacks, acoustic_gate=ac_gate_mode)
 
     return {
         "summary": {"state": state, "min_margin": min_margin,
-                    "gate_margin_threshold": gate_threshold, "limiting_mode": limiting},
+                    "gate_margin_threshold": gate_threshold, "limiting_mode": limiting,
+                    "margin_basis": "chug Nyquist gain margin at the low end of the mixing-lag band"
+                                    + ("" if not ac_gated else f"; acoustic damping/driving ({ac_gate_mode})")},
         "diagnostics": diag,
         "chug": {
             "alpha": chug_rich.get("alpha"), "freq_hz": chug_rich.get("f_chug_hz"),
             "zeta": chug_rich.get("zeta"), "margin": chug_margin,
+            "gain_margin_nominal": gm_nominal,
+            "gain_margin_db": analysis.gain_margin_db(chug_margin),
+            "gain_margin_nominal_db": analysis.gain_margin_db(gm_nominal),
+            "gm_band": band,
+            "phase_margin_deg": chug_fast.get("phase_margin_deg"),
+            "theta_c_s": float(theta_c),
+            "regulator_status": chug_rich.get("regulator_status"),
             "alpha_no_reg": chug_rich.get("alpha_no_reg"), "driver": chug_rich.get("driver"),
             "boundary_curve": boundary,
             "pole": _chug_pole(chug_rich),
@@ -448,8 +506,11 @@ def _build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: f
             "convection_model": inp.get("convection_model"),
             "lag_breakdown": lag_break,
         },
-        "acoustic": {"margin": acoustic_margin, "modes": acoustic_modes,
-                     "any_unstable": ac["any_unstable"], "limiting_mode": ac["limiting_mode"]},
+        "acoustic": {"margin": acoustic_margin, "margin_model": acoustic_margin_model,
+                     "gate_status": ac_gate_mode, "modes": acoustic_modes,
+                     "any_unstable": ac["any_unstable"], "limiting_mode": ac["limiting_mode"],
+                     "chamber_length_m": float(inp["L_ch"]), "chamber_diameter_m": float(inp["D_ch"]),
+                     "sound_speed_m_s": float(gas.a_sound)},
         "phase": phase,
         "vaporization": vap,
         "radar": radar,
@@ -463,12 +524,16 @@ def _build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: f
             "mach_nozzle_entrance": float(inp["mach_nozzle_entrance"]),
             "contraction_ratio": float(inp["contraction_ratio"]),
             "feed_length_O_m": float(inp["feed_length_O"]), "feed_length_F_m": float(inp["feed_length_F"]),
-            "acoustic_gate_alpha_offset": float(inp["acoustic_gate_alpha_offset"]),
+            "acoustic_gate": ac_gate_mode,
+            "acoustic_overlap": {m["mode"]: m["overlap"] for m in ac["modes"]},
+            "damping_injector_frac": float(inp["damping_coeffs"].injector_frac),
+            "damping_twophase_frac": float(inp["damping_coeffs"].twophase_frac),
             # Which named models produced this answer, and what the propellants/injector actually
             # are -- so a report can never be read as if it described a different engine.
             "time_lag_model": inp.get("lag_model"),
             "convection_model": inp.get("convection_model"),
             "mixing_lag_fraction": inp.get("mixing_lag_fraction"),
+            "mixing_lag_fraction_band": list(inp["chug_band"]) if inp.get("chug_band") else None,
             "injector_type": inp.get("injector_type"),
             "fluid_O": inp.get("fluid_name_O"), "fluid_F": inp.get("fluid_name_F"),
             "phase_O": inp.get("phase_O"), "phase_F": inp.get("phase_F"),

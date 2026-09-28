@@ -203,8 +203,11 @@ def chamber_geometry_calc(pc_design,
     cylindrical_length = chamber_length_calc(volume_chamber, area_throat, contraction_ratio, theta)
     contraction_length_horizontal = contraction_length_horizontal_calc(area_chamber, nozzle_y_first, theta)
     
-    # Calculate total chamber length (cylindrical + contraction) from injector face to throat
+    # Barrel + cone. The 1.5*R_t entrance arc adds 1.5*R_t*sin(theta) before the throat:
+    # face to throat is the Huzel & Huang chamber length, reported separately.
     total_chamber_length = cylindrical_length + contraction_length_horizontal
+    entrance_arc_length = 1.5 * np.sqrt(area_throat / np.pi) * np.sin(theta)
+    face_to_throat_length = total_chamber_length + entrance_arc_length
     
     # Calculate chamber radius
     r_c = np.sqrt(area_chamber / np.pi)
@@ -234,7 +237,7 @@ def chamber_geometry_calc(pc_design,
     # Note: nozzle_pts already includes all nozzle segments
     chamber_pts = np.vstack([
         np.column_stack((x_cyl, y_cyl)),
-        np.column_stack((x_contraction[1:], y_contraction[1:])),  # Skip first point to avoid duplicate
+        np.column_stack((x_contraction[1:-1], y_contraction[1:-1])),  # both ends are shared vertices
         nozzle_pts  # Nozzle already starts at the connection point
     ])
     
@@ -284,6 +287,7 @@ def chamber_geometry_calc(pc_design,
         ['Cylindrical Length', f'{cylindrical_length:.6e}', 'm', f'{cylindrical_length_in:.4f}', 'in'],
         ['Contraction Length', f'{contraction_length_horizontal:.6e}', 'm', f'{contraction_length_horizontal_in:.4f}', 'in'],
         ['Total Chamber Length', f'{total_chamber_length:.6e}', 'm', f'{total_chamber_length_in:.4f}', 'in'],
+        ['Face to Throat', f'{face_to_throat_length:.6e}', 'm', f'{face_to_throat_length * m_to_in:.4f}', 'in'],
     ]
     
     # Plot if requested
@@ -374,7 +378,9 @@ def chamber_geometry_calc(pc_design,
     lengths = {
         'cylindrical': cylindrical_length,
         'contraction': contraction_length_horizontal,
-        'total': total_chamber_length
+        'total': total_chamber_length,            # barrel + cone
+        'entrance_arc': entrance_arc_length,
+        'face_to_throat': face_to_throat_length,
     }
     
     return chamber_pts, table_data, lengths

@@ -1,5 +1,7 @@
-import type { RunnerResults, EngineConfig } from '../api/client';
-import { deriveInjectorLayout } from './InjectorPatternPlot';
+import { useEffect, useState } from 'react';
+import type { RunnerResults, EngineConfig, InjectorLayout } from '../api/client';
+import { getInjectorLayout } from '../api/client';
+import { drawingModel } from '../lib/injectorDrawing';
 
 interface ResultsDisplayProps {
   results: RunnerResults | null;
@@ -89,6 +91,21 @@ function Section({ title, children, icon }: SectionProps) {
 }
 
 export function ResultsDisplay({ results, isLoading, targetExitPressure, config }: ResultsDisplayProps) {
+  // Injector layout for the config these results came from. Derived by the backend
+  // (engine/core/injectors/layout.py), the same derivation the Geometry tab draws.
+  // Kept with the config it was fetched for, so a stale layout is never shown for a new config.
+  const [fetchedLayout, setFetchedLayout] = useState<{ for: unknown; layout: InjectorLayout | null } | null>(null);
+  const isImpinging = String((config?.injector as Record<string, unknown> | undefined)?.type ?? '')
+    .toLowerCase() === 'impinging';
+  useEffect(() => {
+    if (!config || !isImpinging) return;
+    let live = true;
+    getInjectorLayout(config as Record<string, unknown>).then((r) => {
+      if (live) setFetchedLayout({ for: config, layout: r.data ?? null });
+    });
+    return () => { live = false; };
+  }, [config, isImpinging]);
+  const injectorLayout = isImpinging && fetchedLayout && fetchedLayout.for === config ? fetchedLayout.layout : null;
   if (isLoading) {
     return (
       <div className="p-5 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
@@ -659,6 +676,18 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure, config 
               <SmallMetric label="Jet-to-jet relative velocity" value={formatNumber(num('u_rel'), 1)} unit="m/s" />
               <SmallMetric label="Cd — oxidizer" value={formatNumber(num('Cd_O'), 4)} unit="" colorClass="text-cyan-400" />
               <SmallMetric label="Cd — fuel" value={formatNumber(num('Cd_F'), 4)} unit="" colorClass="text-orange-400" />
+              {(() => {
+                // Nurick cavitation margin K / K_crit; under 1 the vena contracta boils and the
+                // orifice can flip. Reported by runner.evaluate, changes no flow.
+                const cav = (results as unknown as Record<string, unknown>).injector_cavitation as
+                  Record<string, { margin?: number }> | undefined;
+                const col = (m?: number) => (m === undefined || !Number.isFinite(m) ? 'text-[var(--color-text-primary)]'
+                  : m < 1 ? 'text-red-400' : m < 1.3 ? 'text-yellow-400' : 'text-[var(--color-text-primary)]');
+                return (['O', 'F'] as const).map((k) => cav?.[k]?.margin !== undefined && (
+                  <SmallMetric key={k} label={`Cavitation margin — ${k === 'O' ? 'oxidizer' : 'fuel'}`}
+                               value={formatNumber(cav[k].margin as number, 2)} unit="K/K_crit" colorClass={col(cav[k].margin)} />
+                ));
+              })()}
               <SmallMetric label="d_jet — oxidizer" value={mm(num('d_jet_O'))} unit="mm" colorClass="text-cyan-400" />
               <SmallMetric label="d_jet — fuel" value={mm(num('d_jet_F'))} unit="mm" colorClass="text-orange-400" />
               <SmallMetric label="Weber — oxidizer" value={formatNumber(num('We_O'), 0)} unit="" colorClass="text-cyan-400" />
@@ -677,29 +706,12 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure, config 
       {/* ---------------------------------------------------------------------------------
           INJECTOR GEOMETRY. Pitch circles, standoff and web are pure geometry from the
           design variables -- the solver does not return them, so they are derived here with
-          the SAME function the Chamber Geometry drawing uses, rather than a second copy.
+          the SAME backend layout the Chamber Geometry drawing uses, rather than a second copy.
           --------------------------------------------------------------------------------- */}
       {(() => {
-        const cfgInj = config?.injector as Record<string, unknown> | undefined;
-        if (!cfgInj || String(cfgInj.type ?? '').toLowerCase() !== 'impinging') return null;
-        const geom = cfgInj.geometry as Record<string, Record<string, number>> | undefined;
-        const cg = config?.chamber_geometry as Record<string, number> | undefined;
-        const ox = geom?.oxidizer;
-        const fu = geom?.fuel;
-        const bore = Number(cg?.chamber_diameter ?? 0);
-        if (!ox || !fu || !(bore > 0)) return null;
-        const req = (config?.design_requirements ?? {}) as Record<string, unknown>;
-        const n = (v: unknown) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
-        const { g } = deriveInjectorLayout({
-          oxidizer: { n_elements: Number(ox.n_elements), d_jet: Number(ox.d_jet), impingement_angle: Number(ox.impingement_angle), spacing: Number(ox.spacing) },
-          fuel: { n_elements: Number(fu.n_elements), d_jet: Number(fu.d_jet), impingement_angle: Number(fu.impingement_angle), spacing: Number(fu.spacing) },
-          boreDiameter: bore,
-          centerClearDiameter: n(req.layer1_injector_center_clear_dia_m),
-          minWeb: n(req.layer1_injector_min_web_m),
-          wallClearance: n(req.layer1_injector_wall_clearance_m),
-          plateThickness: n(req.layer1_injector_plate_thickness_m) || 0.0127,
-          counterboreDiameter: n(req.layer1_injector_counterbore_dia_m),
-        });
+        if (!injectorLayout) return null;
+        const bore = injectorLayout.inputs.bore_diameter;
+        const { g } = drawingModel(injectorLayout);
         const MM = 1000;
         const f2 = (v: number) => formatNumber(v, 2);
         return (

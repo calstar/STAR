@@ -11,22 +11,19 @@ import numpy as np
 _LOG = logging.getLogger(__name__)
 _print_raw = os.environ.get("ENGINE_PRINT_IMPINGING_FEED_CLOSURE", "")
 _PRINT_FEED_ORIFICE_CLOSURE = _print_raw != "" and str(_print_raw).lower() not in ("0", "false", "no")
-_FEED_ORIFICE_FP_TOL = 1e-6
-_FEED_ORIFICE_FP_MAX_ITER = 150
-_FEED_ORIFICE_CD_INNER_MAX = 120
-_FEED_ORIFICE_CD_INNER_TOL = 1e-12
-# Under-relaxation for the feed-loss ⇄ Bernoulli fixed point. A full Gauss–Seidel step can limit-cycle
-# when quadratic feed losses interact with choked-orifice flow (seen in ``impinging_smoke``).
-_FEED_ORIFICE_RELAX = 0.35
+
+_STREAM_ROOT_MAX_EVAL = 200
 
 from engine.pipeline.config_schemas import PintleEngineConfig, ImpingingInjectorConfig
 from engine.pipeline.feed_loss import delta_p_feed
 from engine.pipeline.thermal.regen_cooling import delta_p_regen_channels
 from engine.core.discharge import (
     cd_from_re,
+    cd_inf_from_inlet_geometry,
     cd_inf_from_orifice_diameter,
     calculate_reynolds_number,
 )
+from engine.pipeline.assumptions import assume
 from engine.core.spray import (
     evaporation_constant_m2_s,
     tau_evap_from_k,
@@ -44,11 +41,70 @@ from engine.core.spray import (
 )
 
 from . import InjectorModel
+from engine.core.injectors.layout import effective_discharge
 from engine.core.injectors.flow_capacity import (
     effective_flow_areas_from_cd,
     merge_effective_area_warnings,
 )
 
+
+
+def _stream_flow(Pc, P_tank, rho, A, d_hyd, mu, discharge, T_in, cd_cap, feed_dp):
+    """One stream's closure at a fixed Pc: ṁ = Cd(Re(ṁ), P_inj) A √(2ρ (P_tank − Δp_feed(ṁ) − Pc)).
+
+    g(ṁ) = ṁ − Cd A √(2ρ Δp_inj) is negative at ṁ = 0 and non-negative at
+    ṁ_max = Cd_cap A √(2ρ (P_tank − Pc)) (Δp_feed ≥ 0, Cd ≤ Cd_cap), so the root is bracketed and
+    found by Illinois false position. A tank at or below Pc does not flow.
+    Mirrored by ``engine.accel.kernels._stream_flow``.
+
+    Returns (ṁ, Cd, P_inj, Δp_feed, Δp_inj, evaluations).
+    """
+
+    def state(m):
+        dpf = float(feed_dp(m))
+        Pi = float(P_tank - dpf)
+        u = m / (rho * A) if A > 0 else 0.0
+        Re = calculate_reynolds_number(rho, u, d_hyd, mu)
+        Cd = float(min(cd_from_re(Re, discharge, P_inlet=Pi, T_inlet=T_in, d_hyd_m=d_hyd), cd_cap))
+        dpi = Pi - Pc
+        m_b = float(Cd * A * np.sqrt(2.0 * rho * dpi)) if dpi > 0 else 0.0
+        return m - m_b, Cd, Pi, dpf, max(0.0, dpi)
+
+    if not A > 0 or not P_tank > Pc:
+        _, Cd, Pi, dpf, dpi = state(0.0)
+        return 0.0, Cd, Pi, dpf, dpi, 1
+    hi = float(cd_cap * A * np.sqrt(2.0 * rho * (P_tank - Pc)))
+    a, b = 0.0, hi
+    ga, gb = state(a)[0], state(b)[0]
+    n = 2
+    tol = 1e-13 * hi
+    if gb <= 0.0:
+        m = b
+    elif ga >= 0.0:  # Cd = 0 at rest: nothing drives the flow
+        m = a
+    else:
+        side = 0
+        m = b
+        for _ in range(_STREAM_ROOT_MAX_EVAL):
+            m = (a * gb - b * ga) / (gb - ga)
+            gm = state(m)[0]
+            n += 1
+            if abs(gm) <= tol or b - a <= tol:
+                break
+            if gm > 0.0:
+                b, gb = m, gm
+                if side == -1:
+                    ga *= 0.5
+                side = -1
+            else:
+                a, ga = m, gm
+                if side == 1:
+                    gb *= 0.5
+                side = 1
+        else:
+            _LOG.warning("impinging injector: stream flow root not within tolerance after %d evaluations", n)
+    _, Cd, Pi, dpf, dpi = state(m)
+    return float(m), Cd, Pi, dpf, dpi, n + 1
 
 
 def impingement_standoff_m(
@@ -102,9 +158,12 @@ def momentum_ratio_R_from_bulk_velocities(
     v_O_bulk: float,
     v_F_bulk: float,
 ) -> float:
-    """Jet momentum ratio used by Layer 1: sqrt(rho_O*v_O^2 / (rho_F*v_F^2)).
+    """Jet momentum-flux ratio R = sqrt(rho_O*v_O^2 / (rho_F*v_F^2)), used by Layer 1.
 
-    ``v_*_bulk`` are bulk speeds per stream: mdot / (rho * n_elements * A_jet).
+    ``v_*_bulk`` are bulk speeds per stream: mdot / (rho * n_elements * A_jet). Since
+    mdot = Cd A sqrt(2 rho dp), rho v^2 = 2 Cd^2 dp and R = (Cd_O/Cd_F) sqrt(dp_O/dp_F): the
+    injector's Cd-dp split, with no density or hole size in it. It is not Rupe's mixing
+    criterion; that is rupe_mixing_ratio.
     """
     if (
         rho_O <= 0
@@ -119,6 +178,43 @@ def momentum_ratio_R_from_bulk_velocities(
     if den_mom <= 0 or num_mom < 0:
         return float("nan")
     return float(np.sqrt(num_mom / den_mom))
+
+
+def rupe_mixing_ratio(
+    rho_O: float, v_O: float, d_O: float, rho_F: float, v_F: float, d_F: float,
+) -> float:
+    """Rupe's mixing ratio for an unlike doublet, M = rho_O v_O^2 d_O / (rho_F v_F^2 d_F).
+
+    Rupe (JPL PR 20-195), restated by Elverum & Morey, JPL Memo 30-5 (1959) eq. 1: the most
+    uniform mixture-ratio distribution is at M = 1 (stream momentum ratio equal to the diameter
+    ratio). No angle term; the spray's direction is a separate quantity. M = R^2 d_O / d_F.
+    """
+    den = rho_F * v_F ** 2 * d_F
+    if not (np.isfinite(den) and den > 0 and np.isfinite(v_O) and rho_O > 0 and d_O > 0):
+        return float("nan")
+    return float(rho_O * v_O ** 2 * d_O / den)
+
+
+def injector_face_pressure(Pc: float, gamma: float, contraction_ratio: float) -> float:
+    """Static pressure at the injector face for a nozzle-inlet stagnation pressure ``Pc``.
+
+    Heat addition in a constant-area chamber (Rayleigh line) costs stagnation pressure between
+    the face, where the gas is at rest, and the nozzle inlet at M_c, the subsonic root of
+    A_c/A_t: p_face / p0 = (1 + gamma M_c^2) / (1 + (gamma-1)/2 M_c^2)^(gamma/(gamma-1)).
+    Sutton & Biblarz ch. 3: ~1.05 at A_c/A_t = 2, under 1 % above ~5. Not applied by the solve
+    yet (dp_inj = P_inj - Pc); it needs the CEA gamma the chamber solver holds.
+    """
+    g, cr = float(gamma), float(contraction_ratio)
+    if not (np.isfinite(Pc) and g > 1.0 and cr > 1.0):
+        return float(Pc)
+    ex = (g + 1.0) / (2.0 * (g - 1.0))
+    area = lambda M: ((2.0 / (g + 1.0)) * (1.0 + 0.5 * (g - 1.0) * M * M)) ** ex / M  # noqa: E731
+    lo, hi = 1e-12, 1.0
+    for _ in range(200):                       # A/A* falls monotonically on the subsonic branch
+        mid = 0.5 * (lo + hi)
+        lo, hi = (mid, hi) if area(mid) > cr else (lo, mid)
+    M2 = (0.5 * (lo + hi)) ** 2
+    return float(Pc * (1.0 + g * M2) / (1.0 + 0.5 * (g - 1.0) * M2) ** (g / (g - 1.0)))
 
 
 class ImpingingInjector(InjectorModel):
@@ -142,8 +238,10 @@ class ImpingingInjector(InjectorModel):
         config = self.engine_config
         geometry = self.injector_config.geometry
 
-        discharge_O = config.discharge["oxidizer"]
-        discharge_F = config.discharge["fuel"]
+        # The land the plate actually gives when the config asks for it (l_over_d_source:
+        # plate); otherwise the declared blocks, unchanged.
+        discharge_O = effective_discharge(config, "oxidizer")
+        discharge_F = effective_discharge(config, "fuel")
         feed_O = config.feed_system["oxidizer"]
         feed_F = config.feed_system["fuel"]
         spray_cfg = config.spray
@@ -169,8 +267,14 @@ class ImpingingInjector(InjectorModel):
         mdot_O = 0.1
         mdot_F = 0.1
 
-        max_iter = config.solver.closure.max_iterations
-        Cd_reduction = config.solver.closure.Cd_reduction_factor
+        if float(config.solver.closure.Cd_reduction_factor) != 1.0:
+            assume("solver.closure.Cd_reduction_factor", 1.0,
+                   reason="Cd is orifice geometry and Re; a spray-constraint violation is reported, not traded for Cd")
+        for _side, _dc in (("oxidizer", discharge_O), ("fuel", discharge_F)):
+            if cd_inf_from_inlet_geometry(_dc) is None and getattr(_dc, "use_geometry_cd", False):
+                assume(f"discharge.{_side}.inlet_geometry", "thin plate",
+                       reason="no inlet declared: thin-plate Cd, not the drilled L/d passage the layout draws "
+                              "(sharp, L/d 4: 0.79, Lichtarowicz 1965)")
         Cd_O_eff = cd_inf_from_orifice_diameter(d_hyd_O, discharge_O)
         Cd_F_eff = cd_inf_from_orifice_diameter(d_hyd_F, discharge_F)
 
@@ -239,229 +343,33 @@ class ImpingingInjector(InjectorModel):
             float,
             int,
         ]:
-            """Feed loss ⇄ inlet pressure ⇄ Bernoulli mdot until fixed point (per spray outer iteration).
+            """Feed loss, inlet pressure and orifice flow at this Pc, each stream by ``_stream_flow``.
 
-            Sequential update: Δp_feed(ṁ) → P_inj → Δp_inj → Cd(Re(u)) → ṁ′ = Cd A √(2 ρ Δp_inj).
+            With Pc fixed the streams do not interact, so each is its own bracketed root. The relaxed
+            fixed point this replaces stalled at its 150-step cap whenever a probed Pc sat above a
+            tank, and stopped ~2e-6 short of the root otherwise.
 
             Returns
             -------
-            mdot_o, mdot_f, cd_o, cd_f, Pi_o, Pi_f, dpf_o, dpf_f, dpi_o, dpi_f, fp_iters
+            mdot_o, mdot_f, cd_o, cd_f, Pi_o, Pi_f, dpf_o, dpf_f, dpi_o, dpi_f, evaluations
             """
 
-            def _bern_mdot_with_cd_iterate(
-                mdot_seed: float,
-                delta_p_inj: float,
-                Pi_inj: float,
-                rho_i: float,
-                area_i: float,
-                d_hyd_local: float,
-                mu_local: float,
-                discharge_local,
-                Tin: float,
-                cd_cap: float,
-            ) -> Tuple[float, float]:
-                """For fixed inlet head Δp_inj(P_inj,Pc): ṁ = Cd(Re(ṁ)) A √(2ρ Δp_inj) to numerical tolerance."""
-                if delta_p_inj <= 0:
-                    Cd_0 = float(
-                        min(
-                            cd_from_re(
-                                0.0,
-                                discharge_local,
-                                P_inlet=Pi_inj,
-                                T_inlet=Tin,
-                                d_hyd_m=d_hyd_local,
-                            ),
-                            cd_cap,
-                        )
-                    )
-                    return 0.0, Cd_0
+            def _feed_o(m):
+                return delta_p_feed(m, rho_O, feed_O, P_tank_O)
 
-                cd_lo = float(
-                    min(
-                        cd_from_re(
-                            0.0,
-                            discharge_local,
-                            P_inlet=Pi_inj,
-                            T_inlet=Tin,
-                            d_hyd_m=d_hyd_local,
-                        ),
-                        cd_cap,
-                    )
-                )
-                m = float(mdot_seed) if mdot_seed > 1e-18 else float(cd_lo * area_i * np.sqrt(2.0 * rho_i * delta_p_inj))
-                Cd_out = cd_lo
-
-                for _cin in range(1, _FEED_ORIFICE_CD_INNER_MAX + 1):
-                    m_was = float(m)
-                    u_loc = m / (rho_i * area_i) if area_i > 0 else 0.0
-                    Re_loc = calculate_reynolds_number(rho_i, u_loc, d_hyd_local, mu_local)
-                    Cd_out = float(
-                        min(
-                            cd_from_re(
-                                Re_loc,
-                                discharge_local,
-                                P_inlet=Pi_inj,
-                                T_inlet=Tin,
-                                d_hyd_m=d_hyd_local,
-                            ),
-                            cd_cap,
-                        )
-                    )
-                    m = float(Cd_out * area_i * np.sqrt(2.0 * rho_i * delta_p_inj))
-                    inn_rel = abs(m - m_was) / max(abs(m_was), 1e-18)
-                    if inn_rel < _FEED_ORIFICE_CD_INNER_TOL:
-                        break
-                    if _cin == _FEED_ORIFICE_CD_INNER_MAX:
-                        _LOG.warning(
-                            "impinging injector: Cd–Bernoulli inner iterations hit "
-                            f"{_FEED_ORIFICE_CD_INNER_MAX}; inn_rel={inn_rel:.3e}"
-                        )
-
-                return float(m), float(Cd_out)
-
-            mo = float(mdot_o0)
-            mf = float(mdot_f0)
-            dpi_o = dpi_f = 0.0
-            dpf_o = dpf_f = 0.0
-            Pi_o = Pi_f = P_tank_O
-            Cdo = Cdf = 0.0
-
-            for fp_it in range(1, _FEED_ORIFICE_FP_MAX_ITER + 1):
-                mo_prev, mf_prev = mo, mf
-
-                dpf_o = delta_p_feed(mo, rho_O, feed_O, P_tank_O)
-                dpf_f_base = delta_p_feed(mf, rho_F, feed_F, P_tank_F)
+            def _feed_f(m):
+                dp = delta_p_feed(m, rho_F, feed_F, P_tank_F)
                 if config.regen_cooling is not None and config.regen_cooling.enabled:
-                    dpf_reg = delta_p_regen_channels(
-                        mf,
-                        rho_F,
-                        mu_F,
-                        config.regen_cooling,
-                        P_tank_F,
-                    )
-                    dpf_f = dpf_f_base + dpf_reg
-                else:
-                    dpf_f = dpf_f_base
+                    dp += delta_p_regen_channels(m, rho_F, mu_F, config.regen_cooling, P_tank_F)
+                return dp
 
-                Pi_o = float(P_tank_O - dpf_o)
-                Pi_f = float(P_tank_F - dpf_f)
-                dpi_o = max(0.0, Pi_o - Pc)
-                dpi_f = max(0.0, Pi_f - Pc)
-
-                if Pi_o < Pc:
-                    mo_new = 0.0
-                    Cdo = float(
-                        min(
-                            cd_from_re(0.0, discharge_O, P_inlet=Pi_o, T_inlet=T_tank_O, d_hyd_m=d_hyd_O),
-                            cd_eff_o,
-                        )
-                    )
-                else:
-                    mo_new, Cdo = _bern_mdot_with_cd_iterate(
-                        mo,
-                        dpi_o,
-                        Pi_o,
-                        rho_O,
-                        A_O,
-                        d_hyd_O,
-                        mu_O,
-                        discharge_O,
-                        T_tank_O,
-                        cd_eff_o,
-                    )
-
-                if Pi_f < Pc:
-                    mf_new = 0.0
-                    Cdf = float(
-                        min(
-                            cd_from_re(0.0, discharge_F, P_inlet=Pi_f, T_inlet=T_tank_F, d_hyd_m=d_hyd_F),
-                            cd_eff_f,
-                        )
-                    )
-                else:
-                    mf_new, Cdf = _bern_mdot_with_cd_iterate(
-                        mf,
-                        dpi_f,
-                        Pi_f,
-                        rho_F,
-                        A_F,
-                        d_hyd_F,
-                        mu_F,
-                        discharge_F,
-                        T_tank_F,
-                        cd_eff_f,
-                    )
-
-                w = float(_FEED_ORIFICE_RELAX)
-                if not (np.isfinite(w) and 0.0 < w <= 1.0):
-                    w = 0.35
-                mo = float(mo_prev + w * (mo_new - mo_prev))
-                mf = float(mf_prev + w * (mf_new - mf_prev))
-
-                # Consistent feed/injector heads at the relaxed iterate (also updates returned dpi_*).
-                dpf_o = delta_p_feed(mo, rho_O, feed_O, P_tank_O)
-                dpf_f_base = delta_p_feed(mf, rho_F, feed_F, P_tank_F)
-                if config.regen_cooling is not None and config.regen_cooling.enabled:
-                    dpf_f = dpf_f_base + delta_p_regen_channels(
-                        mf,
-                        rho_F,
-                        mu_F,
-                        config.regen_cooling,
-                        P_tank_F,
-                    )
-                else:
-                    dpf_f = dpf_f_base
-                Pi_o = float(P_tank_O - dpf_o)
-                Pi_f = float(P_tank_F - dpf_f)
-                dpi_o = max(0.0, Pi_o - Pc)
-                dpi_f = max(0.0, Pi_f - Pc)
-
-                if Pi_o < Pc:
-                    Cdo = float(
-                        min(
-                            cd_from_re(0.0, discharge_O, P_inlet=Pi_o, T_inlet=T_tank_O, d_hyd_m=d_hyd_O),
-                            cd_eff_o,
-                        )
-                    )
-                else:
-                    u_o2 = mo / (rho_O * A_O) if A_O > 0 else 0.0
-                    Re_o2 = calculate_reynolds_number(rho_O, u_o2, d_hyd_O, mu_O)
-                    Cdo = float(
-                        min(
-                            cd_from_re(Re_o2, discharge_O, P_inlet=Pi_o, T_inlet=T_tank_O, d_hyd_m=d_hyd_O),
-                            cd_eff_o,
-                        )
-                    )
-                if Pi_f < Pc:
-                    Cdf = float(
-                        min(
-                            cd_from_re(0.0, discharge_F, P_inlet=Pi_f, T_inlet=T_tank_F, d_hyd_m=d_hyd_F),
-                            cd_eff_f,
-                        )
-                    )
-                else:
-                    u_f2 = mf / (rho_F * A_F) if A_F > 0 else 0.0
-                    Re_f2 = calculate_reynolds_number(rho_F, u_f2, d_hyd_F, mu_F)
-                    Cdf = float(
-                        min(
-                            cd_from_re(Re_f2, discharge_F, P_inlet=Pi_f, T_inlet=T_tank_F, d_hyd_m=d_hyd_F),
-                            cd_eff_f,
-                        )
-                    )
-
-                # Symmetric relative residual (pure ``|Δ|/|prev|`` blows up when ṁ crosses ~0).
-                den_o = max(abs(mo_prev), abs(mo), 1e-18)
-                den_f = max(abs(mf_prev), abs(mf), 1e-18)
-                rel_o = abs(mo - mo_prev) / den_o
-                rel_f = abs(mf - mf_prev) / den_f
-
-                if rel_o < _FEED_ORIFICE_FP_TOL and rel_f < _FEED_ORIFICE_FP_TOL:
-                    break
-                if fp_it == _FEED_ORIFICE_FP_MAX_ITER:
-                    _LOG.warning(
-                        "impinging injector: feed-orifice coupling hit max iterations "
-                        f"({_FEED_ORIFICE_FP_MAX_ITER}); rel errors O={rel_o:.3e} F={rel_f:.3e}"
-                    )
+            mo, Cdo, Pi_o, dpf_o, dpi_o, n_o = _stream_flow(
+                Pc, P_tank_O, rho_O, A_O, d_hyd_O, mu_O, discharge_O, T_tank_O, cd_eff_o, _feed_o
+            )
+            mf, Cdf, Pi_f, dpf_f, dpi_f, n_f = _stream_flow(
+                Pc, P_tank_F, rho_F, A_F, d_hyd_F, mu_F, discharge_F, T_tank_F, cd_eff_f, _feed_f
+            )
+            fp_it = n_o + n_f
 
             mdot_bn_o = float(Cdo * A_O * np.sqrt(2.0 * rho_O * dpi_o)) if dpi_o > 0 else 0.0
             mdot_bn_f = float(Cdf * A_F * np.sqrt(2.0 * rho_F * dpi_f)) if dpi_f > 0 else 0.0
@@ -489,225 +397,219 @@ class ImpingingInjector(InjectorModel):
 
         feed_orifice_fp_last = 0
 
-        for iteration in range(max_iter):
-            mdot_O, mdot_F, Cd_O, Cd_F, P_inj_O, P_inj_F, delta_p_feed_O, delta_p_feed_F, delta_p_inj_O, delta_p_inj_F, feed_orifice_fp_last = _converge_feed_orifice_coupling(
-                mdot_O,
-                mdot_F,
-                Cd_O_eff,
-                Cd_F_eff,
+        # One pass. Cd is orifice geometry and Reynolds number (Lichtarowicz 1965; SP-8089), not a
+        # lever for the spray constraints: an x* or We violation is reported in diagnostics. The old
+        # loop shrank Cd by Cd_reduction_factor per violation, which also lengthened x*.
+        mdot_O, mdot_F, Cd_O, Cd_F, P_inj_O, P_inj_F, delta_p_feed_O, delta_p_feed_F, delta_p_inj_O, delta_p_inj_F, feed_orifice_fp_last = _converge_feed_orifice_coupling(
+            mdot_O,
+            mdot_F,
+            Cd_O_eff,
+            Cd_F_eff,
+        )
+
+        u_O = mdot_O / (rho_O * A_O) if A_O > 0 else 0.0
+        u_F = mdot_F / (rho_F * A_F) if A_F > 0 else 0.0
+
+        # Impingement relative velocity: law of cosines on the two jet velocity vectors,
+        # whose centerlines are separated by the included angle ``imp_angle_rad``. This is the
+        # velocity at which the unlike jets collide and shear into a sheet, and it is what
+        # drives both breakup (Weber) and the residence/evaporation length (x*).
+        u_rel = float(
+            np.sqrt(u_O ** 2 + u_F ** 2 - 2 * u_O * u_F * np.cos(imp_angle_rad))
+        )
+        turb_fields = _injector_turbulence_fields(u_O, u_F)
+
+        # Representative chamber gas density for the aerodynamic (breakup) Weber number.
+        # rho_g = Pc / (R_gas · T_gas); R_gas and T_gas are configured representative
+        # combustion-gas values because the injector solve runs before the CEA chamber state
+        # is available. Gas density (not liquid inertia) governs primary atomization.
+        rho_gas = float(
+            max(Pc / (spray_cfg.smd.chamber_gas_R * spray_cfg.smd.chamber_gas_T), 1e-6)
+        )
+
+        J = momentum_flux_ratio(rho_O, u_O, rho_F, u_F)
+        MR = mdot_O / mdot_F if mdot_F > 0 else np.inf
+        TMR = thrust_momentum_ratio(J, MR)
+
+        if spray_cfg.spray_angle.model == "J":
+            theta = spray_angle_from_J(J, spray_cfg.spray_angle.k, spray_cfg.spray_angle.n)
+        else:
+            theta = spray_angle_from_TMR(TMR)
+
+        Oh_O = ohnesorge_number(mu_O, rho_O, sigma_O, geometry.oxidizer.d_jet)
+        Oh_F = ohnesorge_number(mu_F, rho_F, sigma_F, geometry.fuel.d_jet)
+
+        # Impinging doublets always use Ingebo (u_rel-based aerodynamic breakup). Legacy Lefebvre
+        # on this path used uncalibrated C/m and reported bogus ~1 µm D32 when spray.smd.model was
+        # left at "lefebvre" from pintle-era YAML (see dispatch impinging bindings).
+        We_O = weber_number(rho_gas, u_rel, geometry.oxidizer.d_jet, sigma_O)
+        We_F = weber_number(rho_gas, u_rel, geometry.fuel.d_jet, sigma_F)
+        D32_O = smd_impinging_ingebo(
+            geometry.oxidizer.d_jet,
+            u_rel,
+            rho_O,
+            mu_O,
+            sigma_O,
+            rho_gas,
+            spray_cfg.smd.C_ingebo,
+        )
+        D32_F = smd_impinging_ingebo(
+            geometry.fuel.d_jet,
+            u_rel,
+            rho_F,
+            mu_F,
+            sigma_F,
+            rho_gas,
+            spray_cfg.smd.C_ingebo,
+        )
+
+        # Evaporation constant from propellant properties + chamber state, not a single
+        # hardcoded K. Falls back to the legacy tau = K*D32^2 when the derivation cannot run
+        # (missing latent heat / boiling point on a custom fluid), so old configs still work.
+        _ev = spray_cfg.evaporation
+        _use_derived = getattr(_ev, "model", "derived") == "derived"
+        k_evap_O = k_evap_F = float("nan")
+        if _use_derived:
+            k_evap_O = evaporation_constant_m2_s(
+                Tc=spray_cfg.smd.chamber_gas_T, Pc=Pc, rho_g=rho_gas, rho_l=rho_O,
+                L_vap=float(getattr(fluids["oxidizer"], "latent_heat", 0.0) or 0.0),
+                T_boil=float(getattr(fluids["oxidizer"], "boiling_point", 0.0) or 0.0),
+                cp_g=float(getattr(_ev, "cp_gas", 2200.0)),
+                C_evap=float(getattr(_ev, "C_evap", 1.562)),
             )
-
-            u_O = mdot_O / (rho_O * A_O) if A_O > 0 else 0.0
-            u_F = mdot_F / (rho_F * A_F) if A_F > 0 else 0.0
-
-            # Impingement relative velocity: law of cosines on the two jet velocity vectors,
-            # whose centerlines are separated by the included angle ``imp_angle_rad``. This is the
-            # velocity at which the unlike jets collide and shear into a sheet, and it is what
-            # drives both breakup (Weber) and the residence/evaporation length (x*).
-            u_rel = float(
-                np.sqrt(u_O ** 2 + u_F ** 2 - 2 * u_O * u_F * np.cos(imp_angle_rad))
+            k_evap_F = evaporation_constant_m2_s(
+                Tc=spray_cfg.smd.chamber_gas_T, Pc=Pc, rho_g=rho_gas, rho_l=rho_F,
+                L_vap=float(getattr(fluids["fuel"], "latent_heat", 0.0) or 0.0),
+                T_boil=float(getattr(fluids["fuel"], "boiling_point", 0.0) or 0.0),
+                cp_g=float(getattr(_ev, "cp_gas", 2200.0)),
+                C_evap=float(getattr(_ev, "C_evap", 1.562)),
             )
-            turb_fields = _injector_turbulence_fields(u_O, u_F)
+        if np.isfinite(k_evap_O) and np.isfinite(k_evap_F):
+            tau_evap_O = tau_evap_from_k(D32_O, k_evap_O)
+            tau_evap_F = tau_evap_from_k(D32_F, k_evap_F)
+        else:
+            tau_evap_O = tau_evap(D32_O, _ev.K)
+            tau_evap_F = tau_evap(D32_F, _ev.K)
 
-            # Representative chamber gas density for the aerodynamic (breakup) Weber number.
-            # rho_g = Pc / (R_gas · T_gas); R_gas and T_gas are configured representative
-            # combustion-gas values because the injector solve runs before the CEA chamber state
-            # is available. Gas density (not liquid inertia) governs primary atomization.
-            rho_gas = float(
-                max(Pc / (spray_cfg.smd.chamber_gas_R * spray_cfg.smd.chamber_gas_T), 1e-6)
-            )
+        # TRANSPORT velocity, not the jet-to-jet relative velocity. u_rel shears the sheet
+        # (it belongs in the Ingebo Weber number above); what carries droplets DOWN the
+        # chamber is the momentum-weighted axial resultant of the collision. Using u_rel here
+        # over-predicted x* by ~2x on a measured design.
+        u_axial = spray_axial_velocity(
+            mdot_O=mdot_O, u_O=u_O, theta_O_deg=geometry.oxidizer.impingement_angle,
+            mdot_F=mdot_F, u_F=u_F, theta_F_deg=geometry.fuel.impingement_angle,
+        )
+        u_transport = u_axial if np.isfinite(u_axial) and u_axial > 0 else u_rel
+        x_star = max(xstar(u_transport, tau_evap_O), xstar(u_transport, tau_evap_F))
 
-            J = momentum_flux_ratio(rho_O, u_O, rho_F, u_F)
-            MR = mdot_O / mdot_F if mdot_F > 0 else np.inf
-            TMR = thrust_momentum_ratio(J, MR)
+        # ---- Impinging-doublet geometry (standoff + ring pitch) -------------------------------
+        # Each stream's ``impingement_angle`` is the jet inclination from the chamber axis; the
+        # two jets of a doublet lean toward each other and collide on the bisector. The offset
+        # they close is RADIAL -- the gap between the two pitch circles --
+        #     dr    = |D_pitch_O - D_pitch_F| / 2,   D_pitch = n·spacing/π
+        #     L_imp = dr / (tan θ_O + tan θ_F)
+        # (purely geometric: each jet closes its half of the offset at rate tan θ). This block
+        # used to say ``s_pair`` -- the average RING DENSITY, 0.5*(s_O + s_F). That is
+        # dimensionally a length and physically the wrong one; see impingement_standoff_m,
+        # which has been computing dr correctly. ``s_pair`` survives below as a diagnostic
+        # only. Nothing reads it for the standoff.
+        theta_O = float(np.deg2rad(geometry.oxidizer.impingement_angle))
+        theta_F = float(np.deg2rad(geometry.fuel.impingement_angle))
+        s_O = float(getattr(geometry.oxidizer, "spacing", 0.0) or 0.0)
+        s_F = float(getattr(geometry.fuel, "spacing", 0.0) or 0.0)
+        s_pair = 0.5 * (s_O + s_F)
+        tan_sum = float(np.tan(theta_O) + np.tan(theta_F))
+        L_imp = impingement_standoff_m(
+            0.5 * (geometry.oxidizer.n_elements + geometry.fuel.n_elements),
+            s_O, s_F,
+            geometry.oxidizer.impingement_angle,
+            geometry.fuel.impingement_angle,
+        )
+        nO_geom = max(1, int(geometry.oxidizer.n_elements))
+        nF_geom = max(1, int(geometry.fuel.n_elements))
+        D_pitch_O = float(nO_geom * s_O / np.pi)
+        D_pitch_F = float(nF_geom * s_F / np.pi)
+        # Circumferential clearance between adjacent same-stream orifices (must stay positive).
+        gap_O = float(s_O - geometry.oxidizer.d_jet)
+        gap_F = float(s_F - geometry.fuel.d_jet)
+        # Axial length the spray needs before it is fully vaporized, measured from the face:
+        # standoff to impingement plus the droplet evaporation length x*.
+        # Sheet breakup length between impingement and droplet formation. Mass conservation
+        # in a radially spreading sheet gives h(r) = d^2/(4r); Kelvin-Helmholtz growth on a
+        # thin liquid sheet in gas gives t_b ~ (h/u)*sqrt(rho_l/rho_g), so L_b = u*t_b. At the
+        # Weber numbers here (3e4-6e4, far past the ~2e3 regime transition) this comes out
+        # small next to L_imp -- the sheet shreds almost immediately -- but it is the step
+        # between "jets meet" and "droplets exist", so the spray length is not complete
+        # without it.
+        _d_avg = 0.5 * (float(geometry.oxidizer.d_jet) + float(geometry.fuel.d_jet))
+        _u_sheet = max(float(u_rel), 1e-6)
+        _rho_l_avg = 0.5 * (float(rho_O) + float(rho_F))
+        # rho_gas carries a 1e-6 floor for solver robustness, and L_b ~ sqrt(rho_l/rho_g),
+        # so at that floor the sqrt is ~2.8e4 and L_b explodes -- during Pc bracketing that
+        # drove the spray length past the whole chamber, collapsed eta_Lstar, and made the
+        # chamber solve report "Supply < Demand at all Pc". Bound it to a physically sane
+        # multiple of the jet diameter: at these Weber numbers the sheet shreds in ~1 d_jet,
+        # and anything past ~20 is not a doublet sheet any more.
+        if np.isfinite(L_imp) and L_imp > 0 and _d_avg > 0 and rho_gas > 1e-4:
+            _h_sheet = (_d_avg ** 2) / (4.0 * L_imp)
+            L_b = float(_h_sheet * np.sqrt(_rho_l_avg / rho_gas))
+            L_b = float(np.clip(L_b, 0.0, 20.0 * _d_avg))
+        else:
+            L_b = 0.0
+        vaporization_length_total = float(
+            (L_imp if np.isfinite(L_imp) else 0.0) + L_b + x_star
+        )
 
-            if spray_cfg.spray_angle.model == "J":
-                theta = spray_angle_from_J(J, spray_cfg.spray_angle.k, spray_cfg.spray_angle.n)
-            else:
-                theta = spray_angle_from_TMR(TMR)
+        constraints_ok, violations = check_spray_constraints(We_O, We_F, x_star, spray_cfg)
 
-            Oh_O = ohnesorge_number(mu_O, rho_O, sigma_O, geometry.oxidizer.d_jet)
-            Oh_F = ohnesorge_number(mu_F, rho_F, sigma_F, geometry.fuel.d_jet)
-
-            # Impinging doublets always use Ingebo (u_rel-based aerodynamic breakup). Legacy Lefebvre
-            # on this path used uncalibrated C/m and reported bogus ~1 µm D32 when spray.smd.model was
-            # left at "lefebvre" from pintle-era YAML (see dispatch impinging bindings).
-            We_O = weber_number(rho_gas, u_rel, geometry.oxidizer.d_jet, sigma_O)
-            We_F = weber_number(rho_gas, u_rel, geometry.fuel.d_jet, sigma_F)
-            D32_O = smd_impinging_ingebo(
-                geometry.oxidizer.d_jet,
-                u_rel,
-                rho_O,
-                mu_O,
-                sigma_O,
-                rho_gas,
-                spray_cfg.smd.C_ingebo,
-            )
-            D32_F = smd_impinging_ingebo(
-                geometry.fuel.d_jet,
-                u_rel,
-                rho_F,
-                mu_F,
-                sigma_F,
-                rho_gas,
-                spray_cfg.smd.C_ingebo,
-            )
-
-            # Evaporation constant from propellant properties + chamber state, not a single
-            # hardcoded K. Falls back to the legacy tau = K*D32^2 when the derivation cannot run
-            # (missing latent heat / boiling point on a custom fluid), so old configs still work.
-            _ev = spray_cfg.evaporation
-            _use_derived = getattr(_ev, "model", "derived") == "derived"
-            k_evap_O = k_evap_F = float("nan")
-            if _use_derived:
-                k_evap_O = evaporation_constant_m2_s(
-                    Tc=spray_cfg.smd.chamber_gas_T, Pc=Pc, rho_g=rho_gas, rho_l=rho_O,
-                    L_vap=float(getattr(fluids["oxidizer"], "latent_heat", 0.0) or 0.0),
-                    T_boil=float(getattr(fluids["oxidizer"], "boiling_point", 0.0) or 0.0),
-                    cp_g=float(getattr(_ev, "cp_gas", 2200.0)),
-                    C_evap=float(getattr(_ev, "C_evap", 1.562)),
-                )
-                k_evap_F = evaporation_constant_m2_s(
-                    Tc=spray_cfg.smd.chamber_gas_T, Pc=Pc, rho_g=rho_gas, rho_l=rho_F,
-                    L_vap=float(getattr(fluids["fuel"], "latent_heat", 0.0) or 0.0),
-                    T_boil=float(getattr(fluids["fuel"], "boiling_point", 0.0) or 0.0),
-                    cp_g=float(getattr(_ev, "cp_gas", 2200.0)),
-                    C_evap=float(getattr(_ev, "C_evap", 1.562)),
-                )
-            if np.isfinite(k_evap_O) and np.isfinite(k_evap_F):
-                tau_evap_O = tau_evap_from_k(D32_O, k_evap_O)
-                tau_evap_F = tau_evap_from_k(D32_F, k_evap_F)
-            else:
-                tau_evap_O = tau_evap(D32_O, _ev.K)
-                tau_evap_F = tau_evap(D32_F, _ev.K)
-
-            # TRANSPORT velocity, not the jet-to-jet relative velocity. u_rel shears the sheet
-            # (it belongs in the Ingebo Weber number above); what carries droplets DOWN the
-            # chamber is the momentum-weighted axial resultant of the collision. Using u_rel here
-            # over-predicted x* by ~2x on a measured design.
-            u_axial = spray_axial_velocity(
-                mdot_O=mdot_O, u_O=u_O, theta_O_deg=geometry.oxidizer.impingement_angle,
-                mdot_F=mdot_F, u_F=u_F, theta_F_deg=geometry.fuel.impingement_angle,
-            )
-            u_transport = u_axial if np.isfinite(u_axial) and u_axial > 0 else u_rel
-            x_star = max(xstar(u_transport, tau_evap_O), xstar(u_transport, tau_evap_F))
-
-            # ---- Impinging-doublet geometry (standoff + ring pitch) -------------------------------
-            # Each stream's ``impingement_angle`` is the jet inclination from the chamber axis; the
-            # two jets of a doublet lean toward each other and collide on the bisector. The offset
-            # they close is RADIAL -- the gap between the two pitch circles --
-            #     dr    = |D_pitch_O - D_pitch_F| / 2,   D_pitch = n·spacing/π
-            #     L_imp = dr / (tan θ_O + tan θ_F)
-            # (purely geometric: each jet closes its half of the offset at rate tan θ). This block
-            # used to say ``s_pair`` -- the average RING DENSITY, 0.5*(s_O + s_F). That is
-            # dimensionally a length and physically the wrong one; see impingement_standoff_m,
-            # which has been computing dr correctly. ``s_pair`` survives below as a diagnostic
-            # only. Nothing reads it for the standoff.
-            theta_O = float(np.deg2rad(geometry.oxidizer.impingement_angle))
-            theta_F = float(np.deg2rad(geometry.fuel.impingement_angle))
-            s_O = float(getattr(geometry.oxidizer, "spacing", 0.0) or 0.0)
-            s_F = float(getattr(geometry.fuel, "spacing", 0.0) or 0.0)
-            s_pair = 0.5 * (s_O + s_F)
-            tan_sum = float(np.tan(theta_O) + np.tan(theta_F))
-            L_imp = impingement_standoff_m(
-                0.5 * (geometry.oxidizer.n_elements + geometry.fuel.n_elements),
-                s_O, s_F,
-                geometry.oxidizer.impingement_angle,
-                geometry.fuel.impingement_angle,
-            )
-            nO_geom = max(1, int(geometry.oxidizer.n_elements))
-            nF_geom = max(1, int(geometry.fuel.n_elements))
-            D_pitch_O = float(nO_geom * s_O / np.pi)
-            D_pitch_F = float(nF_geom * s_F / np.pi)
-            # Circumferential clearance between adjacent same-stream orifices (must stay positive).
-            gap_O = float(s_O - geometry.oxidizer.d_jet)
-            gap_F = float(s_F - geometry.fuel.d_jet)
-            # Axial length the spray needs before it is fully vaporized, measured from the face:
-            # standoff to impingement plus the droplet evaporation length x*.
-            # Sheet breakup length between impingement and droplet formation. Mass conservation
-            # in a radially spreading sheet gives h(r) = d^2/(4r); Kelvin-Helmholtz growth on a
-            # thin liquid sheet in gas gives t_b ~ (h/u)*sqrt(rho_l/rho_g), so L_b = u*t_b. At the
-            # Weber numbers here (3e4-6e4, far past the ~2e3 regime transition) this comes out
-            # small next to L_imp -- the sheet shreds almost immediately -- but it is the step
-            # between "jets meet" and "droplets exist", so the spray length is not complete
-            # without it.
-            _d_avg = 0.5 * (float(geometry.oxidizer.d_jet) + float(geometry.fuel.d_jet))
-            _u_sheet = max(float(u_rel), 1e-6)
-            _rho_l_avg = 0.5 * (float(rho_O) + float(rho_F))
-            # rho_gas carries a 1e-6 floor for solver robustness, and L_b ~ sqrt(rho_l/rho_g),
-            # so at that floor the sqrt is ~2.8e4 and L_b explodes -- during Pc bracketing that
-            # drove the spray length past the whole chamber, collapsed eta_Lstar, and made the
-            # chamber solve report "Supply < Demand at all Pc". Bound it to a physically sane
-            # multiple of the jet diameter: at these Weber numbers the sheet shreds in ~1 d_jet,
-            # and anything past ~20 is not a doublet sheet any more.
-            if np.isfinite(L_imp) and L_imp > 0 and _d_avg > 0 and rho_gas > 1e-4:
-                _h_sheet = (_d_avg ** 2) / (4.0 * L_imp)
-                L_b = float(_h_sheet * np.sqrt(_rho_l_avg / rho_gas))
-                L_b = float(np.clip(L_b, 0.0, 20.0 * _d_avg))
-            else:
-                L_b = 0.0
-            vaporization_length_total = float(
-                (L_imp if np.isfinite(L_imp) else 0.0) + L_b + x_star
-            )
-
-            constraints_ok, violations = check_spray_constraints(We_O, We_F, x_star, spray_cfg)
-
-            diagnostics.update(
-                {
-                    "iterations": iteration + 1,
-                    "constraints_satisfied": constraints_ok,
-                    "violations": violations,
-                    "J": J,
-                    "TMR": TMR,
-                    "theta": theta,
-                    "u_rel": float(u_rel),
-                    "rho_gas_breakup": float(rho_gas),
-                    "Oh_O": float(Oh_O),
-                    "Oh_F": float(Oh_F),
-                    "We_O": We_O,
-                    "We_F": We_F,
-                    "D32_O": D32_O,
-                    "D32_F": D32_F,
-                    "x_star": x_star,
-                    "u_axial_spray": float(u_transport),
-                    "k_evap_O": float(k_evap_O),
-                    "k_evap_F": float(k_evap_F),
-                    "tau_evap_O": float(tau_evap_O),
-                    "tau_evap_F": float(tau_evap_F),
-                    "L_imp": L_imp,
-                    "L_sheet_breakup": float(L_b),
-                    "D_pitch_O": D_pitch_O,
-                    "D_pitch_F": D_pitch_F,
-                    "s_pair": float(s_pair),
-                    "element_gap_O": gap_O,
-                    "element_gap_F": gap_F,
-                    "vaporization_length_total": vaporization_length_total,
-                    # The spray-zone tau_res switch travels WITH the spray diagnostics.
-                    # calculate_combustion_efficiency_advanced() only receives a
-                    # CombustionEfficiencyConfig, so it used to read this off that object --
-                    # where the field does not exist -- and a bare except swallowed the
-                    # mismatch, making the switch permanently False and unreachable.
-                    "apply_tau_res_correction": bool(
-                        getattr(spray_cfg.evaporation, "apply_tau_res_correction", False)
-                    ),
-                    "impingement_angle_deg": np.rad2deg(imp_angle_rad),
-                    "V_rel": float(u_rel),
-                    "breakup_multiplier": 1.0,
-                    "penetration_multiplier": 1.0,
-                    **turb_fields,
-                    # Discharge coefficients
-                    "Cd_O": float(Cd_O),
-                    "Cd_F": float(Cd_F),
-                }
-            )
-
-            if constraints_ok:
-                break
-
-            Cd_O_eff *= Cd_reduction
-            Cd_F_eff *= Cd_reduction
-            Cd_O_eff = max(Cd_O_eff, discharge_O.Cd_min)
-            Cd_F_eff = max(Cd_F_eff, discharge_F.Cd_min)
+        diagnostics.update(
+            {
+                "iterations": 1,
+                "constraints_satisfied": constraints_ok,
+                "violations": violations,
+                "J": J,
+                "TMR": TMR,
+                "theta": theta,
+                "u_rel": float(u_rel),
+                "rho_gas_breakup": float(rho_gas),
+                "Oh_O": float(Oh_O),
+                "Oh_F": float(Oh_F),
+                "We_O": We_O,
+                "We_F": We_F,
+                "D32_O": D32_O,
+                "D32_F": D32_F,
+                "x_star": x_star,
+                "u_axial_spray": float(u_transport),
+                "k_evap_O": float(k_evap_O),
+                "k_evap_F": float(k_evap_F),
+                "tau_evap_O": float(tau_evap_O),
+                "tau_evap_F": float(tau_evap_F),
+                "L_imp": L_imp,
+                "L_sheet_breakup": float(L_b),
+                "D_pitch_O": D_pitch_O,
+                "D_pitch_F": D_pitch_F,
+                "s_pair": float(s_pair),
+                "element_gap_O": gap_O,
+                "element_gap_F": gap_F,
+                "vaporization_length_total": vaporization_length_total,
+                # The spray-zone tau_res switch travels WITH the spray diagnostics.
+                # calculate_combustion_efficiency_advanced() only receives a
+                # CombustionEfficiencyConfig, so it used to read this off that object --
+                # where the field does not exist -- and a bare except swallowed the
+                # mismatch, making the switch permanently False and unreachable.
+                "apply_tau_res_correction": bool(
+                    getattr(spray_cfg.evaporation, "apply_tau_res_correction", False)
+                ),
+                "impingement_angle_deg": np.rad2deg(imp_angle_rad),
+                "V_rel": float(u_rel),
+                "breakup_multiplier": 1.0,
+                "penetration_multiplier": 1.0,
+                **turb_fields,
+                # Discharge coefficients
+                "Cd_O": float(Cd_O),
+                "Cd_F": float(Cd_F),
+            }
+        )
 
         # Diagnostics must match last feed–orifice coupling (recomputing from ṁ duplicates float path and drifted Cd).
         delta_p_feed_O_final = float(delta_p_feed_O)
@@ -741,7 +643,8 @@ class ImpingingInjector(InjectorModel):
         )
         turb_final = _injector_turbulence_fields(u_O_final, u_F_final)
 
-        # Momentum-balance metric: v = mdot / (rho * n_elements * A_jet), A_jet = pi*(d_jet/2)^2
+        # Momentum metrics on v = mdot / (rho * n_elements * A_jet), A_jet = pi*(d_jet/2)^2:
+        # R, the Cd-dp split, and Rupe's M, the mixing criterion.
         n_O = max(1, int(geometry.oxidizer.n_elements))
         n_F = max(1, int(geometry.fuel.n_elements))
         djo = float(geometry.oxidizer.d_jet)
@@ -754,6 +657,9 @@ class ImpingingInjector(InjectorModel):
         v_F_bulk = mdot_F / denom_F if denom_F > 0 else np.nan
         momentum_ratio_R = momentum_ratio_R_from_bulk_velocities(
             float(rho_O), float(rho_F), float(v_O_bulk), float(v_F_bulk)
+        )
+        rupe_M = rupe_mixing_ratio(
+            float(rho_O), float(v_O_bulk), djo, float(rho_F), float(v_F_bulk), djf
         )
 
         mom_update: Dict[str, Any] = {
@@ -774,6 +680,8 @@ class ImpingingInjector(InjectorModel):
             mom_update["rho_F_momentum"] = float(rho_F)
         if np.isfinite(momentum_ratio_R) and momentum_ratio_R > 0:
             mom_update["momentum_ratio_R"] = momentum_ratio_R
+        if np.isfinite(rupe_M) and rupe_M > 0:
+            mom_update["rupe_M"] = rupe_M
 
         diagnostics.update(
             {
