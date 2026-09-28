@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.ts';
-import { addHistory, createPart, getPart, knownElementIds, listParts, SYSTEM_USER, updatePart, type Part } from './db.ts';
+import { addHistory, createPart, deletePartRow, getPart, knownElementIds, listParts, retireElement, SYSTEM_USER, updatePart, type Part } from './db.ts';
 import type { OnshapeClient, TranslationState } from './onshape/client.ts';
 import { canRenderLocally, renderLocally } from './render/index.ts';
 
@@ -75,8 +75,11 @@ export async function renderThumbnail(partId: number): Promise<void> {
   rendering.add(partId);
   try {
     const png = await renderLocally(path.join(config.dataDir, part.originalPath), part.originalFilename ?? part.originalPath);
+    // The part may have been deleted, or its file replaced, while this was drawing.
+    if (getPart(partId)?.originalPath !== part.originalPath) return;
     writeThumbnail(partId, png, 'png');
   } catch (err) {
+    if (!getPart(partId)) return;
     addHistory(partId, SYSTEM_USER, 'Picture could not be drawn from the file', {
       error: errorMessage(err),
       note: 'Onshape will draw it during the next update',
@@ -262,6 +265,44 @@ async function nameParts(studios: { id: number | null; elementId: string; name: 
     }
     console.error('[library] naming parts failed:', err);
   }
+}
+
+export class Busy extends Error {}
+
+/**
+ * Admin: swap a part's CAD file. The new file is stored and drawn here, and the part
+ * waits for the next "Update Onshape", which imports it as a fresh Part Studio. The
+ * old Part Studio stays in Onshape (assemblies may use it) but the hub stops pointing
+ * at it. Metadata (name, cost, links...) is kept.
+ */
+export function replaceOriginal(partId: number, tmpPath: string, filename: string, user: string): Part {
+  const part = getPart(partId)!;
+  if (part.status === 'pending') throw new Busy('This part is being added to Onshape right now. Try again when that finishes.');
+  const oldPath = part.originalPath;
+  const originalPath = storeOriginal(partId, tmpPath, filename);
+  if (oldPath && oldPath !== originalPath) fs.rmSync(path.join(config.dataDir, oldPath), { force: true });
+  if (part.elementId) retireElement(part.elementId, partId);
+  const updated = updatePart(
+    partId,
+    { originalPath, originalFilename: filename, translationId: null, elementId: null, versionId: null, partId: null, status: 'staged', statusDetail: WAITING },
+    user,
+  );
+  addHistory(partId, user, 'Replaced the CAD file', { file: filename, was: part.originalFilename, oldElementId: part.elementId });
+  void renderThumbnail(partId);
+  return updated;
+}
+
+/**
+ * Admin: delete a part from the hub for good (record, history, file, picture). Its Part
+ * Studio stays in the Onshape library, since assemblies may use it, but is never listed again.
+ */
+export function deletePart(partId: number): void {
+  const part = getPart(partId)!;
+  if (part.status === 'pending') throw new Busy('This part is being added to Onshape right now. Try again when that finishes.');
+  if (part.elementId) retireElement(part.elementId, partId);
+  deletePartRow(partId);
+  if (part.originalPath) fs.rmSync(path.join(config.dataDir, 'originals', String(partId)), { recursive: true, force: true });
+  if (part.thumbnailFile) fs.rmSync(path.join(config.dataDir, 'thumbs', part.thumbnailFile), { force: true });
 }
 
 /** Put a failed part back in line for the next update. */

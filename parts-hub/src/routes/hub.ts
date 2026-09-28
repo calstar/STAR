@@ -5,7 +5,8 @@ import { Router, type NextFunction, type Request, type Response } from 'express'
 import multer from 'multer';
 import { config } from '../config.ts';
 import { addHistory, apiCallsSince, createPart, getHistory, getPart, listCategories, listParts, updatePart, type Part } from '../db.ts';
-import { checkOnshape, estimateCalls, refreshThumbnail, renderThumbnail, retryPart, startSync, storeOriginal, syncStatus, WAITING, waitingParts } from '../library.ts';
+import { Busy, checkOnshape, deletePart, estimateCalls, refreshThumbnail, renderThumbnail, replaceOriginal, retryPart, startSync, storeOriginal, syncStatus, WAITING, waitingParts } from '../library.ts';
+import { isAdmin } from '../admins.ts';
 import { BadRequest, CAD_EXTENSIONS, cleanEdit, hubJson } from '../parts.ts';
 
 export const hubApi = Router();
@@ -23,11 +24,27 @@ function findPart(req: Request): Part {
   return part;
 }
 class NotFound extends Error {}
+class Forbidden extends Error {}
+
+function requireAdmin(req: Request, _res: Response, next: NextFunction): void {
+  if (!isAdmin(user(req))) return next(new Forbidden('Only Parts Hub admins can do this (see parts-hub/admins.txt).'));
+  next();
+}
+
+/** Multer gives latin1 file names; browsers send UTF-8. Returns the name if it's a CAD format we accept. */
+function cadFilename(file: Express.Multer.File | undefined): string {
+  if (!file) throw new BadRequest('Attach a CAD file');
+  const filename = Buffer.from(file.originalname, 'latin1').toString('utf8');
+  const ext = filename.toLowerCase().split('.').pop() ?? '';
+  if (!CAD_EXTENSIONS.includes(ext)) throw new BadRequest(`.${ext} files can't be imported by Onshape`);
+  return filename;
+}
 
 hubApi.get('/me', (req, res) => {
   const now = new Date();
   res.json({
     ...req.user,
+    isAdmin: isAdmin(user(req)),
     mock: config.mock,
     libraryDocumentUrl: `${config.onshape.baseUrl}/documents/${config.onshape.libraryDocumentId}`,
     apiCalls: {
@@ -54,17 +71,13 @@ hubApi.get('/parts/:id', (req, res) => {
 hubApi.post('/parts', upload.single('file'), (req, res) => {
   const file = req.file;
   try {
-    if (!file) throw new BadRequest('Attach a CAD file');
-    // multer decodes the filename as latin1; browsers send UTF-8.
-    const filename = Buffer.from(file.originalname, 'latin1').toString('utf8');
-    const ext = filename.toLowerCase().split('.').pop() ?? '';
-    if (!CAD_EXTENSIONS.includes(ext)) throw new BadRequest(`.${ext} files can't be imported by Onshape`);
+    const filename = cadFilename(file);
     const meta = cleanEdit(JSON.parse(String(req.body.meta ?? '{}')));
     if (!meta.name) throw new BadRequest('Display name is required');
 
     // Stays on this server until someone presses "Update Onshape"; the picture is drawn here.
     const part = createPart({ ...meta, name: meta.name, originalFilename: filename, status: 'staged', statusDetail: WAITING }, user(req));
-    updatePart(part.id, { originalPath: storeOriginal(part.id, file.path, filename) });
+    updatePart(part.id, { originalPath: storeOriginal(part.id, file!.path, filename) });
     addHistory(part.id, user(req), 'Created', { file: filename });
     void renderThumbnail(part.id);
     res.status(201).json(hubJson(getPart(part.id)!));
@@ -89,6 +102,28 @@ hubApi.patch('/parts/:id', (req, res) => {
   const updated = updatePart(part.id, edit, user(req));
   addHistory(part.id, user(req), 'Edited', changes);
   res.json(hubJson(updated));
+});
+
+// ---- admin only -----------------------------------------------------------------
+
+// Replace the CAD file; the part waits for the next "Update Onshape".
+hubApi.post('/parts/:id/file', requireAdmin, upload.single('file'), (req, res) => {
+  const file = req.file;
+  try {
+    const part = findPart(req);
+    const filename = cadFilename(file);
+    res.json(hubJson(replaceOriginal(part.id, file!.path, filename, user(req))));
+  } finally {
+    if (file && fs.existsSync(file.path)) fs.rmSync(file.path, { force: true });
+  }
+});
+
+// Delete for good (the Onshape Part Studio stays; assemblies may use it).
+hubApi.delete('/parts/:id', requireAdmin, (req, res) => {
+  const part = findPart(req);
+  deletePart(part.id);
+  console.log(`[hub] part ${part.id} "${part.name}" deleted by ${user(req)}`);
+  res.json({ ok: true });
 });
 
 hubApi.post('/parts/:id/archive', (req, res) => {
@@ -152,6 +187,8 @@ hubApi.post('/check-onshape', (req, res) => {
 hubApi.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof BadRequest || err instanceof SyntaxError) res.status(400).json({ error: err.message });
   else if (err instanceof NotFound) res.status(404).json({ error: err.message });
+  else if (err instanceof Forbidden) res.status(403).json({ error: err.message });
+  else if (err instanceof Busy) res.status(409).json({ error: err.message });
   else if (err instanceof multer.MulterError) res.status(400).json({ error: err.message });
   else {
     console.error('[hub]', err);

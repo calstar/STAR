@@ -128,6 +128,15 @@ CREATE TABLE IF NOT EXISTS part_history (
 );
 CREATE INDEX IF NOT EXISTS part_history_part ON part_history (part_id);
 
+-- Library Part Studios the hub no longer points at (file replaced, part deleted).
+-- They stay in Onshape (assemblies may use them), so "Check Onshape for new parts"
+-- must not list them again.
+CREATE TABLE IF NOT EXISTS retired_elements (
+  element_id TEXT PRIMARY KEY,
+  part_id INTEGER,
+  at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS api_usage (
   day TEXT PRIMARY KEY,           -- YYYY-MM-DD (UTC)
   calls INTEGER NOT NULL
@@ -193,9 +202,30 @@ export function getPart(id: number): Part | undefined {
   return row ? rowToPart(row as Record<string, unknown>) : undefined;
 }
 
+/** Part Studios the hub already knows: current parts plus retired ones. */
 export function knownElementIds(): Set<string> {
-  const rows = getDb().prepare('SELECT onshape_element_id AS e FROM parts WHERE onshape_element_id IS NOT NULL').all();
+  const rows = getDb()
+    .prepare('SELECT onshape_element_id AS e FROM parts WHERE onshape_element_id IS NOT NULL UNION SELECT element_id FROM retired_elements')
+    .all();
   return new Set(rows.map((r) => String((r as { e: string }).e)));
+}
+
+export function retireElement(elementId: string, partId: number): void {
+  getDb().prepare('INSERT OR IGNORE INTO retired_elements (element_id, part_id, at) VALUES (?, ?, ?)').run(elementId, partId, now());
+}
+
+/** Remove a part and its history for good (admin delete). */
+export function deletePartRow(id: number): void {
+  const db = getDb();
+  db.exec('BEGIN');
+  try {
+    db.prepare('DELETE FROM part_history WHERE part_id = ?').run(id);
+    db.prepare('DELETE FROM parts WHERE id = ?').run(id);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
 }
 
 export function createPart(fields: Partial<Part> & { name: string }, user: string): Part {

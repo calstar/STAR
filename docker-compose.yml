@@ -375,6 +375,9 @@ services:
     volumes:
       # SQLite + original CAD files + thumbnails. Back this up.
       - parts_data:/data
+      # admins.txt, re-read on change. The directory, not the file: git replaces
+      # files on pull (new inode) and a single-file mount would keep the old one.
+      - ./parts-hub/config:/app/config:ro
 
   # ── DAQ Run Viewer ───────────────────────────────────────────────────────
   # Read-only web viewer for PAST Elodin runs (browse, plot, export CSV). One

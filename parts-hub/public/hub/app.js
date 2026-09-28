@@ -395,6 +395,52 @@ async function detailPage(id) {
     }
   }
 
+  // ---- admin tools (the server checks admins.txt too) ----
+  async function replaceFile(file) {
+    if (!file) return;
+    if (!confirm(`Replace the CAD file of "${part.name}" with ${file.name}?\n\nName, cost, links and specs stay. The new file goes to Onshape at the next "Update Onshape"; until then the part is out of the Onshape panel. The old Part Studio stays in the Onshape library, and assemblies already using it are not changed.`)) return;
+    const body = new FormData();
+    body.append('file', file);
+    try {
+      const res = await fetch(`/api/hub/parts/${id}/file`, { method: 'POST', body });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `Replace failed (${res.status})`);
+      part = data;
+      toast('File replaced. Press Update Onshape on the parts list to send it to Onshape.', 'ok');
+      renderSide();
+      loadHistory();
+      poll();
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  }
+
+  async function deleteForGood() {
+    const typed = prompt(`Delete "${part.name}" from the Parts Hub for good?\n\nThis removes its details, history, uploaded file and picture, and it disappears from the Onshape panel. Assemblies that already use it are not affected, and its Part Studio stays in the Onshape library.\n\nType DELETE to confirm.`);
+    if (typed !== 'DELETE') {
+      if (typed !== null) toast('Not deleted: type DELETE to confirm.', 'err');
+      return;
+    }
+    try {
+      await api(`parts/${id}`, { method: 'DELETE' });
+      leaveGuard = null;
+      toast(`Deleted "${part.name}".`, 'ok');
+      location.hash = '#/';
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  }
+
+  function adminTools() {
+    if (!me?.isAdmin) return null;
+    const picker = h('input', { type: 'file', hidden: true, onchange: (e) => replaceFile(e.target.files[0]) });
+    return h('div', { class: 'admin-box' },
+      h('div', { class: 'admin-title' }, 'Admin'),
+      h('button', { class: 'btn', onclick: () => picker.click(), disabled: part.status === 'pending' || null }, 'Replace CAD file…'),
+      h('button', { class: 'btn danger', onclick: deleteForGood, disabled: part.status === 'pending' || null }, 'Delete part…'),
+      picker);
+  }
+
   function renderSide() {
     let statusBox = null;
     if (part.status === 'staged') {
@@ -421,6 +467,7 @@ async function detailPage(id) {
           ? h('button', { class: 'btn', onclick: () => act('archive', { archived: false }, 'Restored') }, 'Restore')
           : h('button', { class: 'btn danger', onclick: () => confirm(`Archive "${part.name}"? It will be hidden from the hub and the Onshape panel. Existing assemblies are not affected.`) && act('archive', { archived: true }, 'Archived') }, 'Archive'),
       ),
+      adminTools(),
       h('div', { class: 'facts' },
         part.originalFilename ? h('div', {}, 'File: ', part.originalFilename) : null,
         h('div', {}, `Added by ${part.createdBy} · ${when(part.createdAt)}`),

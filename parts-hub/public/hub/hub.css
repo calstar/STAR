@@ -182,3 +182,8 @@ progress { width: 100%; height: 8px; }
 .batch .row { grid-template-columns: 1.4fr 1fr 32px; align-items: center; }
 .batch-file { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drawing { color: var(--muted); font-size: 13px; }
+
+/* Admin tools on the part page */
+.admin-box { display: flex; flex-direction: column; gap: 8px; border: 1px dashed var(--danger); border-radius: var(--radius); padding: 10px; }
+.admin-box .btn { justify-content: center; }
+.admin-title { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--danger); }
