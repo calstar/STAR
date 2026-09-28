@@ -60,7 +60,7 @@ The current pair belongs to a person's account. Uploads therefore show that pers
 ### 2. Library document
 
 1. Create a document in the Enterprise named **STAR Parts Library** and put its id in `PARTS_LIBRARY_DOCUMENT_ID`. The id is the 24-character value in `https://starberkeley.onshape.com/documents/<id>/w/...`.
-2. Share it **Can view** with the whole Enterprise, or with the team that uses the panel. Every member needs view access or inserts fail with "Onshape refused the insert…".
+2. Share it **Can view** with the whole Enterprise, or with the team that uses the panel, **with the Link permission turned on**: Onshape treats inserting from another document as linking to it. Without Link (view alone isn't enough), inserts fail with "Onshape refused the insert…".
 3. Keep edit access to the key's owner and admins. The hub imports parts and creates versions in this document, and hand edits in the workspace end up in the next version.
 
 Parts can also be imported straight into this document in Onshape (free), then picked up with **Check Onshape for new parts** in the hub.

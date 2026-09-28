@@ -38,7 +38,7 @@ Merging to `main` makes CI publish the image, and `star-auto-update` deploys it.
 Walk Carlos through these; you can't do them from the server.
 
 - [x] **API key with Read + Write.** The hub imports parts and creates versions, so its key pair needs Write scope. The stack's `ONSHAPE_ACCESS_KEY` / `ONSHAPE_SECRET_KEY` has it, and the hub uses it unless `PARTS_ONSHAPE_ACCESS_KEY` / `PARTS_ONSHAPE_SECRET_KEY` are set. A read-only pair fails with `Invalid API key state`. If that pair is ever replaced, give the hub its own Read + Write pair (ideally from a team/bot account).
-- [ ] **Library document.** *Created:* `64c6e9b3f2e516c1dd98bdf9`. Still needed: share it **Can view** with the whole Enterprise (every member needs view access or inserts fail). Keep edit access to admins and the key's owner. Its id is the 24-character value in the URL `https://starberkeley.onshape.com/documents/<id>/w/...` → `PARTS_LIBRARY_DOCUMENT_ID`. (Onshape adds an empty "Part Studio 1" and "Assembly 1"; they can stay, the hub ignores default-named tabs.)
+- [ ] **Library document.** *Created:* `64c6e9b3f2e516c1dd98bdf9`. Shared with "All enterprise users". It must be **Can view with Link** permission: view alone makes every insert fail. Keep edit access to admins and the key's owner. Its id is the 24-character value in the URL `https://starberkeley.onshape.com/documents/<id>/w/...` → `PARTS_LIBRARY_DOCUMENT_ID`. (Onshape adds an empty "Part Studio 1" and "Assembly 1"; they can stay, the hub ignores default-named tabs.)
 - [ ] **OAuth app settings** (Enterprise settings → Developer → OAuth applications → the app):
   - Redirect URLs: `https://parts.starberkeley.org/panel/oauth/callback`
   - OAuth URL: `https://parts.starberkeley.org/panel/`
@@ -135,7 +135,7 @@ Restore: stop the container, put the snapshot back as `/data/hub.sqlite` (remove
 | Container restarts, logs say `Configuration problems:` | A `PARTS_*` value is missing from `/opt/STAR/.env`. |
 | "Update Onshape" fails with `Invalid API key state` | The key pair is read-only. Needs a Read + Write pair (step 1). |
 | Panel keeps bouncing to Onshape sign-in / "Sign-in link expired" | Redirect URL on the OAuth app doesn't exactly match `https://parts.starberkeley.org/panel/oauth/callback`, or the client secret is wrong. |
-| Panel shows "Onshape refused the insert" | The member lacks view access to STAR Parts Library (share it with the Enterprise) or edit access to their assembly. |
+| Panel shows "Onshape refused the insert" | The member lacks **Link** permission on STAR Parts Library (view alone isn't enough: inserting from another document is linking; add Link to the Enterprise share) or edit access to their assembly. |
 | No STAR Parts icon in assemblies | App not assigned to that member in Enterprise settings → Developer, or the extension's context isn't "Inside assembly". Reload the Onshape tab after assigning. |
 | Hub returns 401 "Not signed in with a school account" | Reached without the Caddy gate, or the auth service isn't passing `X-Auth-Email`. Check the Caddyfile site block. |
 | Picture missing for a part | STEP/IGES/STL are drawn on the server. Other formats and multi-file assemblies get Onshape's render at the next "Update Onshape". "Redraw picture" on the part page retries. |

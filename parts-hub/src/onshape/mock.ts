@@ -56,6 +56,8 @@ export function createMockClient(): OnshapeClient {
     async insertPartStudio(auth, target, source) {
       await sleep(400);
       if (auth.kind === 'bearer' && !auth.token) throw new OnshapeError(401, 'no token', 'mock insert');
+      // An assembly the member can't use (or a library shared without Link permission).
+      if (target.documentId === 'd'.repeat(24)) throw new OnshapeError(403, 'Resource does not exist, or you do not have permission to access it.', 'mock insert');
       console.log(`[mock] insert ${source.elementId}@${source.versionId} into ${target.documentId}/w/${target.workspaceId}/e/${target.elementId}`);
     },
   };
