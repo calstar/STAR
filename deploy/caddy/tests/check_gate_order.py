@@ -16,7 +16,8 @@ subrequest ever runs -- serving the whole app, API included, to anyone. It looks
 protected, it adapts without warning, and every page still loads while logged in,
 so nothing short of checking the adapted order catches it.
 
-Sites that are public on purpose go in PUBLIC_HOSTS.
+Sites that are public on purpose go in PUBLIC_HOSTS; single path prefixes of an
+otherwise gated site go in PUBLIC_PATHS.
 """
 import json
 import sys
@@ -25,13 +26,28 @@ import sys
 #: grants access, so protecting it would deadlock the login flow.
 PUBLIC_HOSTS = {"auth"}
 
+#: Path prefixes that are public by design on an otherwise gated host, keyed by
+#: the host's first label. A route is exempt only if EVERY path it matches lies
+#: under one of these prefixes; everything else on the host must still gate first.
+#:   parts /panel/ -- the Onshape right-panel extension. It runs inside Onshape's
+#:   iframe, where the STAR cookie is never sent, and authenticates with Onshape
+#:   OAuth instead (parts-hub/src/auth/panel.ts). It never reads X-Auth-*.
+PUBLIC_PATHS = {"parts": ("/panel/",)}
 
-def _sequence(handlers):
+
+def _is_public(route, prefixes):
+    paths = [p for m in route.get("match", []) for p in m.get("path", [])]
+    return bool(paths) and all(any(p.startswith(pre) for pre in prefixes) for p in paths)
+
+
+def _sequence(handlers, public_prefixes=()):
     """Ordered list of "auth"/"proxy" for one site's handler tree."""
     out = []
     for h in handlers:
         if h.get("handler") == "subroute":
             for r in h.get("routes", []):
+                if public_prefixes and _is_public(r, public_prefixes):
+                    continue
                 blob = json.dumps(r.get("handle", []))
                 # forward_auth is the only reverse_proxy that sets X-Forwarded-Uri.
                 if '"X-Forwarded-Uri"' in blob:
@@ -39,7 +55,7 @@ def _sequence(handlers):
                 elif '"reverse_proxy"' in blob:
                     out.append("proxy")
                 else:
-                    out.extend(_sequence(r.get("handle", [])))
+                    out.extend(_sequence(r.get("handle", []), public_prefixes))
     return out
 
 
@@ -55,7 +71,7 @@ def main() -> int:
             label = hosts[0]
             if label.split(".")[0] in PUBLIC_HOSTS:
                 continue
-            seq = _sequence(route.get("handle", []))
+            seq = _sequence(route.get("handle", []), PUBLIC_PATHS.get(label.split(".")[0], ()))
             if not seq:
                 continue
             checked += 1

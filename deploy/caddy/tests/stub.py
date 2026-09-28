@@ -1,6 +1,6 @@
 """Stub upstream. ROLE=auth mimics /verify; ROLE=app echoes what it received."""
 import os
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ROLE = os.environ["ROLE"]; NAME = os.environ.get("NAME", ROLE); PORT = int(os.environ["PORT"])
 
 class H(BaseHTTPRequestHandler):
@@ -29,4 +29,7 @@ class H(BaseHTTPRequestHandler):
     do_POST = do_GET
     def log_message(self, *a): pass
 
-HTTPServer(("0.0.0.0", PORT), H).serve_forever()
+# Threaded: each Caddy site's forward_auth keeps its own keep-alive connection to
+# auth, so a single-threaded stub would sit on the first site's idle connection
+# and never answer the second site's (seen as a 10 s timeout, HTTP 000).
+ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()

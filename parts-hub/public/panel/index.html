@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STAR Parts</title>
+  <link rel="stylesheet" href="panel.css">
+  <script type="module" src="panel.js"></script>
+</head>
+<body>
+  <header class="top">
+    <input id="search" type="search" placeholder="Search parts, numbers, vendors…" autocomplete="off" spellcheck="false" aria-label="Search parts" aria-controls="grid">
+    <div id="chips" class="chips" role="toolbar" aria-label="Categories"></div>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <main id="main">
+    <section id="recent-wrap" class="recent-wrap" hidden>
+      <h2>Recent</h2>
+      <div id="recent" class="recent"></div>
+    </section>
+    <div id="grid" class="grid" role="listbox" aria-label="Parts"></div>
+    <p id="empty" class="empty" hidden></p>
+  </main>
+
+  <div id="popover" class="popover" role="tooltip" hidden></div>
+
+  <aside id="drawer" class="drawer" hidden aria-label="Part details">
+    <div class="drawer-head">
+      <button id="drawer-close" class="icon-btn" aria-label="Close details">✕</button>
+    </div>
+    <div id="drawer-body" class="drawer-body"></div>
+    <div class="drawer-foot">
+      <button id="drawer-insert" class="primary">Insert</button>
+    </div>
+  </aside>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <div id="signin" class="signin" hidden>
+    <p>Connect the Parts panel to your Onshape account.</p>
+    <a id="signin-link" class="primary" href="#">Sign in with Onshape</a>
+  </div>
+</body>
+</html>

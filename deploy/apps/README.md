@@ -34,6 +34,7 @@ Service URL `http://caddy:80`:
 | `openrocket` | `starberkeley.org` | `http://caddy:80` |
 | `feed-twin` | `starberkeley.org` | `http://caddy:80` |
 | `daq-viewer` | `starberkeley.org` | `http://caddy:80` |
+| `parts` | `starberkeley.org` | `http://caddy:80` |
 
 Plus one **SSH** route on the same tunnel for remote admin — the `ssh://` scheme
 makes it SSH, and `cloudflared` maps `host.docker.internal` to the host via
