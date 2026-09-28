@@ -53,14 +53,14 @@ Do all of this signed in with an **enterprise admin** account (your own is fine 
 
 ### 1. API keys (server side)
 
-The hub talks to the library document with an API key pair that needs **Read and Write** scopes (it imports parts and creates versions). Set it as `PARTS_ONSHAPE_ACCESS_KEY` / `PARTS_ONSHAPE_SECRET_KEY` in the stack's root `.env`. Without those it falls back to the shared `ONSHAPE_ACCESS_KEY` / `ONSHAPE_SECRET_KEY`, but that pair (used by OpenRocket) is read-only today, and writes fail with "Invalid API key state".
+The hub talks to the library document with an API key pair that needs **Read and Write** scopes (it imports parts and creates versions). Set it as `PARTS_ONSHAPE_ACCESS_KEY` / `PARTS_ONSHAPE_SECRET_KEY` in the stack's root `.env`. Without those it falls back to the shared `ONSHAPE_ACCESS_KEY` / `ONSHAPE_SECRET_KEY`, which currently has Write scope. A read-only pair fails with "Invalid API key state".
 
 The current pair belongs to a person's account. Uploads therefore show that person as the author of each import and version, and the integration stops working if that account loses access. When convenient, create a dedicated enterprise user (e.g. `star-bot@…`) with its own key pair (read + write scope) and swap it in.
 
 ### 2. Library document
 
 1. Create a document in the Enterprise named **STAR Parts Library** and put its id in `PARTS_LIBRARY_DOCUMENT_ID`. The id is the 24-character value in `https://starberkeley.onshape.com/documents/<id>/w/...`.
-2. Share it **Can view** with the whole Enterprise, or with the team that uses the panel. Every member needs view access or inserts fail with "Onshape refused the insert…".
+2. Share it **Can view** with the whole Enterprise, or with the team that uses the panel, **with the Link permission turned on**: Onshape treats inserting from another document as linking to it. Without Link (view alone isn't enough), inserts fail with "Onshape refused the insert…".
 3. Keep edit access to the key's owner and admins. The hub imports parts and creates versions in this document, and hand edits in the workspace end up in the next version.
 
 Parts can also be imported straight into this document in Onshape (free), then picked up with **Check Onshape for new parts** in the hub.
@@ -164,10 +164,11 @@ docker compose exec parts-hub node scripts/smoke-test.ts /data/sample.step \
 1. Start one import per file into the library document (`flattenAssemblies=true`, so a multi-body vendor STEP becomes one Part Studio). The file is sent under the display name, so the tab gets that name without a rename call. Onshape also keeps the file as a tab next to it.
 2. Check on all imports together (one call covers up to 20), at about 8 s, 19 s, 35 s, 58 s, then every 30 s.
 3. Find the new Part Studio tabs (one call).
-4. Create **one** library version for the whole batch; that is what the panel inserts from.
-5. Only for formats the server can't draw (SolidWorks, Parasolid, ...): ask Onshape for the picture (one call each).
+4. Name the parts inside them after the hub's display name (two calls for the whole batch: list the parts, rename them all). Vendor files often carry names like "Mirror 1", and the part name is what assemblies show. A single-part file gets the display name; with several parts, meaningful names are kept after it ("1/4 Union - NUT") and leftovers are numbered ("1/4 Union (2)").
+5. Create **one** library version for the whole batch; that is what the panel inserts from.
+6. Only for formats the server can't draw (SolidWorks, Parasolid, ...): ask Onshape for the picture (one call each).
 
-A batch of N STEP files costs about **N + 5 calls**. A part Onshape can't translate fails on its own without holding up the rest. **Try again at next update** puts it back in line, and an update cut short resumes where it stopped instead of re-importing. All Onshape work goes through one queue, so two updates never race.
+A batch of N STEP files costs about **N + 7 calls**. A part Onshape can't translate fails on its own without holding up the rest. **Try again at next update** puts it back in line, and an update cut short resumes where it stopped instead of re-importing. All Onshape work goes through one queue, so two updates never race.
 
 **Insert.** The panel inserts the **whole Part Studio at the part's version** (`isWholePartStudio: true`), so a fitting comes in as one unit, at the assembly origin. It inserts as the member (their OAuth token), so they need edit access to the assembly and view access to the library.
 
@@ -175,9 +176,9 @@ A batch of N STEP files costs about **N + 5 calls**. A part Onshape can't transl
 
 **Archive** hides a part from the hub list and the panel. It never deletes anything in Onshape, and assemblies that already use the part are unaffected. Archived parts can be shown with "Show archived" and restored.
 
-**Check Onshape for new parts** is the other way in: import STEP files straight into the library document in Onshape (Onshape's own website doesn't count against the API allowance), then press it in the hub. It finds Part Studios the hub doesn't know, creates one version for them, fetches their pictures from Onshape and lists them, named after their tabs, for you to fill in. Cost: about 3 calls plus 1 per new part. Empty default tabs ("Part Studio 1") are ignored. Server upload costs about the same (N + 5 per batch), so use whichever is convenient.
+**Check Onshape for new parts** is the other way in: import STEP files straight into the library document in Onshape (Onshape's own website doesn't count against the API allowance), then press it in the hub. It finds Part Studios the hub doesn't know, creates one version for them, fetches their pictures from Onshape and lists them, named after their tabs, for you to fill in. Cost: about 5 calls plus 1 per new part. Empty default tabs ("Part Studio 1") are ignored. Server upload costs about the same (N + 7 per batch), so use whichever is convenient.
 
-**Search** (hub and panel) matches every field: name, part number, vendor, category, tags, description, notes, cost note, custom fields and link labels. It ignores punctuation in part numbers (`ss4006` finds `SS-400-6`) and tolerates small typos. The panel still only shows picture + name. Hover a card for part number, vendor, cost and category, or click ⓘ for everything.
+**Search** (hub and panel) matches every field: name, part number, vendor, category, tags, description, notes, cost note, custom fields and link labels. Every word must match, in any order. Words tolerate small typos (`vlave`), but sizes and part numbers never do: `5000 psi` won't find a 3000 psi part, and `SS-400-6` won't find SS-400-9 (punctuation is optional, so `ss4006` works). Fractions and decimals are interchangeable (`0.25` finds 1/4), inch marks and filler words are ignored, so `1/4 to 3/8 npt`, `3/8 npt 1/4` and `1/4" x 3/8" NPT` all find the same adapters. The panel still only shows picture + name. Hover a card for part number, vendor, cost and category, or click ⓘ for everything.
 
 **Panel keys:** type to search. ↓/↑ move the highlight by row, and after that ←/→ move it by card. Enter inserts, Esc closes details or clears the search. The last 8 parts you inserted appear in a Recent row (stored in your browser).
 

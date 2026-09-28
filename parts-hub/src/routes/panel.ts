@@ -47,11 +47,16 @@ panelApi.use((err: unknown, _req: Request, res: Response, _next: NextFunction) =
     res.status(401).json({ error: 'Sign in to Onshape' });
   } else if (err instanceof OnshapeError) {
     console.error('[panel]', err.message);
-    const hint =
-      err.status === 403 || err.status === 404
-        ? 'Onshape refused the insert. Do you have view access to the STAR Parts Library document, and edit access to this assembly?'
-        : `Onshape error ${err.status}`;
-    res.status(502).json({ error: hint });
+    // Never answer 5xx here: Cloudflare replaces 502s with its own error page and
+    // the member would only see "request failed" instead of this explanation.
+    if (err.status === 403 || err.status === 404) {
+      res.status(403).json({
+        error:
+          'Onshape refused the insert. The STAR Parts Library must be shared with you with Link permission (not just view), and you need edit access to this assembly.',
+      });
+    } else {
+      res.status(424).json({ error: `Onshape could not insert the part (error ${err.status}). Try again in a moment.` });
+    }
   } else {
     console.error('[panel]', err);
     res.status(500).json({ error: 'Server error' });

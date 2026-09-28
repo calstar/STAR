@@ -224,7 +224,7 @@ async function listPage() {
   }
 
   async function startCheck() {
-    if (!confirm('Look for parts that were imported straight into the STAR Parts Library document in Onshape?\n\nUses about 3 Onshape API calls, plus 1 per new part for its picture.')) return;
+    if (!confirm('Look for parts that were imported straight into the STAR Parts Library document in Onshape?\n\nUses about 5 Onshape API calls, plus 1 per new part for its picture.')) return;
     try {
       renderImportJob(await api('check-onshape', { method: 'POST' }));
       clearTimeout(pollTimer);

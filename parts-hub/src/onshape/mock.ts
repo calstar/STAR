@@ -17,6 +17,9 @@ export function createMockClient(): OnshapeClient {
   const elements = new Map<string, string>(MOCK_EXISTING.map((e) => [e.id, e.name]));
   const translations = new Map<string, { polls: number; elementId: string; fail: boolean; filename: string }>();
   let versionCount = 1;
+  /** What nameParts last named each Part Studio's parts (for tests). */
+  const partNamesByElement = new Map<string, string>();
+  (globalThis as { __mockPartNames?: Map<string, string> }).__mockPartNames = partNamesByElement;
 
   return {
     async libraryWorkspaceId() {
@@ -43,6 +46,9 @@ export function createMockClient(): OnshapeClient {
       }
       return out;
     },
+    async nameParts(studios) {
+      for (const s of studios) partNamesByElement.set(s.elementId, s.name);
+    },
     async listPartStudios() {
       return [...elements].map(([id, name]) => ({ id, name }));
     },
@@ -56,6 +62,8 @@ export function createMockClient(): OnshapeClient {
     async insertPartStudio(auth, target, source) {
       await sleep(400);
       if (auth.kind === 'bearer' && !auth.token) throw new OnshapeError(401, 'no token', 'mock insert');
+      // An assembly the member can't use (or a library shared without Link permission).
+      if (target.documentId === 'd'.repeat(24)) throw new OnshapeError(403, 'Resource does not exist, or you do not have permission to access it.', 'mock insert');
       console.log(`[mock] insert ${source.elementId}@${source.versionId} into ${target.documentId}/w/${target.workspaceId}/e/${target.elementId}`);
     },
   };

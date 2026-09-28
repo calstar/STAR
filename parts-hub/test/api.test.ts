@@ -124,6 +124,8 @@ test('upload stays on the server until "Update Onshape", then reaches the panel'
   assert.equal(a.status, 'ready');
   assert.ok(a.elementId && a.versionId);
   assert.equal(a.versionId, b.versionId, 'one version for the whole batch');
+  const named = (globalThis as { __mockPartNames?: Map<string, string> }).__mockPartNames!;
+  assert.equal(named.get(a.elementId), '1/4 Tube Union SS', 'parts in Onshape are named after the hub name');
 
   const session = await panelSession();
   const auth = { authorization: `Bearer ${session}` };
@@ -136,6 +138,11 @@ test('upload stays on the server until "Update Onshape", then reaches the panel'
     fetch(`${base}/panel/api/insert`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify(body) });
   assert.equal((await insert({ partId: created.id, ...ids })).status, 200);
   assert.equal((await insert({ partId: created.id, ...ids, workspaceId: '../x' })).status, 400);
+  // Onshape refusing (e.g. library shared without Link) is a 4xx with an explanation,
+  // never a 5xx that Cloudflare would swap for its own error page.
+  const refused = await insert({ partId: created.id, ...ids, documentId: 'd'.repeat(24) });
+  assert.equal(refused.status, 403);
+  assert.match((await refused.json()).error, /Link permission/);
 
   // Archived parts disappear from the panel and can't be inserted.
   await hub(`parts/${created.id}/archive`, { method: 'POST', body: JSON.stringify({ archived: true }) });

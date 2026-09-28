@@ -12,6 +12,19 @@ import { config } from '../config.ts';
 const API = '/api/v17';
 const JSON_ACCEPT = 'application/json;charset=UTF-8; qs=0.09';
 // Isometric view: rows map model x/y/z to view x (right), y (up), z (towards viewer).
+// Onshape's standard "Name" property: the same id for every part in every document.
+const NAME_PROPERTY = '57f3fb8efa3416c06701d60d';
+// Names vendor CAD leaves on bodies that say nothing about the part ("Mirror 1", "Body2").
+const GENERIC_PART_NAME = /^(part|body|solid|mirror|extrude|revolve|sweep|loft|fillet|chamfer|pattern|boolean|split|shell|thicken|import(ed)?|surface|feature)[\s_-]*\d*$/i;
+
+/** What each part of a Part Studio should be called, given the hub's display name. */
+export function partNames(display: string, originals: string[]): string[] {
+  if (originals.length === 1) return [display];
+  return originals.map((original, i) =>
+    original && !GENERIC_PART_NAME.test(original.trim()) ? `${display} - ${original.trim()}` : `${display} (${i + 1})`,
+  );
+}
+
 const ISOMETRIC = '0.707,0.707,0,0,-0.408,0.408,0.816,0,0.577,-0.577,0.577,0';
 
 export type Auth = { kind: 'keys' } | { kind: 'bearer'; token: string };
@@ -26,6 +39,8 @@ export interface OnshapeClient {
   /** Status of several imports; batched into as few API calls as possible. */
   getTranslations(translationIds: string[]): Promise<Map<string, TranslationState>>;
   listPartStudios(wvm: 'w' | 'v', wvmId: string): Promise<{ id: string; name: string }[]>;
+  /** Rename the parts inside these Part Studios (workspace) after their hub names. 2 calls total. */
+  nameParts(studios: { elementId: string; name: string }[]): Promise<void>;
   createVersion(name: string, description: string): Promise<string>;
   renderThumbnail(versionId: string, elementId: string): Promise<Image>;
   /** Insert a whole Part Studio from the library (at a version) into the target assembly. */
@@ -186,6 +201,22 @@ export function createOnshapeClient(): OnshapeClient {
         { query: { elementType: 'PARTSTUDIO' } },
       );
       return elements.filter((e) => e.elementType === 'PARTSTUDIO').map((e) => ({ id: e.id, name: e.name }));
+    },
+
+    async nameParts(studios) {
+      if (!studios.length) return;
+      const wid = await client.libraryWorkspaceId();
+      // One call lists every part in the workspace; one more renames them all.
+      const parts = await json<{ elementId: string; partId: string; name: string }[]>('GET', `${API}/parts/d/${did}/w/${wid}`);
+      const items = studios.flatMap(({ elementId, name }) => {
+        const own = parts.filter((p) => p.elementId === elementId);
+        const names = partNames(name, own.map((p) => p.name));
+        return own.map((p, i) => ({
+          href: `${config.onshape.baseUrl}/api/metadata/d/${did}/w/${wid}/e/${elementId}/p/${p.partId}`,
+          properties: [{ propertyId: NAME_PROPERTY, value: names[i] }],
+        }));
+      });
+      if (items.length) await json('POST', `${API}/metadata/d/${did}/w/${wid}`, { json: { items } });
     },
 
     async createVersion(name, description) {

@@ -58,6 +58,14 @@ const SAMPLES: Sample[] = [
     unitCost: 0.21,
   },
   {
+    name: '1/4 Tube x 3/8 NPT Male Connector', partNumber: 'SS-400-1-6', vendor: 'Swagelok', category: 'Fittings',
+    tags: ['adapter', 'npt'], unitCost: 18.6, customFields: [{ key: 'Material', value: '316 SS' }],
+  },
+  {
+    name: '1/4 Tube x 1/4 NPT Male Connector', partNumber: 'SS-400-1-4', vendor: 'Swagelok', category: 'Fittings',
+    tags: ['adapter', 'npt'], unitCost: 16.9, customFields: [{ key: 'Material', value: '316 SS' }],
+  },
+  {
     name: '3/8 Tube Tee SS', partNumber: 'SS-600-3', vendor: 'Swagelok', category: 'Fittings', tags: ['tee', '3/8'],
     unitCost: 61.2,
   },
