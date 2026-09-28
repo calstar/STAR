@@ -17,6 +17,9 @@ export function createMockClient(): OnshapeClient {
   const elements = new Map<string, string>(MOCK_EXISTING.map((e) => [e.id, e.name]));
   const translations = new Map<string, { polls: number; elementId: string; fail: boolean; filename: string }>();
   let versionCount = 1;
+  /** What nameParts last named each Part Studio's parts (for tests). */
+  const partNamesByElement = new Map<string, string>();
+  (globalThis as { __mockPartNames?: Map<string, string> }).__mockPartNames = partNamesByElement;
 
   return {
     async libraryWorkspaceId() {
@@ -42,6 +45,9 @@ export function createMockClient(): OnshapeClient {
         }
       }
       return out;
+    },
+    async nameParts(studios) {
+      for (const s of studios) partNamesByElement.set(s.elementId, s.name);
     },
     async listPartStudios() {
       return [...elements].map(([id, name]) => ({ id, name }));

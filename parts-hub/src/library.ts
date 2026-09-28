@@ -112,7 +112,7 @@ export function estimateCalls(parts = waitingParts()): number {
   if (!parts.length) return 0;
   const imports = parts.filter((p) => !p.elementId && !p.translationId).length;
   const pictures = parts.filter((p) => !p.thumbnailFile && !isRendering(p.id)).length;
-  return imports + 3 /* status checks */ + 1 /* find the new tabs */ + 1 /* version */ + pictures;
+  return imports + 3 /* status checks */ + 1 /* find the new tabs */ + 2 /* name parts */ + 1 /* version */ + pictures;
 }
 
 export type SyncResult = { added: number; failed: number; versionId: string | null };
@@ -195,10 +195,14 @@ async function runSync(user: string): Promise<SyncResult> {
       }
     }
 
-    // 3. One version for the whole batch: that's what the panel inserts from.
+    // 3. Name the parts after the hub name (vendor files carry names like "Mirror 1",
+    //    which is what assemblies show), then one version for the whole batch: that's
+    //    what the panel inserts from. Renaming is 2 calls however big the batch is.
     const unversioned = current().filter((p) => p.elementId && !p.versionId);
     let versionId: string | null = null;
     if (unversioned.length) {
+      step('Naming parts');
+      await nameParts(unversioned.map((p) => ({ id: p.id, elementId: p.elementId!, name: p.name })));
       step('Creating a library version');
       const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
       versionId = await client.createVersion(
@@ -248,6 +252,18 @@ async function waitForTranslations(ids: string[]): Promise<Map<string, Translati
   return settled;
 }
 
+/** Rename parts; a failure is noted on the parts but never stops the update. */
+async function nameParts(studios: { id: number | null; elementId: string; name: string }[]): Promise<void> {
+  try {
+    await client.nameParts(studios);
+  } catch (err) {
+    for (const s of studios) {
+      if (s.id) addHistory(s.id, SYSTEM_USER, 'Could not rename the parts in Onshape', { error: errorMessage(err) });
+    }
+    console.error('[library] naming parts failed:', err);
+  }
+}
+
 /** Put a failed part back in line for the next update. */
 export function retryPart(partId: number): void {
   updatePart(partId, { status: 'staged', statusDetail: WAITING });
@@ -261,7 +277,7 @@ const DEFAULT_TAB = /^Part Studio \d+$/;
  * "Check Onshape for new parts": find Part Studios someone added straight to the
  * library document in Onshape (importing there is free), give them one shared
  * version, fetch their pictures and list them in the hub.
- * Costs ~3 calls plus 1 per new part (its picture).
+ * Costs ~5 calls plus 1 per new part (its picture).
  */
 export function checkOnshape(user: string): Promise<{ created: number; versionId: string | null }> {
   return enqueue(async () => {
@@ -270,6 +286,7 @@ export function checkOnshape(user: string): Promise<{ created: number; versionId
     const fresh = studios.filter((s) => !known.has(s.id) && !DEFAULT_TAB.test(s.name));
     if (!fresh.length) return { created: 0, versionId: null };
 
+    await nameParts(fresh.map((s) => ({ id: null, elementId: s.id, name: s.name.replace(CAD_SUFFIX, '').trim() || s.name })));
     const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
     const versionId = await client.createVersion(
       `Parts Hub check ${stamp}`,

@@ -124,6 +124,8 @@ test('upload stays on the server until "Update Onshape", then reaches the panel'
   assert.equal(a.status, 'ready');
   assert.ok(a.elementId && a.versionId);
   assert.equal(a.versionId, b.versionId, 'one version for the whole batch');
+  const named = (globalThis as { __mockPartNames?: Map<string, string> }).__mockPartNames!;
+  assert.equal(named.get(a.elementId), '1/4 Tube Union SS', 'parts in Onshape are named after the hub name');
 
   const session = await panelSession();
   const auth = { authorization: `Bearer ${session}` };
