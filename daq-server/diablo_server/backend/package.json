@@ -9,7 +9,7 @@
     "build": "tsc",
     "start": "USE_CPP_CONTROLLER=true node dist/server.js",
     "relay": "NODE_OPTIONS='--max-old-space-size=8192' tsx src/elodin-relay.ts",
-    "test": "vitest run"
+    "test": "vitest run --exclude 'dist/**'"
   },
   "keywords": [],
   "author": "",

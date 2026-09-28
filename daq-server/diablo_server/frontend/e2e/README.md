@@ -34,14 +34,16 @@ This starts the **simulated** stack (`USE_SIM=1`, detached tmux — no interacti
 
 ## CI
 
-- **Integration job:** `bash test/test_integration.sh` only (WebSocket / Elodin / stack checks). No browser tests.
+- **Integration job:** `bash test/test_integration.sh` includes environmental data-flow and malformed-packet checks. The isolated environmental recovery test runs afterward. No browser tests.
 - **Guitest E2E job:** `playwright-guitest-e2e` runs `bash test/e2e_guitest_playwright.sh` (full tmux guitest stack). That is browser E2E in CI.
 
 ## What the tests check
 
 **`e2e/sensor-info.spec.ts`** — ingest header cards (packet count, **Ingest Rate**, board scan grid), and **columns 2–4** on every data row (raw ADC / counts, converted values, Frontend Rate Hz) with no `---` or empty text. Uses **`innerText` in the page**. Waits for PT/HPT loading rows to clear, then **`E2E_SETTLE_MS` (default 5000 ms)**, then one snapshot.
 
-**`e2e/boards-heartbeats.spec.ts`** — **`/boards`** (“Boards / Heartbeats”): **every** card must have **State ACTIVE** (only that state passes), plus **CONNECTED**, **Heartbeat** numeric Hz (not **---**), and **Self Test: ALL PASSED**. Same settle delay as Sensor Info.
+**`e2e/boards-heartbeats.spec.ts`** — **`/boards`** (“Boards / Heartbeats”): **every** card must have **State ACTIVE** (only that state passes), plus **CONNECTED**, **Heartbeat** numeric Hz (not **---**), and **Self Test: ALL PASSED**. Environmental boards must show **N/A** instead, because their firmware does not support self-tests. Same settle delay as Sensor Info.
+
+**`e2e/environmental.spec.ts`** checks `/environmental` against the live guitest stack without replacing API or WebSocket traffic. It requires repeated samples for all three ENV25 measurements, visible readouts in the simulator's expected ranges, and plotted traces. It checks desktop and mobile layouts. The frozen test config must keep environmental board 25 enabled on connector 1.
 
 **`e2e/00-load-time.spec.ts`** — load-time budget guard (named `00-` so it runs **first** — cold OS/page caches, so it measures true first-open, not a warmed rerun) (regression tripwire for the pre-Vite ~20s cold loads). Asserts `/` and `/sensor-info` are interactive (`<main>` visible) within **`E2E_LOAD_BUDGET_MS`** (default 2 s; local baseline ~250 ms) and that Sensor Info shows first **live data** (Packets card loses its `---` placeholder) within **`E2E_DATA_BUDGET_MS`** (default 10 s; local baseline ~275 ms). Budgets are generous because CI runners are slow; measured times (`[load-benchmark]` lines: interactive / DCL / load / FCP / first-data) are logged every run so trends are visible in CI history before the budget ever trips.
 

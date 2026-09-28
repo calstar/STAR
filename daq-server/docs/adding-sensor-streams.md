@@ -76,17 +76,19 @@ Enabled environmental boards need distinct integer IDs from 1 to 255. The shared
 
 The tracked `config/config_base.toml` and `config/profiles/default/config.toml` include board 25 at `192.168.2.25`, matching `firmware/Environmental Tracker/src/main.h`. `config/config.toml` is a generated, gitignored runtime file. For an existing installation, copy `[boards.environmental_board]` into its active profile and deploy that profile. The Environmental view is available under **All Views → Environmental**, at `/environmental`, and can be pinned with `environmental` in `[gui].tabs`. It shows separate readouts and plots for each measurement; stale readouts show “Waiting for fresh data.” Heartbeats appear in Boards.
 
-The board simulator supports `--only-type ENVIRONMENTAL` with the firmware's 5 Hz default rate. Use a loopback simulation config for local testing. To test the real database and backend path without hardware, build `daq_bridge`, install the backend dependencies, then run from `diablo_server/backend`:
+The board simulator supports `--only-type ENVIRONMENTAL` with the firmware's 5 Hz default rate. Use a loopback simulation config for local testing. The standard `test/ws_data_flow_test.ts` suite includes environmental values, units, epoch timestamps, heartbeat attribution, and malformed-packet rejection. Select these checks with `--backend=thin --only=environmental` against an existing test stack. The default packet source is `127.0.0.25`; `TEST_ENVIRONMENTAL_SOURCE_IP` overrides it for isolated tests.
+
+To test subscription retry and database restart recovery without hardware, build `daq_bridge`, install the backend dependencies, then run from `diablo_server/backend`:
 
 ```sh
 ELODIN_DB=/absolute/path/to/elodin-db \
 DAQ_BRIDGE=/absolute/path/to/daq_bridge \
-npx tsx test/environmental.integration.ts
+npx tsx test/environmental-recovery.integration.ts
 ```
 
-This test starts an isolated Elodin database, bridge, and backend on local ports. The bridge also requires its existing UDP config port 5008 to be free. The test verifies UDP-to-WebSocket values, units, epoch timestamps, heartbeat attribution, and malformed packet rejection, then stops its processes. Run the backend unit tests with `npm test -- --exclude 'dist/**'` to exclude the repository's compiled test copies. Run the frontend tests with `npm test` from `diablo_server/frontend`.
+This test starts an isolated Elodin database, bridge, and backend on local ports. The bridge also requires its existing UDP config port 5008 to be free. It waits for Elodin to reject the environmental subscription before starting the bridge, runs the standard environmental checks, then replaces the database with a fresh instance and runs those checks again without restarting the bridge or backend. It also checks that invalid and duplicate environmental IDs make the bridge exit with status 1. The test stops its processes on exit.
 
-Set `BACKEND_FIRST=1` for the startup-order and recovery test. It waits for Elodin to reject the environmental subscription before starting the bridge, verifies that readings arrive after a retry, then replaces the database with a fresh instance and checks that readings resume without restarting the bridge or backend. Both modes check that invalid and duplicate environmental IDs make the bridge exit with status 1. These tests use simulated packets, not physical hardware.
+CI runs backend and frontend unit tests, the C++ environmental configuration test, the standard data-flow suite, and the recovery test. `npm test` in the backend excludes compiled test copies under `dist`. The environmental Playwright test uses the live guitest stack and checks readouts and plotted traces on desktop and mobile. The Boards page shows environmental self-tests as **N/A** because the firmware does not support them. These tests use simulated packets, not physical hardware; a hardware check is still required before merging.
 
 ## CalibrationCommand `[0x46, 0x00]`
 
