@@ -4,6 +4,11 @@
 // whole word > word prefix > substring > same characters ignoring punctuation
 // ("ss4006" finds "SS-400-6") > one or two typos ("vlave") > letters in order ("tbun").
 // Name and part number weigh most, then vendor/category/tags, then everything else.
+//
+// Sizes and part numbers are matched exactly, never "typo-corrected": 5000 must not
+// find 3000, 1/4 must not find 11/4, SS-400-6 must not find SS-400-9. Fractions and
+// decimals are interchangeable (0.25 finds 1/4), inch marks are ignored (1/4" = 1/4),
+// and filler words drop out, so "1/4 to 3/8 npt" and "3/8 x 1/4 NPT" both work.
 
 const WEIGHTS = { name: 3, partNumber: 3, vendor: 2, category: 2, tags: 2 };
 
@@ -14,6 +19,35 @@ export function normalize(s) {
     .replace(/[̀-ͯ]/g, '');
 }
 const compact = (s) => s.replace(/[^a-z0-9]/g, '');
+const hasDigit = (s) => /\d/.test(s);
+const STOPWORDS = new Set(['to', 'x', 'by', 'and', 'with', 'for', 'the', 'a', 'an', 'of', 'in', 'inch', 'inches', '-', '&', '→']);
+const DENOMINATORS = [2, 4, 8, 16, 32, 64];
+
+const trimDecimal = (n) => String(Number(n.toFixed(6)));
+
+/** Extra searchable spellings of the sizes in a text: "1/4" adds "0.25 .25"; "0.375" adds "3/8". */
+function sizeAliases(text) {
+  const out = [];
+  for (const [, a, b] of text.matchAll(/(?<![\d.\/])(\d+)\/(\d+)(?![\d\/])/g)) {
+    if (+b && DENOMINATORS.includes(+b)) {
+      const d = trimDecimal(+a / +b);
+      out.push(d, d.startsWith('0.') ? d.slice(1) : '');
+    }
+  }
+  for (const [m] of text.matchAll(/(?<![\d\/])\d*\.\d+(?![\d\/])/g)) {
+    const v = Number(m);
+    for (const b of DENOMINATORS) {
+      const a = Math.round(v * b);
+      if (a > 0 && Math.abs(a / b - v) < 1e-9) {
+        let g = a, h = b;
+        while (h) [g, h] = [h, g % h];
+        out.push(`${a / g}/${b / g}`);
+        break;
+      }
+    }
+  }
+  return out.filter(Boolean);
+}
 
 function fieldsOf(part) {
   const fields = [
@@ -31,7 +65,8 @@ function fieldsOf(part) {
   return fields
     .filter(([, v]) => v)
     .map(([key, value]) => {
-      const text = normalize(value);
+      const base = normalize(value);
+      const text = [base, ...sizeAliases(base)].join(' ');
       return { weight: WEIGHTS[key] ?? 1, text, compact: compact(text), words: text.split(/[^a-z0-9./"#-]+/).filter(Boolean) };
     });
 }
@@ -70,21 +105,46 @@ function looseSubsequence(needle, hay) {
   return false;
 }
 
+/** Index of `token` in `text` where a number isn't cut in half (1/4 in "11/4" or "1/42" doesn't count). */
+function numericIndex(text, token) {
+  for (let i = text.indexOf(token); i !== -1; i = text.indexOf(token, i + 1)) {
+    const before = text[i - 1] ?? ' ';
+    const after = text[i + token.length] ?? ' ';
+    if (!/[\d./]/.test(before) && !/\d/.test(after) && !(after === '/' && /^\d/.test(text.slice(i + token.length + 1)))) return i;
+  }
+  return -1;
+}
+
 function tokenScore(token, field) {
-  const idx = field.text.indexOf(token);
+  const numeric = hasDigit(token);
+  const idx = numeric ? numericIndex(field.text, token) : field.text.indexOf(token);
   if (idx !== -1) {
     if (field.words.includes(token)) return 1.2;
     const atWordStart = idx === 0 || /[^a-z0-9]/.test(field.text[idx - 1]);
     return atWordStart ? 1 : 0.8;
   }
   const ct = compact(token);
-  if (ct.length >= 2 && field.compact.includes(ct)) return 0.7;
+  // Part numbers typed without punctuation ("ss4006" for "SS-400-6"). Not for bare
+  // numbers or fractions, where dropping the "/" or "." changes the meaning.
+  if (ct.length >= 2 && (!numeric || (/[a-z]/.test(ct) && !token.includes('/'))) && field.compact.includes(ct)) return 0.7;
+  if (numeric) return 0; // a near-miss on a size or part number is a different part
   if (ct.length >= 4) {
     const maxTypos = ct.length >= 8 ? 2 : 1;
-    if (field.words.some((w) => w.length >= 3 && editDistanceAtMost(ct, compact(w), maxTypos))) return 0.5;
+    if (field.words.some((w) => w.length >= 3 && !hasDigit(w) && editDistanceAtMost(ct, compact(w), maxTypos))) return 0.5;
+    if (looseSubsequence(ct, field.compact)) return 0.35;
   }
-  if (ct.length >= 3 && looseSubsequence(ct, field.compact)) return 0.35;
   return 0;
+}
+
+/** Split a query into words: "1/4x3/8" -> 1/4 3/8, inch marks dropped, filler words removed. */
+function queryTokens(query) {
+  const words = normalize(query)
+    .replace(/(\d)\s*[x×*]\s*(?=\d)/g, '$1 ')
+    .split(/\s+/)
+    .map((w) => (/^[\d./]+(?:"|''|in|inch|inches)$/.test(w) ? w.replace(/(?:"|''|in|inch|inches)$/, '') : w))
+    .filter(Boolean);
+  const meaningful = words.filter((w) => !STOPWORDS.has(w));
+  return meaningful.length ? meaningful : words;
 }
 
 /**
@@ -92,7 +152,7 @@ function tokenScore(token, field) {
  * original order is kept. `category` narrows to one category.
  */
 export function search(index, query, { category = '' } = {}) {
-  const tokens = normalize(query).split(/\s+/).filter(Boolean);
+  const tokens = queryTokens(query);
   const pool = category ? index.filter((e) => e.part.category === category) : index;
   if (!tokens.length) return pool.map((e) => e.part);
   const q = normalize(query).trim();
