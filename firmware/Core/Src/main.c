@@ -590,7 +590,7 @@ static void MX_TIM2_Init(void)
   sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
   sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
   sConfigIC.ICFilter = 0;
-  if (HAL_TIM_IC_ConfigChannel(&htim2, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
+  if (HAL_TIM_IC_ConfigChannel(&htim2, &sConfigIC, TIM_CHANNEL_4) != HAL_OK)
   {
     Error_Handler();
   }
@@ -805,7 +805,8 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOE, NAND_CS_Pin|ACCEL_INT2_Pin|ETH_CS_Pin|LED2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, NAND_CS_Pin|REG_3V6_EN_Pin|ETH_RST_Pin|ETH_CS_Pin
+                          |LED2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(EMMC_RST_GPIO_Port, EMMC_RST_Pin, GPIO_PIN_RESET);
@@ -814,13 +815,14 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOC, ACCEL_CS_Pin|CS_BARO_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, ETH_RST_Pin|RADIO_NRST_Pin|LED1_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, ALT_ARM_RESET_Pin|GPS_RST_Pin|RADIO_NRST_Pin|LED1_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, GPS_RST_Pin|PYRO_2_CTRL_Pin|PYRO_1_CTRL_Pin|RADIO_CS_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOD, PYRO_EN_2_Pin|PYRO_EN_1_Pin|ALT_ARM_SET_Pin|PYRO_2_CTRL_Pin
+                          |PYRO_1_CTRL_Pin|RADIO_CS_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : NAND_CS_Pin ACCEL_INT2_Pin ETH_CS_Pin */
-  GPIO_InitStruct.Pin = NAND_CS_Pin|ACCEL_INT2_Pin|ETH_CS_Pin;
+  /*Configure GPIO pins : NAND_CS_Pin REG_3V6_EN_Pin ETH_RST_Pin ETH_CS_Pin */
+  GPIO_InitStruct.Pin = NAND_CS_Pin|REG_3V6_EN_Pin|ETH_RST_Pin|ETH_CS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -851,36 +853,40 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(ACCEL_INT1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : ETH_INT_Pin */
-  GPIO_InitStruct.Pin = ETH_INT_Pin;
+  /*Configure GPIO pins : ACCEL_INT2_Pin ETH_INT_Pin */
+  GPIO_InitStruct.Pin = ACCEL_INT2_Pin|ETH_INT_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(ETH_INT_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : ETH_RST_Pin RADIO_NRST_Pin */
-  GPIO_InitStruct.Pin = ETH_RST_Pin|RADIO_NRST_Pin;
+  /*Configure GPIO pin : SW_ST_Pin */
+  GPIO_InitStruct.Pin = SW_ST_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(SW_ST_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : ALT_ARM_RESET_Pin GPS_RST_Pin RADIO_NRST_Pin */
+  GPIO_InitStruct.Pin = ALT_ARM_RESET_Pin|GPS_RST_Pin|RADIO_NRST_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : GSP_INT1_Pin */
-  GPIO_InitStruct.Pin = GSP_INT1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  /*Configure GPIO pins : GPS_ANT_STATUS_Pin PYRO_2_PG_Pin PYRO_1_PG_Pin RADIO_RF_SW_Pin
+                           RADIO_BUSY_Pin */
+  GPIO_InitStruct.Pin = GPS_ANT_STATUS_Pin|PYRO_2_PG_Pin|PYRO_1_PG_Pin|RADIO_RF_SW_Pin
+                          |RADIO_BUSY_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GSP_INT1_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : GPS_RST_Pin PYRO_2_CTRL_Pin PYRO_1_CTRL_Pin RADIO_CS_Pin */
-  GPIO_InitStruct.Pin = GPS_RST_Pin|PYRO_2_CTRL_Pin|PYRO_1_CTRL_Pin|RADIO_CS_Pin;
+  /*Configure GPIO pins : PYRO_EN_2_Pin PYRO_EN_1_Pin ALT_ARM_SET_Pin PYRO_2_CTRL_Pin
+                           PYRO_1_CTRL_Pin RADIO_CS_Pin */
+  GPIO_InitStruct.Pin = PYRO_EN_2_Pin|PYRO_EN_1_Pin|ALT_ARM_SET_Pin|PYRO_2_CTRL_Pin
+                          |PYRO_1_CTRL_Pin|RADIO_CS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PYRO_2_PG_Pin PYRO_1_PG_Pin RADIO_RF_SW_Pin RADIO_BUSY_Pin */
-  GPIO_InitStruct.Pin = PYRO_2_PG_Pin|PYRO_1_PG_Pin|RADIO_RF_SW_Pin|RADIO_BUSY_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
   /*Configure GPIO pin : RADIO_DIO1_Pin */
