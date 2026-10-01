@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Position } from '@xyflow/react';
 import type { Edge, Node } from '@xyflow/react';
-import { CORNER_GAP, branchFace, junctionEnd, reseatJunctions, runFaces, slideAlong } from './junctions';
+import { branchFace, junctionEnd, reseatJunctions, runFaces, slideAlong } from './junctions';
 import { pathPoints, routeOrthogonal } from './route';
 import type { Along, EndLookup } from './junctions';
 import { insertInline, splitEdgeAt } from './splitEdge';
@@ -101,23 +101,32 @@ describe('a tee that rides its run', () => {
     expect(outOf.waypoints).toEqual([P(230, 30), P(230, 630)]);
   });
 
-  it('is moved off a bend the pipe puts under it, onto the leg it was on', () => {
-    // The pipe's bend used to be further on; now it is right there. A tee on
-    // a bend draws a hook out of one half, so it moves the fourteen pixels it
-    // reaches -- back along the leg it was on -- and on to the grid line past
-    // that. An L, whose bend has one place to be: a Z whose crossbar would
-    // land on the tee is drawn with the crossbar that leaves the tee where it
-    // is instead (pipes.routeOfPipe).
+  it('stays where it is when the pipe brings a bend to it, and turns there as an elbow', () => {
+    // The pipe's bend used to be further on; now it is right there. This
+    // used to say the tee moved the fourteen pixels it reaches, back along
+    // the leg it was on, since a tee on a bend drew a hook out of one half.
+    // A tee may sit on a bend now -- its run faces at right angles, each half
+    // straight into its own face, the bend belonging to neither -- so it
+    // stays where it was put. An L, whose bend has one place to be: a Z
+    // whose crossbar would land on the tee is drawn with the crossbar that
+    // leaves the tee straight instead (pipes.routeOfPipe, and the case after
+    // this one).
     const nodes = [part('A', 0, 0), part('B', 400, 300)];
     const edges: Edge[] = [{ id: 'A-B', source: 'A', sourceHandle: 'r', target: 'B', targetHandle: 't', type: 'smoothstep', data: {} }];
     const split = splitEdgeAt(nodes, edges, 'A-B', P(230, 30), undefined, { a: endOf(nodes[0], 'r')!, b: endOf(nodes[1], 't')! })!;
     expect(centre(split.nodes.find(n => n.id === split.junctionId)!)).toEqual(P(230, 30));
     const moved = split.nodes.map(n => (n.id === 'B' ? { ...n, position: { x: 200, y: 300 } } : n));
     const re = reseatJunctions(moved, split.edges, endOf);
-    expect(230 - CORNER_GAP).toBeGreaterThanOrEqual(210);
-    expect(centre(re.nodes.find(n => n.id === split.junctionId)!)).toEqual(P(210, 30));
-    const outOf = re.edges.find(e => e.source === split.junctionId)!.data as { waypoints?: Pt[] };
-    expect(outOf.waypoints).toEqual([P(230, 30)]);
+    const j = re.nodes.find(n => n.id === split.junctionId)!;
+    expect(centre(j)).toEqual(P(230, 30));
+    expect([alongOf(j).in, alongOf(j).out]).toEqual(['l', 'b']);
+    // Neither half carries the bend: both are straight into the tee's faces.
+    const into = re.edges.find(e => e.target === split.junctionId)!;
+    const outOf = re.edges.find(e => e.source === split.junctionId)!;
+    expect(into.targetHandle).toBe('l');
+    expect(outOf.sourceHandle).toBe('b');
+    expect((outOf.data as { waypoints?: Pt[] }).waypoints).toBeUndefined();
+    expect(reseatJunctions(re.nodes, re.edges, endOf)).toEqual(re);
   });
 
   it('stays where it is when its pipe could bend on it, the crossbar going where it leaves the tee', () => {
