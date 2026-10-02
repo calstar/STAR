@@ -1,6 +1,8 @@
+import type { User } from "@prisma/client";
 import { cache } from "react";
 
 import { prisma } from "@/lib/db";
+import { getCurrentDbUser } from "@/lib/user";
 
 // Global admin allowlist for destructive operations (delete task/project/subteam).
 // This is NOT per-project access control — everyone still views and edits
@@ -50,4 +52,11 @@ export async function isAdmin(email: string | null | undefined): Promise<boolean
 export async function listAdmins(): Promise<{ email: string }[]> {
   const emails = [...(await getAdminEmails())].sort((a, b) => a.localeCompare(b));
   return emails.map((email) => ({ email }));
+}
+
+/** The current viewer, if they are an admin; throws otherwise. For server actions. */
+export async function requireAdmin(): Promise<User> {
+  const user = await getCurrentDbUser();
+  if (!(await isAdmin(user.email))) throw new Error("Forbidden: admins only");
+  return user;
 }
