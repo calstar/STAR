@@ -6,6 +6,9 @@ import { parseMoney } from "@/lib/finance/money";
 
 export const CALLINK_BASE = "https://callink.berkeley.edu";
 
+/** A request's page on CalLink (its id, not the request number it shows). */
+export const callinkRequestUrl = (callinkId: number) => `${CALLINK_BASE}/finance/STAR/requests/purchase/${callinkId}`;
+
 // The scrape's record shape, as far as we read it.
 export type ScrapedRecord = {
   scrapedAt?: string;
