@@ -1,5 +1,6 @@
 // What a reimbursement request file must hold, and the parts of the CalLink form that do
-// not come from it. Shared by submit.mjs (drives the page) and direct.mjs (posts the form).
+// not come from it. Shared by submit.mjs (drives the page), lib/file.mjs (posts the form)
+// and worker.mjs.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -44,15 +45,19 @@ export const DIRECT_DEPOSIT = {
   pending: /will complete the form within 3 business days/i,
 };
 
-const REQUEST_KEYS = ['subject', 'description', 'payee', 'uid', 'email', 'phone', 'expenditureAction',
+export const REQUEST_KEYS = ['subject', 'description', 'payee', 'uid', 'email', 'phone', 'expenditureAction',
   'directDepositSignedUp', 'specialInstructions', 'eventDetails', 'items'];
-const ITEM_KEYS = ['date', 'vendor', 'total', 'comment', 'file'];
+export const ITEM_KEYS = ['date', 'vendor', 'total', 'comment', 'file'];
 
-// Read and check a request file, and fill in what STAR fixes. Throws with every problem
-// at once. Every payee is a UC Berkeley student or staff member, so a UID is required.
+// Read and check a request file. Receipt paths are relative to the file.
 export function loadRequest(specPath) {
   const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
-  const specDir = path.dirname(path.resolve(specPath));
+  return validateRequest(spec, path.dirname(path.resolve(specPath)));
+}
+
+// Check a request and fill in what STAR fixes. Throws with every problem at once.
+// Every payee is a UC Berkeley student or staff member, so a UID is required.
+export function validateRequest(spec, specDir) {
   const problems = [];
   // Fixed answers are not inputs: a file that tries to set one is a mistake, not a choice.
   for (const k of Object.keys(spec)) {
