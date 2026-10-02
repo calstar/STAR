@@ -113,7 +113,7 @@ export type FinanceDetail = DetailDto<{
   approvedAmountCents: number | null;
   events: FinanceEvent[];
   /** What this viewer may do; the actions check again on the server. */
-  can: { seePii: boolean; approve: boolean; reject: boolean; retry: boolean; cancel: boolean };
+  can: { seePii: boolean; approve: boolean; reject: boolean; retry: boolean; cancel: boolean; resolve: boolean };
 }>;
 
 export async function getFinanceDetail(number: number, viewer: Viewer): Promise<FinanceDetail | null> {
@@ -204,6 +204,7 @@ export async function getFinanceDetail(number: number, viewer: Viewer): Promise<
       cancel:
         (viewer.isAdmin && ["pending_approval", "approved", "failed"].includes(r.status)) ||
         (owner && r.status === "pending_approval"),
+      resolve: viewer.isAdmin && r.status === "submitting" && r.needsCheck,
     },
     pii,
     items,

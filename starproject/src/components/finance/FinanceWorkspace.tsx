@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ReimbursementActions } from "@/components/finance/ReimbursementActions";
 import { ReimbursementDetail } from "@/components/finance/ReimbursementDetail";
 import { ReimbursementTable } from "@/components/finance/ReimbursementTable";
 import { Modal } from "@/components/Modal";
@@ -30,6 +31,8 @@ export function FinanceWorkspace({ rows, admin }: { rows: FinanceRow[]; admin: b
   const [open, setOpen] = useState<number | null>(null);
   const [data, setData] = useState<FinanceDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  // Bumps to re-fetch the open reimbursement after an action in the card.
+  const [nonce, setNonce] = useState(0);
   const reqId = useRef(0);
 
   const statuses = useMemo(() => {
@@ -84,7 +87,7 @@ export function FinanceWorkspace({ rows, admin }: { rows: FinanceRow[]; admin: b
       setData(d);
       setLoading(false);
     });
-  }, [open]);
+  }, [open, nonce]);
 
   // Keep the table current after anything done in the card.
   useEffect(() => {
@@ -138,7 +141,18 @@ export function FinanceWorkspace({ rows, admin }: { rows: FinanceRow[]; admin: b
       {open != null && (
         <Modal onClose={close}>
           {data ? (
-            <ReimbursementDetail data={data} />
+            <ReimbursementDetail
+              data={data}
+              actions={
+                <ReimbursementActions
+                  data={data}
+                  onChanged={() => {
+                    setNonce((n) => n + 1);
+                    router.refresh();
+                  }}
+                />
+              }
+            />
           ) : (
             <div className="py-16 text-center text-sm text-neutral-500 dark:text-neutral-400">
               {loading ? "Loading…" : "Reimbursement not found."}
