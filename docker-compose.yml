@@ -418,6 +418,38 @@ services:
   # daq-server/deploy/systemd/. Caddy proxies to them on the host; the routes
   # are in deploy/caddy/Caddyfile.
 
+  # ── Server analytics agent ───────────────────────────────────────────────
+  # Samples this box and pushes to the hub on the EC2 box
+  # (analytics.starberkeley.org/api/ingest), which serves the panel. Read-only
+  # views of the host only: /proc, /, the cgroup tree, the Docker socket,
+  # auto-update's state file, and the journal -- the DAQ server runs natively
+  # under systemd user units (sensor-*), so its logs are there, not in Docker.
+  # Idles until ANALYTICS_APPS_TOKEN is set. See server-analytics/README.md.
+  analytics-agent:
+    image: ghcr.io/calstar/star-analytics:${STAR_IMAGE_TAG:-latest}
+    build:
+      context: ./server-analytics
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["agent"]
+    environment:
+      HOST_NAME: apps
+      HUB_URL: ${ANALYTICS_HUB_URL:-https://analytics.starberkeley.org}
+      ANALYTICS_TOKEN: ${ANALYTICS_APPS_TOKEN:-}
+      JOURNAL_DIR: /host/journal
+      JOURNAL_UNIT_PREFIXES: sensor-
+      GOMEMLIMIT: 40MiB
+    volumes:
+      - /proc:/host/proc:ro
+      - /:/host/root:ro
+      - /sys/fs/cgroup:/host/cgroup:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/star-auto-update:/host/auto-update:ro
+      - /var/log/journal:/host/journal:ro
+    mem_limit: 64m
+    memswap_limit: 64m   # == mem_limit -> no swap; OOM this container alone
+    cpus: 0.1
+
   # ── Landing page ─────────────────────────────────────────────────────────
   landing:
     image: ghcr.io/calstar/star-landing:${STAR_IMAGE_TAG:-latest}
