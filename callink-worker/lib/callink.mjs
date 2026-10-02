@@ -50,6 +50,12 @@ export async function getJson(ctx, p) {
   return r.json();
 }
 
+/** When the stored CalLink login runs out (a fixed 24 h from sign-in), or null. */
+export async function sessionExpiresAt(ctx) {
+  const c = (await ctx.cookies()).find(c => c.name === 'App.Login' && /callink\.berkeley\.edu$/.test(c.domain));
+  return c && c.expires > 0 ? new Date(c.expires * 1000) : null;
+}
+
 /** Does the stored session still reach the purchase-request form? */
 export async function sessionAlive(ctx) {
   const r = await get(ctx, FORM_URL);

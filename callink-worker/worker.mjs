@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { starproject } from './lib/api.mjs';
-import { RUNS, brief, listAll, log, openSession, sessionAlive } from './lib/callink.mjs';
+import { RUNS, brief, listAll, log, openSession, sessionAlive, sessionExpiresAt } from './lib/callink.mjs';
 import { MaybeFiled, NotFiled, fileRequest } from './lib/file.mjs';
 import { findByTag } from './lib/match.mjs';
 import { scrapeAll } from './lib/scrape.mjs';
@@ -166,7 +166,12 @@ const idle = ms => new Promise(res => { const t = setTimeout(res, ms); wake = ()
 try {
   while (!stopping) {
     const alive = await sessionAlive(ctx).catch(() => false);
-    await api.heartbeat({ session: alive ? 'ok' : 'expired', lastScrapeAt: state().lastScrapeAt ?? null }).catch(e => log('heartbeat failed:', brief(e)));
+    const expires = alive ? await sessionExpiresAt(ctx) : null;
+    await api.heartbeat({
+      session: alive ? 'ok' : 'expired',
+      sessionExpiresAt: expires?.toISOString() ?? null,
+      lastScrapeAt: state().lastScrapeAt ?? null,
+    }).catch(e => log('heartbeat failed:', brief(e)));
     if (!alive) {
       log('CalLink session expired: run `node session.mjs login` and approve the Duo push');
       if (once) break;

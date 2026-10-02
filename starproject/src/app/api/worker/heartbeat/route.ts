@@ -9,9 +9,14 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const denied = requireWorker(req);
   if (denied) return denied;
-  const body = await jsonBody<{ session?: string; lastScrapeAt?: string | null; note?: string | null }>(req);
+  const body = await jsonBody<{ session?: string; sessionExpiresAt?: string | null; lastScrapeAt?: string | null; note?: string | null }>(req);
   if (body?.session !== "ok" && body?.session !== "expired") {
     return NextResponse.json({ error: 'session must be "ok" or "expired"' }, { status: 400 });
   }
-  return NextResponse.json(await heartbeat({ session: body.session, lastScrapeAt: body.lastScrapeAt, note: body.note }));
+  if (body.sessionExpiresAt != null && Number.isNaN(new Date(body.sessionExpiresAt).getTime())) {
+    return NextResponse.json({ error: "sessionExpiresAt must be a date" }, { status: 400 });
+  }
+  return NextResponse.json(
+    await heartbeat({ session: body.session, sessionExpiresAt: body.sessionExpiresAt, lastScrapeAt: body.lastScrapeAt, note: body.note }),
+  );
 }

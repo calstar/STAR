@@ -394,8 +394,9 @@ model PayeeProfile {
 // last scraped. One row, id "callink".
 model WorkerStatus {
   id           String    @id
-  session      String // ok | expired
-  lastSeenAt   DateTime
-  lastScrapeAt DateTime?
+  session          String // ok | expired
+  sessionExpiresAt DateTime? // CalLink logins last a fixed 24 h from sign-in
+  lastSeenAt       DateTime
+  lastScrapeAt     DateTime?
   note         String?
 }

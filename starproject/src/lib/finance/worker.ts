@@ -293,9 +293,15 @@ export async function importScrape(records: ScrapedRecord[], listedIds?: number[
 
 // ---- heartbeat ----------------------------------------------------------------------
 
-export async function heartbeat(input: { session: "ok" | "expired"; lastScrapeAt?: string | null; note?: string | null }) {
+export async function heartbeat(input: {
+  session: "ok" | "expired";
+  sessionExpiresAt?: string | null;
+  lastScrapeAt?: string | null;
+  note?: string | null;
+}) {
   const data = {
     session: input.session,
+    sessionExpiresAt: input.sessionExpiresAt ? new Date(input.sessionExpiresAt) : null,
     lastSeenAt: new Date(),
     lastScrapeAt: input.lastScrapeAt ? new Date(input.lastScrapeAt) : undefined,
     note: input.note ?? null,

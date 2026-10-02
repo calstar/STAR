@@ -10,6 +10,7 @@ export default async function FinancePage() {
   const viewer = await getViewer();
   const rows = await listFinanceRows(viewer);
   const worker = viewer.isAdmin ? await prisma.workerStatus.findUnique({ where: { id: "callink" } }) : null;
+  const now = Date.now();
   const queued = rows.filter((r) => r.status.key === "approved").length;
 
   return (
@@ -23,39 +24,59 @@ export default async function FinancePage() {
         </div>
         <NewReimbursementButton />
       </div>
-      {viewer.isAdmin && <WorkerBanner worker={worker} queued={queued} />}
+      {viewer.isAdmin && <WorkerBanner worker={worker} queued={queued} now={now} />}
       <FinanceWorkspace rows={rows} admin={viewer.isAdmin} />
     </main>
   );
 }
 
 const STALE_MS = 30 * 60_000;
+const SOON_MS = 2 * 3600_000;
 
-// Admins only: whether callink-worker is alive and signed in to CalLink. Its
-// session needs a Duo approval once a day.
-function WorkerBanner({
-  worker,
-  queued,
-}: {
-  worker: { session: string; lastSeenAt: Date; lastScrapeAt: Date | null } | null;
-  queued: number;
-}) {
-  const seen = worker ? formatWhen(worker.lastSeenAt) : null;
-  let problem: string | null = null;
-  if (!worker) problem = "The CalLink worker hasn't reported in yet.";
-  else if (worker.session === "expired") problem = "The CalLink worker's login has expired. Run its login and approve the Duo push.";
-  else if (Date.now() - worker.lastSeenAt.getTime() > STALE_MS) problem = `The CalLink worker was last seen ${seen}.`;
-  if (!problem && !queued) return null;
+type Worker = { session: string; sessionExpiresAt: Date | null; lastSeenAt: Date; lastScrapeAt: Date | null };
+
+const TONE = {
+  ok: "border-green-200 bg-green-50 text-green-900 dark:border-green-900 dark:bg-green-950 dark:text-green-200",
+  warn: "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200",
+  bad: "border-red-200 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200",
+};
+
+// Admins only: whether callink-worker has a live CalLink session. Logins last a
+// fixed 24 h from sign-in, so this says when it runs out and how to renew it.
+function WorkerBanner({ worker, queued, now }: { worker: Worker | null; queued: number; now: number }) {
+  let tone: keyof typeof TONE;
+  let text: string;
+  let renew = false;
+  const expires = worker?.sessionExpiresAt?.getTime() ?? null;
+  if (!worker) {
+    tone = "warn";
+    text = "The CalLink worker hasn't reported in yet.";
+  } else if (now - worker.lastSeenAt.getTime() > STALE_MS) {
+    tone = "warn";
+    text = `The CalLink worker was last seen ${formatWhen(worker.lastSeenAt)}; its session status may be out of date.`;
+  } else if (worker.session !== "ok" || (expires != null && expires <= now)) {
+    tone = "bad";
+    text = "CalLink session: needs a new login.";
+    renew = true;
+  } else if (expires != null && expires - now < SOON_MS) {
+    tone = "warn";
+    text = `CalLink session: signed in, but it runs out at ${formatWhen(new Date(expires))}.`;
+    renew = true;
+  } else {
+    tone = "ok";
+    text = expires != null ? `CalLink session: signed in until ${formatWhen(new Date(expires))}.` : "CalLink session: signed in.";
+  }
   return (
-    <p
-      className={`mb-4 rounded-lg border p-3 text-sm ${
-        problem
-          ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
-          : "border-neutral-200 bg-white text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300"
-      }`}
-    >
-      {problem ?? `CalLink worker signed in (last seen ${seen}).`}
-      {queued > 0 && ` ${queued} approved request${queued > 1 ? "s" : ""} waiting to be filed.`}
-    </p>
+    <div className={`mb-4 rounded-lg border p-3 text-sm ${TONE[tone]}`}>
+      <p>
+        {text}
+        {queued > 0 && ` ${queued} approved request${queued > 1 ? "s" : ""} waiting to be filed.`}
+      </p>
+      {renew && (
+        <p className="mt-1 text-xs">
+          On the server: <code className="rounded bg-black/5 px-1 dark:bg-white/10">docker compose exec callink-worker node session.mjs login</code>, then approve the Duo push.
+        </p>
+      )}
+    </div>
   );
 }
