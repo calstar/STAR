@@ -1,0 +1,71 @@
+import { describe, expect, it } from "vitest";
+
+import { toCallinkDate, toWorkerRequest } from "@/lib/finance/serialize";
+
+const ours = () => ({
+  number: 42,
+  subject: "Motor casings",
+  description: null,
+  eventDetails: null,
+  specialInstructions: "",
+  expenditureAction: "Direct Deposit",
+  directDepositSignedUp: true,
+  payeeFirstName: "Ada",
+  payeeLastName: "Lovelace",
+  payeeEmail: "ada@berkeley.edu",
+  pii: { street: "1 Analytical Way", street2: null, city: "Berkeley", state: "CA", zip: "94704", phone: "5105550100", uid: "7654321" },
+  items: [
+    { position: 2, date: "2026-10-02", vendor: "Swagelok", amountCents: 2345, comment: null, receipts: [{ id: "rb", fileName: "swage lok.pdf" }] },
+    { position: 1, date: "2026-09-30", vendor: "McMaster-Carr", amountCents: 10000, comment: "tax incl.", receipts: [{ id: "ra", fileName: "../mc.pdf" }] },
+  ],
+});
+
+// The keys callink-worker/request.mjs accepts; anything else makes it refuse the file.
+const REQUEST_KEYS = ["subject", "description", "payee", "uid", "email", "phone", "expenditureAction",
+  "directDepositSignedUp", "specialInstructions", "eventDetails", "items"];
+const ITEM_KEYS = ["date", "vendor", "total", "comment", "file"];
+
+describe("toWorkerRequest", () => {
+  const { request, receipts } = toWorkerRequest(ours());
+
+  it("tags the subject so the filing can be found on CalLink", () => {
+    expect(request.subject).toBe("Motor casings [STAR R-42]");
+  });
+
+  it("uses only keys the worker accepts", () => {
+    const json = JSON.parse(JSON.stringify(request));
+    for (const k of Object.keys(json)) expect(REQUEST_KEYS).toContain(k);
+    for (const it of json.items) for (const k of Object.keys(it)) expect(ITEM_KEYS).toContain(k);
+  });
+
+  it("orders items, formats dates and totals, and names files uniquely", () => {
+    expect(request.items).toEqual([
+      { date: "09/30/2026", vendor: "McMaster-Carr", total: "100.00", comment: "tax incl.", file: "1-mc.pdf" },
+      { date: "10/02/2026", vendor: "Swagelok", total: "23.45", comment: undefined, file: "2-swage lok.pdf" },
+    ]);
+    expect(receipts).toEqual([
+      { receiptId: "ra", fileName: "1-mc.pdf" },
+      { receiptId: "rb", fileName: "2-swage lok.pdf" },
+    ]);
+  });
+
+  it("drops empty optional answers", () => {
+    expect(request.specialInstructions).toBeUndefined();
+    expect(request.description).toBeUndefined();
+  });
+
+  it("refuses to build a request CalLink would reject", () => {
+    expect(() => toWorkerRequest({ ...ours(), pii: null })).toThrow(/address/);
+    expect(() => toWorkerRequest({ ...ours(), pii: { ...ours().pii, uid: null } })).toThrow(/UID/);
+    const twoFiles = ours();
+    twoFiles.items[0].receipts.push({ id: "rc", fileName: "x.pdf" });
+    expect(() => toWorkerRequest(twoFiles)).toThrow(/exactly one receipt/);
+  });
+});
+
+describe("toCallinkDate", () => {
+  it("converts and refuses junk", () => {
+    expect(toCallinkDate("2026-01-05")).toBe("01/05/2026");
+    expect(() => toCallinkDate("1/5/2026")).toThrow();
+  });
+});
