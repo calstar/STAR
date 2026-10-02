@@ -166,3 +166,40 @@ rest and rejects a request file that tries to set a fixed answer.
 Request file shape: `subject, description, payee{firstName, lastName, street, street2,
 city, state, zip}, uid, email, phone, expenditureAction?, directDepositSignedUp?,
 specialInstructions?, eventDetails?, items[{date, vendor, total, comment?, file}]`.
+
+## The system (built 2026-10-02)
+
+```
+member ──form──▶ STARProject /finance ──admin approves──▶ queue
+                     ▲   (Postgres: requests, PII, receipts)    │
+                     │                                          ▼
+   nightly scrape ───┴──── callink-worker ◀──claim/report── /api/worker/* (bearer token)
+   (all of CalLink)           │  files on CalLink (plain HTTP, tagged [STAR R-n])
+                              ▼
+                           CalLink
+```
+
+- **STARProject** (`starproject/src/lib/finance/`, `src/app/finance`, `src/app/api/finance`,
+  `src/app/api/worker`): the Finance tab lists every request (CalLink's history plus ours),
+  the detail card hides address/phone/UID/receipts from everyone but the payee, the filer
+  and admins, the form files to `pending_approval`, admins approve/reject/retry.
+- **callink-worker** (`worker.mjs`, `lib/`): claims approved requests, files them, reports
+  the CalLink id; scrapes and pushes CalLink nightly (`push.mjs` for the first import).
+  Runs as the `callink-worker` service in `deploy/ec2/docker-compose.yml`, dry until
+  `CALLINK_WORKER_FLAGS=--live`.
+
+How a request is never filed twice:
+
+1. The subject carries `[STAR R-n]`. Before posting, the worker looks for that tag on
+   CalLink and reports "filed" if it is already there.
+2. A journal entry is written before the final POST. A crash leaves it at `posting`;
+   the next start reports "maybe filed", which parks the request as **Needs check** for
+   an admin (who looks on CalLink and picks "It's on CalLink" or "queue again").
+3. A claim's lease that runs out comes back as a *reconcile* job (look for the tag), never
+   as a fresh filing.
+4. The scrape links any CalLink request carrying our tag to its STARProject row and marks
+   it filed, even if we had it as failed or re-queued.
+
+Deletions: CalLink's list omits deleted requests, so the scrape's last batch sends every
+listed id and rows no longer listed are marked deleted, unless that would mark more than
+10 (or 5%) at once, which means a broken scrape, not a purge.
