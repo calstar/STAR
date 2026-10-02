@@ -11,6 +11,12 @@ test('finds the request just filed', () => {
   assert.equal(findNewRequest(rows, { subject, totalCents: 1234, since })?.id, 3);
 });
 
+test("copes with CalLink stamping Eastern time as UTC", () => {
+  // Filed 12:00:00Z; CalLink's list said 07:59:59+00:00 (seen 2026-10-02).
+  const rows = [row(1892418, subject, 1.0, '2026-10-02T07:59:59+00:00')];
+  assert.equal(findNewRequest(rows, { subject, totalCents: 100, since: new Date('2026-10-02T11:59:58Z') })?.id, 1892418);
+});
+
 test('needs the amount and the time to agree too', () => {
   assert.equal(findNewRequest([row(3, subject, 99, '2026-10-02T10:00:05Z')], { subject, totalCents: 1234, since }), null);
   assert.equal(findNewRequest([row(3, subject, 12.34, '2026-09-01T00:00:00Z')], { subject, totalCents: 1234, since }), null);

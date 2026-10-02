@@ -90,7 +90,9 @@ All read-only, with the session's cookies:
 `callink-worker/scrape.mjs` uses these. Quirks of the form it handles: items 2–6 label
 their upload "Upload Item #N file here", item 3's date question is spelt "Iterm #3",
 totals are typed with or without `$` and `,`. CalLink sometimes stalls a request for
-30 s; a retry answers at once.
+30 s; a retry answers at once. The list's `submittedOn` is Eastern time labelled `+00:00`
+(a request filed at 12:00Z lists as `07:59:59+00:00`); the detail API's dates carry the
+right offset.
 
 What the data is like (735 requests, 2018-01 to 2026-09):
 
