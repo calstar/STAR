@@ -11,10 +11,10 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { readEnv } from './lib/env.mjs';
 
 const FORM_URL = 'https://callink.berkeley.edu/actionCenter/organization/star/Finance/CreatePurchaseRequest';
 const PROFILE = process.env.CALLINK_PROFILE ?? path.join(os.homedir(), '.local/share/star/callink-profile');
-const ENV_FILE = process.env.CALLINK_ENV ?? path.join(os.homedir(), '.config/star/callink.env');
 const OUT = process.env.CALLINK_OUT ?? path.join(os.homedir(), '.local/share/star/callink-runs');
 const DUO_WAIT_MS = 120_000;
 
@@ -28,16 +28,6 @@ const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const shot = (page, name) => page.screenshot({ path: path.join(OUT, `${stamp}-${name}.png`), fullPage: true });
 
-function readCreds() {
-  const st = fs.statSync(ENV_FILE);
-  if (st.mode & 0o077) throw new Error(`${ENV_FILE} is readable by others; chmod 600 it`);
-  const env = Object.fromEntries(
-    fs.readFileSync(ENV_FILE, 'utf8').split('\n')
-      .map(l => l.match(/^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/)).filter(Boolean).map(m => [m[1], m[2]]),
-  );
-  if (!env.CALNET_USERNAME || !env.CALNET_PASSWORD) throw new Error(`${ENV_FILE} needs CALNET_USERNAME and CALNET_PASSWORD`);
-  return env;
-}
 
 const onCallink = page => new URL(page.url()).hostname === 'callink.berkeley.edu';
 
@@ -55,7 +45,7 @@ try {
   await page.goto(FORM_URL, { waitUntil: 'networkidle' });
 
   if (!onCallink(page) && mode === 'login') {
-    const { CALNET_USERNAME, CALNET_PASSWORD } = readCreds();
+    const { CALNET_USERNAME, CALNET_PASSWORD } = readEnv(['CALNET_USERNAME', 'CALNET_PASSWORD']);
     await page.fill('#username', CALNET_USERNAME);
     await page.fill('#password', CALNET_PASSWORD);
     await Promise.all([page.waitForLoadState('networkidle'), page.click('#submitBtn')]);
