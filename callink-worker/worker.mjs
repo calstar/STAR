@@ -8,6 +8,7 @@
 // Never files anything twice. Before posting it looks for the request's [STAR R-n] tag
 // on CalLink; a journal entry written before the final POST means a crash at any point
 // is reported honestly on restart ("maybe filed" goes to an admin, not back in the queue).
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,6 +24,7 @@ const once = process.argv.includes('--once');
 const POLL_MS = 60_000;
 const EXPIRED_POLL_MS = 5 * 60_000;
 const SCRAPE_EVERY_MS = 24 * 3600_000;
+const LOGIN_POLL_MS = 10_000;
 
 // Deployed before it's configured (auto-deploy brings up the whole stack), it waits
 // rather than crash-looping under `restart: unless-stopped`.
@@ -144,6 +146,45 @@ async function file(ctx, claimed) {
   }
 }
 
+// ---- the admin "Sign in to CalLink" button --------------------------------------------
+
+/** Run `session.mjs login --fresh` (the same sign-in as by hand over SSH) and tell
+ * STARProject how it goes. The browser profile is one process's at a time, so the
+ * caller closes its session first and reopens it after. */
+function signIn() {
+  return new Promise(resolve => {
+    const child = spawn(process.execPath, [path.join(import.meta.dirname, 'session.mjs'), 'login', '--fresh'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let last = '';
+    const onLine = line => {
+      if (!line.trim()) return;
+      console.log(line);
+      last = line.replace(/^\S+Z /, '');
+      if (/approve the Duo push/.test(line)) api.reportLogin('waiting_duo').catch(e => log('login report failed:', brief(e)));
+    };
+    for (const stream of [child.stdout, child.stderr]) {
+      let buf = '';
+      stream.on('data', d => {
+        buf += d;
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        lines.forEach(onLine);
+      });
+    }
+    child.on('close', code => resolve(code === 0 ? { ok: true } : { ok: false, note: /stuck at|did not reach/.test(last) ? 'Duo was not approved in time' : last }));
+  });
+}
+
+async function loginIfAsked() {
+  if (!(await api.loginRequested().catch(e => { log('login poll failed:', brief(e)); return false; }))) return false;
+  log('an admin asked for a CalLink sign-in');
+  await ctx.close();
+  const res = await signIn();
+  ctx = await openSession();
+  log(`sign-in ${res.ok ? 'succeeded' : `failed: ${res.note}`}`);
+  await api.reportLogin(res.ok ? 'ok' : 'failed', res.note).catch(e => log('login report failed:', brief(e)));
+  return true;
+}
+
 // ---- the loop -----------------------------------------------------------------------------
 
 async function scrapeAndPush(ctx) {
@@ -156,15 +197,23 @@ async function scrapeAndPush(ctx) {
 
 log(`worker starting (${live ? 'LIVE: files on CalLink' : 'dry run'}${once ? ', one pass' : ''})`);
 await replayJournal();
-const ctx = await openSession();
+let ctx = await openSession();
 let stopping = false;
 let wake = () => {};
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { stopping = true; wake(); log(`${sig}: finishing the current step`); });
-// Wait between polls, but stop waiting the moment we're asked to stop.
-const idle = ms => new Promise(res => { const t = setTimeout(res, ms); wake = () => { clearTimeout(t); res(); }; });
+const nap = ms => new Promise(res => { const t = setTimeout(res, ms); wake = () => { clearTimeout(t); res(); }; });
+// Wait between polls, but stop waiting the moment we're asked to stop, and answer a
+// sign-in request within seconds (then go round the loop at once to report it).
+async function idle(ms) {
+  for (const end = Date.now() + ms; !stopping && Date.now() < end; ) {
+    await nap(Math.min(LOGIN_POLL_MS, end - Date.now()));
+    if (!stopping && !once && (await loginIfAsked())) return;
+  }
+}
 
 try {
   while (!stopping) {
+    if (!once) await loginIfAsked();
     const alive = await sessionAlive(ctx).catch(() => false);
     const expires = alive ? await sessionExpiresAt(ctx) : null;
     await api.heartbeat({
@@ -173,7 +222,7 @@ try {
       lastScrapeAt: state().lastScrapeAt ?? null,
     }).catch(e => log('heartbeat failed:', brief(e)));
     if (!alive) {
-      log('CalLink session expired: run `node session.mjs login` and approve the Duo push');
+      log('CalLink session expired: press "Sign in to CalLink" on /finance (or run `node session.mjs login`) and approve the Duo push');
       if (once) break;
       await idle(EXPIRED_POLL_MS);
       continue;

@@ -91,13 +91,15 @@ Pause it any time with `sudo systemctl disable --now star-auto-update.timer`;
 
 `callink-worker` files approved reimbursements from STARProject's Finance tab on
 CalLink, and pushes CalLink's request history back every night. It signs in as a
-CalNet account, so CalLink's session needs a Duo approval roughly once a day; when
-it lapses, admins see "CalLink login needed" on /finance.
+CalNet account, so CalLink's session needs a Duo approval roughly once a day. Admins
+see on /finance when it runs out, and its **Sign in to CalLink** button has the worker
+sign in: Duo pushes to the account owner's phone, and approving it renews the 24 h.
+A press the worker doesn't take up within 2 minutes lapses, so no push arrives late.
 
 ```bash
 # one-time: STARPROJECT_WORKER_TOKEN and CALLINK_CALNET_* in .env, then
 docker compose up -d starproject callink-worker
-docker compose exec callink-worker node session.mjs login    # approve the Duo push
+docker compose exec callink-worker node session.mjs login    # or the button on /finance; approve the Duo push
 docker compose exec callink-worker node push.mjs             # first import of CalLink's history
 docker compose logs -f callink-worker
 ```

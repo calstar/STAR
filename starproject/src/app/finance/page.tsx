@@ -1,7 +1,9 @@
 import { PAGE_CONTAINER } from "@/components/EntityRow";
+import { CallinkLoginButton } from "@/components/finance/CallinkLoginButton";
 import { FinanceWorkspace, NewReimbursementButton } from "@/components/finance/FinanceWorkspace";
 import { prisma } from "@/lib/db";
 import { formatWhen } from "@/lib/finance/dates";
+import { loginView, type LoginStatus } from "@/lib/finance/login";
 import { listFinanceRows, getViewer } from "@/lib/finance/queries";
 
 export const dynamic = "force-dynamic";
@@ -33,7 +35,7 @@ export default async function FinancePage() {
 const STALE_MS = 30 * 60_000;
 const SOON_MS = 2 * 3600_000;
 
-type Worker = { session: string; sessionExpiresAt: Date | null; lastSeenAt: Date; lastScrapeAt: Date | null };
+type Worker = LoginStatus & { session: string; sessionExpiresAt: Date | null; lastSeenAt: Date; lastScrapeAt: Date | null };
 
 const TONE = {
   ok: "border-green-200 bg-green-50 text-green-900 dark:border-green-900 dark:bg-green-950 dark:text-green-200",
@@ -42,7 +44,8 @@ const TONE = {
 };
 
 // Admins only: whether callink-worker has a live CalLink session. Logins last a
-// fixed 24 h from sign-in, so this says when it runs out and how to renew it.
+// fixed 24 h from sign-in, so this says when it runs out, and the button renews it
+// (the worker signs in and Duo pushes to the CalNet account owner's phone).
 function WorkerBanner({ worker, queued, now }: { worker: Worker | null; queued: number; now: number }) {
   let tone: keyof typeof TONE;
   let text: string;
@@ -66,17 +69,21 @@ function WorkerBanner({ worker, queued, now }: { worker: Worker | null; queued: 
     tone = "ok";
     text = expires != null ? `CalLink session: signed in until ${formatWhen(new Date(expires))}.` : "CalLink session: signed in.";
   }
+  const login = loginView(worker, now);
+  if (login.kind === "busy") tone = "warn";
+  // A sign-in that finished in the last 10 minutes is worth mentioning.
+  const recent = login.kind === "done" && now - login.at.getTime() < 10 * 60_000;
   return (
-    <div className={`mb-4 rounded-lg border p-3 text-sm ${TONE[tone]}`}>
-      <p>
-        {text}
-        {queued > 0 && ` ${queued} approved request${queued > 1 ? "s" : ""} waiting to be filed.`}
-      </p>
-      {renew && (
-        <p className="mt-1 text-xs">
-          On the server: <code className="rounded bg-black/5 px-1 dark:bg-white/10">docker compose exec callink-worker node session.mjs login</code>, then approve the Duo push.
+    <div className={`mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 text-sm ${TONE[tone]}`}>
+      <div>
+        <p>
+          {text}
+          {queued > 0 && ` ${queued} approved request${queued > 1 ? "s" : ""} waiting to be filed.`}
         </p>
-      )}
+        {login.kind === "busy" && <p className="mt-1 font-medium">{login.text}</p>}
+        {recent && <p className="mt-1 text-xs">Last sign-in ({formatWhen(login.at)}): {login.text}</p>}
+      </div>
+      {worker && <CallinkLoginButton busy={login.kind === "busy"} label={renew ? "Sign in to CalLink" : "Renew CalLink login"} />}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
+import { canRequestLogin } from "@/lib/finance/login";
 import { getFinanceDetail, getViewer, type FinanceDetail } from "@/lib/finance/queries";
 import { canTransition, type Actor } from "@/lib/finance/status";
 import { getCurrentDbUser } from "@/lib/user";
@@ -88,4 +89,20 @@ export async function resolveNeedsCheck(id: string, filed: boolean): Promise<Res
     { needsCheck: false, leaseUntil: null, lastError: null },
     (r) => (!admin ? "Admins only." : r.status !== "submitting" || !r.needsCheck ? "This doesn't need checking." : null),
   );
+}
+
+/** Admins: ask callink-worker to sign in to CalLink, which sends the Duo push. */
+export async function requestCallinkLogin(): Promise<Result> {
+  const user = await getCurrentDbUser();
+  if (!(await isAdmin(user.email))) return { error: "Admins only." };
+  const now = new Date();
+  const status = await prisma.workerStatus.findUnique({ where: { id: "callink" } });
+  if (!status) return { error: "The CalLink worker hasn't reported in yet, so nothing would pick this up." };
+  if (!canRequestLogin(status, now.getTime())) return { error: "A sign-in is already under way." };
+  await prisma.workerStatus.update({
+    where: { id: "callink" },
+    data: { loginState: "requested", loginRequestedAt: now, loginRequestedBy: user.email, loginUpdatedAt: now, loginNote: null },
+  });
+  revalidatePath("/finance");
+  return { ok: true };
 }

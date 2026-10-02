@@ -73,6 +73,13 @@ persistent and expire a fixed 24 h after sign-in, so the profile survives restar
 one Duo approval a day keeps the worker signed in. `session.mjs check` records whether
 the stored session still reaches the form.
 
+The /finance banner's **Sign in to CalLink** button (admins) runs the same sign-in from
+the worker: STARProject marks a request (`WorkerStatus.loginState = requested`), the
+worker polls `GET /api/worker/login` every 10 s, takes it once, and runs
+`session.mjs login --fresh`, reporting `waiting_duo` then `ok`/`failed`. `--fresh` sets
+CalLink's own cookies aside so a still-live session is renewed too, and puts them back if
+the new sign-in fails. Requests not taken within 2 minutes lapse.
+
 ## Reading requests (no HTML scraping of the app)
 
 All read-only, with the session's cookies:

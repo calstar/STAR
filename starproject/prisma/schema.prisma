@@ -3,7 +3,7 @@
 // control, gives "my tasks" later). Blockers are display-only edges.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   // native = local dev; debian-openssl-3.0.x = the node:22-bookworm-slim runtime
   // image. Prisma needs the matching query engine for wherever the client runs.
   binaryTargets = ["native", "debian-openssl-3.0.x"]
@@ -29,20 +29,20 @@ enum TaskPriority {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?  // from the auth header; overwritten on every request
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String? // from the auth header; overwritten on every request
   displayName String? // user-chosen override; if set, shown instead of `name`
-  createdAt DateTime @default(now())
+  createdAt   DateTime @default(now())
 
-  createdProjects Project[] @relation("ProjectCreatedBy")
-  createdTasks    Task[]    @relation("TaskCreatedBy")
-  assignedTasks   Task[]    @relation("TaskAssignee")
-  activities      Activity[] @relation("ActivityActor")
-  settings        UserSettings?
-  digestSubscriptions DigestSubscription[]
-  emailQueue      EmailQueueItem[]
-  payeeProfile    PayeeProfile?
+  createdProjects        Project[]            @relation("ProjectCreatedBy")
+  createdTasks           Task[]               @relation("TaskCreatedBy")
+  assignedTasks          Task[]               @relation("TaskAssignee")
+  activities             Activity[]           @relation("ActivityActor")
+  settings               UserSettings?
+  digestSubscriptions    DigestSubscription[]
+  emailQueue             EmailQueueItem[]
+  payeeProfile           PayeeProfile?
   createdReimbursements  Reimbursement[]      @relation("ReimbursementCreatedBy")
   approvedReimbursements Reimbursement[]      @relation("ReimbursementApprovedBy")
   reimbursementEvents    ReimbursementEvent[] @relation("ReimbursementEventActor")
@@ -135,7 +135,7 @@ model Task {
   subteam     Subteam?      @relation(fields: [subteamId], references: [id])
   title       String
   description String?
-  blockedNote String?       // free-text "why is this blocked" comment (auto-saved, like description)
+  blockedNote String? // free-text "why is this blocked" comment (auto-saved, like description)
   status      TaskStatus    @default(backlog)
   priority    TaskPriority?
   assignees   User[]        @relation("TaskAssignee")
@@ -148,8 +148,8 @@ model Task {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
-  blockedBy TaskBlocker[] @relation("BlockedTask") // tasks blocking THIS one
-  blocking  TaskBlocker[] @relation("BlockerTask") // tasks THIS one blocks
+  blockedBy  TaskBlocker[] @relation("BlockedTask") // tasks blocking THIS one
+  blocking   TaskBlocker[] @relation("BlockerTask") // tasks THIS one blocks
   activities Activity[]
 
   @@index([projectId, status])
@@ -393,10 +393,16 @@ model PayeeProfile {
 // The worker's last report: whether its CalLink session is alive and when it
 // last scraped. One row, id "callink".
 model WorkerStatus {
-  id           String    @id
+  id               String    @id
   session          String // ok | expired
   sessionExpiresAt DateTime? // CalLink logins last a fixed 24 h from sign-in
   lastSeenAt       DateTime
   lastScrapeAt     DateTime?
-  note         String?
+  note             String?
+  // An admin's "Sign in to CalLink" button: requested → running → waiting_duo → ok | failed.
+  loginState       String?
+  loginRequestedAt DateTime?
+  loginRequestedBy String?
+  loginUpdatedAt   DateTime?
+  loginNote        String?
 }

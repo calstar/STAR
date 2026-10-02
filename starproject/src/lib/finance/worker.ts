@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/db";
 import { mapScrapedRecord, subjectTag, type MappedRequest, type ScrapedRecord } from "@/lib/finance/callink-import";
+import { LOGIN_PICKUP_MS } from "@/lib/finance/login";
 import { toWorkerRequest, type WorkerRequest } from "@/lib/finance/serialize";
 
 // What the worker API does. callink-worker is the only caller (token-gated in
@@ -309,4 +310,25 @@ export async function heartbeat(input: {
   await prisma.workerStatus.upsert({ where: { id: "callink" }, create: { id: "callink", ...data }, update: data });
   const queued = await prisma.reimbursement.count({ where: { status: "approved" } });
   return { queued };
+}
+
+// ---- the admin "Sign in to CalLink" button ---------------------------------------------
+
+/** The worker's poll: is there a fresh sign-in request? Takes it, so it runs once. */
+export async function takeLoginRequest(): Promise<boolean> {
+  const now = new Date();
+  const taken = await prisma.workerStatus.updateMany({
+    where: { id: "callink", loginState: "requested", loginRequestedAt: { gt: new Date(now.getTime() - LOGIN_PICKUP_MS) } },
+    data: { loginState: "running", loginUpdatedAt: now, loginNote: null },
+  });
+  return taken.count === 1;
+}
+
+/** The worker reports how the sign-in it took is going. */
+export async function reportLogin(state: "waiting_duo" | "ok" | "failed", note?: string | null) {
+  const updated = await prisma.workerStatus.updateMany({
+    where: { id: "callink", loginState: { in: ["running", "waiting_duo"] } },
+    data: { loginState: state, loginUpdatedAt: new Date(), loginNote: note?.slice(0, 500) ?? null },
+  });
+  return { updated: updated.count };
 }

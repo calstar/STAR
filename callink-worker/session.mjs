@@ -2,6 +2,8 @@
 // and report whether the stored session still reaches the CalLink form.
 //
 //   node session.mjs login   # sign in if needed; waits for you to approve the Duo push
+//   node session.mjs login --fresh  # sign in again even if signed in (renews the 24 h);
+//                                   # keeps the old session if the new sign-in fails
 //   node session.mjs check   # no sign-in; appends ok/expired to the session log
 //
 // Credentials come from $CALLINK_ENV (default ~/.config/star/callink.env):
@@ -17,6 +19,7 @@ const FORM_URL = 'https://callink.berkeley.edu/actionCenter/organization/star/Fi
 const DUO_WAIT_MS = 120_000;
 
 const mode = process.argv[2];
+const fresh = process.argv.includes('--fresh');
 if (!['login', 'check'].includes(mode)) {
   console.error('usage: node session.mjs login|check');
   process.exit(2);
@@ -39,7 +42,14 @@ const page = ctx.pages()[0] ?? (await ctx.newPage());
 page.on('framenavigated', f => { if (f === page.mainFrame()) log('nav', f.url().split('?')[0]); });
 
 let status = 'expired';
+const isCallink = c => /(^|\.)callink\.berkeley\.edu$/.test(c.domain);
+const previous = fresh && mode === 'login' ? (await ctx.cookies()).filter(isCallink) : [];
 try {
+  if (previous.length) {
+    // Drop only CalLink's own cookies, so it asks CalNet for a new 24 h login.
+    log('fresh: setting the current CalLink session aside');
+    await ctx.clearCookies({ domain: /callink\.berkeley\.edu$/ });
+  }
   await page.goto(FORM_URL, { waitUntil: 'networkidle' });
 
   if (!onCallink(page) && mode === 'login') {
@@ -83,6 +93,11 @@ try {
     log('cookie', c.domain, c.name, 'expires', exp);
   }
 } finally {
+  if (previous.length && status !== 'ok') {
+    log('fresh sign-in failed; putting the previous session back');
+    await ctx.clearCookies({ domain: /callink\.berkeley\.edu$/ }).catch(() => {});
+    await ctx.addCookies(previous).catch(e => log('could not restore it:', e.message));
+  }
   fs.appendFileSync(path.join(OUT, 'session.log'), `${new Date().toISOString()} ${mode} ${status}\n`);
   log('status', status);
   await ctx.close();
