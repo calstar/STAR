@@ -62,7 +62,7 @@ export function ReimbursementDetail({
       <div className="mt-3 flex flex-wrap items-center gap-3 pr-10">
         <span className="text-2xl font-semibold text-neutral-400 dark:text-neutral-500">R-{d.number}</span>
         <h2 className="text-xl font-semibold">{d.subject}</h2>
-        <StatusPill {...d.display} />
+        <StatusPill label={d.display.label} tone={d.display.tone} />
       </div>
       <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
         {d.createdBy ? `Filed by ${d.createdBy} · ${when(d.createdAt)}` : d.submittedOn ? `Submitted ${when(d.submittedOn)}` : null}
@@ -168,17 +168,21 @@ export function ReimbursementDetail({
                   <span className="ml-2 text-xs text-neutral-500 dark:text-neutral-400">{itemDate(i.date)}</span>
                   {i.comment && <span className="block text-xs text-neutral-500 dark:text-neutral-400">{i.comment}</span>}
                   {i.receipts ? (
-                    i.receipts.map((f) => (
-                      <a
-                        key={f.id}
-                        href={f.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mr-3 block text-xs text-blue-700 underline hover:no-underline dark:text-blue-300 sm:inline"
-                      >
-                        {f.fileName}
-                      </a>
-                    ))
+                    i.receipts.length > 0 && (
+                      <span className="mt-0.5 flex flex-wrap gap-x-3 text-xs">
+                        {i.receipts.map((f) => (
+                          <a
+                            key={f.id}
+                            href={f.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-blue-700 underline hover:no-underline dark:text-blue-300"
+                          >
+                            {f.fileName}
+                          </a>
+                        ))}
+                      </span>
+                    )
                   ) : i.receiptCount > 0 ? (
                     <span className="block text-xs text-neutral-400">
                       {i.receiptCount} receipt{i.receiptCount > 1 ? "s" : ""} (hidden)

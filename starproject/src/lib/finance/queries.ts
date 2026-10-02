@@ -210,3 +210,85 @@ export async function getFinanceDetail(number: number, viewer: Viewer): Promise<
   };
   return redact(detail, allowed);
 }
+
+export type ProfileDefaults = {
+  firstName: string;
+  lastName: string;
+  street: string;
+  street2: string;
+  city: string;
+  state: string;
+  zip: string;
+  phone: string;
+  uid: string;
+  email: string;
+  directDepositSignedUp: boolean;
+};
+
+/**
+ * What the form starts with: the member's saved payee profile; failing that,
+ * the payee details on their newest CalLink request (matched on the signed-in
+ * account's email only, so nobody is shown another member's details); failing
+ * that, just their account email.
+ */
+export async function getProfileDefaults(
+  user: { id: string; email: string; name: string | null },
+): Promise<{ values: ProfileDefaults; seededFrom: string | null; saved: boolean }> {
+  const email = user.email.toLowerCase();
+  const saved = await prisma.payeeProfile.findUnique({ where: { userId: user.id } });
+  if (saved) {
+    return {
+      values: { ...saved, street2: saved.street2 ?? "", email: saved.email ?? email },
+      seededFrom: null,
+      saved: true,
+    };
+  }
+  const last = await prisma.reimbursement.findFirst({
+    where: { source: "callink", payeeEmail: email, pii: { isNot: null } },
+    orderBy: { submittedOn: "desc" },
+    select: {
+      callinkRequestNumber: true,
+      payeeFirstName: true,
+      payeeLastName: true,
+      directDepositSignedUp: true,
+      pii: true,
+    },
+  });
+  if (last?.pii) {
+    return {
+      values: {
+        firstName: last.payeeFirstName,
+        lastName: last.payeeLastName,
+        street: last.pii.street,
+        street2: last.pii.street2 ?? "",
+        city: last.pii.city,
+        state: last.pii.state,
+        zip: last.pii.zip,
+        phone: last.pii.phone ?? "",
+        uid: last.pii.uid ?? "",
+        email,
+        directDepositSignedUp: last.directDepositSignedUp ?? true,
+      },
+      seededFrom: last.callinkRequestNumber,
+      saved: false,
+    };
+  }
+  const [first = "", ...rest] = (user.name ?? "").trim().split(/\s+/);
+  return {
+    values: {
+      firstName: first,
+      lastName: rest.join(" "),
+      street: "",
+      street2: "",
+      city: "Berkeley",
+      state: "CA",
+      zip: "",
+      phone: "",
+      uid: "",
+      email,
+      directDepositSignedUp: true,
+    },
+    seededFrom: null,
+    saved: false,
+  };
+}

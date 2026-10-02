@@ -45,7 +45,7 @@ const columns = [
   col.accessor((r) => r.status.label, {
     id: "status",
     header: "Status",
-    cell: (info) => <StatusPill {...info.row.original.status} />,
+    cell: (info) => <StatusPill label={info.row.original.status.label} tone={info.row.original.status.tone} />,
   }),
   col.accessor("callinkRequestNumber", { header: "CalLink #", cell: (info) => info.getValue() ?? "—" }),
   col.accessor("category", { header: "Category", cell: (info) => info.getValue() ?? "—" }),
