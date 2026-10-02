@@ -32,7 +32,10 @@ PUBLIC_HOSTS = {"auth"}
 #:   parts /panel/ -- the Onshape right-panel extension. It runs inside Onshape's
 #:   iframe, where the STAR cookie is never sent, and authenticates with Onshape
 #:   OAuth instead (parts-hub/src/auth/panel.ts). It never reads X-Auth-*.
-PUBLIC_PATHS = {"parts": ("/panel/",)}
+#:   analytics /api/ingest -- (EC2 Caddyfile) where each box's agent pushes its
+#:   samples. Agents have no browser session; the hub checks a per-host bearer
+#:   token instead (server-analytics/internal/hub/ingest.go).
+PUBLIC_PATHS = {"parts": ("/panel/",), "analytics": ("/api/ingest",)}
 
 
 def _is_public(route, prefixes):

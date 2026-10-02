@@ -26,6 +26,7 @@ name: Publish app images
       - 'landing/**'
       - 'starproject/**'
       - 'parts-hub/**'
+      - 'server-analytics/**'
       - '.github/workflows/publish-apps.yml'
   workflow_dispatch:
 
@@ -70,6 +71,8 @@ jobs:
           # STARProject: one Next.js image serves pages + /api and runs migrations on start.
           - { name: starproject,                  context: ./starproject,               dockerfile: ./starproject/Dockerfile }
           - { name: parts-hub,                    context: ./parts-hub,                 dockerfile: ./parts-hub/Dockerfile }
+          # Server analytics: one image, hub on EC2 and an agent on each box.
+          - { name: analytics,                    context: ./server-analytics,          dockerfile: ./server-analytics/Dockerfile }
     steps:
       - uses: actions/checkout@v4
 
