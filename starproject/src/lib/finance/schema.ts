@@ -66,7 +66,6 @@ export const reimbursementInputSchema = z
     expenditureAction: z.enum(EXPENDITURE_ACTIONS).default("Direct Deposit"),
     directDepositSignedUp: z.boolean().default(true),
     specialInstructions: optional(1000),
-    eventDetails: optional(1000),
     items: z.array(itemSchema).min(1, "Add at least one item").max(MAX_ITEMS, `At most ${MAX_ITEMS} items`),
     saveProfile: z.boolean().default(true),
   })

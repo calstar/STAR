@@ -122,7 +122,6 @@ export async function buildForm(ctx, { spec, items, total }, { onUpload } = {}) 
   f.choose(Q.expenditure, EXPENDITURE[spec.expenditureAction]);
   f.setText(Q.special, spec.specialInstructions);
   if (spec.expenditureAction === 'Direct Deposit') f.choose(Q.directDeposit, spec.directDepositSignedUp ? DIRECT_DEPOSIT.done : DIRECT_DEPOSIT.pending);
-  f.setText(Q.event, spec.eventDetails);
 
   for (const [i, it] of items.entries()) {
     const n = i + 1;

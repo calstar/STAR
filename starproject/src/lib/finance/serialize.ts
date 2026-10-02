@@ -5,6 +5,7 @@ import { safeFileName } from "@/lib/finance/receipts";
 // One of our reimbursements → the request file callink-worker files on CalLink
 // (validated there by request.mjs). Its keys are exactly the ones request.mjs
 // allows; everything STAR fixes is filled in by the worker, not sent from here.
+// STAR reimburses supplies, not events, so CalLink's event question stays blank.
 
 export type WorkerRequest = {
   subject: string;
@@ -16,7 +17,6 @@ export type WorkerRequest = {
   expenditureAction: string;
   directDepositSignedUp: boolean;
   specialInstructions?: string;
-  eventDetails?: string;
   items: { date: string; vendor: string; total: string; comment?: string; file: string }[];
 };
 
@@ -26,7 +26,6 @@ type Source = {
   number: number;
   subject: string;
   description: string | null;
-  eventDetails: string | null;
   specialInstructions: string | null;
   expenditureAction: string;
   directDepositSignedUp: boolean | null;
@@ -98,7 +97,6 @@ export function toWorkerRequest(r: Source): { request: WorkerRequest; receipts: 
       expenditureAction: r.expenditureAction,
       directDepositSignedUp: r.directDepositSignedUp ?? true,
       specialInstructions: opt(r.specialInstructions),
-      eventDetails: opt(r.eventDetails),
       items,
     },
     receipts,

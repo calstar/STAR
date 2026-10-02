@@ -9,7 +9,6 @@ const ours = () => ({
   number: 42,
   subject: "Motor casings",
   description: null,
-  eventDetails: null,
   specialInstructions: "",
   expenditureAction: "Direct Deposit",
   directDepositSignedUp: true,
@@ -48,7 +47,7 @@ describe("toWorkerRequest", () => {
 
   it("uses only keys the worker accepts, with every optional answer filled in", () => {
     const full = ours();
-    Object.assign(full, { description: "d", eventDetails: "e", specialInstructions: "s" });
+    Object.assign(full, { description: "d", specialInstructions: "s" });
     full.items[0].comment = "c";
     full.pii.street2 = "Apt 2";
     const json = JSON.parse(JSON.stringify(toWorkerRequest(full).request));

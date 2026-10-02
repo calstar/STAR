@@ -76,7 +76,6 @@ export async function POST(req: Request) {
         status: "pending_approval",
         subject: input.subject,
         description: input.description ?? null,
-        eventDetails: input.eventDetails ?? null,
         specialInstructions: input.specialInstructions ?? null,
         expenditureAction: input.expenditureAction,
         directDepositSignedUp: input.expenditureAction === "Direct Deposit" ? input.directDepositSignedUp : null,

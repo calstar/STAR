@@ -30,7 +30,6 @@ export const Q = {
   expenditure: /^4\.\s*Expenditure Action/i,
   special: /^5\.\s*SPECIAL INSTRUCTIONS/i,
   directDeposit: /^6\.\s*Direct Deposit/i,
-  event: /^Event Details/i,
   item: (n, rest) => new RegExp(`^(?:Item|Iterm) #${n}:\\s*${rest}`, 'i'),
   upload: n => (n === 1 ? /^Item #1:\s*Upload/i : new RegExp(`^Upload Item #${n} file`, 'i')),
 };
@@ -46,7 +45,7 @@ export const DIRECT_DEPOSIT = {
 };
 
 export const REQUEST_KEYS = ['subject', 'description', 'payee', 'uid', 'email', 'phone', 'expenditureAction',
-  'directDepositSignedUp', 'specialInstructions', 'eventDetails', 'items'];
+  'directDepositSignedUp', 'specialInstructions', 'items'];
 export const ITEM_KEYS = ['date', 'vendor', 'total', 'comment', 'file'];
 
 // Read and check a request file. Receipt paths are relative to the file.

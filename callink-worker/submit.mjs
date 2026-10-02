@@ -126,7 +126,6 @@ try {
   await choose(Q.expenditure, EXPENDITURE[spec.expenditureAction]);
   await fillText(Q.special, spec.specialInstructions);
   if (spec.expenditureAction === 'Direct Deposit') await choose(Q.directDeposit, spec.directDepositSignedUp ? DIRECT_DEPOSIT.done : DIRECT_DEPOSIT.pending);
-  await fillText(Q.event, spec.eventDetails);
 
   for (const [i, it] of items.entries()) {
     const n = i + 1;

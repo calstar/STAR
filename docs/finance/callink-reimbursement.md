@@ -164,10 +164,11 @@ rest and rejects a request file that tries to set a fixed answer.
 | Item location | fixed: Berkeley, CA, hidden |
 | Item invoice number | hidden, sent blank |
 | Item additional misc. information | shown as "Comment" |
+| Event details | not asked: STAR reimburses supplies, not events (left blank on CalLink) |
 
 Request file shape: `subject, description, payee{firstName, lastName, street, street2,
 city, state, zip}, uid, email, phone, expenditureAction?, directDepositSignedUp?,
-specialInstructions?, eventDetails?, items[{date, vendor, total, comment?, file}]`.
+specialInstructions?, items[{date, vendor, total, comment?, file}]`.
 
 ## The system (built 2026-10-02)
 

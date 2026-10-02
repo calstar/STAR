@@ -79,7 +79,6 @@ export function ReimbursementForm({
   const [payee, setPayee] = useState(defaults);
   const [expenditureAction, setExpenditureAction] = useState<(typeof EXPENDITURE_ACTIONS)[number]>("Direct Deposit");
   const [specialInstructions, setSpecialInstructions] = useState("");
-  const [eventDetails, setEventDetails] = useState("");
   const [items, setItems] = useState<Item[]>(() => [blankItem()]);
   const [saveProfile, setSaveProfile] = useState(true);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -129,7 +128,6 @@ export function ReimbursementForm({
       expenditureAction,
       directDepositSignedUp: payee.directDepositSignedUp,
       specialInstructions,
-      eventDetails,
       items: items.map((i) => ({ date: i.date, vendor: i.vendor, amount: i.amount, comment: i.comment })),
       saveProfile,
     };
@@ -335,9 +333,6 @@ export function ReimbursementForm({
               <textarea className={control} rows={2} value={specialInstructions} onChange={(e) => setSpecialInstructions(e.target.value)} />
             </Field>
           )}
-          <Field label="Event details (optional)" error={errors.eventDetails} hint="For event expenses: dates, location, number of attendees.">
-            <textarea className={control} rows={2} value={eventDetails} onChange={(e) => setEventDetails(e.target.value)} />
-          </Field>
         </div>
       </div>
 
