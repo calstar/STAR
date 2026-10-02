@@ -9,7 +9,6 @@ import { ReimbursementDetail } from "@/components/finance/ReimbursementDetail";
 import { ReimbursementTable } from "@/components/finance/ReimbursementTable";
 import { Modal } from "@/components/Modal";
 import { loadReimbursement } from "@/lib/actions/finance";
-import { formatCents } from "@/lib/finance/money";
 import type { FinanceDetail, FinanceRow } from "@/lib/finance/queries";
 
 const chip = (active: boolean) =>
@@ -55,7 +54,6 @@ export function FinanceWorkspace({ rows, admin }: { rows: FinanceRow[]; admin: b
       return true;
     });
   }, [rows, search, status, mine, review]);
-  const total = useMemo(() => filtered.reduce((s, r) => s + r.amountCents, 0), [filtered]);
 
   const openRow = useCallback((n: number) => {
     setData(null);
@@ -130,7 +128,7 @@ export function FinanceWorkspace({ rows, admin }: { rows: FinanceRow[]; admin: b
           </div>
         </div>
         <p className="text-xs text-neutral-500 dark:text-neutral-400">
-          {filtered.length} of {rows.length} · {formatCents(total)}
+          {filtered.length} of {rows.length}
         </p>
       </div>
 

@@ -26,7 +26,6 @@ export type FinanceRow = {
   date: string;
   status: { key: string; label: string; tone: Tone };
   callinkRequestNumber: string | null;
-  category: string | null;
   vendors: string;
   mine: boolean;
   needsAdmin: boolean;
@@ -51,7 +50,6 @@ export async function listFinanceRows(viewer: Viewer): Promise<FinanceRow[]> {
       callinkStatus: true,
       callinkDeletedOn: true,
       callinkRequestNumber: true,
-      category: true,
       needsCheck: true,
       items: { select: { vendor: true } },
     },
@@ -67,7 +65,6 @@ export async function listFinanceRows(viewer: Viewer): Promise<FinanceRow[]> {
       date: (r.submittedOn ?? r.createdAt).toISOString(),
       status: displayStatus(r),
       callinkRequestNumber: r.callinkRequestNumber,
-      category: r.category,
       vendors: [...new Set(r.items.map((i) => i.vendor).filter(Boolean))].join(", "),
       mine: isMine(viewer, r),
       needsAdmin: needsAdmin(r),

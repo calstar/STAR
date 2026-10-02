@@ -17,12 +17,11 @@ import type { FinanceRow } from "@/lib/finance/queries";
 
 const col = createColumnHelper<FinanceRow>();
 
-// Mobile shows #/subject/amount/status; md adds date and payee; lg the rest.
+// Mobile shows #/subject/amount/status; md adds date and payee; lg the CalLink number.
 const columnClasses: Record<string, string> = {
   date: "hidden md:table-cell",
   payeeName: "hidden md:table-cell",
   callinkRequestNumber: "hidden lg:table-cell",
-  category: "hidden lg:table-cell",
 };
 
 
@@ -47,7 +46,6 @@ const columns = [
     cell: (info) => <StatusPill label={info.row.original.status.label} tone={info.row.original.status.tone} />,
   }),
   col.accessor("callinkRequestNumber", { header: "CalLink #", cell: (info) => info.getValue() ?? "—" }),
-  col.accessor("category", { header: "Category", cell: (info) => info.getValue() ?? "—" }),
 ];
 
 /** All reimbursements, newest first; a row click opens the detail card. */

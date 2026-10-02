@@ -13,7 +13,7 @@ export default async function NewReimbursementPage() {
 
   return (
     <main className={PAGE_CONTAINER}>
-      <div className="max-w-3xl">
+      <div className="mx-auto max-w-3xl">
       <p className="text-sm text-neutral-500 dark:text-neutral-400">
         <Link href="/finance" className="hover:underline">
           Finance
