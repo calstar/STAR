@@ -9,13 +9,11 @@
 //   CALNET_PASSWORD=...
 import { chromium } from 'playwright';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { PROFILE, RUNS as OUT } from './lib/callink.mjs';
 import { readEnv } from './lib/env.mjs';
 
 const FORM_URL = 'https://callink.berkeley.edu/actionCenter/organization/star/Finance/CreatePurchaseRequest';
-const PROFILE = process.env.CALLINK_PROFILE ?? path.join(os.homedir(), '.local/share/star/callink-profile');
-const OUT = process.env.CALLINK_OUT ?? path.join(os.homedir(), '.local/share/star/callink-runs');
 const DUO_WAIT_MS = 120_000;
 
 const mode = process.argv[2];

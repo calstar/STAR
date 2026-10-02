@@ -1,8 +1,9 @@
+// Reverse-engineering aid used while mapping CalLink (read-only). Not part of the worker.
 // Read-only exploration: open a CalLink URL with the stored session, dump links and network JSON.
 import { chromium } from 'playwright';
+import { PROFILE, RUNS } from '../lib/callink.mjs';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
-const PROFILE = path.join(os.homedir(), '.local/share/star/callink-profile');
-const OUT = path.join(os.homedir(), '.local/share/star/callink-explore');
+const OUT = path.join(RUNS, '..', 'callink-explore');
 const url = process.argv[2];
 const ctx = await chromium.launchPersistentContext(PROFILE, { headless: true });
 const page = ctx.pages()[0] ?? await ctx.newPage();

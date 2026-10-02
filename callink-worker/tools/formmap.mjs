@@ -1,7 +1,9 @@
+// Reverse-engineering aid used while mapping CalLink (read-only). Not part of the worker.
 // Read-only: load the purchase-request form and print every question, its kind, and its options.
 import { chromium } from 'playwright';
+import { PROFILE, RUNS } from '../lib/callink.mjs';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
-const ctx = await chromium.launchPersistentContext(path.join(os.homedir(), '.local/share/star/callink-profile'), { headless: true });
+const ctx = await chromium.launchPersistentContext(PROFILE, { headless: true });
 const page = ctx.pages()[0] ?? await ctx.newPage();
 await page.goto('https://callink.berkeley.edu/actionCenter/organization/star/Finance/CreatePurchaseRequest', { waitUntil: 'networkidle' });
 const map = await page.evaluate(() => {
@@ -20,7 +22,7 @@ const map = await page.evaluate(() => {
     };
   });
 });
-fs.writeFileSync(path.join(os.homedir(), '.local/share/star/callink-explore/formmap.json'), JSON.stringify(map, null, 1));
+fs.writeFileSync(path.join(RUNS, '..', 'callink-explore', 'formmap.json'), JSON.stringify(map, null, 1));
 for (const q of map) {
   console.log(`${q.required ? '*' : ' '} ${q.label}`);
   for (const f of q.fields) console.log(`     ${f.tag}/${f.type} ${f.name || f.id}${f.option ? ' :: ' + f.option : ''}${f.text ? ' [' + f.text + ']' : ''}${f.options ? ' ' + f.options.join(' | ') : ''}`);

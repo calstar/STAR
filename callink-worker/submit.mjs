@@ -8,13 +8,11 @@
 // are relative to the file. The account is not in it: every request goes to MISC-STAR.
 import { chromium } from 'playwright';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
+import { PROFILE, RUNS as OUT } from './lib/callink.mjs';
 import { ACCOUNT_ID, ACCOUNT_NAME, CATEGORY, CATEGORY_ID, EXPENDITURE, FORM_URL, DIRECT_DEPOSIT, Q, loadRequest } from './request.mjs';
 
-const PROFILE = process.env.CALLINK_PROFILE ?? path.join(os.homedir(), '.local/share/star/callink-profile');
-const OUT = process.env.CALLINK_OUT ?? path.join(os.homedir(), '.local/share/star/callink-runs');
 
 const [specPath, ...flags] = process.argv.slice(2);
 const doSubmit = flags.includes('--submit');

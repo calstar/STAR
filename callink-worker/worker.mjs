@@ -24,7 +24,19 @@ const POLL_MS = 60_000;
 const EXPIRED_POLL_MS = 5 * 60_000;
 const SCRAPE_EVERY_MS = 24 * 3600_000;
 
-const api = starproject();
+// Deployed before it's configured (auto-deploy brings up the whole stack), it waits
+// rather than crash-looping under `restart: unless-stopped`.
+let api;
+for (;;) {
+  try {
+    api = starproject();
+    break;
+  } catch (e) {
+    log(`not configured, waiting: ${brief(e)}`);
+    if (once) process.exit(1);
+    await new Promise(res => setTimeout(res, 3600_000));
+  }
+}
 const JOURNAL = path.join(RUNS, 'jobs');
 const STATE = path.join(RUNS, 'worker-state.json');
 fs.mkdirSync(JOURNAL, { recursive: true });
