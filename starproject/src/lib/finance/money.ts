@@ -1,12 +1,17 @@
 // Money is integer cents everywhere. CalLink and members type amounts as text
 // ("505.51", "$505.51", "1,411.09"), and floats would drift when items are summed.
 
+// No STAR receipt is a million dollars; a bigger "total" is an order number typed
+// in the wrong box (CalLink has one: 106963555), and would overflow the column.
+export const MAX_CENTS = 100_000_000;
+
 /** "$1,411.09" → 141109. Anything that is not an amount ("N/A", "£78.57", "") → null. */
 export function parseMoney(text: string | null | undefined): number | null {
   const s = String(text ?? "").replace(/[$,\s]/g, "");
   if (!/^\d+(\.\d{1,2})?$/.test(s)) return null;
   const [whole, frac = ""] = s.split(".");
-  return Number(whole) * 100 + Number(frac.padEnd(2, "0"));
+  const cents = Number(whole) * 100 + Number(frac.padEnd(2, "0"));
+  return cents > MAX_CENTS ? null : cents;
 }
 
 /** 141109 → "$1,411.09". */

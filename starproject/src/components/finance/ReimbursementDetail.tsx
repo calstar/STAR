@@ -3,18 +3,13 @@
 import { CopyLinkButton } from "@/components/CopyLinkButton";
 import { StatusPill } from "@/components/finance/StatusPill";
 import { callinkRequestUrl } from "@/lib/finance/callink-import";
+import { formatItemDate as itemDate, formatWhen as when } from "@/lib/finance/dates";
 import { formatCents } from "@/lib/finance/money";
 import type { FinanceDetail } from "@/lib/finance/queries";
 
 const label = "text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400";
 const section = "rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 shadow-sm";
 
-const when = (iso: string) =>
-  new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
-const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-
-// Our item dates are YYYY-MM-DD; imported ones are whatever was typed on CalLink.
-const itemDate = (s: string) => (/^\d{4}-\d{2}-\d{2}$/.test(s) ? day(`${s}T12:00:00`) : s || "—");
 
 const EVENT_LABEL: Record<string, string> = {
   created: "Submitted for approval",

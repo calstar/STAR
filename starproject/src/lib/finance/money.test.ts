@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { centsToPlain, formatCents, parseMoney, sumCents } from "@/lib/finance/money";
+import { MAX_CENTS, centsToPlain, formatCents, parseMoney, sumCents } from "@/lib/finance/money";
 
 describe("parseMoney", () => {
   it("reads the ways members type a total", () => {
@@ -15,6 +15,11 @@ describe("parseMoney", () => {
     for (const s of ["N/A", "bank statement", "£78.57", "", "1.234", "-5", null, undefined]) {
       expect(parseMoney(s)).toBeNull();
     }
+  });
+
+  it("refuses a total no receipt could have", () => {
+    expect(parseMoney("1000000.00")).toBe(MAX_CENTS);
+    expect(parseMoney("106963555")).toBeNull();
   });
 
   it("does not drift the way floats do", () => {

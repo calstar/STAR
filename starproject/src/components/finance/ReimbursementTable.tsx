@@ -11,6 +11,7 @@ import {
 import { useState } from "react";
 
 import { StatusPill } from "@/components/finance/StatusPill";
+import { formatDay } from "@/lib/finance/dates";
 import { formatCents } from "@/lib/finance/money";
 import type { FinanceRow } from "@/lib/finance/queries";
 
@@ -24,15 +25,13 @@ const columnClasses: Record<string, string> = {
   category: "hidden lg:table-cell",
 };
 
-export const shortDate = (iso: string) =>
-  new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
 const columns = [
   col.accessor("number", {
     header: "#",
-    cell: (info) => <span className="text-neutral-400 dark:text-neutral-500">R-{info.getValue()}</span>,
+    cell: (info) => <span className="whitespace-nowrap text-neutral-400 dark:text-neutral-500">R-{info.getValue()}</span>,
   }),
-  col.accessor("date", { header: "Date", cell: (info) => <span className="whitespace-nowrap">{shortDate(info.getValue())}</span> }),
+  col.accessor("date", { header: "Date", cell: (info) => <span className="whitespace-nowrap">{formatDay(info.getValue())}</span> }),
   col.accessor("subject", {
     header: "Subject",
     cell: (info) => <span className="font-medium">{info.getValue()}</span>,
