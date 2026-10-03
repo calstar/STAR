@@ -70,7 +70,9 @@ function seedProfile(config = GOOD_CONFIG, script: string | null = SCRIPT): void
 
 beforeEach(() => {
   rmSync(join(configDir, 'scripts'), { recursive: true, force: true });
-  rmSync(join(configDir, 'config.toml'), { force: true });
+  // getConfigPath() only honours CONFIG_PATH while the file exists; delete it and resolution falls
+  // through to the repo's real config/, which the deploy would then overwrite. Keep a placeholder.
+  writeFileSync(join(configDir, 'config.toml'), '# placeholder\n', 'utf-8');
   writeFileSync(join(configDir, '.active_profile'), 'default\n', 'utf-8');
   seedProfile();
 });
