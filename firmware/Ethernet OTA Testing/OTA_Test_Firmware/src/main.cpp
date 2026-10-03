@@ -3,12 +3,20 @@
 // ── Globals ───────────────────────────────────────────────────
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0x05};
 
-EthernetServer otaServer(OTA_TCP_PORT);
+StarOTA::Server otaServer(OTA_TCP_PORT);
+
+/**
+ * The message this build prints. Prefer STAR_OTA_TEST_MESSAGE — the
+ * library-wide flag that `firmware/tools/ota_upload.py --message` and the
+ * Test-GUI's OTA tab both set — and fall back to this project's older
+ * -DOTA_MESSAGE so the local ota_upload.py keeps working.
+ */
+static const char* currentMessage() {
+    return StarOTA::testMessage()[0] != '\0' ? StarOTA::testMessage()
+                                              : OTA_MESSAGE;
+}
 unsigned long lastPrintMillis = 0;
 unsigned long bootTime = 0;
-
-// ── Forward declarations ─────────────────────────────────────
-void handleOTA(EthernetClient& client);
 
 // ══════════════════════════════════════════════════════════════
 //  SETUP
@@ -63,14 +71,12 @@ void setup() {
 
     // ── OTA TCP server ──────────────────────────────────────
     otaServer.begin();
-    Serial.print("[OTA] TCP server listening on port ");
-    Serial.println(OTA_TCP_PORT);
     Serial.println();
 
     // ── Ready ────────────────────────────────────────────────
     Serial.println("[MAIN] Setup complete. Entering main loop.");
     Serial.print("[MAIN] Current firmware message: \"");
-    Serial.print(OTA_MESSAGE);
+    Serial.print(currentMessage());
     Serial.println("\"");
     Serial.println();
 
@@ -83,19 +89,9 @@ void setup() {
 // ══════════════════════════════════════════════════════════════
 void loop() {
     // ── 1. Non-blocking OTA check ────────────────────────────
-    EthernetClient client = otaServer.available();
-    if (client) {
-        Serial.println();
-        Serial.println(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
-        Serial.print("[OTA] Incoming connection from ");
-        Serial.print(client.remoteIP());
-        Serial.print(":");
-        Serial.println(client.remotePort());
-        Serial.println(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
-
-        handleOTA(client);  // Blocking during firmware transfer
-        // If handleOTA returns without rebooting, something failed.
-    }
+    // Blocks only while a transfer is actually running, and never returns on
+    // success — the board reboots into the new image.
+    otaServer.poll();
 
     // ── 2. Periodic serial message ───────────────────────────
     unsigned long now = millis();
@@ -107,7 +103,7 @@ void loop() {
         unsigned long secs = uptime % 60;
 
         Serial.print("[MSG] ");
-        Serial.print(OTA_MESSAGE);
+        Serial.print(currentMessage());
         Serial.print("  |  uptime ");
         Serial.print(mins);
         Serial.print("m ");
@@ -122,123 +118,4 @@ void loop() {
     }
 
     delay(10);  // Small yield
-}
-
-// ══════════════════════════════════════════════════════════════
-//  OTA HANDLER  (blocking once a client connects)
-// ══════════════════════════════════════════════════════════════
-void handleOTA(EthernetClient& client) {
-    // ── Step 1: Read 4-byte firmware size (big-endian) ───────
-    Serial.println("[OTA] Waiting for 4-byte size header...");
-
-    unsigned long startWait = millis();
-    while (client.available() < 4) {
-        if (millis() - startWait > OTA_TIMEOUT_MS) {
-            Serial.println("[OTA] ERROR: Timed out waiting for size header.");
-            client.stop();
-            return;
-        }
-        delay(1);
-    }
-
-    uint32_t firmwareSize = 0;
-    firmwareSize |= ((uint32_t)client.read()) << 24;
-    firmwareSize |= ((uint32_t)client.read()) << 16;
-    firmwareSize |= ((uint32_t)client.read()) << 8;
-    firmwareSize |= ((uint32_t)client.read());
-
-    Serial.print("[OTA] Firmware size: ");
-    Serial.print(firmwareSize);
-    Serial.println(" bytes");
-
-    if (firmwareSize == 0 ||
-        firmwareSize > 0x200000) {  // Sanity: 0 < size <= 2 MB
-        Serial.println("[OTA] ERROR: Invalid firmware size. Aborting.");
-        client.stop();
-        return;
-    }
-
-    // ── Step 2: Begin Update ─────────────────────────────────
-    if (!Update.begin(firmwareSize)) {
-        Serial.print("[OTA] ERROR: Update.begin() failed: ");
-        Update.printError(Serial);
-        client.stop();
-        return;
-    }
-    Serial.println("[OTA] Update.begin() OK. Receiving firmware...");
-
-    // ── Step 3: Stream firmware data ─────────────────────────
-    uint8_t buf[OTA_CHUNK_SIZE];
-    uint32_t totalReceived = 0;
-    int lastPercent = -1;
-    unsigned long lastDataTime = millis();
-
-    while (totalReceived < firmwareSize) {
-        int bytesAvailable = client.available();
-        if (bytesAvailable > 0) {
-            int toRead = min((int)sizeof(buf), bytesAvailable);
-            toRead = min(toRead, (int)(firmwareSize - totalReceived));
-            int bytesRead = client.read(buf, toRead);
-
-            if (bytesRead > 0) {
-                size_t written = Update.write(buf, bytesRead);
-                if (written != (size_t)bytesRead) {
-                    Serial.println(
-                        "[OTA] ERROR: Update.write() size mismatch!");
-                    Update.printError(Serial);
-                    Update.abort();
-                    client.stop();
-                    return;
-                }
-                totalReceived += bytesRead;
-                lastDataTime = millis();
-
-                // Print progress every 5%
-                int percent = (int)((totalReceived * 100UL) / firmwareSize);
-                if (percent / 5 != lastPercent / 5) {
-                    lastPercent = percent;
-                    Serial.print("[OTA] Progress: ");
-                    Serial.print(percent);
-                    Serial.print("% (");
-                    Serial.print(totalReceived);
-                    Serial.print(" / ");
-                    Serial.print(firmwareSize);
-                    Serial.println(" bytes)");
-                }
-            }
-        } else {
-            // No data available — check timeout
-            if (millis() - lastDataTime > OTA_TIMEOUT_MS) {
-                Serial.println(
-                    "[OTA] ERROR: Timed out waiting for firmware data.");
-                Update.abort();
-                client.stop();
-                return;
-            }
-            delay(1);
-        }
-    }
-
-    // ── Step 4: Finalize ─────────────────────────────────────
-    Serial.println("[OTA] All bytes received. Finalizing update...");
-
-    if (!Update.end(true)) {
-        Serial.print("[OTA] ERROR: Update.end() failed: ");
-        Update.printError(Serial);
-        client.stop();
-        return;
-    }
-
-    Serial.println("[OTA] ============================================");
-    Serial.println("[OTA]   UPDATE SUCCESSFUL — Rebooting now...");
-    Serial.println("[OTA] ============================================");
-    Serial.flush();
-
-    // Send confirmation back to uploader before closing and rebooting
-    client.println("OK");
-    client.flush();
-
-    client.stop();
-    delay(500);
-    ESP.restart();
 }

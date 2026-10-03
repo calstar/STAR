@@ -1,0 +1,25 @@
+[Unit]
+Description=STAR board-LAN DHCP (dnsmasq, isolated segment)
+Documentation=file:%h/sensor_system/daq-server/deploy/dhcp/README.md
+# Board LAN only; after the NIC exists and has its static 192.168.2.20/24.
+After=network-online.target
+Wants=network-online.target
+# This is the sole DHCP authority on the board segment — don't co-run the
+# distro dnsmasq (bootstrap disables it).
+Conflicts=dnsmasq.service
+
+[Service]
+Type=simple
+# Fail fast on a bad generated config instead of crash-looping.
+ExecStartPre=/usr/sbin/dnsmasq --test --conf-file=/etc/star-dhcp/star-dhcp.conf
+# --conf-file=<ours> => the distro /etc/dnsmasq.conf and /etc/dnsmasq.d are NOT
+# read; we serve exactly the generated board-LAN config, nothing else.
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/star-dhcp/star-dhcp.conf
+# SIGHUP re-reads the dhcp-hostsfile (reservations) without dropping leases or
+# the pool. `systemctl reload star-dhcp` after regenerating.
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -7,6 +7,12 @@
  * is_abort_controller from ACTUATOR_CONFIG. Uses DAQv2-Comms over Ethernet/UDP.
  * Implements plan: Single Actuator Hotfire Script
  * (Hotfire_Code/Actuator_Hotfire).
+ *
+ * Networking mirrors the sense-board core (SensorHotfireCore.h): with
+ * -DSENSOR_ETH_USE_DHCP the ground station assigns this board's address from
+ * its MAC -> IP reservation table, and the board broadcasts BOARD_HEARTBEAT
+ * until a server is heard, learning the server's address from its packets.
+ * See common/board_net.h.
  */
 
 #include "main.h"
@@ -25,7 +31,9 @@
 #include "actuator_board_pins.h"
 #include "actuator_config.h"
 #include "firmware_hash.h"
-#include "hotfire_ota.h"
+#include "board_net.h"
+
+#include <STAR_EthernetOTA.h>
 
 using namespace actuator_board_pins;
 
@@ -43,7 +51,12 @@ const int udpListenPort = 5005;
 const int serverPort = HOTFIRE_SERVER_PORT;
 const int ptBoardPort = 5005;
 EthernetUDP udp;
-static OTAEthernetServer otaServer(HOTFIRE_OTA_PORT);
+static StarOTA::Server otaServer(HOTFIRE_OTA_PORT);
+
+// Address + server-discovery state. The scheme lives in common/board_net.h,
+// shared with SensorHotfireCore.h so the actuator and the sense boards behave
+// identically and cannot drift apart.
+static BoardNet::State net;
 
 //-----------------------------------------------------------------------------
 // Verbose serial gate from ACTUATOR_CONFIG (enable_serial_printing); default on
@@ -52,6 +65,15 @@ static OTAEthernetServer otaServer(HOTFIRE_OTA_PORT);
 //-----------------------------------------------------------------------------
 #include "hotfire_log.h"
 bool g_verbose = true;
+
+/**
+ * Freeze our address before a single byte reaches flash. Our address is a DHCP
+ * lease, and a renewal landing mid-flash would move us and drop the transfer,
+ * so this suspends renewals for the duration.
+ */
+static void otaFreezeAddress(void*, uint32_t) {
+    BoardNet::beginOtaHold(net);
+}
 
 //-----------------------------------------------------------------------------
 // State machine
@@ -237,7 +259,7 @@ static daq::BoardState getBoardStateForHeartbeat() {
     }
 }
 
-static void sendBoardHeartbeat() {
+static void sendBoardHeartbeatTo(IPAddress dest_ip, int dest_port) {
     daq::BoardHeartbeatPacket hb;
     memcpy(hb.firmware_hash, FirmwareHash::get(), 32);
     hb.board_id = board_id;
@@ -251,23 +273,30 @@ static void sendBoardHeartbeat() {
         return;
 
     HF_VERBOSE("Sent: heartbeat to ");
-    HF_VERBOSE(serverIP);
+    HF_VERBOSE(dest_ip);
     HF_VERBOSE(":");
-    HF_VERBOSELN(serverPort);
+    HF_VERBOSELN(dest_port);
     Serial.flush();
-    udp.beginPacket(serverIP, serverPort);
+    udp.beginPacket(dest_ip, dest_port);
     udp.write(packetBuffer, len);
     udp.endPacket();
+}
+
+static void sendBoardHeartbeat() {
+    sendBoardHeartbeatTo(serverIP, serverPort);
 }
 
 //-----------------------------------------------------------------------------
 // Helpers: self IP as uint32_t, IP in PT list
 //-----------------------------------------------------------------------------
 static uint32_t getSelfIP() {
-    return static_cast<uint32_t>(staticIP[0]) << 24 |
-           static_cast<uint32_t>(staticIP[1]) << 16 |
-           static_cast<uint32_t>(staticIP[2]) << 8 |
-           static_cast<uint32_t>(staticIP[3]);
+    // Use the live stack address, not staticIP: the board sits on whatever
+    // the server leased it, and self-matching against ACTUATOR_CONFIG
+    // locations must reflect where we actually are.
+    IPAddress self = Ethernet.localIP();
+    return static_cast<uint32_t>(self[0]) << 24 |
+           static_cast<uint32_t>(self[1]) << 16 |
+           static_cast<uint32_t>(self[2]) << 8 | static_cast<uint32_t>(self[3]);
 }
 
 static IPAddress uint32ToIPAddress(uint32_t ip) {
@@ -499,6 +528,9 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
             daq::ServerHeartbeatPacket data;
             if (daq::parse_server_heartbeat_packet(buffer, len, dummy, data)) {
                 last_server_heartbeat_ms = millis();
+#ifdef SENSOR_ETH_USE_DHCP
+                BoardNet::onServerPacket(net, remoteIP, serverIP);
+#endif
                 uint32_t sip = (static_cast<uint32_t>(serverIP[0]) << 24) |
                                (static_cast<uint32_t>(serverIP[1]) << 16) |
                                (static_cast<uint32_t>(serverIP[2]) << 8) |
@@ -526,6 +558,9 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
                 g_verbose = (enable_serial & 1);
                 g_log_stream_level =
                     (enable_serial >= 2) ? (enable_serial - 1) : 0;
+#ifdef SENSOR_ETH_USE_DHCP
+                BoardNet::onServerPacket(net, remoteIP, serverIP);
+#endif
                 return IncomingPacketKind::Config;
             }
             return IncomingPacketKind::None;
@@ -1053,8 +1088,9 @@ static void flushLogs() {
 //-----------------------------------------------------------------------------
 void setup() {
     Serial.begin(115200);
+    delay(SERIAL_MONITOR_READY_DELAY_MS);
     FirmwareHash::print();
-    Serial.println("Actuator Hotfire starting...");
+    Serial.println("Actuator Hotfire state machine starting...");
 
     board_id = (uint8_t)BOARD_ID;
     staticIP = IPAddress(192, 168, 2, (uint8_t)BOARD_ID);
@@ -1073,24 +1109,75 @@ void setup() {
     led_cycle_start_ms = millis();
 
     ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_ETH));
+    BoardNet::configure(net, mac, staticIP, subnet);
+    BoardNet::printMac(net);
     SPI.begin(Actuator_Board.ETH_SCLK, Actuator_Board.ETH_MISO,
               Actuator_Board.ETH_MOSI, Actuator_Board.ETH_CS);
     delay(ETHERNET_SPI_DELAY_MS);
     Ethernet.init(Actuator_Board.ETH_CS);
     delay(ETHERNET_INIT_DELAY_MS);
+#ifdef SENSOR_ETH_USE_DHCP
+    // The ground station decides our address; we only ask for one.
+    BoardNet::begin(net, dns, gateway);
+#else
     Ethernet.begin(mac, staticIP, dns, gateway, subnet);
+#endif
     delay(ETHERNET_BEGIN_DELAY_MS);
-    udp.begin(udpListenPort);
-    otaServer.begin();
-    Serial.print("Ethernet initialized. IP: ");
+
+    // W5500 / Ethernet status (same prints as the sense boards so the shared
+    // test-GUI serial parser understands both)
+    Serial.println("[ETH] Ethernet initialized (SPI WIZnet)");
+    Serial.print("Address source: ");
+    Serial.println(BoardNet::sourceName(net.source));
+    Serial.print("Stack IP (Ethernet.localIP): ");
     Serial.println(Ethernet.localIP());
-    Serial.printf("OTA TCP server listening on port %d\n", HOTFIRE_OTA_PORT);
+    Serial.print("Hardware: ");
+    switch (Ethernet.hardwareStatus()) {
+        case EthernetNoHardware:
+            Serial.println("no chip detected — check CS / SPI wiring");
+            break;
+        case EthernetW5100:
+            Serial.println("W5100");
+            break;
+        case EthernetW5200:
+            Serial.println("W5200");
+            break;
+        case EthernetW5500:
+            Serial.println("W5500");
+            break;
+        default:
+            Serial.println("unknown");
+            break;
+    }
+    Serial.print("Link status: ");
+    if (Ethernet.linkStatus() == LinkON) {
+        Serial.println("Connected");
+    } else if (Ethernet.linkStatus() == LinkOFF) {
+        Serial.println("Disconnected");
+    } else {
+        Serial.println("Unknown");
+    }
+    if (Ethernet.localIP() == IPAddress(0, 0, 0, 0)) {
+        Serial.println(
+            "[ETH] WARNING: stack IP is 0.0.0.0 — check cable / W5500");
+    }
+    Serial.flush();
+
+    udp.begin(udpListenPort);
+    otaServer.onStart(otaFreezeAddress);
+    otaServer.begin();
+    Serial.print("UDP listening on port ");
+    Serial.println(udpListenPort);
 
     state = ActuatorControllerState::WaitingForServer;
     Serial.println("State -> WaitingForServer");
     Serial.flush();
     state_enter_ms = millis();
     last_server_heartbeat_ms = 0;
+#ifdef SENSOR_ETH_USE_DHCP
+    Serial.println(
+        "[NET] address assigned by the server; broadcasting until one is heard");
+#endif
 
     Serial.println("Setup complete. State: WaitingForServer");
 
@@ -1105,10 +1192,16 @@ void setup() {
 }
 
 void loop() {
-    // Non-blocking OTA check — blocks only if a client actually connects
-    EthernetClient ota_client = otaServer.available();
-    if (ota_client)
-        hotfire_handleOTA(ota_client);
+#ifdef SENSOR_ETH_USE_DHCP
+    // Renew the lease as it expires; no-op while an OTA is in flight.
+    BoardNet::maintainLease(net);
+#endif
+    // Non-blocking OTA check — blocks only if a client actually connects,
+    // and never returns on success (the board reboots into the new image).
+    otaServer.poll();
+    // Bench marker: prints only on builds made with -DSTAR_OTA_TEST_MESSAGE,
+    // so consecutive OTA uploads are visibly different on the serial monitor.
+    StarOTA::printTestMessage();
 
     updateLedNonBlocking();
     updatePWM();
@@ -1154,6 +1247,18 @@ void loop() {
         }
     }
 
+#ifdef SENSOR_ETH_USE_DHCP
+    // Server gone quiet: forget it and resume discovery broadcasts so a new
+    // (or restarted) server can find us. The address stays locked -- only the
+    // outbound destination resets.
+    if (BoardNet::serverWentSilent(net)) {
+        net.serverLearned = false;
+        serverIP = IPAddress(192, 168, 2, HOTFIRE_SERVER_IP_OCTET_4);
+        Serial.println("[NET] server silent -- resuming discovery");
+        Serial.flush();
+    }
+#endif
+
     switch (state) {
         case ActuatorControllerState::WaitingForServer:
             run_WaitingForServer();
@@ -1187,8 +1292,17 @@ void loop() {
         if (state == ActuatorControllerState::WaitingForServer) {
             HF_VERBOSELN("Setup state: sending heartbeat");
             Serial.flush();
+            sendBoardHeartbeat();
+        } else {
+            sendBoardHeartbeat();
         }
-        sendBoardHeartbeat();
+#ifdef SENSOR_ETH_USE_DHCP
+        // Discovery: announce to everyone on the wire until a server is
+        // learned. Reuses the normal heartbeat packet on the same 1 s tick.
+        if (!net.serverLearned)
+            sendBoardHeartbeatTo(IPAddress(255, 255, 255, 255),
+                                 HOTFIRE_SERVER_PORT);
+#endif
     }
 
     // Flush buffered logs to the server ~1 Hz (or sooner if the buffer is

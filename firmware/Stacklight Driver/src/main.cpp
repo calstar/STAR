@@ -10,12 +10,12 @@
 #include <SPI.h>
 #include <daq-protocol.h>
 #include <esp_mac.h>
+#include <STAR_EthernetOTA.h>
 
 #include <cstring>
 
 #include "firmware_hash.h"
 #include "hotfire_config.h"
-#include "hotfire_ota.h"
 #include "stacklight_pins.h"
 
 using namespace stacklight_pins;
@@ -36,7 +36,7 @@ static IPAddress subnet(255, 255, 255, 0);
 static IPAddress dns(192, 168, 2, 1);
 static IPAddress serverIP(192, 168, 2, HOTFIRE_SERVER_IP_OCTET_4);
 static EthernetUDP udp;
-static OTAEthernetServer otaServer(HOTFIRE_OTA_PORT);
+static StarOTA::Server otaServer(HOTFIRE_OTA_PORT);
 static unsigned long lastHeartbeatMillis = 0;
 static unsigned long last_server_heartbeat_ms = 0;
 static daq::EngineState last_engine_state = daq::EngineState::SAFE;
@@ -117,9 +117,9 @@ void setup() {
 }
 
 void loop() {
-    EthernetClient ota_client = otaServer.available();
-    if (ota_client)
-        hotfire_handleOTA(ota_client);
+    // Blocks only if a client connects; never returns on success.
+    otaServer.poll();
+    StarOTA::printTestMessage();
 
     int packetSize = udp.parsePacket();
     if (packetSize > 0) {
