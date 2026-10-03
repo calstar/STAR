@@ -25,7 +25,9 @@ import {
     noteSubscriptionRejected,
     notePairDelivered,
     clearSubscriptionState,
+    setClockForTests,
     SUBSCRIPTION_REQ_ID_SPACE,
+    MAX_PAIR_ATTEMPTS,
 } from '../elodin-vtable-registry.js';
 
 // ── A fake DB client: isConnected + sendRawMessage is the whole surface used ──
@@ -54,8 +56,11 @@ const CONFIG = {
     },
 };
 
+let clock = 1_000_000;
 beforeEach(() => {
     clearSubscriptionState();
+    clock = 1_000_000;
+    setClockForTests(() => clock);
 });
 
 const keyOf = (s: Sent) => `${s.high},${s.low}`;
@@ -107,23 +112,27 @@ describe('a refused subscription is actually retried', () => {
         expect(id, 'PT1_Cal.CH1 must be in the subscription list').toBeDefined();
 
         noteSubscriptionRejected(id!, 'invalid msg id');
+        clock += 10_000; // past the first backoff
 
         const second: Sent[] = [];
         await registerVTables(fakeClient(second), CONFIG);
         expect(second.map(keyOf)).toContain('32,17'); // [0x20, 0x11]
     });
 
-    it('re-sends a pair refused only once, and only on the next pass', async () => {
+    it('holds a rejected pair until its backoff expires, then retries it', async () => {
         const first: Sent[] = [];
         await registerVTables(fakeClient(first), CONFIG);
         const id = reqIdFor(first, 0x20, 0x11)!;
         noteSubscriptionRejected(id, 'invalid msg id');
-        // A duplicate refusal for the same id names nothing any more.
-        noteSubscriptionRejected(id, 'invalid msg id');
 
-        const next: Sent[] = [];
-        await registerVTables(fakeClient(next), CONFIG);
-        expect(next.filter((s) => keyOf(s) === '32,17')).toHaveLength(1);
+        const tooSoon: Sent[] = [];
+        await registerVTables(fakeClient(tooSoon), CONFIG);
+        expect(tooSoon.map(keyOf)).not.toContain('32,17');
+
+        clock += 10_000;
+        const later: Sent[] = [];
+        await registerVTables(fakeClient(later), CONFIG);
+        expect(later.map(keyOf)).toContain('32,17');
     });
 });
 
@@ -138,6 +147,7 @@ describe('a live table is never re-subscribed', () => {
         // The DB is streaming this table — so this rejection cannot belong to it.
         notePairDelivered(0x46, 0x00);
         noteSubscriptionRejected(id!, 'invalid msg id');
+        clock += 120_000;
 
         const second: Sent[] = [];
         await registerVTables(fakeClient(second), CONFIG);
@@ -146,21 +156,29 @@ describe('a live table is never re-subscribed', () => {
 });
 
 describe('retries converge', () => {
-    it('never gives up on a refused pair: a board that comes up late is still picked up', async () => {
-        // The DB refuses a table that is registered but has never been written — every table
-        // of a board that is not up yet. The integration test's board 60 sits silent for a
-        // minute before its first SELF_TEST; a real board may sit for hours. However long the
-        // refusals run, the pass after one must re-send the pair, or the board never appears.
-        let sent: Sent[] = [];
+    it('parks a pair nothing publishes instead of resending it forever', async () => {
+        const sent: Sent[] = [];
         await registerVTables(fakeClient(sent), CONFIG);
-        for (let pass = 0; pass < 200; pass++) {
-            const id = reqIdFor(sent, 0x60, 21); // PT board 21, self-test sensor 0
-            expect(id, `[0x60, 21] re-sent on pass ${pass}`).toBeDefined();
-            noteSubscriptionRejected(id!, 'invalid msg id');
-            sent = [];
-            await registerVTables(fakeClient(sent), CONFIG);
+        const target: [number, number] = [0x20, 0x11];
+
+        let resends = 0;
+        for (let pass = 0; pass < 40; pass++) {
+            const passSent: Sent[] = [];
+            await registerVTables(fakeClient(passSent), CONFIG);
+            const id = reqIdFor(passSent, target[0], target[1]);
+            if (id !== undefined) {
+                resends++;
+                noteSubscriptionRejected(id, 'invalid msg id');
+            }
+            clock += 120_000; // always past backoff, so only parking can stop it
         }
-        expect(reqIdFor(sent, 0x60, 21)).toBeDefined();
+
+        expect(resends).toBeLessThan(MAX_PAIR_ATTEMPTS + 2);
+
+        // And once parked it stays parked.
+        const after: Sent[] = [];
+        await registerVTables(fakeClient(after), CONFIG);
+        expect(after.map(keyOf)).not.toContain('32,17');
     });
 
     it('sends nothing once everything is subscribed', async () => {
