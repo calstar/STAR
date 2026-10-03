@@ -4,10 +4,13 @@ name: STARProject CI
   push:
     paths:
       - 'starproject/**'
+      # The finance serializer's test reads the worker's accepted keys from here.
+      - 'callink-worker/request.mjs'
       - '.github/workflows/starproject-ci.yml'
   pull_request:
     paths:
       - 'starproject/**'
+      - 'callink-worker/request.mjs'
       - '.github/workflows/starproject-ci.yml'
   workflow_dispatch:
 

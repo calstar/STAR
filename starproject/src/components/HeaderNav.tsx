@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/tasks", label: "Tasks" },
   { href: "/subteams", label: "Subteams" },
   { href: "/activity", label: "Activity" },
+  { href: "/finance", label: "Finance" },
 ];
 
 // One link, styled per variant: mobile panel rows get a 44px touch target and

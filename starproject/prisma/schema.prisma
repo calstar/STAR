@@ -3,7 +3,7 @@
 // control, gives "my tasks" later). Blockers are display-only edges.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   // native = local dev; debian-openssl-3.0.x = the node:22-bookworm-slim runtime
   // image. Prisma needs the matching query engine for wherever the client runs.
   binaryTargets = ["native", "debian-openssl-3.0.x"]
@@ -29,19 +29,23 @@ enum TaskPriority {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?  // from the auth header; overwritten on every request
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String? // from the auth header; overwritten on every request
   displayName String? // user-chosen override; if set, shown instead of `name`
-  createdAt DateTime @default(now())
+  createdAt   DateTime @default(now())
 
-  createdProjects Project[] @relation("ProjectCreatedBy")
-  createdTasks    Task[]    @relation("TaskCreatedBy")
-  assignedTasks   Task[]    @relation("TaskAssignee")
-  activities      Activity[] @relation("ActivityActor")
-  settings        UserSettings?
-  digestSubscriptions DigestSubscription[]
-  emailQueue      EmailQueueItem[]
+  createdProjects        Project[]            @relation("ProjectCreatedBy")
+  createdTasks           Task[]               @relation("TaskCreatedBy")
+  assignedTasks          Task[]               @relation("TaskAssignee")
+  activities             Activity[]           @relation("ActivityActor")
+  settings               UserSettings?
+  digestSubscriptions    DigestSubscription[]
+  emailQueue             EmailQueueItem[]
+  payeeProfile           PayeeProfile?
+  createdReimbursements  Reimbursement[]      @relation("ReimbursementCreatedBy")
+  approvedReimbursements Reimbursement[]      @relation("ReimbursementApprovedBy")
+  reimbursementEvents    ReimbursementEvent[] @relation("ReimbursementEventActor")
 }
 
 model Project {
@@ -131,7 +135,7 @@ model Task {
   subteam     Subteam?      @relation(fields: [subteamId], references: [id])
   title       String
   description String?
-  blockedNote String?       // free-text "why is this blocked" comment (auto-saved, like description)
+  blockedNote String? // free-text "why is this blocked" comment (auto-saved, like description)
   status      TaskStatus    @default(backlog)
   priority    TaskPriority?
   assignees   User[]        @relation("TaskAssignee")
@@ -144,8 +148,8 @@ model Task {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
-  blockedBy TaskBlocker[] @relation("BlockedTask") // tasks blocking THIS one
-  blocking  TaskBlocker[] @relation("BlockerTask") // tasks THIS one blocks
+  blockedBy  TaskBlocker[] @relation("BlockedTask") // tasks blocking THIS one
+  blocking   TaskBlocker[] @relation("BlockerTask") // tasks THIS one blocks
   activities Activity[]
 
   @@index([projectId, status])
@@ -212,4 +216,193 @@ model RemovedSeedAdmin {
   id        String   @id @default(cuid())
   email     String   @unique
   createdAt DateTime @default(now())
+}
+
+// ---- Finance: reimbursements filed on CalLink --------------------------------
+//
+// Two sources share one table: requests filed through STARProject (which an admin
+// approves and callink-worker then files on CalLink), and requests that already
+// exist on CalLink, imported by the worker's scrape. The CalLink* fields mirror
+// CalLink and are written only by the worker API.
+
+enum ReimbursementSource {
+  callink // imported from CalLink's history
+  starproject // filed through STARProject
+}
+
+enum ReimbursementStatus {
+  pending_approval // waiting for an admin
+  approved // queued for the worker
+  submitting // claimed by the worker (leaseUntil), or outcome unknown (needsCheck)
+  submitted // on CalLink; its CalLink status is in callinkStatus
+  failed // the worker could not file it; an admin can retry
+  rejected // an admin declined it (reviewNote says why)
+  cancelled // withdrawn before it was filed
+}
+
+model Reimbursement {
+  id     String              @id @default(cuid())
+  // Human-facing number (R-N); also tagged into the CalLink subject as [STAR R-N]
+  // so a filing can be found on CalLink again. Never reused, never edited.
+  number Int                 @unique @default(autoincrement())
+  source ReimbursementSource
+  status ReimbursementStatus
+
+  subject               String
+  description           String?
+  eventDetails          String?
+  specialInstructions   String?
+  expenditureAction     String   @default("Direct Deposit")
+  directDepositSignedUp Boolean?
+  category              String? // imported rows only; everything we file is a Reimbursement
+  amountCents           Int // sum of the items (ours) or CalLink's submitted amount (imported)
+
+  // Not PII: shown to every member. Emails are stored lowercase.
+  payeeFirstName String
+  payeeLastName  String
+  payeeEmail     String?
+  submitterName  String?
+  submitterEmail String?
+  createdById    String?
+  createdBy      User?   @relation("ReimbursementCreatedBy", fields: [createdById], references: [id])
+
+  approvedById String?
+  approvedBy   User?     @relation("ReimbursementApprovedBy", fields: [approvedById], references: [id])
+  approvedAt   DateTime?
+  reviewNote   String?
+  leaseUntil   DateTime? // the worker's claim expires here
+  needsCheck   Boolean   @default(false) // the worker may have filed it but could not confirm
+  attempts     Int       @default(0)
+  lastError    String?
+
+  callinkId            Int?      @unique
+  callinkRequestNumber String?
+  callinkStatus        String?
+  callinkStage         String?
+  submittedAmountCents Int?
+  approvedAmountCents  Int?
+  submittedOn          DateTime?
+  callinkDeletedOn     DateTime?
+  scrapedAt            DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  pii    ReimbursementPii?
+  items  ReimbursementItem[]
+  events ReimbursementEvent[]
+
+  @@index([status])
+  @@index([payeeEmail])
+  @@index([submitterEmail])
+}
+
+// The payee's address, phone and UID. Kept apart so list queries never select
+// them; only the payee, the submitter and admins are shown this row.
+model ReimbursementPii {
+  reimbursementId String        @id
+  reimbursement   Reimbursement @relation(fields: [reimbursementId], references: [id], onDelete: Cascade)
+  street          String
+  street2         String?
+  city            String
+  state           String
+  zip             String
+  phone           String?
+  uid             String?
+}
+
+model ReimbursementItem {
+  id              String        @id @default(cuid())
+  reimbursementId String
+  reimbursement   Reimbursement @relation(fields: [reimbursementId], references: [id], onDelete: Cascade)
+  position        Int // 1..6, CalLink's item number
+  date            String // YYYY-MM-DD for ours; CalLink's free text for imported rows
+  vendor          String
+  amountCents     Int? // null when an imported total is not money ("N/A")
+  amountText      String? // the imported total as typed
+  comment         String?
+  // Imported rows only; ours are always Supplies / Berkeley, CA / no invoice.
+  type            String?
+  location        String?
+  invoice         String?
+
+  receipts ReceiptFile[]
+
+  @@unique([reimbursementId, position])
+}
+
+// A receipt. Ours carry their bytes (ReceiptBlob); imported ones point at the
+// document on CalLink.
+model ReceiptFile {
+  id                String            @id @default(cuid())
+  itemId            String
+  item              ReimbursementItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  fileName          String
+  mimeType          String
+  size              Int
+  callinkDocumentId String?
+  callinkHref       String?
+  createdAt         DateTime          @default(now())
+
+  blob ReceiptBlob?
+}
+
+// Receipt bytes, in their own table so no query that lists receipts loads them.
+model ReceiptBlob {
+  receiptId String      @id
+  receipt   ReceiptFile @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  data      Bytes
+}
+
+// What happened to a reimbursement, shown as its timeline.
+model ReimbursementEvent {
+  id              String        @id @default(cuid())
+  reimbursementId String
+  reimbursement   Reimbursement @relation(fields: [reimbursementId], references: [id], onDelete: Cascade)
+  kind            String // created | approved | rejected | cancelled | retried | claimed | released | submitted | failed | needs_check | callink_status
+  fromStatus      String?
+  toStatus        String?
+  note            String?
+  actorId         String?
+  actor           User?         @relation("ReimbursementEventActor", fields: [actorId], references: [id])
+  actorLabel      String? // "worker" or "scrape" when no member did it
+  createdAt       DateTime      @default(now())
+
+  @@index([reimbursementId, createdAt])
+}
+
+// A member's saved payee details, used to fill in the reimbursement form.
+// `email` is only a default for the form; it never decides who may see what.
+model PayeeProfile {
+  userId                String   @id
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firstName             String
+  lastName              String
+  street                String
+  street2               String?
+  city                  String
+  state                 String
+  zip                   String
+  phone                 String
+  uid                   String
+  email                 String?
+  directDepositSignedUp Boolean  @default(true)
+  updatedAt             DateTime @updatedAt
+}
+
+// The worker's last report: whether its CalLink session is alive and when it
+// last scraped. One row, id "callink".
+model WorkerStatus {
+  id               String    @id
+  session          String // ok | expired
+  sessionExpiresAt DateTime? // CalLink logins last a fixed 24 h from sign-in
+  lastSeenAt       DateTime
+  lastScrapeAt     DateTime?
+  note             String?
+  // An admin's "Sign in to CalLink" button: requested → running → waiting_duo → ok | failed.
+  loginState       String?
+  loginRequestedAt DateTime?
+  loginRequestedBy String?
+  loginUpdatedAt   DateTime?
+  loginNote        String?
 }

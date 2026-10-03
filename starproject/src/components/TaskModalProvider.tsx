@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 
+import { Modal } from "@/components/Modal";
 import { TaskDetail } from "@/components/TaskDetail";
 import { loadTaskById, loadTaskDetail } from "@/lib/actions/task-detail";
 import type { TaskDetailData } from "@/lib/task-detail";
@@ -89,21 +90,6 @@ export function TaskModalProvider({ children }: { children: React.ReactNode }) {
     });
   }, [open, nonce]);
 
-  // Esc to close + lock body scroll while open.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
-    };
-  }, [open, close]);
-
   // Keep the underlying page fresh so board/list reflect edits made in the modal.
   useEffect(() => {
     if (!open) router.refresh();
@@ -114,32 +100,15 @@ export function TaskModalProvider({ children }: { children: React.ReactNode }) {
     <TaskModalContext.Provider value={{ openTask, refresh }}>
       {children}
       {open && (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 sm:p-8"
-          onClick={close}
-        >
-          <div
-            className="relative flex h-dvh w-full flex-col overflow-hidden bg-neutral-50 dark:bg-neutral-900 shadow-xl sm:h-auto sm:max-h-[85dvh] sm:max-w-3xl sm:rounded-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              onClick={close}
-              aria-label="Close"
-              className="absolute right-3 top-3 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-neutral-100 text-neutral-400 ring-1 ring-neutral-200 dark:bg-neutral-800 dark:ring-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-700 hover:text-neutral-700 dark:hover:text-neutral-200"
-            >
-              ✕
-            </button>
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
-              {data ? (
-                <TaskDetail data={data} />
-              ) : (
-                <div className="py-16 text-center text-sm text-neutral-500 dark:text-neutral-400">
-                  {loading ? "Loading…" : "Task not found."}
-                </div>
-              )}
+        <Modal onClose={close}>
+          {data ? (
+            <TaskDetail data={data} />
+          ) : (
+            <div className="py-16 text-center text-sm text-neutral-500 dark:text-neutral-400">
+              {loading ? "Loading…" : "Task not found."}
             </div>
-          </div>
-        </div>
+          )}
+        </Modal>
       )}
     </TaskModalContext.Provider>
   );
