@@ -5,10 +5,10 @@ import type { ParamValue } from './params';
 import type { FittingRow, LineSegment } from './segments';
 import { INLINE, centreOf, nodeSize, remapAttachments } from './attach';
 import {
-  J_ANCHOR, J_HALF, branchFace, centreOfJunction, faceOfDir, hasLegalSpot, isJunction, junctionData, legalSpot, runDirOf,
-  runFaces,
+  J_ANCHOR, J_HALF, branchFaceOf, centreOfJunction, faceOfDir, hasLegalSpot, isElbow, isJunction, junctionData, legalSpot,
+  teeCorner,
 } from './junctions';
-import type { Along, Crowd, EndLookup, Face } from './junctions';
+import type { Along, Crowd, EndLookup, Face, RunFaces } from './junctions';
 import type { Obstacles } from './routeGrid';
 import { pipeOf, splitSpot } from './pipes';
 import { AXIS_EPS, STUB, arcsOf, pathPoints, pointAtArc, routeOrthogonal, routeThrough, simplifyPoints, sliceByArc } from './route';
@@ -27,10 +27,10 @@ import type { End, Pt } from './route';
  * `EXTENSIVE_LINE_PARAMS`.
  *
  * Neither changes the shape of the pipe it cuts. The cut is made on the line
- * as it is drawn, at a spot the thing going in can actually sit (off the
- * bends, clear of the ends -- `legalSpot`), and each half is handed its
- * slice of what was drawn, measured along the line: a person's corners stay
- * a person's, the router's stay the router's.
+ * as it is drawn, at a spot the thing going in can actually sit (clear of the
+ * ends, and off the bends -- or, for a tee, right on one -- `legalSpot`), and
+ * each half is handed its slice of what was drawn, measured along the line:
+ * a person's corners stay a person's, the router's stay the router's.
  */
 
 /**
@@ -148,15 +148,18 @@ function idMinter(edges: Edge[]) {
  * that reaches `reach` each way along it: the upstream half from the line's
  * source to the thing's inlet, the downstream from its outlet to the
  * target. Corners are dealt out by distance along the line -- a corner the
- * thing covers belongs to neither half.
+ * thing covers belongs to neither half, and nor does the bend an elbow tee
+ * is put on (`reach.elbow`): it is the tee's, and each half draws straight
+ * into the tee's face on its own leg.
  */
 function halves(
-  edges: Edge[], edge: Edge, points: Pt[], s: number, reach: { anchor: number; clear: number },
+  edges: Edge[], edge: Edge, points: Pt[], s: number, reach: { anchor: number; clear: number; elbow?: boolean },
   midId: string, inHandle: string, outHandle: string, byHand: boolean,
 ): { edges: Edge[]; up: { id: string; points: Pt[] }; down: { id: string; points: Pt[] } } {
   const arcs = arcsOf(points);
   const L = arcs[arcs.length - 1];
-  const inner = points.slice(1, -1).map((p, i) => ({ p, s: arcs[i + 1] }));
+  const under = (c: { s: number }) => !!reach.elbow && Math.abs(c.s - s) <= AXIS_EPS;
+  const inner = points.slice(1, -1).map((p, i) => ({ p, s: arcs[i + 1] })).filter(c => !under(c));
   // A spot is legal with a bend exactly its reach away, so a corner at the
   // edge of the reach is one the half keeps. A tee reaches nothing, and every
   // corner goes to exactly one half, the one up to and including the tee's
@@ -194,8 +197,7 @@ function halves(
  * and a fraction read off the tees either side; where the pipe's ends are is
  * left for the reseat to put in, since only it routes the whole pipe.
  */
-function alongFor(nodes: Node[], edges: Edge[], edge: Edge, points: Pt[], s: number, dir: Pt): Along {
-  const faces = runFaces(dir);
+function alongFor(nodes: Node[], edges: Edge[], edge: Edge, points: Pt[], s: number, faces: RunFaces): Along {
   const L = arcsOf(points)[points.length - 1] || 1;
   const f = s / L;
   const pipe = pipeOf(nodes, edges, edge);
@@ -229,9 +231,10 @@ function alongFor(nodes: Node[], edges: Edge[], edge: Edge, points: Pt[], s: num
  *
  * The one operation behind every gesture that branches a line. The tee goes
  * on the line where it is drawn, at the legal spot nearest `at` (see
- * `splitSpot`: never on or beside a bend, never inside a port's stub, never
- * on another tee), turned to the way the run goes there, and told which pipe
- * it rides -- see `pipes.ts`. The two halves draw exactly what the line drew;
+ * `splitSpot`: on a bend or a tee's reach clear of one, never inside a
+ * port's stub, never on another tee), turned to the way the run goes there
+ * -- round the corner, on a bend -- and told which pipe it rides -- see
+ * `pipes.ts`. The two halves draw exactly what the line drew;
  * probes clipped to the line are re-clipped to the half they were on.
  */
 export function splitEdgeAt(
@@ -253,11 +256,11 @@ export function splitEdgeAt(
   if (!spot) return null;
 
   const junctionId = nextJunctionId();
-  const faces = runFaces(spot.dir);
+  const faces = spot.faces;
   // Put down on purpose, here, with its pipe's ends where they are: its home
   // (`Along.home`). On a longer pipe, whose ends only the reseat knows, the
   // first seat records it.
-  const found = alongFor(nodes, edges, edge, points, spot.s, spot.dir);
+  const found = alongFor(nodes, edges, edge, points, spot.s, faces);
   const along: Along = found.ends
     ? { ...found, home: { a: { ...found.ends.a }, b: { ...found.ends.b }, at: { x: spot.point.x, y: spot.point.y } } }
     : found;
@@ -279,7 +282,9 @@ export function splitEdgeAt(
 
   // Corners are dealt out at the tee's centre, as the reseat deals them, so
   // none is lost under a tee a crowded line could only put near a bend.
-  const cut = halves(edges, edge, points, spot.s, { anchor: J_ANCHOR, clear: 0 }, junctionId, faces.in, faces.out, byHand);
+  const cut = halves(
+    edges, edge, points, spot.s, { anchor: J_ANCHOR, clear: 0, elbow: isElbow(faces) }, junctionId, faces.in, faces.out, byHand,
+  );
   return {
     nodes: [...remapAttachments(nodes, edgeId, [cut.up, cut.down], points), junction],
     edges: [...edges.filter(e => e.id !== edgeId), ...cut.edges],
@@ -390,7 +395,7 @@ export function tapLine(
   if (!split) return null;
   const tee = split.nodes.find(n => n.id === split.junctionId)!;
   const c = centreOfJunction(tee);
-  const face = branchFace(runDirOf(junctionData(tee).along!), pointer, c);
+  const face = branchFaceOf(junctionData(tee).along!, pointer, c);
   const { w, h } = nodeSize(instrument);
   // The port on the middle of the bottom side, 30 px from the tee's centre.
   const reach = 30;
@@ -453,6 +458,7 @@ function pathProject(pts: Pt[], p: Pt): number {
 export function mergedLineData(
   a: Record<string, unknown> | undefined,
   b: Record<string, unknown> | undefined,
+  joint?: Pt | null,
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...a };
 
@@ -464,7 +470,10 @@ export function mergedLineData(
 
   const own = (d: Record<string, unknown> | undefined) => (d?.waypoints as Pt[] | undefined) ?? [];
   const byHand = (d: Record<string, unknown> | undefined) => own(d).length > 0 && !d?.viaRun;
-  const waypoints = [...own(a), ...own(b)];
+  // Between the two, the corner the elbow tee they met at was (`joint`):
+  // neither half carried it, since each stopped at the tee's face on its own
+  // leg, and without it the healed line cut the corner.
+  const waypoints = [...own(a), ...(joint ? [{ ...joint }] : []), ...own(b)];
   delete merged.viaRun;
   if (waypoints.length) {
     merged.waypoints = waypoints;
@@ -550,16 +559,19 @@ function reversedData(data: Record<string, unknown> | undefined): Record<string,
 /**
  * A chain of lines joined through things taken out of the run, as one line:
  * `chain[k]` with `reversed[k]` when it is stored against the chain's
- * direction. `clear` drops the corners each removed thing made for itself.
+ * direction. `clear` drops the corners each removed thing made for itself;
+ * `joint(k)` is the corner an elbow tee between `chain[k - 1]` and
+ * `chain[k]` was, which the healed line keeps.
  */
 function mergeChain(
   chain: Edge[], reversed: boolean[], id: string,
   clear: (data: Record<string, unknown> | undefined, k: number) => Record<string, unknown> | undefined = d => d,
+  joint: (k: number) => Pt | null = () => null,
 ): Edge {
   const first = chain[0], last = chain[chain.length - 1];
   const dataOf = (k: number) => clear(reversed[k] ? reversedData(chain[k].data) : chain[k].data, k);
   let data = dataOf(0);
-  for (let k = 1; k < chain.length; k++) data = mergedLineData(data, dataOf(k));
+  for (let k = 1; k < chain.length; k++) data = mergedLineData(data, dataOf(k), joint(k));
   if (chain.length === 1) data = mergedLineData(data, undefined);
   const source = reversed[0] ? first.target : first.source;
   const sourceHandle = reversed[0] ? first.targetHandle : first.sourceHandle;
@@ -609,8 +621,10 @@ export function rejoinChains(
   if (!midNodes.length) return [];
   const boxes = new Map(deletedNodes.map(n => { const { w, h } = nodeSize(n); return [n.id, { x: n.position.x, y: n.position.y, w, h }]; }));
 
-  // The two lines each deleted mid-run thing joins.
+  // The two lines each deleted mid-run thing joins, and the corner of the
+  // pipe an elbow tee among them was.
   const pairOf = new Map<string, [Edge, Edge]>();
+  const cornerOf = new Map<string, Pt>();
   for (const n of midNodes) {
     const on = deletedEdges.filter(e => e.source !== e.target && (e.source === n.id || e.target === n.id));
     const along = isJunction(n) ? junctionData(n).along : undefined;
@@ -618,7 +632,12 @@ export function rejoinChains(
     if (along) {
       const inE = on.find(e => at(e) === along.in);
       const outE = on.find(e => e !== inE && at(e) === along.out);
-      if (inE && outE) { pairOf.set(n.id, [inE, outE]); continue; }
+      if (inE && outE) {
+        pairOf.set(n.id, [inE, outE]);
+        const corner = teeCorner(n);
+        if (corner) cornerOf.set(n.id, corner);
+        continue;
+      }
     }
     if (on.length === 2) pairOf.set(n.id, [on[0], on[1]]);
   }
@@ -679,7 +698,8 @@ export function rejoinChains(
       const src = nodesAlong[0], tgt = nodesAlong[nodesAlong.length - 1];
       const id = freshEdgeId(`${src}-${tgt}`, x => has(x) || minted.has(x));
       minted.add(id);
-      out.push({ edge: mergeChain(ordered, reversed, id, clear), replaced: ordered.map(e => e.id), reversed });
+      const joint = (k: number) => cornerOf.get(nodesAlong[k]) ?? null;
+      out.push({ edge: mergeChain(ordered, reversed, id, clear, joint), replaced: ordered.map(e => e.id), reversed });
       break;
     }
   }
@@ -787,6 +807,8 @@ export function healThrough(nodes: Node[], edges: Edge[], id: string, drawn?: He
   const at = (e: Edge) => (e.source === id ? e.sourceHandle : e.targetHandle) ?? '';
   const inE = along && lines.find(e => at(e) === along.in);
   const outE = along && lines.find(e => e !== inE && at(e) === along.out);
+  // Healed through an elbow tee, the line keeps the corner the tee was.
+  const corner = inE && outE ? teeCorner(n) : null;
   const [first, second] = inE && outE ? [inE, outE]
     : lines[0].target === id || lines[1].source === id ? [lines[0], lines[1]] : [lines[1], lines[0]];
   // Heal through it: the first line from its far end, then the second on.
@@ -799,7 +821,7 @@ export function healThrough(nodes: Node[], edges: Edge[], id: string, drawn?: He
   const lineId = freshEdgeId(`${src}-${tgt}`, new Set(rest.map(e => e.id)));
   return {
     nodes: reclip(nodes.filter(x => x.id !== id), lineId, [first.id, second.id], reversed, drawn),
-    edges: [...rest, mergeChain([first, second], reversed, lineId)],
+    edges: [...rest, mergeChain([first, second], reversed, lineId, undefined, () => corner)],
     lineId,
   };
 }

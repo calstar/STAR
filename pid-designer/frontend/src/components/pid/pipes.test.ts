@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { Position } from '@xyflow/react';
 import type { Edge, Node } from '@xyflow/react';
 import {
-  ACROSS, CORNER_GAP, END_GAP, J_END, TEE_END_GAP, TEE_GAP, adoptTee, dragging, freezePipe, isJunction, junctionData, junctionEnd, keptShape,
+  CORNER_GAP, END_GAP, J_END, TEE_END_GAP, TEE_GAP, adoptTee, dragging, freezePipe, isJunction, junctionData, junctionEnd, keptShape,
   latestSpots, legalSpot, pipeGeometry, pipeOf, pipesOf, pointLines, reseatJunctions, setHandCorners, slideAlong, splitSpot,
-  thawPipe,
+  freeFaces, thawPipe,
 } from './junctions';
 import type { Along, Dragging, EndLookup, Face } from './junctions';
 import { dissolveAfterDelete, insertInline, rejoinChains, splitEdgeAt } from './splitEdge';
@@ -467,6 +467,10 @@ describe('the reseat', () => {
   it('leaves room for every tee after it, so none is crowded onto a bend', () => {
     // Three tees on a long L; then its far end is pulled in, so the pipe is
     // a 100 px leg and a 40 px one. Two of the tees end up near the bend.
+    // This used to ask that every tee end up a tee's reach off the bend; one
+    // may now sit right on it, as an elbow, and what is still asked is that
+    // none is crowded beside it: each is on the bend, turning there with
+    // neither of its lines carrying the bend, or a reach clear of it.
     const nodes = [part('A', 0, 0), part('B', 270, 200)];
     const t1 = tee(nodes, [E('A', 'r', 'B', 't')], 'A-B', P(140, 30));
     const h1 = t1.edges.find(e => e.source === t1.id)!;
@@ -476,10 +480,20 @@ describe('the reseat', () => {
     const moved = t3.nodes.map(n => (n.id === 'B' ? { ...n, position: { x: 130, y: 70 } } : n));
     const s = settle(moved, t3.edges);
     const bend = P(160, 30);
+    let onBend = 0;
     for (const id of [t1.id, t2.id, t3.id]) {
-      const c = centre(s.nodes.find(n => n.id === id)!);
-      expect(Math.abs(c.x - bend.x) + Math.abs(c.y - bend.y)).toBeGreaterThanOrEqual(CORNER_GAP - 1e-6);
+      const n = s.nodes.find(x => x.id === id)!;
+      const c = centre(n);
+      const off = Math.abs(c.x - bend.x) + Math.abs(c.y - bend.y);
+      if (off < 1e-6) {
+        onBend++;
+        expect([alongOf(n).in, alongOf(n).out]).toEqual(['l', 'b']);
+        for (const e of s.edges.filter(x => x.source === id || x.target === id)) {
+          expect(dataOf(e).waypoints ?? []).not.toContainEqual(bend);
+        }
+      } else expect(off).toBeGreaterThanOrEqual(CORNER_GAP - 1e-6);
     }
+    expect(onBend).toBeLessThanOrEqual(1);
   });
 
   it('loses no corner of a hand-routed pipe that tightens round its tee past holding it clear of its bends', () => {
@@ -1302,7 +1316,7 @@ describe('the faces lines take, against the rest of the page', () => {
 
 describe('the routes lines take among the other lines', () => {
   /** The faces across a riding tee's run: the ones a branch may leave it by. */
-  const ACROSS_OF = (tee: Node): Face[] => ACROSS[junctionData(tee).along!.in as Face];
+  const ACROSS_OF = (tee: Node): Face[] => freeFaces(junctionData(tee).along!);
   /** The lines of the pipe tee `id` rides, as drawn. */
   const pipeLines = (s: { nodes: Node[]; edges: Edge[] }, drawn: Map<string, Pt[]>, id: string) =>
     pipeOf(s.nodes, s.edges, s.nodes.find(n => n.id === id)!)!.lines.map(l => drawn.get(l)!);
@@ -1801,30 +1815,55 @@ describe('a tee whose pipe is moved out from under it', () => {
 
 describe('where the reseat puts a tee it moves', () => {
   it('lands on the grid line on its leg nearest where the rule stops it, and exactly on it', () => {
+    // A tee on the first leg of a Z at x = 180, and A brought along until
+    // its port is six pixels behind the tee. Held a port's clearance off A
+    // it stopped at x = 80, on the grid; with A's port at x = 76 instead it
+    // stops at 90, the grid line on its leg nearest the stop that is still
+    // that far off. (This used to bring a bend up under the tee; a tee
+    // within its reach of a bend now goes onto the bend as an elbow -- the
+    // case after this one.)
+    const z = zPipe();
+    const t = tee(z.nodes, z.edges, 'A-B', P(180, 30));
+    expect(centre(t.nodes.find(n => n.id === t.id)!)).toEqual(P(180, 30));
+    const s = settle(t.nodes.map(n => (n.id === 'A' ? { ...n, position: P(116, 0) } : n)), t.edges);
+    const T = s.nodes.find(n => n.id === t.id)!;
+    expect(T.position).toEqual(P(185, 25));
+    expect(190 - 176).toBeGreaterThanOrEqual(CORNER_GAP);
+    // Where it is then is a legal spot, and the next reseat leaves it there.
+    expect(s.runs).toBe(1);
+  });
+
+  it('goes onto a bend brought within its reach, as an elbow, and stays there', () => {
     // A tee on the upright leg of a Z at y = 100, and B brought up until the
-    // lower bend is ten pixels under it. Held a tee's reach off the bend it
-    // stopped at y = 96, on no grid line, and a branch from it to a symbol on
-    // the grid jogged by the four. It goes on to y = 90, the grid line on its
-    // leg nearest the stop that is still a tee's reach off the bend.
+    // lower bend is ten pixels under it. This used to hold it a tee's reach
+    // off the bend and then on the grid line past that, y = 90; a bend is a
+    // spot a tee may sit on now, and one within its reach takes it: on the
+    // bend, in from above and out to the right, the line out of it straight
+    // to B.
     const z = zPipe();
     const t = tee(z.nodes, z.edges, 'A-B', P(230, 100));
-    expect(centre(t.nodes.find(n => n.id === t.id)!)).toEqual(P(230, 100));
     const s = settle(t.nodes.map(n => (n.id === 'B' ? { ...n, position: P(400, 80) } : n)), t.edges);
     const T = s.nodes.find(n => n.id === t.id)!;
-    expect(T.position).toEqual(P(225, 85));
-    expect(110 - 90).toBeGreaterThanOrEqual(CORNER_GAP);
-    // Where it is then is a legal spot, and the next reseat leaves it there.
+    expect(centre(T)).toEqual(P(230, 110));
+    expect([alongOf(T).in, alongOf(T).out]).toEqual(['t', 'r']);
+    const out = s.edges.find(e => e.source === t.id)!;
+    expect(draw(out, s.nodes).pts).toEqual([P(238, 110), P(400, 110)]);
     expect(s.runs).toBe(1);
   });
 
   it('lands exactly where the rule stops it when no grid line beside that is a legal spot', () => {
     // B brought up until the upright leg is 28 px long, from y = 30 down to
-    // 58: the only spot on it a tee's reach from both bends is y = 44, and
-    // the grid lines either side, 40 and 50, are each ten pixels from one.
+    // 58: the only straight spot on it a tee's reach from both bends is
+    // y = 44, and the grid lines either side, 40 and 50, are each ten pixels
+    // from one. Both bends are spots too now, and a tee at y = 48 is within
+    // its reach of the lower one -- but one put at 44 itself, the place the
+    // rule stopped it before, is a legal spot and stays there.
     const z = zPipe();
     const t = tee(z.nodes, z.edges, 'A-B', P(230, 70));
     const s = settle(t.nodes.map(n => (n.id === 'B' ? { ...n, position: P(400, 28) } : n)), t.edges);
-    expect(s.nodes.find(n => n.id === t.id)!.position).toEqual(P(225, 39));
+    expect(centre(s.nodes.find(n => n.id === t.id)!)).toEqual(P(230, 58));
+    const held = settle(s.nodes.map(n => (n.id === t.id ? { ...n, position: P(225, 39) } : n)), s.edges);
+    expect(held.nodes.find(n => n.id === t.id)!.position).toEqual(P(225, 39));
   });
 
   it('is the pixel it means, not a few ulps off it', () => {
@@ -1875,31 +1914,35 @@ describe('a tee dragged along its pipe', () => {
     expect(s.dir).toEqual(P(0, 1));
   });
 
-  it('is kept off a bend', () => {
+  it('rests on a bend it is slid to, and goes on past it', () => {
     const z = zPipe();
     const t1 = tee(z.nodes, z.edges, 'A-B', P(150, 30));
     const n = t1.nodes.find(x => x.id === t1.id)!;
     // Pointer 3 px short of the bend on the first leg, then 3 px past it on
-    // the second. Held a tee's reach off the bend, and then on the grid line
-    // on that leg nearest where it was held that is still that far off it:
-    // x = 210, not 216, and y = 50, not 44. (It stopped at the reach itself,
-    // on no grid line, and its branch jogged by the difference.)
+    // the second: on the bend both times. This used to hold the tee a tee's
+    // reach off the bend, and then on the grid line past that -- x = 210 and
+    // y = 50 -- since no tee sat on a bend; it may now, as an elbow, and one
+    // slid within its reach of a bend stops there.
     const before = slideAlong(n, alongOf(n), { x: 222, y: 24 }, t1.edges, byIdOf(t1.nodes), endOf)!;
-    expect(before.position).toEqual(P(210 - 5, 25));
-    expect(230 - 210).toBeGreaterThanOrEqual(CORNER_GAP);
+    expect(before.position).toEqual(P(225, 25));
     const past = slideAlong(n, alongOf(n), { x: 225, y: 28 }, t1.edges, byIdOf(t1.nodes), endOf)!;
-    expect(past.position).toEqual(P(225, 50 - 5));
+    expect(past.position).toEqual(P(225, 25));
+    // A reach and more past it, it is on the next leg, on the grid.
+    const on = slideAlong(n, alongOf(n), { x: 225, y: 45 }, t1.edges, byIdOf(t1.nodes), endOf)!;
+    expect(on.position).toEqual(P(225, 45));
+    expect(50 - 30).toBeGreaterThanOrEqual(CORNER_GAP);
   });
 
-  it('is put on the grid line nearest where the bend stopped it, beside a corner off the grid too', () => {
+  it('rests on a bend off the grid, exactly on it', () => {
     // A's port at y = 34, so the pipe's first leg runs off the grid and the
-    // bend is at (230, 34): held off it at y = 48, the nearest grid line that
-    // is still a tee's reach off the bend is 50.
+    // bend is at (230, 34). Slid just past it the tee is on the bend, not on
+    // a grid line beside it: a grid line within its reach of a bend is the
+    // bend's. (It used to be held off the bend, on the grid line at y = 50.)
     const nodes = [part('A', 0, 4), part('B', 400, 300)];
     const t1 = tee(nodes, [E('A', 'r', 'B', 'l')], 'A-B', P(150, 34));
     const n = t1.nodes.find(x => x.id === t1.id)!;
     const past = slideAlong(n, alongOf(n), { x: 225, y: 32 }, t1.edges, byIdOf(t1.nodes), endOf)!;
-    expect(past.position).toEqual(P(225, 45));
+    expect(past.position).toEqual(P(225, 29));
   });
 
   it('stays where the rule stopped it when no grid line beside the stop is a legal spot', () => {
@@ -2105,17 +2148,28 @@ describe('where a tee put into a line goes', () => {
   it('is where the hover dot says: the legal spot nearest the pointer', () => {
     const z = zPipe();
     const pts = draw(z.edges[0], z.nodes).pts;
+    // Near a bend, that is the bend (it used to be a tee's reach off it, at
+    // x = 216: no tee sat on a bend); and along the leg, the pointer's spot.
     const spot = splitSpot(z.nodes, z.edges, 'A-B', pts, P(229, 31))!;
-    expect(spot.point).toEqual(P(230 - CORNER_GAP, 30));
+    expect(spot.point).toEqual(P(230, 30));
     const s = splitEdgeAt(z.nodes, z.edges, 'A-B', P(229, 31), undefined, { points: pts })!;
     expect(centre(s.nodes.find(n => n.id === s.junctionId)!)).toEqual(spot.point);
+    expect(splitSpot(z.nodes, z.edges, 'A-B', pts, P(200, 32))!.point).toEqual(P(200, 30));
   });
 
-  it('goes onto the leg a pull at a bend heads for', () => {
+  it('goes onto a bend pressed at, whichever leg the pull heads for', () => {
+    // This used to put the tee a reach down the leg the pull headed for; a
+    // tee on a bend is an elbow now, and its branch leaves by whichever of
+    // its two free faces carries a leg on toward where the pull heads.
     const z = zPipe();
     const pts = draw(z.edges[0], z.nodes).pts;
-    expect(splitSpot(z.nodes, z.edges, 'A-B', pts, P(230, 30), P(500, 230))!.point).toEqual(P(230, 30 + CORNER_GAP));
-    expect(splitSpot(z.nodes, z.edges, 'A-B', pts, P(230, 30), P(100, -100))!.point).toEqual(P(230 - CORNER_GAP, 30));
+    for (const toward of [P(500, 230), P(100, -100)]) {
+      const spot = splitSpot(z.nodes, z.edges, 'A-B', pts, P(230, 30), toward)!;
+      expect(spot.point).toEqual(P(230, 30));
+      expect(spot.faces).toEqual({ in: 'l', out: 'b' });
+    }
+    // A press a reach and more along a leg is not the bend's.
+    expect(splitSpot(z.nodes, z.edges, 'A-B', pts, P(230, 50), P(500, 230))!.point).toEqual(P(230, 50));
   });
 
   it('is told the pipe it lands on, not just the line', () => {
@@ -2137,25 +2191,28 @@ describe('where a tee put into a line goes', () => {
 
   it('is, told the drawing\'s ports, where the reseat puts it on its pipe, on a short bent line too', () => {
     // A pipe routed by hand with a jog at x=76, and a tee just past the jog:
-    // the line from A to it is 57 px with two bends in it, and no spot on it
-    // a tee's reach clear of both. On the line alone the least bad spot is
-    // between the bends; placed on its pipe, as the reseat places it, the new
-    // tee goes past the second bend and the tee beyond is made room. The dot
-    // has to say where it lands.
-    const nodes = [part('A', 0, 0), part('B', 400, 26)];
-    const e = E('A', 'r', 'B', 'l', { waypoints: [P(76, 30), P(76, 56)], offset: 0 });
-    const t1 = tee(nodes, [e], 'A-B', P(98.6, 56));
+    // the line from A to it is 41 px with two bends in it, and no spot on it
+    // a tee's reach clear of both -- nor either bend, ten pixels from the
+    // other, which an elbow tee on it would turn inside its stub to reach.
+    // (The jog was 26 px; a tee may sit on a bend now, and one that long has
+    // a bend to put it on.) On the line alone the least bad spot is between
+    // the bends; placed on its pipe, as the reseat places it, the new tee
+    // goes past the second bend and the tee beyond is made room. The dot has
+    // to say where it lands.
+    const nodes = [part('A', 0, 0), part('B', 400, 10)];
+    const e = E('A', 'r', 'B', 'l', { waypoints: [P(76, 30), P(76, 40)], offset: 0 });
+    const t1 = tee(nodes, [e], 'A-B', P(98.6, 40));
     const up = t1.edges.find(x => x.target === t1.id)!;
     const pts = draw(up, t1.nodes).pts;
-    expect(pts).toEqual([P(60, 30), P(76, 30), P(76, 56), P(90.6, 56)]);
-    const dot = splitSpot(t1.nodes, t1.edges, up.id, pts, P(76, 40), undefined, { endOf })!;
-    expect(dot.point).toEqual(P(90, 56));
-    expect(splitSpot(t1.nodes, t1.edges, up.id, pts, P(76, 40))!.point).not.toEqual(dot.point);
-    const s = splitEdgeAt(t1.nodes, t1.edges, up.id, P(76, 40), undefined, { points: pts, endOf })!;
+    expect(pts).toEqual([P(60, 30), P(76, 30), P(76, 40), P(90.6, 40)]);
+    const dot = splitSpot(t1.nodes, t1.edges, up.id, pts, P(76, 35), undefined, { endOf })!;
+    expect(dot.point).toEqual(P(90, 40));
+    expect(splitSpot(t1.nodes, t1.edges, up.id, pts, P(76, 35))?.point).not.toEqual(dot.point);
+    const s = splitEdgeAt(t1.nodes, t1.edges, up.id, P(76, 35), undefined, { points: pts, endOf })!;
     expect(centre(s.nodes.find(n => n.id === s.junctionId)!)).toEqual(dot.point);
     const after = settle(s.nodes, s.edges);
     expect(centre(after.nodes.find(n => n.id === s.junctionId)!)).toEqual(dot.point);
-    expect(centre(after.nodes.find(n => n.id === t1.id)!)).toEqual(P(90 + TEE_GAP, 56));
+    expect(centre(after.nodes.find(n => n.id === t1.id)!)).toEqual(P(90 + TEE_GAP, 40));
   });
 
   it('lands where the dot said, whatever line it goes into (randomised)', () => {

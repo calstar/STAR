@@ -604,15 +604,35 @@ describe('a line with no room for a tee is not split, and no tee already there m
   });
 
   it('puts no tee into a short line bent where a tee would sit, pulled from or tee\'d by the Junction tool alike', () => {
-    // A tank's lid port with an open end let go 30 px up and to the left:
-    // legs of 20 and 22, and no spot on it clear of the ends and the bend.
-    // A tee put in went 4 px from the bend, and its halves hooked round it.
+    // A tank's lid port with an open end let go 10 px up and 22 to the
+    // left: legs of 10 and 22, and no spot on it clear of the ends and the
+    // bend -- nor the bend itself, inside the port's clearance. A tee put in
+    // went 4 px from the bend, and its halves hooked round it. (The legs
+    // were 20 and 22; a bend that far from both ends holds a tee now, as an
+    // elbow -- the case after this one.)
     const J: Node = { id: 'J', type: 'JUNCTION', position: P(480 - J_HALF, 300 - J_HALF), data: { componentType: 'JUNCTION', label: 'J' } };
-    const g: G = { nodes: [sym('S', 480, 320, ['t']), J, sym('X', 700, 400, ['l'])], edges: [E('S', 't', 'J', 'r')] };
-    expect(drawn(g.edges[0], g.nodes)).toEqual([P(510, 320), P(510, 300), P(488, 300)]);
-    for (const at of [P(510, 312), P(510, 306), P(500, 300)]) {
+    const g: G = { nodes: [sym('S', 480, 310, ['t']), J, sym('X', 700, 400, ['l'])], edges: [E('S', 't', 'J', 'r')] };
+    expect(drawn(g.edges[0], g.nodes)).toEqual([P(510, 310), P(510, 300), P(488, 300)]);
+    for (const at of [P(510, 306), P(510, 302), P(500, 300)]) {
       expect(drop(g, port('X', 'l'), at)).toEqual({ kind: 'cancel', why: 'full' });
       expect(splitEdgeAt(g.nodes, g.edges, 'S-J', at, undefined, { points: drawn(g.edges[0], g.nodes) })).toBeNull();
+    }
+  });
+
+  it('puts a tee on the bend of a short line whose bend can hold one, each half straight into its face', () => {
+    // Legs of 20 and 22: no straight spot a tee's reach from both the bend
+    // and the ends, but the bend is a reach from both ends, and a tee goes
+    // on it, in from the port below and out to the open end on the left.
+    const J: Node = { id: 'J', type: 'JUNCTION', position: P(480 - J_HALF, 300 - J_HALF), data: { componentType: 'JUNCTION', label: 'J' } };
+    const g: G = { nodes: [sym('S', 480, 320, ['t']), J, sym('X', 700, 400, ['l'])], edges: [E('S', 't', 'J', 'r')] };
+    for (const at of [P(510, 312), P(510, 306), P(500, 300)]) {
+      const plan = connected(drop(g, port('X', 'l'), at));
+      const after = settle(commitDrop(plan, scene(g))!);
+      const tee = after.nodes.find(n => isJunction(n) && n.id !== 'J')!;
+      expect(centre(after, tee.id)).toEqual(P(510, 300));
+      const lines = after.edges.filter(e => e.source === tee.id || e.target === tee.id).map(e => drawn(e, after.nodes));
+      expect(lines).toContainEqual([P(510, 320), P(510, 308)]);
+      expect(lines).toContainEqual([P(502, 300), P(488, 300)]);
     }
   });
 

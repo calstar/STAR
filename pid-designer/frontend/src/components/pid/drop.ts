@@ -2,10 +2,10 @@ import type { Connection, Edge, EdgeChange, HandleType, Node } from '@xyflow/rea
 import { Position, addEdge } from '@xyflow/react';
 import { freshEdgeId, nextJunctionId } from './ids';
 import {
-  FACES, J_ANCHOR, J_END, J_HALF, J_STUB, TEE_GAP, adoptTee, branchFace, centreOfJunction, isJunction, junctionData,
-  crowdOf, junctionEnd, pipesOf, runDirOf, splitSpot,
+  CORNER_GAP, FACES, J_ANCHOR, J_END, J_HALF, J_STUB, SIDE_OF, TEE_GAP, adoptTee, aheadOnRun, branchFaceOf, centreOfJunction,
+  OUT_OF, isElbow, isJunction, junctionData, crowdOf, junctionEnd, pipesOf, runFacesNear, splitSpot,
 } from './junctions';
-import type { Along, Crowd, EndLookup, Face, Pipe } from './junctions';
+import type { Along, Crowd, EndLookup, Face, Pipe, RunFaces } from './junctions';
 import { healThrough, insertInline, splitEdgeAt, tapLine } from './splitEdge';
 import { drawnRoute } from './lineRoute';
 import { lineAt } from './lineHit';
@@ -319,6 +319,32 @@ function across(dir: Pt, at: Pt, to: Pt): Leave {
 
 const leaveOf = (e: PlanEnd): Leave => SIDE_LEAVE[e.end.side] ?? ANY;
 
+/**
+ * Which way a branch leaves a tee whose run takes `run`, toward `to` from
+ * `at`: across a straight run, as `across` says; out of an elbow by the free
+ * face it would take (`branchFaceOf`), since its two free faces lie on both
+ * axes and only the face says which.
+ */
+const leaveRun = (run: RunFaces, at: Pt, to: Pt): Leave =>
+  (isElbow(run) ? SIDE_LEAVE[SIDE_OF[branchFaceOf(run, to, at)]] : across(OUT_OF[run.out], at, to));
+
+/**
+ * The run a tee put into a line where a pull out of it starts would take,
+ * and where it would sit: on the bend, at right angles, when the press is
+ * within a tee's reach of one (`splitSpot` puts it there), and otherwise
+ * along the leg under the press.
+ */
+function lineRun(points: Pt[], at: Pt): { faces: RunFaces; at: Pt } {
+  for (let i = 1; i + 1 < points.length; i++) {
+    if (Math.abs(points[i].x - at.x) + Math.abs(points[i].y - at.y) >= CORNER_GAP) continue;
+    // On one of the bend's two legs, not just near it as the crow flies.
+    const onLeg = Math.abs(points[i].x - at.x) < AXIS_EPS || Math.abs(points[i].y - at.y) < AXIS_EPS;
+    const faces = onLeg ? runFacesNear(points, points[i]) : null;
+    if (faces && isElbow(faces)) return { faces, at: points[i] };
+  }
+  return { faces: runFacesNear(points, at), at };
+}
+
 // ── Where the drag came from ─────────────────────────────────────────────────
 
 /** Everything a pull may not land on: the pipe it is on, and what that pipe ends at. */
@@ -483,12 +509,13 @@ function originLeave(o: Origin, to: Pt, cx: Cx): Leave {
     case 'fixed':
       return SIDE_LEAVE[o.end.side] ?? ANY;
     case 'line': {
-      const near = nearestOnPolyline(o.points, o.point);
-      return near ? across(near.dir, o.point, to) : ANY;
+      if (!nearestOnPolyline(o.points, o.point)) return ANY;
+      const run = lineRun(o.points, o.point);
+      return leaveRun(run.faces, run.at, to);
     }
     case 'tee': {
       const run = runOfTee(cx, o.node);
-      return run ? across(runDirOf(run.along), o.point, to) : ANY;
+      return run ? leaveRun(run.along, o.point, to) : ANY;
     }
   }
 }
@@ -500,14 +527,14 @@ function originProbe(o: Origin, to: Pt, cx: Cx): End {
     case 'fixed':
       return o.end;
     case 'line': {
-      const near = nearestOnPolyline(o.points, o.point);
-      const face = branchFace(near?.dir ?? { x: 1, y: 0 }, to, o.point);
-      return junctionEnd({ x: o.point.x - J_HALF, y: o.point.y - J_HALF }, face);
+      const run = lineRun(o.points, o.point);
+      const face = branchFaceOf(run.faces, to, run.at);
+      return junctionEnd({ x: run.at.x - J_HALF, y: run.at.y - J_HALF }, face);
     }
     case 'tee': {
       const run = runOfTee(cx, o.node);
       const c = o.point;
-      const face = run ? branchFace(runDirOf(run.along), to, c) : faceTowards(to.x, to.y, c.x, c.y) as Face;
+      const face = run ? branchFaceOf(run.along, to, c) : faceTowards(to.x, to.y, c.x, c.y) as Face;
       return { ...junctionEnd(o.node.position, face) };
     }
   }
@@ -589,7 +616,7 @@ function teeAtFoot(o: Origin, cx: Cx, edge: Edge, pts: Pt[], at: Pt, far: { poin
     const c = centreOfJunction(n);
     // In line with it to within what the router draws straight into a tee.
     if (!run || dist(c, foot) > ALIGNED) continue;
-    const face = branchFace(runDirOf(run.along), far.point, c);
+    const face = branchFaceOf(run.along, far.point, c);
     const used = (cx.linesAt.get(n.id) ?? []).some(e => handleAt(e, n.id) === face);
     if (!used) return teeFace(cx, n, face);
   }
@@ -618,15 +645,16 @@ function splitEnd(cx: Cx, edge: Edge, pts: Pt[], at: Pt, toward: Pt, far: { poin
   }
   spot ??= splitSpot(nodes, edges, edge.id, pts, want, toward, geometry);
   if (!spot || !roomBeside(cx, edge, spot)) return null;
-  const face = branchFace(spot.dir, toward, spot.point);
+  const face = branchFaceOf(spot.faces, toward, spot.point);
   const position = { x: spot.point.x - J_HALF, y: spot.point.y - J_HALF };
   return { kind: 'split', edgeId: edge.id, at: want, points: pts, face, centre: spot.point, end: junctionEnd(position, face) };
 }
 
 /**
  * The end a line to or from an existing tee takes, the other end being at
- * `toward`. A tee that rides a pipe takes it on the face across its run on
- * that side; that face taken, a new tee goes into the run `TEE_GAP` along,
+ * `toward`. A tee that rides a pipe takes it on the face its run leaves free
+ * on that side (across a straight run; carrying an elbow's leg on past its
+ * corner); that face taken, a new tee goes into the run `TEE_GAP` along,
  * toward the other end -- two branches on one face are drawn as one. A free
  * junction or open end takes it on the face that points at it, or the free
  * face that points nearest.
@@ -636,10 +664,9 @@ function teeEnd(cx: Cx, tee: Node, toward: Pt): PlanEnd | null {
   const used = new Set((cx.linesAt.get(tee.id) ?? []).map(e => handleAt(e, tee.id)));
   const run = runOfTee(cx, tee);
   if (run) {
-    const dir = runDirOf(run.along);
-    const face = branchFace(dir, toward, c);
+    const face = branchFaceOf(run.along, toward, c);
     if (!used.has(face)) return teeFace(cx, tee, face);
-    const ahead = (toward.x - c.x) * dir.x + (toward.y - c.y) * dir.y >= 0;
+    const ahead = aheadOnRun(run.along, c, toward);
     const line = ahead ? run.outLine : run.inLine;
     const pts = cx.points(line.id);
     if (!pts) return null;
@@ -1012,7 +1039,7 @@ function connected(plan: DropPlan, scene: DropScene): { nodes: Node[]; edges: Ed
         const tee = nodes.find(n => n.id === split.junctionId)!;
         const c = centreOfJunction(tee);
         const along = junctionData(tee).along;
-        return { id: tee.id, handle: along ? branchFace(runDirOf(along), other, c) : end.face, centre: c };
+        return { id: tee.id, handle: along ? branchFaceOf(along, other, c) : end.face, centre: c };
       }
       case 'open': {
         const id = nextJunctionId();

@@ -11,11 +11,11 @@ import {
 } from './routeGrid';
 import type { Obstacles, Soft, SoftLine } from './routeGrid';
 import {
-  ACROSS, CORNER_GAP, END_GAP, FACES, J_ANCHOR, J_CLEAR, J_END, J_HALF, J_STUB, TEE_END_GAP, TEE_GAP,
-  branchFace, centreOfJunction, faceOfDir, hasLegalSpot, isJunction, junctionData, junctionEnd, latestSpots, legalSpot,
-  onAxisOf, runFaces, withHandle,
+  CORNER_GAP, END_GAP, FACES, J_ANCHOR, J_CLEAR, J_END, J_HALF, J_STUB, OUT_OF, TEE_END_GAP, TEE_GAP,
+  branchFaceOf, centreOfJunction, freeFaces, hasLegalSpot, isElbow, isJunction, junctionData, junctionEnd, latestSpots,
+  legalSpot, onAxisOf, runFacesAt, runFacesNear, teeCorner, withHandle,
 } from './junctions';
-import type { Along, EndLookup, Face, SpotRules } from './junctions';
+import type { Along, EndLookup, Face, RunFaces, SpotRules } from './junctions';
 import { centreOf } from './attach';
 import { pageOf } from './pages';
 import { measuredAt } from './ports';
@@ -46,7 +46,9 @@ import type { TrackLine } from './tracks';
  *  - each of its lines is handed exactly its slice of the path between the
  *    tees on either side of it, by distance along the path. Its corners are
  *    the pipe's corners on that stretch, so the lines together draw the
- *    pipe and nothing else;
+ *    pipe and nothing else -- but for the bend an elbow tee sits on, which
+ *    is the tee's: both its lines stop at its faces, and the pipe is drawn
+ *    through it (`cornersOfPipe`);
  *  - which faces its tees' run lines take follows from which way the path
  *    runs at each tee.
  *
@@ -276,7 +278,7 @@ export interface PipeGeometry {
 /** An end of a line at `node`, as the router takes it: a tee's face carries J_END. */
 function endFor(node: Node, handle: string | null | undefined, endOf: EndLookup): End | null {
   if (isJunction(node)) {
-    if (!handle || !(handle in ACROSS)) return null;
+    if (!handle || !FACES.includes(handle as Face)) return null;
     return { ...(endOf(node, handle) ?? junctionEnd(node.position, handle as Face)), ...J_END };
   }
   return endOf(node, handle);
@@ -440,31 +442,63 @@ function settledThrough(a: End, b: End, corners: Pt[]): Pt[] {
   return pts;
 }
 
-/** A pipe's stored corners, in order from `a` to `b`: every line's, each read the pipe's way. */
-function cornersOfPipe(pipe: Pipe, edgeById: Map<string, Edge>): Pt[] {
-  return pipe.lines.flatMap((id, k) => {
+/**
+ * A pipe's stored corners, in order from `a` to `b`: every line's, each read
+ * the pipe's way, and between two lines the corner an elbow tee there sits
+ * on (`teeCorner`), which neither line carries -- each stops at the tee's
+ * face on its own leg, and the bend between the faces is the tee.
+ */
+function cornersOfPipe(pipe: Pipe, edgeById: Map<string, Edge>, byId: Map<string, Node>): Pt[] {
+  const out: Pt[] = [];
+  pipe.lines.forEach((id, k) => {
     const w = waypointsOfLine(edgeById.get(id)!);
-    return pipe.forward[k] ? w : [...w].reverse();
+    out.push(...(pipe.forward[k] ? w : [...w].reverse()));
+    const tee = k < pipe.tees.length ? byId.get(pipe.tees[k]) : undefined;
+    const corner = tee && teeCorner(tee);
+    if (corner) out.push(corner);
   });
+  return out;
 }
 
 /**
  * Does routing a pipe along `pts` leave every tee on it where it is to be
- * kept? Each tee put where the reseat would put it (`placeTees`), from where
- * it is to be kept (`anchors`, or where it is).
+ * kept, and as it is? Each tee put where the reseat would put it
+ * (`placeTees`), from where it is to be kept (`anchors`, or where it is),
+ * and still straight if it was straight, still an elbow if it was one --
+ * as it was when the drag began, during one (`elbowsAt`).
+ *
+ * A route that puts a bend under a straight tee leaves it where it is, an
+ * elbow now, but turns its run onto a face a branch may be on: the branch
+ * is sent round to another, and a line that ran straight down out of the
+ * tee comes out of its side. Where another crossbar leaves the tee straight,
+ * that is the one; and where one keeps an elbow's corner on it, that one.
  */
 function keepsTees(pipe: Pipe, a: End, b: End, pts: Pt[], m: Model, anchors?: Map<string, Pt>): boolean {
   const arcs = arcsOf(pts);
   const geo: PipeGeometry = { a, b, pts, arcs, length: arcs[arcs.length - 1] ?? 0, hand: false };
   if (geo.length < 1e-6) return false;
-  const { points } = placeTees(pipe, geo, m, anchors);
+  const { spots, points } = placeTees(pipe, geo, m, anchors);
   return pipe.tees.every((id, i) => {
     const tee = m.byId.get(id);
     if (!tee) return false;
     const q = anchors?.get(id) ?? centreOfJunction(tee);
-    return Math.abs(points[i].x - q.x) < MEASURED && Math.abs(points[i].y - q.y) < MEASURED;
+    if (Math.abs(points[i].x - q.x) >= MEASURED || Math.abs(points[i].y - q.y) >= MEASURED) return false;
+    const then = anchors?.has(id) ? elbowsAt.get(anchors) : undefined;
+    const along = junctionData(tee).along;
+    const was = then ? then.has(id) : !!along && isElbow(along);
+    return isElbow(runFacesAt(pts, spots[i])) === was;
   });
 }
+
+/**
+ * The tees that sat on a bend when a drag began, by the anchors the drag
+ * keeps the rest where they were (`Dragging.anchors`): what a route asked to
+ * keep the tees as they were is asked of (`keepsTees`). Asked of where the
+ * last tick left them, a tee one tick had taken onto a bend and the next
+ * had a crossbar to leave straight was held to the bend, and a drag made
+ * slowly ended somewhere the same move made at once did not.
+ */
+const elbowsAt = new WeakMap<Map<string, Pt>, ReadonlySet<string>>();
 
 /**
  * The router's route for a pipe with tees on it: the router's own, unless
@@ -616,7 +650,7 @@ function keptAround(
   // not yet the one it is on when the tee has just been slid round a bend.
   const teeEnd = (i: number, side: 'in' | 'out'): End | null => {
     const tee = nodesById.get(pipe.tees[i])!;
-    const face = runFaces(pointAtArc(shape, spots[i])!.dir)[side];
+    const face = runFacesAt(shape, spots[i])[side];
     return endFor({ ...tee, position: { x: at[i].x - J_HALF, y: at[i].y - J_HALF } }, face, endOf);
   };
   // The whole pipe from its stretches, and whether it is one the next
@@ -842,7 +876,7 @@ export function pipeGeometry(
   const b = ends?.b ?? endFor(nb, handleOf(pipe.b), endOf);
   if (!a || !b) return null;
   const hand = pipe.lines.some(id => isHand(edgeById.get(id)!));
-  const corners = cornersOfPipe(pipe, edgeById);
+  const corners = cornersOfPipe(pipe, edgeById, nodesById);
   const page = pageOfNode(na);
   const pts = simplifyPoints(hand
     ? settledThrough(a, b, corners)
@@ -1080,8 +1114,10 @@ function pipeWas(pipe: Pipe, geo: PipeGeometry, before: Before, endOf: EndLookup
   // back onto the leg it had come from.
   const sideways = (axis: 'x' | 'y') => moves.length > 0
     && moves.every(d => !!d && Math.abs(axis === 'x' ? d.x : d.y) <= Math.abs(axis === 'x' ? d.y : d.x));
+  // An elbow tee sat on two legs at once, and neither is the one it sat on.
   const across = pipe.tees.map(id => {
-    const face = junctionData(before.node(id)!).along?.in;
+    const along = junctionData(before.node(id)!).along;
+    const face = along && !isElbow(along) ? along.in : undefined;
     const axis: 'x' | 'y' | null = face === 'l' || face === 'r' ? 'x' : face === 't' || face === 'b' ? 'y' : null;
     return axis && sideways(axis) ? axis : null;
   });
@@ -1276,7 +1312,7 @@ function placeTees(
 ): { spots: number[]; points: Pt[] } {
   const n = pipe.tees.length;
   const gapA = endGapAt(pipe.a, m), gapB = endGapAt(pipe.b, m);
-  const latest = latestSpots(geo.pts, n, { endGapA: gapA, endGapB: gapB });
+  const latest = latestSpots(geo.pts, n, { endGapA: gapA, endGapB: gapB, elbows: true });
   const spots: number[] = [], points: Pt[] = [];
   let then: PipeWas | null | undefined;
   for (let i = 0; i < n; i++) {
@@ -1287,6 +1323,7 @@ function placeTees(
       // falls back to a flat spacing each.
       endGapB: latest ? geo.length - latest[i] : gapB + (n - 1 - i) * TEE_GAP,
       neighbours: { before: i > 0 ? spots[i - 1] : undefined },
+      elbows: true,
     };
     const recorded = recordedArc(tee, pipe, geo.length);
     const home = homeSpot(tee, pipe, geo, rules, recorded);
@@ -1328,13 +1365,20 @@ function placeTees(
  * exactly one line -- for a tee on its legal spot, a reach clear of any
  * bend, that is exactly the line's slice; for one a crowded pipe could only
  * put near a bend, the corner still goes to a line rather than being lost
- * under the tee, and the pipe keeps its shape.
+ * under the tee, and the pipe keeps its shape. A corner a tee sits right on
+ * goes to neither: that tee is an elbow (`runFacesAt`, to the same
+ * tolerance), both lines draw straight into its faces, and the pipe takes
+ * the corner from the tee (`cornersOfPipe`). Handed to the line before it,
+ * the line ran on past its face to the tee's centre and came back -- a hook
+ * under the dot.
  */
 function sliceCorners(pipe: Pipe, geo: PipeGeometry, spots: number[], k: number): Pt[] {
   const n = pipe.tees.length;
   const lo = k === 0 ? -Infinity : spots[k - 1];
   const hi = k === n ? Infinity : spots[k];
-  const inner = geo.pts.slice(1, -1).filter((_, i) => geo.arcs[i + 1] > lo + 1e-9 && geo.arcs[i + 1] <= hi + 1e-9).map(p => ({ ...p }));
+  const inner = geo.pts.slice(1, -1)
+    .filter((_, i) => geo.arcs[i + 1] > lo + SPOT_EPS && geo.arcs[i + 1] <= hi + 1e-9 && Math.abs(geo.arcs[i + 1] - hi) > SPOT_EPS)
+    .map(p => ({ ...p }));
   return pipe.forward[k] ? inner : inner.reverse();
 }
 
@@ -1457,7 +1501,9 @@ function seatPipeOnce(
   pipe.tees.forEach((id, i) => {
     const tee = d.node(id)!;
     const at = { ...pointAtArc(geo.pts, spots[i])!, point: points[i] };
-    const faces = runFaces(at.dir);
+    // On a bend, at right angles: in by the leg the pipe arrives on, out by
+    // the leg it leaves on.
+    const faces = runFacesAt(geo.pts, spots[i]);
     const position = { x: at.point.x - J_HALF, y: at.point.y - J_HALF };
     const moved = Math.abs(position.x - tee.position.x) > POS_EPS || Math.abs(position.y - tee.position.y) > POS_EPS;
     const along = junctionData(tee).along!;
@@ -1472,11 +1518,15 @@ function seatPipeOnce(
     const had = homeOnPipe(along, pipe);
     const homeMoved = !!had && endsAtHome(had, geo.a, geo.b)
       && (Math.abs(had.at.x - at.point.x) > POS_EPS || Math.abs(had.at.y - at.point.y) > POS_EPS);
+    // A corner a slide left with the tee (`Along.corner`) is the pipe's from
+    // here on, handed to the line on its side; the record stops carrying it.
     const stale = moved || along.in !== faces.in || along.out !== faces.out || along.from !== from || along.to !== to
-      || typeof along.t !== 'number' || !along.ends || homeMoved;
+      || typeof along.t !== 'number' || !along.ends || homeMoved || !!along.corner;
     if (stale) {
+      const { corner: _gone, ...rest } = along;
+      void _gone;
       const next: Along = {
-        ...along, t: geo.length ? spots[i] / geo.length : 0, in: faces.in, out: faces.out, from, to,
+        ...rest, t: geo.length ? spots[i] / geo.length : 0, in: faces.in, out: faces.out, from, to,
         ends: { a: { x: geo.a.x, y: geo.a.y }, b: { x: geo.b.x, y: geo.b.y } },
         home: homeFor(tee, pipe, geo.a, geo.b, { x: at.point.x, y: at.point.y }),
       };
@@ -1485,10 +1535,10 @@ function seatPipeOnce(
     d.setEdge(faceAt(d.edge(pipe.lines[i])!, id, faces.in));
     d.setEdge(faceAt(d.edge(pipe.lines[i + 1])!, id, faces.out));
     // Anything else left on one of the run's faces -- a branch the tee has
-    // just turned under -- goes across the run, on the side it comes from.
-    // The lines on a riding tee's run faces are then only ever its run, which
-    // is how the next reseat finds the pipe; which face across is best is the
-    // face choice's to say.
+    // just turned under, or slid onto a bend under -- goes to a face the run
+    // leaves free, on the side it comes from. The lines on a riding tee's run
+    // faces are then only ever its run, which is how the next reseat finds
+    // the pipe; which free face is best is the face choice's to say.
     for (const line of m.linesAt.get(id) ?? []) {
       if (line.id === pipe.lines[i] || line.id === pipe.lines[i + 1]) continue;
       const e = d.edge(line.id)!;
@@ -1496,7 +1546,7 @@ function seatPipeOnce(
       if (h !== faces.in && h !== faces.out) continue;
       const far = d.node(farOf(e, id).id);
       const comesFrom = far ? (isJunction(far) ? centreOfJunction(far) : centreOf(far)) : at.point;
-      d.setEdge(faceAt(e, id, branchFace(at.dir, comesFrom, at.point)));
+      d.setEdge(faceAt(e, id, branchFaceOf(faces, comesFrom, at.point)));
     }
   });
   pipe.lines.forEach((id, k) => d.setEdge(withCorners(d.edge(id)!, sliceCorners(pipe, geo, spots, k), geo.hand)));
@@ -1729,11 +1779,15 @@ function entries(pts: Pt[], boxes: Box[]): number {
   return n;
 }
 
-/** The faces a line may take at `node`: the two across a riding tee's run, all four of any other tee, none of a symbol. */
+/**
+ * The faces a line may take at `node`: the two a riding tee's run leaves
+ * free (across a straight run, or carrying an elbow's legs on past its
+ * corner), all four of any other tee, none of a symbol.
+ */
 function choicesAt(node: Node | undefined): Face[] | null {
   if (!node || !isJunction(node)) return null;
   const along = junctionData(node).along;
-  return along ? ACROSS[along.in] : FACES;
+  return along ? freeFaces(along) : FACES;
 }
 
 /** The faces given out at a junction so far in one reseat, and the routes that took them. */
@@ -1903,7 +1957,7 @@ function freshRoute(u: Unit, fa: string | null | undefined, fb: string | null | 
   const obstacles = sheetOfUnit(u, p).obstacles(pageOfNode(na));
   if (u.pipe) {
     const lines = linesNow(u.pipe, p.d);
-    if (u.pipe.lines.some(id => isHand(lines.get(id)!))) return simplifyPoints(settledThrough(a, b, cornersOfPipe(u.pipe, lines)));
+    if (u.pipe.lines.some(id => isHand(lines.get(id)!))) return simplifyPoints(settledThrough(a, b, cornersOfPipe(u.pipe, lines, byId)));
     return autoRoute(a, b, obstacles);
   }
   const e = p.d.edge(u.line!.id)!;
@@ -2701,8 +2755,8 @@ function holdPipeFaces(pipe: Pipe, p: Pricing, pts: Pt[] | null) {
  */
 function keptOnFaces(pipe: Pipe, u: Unit, p: Pricing): Pt[] | null {
   const lines = linesNow(pipe, p.d);
-  const corners = cornersOfPipe(pipe, lines);
   const byId = p.d.byId();
+  const corners = cornersOfPipe(pipe, lines, byId);
   const na = byId.get(u.ends[0].nodeId), nb = byId.get(u.ends[1].nodeId);
   if (!na || !nb) return null;
   const a = endFor(na, u.ends[0].handle, p.endOf), b = endFor(nb, u.ends[1].handle, p.endOf);
@@ -3500,7 +3554,14 @@ export interface Dragging {
 export function dragging(nodes: Node[], moving: Iterable<string>, edges?: Edge[]): Dragging {
   const picked = new Set(moving);
   const anchors = new Map<string, Pt>();
-  for (const n of nodes) if (!picked.has(n.id) && isJunction(n)) anchors.set(n.id, centreOfJunction(n));
+  const elbows = new Set<string>();
+  for (const n of nodes) {
+    if (picked.has(n.id) || !isJunction(n)) continue;
+    anchors.set(n.id, centreOfJunction(n));
+    const along = junctionData(n).along;
+    if (along && isElbow(along)) elbows.add(n.id);
+  }
+  elbowsAt.set(anchors, elbows);
   return {
     anchors, moving: picked,
     start: { nodes: new Map(nodes.map(n => [n.id, n])), edges: new Map((edges ?? []).map(e => [e.id, e])) },
@@ -3877,30 +3938,23 @@ function normaliseRunCorners(
   }
 }
 
-/** The way out of a junction by each of its faces. */
-const OUT_OF: Record<Face, Pt> = { t: { x: 0, y: -1 }, b: { x: 0, y: 1 }, l: { x: -1, y: 0 }, r: { x: 1, y: 0 } };
-
 /**
  * Where an open end at `at` goes that is closer to `tee` than the two dots
- * are wide: touching it, on the side it is on -- across the run of a riding
- * tee, since its run faces are the pipe's, and whichever way it is furthest
- * off a junction that rides nothing. One right on top of the tee's centre
- * has no side, and goes out of the face its line leaves the tee by.
+ * are wide: touching it, on the side it is on -- out of a face a riding
+ * tee's run leaves free, since its run faces are the pipe's (the one the
+ * open end is furthest out toward), and whichever way it is furthest off a
+ * junction that rides nothing. One right on top of the tee's centre has no
+ * side, and goes out of the face its line leaves the tee by.
  */
 function besideTee(tee: Node, at: Pt, face: string | null | undefined): Pt {
   const c = centreOfJunction(tee);
   const off = { x: at.x - c.x, y: at.y - c.y };
   const along = junctionData(tee).along;
-  const faces = along ? ACROSS[along.in] : FACES;
+  const faces = along ? freeFaces(along) : FACES;
   const now = faces.includes(face as Face) ? (face as Face) : faces[1];
-  let side: Face;
-  if (along) {
-    // ACROSS lists the face toward smaller coordinates first.
-    const v = faces[0] === 't' ? off.y : off.x;
-    side = Math.abs(v) > POS_EPS ? (v < 0 ? faces[0] : faces[1]) : now;
-  } else {
-    side = Math.abs(off.x) > POS_EPS || Math.abs(off.y) > POS_EPS ? faceOfDir(off) : now;
-  }
+  const toward = (f: Face) => OUT_OF[f].x * off.x + OUT_OF[f].y * off.y;
+  const best = faces.reduce((b, f) => (toward(f) > toward(b) ? f : b));
+  const side = toward(best) > POS_EPS ? best : now;
   const u = OUT_OF[side];
   return { x: c.x + 2 * J_HALF * u.x, y: c.y + 2 * J_HALF * u.y };
 }
@@ -3993,7 +4047,7 @@ function clearDots(p: Pricing, seats: Map<Pipe, PipeGeometry>) {
     const through = dots.filter(x => throughDot(geo.pts, [x.at]));
     if (!through.length) continue;
     const path = keptAround(
-      pipe, geo.a, geo.b, cornersOfPipe(pipe, linesNow(pipe, d)), d.byId(), p.endOf,
+      pipe, geo.a, geo.b, cornersOfPipe(pipe, linesNow(pipe, d), d.byId()), d.byId(), p.endOf,
       { bodies: sheet.bodies(page), obstacles, dots: dots.map(x => x.at), lines: linesAtDots(p, through.map(x => x.id)) },
       () => ({ ...m, byId: d.byId() }),
     );
@@ -4119,12 +4173,24 @@ function legalGridBeside(pts: Pt[], arcs: number[], s: number, rules: SpotRules,
  * where the tee was (its record, `Along.t`): the first tick of a drag, which
  * React Flow reports half a step on, leaves the tee where it is, and a tee
  * moves a whole step once the pointer has.
+ *
+ * A bend is a spot too, for a tee within its reach of it: slid toward a
+ * corner the tee rests on it, an elbow, and slid on it goes round onto the
+ * next leg once the pointer is a reach past it. `from` is where the tee is
+ * before this move, when `nodesById` has it where the pointer put it (as
+ * the canvas's does): an elbow tee is a corner of its pipe, and the pipe has
+ * to be routed through where that corner is, not where it is being dragged.
  */
 export function slideAlong(
   junction: Node, along: Along, p: XYPosition, edges: Edge[], nodesById: Map<string, Node>, endOf: EndLookup,
-  obstacles?: Obstacles,
+  obstacles?: Obstacles, from?: XYPosition,
 ): { position: XYPosition; along: Along; dir: Pt } | null {
-  const nodes = [...nodesById.values()];
+  const at0 = nodesById.get(junction.id);
+  const elbow = isElbow(along);
+  // The tee as it stood, and so the corner it carries, when it is an elbow.
+  const stood = elbow && at0 && from ? { ...at0, position: from, data: { ...(at0.data as Record<string, unknown>), along } } : at0;
+  const corner = stood && elbow ? teeCorner(stood) : null;
+  const nodes = [...nodesById.values()].map(n => (n.id === junction.id && stood ? stood : n));
   const m = buildModel(nodes, edges);
   const at = m.byTee.get(junction.id);
   if (!at) return null;
@@ -4138,6 +4204,7 @@ export function slideAlong(
       before: i > 0 ? arcOf(pipe.tees[i - 1]) : undefined,
       after: i < pipe.tees.length - 1 ? arcOf(pipe.tees[i + 1]) : undefined,
     },
+    elbows: true,
   };
   const was = recordedArc(junction, pipe, geo.length);
   const pointer = project(geo.pts, { x: p.x + J_HALF, y: p.y + J_HALF }, was);
@@ -4150,12 +4217,12 @@ export function slideAlong(
   const byPointer = legalSpot(geo.pts, pointer, rules);
   const gridArc = onGrid ? project(geo.pts, gridded, pointer) : pointer;
   const byGrid = onGrid ? legalSpot(geo.pts, gridArc, rules) : byPointer;
-  // The grid moves the tee half a step at most. A grid line on a bend is no
-  // spot for a tee, and the legal spot nearest one is on the leg before it,
-  // whichever leg the pointer is on: three pixels down the leg after a
-  // bend, the grid would send the tee back round the bend. Where the grid
-  // takes it further than half a step from where the pointer alone would
-  // put it, the pointer's spot stands.
+  // The grid moves the tee half a step at most. Where a bend it may not sit
+  // on is in the way, the legal spot nearest a grid line on it is on the
+  // leg before it, whichever leg the pointer is on: three pixels down the
+  // leg after such a bend, the grid would send the tee back round it. Where
+  // the grid takes it further than half a step from where the pointer alone
+  // would put it, the pointer's spot stands.
   let s = Math.abs(byGrid - byPointer) <= GRID / 2 + SPOT_EPS ? byGrid : byPointer;
   const spot = pointAtArc(geo.pts, s)!;
   // The grid line itself, not the point a round trip through its arc
@@ -4172,18 +4239,26 @@ export function slideAlong(
   }
   // `in` and `out` stay the faces its lines are on now: they are how the
   // reseat finds the tee's run lines, and the reseat is what turns them when
-  // the tee has slid round a bend (`dir` says which way the pipe runs there).
-  // A tee slid by hand is put down on purpose: where it is now, with its
-  // pipe's ends where they are, is its home (`Along.home`).
+  // the tee has slid round a bend, onto one or off one (`dir` says which way
+  // the pipe runs there). A tee slid by hand is put down on purpose: where
+  // it is now, with its pipe's ends where they are, is its home
+  // (`Along.home`).
   const flipped = along.from === pipe.b.nodeId && along.to === pipe.a.nodeId && along.from !== along.to;
   const centre = unnoised(spot.point);
   const ends = flipped
     ? { a: { x: geo.b.x, y: geo.b.y }, b: { x: geo.a.x, y: geo.a.y } }
     : { a: { x: geo.a.x, y: geo.a.y }, b: { x: geo.b.x, y: geo.b.y } };
+  // An elbow slid off its corner leaves the corner with it until the reseat
+  // hands it to a line (`Along.corner`); slid back onto it, it is the corner
+  // again and carries nothing.
+  const { corner: _had, ...rest } = along;
+  void _had;
+  const left = corner && Math.hypot(corner.x - centre.x, corner.y - centre.y) > POS_EPS
+    ? { corner: { x: corner.x - centre.x, y: corner.y - centre.y } } : {};
   return {
     position: { x: centre.x - J_HALF, y: centre.y - J_HALF },
     along: {
-      ...along, t: flipped ? 1 - s / geo.length : s / geo.length,
+      ...rest, ...left, t: flipped ? 1 - s / geo.length : s / geo.length,
       ends, home: { a: { ...ends.a }, b: { ...ends.b }, at: { ...centre } },
     },
     dir: spot.dir,
@@ -4301,11 +4376,17 @@ function lineEndGaps(nodes: Node[], edges: Edge[], edge: Edge): { a: number; b: 
  * a legal spot of its own the two agree; on a short, bent one with none, the
  * pipe's placement can find the tee a spot the line alone could not -- the
  * next leg, with the tee beyond made room -- and the dot has to say so.
+ *
+ * At or within a tee's reach of a bend it may sit on, the tee goes on the
+ * bend, an elbow, whichever leg the gesture heads for: three lines meeting
+ * where a pipe turns are a drafter's tee as much as three meeting on a
+ * straight. `faces` are the run faces it takes there, the line's source
+ * side first, at right angles on a bend.
  */
 export function splitSpot(
   nodes: Node[], edges: Edge[], edgeId: string, points: Pt[], at: Pt, toward?: Pt,
   geometry?: { endOf: EndLookup; obstacles?: Obstacles; crowd?: Crowd },
-): { s: number; point: Pt; dir: Pt; length: number } | null {
+): { s: number; point: Pt; dir: Pt; faces: RunFaces; length: number } | null {
   const edge = edges.find(e => e.id === edgeId);
   const pts = simplifyPoints(points);
   if (!edge || pts.length < 2) return null;
@@ -4326,7 +4407,7 @@ export function splitSpot(
     }
   }
   const crowd = geometry?.crowd ? crowdedArcs(pts, edge, geometry.crowd) : [];
-  const rules = { endGapA: gaps.a, endGapB: gaps.b, prefer };
+  const rules = { endGapA: gaps.a, endGapB: gaps.b, prefer, elbows: true };
   // Clear of what crowds the line by a tee's spacing where there is room for
   // that, and by a tee's reach where there is only room for that.
   let s = legalSpot(pts, s0, { ...rules, avoid: crowd.flatMap(w => spreadOver(w.at, w.half)) });
@@ -4337,9 +4418,12 @@ export function splitSpot(
   const landed = geometry ? landingSpot(nodes, edges, edge, pts, spot.point, geometry) : null;
   // Nowhere a tee can sit -- on the line's whole pipe, when that can be
   // routed, or else on the line -- and none goes in.
-  if (!(landed ? landed.legal : hasLegalSpot(pts, { endGapA: gaps.a, endGapB: gaps.b }))) return null;
-  if (!landed) return { s, point: unnoised(spot.point), dir: spot.dir, length };
-  return { s: project(pts, landed.point), point: landed.point, dir: landed.dir, length };
+  if (!(landed ? landed.legal : hasLegalSpot(pts, { endGapA: gaps.a, endGapB: gaps.b, elbows: true }))) return null;
+  if (!landed) return { s, point: unnoised(spot.point), dir: spot.dir, faces: runFacesAt(pts, s), length };
+  // The faces on the line as drawn, source first, wherever the pipe's own
+  // direction runs: the point the pipe's placement gives is on it, and on a
+  // bend of it when the tee is an elbow.
+  return { s: project(pts, landed.point), point: landed.point, dir: landed.dir, faces: runFacesNear(pts, landed.point), length };
 }
 
 /** What else is on the page for a new tee to keep clear of: the lines as drawn, and the tees' dots. */
@@ -4458,6 +4542,6 @@ function landingSpot(
   byId.set(id, { id, type: 'JUNCTION', position: { x: point.x - J_HALF, y: point.y - J_HALF }, data: { componentType: 'JUNCTION' } });
   const { spots, points } = placeTees({ ...pipe, tees: [...pipe.tees.slice(0, k), id, ...pipe.tees.slice(k)] }, geo, { ...m, byId });
   const at = pointAtArc(geo.pts, spots[k]);
-  const legal = hasLegalSpot(geo.pts, { endGapA: endGapAt(pipe.a, m), endGapB: endGapAt(pipe.b, m) });
+  const legal = hasLegalSpot(geo.pts, { endGapA: endGapAt(pipe.a, m), endGapB: endGapAt(pipe.b, m), elbows: true });
   return at ? { point: points[k], dir: at.dir, legal } : null;
 }
