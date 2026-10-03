@@ -486,8 +486,13 @@ inline void setup(CoreState& s, const Config& cfg) {
     s.serverPort = HOTFIRE_SERVER_PORT;
     s.lastHeartbeatMillis = 0;
 #ifdef SENSOR_ETH_USE_DHCP
-    HF_LOGLN(
-        "[NET] address assigned by the server; broadcasting until one is heard");
+    // Only claim the server assigned the address when it did; begin() falls
+    // back to the static address when no DHCP server answers.
+    HF_LOGLN(BoardNet::usingDhcp(s.net)
+                 ? "[NET] address assigned by the server; broadcasting until "
+                   "one is heard"
+                 : "[NET] using the static fallback address; broadcasting "
+                   "until a server is heard");
 #endif
     Serial.println("State -> WaitingForServer");
     Serial.flush();

@@ -1175,8 +1175,13 @@ void setup() {
     state_enter_ms = millis();
     last_server_heartbeat_ms = 0;
 #ifdef SENSOR_ETH_USE_DHCP
-    Serial.println(
-        "[NET] address assigned by the server; broadcasting until one is heard");
+    // Only claim the server assigned the address when it did; begin() falls
+    // back to the static address when no DHCP server answers.
+    Serial.println(BoardNet::usingDhcp(net)
+                       ? "[NET] address assigned by the server; broadcasting "
+                         "until one is heard"
+                       : "[NET] using the static fallback address; "
+                         "broadcasting until a server is heard");
 #endif
 
     Serial.println("Setup complete. State: WaitingForServer");
