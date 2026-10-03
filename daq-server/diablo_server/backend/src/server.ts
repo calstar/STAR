@@ -1416,10 +1416,9 @@ const STATE_TO_CSV_NAME: Record<string, string> = {
 };
 
 // VTable resubscription — Elodin DB rejects subscriptions for VTables not yet
-// registered by other services (e.g., daq_bridge). Retry every 5s until all
-// expected packet groups flow.
+// registered by other services (e.g., daq_bridge). A pass runs every 5s for the life of
+// the connection; once everything is subscribed it sends nothing.
 let resubscribeTimer: NodeJS.Timeout | null = null;
-let shouldResubscribe = true;
 const RESUBSCRIBE_MIN_MS = 5000;
 
 // No attempt ceiling any more. The old one (24 passes, ~2 min) was dead code anyway: the
@@ -1428,13 +1427,16 @@ const RESUBSCRIBE_MIN_MS = 5000;
 // after the backend connects would never be picked up. Termination is now per PAIR
 // (MAX_PAIR_ATTEMPTS in elodin-vtable-registry), which is where it belongs: one table that
 // nobody publishes gets parked, without stopping retries for every other table.
+//
+// Nor does the first data packet stop it. It used to: harmless when one pass sent
+// everything, fatal once a pass was capped at the request-id space — the first pass got
+// sensor data flowing, the remainder (board heartbeat/self-test tables) was never sent, and a
+// board's self-test never reached the GUI. A pass with nothing due sends nothing.
 function scheduleResubscribe(delayMs: number = RESUBSCRIBE_MIN_MS): void {
-  if (!shouldResubscribe) return;
   if (resubscribeTimer) return;
   resubscribeTimer = setTimeout(() => {
     resubscribeTimer = null;
     if (!elodin.isConnected()) return;
-    if (!shouldResubscribe) return;
     registerVTables(elodin).then((res) => {
       // Sleep until the earliest pair is actually due, instead of spinning every 5 s.
       // A remainder means the pass hit the request-id cap, not that anything is wrong —
@@ -1515,7 +1517,6 @@ elodin.on('connected', () => {
   broadcastConnectionStatus();
 
   if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
-  shouldResubscribe = true;
 
   calibrationHost.elodin = elodin;
   registerVTables(elodin).then(() => {
@@ -1674,8 +1675,6 @@ elodin.on('packet', (header: any, payload: Buffer) => {
           console.log(`[ThinServer] Mission T+0: ${new Date(firstPacketTimeMs).toISOString()}`);
         }
         broadcast({ type: MessageType.MISSION_START_TIME, timestamp: Date.now(), payload: { missionStartTime: firstPacketTimeMs } });
-        shouldResubscribe = false;
-        if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
       }
 
       const key = `${parsed.entity}.${parsed.component}`;
