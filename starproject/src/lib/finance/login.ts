@@ -30,7 +30,7 @@ export function loginView(s: LoginStatus | null, now: number): LoginView {
     case "running":
     case "waiting_duo":
       if (now - updated >= LOGIN_RUN_MS) return { kind: "done", ok: false, text: "The sign-in stopped reporting.", at: new Date(updated) };
-      return { kind: "busy", text: s.loginState === "running" ? "Signing in to CalNet…" : "Duo push sent: approve it on your phone." };
+      return { kind: "busy", text: s.loginState === "running" ? "Signing in to CalNet…" : "Waiting on Duo: approve the push on your phone." };
     case "ok":
       return { kind: "done", ok: true, text: "Signed in.", at: new Date(updated) };
     default:

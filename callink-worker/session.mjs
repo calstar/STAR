@@ -17,6 +17,9 @@ import { readEnv } from './lib/env.mjs';
 
 const FORM_URL = 'https://callink.berkeley.edu/actionCenter/organization/star/Finance/CreatePurchaseRequest';
 const DUO_WAIT_MS = 120_000;
+// Duo's push screen ("Check for a Duo Push"; "Enter code in Duo Mobile" for verified push).
+const DUO_PUSH_TEXT = /duo push|enter (this )?code|check your phone|sent to/i;
+const DUO_PUSH_ASSUME_MS = 8_000;
 
 const mode = process.argv[2];
 const fresh = process.argv.includes('--fresh');
@@ -61,17 +64,29 @@ try {
     log('after password at', new URL(page.url()).hostname, 'buttons:', await visibleButtons(page));
 
     // Duo Universal Prompt: wait for the push approval, clicking through the
-    // "trust this browser" question if Duo asks it.
-    log(`approve the Duo push on your phone (waiting ${DUO_WAIT_MS / 1000}s)`);
+    // "trust this browser" question if Duo asks it. A browser Duo remembers goes
+    // straight through with no push, so only say a push is waiting once Duo shows
+    // one, or once we've sat on Duo long enough that it must be waiting for something.
+    // (callink-worker relays the "approve the Duo push" line to the /finance banner.)
     const deadline = Date.now() + DUO_WAIT_MS;
+    const pushAssumedAt = Date.now() + DUO_PUSH_ASSUME_MS;
+    let announced = false;
+    let heading = '';
     while (!onCallink(page) && Date.now() < deadline) {
       const trust = page.getByRole('button', { name: /yes, this is my device|trust browser/i });
       if (await trust.isVisible().catch(() => false)) {
         log('duo asked to trust this browser; answering yes');
         await trust.click();
       }
-      await page.waitForTimeout(2000);
+      const now = (await page.locator('h1, h2').first().innerText({ timeout: 500 }).catch(() => '')).trim();
+      if (now && now !== heading) log('duo shows:', (heading = now).slice(0, 80));
+      if (!announced && (DUO_PUSH_TEXT.test(heading) || Date.now() >= pushAssumedAt)) {
+        announced = true;
+        log(`approve the Duo push on your phone (waiting ${Math.round((deadline - Date.now()) / 1000)}s)`);
+      }
+      await page.waitForTimeout(1000);
     }
+    if (!announced && onCallink(page)) log('duo remembered this browser; no push needed');
     await page.waitForLoadState('networkidle').catch(() => {});
     if (!onCallink(page)) {
       await shot(page, 'stuck');
