@@ -25,9 +25,7 @@ import {
     noteSubscriptionRejected,
     notePairDelivered,
     clearSubscriptionState,
-    setClockForTests,
     SUBSCRIPTION_REQ_ID_SPACE,
-    MAX_PAIR_ATTEMPTS,
 } from '../elodin-vtable-registry.js';
 
 // ── A fake DB client: isConnected + sendRawMessage is the whole surface used ──
@@ -56,11 +54,8 @@ const CONFIG = {
     },
 };
 
-let clock = 1_000_000;
 beforeEach(() => {
     clearSubscriptionState();
-    clock = 1_000_000;
-    setClockForTests(() => clock);
 });
 
 const keyOf = (s: Sent) => `${s.high},${s.low}`;
@@ -69,7 +64,7 @@ const keyOf = (s: Sent) => `${s.high},${s.low}`;
  *  full list takes a couple of passes — that is the cap working, not a failure. */
 async function drain(sent: Sent[], failPairs?: Set<string>): Promise<void> {
     for (let i = 0; i < 20; i++) {
-        const res = await registerVTables(fakeClient(sent, failPairs));
+        const res = await registerVTables(fakeClient(sent, failPairs), CONFIG);
         if (res.remaining === 0) return;
     }
     throw new Error('subscriptions never drained');
@@ -80,7 +75,7 @@ const reqIdFor = (sent: Sent[], high: number, low: number) =>
 describe('request id attribution', () => {
     it('never gives one in-flight id to two different pairs', async () => {
         const sent: Sent[] = [];
-        await registerVTables(fakeClient(sent));
+        await registerVTables(fakeClient(sent), CONFIG);
 
         // Ids restart per window; within any window an id must name exactly one pair.
         for (let i = 0; i < sent.length; i += SUBSCRIPTION_REQ_ID_SPACE) {
@@ -92,7 +87,7 @@ describe('request id attribution', () => {
 
     it('never issues an id outside the one-byte wire space', async () => {
         const sent: Sent[] = [];
-        await registerVTables(fakeClient(sent));
+        await registerVTables(fakeClient(sent), CONFIG);
         for (const s of sent) {
             expect(s.reqId).toBeGreaterThanOrEqual(1);
             expect(s.reqId).toBeLessThanOrEqual(SUBSCRIPTION_REQ_ID_SPACE);
@@ -103,7 +98,7 @@ describe('request id attribution', () => {
 describe('a refused subscription is actually retried', () => {
     it('re-sends the calibrated PT pair that was rejected (the no-data bug)', async () => {
         const first: Sent[] = [];
-        await registerVTables(fakeClient(first));
+        await registerVTables(fakeClient(first), CONFIG);
 
         // PT1 CH1 calibrated — one of the first pairs sent, and exactly the family that went
         // missing on the stand. Under the old rotation its id resolved to a tail self-test
@@ -112,27 +107,23 @@ describe('a refused subscription is actually retried', () => {
         expect(id, 'PT1_Cal.CH1 must be in the subscription list').toBeDefined();
 
         noteSubscriptionRejected(id!, 'invalid msg id');
-        clock += 10_000; // past the first backoff
 
         const second: Sent[] = [];
-        await registerVTables(fakeClient(second));
+        await registerVTables(fakeClient(second), CONFIG);
         expect(second.map(keyOf)).toContain('32,17'); // [0x20, 0x11]
     });
 
-    it('holds a rejected pair until its backoff expires, then retries it', async () => {
+    it('re-sends a pair refused only once, and only on the next pass', async () => {
         const first: Sent[] = [];
-        await registerVTables(fakeClient(first));
+        await registerVTables(fakeClient(first), CONFIG);
         const id = reqIdFor(first, 0x20, 0x11)!;
         noteSubscriptionRejected(id, 'invalid msg id');
+        // A duplicate refusal for the same id names nothing any more.
+        noteSubscriptionRejected(id, 'invalid msg id');
 
-        const tooSoon: Sent[] = [];
-        await registerVTables(fakeClient(tooSoon));
-        expect(tooSoon.map(keyOf)).not.toContain('32,17');
-
-        clock += 10_000;
-        const later: Sent[] = [];
-        await registerVTables(fakeClient(later));
-        expect(later.map(keyOf)).toContain('32,17');
+        const next: Sent[] = [];
+        await registerVTables(fakeClient(next), CONFIG);
+        expect(next.filter((s) => keyOf(s) === '32,17')).toHaveLength(1);
     });
 });
 
@@ -147,44 +138,35 @@ describe('a live table is never re-subscribed', () => {
         // The DB is streaming this table — so this rejection cannot belong to it.
         notePairDelivered(0x46, 0x00);
         noteSubscriptionRejected(id!, 'invalid msg id');
-        clock += 120_000;
 
         const second: Sent[] = [];
-        await registerVTables(fakeClient(second));
+        await registerVTables(fakeClient(second), CONFIG);
         expect(second.map(keyOf)).not.toContain('70,0'); // [0x46, 0x00]
     });
 });
 
 describe('retries converge', () => {
-    it('parks a pair nothing publishes instead of resending it forever', async () => {
-        const sent: Sent[] = [];
-        await registerVTables(fakeClient(sent));
-        const target: [number, number] = [0x20, 0x11];
-
-        let resends = 0;
-        for (let pass = 0; pass < 40; pass++) {
-            const passSent: Sent[] = [];
-            await registerVTables(fakeClient(passSent));
-            const id = reqIdFor(passSent, target[0], target[1]);
-            if (id !== undefined) {
-                resends++;
-                noteSubscriptionRejected(id, 'invalid msg id');
-            }
-            clock += 120_000; // always past backoff, so only parking can stop it
+    it('never gives up on a refused pair: a board that comes up late is still picked up', async () => {
+        // The DB refuses a table that is registered but has never been written — every table
+        // of a board that is not up yet. The integration test's board 60 sits silent for a
+        // minute before its first SELF_TEST; a real board may sit for hours. However long the
+        // refusals run, the pass after one must re-send the pair, or the board never appears.
+        let sent: Sent[] = [];
+        await registerVTables(fakeClient(sent), CONFIG);
+        for (let pass = 0; pass < 200; pass++) {
+            const id = reqIdFor(sent, 0x60, 21); // PT board 21, self-test sensor 0
+            expect(id, `[0x60, 21] re-sent on pass ${pass}`).toBeDefined();
+            noteSubscriptionRejected(id!, 'invalid msg id');
+            sent = [];
+            await registerVTables(fakeClient(sent), CONFIG);
         }
-
-        expect(resends).toBeLessThan(MAX_PAIR_ATTEMPTS + 2);
-
-        // And once parked it stays parked.
-        const after: Sent[] = [];
-        await registerVTables(fakeClient(after));
-        expect(after.map(keyOf)).not.toContain('32,17');
+        expect(reqIdFor(sent, 0x60, 21)).toBeDefined();
     });
 
     it('sends nothing once everything is subscribed', async () => {
         await drain([]);
         const second: Sent[] = [];
-        const res = await registerVTables(fakeClient(second));
+        const res = await registerVTables(fakeClient(second), CONFIG);
         expect(second).toHaveLength(0);
         expect(res.sent).toBe(0);
         expect(res.remaining).toBe(0);
@@ -192,7 +174,7 @@ describe('retries converge', () => {
 
     it('caps a pass at the request-id space and queues the rest', async () => {
         const sent: Sent[] = [];
-        const res = await registerVTables(fakeClient(sent));
+        const res = await registerVTables(fakeClient(sent), CONFIG);
         expect(sent.length).toBeLessThanOrEqual(SUBSCRIPTION_REQ_ID_SPACE);
         if (res.remaining > 0) expect(sent.length).toBe(SUBSCRIPTION_REQ_ID_SPACE);
     });

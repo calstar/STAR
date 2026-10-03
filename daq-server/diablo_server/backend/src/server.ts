@@ -1425,9 +1425,9 @@ const RESUBSCRIBE_MIN_MS = 5000;
 // No attempt ceiling any more. The old one (24 passes, ~2 min) was dead code anyway: the
 // dbError handler called scheduleResubscribe(1) on every refusal, resetting the ladder
 // forever. Worse, a real ceiling is wrong here — a service started more than two minutes
-// after the backend connects would never be picked up. Termination is now per PAIR
-// (MAX_PAIR_ATTEMPTS in elodin-vtable-registry), which is where it belongs: one table that
-// nobody publishes gets parked, without stopping retries for every other table.
+// after the backend connects would never be picked up. A refused pair is re-sent every pass
+// for the life of the connection: the DB also refuses a registered table that has never been
+// written, which is every table of a board that is not up yet (see elodin-vtable-registry).
 function scheduleResubscribe(delayMs: number = RESUBSCRIBE_MIN_MS): void {
   if (!shouldResubscribe) return;
   if (resubscribeTimer) return;
@@ -1436,15 +1436,9 @@ function scheduleResubscribe(delayMs: number = RESUBSCRIBE_MIN_MS): void {
     if (!elodin.isConnected()) return;
     if (!shouldResubscribe) return;
     registerVTables(elodin).then((res) => {
-      // Sleep until the earliest pair is actually due, instead of spinning every 5 s.
       // A remainder means the pass hit the request-id cap, not that anything is wrong —
       // come straight back for it rather than idling 5 s per 255 tables on first connect.
-      const wait = res.remaining > 0
-        ? 0
-        : res.nextAttemptMs === null
-          ? RESUBSCRIBE_MIN_MS
-          : Math.max(RESUBSCRIBE_MIN_MS, res.nextAttemptMs - Date.now());
-      scheduleResubscribe(wait);
+      scheduleResubscribe(res.remaining > 0 ? 0 : RESUBSCRIBE_MIN_MS);
     }).catch(() => {
       scheduleResubscribe(RESUBSCRIBE_MIN_MS);
     });

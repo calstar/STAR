@@ -73,8 +73,6 @@ const pendingSubscriptionReqIds = new Map<number, string>();
 
 /** One wire byte, so this is the whole id space — see pendingSubscriptionReqIds. */
 export const SUBSCRIPTION_REQ_ID_SPACE = 255;
-/** Attempts before a pair is parked as "no publisher is ever going to register this". */
-export const MAX_PAIR_ATTEMPTS = 12;
 
 /** Pairs the DB has actually delivered a packet for. A table cannot be streaming and
  *  refusing its own subscription at the same time, so a rejection naming one of these is
@@ -82,24 +80,18 @@ export const MAX_PAIR_ATTEMPTS = 12;
  *  table, doubling its rate (the hazard documented above). Guarding on delivery makes that
  *  structurally impossible rather than merely unlikely. */
 const deliveredPairs = new Set<string>();
-/** Rejected pairs awaiting a retry, with their backoff. */
-const rejectedPairs = new Map<string, { attempts: number; nextAttemptMs: number }>();
-/** Pairs that exhausted MAX_PAIR_ATTEMPTS — stop asking, and stop logging about it. */
-const parkedPairs = new Set<string>();
-/** Rejections seen since the last pass logged a summary, so one line replaces thousands. */
+/** Rejections seen since the last pass logged a summary, so one line replaces thousands.
+ *
+ *  A refused pair is simply re-sent on the next pass, every pass, for the life of the
+ *  connection — no backoff and no giving up. A refusal does not mean "nobody publishes this":
+ *  the DB also refuses a table that is registered but has never been written, which is every
+ *  table of a board that is not up yet. A backoff that grew to 60 s (and parked after 12
+ *  tries) left a board that came up a minute into the run invisible for up to a minute, and
+ *  one that came up after ~8 minutes invisible for good. Re-sending a refused pair is cheap
+ *  and cannot duplicate a stream (it spawned none), and the noise is one line per pass. */
 let refusalsSinceLastPass = 0;
 const refusedPairsSinceLastPass = new Set<string>();
-
-/** Injectable clock, so backoff is testable without fake timers fighting the await. */
-let nowFn: () => number = () => Date.now();
-export function setClockForTests(fn: () => number): void {
-    nowFn = fn;
-}
-
-/** Backoff for attempt n: 5s, 10s, 20s, 40s, then 60s. */
-function backoffMs(attempts: number): number {
-    return Math.min(60_000, 5_000 * 2 ** Math.max(0, attempts - 1));
-}
+let lastRefusalDescription = '';
 
 /** Record that the DB delivered a packet for this pair. */
 export function notePairDelivered(high: number, low: number): void {
@@ -111,10 +103,9 @@ export function clearSubscriptionState(): void {
     subscribedVTableStreamPairs.clear();
     pendingSubscriptionReqIds.clear();
     deliveredPairs.clear();
-    rejectedPairs.clear();
-    parkedPairs.clear();
     refusalsSinceLastPass = 0;
     refusedPairsSinceLastPass.clear();
+    lastRefusalDescription = '';
 }
 
 /**
@@ -140,31 +131,17 @@ export function noteSubscriptionRejected(requestId: number, description: string)
 
     if (!subscribedVTableStreamPairs.delete(key)) return;
 
-    const state = rejectedPairs.get(key) ?? { attempts: 0, nextAttemptMs: 0 };
-    state.attempts += 1;
-    state.nextAttemptMs = nowFn() + backoffMs(state.attempts);
-    rejectedPairs.set(key, state);
-
     refusalsSinceLastPass += 1;
     refusedPairsSinceLastPass.add(key);
-
-    if (state.attempts >= MAX_PAIR_ATTEMPTS) {
-        parkedPairs.add(key);
-        rejectedPairs.delete(key);
-        const [high, low] = key.split(',').map(Number);
-        console.warn(
-            `[Elodin] giving up on [0x${high.toString(16).padStart(2, '0')}, ` +
-            `0x${low.toString(16).padStart(2, '0')}] after ${state.attempts} attempts: ` +
-            `${description} — no publisher registers this table`,
-        );
-    }
+    lastRefusalDescription = description;
 }
 
 /** Drain the per-pass refusal tally, so registerVTables can log one line instead of thousands. */
-function takeRefusalSummary(): { count: number; pairs: string[] } {
-    const out = { count: refusalsSinceLastPass, pairs: [...refusedPairsSinceLastPass] };
+function takeRefusalSummary(): { count: number; pairs: string[]; description: string } {
+    const out = { count: refusalsSinceLastPass, pairs: [...refusedPairsSinceLastPass], description: lastRefusalDescription };
     refusalsSinceLastPass = 0;
     refusedPairsSinceLastPass.clear();
+    lastRefusalDescription = '';
     return out;
 }
 
@@ -314,38 +291,30 @@ export function buildVTableStreamSubscriptionList(cfgIn?: unknown): Array<[numbe
 export interface SubscriptionPassResult {
     sent: number;
     skipped: number;
-    parked: number;
     /** Pairs due this pass that did not fit in the request-id space; send them next pass. */
     remaining: number;
-    /** Earliest backoff deadline still outstanding, or null when nothing is waiting. */
-    nextAttemptMs: number | null;
 }
 
-export async function registerVTables(client: ElodinClient): Promise<SubscriptionPassResult> {
-    const empty: SubscriptionPassResult = { sent: 0, skipped: 0, parked: parkedPairs.size, remaining: 0, nextAttemptMs: null };
+/** `cfg` is for tests: omitted, the deployed config is read (see buildVTableStreamSubscriptionList). */
+export async function registerVTables(client: ElodinClient, cfg?: unknown): Promise<SubscriptionPassResult> {
+    const empty: SubscriptionPassResult = { sent: 0, skipped: 0, remaining: 0 };
     if (!client.isConnected()) {
         console.warn('⚠️ Cannot subscribe VTableStreams — Elodin client not connected');
         return empty;
     }
 
     try {
-        const subscriptions = buildVTableStreamSubscriptionList();
+        const subscriptions = buildVTableStreamSubscriptionList(cfg);
         const vtableStreamMsgId = computeMsgId('VTableStream');
 
         // Do NOT clear subscribedVTableStreamPairs here — this runs every few seconds, and
         // re-sending a live subscription spawns a SECOND DB stream task for that table.
         // Pairs are cleared only on disconnect (clearSubscriptionState).
-        const now = nowFn();
         const due: Array<[number, number]> = [];
         let skippedCount = 0;
         for (const [high, low] of subscriptions) {
             const key = `${high},${low}`;
-            if (subscribedVTableStreamPairs.has(key) || parkedPairs.has(key)) {
-                skippedCount++;
-                continue;
-            }
-            const backoff = rejectedPairs.get(key);
-            if (backoff && backoff.nextAttemptMs > now) {
+            if (subscribedVTableStreamPairs.has(key)) {
                 skippedCount++;
                 continue;
             }
@@ -390,24 +359,18 @@ export async function registerVTables(client: ElodinClient): Promise<Subscriptio
                 .join(' ');
             console.warn(
                 `[Elodin] ${refused.count} subscription refusal(s) over ${refused.pairs.length} pair(s) ` +
-                `since the last pass — will retry with backoff. First: ${sample}` +
-                (parkedPairs.size > 0 ? ` (${parkedPairs.size} parked)` : ''),
+                `since the last pass (${refused.description}) — will retry next pass. First: ${sample}`,
             );
-        }
-
-        let nextAttemptMs: number | null = null;
-        for (const s of rejectedPairs.values()) {
-            if (nextAttemptMs === null || s.nextAttemptMs < nextAttemptMs) nextAttemptMs = s.nextAttemptMs;
         }
 
         if (successCount > 0) {
             console.log(
                 `📡 VTableStream: sent ${successCount} new, skipped ${skippedCount}` +
                 (remaining > 0 ? `, ${remaining} queued for the next pass` : '') +
-                ` (${subscriptions.length} total, ${parkedPairs.size} parked)`,
+                ` (${subscriptions.length} total)`,
             );
         }
-        return { sent: successCount, skipped: skippedCount, parked: parkedPairs.size, remaining, nextAttemptMs };
+        return { sent: successCount, skipped: skippedCount, remaining };
     } catch (error) {
         console.error('❌ VTableStream subscription error:', error);
         return empty;
