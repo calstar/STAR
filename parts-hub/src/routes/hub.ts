@@ -5,7 +5,7 @@ import { Router, type NextFunction, type Request, type Response } from 'express'
 import multer from 'multer';
 import { config } from '../config.ts';
 import { addHistory, apiCallsSince, createPart, getHistory, getPart, listCategories, listParts, updatePart, type Part } from '../db.ts';
-import { Busy, checkOnshape, deletePart, estimateCalls, refreshThumbnail, renderThumbnail, replaceOriginal, retryPart, startSync, storeOriginal, syncStatus, WAITING, waitingParts } from '../library.ts';
+import { Busy, checkOnshape, deletePart, estimateCalls, weightChanges, refreshThumbnail, renderThumbnail, replaceOriginal, retryPart, startSync, storeOriginal, syncStatus, WAITING, waitingParts } from '../library.ts';
 import { isAdmin } from '../admins.ts';
 import { BadRequest, CAD_EXTENSIONS, cleanEdit, hubJson } from '../parts.ts';
 
@@ -98,8 +98,10 @@ hubApi.patch('/parts/:id', (req, res) => {
     res.json(hubJson(part));
     return;
   }
-  // Hub-only: the catalog shows the hub's name, so nothing is sent to Onshape.
-  const updated = updatePart(part.id, edit, user(req));
+  // Everything is hub-only except weight: once the part is in Onshape, a weight change
+  // waits for the next "Update Onshape", which writes it as the part's mass.
+  const weightChanged = Boolean(changes.weight || changes.weightUnit);
+  const updated = updatePart(part.id, { ...edit, ...(weightChanged && part.elementId ? { weightDirty: true } : {}) }, user(req));
   addHistory(part.id, user(req), 'Edited', changes);
   res.json(hubJson(updated));
 });
@@ -157,11 +159,12 @@ hubApi.get('/parts/:id/original', (req, res) => {
 // "Update Onshape": send every waiting part in one batch (runs in the background).
 hubApi.get('/sync', (_req, res) => {
   const waiting = waitingParts();
-  res.json({ job: syncStatus(), waiting: waiting.length, estimatedCalls: estimateCalls(waiting) });
+  const weights = weightChanges();
+  res.json({ job: syncStatus(), waiting: waiting.length, weightChanges: weights.length, estimatedCalls: estimateCalls(waiting, weights) });
 });
 
 hubApi.post('/sync', (req, res) => {
-  if (!waitingParts().length && !syncStatus().running) throw new BadRequest('No parts are waiting for Onshape');
+  if (!waitingParts().length && !weightChanges().length && !syncStatus().running) throw new BadRequest('Nothing is waiting for Onshape');
   res.status(202).json({ job: startSync(user(req)) });
 });
 

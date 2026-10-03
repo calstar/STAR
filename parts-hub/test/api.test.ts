@@ -263,3 +263,31 @@ test('an admin can delete a part for good', async () => {
   assert.ok(!fs.existsSync(path.join(dataDir, 'originals', String(id))), 'uploaded file removed');
   assert.ok(!(await (await hub('parts?archived=1')).json()).some((p: { id: number }) => p.id === id));
 });
+
+const masses = () => (globalThis as { __mockMasses?: Map<string, number> }).__mockMasses!;
+
+test('weights go to Onshape as mass, in kg, and a later change re-versions the part', async () => {
+  assert.equal((await hub('parts/1', { method: 'PATCH', body: JSON.stringify({ weight: -1 }) })).status, 400);
+  assert.equal((await hub('parts/1', { method: 'PATCH', body: JSON.stringify({ weightUnit: 'stone' }) })).status, 400);
+
+  const { id } = await upload('Heavy union', 'heavy.step', { weight: '2', weightUnit: 'oz' });
+  await syncAndWait();
+  const first = await (await hub(`parts/${id}`)).json();
+  assert.equal(first.status, 'ready');
+  assert.ok(Math.abs(masses().get(first.elementId)! - 2 * 0.028349523125) < 1e-12, '2 oz in kg');
+
+  // Changing the weight of a part already in Onshape waits for the next update...
+  const edited = await (await hub(`parts/${id}`, { method: 'PATCH', body: JSON.stringify({ weight: 0.25, weightUnit: 'lb' }) })).json();
+  assert.equal(edited.weightDirty, true);
+  assert.equal(edited.status, 'ready', 'still insertable meanwhile');
+  assert.equal((await (await hub('sync')).json()).weightChanges, 1);
+
+  // ...which writes it and gives the part a new version to insert from.
+  const sync = await syncAndWait();
+  assert.equal(sync.job.result.weightsUpdated, 1);
+  const after = await (await hub(`parts/${id}`)).json();
+  assert.equal(after.weightDirty, false);
+  assert.notEqual(after.versionId, first.versionId);
+  assert.ok(Math.abs(masses().get(after.elementId)! - 0.25 * 0.45359237) < 1e-12);
+  assert.equal((await (await hub('sync')).json()).weightChanges, 0);
+});

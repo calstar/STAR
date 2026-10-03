@@ -6,6 +6,8 @@ import { config } from './config.ts';
 export type Link = { label: string; url: string };
 export type CustomField = { key: string; value: string };
 // staged: on this server only · pending: being added to Onshape · ready: in the catalog · failed
+export const WEIGHT_UNITS = { g: 0.001, kg: 1, oz: 0.028349523125, lb: 0.45359237 } as const; // kg per unit
+export type WeightUnit = keyof typeof WEIGHT_UNITS;
 export type PartStatus = 'staged' | 'pending' | 'ready' | 'failed';
 
 export interface Part {
@@ -17,6 +19,10 @@ export interface Part {
   tags: string[];
   unitCost: number | null; // USD
   costNote: string;
+  weight: number | null; // in weightUnit, as entered
+  weightUnit: WeightUnit;
+  /** Weight changed since the part's Onshape version; the next "Update Onshape" sends it. */
+  weightDirty: boolean;
   description: string;
   notes: string;
   links: Link[];
@@ -49,7 +55,7 @@ export interface HistoryEntry {
 
 /** Fields members can edit from the hub. */
 export const EDITABLE_FIELDS = [
-  'name', 'partNumber', 'vendor', 'category', 'tags', 'unitCost', 'costNote',
+  'name', 'partNumber', 'vendor', 'category', 'tags', 'unitCost', 'costNote', 'weight', 'weightUnit',
   'description', 'notes', 'links', 'customFields',
 ] as const;
 export type EditableField = (typeof EDITABLE_FIELDS)[number];
@@ -64,6 +70,9 @@ const COLUMNS: Record<keyof Part, string> = {
   tags: 'tags',
   unitCost: 'unit_cost_cents',
   costNote: 'cost_note',
+  weight: 'weight',
+  weightUnit: 'weight_unit',
+  weightDirty: 'weight_dirty',
   description: 'description',
   notes: 'notes',
   links: 'links',
@@ -96,6 +105,9 @@ CREATE TABLE IF NOT EXISTS parts (
   tags TEXT NOT NULL DEFAULT '[]',
   unit_cost_cents INTEGER,
   cost_note TEXT NOT NULL DEFAULT '',
+  weight REAL,
+  weight_unit TEXT NOT NULL DEFAULT 'g',
+  weight_dirty INTEGER NOT NULL DEFAULT 0,
   description TEXT NOT NULL DEFAULT '',
   notes TEXT NOT NULL DEFAULT '',
   links TEXT NOT NULL DEFAULT '[]',
@@ -160,7 +172,19 @@ export function openDb(file = path.join(config.dataDir, 'hub.sqlite')): Database
   db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+/** Columns added after the first release; CREATE TABLE IF NOT EXISTS won't add them to old databases. */
+function migrate(d: DatabaseSync): void {
+  const have = new Set(d.prepare('PRAGMA table_info(parts)').all().map((c) => String((c as { name: string }).name)));
+  const add: [string, string][] = [
+    ['weight', 'REAL'],
+    ['weight_unit', "TEXT NOT NULL DEFAULT 'g'"],
+    ['weight_dirty', 'INTEGER NOT NULL DEFAULT 0'],
+  ];
+  for (const [col, type] of add) if (!have.has(col)) d.exec(`ALTER TABLE parts ADD COLUMN ${col} ${type}`);
 }
 
 export function getDb(): DatabaseSync {
@@ -178,6 +202,7 @@ function rowToPart(row: Record<string, unknown>): Part {
     part[key] = value;
   }
   part.archived = Boolean(row.archived);
+  part.weightDirty = Boolean(row.weight_dirty);
   part.unitCost = row.unit_cost_cents == null ? null : Number(row.unit_cost_cents) / 100;
   return part as unknown as Part;
 }
@@ -185,7 +210,7 @@ function rowToPart(row: Record<string, unknown>): Part {
 function toColumnValue(key: keyof Part, value: unknown): string | number | null {
   if (JSON_FIELDS.has(key)) return JSON.stringify(value ?? []);
   if (key === 'unitCost') return value == null ? null : Math.round(Number(value) * 100);
-  if (key === 'archived') return value ? 1 : 0;
+  if (key === 'archived' || key === 'weightDirty') return value ? 1 : 0;
   return (value ?? null) as string | number | null;
 }
 

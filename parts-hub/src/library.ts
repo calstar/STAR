@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.ts';
-import { addHistory, createPart, deletePartRow, getPart, knownElementIds, listParts, retireElement, SYSTEM_USER, updatePart, type Part } from './db.ts';
+import { addHistory, createPart, deletePartRow, WEIGHT_UNITS, getPart, knownElementIds, listParts, retireElement, SYSTEM_USER, updatePart, type Part } from './db.ts';
 import type { OnshapeClient, TranslationState } from './onshape/client.ts';
 import { canRenderLocally, renderLocally } from './render/index.ts';
 
@@ -110,15 +110,23 @@ export function waitingParts(): Part[] {
   return listParts().filter((p) => p.status === 'staged' || p.status === 'pending');
 }
 
-/** Rough API cost of updating now, shown next to the button. */
-export function estimateCalls(parts = waitingParts()): number {
-  if (!parts.length) return 0;
-  const imports = parts.filter((p) => !p.elementId && !p.translationId).length;
-  const pictures = parts.filter((p) => !p.thumbnailFile && !isRendering(p.id)).length;
-  return imports + 3 /* status checks */ + 1 /* find the new tabs */ + 2 /* name parts */ + 1 /* version */ + pictures;
+/** Parts already in Onshape whose weight changed since; the next update re-versions them. */
+export function weightChanges(): Part[] {
+  return listParts().filter((p) => p.status === 'ready' && p.weightDirty && p.elementId);
 }
 
-export type SyncResult = { added: number; failed: number; versionId: string | null };
+const massKg = (p: Part) => (p.weight == null ? null : p.weight * WEIGHT_UNITS[p.weightUnit]);
+
+/** Rough API cost of updating now, shown next to the button. */
+export function estimateCalls(parts = waitingParts(), weights = weightChanges()): number {
+  if (!parts.length && !weights.length) return 0;
+  const imports = parts.filter((p) => !p.elementId && !p.translationId).length;
+  const pictures = parts.filter((p) => !p.thumbnailFile && !isRendering(p.id)).length;
+  const importing = parts.length ? 3 /* status checks */ + 1 /* find the new tabs */ : 0;
+  return imports + importing + 2 /* names + weights */ + 1 /* version */ + pictures;
+}
+
+export type SyncResult = { added: number; failed: number; weightsUpdated: number; versionId: string | null };
 export type SyncJob = { running: boolean; startedBy?: string; parts?: number; step?: string; result?: SyncResult; error?: string };
 let job: SyncJob = { running: false };
 export const syncStatus = () => job;
@@ -130,7 +138,7 @@ export function startSync(user: string): SyncJob {
 }
 
 export function syncToOnshape(user: string): Promise<SyncResult> {
-  job = { running: true, startedBy: user, parts: waitingParts().length, step: 'Queued' };
+  job = { running: true, startedBy: user, parts: waitingParts().length + weightChanges().length, step: 'Queued' };
   return enqueue(() => runSync(user)).then(
     (result) => {
       job = { running: false, startedBy: user, result };
@@ -151,7 +159,8 @@ function onshapeFilename(part: Part): string {
 
 async function runSync(user: string): Promise<SyncResult> {
   const batch = waitingParts().map((p) => p.id);
-  if (!batch.length) return { added: 0, failed: 0, versionId: null };
+  const reweigh = weightChanges().map((p) => p.id);
+  if (!batch.length && !reweigh.length) return { added: 0, failed: 0, weightsUpdated: 0, versionId: null };
   const step = (s: string) => (job = { ...job, step: s });
   const current = () => batch.map((id) => getPart(id)!).filter((p) => p.status === 'pending');
   const fail = (id: number, msg: string, retranslate = false) => {
@@ -198,21 +207,41 @@ async function runSync(user: string): Promise<SyncResult> {
       }
     }
 
-    // 3. Name the parts after the hub name (vendor files carry names like "Mirror 1",
-    //    which is what assemblies show), then one version for the whole batch: that's
-    //    what the panel inserts from. Renaming is 2 calls however big the batch is.
+    // 3. Name the new parts after the hub name (vendor files carry names like "Mirror 1",
+    //    which is what assemblies show) and write every weight as the parts' mass, in one
+    //    batch (2 calls). Then one version for the whole batch: that's what the panel
+    //    inserts from, so weight changes on parts already in Onshape need it too.
     const unversioned = current().filter((p) => p.elementId && !p.versionId);
+    const reweighed = reweigh.map((id) => getPart(id)).filter((p): p is Part => Boolean(p?.weightDirty && p.elementId));
     let versionId: string | null = null;
-    if (unversioned.length) {
-      step('Naming parts');
-      await nameParts(unversioned.map((p) => ({ id: p.id, elementId: p.elementId!, name: p.name })));
+    let propsOk = true;
+    if (unversioned.length || reweighed.length) {
+      step('Naming parts and setting weights');
+      propsOk = await setPartProperties([
+        // New parts without a weight leave Onshape's mass alone; a cleared weight clears it.
+        ...unversioned.map((p) => ({ id: p.id, elementId: p.elementId!, name: p.name, massKg: massKg(p) ?? undefined })),
+        ...reweighed.map((p) => ({ id: p.id, elementId: p.elementId!, massKg: massKg(p) })),
+      ]);
+      // If Onshape refused the weights, leave those parts waiting rather than version them unchanged.
+      if (!propsOk) reweighed.length = 0;
+    }
+    if (unversioned.length || reweighed.length) {
       step('Creating a library version');
       const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+      const what = [
+        unversioned.length ? `${unversioned.length} part(s) added` : '',
+        reweighed.length ? `${reweighed.length} weight(s) updated` : '',
+      ].filter(Boolean).join(', ');
       versionId = await client.createVersion(
         `Parts Hub update ${stamp}`,
-        `${unversioned.length} part(s) added by ${user}: ${unversioned.map((p) => p.name).join(', ')}`.slice(0, 5000),
+        `${what} by ${user}: ${[...unversioned, ...reweighed].map((p) => p.name).join(', ')}`.slice(0, 5000),
       );
-      for (const part of unversioned) updatePart(part.id, { versionId });
+      // A weight Onshape refused stays waiting for the next update.
+      for (const part of unversioned) updatePart(part.id, { versionId, weightDirty: !propsOk && part.weight != null });
+      for (const part of reweighed) {
+        updatePart(part.id, { versionId, weightDirty: false });
+        addHistory(part.id, user, 'Weight sent to Onshape', { weight: `${part.weight ?? '-'} ${part.weightUnit}`, versionId });
+      }
     }
 
     // 4. Pictures only for files we couldn't draw ourselves (1 call each), then done.
@@ -231,7 +260,7 @@ async function runSync(user: string): Promise<SyncResult> {
       addHistory(part.id, user, 'Added to Onshape', { versionId: part.versionId, elementId: part.elementId });
       added++;
     }
-    return { added, failed: batch.length - added, versionId };
+    return { added, failed: batch.length - added, weightsUpdated: reweighed.length, versionId };
   } catch (err) {
     // Anything that stopped the whole batch (network, version creation...). Parts keep
     // whatever step they reached, so the next update resumes instead of re-importing.
@@ -255,15 +284,17 @@ async function waitForTranslations(ids: string[]): Promise<Map<string, Translati
   return settled;
 }
 
-/** Rename parts; a failure is noted on the parts but never stops the update. */
-async function nameParts(studios: { id: number | null; elementId: string; name: string }[]): Promise<void> {
+/** Set part names/masses; a failure is noted on the parts but never stops the update. */
+async function setPartProperties(studios: { id: number | null; elementId: string; name?: string; massKg?: number | null }[]): Promise<boolean> {
   try {
-    await client.nameParts(studios);
+    await client.setPartProperties(studios);
+    return true;
   } catch (err) {
     for (const s of studios) {
-      if (s.id) addHistory(s.id, SYSTEM_USER, 'Could not rename the parts in Onshape', { error: errorMessage(err) });
+      if (s.id) addHistory(s.id, SYSTEM_USER, 'Could not set part names/weight in Onshape', { error: errorMessage(err) });
     }
-    console.error('[library] naming parts failed:', err);
+    console.error('[library] setting part properties failed:', err);
+    return false;
   }
 }
 
@@ -327,7 +358,7 @@ export function checkOnshape(user: string): Promise<{ created: number; versionId
     const fresh = studios.filter((s) => !known.has(s.id) && !DEFAULT_TAB.test(s.name));
     if (!fresh.length) return { created: 0, versionId: null };
 
-    await nameParts(fresh.map((s) => ({ id: null, elementId: s.id, name: s.name.replace(CAD_SUFFIX, '').trim() || s.name })));
+    await setPartProperties(fresh.map((s) => ({ id: null, elementId: s.id, name: s.name.replace(CAD_SUFFIX, '').trim() || s.name })));
     const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
     const versionId = await client.createVersion(
       `Parts Hub check ${stamp}`,

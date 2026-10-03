@@ -181,15 +181,17 @@ async function listPage() {
   }
 
   let lastSyncShown = null;
-  function renderSync({ job, waiting, estimatedCalls }) {
+  function renderSync({ job, waiting, weightChanges = 0, estimatedCalls }) {
     syncBar.hidden = false;
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
     if (job.running) {
-      fill(syncBar, h('span', { class: 'spinner' }), h('strong', {}, `Adding ${job.parts} part(s) to Onshape`), ` · ${job.step ?? ''}…`);
-    } else if (waiting) {
+      fill(syncBar, h('span', { class: 'spinner' }), h('strong', {}, `Updating Onshape (${plural(job.parts, 'part')})`), ` · ${job.step ?? ''}…`);
+    } else if (waiting || weightChanges) {
+      const what = [waiting ? plural(waiting, 'new part') : '', weightChanges ? plural(weightChanges, 'weight change') : ''].filter(Boolean).join(' and ');
       fill(syncBar,
         h('div', { class: 'grow' },
-          h('strong', {}, `${waiting} part${waiting === 1 ? '' : 's'} waiting for Onshape.`),
-          ' They are saved here but not in the Onshape panel yet. Upload the rest of your batch, then update once.'),
+          h('strong', {}, `${what} waiting for Onshape.`),
+          waiting ? ' New parts are saved here but not in the Onshape panel yet. Upload the rest of your batch, then update once.' : ' Inserts keep using the previous weight until you update.'),
         h('button', { class: 'btn primary small', onclick: startSync }, 'Update Onshape'),
         h('span', { class: 'hint' }, `about ${estimatedCalls} API calls`));
     } else if (job.error) {
@@ -199,7 +201,9 @@ async function listPage() {
     }
     // Announce a finished update once.
     if (!job.running && job.result && lastSyncShown === true) {
-      toast(`Added ${job.result.added} part(s) to Onshape${job.result.failed ? `, ${job.result.failed} failed` : ''}`, job.result.failed ? 'err' : 'ok');
+      const r = job.result;
+      const done = [r.added ? `added ${r.added} part(s)` : '', r.weightsUpdated ? `updated ${r.weightsUpdated} weight(s)` : ''].filter(Boolean).join(' and ') || 'nothing to change';
+      toast(`Onshape: ${done}${r.failed ? `, ${r.failed} failed` : ''}`, r.failed ? 'err' : 'ok');
     }
     lastSyncShown = job.running;
   }
@@ -268,9 +272,14 @@ function partForm(part, onChange) {
     tags: h('input', { value: (part.tags ?? []).join(', '), placeholder: 'comma, separated' }),
     unitCost: h('input', { value: part.unitCost != null ? Number(part.unitCost).toFixed(2) : '', inputmode: 'decimal', placeholder: '0.00' }),
     costNote: h('input', { value: part.costNote ?? '', placeholder: 'e.g. qty 10 price, quoted 2026-08' }),
+    weight: h('input', { value: part.weight ?? '', inputmode: 'decimal', placeholder: 'e.g. 0.04' }),
+    weightUnit: h('select', { 'aria-label': 'Weight unit' },
+      ['g', 'kg', 'oz', 'lb'].map((u) => h('option', { value: u }, u))),
     description: h('textarea', {}, part.description ?? ''),
     notes: h('textarea', {}, part.notes ?? ''),
   };
+  inputs.weightUnit.value = part.weightUnit && part.weight != null ? part.weightUnit : prefs.get('weightUnit', 'lb');
+  inputs.weightUnit.addEventListener('change', () => prefs.set('weightUnit', inputs.weightUnit.value));
   const links = rowsEditor(part.links ?? [], [['label', 'Label (e.g. Datasheet)'], ['url', 'https://…']], '+ Add link', '');
   const custom = rowsEditor(part.customFields ?? [], [['key', 'Field (e.g. Max pressure)'], ['value', 'Value (e.g. 5000 psi)']], '+ Add field', 'kv');
 
@@ -285,6 +294,9 @@ function partForm(part, onChange) {
     field('Category', inputs.category),
     field('Tags', inputs.tags),
     field('Cost (USD, per unit)', h('div', { class: 'cost' }, inputs.unitCost, inputs.costNote), { full: true }),
+    field('Weight (per unit)', h('div', { class: 'weight' }, inputs.weight, inputs.weightUnit), {
+      hint: 'Sent to Onshape as the part\'s mass at the next Update Onshape, so assembly mass properties work.',
+    }),
     field('Links', links.el, { full: true }),
     field('Custom fields', custom.el, { full: true, hint: 'Anything else worth knowing: material, pressure rating, thread, …' }),
     field('Description', inputs.description, { full: true }),
@@ -308,6 +320,8 @@ function partForm(part, onChange) {
       tags: inputs.tags.value.split(',').map((t) => t.trim()).filter(Boolean),
       unitCost: inputs.unitCost.value.trim() === '' ? null : inputs.unitCost.value,
       costNote: inputs.costNote.value,
+      weight: inputs.weight.value.trim() === '' ? null : inputs.weight.value,
+      weightUnit: inputs.weightUnit.value,
       description: inputs.description.value,
       notes: inputs.notes.value,
       links: links.read(),
@@ -443,7 +457,10 @@ async function detailPage(id) {
 
   function renderSide() {
     let statusBox = null;
-    if (part.status === 'staged') {
+    if (part.status === 'ready' && part.weightDirty) {
+      statusBox = h('div', { class: 'status-box pending' }, h('strong', {}, 'New weight not in Onshape yet.'),
+        h('div', {}, 'It goes to Onshape at the next ', h('a', { href: '#/' }, 'Update Onshape'), '. Until then, inserts use the previous weight.'));
+    } else if (part.status === 'staged') {
       statusBox = h('div', { class: 'status-box pending' }, h('strong', {}, 'Not in Onshape yet.'),
         h('div', {}, 'Saved on the server. It joins the Onshape panel at the next ', h('a', { href: '#/' }, 'Update Onshape'), ', together with everything else waiting.'));
     } else if (part.status === 'pending') {

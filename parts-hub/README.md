@@ -174,6 +174,8 @@ A batch of N STEP files costs about **N + 7 calls**. A part Onshape can't transl
 
 **Renaming** and every other edit are hub-only: no Onshape calls. The panel and hub always show the hub's name; the Onshape tab keeps the name the part had when it was added.
 
+**Weight.** Each part has a weight with a unit (g, kg, oz or lb). **Update Onshape** writes it as the part's **Mass** in Onshape, in the same batch call that names the parts. Vendor STEP files carry no material, so without this Onshape can't compute mass at all, and assembly mass properties come out empty. A fitting with several bodies has its weight split across them by volume (1 extra call for that fitting). Changing the weight of a part already in Onshape marks it "waiting": the next update writes the new mass and gives the part a new version to insert from. Until then, inserts use the previous weight.
+
 **Admins** (listed in [`config/admins.txt`](config/admins.txt), the same model as the DAQ server's `operators.txt`) get two extra buttons on a part's page. Everyone else can still upload, edit and archive.
 - **Replace CAD file**: swaps in a new file and keeps the name, cost, links and specs. The picture is redrawn right away. The part is out of the Onshape panel until the next **Update Onshape**, which imports the new file as a fresh Part Studio. The old Part Studio stays in the library, so assemblies already using it are unchanged, and the hub never lists it again.
 - **Delete part** (type DELETE to confirm): removes it from the hub for good: details, history, uploaded file and picture. Its Part Studio stays in the Onshape library (the hub never deletes Onshape data), and is never listed again.
