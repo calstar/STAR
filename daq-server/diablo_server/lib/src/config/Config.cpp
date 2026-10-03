@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <stdexcept>
 #include <toml++/toml.hpp>
 
 namespace fsw {
@@ -35,6 +36,8 @@ ActiveBoardKind kind_of(const std::string& type_str) {
         return ActiveBoardKind::LC;
     if (type_str == "ENCODER")
         return ActiveBoardKind::ENCODER;
+    if (type_str == "ENVIRONMENTAL")
+        return ActiveBoardKind::ENVIRONMENTAL;
     if (type_str == "ACTUATOR")
         return ActiveBoardKind::ACTUATOR;
     return ActiveBoardKind::UNKNOWN;
@@ -70,9 +73,15 @@ BoardConfig parse_board(const std::string& section, const toml::table& bt) {
     b.section = section;
     b.type = s_or(bt["type"], "");
     b.ip = s_or(bt["ip"], "");
-    b.board_id =
-        static_cast<int>(i_or(bt["board_id"], i_or(bt["id"], -1)));  // legacy "id" fallback
     b.enabled = b_or(bt["enabled"], true);
+    const auto id_node = bt.contains("board_id") ? bt["board_id"] : bt["id"];
+    const auto id = i_or(id_node, -1);
+    if (b.enabled && b.type == "ENVIRONMENTAL" && (!id_node.is_integer() || id < 1 || id > 255)) {
+        throw std::invalid_argument("[Config] [" + section +
+                                    "] environmental board ID must be an integer from 1 to 255");
+    }
+    b.board_id =
+        static_cast<int>(b.type == "ENVIRONMENTAL" ? id : i_or(bt["board_id"], i_or(bt["id"], -1)));
     b.num_actuators = static_cast<int>(i_or(bt["num_actuators"], 0));
     b.send_port = static_cast<uint16_t>(i_or(bt["send_port"], 5005));
     b.listen_port = static_cast<uint16_t>(i_or(bt["listen_port"], 5005));
@@ -99,6 +108,25 @@ BoardConfig parse_board(const std::string& section, const toml::table& bt) {
     b.hp_pt_full_scale_psi = d_or(bt["hp_pt_full_scale_psi"], 5000.0);
     b.hp_pt_sense_resistor_ohms = d_or(bt["hp_pt_sense_resistor_ohms"], 120.0);
     return b;
+}
+
+void validate_environmental_boards(const Config& cfg) {
+    std::map<int, std::string> owners;
+    for (const auto& b : cfg.boards) {
+        if (!b.enabled || b.type != "ENVIRONMENTAL")
+            continue;
+        if (b.board_id < 1 || b.board_id > 255) {
+            throw std::invalid_argument(
+                "[Config] [" + b.section +
+                "] environmental board ID must be an integer from 1 to 255");
+        }
+        const auto [owner, inserted] = owners.emplace(b.board_id, b.section);
+        if (!inserted) {
+            throw std::invalid_argument("[Config] environmental board ID " +
+                                        std::to_string(b.board_id) + " is claimed by both [" +
+                                        owner->second + "] and [" + b.section + "]");
+        }
+    }
 }
 
 Config from_table(const toml::table& t) {
@@ -321,6 +349,7 @@ Config from_table(const toml::table& t) {
             }
     }
 
+    validate_environmental_boards(c);
     return c;
 }
 
@@ -381,6 +410,8 @@ Config load(const std::string& path) {
         std::cerr << "[Config] TOML parse error in " << path << ": " << e.description()
                   << std::endl;
         return Config{};
+    } catch (const std::invalid_argument&) {
+        throw;  // Invalid board identities must not become an empty/default configuration.
     } catch (const std::exception& e) {
         std::cerr << "[Config] Failed to read " << path << ": " << e.what() << std::endl;
         return Config{};
@@ -398,6 +429,7 @@ Config load_from_string(const std::string& text) {
 }
 
 std::map<ActiveBoardKind, std::vector<elodin::BoardChannels>> active_boards(const Config& cfg) {
+    validate_environmental_boards(cfg);
     std::map<ActiveBoardKind, std::vector<elodin::BoardChannels>> result;
     std::map<ActiveBoardKind, std::map<uint8_t, std::string>> slot_owner;
     for (const auto& b : cfg.boards) {
@@ -407,7 +439,9 @@ std::map<ActiveBoardKind, std::vector<elodin::BoardChannels>> active_boards(cons
         if (bt == ActiveBoardKind::UNKNOWN)
             continue;
         const uint8_t slot = b.slot();
-        check_board_slots(slot_owner, bt, slot, b.section, b.board_id);
+        // Environmental tables use the full board ID, not a channel-slot block.
+        if (bt != ActiveBoardKind::ENVIRONMENTAL)
+            check_board_slots(slot_owner, bt, slot, b.section, b.board_id);
 
         elodin::BoardChannels bc;
         bc.board_id = static_cast<uint8_t>(b.board_id);

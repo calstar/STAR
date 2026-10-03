@@ -33,6 +33,7 @@ export declare enum SensorType {
     ACT = "ACT",
     TC = "TC",
     RTD = "RTD",
+    ENV = "ENV",
     LC = "LC"
 }
 export declare enum SystemState {

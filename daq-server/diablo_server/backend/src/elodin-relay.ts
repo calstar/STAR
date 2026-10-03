@@ -12,7 +12,7 @@
 import * as net from 'net';
 import { WebSocketServer } from 'ws';
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
-import { registerVTables, clearSubscriptionState } from './elodin-vtable-registry.js';
+import { registerVTables, clearSubscriptionState, noteSubscriptionRejected } from './elodin-vtable-registry.js';
 import { loadActuatorChannelToEntityMap } from './sensor-config.js';
 
 const ELODIN_HOST = process.env.ELODIN_HOST || '127.0.0.1';
@@ -164,6 +164,11 @@ function main(): void {
       console.error('[Relay] Initial subscription failed:', e);
       scheduleResubscribe(1);
     });
+  });
+
+  elodin.on('dbError', (requestId: number, description: string) => {
+    noteSubscriptionRejected(requestId, description);
+    scheduleResubscribe(1);
   });
 
   elodin.on('disconnected', () => {

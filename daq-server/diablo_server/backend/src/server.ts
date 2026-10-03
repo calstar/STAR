@@ -506,6 +506,7 @@ function updateBoard(low: number, payload: Buffer): void {
   else if (boardType === 4) typeStr = 'LC';
   else if (boardType === 5) typeStr = 'ACTUATOR';
   else if (boardType === 6 || boardId === 61) typeStr = 'ENCODER';
+  else if (boardType === 7) typeStr = 'ENVIRONMENTAL';
 
   let status = boardsStatus.get(boardId);
   const wasDisconnected = !status || status.lastHeartbeatMs == null || now - (status.lastHeartbeatMs ?? 0) > BOARD_HEARTBEAT_STALE_MS;
