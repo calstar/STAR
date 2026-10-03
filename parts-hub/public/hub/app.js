@@ -181,15 +181,17 @@ async function listPage() {
   }
 
   let lastSyncShown = null;
-  function renderSync({ job, waiting, estimatedCalls }) {
+  function renderSync({ job, waiting, weightChanges = 0, estimatedCalls }) {
     syncBar.hidden = false;
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
     if (job.running) {
-      fill(syncBar, h('span', { class: 'spinner' }), h('strong', {}, `Adding ${job.parts} part(s) to Onshape`), ` · ${job.step ?? ''}…`);
-    } else if (waiting) {
+      fill(syncBar, h('span', { class: 'spinner' }), h('strong', {}, `Updating Onshape (${plural(job.parts, 'part')})`), ` · ${job.step ?? ''}…`);
+    } else if (waiting || weightChanges) {
+      const what = [waiting ? plural(waiting, 'new part') : '', weightChanges ? plural(weightChanges, 'weight change') : ''].filter(Boolean).join(' and ');
       fill(syncBar,
         h('div', { class: 'grow' },
-          h('strong', {}, `${waiting} part${waiting === 1 ? '' : 's'} waiting for Onshape.`),
-          ' They are saved here but not in the Onshape panel yet. Upload the rest of your batch, then update once.'),
+          h('strong', {}, `${what} waiting for Onshape.`),
+          waiting ? ' New parts are saved here but not in the Onshape panel yet. Upload the rest of your batch, then update once.' : ' Inserts keep using the previous weight until you update.'),
         h('button', { class: 'btn primary small', onclick: startSync }, 'Update Onshape'),
         h('span', { class: 'hint' }, `about ${estimatedCalls} API calls`));
     } else if (job.error) {
@@ -199,7 +201,9 @@ async function listPage() {
     }
     // Announce a finished update once.
     if (!job.running && job.result && lastSyncShown === true) {
-      toast(`Added ${job.result.added} part(s) to Onshape${job.result.failed ? `, ${job.result.failed} failed` : ''}`, job.result.failed ? 'err' : 'ok');
+      const r = job.result;
+      const done = [r.added ? `added ${r.added} part(s)` : '', r.weightsUpdated ? `updated ${r.weightsUpdated} weight(s)` : ''].filter(Boolean).join(' and ') || 'nothing to change';
+      toast(`Onshape: ${done}${r.failed ? `, ${r.failed} failed` : ''}`, r.failed ? 'err' : 'ok');
     }
     lastSyncShown = job.running;
   }
@@ -268,9 +272,14 @@ function partForm(part, onChange) {
     tags: h('input', { value: (part.tags ?? []).join(', '), placeholder: 'comma, separated' }),
     unitCost: h('input', { value: part.unitCost != null ? Number(part.unitCost).toFixed(2) : '', inputmode: 'decimal', placeholder: '0.00' }),
     costNote: h('input', { value: part.costNote ?? '', placeholder: 'e.g. qty 10 price, quoted 2026-08' }),
+    weight: h('input', { value: part.weight ?? '', inputmode: 'decimal', placeholder: 'e.g. 0.04' }),
+    weightUnit: h('select', { 'aria-label': 'Weight unit' },
+      ['g', 'kg', 'oz', 'lb'].map((u) => h('option', { value: u }, u))),
     description: h('textarea', {}, part.description ?? ''),
     notes: h('textarea', {}, part.notes ?? ''),
   };
+  inputs.weightUnit.value = part.weightUnit && part.weight != null ? part.weightUnit : prefs.get('weightUnit', 'lb');
+  inputs.weightUnit.addEventListener('change', () => prefs.set('weightUnit', inputs.weightUnit.value));
   const links = rowsEditor(part.links ?? [], [['label', 'Label (e.g. Datasheet)'], ['url', 'https://…']], '+ Add link', '');
   const custom = rowsEditor(part.customFields ?? [], [['key', 'Field (e.g. Max pressure)'], ['value', 'Value (e.g. 5000 psi)']], '+ Add field', 'kv');
 
@@ -285,6 +294,9 @@ function partForm(part, onChange) {
     field('Category', inputs.category),
     field('Tags', inputs.tags),
     field('Cost (USD, per unit)', h('div', { class: 'cost' }, inputs.unitCost, inputs.costNote), { full: true }),
+    field('Weight (per unit)', h('div', { class: 'weight' }, inputs.weight, inputs.weightUnit), {
+      hint: 'Sent to Onshape as the part\'s mass at the next Update Onshape, so assembly mass properties work.',
+    }),
     field('Links', links.el, { full: true }),
     field('Custom fields', custom.el, { full: true, hint: 'Anything else worth knowing: material, pressure rating, thread, …' }),
     field('Description', inputs.description, { full: true }),
@@ -308,6 +320,8 @@ function partForm(part, onChange) {
       tags: inputs.tags.value.split(',').map((t) => t.trim()).filter(Boolean),
       unitCost: inputs.unitCost.value.trim() === '' ? null : inputs.unitCost.value,
       costNote: inputs.costNote.value,
+      weight: inputs.weight.value.trim() === '' ? null : inputs.weight.value,
+      weightUnit: inputs.weightUnit.value,
       description: inputs.description.value,
       notes: inputs.notes.value,
       links: links.read(),
@@ -395,9 +409,58 @@ async function detailPage(id) {
     }
   }
 
+  // ---- admin tools (the server checks admins.txt too) ----
+  async function replaceFile(file) {
+    if (!file) return;
+    if (!confirm(`Replace the CAD file of "${part.name}" with ${file.name}?\n\nName, cost, links and specs stay. The new file goes to Onshape at the next "Update Onshape"; until then the part is out of the Onshape panel. The old Part Studio stays in the Onshape library, and assemblies already using it are not changed.`)) return;
+    const body = new FormData();
+    body.append('file', file);
+    try {
+      const res = await fetch(`/api/hub/parts/${id}/file`, { method: 'POST', body });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `Replace failed (${res.status})`);
+      part = data;
+      toast('File replaced. Press Update Onshape on the parts list to send it to Onshape.', 'ok');
+      renderSide();
+      loadHistory();
+      poll();
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  }
+
+  async function deleteForGood() {
+    const typed = prompt(`Delete "${part.name}" from the Parts Hub for good?\n\nThis removes its details, history, uploaded file and picture, and it disappears from the Onshape panel. Assemblies that already use it are not affected, and its Part Studio stays in the Onshape library.\n\nType DELETE to confirm.`);
+    if (typed !== 'DELETE') {
+      if (typed !== null) toast('Not deleted: type DELETE to confirm.', 'err');
+      return;
+    }
+    try {
+      await api(`parts/${id}`, { method: 'DELETE' });
+      leaveGuard = null;
+      toast(`Deleted "${part.name}".`, 'ok');
+      location.hash = '#/';
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  }
+
+  function adminTools() {
+    if (!me?.isAdmin) return null;
+    const picker = h('input', { type: 'file', hidden: true, onchange: (e) => replaceFile(e.target.files[0]) });
+    return h('div', { class: 'admin-box' },
+      h('div', { class: 'admin-title' }, 'Admin'),
+      h('button', { class: 'btn', onclick: () => picker.click(), disabled: part.status === 'pending' || null }, 'Replace CAD file…'),
+      h('button', { class: 'btn danger', onclick: deleteForGood, disabled: part.status === 'pending' || null }, 'Delete part…'),
+      picker);
+  }
+
   function renderSide() {
     let statusBox = null;
-    if (part.status === 'staged') {
+    if (part.status === 'ready' && part.weightDirty) {
+      statusBox = h('div', { class: 'status-box pending' }, h('strong', {}, 'New weight not in Onshape yet.'),
+        h('div', {}, 'It goes to Onshape at the next ', h('a', { href: '#/' }, 'Update Onshape'), '. Until then, inserts use the previous weight.'));
+    } else if (part.status === 'staged') {
       statusBox = h('div', { class: 'status-box pending' }, h('strong', {}, 'Not in Onshape yet.'),
         h('div', {}, 'Saved on the server. It joins the Onshape panel at the next ', h('a', { href: '#/' }, 'Update Onshape'), ', together with everything else waiting.'));
     } else if (part.status === 'pending') {
@@ -421,6 +484,7 @@ async function detailPage(id) {
           ? h('button', { class: 'btn', onclick: () => act('archive', { archived: false }, 'Restored') }, 'Restore')
           : h('button', { class: 'btn danger', onclick: () => confirm(`Archive "${part.name}"? It will be hidden from the hub and the Onshape panel. Existing assemblies are not affected.`) && act('archive', { archived: true }, 'Archived') }, 'Archive'),
       ),
+      adminTools(),
       h('div', { class: 'facts' },
         part.originalFilename ? h('div', {}, 'File: ', part.originalFilename) : null,
         h('div', {}, `Added by ${part.createdBy} · ${when(part.createdAt)}`),

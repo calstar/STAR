@@ -8,7 +8,10 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parts-hub-test-'));
+const adminsFile = path.join(dataDir, 'admins.txt');
+fs.writeFileSync(adminsFile, '# test admins\nBoss@Berkeley.edu\n');
 Object.assign(process.env, {
+  PARTS_ADMINS_FILE: adminsFile,
   MOCK_ONSHAPE: '1',
   AUTH_MODE: 'header',
   ALLOWED_EMAIL_DOMAINS: 'berkeley.edu',
@@ -201,4 +204,90 @@ test('"Check Onshape for new parts" lists Part Studios added directly in Onshape
     return j.running ? undefined : j;
   });
   assert.equal(again.result.created, 0);
+});
+
+const admin = { 'x-auth-email': 'boss@berkeley.edu' };
+const asAdmin = (p: string, init: RequestInit = {}) => hub(p, { ...init, headers: { ...admin, ...(init.headers as object) } });
+
+test('only admins may replace a file or delete a part', async () => {
+  assert.equal((await (await hub('me')).json()).isAdmin, false);
+  assert.equal((await (await asAdmin('me')).json()).isAdmin, true, 'admins.txt is case-insensitive');
+  const { id } = await upload('Protected', 'p.step');
+  const form = new FormData();
+  form.set('file', new Blob([CUBE]), 'new.step');
+  assert.equal((await hub(`parts/${id}/file`, { method: 'POST', body: form })).status, 403);
+  assert.equal((await hub(`parts/${id}`, { method: 'DELETE' })).status, 403);
+  assert.equal((await (await hub(`parts/${id}`)).json()).name, 'Protected');
+});
+
+test('an admin replacing the file sends it to Onshape again; the old Part Studio is never re-listed', async () => {
+  const { id } = await upload('Replace me', 'old.step', { vendor: 'Keep', unitCost: 5 });
+  await syncAndWait();
+  const before = await (await hub(`parts/${id}`)).json();
+  assert.ok(before.elementId);
+
+  const form = new FormData();
+  form.set('file', new Blob([CUBE]), 'new-rev-b.step');
+  const res = await asAdmin(`parts/${id}/file`, { method: 'POST', body: form });
+  assert.equal(res.status, 200);
+  const replaced = await res.json();
+  assert.equal(replaced.status, 'staged');
+  assert.equal(replaced.originalFilename, 'new-rev-b.step');
+  assert.equal(replaced.elementId, null);
+  assert.equal(replaced.vendor, 'Keep', 'details are kept');
+  assert.equal((await (await hub(`parts/${id}`)).json()).history[0].action, 'Replaced the CAD file');
+
+  await syncAndWait();
+  const after = await (await hub(`parts/${id}`)).json();
+  assert.equal(after.status, 'ready');
+  assert.notEqual(after.elementId, before.elementId, 'a fresh Part Studio');
+
+  // The old Part Studio is still in (mock) Onshape but must not come back as a new part.
+  await hub('check-onshape', { method: 'POST' });
+  const check = await waitFor(async () => {
+    const j = await (await hub('check-onshape')).json();
+    return j.running ? undefined : j;
+  });
+  assert.equal(check.result.created, 0);
+});
+
+test('an admin can delete a part for good', async () => {
+  const { id } = await upload('Delete me', 'gone.step');
+  await waitFor(async () => {
+    const p = await (await hub(`parts/${id}`)).json();
+    return p.rendering === false ? p : undefined;
+  });
+  assert.ok(fs.existsSync(path.join(dataDir, 'originals', String(id))));
+  assert.equal((await asAdmin(`parts/${id}`, { method: 'DELETE' })).status, 200);
+  assert.equal((await hub(`parts/${id}`)).status, 404);
+  assert.ok(!fs.existsSync(path.join(dataDir, 'originals', String(id))), 'uploaded file removed');
+  assert.ok(!(await (await hub('parts?archived=1')).json()).some((p: { id: number }) => p.id === id));
+});
+
+const masses = () => (globalThis as { __mockMasses?: Map<string, number> }).__mockMasses!;
+
+test('weights go to Onshape as mass, in kg, and a later change re-versions the part', async () => {
+  assert.equal((await hub('parts/1', { method: 'PATCH', body: JSON.stringify({ weight: -1 }) })).status, 400);
+  assert.equal((await hub('parts/1', { method: 'PATCH', body: JSON.stringify({ weightUnit: 'stone' }) })).status, 400);
+
+  const { id } = await upload('Heavy union', 'heavy.step', { weight: '2', weightUnit: 'oz' });
+  await syncAndWait();
+  const first = await (await hub(`parts/${id}`)).json();
+  assert.equal(first.status, 'ready');
+  assert.ok(Math.abs(masses().get(first.elementId)! - 2 * 0.028349523125) < 1e-12, '2 oz in kg');
+
+  // Changing the weight of a part already in Onshape waits for the next update...
+  const edited = await (await hub(`parts/${id}`, { method: 'PATCH', body: JSON.stringify({ weight: 0.25, weightUnit: 'lb' }) })).json();
+  assert.equal(edited.weightDirty, true);
+  assert.equal(edited.status, 'ready', 'still insertable meanwhile');
+  assert.equal((await (await hub('sync')).json()).weightChanges, 1);
+
+  // ...which writes it and gives the part a new version to insert from.
+  const sync = await syncAndWait();
+  assert.equal(sync.job.result.weightsUpdated, 1);
+  const after = await (await hub(`parts/${id}`)).json();
+  assert.equal(after.weightDirty, false);
+  assert.notEqual(after.versionId, first.versionId);
+  assert.ok(Math.abs(masses().get(after.elementId)! - 0.25 * 0.45359237) < 1e-12);
+  assert.equal((await (await hub('sync')).json()).weightChanges, 0);
 });

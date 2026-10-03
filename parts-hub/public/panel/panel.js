@@ -91,6 +91,7 @@ function h(tag, attrs = {}, ...children) {
   return el;
 }
 
+const formatWeight = (p) => (p.weight != null ? `${Number(p.weight)} ${p.weightUnit}` : '');
 const initials = (name) => name.split(/\s+/).filter((w) => /[a-z]/i.test(w)).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
 
 function thumb(part, cls = 'thumb') {
@@ -205,6 +206,7 @@ function showPopover(part, card) {
     ['Part #', part.partNumber],
     ['Vendor', part.vendor],
     ['Cost', formatCost(part.unitCost)],
+    ['Weight', formatWeight(part)],
     ['Category', part.category],
   ].filter(([, v]) => v);
   if (!rows.length || !$('drawer').hidden) return;
@@ -230,6 +232,7 @@ function openDrawer(part) {
     ['Vendor', part.vendor],
     ['Category', part.category],
     ['Cost', [formatCost(part.unitCost), part.costNote].filter(Boolean).join(' · ')],
+    ['Weight', formatWeight(part)],
   ].filter(([, v]) => v);
   const section = (title, ...content) => [h('h3', {}, title), ...content];
   $('drawer-body').replaceChildren(...[

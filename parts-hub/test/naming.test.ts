@@ -14,3 +14,11 @@ test('several parts keep meaningful names and number the generic ones', () => {
     '1/4 Union (4)',
   ]);
 });
+
+import { massValue, splitMass } from '../src/onshape/client.ts';
+
+test('a fitting weight is split across its bodies by volume, or equally if volumes are unknown', () => {
+  assert.deepEqual(splitMass(1, [3, 1]), [0.75, 0.25]);
+  assert.deepEqual(splitMass(1, [3, null]), [0.5, 0.5]);
+  assert.equal(massValue(0.0283495231), '0.0283495 kg');
+});
