@@ -3,7 +3,7 @@
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { SystemState, CommandPayload, MessageType } from '@/lib/types';
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useControlMode } from '@/lib/control-mode';
 import { allStates, loadStates, stateNameUpper, bootStateId } from '@/lib/states';
 import { getApiBaseUrl } from '@/lib/websocket';
@@ -103,10 +103,18 @@ function arrowPath(from: SystemState, to: SystemState, sideOffset = 0): string {
 }
 
 function StateNode({
-  state, isActive, isReachable, onClick,
-}: { state: SystemState; isActive: boolean; isReachable: boolean; onClick: () => void; }) {
+  state, isActive, isReachable, blockedReason, onClick,
+}: {
+  state: SystemState; isActive: boolean; isReachable: boolean;
+  /** Why the sequencer will not accept this state right now, if it will not. */
+  blockedReason?: string;
+  onClick: () => void;
+}) {
   const isEmergency = false;
-  const isClickable = isReachable || isActive || isEmergency;
+  // A state the sequencer has masked out cannot be entered no matter what the CSV says, so it
+  // must not look pressable. This is the difference between finding out on click and never
+  // reaching for it.
+  const isClickable = (isReachable || isActive || isEmergency) && blockedReason === undefined;
   const name = stateNameUpper(state) ?? 'UNKNOWN';
   const x = nodeX(state); const y = nodeY(state);
 
@@ -118,8 +126,11 @@ function StateNode({
     <g
       onClick={onClick}
       className={isClickable ? 'cursor-pointer' : 'cursor-not-allowed'}
-      style={{ opacity: (!isActive && !isReachable && !isEmergency) ? 0.45 : 1 }}
+      style={{ opacity: (blockedReason !== undefined || (!isActive && !isReachable && !isEmergency)) ? 0.45 : 1 }}
     >
+      {/* Native SVG tooltip — the node had none at all, so an unreachable state was simply dead
+          under the cursor with nothing to explain it. */}
+      {blockedReason !== undefined && <title>{`${name} unavailable — ${blockedReason}`}</title>}
       <rect x={x} y={y} width={NW} height={NH} rx={12}
         fill={fill} stroke={stroke} strokeWidth={sw}
         style={{ transition: 'fill 0.15s, stroke 0.15s' }}
@@ -200,6 +211,9 @@ export default function StateMachineDiagram() {
   }, [ws]);
 
   const debugMode = useSensorStore((s) => s.debugMode);
+  const updateNotification = useSensorStore((s) => s.updateNotification);
+  const allowedStateMask = useSensorStore((s) => s.allowedStateMask);
+  const stateRefusalReasons = useSensorStore((s) => s.stateRefusalReasons);
 
   // Backend transitions when available. The hardcoded fallback is keyed by the compiled
   // SystemState enum, so it is only meaningful while the built-in state list is also in force —
@@ -210,13 +224,30 @@ export default function StateMachineDiagram() {
   const sendStateTransition = (targetState: SystemState) => {
     if (!controlEnabled) return;
     const effectiveState = currentState ?? bootStateId() ?? -1;
+
+    // Greyed because the sequencer has masked it out. Say so rather than sending a command that
+    // is certain to be refused — the tooltip already explains on hover, and this is the same
+    // sentence for anyone who clicks anyway.
+    const blocked = blockedReasonFor(targetState);
+    if (blocked !== undefined) {
+      updateNotification({
+        category: 'error',
+        message: `${stateNameUpper(targetState)} unavailable — ${blocked}`,
+        timestampMs: Date.now(),
+      });
+      return;
+    }
     const isAllowed = transitions.some(t => t.from === effectiveState && t.to === targetState);
     const isInDebugMode = debugMode;
 
     // In debug mode, allow any transition
     if (!isAllowed && !isInDebugMode && effectiveState !== targetState) {
-      console.warn(`⚠️ Invalid transition: ${stateNameUpper(effectiveState)} → ${stateNameUpper(targetState)}`);
-      alert(`Invalid transition: Cannot go from ${stateNameUpper(effectiveState)} to ${stateNameUpper(targetState)}`);
+      // Through the notification panel, not alert(). A modal steals focus mid-procedure and,
+      // worse, read nothing like a refusal that came from the sequencer — the same rejection
+      // looked like two different failures depending on which side caught it.
+      const message = `Cannot go from ${stateNameUpper(effectiveState)} to ${stateNameUpper(targetState)} — transition not in the state table`;
+      console.warn(`⚠️ Invalid transition: ${message}`);
+      updateNotification({ category: 'error', message, timestampMs: Date.now() });
       return;
     }
 
@@ -233,6 +264,22 @@ export default function StateMachineDiagram() {
   };
 
   const effectiveState = currentState ?? bootStateId() ?? -1;
+
+  /**
+   * Why the sequencer would refuse this state right now, or undefined if it would accept it.
+   *
+   * Reads the mask the sequencer already publishes on every state update — it clears states whose
+   * script failed to load AND states whose sensor gate is currently unsatisfied. A null mask means
+   * the sequencer has not published yet, which is not the same as "nothing is allowed": greying
+   * every button because a client connected early would be worse than the problem being fixed.
+   */
+  const blockedReasonFor = useCallback((state: SystemState): string | undefined => {
+    if (allowedStateMask === null) return undefined;
+    if (state >= 32) return undefined;           // the mask is 32 bits wide
+    if ((allowedStateMask & (1 << state)) !== 0) return undefined;
+    if (state === effectiveState) return undefined;  // standing in it is not a refusal
+    return stateRefusalReasons[state] ?? 'the sequencer will not accept this state right now';
+  }, [allowedStateMask, stateRefusalReasons, effectiveState]);
 
   const reachableStates = useMemo(() => {
     const set = new Set(
@@ -334,6 +381,7 @@ export default function StateMachineDiagram() {
               state={state}
               isActive={effectiveState === state}
               isReachable={controlEnabled && reachableStates.has(state)}
+              blockedReason={blockedReasonFor(state)}
               onClick={() => sendStateTransition(state)}
             />
           ))}

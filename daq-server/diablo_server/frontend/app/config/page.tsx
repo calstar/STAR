@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { MessageType } from '@/lib/types';
@@ -14,6 +15,15 @@ import {
   parseCsvGrid, serializeCsvGrid, diffKeys, boardSlotIssue, boardDisplayName,
   CONFIG_PAGE_LABELS, type CsvGrid, type ConfigPageId,
 } from '@/lib/config-validation';
+import {
+  slugify, renameScriptSlug, checkScriptNames, isValidScriptFilename,
+} from '@/lib/state-script-names';
+import {
+  completionsAt, applyCompletion, type Completion, type CompletionResult,
+} from '@/lib/state-script-complete';
+import {
+  highlightSpans, TOKEN_CLASS, EDITOR_TEXT, LINE_HEIGHT_PX, EDITOR_PAD_PX,
+} from '@/lib/state-script-highlight';
 
 /** The editor's tabs, left to right. Also the ids a ConfigIssue names, so the session page can
  *  link an issue straight to the page that fixes it. Ordered by usefulness and grouped so related
@@ -103,6 +113,12 @@ interface ConfigData {
     is_abort?: boolean;
     is_boot?: boolean;
     is_flow?: boolean;
+    // Dynamic states. A non-empty script_file is what makes a state dynamic — there is
+    // deliberately no is_dynamic flag that could disagree with the data it describes.
+    script_file?: string;
+    script_timeout_ms?: number;
+    script_return_target?: string;
+    script_timeout_target?: string;
   }>;
   // 4th element assigns the actuator to controller_service ("pwm_fuel" | "pwm_ox"); absent means
   // the sequencer owns it. See validateControllerPwmActuators.
@@ -317,6 +333,671 @@ const ptTypeOf = (board: any): string => {
  * (a board row, a state row, a table) rather than as a scattered banner. `error` = will break the
  * running config; `warn` = a mismatch worth fixing. One look for all of them.
  */
+/**
+ * What a script may say, and — for this rig — what it may name.
+ *
+ * `fixed inset-0` with flex centring, so it lands in the middle of the VIEWPORT rather than
+ * wherever the config page happens to be scrolled to. The config page is long; an inline panel
+ * would open somewhere off-screen.
+ *
+ * The name lists come from the config being edited rather than being hardcoded, so this doubles as
+ * "what can I actually write here" — which is the question an operator has, and the one a static
+ * grammar reference does not answer.
+ */
+function ScriptReference({
+  tables, onClose,
+}: {
+  tables: { actuators: Set<string>; sensors: Set<string>; states: Set<string>; allowedTransitions: Set<string> };
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const Row = ({ call, what }: { call: string; what: string }) => (
+    <div className="grid grid-cols-[minmax(0,15rem)_1fr] gap-3 py-1 items-baseline">
+      <code className="font-mono text-purple-300 text-sm break-words">{call}</code>
+      <span className="text-sm text-gray-300">{what}</span>
+    </div>
+  );
+
+  const Names = ({ label, set, empty }: { label: string; set: Set<string>; empty: string }) => (
+    <div className="mb-3">
+      <div className="text-sm text-gray-400 mb-1">{label}</div>
+      {set.size === 0
+        ? <div className="text-sm text-amber-300">{empty}</div>
+        : <div className="flex flex-wrap gap-1">
+            {[...set].sort().map((n) => (
+              <code key={n} className="font-mono text-xs bg-gray-800 text-gray-200 px-1.5 py-0.5 rounded">{n}</code>
+            ))}
+          </div>}
+    </div>
+  );
+
+  // Portalled to <body>. `position: fixed` is viewport-relative only when no ancestor creates a
+  // containing block — and .bg-card (globals.css) sets backdrop-filter for the glassmorphism
+  // panels, which does exactly that. Inside the config page this modal therefore anchored to the
+  // panel and landed somewhere down the scroll instead of on screen. A portal escapes the whole
+  // ancestor chain, so it stays centred regardless of what the page does above it.
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+         onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-3xl max-h-[85vh] flex flex-col"
+           onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700 shrink-0">
+          <h3 className="font-semibold text-white">Script reference</h3>
+          <button onClick={onClose}
+                  className="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 text-sm text-white">
+            Close
+          </button>
+        </div>
+
+        <div className="overflow-auto px-5 py-4 space-y-5">
+          <section>
+            <h4 className="text-white font-semibold mb-2">Commands</h4>
+            <Row call="open_valve(VALVE)" what="Open a valve, and keep it open." />
+            <Row call="close_valve(VALVE)" what="Close a valve, and keep it closed." />
+            <Row call="delay(seconds)" what="Wait. Accepts a decimal, e.g. delay(0.2)." />
+            <Row call="transition_to(STATE)" what="Leave for another state. Ends the script immediately." />
+          </section>
+
+          <section>
+            <h4 className="text-white font-semibold mb-2">Values</h4>
+            <Row call="pressure(SENSOR)" what="Live calibrated pressure in PSI. Fails the script if the reading is stale or uncalibrated." />
+            <Row call="elapsed()" what="Seconds since this state was entered." />
+            <Row call="x = 0.9 * pressure(P)" what="Variables hold numbers. Assign before use." />
+          </section>
+
+          <section>
+            <h4 className="text-white font-semibold mb-2">Structure</h4>
+            <Row call="if cond:" what="Also elif and else. Indent the body." />
+            <Row call="while cond:" what="Repeats. The body must contain a delay()." />
+            <Row call="# comment" what="To end of line." />
+            <div className="mt-2 text-sm text-gray-300 space-y-1">
+              <p>Comparisons: <code className="font-mono text-purple-300">&lt; &lt;= &gt; &gt;= == !=</code> — one per condition; combine with <code className="font-mono text-purple-300">and</code>, <code className="font-mono text-purple-300">or</code>, <code className="font-mono text-purple-300">not</code>.</p>
+              <p>Arithmetic: <code className="font-mono text-purple-300">+ - * /</code> and parentheses.</p>
+              <p>Indent with spaces, consistently. Tabs are refused, and so is <code className="font-mono text-purple-300">a &lt; b &lt; c</code> — write <code className="font-mono text-purple-300">(a &lt; b) and (b &lt; c)</code>.</p>
+              <p>Names are bare and uppercase: <code className="font-mono text-purple-300">open_valve(FUEL_VENT)</code>, never <code className="font-mono text-purple-300">&quot;Fuel Vent&quot;</code>.</p>
+            </div>
+          </section>
+
+          <section>
+            <h4 className="text-white font-semibold mb-2">Names you can use here</h4>
+            <p className="text-sm text-gray-400 mb-3">
+              From this config. The same name can mean different things in different slots — a valve
+              in <code className="font-mono text-purple-300">open_valve(…)</code> and a state in{' '}
+              <code className="font-mono text-purple-300">transition_to(…)</code> — so what a name
+              means is decided by where it sits.
+            </p>
+            <Names label="Valves — open_valve / close_valve" set={tables.actuators}
+                   empty="No actuator roles are configured." />
+            <Names label="Sensors — pressure()" set={tables.sensors}
+                   empty="No PT sensor roles are configured." />
+            <Names label="States — transition_to()" set={tables.allowedTransitions}
+                   empty="This state cannot reach any other state — check its row in the Transitions table." />
+          </section>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** One indent level. A literal tab is a hard error in this language, so the editor never types one. */
+const INDENT = '    ';
+
+/**
+ * Apply an edit through the browser's OWN editing pipeline, so Ctrl+Z can undo it.
+ *
+ * Every edit the editor made used to go through `onSource()`, i.e. React writing the textarea's
+ * value prop. That replaces the text from outside the native pipeline: the browser records no undo
+ * entry for it and, in most engines, discards the undo stack it had. The visible result was that
+ * Ctrl+Z would not undo an autocomplete or a Tab at all, and could jump back past several earlier
+ * edits when it did fire.
+ *
+ * execCommand is deprecated and is still the only way to make a programmatic edit join a
+ * textarea's undo history; every engine implements `insertText`. It also fires a normal `input`
+ * event, so React's onChange runs and component state stays in step by itself.
+ *
+ * Returns false if the engine refuses, so callers can fall back to setting state — an edit that
+ * cannot be undone is much better than an edit that does not happen.
+ */
+function execInsert(ta: HTMLTextAreaElement, from: number, to: number, text: string): boolean {
+  try {
+    ta.focus();
+    ta.setSelectionRange(from, to);
+    // An empty insert is a deletion, and insertText with "" is not reliably treated as one —
+    // `delete` is, and lands on the same undo stack.
+    return text.length > 0
+      ? document.execCommand('insertText', false, text)
+      : document.execCommand('delete');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * How many characters Backspace should take when the caret sits in a line's leading indent.
+ *
+ * Indentation is four spaces, so deleting it one space at a time means four presses to undo one
+ * Tab. Inside the indent, Backspace instead falls back to the previous indent boundary — from
+ * column 8 to 4, from 5 to 4, from 3 to 0. Returns 0 when the caret is not in leading whitespace,
+ * meaning "not our business": the textarea deletes one character, as it should mid-text.
+ */
+function backspaceWidth(src: string, caret: number): number {
+  const lineStart = src.lastIndexOf('\n', caret - 1) + 1;
+  const before = src.slice(lineStart, caret);
+  if (before.length === 0 || !/^ +$/.test(before)) return 0;
+  return ((before.length - 1) % INDENT.length) + 1;
+}
+
+/**
+ * The whole-line span a selection touches — what an indent or outdent has to act on.
+ *
+ * A selection dragged down to the start of the next line does not make that line selected; without
+ * the check, Tab would indent a line the operator never highlighted.
+ */
+function lineSpan(src: string, from: number, to: number): { start: number; end: number } {
+  const start = src.lastIndexOf('\n', from - 1) + 1;
+  const lastTouched = to > from && src[to - 1] === '\n' ? to - 1 : to;
+  const nl = src.indexOf('\n', lastTouched);
+  return { start, end: nl === -1 ? src.length : nl };
+}
+
+/** The leading spaces of the line holding `pos`. */
+function indentAt(src: string, pos: number): string {
+  const start = src.lastIndexOf('\n', pos - 1) + 1;
+  return /^ */.exec(src.slice(start, pos))?.[0] ?? '';
+}
+
+/**
+ * The dynamic-state script editor.
+ *
+ * This is the first multi-line text input in the app — there is no Monaco, CodeMirror or Ace in
+ * package.json, and adding one for a language with seven statements would be a lot of dependency
+ * for a little syntax colour. A textarea with a synced line-number gutter covers what the operator
+ * actually needs: see the line a diagnostic names, and click to it.
+ *
+ * Two diagnostic sources, deliberately separate:
+ *   - names, checked here, instantly, against the config being edited (no parser needed, because
+ *     names resolve positionally);
+ *   - syntax, checked by the backend spawning the sequencer's own parser, on a debounce.
+ * The sequencer re-checks everything at startup and is the authority over both.
+ */
+function ScriptEditor({
+  state, stateNames, source, tables, syntax, allowedTargets, canEdit,
+  onSource, onField, onCheck,
+}: {
+  state: { name?: string; script_file?: string; script_timeout_ms?: number; script_return_target?: string; script_timeout_target?: string };
+  stateNames: string[];
+  source: string;
+  tables: { actuators: Set<string>; sensors: Set<string>; states: Set<string>; allowedTransitions: Set<string> };
+  syntax: { line: number; message: string }[];
+  allowedTargets: string[];
+  canEdit: boolean;
+  onSource: (next: string) => void;
+  onField: (patch: Record<string, unknown>) => void;
+  onCheck: (src: string) => void;
+}) {
+  const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const gutterRef = useRef<HTMLDivElement | null>(null);
+  const mirrorRef = useRef<HTMLPreElement | null>(null);
+  const [showReference, setShowReference] = useState(false);
+  const [completion, setCompletion] = useState<CompletionResult | null>(null);
+  /** Row highlighted in the popup, or -1 for none — see queueComplete. */
+  const [completionIdx, setCompletionIdx] = useState(-1);
+  const [completionPos, setCompletionPos] = useState({ left: 0, top: 0 });
+  /** Width of one character. Measured once, because the editor is monospace — which is what makes
+   *  placing the popup arithmetic rather than a hidden-mirror measurement. */
+  const [charWidth, setCharWidth] = useState(0);
+  const lines = source.split('\n');
+
+  useEffect(() => {
+    const probe = document.createElement('span');
+    probe.className = 'font-mono text-sm';
+    probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre';
+    probe.textContent = '0'.repeat(100);
+    document.body.appendChild(probe);
+    setCharWidth(probe.getBoundingClientRect().width / 100);
+    probe.remove();
+  }, []);
+
+  const tokenSpans = highlightSpans(source, tables);
+
+  /** Recompute the popup for wherever the caret is now. */
+  const queueComplete = (ta: HTMLTextAreaElement) => {
+    if (!canEdit) return;
+    const caret = ta.selectionStart;
+    // A selection is not a cursor; suggesting into one would replace text the operator highlighted.
+    if (ta.selectionEnd !== caret) { setCompletion(null); return; }
+    const next = completionsAt(ta.value, caret, tables);
+    setCompletion(next);
+    // [from, to) is the text an accept would replace, so an empty range means nothing has been
+    // typed at this position yet. The list is still worth showing — it is how you learn what the
+    // valves are called — but NOTHING is preselected (-1), because with no prefix every name
+    // matches equally and there is no reason to prefer the first. That also keeps Tab meaning
+    // indent until the operator has either typed a character or picked a row with the arrows.
+    setCompletionIdx(next && next.to > next.from ? 0 : -1);
+    if (next) {
+      const upto = ta.value.slice(0, caret);
+      const line = upto.split('\n').length - 1;
+      const col = caret - (upto.lastIndexOf('\n') + 1);
+      setCompletionPos({
+        left: EDITOR_PAD_PX + col * charWidth - ta.scrollLeft,
+        top: EDITOR_PAD_PX + (line + 1) * LINE_HEIGHT_PX - ta.scrollTop,
+      });
+    }
+  };
+
+  const accept = (item: Completion) => {
+    const ta = taRef.current;
+    if (!ta || !completion) return;
+    const { source: next, caret } = applyCompletion(source, completion, item);
+    // Through the browser's editing pipeline, so the operator can Ctrl+Z an accepted suggestion
+    // like any other typing. Falls back to a state write if the engine refuses.
+    if (!execInsert(ta, completion.from, completion.to, item.text)) onSource(next);
+    setCompletion(null);
+    requestAnimationFrame(() => {
+      ta.focus();
+      // Set explicitly even after execInsert: the caret belongs where the item asks for it
+      // (inside `open_valve(`), not where the inserted text happens to end.
+      ta.setSelectionRange(caret, caret);
+      // `open_valve(` is only half the job — reopen so the valve list follows immediately. With
+      // nothing typed inside the paren yet it opens with no row selected, so it reads as a list of
+      // what is available rather than a choice already made.
+      if (item.reopen) queueComplete(ta);
+    });
+  };
+
+  /**
+   * Enter, carrying the current line's indentation onto the new line.
+   *
+   * Only takes over when there is indentation to carry; an unindented line gets the textarea's own
+   * newline, which is already undoable and already correct.
+   */
+  const newlineKeepingIndent = (
+    e: React.KeyboardEvent<HTMLTextAreaElement>,
+    ta: HTMLTextAreaElement,
+  ) => {
+    const { selectionStart: s, selectionEnd: en } = ta;
+    const indent = indentAt(source, s);
+    if (indent.length === 0) return;
+    e.preventDefault();
+    if (execInsert(ta, s, en, `\n${indent}`)) return;
+    const caret = s + 1 + indent.length;
+    onSource(`${source.slice(0, s)}\n${indent}${source.slice(en)}`);
+    requestAnimationFrame(() => ta.setSelectionRange(caret, caret));
+  };
+
+  const onEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const ta = e.currentTarget;
+
+    if (completion) {
+      // These keys belong to the popup while it is open. Without preventDefault the caret moves
+      // under it, and the next insert lands somewhere else entirely.
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const n = completion.items.length;
+        setCompletionIdx((i) => {
+          // From "nothing selected", down takes the first row and up takes the last, rather than
+          // letting -1 fall through the modulo and land somewhere arbitrary.
+          if (i < 0) return e.key === 'ArrowDown' ? 0 : n - 1;
+          return e.key === 'ArrowDown' ? (i + 1) % n : (i - 1 + n) % n;
+        });
+        return;
+      }
+      // Tab is the ONLY accept key. Enter always means newline — a suggestion can never stand
+      // between the operator and the next line, so the Shift+Enter escape hatch that used to
+      // exist for exactly that has nothing left to escape from.
+      //
+      // With nothing selected the popup does not claim Tab at all: it falls through to the indent
+      // below. An open menu listing every valve is a reference, not a pending choice, and it must
+      // not turn an indent into an insertion of whatever happened to sort first.
+      if (e.key === 'Tab' && completionIdx >= 0) {
+        e.preventDefault();
+        const item = completion.items[completionIdx];
+        if (item) {
+          accept(item);
+          return;
+        }
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setCompletion(null);
+        return;
+      }
+      // Enter dismisses the popup and falls through to the newline below.
+      if (e.key === 'Enter') setCompletion(null);
+    }
+
+    if (e.key === 'Enter') {
+      newlineKeepingIndent(e, ta);
+      return;
+    }
+
+    // Backspace inside the leading indent removes a whole level, not one space.
+    if (e.key === 'Backspace') {
+      const { selectionStart: s, selectionEnd: en } = ta;
+      if (s !== en) return; // a selection deletes itself, normally
+      const back = backspaceWidth(source, s);
+      if (back <= 1) return; // nothing special to do — let the textarea delete one character
+      e.preventDefault();
+      if (!execInsert(ta, s - back, s, '')) {
+        const caret = s - back;
+        onSource(source.slice(0, s - back) + source.slice(s));
+        requestAnimationFrame(() => ta.setSelectionRange(caret, caret));
+      }
+      return;
+    }
+
+    // Tab indents. Tab-to-blur in a code box is maddening, and a literal tab is a hard error in
+    // this language — the editor must not be able to type one.
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const { selectionStart: s, selectionEnd: en } = ta;
+
+      // A bare caret: insert one level.
+      if (s === en && !e.shiftKey) {
+        if (!execInsert(ta, s, en, INDENT)) {
+          const caret = s + INDENT.length;
+          onSource(`${source.slice(0, s)}${INDENT}${source.slice(en)}`);
+          requestAnimationFrame(() => ta.setSelectionRange(caret, caret));
+        }
+        return;
+      }
+
+      // A selection: shift every line it touches. This used to build the new source as
+      // `slice(0, s) + "    " + slice(en)`, which drops slice(s, en) — so indenting a highlighted
+      // block DELETED it, and because the replacement went through a state write rather than the
+      // browser, Ctrl+Z could not bring it back. Shift+Tab outdents one level.
+      const { start, end } = lineSpan(source, s, en);
+      const block = source.slice(start, end);
+      const next = block
+        .split('\n')
+        .map((l) => (e.shiftKey ? l.replace(/^ {1,4}/, '') : l.length > 0 ? INDENT + l : l))
+        .join('\n');
+      if (next === block) return; // nothing left to outdent — do not touch the undo stack
+      if (!execInsert(ta, start, end, next)) {
+        onSource(source.slice(0, start) + next + source.slice(end));
+      }
+      // Keep the block selected so the operator can press Tab again.
+      requestAnimationFrame(() => ta.setSelectionRange(start, start + next.length));
+    }
+  };
+
+  // Debounced, so the backend is not spawned on every keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => onCheck(source), 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source]);
+
+  const nameIssues = checkScriptNames(source, tables);
+  const issues = [
+    ...nameIssues.map((i) => ({ ...i, kind: 'name' as const })),
+    ...syntax.map((i) => ({ ...i, kind: 'syntax' as const })),
+  ].sort((a, b) => a.line - b.line);
+
+  /**
+   * Placeholder for an empty script.
+   *
+   * Every line is a COMMENT. A greyed-out block of valid-looking script reads as something already
+   * written — the operator's eye sees `open_valve(...)` in a monospace box and moves on, and the
+   * only tell is the colour. Commented out, it cannot be mistaken for content, and it is inert
+   * even if someone selects and pastes it.
+   *
+   * The example uses names from the config actually being edited, so it is worth copying rather
+   * than an illustration of a rig that may not exist. Falls back to generic placeholders only when
+   * the tables are empty.
+   */
+  const placeholderScript = (() => {
+    const valve = [...tables.actuators][0] ?? 'VENT_VALVE';
+    const target = [...tables.allowedTransitions][0] ?? [...tables.states][0] ?? 'IDLE';
+    return [
+      '# This script is empty. Write it here — every line below is a comment.',
+      '#',
+      '# Open a valve for half a second, then leave:',
+      `#   open_valve(${valve})`,
+      '#   delay(0.5)',
+      `#   close_valve(${valve})`,
+      `#   transition_to(${target})`,
+      '#',
+      '# Also available: if / elif / else, while, variables, pressure(SENSOR), elapsed().',
+      '# Names are bare and uppercase — no quotes.',
+    ].join('\n');
+  })();
+
+  /** Everything the script commands, derived from what it names. Under the layered model, the
+   *  dangerous case is a valve the operator EXPECTED to see here and does not. */
+  const commanded = [...new Set(
+    source.split('\n').flatMap((l) => [...l.matchAll(/\b(?:open_valve|close_valve)\s*\(\s*([A-Z][A-Z0-9_]*)\s*\)/g)].map((m) => m[1])),
+  )];
+  const read = [...new Set(
+    source.split('\n').flatMap((l) => [...l.matchAll(/\bpressure\s*\(\s*([A-Z][A-Z0-9_]*)\s*\)/g)].map((m) => m[1])),
+  )];
+
+  const goToLine = (line: number) => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const before = lines.slice(0, line - 1).join('\n').length + (line > 1 ? 1 : 0);
+    ta.focus();
+    ta.setSelectionRange(before, before + (lines[line - 1]?.length ?? 0));
+  };
+
+  return (
+    <div>
+      <div>
+        {/* text-gray-300, not text-text-muted: that token is #888888, which lands around 4:1 on
+            this panel — under AA for normal text, and this is prose people actually need to read
+            rather than a label beside a control they can already see. */}
+        <div className="flex items-start justify-between gap-4 mb-3">
+          <p className="text-sm text-gray-300 leading-relaxed">
+            Runs on entry, after <strong className="text-white">{state.name}</strong>&rsquo;s
+            Actuators column has put every valve in a defined position. Valves the script does not
+            name keep that position.
+          </p>
+          <button
+            onClick={() => setShowReference(true)}
+            className="shrink-0 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm text-white"
+          >
+            What can I write?
+          </button>
+        </div>
+
+        {showReference && (
+          <ScriptReference tables={tables} onClose={() => setShowReference(false)} />
+        )}
+
+        <div className="space-y-3">
+          <div className="flex gap-3 flex-wrap">
+            <label className="text-sm">
+              <div className="text-gray-300 mb-1">Timeout (ms)</div>
+              <input
+                type="number"
+                value={state.script_timeout_ms ?? 0}
+                onChange={(e) => onField({ script_timeout_ms: Number(e.target.value) })}
+                disabled={!canEdit}
+                className="px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white w-32"
+              />
+            </label>
+            {([
+              ['script_return_target', 'When the script ends'],
+              ['script_timeout_target', 'When the timeout fires'],
+            ] as const).map(([key, label]) => (
+              <label key={key} className="text-sm">
+                <div className="text-gray-300 mb-1">{label}</div>
+                {/* A select of real states, never free text — and targets the Transitions table
+                    forbids are disabled, so a refusal the sequencer would raise at load cannot be
+                    authored here in the first place. */}
+                <select
+                  value={String(state[key] ?? '')}
+                  onChange={(e) => onField({ [key]: e.target.value })}
+                  disabled={!canEdit}
+                  className="px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white"
+                >
+                  <option value="">— pick a state —</option>
+                  {stateNames.filter((n) => n !== state.name).map((n) => {
+                    const ok = allowedTargets.includes(n);
+                    return (
+                      <option key={n} value={n} disabled={!ok}>
+                        {n}{ok ? '' : ' (not an allowed transition)'}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+            ))}
+          </div>
+
+          {/* The editor: a highlighted <pre> UNDER a transparent <textarea>.
+              A textarea cannot colour its own text, so the usual trick applies — paint the tokens
+              on a mirror behind it and make the real text transparent, keeping the caret visible.
+              The two must agree on font, size, line height, padding and wrapping to the pixel, so
+              they share EDITOR_TEXT below; changing one without the other slides the colours off
+              the characters. `white-space: pre` (no wrapping) removes the hardest alignment case
+              and is how a code editor behaves anyway. */}
+          <div className="relative flex border border-gray-700 rounded overflow-hidden bg-gray-950">
+            <div ref={gutterRef}
+                 className="select-none text-right text-xs font-mono text-gray-600 bg-gray-900 py-2 px-2 overflow-hidden shrink-0"
+                 style={{ lineHeight: LINE_HEIGHT_PX + 'px' }}>
+              {lines.map((_, i) => (
+                <div key={i} className={issues.some((x) => x.line === i + 1) ? 'text-red-400' : ''}>
+                  {i + 1}
+                </div>
+              ))}
+            </div>
+
+            <div className="relative flex-1 min-w-0">
+              <pre ref={mirrorRef} aria-hidden
+                   className={`${EDITOR_TEXT} absolute inset-0 overflow-hidden pointer-events-none m-0`}>
+                {tokenSpans}
+              </pre>
+              <textarea
+                ref={taRef}
+                value={source}
+                onChange={(e) => { onSource(e.target.value); queueComplete(e.target); }}
+                onSelect={(e) => queueComplete(e.currentTarget)}
+                onBlur={() => setCompletion(null)}
+                onScroll={(e) => {
+                  // Both followers, every frame: the gutter vertically, the highlight mirror on
+                  // both axes. A missed horizontal sync is invisible until a line is long.
+                  const el = e.currentTarget;
+                  if (gutterRef.current) gutterRef.current.scrollTop = el.scrollTop;
+                  if (mirrorRef.current) {
+                    mirrorRef.current.scrollTop = el.scrollTop;
+                    mirrorRef.current.scrollLeft = el.scrollLeft;
+                  }
+                  setCompletion(null);  // the popup was anchored to the old scroll position
+                }}
+                onKeyDown={onEditorKeyDown}
+                spellCheck={false}
+                disabled={!canEdit}
+                rows={14}
+                placeholder={placeholderScript}
+                className={`${EDITOR_TEXT} relative w-full h-full bg-transparent text-transparent outline-none resize-y placeholder:text-gray-600`}
+                style={{ caretColor: '#e5e7eb' }}
+              />
+
+              {completion && (
+                <ul
+                  className="absolute z-30 max-h-56 w-72 overflow-auto rounded border border-gray-600 bg-gray-900 shadow-xl text-sm"
+                  style={{ left: completionPos.left, top: completionPos.top }}
+                  // The textarea must keep focus, or the caret moves and the insert lands wrong.
+                  onMouseDown={(e) => e.preventDefault()}
+                >
+                  {completion.items.map((item, i) => (
+                    <li key={item.text}>
+                      <button
+                        onClick={() => accept(item)}
+                        onMouseEnter={() => setCompletionIdx(i)}
+                        className={`flex w-full items-baseline gap-2 px-2 py-1 text-left ${
+                          i === completionIdx ? 'bg-gray-700' : 'hover:bg-gray-800'
+                        }`}
+                      >
+                        {/* label, not text: the insert carries a closing paren the list should
+                            not show. */}
+                        <code className={`font-mono ${TOKEN_CLASS[item.kind] ?? 'text-gray-100'}`}>
+                          {item.label ?? item.text}
+                        </code>
+                        <span className="ml-auto text-xs text-gray-400 truncate">{item.detail}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          {/* Legend. Small and permanent: the colours only mean anything if you can find out what
+              they mean, and a reader should not have to open the reference popup to do it. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-400">
+            {([
+              ['command', 'command'], ['valve', 'valve'], ['sensor', 'sensor'],
+              ['state', 'state'], ['keyword', 'keyword'], ['number', 'number'],
+              ['comment', 'comment'],
+            ] as const).map(([kind, label]) => (
+              <span key={kind} className="inline-flex items-center gap-1">
+                <span className={`font-mono ${TOKEN_CLASS[kind]}`}>&#9632;</span>
+                {label}
+              </span>
+            ))}
+            <span className="inline-flex items-center gap-1">
+              <span className="font-mono text-white underline decoration-red-500 decoration-wavy">&#9632;</span>
+              not in this config
+            </span>
+            <span className="ml-auto text-gray-500">
+              <kbd className="font-mono">↑</kbd>/<kbd className="font-mono">↓</kbd> choose ·{' '}
+              <kbd className="font-mono">Tab</kbd> accept ·{' '}
+              <kbd className="font-mono">Esc</kbd> dismiss ·{' '}
+              <kbd className="font-mono">Tab</kbd>/<kbd className="font-mono">Shift</kbd>+
+              <kbd className="font-mono">Tab</kbd> indent
+            </span>
+          </div>
+
+          {issues.length > 0 ? (
+            <div className="space-y-1">
+              {issues.map((x, i) => (
+                <button key={i} onClick={() => goToLine(x.line)}
+                        className="block w-full text-left text-xs text-red-300 hover:text-red-200">
+                  line {x.line}: {x.message}
+                  <span className="text-gray-600"> ({x.kind})</span>
+                </button>
+              ))}
+            </div>
+          ) : source.trim() ? (
+            <p className="text-xs text-emerald-400">No problems found.</p>
+          ) : null}
+
+          {/* Only once the script actually names something. On an empty script this was two lines
+              of "none", which reads as a broken widget rather than an empty summary — and there is
+              nothing to summarise until there is a script. */}
+          {(commanded.length > 0 || read.length > 0) && (
+            <div className="text-sm text-gray-300 border-t border-gray-700 pt-3 space-y-1">
+              {commanded.length > 0 && (
+                <div>
+                  <span className="text-gray-400">Valves this script commands: </span>
+                  <span className="font-mono text-white">{commanded.join(', ')}</span>
+                </div>
+              )}
+              {read.length > 0 && (
+                <div>
+                  <span className="text-gray-400">Sensors it reads: </span>
+                  <span className="font-mono text-white">{read.join(', ')}</span>
+                </div>
+              )}
+              <p className="text-gray-400 pt-1">
+                Every other valve keeps the position {state.name}&rsquo;s Actuators column gives it.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function InlineIssue({ level = 'error', className = '', children }:
   { level?: 'error' | 'warn'; className?: string; children: ReactNode }) {
   const tone = level === 'warn'
@@ -473,6 +1154,23 @@ export default function ConfigPage() {
         if (d.orphan.length || d.missing.length)
           issues.push('Transitions rows do not match the state list');
       }
+      // Dynamic states: the names a script uses, checked against the config being saved. Syntax is
+      // the backend's job (it spawns the sequencer's own parser on save); this is the error people
+      // actually make, and it is answerable here with no round trip.
+      for (const s of stateList) {
+        const file = String(s.script_file ?? '').trim();
+        if (!file) continue;
+        const label = String(s.name ?? '(unnamed)');
+        if (!isValidScriptFilename(file)) {
+          issues.push(`${label}: "${file}" is not a bare <name>.script filename`);
+          continue;
+        }
+        const src = scriptSources[file];
+        if (src === undefined) continue;  // not loaded; the sequencer will judge it at startup
+        for (const issue of checkScriptNames(src, scriptTablesFor(label)))
+          issues.push(`${label} script line ${issue.line}: ${issue.message}`);
+      }
+
       if (issues.length) {
         setError(`Fix the state machine before saving — ${issues.join('; ')}. Use “Regenerate empty” or fix the tables.`);
         setTimeout(() => setError(null), 9000);
@@ -518,6 +1216,27 @@ export default function ConfigPage() {
         if (!r.ok) {
           const b = await r.json().catch(() => ({}));
           throw new Error(b.error || `Failed to save the ${name} table (${r.status})`);
+        }
+      }
+
+      // Scripts join the same sequence. The backend syntax-checks each one with the sequencer's
+      // own parser before writing it, so a script that does not parse fails the save here rather
+      // than becoming an unenterable state discovered at the next session start.
+      for (const s of stateList) {
+        const file = String(s.script_file ?? '').trim();
+        const src = file ? scriptSources[file] : undefined;
+        if (!file || src === undefined) continue;
+        const r = await fetch(
+          `${getApiBaseUrl()}/api/state-script?name=${encodeURIComponent(file)}` +
+          `&state=${encodeURIComponent(String(s.name ?? ''))}`,
+          { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: src },
+        );
+        if (!r.ok) {
+          const b = await r.json().catch(() => ({} as any));
+          const first = Array.isArray(b?.diagnostics) && b.diagnostics.length
+            ? ` — line ${b.diagnostics[0].line}: ${b.diagnostics[0].message}`
+            : '';
+          throw new Error(`${s.name}: ${b?.error || `failed to save ${file}`}${first}`);
         }
       }
 
@@ -783,6 +1502,17 @@ export default function ConfigPage() {
   const [csvDelays, setCsvDelays] = useState<CsvGrid | null>(null);
   const [csvTransitions, setCsvTransitions] = useState<CsvGrid | null>(null);
   const [csvLoading, setCsvLoading] = useState(false);
+
+  // ── Dynamic-state scripts ──────────────────────────────────────────────────
+  // Loaded by filename, edited in memory, and written back on Save alongside the CSVs. Keyed by
+  // script_file rather than by state, because two states may legitimately point at one file.
+  const [scriptSources, setScriptSources] = useState<Record<string, string>>({});
+  /** Which state's script the panel below the table is showing. By state ID, not index: indices
+   *  shift when a state is added, removed or moved, and the selection would follow the wrong row. */
+  const [scriptPanelStateId, setScriptPanelStateId] = useState<number | null>(null);
+  const [scriptsOpen, setScriptsOpen] = useState(false);
+  /** Syntax diagnostics from state_script_check, keyed by script filename. */
+  const [scriptSyntax, setScriptSyntax] = useState<Record<string, { line: number; message: string }[]>>({});
   const [showDelays, setShowDelays] = useState(false);
 
   const loadStateCsvs = async () => {
@@ -798,6 +1528,21 @@ export default function ConfigPage() {
       setCsvDelays(d);
       setCsvTransitions(t);
       savedCsvRef.current = csvSignature(a, d, t);  // baseline for the unsaved-changes check
+
+      // Scripts ride along with the tables: they belong to the same tab, and fetching them lazily
+      // when the editor opens would make a rename unable to rewrite a transition_to in a script
+      // the operator has not looked at yet.
+      const files = [...new Set(
+        (config.states || []).map((s) => String(s.script_file ?? '').trim()).filter(Boolean),
+      )];
+      const loaded: Record<string, string> = {};
+      await Promise.all(files.map(async (f) => {
+        try {
+          const r = await fetch(`${getApiBaseUrl()}/api/state-script?name=${encodeURIComponent(f)}`);
+          if (r.ok) loaded[f] = String((await r.json())?.source ?? '');
+        } catch { /* a script that will not load is reported by validation, not here */ }
+      }));
+      setScriptSources(loaded);
     } catch (e: any) {
       setError(e?.message || 'Failed to load state CSVs');
       setTimeout(() => setError(null), 4000);
@@ -845,6 +1590,79 @@ export default function ConfigPage() {
   // ── [[states]] editor ──────────────────────────────────────────────────────
   const stateList = (config.states || []) as NonNullable<ConfigData['states']>;
 
+  /**
+   * The three namespaces a script's names resolve in, plus what `stateName` may transition to.
+   *
+   * Built from the config being EDITED, not from what is deployed — so a rename or a newly added
+   * valve is reflected before Save, which is the whole point of checking here rather than waiting
+   * for the sequencer.
+   */
+  const scriptTablesFor = (stateName: string) => {
+    const actuators = new Set(Object.keys(config.actuator_roles ?? {}).map(slugify));
+    const sensors = new Set<string>();
+    for (const [section, roles] of Object.entries(config as Record<string, unknown>)) {
+      if (!section.startsWith('sensor_roles_') || typeof roles !== 'object' || !roles) continue;
+      for (const role of Object.keys(roles as Record<string, unknown>)) sensors.add(slugify(role));
+    }
+    const names = (config.states || []).map((s) => String(s.name ?? '')).filter(Boolean);
+    const states = new Set(names.map(slugify));
+
+    // Reachability comes from the Transitions grid the operator is looking at, so a cell they just
+    // flipped counts immediately.
+    const allowedTransitions = new Set<string>();
+    const row = csvTransitions?.rows.find((r) => r.key === stateName);
+    if (row) {
+      csvTransitions!.states.forEach((target, i) => {
+        if ((row.cells[i] || '0').trim() === '1') allowedTransitions.add(slugify(target));
+      });
+    } else {
+      // No transitions grid loaded: do not invent reachability, or every transition_to would be
+      // reported as forbidden. Fall back to "any declared state" and let the sequencer decide.
+      for (const s of states) allowedTransitions.add(s);
+    }
+    return { actuators, sensors, states, allowedTransitions };
+  };
+
+  /**
+   * Open the script editor for a state, creating the script if it has none.
+   *
+   * A new dynamic state is given both landing targets up front rather than left blank. Blank is a
+   * load-time refusal, and an operator who writes a script and saves it should not be told the
+   * state is unenterable because of two fields the editor never asked about. They are seeded to
+   * the boot state, which every rig has and which is always somewhere safe to end up.
+   */
+  const setDynamic = (idx: number, on: boolean) => {
+    const st = stateList[idx];
+    if (!on) {
+      // Back to an ordinary state. setState drops the keys rather than blanking them — an empty
+      // script_file still reads as "dynamic" to anything that only checks presence.
+      setState(idx, {
+        script_file: '', script_timeout_ms: 0,
+        script_return_target: '', script_timeout_target: '',
+      });
+      if (st?.id === scriptPanelStateId) setScriptPanelStateId(null);
+      return;
+    }
+
+    const base = slugify(String(st?.name ?? 'state')).toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'state';
+    const file = st?.script_file || `${base}.script`;
+    const boot = (config.states || []).find((s) => s.is_boot)?.name
+      ?? (config.states || [])[0]?.name
+      ?? '';
+    setState(idx, {
+      script_file: file,
+      script_timeout_ms: st?.script_timeout_ms || 30000,
+      script_return_target: st?.script_return_target || boot,
+      script_timeout_target: st?.script_timeout_target || boot,
+    });
+    setScriptSources((prev) => (prev[file] !== undefined ? prev : { ...prev, [file]: '' }));
+    // Show it straight away. Ticking the box with nothing visibly happening below reads as a
+    // no-op, and the two required landing targets are seeded above rather than left blank —
+    // blank is a load-time refusal, and the operator never asked about those fields.
+    if (typeof st?.id === 'number') setScriptPanelStateId(st.id);
+    setScriptsOpen(true);
+  };
+
   const setState = (idx: number, patch: Record<string, unknown>) =>
     setConfig((prev) => {
       const list = [...((prev.states || []) as any[])];
@@ -857,6 +1675,14 @@ export default function ConfigPage() {
       if (!list[idx].is_abort) delete list[idx].is_abort;
       if (!list[idx].is_boot) delete list[idx].is_boot;
       if (!list[idx].is_flow) delete list[idx].is_flow;
+      // Clearing a script must remove the key, not leave script_file = "". An empty string would
+      // still read as "this state is dynamic" to a loader that only checks presence, and the
+      // sequencer would then refuse a state the operator believes they just made ordinary again.
+      for (const k of ['script_file', 'script_return_target', 'script_timeout_target']) {
+        if (!String(list[idx][k] ?? '').trim()) delete list[idx][k];
+      }
+      if (!list[idx].script_timeout_ms || Number.isNaN(list[idx].script_timeout_ms))
+        delete list[idx].script_timeout_ms;
       return { ...prev, states: list } as ConfigData;
     });
 
@@ -896,9 +1722,49 @@ export default function ConfigPage() {
         }
         : fire;
       const nextFlow = flow && flow.return_target === from ? { ...flow, return_target: to } : flow;
-      if (nextFire === fire && nextFlow === flow) return prev;
-      return { ...p, ...(nextFire ? { fire: nextFire } : {}), ...(nextFlow ? { flow: nextFlow } : {}) } as ConfigData;
+
+      // A dynamic state's two landing targets are a fourth and fifth place a state is named.
+      const states = (p.states || []).map((s) =>
+        s.script_return_target === from || s.script_timeout_target === from
+          ? {
+            ...s,
+            ...(s.script_return_target === from ? { script_return_target: to } : {}),
+            ...(s.script_timeout_target === from ? { script_timeout_target: to } : {}),
+          }
+          : s,
+      );
+
+      const changed =
+        nextFire !== fire || nextFlow !== flow || states.some((s, i) => s !== (p.states || [])[i]);
+      if (!changed) return prev;
+      return {
+        ...p,
+        states,
+        ...(nextFire ? { fire: nextFire } : {}),
+        ...(nextFlow ? { flow: nextFlow } : {}),
+      } as ConfigData;
     });
+
+    // And the sixth: transition_to(SLUG) inside every script, including other states' scripts.
+    //
+    // Rewritten in the STATE namespace only. A bare replace of the token would also rewrite
+    // open_valve(FUEL_VENT) when renaming the *state* Fuel Vent — and both of those names exist
+    // on the shipped server profile, so an unrelated rename would silently point a valve command
+    // at something that does not exist and make a working state unenterable.
+    const fromSlug = slugify(from);
+    const toSlug = slugify(to);
+    if (fromSlug !== toSlug) {
+      setScriptSources((prev) => {
+        const next: Record<string, string> = {};
+        let changed = false;
+        for (const [file, src] of Object.entries(prev)) {
+          const out = renameScriptSlug(src, 'state', fromSlug, toSlug);
+          next[file] = out;
+          if (out !== src) changed = true;
+        }
+        return changed ? next : prev;
+      });
+    }
   };
 
   const addState = () => {
@@ -2539,6 +3405,7 @@ export default function ConfigPage() {
                         <th className="px-3 py-2 text-left font-semibold w-20">Boot</th>
                         <th className="px-3 py-2 text-left font-semibold w-20">Abort</th>
                         <th className="px-3 py-2 text-left font-semibold w-20">Flow</th>
+                        <th className="px-3 py-2 text-left font-semibold w-24">Dynamic</th>
                         <th className="px-3 py-2 w-20" />
                       </tr>
                     </thead>
@@ -2611,6 +3478,16 @@ export default function ConfigPage() {
                               className="w-4 h-4 accent-emerald-400"
                             />
                           </td>
+                          <td className="px-3 py-1.5">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(String(st.script_file ?? '').trim())}
+                              onChange={(e) => setDynamic(i, e.target.checked)}
+                              disabled={!canEdit}
+                              title="Run a script on entry. The state's Actuators column is applied first, then the script layers on top. Edit it below."
+                              className="w-4 h-4 accent-purple-400"
+                            />
+                          </td>
                           <td className="px-3 py-1.5 text-right whitespace-nowrap">
                             <button
                               onClick={() => moveState(i, -1)}
@@ -2635,7 +3512,7 @@ export default function ConfigPage() {
                         </tr>
                       ))}
                       {stateList.length === 0 && (
-                        <tr><td colSpan={7} className="px-3 py-3 text-sm text-text-muted">
+                        <tr><td colSpan={9} className="px-3 py-3 text-sm text-text-muted">
                           No [[states]] declared — the built-in list is in use. Add one to start overriding it.
                         </td></tr>
                       )}
@@ -2644,8 +3521,94 @@ export default function ConfigPage() {
                 </div>
                 <p className="text-sm text-text-muted">
                   States are saved with the rest of the config — use <strong>Save Config</strong> at the top.
+                  A state with a <strong>Script</strong> runs it on entry, after its Actuators column
+                  has put every valve in a defined position.
                 </p>
               </div>
+
+              {/* ── Dynamic-state scripts ──────────────────────────────────────────────────
+                  Collapsed by default: most rigs have no dynamic states, and a permanently open
+                  code editor under the state table would be the loudest thing on the page for
+                  something nobody is editing. Inline rather than a modal so the state list stays
+                  visible while a script is being read — the two are only meaningful together. */}
+              {(() => {
+                const dynamicStates = stateList
+                  .map((s, i) => ({ s, i }))
+                  .filter(({ s }) => String(s.script_file ?? '').trim());
+                if (dynamicStates.length === 0) return null;
+
+                // Fall back to the first dynamic state when the selected one stopped being dynamic
+                // — unticked, removed, reordered. Never render an empty panel.
+                const selected = dynamicStates.find(({ s }) => s.id === scriptPanelStateId)
+                  ?? dynamicStates[0];
+                const st = selected.s;
+                const idx = selected.i;
+                const file = String(st.script_file);
+                const name = String(st.name ?? '');
+
+                return (
+                  <div className="bg-gray-800 rounded-lg border border-gray-700">
+                    <button
+                      onClick={() => setScriptsOpen((v) => !v)}
+                      className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-700/40 rounded-lg"
+                    >
+                      <span className="font-semibold text-white">
+                        Dynamic state scripts
+                        <span className="ml-2 text-xs font-normal text-gray-400">
+                          {dynamicStates.length} state{dynamicStates.length === 1 ? '' : 's'}
+                        </span>
+                      </span>
+                      <span className="text-gray-400 text-sm">{scriptsOpen ? '\u25be' : '\u25b8'}</span>
+                    </button>
+
+                    {scriptsOpen && (
+                      <div className="px-4 pb-4 space-y-3 border-t border-gray-700 pt-3">
+                        <label className="flex items-center gap-2 text-sm flex-wrap">
+                          <span className="text-gray-300">Script for</span>
+                          <select
+                            value={String(st.id ?? '')}
+                            onChange={(e) => setScriptPanelStateId(Number(e.target.value))}
+                            className="px-2 py-1 bg-gray-900 border border-gray-600 rounded text-white"
+                          >
+                            {dynamicStates.map(({ s }) => (
+                              <option key={s.id} value={String(s.id ?? '')}>{s.name}</option>
+                            ))}
+                          </select>
+                          <span className="text-xs text-gray-400 font-mono">{file}</span>
+                        </label>
+
+                        <ScriptEditor
+                          state={st}
+                          stateNames={stateList.map((s) => String(s.name ?? '')).filter(Boolean)}
+                          source={scriptSources[file] ?? ''}
+                          tables={scriptTablesFor(name)}
+                          syntax={scriptSyntax[file] ?? []}
+                          allowedTargets={(() => {
+                            const row = csvTransitions?.rows.find((r) => r.key === name);
+                            if (!row || !csvTransitions) return stateList.map((s) => String(s.name ?? ''));
+                            return csvTransitions.states.filter(
+                              (_, k) => (row.cells[k] || '0').trim() === '1',
+                            );
+                          })()}
+                          canEdit={canEdit}
+                          onSource={(next) => setScriptSources((prev) => ({ ...prev, [file]: next }))}
+                          onField={(patch) => setState(idx, patch)}
+                          onCheck={async (src) => {
+                            try {
+                              const r = await fetch(
+                                `${getApiBaseUrl()}/api/state-script/check?state=${encodeURIComponent(name)}`,
+                                { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: src },
+                              );
+                              const b = await r.json().catch(() => ({}));
+                              setScriptSyntax((prev) => ({ ...prev, [file]: b?.diagnostics ?? [] }));
+                            } catch { /* early warning only; the sequencer is the authority */ }
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {csvLoading && <p className="text-sm text-text-muted">Loading…</p>}
               {!csvLoading && !csvActuators && (
