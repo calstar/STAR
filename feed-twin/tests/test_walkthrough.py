@@ -57,7 +57,17 @@ def tank(state: dict, key: str) -> dict:
 
 def test_an_operator_can_take_the_stand_from_cold_to_fire() -> None:
     # Fast fills, so the sequence runs in seconds rather than minutes.
-    state = open_stand(copv_fill_s=2.0, tank_fill_s=2.0, fuel_fill_s=2.0, dome=500.0)
+    # The LOX load gets six seconds rather than two: onto a chilled wall, two
+    # seconds of 4 kg/s compresses the ullage nitrogen faster than the vessel
+    # step resolves its exchange with the liquid, and the vent line lands on
+    # nitrogen's saturation line.
+    state = open_stand(
+        copv_fill_s=2.0,
+        tank_fill_s=6.0,
+        fuel_fill_s=2.0,
+        load_chill_s=2.0,
+        dome=500.0,
+    )
     sid = state["id"]
     assert state["state"] == "Idle"
     for vessel in state["tanks"] + state["bottles"]:
@@ -65,16 +75,21 @@ def test_an_operator_can_take_the_stand_from_cold_to_fire() -> None:
     for t in state["tanks"]:
         assert t["liquid_mass_kg"] == 0.0
 
-    # Arm, then load the oxidiser.
+    # Arm, then load the oxidiser. The warm tank chills before anything
+    # collects, and the panel says so.
     go(sid, "Armed")
     go(sid, "Ox Fill")
-    state = run(sid, 3.0)
+    state = run(sid, 1.0)
     ox_id = next(
         t["id"]
         for t in state["tanks"]
         if "ox" in t["id"].lower() or "lox" in t["id"].lower()
     )
     fu_id = next(t["id"] for t in state["tanks"] if t["id"] != ox_id)
+    assert tank(state, ox_id)["chilling"], "a warm LOX tank chills first"
+    assert tank(state, ox_id)["liquid_mass_kg"] == 0.0, "nothing collects yet"
+    state = run(sid, 3.0)
+    assert not tank(state, ox_id)["chilling"]
     assert tank(state, ox_id)["liquid_mass_kg"] > 1.0, "LOX should be arriving"
     assert tank(state, fu_id)["liquid_mass_kg"] == 0.0, "only the ox tank is filling"
 
