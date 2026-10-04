@@ -187,3 +187,97 @@ describe('Cd change', () => {
     expect(m).toEqual({ a: { b: 5, c: 2 }, d: 3, e: null });
   });
 });
+
+import layoutDoublet from './__fixtures__/layout_doublet_6500N.json';
+
+describe('the stand plate (drill-spot channels, seals, ports, checked against its drawing)', () => {
+  const LD = layoutDoublet as unknown as InjectorLayout & { drawings: InjectorDrawings };
+  const html = renderToStaticMarkup(createElement(InjectorPatternPlot, { layout: LD }));
+
+  it('shows the port plate and the revolve sketch', () => {
+    expect(html).toContain('Port plate');
+    expect(html).toContain('Revolve sketch');
+  });
+
+  it('reads out the drill-spot floor, the channel area, the ports and the drawing check', () => {
+    expect(html).toMatch(/7\.62 floor \+ 2\.54 drill spot, 118 mm²/);
+    expect(html).toContain('2× 3/8 NPT per ring');
+    expect(html).toMatch(/model within 0\.00\d mm of it/);
+  });
+
+  it('writes the revolve sketch as one closed polyline and the axis', () => {
+    const dxf = primitivesToDxf(LD.drawings.revolve!, 'in');
+    expect((dxf.match(/\nPOLYLINE\n/g) ?? []).length).toBe(2);
+    expect(dxf).toContain('\n70\n1\n');          // closed
+  });
+});
+
+describe('seal grooves and gland in the hardware form', () => {
+  const cfg = {
+    injector: { plate: {
+      back: 'channels', channel_floor: 'spot', channel_spot_length: 0.00254, channel_inlets: 2, port_thread: '3/8 NPT',
+      back_grooves: [{ r_inner: 0.0076454, r_outer: 0.011176, depth: 0.0019558, corner_radius: 0.000254 }],
+      rim_gland: { z_start: 0.00381, width: 0.0071374, depth: 0.0042545, corner_radius: 0.000635 },
+    } },
+    discharge: { oxidizer: {}, fuel: {} },
+  } as unknown as Parameters<typeof draftFromConfig>[0];
+
+  it('round-trip in metres, and a half-typed groove is not sent', () => {
+    const d = draftFromConfig(cfg);
+    expect(d.spot).toBe('2.54');
+    expect(d.ports).toBe('2');
+    const rows = JSON.parse(d.grooves);
+    expect(rows[0]).toEqual(['7.6454', '11.176', '1.9558', '0.254']);
+    const up = updatesFromDraft({ ...d, grooves: JSON.stringify([...rows, ['20', '', '1', '']]) }) as {
+      injector: { plate: { back_grooves: { r_inner: number }[]; rim_gland: { depth: number } | null; channel_inlets: number } };
+    };
+    expect(up.injector.plate.back_grooves).toHaveLength(1);
+    expect(up.injector.plate.back_grooves[0].r_inner).toBeCloseTo(0.0076454, 9);
+    expect(up.injector.plate.rim_gland?.depth).toBeCloseTo(0.0042545, 9);
+    expect(up.injector.plate.channel_inlets).toBe(2);
+  });
+
+  it('drop the gland when its position is cleared', () => {
+    const d = { ...draftFromConfig(cfg), gland_z: '' };
+    const up = updatesFromDraft(d) as { injector: { plate: { rim_gland: unknown } } };
+    expect(up.injector.plate.rim_gland).toBeNull();
+  });
+});
+
+import cfgNew from './__fixtures__/injector_cfg_new.json';
+import cfgOld from './__fixtures__/injector_cfg_old.json';
+import { changedUpdates } from '../lib/injectorHardware';
+
+describe('Apply sends only what the form changed', () => {
+  // The 2026-09-28 break: the form had read the OLD design, the session held the NEW one, and
+  // changing the igniter wrote the old plate (flat channels, no grooves, no drawing) over it.
+  const NEW = cfgNew as unknown as Parameters<typeof draftFromConfig>[0];
+  const OLD = cfgOld as unknown as Parameters<typeof draftFromConfig>[0];
+
+  it('an igniter change from a stale form leaves the newer plate alone', () => {
+    const stale = draftFromConfig(OLD);
+    const up = changedUpdates(stale, { ...stale, thread: '1/4 NPT' });
+    expect(up).toEqual({ injector: { igniter: { thread: '1/4 NPT', hub_thickness: null } } });
+    const after = mergeDeep(NEW, up) as unknown as { injector: { plate: Record<string, unknown>; igniter: { thread: string } } };
+    expect(after.injector.plate.channel_floor).toBe('spot');
+    expect((after.injector.plate.back_grooves as unknown[]).length).toBe(5);
+    expect(after.injector.plate.profile_dxf).toContain('revolve');
+    expect(after.injector.igniter.thread).toBe('1/4 NPT');
+  });
+
+  it('nothing changed sends nothing', () => {
+    const d = draftFromConfig(NEW);
+    expect(changedUpdates(d, { ...d })).toEqual({});
+  });
+
+  it('a groove edit sends the whole groove list, and only it', () => {
+    const d = draftFromConfig(NEW);
+    const rows = JSON.parse(d.grooves);
+    rows[0][2] = '2.1';
+    const up = changedUpdates(d, { ...d, grooves: JSON.stringify(rows) }) as { injector: { plate: Record<string, unknown> } };
+    expect(Object.keys(up)).toEqual(['injector']);
+    expect(Object.keys(up.injector.plate)).toEqual(['back_grooves']);
+    expect((up.injector.plate.back_grooves as { depth: number }[])[0].depth).toBeCloseTo(0.0021, 9);
+    expect((up.injector.plate.back_grooves as unknown[]).length).toBe(5);
+  });
+});

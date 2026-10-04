@@ -316,6 +316,11 @@ def _on_grid(times, values, t_end):
     return np.column_stack((t, v))
 
 
+#: How a pressurant is written in tank names and printouts (display only; the physics uses the
+#: CoolProp name). A gas not listed here is written as its CoolProp name.
+_GAS_LABEL = {"nitrogen": "N₂", "n2": "N₂", "helium": "He", "he": "He"}
+
+
 def ullage_gas_density(tank_section):
     """Pressurant density in a tank's ullage at T-0 [kg/m3], CoolProp at the tank's
     initial_pressure_psi (absolute, as the engine solver reads it) and ullage_gas_temperature_K."""
@@ -400,12 +405,20 @@ def flight_report(flight, config, drag_curves=None, extra=None):
     return report
 
 
-def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
+def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False, liftoff_mass=None,
+                 ullage_gas_kg=None):
     """
     Build and fly the vehicle in RocketPy from a thrust curve and the two propellant flows.
 
+    ``liftoff_mass`` [kg]: the vehicle as weighed on the rail, loaded and pressed. When given, the
+    airframe's mass is set so the vehicle lifts off at exactly this mass.
+
+    ``ullage_gas_kg`` [kg]: the gas in the tanks' ullages at T-0 when the caller knows it better
+    than this config's tanks do (Layer X burns the drawing's tanks). The difference from the
+    config-sized ullage is carried as a lumped mass with the airframe: it stays aboard all flight.
+
     Returns a dict: apogee (AGL), apogee_asl, max_velocity (vertical), flight (RocketPy Flight),
-    truncation_info, mass_caps, flight_report (see flight_report), params (the config).
+    truncation_info, mass_caps, mass_budget, flight_report (see flight_report), params (the config).
     """
     burn_time = float(config.thrust.burn_time)
 
@@ -501,6 +514,12 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
     else:
         effective_burn_time = burn_time
         truncation_info = {"truncated": False}
+        # The same 500-per-second sampling the truncated branch gets. Handed a callable, RocketPy's
+        # Motor re-samples it at 50 points over the whole burn (72 ms apart on a 3.6 s curve), so
+        # an untruncated curve flew a coarser copy of itself: its tail aliased, and on the 6.8 kN
+        # vehicle the apogee held still for 200 N·s of impulse and then dropped 116 m.
+        if callable(thrust_curve) and not isinstance(thrust_curve, list):
+            thrust_curve = truncate_thrust_curve(thrust_curve, burn_time)
 
     from engine.pipeline.config_schemas import ensure_chamber_geometry
     cg = ensure_chamber_geometry(config)
@@ -777,6 +796,14 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
             "fluid": Fluid(name=f"{section.ullage_gas} ullage", density=rho_g),
         }
     m_ullage_gas = ullage["LOX"]["initial_gas_kg"] + ullage["fuel"]["initial_gas_kg"]
+    # THE PRESSURANT IS THE ULLAGE GAS. The regulator fills the ullages from the COPV, so the bottle
+    # holds what the tanks' ullage_gas names: one species, priced as that species everywhere below
+    # (the refill, the isothermal lockup reserve, the labels). These read "N2" whatever the gas was,
+    # and Layer X's helium bottle was priced as nitrogen (docs/layerx/AUDIT.md 5.2).
+    gases = sorted({ullage["LOX"]["gas"], ullage["fuel"]["gas"]})
+    pressurant_gas = gases[0] if len(gases) == 1 else " / ".join(gases)
+    # The names RocketPy prints and the tank is looked up by: "Pressurant (N₂) Tank" stays what it was.
+    gas_label = " / ".join(_GAS_LABEL.get(g.strip().lower(), g) for g in gases)
 
     # Pressurant (COPV) tank setup
     m_pressurant = 0.0
@@ -806,7 +833,7 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
             # geometry.inverse_volume, whose domain is exactly [0, V_copv], so a tank filled
             # to precisely its own volume fails on float equality. Mass is conserved exactly;
             # only the density carries the 0.1 %.
-            gn2_pressurant = Fluid(name="GN2_COPV", density=m_pressurant/(V_copv*0.999))
+            copv_gas = Fluid(name=f"{gas_label} COPV", density=m_pressurant/(V_copv*0.999))
             press_geom = CylindricalTank(
                 radius=config.press_tank.press_radius,
                 height=press_h_eff,
@@ -831,7 +858,7 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
             # the COPV and arrives in the tanks, so the mass is conserved and the CG follows it.
             mdot_pressurant_avg = 0.0
 
-            print(f"  Pressurant (N₂): {m_pressurant:.3f} kg in {V_copv*1000:.2f} L "
+            print(f"  Pressurant ({gas_label}): {m_pressurant:.3f} kg in {V_copv*1000:.2f} L "
                   f"({m_pressurant/V_copv:.0f} kg/m3), carried as dead mass (not expelled)")
 
     # REFILL. With a COPV on board the regulator holds tank pressure, so the ullage gas grows by
@@ -899,11 +926,11 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
         mdot_pressurant = Function(np.column_stack((t_flux, refill_rate)))
 
         pressurant_tank = MassFlowRateBasedTank(
-            name="Pressurant (N₂) Tank",
+            name=f"Pressurant ({gas_label}) Tank",
             geometry=press_geom,
             flux_time=effective_burn_time,
-            liquid=gn2_pressurant,  # Using "liquid" field for gas (RocketPy limitation)
-            gas=gn2_pressurant,
+            liquid=copv_gas,  # Using "liquid" field for gas (RocketPy limitation)
+            gas=copv_gas,
             # The stub comes OUT OF the pressurant mass, not on top of it. It used to be a
             # flat 0.01 kg added alongside initial_liquid_mass, so the tank held
             # m_pressurant + 0.01 kg: with the density derived from m_pressurant/V that is
@@ -961,6 +988,44 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
     # motor on and off, whatever the length, fins or finish: the build-up for this 7.76 m, 49:1
     # vehicle is 0.64-0.91 depending on the finish, and friction alone is above 0.45.
     drag_curves = resolve_drag_curves(config, A_e, stack)
+
+    # THE VEHICLE AS WEIGHED. Given the liftoff mass (on the rail, loaded and pressed), the
+    # airframe is what is left of it once the motor's dry mass, the propellants and the gases are
+    # booked, so the vehicle flies at exactly that mass whatever the config's airframe_mass says.
+    # The airframe keeps its shape: its inertia scales with its mass and its CM stays put.
+    # Gas the caller says is in the ullages beyond what these tanks hold: lumped with the airframe.
+    extra_gas = (float(ullage_gas_kg) - m_ullage_gas) if ullage_gas_kg is not None else 0.0
+    carried = motor_dry_mass + m_lox0 + m_rp10 + m_pressurant + m_ullage_gas + extra_gas
+    airframe_source = "config"
+    if liftoff_mass is not None:
+        airframe = float(liftoff_mass) - carried
+        if airframe <= 0.0:
+            raise ValueError(
+                f"A liftoff mass of {float(liftoff_mass):.2f} kg leaves nothing for the airframe: the motor "
+                f"dry mass, propellants and gases alone are {carried:.2f} kg"
+            )
+        if float(rocket_mass) > 0.0:
+            rocket_inertia = [float(i) * airframe / float(rocket_mass) for i in rocket_inertia]
+        print(f"  Liftoff mass {float(liftoff_mass):.2f} kg given: airframe {airframe:.2f} kg "
+              f"(config {float(rocket_mass):.2f} kg), inertia scaled with it")
+        rocket_mass = airframe
+        airframe_source = "liftoff mass"
+    airframe_only = float(rocket_mass)
+    if extra_gas:
+        print(f"  Ullage gas at T-0 {float(ullage_gas_kg):.3f} kg given ({m_ullage_gas:.3f} kg in these tanks): "
+              f"{extra_gas:+.3f} kg carried with the airframe")
+        rocket_mass = rocket_mass + extra_gas
+    mass_budget = {
+        "airframe_kg": airframe_only,
+        "airframe_source": airframe_source,
+        "motor_dry_kg": float(motor_dry_mass),
+        "oxidizer_kg": float(m_lox0),
+        "fuel_kg": float(m_rp10),
+        "pressurant_kg": float(m_pressurant),
+        "pressurant_gas": pressurant_gas,
+        "ullage_gas_kg": float(m_ullage_gas + extra_gas),
+        "liftoff_kg": float(airframe_only + carried),
+    }
     rocket = Rocket(
         radius=rocket_radius,
         mass=rocket_mass,
@@ -977,14 +1042,18 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
             "tail to nose tip (tank positions + avionics_payload_length_m); drag and inertia use the stack"
         )
 
-    # Fins at bottom (tail) - position 0.0
-    rocket.add_trapezoidal_fins(
-        n=config.rocket.fins.no_fins,
-        root_chord=config.rocket.fins.root_chord,
-        tip_chord=config.rocket.fins.tip_chord,
-        span=config.rocket.fins.fin_span,
-        position=config.rocket.fins.fin_position,  # User-specified position from rocket tail
-    )
+    # Fins at bottom (tail) - position 0.0. Optional in the schema: a finless vehicle flies without.
+    fins = getattr(config.rocket, "fins", None)
+    if fins is not None:
+        rocket.add_trapezoidal_fins(
+            n=fins.no_fins,
+            root_chord=fins.root_chord,
+            tip_chord=fins.tip_chord,
+            span=fins.fin_span,
+            position=fins.fin_position,  # User-specified position from rocket tail
+        )
+    else:
+        report_warnings.append("rocket.fins is not set: flown without fins, so the vehicle has no aerodynamic stability")
 
     # Motor above fins
     rocket.add_motor(liquid_motor, position=motor_position)
@@ -1027,7 +1096,7 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
     print(f"  LOX propellant: {m_lox0:.2f} kg")
     print(f"  Fuel propellant: {m_rp10:.2f} kg")
     if m_pressurant > 0:
-        print(f"  Pressurant gas: {m_pressurant:.3f} kg")
+        print(f"  Pressurant gas ({gas_label}): {m_pressurant:.3f} kg")
     print(f"  Ullage gas at T-0: {m_ullage_gas:.3f} kg")
     print(f"  TOTAL: {total_initial_mass:.2f} kg")
     print(f"\nInitial thrust: {initial_thrust:.1f} N")
@@ -1111,5 +1180,6 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
         "params": config,
         "truncation_info": truncation_info,
         "mass_caps": mass_caps,
+        "mass_budget": mass_budget,
         "flight_report": report,
     }

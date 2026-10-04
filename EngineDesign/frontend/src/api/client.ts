@@ -55,6 +55,8 @@ export interface EngineConfig {
 
 export interface ConfigResponse {
   config: EngineConfig;
+  /** Changes whenever the backend session is recreated (restart, idle eviction). */
+  session_epoch?: string;
 }
 
 export interface UploadResponse {
@@ -192,6 +194,9 @@ export interface RunnerResults {
       stability_index?: number;
       period?: number;
       tau_residence?: number;
+      /** Gas residence time rho_c V / mdot [s]. */
+      theta_c?: number;
+      chug_gain_margin?: number;
       Lstar?: number;
     };
     acoustic: {
@@ -208,6 +213,11 @@ export interface RunnerResults {
       water_hammer_pressure?: number;
       stability_margin?: number;
       sound_speed?: number;
+      length_m?: number;
+      feed_lines?: Partial<Record<'oxidizer' | 'fuel', {
+        pogo_frequency?: number; surge_frequency?: number; water_hammer_pressure?: number;
+        sound_speed?: number; length_m?: number;
+      }>>;
     };
     issues: string[];
     recommendations: string[];
@@ -240,6 +250,8 @@ export interface EvaluateResponse {
   // injector/propellant than is now live (e.g. after a propellant switch without re-solving).
   design_warning?: string | null;
   results: RunnerResults;
+  /** engine/pipeline/forward_report.py: what forward mode shows, each number once. */
+  report?: import('../lib/forwardReport').ForwardReport;
 }
 
 // API functions
@@ -276,8 +288,10 @@ export async function getParameters(): Promise<ApiResponse<import('../lib/parame
   return request('/config/parameters');
 }
 
-export async function updateConfig(updates: Partial<EngineConfig>): Promise<ApiResponse<ConfigResponse>> {
-  return request<ConfigResponse>('/config', {
+/** ``expectSha256``: the design the update was computed for; the server refuses (409) if it has moved. */
+export async function updateConfig(updates: Partial<EngineConfig>, expectSha256?: string | null): Promise<ApiResponse<ConfigResponse>> {
+  const q = expectSha256 ? `?expect_sha256=${encodeURIComponent(expectSha256)}` : '';
+  return request<ConfigResponse>(`/config${q}`, {
     method: 'PUT',
     headers: designHeaders(),
     body: JSON.stringify(updates),
@@ -857,8 +871,43 @@ export interface InjectorChannel {
   length: number; length_wanted: number; l_over_d: number; pierces_back: boolean;
   r_center: number; width: number; width_min: number; width_widened: boolean;
   r_lo: number; r_hi: number;
-  floor: 'flat' | 'coned'; floor_slope: number; floor_z_lo: number; floor_z_hi: number;
+  floor: 'flat' | 'coned' | 'spot' | 'drawing'; floor_slope: number; floor_z_lo: number; floor_z_hi: number;
   depth: number; depth_min: number; footprint: number; breakthrough: string;
+  flow_area: number;
+  /** Outline in (r, z), back face -> floor -> back face. */
+  section?: [number, number][];
+  /** Radius the floor (and its depth) is measured at. */
+  r_floor?: number;
+  hydraulic_diameter?: number;
+  spot_length?: number;
+  floor_width?: number;
+}
+
+/** The plug's half-section and what is cut in its back face (layout.plate_profile). */
+export interface InjectorProfile {
+  loop: [number, number][];
+  grooves: { name: string; r_inner: number; r_outer: number; depth: number }[];
+  skipped: string[];
+  back_lands: { between: string; land: number }[];
+  thread_clash?: string[];
+  thickness: number;
+  with_port: boolean;
+}
+
+/** The cover plate's feed ports (layout.feed_ports). */
+export interface InjectorPorts {
+  thread: string; thread_od: number; tap_drill: number; bore: number; bore_declared: boolean;
+  per_ring: number; clock_F_deg: number; source: string;
+  rings: Record<'O' | 'F', {
+    r: number; angles_deg: number[]; bore_r_lo: number; bore_r_hi: number;
+    channel_r_lo: number; channel_r_hi: number;
+  }>;
+}
+
+/** injector.plate.profile_dxf: what the drawing says, and (check mode) how far the model is from it. */
+export interface InjectorDrawingCheck {
+  source: string; mode: 'geometry' | 'check'; thickness: number; plate_radius: number; axis_hole: boolean;
+  deviation?: { max: number; a_to_b: number; b_to_a: number; where_a: [number, number]; where_b: [number, number] };
 }
 
 export interface InjectorPassage {
@@ -925,6 +974,9 @@ export interface InjectorLayout {
   } | null;
   /** The centre keep-out actually enforced, and what set it. */
   centre_keepout: { dia: number; source: string | null };
+  profile?: InjectorProfile;
+  ports?: InjectorPorts | null;
+  drawing?: InjectorDrawingCheck;
   inputs: {
     oxidizer: InjectorStreamGeometry;
     fuel: InjectorStreamGeometry;
@@ -941,6 +993,29 @@ export interface InjectorLayout {
     land_ld_F: number;
     plate: Record<string, unknown>;
   };
+}
+
+/** One line of the spray and mixing report (engine/core/injectors/spray_report.py). */
+export interface SprayRow {
+  label: string; value: number | string | null; unit: string; band: string;
+  status: 'ok' | 'warn' | 'bad' | 'info'; source: string; note: string;
+}
+
+export interface SpraySensitivityCase {
+  case: string; why: string; applied: boolean; error?: string;
+  F?: number; Isp?: number; Pc_psia?: number; OF?: number;
+  eta_cstar?: number; eta_vap?: number; eta_mix?: number; vap_F?: number; vap_O?: number;
+}
+
+export interface SprayReport {
+  design: { F: number; Pc_psia: number; OF: number; Isp: number; P_tank_O_psi: number; P_tank_F_psi: number };
+  sections: { title: string; rows: SprayRow[] }[];
+  sensitivity: SpraySensitivityCase[] | null;
+}
+
+/** Spray and mixing of the session's injector at its tank pressures; solves the engine (~20 s with sensitivity). */
+export async function getSprayReport(sensitivity = true): Promise<ApiResponse<SprayReport>> {
+  return request<SprayReport>(`/geometry/injector/spray?sensitivity=${sensitivity}`);
 }
 
 /** Layout of the session's injector, or of `config` when given. 404 = not an impinging doublet. */

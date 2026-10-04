@@ -305,6 +305,22 @@ def _solve_dominant_root(streams: List[ChugStream], chamber: ChugChamber,
     return best
 
 
+def _dominant_root(streams: List[ChugStream], chamber: ChugChamber, fast_res: Dict[str, float],
+                   *, with_regulator: bool = True) -> Tuple[float, float, float]:
+    """The most unstable root of F(s) = 0: seeded at every negative-real-axis crossing of L(iw)
+    (``fast_res``, from ``chug_margin_fast``), the largest alpha kept. (alpha, omega, |F|)."""
+    seeds = [2 * np.pi * f for f in fast_res.get("crossings_hz", []) if np.isfinite(f) and f > 0]
+    if not seeds:
+        f0 = fast_res.get("f_chug_hz", float("nan"))
+        seeds = [2 * np.pi * f0 if np.isfinite(f0) else 2 * np.pi * 100.0]
+    best = (float("nan"), float("nan"), float("inf"))
+    for w0 in seeds:
+        a, w, r = _solve_dominant_root(streams, chamber, with_regulator=with_regulator, omega_seed=w0)
+        if np.isfinite(a) and (not np.isfinite(best[0]) or a > best[0]):
+            best = (a, w, r)
+    return best
+
+
 def _dominant_driver(streams: List[ChugStream], s: complex) -> str:
     """Heuristic: which feed term dominates |Z_feed| at the root -> the limiting physics."""
     drivers = {"feed_inertance": 0.0, "feed_resistance": 0.0, "injector_stiffness": 0.0, "regulator": 0.0}
@@ -360,9 +376,15 @@ def _solve_root_near(streams: List[ChugStream], chamber: ChugChamber, s0: comple
     return float(sol[0]), float(sol[1]), float(resF)
 
 
+def mean_eta(streams: List[ChugStream]) -> float:
+    """Mass-flow-weighted injector stiffness of the streams."""
+    m = sum(max(float(s.mdot), 0.0) for s in streams)
+    return float(sum(float(s.mdot) * float(s.eta_inj) for s in streams) / m) if m > 0 else float("nan")
+
+
 def chug_root_locus(streams: List[ChugStream], chamber: ChugChamber,
                     *, eta_values: Optional[np.ndarray] = None,
-                    with_regulator: bool = True) -> List[Dict[str, float]]:
+                    with_regulator: bool = True, scale_design: bool = False) -> List[Dict[str, float]]:
     """Track the dominant chug pole through the s-plane as injector stiffness sweeps.
 
     This is a root locus in the textbook sense: ``eta_inj = dP_inj/Pc`` is the swept gain, and each
@@ -378,10 +400,15 @@ def chug_root_locus(streams: List[ChugStream], chamber: ChugChamber,
     demonstrated fix for it. ``test_locus_is_continuous_in_frequency`` checks the OUTPUT is a branch;
     it does not, and cannot currently, distinguish the two seeding strategies.
 
+    ``scale_design``: each value is the streams' mass-weighted mean stiffness, reached by scaling
+    every stream's OWN drop by one factor, so the design (unequal drops and all) sits exactly on
+    the branch at its own mean. Off, every stream is set to the same eta.
+
     Returns points in ascending ``eta`` with keys ``eta``, ``real``, ``imag``, ``f_hz``, ``zeta``.
     Points where the branch could not be followed are dropped, so the caller gets a clean polyline.
     """
     import copy
+    eta0 = mean_eta(streams) if scale_design else float("nan")
 
     if eta_values is None:
         eta_values = np.linspace(0.05, 0.60, 28)
@@ -393,7 +420,7 @@ def chug_root_locus(streams: List[ChugStream], chamber: ChugChamber,
         out = []
         for st in streams:
             st2 = copy.copy(st)
-            st2.eta_inj = float(eta)
+            st2.eta_inj = float(st.eta_inj) * eta / eta0 if scale_design else float(eta)
             out.append(st2)
         return out
 
@@ -408,6 +435,15 @@ def chug_root_locus(streams: List[ChugStream], chamber: ChugChamber,
     for eta in etas:
         st = scaled(eta)
         a, w, res = _solve_root_near(st, chamber, s_prev, with_regulator=with_regulator)
+        # The branch that matters is the DOMINANT root (the one chug_growth_rate reports for the
+        # design). Following one seed from the softest injector can stay on a subdominant root:
+        # on a design with LOX at eta 0.25 and fuel at 0.10 it passed the design at -79 s^-1,
+        # 50 Hz while the design's own pole was -40 s^-1, 23 Hz. So each point also runs the
+        # dominant-root search and keeps whichever root grows faster.
+        ad, wd, rd = _dominant_root(st, chamber, chug_margin_fast(st, chamber, with_regulator=with_regulator),
+                                    with_regulator=with_regulator)
+        if np.isfinite(ad) and np.isfinite(wd) and wd > 0 and (not np.isfinite(a) or ad > a + 1e-9):
+            a, w, res = ad, wd, rd
         if not (np.isfinite(a) and np.isfinite(w) and w > 0):
             # Lost the branch: re-acquire from the frequency scan rather than abandoning the sweep.
             f2 = chug_margin_fast(st, chamber, with_regulator=with_regulator)
@@ -439,16 +475,7 @@ def chug_growth_rate(streams: List[ChugStream], chamber: ChugChamber,
     fast = chug_margin_fast(streams, chamber, with_regulator=with_regulator)
 
     def dominant(with_reg: bool, fast_res: Dict[str, float]) -> Tuple[float, float, float]:
-        seeds = [2 * np.pi * f for f in fast_res.get("crossings_hz", []) if np.isfinite(f) and f > 0]
-        if not seeds:
-            f0 = fast_res.get("f_chug_hz", float("nan"))
-            seeds = [2 * np.pi * f0 if np.isfinite(f0) else 2 * np.pi * 100.0]
-        best = (float("nan"), float("nan"), float("inf"))
-        for w0 in seeds:
-            a, w, r = _solve_dominant_root(streams, chamber, with_regulator=with_reg, omega_seed=w0)
-            if np.isfinite(a) and (not np.isfinite(best[0]) or a > best[0]):
-                best = (a, w, r)
-        return best
+        return _dominant_root(streams, chamber, fast_res, with_regulator=with_reg)
 
     alpha, omega, resF = dominant(with_regulator, fast)
     out: Dict[str, float] = {

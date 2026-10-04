@@ -1,0 +1,270 @@
+{
+ "run": "20261002-231658-7e47d1",
+ "vs": "20261002-224508-cf9797",
+ "shots": [
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/wave2/burn-overview-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/wave2/burn-feed-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/wave2/burn-engine-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/wave2/burn-hardware-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/wave2/burn-flight-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/wave2/burn-stand-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/wave2/burn-uncertainty-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/wave2/burn-record-1920-dark.png"
+ ],
+ "console": [],
+ "axe": [
+  {
+   "tag": "burn-record-1920-dark",
+   "id": "empty-table-header",
+   "impact": "minor",
+   "n": 1,
+   "help": "Table header text should not be empty",
+   "nodes": [
+    ".text-\\[var\\(--color-text-muted\\)\\] > th:nth-child(1) ::   Element does not have text that is visible to screen readers"
+   ]
+  }
+ ],
+ "overlap": [],
+ "clipped": [],
+ "ellipsis": [
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "typical globe/ball valve, IEC 60534-2-1 table 2. Manufacture",
+   "title": "typical globe/ball valve, IEC 60534-2-1 table 2. Manufacturer-specific — look it up.",
+   "at": [
+    1136,
+    2249
+   ],
+   "sw": 470,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  },
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "numerically small rather than measured; a seat leak spec wou",
+   "title": "numerically small rather than measured; a seat leak spec would be better",
+   "at": [
+    1136,
+    2276
+   ],
+   "sw": 413,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  },
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "assumed fast solenoid; measure it — actuation time drives st",
+   "title": "assumed fast solenoid; measure it — actuation time drives startup transients",
+   "at": [
+    1136,
+    2304
+   ],
+   "sw": 432,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  },
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "IEC 60534-2-1 value for a globe or ball valve with a flow-to",
+   "title": "IEC 60534-2-1 value for a globe or ball valve with a flow-to-open plug",
+   "at": [
+    1136,
+    2331
+   ],
+   "sw": 397,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  },
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "typical globe/ball valve, IEC 60534-2-1 table 2. Manufacture",
+   "title": "typical globe/ball valve, IEC 60534-2-1 table 2. Manufacturer-specific — look it up.",
+   "at": [
+    1136,
+    2359
+   ],
+   "sw": 470,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  },
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "numerically small rather than measured; a seat leak spec wou",
+   "title": "numerically small rather than measured; a seat leak spec would be better",
+   "at": [
+    1136,
+    2386
+   ],
+   "sw": 413,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  },
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "assumed fast solenoid; measure it — actuation time drives st",
+   "title": "assumed fast solenoid; measure it — actuation time drives startup transients",
+   "at": [
+    1136,
+    2413
+   ],
+   "sw": 432,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  },
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "IEC 60534-2-1 value for a globe or ball valve with a flow-to",
+   "title": "IEC 60534-2-1 value for a globe or ball valve with a flow-to-open plug",
+   "at": [
+    1136,
+    2441
+   ],
+   "sw": 397,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  },
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "typical globe/ball valve, IEC 60534-2-1 table 2. Manufacture",
+   "title": "typical globe/ball valve, IEC 60534-2-1 table 2. Manufacturer-specific — look it up.",
+   "at": [
+    1136,
+    2468
+   ],
+   "sw": 470,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  },
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "numerically small rather than measured; a seat leak spec wou",
+   "title": "numerically small rather than measured; a seat leak spec would be better",
+   "at": [
+    1136,
+    2496
+   ],
+   "sw": 413,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  },
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "assumed fast solenoid; measure it — actuation time drives st",
+   "title": "assumed fast solenoid; measure it — actuation time drives startup transients",
+   "at": [
+    1136,
+    2523
+   ],
+   "sw": 432,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  },
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "IEC 60534-2-1 value for a globe or ball valve with a flow-to",
+   "title": "IEC 60534-2-1 value for a globe or ball valve with a flow-to-open plug",
+   "at": [
+    1136,
+    2550
+   ],
+   "sw": 397,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  },
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "typical globe/ball valve, IEC 60534-2-1 table 2. Manufacture",
+   "title": "typical globe/ball valve, IEC 60534-2-1 table 2. Manufacturer-specific — look it up.",
+   "at": [
+    1136,
+    2578
+   ],
+   "sw": 470,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  },
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "numerically small rather than measured; a seat leak spec wou",
+   "title": "numerically small rather than measured; a seat leak spec would be better",
+   "at": [
+    1136,
+    2605
+   ],
+   "sw": 413,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  },
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "assumed fast solenoid; measure it — actuation time drives st",
+   "title": "assumed fast solenoid; measure it — actuation time drives startup transients",
+   "at": [
+    1136,
+    2632
+   ],
+   "sw": 432,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  },
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "IEC 60534-2-1 value for a globe or ball valve with a flow-to",
+   "title": "IEC 60534-2-1 value for a globe or ball valve with a flow-to-open plug",
+   "at": [
+    1136,
+    2660
+   ],
+   "sw": 397,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  },
+  {
+   "tag": "burn-record-1920-dark",
+   "text": "typical globe/ball valve, IEC 60534-2-1 table 2. Manufacture",
+   "title": "typical globe/ball valve, IEC 60534-2-1 table 2. Manufacturer-specific — look it up.",
+   "at": [
+    1136,
+    2687
+   ],
+   "sw": 470,
+   "cw": 352,
+   "sh": 17,
+   "ch": 17,
+   "p": "tbody > tr.border-b > td.px-2.py-1 > span.block.truncate"
+  }
+ ],
+ "orphan": []
+}

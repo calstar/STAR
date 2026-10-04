@@ -17,6 +17,7 @@ const INK = 'var(--color-text-primary)';
 const BG = 'var(--color-bg-secondary)';
 const WARN = '#fbbf24';
 const BAD = '#f87171';
+const SEAL = '#4ade80';
 
 interface Style {
   stroke?: string;
@@ -53,6 +54,7 @@ const STYLE: Record<string, Style> = {
   PITCH_F: { stroke: FU, width: 0.6, dash: '3 3', opacity: 0.5 },
   KEEPOUT: { stroke: WALL, width: 1, dash: '5 2' },
   LAND: { stroke: WARN, width: 0.7, dash: '2 2', opacity: 0.8 },
+  SEAL: { stroke: SEAL, width: 0.8 },
   NOTE: { stroke: WALL },
   DIM: { stroke: WALL, width: 0.6 },
 };

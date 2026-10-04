@@ -93,12 +93,23 @@ def cd_from_re(
     Calculate discharge coefficient as function of Reynolds number, optional orifice
     diameter, pressure, and temperature.
 
-    Base formula: Cd(Re) = Cd_inf,eff - a_Re / √Re
+    ``Re`` is on the bulk hole velocity mdot/(rho A) and the hole diameter.
+
+    Re law, when the block declares an inlet, an ``orifice_l_over_d`` and
+    ``length_model: lichtarowicz`` (the default) -- Lichtarowicz, Duggins & Markland (1965):
+        1/Cd = 1/Cd_u + 20 (1 + 2.25 L/d)/Re - 0.0015 (L/d) / (1 + 7.5 [log10(0.00015 Re)]^2)
+    with Cd_u the orifice's own high-Re Cd as this module anchors it (inlet table x
+    cd_length_factor, cd_u_from_inlet_geometry), then the counterbore approach
+    (approach_beta) and the 0.98 cap exactly as cd_inf_from_inlet_geometry applies them.
+
+    Otherwise (``length_model: piecewise``, or no declared inlet / L/d): the LEGACY, unsourced
+    form Cd(Re) = Cd_inf,eff - a_Re / √Re. ``a_Re`` is a tuned coefficient with no reference
+    and is ignored whenever the Lichtarowicz law applies.
 
     ``Cd_inf,eff`` is ``cd_inf_from_orifice_diameter(d_hyd_m, config)`` when geometry
     mode is enabled; otherwise ``config.Cd_inf``.
 
-    With corrections:
+    Corrections (unsourced; off by default):
     - Pressure correction: Cd(P) = Cd(Re) × [1 + a_P × (P/P_ref - 1)]
     - Temperature correction: Cd(T) = Cd(Re) × [1 + a_T × (T/T_ref - 1)]
 
@@ -112,7 +123,12 @@ def cd_from_re(
     if Re <= 0:
         return float(config.Cd_min)
 
-    Cd = cd_inf_eff - config.a_Re / np.sqrt(max(Re, 1e-6))
+    lich = lichtarowicz_re_inputs(config)
+    if lich is not None:
+        cd_u, lod, beta = lich
+        Cd = min(cd_with_approach(cd_lichtarowicz_re(cd_u, Re, lod), beta), 0.98)
+    else:
+        Cd = cd_inf_eff - config.a_Re / np.sqrt(max(Re, 1e-6))
 
     if config.use_pressure_correction and P_inlet is not None and config.P_ref > 0:
         P_correction = 1.0 + config.a_P * (P_inlet / config.P_ref - 1.0)
@@ -291,6 +307,21 @@ def cd_inf_from_inlet_geometry(config) -> Optional[float]:
 
     Returns None when neither ``inlet_geometry`` nor ``inlet_radius_ratio`` is set, so the
     caller keeps its existing diameter-based behaviour and nothing changes for old configs.
+    This is the orifice's own ultimate Cd (cd_u_from_inlet_geometry) seen through the
+    counterbore approach, capped at 0.98.
+    """
+    cd = cd_u_from_inlet_geometry(config)
+    if cd is None:
+        return None
+    cd = cd_with_approach(cd, getattr(config, "approach_beta", None))
+    return float(min(cd, 0.98))
+
+
+def cd_u_from_inlet_geometry(config) -> Optional[float]:
+    """The ORIFICE's high-Re Cd, inlet table x length factor, before any counterbore approach.
+
+    This is Cd_u of Lichtarowicz et al. (1965) as anchored here (sharp 0.80 at
+    LICHTAROWICZ_REF_LD). None when the config declares no inlet.
     """
     name = getattr(config, "inlet_geometry", None)
     rd = getattr(config, "inlet_radius_ratio", None)
@@ -309,8 +340,48 @@ def cd_inf_from_inlet_geometry(config) -> Optional[float]:
     lod = getattr(config, "orifice_l_over_d", None)
     if lod is not None and np.isfinite(float(lod)):
         cd *= cd_length_factor(float(lod), getattr(config, "length_model", "lichtarowicz"))
-    cd = cd_with_approach(cd, getattr(config, "approach_beta", None))
-    return float(min(cd, 0.98))
+    return float(cd)
+
+
+#: Lichtarowicz, Duggins & Markland (1965), J. Mech. Eng. Sci. 7(2):210-219, eq. for a
+#: sharp-inlet long orifice (2 <= L/d <= 10), non-cavitating:
+#:   1/Cd = 1/Cd_u + A (1 + B L/d)/Re - C (L/d) / (1 + D [log10(E Re)]^2)
+LICHTAROWICZ_RE_A = 20.0
+LICHTAROWICZ_RE_B = 2.25
+LICHTAROWICZ_RE_C = 0.0015
+LICHTAROWICZ_RE_D = 7.5
+LICHTAROWICZ_RE_E = 0.00015
+
+
+def cd_lichtarowicz_re(cd_u: float, Re: float, l_over_d: float) -> float:
+    """Lichtarowicz et al. (1965) Cd at Reynolds number ``Re`` (bulk velocity mdot/(rho A), hole
+    diameter) for an orifice whose ultimate (high-Re) Cd is ``cd_u`` and length is ``l_over_d``.
+
+    Mirrored by ``engine.accel.kernels._cd_lichtarowicz_re``; keep the operation order identical.
+    """
+    x = float(l_over_d)
+    lg = math.log10(LICHTAROWICZ_RE_E * Re)
+    inv = (1.0 / cd_u
+           + LICHTAROWICZ_RE_A * (1.0 + LICHTAROWICZ_RE_B * x) / Re
+           - LICHTAROWICZ_RE_C * x / (1.0 + LICHTAROWICZ_RE_D * lg * lg))
+    return float(1.0 / inv)
+
+
+def lichtarowicz_re_inputs(config) -> Optional[tuple]:
+    """``(Cd_u, L/d, approach_beta)`` when cd_from_re uses the Lichtarowicz Re law, else None.
+
+    It applies when the block declares an inlet (so Cd_u exists), an L/d, and
+    ``length_model: lichtarowicz`` (the default). Otherwise cd_from_re keeps the legacy a_Re form.
+    """
+    if getattr(config, "length_model", "lichtarowicz") != "lichtarowicz":
+        return None
+    lod = getattr(config, "orifice_l_over_d", None)
+    if lod is None or not np.isfinite(float(lod)) or float(lod) <= 0.0:
+        return None
+    cd_u = cd_u_from_inlet_geometry(config)
+    if cd_u is None:
+        return None
+    return float(cd_u), float(lod), getattr(config, "approach_beta", None)
 
 
 # =====================================================================================

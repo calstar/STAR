@@ -81,6 +81,7 @@ export const leaveDiagram = api.leave;
 export const loadDiagram = api.load;
 export const autosaveDiagram = api.autosave;
 export const flushDiagram = api.flush;
+export const rescueDiagram = api.rescue;
 export const getHistory = api.getHistory;
 export const listReleases = api.listReleases;
 export const getVersion = api.getVersion;

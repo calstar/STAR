@@ -52,8 +52,24 @@ const NOT_EDITING: Record<string, string> = {
   'ChamberThermalGraphic.tsx': 'chart controls (half view, units)',
   'InjectorPatternPlot.tsx': 'view controls (section cut, DXF units) and DXF download',
   'InjectorDrawing.tsx': 'draws primitives; hover only',
+  'SprayMixing.tsx': 'runs the spray report on the session config; writes nothing',
   'HeatFluxProfileChart.tsx': 'chart controls (which time slices to draw)',
   'StabilityPanel.tsx': 'sensitivity sliders feeding one evaluate() call',
+  'LayerX.tsx': 'burns a copy of the session config through a feed drawing; writes nothing to the design (settings are view state, each run records what it used)',
+  'LayerXResult.tsx': 'chart cursor and section toggles',
+  'Uncertainty.tsx': 'which output the tornado ranks by',
+  'Flight.tsx': 'charts only',
+  'Reconcile.tsx': 'targets and a job on a copy of the session config; the one write is ReconcileWrite.tsx, gated',
+  'FeedSchematic.tsx': 'play, pause, speed and the time scrubber move the replay cursor of a finished burn; nothing is written',
+  'Optimise.tsx': 'searches feed settings on copies of the session config; "Use these settings" fills the Layer X rail (view state), never the design',
+  'Measured.tsx': 'pairs drawing instruments with DAQ channels (saved per drawing, never in the design) and reads a DAQ export locally',
+  'fields.tsx': 'the number cell the Layer X forms (Trade, Optimise) use for their own ranges; writes nothing',
+  'Menu.tsx': 'a dropdown primitive for the Layer X run picker and export menu; writes nothing',
+  'RunBar.tsx': 'picks, compares, pins and exports Layer X runs (run records on the server, never the design)',
+
+  // Not the engine design: a person's measurements of the feed drawing, kept per user and drawing
+  // (engine/layerx/measurements.py), never written to the config.
+  'ParametersPanel.tsx': "restates feed-drawing parameters for this user's Layer X burns; the design is not touched",
 
   // Not part of the design yet -- see the note above.
 }
@@ -98,6 +114,9 @@ const VIEW_ONLY: Record<string, string> = {
   'DemoLayerCard.tsx:setIsExpanded': 'expand/collapse a layer card',
   'FlightSimulation.tsx:setIsExpanded': 'expand/collapse a section',
   'ForwardMode.tsx:handleEvaluate()': 'runs evaluate(); reads the config, never writes it',
+  'ForwardView.tsx:onClick={onToggle}': 'opens a section of a forward result',
+  "ForwardView.tsx:toggle('handcheck')": 'opens the independent check',
+  "ForwardView.tsx:toggle('inputs')": 'opens the inputs list (its measurement fields sit in a gated fieldset)',
   'FlightSimulation.tsx:handleOptimize : handleSimulate': 'runs the flight sim; writes nothing',
   'CustomPlotter.tsx:setShowDataPreview': 'shows the raw data table under the chart',
   'CustomPlotter.tsx:onClick={handleDownloadENG}': 'exports a thrust curve file',
@@ -139,6 +158,42 @@ const VIEW_ONLY: Record<string, string> = {
   // Local demo state only.
   'OptimizerDemo.tsx:handleReset': 'clears this tab\'s own results',
   'OptimizerDemo.tsx:handleContinueToLayer4': 'runs the flight sim, which does not write the config',
+}
+
+/**
+ * Layer X's rebuilt GUI, components/lx/: exempt by directory, except its write paths.
+ *
+ * Everything in lx/ is the Layer X console: run picking and comparison, the time cursor, page
+ * tabs, chart and schematic controls, the rail's burn settings (view state, and each run records
+ * what it used), units and theme, and the lx/ui primitives themselves. None of it writes the
+ * design -- the same reasons the old layerx/ files are listed one by one in NOT_EDITING above.
+ * Listing every new view file there would turn this audit into a rubber stamp nobody reads, so
+ * the directory is exempt instead.
+ *
+ * The exemption is narrow on purpose. A file under lx/ whose path names a write -- "Write" (the
+ * write-back to the design, as layerx/ReconcileWrite.tsx is today) or "Optimize"/"Optimise" (the
+ * optimiser's "write these to the design") -- is audited like any other component. Case-blind and
+ * on the whole path below lx/, so `optimize/Rail.tsx` and `RailWriteBack.tsx` are both caught; a
+ * false catch costs one gate or one VIEW_ONLY line, a false pass costs the bug this file exists for.
+ *
+ * And because lx/ pages use lx/ui primitives rather than raw tags, an audited lx/ file also has its
+ * primitives checked: <Field>, <Button>, <Toggle>, <Segmented> and <MenuItem> each pass `readOnly` /
+ * `disabled` straight to their native control, so `disabled={readOnly}` (or `readOnly={...}` on a
+ * Field, or a disabled fieldset around them) gates them exactly as it gates a raw tag.
+ */
+const LX_DIR = '/components/lx/'
+const LX_WRITES = /write|optimi[sz]e/i
+const LX_PRIMITIVES = ['Field', 'Button', 'Toggle', 'Segmented', 'MenuItem']
+
+function lxPath(path: string): string | null {
+  const i = path.indexOf(LX_DIR)
+  return i < 0 ? null : path.slice(i + LX_DIR.length)
+}
+
+/** Under lx/ and not a write path: view state only, not audited. */
+function lxViewOnly(path: string): boolean {
+  const rel = lxPath(path)
+  return rel !== null && !LX_WRITES.test(rel)
 }
 
 const raw = import.meta.glob('../components/**/*.tsx', {
@@ -214,6 +269,16 @@ function disabledFieldsetSpans(src: string): [number, number][] {
 }
 
 /**
+ * Whether a control's own tag gates it: `readOnly` inside its `disabled={...}`, or an input's
+ * `readOnly={...}` attribute. Merely mentioning `readOnly` is not gating: a tooltip that says
+ * "check the design out" in a `title={readOnly ? ...}` passed the old presence check while the
+ * button stayed live.
+ */
+function gatedBy(tag: string): boolean {
+  return /\bdisabled=\{[^}]*\breadOnly\b/.test(tag) || /\breadOnly=\{/.test(tag)
+}
+
+/**
  * The VIEW_ONLY key covering this control, if any.
  *
  * A key is `File.tsx:marker`, where `marker` is any distinctive substring of
@@ -229,6 +294,33 @@ function excuseFor(file: string, tag: string): string | null {
   return null
 }
 
+/** Every control in `srcs` (path → comment-stripped source) that edits without a gate or an excuse. */
+function ungatedControls(srcs: Record<string, string>): string[] {
+  const offenders: string[] = []
+
+  for (const [path, src] of Object.entries(srcs)) {
+    const name = path.split('/').pop()!
+    const inLx = lxPath(path) !== null
+    // lx/ files are decided by the directory rule alone: an old layerx/ basename in NOT_EDITING
+    // (Optimise.tsx, LayerX.tsx) must not exempt a new write path that happens to share it.
+    if (inLx ? lxViewOnly(path) : name in NOT_EDITING) continue
+
+    const spans = disabledFieldsetSpans(src)
+    const inFieldset = (at: number) => spans.some(([s, e]) => at > s && at < e)
+
+    for (const tag of ['input', 'select', 'textarea', 'button', ...(inLx ? LX_PRIMITIVES : [])]) {
+      for (const { text, at } of openingTags(src, tag)) {
+        if (gatedBy(text)) continue
+        if (inFieldset(at)) continue
+        if (excuseFor(name, text)) continue
+        offenders.push(`${name}  ${text.replace(/\s+/g, ' ').slice(0, 100)}`)
+      }
+    }
+  }
+
+  return offenders
+}
+
 describe('every design-editing control is gated on the checkout', () => {
   it('keeps every exemption pointing at a real file', () => {
     const stale = Object.keys(NOT_EDITING).filter(
@@ -238,26 +330,38 @@ describe('every design-editing control is gated on the checkout', () => {
   })
 
   it('leaves no ungated input, select, textarea or button', () => {
-    const offenders: string[] = []
-
-    for (const [path, src] of Object.entries(files)) {
-      const name = path.split('/').pop()!
-      if (name in NOT_EDITING) continue
-
-      const spans = disabledFieldsetSpans(src)
-      const inFieldset = (at: number) => spans.some(([s, e]) => at > s && at < e)
-
-      for (const tag of ['input', 'select', 'textarea', 'button']) {
-        for (const { text, at } of openingTags(src, tag)) {
-          if (/\breadOnly\b/.test(text)) continue
-          if (inFieldset(at)) continue
-          if (excuseFor(name, text)) continue
-          offenders.push(`${name}  ${text.replace(/\s+/g, ' ').slice(0, 100)}`)
-        }
-      }
-    }
-
+    const offenders = ungatedControls(files)
     expect(offenders, `ungated controls:\n${offenders.join('\n')}`).toEqual([])
+  })
+
+  // The audit audits itself: the lx/ exemption must not swallow a write path, and must not leak
+  // out of lx/. Synthetic sources, so this holds whatever the real files happen to contain today.
+  it('exempts lx/ view files but still catches an ungated control in an lx/ write path', () => {
+    const ungatedButton = '<button onClick={save}>Save</button>'
+    expect(ungatedControls({ '../components/lx/pages/Feed.tsx': ungatedButton })).toEqual([])
+    expect(ungatedControls({ '../components/lx/ui/Field.tsx': '<input value={v} onChange={c} />' })).toEqual([])
+
+    expect(ungatedControls({ '../components/lx/rail/RailWrite.tsx': ungatedButton })).toHaveLength(1)
+    expect(ungatedControls({ '../components/lx/optimize/Search.tsx': ungatedButton })).toHaveLength(1)
+    expect(ungatedControls({ '../components/lx/pages/Optimise.tsx': ungatedButton })).toHaveLength(1)
+    // A basename the old layerx/ files made exempt does not carry over into lx/.
+    expect(ungatedControls({ '../components/lx/Optimise.tsx': ungatedButton })).toHaveLength(1)
+    // Outside lx/ nothing changed: a new component is audited.
+    expect(ungatedControls({ '../components/NewPanel.tsx': '<input value={v} />' })).toHaveLength(1)
+  })
+
+  it('audits the lx/ui primitives in an lx/ write path, and accepts them gated', () => {
+    const at = '../components/lx/OptimizeRail.tsx'
+    expect(ungatedControls({ [at]: '<Field label="Tank pressure" value={p} onCommit={setP} />' })).toHaveLength(1)
+    expect(ungatedControls({ [at]: '<Button variant="primary" onClick={write}>Write to design</Button>' })).toHaveLength(1)
+    expect(ungatedControls({ [at]: '<Toggle checked={on} onChange={setOn} label="Walls" />' })).toHaveLength(1)
+    expect(ungatedControls({ [at]: '<MenuItem onClick={apply}>Apply</MenuItem>' })).toHaveLength(1)
+
+    expect(ungatedControls({ [at]: '<Field label="Tank pressure" value={p} onCommit={setP} readOnly={readOnly} />' })).toEqual([])
+    expect(ungatedControls({ [at]: '<Button variant="primary" disabled={readOnly || busy} onClick={write}>Write</Button>' })).toEqual([])
+    expect(ungatedControls({ [at]: '<fieldset disabled={readOnly}><Segmented value={v} options={o} onChange={s} ariaLabel="x" /></fieldset>' })).toEqual([])
+    // A title that merely mentions readOnly is not a gate.
+    expect(ungatedControls({ [at]: '<Button title={readOnly ? "check out first" : ""} onClick={write}>Write</Button>' })).toHaveLength(1)
   })
 
   it('gates the individual write controls in analysis-heavy components', () => {
@@ -274,7 +378,7 @@ describe('every design-editing control is gated on the checkout', () => {
         .flatMap((t) => openingTags(src, t))
         .find(({ text }) => text.includes(marker))
       if (!tag) ungated.push(`${key} — no control matches (${why})`)
-      else if (!/\breadOnly\b/.test(tag.text)) ungated.push(`${key} — not gated (${why})`)
+      else if (!gatedBy(tag.text)) ungated.push(`${key} — not gated (${why})`)
     }
     expect(ungated, ungated.join('\n')).toEqual([])
   })

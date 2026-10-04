@@ -112,7 +112,7 @@ export default function ConfigurationSelector({ onConfigChange }: Props) {
     'focus:ring-blue-500 disabled:opacity-50';
 
   return (
-    <div className="flex items-center gap-4">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
       <label className="flex items-center gap-1.5">
         <span className="text-xs text-[var(--color-text-secondary)]">Propellant</span>
         <select

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from typing import Tuple, Dict, Any
 
@@ -34,7 +35,7 @@ from engine.core.spray import (
     spray_angle_from_TMR,
     weber_number,
     ohnesorge_number,
-    smd_impinging_ingebo,
+    smd_impinging_tn4222,
     tau_evap,
     xstar,
     check_spray_constraints,
@@ -49,7 +50,8 @@ from engine.core.injectors.flow_capacity import (
 
 
 
-def _stream_flow(Pc, P_tank, rho, A, d_hyd, mu, discharge, T_in, cd_cap, feed_dp):
+def _stream_flow(Pc, P_tank, rho, A, d_hyd, mu, discharge, T_in, cd_cap, feed_dp,
+                 *, cav=None, network=None, detail=None):
     """One stream's closure at a fixed Pc: ṁ = Cd(Re(ṁ), P_inj) A √(2ρ (P_tank − Δp_feed(ṁ) − Pc)).
 
     g(ṁ) = ṁ − Cd A √(2ρ Δp_inj) is negative at ṁ = 0 and non-negative at
@@ -60,14 +62,32 @@ def _stream_flow(Pc, P_tank, rho, A, d_hyd, mu, discharge, T_in, cd_cap, feed_dp
     Returns (ṁ, Cd, P_inj, Δp_feed, Δp_inj, evaluations).
     """
 
+    def cd_of(Re, P_in):
+        Cd = float(min(cd_from_re(Re, discharge, P_inlet=P_in, T_inlet=T_in, d_hyd_m=d_hyd), cd_cap))
+        if cav is not None and P_in > Pc:
+            # Cavitating orifice (Nurick 1976): Cd = Cc sqrt(K), K = (P_in - P_v)/(P_in - Pc).
+            P_v, Cc = cav
+            K = (P_in - P_v) / (P_in - Pc)
+            Cd = float(min(Cd, Cc * math.sqrt(max(K, 0.0))))
+        return Cd
+
     def state(m):
         dpf = float(feed_dp(m))
         Pi = float(P_tank - dpf)
-        u = m / (rho * A) if A > 0 else 0.0
-        Re = calculate_reynolds_number(rho, u, d_hyd, mu)
-        Cd = float(min(cd_from_re(Re, discharge, P_inlet=Pi, T_inlet=T_in, d_hyd_m=d_hyd), cd_cap))
         dpi = Pi - Pc
-        m_b = float(Cd * A * np.sqrt(2.0 * rho * dpi)) if dpi > 0 else 0.0
+        if network is not None:
+            # Cd stays the holes' own (flow-weighted); the manifold's loss shows as the gap
+            # between the port head and the flow, reported as Cd_eff_manifold.
+            m_b, holes, Cd = network.march(m, Pi, Pc, cd_of)
+            if detail is not None:
+                detail["holes"] = holes
+                detail["cd_eff"] = (float(m_b / (A * math.sqrt(2.0 * rho * dpi)))
+                                    if dpi > 0 and m_b > 0 else float("nan"))
+        else:
+            u = m / (rho * A) if A > 0 else 0.0
+            Re = calculate_reynolds_number(rho, u, d_hyd, mu)
+            Cd = cd_of(Re, Pi)
+            m_b = float(Cd * A * np.sqrt(2.0 * rho * dpi)) if dpi > 0 else 0.0
         return m - m_b, Cd, Pi, dpf, max(0.0, dpi)
 
     if not A > 0 or not P_tank > Pc:
@@ -105,6 +125,132 @@ def _stream_flow(Pc, P_tank, rho, A, d_hyd, mu, discharge, T_in, cd_cap, feed_dp
             _LOG.warning("impinging injector: stream flow root not within tolerance after %d evaluations", n)
     _, Cd, Pi, dpf, dpi = state(m)
     return float(m), Cd, Pi, dpf, dpi, n + 1
+
+
+
+def _churchill_f(Re: float, rel_rough: float) -> float:
+    """Darcy friction factor, Churchill (1977), laminar through fully rough in one expression."""
+    if not Re > 0:
+        return 0.0
+    A = (2.457 * math.log(1.0 / ((7.0 / Re) ** 0.9 + 0.27 * rel_rough))) ** 16
+    B = (37530.0 / Re) ** 16
+    return 8.0 * ((8.0 / Re) ** 12 + 1.0 / (A + B) ** 1.5) ** (1.0 / 12.0)
+
+
+class _RingManifold:
+    """One stream's back channel as a dividing-flow ring, marched hole by hole.
+
+    Each of ``n_ports`` ports splits two ways, so ``2 n_ports`` identical branches each feed
+    ``n_holes / (2 n_ports)`` holes, the first half a pitch from the port (port between holes).
+    Along a branch:
+
+    - into the branch from the port (after the feed line's velocity head is dumped there):
+      p = P_port - (1 + K_ent) rho u^2 / 2;
+    - between holes, Darcy friction (Churchill) on the channel's hydraulic diameter;
+    - each hole flows from the LOCAL STATIC pressure, Cd A sqrt(2 rho (p - Pc)) -- with the
+      approach flow normal to the hole no velocity head is recovered (Rohde, Richards & Metger,
+      NASA TN D-5467, 1969); Cd from the hole's own Reynolds number (and cavitation);
+    - past each hole the branch slows and regains C_R rho (u1^2 - u2^2)/2 of static pressure
+      (dividing-flow manifold; Acrivos, Babcock & Pigford 1959; Bajura 1971).
+
+    The outer root on the stream's total flow closes the branch flow to zero at the dead end.
+    Not modelled: the extra lip separation of crossflow over the hole inlet (TN D-5467 Fig. 7;
+    Strakey & Talley), which lowers Cd further near the port -- measure it by cold flow.
+    """
+
+    def __init__(self, *, n_holes, n_ports, A_ch, D_h, r_ring, A_hole, d_hole, rho, mu,
+                 K_ent, C_R, roughness):
+        self.n_ports = int(max(1, n_ports))
+        per = n_holes / (2.0 * self.n_ports)
+        self.h = int(round(per))
+        if abs(per - self.h) > 1e-9 or self.h < 1:
+            from engine.pipeline.assumptions import assume
+            assume("injector.plate.channel_inlets", self.n_ports,
+                   reason=f"{n_holes} holes do not split evenly over {2 * self.n_ports} branches; "
+                          f"{self.h} per branch used")
+            self.h = max(1, self.h)
+        self.A_ch, self.D_h, self.A_hole, self.d_hole = A_ch, D_h, A_hole, d_hole
+        self.rho, self.mu, self.K_ent, self.C_R = rho, mu, K_ent, C_R
+        self.s = 2.0 * math.pi * r_ring / float(n_holes)
+        self.eps = roughness / D_h if D_h > 0 else 0.0
+        self.scale = float(n_holes) / (2.0 * self.n_ports * self.h)
+
+    def march(self, m_total, P_port, Pc, cd_of):
+        rho, A_ch = self.rho, self.A_ch
+        mb = m_total / (2.0 * self.n_ports)
+        u = mb / (rho * A_ch)
+        p = P_port - (1.0 + self.K_ent) * 0.5 * rho * u * u
+        holes, cds = [], []
+        for j in range(self.h):
+            seg = 0.5 * self.s if j == 0 else self.s
+            Re_ch = rho * abs(u) * self.D_h / self.mu
+            p -= _churchill_f(Re_ch, self.eps) * (seg / self.D_h) * 0.5 * rho * u * abs(u)
+            dp = p - Pc
+            q = 0.0
+            if dp > 0:
+                q = cd_of(0.0, p) * self.A_hole * math.sqrt(2.0 * rho * dp)
+                for _ in range(3):   # the hole's Cd at its own Reynolds number
+                    Re_h = rho * (q / (rho * self.A_hole)) * self.d_hole / self.mu
+                    q = cd_of(Re_h, p) * self.A_hole * math.sqrt(2.0 * rho * dp)
+            cds.append(q / (self.A_hole * math.sqrt(2.0 * rho * dp)) if dp > 0 and q > 0 else cd_of(0.0, p))
+            mb -= q
+            u_new = mb / (rho * A_ch)
+            p += self.C_R * 0.5 * rho * (u * u - u_new * u_new)
+            u = u_new
+            holes.append(q)
+        total = 2.0 * self.n_ports * self.scale * sum(holes)
+        cd_hole = (sum(c * q for c, q in zip(cds, holes)) / sum(holes)) if sum(holes) > 0 else cds[0]
+        return total, holes, cd_hole
+
+
+def _ring_manifold_for(config, side, rho, mu, n_holes, d_hole):
+    """The stream's ring network when the declared plate has back channels, else None."""
+    plate = getattr(config.injector, "plate", None)
+    if (plate is None or getattr(plate, "back", None) != "channels"
+            or getattr(plate, "manifold_model", "plenum") != "ring_network"):
+        return None
+    from engine.core.injectors.layout import layout_from_config
+    lay = layout_from_config(config, drawings=False, checks=False)
+    if lay is None:
+        return None
+    ch = lay["passages"]["O" if side == "oxidizer" else "F"].get("channel")
+    if not ch or not ch.get("flow_area", 0.0) > 0:
+        return None
+    w, h = float(ch["width"]), float(ch.get("flow_height") or ch["depth"])
+    D_h = float(ch.get("hydraulic_diameter") or 4.0 * w * h / (2.0 * (w + h)))   # drawn section, else w x h
+    return _RingManifold(
+        n_holes=int(n_holes), n_ports=int(getattr(plate, "channel_inlets", 1) or 1),
+        A_ch=float(ch["flow_area"]), D_h=D_h, r_ring=float(ch["r_center"]),
+        A_hole=math.pi * d_hole ** 2 / 4.0, d_hole=d_hole, rho=rho, mu=mu,
+        K_ent=float(getattr(plate, "channel_entry_K", 0.5)),
+        C_R=float(getattr(plate, "channel_pressure_regain", 1.0)),
+        roughness=float(getattr(plate, "channel_roughness", 3.2e-6)))
+
+
+def _manifold_diagnostics(net_O, net_F, detail, mdot_O, mdot_F):
+    """Per-hole flow along each channel branch (port first) and the element mixture ratios."""
+    if net_O is None and net_F is None:
+        return {"manifold_model": "plenum"}
+    out = {"manifold_model": "ring_network"}
+    per = {}
+    for k, net, md in (("O", net_O, mdot_O), ("F", net_F, mdot_F)):
+        holes = detail[k].get("holes") if net is not None else None
+        if holes:
+            mean = md / (2.0 * net.n_ports * net.scale * len(holes)) if md > 0 else float("nan")
+            per[k] = list(holes)
+            out[f"element_mass_flows_{k}"] = [float(q) for q in holes]
+            out[f"element_flow_ratio_min_{k}"] = float(min(holes) / mean) if mean > 0 else float("nan")
+            out[f"element_flow_ratio_max_{k}"] = float(max(holes) / mean) if mean > 0 else float("nan")
+            out[f"manifold_branch_velocity_{k}"] = float(md / (2.0 * net.n_ports) / (net.rho * net.A_ch))
+            out[f"manifold_ports_{k}"] = int(net.n_ports)
+            out[f"Cd_eff_manifold_{k}"] = float(detail[k].get("cd_eff", float("nan")))
+    if "O" in per and "F" in per and len(per["O"]) == len(per["F"]):
+        mrs = [o / f if f > 0 else float("inf") for o, f in zip(per["O"], per["F"])]
+        out["element_mixture_ratios"] = mrs
+        out["element_mass_flows"] = [o + f for o, f in zip(per["O"], per["F"])]
+        out["element_mixture_ratio_min"] = float(min(mrs))
+        out["element_mixture_ratio_max"] = float(max(mrs))
+    return out
 
 
 def impingement_standoff_m(
@@ -355,19 +501,21 @@ class ImpingingInjector(InjectorModel):
             """
 
             def _feed_o(m):
-                return delta_p_feed(m, rho_O, feed_O, P_tank_O)
+                return delta_p_feed(m, rho_O, feed_O, P_tank_O, mu=mu_O)
 
             def _feed_f(m):
-                dp = delta_p_feed(m, rho_F, feed_F, P_tank_F)
+                dp = delta_p_feed(m, rho_F, feed_F, P_tank_F, mu=mu_F)
                 if config.regen_cooling is not None and config.regen_cooling.enabled:
                     dp += delta_p_regen_channels(m, rho_F, mu_F, config.regen_cooling, P_tank_F)
                 return dp
 
             mo, Cdo, Pi_o, dpf_o, dpi_o, n_o = _stream_flow(
-                Pc, P_tank_O, rho_O, A_O, d_hyd_O, mu_O, discharge_O, T_tank_O, cd_eff_o, _feed_o
+                Pc, P_tank_O, rho_O, A_O, d_hyd_O, mu_O, discharge_O, T_tank_O, cd_eff_o, _feed_o,
+                cav=cav_O, network=net_O, detail=net_detail["O"],
             )
             mf, Cdf, Pi_f, dpf_f, dpi_f, n_f = _stream_flow(
-                Pc, P_tank_F, rho_F, A_F, d_hyd_F, mu_F, discharge_F, T_tank_F, cd_eff_f, _feed_f
+                Pc, P_tank_F, rho_F, A_F, d_hyd_F, mu_F, discharge_F, T_tank_F, cd_eff_f, _feed_f,
+                cav=cav_F, network=net_F, detail=net_detail["F"],
             )
             fp_it = n_o + n_f
 
@@ -394,6 +542,23 @@ class ImpingingInjector(InjectorModel):
                 )
 
             return mo, mf, Cdo, Cdf, Pi_o, Pi_f, dpf_o, dpf_f, dpi_o, dpi_f, fp_it
+
+        # Cavitation limit on every hole (Nurick 1976); a no-op wherever K > (Cd/Cc)^2.
+        from engine.core.discharge import contraction_coefficient, inlet_radius_ratio_of
+
+        def _cav(side, dc):
+            pv = getattr(fluids[side], "vapor_pressure", None)
+            if pv is None or not np.isfinite(float(pv)):
+                return None
+            return float(pv), contraction_coefficient(inlet_radius_ratio_of(dc))
+
+        cav_O, cav_F = _cav("oxidizer", discharge_O), _cav("fuel", discharge_F)
+        # Back channels as dividing-flow rings (None: the manifold is a plenum at one pressure).
+        net_O = _ring_manifold_for(config, "oxidizer", rho_O, mu_O,
+                                   geometry.oxidizer.n_elements, geometry.oxidizer.d_jet)
+        net_F = _ring_manifold_for(config, "fuel", rho_F, mu_F,
+                                   geometry.fuel.n_elements, geometry.fuel.d_jet)
+        net_detail = {"O": {}, "F": {}}
 
         feed_orifice_fp_last = 0
 
@@ -444,24 +609,25 @@ class ImpingingInjector(InjectorModel):
         # left at "lefebvre" from pintle-era YAML (see dispatch impinging bindings).
         We_O = weber_number(rho_gas, u_rel, geometry.oxidizer.d_jet, sigma_O)
         We_F = weber_number(rho_gas, u_rel, geometry.fuel.d_jet, sigma_F)
-        D32_O = smd_impinging_ingebo(
-            geometry.oxidizer.d_jet,
-            u_rel,
-            rho_O,
-            mu_O,
-            sigma_O,
-            rho_gas,
-            spray_cfg.smd.C_ingebo,
-        )
-        D32_F = smd_impinging_ingebo(
-            geometry.fuel.d_jet,
-            u_rel,
-            rho_F,
-            mu_F,
-            sigma_F,
-            rho_gas,
-            spray_cfg.smd.C_ingebo,
-        )
+        # NACA TN 4222: each stream at its own jet velocity, entering gas at rest (dV = Vj).
+        _smd = spray_cfg.smd
+        _prop = bool(getattr(_smd, "smd_property_scaling", True))
+        _scale = float(getattr(_smd, "smd_scale", 1.0) or 1.0)
+        from engine.core.spray import tn4222_transfer_model
+        _transfer = tn4222_transfer_model(_smd)
+        # A stream that does not flow (tank at or below Pc) has no spray: NaN, not an error.
+        D32_O = (_scale * smd_impinging_tn4222(
+            geometry.oxidizer.d_jet, u_O, rho_O, mu_O, sigma_O, rho_gas,
+            scale_properties=_prop, transfer=_transfer) if u_O > 0 else float("nan"))
+        D32_F = (_scale * smd_impinging_tn4222(
+            geometry.fuel.d_jet, u_F, rho_F, mu_F, sigma_F, rho_gas,
+            scale_properties=_prop, transfer=_transfer) if u_F > 0 else float("nan"))
+        # Measured D32 (measurements.d32_*_um) replaces the correlation where it was measured.
+        _mO, _mF = getattr(_smd, "d32_measured_O", None), getattr(_smd, "d32_measured_F", None)
+        if _mO and u_O > 0:
+            D32_O = float(_mO)
+        if _mF and u_F > 0:
+            D32_F = float(_mF)
 
         # Evaporation constant from propellant properties + chamber state, not a single
         # hardcoded K. Falls back to the legacy tau = K*D32^2 when the derivation cannot run
@@ -500,7 +666,8 @@ class ImpingingInjector(InjectorModel):
             mdot_F=mdot_F, u_F=u_F, theta_F_deg=geometry.fuel.impingement_angle,
         )
         u_transport = u_axial if np.isfinite(u_axial) and u_axial > 0 else u_rel
-        x_star = max(xstar(u_transport, tau_evap_O), xstar(u_transport, tau_evap_F))
+        _xs = [v for v in (xstar(u_transport, tau_evap_O), xstar(u_transport, tau_evap_F)) if np.isfinite(v)]
+        x_star = max(_xs) if _xs else float("nan")   # NaN only when neither stream flows
 
         # ---- Impinging-doublet geometry (standoff + ring pitch) -------------------------------
         # Each stream's ``impingement_angle`` is the jet inclination from the chamber axis; the
@@ -697,6 +864,7 @@ class ImpingingInjector(InjectorModel):
                 "delta_p_feed_O": float(delta_p_feed_O_final),
                 "delta_p_feed_F": float(delta_p_feed_F_final),
                 "feed_orifice_coupling_iterations": int(feed_orifice_fp_last),
+                **_manifold_diagnostics(net_O, net_F, net_detail, mdot_O, mdot_F),
                 "mdot_from_bernoulli_O": float(mdot_from_bernoulli_O),
                 "mdot_from_bernoulli_F": float(mdot_from_bernoulli_F),
                 **mom_update,

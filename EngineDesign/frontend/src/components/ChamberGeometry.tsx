@@ -5,6 +5,7 @@ import { ChamberContourPlot } from './ChamberContourPlot';
 import { InjectorPatternPlot } from './InjectorPatternPlot';
 import { ChamberThermalGraphic } from './ChamberThermalGraphic';
 import { InjectorHardware } from './InjectorHardware';
+import { SprayMixing } from './SprayMixing';
 import { useViewState } from '../lib/viewState';
 
 interface ChamberGeometryProps {
@@ -163,7 +164,10 @@ export function ChamberGeometry({ config, onConfigUpdated }: ChamberGeometryProp
           <h3 className="text-base font-bold text-[var(--color-text-primary)] mb-3">Injector Pattern</h3>
           <InjectorPatternPlot layout={injector} />
           <div className="mt-3">
-            <InjectorHardware onSaved={(c) => { onConfigUpdated?.(c); void fetchGeometry(); }} />
+            <InjectorHardware reloadKey={injector} onSaved={(c) => { onConfigUpdated?.(c); void fetchGeometry(); }} />
+          </div>
+          <div className="mt-3">
+            <SprayMixing />
           </div>
         </div>
       )}

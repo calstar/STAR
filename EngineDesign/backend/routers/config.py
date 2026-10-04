@@ -1,6 +1,6 @@
 """Config management endpoints."""
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
 from starlette.concurrency import run_in_threadpool
 import os
 from pathlib import Path
@@ -68,7 +68,7 @@ async def get_config(session: UserSession = Depends(get_session)):
     """Get the current config as JSON."""
     if not session.app_state.has_config():
         raise HTTPException(status_code=404, detail="No config loaded. Upload a config file first.")
-    return {"config": config_to_dict(session.app_state.config)}
+    return {"config": config_to_dict(session.app_state.config), "session_epoch": session.epoch}
 
 
 @router.post("/load")
@@ -93,7 +93,7 @@ async def load_config_json(body: dict, session: UserSession = Depends(get_sessio
     # Off the event loop: a cold CEA cache build here would block every other
     # request. See the note in upload_config.
     await run_in_threadpool(session.app_state.set_config, config, session.app_state.config_path)
-    return {"status": "success", "config": config_to_dict(config)}
+    return {"status": "success", "config": config_to_dict(config), "session_epoch": session.epoch}
 
 
 @router.get("/parameters")
@@ -209,13 +209,24 @@ async def update_config(
     updates: dict,
     session: UserSession = Depends(get_session),
     _: None = DesignCheckout,
+    expect_sha256: str | None = Query(default=None, max_length=64, pattern="^[0-9a-f]{64}$"),
 ):
     """Update the current config with partial updates.
 
     Accepts a nested dict of updates that will be merged with the current config.
+
+    ``expect_sha256``: the design the update was computed for (Layer X's fitted feed, a reconciled
+    injector). If the live design is no longer that one the write is refused with 409: a K0 fitted
+    to one design must not land in another because a tab was a few seconds stale.
     """
     if not session.app_state.has_config():
         raise HTTPException(status_code=404, detail="No config loaded. Upload a config file first.")
+    # A string only: called as a plain function (tests, other routes) the default is FastAPI's Query object.
+    if isinstance(expect_sha256, str):
+        from engine.layerx.fingerprint import config_fingerprint
+
+        if config_fingerprint(session.app_state.config) != expect_sha256:
+            raise HTTPException(status_code=409, detail="The design has changed since this was computed. Run it again first.")
 
     try:
         # Get current config as dict

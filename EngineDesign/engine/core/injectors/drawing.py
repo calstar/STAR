@@ -101,6 +101,9 @@ def _plug_outline(lay: Dict[str, Any]) -> List[Pt]:
     """The plug's half-section outline in (x = z, y = r), from the port wall around to it again:
     along the face (groove included) out to the sleeve bore, down the rim, back along the back
     face with each channel notched in, up the hub, and the port wall."""
+    if lay.get("profile"):
+        # The half-section the layout built (or read from the drawing): (r, z) -> (x = z, y = r).
+        return [(z, r) for r, z in lay["profile"]["loop"]]
     f, inp, env = lay["face"], lay["inputs"], lay["envelope"]
     t = float(inp["plate_thickness"])
     ign = lay.get("igniter") or {}
@@ -203,7 +206,7 @@ def _passage_parts(lay: Dict[str, Any], k: str) -> List[Tuple[Pt, ...]]:
 
     start_x = None if f["contoured"] else 0.0            # contoured: the exit is square on the flank
     if ch is not None:
-        end_x = None if ch["floor"] == "coned" else ch["end"][1]
+        end_x = None if ch["floor"] in ("coned", "spot", "drawing") else ch["end"][1]
         L = ch["length"]
         (a1, a2), (b1, b2) = (edge(+0.5 * d, 0.0, L, start_x, end_x),
                               edge(-0.5 * d, 0.0, L, start_x, end_x))
@@ -329,7 +332,8 @@ def _section(lay: Dict[str, Any], through_doublet: bool) -> List[Dict[str, Any]]
                             H([(z_back, r_port_major), (z_back + run, r_end), (z_back + run, r_tap)])))
         for ch in chans.values():
             if ch:   # the channel's centre line, back face to floor
-                geo.append(poly("CENTER", H([(-t, ch["r_center"]), (ch["end"][1], ch["r_center"])])))
+                rf = ch.get("r_floor", ch["r_center"])
+                geo.append(poly("CENTER", H([(-t, rf), (-t + ch["depth"], rf)])))
         if has_doublet and not f["degenerate"]:
             idx = int(round(kk)) % n
             for k in ("O", "F"):
@@ -369,11 +373,12 @@ def _section(lay: Dict[str, Any], through_doublet: bool) -> List[Dict[str, Any]]
         ch = chans[k]
         if not ch:
             continue
-        z_floor = -ch["end"][1]               # the floor at the channel's centre, drawing frame
+        rf = ch.get("r_floor", ch["r_center"])
+        z_floor = t - ch["depth"]             # the floor, drawing frame
         prims.append(dim((ch["r_lo"], t), (ch["r_hi"], t), (0.0, 0.0015), _mm(ch["width"])))
-        prims.append(dim((ch["r_center"], t), (ch["r_center"], z_floor),
-                         (ch["r_hi"] - ch["r_center"] + 0.0012, 0.0), _mm(ch["depth"]), side="right"))
-        prims.append(text("PASSAGE_" + k, (ch["r_center"], t + 0.0015 + 1.6 * fs), f"{name} channel", "middle"))
+        prims.append(dim((rf, t), (rf, z_floor), (ch["r_hi"] - rf + 0.0012, 0.0), _mm(ch["depth"]), side="right"))
+        prims.append(text("PASSAGE_" + k, (0.5 * (ch["r_lo"] + ch["r_hi"]), t + 0.0015 + 1.6 * fs),
+                          f"{name} channel", "middle"))
     if ign:
         # The thread line runs the engagement the thread needs (L2) from the back; red when the
         # metal at the port is shorter than that.
@@ -383,6 +388,10 @@ def _section(lay: Dict[str, Any], through_doublet: bool) -> List[Dict[str, Any]]
         if ign["l2"] > top_y:
             prims.append(text("BAD", (-0.0015, 0.5 * top_y - 0.9 * fs), f"needs {_mm(ign['l2'])}, has {_mm(top_y)}", "end"))
 
+    grooves = (lay.get("profile") or {}).get("grooves") or []
+    if grooves:
+        g0 = grooves[0]
+        prims.append(text("NOTE", (0.5 * (g0["r_inner"] + g0["r_outer"]), t + 0.0015 + 1.6 * fs), "seal", "middle"))
     ref = r_so if env["sleeve_declared"] else r_s
     prims.append(dim((r_s, 0.0), (r_s, t), (ref - r_s + 0.003, 0.0), f"plate {_mm(t)}", side="right"))
     if hub_t > t and ign and ign.get("hub_diameter"):
@@ -432,6 +441,9 @@ def _face(lay: Dict[str, Any], back: bool) -> List[Dict[str, Any]]:
             if ch:
                 prims.append(circle("CHANNEL_" + k, (0.0, 0.0), ch["r_lo"]))
                 prims.append(circle("CHANNEL_" + k, (0.0, 0.0), ch["r_hi"]))
+        for g in (lay.get("profile") or {}).get("grooves") or []:
+            prims.append(circle("SEAL", (0.0, 0.0), g["r_inner"]))
+            prims.append(circle("SEAL", (0.0, 0.0), g["r_outer"]))
     for k in ("O", "F"):
         st = inp["oxidizer" if k == "O" else "fuel"]
         th, d = float(st["impingement_angle"]), float(st["d_jet"])
@@ -489,11 +501,63 @@ def _face(lay: Dict[str, Any], back: bool) -> List[Dict[str, Any]]:
     return prims
 
 
+# =============================================================================================
+# Port plate and revolve sketch
+# =============================================================================================
+
+def _ports(lay: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The cover plate from above: its feed ports over the channels (hidden), the igniter."""
+    ports, env, P = lay["ports"], lay["envelope"], lay["passages"]
+    r_s = env["r_sleeve_id"]
+    prims: List[Dict[str, Any]] = [circle("PLATE", (0.0, 0.0), r_s)]
+    for k in ("O", "F"):
+        ch = P[k]["channel"]
+        prims.append(circle("HIDDEN", (0.0, 0.0), ch["r_lo"]))
+        prims.append(circle("HIDDEN", (0.0, 0.0), ch["r_hi"]))
+    for g in (lay.get("profile") or {}).get("grooves") or []:
+        prims.append(circle("SEAL", (0.0, 0.0), g["r_inner"]))
+        prims.append(circle("SEAL", (0.0, 0.0), g["r_outer"]))
+    for k, name in (("O", "LOX"), ("F", "fuel")):
+        ring = ports["rings"][k]
+        for i, a in enumerate(ring["angles_deg"]):
+            ang = math.radians(90.0 - a)          # the first port at 12 o'clock, clockwise
+            c = (ring["r"] * math.cos(ang), ring["r"] * math.sin(ang))
+            prims.append(circle("PASSAGE_" + k, c, 0.5 * ports["bore"], id=f"P{k}{i}"))
+            prims.append(circle("THREAD", c, 0.5 * ports["thread_od"]))
+        a = math.radians(90.0 - ring["angles_deg"][0])
+        prims.append(text("PASSAGE_" + k, (ring["r"] * math.cos(a) + 0.5 * ports["thread_od"] + 0.0015,
+                                           ring["r"] * math.sin(a)),
+                          f"{name} {ports['per_ring']}× {ports['thread']} on ⌀{_mm(2 * ring['r'], 1)}", "start"))
+    ign = lay.get("igniter")
+    if ign:
+        prims.append(circle("IGNITER", (0.0, 0.0), 0.5 * ign["tap_drill"]))
+        prims.append(circle("THREAD", (0.0, 0.0), 0.5 * ign["thread_od"]))
+        prims.append(text("NOTE", (0.0, -0.5 * ign["thread_od"] - 0.004), f"igniter {ign['thread']}", "middle"))
+    prims.append(poly("CENTER", [(-r_s * 1.04, 0.0), (r_s * 1.04, 0.0)]))
+    prims.append(poly("CENTER", [(0.0, -r_s * 1.04), (0.0, r_s * 1.04)]))
+    return prims
+
+
+def _revolve(lay: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The plate's half-section as a CAD revolve sketch: one closed profile, radius across (x),
+    axial up from the face (y = 0 at the face, the back face at y = t), and the axis. Nothing
+    else, so it revolves as it is."""
+    loop = lay["profile"]["loop"]
+    t = float(lay["profile"]["thickness"])
+    return [poly("PLATE", [(r, -z) for r, z in loop], closed=True),
+            poly("CENTER", [(0.0, -0.1 * t), (0.0, 1.1 * t)])]
+
+
 def injector_drawings(lay: Dict[str, Any]) -> Dict[str, Any]:
     """All views of a layout."""
-    return {
+    out = {
         "face": _face(lay, back=False),
         "back": _face(lay, back=True),
         "section_doublet": _section(lay, True),
         "section_between": _section(lay, False),
     }
+    if lay.get("profile"):
+        out["revolve"] = _revolve(lay)
+    if lay.get("ports"):
+        out["ports"] = _ports(lay)
+    return out

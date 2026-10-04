@@ -157,15 +157,28 @@ def fitting_K(name: str, ctx: FittingContext) -> float:
 
 
 def _bend(ctx: FittingContext, angle: float) -> float:
-    return float(
-        ft.bend_rounded(
-            Di=ctx.bore,
-            angle=ctx.get("angle", angle),
-            Re=ctx.Re or None,
-            roughness=ctx.roughness,
-            bend_diameters=ctx.get("bend_diameters", 5.0),
+    def rennels(Re: float | None, fd: float | None = None) -> float:
+        return float(
+            ft.bend_rounded(
+                Di=ctx.bore,
+                angle=ctx.get("angle", angle),
+                fd=fd,
+                roughness=ctx.roughness,
+                bend_diameters=ctx.get("bend_diameters", 5.0),
+                Re=Re,
+            )
         )
-    )
+
+    try:
+        return rennels(ctx.Re or None)
+    except ValueError:
+        # Below Re ~ 5 Rennels computes its own friction factor with Clamond's
+        # turbulent formula, which takes the log of a negative number. Hand it
+        # the line's own -- laminar-correct -- instead, and only then: where it
+        # works, the number is exactly fluids' as before.
+        if not ctx.fd > 0.0:
+            raise
+        return rennels(None, fd=ctx.fd)
 
 
 def _contraction(ctx: FittingContext) -> float:

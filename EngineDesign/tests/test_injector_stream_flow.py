@@ -17,6 +17,8 @@ def _injector():
     from engine.core.injectors.impinging import ImpingingInjector
 
     cfg = load_config("configs/ethalox_6500N.yaml")
+    if getattr(cfg.injector, "plate", None) is not None:
+        cfg.injector.plate.manifold_model = "plenum"   # the plenum closure; rings: test_injector_ring_manifold
     return ImpingingInjector(cfg)
 
 

@@ -49,6 +49,13 @@ from feedtwin.engine.chamber import (
     cea_cache_for,
     mixture_ratio_of,
 )
+from feedtwin.engine.card import (
+    CardChamber,
+    ChamberCard,
+    EngineCard,
+    InjectorCard,
+    Table2D,
+)
 from feedtwin.engine.component import EngineCoupling, InjectorLeg, injector_legs
 from feedtwin.engine.design import (
     PROPELLANT_ALIASES,
@@ -69,6 +76,11 @@ from feedtwin.engine.importer import (
 )
 
 __all__ = [
+    "CardChamber",
+    "ChamberCard",
+    "EngineCard",
+    "InjectorCard",
+    "Table2D",
     "MixtureBalance",
     "SideBalance",
     "balance_from",

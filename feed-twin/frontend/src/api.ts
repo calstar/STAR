@@ -215,8 +215,12 @@ export interface TankState {
    *  chilling down and will boil hard if the vent shuts. */
   wall_temperature_K?: number;
   surface_temperature_K?: number;
+  /** A LOX load still chilling the wall: nothing collects yet. */
+  chilling?: boolean;
   /** What the drawing says the vessel holds [L]. */
   volume_L?: number;
+  /** Which leg the tank is on, from what it holds. Empty on a bottle. */
+  side?: 'lox' | 'fuel' | '';
 }
 
 /** One tick of a live stand. */

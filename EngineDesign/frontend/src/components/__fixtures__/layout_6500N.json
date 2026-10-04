@@ -11840,6 +11840,94 @@
     "t": "poly"
    }
   ],
+  "revolve": [
+   {
+    "closed": true,
+    "layer": "PLATE",
+    "pts": [
+     [
+      0.0091281,
+      -0.0
+     ],
+     [
+      0.0334832,
+      -0.0
+     ],
+     [
+      0.0353511,
+      0.0017418
+     ],
+     [
+      0.0451745,
+      0.0017418
+     ],
+     [
+      0.0468566,
+      -0.0
+     ],
+     [
+      0.0762,
+      -0.0
+     ],
+     [
+      0.0762,
+      0.0127
+     ],
+     [
+      0.0516285,
+      0.0127
+     ],
+     [
+      0.0516285,
+      0.0048204
+     ],
+     [
+      0.0485823,
+      0.0048204
+     ],
+     [
+      0.0485823,
+      0.0127
+     ],
+     [
+      0.0317526,
+      0.0127
+     ],
+     [
+      0.0317526,
+      0.0053994
+     ],
+     [
+      0.028636,
+      0.0053994
+     ],
+     [
+      0.028636,
+      0.0127
+     ],
+     [
+      0.0091281,
+      0.0127
+     ]
+    ],
+    "t": "poly"
+   },
+   {
+    "closed": false,
+    "layer": "CENTER",
+    "pts": [
+     [
+      0.0,
+      -0.00127
+     ],
+     [
+      0.0,
+      0.01397
+     ]
+    ],
+    "t": "poly"
+   }
+  ],
   "section_between": [
    {
     "closed": true,
@@ -13867,6 +13955,7 @@
      0.05010543581252971,
      -0.0048204451424901755
     ],
+    "entry_lip_deg": 44.0,
     "exit": [
      0.046015565864881355,
      -0.0008709036436253691
@@ -13883,9 +13972,27 @@
     "orifice_area": 3.808307051127946e-05,
     "pierces_back": false,
     "r_center": 0.05010543581252971,
+    "r_floor": 0.05010543581252971,
     "r_hi": 0.05162852653866917,
     "r_lo": 0.04858234508639024,
-    "short_wall_l_over_d": 3.4822348431047154,
+    "section": [
+     [
+      0.04858234508639024,
+      -0.0127
+     ],
+     [
+      0.04858234508639024,
+      -0.0048204451424901755
+     ],
+     [
+      0.05162852653866917,
+      -0.0048204451424901755
+     ],
+     [
+      0.05162852653866917,
+      -0.0127
+     ]
+    ],
     "width": 0.0030461814522789307,
     "width_min": 0.0030461814522789307,
     "width_widened": false
@@ -13937,6 +14044,7 @@
      0.030194280945049785,
      -0.0053993718970754
     ],
+    "entry_lip_deg": 47.0,
     "exit": [
      0.034417145908487407,
      -0.0008709036436253691
@@ -13953,9 +14061,27 @@
     "orifice_area": 4.516779271481301e-05,
     "pierces_back": false,
     "r_center": 0.030194280945049785,
+    "r_floor": 0.030194280945049785,
     "r_hi": 0.03175257513737201,
     "r_lo": 0.028635986752727563,
-    "short_wall_l_over_d": 3.533742456931169,
+    "section": [
+     [
+      0.028635986752727563,
+      -0.0127
+     ],
+     [
+      0.028635986752727563,
+      -0.0053993718970754
+     ],
+     [
+      0.03175257513737201,
+      -0.0053993718970754
+     ],
+     [
+      0.03175257513737201,
+      -0.0127
+     ]
+    ],
     "width": 0.0031165883846444448,
     "width_min": 0.0031165883846444448,
     "width_widened": false
@@ -13977,6 +14103,147 @@
    "thru": 0.006191898999655421
   }
  },
+ "plate_bending": {
+  "allowable": null,
+  "centre": {
+   "M_r": -0.0,
+   "M_t": 6459.885934479446,
+   "r": 0.010667999999999999,
+   "sigma": 240308237.37911016,
+   "sigma_r": -0.0,
+   "sigma_t": 240308237.37911016,
+   "t_net": 0.0127
+  },
+  "channels": {
+   "F": {
+    "M_r": 1733.9295834061909,
+    "M_t": 2635.394913884161,
+    "r": 0.04858234508639024,
+    "sigma": 447721981.32657135,
+    "sigma_r": 447721981.32657135,
+    "sigma_t": 164182931.542493,
+    "t_net": 0.0048204451424901755
+   },
+   "O": {
+    "M_r": 2352.3218887640114,
+    "M_t": 3450.3535117259385,
+    "r": 0.028635986752727563,
+    "sigma": 484129466.3728625,
+    "sigma_r": 484129466.3728625,
+    "sigma_t": 188647002.08602673,
+    "t_net": 0.0053993718970754
+   }
+  },
+  "max": {
+   "M_r": 2352.3218887640114,
+   "M_t": 3450.3535117259385,
+   "r": 0.028635986752727563,
+   "sigma": 484129466.3728625,
+   "sigma_r": 484129466.3728625,
+   "sigma_t": 188647002.08602673,
+   "t_net": 0.0053993718970754,
+   "where": "LOX channel root"
+  },
+  "p_gauge": 2863420.51,
+  "p_source": "target_chamber_pressure_psi, 1 atm outside",
+  "poisson_assumed": true,
+  "poisson_ratio": 0.3,
+  "r_hole": 0.010667999999999999,
+  "r_loaded": 0.0635,
+  "r_plate": 0.0762,
+  "support": "simply_supported",
+  "thickness": 0.0127,
+  "yield_factor": 1.5,
+  "yield_strength": null
+ },
+ "ports": null,
+ "profile": {
+  "back_lands": [
+   {
+    "between": "the centre port and LOX channel",
+    "land": 0.019507861752727562
+   },
+   {
+    "between": "LOX channel and fuel channel",
+    "land": 0.016829769949018233
+   },
+   {
+    "between": "fuel channel and the rim",
+    "land": 0.02457147346133083
+   }
+  ],
+  "grooves": [],
+  "loop": [
+   [
+    0.009128124999999999,
+    0.0
+   ],
+   [
+    0.03348321609161707,
+    0.0
+   ],
+   [
+    0.03535107572535774,
+    -0.0017418072872507381
+   ],
+   [
+    0.04517454399229376,
+    -0.0017418072872507381
+   ],
+   [
+    0.04685658773746895,
+    0.0
+   ],
+   [
+    0.0762,
+    0.0
+   ],
+   [
+    0.0762,
+    -0.0127
+   ],
+   [
+    0.05162852653866917,
+    -0.0127
+   ],
+   [
+    0.05162852653866917,
+    -0.0048204451424901755
+   ],
+   [
+    0.04858234508639024,
+    -0.0048204451424901755
+   ],
+   [
+    0.04858234508639024,
+    -0.0127
+   ],
+   [
+    0.03175257513737201,
+    -0.0127
+   ],
+   [
+    0.03175257513737201,
+    -0.0053993718970754
+   ],
+   [
+    0.028635986752727563,
+    -0.0053993718970754
+   ],
+   [
+    0.028635986752727563,
+    -0.0127
+   ],
+   [
+    0.009128124999999999,
+    -0.0127
+   ]
+  ],
+  "skipped": [],
+  "thickness": 0.0127,
+  "thread_clash": [],
+  "with_port": true
+ },
  "warnings": [
   {
    "code": "channel_area_O",
@@ -13984,9 +14251,9 @@
    "text": "LOX channel cross-section 22.8 mm\u00b2 is 0.50\u00d7 the 45.2 mm\u00b2 of orifices it feeds \u2014 the channel (and any groove in the cover) is the manifold; SP-8089: as large a cross-section as possible, confirm by cold flow"
   },
   {
-   "code": "short_wall_O",
-   "level": "warn",
-   "text": "LOX holes break into a flat floor obliquely: the short wall is L/d 3.5, under SP-8089's 4 \u2014 raise the hole L/d or cone the floor"
+   "code": "oblique_inlet_O",
+   "level": "info",
+   "text": "LOX holes break into the flat channel floor 43\u00b0 off square: the inlet lip on the acute side is 47\u00b0, not the 90\u00b0 sharp edge the Cd (and the cavitation Cc) are for; its effect on Cd and on the jet direction is not modelled \u2014 cone the floor (channel_floor: coned) or cold-flow one element for its Cd"
   },
   {
    "code": "channel_area_F",
@@ -13994,14 +14261,19 @@
    "text": "fuel channel cross-section 24.0 mm\u00b2 is 0.63\u00d7 the 38.1 mm\u00b2 of orifices it feeds \u2014 the channel (and any groove in the cover) is the manifold; SP-8089: as large a cross-section as possible, confirm by cold flow"
   },
   {
-   "code": "short_wall_F",
-   "level": "warn",
-   "text": "fuel holes break into a flat floor obliquely: the short wall is L/d 3.5, under SP-8089's 4 \u2014 raise the hole L/d or cone the floor"
+   "code": "oblique_inlet_F",
+   "level": "info",
+   "text": "fuel holes break into the flat channel floor 46\u00b0 off square: the inlet lip on the acute side is 44\u00b0, not the 90\u00b0 sharp edge the Cd (and the cavitation Cc) are for; its effect on Cd and on the jet direction is not modelled \u2014 cone the floor (channel_floor: coned) or cold-flow one element for its Cd"
   },
   {
    "code": "igniter_engagement",
    "level": "bad",
    "text": "1/2 NPT needs 13.56 mm of thread (ASME B1.20.1 L2); the plate is 12.70 mm at the port \u2014 raise 'Thickness at port' (injector.igniter.hub_thickness) or thicken the plate"
+  },
+  {
+   "code": "plate_bending",
+   "level": "info",
+   "text": "plate bending under Pc 2.86 MPa gauge (target_chamber_pressure_psi, 1 atm outside) over \u2300127.0, \u2300152.4 plug simply supported, \u03bd 0.3 assumed, Tresca: LOX channel ligament 5.40 mm at r 28.6: 484 MPa; fuel channel ligament 4.82 mm at r 48.6: 448 MPa; port edge 240 MPa; max 484 MPa at r 28.6 mm (LOX channel root) \u2014 material undeclared (injector.plate.yield_strength): stress only (manifold pressure in the channels and cover/bolt loads not included)"
   }
  ]
 }

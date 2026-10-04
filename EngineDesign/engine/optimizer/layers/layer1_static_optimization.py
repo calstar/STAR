@@ -31,8 +31,10 @@ from engine.core.injectors.layout import (
     EXIT_LAND_DEFAULT,
     FREE_JET_MAX_D,
     PLATE_THICKNESS_DEFAULT,
+    MANIFOLD_Q_FRAC,
     channel_for_ring,
     channel_lands,
+    channel_velocity_head as _channel_velocity_head,
     igniter_keepouts,
     impingement_ld_band,
     passage_back_entry,
@@ -204,6 +206,48 @@ def _layer1_plate(config_obj: Any) -> Dict[str, Any]:
     return pl.model_dump() if hasattr(pl, "model_dump") else dict(pl)
 
 
+def _layer1_injector_plate_constants(config_obj: Any, requirements: Dict[str, Any]) -> Dict[str, Any]:
+    """The injector-plate entries of Layer 1's constants dict, from the config and requirements.
+
+    Nothing declared under ``injector.plate`` => flat face, plenum back: exactly the constraints
+    this optimizer had before. ``layer1_injector_plate_support`` reads ``injector.plate.support``
+    when the schema carries it; a rim-retained plug defaults to simply supported.
+    """
+    # Orifice land length (diameters) per side, which decides whether the back-face entry is
+    # the counterbore or the orifice itself. Same source the Cd model reads.
+    def _land_ld(side: str) -> float:
+        try:
+            v = getattr(config_obj.discharge[side], "orifice_l_over_d", None)
+        except (KeyError, TypeError, AttributeError):
+            v = None
+        return float(v) if v is not None and np.isfinite(float(v)) and float(v) > 0 else 4.0
+    ld_O = _land_ld("oxidizer")
+    try:
+        _fuel_ld = getattr(config_obj.discharge["fuel"], "orifice_l_over_d", None)
+    except (KeyError, TypeError, AttributeError):
+        _fuel_ld = None
+    # The layout falls back to the oxidiser's L/d, not 4.0; so does this.
+    ld_F = _land_ld("fuel") if _fuel_ld is not None else ld_O
+    plate = _layer1_plate(config_obj)
+    plate_obj = getattr(getattr(config_obj, "injector", None), "plate", None)
+    support = getattr(plate_obj, "support", None) or plate.get("support") or "simply_supported"
+    _closure_plate_stress_coeff(support)          # an unknown value fails here, not per candidate
+    return {
+        "layer1_injector_plate_thickness_m": _requirement_float(
+            requirements, "layer1_injector_plate_thickness_m", 0.0),
+        "layer1_injector_land_ld_O": ld_O,
+        "layer1_injector_land_ld_F": ld_F,
+        "layer1_injector_face_contoured": plate.get("face") == "contoured",
+        "layer1_injector_back_channels": plate.get("back") == "channels",
+        "layer1_injector_exit_land": (float(plate["exit_land"]) if plate.get("exit_land") is not None
+                                      else EXIT_LAND_DEFAULT),
+        "layer1_injector_channel_width_m": float(plate.get("channel_width") or 0.0),
+        "layer1_injector_channel_floor": str(plate.get("channel_floor") or "flat"),
+        "layer1_injector_channel_inlets": int(plate.get("channel_inlets") or 1),
+        "layer1_injector_plate_support": str(support),
+    }
+
+
 def _layer1_centre_clear_m(config_obj: Any, requirements: Dict[str, Any]) -> float:
     """Centre keep-out diameter: the explicit reservation if set, else the igniter's, else 0."""
     cc = _requirement_float(requirements, "layer1_injector_center_clear_dia_m", 0.0)
@@ -337,14 +381,35 @@ def _store_last_good_eval_bundle_from_worker_res(
     }
 
 
+def _lox_ring_inboard(spacing_O_m: Any, spacing_F_m: Any, *, fallback: bool = True) -> bool:
+    """True when the LOX pitch circle is inside (or on) the fuel's: D_pitch = n s / pi with one
+    n for both rings, so the spacings order the rings. ``fallback`` when either is unusable."""
+    try:
+        sO, sF = float(spacing_O_m), float(spacing_F_m)
+    except (TypeError, ValueError):
+        return bool(fallback)
+    if not (np.isfinite(sO) and np.isfinite(sF) and sO > 0 and sF > 0):
+        return bool(fallback)
+    return bool(sO <= sF)
+
+
 def _impinging_resultant_tilt_deg(
     mdot_O: float, mdot_F: float,
     rho_O: float, rho_F: float,
     n_elements: float, d_jet_O_m: float, d_jet_F_m: float,
     angle_O_deg: float, angle_F_deg: float,
     lox_inboard: bool = True,
+    *,
+    spacing_O_m: float = float("nan"),
+    spacing_F_m: float = float("nan"),
 ) -> float:
     """Tilt of the doublet's resultant from the chamber axis [deg]; + = toward the WALL.
+
+    Which ring is inboard comes from the pitch circles when the spacings are given
+    (:func:`_lox_ring_inboard`, the rule :func:`_resultant_tilt_breakeven_deg` uses), and
+    only falls back to ``lox_inboard`` without them. It used to come from the
+    ``layer1_ring_order_fuel_outboard`` REQUEST, so a design whose LOX ring sat outboard had
+    its tilt reported with the wrong sign against a break-even computed the right way.
 
     This is the quantity the "protect the ablative" rule was always meant to guard. A
     doublet's spray fan follows the VECTOR SUM of its two streams. With LOX inboard, the LOX
@@ -385,6 +450,7 @@ def _impinging_resultant_tilt_deg(
     p_F = mF * (mF / (rF * A_F))
     if not (np.isfinite(p_O) and np.isfinite(p_F)):
         return float("nan")
+    lox_inboard = _lox_ring_inboard(spacing_O_m, spacing_F_m, fallback=lox_inboard)
     sgn = 1.0 if lox_inboard else -1.0     # flip the rings, flip which way "outward" is
     P_r = sgn * (p_O * np.sin(tO) - p_F * np.sin(tF))
     P_z = p_O * np.cos(tO) + p_F * np.cos(tF)
@@ -431,7 +497,7 @@ def _resultant_tilt_breakeven_deg(
         return float("nan")
     dr = 0.5 * abs(dp_O - dp_F)
     L_imp = dr / tan_sum
-    inner_is_O = dp_O <= dp_F
+    inner_is_O = _lox_ring_inboard(spacing_O_m, spacing_F_m)
     th_in = float(angle_O_deg) if inner_is_O else float(angle_F_deg)
     r_imp = 0.5 * (dp_O if inner_is_O else dp_F) + L_imp * float(np.tan(np.deg2rad(th_in)))
     if not np.isfinite(r_imp) or r_imp >= r_wall:
@@ -1009,6 +1075,9 @@ def _layer1_chamber_mass_kg(
     wall_density_kg_m3: float,
     Pc_pa: float = 0.0,
     closure_yield_pa: float = 205e6,   # 304 stainless, annealed, minimum yield (ASTM A240)
+    plate_support: str = "clamped",
+    r_plate_m: float = 0.0,
+    poisson: float = 0.3,              # steels, 0.27-0.30; 304 SS ~0.29
 ) -> float:
     """Cylindrical-shell dry-mass proxy for the chamber barrel [kg].
 
@@ -1039,12 +1108,39 @@ def _layer1_chamber_mass_kg(
     # so existing callers are unchanged.
     m_closure = 0.0
     if np.isfinite(Pc_pa) and Pc_pa > 0 and closure_yield_pa > 0:
-        r_inner = 0.5 * d_inner
-        # Roark (Table 11.2, fixed edge, uniform load): sigma_max = 3 p a^2 / (4 t^2). The 0.3
-        # used here had no source and sized the plate 37 % thin.
-        t_face = r_inner * float(np.sqrt(0.75 * float(Pc_pa) / float(closure_yield_pa)))
-        m_closure = float(np.pi * r_inner ** 2 * t_face * float(wall_density_kg_m3))
+        # The plate spans the plug (sleeve bore) when that is known, else the gas bore.
+        a = float(r_plate_m) if (np.isfinite(r_plate_m) and r_plate_m > 0) else 0.5 * d_inner
+        k = _closure_plate_stress_coeff(plate_support, poisson)
+        t_face = a * float(np.sqrt(k * float(Pc_pa) / float(closure_yield_pa)))
+        m_closure = float(np.pi * a ** 2 * t_face * float(wall_density_kg_m3))
     return m_barrel + m_closure
+
+
+#: Declared ``injector.plate.support`` values -> the edge condition they mean.
+_PLATE_SUPPORTS = {"simply_supported": "simply_supported", "clamped": "clamped", "fixed": "clamped"}
+
+
+def _closure_plate_stress_coeff(support: str, poisson: float = 0.3) -> float:
+    """k in sigma_max = k p a^2 / t^2 for a solid circular plate under uniform pressure p.
+
+    Roark's Formulas for Stress and Strain (7th ed.), Table 11.2, uniform load over the plate
+    (Timoshenko & Woinowsky-Krieger, Theory of Plates and Shells, 2nd ed., sections 15-16,
+    give the same):
+
+    * case 10a, edge SIMPLY SUPPORTED: max stress at the centre, k = 3 (3 + nu) / 8
+      (1.2375 at nu = 0.3);
+    * case 10b, edge FIXED (clamped): max stress at the edge, k = 3 / 4.
+
+    A plug retained by a rim/shoulder and a snap ring rotates at its edge, so it is closer to
+    simply supported than to clamped -- the clamped figure sizes it ~22 % thin.
+    """
+    kind = _PLATE_SUPPORTS.get(str(support).strip().lower())
+    if kind is None:
+        raise ValueError(f"plate support {support!r}: expected one of {sorted(_PLATE_SUPPORTS)}")
+    if kind == "clamped":
+        return 0.75
+    nu = float(poisson)
+    return 3.0 * (3.0 + nu) / 8.0
 
 
 def _layer1_chamber_mass_term(
@@ -1957,13 +2053,14 @@ def _impinging_geometry_fit_squared(
 ) -> float:
     """Squared penalty keeping the impinging element geometry physically self-consistent.
 
-    Couples the otherwise-dead ``spacing`` variable to the solve through three soft constraints:
+    Two soft constraints, read from the physics ``diagnostics``:
 
     * **Ring fit** — the hole pitch-circle ``D_pitch = n·spacing/π`` must stay inside the chamber bore.
     * **No overlap** — adjacent orifices must not collide (``element_gap = spacing − d_jet`` ≥ 0).
-    * **Vaporization budget** — the streams meet a distance ``L_imp`` downstream and the droplets need
-      ``x_star`` more to vaporize; ``L_imp + x_star`` must fit within the chamber length, otherwise the
-      spray is still atomizing at the throat.
+
+    It no longer co-locates the rings (that drove the impingement standoff to zero) nor charges a
+    vaporization-length budget (a second, cruder evaporation model double-counting eta_vap); see
+    the comments below. :func:`_impinging_ring_geometry_squared` carries the ring pair.
 
     All terms are relative (scale-free) and one-sided (only violations are penalized), so a comfortably
     sized element contributes exactly zero.
@@ -1983,18 +2080,10 @@ def _impinging_geometry_fit_squared(
             if np.isfinite(d_pitch) and d_pitch > 0:
                 term += max(0.0, d_pitch / bore - 1.0) ** 2
 
-    # RING CO-LOCATION. An unlike doublet only exists if the oxidizer and fuel orifices are
-    # ADJACENT -- they must sit on (essentially) the same pitch circle for the two jets to meet.
-    # Nothing enforced that, and both the seed and the converged design put them on rings far
-    # apart (converged: D_pitch_O 51.5 mm vs D_pitch_F 31.0 mm, 20.5 mm of radial separation;
-    # the seed was worse, 19.7 vs 119.4 mm with the fuel ring OUTSIDE a 114.8 mm bore). The
-    # impingement model quietly papers over it by averaging the two spacings into
-    # ``s_pair = 0.5*(s_O + s_F)``, so it reports a plausible L_imp for jets that cannot collide.
-    # Penalise the radial mismatch relative to the bore, so "same ring" costs zero.
-    if np.isfinite(bore) and bore > 0:
-        dpo, dpf = _f("D_pitch_O"), _f("D_pitch_F")
-        if np.isfinite(dpo) and np.isfinite(dpf) and dpo > 0 and dpf > 0:
-            term += (abs(dpo - dpf) / bore) ** 2
+    # No ring CO-LOCATION term. One used to charge (|D_pitch_O - D_pitch_F| / bore)^2, which
+    # drives the ring gap -- and with it the impingement standoff L_imp = dr / (tan th_O +
+    # tan th_F) -- to zero: jets colliding on the face. _impinging_ring_geometry_squared owns
+    # the ring pair (fit, web, standoff band, order, clearances) from the design variables.
 
     for k in ("element_gap_O", "element_gap_F"):
         gap = _f(k)
@@ -2004,16 +2093,13 @@ def _impinging_geometry_fit_squared(
             if gap < 0.0:
                 term += (gap / ref) ** 2
 
-    L = float(L_chamber_m)
-    if np.isfinite(L) and L > 0:
-        vap = _f("vaporization_length_total")
-        if not (np.isfinite(vap) and vap > 0):
-            L_imp = _f("L_imp")
-            x_star = _f("x_star")
-            vap = (L_imp if np.isfinite(L_imp) else 0.0) + (x_star if np.isfinite(x_star) else 0.0)
-        if np.isfinite(vap) and vap > 0:
-            term += max(0.0, vap / L - 1.0) ** 2
-
+    # No vaporization-length budget. It charged (L_imp + L_b + x*) / L_chamber past 1, with
+    # x* = u_ax D32^2 / k_evap from spray.py's second evaporation model (1-atm boiling point
+    # and latent heat, a C_evap fitted to a legacy K, constant drop speed, no heat-up) -- a
+    # cruder model than the c* spray march, whose eta_vap already charges incomplete
+    # vaporization through Isp. On the 6500N doublet it added ~142 points (x* 186 mm against
+    # the march's fuel drop gone by ~110-130 mm): the same loss counted twice, once wrongly.
+    # ``L_chamber_m`` is kept in the signature for callers; nothing here reads it now.
     return float(term)
 
 
@@ -2097,13 +2183,41 @@ def _layer1_momentum_gate(R: float, R_min: Optional[float], R_max: Optional[floa
 
 def _layer1_declared_limit_gates(
     config: Any, requirements: dict, constants: dict,
+    performance: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Tuple[bool, str]]:
     """Every declared geometric limit, checked on the emitted design at face value.
 
     {gate: (passed, reason)}. Only limits the configuration declares are checked (plus the
-    SP-8089 free-jet length and the bore, which always apply to a doublet).
+    SP-8089 free-jet length and the bore, which always apply to a doublet). ``performance``
+    (the emitted design's solve: ``mdot_O/F`` and ``diagnostics.delta_p_injector_O/F``) adds
+    the manifold velocity-head gate when the plate declares channels.
     """
     gates: Dict[str, Tuple[bool, str]] = {}
+    # Plate entries the caller's constants lack come from the config (a hand-built constants
+    # dict, or none); the run's own constants carry every one of them.
+    constants = {**_layer1_injector_plate_constants(config, requirements), **(constants or {})}
+    inj = getattr(config, "injector", None)
+
+    # Igniter thread engagement: the tapped port needs the thread's effective length L2
+    # (ASME B1.20.1, engine.core.injectors.hardware_tables.NPT) of metal -- the hub at the port
+    # when one is declared, else the plate. The plate thickness is a declared number, not a
+    # design variable, so nothing in the search can move this: it is a sign-off gate only.
+    ign = getattr(inj, "igniter", None)
+    if ign is not None and getattr(ign, "thread", None):
+        t_plate = float(constants.get("layer1_injector_plate_thickness_m", 0.0) or 0.0)
+        if not (np.isfinite(t_plate) and t_plate > 0.0):
+            t_plate = PLATE_THICKNESS_DEFAULT          # the layout's own fallback
+        ko = igniter_keepouts(
+            ign.model_dump() if hasattr(ign, "model_dump") else dict(ign),
+            plate_thickness=t_plate,
+            min_web=float(constants.get("layer1_injector_min_web_m", 0.0) or 0.0))
+        if ko is not None:
+            at = "injector.igniter.hub_thickness" if ko["hub_thickness"] is not None else "the plate"
+            gates["igniter_engagement"] = (
+                ko["engaged_thickness"] >= ko["l2"],
+                f"{ko['thread']} igniter needs {ko['l2'] * 1e3:.2f} mm of thread engagement (ASME "
+                f"B1.20.1 L2); {at} gives {ko['engaged_thickness'] * 1e3:.2f} mm at the port")
+
     cg = getattr(config, "chamber_geometry", None)
     if cg is None:
         return gates
@@ -2118,7 +2232,6 @@ def _layer1_declared_limit_gates(
         return gates
     A_c = np.pi * D * D / 4.0
     lens = _layer1_chamber_lengths(At, Lstar, D, _layer1_contraction_theta(constants))
-    inj = getattr(config, "injector", None)
     geom = getattr(inj, "geometry", None)
     n = 0
     if getattr(inj, "type", None) == "impinging" and geom is not None:
@@ -2184,6 +2297,41 @@ def _layer1_declared_limit_gates(
             liner_thickness_m=float(c.get("layer1_injector_liner_thickness_m", 0.0) or 0.0))
         gates["injector_back_face"] = (back <= 0.0,
                                        f"Injector back-face limits violated (score {back:.3g})")
+        if bool(c.get("layer1_injector_back_channels", False)) and isinstance(performance, dict):
+            _dg = performance.get("diagnostics") if isinstance(performance.get("diagnostics"), dict) else {}
+            fl = getattr(config, "fluids", None) or {}
+
+            def _rho(key: str, side: str) -> Any:
+                v = c.get(key)
+                if v is None:
+                    try:
+                        v = fl[side].density
+                    except (KeyError, TypeError, AttributeError):
+                        v = None
+                return v
+            inlets = int(c.get("layer1_injector_channel_inlets", 1) or 1)
+            mq = _impinging_manifold_q(
+                **g, plate_thickness_m=float(c.get("layer1_injector_plate_thickness_m", 0.0) or 0.0),
+                face_contoured=bool(c.get("layer1_injector_face_contoured", False)),
+                exit_land=float(c.get("layer1_injector_exit_land", EXIT_LAND_DEFAULT)),
+                passage_ld_O=float(c.get("layer1_injector_land_ld_O", 4.0) or 4.0),
+                passage_ld_F=float(c.get("layer1_injector_land_ld_F", 4.0) or 4.0),
+                channel_width_m=float(c.get("layer1_injector_channel_width_m", 0.0) or 0.0),
+                channel_floor=str(c.get("layer1_injector_channel_floor", "flat")),
+                channel_inlets=inlets,
+                mdot_O=performance.get("mdot_O"), mdot_F=performance.get("mdot_F"),
+                dp_O=_dg.get("delta_p_injector_O"), dp_F=_dg.get("delta_p_injector_F"),
+                rho_O=_rho("rho_O", "oxidizer"), rho_F=_rho("rho_F", "fuel"))
+            for k, tag in (("O", "LOX"), ("F", "fuel")):
+                h = mq.get(k)
+                if h is None:
+                    continue
+                gates[f"manifold_q_{k}"] = (
+                    h["q_over_dp"] <= h["q_frac"],
+                    f"{tag} channel velocity head {100 * h['q_over_dp']:.0f} % of the injector "
+                    f"drop at {inlets} feed port{'s' if inlets > 1 else ''} > "
+                    f"{100 * MANIFOLD_Q_FRAC:.0f} % (channel {h['flow_area'] * 1e6:.1f} mm^2, "
+                    f"needs {h['area_needed'] * 1e6:.0f} mm^2, or more ports)")
     return gates
 
 
@@ -2281,6 +2429,104 @@ def _impinging_face_infeasibility_terms(
     return float(term)
 
 
+def _impinging_channel_pair(
+    *,
+    n_elements: float, spacing_O_m: float, spacing_F_m: float,
+    d_jet_O_m: float, d_jet_F_m: float, angle_O_deg: float, angle_F_deg: float,
+    plate_thickness_m: float, face_contoured: bool, exit_land: float,
+    passage_ld_O: float, passage_ld_F: float, channel_width_m: float, channel_floor: str,
+) -> Optional[Tuple[Dict[str, Any], Dict[str, Any], bool]]:
+    """(LOX channel, fuel channel, LOX inboard) from ``layout.channel_for_ring`` -- the drawing's
+    own geometry -- or None when the ring pair is degenerate."""
+    from engine.core.injectors.layout import exit_recess as _exit_recess
+    try:
+        n = int(round(float(n_elements))) if np.isfinite(n_elements) else 0
+    except (TypeError, ValueError):
+        return None
+    if n < 1:
+        return None
+    r_O = n * float(spacing_O_m) / np.pi / 2.0
+    r_F = n * float(spacing_F_m) / np.pi / 2.0
+    ox_inner = r_O <= r_F
+    thO, thF = float(angle_O_deg), float(angle_F_deg)
+    if not (np.isfinite(thO) and np.isfinite(thF)):
+        return None
+    dO, dF = float(d_jet_O_m), float(d_jet_F_m)
+    if face_contoured:
+        d_in, th_in, d_out, th_out = (dO, thO, dF, thF) if ox_inner else (dF, thF, dO, thO)
+        z_E = -_exit_recess(d_in=d_in, th_in=th_in, d_out=d_out, th_out=th_out,
+                            exit_land=float(exit_land))
+    else:
+        z_E = 0.0
+    w = float(channel_width_m) if np.isfinite(channel_width_m) and channel_width_m > 0 else None
+    t = float(plate_thickness_m)
+    chO = channel_for_ring(r_exit=r_O, z_exit=z_E, d=dO, theta_deg=thO, is_inner=ox_inner,
+                           plate_thickness=t, passage_ld=float(passage_ld_O), width=w,
+                           floor=channel_floor, exit_land=float(exit_land))
+    chF = channel_for_ring(r_exit=r_F, z_exit=z_E, d=dF, theta_deg=thF, is_inner=not ox_inner,
+                           plate_thickness=t, passage_ld=float(passage_ld_F), width=w,
+                           floor=channel_floor, exit_land=float(exit_land))
+    return chO, chF, ox_inner
+
+
+def _impinging_manifold_q(
+    *,
+    n_elements: float, spacing_O_m: float, spacing_F_m: float,
+    d_jet_O_m: float, d_jet_F_m: float, angle_O_deg: float, angle_F_deg: float,
+    plate_thickness_m: float, face_contoured: bool, exit_land: float,
+    passage_ld_O: float, passage_ld_F: float, channel_width_m: float, channel_floor: str,
+    channel_inlets: int, mdot_O: Any, mdot_F: Any, dp_O: Any, dp_F: Any, rho_O: Any, rho_F: Any,
+) -> Dict[str, Dict[str, float]]:
+    """Channels back: each channel's velocity head at its feed port against the injector drop.
+
+    ``layout.channel_velocity_head`` on the channel ``layout.channel_for_ring`` draws, with
+    ``channel_inlets`` ports each splitting two ways: q = rho/2 (mdot / (2 n rho A))^2. The limit
+    is ``layout.MANIFOLD_Q_FRAC`` of the drop (Rohde, Richards & Metger, NASA TN D-5467: holes
+    fed across a channel recover none of its velocity head). {side: velocity-head dict}; a side
+    is missing when its channel pierces the back (no channel) or its flow is not known -- the
+    same skips as ``layout._check_manifold``.
+    """
+    t = float(plate_thickness_m)
+    if not (np.isfinite(t) and t > 0.0):
+        t = PLATE_THICKNESS_DEFAULT            # the layout's own fallback, so both agree
+    pair = _impinging_channel_pair(
+        n_elements=n_elements, spacing_O_m=spacing_O_m, spacing_F_m=spacing_F_m,
+        d_jet_O_m=d_jet_O_m, d_jet_F_m=d_jet_F_m, angle_O_deg=angle_O_deg,
+        angle_F_deg=angle_F_deg, plate_thickness_m=t, face_contoured=face_contoured,
+        exit_land=exit_land, passage_ld_O=passage_ld_O, passage_ld_F=passage_ld_F,
+        channel_width_m=channel_width_m, channel_floor=channel_floor)
+    out: Dict[str, Dict[str, float]] = {}
+    if pair is None:
+        return out
+    chans = {"O": pair[0], "F": pair[1]}
+    flows = {"O": (mdot_O, dp_O, rho_O), "F": (mdot_F, dp_F, rho_F)}
+    for k, ch in chans.items():
+        if ch["pierces_back"]:
+            continue
+        try:
+            m, dp, rho = (float(v) for v in flows[k])
+        except (TypeError, ValueError):
+            continue
+        if not (np.isfinite(m) and np.isfinite(dp) and np.isfinite(rho) and m > 0 and dp > 0 and rho > 0):
+            continue
+        h = _channel_velocity_head(flow_area=float(ch["flow_area"]), mdot=m, rho=rho, dp=dp,
+                                   inlets=int(channel_inlets or 1))
+        if np.isfinite(h["q_over_dp"]):
+            out[k] = dict(h, flow_area=float(ch["flow_area"]))
+    return out
+
+
+def _impinging_manifold_violation(q: Dict[str, Dict[str, float]]) -> float:
+    """Graded infeasibility from :func:`_impinging_manifold_q`: the channel AREA shortfall,
+    ``(A_needed / A - 1)^2`` summed over the sides, 0 at or under ``MANIFOLD_Q_FRAC``."""
+    term = 0.0
+    for h in q.values():
+        A, A_need = float(h.get("flow_area", 0.0)), float(h.get("area_needed", float("nan")))
+        if A > 0 and np.isfinite(A_need):
+            term += max(0.0, A_need / A - 1.0) ** 2
+    return float(term)
+
+
 def _impinging_channel_terms(
     *,
     n_elements: float, spacing_O_m: float, spacing_F_m: float,
@@ -2299,32 +2545,18 @@ def _impinging_channel_terms(
     igniter's thick centre, or when the outer channel runs off the plug.
     """
     import math as _m
-    from engine.core.injectors.layout import exit_recess as _exit_recess
     bore = float(D_chamber_inner_m)
-    n = int(round(float(n_elements))) if np.isfinite(n_elements) else 0
-    if not (np.isfinite(bore) and bore > 0 and n >= 1):
+    if not (np.isfinite(bore) and bore > 0):
         return 0.0
-    r_O = n * float(spacing_O_m) / np.pi / 2.0
-    r_F = n * float(spacing_F_m) / np.pi / 2.0
-    ox_inner = r_O <= r_F
-    thO, thF = float(angle_O_deg), float(angle_F_deg)
-    if not (np.isfinite(thO) and np.isfinite(thF)):
+    pair = _impinging_channel_pair(
+        n_elements=n_elements, spacing_O_m=spacing_O_m, spacing_F_m=spacing_F_m,
+        d_jet_O_m=d_jet_O_m, d_jet_F_m=d_jet_F_m, angle_O_deg=angle_O_deg,
+        angle_F_deg=angle_F_deg, plate_thickness_m=plate_thickness_m,
+        face_contoured=face_contoured, exit_land=exit_land, passage_ld_O=passage_ld_O,
+        passage_ld_F=passage_ld_F, channel_width_m=channel_width_m, channel_floor=channel_floor)
+    if pair is None:
         return 0.0
-    dO, dF = float(d_jet_O_m), float(d_jet_F_m)
-    if face_contoured:
-        d_in, th_in, d_out, th_out = (dO, thO, dF, thF) if ox_inner else (dF, thF, dO, thO)
-        z_E = -_exit_recess(d_in=d_in, th_in=th_in, d_out=d_out, th_out=th_out,
-                            exit_land=float(exit_land))
-    else:
-        z_E = 0.0
-    w = float(channel_width_m) if np.isfinite(channel_width_m) and channel_width_m > 0 else None
-    t = float(plate_thickness_m)
-    chO = channel_for_ring(r_exit=r_O, z_exit=z_E, d=dO, theta_deg=thO, is_inner=ox_inner,
-                           plate_thickness=t, passage_ld=float(passage_ld_O), width=w,
-                           floor=channel_floor, exit_land=float(exit_land))
-    chF = channel_for_ring(r_exit=r_F, z_exit=z_E, d=dF, theta_deg=thF, is_inner=not ox_inner,
-                           plate_thickness=t, passage_ld=float(passage_ld_F), width=w,
-                           floor=channel_floor, exit_land=float(exit_land))
+    chO, chF, ox_inner = pair
     term = 0.0
     for ch in (chO, chF):
         if ch["pierces_back"]:
@@ -4312,6 +4544,28 @@ def _compute_objective_value(
         geom_hard += _impinging_free_jet_violation(
             n_elements=n_el_O, spacing_O_m=sp_O, spacing_F_m=sp_F,
             d_jet_O_m=d_jet_O, d_jet_F_m=d_jet_F, angle_O_deg=ang_O, angle_F_deg=ang_F)
+        # Channels back: the channel is the manifold, and a feed port's velocity head past
+        # MANIFOLD_Q_FRAC of the drop starves the holes beside it. Active only when the plate
+        # declares channels and the solve produced flows; the orifice size, angle and drop are
+        # all this search's to move, so it is a hard limit, not a report.
+        if bool(constants.get("layer1_injector_back_channels", False)) and isinstance(result, dict):
+            _dg = result.get("diagnostics") if isinstance(result.get("diagnostics"), dict) else {}
+            _mq = _impinging_manifold_q(
+                n_elements=n_el_O, spacing_O_m=sp_O, spacing_F_m=sp_F,
+                d_jet_O_m=d_jet_O, d_jet_F_m=d_jet_F, angle_O_deg=ang_O, angle_F_deg=ang_F,
+                plate_thickness_m=float(constants.get("layer1_injector_plate_thickness_m", 0.0) or 0.0),
+                face_contoured=bool(constants.get("layer1_injector_face_contoured", False)),
+                exit_land=float(constants.get("layer1_injector_exit_land", EXIT_LAND_DEFAULT)),
+                passage_ld_O=float(constants.get("layer1_injector_land_ld_O", 4.0) or 4.0),
+                passage_ld_F=float(constants.get("layer1_injector_land_ld_F", 4.0) or 4.0),
+                channel_width_m=float(constants.get("layer1_injector_channel_width_m", 0.0) or 0.0),
+                channel_floor=str(constants.get("layer1_injector_channel_floor", "flat")),
+                channel_inlets=int(constants.get("layer1_injector_channel_inlets", 1) or 1),
+                mdot_O=result.get("mdot_O"), mdot_F=result.get("mdot_F"),
+                dp_O=_dg.get("delta_p_injector_O"), dp_F=_dg.get("delta_p_injector_F"),
+                rho_O=constants.get("rho_O"), rho_F=constants.get("rho_F"))
+            geom_hard += _impinging_manifold_violation(_mq)
+            _infeas_trace(_tr, "manifold_q", geom_hard)
         infeasibility_score += _impinging_infeasibility_layout_terms(
             d_jet_O=d_jet_O, d_jet_F=d_jet_F, sp_O=sp_O, sp_F=sp_F,
             n_el_O=n_el_O, n_el_F=n_el_O, D_chamber_inner=D_chamber_inner)
@@ -4471,7 +4725,12 @@ def _compute_objective_value(
     chamber_mass_kg = _layer1_chamber_mass_kg(
         A_chamber_check, L_chamber_curr, TOTAL_WALL_THICKNESS_M,
         float(constants.get("layer1_chamber_wall_density_kg_m3", 2000.0)),
-        Pc_pa=float(Pc_actual) if np.isfinite(Pc_actual) else 0.0)
+        Pc_pa=float(Pc_actual) if np.isfinite(Pc_actual) else 0.0,
+        plate_support=str(constants.get("layer1_injector_plate_support", "clamped")),
+        # The plug fills the sleeve bore: this candidate's bore plus the liner.
+        r_plate_m=(0.5 * float(D_chamber_inner)
+                   + float(constants.get("layer1_injector_liner_thickness_m", 0.0) or 0.0)
+                   if constants.get("layer1_injector_plate_support") is not None else 0.0))
     mass_term = (_layer1_chamber_mass_term(
         chamber_mass_kg, float(constants.get("layer1_chamber_mass_ref_kg", 5.0)))
         if W_MASS > 0.0 else 0.0)
@@ -4524,7 +4783,8 @@ def _compute_objective_value(
                 result.get("mdot_O"), result.get("mdot_F"),
                 constants.get("rho_O", 1141.0), constants.get("rho_F", 789.0),
                 n_el_O, d_jet_O, d_jet_F, ang_O, ang_F,
-                lox_inboard=bool(constants.get("layer1_ring_order_fuel_outboard", True)))
+                lox_inboard=bool(constants.get("layer1_ring_order_fuel_outboard", True)),
+                spacing_O_m=sp_O, spacing_F_m=sp_F)
             infeasibility_score += _impinging_resultant_wall_violation(
                 tilt_deg,
                 max_outward_deg=_resolve_tilt_allowance_deg(
@@ -6680,30 +6940,18 @@ def run_layer1_optimization(
         requirements, "layer1_injector_counterbore_dia_m", 0.0)
     layer1_injector_min_back_web_m = _requirement_float(
         requirements, "layer1_injector_min_back_web_m", 0.0)
-    # Orifice land length (diameters) per side, which decides whether the back-face entry is
-    # the counterbore or the orifice itself. Same source the Cd model reads.
-    def _land_ld(side: str) -> float:
-        try:
-            v = getattr(config_obj.discharge[side], "orifice_l_over_d", None)
-        except (KeyError, TypeError, AttributeError):
-            v = None
-        return float(v) if v is not None and np.isfinite(float(v)) and float(v) > 0 else 4.0
-    layer1_injector_land_ld_O = _land_ld("oxidizer")
-    try:
-        _fuel_ld = getattr(config_obj.discharge["fuel"], "orifice_l_over_d", None)
-    except (KeyError, TypeError, AttributeError):
-        _fuel_ld = None
-    # The layout falls back to the oxidiser's L/d, not 4.0; so does this.
-    layer1_injector_land_ld_F = _land_ld("fuel") if _fuel_ld is not None else layer1_injector_land_ld_O
-    # How the plug is machined (injector.plate). Nothing declared => flat face, plenum back:
-    # exactly the constraints this optimizer had before.
-    _plate = _layer1_plate(config_obj)
-    layer1_injector_face_contoured = _plate.get("face") == "contoured"
-    layer1_injector_back_channels = _plate.get("back") == "channels"
-    layer1_injector_exit_land = (float(_plate["exit_land"]) if _plate.get("exit_land") is not None
-                                 else EXIT_LAND_DEFAULT)
-    layer1_injector_channel_width_m = float(_plate.get("channel_width") or 0.0)
-    layer1_injector_channel_floor = str(_plate.get("channel_floor") or "flat")
+    # Orifice L/d per side and how the plug is machined (injector.plate): one derivation,
+    # shared with the sign-off gates (_layer1_injector_plate_constants).
+    _pc = _layer1_injector_plate_constants(config_obj, requirements)
+    layer1_injector_land_ld_O = _pc["layer1_injector_land_ld_O"]
+    layer1_injector_land_ld_F = _pc["layer1_injector_land_ld_F"]
+    layer1_injector_face_contoured = _pc["layer1_injector_face_contoured"]
+    layer1_injector_back_channels = _pc["layer1_injector_back_channels"]
+    layer1_injector_exit_land = _pc["layer1_injector_exit_land"]
+    layer1_injector_channel_width_m = _pc["layer1_injector_channel_width_m"]
+    layer1_injector_channel_floor = _pc["layer1_injector_channel_floor"]
+    layer1_injector_channel_inlets = _pc["layer1_injector_channel_inlets"]
+    layer1_injector_plate_support = _pc["layer1_injector_plate_support"]
     if layer1_injector_face_contoured and layer1_injector_back_channels:
         # Square exits AND passage length set by the channel: nothing left for the ceiling.
         layer1_injector_min_face_incidence_deg = 0.0
@@ -7944,6 +8192,8 @@ def run_layer1_optimization(
         'layer1_injector_exit_land': layer1_injector_exit_land,
         'layer1_injector_channel_width_m': layer1_injector_channel_width_m,
         'layer1_injector_channel_floor': layer1_injector_channel_floor,
+        'layer1_injector_channel_inlets': layer1_injector_channel_inlets,
+        'layer1_injector_plate_support': layer1_injector_plate_support,
         'layer1_injector_r_plate_m': layer1_injector_r_plate_m,
         'layer1_injector_r_port_m': layer1_injector_r_port_m,
         'layer1_injector_liner_thickness_m': layer1_injector_liner_thickness_m,
@@ -9250,6 +9500,8 @@ def run_layer1_optimization(
             getattr(_gf.oxidizer, "impingement_angle", float("nan")) if _gf else float("nan"),
             getattr(_gf.fuel, "impingement_angle", float("nan")) if _gf else float("nan"),
             lox_inboard=layer1_ring_order_fuel_outboard,
+            spacing_O_m=getattr(_gf.oxidizer, "spacing", float("nan")) if _gf else float("nan"),
+            spacing_F_m=getattr(_gf.fuel, "spacing", float("nan")) if _gf else float("nan"),
         )
         initial_performance["resultant_tilt_deg"] = (
             float(_tilt_final) if np.isfinite(_tilt_final) else None)
@@ -9305,7 +9557,8 @@ def run_layer1_optimization(
     # Every declared geometric limit, re-checked on the emitted design at face value. In the
     # search these share one sum-of-squares tolerance (gate_eps), which lets a single 4.5 %
     # violation through; sign-off does not.
-    limit_gates = _layer1_declared_limit_gates(optimized_config, requirements, constants_dict)
+    limit_gates = _layer1_declared_limit_gates(optimized_config, requirements, constants_dict,
+                                               performance=initial_performance)
     for _gname, (_gok, _gmsg) in limit_gates.items():
         initial_performance[f"{_gname}_gate_passed"] = bool(_gok)
         if not _gok:

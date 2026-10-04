@@ -38,11 +38,13 @@ import threading
 from dataclasses import dataclass, field
 from typing import Callable, Literal, Sequence
 
+from feedtwin.session.burn import BurnPlan, burn, burn_setup, open_session, prime_at_t0
+
 from backend.assembly import Model, assemble
 from backend.library import Library
-from backend.run import PSI, from_psig, psig
-from backend.session import PAD_HOLD_S, Session, Setup
-from backend.statemachine import bind, load_machine
+from backend.run import psig
+from backend.session import PAD_HOLD_S, Session
+from backend.statemachine import load_machine
 
 #: Drawing name per gas. Two P&IDs that differ only in what is in the bottle,
 #: so the comparison is the gas and nothing else.
@@ -211,6 +213,26 @@ def _bottle_litres(session: Session) -> float:
     return float(bottle.volume.volume) * 1e3
 
 
+def _plan(litres: float | None, dt: float = 0.05, horizon: float = 14.0) -> BurnPlan:
+    """The study's T-0 and burn, as the library's burn reads them."""
+    return BurnPlan(
+        tank_psi=TANK_PSI,
+        copv_psi=COPV_PSI,
+        fill_fraction=FILL_FRACTION,
+        bottle_litres=litres,
+        hold_s=PAD_HOLD_S,
+        settle_band_psi=SETTLE_BAND,
+        settle_steps=SETTLE_STEPS,
+        settle_min_s=SETTLE_MIN_S,
+        settle_max_s=SETTLE_MAX_S,
+        lead_in_s=LEAD_IN,
+        dt=dt,
+        horizon_s=horizon,
+        dry_kg=DRY,
+        tanks=("OXT", "FUT"),
+    )
+
+
 def _stand(
     library: Library,
     gas: str,
@@ -228,7 +250,9 @@ def _stand(
     Primed directly rather than flown through fills and presses. Pressing the
     tanks draws on the same bottle the study is about, so rehearsing the pad
     would mean an undersized COPV failed for two reasons at once and the trace
-    could not say which.
+    could not say which. The priming and the settle to lockup are the library's
+    (:func:`feedtwin.session.burn.prime_at_t0`), shared with EngineDesign's
+    Layer X so both burn from the same T-0.
     """
     artifact_id = find_diagram(library, gas)
     if artifact_id is None:
@@ -236,92 +260,22 @@ def _stand(
     model: Model = assemble(
         library, artifact_id, engine_id=engine_id, cea_cache=cea_cache
     )
-    machine = load_machine()
-    labels = {
-        n.id: n.label for n in model.diagram.nodes if n.id in model.built.actuators
-    }
-    session = Session(
+    session = open_session(
         model,
-        machine,
-        bind(machine, labels),
-        setup=Setup(
+        load_machine(),
+        # The study's numerics (feedtwin.session.burn.burn_setup): no latency
+        # budget, a generous Newton allowance, and the cockpit's newer thermal
+        # closures off so docs/PHYSICS-BENCHMARK.md 2.x keeps meaning what it
+        # meant.
+        setup=burn_setup(
             dome_psi=DOME_PSI,
             ullage_collapse=collapse,
             ullage_vapour=vapour,
             chilldown=chilldown,
             line_walls=line_walls,
-            # The study's tanks are primed chilled and its expectations in
-            # docs/PHYSICS-BENCHMARK.md 2.x were set with a well-mixed liquid
-            # and a wall that boils at any superheat. The cockpit's newer
-            # closures (surface layer, boiling onset, nucleate regime) stay
-            # off here so those numbers keep meaning what they meant; turn
-            # them on deliberately, with a fresh baseline.
-            stratification=False,
-            boiling_onset_K=0.0,
-            chilldown_nucleate=0.0,
-            # A study burns to depletion and reads the trace past it; the
-            # cockpit's automatic Vent at burnout would open the vents on it.
-            auto_vent=False,
-            # Study settings: no latency budget, a generous Newton allowance.
-            # The whole point is that this is allowed to take as long as
-            # accuracy needs.
-            max_iterations=120,
-            tick_budget=1.0e9,
         ),
     )
-    if litres is not None:
-        for bottle in session.bottles.values():
-            bottle.volume.volume = litres / 1e3
-    session.prime(
-        fill_fraction=FILL_FRACTION,
-        tank_psi=TANK_PSI,
-        copv_psi=COPV_PSI,
-        state="Ready",
-        hold_s=PAD_HOLD_S,
-    )
-    # Settle to regulator lockup with the mains shut -- and *check* that it
-    # did. A fixed forty steps was enough for an adiabatic ullage and not for
-    # one with collapse on: the trace then opened 139 psi under lockup, and the
-    # regulator catching up read as a violent drop-and-recovery at ignition.
-    # Now the settle runs until both tanks have sat within SETTLE_BAND of the
-    # lockup pressure for SETTLE_STEPS consecutive steps, or gives up at
-    # SETTLE_MAX_S and says so in the trace notes.
-    # Settle with the press solenoids held open. In `Ready` the actuator table
-    # shuts them, so a tank whose ullage is collapsing simply drifts below
-    # lockup while it waits -- physical, and exactly what an operator tops up
-    # in Ox Press before going to Ready. The study wants the tank *at* lockup
-    # at T-0, so it does the top-up here and releases the valves after.
-    pressers = [
-        symbol
-        for actuator, symbol in session.binding.to_symbol.items()
-        if "press" in actuator.lower()
-        and "fill" not in actuator.lower()
-        and "gse" not in actuator.lower()
-    ]
-    for symbol in pressers:
-        session.set_valve(symbol, True)
-    target = from_psig(TANK_PSI)
-    steady = 0
-    elapsed = 0.0
-    while elapsed < SETTLE_MAX_S:
-        session.step(0.05)
-        elapsed += 0.05
-        within = all(
-            abs(sim.pressure - target) < SETTLE_BAND * PSI
-            for sim in session.tanks.values()
-        )
-        steady = steady + 1 if within else 0
-        if steady >= SETTLE_STEPS and elapsed >= SETTLE_MIN_S:
-            break
-    session.release()
-    if steady < SETTLE_STEPS:
-        worst = max(
-            abs(psig(sim.pressure) - TANK_PSI) for sim in session.tanks.values()
-        )
-        session.assumptions.append(
-            f"T-0 did not settle: after {SETTLE_MAX_S:.0f} s a tank is still "
-            f"{worst:.1f} psi from lockup. The trace opens off its datum."
-        )
+    prime_at_t0(session, _plan(litres))
     return session
 
 
@@ -359,24 +313,7 @@ def _burn(
         thrust.append((chamber.thrust) if (firing and chamber) else 0.0)
         ok.append(bool(getattr(sample, "converged", True)))
 
-    clock = -LEAD_IN
-    while clock < -1e-9:
-        sample = session.step(dt)
-        clock += dt
-        record(clock, sample, firing=False)
-
-    session.state = "Fire"
-    clock = 0.0
-    depleted: float | None = None
-    while clock <= horizon:
-        if cancelled():
-            break
-        sample = session.step(dt)
-        clock += dt
-        record(clock, sample, firing=True)
-        if ox.state.liquid_mass < DRY or fuel.state.liquid_mass < DRY:
-            depleted = round(clock, 2)
-            break
+    end = burn(session, _plan(None, dt, horizon), record, cancelled=cancelled)
 
     return Trace(
         key=key,
@@ -391,7 +328,7 @@ def _burn(
         chamber_psi=[round(v, 1) for v in chamber_psi],
         thrust_n=[round(v, 1) for v in thrust],
         converged=ok,
-        depleted_s=depleted,
+        depleted_s=end.depleted_s,
         failed_ticks=sum(1 for c in ok if not c),
     )
 

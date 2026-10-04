@@ -12,6 +12,10 @@ Two recession modes:
     the solved surface temperature, not an energy balance.
 
 A receding face is handled by remapping the profile onto the shortened wall each step.
+
+A layer may carry ``cp_of(T)``: its heat capacity is then taken at each cell's temperature at the
+start of every step (lagged one step, as backward Euler does with a property). Without it the
+wall is exactly the constant-property model.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ class Layer:
     rho: float
     cp: float
     name: str = ""
+    cp_of: Optional[Callable[[np.ndarray], np.ndarray]] = None
 
 
 def _graded(L: float, n: int, first: float) -> np.ndarray:
@@ -101,17 +106,29 @@ class WallModel:
             props.append((len(xs) - 1, lay))
             x0 += t
         self.y = np.concatenate(segs)                 # distance from the hot face
-        k_cell, rc_cell = [], []
+        k_cell, rc_cell, owner = [], [], []
         for n, lay in props:
             k_cell += [lay.k] * n
             rc_cell += [lay.rho * lay.cp] * n
+            owner += [lay] * n
         self._k = np.array(k_cell)
         self._rc = np.array(rc_cell)
+        self._varying = [(np.array([o is lay for o in owner]), lay)
+                         for lay in self.layers if lay.cp_of is not None]
         dx = np.diff(self.y)
+        self._dx = dx
         self._G = self._k / dx                       # cell conductance
+        self._set_capacity()
+
+    def _set_capacity(self):
+        """Node heat capacity per area from the cell rho*cp (cp(T) layers at the cell mean T)."""
+        if self._varying and getattr(self, "T", None) is not None and len(self.T) == len(self.y):
+            Tc = 0.5 * (self.T[:-1] + self.T[1:])
+            for mask, lay in self._varying:
+                self._rc[mask] = lay.rho * lay.cp_of(Tc[mask])
         C = np.zeros_like(self.y)
-        C[:-1] += 0.5 * self._rc * dx
-        C[1:] += 0.5 * self._rc * dx
+        C[:-1] += 0.5 * self._rc * self._dx
+        C[1:] += 0.5 * self._rc * self._dx
         self._C = C                                   # node heat capacity per area
 
     @property
@@ -155,6 +172,8 @@ class WallModel:
              T_bracket: Tuple[float, float] = (150.0, 4500.0)) -> dict:
         """Advance by dt. Returns the surface temperature, the recession this step [m] and
         the surface mass flux [kg/(m^2 s)]."""
+        if self._varying:
+            self._set_capacity()
         G0, C0, T0 = self._G[0], self._C[0], self.T[0]
         lin0 = self._interior(dt, 0.0)
         lin1 = self._interior(dt, 1.0)

@@ -101,7 +101,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
     ullage_collapse: true,
     ullage_vapour: true,
     chilldown: 100,
-    line_walls: false,
+    line_walls: true,
     ambient_leak: 8,
   });
   const [hidden, setHidden] = useState<Record<string, boolean>>({});

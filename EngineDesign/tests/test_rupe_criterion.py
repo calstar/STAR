@@ -44,6 +44,10 @@ def _cfg(**geom):
     d = load_config(str(ROOT / "configs/ethalox_6500N.yaml")).model_dump()
     for side, kv in geom.items():
         d["injector"]["geometry"][side].update(kv)
+    if d["injector"].get("plate"):
+        # Rupe/R identities at the holes' own drop: the plenum closure (with ring channels part
+        # of the drop is spent in the manifold; see test_injector_ring_manifold).
+        d["injector"]["plate"]["manifold_model"] = "plenum"
     return PintleEngineConfig.model_validate(d)
 
 

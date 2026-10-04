@@ -194,6 +194,7 @@ class ChamberSolver:
             "R_opt": self._rupe_R_opt(),
             "fuel_props": self._get_fuel_props(),
             "ox_props": self._get_ox_props(),
+            "cea_cache": self.cea_cache,  # c*(O/F) for the mixing / vaporized-gas c* ratios
         }
 
         # Add injection velocities to advanced_params if available in diagnostics
@@ -214,8 +215,10 @@ class ChamberSolver:
             debug=self._debug if hasattr(self, '_debug') else False,
         )
         
-        # Validate efficiency
-        if not np.isfinite(eta) or eta <= 0 or eta > 1.0:
+        # Validate efficiency. No upper bound: eta_c* is against c*_ideal at the BULK O/F, and off
+        # the c* peak a spread of stream tubes, or a vaporized gas nearer the peak, can beat it
+        # (combustion_physics.stream_tube_mixing_efficiency / calculate_vaporization_efficiency).
+        if not np.isfinite(eta) or eta <= 0:
             return np.nan
 
         
@@ -314,6 +317,7 @@ class ChamberSolver:
                 "turbulence_intensity": diag_test.get("turbulence_intensity_mix", DEFAULT_TURBULENCE_INTENSITY_ND),
                 "fuel_props": self._get_fuel_props(),
             "ox_props": self._get_ox_props(),
+            "cea_cache": self.cea_cache,  # c*(O/F) for the mixing / vaporized-gas c* ratios
             }
             eta_test = eta_cstar(
                 calculate_Lstar(cg.volume, cg.A_throat, Lstar_override=cg.Lstar),
@@ -579,6 +583,7 @@ class ChamberSolver:
             "R_opt": self._rupe_R_opt(),
             "fuel_props": self._get_fuel_props(),
             "ox_props": self._get_ox_props(),
+            "cea_cache": self.cea_cache,  # c*(O/F) for the mixing / vaporized-gas c* ratios
         }
         
         eta = eta_cstar(
@@ -1176,6 +1181,8 @@ class ChamberSolver:
             if v is not None:
                 props[key] = float(v)
         props["Pc_ref"] = float(getattr(fl, "Pc_ref", 2.5e6) or 2.5e6)
+        if getattr(fl, "name", None):
+            props["name"] = str(fl.name)   # CoolProp liquid cp(T) / density in the heat-up
         return props
 
     def _get_fuel_props(self) -> Optional[Dict[str, float]]:

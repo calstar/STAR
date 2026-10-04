@@ -53,7 +53,7 @@ def _impinging_spray_extras(config, P, sol, Pc):
     )
     (_ok, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, _mom_R, _Cd_O, _Cd_F,
      _Pi_O, _Pi_F, _dpi_O, _dpi_F, _A_O, _A_F, _dpf_O, _dpf_F, We_O, We_F, u_rel, x_star,
-     _cok, _n_iter, _ti_O, _ti_F) = sol
+     _cok, _n_iter, _ti_O, _ti_F) = sol[:26]
     geometry = config.injector.geometry
     spray_cfg = config.spray
     fluids = config.fluids
@@ -131,7 +131,8 @@ def build_diag(P, sol, config=None, Pc=None):
     (_ok, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, mom_R, Cd_O, Cd_F,
      Pi_O, Pi_F, dpi_O, dpi_F, A_geom_O, A_geom_F,
      dpf_O, dpf_F, We_O, We_F, u_rel, x_star, constraints_ok, n_iter,
-     ti_O, ti_F) = sol
+     ti_O, ti_F) = sol[:26]
+    holes_O, holes_F = (sol[26], sol[27]) if len(sol) > 26 else ((), ())
 
     djo, djf = float(P[_DJO]), float(P[_DJF])
     rho_O, rho_F = float(P[_RHO_O]), float(P[_RHO_F])
@@ -214,9 +215,45 @@ def build_diag(P, sol, config=None, Pc=None):
         u_ax = ((mdot_O * u_O * math.cos(math.radians(float(P[_ANG_O])))
                  + mdot_F * u_F * math.cos(math.radians(float(P[_ANG_F])))) / mt) if mt > 0 else float("nan")
         diag["u_axial_spray"] = u_ax if (math.isfinite(u_ax) and u_ax > 0) else float(u_rel)
-    # Same included-angle convention as impinging.py: separation = theta_O + theta_F.
-    imp_sep = float(P[_ANG_O]) + float(P[_ANG_F])
-    diag["impingement_angle_deg"] = max(1.0, min(179.0, imp_sep))
+    if float(P[_INJ_TYPE]) != 0.0:
+        # Same included-angle convention as impinging.py: separation = theta_O + theta_F. The
+        # pintle publishes none (the c* model then takes the drops as axial), so neither does this.
+        imp_sep = float(P[_ANG_O]) + float(P[_ANG_F])
+        diag["impingement_angle_deg"] = max(1.0, min(179.0, imp_sep))
+        diag.update(_manifold_diagnostics(P, holes_O, holes_F, mdot_O, mdot_F, dpi_O, dpi_F))
     if config is not None and Pc is not None and float(P[_INJ_TYPE]) != 0.0:
         diag.update(_impinging_spray_extras(config, P, sol, float(Pc)))
     return diag
+
+
+def _manifold_diagnostics(P, holes_O, holes_F, mdot_O, mdot_F, dpi_O, dpi_F):
+    """impinging._manifold_diagnostics from the kernel's per-hole flows."""
+    if len(holes_O) == 0 and len(holes_F) == 0:
+        return {"manifold_model": "plenum"}
+    out = {"manifold_model": "ring_network"}
+    per = {}
+    for k, holes, md, dpi, rho, d, n in (
+            ("O", holes_O, mdot_O, dpi_O, float(P[_RHO_O]), float(P[_DJO]), float(P[_NO])),
+            ("F", holes_F, mdot_F, dpi_F, float(P[_RHO_F]), float(P[_DJF]), float(P[_NF]))):
+        if len(holes) == 0:
+            continue
+        b = _IDX[f"NET_{k}"]
+        n_ports, scale, A_ch = float(P[b + 1]), float(P[b + 7]), float(P[b + 3])
+        hs = [float(q) for q in holes]
+        mean = md / (2.0 * n_ports * scale * len(hs)) if md > 0 else float("nan")
+        per[k] = hs
+        out[f"element_mass_flows_{k}"] = hs
+        out[f"element_flow_ratio_min_{k}"] = float(min(hs) / mean) if mean > 0 else float("nan")
+        out[f"element_flow_ratio_max_{k}"] = float(max(hs) / mean) if mean > 0 else float("nan")
+        out[f"manifold_branch_velocity_{k}"] = float(md / (2.0 * n_ports) / (rho * A_ch))
+        out[f"manifold_ports_{k}"] = int(n_ports)
+        A = n * math.pi * d ** 2 / 4.0
+        out[f"Cd_eff_manifold_{k}"] = (float(md / (A * math.sqrt(2.0 * rho * dpi)))
+                                       if dpi > 0 and md > 0 else float("nan"))
+    if "O" in per and "F" in per and len(per["O"]) == len(per["F"]):
+        mrs = [o / f if f > 0 else float("inf") for o, f in zip(per["O"], per["F"])]
+        out["element_mixture_ratios"] = mrs
+        out["element_mass_flows"] = [o + f for o, f in zip(per["O"], per["F"])]
+        out["element_mixture_ratio_min"] = float(min(mrs))
+        out["element_mixture_ratio_max"] = float(max(mrs))
+    return out

@@ -21,9 +21,13 @@
      FlightSimulation, but never defined here -- so every "muted" label was
      inheriting full-brightness --color-text-primary and reading as loud as the
      content it annotates. Value matched to recovery-calculator, which sets it
-     for contrast (7.8:1 on the dark ground). */
-  --color-text-muted: #9fb0c4;
+     for contrast. Kept below --color-text-secondary so units and sub-text annotate the
+     labels instead of out-shouting them (#7d8ba0: 5.6:1 on the dark ground, AA). */
+  --color-text-muted: #7d8ba0;
   --color-border: #2d2d3a;
+  /* The propellants, everywhere they are drawn (Layer X, schematics): one token each. */
+  --color-lox: #7dd3fc;
+  --color-fuel: #fdba74;
 }
 
 /* Base styles */

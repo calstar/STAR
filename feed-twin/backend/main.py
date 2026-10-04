@@ -28,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import feedtwin
 from feedtwin.pid import INLINE_TYPES, INSTRUMENT_TYPES, SOURCE_TYPES
-from feedtwin.pid.network import SINK_TYPES
+from feedtwin.pid.network import SINK_TYPES, propellant_side
 
 from backend.assembly import (
     AssemblyError,
@@ -631,7 +631,11 @@ def _stand(
         for node in model.diagram.nodes
         if node.id in model.built.actuators
     }
-    return Stand(model=model, machine=loaded, binding=bind(loaded, labels))
+    return Stand(
+        model=model,
+        machine=loaded,
+        binding=bind(loaded, labels, roles=model.built.valve_roles),
+    )
 
 
 #: Instrument types that read a temperature rather than a pressure.
@@ -775,6 +779,8 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
                     values.get("surface_temperature_K", 0.0), 1
                 ),
                 volume_L=round(values.get("volume_L", 0.0), 2),
+                side=propellant_side(built.network.nodes[sim.outlet_node].fluid),
+                chilling=bool(values.get("chilling", 0.0)),
             )
             for sim in session.tanks.values()
             for values in [sample.tanks[sim.id]]
@@ -816,13 +822,18 @@ async def open_session(
     """
     settings = dict(body or {})
     stand = _stand(diagram, engine, fluid_set, machine, multiphase)
-    session = Session(
-        stand.model,
-        stand.machine,
-        stand.binding,
-        state=str(settings.get("state") or "Idle"),
-        setup=_setup(settings),
-    )
+    try:
+        session = Session(
+            stand.model,
+            stand.machine,
+            stand.binding,
+            state=str(settings.get("state") or "Idle"),
+            setup=_setup(settings),
+        )
+    except AssemblyError as exc:
+        # A drawing that assembles can still fail to *start* -- a COPV drawn
+        # as a tank has no liquid to begin from. Said, not a bare 500.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if len(_SESSIONS) >= _SESSION_LIMIT:
         _SESSIONS.pop(next(iter(_SESSIONS)))
     _SESSIONS[session.id] = session

@@ -19,13 +19,17 @@ export interface InjectorDrawings {
   back: Primitive[];
   section_doublet: Primitive[];
   section_between: Primitive[];
+  /** The half-section alone, x = radius, y = up from the face: a CAD revolve sketch. */
+  revolve?: Primitive[];
+  /** The cover plate from above: feed ports over the channels. */
+  ports?: Primitive[];
 }
 
 /** AutoCAD colour index per layer, so the file opens legibly without a layer setup. */
 const LAYER_ACI: Record<string, number> = {
   PLATE: 7, SLEEVE: 8, LINER: 30, CHAMBER: 7, GROOVE: 7, CHANNEL_O: 4, CHANNEL_F: 30, PASSAGE_O: 4, PASSAGE_F: 30, JET_O: 4, JET_F: 30,
   IMPINGE: 7, IMPINGE_RING: 7, IGNITER: 7, THREAD: 8, HOLE_O: 4, HOLE_F: 30, BAD: 1, HIDDEN: 8, CENTER: 1, BREAK: 8,
-  PITCH_O: 4, PITCH_F: 30, KEEPOUT: 2, LAND: 2, NOTE: 8, DIM: 3,
+  PITCH_O: 4, PITCH_F: 30, KEEPOUT: 2, LAND: 2, NOTE: 8, DIM: 3, SEAL: 3,
 };
 
 /** Layers that are shading only: drawn filled on screen, not written to CAD. */

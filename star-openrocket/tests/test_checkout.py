@@ -498,20 +498,33 @@ def test_beat_alone_survives_the_ttl_but_idling_does_not(client, monkeypatch):
     assert client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A).status_code == 200
 
 
-def test_a_lapsed_hold_cannot_be_beaten_back_to_life(client, monkeypatch):
-    """Beating is a refresh, not a resurrection.
+def test_a_lapsed_hold_nobody_took_is_reclaimed_by_its_holder(client, monkeypatch):
+    """A lapse with nobody waiting is not a conflict, and must not cost the edit.
 
-    Once the hold has gone the design is free and someone else may already have
-    taken it, so a client that could beat its way back would reintroduce exactly
-    the two-holders case checkouts exist to prevent. 423 here is what makes the
-    lost-checkout dialog offer "Take it back" rather than silently re-beating.
+    Every content write needs the checkout, so if nobody has taken the design
+    since it lapsed on you, nobody can have changed it: your next beat or save
+    takes the hold back instead of being refused (see
+    ``DesignStore.claim_for_write``). Refusing it was how edits were lost --
+    step away past ``lock_ttl``, come back, keep editing, and every save came
+    back 423 with nobody else anywhere near the design.
     """
     doc_id = _create(client)
     _share(client, doc_id, [B["X-Auth-Email"]])
-    client.post(f"{BASE}/{doc_id}/checkout", headers=A)
+    monkeypatch.setattr(documents.store, "lock_ttl", 0)  # lapsed
+    assert client.post(f"{BASE}/{doc_id}/checkout/beat", headers=A).status_code == 200
+    assert _save(client, doc_id, A).status_code == 200
+    monkeypatch.setattr(documents.store, "lock_ttl", 900)
+    assert client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A).status_code == 423
 
-    monkeypatch.setattr(documents.store, "lock_ttl", 1)
-    time.sleep(1.05)
-    assert client.post(f"{BASE}/{doc_id}/checkout/beat", headers=A).status_code == 423
-    # and it really was free, not merely unbeatable
+
+def test_a_lapsed_hold_someone_else_took_is_not_reclaimed(client, monkeypatch):
+    """Lapsing still frees the design for whoever acts first. Once B has taken
+    it, A's beat and save are refused -- the two-holders case checkouts exist
+    to prevent."""
+    doc_id = _create(client)
+    _share(client, doc_id, [B["X-Auth-Email"]])
+    monkeypatch.setattr(documents.store, "lock_ttl", 0)
     assert client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A).status_code == 200
+    monkeypatch.setattr(documents.store, "lock_ttl", 900)
+    assert client.post(f"{BASE}/{doc_id}/checkout/beat", headers=A).status_code == 423
+    assert _save(client, doc_id, A).status_code == 423

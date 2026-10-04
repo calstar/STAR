@@ -188,8 +188,9 @@ interface CanvasProps {
   sheet:              Omit<SheetMeta, 'page'>;
   /** Autosave hit a 403: this diagram was unshared while it was open. */
   onForbidden:        () => void;
-  /** Autosave hit a 423: the checkout lapsed or was taken. */
-  onLockLost:         () => void;
+  /** Autosave hit a 423: the checkout went to someone else. Given the name of
+   *  the diagram the refused edits were kept as, when keeping them worked. */
+  onLockLost:         (savedAs?: string) => void;
   /** React Flow themes its own chrome (handles, selection, controls) off
    *  this -- it does not read the CSS variables above on its own. */
   theme:              Theme;
@@ -352,15 +353,23 @@ function PIDCanvas({
       if (serialized === lastSaved.current) return;
       lastSaved.current = serialized;
       unsnapped.current = true;
-      api.autosaveDiagram(diagramRef, { nodes, edges }).catch((e: unknown) => {
+      const payload = { nodes, edges };
+      api.autosaveDiagram(diagramRef, payload).catch((e: unknown) => {
         lastSaved.current = ''; // failed -- let the next change retry
         // 403 means this diagram was unshared from you while you had it open.
         // Retrying is silent and pointless -- tell the parent so it can stop
         // and fall back to one of your own.
         if (e instanceof api.ApiError && e.status === 403) onForbidden();
-        // 423: the checkout lapsed and someone else took it. Drop to read-only
-        // rather than retry into a void.
-        else if (e instanceof api.ApiError && e.status === 423) onLockLost();
+        // 423: someone else has the checkout. (A lapse nobody took is not a
+        // 423 any more -- the server hands the hold back on this save.) Keep
+        // what this save carried as a diagram of the user's own *first*: going
+        // read only leaves it on screen only, and "Take it back" reloads over
+        // it. Then drop to read-only rather than retry into a void.
+        else if (e instanceof api.ApiError && e.status === 423) {
+          api.rescueDiagram(diagramRef, payload)
+            .then(kept => onLockLost(kept.name))
+            .catch(() => onLockLost());
+        }
       });
     }, 1000);
     return () => clearTimeout(t);

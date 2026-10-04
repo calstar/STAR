@@ -38,15 +38,6 @@ def rig():
     return cfg, PintleEngineRunner(cfg)
 
 
-@pytest.fixture(autouse=True)
-def ungated(monkeypatch):
-    """These tests pin how outcomes are CLASSIFIED, not whether the chamber kernels are current.
-    While accel.chamber_physics_not_mirrored() is non-empty every chamber call is NOT_HANDLED by
-    design (tests/test_numba_ab_parity.py covers that), so lift the gate here."""
-    from engine import accel
-    monkeypatch.setattr(accel, "_CHAMBER_PHYSICS_NOT_MIRRORED", ())
-
-
 def test_converged_is_ok(rig):
     from engine import accel
     cfg, r = rig

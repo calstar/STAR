@@ -1,0 +1,246 @@
+/* Layer X charts (Chart.tsx, engine.ts). Colours are the theme's tokens; nothing here is a
+   literal colour, so a theme flip needs no rebuild of the DOM layer. */
+
+.lx-chart {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0;
+}
+
+/* The values at the cursor, one row above the plot. */
+.lx-chart-readout {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 14px;
+  min-height: 18px;
+  padding: 0 0 2px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--lx-text-2);
+}
+.lx-chart-ro {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+}
+.lx-chart-ro-key {
+  display: inline-block;
+  align-self: center;
+  width: 10px;
+  height: 0;
+  border-top: 2px solid currentColor;
+}
+.lx-chart-ro-label { color: var(--lx-text-2); }
+.lx-chart-ro-value {
+  color: var(--lx-text);
+  font-family: var(--lx-font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+/* A chart off the clock reads its x value out first. */
+.lx-chart-ro-x .lx-chart-ro-value { color: var(--lx-text-2); }
+/* The y unit, heading the tick column on the readout's row (its width is the gutter's, set by the
+   engine), right-aligned with the tick labels under it. */
+.lx-chart-unit {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--lx-text-3);
+  text-align: right;
+  white-space: nowrap;
+}
+.lx-chart-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.lx-chart-ro-ghost .lx-chart-ro-label,
+.lx-chart-ro-ghost .lx-chart-ro-value { color: var(--lx-text-3); }
+
+.lx-chart-plot {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.lx-chart-plot .uplot { font-family: var(--lx-font-sans); line-height: 1.45; }
+
+.lx-chart-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+/* The right gutter's names: a series in its colour, a limit in its status colour. Cut with an
+   ellipsis past the engine's width cap (the readout row carries the full name). */
+.lx-chart-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: hidden;
+  font-family: var(--lx-font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  will-change: transform;
+}
+.lx-chart-label-ghost { font-weight: 400; }
+.lx-chart-anno {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--lx-surface) 82%, transparent);
+  color: var(--lx-text-2);
+  font-size: 11px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+.lx-chart-limit { font-weight: 400; }
+.lx-chart-limit-ok { color: var(--lx-ok); }
+.lx-chart-limit-warn { color: var(--lx-warn); }
+.lx-chart-limit-bad { color: var(--lx-bad); }
+
+.lx-chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--lx-text-3);
+  font-size: 12px;
+}
+
+/* The hairline from a worst-point ring to its note, when the note had to sit apart. */
+.lx-chart-leader {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.lx-chart-leader line {
+  stroke: var(--lx-text-3);
+  stroke-width: 1;
+}
+
+/* The cursor layer lives in uPlot's overlay, over the plotting area only. */
+.lx-chart-over {
+  cursor: crosshair;
+  touch-action: pan-y;
+}
+.lx-chart-cursor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -0.5px;
+  width: 1px;
+  background: var(--lx-cursor);
+  opacity: 0.55;
+  pointer-events: none;
+  will-change: transform;
+}
+.lx-chart-dot {
+  position: absolute;
+  left: -3.5px;
+  top: -3.5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px var(--lx-surface);
+  pointer-events: none;
+  will-change: transform;
+}
+.lx-chart-dot-ghost {
+  left: -2.5px;
+  top: -2.5px;
+  width: 5px;
+  height: 5px;
+  opacity: 0.8;
+}
+
+/* A margin bar was clicked: flash where it points. */
+.lx-chart-focus { position: absolute; pointer-events: none; }
+.lx-chart-focus-ring {
+  left: -8px;
+  top: -8px;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--lx-accent);
+  border-radius: 50%;
+  animation: lx-chart-ring 1600ms ease-out forwards;
+}
+.lx-chart-focus-line {
+  top: 0;
+  bottom: 0;
+  left: -1px;
+  width: 2px;
+  background: var(--lx-accent);
+  animation: lx-chart-fade 1600ms ease-out forwards;
+}
+@keyframes lx-chart-ring {
+  0% { opacity: 1; scale: 1.8; }
+  25% { opacity: 1; scale: 1; }
+  100% { opacity: 0; scale: 1; }
+}
+@keyframes lx-chart-fade {
+  0%, 40% { opacity: 1; }
+  100% { opacity: 0; }
+}
+/* Still, not animated: the marker simply shows for the focus's duration and goes. */
+@media (prefers-reduced-motion: reduce) {
+  .lx .lx-chart-focus,
+  .lx-chart-focus { animation: none !important; }
+}
+
+/* ------------------------------------------------------------------ x-y charts and heatmaps */
+.lx-xy-canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+.lx-xy .lx-chart-plot { cursor: crosshair; touch-action: pan-y; }
+/* Text drawn over the plot (a mark's or a path's name, a contour's value, a vertical limit's
+   name) sits on a quiet pill of the panel colour, so it reads over a heat layer or a line. */
+.lx-xy-pill {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--lx-surface) 84%, transparent);
+}
+.lx-xy-contour {
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--lx-text-2);
+  font-size: 10px;
+  line-height: 13px;
+  white-space: nowrap;
+}
+.lx-xy-ro { display: inline-flex; flex-wrap: wrap; gap: 2px 14px; padding: 0; }
+.lx-xy-ro-unit { margin-left: -2px; color: var(--lx-text-3); }
+/* The colourbar's unit heads its column, at the right of the readout row. */
+.lx-xy-zhead { text-align: left; overflow: visible; }
+.lx-xy-cursor-h { will-change: transform; }
+/* Over a heat layer the cursor needs its own edge to read on dark and light cells alike. */
+.lx-xy .lx-chart-cursor {
+  opacity: 0.9;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--lx-surface) 70%, transparent);
+}
+.lx-xy-hover { display: none; }

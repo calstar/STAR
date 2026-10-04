@@ -75,7 +75,13 @@ def calculate_chugging_frequency(
         freq_helm = float((a / (2.0 * np.pi)) * np.sqrt(throat_area / (chamber_volume * L_eff)))
 
     freq = freq_helm if np.isfinite(freq_helm) else float(freq_res)
+    # The gas residence time, m_gas / mdot = rho_c V / mdot = L* c* / (R T) -- what the chug
+    # model's theta_c and the results' "Residence Time" are. L*/c* is not a residence time: it is
+    # short of it by Gamma^2 (~0.4), and was shown as "tau residence" beside the real one.
+    theta_c = (float(Lstar * cstar / (R * Tc)) if (R is not None and Tc is not None and R * Tc > 0)
+               else float("nan"))
     return {
+        "theta_c": theta_c,
         "frequency": float(freq),
         "frequency_residence": float(freq_res),
         "frequency_helmholtz": float(freq_helm),
@@ -588,9 +594,32 @@ def _stability_config(config) -> StabilityConfig:
     return sc if isinstance(sc, StabilityConfig) else StabilityConfig()
 
 
+def _feed_override(feed: Optional[Dict[str, Dict[str, float]]], side: str) -> Dict[str, float]:
+    """The caller's feed impedance for one side (``feed[side]`` or ``feed["O"/"F"]``), validated.
+
+    Only ``inertance`` [1/m] and ``dP_feed`` [Pa] are read. A value that is not a finite,
+    non-negative number is refused rather than clipped: it would otherwise move the chug margin
+    with nothing in the payload saying why."""
+    if not feed:
+        return {}
+    key = "O" if side == "oxidizer" else "F"
+    f = feed.get(side) or feed.get(key) or {}
+    out: Dict[str, float] = {}
+    for name in ("inertance", "dP_feed"):
+        v = f.get(name)
+        if v is None:
+            continue
+        v = float(v)
+        if not np.isfinite(v) or v < 0.0:
+            raise ValueError(f"feed[{side!r}][{name!r}] must be finite and >= 0, got {v!r}")
+        out[name] = v
+    return out
+
+
 def build_stability_inputs(config, Pc: float, MR: float, mdot_total: float, cstar: float,
                            gamma: float, R: float, Tc: float, diagnostics: Dict[str, Any],
-                           cg: Any, *, overrides: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+                           cg: Any, *, overrides: Optional[Dict[str, float]] = None,
+                           feed: Optional[Dict[str, Dict[str, float]]] = None) -> Dict[str, Any]:
     """Extract chug/acoustic model inputs from config + diagnostics. Shared by the fast path
     (compute_physical_stability) and the rich report (report.py) so they use IDENTICAL extraction.
     [Phys §3.2, §4, §5]
@@ -598,6 +627,14 @@ def build_stability_inputs(config, Pc: float, MR: float, mdot_total: float, csta
     Sources, in order: solved geometry (``cg``), the closure diagnostics of this evaluation, the
     config (``fluids`` for the propellants, ``feed_system`` for the plumbing, ``stability`` for the
     model calibration), and finally recorded assumptions -- never a silent constant.
+
+    ``feed`` (opt-in, default None = the config's plumbing, exactly as before): the feed impedance
+    of each side stated by the caller, ``{"oxidizer"|"O": {"inertance": I [1/m], "dP_feed": dp [Pa]},
+    "fuel"|"F": {...}}``. ``inertance`` replaces ``feed_system.<side>.length / A_hydraulic`` (the
+    caller has summed L/A over the lines it knows, e.g. a P&ID drawing's); ``dP_feed`` replaces the
+    closure's feed drop as the steady drop the linearised resistance ``R = 2 dp / mdot`` is taken
+    from, *whole*: the ``supply_K`` share is not subtracted from it, because the caller's drop runs
+    from the tank outlet and the supply is upstream of the tank. Either key may be given alone.
     """
     from engine.pipeline.stability import core, chug, acoustic, timelag
     from engine.pipeline.assumptions import assume
@@ -752,6 +789,27 @@ def build_stability_inputs(config, Pc: float, MR: float, mdot_total: float, csta
     L_feed_F, A_feed_F = _feed_geometry(config, "fuel")
     reg_kw = dict(enabled=bool(sc.regulator_enabled), corner_hz=float(sc.regulator_corner_hz),
                   Z_hf=float(sc.regulator_Z_hf), max_excursion_pa=float(sc.regulator_max_excursion_psi) * 6894.757)
+    # The supply's share of the lumped feed loss (feed_system.<side>.supply_K): it sets the inlet
+    # pressure above, but it is the regulator and ullage at chug frequencies, which the Regulator
+    # model below carries. Counting it again as line resistance raised the gain margin (1.51 ->
+    # 1.57 on the 6.8 kN stand fit), in the unsafe direction. Zero by default: K0 all line.
+    dpfO = _chug_feed_drop(config, "oxidizer", dpfO, mdot_O, rho_O)
+    dpfF = _chug_feed_drop(config, "fuel", dpfF, mdot_F, rho_F)
+    # The caller's feed impedance (opt-in). The equivalent length is I * A on the config's own area,
+    # so ChugStream.inertance() = length/area returns the caller's I and nothing else in the stream
+    # changes. Without ``feed`` none of this runs and the streams are exactly the config's.
+    feed_basis = "config"
+    ovO, ovF = _feed_override(feed, "oxidizer"), _feed_override(feed, "fuel")
+    if ovO or ovF:
+        feed_basis = "caller"
+        if "inertance" in ovO:
+            L_feed_O = ovO["inertance"] * A_feed_O
+        if "inertance" in ovF:
+            L_feed_F = ovF["inertance"] * A_feed_F
+        if "dP_feed" in ovO:
+            dpfO = ovO["dP_feed"]
+        if "dP_feed" in ovF:
+            dpfF = ovF["dP_feed"]
     streams = [
         chug.ChugStream("O", mdot=mdot_O, eta_inj=max(eta_O, 1e-3), Pc=Pc, dP_feed=dpfO,
                         feed_length=L_feed_O, feed_area=A_feed_O, tau_conv=tau_conv_O,
@@ -824,6 +882,8 @@ def build_stability_inputs(config, Pc: float, MR: float, mdot_total: float, csta
         "D32_O": D32_O, "D32_F": D32_F, "K_v_O": K_v_O, "K_v_F": K_v_F,
         "rho_O": rho_O, "rho_F": rho_F, "K_bulk_O": K_bulk_O,
         "feed_length_O": L_feed_O, "feed_length_F": L_feed_F,
+        # "config" (the config's plumbing) or "caller" (``feed`` restated it, opt-in).
+        "feed_basis": feed_basis,
         "u_O": diagnostics.get("u_O"), "Cd_O": diagnostics.get("Cd_O"),
         "u_F": diagnostics.get("u_F"), "Cd_F": diagnostics.get("Cd_F"),
         # Which stream actually paces the burn. Everything that reports "the" vaporization length,
@@ -885,6 +945,17 @@ def chug_band(inp: Dict[str, Any], nominal_gm: float, n_pts: int = 5) -> Optiona
         "at_min_fraction": fracs[k_min],
         "nominal_fraction": f0,
     }
+
+
+def _chug_feed_drop(config: Any, side: str, dp_feed: float, mdot: float, rho: float) -> float:
+    """The feed drop the chug loop sees as resistance: the line's, without the supply's share."""
+    fs = (getattr(config, "feed_system", None) or {}).get(side)
+    k_supply = float(getattr(fs, "supply_K", 0.0) or 0.0) if fs is not None else 0.0
+    area = float(getattr(fs, "A_hydraulic", 0.0) or 0.0) if fs is not None else 0.0
+    if k_supply <= 0.0 or area <= 0.0 or rho <= 0.0 or not np.isfinite(dp_feed):
+        return dp_feed
+    supply = k_supply * mdot * mdot / (2.0 * rho * area * area)
+    return max(dp_feed - supply, 0.0)
 
 
 def compute_physical_stability(config, Pc: float, MR: float, mdot_total: float, cstar: float,
@@ -1007,8 +1078,8 @@ def comprehensive_stability_analysis(
         band = phys.get("chug_band")
         chugging["chug_gm_band"] = band
         if chug_gm <= 1.0:
-            issues.append(f"Chug (feed-coupled LF) loop predicted unstable: gain margin {chug_gm:.2f} < 1. "
-                          f"Stiffen the injector or improve atomization")
+            issues.append(f"Chug (feed-coupled LF) loop predicted unstable: gain margin {chug_gm:.2f} < 1 at "
+                          f"the nominal mixing lag. Stiffen the injector or improve atomization")
         elif band is not None and np.isfinite(band["min"]) and band["min"] <= 1.0:
             issues.append(f"Chug gain margin {chug_gm:.2f} at the nominal mixing lag, but {band['min']:.2f} "
                           f"at mixing_lag_fraction {band['at_min_fraction']:.2f}: the verdict hangs on an "
@@ -1175,8 +1246,10 @@ def _generate_stability_recommendations(
     # (GM 2), the usual floor for a feedback loop.
     gm = chugging.get("stability_margin")
     if gm is not None and np.isfinite(gm) and gm < 2.0:
-        recs.append("Chug gain margin is thin: stiffen the injector (raise dP_inj/Pc) or shorten the vaporization lag (finer SMD).")
-        recs.append("Consider injector or chamber damping features such as baffles or acoustic liners.")
+        recs.append("Chug gain margin is thin: stiffen the injector (raise dP_inj/Pc), shorten the "
+                    "combustion lag (finer SMD), or add feed-line inertance or resistance.")
+        # Baffles and acoustic liners damp chamber acoustic modes; they do nothing for chug, a
+        # bulk mode whose loop runs through the feed. (This used to follow every chug warning.)
 
     if not np.isfinite(chugging["frequency"]):
         pass

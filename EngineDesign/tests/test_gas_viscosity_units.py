@@ -31,7 +31,7 @@ def test_huzel_viscosity_is_the_right_order_against_cea(T, M, mu_cea):
 
 def test_every_copy_of_the_fit_agrees():
     from engine.pipeline.thermal.regen_cooling import calculate_gas_viscosity_huzel
-    from engine.accel.kernels import _gas_viscosity_huzel
+    from engine.accel.chamber import _huzel_mu as _gas_viscosity_huzel   # the spray march film
     T, M = 3226.0, 22.25
     assert _gas_viscosity_huzel(T, M) == pytest.approx(calculate_gas_viscosity_huzel(T, M), rel=1e-12)
     src = open("engine/pipeline/thermal/ablative_cooling.py").read()

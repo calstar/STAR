@@ -41,7 +41,7 @@ from backend.routers import control
 
 # Import other routers optionally (may fail if dependencies missing)
 _optional_routers = {}
-for router_name in ['config', 'configs_store', 'documents', 'users', 'evaluate', 'timeseries', 'flight', 'geometry', 'optimizer']:
+for router_name in ['config', 'configs_store', 'documents', 'users', 'evaluate', 'timeseries', 'flight', 'geometry', 'optimizer', 'layerx']:
     try:
         router_module = __import__(f'backend.routers.{router_name}', fromlist=[router_name])
         _optional_routers[router_name] = router_module
@@ -65,6 +65,10 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+if 'layerx' in _optional_routers:
+    # Refuses an oversized drawing upload before Starlette reads (and spools) its body.
+    app.add_middleware(_optional_routers['layerx'].UploadSizeGuard)
 
 # CORS middleware for React frontend
 app.add_middleware(

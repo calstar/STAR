@@ -16,7 +16,7 @@ table is needed.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -66,6 +66,12 @@ class PidNode:
     params: Mapping[str, Param] = field(default_factory=dict)
     options: Mapping[str, str] = field(default_factory=dict)
     ports: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    drawn_as: str = ""
+    """The symbol the drawing used, when it is read as another -- see
+    :func:`_gas_tank_as_bottle`. Empty when the symbol is read as drawn."""
+    rotation: float = 0.0
+    """Degrees the symbol is turned on the drawing. A tank's ``t`` ports are on
+    its top only while it is upright."""
 
     @property
     def is_inline(self) -> bool:
@@ -185,6 +191,13 @@ def _ports(raw: Any) -> dict[str, dict[str, str]]:
     return out
 
 
+def _rotation(raw: Any) -> float:
+    try:
+        return float(raw or 0.0) % 360.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def read_diagram(payload: Mapping[str, Any], *, name: str = "diagram") -> Diagram:
     """Parse a saved drawing. Lenient by design -- see the module docstring."""
     raw_nodes = payload.get("nodes")
@@ -220,6 +233,7 @@ def read_diagram(payload: Mapping[str, Any], *, name: str = "diagram") -> Diagra
                 params=_params(data.get("params"), f"{name}:{node_id}"),
                 options=_options(data.get("options")),
                 ports=_ports(data.get("ports")),
+                rotation=_rotation(data.get("rotation", raw.get("rotation"))),
             )
         )
 
@@ -248,6 +262,8 @@ def read_diagram(payload: Mapping[str, Any], *, name: str = "diagram") -> Diagra
             )
         )
 
+    nodes = [_gas_tank_as_bottle(n) for n in nodes]
+
     known = {n.id for n in nodes}
     dangling = [e.id for e in edges if e.source not in known or e.target not in known]
     if dangling:
@@ -257,6 +273,37 @@ def read_diagram(payload: Mapping[str, Any], *, name: str = "diagram") -> Diagra
         )
 
     return Diagram(nodes=tuple(nodes), edges=tuple(edges), name=name)
+
+
+def _gas_tank_as_bottle(node: PidNode) -> PidNode:
+    """A TANK that can only hold gas is the pressurant supply: read it as one.
+
+    pid-designer offers ``copv`` as a tank *wall material*, so a COPV is easily
+    drawn with the propellant-tank symbol. Read as drawn it supplies nothing --
+    the press lines land on the tanks' liquid side -- and a stand cannot even
+    open, because a propellant tank starts from a saturated liquid that does not
+    exist above the critical point.
+
+    Only when the drawing itself rules out a liquid: the fluid and the
+    temperature are both stated, and the temperature is above that fluid's
+    critical temperature. A LOX tank that merely forgot its temperature is left
+    alone (and warned about as a missing temperature, which is what it is).
+    Nothing is invented -- the pressure, fluid and volume are the drawing's own.
+    """
+    if node.type != "TANK" or not node.fluid:
+        return node
+    temperature = node.params.get("temperature")
+    if temperature is None:
+        return node
+    try:
+        from feedtwin.props import Fluid
+
+        critical = Fluid(node.fluid).critical_temperature
+    except Exception:  # noqa: BLE001 - an unknown fluid is the reader's to report
+        return node
+    if not temperature.si > critical:
+        return node
+    return replace(node, type="KBOTTLE", drawn_as="TANK")
 
 
 def load_diagram(path: str | Path) -> Diagram:

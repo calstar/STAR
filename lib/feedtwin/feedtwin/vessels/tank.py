@@ -420,15 +420,17 @@ class Tank:
             heat_capacity=self.liquid.get("cp", T=T, q=0.0),
         )
 
-    def outlet_pressure(self, state: TankState) -> float:
+    def outlet_pressure(self, state: TankState, gravity: float = GRAVITY) -> float:
         """Pressure at the tank outlet [Pa]: ullage plus the liquid column.
 
         The head a full tank adds is not negligible against a feed-system
         budget -- a metre of LOX is about 1.6 psi -- and it decays over a burn,
         so a model that leaves it out predicts a drifting error rather than a
-        constant one.
+        constant one. ``gravity`` is what the column feels along the tank's
+        axis: standard gravity on a stand, several times it in a vehicle under
+        thrust.
         """
-        return self.pressure(state) + self.liquid_density(state) * GRAVITY * self.level(
+        return self.pressure(state) + self.liquid_density(state) * gravity * self.level(
             state
         )
 

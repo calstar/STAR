@@ -1,0 +1,17 @@
+{
+ "run": "20261002-231658-7e47d1",
+ "vs": "20261002-224508-cf9797",
+ "shots": [
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/wave2/tools-injector-1440-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/wave2/tools-optimize-1440-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/wave2/empty-1440-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/wave2/running-1440-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/wave2/failed-1440-dark.png"
+ ],
+ "console": [],
+ "axe": [],
+ "overlap": [],
+ "clipped": [],
+ "ellipsis": [],
+ "orphan": []
+}

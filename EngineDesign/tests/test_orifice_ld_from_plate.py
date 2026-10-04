@@ -142,9 +142,11 @@ def test_python_and_accelerator_agree_with_plate_ld(counterbore):
     from engine.core.injectors import get_injector_model
     with _python_only():
         ref = runner.evaluate(*P, P_ambient=101325.0, silent=True)
-    # The chamber kernels are gated off until they mirror the Python chamber physics
-    # (accel.chamber_physics_not_mirrored); the injector kernel is what the default path runs,
-    # so that is where the plate's L/d has to arrive.
+    # The plate's L/d has to arrive in the injector kernel (accel.solve, which the default path
+    # runs on every residual) and through it in the chamber kernel Layer 1 runs.
+    full = accel.evaluate(c, runner.cea_cache, *P, 101325.0)
+    assert full is not None
+    assert full["F"] == pytest.approx(ref["F"], rel=1e-6)
     got = accel.solve(c, *P, ref["Pc"])
     assert got is not None
     mO, mF, _ = get_injector_model(c).solve(*P, ref["Pc"])
@@ -189,14 +191,18 @@ def test_ship_is_clear_and_warm_lox_is_not():
     # leaves the vena contracta at vapour pressure.
     c.fluids["oxidizer"].vapor_pressure = 500 * PSI
     cav = PintleEngineRunner(c).evaluate(*P, silent=True)["injector_cavitation"]
-    assert cav["O"]["margin"] < 1.0
+    # Cd is now held at Cc sqrt(K) (Nurick): the hole runs AT the cavitation line, margin 1.
+    assert cav["O"]["margin"] == pytest.approx(1.0, abs=1e-6)
 
 
-def test_the_report_changes_no_flow():
+def test_a_cavitating_feed_loses_flow():
+    """Cavitation used to be reported only; a vena contracta at vapour pressure now caps Cd at
+    Cc sqrt(K) (Nurick 1976), so saturated LOX flows less and the engine makes less thrust."""
     from engine.core.runner import PintleEngineRunner
     c = _ship()
     P = (c.lox_tank.initial_pressure_psi * PSI, c.fuel_tank.initial_pressure_psi * PSI)
     base = PintleEngineRunner(c).evaluate(*P, silent=True)
     c.fluids["oxidizer"].vapor_pressure = 500 * PSI
     warm = PintleEngineRunner(c).evaluate(*P, silent=True)
-    assert warm["F"] == pytest.approx(base["F"], rel=1e-12)
+    assert warm["mdot_O"] < 0.9 * base["mdot_O"]
+    assert warm["F"] < base["F"]

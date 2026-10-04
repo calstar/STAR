@@ -65,7 +65,7 @@ class TestTheStudyReachesLockup:
     @pytest.mark.parametrize("gas", ["gn2", "he"])
     def test_every_thermal_model_on_settles_at_lockup(self, gas: str) -> None:
         session = all_thermal(gas)
-        notes = [a for a in session.assumptions if "did not settle" in a]
+        notes = [a for a in session.assumptions if "T-0 not settled" in a]
         assert notes == [], notes
         for sim in session.tanks.values():
             assert abs(psig(sim.pressure) - study.TANK_PSI) < study.SETTLE_BAND, (

@@ -14,7 +14,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import { channelColor, fixed } from '../api';
+import { channelColor, fixed, type TankState } from '../api';
 import ActuatorGrid from '../components/ActuatorGrid';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
 import PadSequence from '../components/PadSequence';
@@ -28,8 +28,8 @@ const WINDOWS = [
   { label: '5min', seconds: 300 },
 ];
 
-const TANK_COLOUR = (label: string) =>
-  /lox|ox/i.test(label) ? 'var(--color-lox)' : 'var(--color-fuel)';
+const TANK_COLOUR = (t: TankState) =>
+  (t.side ? t.side === 'lox' : /lox|ox/i.test(t.label)) ? 'var(--color-lox)' : 'var(--color-fuel)';
 
 /** A vessel, drawn as the thing it is: a column of liquid, to scale. */
 function Vessel({
@@ -41,6 +41,7 @@ function Vessel({
   temperature,
   colour,
   gas = false,
+  chilling = false,
 }: {
   label: string;
   litres?: number;
@@ -50,6 +51,7 @@ function Vessel({
   temperature: number;
   colour: string;
   gas?: boolean;
+  chilling?: boolean;
 }) {
   return (
     <div className="bg-card flex min-w-[150px] flex-1 gap-2.5 rounded-lg border border-gray-800 px-3 py-2">
@@ -74,6 +76,14 @@ function Vessel({
         </div>
         <div className="font-mono text-[10px] leading-snug tabular-nums text-text-muted">
           {fixed(mass, 2)} kg · {fixed(fill * 100, 0)}% · {fixed(temperature, 0)} K
+          {chilling && (
+            <span
+              className="ml-1 text-sky-400"
+              title="The wall is still warm: LOX poured in flashes off and vents, and nothing collects until the metal is at saturation."
+            >
+              chilling
+            </span>
+          )}
         </div>
       </div>
     </div>
@@ -123,8 +133,14 @@ export function Console() {
             pressurePsi={t.pressure_psi}
             fill={t.fill_fraction}
             mass={t.liquid_mass_kg}
-            temperature={t.liquid_temperature_K}
-            colour={TANK_COLOUR(t.label)}
+            // Until liquid collects, what there is to watch is the metal.
+            temperature={
+              t.liquid_mass_kg > 0.001 || t.wall_temperature_K === undefined
+                ? t.liquid_temperature_K
+                : t.wall_temperature_K
+            }
+            chilling={t.chilling}
+            colour={TANK_COLOUR(t)}
           />
         ))}
         {live.bottles.map((b) => (

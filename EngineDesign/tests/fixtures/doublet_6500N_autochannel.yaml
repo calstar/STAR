@@ -1,3 +1,5 @@
+# Test fixture: the 6.5 kN doublet with the layout's auto-drawn channels and 1 port per ring (pre-CAD).
+# Frozen so the manifold/plate tests do not move when the live design file changes.
 # Ethalox unlike doublet, 6500 N -- configs/ethalox_6500N.yaml re-optimised on the 2026-09-26 physics.
 # Locked: 5.000 in bore (6.5 in OD - 2 x (0.5 in ablative + 0.25 in steel)), 24 doublets (15 deg
 # indexing), whole-degree jet angles, L* 1.0 m, 1/2 in x 0.035 tube feed lines, Pc target 375 psia.

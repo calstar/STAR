@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
-from typing import Literal, Optional, Union, List, Dict, Tuple, Set
+from typing import Any, Literal, Optional, Union, List, Dict, Tuple, Set
 import numpy as np
 
 
@@ -143,10 +143,27 @@ class IgniterPortConfig(BaseModel):
                     "None => the field thickness layer1_injector_plate_thickness_m.")
 
 
+class BackGrooveConfig(BaseModel):
+    """An annular groove in the plug's back face, as the designer drew it (a face seal's gland).
+    Drawn, exported and checked for clearance to the channels; never sized here."""
+    r_inner: float = Field(gt=0.0, description="Inner radius [m].")
+    r_outer: float = Field(gt=0.0, description="Outer radius [m].")
+    depth: float = Field(gt=0.0, description="Depth into the back face [m].")
+    corner_radius: float = Field(default=0.0, ge=0.0, description="Fillet at the bottom corners [m].")
+
+
+class RimGlandConfig(BaseModel):
+    """A groove round the plug's rim (a radial seal's gland), as the designer drew it."""
+    z_start: float = Field(ge=0.0, description="Axial distance from the face to the groove's face-side wall [m].")
+    width: float = Field(gt=0.0, description="Axial width [m].")
+    depth: float = Field(gt=0.0, description="Radial depth into the rim [m].")
+    corner_radius: float = Field(default=0.0, ge=0.0, description="Fillet at the bottom corners [m].")
+
+
 class InjectorPlateConfig(BaseModel):
     """The injector as a plug in the chamber sleeve: how its face and back are machined.
-    Geometry only -- structure (FEA), seals, the manifold cover and the plug's retention are the
-    designer's; engine/core/injectors/layout.py reports the lands they get. The holes' L/d is
+    Geometry, plus a closed-form plate-bending estimate -- FEA, seals, the manifold cover and the
+    plug's retention are the designer's; engine/core/injectors/layout.py reports the lands they get. The holes' L/d is
     discharge.<side>.orifice_l_over_d: one number sets both the Cd and, with channels, how deep
     the channels sit."""
     face: Literal["flat", "contoured"] = Field(default="contoured",
@@ -168,14 +185,80 @@ class InjectorPlateConfig(BaseModel):
     channel_width: Optional[float] = Field(default=None, gt=0.0,
         description="Channels back: channel width [m]. None or narrower than the passage footprint "
                     "=> footprint + 2 x exit_land.")
-    channel_floor: Literal["flat", "coned"] = Field(default="flat",
+    channel_floor: Literal["flat", "coned", "spot"] = Field(default="flat",
         description="Channels back: flat floor (holes break through off square; deburr and "
-                    "flow-test) or a floor turned as a cone normal to the passages (square "
-                    "breakthrough).")
+                    "flow-test), a floor turned as a cone normal to the passages (square "
+                    "breakthrough), or spot: a flat floor channel_width wide beside a drill-spot "
+                    "facet square to the passages, channel_spot_length across (square breakthrough; "
+                    "the stand's plate).")
+    channel_spot_length: Optional[float] = Field(default=None, gt=0.0,
+        description="Spot floor: the facet's length across the hole [m]. None => d + 2 x exit_land.")
     channel_inlets: int = Field(default=1, ge=1,
         description="Channels back: feed ports into each channel. Each splits two ways around "
                     "the ring, so a branch carries mdot / (2 x inlets) at the port; the layout "
                     "checks that branch's velocity head against the injector drop.")
+    support: Literal["simply_supported", "clamped"] = Field(default="simply_supported",
+        description="How the plug's edge is held, for the layout's plate-bending check (circular "
+                    "plate under Pc over the bore). simply_supported (conservative for a plug on a "
+                    "shoulder or retaining ring) or clamped (edge cannot rotate).")
+    yield_strength: Optional[float] = Field(default=None, gt=0.0,
+        description="Plate material yield strength at temperature [Pa]. None => the plate-bending "
+                    "check reports stress only; declared, stress above yield / 1.5 is flagged.")
+    poisson_ratio: Optional[float] = Field(default=None, gt=0.0, lt=0.5,
+        description="Plate material Poisson ratio for the plate-bending check. None => 0.3 (assumed).")
+    channel_flow_height_O: Optional[float] = Field(default=None, gt=0.0,
+        description="Channels back: height [m] of the LOX manifold passage the flow sees (the "
+                    "channel plus any groove in the cover). None => the channel depth the layout "
+                    "draws. Flow area = channel_width x this.")
+    channel_flow_height_F: Optional[float] = Field(default=None, gt=0.0,
+        description="As channel_flow_height_O, for the fuel channel [m].")
+    manifold_model: Literal["ring_network", "plenum"] = Field(default="ring_network",
+        description="Channels back: 'ring_network' solves each channel as a dividing-flow ring "
+                    "(each port splits two ways; holes fed by the local static pressure, NASA TN "
+                    "D-5467; friction and momentum regain between holes, Acrivos/Bajura). 'plenum' "
+                    "treats the manifold as still fluid at one pressure (the old model).")
+    channel_entry_K: float = Field(default=0.5, ge=0.0,
+        description="Loss from the feed port into each channel branch, on the branch velocity head "
+                    "(sharp entrance, Idelchik diagram 3-1: 0.5). Assumed until flow-tested.")
+    channel_pressure_regain: float = Field(default=1.0, ge=0.0, le=1.0,
+        description="Static-pressure regain fraction as the branch slows past each hole (dividing-"
+                    "flow manifold; 1 = ideal momentum recovery, Acrivos, Babcock & Pigford 1959; "
+                    "measured 0.6-1). Assumed until flow-tested.")
+    channel_roughness: float = Field(default=3.2e-6, ge=0.0,
+        description="Channel wall roughness [m] for Churchill friction (machined, Ra ~0.8 um).")
+    back_grooves: List[BackGrooveConfig] = Field(default_factory=list,
+        description="Grooves cut in the back face (face-seal glands), as drawn. The layout draws "
+                    "them, keeps them in the plate section (bending) and flags one that runs into "
+                    "a channel, the centre port or another groove.")
+    rim_gland: Optional[RimGlandConfig] = Field(default=None,
+        description="Groove round the plug's rim (radial seal gland), as drawn.")
+    port_thread: Optional[Literal["1/8 NPT", "1/4 NPT", "3/8 NPT", "1/2 NPT", "3/4 NPT"]] = Field(
+        default=None,
+        description="Feed ports in the cover plate above the channels, channel_inlets per ring. "
+                    "Drawn in the port-plate view; each port's bore is checked against the "
+                    "back-face grooves it lands over.")
+    port_bore: Optional[float] = Field(default=None, gt=0.0,
+        description="Diameter the port opens with onto the injector's back face [m]. None => the "
+                    "thread's tap drill.")
+    port_radius_O: Optional[float] = Field(default=None, gt=0.0,
+        description="Radius of the LOX ports [m]. None => the middle of the LOX channel.")
+    port_radius_F: Optional[float] = Field(default=None, gt=0.0,
+        description="Radius of the fuel ports [m]. None => the middle of the fuel channel.")
+    port_clock_F_deg: Optional[float] = Field(default=None,
+        description="Angle from the first LOX port to the first fuel port [deg]. None => half the "
+                    "port pitch.")
+    profile_dxf_mode: Literal["geometry", "check"] = Field(default="geometry",
+        description="geometry: the drawing IS the plate (its section replaces the model's). check: "
+                    "the plate is built from the fields above and compared with the drawing, line "
+                    "by line; where they differ the layout says so.")
+    profile_dxf: Optional[str] = Field(default=None,
+        description="The plate's revolved half-section as drawn (a DXF of the revolve sketch, "
+                    "units set; path absolute or from EngineDesign/). When set it is the geometry: "
+                    "plate thickness, face groove, the channels' sections (flow area, hydraulic "
+                    "diameter, centroid radius) and each passage's exit, length and entry are read "
+                    "from it (engine/core/injectors/plate_dxf.py), and where the config's rings, L/d "
+                    "or igniter disagree with it the layout says so. channel_width and "
+                    "channel_flow_height_* are then not used.")
 
 
 class ImpingingInjectorConfig(InjectorBaseConfig):
@@ -210,6 +293,19 @@ FEED_LINE_SIZES: Dict[str, float] = {
 }
 
 
+class FeedFitting(BaseModel):
+    """One itemised loss in a feed run: a valve, bend, tee, filter or fitting.
+
+    ``K`` is in velocity heads of the LINE (A_hydraulic), so a component in a different bore
+    must be referred first: K_line = K_local (A_line / A_local)^2 (scripts/feed_line_K.py).
+    ``source`` is required -- a loss coefficient with no provenance is the thing this list
+    exists to replace.
+    """
+    name: str = Field(min_length=1, description="What the component is, e.g. '1/2 in ball valve'.")
+    K: float = Field(ge=0, description="Loss coefficient on the line velocity head [-].")
+    source: str = Field(min_length=1, description="Where K came from (Crane TP-410 A-27, datasheet Cv, water-flow test, ...).")
+
+
 class FeedSystemConfig(BaseModel):
     """Feed system configuration for one branch (O or F).
 
@@ -241,6 +337,16 @@ class FeedSystemConfig(BaseModel):
         description="Flow area of the feed line [m²]. Derived as πd²/4 from d_inlet when omitted.",
     )
     K0: float = Field(ge=0, description="Base loss coefficient")
+    supply_K: float = Field(
+        default=0.0, ge=0,
+        description=(
+            "The part of K0 that is the pressurant supply sagging under flow (regulator droop and "
+            "supply effect), not the line: it lowers the injector inlet exactly as K0 does, but at "
+            "chug frequencies it is the regulator's compliance (modelled separately in stability), so "
+            "the chug loop's feed resistance leaves it out. Written by Layer X's feed fit. 0: K0 is "
+            "all line, as before."
+        ),
+    )
     K1: float = Field(ge=0, description="Pressure dependence coefficient")
     phi_type: Literal["none", "sqrtP", "logP"] = Field(
         default="none",
@@ -273,6 +379,50 @@ class FeedSystemConfig(BaseModel):
             "tube run. None => the line itself (A_hydraulic)."
         ),
     )
+    fittings: List[FeedFitting] = Field(
+        default_factory=list,
+        description=(
+            "Itemised valves, bends, tees, filters and fittings, each {name, K, source} with K on "
+            "the line velocity head. Summed into K_eff on both paths (K0 and roughness_m). Empty "
+            "=> no change."
+        ),
+    )
+    roughness_m: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Absolute wall roughness [m] (drawn stainless tube 1.5e-6, Crane TP-410 A-23). When "
+            "set, K_eff = K_entrance + f L/d_inlet + sum(fittings) with Darcy f from Colebrook-"
+            "White at the actual Re = rho v d_inlet / mu of each call, and K0 is NOT used. None "
+            "=> K0 is the loss (the measured-override path), exactly as before. Assumes one "
+            "circular passage of bore d_inlet; requires length."
+        ),
+    )
+    K_entrance: float = Field(
+        default=0.5,
+        ge=0,
+        description=(
+            "Tank-to-line entrance loss, line velocity heads; used only when roughness_m is set. "
+            "0.5 = sharp-edged entrance (Crane TP-410 A-29)."
+        ),
+    )
+    derived_from: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Where K0 came from when it was fitted rather than typed: Layer X writes the feed-twin "
+            "drawing it burned, the run, the fitted line and supply terms, the flow they hold at, and "
+            "the K0 it replaced (engine/layerx/feedfit.py). Read by people, not by the physics."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _roughness_needs_length(self):
+        if self.roughness_m is not None and self.length is None:
+            raise ValueError(
+                "feed_system: roughness_m is set but length is not -- the friction path needs "
+                "f L/D. Give the line length, or drop roughness_m to use K0."
+            )
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -399,10 +549,22 @@ class SurfaceReactionConfig(BaseModel):
 class GraphiteInsertConfig(BaseModel):
     """Graphite throat insert configuration (separate from chamber ablator)"""
     enabled: bool = Field(default=False, description="Enable graphite throat insert")
-    material_density: float = Field(default=1800.0, gt=0, description="Graphite density [kg/m³] (typical: 1800-2200)")
+    material_density: float = Field(default=1800.0, gt=0, description="Graphite BULK density [kg/m³], from the grade's datasheet (isomolded 1750-1900). Not the 2260 of a single crystal: recession is carbon mass flux over this density")
     heat_of_ablation: float = Field(default=8.0e6, gt=0, description="Effective heat of ablation [J/kg] (graphite: ~8-12 MJ/kg)")
     thermal_conductivity: float = Field(default=100.0, gt=0, description="Graphite thermal conductivity [W/(m·K)] (typical: 50-150)")
-    specific_heat: float = Field(default=710.0, gt=0, description="Graphite specific heat [J/(kg·K)]")
+    specific_heat: float = Field(default=710.0, gt=0, description="Graphite specific heat [J/(kg·K)]; the insert's heat capacity when specific_heat_model is 'constant'")
+    specific_heat_model: Literal["constant", "butland_maddison_1973"] = Field(
+        default="constant",
+        description=(
+            "How the insert's specific heat follows temperature (engine/pipeline/thermal/graphite_properties.py). "
+            "'constant' uses specific_heat at every temperature; 'butland_maddison_1973' is graphite's published "
+            "cp(T), 0.71 kJ/(kg K) at 300 K rising to 2.0 at 2000 K, the same for every polygranular grade."
+        ),
+    )
+    material_source: Optional[str] = Field(
+        default=None,
+        description="Where the insert's material numbers came from: grade, manufacturer, datasheet.",
+    )
     initial_thickness: float = Field(default=0.005, gt=0, description="Initial graphite insert thickness [m]")
     surface_temperature_limit: float = Field(default=2500.0, gt=0, description="Maximum surface temperature before failure [K]")
     oxidation_temperature: float = Field(default=800.0, gt=0, description="Onset temperature for oxidation [K]")
@@ -675,21 +837,45 @@ class SMDConfig(BaseModel):
     model: Literal["lefebvre", "nukiyama_tanasawa", "ingebo"] = Field(
         default="lefebvre",
         description=(
-            "SMD model type. 'ingebo' is the established impinging-jet correlation "
-            "D32 = C_ingebo·d·(We_g·Re_l)^(-1/4) driven by the impingement relative velocity "
-            "(recommended for impinging doublets). 'lefebvre' is the legacy We^-m·(1+Oh)^p form."
+            "SMD model type. Impinging doublets always use NACA TN 4222 (Ingebo 1958) per stream; "
+            "'lefebvre' is the legacy We^-m·(1+Oh)^p form used by the pintle path."
         ),
     )
     C: float = Field(default=0.5, gt=0, description="Lefebvre constant C")
     m: float = Field(default=0.6, gt=0, description="Lefebvre exponent m")
     p: float = Field(default=0.0, description="Lefebvre exponent p (viscous term (1+Oh)^p)")
-    C_ingebo: float = Field(
-        default=3.9,
+    C_ingebo: Optional[float] = Field(
+        default=None,
+        description="[DEPRECATED — no effect] Prefactor of the former SMD function. Impinging D32 is NACA TN 4222; calibrate with smd_scale.",
+    )
+    d32_measured_O: Optional[float] = Field(default=None, gt=0,
+        description="Measured oxidizer D32 [m]; set from measurements.d32_O_um. Held at this value.")
+    d32_measured_F: Optional[float] = Field(default=None, gt=0,
+        description="Measured fuel D32 [m]; set from measurements.d32_F_um. Held at this value.")
+    smd_scale: float = Field(
+        default=1.0,
         gt=0,
         description=(
-            "Prefactor for the Ingebo impinging-jet SMD correlation "
-            "D32 = C_ingebo·d·(We_g·Re_l)^(-1/4). Literature reports ~3.9-5.0; "
-            "calibrate against a reference/target SMD."
+            "Multiplier on the impinging-jet D32 of NACA TN 4222 (Ingebo 1958). 1.0 = the "
+            "correlation; set it from a measured D32 (PDPA / laser diffraction cold flow)."
+        ),
+    )
+    smd_property_scaling: bool = Field(
+        default=True,
+        description=(
+            "Carry TN 4222 (n-heptane) to the actual liquid and gas with Ingebo's TN 4087 exponents: "
+            "D ~ (sigma mu_l / rho_l)^(1/4) rho_gas^(-1/4). Off = heptane in air as measured."
+        ),
+    )
+    smd_property_transfer: Literal["tn4087", "dombrowski_johns", "none"] = Field(
+        default="tn4087",
+        description=(
+            "How TN 4222's n-heptane/air D32 is carried to the real liquid and gas (used when "
+            "smd_property_scaling is on; spray.tn4222_property_factor). 'tn4087': Ingebo's crossflow "
+            "exponents, (sigma mu_l/rho_l)^(1/4) rho_g^(-1/4). 'dombrowski_johns': inviscid "
+            "sheet-breakup (Dombrowski & Johns 1963), (sigma^2/(rho_g rho_l))^(1/6). 'none': heptane "
+            "in air. An unverified transfer either way: on the 6.5 kN ethalox doublet the three "
+            "span eta_vap 0.961-0.989 (injector audit 2026-09-28). Measure D32 and set smd_scale."
         ),
     )
     chamber_gas_R: float = Field(
@@ -842,20 +1028,48 @@ class CombustionEfficiencyConfig(BaseModel):
         default=False,
         description="[DEPRECATED] Turbulence is folded into eta_mixing; the standalone eta_turbulence penalty was removed (non-physical/double-counted)."
     )
-    # --- Mixing: eta_mix = Em_peak exp(-(ln sqrt(M/M_opt))^2 / (2 sigma^2)) ---
+    # --- Mixing: eta_mix = sum_i w_i c*(O/F_i) / c*(O/F) over stream tubes whose O/F spread
+    # reproduces Rupe's mixing factor E_m (combustion_physics.stream_tube_mixing_efficiency).
     # M = rho_O v_O^2 d_O / (rho_F v_F^2 d_F), Elverum & Morey (JPL Memo 30-5) eq. 1.
     Em_peak: float = Field(
         default=0.96, ge=0.5, le=1.0,
-        description="ASSUMED c* mixing efficiency at M = rupe_M_opt; no correlation predicts it. "
-                    "0.96 puts a well-atomized, balanced design in the 0.90-0.97 c* efficiency band "
-                    "SP-8089 and Sutton report for unlike doublets. Replace it with hot-fire c*."
+        description="[DEPRECATED — no effect] Was an assumed c* mixing efficiency; E_m is not a c* "
+                    "efficiency. Mixing is now rupe_Em_opt through the stream-tube c* integral."
     )
     mixing_sigma: float = Field(
         default=1.5, gt=0.0,
-        description="ASSUMED log-Gaussian width of the mixing falloff in ln sqrt(M) (the scale of "
-                    "the old momentum-ratio model, sqrt(M) = R sqrt(d_O/d_F)); 1.5 costs 1 % at "
-                    "M = 0.65 or 1.53. Not from data: Rupe's and Elverum & Morey's curves fix the "
-                    "optimum, not the width."
+        description="[DEPRECATED — no effect] Width of the retired log-Gaussian mixing falloff; the "
+                    "falloff is Rupe's correlation (rupe_Em_curvature)."
+    )
+    rupe_Em_opt: float = Field(
+        default=0.80, gt=0.0, le=1.0,
+        description="Rupe mixing factor E_m (cold-flow mixture-ratio uniformity, 0-1; JPL TR 32-1546 "
+                    "eq. 1) of the element at its optimum M. Circular 1-on-1 unlike doublets with "
+                    "fully developed jets: 0.75-0.85 (Rupe, as summarized in Hoehn, Rupe & Sotter, "
+                    "JPL TR 32-1546, 1972, p. 1); Rupe's correlation peaks at 0.82 and JPL's "
+                    "noncavitating orifices at 0.815 (ibid. p. 10); short or cavitating orifices "
+                    "0.70 (Nurick & McHale, ibid.). 0.80 is the middle of the band: replace it with "
+                    "a cold-flow measurement of the element."
+    )
+    rupe_Em_curvature: float = Field(
+        default=6.07, ge=0.0,
+        description="Fall-off of E_m away from the optimum, E_m = rupe_Em_opt (1 - a (N_R - N_opt)^2), "
+                    "N_R = M/(1+M): a = 6.07 fitted to Rupe's mean line digitized from JPL TR 32-1546 "
+                    "Fig. 1 (N_R 0.26-0.78, within 2.4 points; data scatter +-5)."
+    )
+    mixing_distribution: Literal["gaussian", "two_tube"] = Field(
+        default="gaussian",
+        description="Shape of the O/F spread that reproduces E_m in the stream-tube c* integral: "
+                    "normal in oxidizer mass fraction (default) or two equal-mass tubes. The other "
+                    "shape's eta_mix is reported beside it; at E_m 0.8 on LOX/ethanol they differ "
+                    "by ~1.3 points (two tubes lose less)."
+    )
+    droplet_blowing_model: Literal["abramzon_sirignano", "none"] = Field(
+        default="abramzon_sirignano",
+        description="Stefan-flow corrections in the vaporization march while a drop evaporates: "
+                    "Nu* = 2 + (Nu0 - 2)/F(B) (Abramzon & Sirignano 1989) and C_D (1+B)^-0.2 "
+                    "(Yuen & Chen 1976). 'none' = uncorrected Ranz-Marshall and solid-sphere drag, "
+                    "which do not hold at the transfer numbers here (B_T 16-80)."
     )
     rupe_M_opt: float = Field(
         default=1.0, gt=0.0,
@@ -2498,6 +2712,26 @@ class PressureCurvesConfig(BaseModel):
     fuel_segments: List[PressureSegmentConfig] = Field(description="Fuel tank pressure curve segments")
 
 
+class MeasuredValue(BaseModel):
+    """A number measured on hardware, with where it came from. There is no default source."""
+    value: float = Field(description="The measured value, in the unit its field names.")
+    uncertainty: Optional[float] = Field(default=None, ge=0.0, description="± one standard uncertainty, same unit.")
+    source: str = Field(min_length=1, description="Test and how: 'cold flow, water, element 3, 2026-10-02'.")
+    date: Optional[str] = Field(default=None, description="When it was measured (ISO date).")
+
+
+class MeasurementsConfig(BaseModel):
+    """Measured values that replace the model's assumptions wherever they enter
+    (engine/pipeline/measurements.py). Each one turns its ◇ in forward mode into ●."""
+    cd_O: Optional[MeasuredValue] = Field(default=None, description="Oxidizer orifice Cd (cold flow), replaces the discharge model.")
+    cd_F: Optional[MeasuredValue] = Field(default=None, description="Fuel orifice Cd (cold flow), replaces the discharge model.")
+    em: Optional[MeasuredValue] = Field(default=None, description="Element mixing factor E_m (cold-flow patternation), used as measured in place of Rupe's curve.")
+    d32_O_um: Optional[MeasuredValue] = Field(default=None, description="Oxidizer-stream D32 [µm] at the design point, held at that value.")
+    d32_F_um: Optional[MeasuredValue] = Field(default=None, description="Fuel-stream D32 [µm] at the design point, held at that value.")
+    nozzle_efficiency: Optional[MeasuredValue] = Field(default=None, description="Nozzle efficiency ζ_n from measured thrust, replaces the assumed factor.")
+    chug_frequency_hz: Optional[MeasuredValue] = Field(default=None, description="Chug frequency seen in hot fire [Hz]: shown beside the model's, not fed in.")
+
+
 class PintleEngineConfig(BaseModel):
     """Complete pintle engine configuration"""
     # Propellant preset name (configs/propellants/<name>.yaml). Resolved by io.load_config BEFORE
@@ -2522,6 +2756,7 @@ class PintleEngineConfig(BaseModel):
     nozzle: Optional[NozzleConfig] = Field(default=None, description="Legacy nozzle config (use chamber_geometry instead)")
     solver: SolverConfig = Field(default_factory=SolverConfig)
     stability: StabilityConfig = Field(default_factory=StabilityConfig, description="Combustion / feed stability model inputs (calibration, regulator, acoustic damping)")
+    measurements: Optional[MeasurementsConfig] = Field(default=None, description="Measured values that replace the model's assumptions (cold flow, hot fire).")
     optimizer: Optional[OptimizerConfig] = Field(default=None, description="Optimizer configuration")
     # Flight simulation fields (optional)
     lox_tank: Optional[LOXTankConfig] = Field(default=None, description="LOX tank configuration for flight simulation")

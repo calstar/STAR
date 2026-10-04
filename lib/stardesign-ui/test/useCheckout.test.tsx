@@ -336,6 +336,19 @@ describe('losing it', () => {
     expect(view.result.current.lostUnexpectedly).toBe(false);
     expect(view.result.current.held).toBe(true);
   });
+
+  it('remembers where refused edits were kept, until the notice is dismissed', async () => {
+    const api = stubApi();
+    const view = await mountHeld(api);
+    expect(view.result.current.savedAs).toBeNull();
+
+    await act(() => { view.result.current.lost('Feed system (unsaved changes, 2026-10-03 17:40 UTC)'); });
+
+    expect(view.result.current.lostUnexpectedly).toBe(true);
+    expect(view.result.current.savedAs).toBe('Feed system (unsaved changes, 2026-10-03 17:40 UTC)');
+    await act(() => { view.result.current.acknowledgeLost(); });
+    expect(view.result.current.savedAs).toBeNull();
+  });
 });
 
 describe('on a developer\'s own machine', () => {

@@ -43,6 +43,8 @@ const FIELD_LABELS: Record<string, string> = {
   surface_tension: 'Surface Tension (N/m)',
   vapor_pressure: 'Vapor Pressure (Pa)',
   specific_heat: 'Specific Heat (J/kg·K)',
+  specific_heat_model: 'Specific Heat vs Temperature (constant | butland_maddison_1973)',
+  material_source: 'Material Source (grade, datasheet)',
   thermal_conductivity: 'Thermal Conductivity (W/m·K)',
   temperature: 'Temperature (K)',
   n_orifices: 'Number of Orifices',

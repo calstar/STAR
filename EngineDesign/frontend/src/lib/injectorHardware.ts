@@ -19,7 +19,7 @@ export interface Field {
   key: string;
   label: string;
   unit?: string;
-  kind?: 'num' | 'int' | 'select';
+  kind?: 'num' | 'int' | 'select' | 'text';
   options?: { value: string; label: string }[];
   hint?: string;
   /** Shown only when this holds: a field that does nothing for this plug is not offered. */
@@ -50,8 +50,9 @@ export const GROUPS: { title: string; fields: Field[] }[] = [
     title: 'Back',
     fields: [
       { key: 'back', label: 'Back', kind: 'select', options: opt(['channels', 'channels'], ['plenum', 'plenum behind']) },
-      { key: 'channel_width', label: 'Channel width', unit: 'mm', hint: 'blank = hole footprint + 2 lands', show: channels },
-      { key: 'channel_floor', label: 'Channel floor', kind: 'select', options: opt(['flat', 'flat'], ['coned', 'coned (square inlets)']), show: channels },
+      { key: 'channel_floor', label: 'Channel floor', kind: 'select', options: opt(['flat', 'flat'], ['coned', 'coned (square inlets)'], ['spot', 'flat + drill spot']), show: channels },
+      { key: 'channel_width', label: 'Channel width', unit: 'mm', hint: 'drill-spot floor: the flat floor beside the spot. blank = hole footprint + 2 lands', show: channels },
+      { key: 'spot', label: 'Drill spot', unit: 'mm', hint: 'facet square to the hole, across the hole; blank = d + 2 lands', show: (d) => channels(d) && d.channel_floor === 'spot' },
       { key: 'counterbore', label: 'Counterbore ⌀', unit: 'mm', hint: 'blank = none', show: plenum },
     ],
   },
@@ -73,7 +74,44 @@ export const GROUPS: { title: string; fields: Field[] }[] = [
       { key: 'hub_t', label: 'Thickness at port', unit: 'mm', hint: 'blank = plate; thicker makes a boss as wide as the port keep-out', show: (d) => d.thread !== '' },
     ],
   },
+  {
+    title: 'Feed ports (cover plate)',
+    fields: [
+      { key: 'ports', label: 'Ports per ring', kind: 'int', hint: 'each splits two ways round its channel; blank = 1', show: channels },
+      { key: 'port_thread', label: 'Port thread', kind: 'select', options: [{ value: '', label: 'not drawn' }, ...NPT.map((t) => ({ value: t, label: t }))], show: channels },
+      { key: 'port_bore', label: 'Port bore', unit: 'mm', hint: 'what the port opens onto the channel with; blank = tap drill', show: (d) => channels(d) && d.port_thread !== '' },
+      { key: 'port_clock', label: 'Fuel ports from LOX', unit: '°', hint: 'blank = half the port pitch', show: (d) => channels(d) && d.port_thread !== '' },
+    ],
+  },
+  {
+    title: 'Rim gland',
+    fields: [
+      { key: 'gland_z', label: 'From face', unit: 'mm', hint: 'to the groove\'s face-side wall; blank = no gland' },
+      { key: 'gland_w', label: 'Width', unit: 'mm', show: (d) => d.gland_z !== '' },
+      { key: 'gland_d', label: 'Depth', unit: 'mm', show: (d) => d.gland_z !== '' },
+      { key: 'gland_rc', label: 'Corner radius', unit: 'mm', show: (d) => d.gland_z !== '' },
+    ],
+  },
+  {
+    title: 'Drawing',
+    fields: [
+      { key: 'dxf', label: 'Revolve DXF', kind: 'text', hint: 'path from EngineDesign/, e.g. configs/cad/plate.dxf; blank = none' },
+      { key: 'dxf_mode', label: 'Use it as', kind: 'select', options: opt(['check', 'a check on the model'], ['geometry', 'the geometry']), show: (d) => d.dxf !== '' },
+    ],
+  },
 ];
+
+/** One back-face groove as the form edits it: [r inner, r outer, depth, corner radius], mm. */
+export type GrooveRow = [string, string, string, string];
+
+export function groovesFromDraft(d: Draft): GrooveRow[] {
+  try {
+    const v = JSON.parse(d.grooves || '[]');
+    return Array.isArray(v) ? (v as GrooveRow[]) : [];
+  } catch {
+    return [];
+  }
+}
 
 const s = (v: unknown, k = 1) => (v === null || v === undefined || v === '' ? '' : String(+(Number(v) * k).toPrecision(8)));
 
@@ -83,7 +121,22 @@ export function draftFromConfig(c: EngineConfig): Draft {
   const ig = inj.igniter ?? {};
   const pl = inj.plate ?? {};
   const dis = (c.discharge ?? {}) as Record<string, Record<string, unknown>>;
+  const gl = (pl.rim_gland ?? null) as Record<string, unknown> | null;
+  const grooves = ((pl.back_grooves ?? []) as Record<string, unknown>[]).map(
+    (g) => [s(g.r_inner, MM), s(g.r_outer, MM), s(g.depth, MM), s(g.corner_radius, MM)] as GrooveRow);
   return {
+    spot: s(pl.channel_spot_length, MM),
+    ports: s(pl.channel_inlets),
+    port_thread: String(pl.port_thread ?? ''),
+    port_bore: s(pl.port_bore, MM),
+    port_clock: s(pl.port_clock_F_deg),
+    gland_z: s(gl?.z_start, MM),
+    gland_w: s(gl?.width, MM),
+    gland_d: s(gl?.depth, MM),
+    gland_rc: s(gl?.corner_radius, MM),
+    grooves: JSON.stringify(grooves),
+    dxf: String(pl.profile_dxf ?? ''),
+    dxf_mode: String(pl.profile_dxf_mode ?? 'check'),
     face: String(pl.face ?? 'contoured'),
     groove_bottom: String(pl.groove_bottom ?? 'flat'),
     exit_land: s(pl.exit_land, MM),
@@ -107,9 +160,23 @@ export function draftFromConfig(c: EngineConfig): Draft {
 export function updatesFromDraft(d: Draft): Record<string, unknown> {
   const m = (k: string) => (d[k] === '' ? null : Number(d[k]) / MM);
   const n = (k: string) => (d[k] === '' ? null : Number(d[k]));
+  const num = (v: string) => (v === '' ? null : Number(v) / MM);
   const plate = {
     face: d.face, groove_bottom: d.groove_bottom, exit_land: m('exit_land'),
     back: d.back, channel_width: m('channel_width'), channel_floor: d.channel_floor,
+    channel_spot_length: m('spot'),
+    channel_inlets: d.ports === '' ? 1 : Math.max(1, Math.round(Number(d.ports))),
+    port_thread: d.port_thread || null,
+    port_bore: m('port_bore'),
+    port_clock_F_deg: n('port_clock'),
+    // Rows missing a radius or depth are not grooves yet: dropped, not sent as zero.
+    back_grooves: groovesFromDraft(d)
+      .filter(([ri, ro, dep]) => ri !== '' && ro !== '' && dep !== '')
+      .map(([ri, ro, dep, rc]) => ({ r_inner: num(ri), r_outer: num(ro), depth: num(dep), corner_radius: num(rc) ?? 0 })),
+    rim_gland: d.gland_z === '' || d.gland_w === '' || d.gland_d === '' ? null
+      : { z_start: m('gland_z'), width: m('gland_w'), depth: m('gland_d'), corner_radius: m('gland_rc') ?? 0 },
+    profile_dxf: d.dxf || null,
+    profile_dxf_mode: d.dxf_mode || 'check',
   };
   const igniter = d.thread ? { thread: d.thread, hub_thickness: m('hub_t') } : null;
   const side = (k: 'O' | 'F') => ({
@@ -128,6 +195,34 @@ export function updatesFromDraft(d: Draft): Record<string, unknown> {
     },
   };
 }
+
+/**
+ * Only what the form changed: ``updatesFromDraft`` of the draft, less every leaf it shares with
+ * ``updatesFromDraft`` of the draft's base. Apply sends this, never the whole form -- the form
+ * covers the plate, the igniter and both holes, and writing all of it back put a stale plate
+ * over a newer config when only the igniter had been touched (2026-09-28). Arrays and objects
+ * that are values (a groove list, the rim gland) go whole when any part of them changed.
+ */
+export function changedUpdates(base: Draft, draft: Draft): Record<string, unknown> {
+  const diff = (a: unknown, b: unknown): unknown => {
+    const obj = (v: unknown) => v !== null && typeof v === 'object' && !Array.isArray(v);
+    if (obj(a) && obj(b)) {
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(a as object)) {
+        const bv = (b as Record<string, unknown>)[k];
+        const av = (a as Record<string, unknown>)[k];
+        // A value-object (gland) replaces whole: it has no identity of its own to merge into.
+        const d = obj(av) && obj(bv) && !VALUE_OBJECTS.has(k) ? diff(av, bv) : (JSON.stringify(av) === JSON.stringify(bv) ? undefined : av);
+        if (d !== undefined && !(obj(d) && Object.keys(d as object).length === 0)) out[k] = d;
+      }
+      return out;
+    }
+    return JSON.stringify(a) === JSON.stringify(b) ? undefined : a;
+  };
+  return (diff(updatesFromDraft(draft), updatesFromDraft(base)) ?? {}) as Record<string, unknown>;
+}
+
+const VALUE_OBJECTS = new Set(['rim_gland', 'igniter']);
 
 /** ``base`` with ``patch`` laid over it, objects merged key by key (arrays and nulls replace). */
 export function mergeDeep<T>(base: T, patch: unknown): T {

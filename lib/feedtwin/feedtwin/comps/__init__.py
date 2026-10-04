@@ -79,6 +79,7 @@ from feedtwin.comps.gas import (
     critical_pressure_ratio,
     subsonic_mass_flow,
 )
+from feedtwin.comps.relief import ReliefValve
 from feedtwin.comps.elements import (
     CHARACTERISTICS,
     GRAVITY,
@@ -120,6 +121,7 @@ __all__ = [
     "MeasuredElement",
     "PortKind",
     "Regulator",
+    "ReliefValve",
     "OrificeCd",
     "OrificeISO5167",
     "Pipe",

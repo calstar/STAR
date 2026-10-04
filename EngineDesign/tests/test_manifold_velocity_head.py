@@ -86,9 +86,12 @@ def test_6500N_channels_are_flagged_with_the_area_they_need(solved):
         assert ch["q_over_dp"] == pytest.approx(q_dp, rel=1e-9)
         assert ch["area_needed"] == pytest.approx(A_need, rel=1e-9)
         w = _codes(out).get(f"manifold_q_{k}")
-        assert w is not None and w["level"] == "warn", out["warnings"]
+        assert w is not None and w["level"] == "bad", out["warnings"]
         assert f"{A_need * 1e6:.0f} mm²" in w["text"]
-    assert out["passages"]["O"]["channel"]["q_over_dp"] > 0.5
+    # With the ring-manifold solve the starved channel carries less flow than the plenum model
+    # assumed, so q/dp is lower than the old 0.5+; it is still well past MANIFOLD_Q_FRAC.
+    from engine.core.injectors.layout import MANIFOLD_Q_FRAC
+    assert out["passages"]["O"]["channel"]["q_over_dp"] > 5 * MANIFOLD_Q_FRAC
 
 
 def test_a_channel_big_enough_is_not_flagged(solved):

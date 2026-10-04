@@ -22,6 +22,7 @@ from engine.pipeline.reaction_chemistry import (
 )
 from engine.pipeline.thermal import gas_side
 from engine.pipeline.thermal.graphite_cooling import carbon_oxidation
+from engine.pipeline.thermal.graphite_properties import SPECIFIC_HEAT_MODELS
 from engine.pipeline.thermal.wall_conduction import Layer, WallModel
 from engine.pipeline.constants import STEFAN_BOLTZMANN_W_M2_K4
 from engine.pipeline.stability.analysis import (
@@ -126,6 +127,11 @@ class TimeVaryingState:
     # Must be at end since it has a default value
     diagnostics: Optional[Dict[str, Any]] = None
 
+    # Every wall station's state at this time (TimeVaryingCoupledSolver._station_report):
+    # recession, thickness left, surface/back/interface temperatures and the gas-side flux at the
+    # current surface temperature. A read-out only; nothing in it feeds the solve.
+    stations: Optional[Dict[str, Dict[str, Any]]] = None
+
 
 class TimeVaryingCoupledSolver:
     """
@@ -143,9 +149,16 @@ class TimeVaryingCoupledSolver:
         config: PintleEngineConfig,
         cea_cache: Any,
         P_ambient: Optional[float] = None,
+        chug_eroded_geometry: bool = False,
     ):
         """
         Initialize the coupled time-varying solver.
+
+        ``chug_eroded_geometry`` (default off: the previous behaviour exactly) hands the stability
+        analysis the eroded geometry of each step -- throat area, chamber volume, L*, bore, exit
+        and expansion ratio, the copy the chamber was solved on -- instead of the as-built design.
+        Off, the chug loop's K_c and theta_c rest on the design-point A_t and L* while the chamber
+        it describes has eroded (Layer X audit D7-D, coupling-map row 19).
 
         ``P_ambient`` is the back pressure the nozzle fires into, in Pa. Explicit wins;
         otherwise it comes from ``environment.elevation`` through the same standard
@@ -164,6 +177,7 @@ class TimeVaryingCoupledSolver:
         """
         self.config = config
         self.cea_cache = cea_cache
+        self.chug_eroded_geometry = bool(chug_eroded_geometry)
         if P_ambient is not None:
             self.P_ambient = float(P_ambient)
         else:
@@ -209,12 +223,35 @@ class TimeVaryingCoupledSolver:
     def _graphite_layers(self) -> List[Layer]:
         gr = self.config.graphite_insert
         layers = [Layer(gr.initial_thickness, gr.thermal_conductivity, gr.material_density,
-                        gr.specific_heat, "graphite")]
+                        gr.specific_heat, "graphite",
+                        cp_of=SPECIFIC_HEAT_MODELS[gr.specific_heat_model])]
         case = getattr(self.config, "stainless_steel_case", None)
         if case is not None and case.enabled:
+            backing = self._insert_backing()
+            if backing is not None:
+                layers.append(backing)
             layers.append(Layer(case.thickness, case.thermal_conductivity, case.density,
                                 case.specific_heat, "case"))
         return layers
+
+    def _insert_backing(self) -> Optional[Layer]:
+        """What sits between the graphite insert and the case at the throat.
+
+        The case is a cylinder at the chamber bore plus the liner (``D_chamber/2 + t_liner``); the
+        insert's outside is the throat radius plus its thickness. The gap between them is filled with
+        the liner's material, the only other material the config declares (assumed: the config does
+        not say what backs the insert). Without it the graphite sat directly on the steel, which
+        sank its heat into the case: LE4's throat growth fell from ~4 % to ~1.5 % (2026-10-03). None
+        when there is no liner or no gap."""
+        abl = getattr(self.config, "ablative_cooling", None)
+        gr = self.config.graphite_insert
+        if abl is None or not abl.enabled:
+            return None
+        gap = 0.5 * float(self.D_chamber_initial) + float(abl.initial_thickness) \
+            - (0.5 * float(self.D_throat_initial) + float(gr.initial_thickness))
+        if gap <= 0.0:
+            return None
+        return Layer(gap, abl.thermal_conductivity, abl.material_density, abl.specific_heat, "backing")
 
     def liner_end(self) -> float:
         """Throat-frame x where the liner meets the graphite insert (0 without one)."""
@@ -449,14 +486,21 @@ class TimeVaryingCoupledSolver:
         comprehensive_stability = None
         try:
             from engine.pipeline.stability.analysis import comprehensive_stability_analysis
+            # The closure's own injector and feed drops and SMDs: without them the stability
+            # analysis falls back to 0.30*Pc / 0.10*Pc and 80/60 um, which put the chug margin 13 %
+            # under forward mode's at the same point (GM 1.290 vs 1.479 on the 6.8 kN engine).
             stability_diag = {
+                **diagnostics,
                 "mdot_O": mdot_total * MR / (1.0 + MR),
                 "mdot_F": mdot_total / (1.0 + MR),
                 "P_tank_O": P_tank_O,
                 "P_tank_F": P_tank_F,
             }
+            # Off by default: the design-point geometry, as before. On: the geometry this step's
+            # chamber was solved on (eroded A_t, V, L*, bore, A_e, eps).
+            stability_config = config_current if self.chug_eroded_geometry else self.config
             comprehensive_stability = comprehensive_stability_analysis(
-                config=self.config, Pc=Pc, MR=MR, mdot_total=mdot_total, cstar=cstar_actual,
+                config=stability_config, Pc=Pc, MR=MR, mdot_total=mdot_total, cstar=cstar_actual,
                 gamma=gamma_chamber, R=R_chamber, Tc=Tc, diagnostics=stability_diag,
             )
             stability_margin = comprehensive_stability.get("chugging", {}).get("stability_margin", stability_margin)
@@ -541,6 +585,7 @@ class TimeVaryingCoupledSolver:
             cstar_ideal=cstar_ideal,
             cstar_actual=cstar_actual,
             diagnostics=diagnostics,
+            stations=self._station_report(),
         )
 
     def _wall_report(self, rates: Dict[str, float]) -> Dict[str, float]:
@@ -590,6 +635,53 @@ class TimeVaryingCoupledSolver:
                 out["q_rad_throat"] = q_rad
         return out
 
+    def _station_report(self) -> Dict[str, Dict[str, Any]]:
+        """Every wall station now: recession, first-layer thickness left, surface, back-face and
+        first-interface temperatures, and the gas-side flux at the current surface temperature
+        under the loads just built for the next interval (the same evaluation ``_wall_report``
+        makes for the barrel and throat). Read-only: nothing here feeds the solve.
+
+        ``q_conv`` is the convection the wall model takes (blown: pyrolysis blowing on the liner,
+        the oxidation blowing factor on graphite), ``q_chem`` the heat the carbon-oxidiser
+        reactions absorb (graphite only), ``q_net = q_conv + q_rad - q_chem`` the surface load."""
+        nan = float("nan")
+        walls, loads = self._walls or {}, self._loads or {}
+        out: Dict[str, Dict[str, Any]] = {}
+        for name, w in walls.items():
+            m = w["model"]
+            Ts = float(m.T[0])
+            rec: Dict[str, Any] = {
+                "x": float(w["x"]), "kind": w["kind"], "receded": float(m.receded),
+                "remaining": float(m.thickness_first), "T_surface": Ts, "T_back": float(m.T_back),
+                "T_interface": float(m.interface_temperature(0)),
+                "q_conv": nan, "q_rad": nan, "q_chem": 0.0, "q_net": nan,
+            }
+            L = loads.get(name)
+            if L is not None:
+                q_rad = float(L["q_rad"](Ts))
+                if "chem" in L:
+                    ox = L["chem"](Ts)
+                    q_conv = float(ox["blowing_factor"] * L["h_of"](Ts) * (L["Taw"] - Ts))
+                    q_chem = float(ox["q_chem"])
+                else:
+                    q_conv = float(L["q_in"](Ts)) - q_rad
+                    q_chem = 0.0
+                rec.update(q_conv=q_conv, q_rad=q_rad, q_chem=q_chem, q_net=q_conv + q_rad - q_chem)
+            out[name] = rec
+        return out
+
+    def wall_layers(self) -> Dict[str, Dict[str, Any]]:
+        """Each wall station's layer stack as built (hot face first) and its position: what the
+        conduction model was given, so a report can list it with its provenance."""
+        out: Dict[str, Dict[str, Any]] = {}
+        for name, w in (self._walls or {}).items():
+            m = w["model"]
+            out[name] = {"x": float(w["x"]), "kind": w["kind"], "T_init": float(m.T_init),
+                         "layers": [{"name": lay.name, "thickness": float(lay.thickness), "k": float(lay.k),
+                                     "rho": float(lay.rho), "cp": float(lay.cp),
+                                     "cp_of_T": lay.cp_of is not None} for lay in m.layers]}
+        return out
+
     def soak_back(self, duration: float = 120.0) -> Dict[str, Dict[str, float]]:
         """Peak back-face and bondline temperatures while each wall's stored heat soaks back
         after shutdown (hot face adiabatic). Run after solve_time_series; the walls are copied."""
@@ -597,6 +689,103 @@ class TimeVaryingCoupledSolver:
         for name, w in (self._walls or {}).items():
             m = copy.deepcopy(w["model"])
             out[name] = {"x": w["x"], **m.soak(duration)}
+        return out
+
+    def soak_duration(self, factor: float = 3.0) -> Dict[str, Any]:
+        """``factor`` times the longest conduction time L^2/alpha over every layer of every wall
+        station, from the wall models' own properties: L the layer's current thickness (the hot
+        layer less its recession), alpha = k/(rho cp). A layer with cp(T) takes the larger of
+        its stated cp and cp at its hottest node, the slower diffusion.
+
+        The slowest mode of a slab with both faces adiabatic decays as exp(-pi^2 alpha t / L^2)
+        (the Fourier-series solution for a slab with insulated faces; Carslaw & Jaeger, Conduction
+        of Heat in Solids, 2nd ed., 1959, ch. III), so after 3 L^2/alpha it is down by
+        exp(-3 pi^2) ~ 1e-13: the stored heat has finished arriving."""
+        best: Dict[str, Any] = {"tau_s": 0.0, "station": None, "layer": None}
+        for name, w in (self._walls or {}).items():
+            m = w["model"]
+            for i, lay in enumerate(m.layers):
+                L = lay.thickness - (m.receded if i == 0 else 0.0)
+                if L <= 0.0 or lay.k <= 0.0:
+                    continue
+                cp = float(lay.cp)
+                if lay.cp_of is not None:
+                    cp = max(cp, float(np.max(lay.cp_of(np.array([float(np.max(m.T))])))))
+                tau = L * L * lay.rho * cp / lay.k
+                if tau > best["tau_s"]:
+                    best = {"tau_s": float(tau), "station": name, "layer": lay.name or f"layer {i}"}
+        best["factor"] = float(factor)
+        best["duration_s"] = float(factor) * best["tau_s"]
+        return best
+
+    def soak_back_history(self, duration: Optional[float] = None, factor: float = 3.0,
+                          first_step: float = 1.0e-2, growth: float = 1.05,
+                          steps_per_duration: int = 1200, peak_resolution_K: float = 0.05) -> Dict[str, Any]:
+        """Soak-back after shutdown, with the time each peak is reached.
+
+        Each station's wall is copied and continued with its hot face adiabatic (no gas, no
+        re-radiation: an upper bound on what reaches the back) and its back face adiabatic as
+        always (wall_conduction.py: no backing is modelled behind the last layer). Backward Euler
+        on the same grid, with a step that grows geometrically from ``first_step`` to
+        ``duration / steps_per_duration``: the stack is fully implicit, so the long steps are
+        stable, and the short ones resolve the first seconds when a thin insert equilibrates.
+        Backward Euler slows a mode of rate lambda by ~lambda*h/2; at the default 1200 steps over
+        3 L^2/alpha the slowest mode (lambda = pi^2 alpha/L^2) has lambda*h = 0.025, so its clock
+        runs ~1 % slow. With constant properties the stored heat, and so the soaked peak, is
+        conserved exactly (both faces adiabatic); a cp(T) layer (graphite) has its capacity lagged
+        one step, as in the burn, so its energy is conserved to that lag.
+
+        ``soak_duration`` sizes the window from the slowest *single layer*. For a stack of layers
+        the slowest mode is slower than any one layer's: by eigen-decomposition of this grid, a
+        12 mm liner at the schema's default properties (k 0.35, rho 1600, cp 1500) on a 1/4 in
+        steel case (k 16, rho 8000, cp 500, typical 300-series) is 2.3x slower than the liner alone, and 3x the liner's L^2/alpha still leaves ~3e-6 of that mode; a 6 mm
+        graphite insert on the same case, 1.6x and ~2e-8. Inside the window for such stacks.
+
+        ``duration`` None is :meth:`soak_duration` (``factor`` x the longest L^2/alpha).
+
+        Per station: the peak back-face and first-interface temperatures and when they occur
+        (``t_*_peak_s``: the first time within ``peak_resolution_K`` of the peak, so a plateau
+        reached early is dated when it was reached, not by round-off along it), and
+        ``t_back_95_s``, when the back face had made 95 % of its rise. With both faces adiabatic
+        the back face rises monotonically to the stored-heat equilibrium; the 95 % time says when
+        it gets there."""
+        size = self.soak_duration(factor)
+        if duration is None:
+            duration = size["duration_s"]
+        duration = float(duration)
+        out: Dict[str, Any] = {"duration_s": duration, "sizing": size, "stations": {}}
+        if duration <= 0.0:
+            return out
+        h_max = max(duration / max(int(steps_per_duration), 1), first_step)
+        for name, w in (self._walls or {}).items():
+            m = copy.deepcopy(w["model"])
+            t = 0.0
+            ts = [0.0]
+            back = [float(m.T_back)]
+            bond = [float(m.interface_temperature(0))]
+            h = float(first_step)
+            while t < duration - 1e-12:
+                step = min(h, duration - t)
+                m.step(step, q_in=lambda s: 0.0)
+                t += step
+                ts.append(t)
+                back.append(float(m.T_back))
+                bond.append(float(m.interface_temperature(0)))
+                h = min(h * growth, h_max)
+            back_a, bond_a, t_a = np.asarray(back), np.asarray(bond), np.asarray(ts)
+            tol = float(peak_resolution_K)
+            ib = int(np.argmax(back_a >= float(np.max(back_a)) - tol))
+            ii = int(np.argmax(bond_a >= float(np.max(bond_a)) - tol))
+            rise = float(np.max(back_a)) - back_a[0]
+            t95 = float(t_a[int(np.argmax(back_a >= back_a[0] + 0.95 * rise))]) if rise > 0 else 0.0
+            out["stations"][name] = {
+                "x": float(w["x"]), "kind": w["kind"],
+                "T_back_start": float(back_a[0]), "T_back_peak": float(np.max(back_a)), "t_back_peak_s": float(t_a[ib]),
+                "t_back_95_s": t95,
+                "T_interface_start": float(bond_a[0]), "T_interface_peak": float(np.max(bond_a)),
+                "t_interface_peak_s": float(t_a[ii]),
+                "T_surface_end": float(m.T[0]), "steps": len(ts) - 1,
+            }
         return out
 
     def solve_time_series(
@@ -732,6 +921,10 @@ class TimeVaryingCoupledSolver:
         
         # Include full diagnostics from ChamberSolver (contains ablative heat flux profiles)
         results["diagnostics"] = [s.diagnostics for s in self.state_history]
-        
+        # Per wall station, per step (a list like diagnostics), and the stacks the walls were
+        # built from (one dict for the run).
+        results["stations"] = [s.stations for s in self.state_history]
+        results["wall_layers"] = self.wall_layers()
+
         return results
 

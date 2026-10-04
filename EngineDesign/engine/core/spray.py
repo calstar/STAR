@@ -1,8 +1,10 @@
-"""Spray and mixing models (J, TMR, θ, We, SMD, x*)"""
+"""Spray and mixing models (J, We, SMD, x*; TMR and theta are diagnostic only)"""
 
 from __future__ import annotations
 
+import math
 import numpy as np
+from typing import Optional
 from typing import Tuple, List
 from engine.pipeline.config_schemas import SprayConfig
 
@@ -36,25 +38,12 @@ def momentum_flux_ratio(rho_O: float, u_O: float, rho_F: float, u_F: float) -> f
 
 
 def thrust_momentum_ratio(J: float, MR: float) -> float:
+    """TMR = J/(1 + MR). DIAGNOSTIC ONLY.
+
+    Not a published parameter: the pintle literature's TMR is the radial-to-axial momentum ratio
+    (mdot_r v_r)/(mdot_a v_a), which this is not. Nothing in the model reads it; it is reported
+    for continuity with old runs.
     """
-    Calculate Thrust/Momentum Ratio (TMR).
-    
-    TMR is a geometry-dependent parameter related to J and mixture ratio.
-    This is a simplified model - can be enhanced with geometry-specific correlations.
-    
-    Parameters:
-    -----------
-    J : float
-        Momentum flux ratio
-    MR : float
-        Mixture ratio (O/F)
-    
-    Returns:
-    --------
-    TMR : float
-    """
-    # Simplified model: TMR ≈ J / (1 + MR)
-    # Can be replaced with geometry-specific correlation
     TMR = J / (1 + MR) if MR > 0 else J
     return float(TMR)
 
@@ -129,28 +118,16 @@ def spray_angle_from_J(J: float, k: float, n: float) -> float:
 
 
 def spray_angle_from_TMR(TMR: float) -> float:
-    """
-    Calculate spray angle from Thrust/Momentum Ratio.
-    
-    θ = arccos(1 / (1 + TMR^0.75))
-    
-    Parameters:
-    -----------
-    TMR : float
-        Thrust/Momentum Ratio
-    
-    Returns:
-    --------
-    theta : float [rad]
+    """theta = arccos(1/(1 + TMR^0.75)) [rad]. DIAGNOSTIC ONLY.
+
+    An invented law on the invented TMR above; no source gives it, and no model reads the angle
+    (the injectors publish it as ``theta``). The vaporization march takes its axial drop speed
+    from ``spray_axial_velocity``.
     """
     if TMR <= 0:
         return 0.0
-    
-    cos_theta = 1 / (1 + TMR**0.75)
-    cos_theta = np.clip(cos_theta, -1, 1)  # Ensure valid arccos range
-    theta = np.arccos(cos_theta)
-    
-    return float(theta)
+    cos_theta = np.clip(1 / (1 + TMR**0.75), -1, 1)
+    return float(np.arccos(cos_theta))
 
 
 def weber_number(rho: float, u: float, d_char: float, sigma: float) -> float:
@@ -222,7 +199,9 @@ def smd_lefebvre(
     """
     Calculate Sauter Mean Diameter (SMD) using Lefebvre correlation.
     
-    D32 = C × d_or × We^(-m) × Oh^p
+    D32 = C × d_or × We^(-m) × (1 + Oh)^p
+
+    Raises ValueError when We or d_or is not positive and finite (it used to return d_or).
     
     Parameters:
     -----------
@@ -243,8 +222,8 @@ def smd_lefebvre(
     --------
     D32 : float [m]
     """
-    if We <= 0 or d_or <= 0:
-        return d_or  # Fallback to orifice diameter
+    if not (np.isfinite(We) and We > 0 and np.isfinite(d_or) and d_or > 0):
+        raise ValueError(f"smd_lefebvre: We={We} and d_or={d_or} must be positive and finite")
 
     # Viscous damping term uses (1 + Oh)^p, NOT Oh^p. Raw Oh^p is unphysical: for a low-viscosity
     # liquid (Oh << 1) it drives D32 -> 0 as Oh -> 0, whereas vanishing viscosity must approach the
@@ -254,71 +233,100 @@ def smd_lefebvre(
     return float(D32)
 
 
-def smd_impinging_ingebo(
+#: NACA TN 4222 (Ingebo 1958) test conditions: n-heptane jet pairs in an airstream at 82 F and
+#: 29.3 in Hg abs. The correlation carries no property terms, so these are its reference state.
+TN4222_RHO_AIR = 29.3 * 3386.389 / (287.05 * ((82.0 - 32.0) * 5.0 / 9.0 + 273.15))   # 1.149 kg/m^3
+TN4222_HEPTANE_SIGMA = 0.0197      # N/m, n-heptane at 28 C
+TN4222_HEPTANE_MU = 3.8e-4         # Pa s
+TN4222_HEPTANE_RHO = 684.0         # kg/m^3
+#: Nukiyama-Tanasawa distribution TN 4222 fits (number ~ D^2 exp(-bD)): D30 = 3.915/b,
+#: D32 = 5/b, so D32/D30 = 5/3.915.
+TN4222_D32_OVER_D30 = 5.0 / 3.915
+
+
+#: How TN 4222's heptane/air D32 is carried to another liquid and gas (SMDConfig.smd_property_transfer).
+TN4222_PROPERTY_TRANSFERS = ("tn4087", "dombrowski_johns", "none")
+
+
+def tn4222_property_factor(transfer: str, *, rho_liq: float, mu_liq: float, sigma: float,
+                           rho_gas: float) -> float:
+    """D32(liquid, gas) / D32(n-heptane, air at TN 4222's conditions), same jets and speeds.
+
+    - "tn4087": Ingebo's crossflow exponents (NACA TN 4087: D30 ~ (We Re)^(-1/4)), so
+      (sigma mu_l / rho_l)^(1/4) rho_g^(-1/4).
+    - "dombrowski_johns": the inviscid sheet-breakup length scale of Dombrowski & Johns (Chem. Eng.
+      Sci. 18, 1963), D ~ (sigma^2 / (rho_g rho_l U^4))^(1/6) at fixed sheet geometry and speed, so
+      (sigma^2 / (rho_g rho_l))^(1/6) relative to heptane/air.
+    - "none": 1 (heptane in air as measured).
+    The spread between them is the uncertainty of carrying a single-liquid correlation to
+    LOX/ethanol at chamber density; a measured D32 (smd_scale) replaces it.
+    """
+    if transfer not in TN4222_PROPERTY_TRANSFERS:
+        raise ValueError(f"TN 4222 property transfer {transfer!r} is not one of {TN4222_PROPERTY_TRANSFERS}")
+    if transfer == "none":
+        return 1.0
+    for name, v in (("rho_liq", rho_liq), ("mu_liq", mu_liq), ("sigma", sigma), ("rho_gas", rho_gas)):
+        if not (np.isfinite(v) and v > 0):
+            raise ValueError(f"tn4222_property_factor: {name}={v} must be positive and finite")
+    if transfer == "tn4087":
+        prop = (sigma * mu_liq / rho_liq) / (TN4222_HEPTANE_SIGMA * TN4222_HEPTANE_MU / TN4222_HEPTANE_RHO)
+        return float((rho_gas / TN4222_RHO_AIR) ** -0.25 * prop ** 0.25)
+    ref = TN4222_HEPTANE_SIGMA ** 2 / (TN4222_RHO_AIR * TN4222_HEPTANE_RHO)
+    return float((sigma ** 2 / (rho_gas * rho_liq) / ref) ** (1.0 / 6.0))
+
+
+def tn4222_transfer_model(smd_cfg) -> str:
+    """The property transfer a spray.smd config asks for: 'none' when smd_property_scaling is off,
+    else smd_property_transfer (default 'tn4087')."""
+    if not bool(getattr(smd_cfg, "smd_property_scaling", True)):
+        return "none"
+    return str(getattr(smd_cfg, "smd_property_transfer", "tn4087") or "tn4087")
+
+
+def smd_impinging_tn4222(
     d_jet: float,
-    u_rel: float,
+    v_jet: float,
     rho_liq: float,
     mu_liq: float,
     sigma: float,
     rho_gas: float,
-    C: float = 3.9,
+    *,
+    dv: Optional[float] = None,
+    scale_properties: bool = True,
+    transfer: Optional[str] = None,
 ) -> float:
-    """Sauter Mean Diameter for impinging-jet atomization (Ingebo correlation).
+    """Sauter mean diameter of an impinging-jet pair, Ingebo, NACA TN 4222 (1958).
 
-        D32 = C * d_jet * (We_g * Re_l)^(-1/4)
+        Dj / D30 = 2.64 (Dj Vj)^(1/2) + 0.97 Dj dV          (Dj, D30 in inches; Vj, dV in ft/s)
+        D32 = (5 / 3.915) D30                                 (Nukiyama-Tanasawa, as fitted)
 
-    Both dimensionless groups are built on the *impingement relative velocity* ``u_rel`` — the
-    velocity at which the two jets actually collide and shear apart — not on either jet's bulk
-    speed. This is the physically correct driver for unlike-doublet sheet breakup.
+    ``v_jet`` is the stream's own jet velocity and ``dv`` the jet-to-gas velocity difference; a
+    face-injected jet enters gas at rest, dV = Vj (TN 4222 eq. 11), the default.
 
-        We_g = rho_gas * u_rel^2 * d_jet / sigma   (aerodynamic Weber: gas shear breaks the sheet)
-        Re_l = rho_liq * u_rel * d_jet / mu_liq    (liquid Reynolds: viscosity resists breakup)
+    TN 4222 measured n-heptane only. ``transfer`` (see ``tn4222_property_factor``) carries it to
+    other liquids and gas densities; None means "tn4087" when ``scale_properties`` else "none".
+    That transfer is an assumption: measure D32 and set ``spray.smd.smd_scale``.
 
-    Trends are all correct: lower relative velocity, higher surface tension, higher liquid
-    viscosity (lower Re), and lower chamber gas density each increase D32. Viscosity enters
-    through Re_l, which replaces the fragile Ohnesorge term in the Lefebvre form.
+    Raises ValueError on a non-positive or non-finite input (it used to return d_jet, a drop the
+    size of the orifice, without saying so).
 
-    Source: Ingebo, R.D., "Drop-size distributions for impinging-jet breakup in airstreams"
-    (NASA jet-atomization correlations). The prefactor ``C`` is reported in roughly the 3.9-5.0
-    range depending on the data set / breakup regime and should be calibrated against a reference
-    SMD; it is exposed via config (``spray.smd.C_ingebo``).
-
-    Parameters
-    ----------
-    d_jet : float
-        Jet (orifice) diameter [m].
-    u_rel : float
-        Impingement relative velocity [m/s].
-    rho_liq, mu_liq, sigma : float
-        Liquid density [kg/m^3], dynamic viscosity [Pa.s], surface tension [N/m].
-    rho_gas : float
-        Chamber gas density [kg/m^3] for the aerodynamic Weber number.
-    C : float
-        Correlation prefactor.
-
-    Returns
-    -------
-    D32 : float [m]
+    Replaces an earlier function that cited this report but ran TN 4087's crossflow form with the
+    We*Re product on the jets' closing speed, and read its D30 as D32: about half the drop size
+    TN 4222 measured.
     """
-    if (
-        d_jet <= 0
-        or u_rel <= 0
-        or sigma <= 0
-        or rho_gas <= 0
-        or rho_liq <= 0
-        or mu_liq <= 0
-        or C <= 0
-    ):
-        return float(d_jet)  # Fallback to jet diameter for degenerate inputs
-
-    We_g = rho_gas * u_rel ** 2 * d_jet / sigma
-    Re_l = rho_liq * u_rel * d_jet / mu_liq
-    product = We_g * Re_l
-    if product <= 0:
-        return float(d_jet)
-
-    D32 = C * d_jet * product ** (-0.25)
-    return float(D32)
+    for name, v in (("d_jet", d_jet), ("v_jet", v_jet), ("rho_liq", rho_liq), ("mu_liq", mu_liq),
+                    ("sigma", sigma), ("rho_gas", rho_gas)):
+        if not (np.isfinite(v) and v > 0):
+            raise ValueError(f"smd_impinging_tn4222: {name}={v} must be positive and finite")
+    if transfer is None:
+        transfer = "tn4087" if scale_properties else "none"
+    dj_in = d_jet / 0.0254
+    vj = v_jet / 0.3048
+    dV = (v_jet if dv is None else abs(float(dv))) / 0.3048
+    d30 = dj_in / (2.64 * math.sqrt(dj_in * vj) + 0.97 * dj_in * dV) * 0.0254
+    d32 = TN4222_D32_OVER_D30 * d30
+    return float(d32 * tn4222_property_factor(transfer, rho_liq=rho_liq, mu_liq=mu_liq,
+                                              sigma=sigma, rho_gas=rho_gas))
 
 
 def evaporation_constant_m2_s(

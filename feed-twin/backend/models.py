@@ -247,6 +247,13 @@ class TankOut(BaseModel):
     #: What the drawing says the vessel holds [L], so the panel shows what it
     #: is simulating -- a 44 L K-bottle does not blow down like a 4.7 L COPV.
     volume_L: float = 0.0
+    #: ``lox`` or ``fuel`` -- which leg the tank is on, from what it holds. The
+    #: pad guide used to find the LOX tank by "ox" in its label, and LE4's are
+    #: TK-2 and TK-3: it watched the empty fuel tank for the LOX load forever.
+    side: str = ""
+    #: A cryogen load is still chilling the wall: what is poured flashes off
+    #: and nothing collects yet. The card shows the wall temperature meanwhile.
+    chilling: bool = False
 
 
 class StudyTraceOut(BaseModel):

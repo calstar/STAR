@@ -111,7 +111,9 @@ def eta_cstar(
     ``spray_diagnostics["cstar_efficiency"]`` so it reaches the reported diagnostics.
 
     advanced_params: Pc, Tc (CEA, adiabatic), cstar_ideal, gamma, R, MR, Ac, At, m_dot_total,
-    u_fuel, u_lox, spray_diagnostics, fuel_props, and optionally ox_props.
+    u_fuel, u_lox, spray_diagnostics, fuel_props, and optionally ox_props; cea_cache (the design's
+    CEACache, whose propellant pair selects the wide c*(O/F) table) or cstar_fn for the mixing and
+    vaporized-gas c* ratios.
     """
     from .combustion_physics import calculate_combustion_efficiency_advanced
 
@@ -138,6 +140,8 @@ def eta_cstar(
         fuel_props=advanced_params.get("fuel_props", None),
         ox_props=advanced_params.get("ox_props", None),
         debug=debug,
+        cea_cache=advanced_params.get("cea_cache", None),
+        cstar_fn=advanced_params.get("cstar_fn", None),
     )
 
     cooling_results = spray_diagnostics.get("cooling") if isinstance(spray_diagnostics, dict) else None
@@ -156,7 +160,9 @@ def eta_cstar(
             "reason": "film coolant stays in the flow; its c* cost (a fuel-rich wall layer) is not modelled"})
 
     eta = results["eta_total"] * eta_HL
-    if not (np.isfinite(eta) and 0.0 <= eta <= 1.0):
+    # Not bounded by 1: c*_ideal is at the bulk O/F, and off the c* peak the stream tubes' spread
+    # or a vaporized gas nearer the peak can exceed it (combustion_physics).
+    if not (np.isfinite(eta) and eta > 0.0):
         raise ValueError(
             f"Invalid combustion efficiency {eta}: L*={Lstar:.4f} m, eta_vap={results['eta_vaporization']:.4f}, "
             f"eta_mix={results['eta_mixing']:.4f}, eta_HL={eta_HL:.4f}."

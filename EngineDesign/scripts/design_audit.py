@@ -15,7 +15,7 @@ import sys, copy, math, yaml
 sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parents[1]))
 from engine.pipeline.io import load_config
 from engine.core.runner import PintleEngineRunner
-from engine.core.injectors.layout import impingement_ld_band, layout_from_config
+from engine.core.injectors.layout import impingement_ld_band, layout_from_config, flows_from_result
 from engine.optimizer.layers.layer1_static_optimization import (
     _impinging_resultant_tilt_deg, _resultant_tilt_breakeven_deg,
     _resolve_tilt_allowance_deg, _impinging_face_infeasibility_terms,
@@ -98,7 +98,9 @@ def audit(f):
     L_imp = 0.5 * abs(n*O['spacing'] - n*F['spacing']) / math.pi / tan_sum
     ld = L_imp / (0.5*(O['d_jet'] + F['d_jet']))
     ld_eps = 1e-6 * max(1.0, band.hi)   # arithmetic noise only -- this is a no-slack audit
-    lay = layout_from_config(Y)
+    # The solve's flows, so the layout also runs its manifold velocity-head, orifice cavitation
+    # and (at the solved Pc) plate-bending checks.
+    lay = layout_from_config(Y, flows=flows_from_result(r, c))
     back_web_req = _opt(rq, 'layer1_injector_min_back_web_m')
     channels = lay['back']['mode'] == 'channels'
     back_web = min(lay['passages']['O']['back_web'], lay['passages']['F']['back_web'])
@@ -113,8 +115,13 @@ def audit(f):
     jet_lo = _opt(rq, 'layer1_impinging_jet_angle_min_deg')
     SKIP = None
     # Layer 1's own sign-off gates (element pitch, L_cyl/D, face-to-exit length, SP-8089 free
-    # jet), the same function validation uses, at face value.
-    gates = _layer1_declared_limit_gates(c, rq, {})
+    # jet), the same function validation uses, at face value. The only constant those four read
+    # is the convergent half-angle (chamber lengths). Its injector_face / injector_back_face
+    # gates read Layer 1's curated plate constants, which this script does not rebuild: given
+    # none they would run as a flat face on a plenum, so only the four above are read -- the face terms
+    # above and the layout (declared plate) are what check the injector.
+    gates = _layer1_declared_limit_gates(
+        c, rq, {'layer1_contraction_half_angle_deg': rq.get('layer1_contraction_half_angle_deg')})
     R = float((r.get('diagnostics') or {}).get('momentum_ratio_R', float('nan')))
     r_lo, r_hi = _opt(rq, 'impinging_momentum_R_min'), _opt(rq, 'impinging_momentum_R_max')
     checks = [

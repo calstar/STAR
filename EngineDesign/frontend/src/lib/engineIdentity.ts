@@ -24,3 +24,26 @@ export function engineIdentity(config: EngineConfig | null | undefined): string 
     fluids?.fuel?.name ?? '',
   ].join('|');
 }
+
+/** JSON with object keys sorted, so the same config always serializes the same way. */
+function stable(v: unknown): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? 'null';
+  if (Array.isArray(v)) return `[${v.map(stable).join(',')}]`;
+  const o = v as Record<string, unknown>;
+  return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${stable(o[k])}`).join(',')}}`;
+}
+
+/**
+ * A key for "this exact design": every field, less the tank setpoints (a Time-Series curve sets its
+ * own pressures, so moving the setpoint does not change what the curve ran on). A burn made on one
+ * fingerprint is not shown against another.
+ */
+export function configFingerprint(config: EngineConfig | null | undefined): string {
+  if (!config) return '';
+  const c = JSON.parse(JSON.stringify(config)) as Record<string, Record<string, unknown> | undefined>;
+  for (const t of ['lox_tank', 'fuel_tank']) if (c[t]) delete c[t]!.initial_pressure_psi;
+  const s = stable(c);
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return h.toString(16);
+}

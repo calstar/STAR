@@ -1,0 +1,233 @@
+{
+ "run": "20261002-231658-7e47d1",
+ "shots": [
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/overview-1440-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/overview-1440-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/feed-1440-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/feed-1440-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/engine-1440-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/engine-1440-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/hardware-1440-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/hardware-1440-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/flight-1440-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/flight-1440-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/stand-1440-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/stand-1440-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/uncertainty-1440-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/record-1440-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/record-1440-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/injector-1440-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/injector-1440-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/optimize-1440-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/optimize-1440-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/overview-1440-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/overview-1440-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/feed-1440-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/feed-1440-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/engine-1440-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/engine-1440-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/hardware-1440-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/hardware-1440-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/flight-1440-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/flight-1440-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/stand-1440-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/stand-1440-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/uncertainty-1440-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/record-1440-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/record-1440-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/injector-1440-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/injector-1440-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/optimize-1440-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/optimize-1440-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/gallery-ui-1440.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/gallery-charts-1440-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/gallery-charts-1440-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/overview-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/overview-1920-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/feed-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/feed-1920-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/engine-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/engine-1920-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/hardware-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/hardware-1920-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/flight-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/flight-1920-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/stand-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/stand-1920-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/uncertainty-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/record-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/record-1920-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/injector-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/injector-1920-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/optimize-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/optimize-1920-dark-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/overview-1920-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/overview-1920-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/feed-1920-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/feed-1920-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/engine-1920-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/engine-1920-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/hardware-1920-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/hardware-1920-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/flight-1920-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/flight-1920-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/stand-1920-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/stand-1920-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/uncertainty-1920-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/record-1920-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/record-1920-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/injector-1920-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/injector-1920-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/optimize-1920-light.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/optimize-1920-light-full.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/gallery-ui-1920.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/gallery-charts-1920-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/qa/gallery-charts-1920-light.png"
+ ],
+ "console": [
+  {
+   "tag": "1920-dark",
+   "type": "error",
+   "text": "Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+  },
+  {
+   "tag": "1920-dark",
+   "type": "error",
+   "text": "Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+  },
+  {
+   "tag": "1920-dark",
+   "type": "error",
+   "text": "Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+  }
+ ],
+ "axe": [
+  {
+   "tag": "record-1440-dark",
+   "id": "empty-table-header",
+   "impact": "minor",
+   "n": 1,
+   "help": "Table header text should not be empty",
+   "nodes": [
+    ".text-\\[var\\(--color-text-muted\\)\\] > th:nth-child(1) ::   Element does not have text that is visible to screen readers"
+   ]
+  },
+  {
+   "tag": "record-1440-light",
+   "id": "empty-table-header",
+   "impact": "minor",
+   "n": 1,
+   "help": "Table header text should not be empty",
+   "nodes": [
+    ".text-\\[var\\(--color-text-muted\\)\\] > th:nth-child(1) ::   Element does not have text that is visible to screen readers"
+   ]
+  },
+  {
+   "tag": "gallery-ui-1440",
+   "id": "landmark-unique",
+   "impact": "moderate",
+   "n": 8,
+   "help": "Landmarks should have a unique role or role/label/title (i.e. accessible name) combination",
+   "nodes": [
+    "#gallery-dark-panel-overview > section[aria-label=\"Verdict\"] ::   The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable",
+    "section[aria-labelledby=\"_r_2n_\"] ::   The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable",
+    "section[aria-labelledby=\"_r_2t_\"] ::   The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable",
+    "section[aria-labelledby=\"_r_32_\"] ::   The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable",
+    "section[aria-labelledby=\"_r_3e_\"] ::   The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable",
+    "section[aria-labelledby=\"_r_3f_\"] ::   The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+   ]
+  },
+  {
+   "tag": "record-1920-dark",
+   "id": "empty-table-header",
+   "impact": "minor",
+   "n": 1,
+   "help": "Table header text should not be empty",
+   "nodes": [
+    ".text-\\[var\\(--color-text-muted\\)\\] > th:nth-child(1) ::   Element does not have text that is visible to screen readers"
+   ]
+  },
+  {
+   "tag": "record-1920-light",
+   "id": "empty-table-header",
+   "impact": "minor",
+   "n": 1,
+   "help": "Table header text should not be empty",
+   "nodes": [
+    ".text-\\[var\\(--color-text-muted\\)\\] > th:nth-child(1) ::   Element does not have text that is visible to screen readers"
+   ]
+  },
+  {
+   "tag": "gallery-ui-1920",
+   "id": "landmark-unique",
+   "impact": "moderate",
+   "n": 8,
+   "help": "Landmarks should have a unique role or role/label/title (i.e. accessible name) combination",
+   "nodes": [
+    "#gallery-dark-panel-overview > section[aria-label=\"Verdict\"] ::   The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable",
+    "section[aria-labelledby=\"_r_5_\"] ::   The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable",
+    "section[aria-labelledby=\"_r_b_\"] ::   The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable",
+    "section[aria-labelledby=\"_r_g_\"] ::   The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable",
+    "section[aria-labelledby=\"_r_s_\"] ::   The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable",
+    "section[aria-labelledby=\"_r_t_\"] ::   The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+   ]
+  }
+ ],
+ "overlap": [
+  {
+   "tag": "gallery-charts-1440-dark",
+   "a": "ΔP/Pc",
+   "b": "1×",
+   "at": [
+    65,
+    869
+   ],
+   "w": 5,
+   "h": 15,
+   "pa": "div.grid.gap-4 > section.min-w-0.border > div.grid.items-center > span.",
+   "pb": "div[Burn timeline] > div.lx-tl-controls > button[Playback speed, 1×] > span.lx-num"
+  },
+  {
+   "tag": "gallery-charts-1440-dark",
+   "a": "1.40 → 1.38–1.40",
+   "b": "0.0",
+   "at": [
+    254,
+    892
+   ],
+   "w": 18,
+   "h": 4,
+   "pa": "div.grid.gap-4 > section.min-w-0.border > div.grid.items-center > span.lx-num",
+   "pb": "div[Burn timeline] > div.lx-tl-track > div.lx-tl-axis > span.lx-tl-axis-tick.lx-num"
+  },
+  {
+   "tag": "gallery-charts-1440-light",
+   "a": "ΔP/Pc",
+   "b": "1×",
+   "at": [
+    65,
+    869
+   ],
+   "w": 5,
+   "h": 15,
+   "pa": "div.grid.gap-4 > section.min-w-0.border > div.grid.items-center > span.",
+   "pb": "div[Burn timeline] > div.lx-tl-controls > button[Playback speed, 1×] > span.lx-num"
+  },
+  {
+   "tag": "gallery-charts-1440-light",
+   "a": "1.40 → 1.38–1.40",
+   "b": "0.0",
+   "at": [
+    254,
+    892
+   ],
+   "w": 18,
+   "h": 4,
+   "pa": "div.grid.gap-4 > section.min-w-0.border > div.grid.items-center > span.lx-num",
+   "pb": "div[Burn timeline] > div.lx-tl-track > div.lx-tl-axis > span.lx-tl-axis-tick.lx-num"
+  }
+ ],
+ "clipped": [],
+ "ellipsis": [],
+ "orphan": []
+}

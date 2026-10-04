@@ -1,0 +1,125 @@
+{
+  "schema": "layerx.catalog/1",
+  "kind": "valves",
+  "about": "Valves, solenoids and regulators Hardware mode may offer in place of a drawn one. Seeded only with the parts the team named and what the shipped drawings carry; nothing here comes from a vendor datasheet this repo holds. Add a row per part you can buy, with its datasheet in 'provenance'. A user's own rows live in <userdata>/layerx/catalog/valves.json and replace a shipped row with the same id.",
+  "rows": [
+    {
+      "id": "aqua-1092-50",
+      "label": "Aqua Environment 1092-50 dome-loaded regulator",
+      "applies_to": [
+        "PR"
+      ],
+      "params": {
+        "Cv": {
+          "value": 0.8,
+          "unit": "Cv"
+        },
+        "dome_bias": {
+          "value": 50,
+          "unit": "psi"
+        },
+        "bore": {
+          "value": 0.23,
+          "unit": "in"
+        }
+      },
+      "source": "manufacturer",
+      "provenance": "Named by the team for LE4 (Aqua 1092-50, Cv 0.8). The numbers are those the shipped drawings state for PR_D, citing Aqua Environment Technical Bulletin 1031, Model 1092; the bulletin itself is not in this repo (docs/layerx/AUDIT.md 9.6 C, H)."
+    },
+    {
+      "id": "press-solenoid-cv1.7",
+      "label": "Press solenoid, Cv 1.7",
+      "applies_to": [
+        "SOL"
+      ],
+      "params": {
+        "Cv": {
+          "value": 1.7,
+          "unit": "Cv",
+          "source": "measured"
+        },
+        "bore": {
+          "value": 6.35,
+          "unit": "mm",
+          "source": "manufacturer"
+        }
+      },
+      "source": "measured",
+      "provenance": "Named by the team for LE4 (press solenoid, 1.7 Cv). Drawings copv_study_he / copv_study_gn2: SV_LOX_PRESS, SV_FUEL_PRESS, SV_LOX_FILL, SV_GN2_VENT, Cv 1.7 'measured' ('press solenoid on the stand'), bore 6.35 mm 'manufacturer'. Make and model not stated."
+    },
+    {
+      "id": "solenoid-cv1.2-ethalox-stand",
+      "label": "Solenoid, Cv 1.2 (ethalox_stand drawing)",
+      "applies_to": [
+        "SOL"
+      ],
+      "params": {
+        "Cv": {
+          "value": 1.2,
+          "unit": "Cv"
+        },
+        "bore": {
+          "value": 6.35,
+          "unit": "mm"
+        }
+      },
+      "source": "manufacturer",
+      "provenance": "Drawing ethalox_stand: SV_LOX_PRESS, SV_FUEL_PRESS, SV_LOX_FILL, SV_GN2_VENT, Cv 1.2 'manufacturer' with no reference given. Superseded on the LE4 drawings by the 1.7 Cv press solenoid."
+    },
+    {
+      "id": "vent-solenoid-cv3.8",
+      "label": "Vent solenoid, Cv 3.8 (calibrated)",
+      "applies_to": [
+        "SOL"
+      ],
+      "params": {
+        "Cv": {
+          "value": 3.8,
+          "unit": "Cv"
+        },
+        "bore": {
+          "value": 9.525,
+          "unit": "mm"
+        }
+      },
+      "source": "estimated",
+      "provenance": "Drawings copv_study_he / copv_study_gn2 / ethalox_stand: SV_LOX_VENT, SV_FUEL_VENT, Cv 3.8 'estimated', calibrated so the tank vents blow 550 psig down to zero in the observed time. A fitted number, not a catalogue rating."
+    },
+    {
+      "id": "main-ball-valve-half-inch",
+      "label": "Main valve, 1/2 in full-port ball valve",
+      "applies_to": [
+        "SOL"
+      ],
+      "params": {
+        "Cv": {
+          "value": 26.1,
+          "unit": "Cv",
+          "source": "estimated"
+        },
+        "bore": {
+          "value": 12.7,
+          "unit": "mm",
+          "source": "manufacturer"
+        }
+      },
+      "source": "estimated",
+      "provenance": "Drawings copv_study_he / copv_study_gn2 / ethalox_stand: MVO, MVF, Cv 26.1 'estimated' from Crane TP-410 for a full-bore ball valve (K = 3 fT = 0.0814 at 12.7 mm); bore 12.7 mm 'manufacturer' (1/2 in NPT full-port ball valve)."
+    },
+    {
+      "id": "control-regulator-dome-line",
+      "label": "Control regulator on the dome line (dome loader)",
+      "applies_to": [
+        "PR"
+      ],
+      "params": {
+        "Cv": {
+          "value": 0.06,
+          "unit": "Cv"
+        }
+      },
+      "source": "estimated",
+      "provenance": "Drawings copv_study_he / copv_study_gn2: PR_C, Cv 0.06 'estimated' ('panel reg on a dome line'). Make and model not stated."
+    }
+  ]
+}

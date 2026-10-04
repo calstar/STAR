@@ -1,0 +1,25 @@
+{
+ "run": "20261002-231658-7e47d1",
+ "vs": "20261002-224508-cf9797",
+ "shots": [
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/wave2/tools-injector-1440-dark.png",
+  "/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign/frontend/e2e-scratch/shots/wave2/tools-optimize-1440-dark.png"
+ ],
+ "console": [],
+ "axe": [
+  {
+   "tag": "tools-optimize-1440-dark",
+   "id": "empty-table-header",
+   "impact": "minor",
+   "n": 1,
+   "help": "Table header text should not be empty",
+   "nodes": [
+    ".text-\\[var\\(--color-text-muted\\)\\] > .w-8 ::   Element does not have text that is visible to screen readers"
+   ]
+  }
+ ],
+ "overlap": [],
+ "clipped": [],
+ "ellipsis": [],
+ "orphan": []
+}

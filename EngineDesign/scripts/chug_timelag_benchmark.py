@@ -373,13 +373,91 @@ def bench_e() -> bool:
     return ok
 
 
+# ---------------------------------------------------------------------------
+# F. Feed-line inertance vs the closed form
+# ---------------------------------------------------------------------------
+#
+# Benchmarks A and E run with feed_length = 0 (the L17 rig decouples its lines), so the line
+# inertance term I*s in Z_feed -- the term that lifts LE4's gate from ~1.01 to ~1.33 (Layer X
+# audit 9.4 section 2) -- had no check at all (audit 5.3). This one is the constant-time-lag
+# chug loop with the feed line's inertia, the system Summerfield set up (M. Summerfield, "A Theory
+# of Unstable Combustion in Liquid Propellant Rocket Systems", J. American Rocket Society 21(5),
+# 108-114, 1951), reduced to one stream so its stability boundary is closed-form:
+#
+#   L(iw) = K_c exp(-iw tau) / ((1 + iw theta) (Z + iw I)),   Z = R + 1/G real
+#   arg L = -(w tau + atan(w theta) + atan(w I / Z))      strictly decreasing in w
+#   |L|   = K_c / (sqrt(1 + w^2 theta^2) sqrt(Z^2 + w^2 I^2))   strictly decreasing in w
+#
+# so the worst negative-real-axis crossing is the first (phase -pi), at the unique root w_c of
+# w tau + atan(w theta) + atan(w I/Z) = pi, and GM = sqrt(1 + w_c^2 theta^2) sqrt(Z^2 + w_c^2 I^2)/K_c.
+# On the boundary itself, for any w: tau*(w) = (pi - atan(w theta) - atan(w I/Z))/w and
+# K_c*(w) = sqrt(1 + w^2 theta^2) sqrt(Z^2 + w^2 I^2). Hand-derived from the model's own equations:
+# it proves the code solves the loop it states, with inertance, not that the loop is the engine.
+
+def inertance_closed_form(K_c: float, theta: float, tau: float, Z: float, I: float):
+    """(GM, f [Hz]) of the one-stream loop above, by bisection on the phase equation."""
+    lo, hi = 1e-6, 2.0 * math.pi * 1e5
+    phase = lambda w: w * tau + math.atan(w * theta) + math.atan(w * I / Z) - math.pi  # noqa: E731
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if phase(mid) > 0:
+            hi = mid
+        else:
+            lo = mid
+    w = 0.5 * (lo + hi)
+    return math.sqrt(1.0 + (w * theta) ** 2) * math.sqrt(Z * Z + (w * I) ** 2) / K_c, w / (2.0 * math.pi)
+
+
+def bench_f() -> bool:
+    print("=" * 78)
+    print("F. feed-line inertance: chug.py vs the closed-form one-stream boundary")
+    print("=" * 78)
+    # LE4's fuel side at t = 0.05 s of the helium burn, rounded: 1.21 kg/s, eta 0.35 at 2.69 MPa,
+    # c* 1567 m/s, A_t 1.795e-3 m2, L* 1.359 m, R 372 J/(kg K), Tc 3205 K, lag 17 ms.
+    mdot, eta, pc, tau = 1.21, 0.35, 2.69e6, 17.0e-3
+    ch = chug.ChugChamber(cstar=1567.0, A_t=1.795e-3, Lstar=1.359, gamma=1.13, R_gas=372.0, T_c=3205.0)
+    area = math.pi * 0.01092 ** 2 / 4.0
+    ok = True
+    print(f"   K_c {ch.K_c():.4g} Pa.s/kg   theta {ch.theta_c() * 1e3:.3f} ms   tau {tau * 1e3:.1f} ms")
+    print(f"   {'I [1/m]':>10} {'GM code':>9} {'GM exact':>9} {'err':>8} {'f code':>8} {'f exact':>8}")
+    for I in (0.0, 1495.0, 10297.0, 30000.0):
+        st = chug.ChugStream("F", mdot=mdot, eta_inj=eta, Pc=pc, dP_feed=1.0e5, feed_length=I * area,
+                             feed_area=area, tau_conv=tau, regulator=chug.Regulator(enabled=False))
+        Z = st.resistance() + 1.0 / st.G_inj()
+        gm_x, f_x = inertance_closed_form(ch.K_c(), ch.theta_c(), tau, Z, I)
+        fast = chug.chug_margin_fast([st], ch)
+        err = fast["gain_margin"] / gm_x - 1.0
+        ok &= abs(err) < 5e-3 and abs(fast["f_chug_hz"] / f_x - 1.0) < 1e-2
+        print(f"   {I:10.0f} {fast['gain_margin']:9.4f} {gm_x:9.4f} {err * 100:7.3f}% {fast['f_chug_hz']:8.2f} {f_x:8.2f}")
+    # On the boundary: tau and K_c set from the closed form at w0 must read GM = 1 at f0.
+    for f0 in (15.0, 25.0, 40.0):
+        w0, I = 2.0 * math.pi * f0, 10297.0
+        st = chug.ChugStream("F", mdot=mdot, eta_inj=eta, Pc=pc, dP_feed=1.0e5, feed_length=I * area,
+                             feed_area=area, tau_conv=0.0, regulator=chug.Regulator(enabled=False))
+        Z = st.resistance() + 1.0 / st.G_inj()
+        th = ch.theta_c()
+        tau_b = (math.pi - math.atan(w0 * th) - math.atan(w0 * I / Z)) / w0
+        K_b = math.sqrt(1.0 + (w0 * th) ** 2) * math.sqrt(Z * Z + (w0 * I) ** 2)
+        st.tau_conv = tau_b
+        chb = chug.ChugChamber(cstar=K_b * ch.A_t, A_t=ch.A_t, Lstar=ch.Lstar, gamma=ch.gamma,
+                               R_gas=ch.R_gas, T_c=ch.T_c * (K_b * ch.A_t / ch.cstar))
+        fast = chug.chug_margin_fast([st], chb)
+        okb = abs(fast["gain_margin"] - 1.0) < 5e-3 and abs(fast["f_chug_hz"] / f0 - 1.0) < 1e-2
+        ok &= okb
+        print(f"   boundary at {f0:4.0f} Hz (tau* {tau_b * 1e3:6.2f} ms): GM {fast['gain_margin']:.4f} at "
+              f"{fast['f_chug_hz']:.2f} Hz  {'ok' if okb else 'OFF'}")
+    print(f"\n   -> {'PASS' if ok else 'FAIL'}")
+    return ok
+
+
 def main() -> int:
     print("chug time-lag model benchmark — external anchors only\n")
     results = {"A solver vs experiment": bench_a(),
                "B lag model vs experiment": bench_b(),
                "C convection vs textbook": bench_c(),
                "D blast radius": bench_d(),
-               "E decider (end-to-end)": bench_e()}
+               "E decider (end-to-end)": bench_e(),
+               "F feed inertance vs closed form": bench_f()}
     print()
     print("=" * 78)
     for k, v in results.items():

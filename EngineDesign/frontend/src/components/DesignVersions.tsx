@@ -65,18 +65,18 @@ function nextLabel(releases: ReleaseVersion[]): string {
   return `0.${maxMinor + 1}`;
 }
 
-async function fetchConfig(): Promise<EngineConfig | null> {
+async function fetchConfig(): Promise<{ config: EngineConfig; epoch: string | null } | null> {
   const res = await getConfig();
-  return res.data?.config ?? null;
+  return res.data?.config ? { config: res.data.config, epoch: res.data.session_epoch ?? null } : null;
 }
 
 /**
  * The design as it stands right now: the authoritative config from the backend
  * session, plus the panel state that has no home in it (lib/designState.ts).
  */
-async function fetchDoc(): Promise<api.EngineDesignDoc | null> {
-  const config = await fetchConfig();
-  return config ? { config, ui: snapshotUiState() } : null;
+async function fetchDoc(): Promise<{ doc: api.EngineDesignDoc; epoch: string | null } | null> {
+  const got = await fetchConfig();
+  return got ? { doc: { config: got.config, ui: snapshotUiState() }, epoch: got.epoch } : null;
 }
 
 interface Props {
@@ -100,6 +100,10 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
   const loadedKey = useRef<string | null>(null);
   const lastSaved = useRef<string>(''); // JSON of the last-autosaved document
   const lastDoc = useRef<api.EngineDesignDoc | null>(null); // for the close beacon
+  // The backend session the design was loaded into. A restart or an idle eviction makes a new
+  // session holding configs/default.yaml; autosaving that would write the default over the
+  // design (it did, 2026-10-01). A changed epoch means: put the design back, save nothing.
+  const sessionEpoch = useRef<string | null>(null);
 
   const [showChange, setShowChange] = useState(false);
   // Name of a design that was unshared out from under us, or null.
@@ -135,7 +139,8 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
   // Apply a snapshot: sync the backend session first, then the app's state.
   const apply = useCallback(
     async (doc: api.EngineDesignDoc) => {
-      await loadConfigJson(doc.config);
+      const loaded = await loadConfigJson(doc.config);
+      sessionEpoch.current = loaded.data?.session_epoch ?? sessionEpoch.current;
       onRestore(doc.config);
       // The panels own their own slice; pushing it back is what makes a
       // controller gain or a pressure segment survive a reload or a restore.
@@ -210,6 +215,26 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
   const live = useRef({ checkout, active, reloadAndFallBack });
   live.current = { checkout, active, reloadAndFallBack };
 
+  // The design as it stands, for a release, a file or a new design's seed. If the backend
+  // session was recreated under us it holds the default config: restore the design first and
+  // hand back the design, never the default.
+  const currentDoc = useCallback(async (): Promise<api.EngineDesignDoc | null> => {
+    const got = await fetchDoc();
+    if (!got) return null;
+    if (got.epoch && sessionEpoch.current && got.epoch !== sessionEpoch.current && lastSaved.current) {
+      const saved = JSON.parse(lastSaved.current) as api.EngineDesignDoc;
+      if (saved?.config && Object.keys(saved.config).length > 0) {
+        await apply(saved);
+        return saved;
+      }
+    }
+    return got.doc;
+  }, [apply]);
+
+  // `apply` for the autosave tick, without re-arming its interval.
+  const applyRef = useRef(apply);
+  applyRef.current = apply;
+
   // `openDoc` for the bootstrap below, without making it a dependency.
   const openDocRef = useRef(openDoc);
   openDocRef.current = openDoc;
@@ -222,7 +247,9 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
         const docs = await api.listDocuments();
         if (cancelled) return;
         if (docs.length === 0) {
-          const seed = (await fetchDoc()) ?? undefined;
+          const fetched = await fetchDoc();
+          sessionEpoch.current = fetched?.epoch ?? null;
+          const seed = fetched?.doc ?? undefined;
           const meta = await api.createDocument('Design 1', seed);
           if (cancelled) return;
           setDocuments([meta]);
@@ -272,8 +299,18 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
       // No checkout, no autosave. The inputs are read-only in that state
       // anyway; this is the belt to that pair of braces.
       if (stopped || loadedKey.current !== key || !live.current.checkout.held) return;
-      const doc = await fetchDoc();
-      if (!doc) return;
+      const got = await fetchDoc();
+      if (!got) return;
+      if (got.epoch && sessionEpoch.current && got.epoch !== sessionEpoch.current) {
+        // The backend session was recreated under us and holds the default config, not this
+        // design. Put the last saved design back; never autosave the default over it.
+        const saved = lastSaved.current ? (JSON.parse(lastSaved.current) as api.EngineDesignDoc) : null;
+        if (saved?.config && Object.keys(saved.config).length > 0) await applyRef.current(saved);
+        else sessionEpoch.current = got.epoch;
+        return;
+      }
+      if (got.epoch && !sessionEpoch.current) sessionEpoch.current = got.epoch;
+      const doc = got.doc;
       const serialized = JSON.stringify(doc);
       lastDoc.current = doc;
       if (serialized === lastSaved.current) return;
@@ -348,10 +385,10 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
 
   const create = useCallback(
     async (name: string) => {
-      const seed = (await fetchDoc()) ?? undefined;
+      const seed = (await currentDoc()) ?? undefined;
       adopt(await api.createDocument(name, seed), seed);
     },
-    [adopt],
+    [adopt, currentDoc],
   );
 
   const rename = useCallback(async (ref: DocRef, name: string) => {
@@ -390,7 +427,7 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
   // the same payload the server stores -- so a design handed over as a file
   // arrives with its controller settings and pressure profiles intact.
   const saveToFile = async () => {
-    const doc = (await fetchDoc()) ?? lastDoc.current;
+    const doc = (await currentDoc()) ?? lastDoc.current;
     if (!doc) {
       setDialog({ kind: 'alert', title: 'Nothing to save', message: 'No configuration is loaded yet.' });
       return;
@@ -466,7 +503,7 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
     setRelStatus('saving');
     setRelError('');
     try {
-      const doc = (await fetchDoc()) ?? undefined;
+      const doc = (await currentDoc()) ?? undefined;
       await api.createRelease(activeRef, relLabel.trim(), doc);
       setRelStatus('ok');
       if (showHistory) void refreshHistory();
@@ -526,7 +563,7 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
       <div
         className={
           inline
-            ? 'flex flex-wrap items-center gap-2 py-2'
+            ? 'flex flex-wrap items-center gap-2 py-1'
             : 'mx-auto flex max-w-7xl flex-wrap items-center gap-2 border-b border-[var(--color-border)] px-4 py-1.5 sm:px-6 lg:px-8'
         }
       >

@@ -266,14 +266,17 @@ class TestChannels:
             assert ch["breakthrough"] == "square"
         assert "oblique_inlet_O" not in _codes(out)
 
-    def test_flat_floor_short_wall_is_under_the_L_over_d_minimum(self):
-        """On a flat floor the hole breaks in at the jet angle: its short wall is (d/2) tan(theta)
-        shorter than the axis, L/d 4 - tan(43)/2 = 3.53 for LOX -- under SP-8089's 4."""
+    def test_flat_floor_leaves_an_acute_inlet_lip_and_no_short_wall_rule(self):
+        """On a flat floor the hole breaks in at the jet angle: the lip on its acute side is
+        90 - 43 = 47 deg. SP-8089's L/d >= 4 is the axis length of a square-entry hole, so the
+        oblique cut is not an L/d shortfall; it is an inlet the Cd model does not cover (info)."""
         ch = self.out["passages"]["O"]["channel"]
-        assert ch["short_wall_l_over_d"] == pytest.approx(4.0 - 0.5 * T(43), rel=1e-9)
-        assert _codes(self.out).get("short_wall_O") == "warn"
+        assert ch["entry_lip_deg"] == pytest.approx(90.0 - 43.0)
+        assert "short_wall_l_over_d" not in ch
+        assert not [c for c in _codes(self.out) if c.startswith("short_wall")]
+        assert _codes(self.out).get("oblique_inlet_O") == "info"
         coned = layout_from_config(_cfg(channel_floor="coned"), drawings=False)
-        assert "short_wall_O" not in _codes(coned)
+        assert coned["passages"]["O"]["channel"]["entry_lip_deg"] == 90.0
 
     def test_channel_flow_area_is_reported_against_the_orifices(self):
         ch = self.out["passages"]["O"]["channel"]
@@ -664,7 +667,7 @@ FIXTURE = ROOT / "frontend/src/components/__fixtures__/layout_6500N.json"
 
 
 def test_frontend_fixture_is_current():
-    """Regenerate: python3 scripts/injector_layout.py configs/ethalox_6500N.yaml > <fixture>"""
+    """Regenerate: python3 scripts/injector_layout.py --no-flows configs/ethalox_6500N.yaml > <fixture>"""
     want = json.loads(json.dumps(layout_from_config(yaml.safe_load(C6500.read_text()))))
     got = json.loads(FIXTURE.read_text())
 

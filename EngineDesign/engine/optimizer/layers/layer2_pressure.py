@@ -53,6 +53,9 @@ N2_Z_LOOKUP_CSV = Path(__file__).resolve().parent.parent.parent.parent / "copv" 
 def generate_pressure_curve_from_segments(
     segments: List[Dict[str, Any]],
     n_points: int = 200,
+    *,
+    allow_rise: bool = False,
+    exact_ends: bool = False,
 ) -> np.ndarray:
     """
     Generate a 200-point pressure curve from segments.
@@ -67,6 +70,13 @@ def generate_pressure_curve_from_segments(
     Args:
         segments: List of segment dicts
         n_points: Total number of points (default 200)
+        allow_rise: keep a segment whose end is above its start (any feed system whose tank
+            pressure climbs: a regulator's supply-pressure effect, a pressurant schedule). Off: such
+            a segment is forced to fall 5 %, which is what Layer 2's search space assumes.
+        exact_ends: a blowdown segment ends AT its end pressure,
+            P = P_end + (P_start - P_end)(e^(-k t) - e^(-k))/(1 - e^(-k)) -- the curve the Time-Series
+            builder draws. Off: P_end + (P_start - P_end) e^(-k t), which stops short of P_end
+            (61 % of the way back at k = 0.5); Layer 2 has always used it.
     
     Returns:
         pressure_array: Array of pressures [Pa] of length n_points
@@ -104,8 +114,8 @@ def generate_pressure_curve_from_segments(
         if not np.isfinite(k):
             k = 0.3
         
-        # Ensure end <= start (decreasing pressure)
-        if P_end > P_start:
+        # Ensure end <= start (decreasing pressure), unless a rising segment is asked for
+        if P_end > P_start and not allow_rise:
             P_end = P_start * 0.95  # Force decrease
         
         # Calculate number of points for this segment
@@ -143,7 +153,11 @@ def generate_pressure_curve_from_segments(
         elif seg_type == "blowdown":
             # Blowdown profile: P(t) = P_end + (P_start - P_end) * exp(-k * t)
             # k controls the decay rate
-            pressure_array[seg_indices] = P_end + (P_start - P_end) * np.exp(-k * t_norm)
+            if exact_ends and abs(1.0 - np.exp(-k)) > 1e-6:
+                ek = np.exp(-k)
+                pressure_array[seg_indices] = P_end + (P_start - P_end) * (np.exp(-k * t_norm) - ek) / (1.0 - ek)
+            else:
+                pressure_array[seg_indices] = P_end + (P_start - P_end) * np.exp(-k * t_norm)
         else:
             # Default to linear
             pressure_array[seg_indices] = P_start + (P_end - P_start) * t_norm

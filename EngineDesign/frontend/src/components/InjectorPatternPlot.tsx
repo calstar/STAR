@@ -131,6 +131,20 @@ export function InjectorPatternPlot({ layout }: Props) {
               </div>
             )}
           </Panel>
+          {(D.ports || D.revolve) && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {D.ports && (
+                <Panel title="Port plate" sub="from above: ports over the channels (dashed)" onDxf={() => exportDxf(D.ports!, 'ports')}>
+                  <InjectorDrawing prims={D.ports} hover={hover} onHover={setHover} maxHeight={340} />
+                </Panel>
+              )}
+              {D.revolve && (
+                <Panel title="Revolve sketch" sub="the plate's half-section: revolve it about the axis" onDxf={() => exportDxf(D.revolve!, 'revolve')}>
+                  <InjectorDrawing prims={D.revolve} maxHeight={340} />
+                </Panel>
+              )}
+            </div>
+          )}
         </>
       )}
 
@@ -180,10 +194,31 @@ export function InjectorPatternPlot({ layout }: Props) {
           ))}
           {drill.map((d) => d.channel && (
             <div key={`c${d.tag}`}>
-              <span style={{ color: d.c }}>●</span> {d.tag} channel on ⌀{fmt(2 * d.channel.r_center * MM)}: {fmt(d.channel.width * MM)} wide × {fmt(d.channel.depth * MM)} deep, {d.channel.floor} floor
-              {' '}(holes break through {d.channel.breakthrough})
+              <span style={{ color: d.c }}>●</span> {d.tag} channel on ⌀{fmt(2 * d.channel.r_center * MM)}: {fmt(d.channel.width * MM)} wide × {fmt(d.channel.depth * MM)} deep
+              {d.channel.floor === 'spot'
+                ? `, ${fmt((d.channel.floor_width ?? 0) * MM)} floor + ${fmt((d.channel.spot_length ?? 0) * MM)} drill spot`
+                : `, ${d.channel.floor} floor`}
+              {', '}{fmt(d.channel.flow_area * 1e6, 0)} mm² (holes break through {d.channel.breakthrough})
             </div>
           ))}
+          {layout.profile && layout.profile.grooves.length > 0 && (
+            <div>
+              back grooves: {layout.profile.grooves.map((gr) => `⌀${fmt(2 * gr.r_inner * MM, 1)}–${fmt(2 * gr.r_outer * MM, 1)}×${fmt(gr.depth * MM)}`).join(', ')}
+              {' '}— least land {fmt(Math.min(...layout.profile.back_lands.map((l) => l.land)) * MM)} mm
+            </div>
+          )}
+          {layout.ports && (
+            <div>
+              ports: {layout.ports.per_ring}× {layout.ports.thread} per ring, bore ⌀{fmt(layout.ports.bore * MM)}
+              {' '}— <span style={{ color: OX }}>LOX</span> on ⌀{fmt(2 * layout.ports.rings.O.r * MM, 1)}, <span style={{ color: FU }}>fuel</span> on ⌀{fmt(2 * layout.ports.rings.F.r * MM, 1)} at {fmt(layout.ports.clock_F_deg, 0)}°
+            </div>
+          )}
+          {layout.drawing && (
+            <div className="opacity-80">
+              drawing {layout.drawing.source.split('/').pop()} ({layout.drawing.mode === 'check' ? 'checked against the model' : 'is the plate'})
+              {layout.drawing.deviation && <> — model within {fmt(layout.drawing.deviation.max * MM, 3)} mm of it</>}
+            </div>
+          )}
           {layout.back.lands && (
             <div>
               back-face lands: centre {fmt(layout.back.lands.inner * MM)} · between channels {fmt(layout.back.lands.between * MM)} · rim {fmt(layout.back.lands.outer * MM)} mm

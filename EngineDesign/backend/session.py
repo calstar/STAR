@@ -26,6 +26,7 @@ import asyncio
 import os
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -98,6 +99,11 @@ class UserSession:
         #: dev). A path-safe segment -- userdata already sanitized it -- so it is
         #: reusable for per-user scratch paths (e.g. config upload staging).
         self.user = user
+        #: New for every session object. A backend restart or an idle eviction makes a fresh
+        #: session holding configs/default.yaml; the design bar compares this to the epoch it
+        #: loaded the design into, so it puts the design back instead of autosaving the
+        #: default over it (2026-10-01: a restart saved methalox over an ethalox design).
+        self.epoch = uuid.uuid4().hex
         self.app_state = AppState()
         self.optimizer = OptimizerState()
         self.controller = ControllerState()

@@ -482,18 +482,25 @@ def _branch_row(
     available = p_up - p_dn
     ceiling = component.flow_ceiling(conditions)
 
-    def choked_row() -> _BranchRow:
+    def choked_row(limit: float | None = None) -> _BranchRow:
         # Choked: the flow is pinned and downstream pressure is decoupled. The
         # ceiling is proportional to upstream pressure, which is the only
         # pressure this row depends on at all.
-        assert ceiling is not None
+        pinned = ceiling if limit is None else limit
+        assert pinned is not None
         return _BranchRow(
-            residual=_CHOKE_STIFFNESS * (ceiling - mdot),
+            residual=_CHOKE_STIFFNESS * (pinned - mdot),
             d_mdot=-_CHOKE_STIFFNESS,
-            d_p_up=_CHOKE_STIFFNESS * (ceiling / p_up if p_up > 0.0 else 0.0),
+            d_p_up=_CHOKE_STIFFNESS * (pinned / p_up if p_up > 0.0 else 0.0),
             d_p_dn=0.0,
             choked=True,
         )
+
+    # A component that pins its own flow at this drop (the opt-in compressible
+    # regulator seat, choked wide open). None for everything else.
+    pinned = component.pinned_flow(available, conditions)
+    if pinned is not None:
+        return choked_row(pinned)
 
     # The component reads the pressures and says the drop has carried it past
     # its critical ratio (or, for a regulator, that it has shut -- ceiling 0).
@@ -853,7 +860,13 @@ def _result(
     diagnostics: dict[str, dict[str, float]] = {}
     regularised: list[str] = []
     choked: list[str] = []
-    branch_rows = _branch_rows(network, x, node_index, branch_index)
+    try:
+        branch_rows = _branch_rows(network, x, node_index, branch_index)
+    except Exception:  # noqa: BLE001 - the report must not fail the solve
+        # Classifying branches (regularised, choked) re-evaluates every one at
+        # the answer. A correlation refusing there is a reporting gap, not a
+        # failed solve: before this guard it escaped a solve asked not to raise.
+        branch_rows = {}
     for branch_id, branch in network.branches.items():
         conditions = network.conditions(
             branch.upstream, pressures.get(branch.upstream, 0.0) or 1.0e5
@@ -864,7 +877,7 @@ def _result(
             )
         except Exception:
             diagnostics[branch_id] = {}
-        if branch_id in branch_index:
+        if branch_id in branch_rows:
             row = branch_rows[branch_id]
             if row.choked:
                 choked.append(branch_id)

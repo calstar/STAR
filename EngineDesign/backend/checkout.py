@@ -60,7 +60,10 @@ def require_design_checkout(request: Request) -> None:
     record = store.find_record(owner, doc_id)
     if record is None:
         return
-    store.require_lock_on(record, doc_id, viewer)
+    # Not `require_lock_on`: a hold that lapsed on this caller with nobody
+    # taking it since is taken back rather than refused, as the design's own
+    # autosave does -- see `DesignStore.claim_for_write`.
+    store.claim_for_write(owner, doc_id, viewer)
 
 
 #: Spelled once so the route decorators read as a statement of intent.

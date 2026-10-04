@@ -18,13 +18,12 @@ the same numba kernels and the comparison is self-referential (it reads as ~1e-1
 agreement, which is the tell). _python_only() below disables the accelerator for
 the reference computation; without it this suite proves nothing.
 
-THE CONFIG LIST IS DELIBERATE. canonical/impinging.yaml has ablative cooling ON
-(the path the project's default configs take), impinging_lox_ch4_8000N.yaml has
-it off, and canonical/pintle.yaml exercises the pintle injector -- a different
-solve (kernels.injector_solve_pintle) and, critically, a different mixing term:
-pintle gets eta_mixing = Em_peak flat, with NO momentum-mixing penalty. Reusing
-the impinging mom_R/R_opt logic there would silently diverge from the
-authoritative path, so that divergence is pinned here.
+THE CONFIG LIST IS DELIBERATE. canonical/impinging.yaml has ablative cooling ON and
+a back-channel ring manifold, impinging_lox_ch4_8000N.yaml has neither (plenum, no
+liner), canonical/pintle.yaml exercises the pintle injector -- a different solve
+(kernels.injector_solve_pintle) and a different mixing input: no Rupe M, so E_m is
+rupe_Em_opt flat and the drops leave axially -- and the 6.5 kN ethalox fixture is the
+design as drawn, where both liquids heat up on CoolProp tables (engine.accel.chamber).
 """
 from __future__ import annotations
 
@@ -60,9 +59,11 @@ POINTS_PSI = [(563.467, 567.644), (518.4, 550.6), (597.3, 584.7)]
 RTOL = 1e-6
 
 CONFIGS = [
-    ("configs/canonical/impinging.yaml", True),          # impinging, ablative ON
-    ("configs/impinging_lox_ch4_8000N.yaml", False),     # impinging, ablative off
+    ("configs/canonical/impinging.yaml", True),          # impinging, ring manifold, ablative ON
+    ("configs/impinging_lox_ch4_8000N.yaml", False),     # impinging, plenum, ablative off
     ("configs/canonical/pintle.yaml", True),             # pintle, ablative ON
+    # the 6.5 kN LOX/ethanol doublet as drawn (ring manifold, CoolProp heat-up of both liquids)
+    ("tests/fixtures/ethalox_6500N_doublet_cad_2026-09-28.yaml", True),
 ]
 
 CORE_FIELDS = ["Pc", "F", "Isp", "MR", "cstar_actual", "eta_cstar",
@@ -186,28 +187,37 @@ class TestAccelMatchesPython:
                     _assert_close(f"diag[{k}]", gd[k], pd[k])
 
     def test_kernel_level_raw_tuple(self, cfg_rel, ablative):
-        """Kernel level: the raw evaluate_core tuple, no wrapper in the way.
+        """Kernel level: chamber.evaluate_core's own result vector, no wrapper in the way.
 
         The retired C suite kept this level because a wrapper override once hid a
         kernel computing retired momentum-method thrust. The property is
         backend-agnostic and worth keeping: a wrapper cannot paper over the kernel.
         """
-        from engine.accel import kernels, params
+        from engine.accel import chamber, kernels, params
         r = _rig(cfg_rel)
         if _chamber_gate():
-            # Strict: once the kernels are ported this XPASSes and fails, which is the prompt to
-            # empty accel._CHAMBER_PHYSICS_NOT_MIRRORED and let the kernels back in.
             pytest.xfail("chamber kernels do not mirror: " + " | ".join(_chamber_gate()))
         P = params.extract_params(r["config"])
+        CH = chamber.chamber_inputs(r["config"], r["cache"])
+        assert CH is not None, "chamber_inputs refused a config the accelerator claims"
         arr = kernels.cea_arrays(r["cache"])
+        R = chamber._R
         for p in r["points"]:
             ref = r["reference"][p]
-            raw = kernels.evaluate_core(P, *arr, p[0], p[1], PA_AMBIENT)
-            assert raw[0], f"kernel did not converge at {p}"
-            _assert_close("kernel Pc", raw[1], _py_field(ref, "Pc"))
-            _assert_close("kernel F", raw[2], _py_field(ref, "F"))
-            _assert_close("kernel Isp", raw[3], _py_field(ref, "Isp"))
-            _assert_close("kernel MR", raw[4], _py_field(ref, "MR"))
+            ok, raw = chamber.evaluate_core(P, CH, arr, p[0], p[1], PA_AMBIENT)
+            assert ok, f"kernel did not converge at {p}"
+            _assert_close("kernel Pc", raw[R["PC"]], _py_field(ref, "Pc"))
+            _assert_close("kernel F", raw[R["F"]], _py_field(ref, "F"))
+            _assert_close("kernel Isp", raw[R["ISP"]], _py_field(ref, "Isp"))
+            _assert_close("kernel MR", raw[R["MR"]], _py_field(ref, "MR"))
+            ce = ref["diagnostics"]["cstar_efficiency"]
+            _assert_close("kernel eta_vap", raw[R["ETA_VAP"]], ce["eta_vaporization"])
+            _assert_close("kernel eta_mix", raw[R["ETA_MIX"]], ce["eta_mixing"])
+            _assert_close("kernel eta_HL", raw[R["ETA_HL"]], ce["eta_heat_loss"])
+            _assert_close("kernel P_exit", raw[R["P_EXIT"]], _py_field(ref, "P_exit"))
+            if ablative:
+                _assert_close("kernel liner heat", raw[R["Q_ABL"]],
+                              ref["diagnostics"]["cooling"]["ablative"]["heat_removed"])
 
 
 @_ab_parity
@@ -263,16 +273,17 @@ class TestCoolingIsActuallyApplied:
 
     def test_effective_tc_differs_and_is_reported(self):
         from engine import accel
-        from engine.accel import kernels, params
+        from engine.accel import chamber, kernels, params
         if _chamber_gate():
             pytest.skip("chamber kernels gated off; the wrapper this pins does not run")
         r = _rig("configs/canonical/impinging.yaml")
         P = params.extract_params(r["config"])
+        CH = chamber.chamber_inputs(r["config"], r["cache"])
         arr = kernels.cea_arrays(r["cache"])
         p_o, p_f = r["points"][0]
-        raw = kernels.evaluate_core(P, *arr, p_o, p_f, PA_AMBIENT)
-        assert raw[0], "kernel did not converge"
-        tc_ideal, tc_eff = float(raw[7]), float(raw[21])
+        ok, raw = chamber.evaluate_core(P, CH, arr, p_o, p_f, PA_AMBIENT)
+        assert ok, "kernel did not converge"
+        tc_ideal, tc_eff = float(raw[chamber._R["TC_IDEAL"]]), float(raw[chamber._R["TC_EFF"]])
         assert tc_eff < tc_ideal - 1.0, (
             f"cooling not applied: Tc_ideal={tc_ideal:.2f} Tc_effective={tc_eff:.2f}. "
             "If ablative is genuinely inactive for this config the test is vacuous."
@@ -375,7 +386,8 @@ class TestChugKernelMatchesPython:
 
 
 _INJ_CONFIGS = ["configs/ethalox_6500N.yaml", "configs/canonical/impinging.yaml",
-                "configs/impinging_lox_ch4_8000N.yaml", "configs/canonical/pintle.yaml"]
+                "configs/impinging_lox_ch4_8000N.yaml", "configs/canonical/pintle.yaml",
+                "tests/fixtures/ethalox_6500N_doublet_cad_2026-09-28.yaml"]
 _INJ_CORE_KEYS = 18     # the first 18 are published by both injector types
 _INJ_KEYS = ["Cd_O", "Cd_F", "delta_p_feed_O", "delta_p_feed_F", "delta_p_injector_O",
              "delta_p_injector_F", "D32_O", "D32_F", "x_star", "u_O", "u_F", "We_O", "We_F",
@@ -385,7 +397,12 @@ _INJ_KEYS = ["Cd_O", "Cd_F", "delta_p_feed_O", "delta_p_feed_F", "delta_p_inject
              # final report); None on the accelerated path until the extras were added
              "L_imp", "D_pitch_O", "D_pitch_F", "element_gap_O", "element_gap_F", "s_pair",
              "vaporization_length_total", "L_sheet_breakup", "k_evap_O", "k_evap_F",
-             "tau_evap_O", "tau_evap_F", "J", "TMR", "theta", "Oh_O", "Oh_F", "rho_gas_breakup"]
+             "tau_evap_O", "tau_evap_F", "J", "TMR", "theta", "Oh_O", "Oh_F", "rho_gas_breakup",
+             # the back-channel ring, hole by hole (impinging._manifold_diagnostics)
+             "element_flow_ratio_min_O", "element_flow_ratio_max_O", "element_flow_ratio_min_F",
+             "element_flow_ratio_max_F", "element_mixture_ratio_min", "element_mixture_ratio_max",
+             "manifold_branch_velocity_O", "manifold_branch_velocity_F", "Cd_eff_manifold_O",
+             "Cd_eff_manifold_F"]
 
 
 @pytest.mark.parametrize("cfg_rel", _INJ_CONFIGS, ids=lambda v: v.split("/")[-1])
@@ -418,6 +435,10 @@ def test_injector_solve_matches_python(cfg_rel):
                     _assert_close(f"diag[{k}]", float(got[2][k]), w, rtol=1e-9)
             assert list(got[2].get("violations", [])) == list(want.get("violations", [])) or \
                 "violations" not in want
+            assert got[2].get("manifold_model") == want.get("manifold_model")
+            for k in ("element_mixture_ratios", "element_mass_flows", "element_mass_flows_O"):
+                if want.get(k) is not None:
+                    np.testing.assert_allclose(got[2][k], want[k], rtol=1e-9, err_msg=k)
 
 
 def test_default_path_matches_python_on_the_shipped_engine():
@@ -446,24 +467,54 @@ def test_default_path_matches_python_on_the_shipped_engine():
         _assert_close(f"chug {k}", st_got[k], st_want[k])
 
 
-def test_chamber_fallback_is_loud_while_physics_is_unmirrored(caplog):
-    """A closed gate must refuse (NOT_HANDLED, never NO_SOLUTION or a number) and say why."""
+def test_chamber_kernel_serves_the_designs():
+    """Every chamber piece is mirrored, so the shipped design and the one drawn from CAD run on
+    the kernel (NOT_HANDLED here would put Layer 1 back on the ~60 ms Python solve)."""
     _need_numba()
-    import logging
-
     from engine import accel
     from engine.core.runner import PintleEngineRunner
     from engine.pipeline.io import load_config
-    reasons = accel.chamber_physics_not_mirrored()
-    if not reasons:
-        pytest.skip("chamber kernels mirror the Python physics; nothing is gated")
-    config = load_config(str(ROOT / "configs/ethalox_6500N.yaml"))
-    runner = PintleEngineRunner(config)
-    accel._warned_chamber_fallback = False
-    with caplog.at_level(logging.WARNING, logger="engine.accel"):
-        res, oc = accel.evaluate_ex(config, runner.cea_cache, 4.0e6, 4.0e6, 94070.0)
-    assert res is None and oc is accel.Outcome.NOT_HANDLED
-    assert accel.chamber_solve_ex(config, runner.cea_cache, 4.0e6, 4.0e6)[1] is accel.Outcome.NOT_HANDLED
-    assert any("falls back to the Python solve" in m for m in caplog.messages)
-    # the injector-only surface stays accelerated: it IS mirrored
-    assert accel.solve_ex(config, 4.0e6, 4.0e6, 2.6e6)[1] is accel.Outcome.OK
+    assert accel.chamber_physics_not_mirrored() == ()
+    for rel in ("configs/ethalox_6500N.yaml", "tests/fixtures/ethalox_6500N_doublet_cad_2026-09-28.yaml"):
+        config = load_config(str(ROOT / rel))
+        runner = PintleEngineRunner(config)
+        P = 560.0 * PSI_TO_PA
+        res, oc = accel.evaluate_ex(config, runner.cea_cache, P, P, PA_AMBIENT)
+        assert oc is accel.Outcome.OK, f"{rel}: {oc}"
+
+
+def test_heatup_tables_match_coolprop():
+    """The one tabulation in the chamber kernel: CoolProp's liquid cp(T) and density at the
+    chamber pressure (combustion_physics.liquid_heatup_properties), for both liquids of the 6.5 kN
+    engine over the whole Pc window. A point the table refuses is allowed (the kernel returns no
+    solution and the caller runs Python); a point it answers must answer right."""
+    _need_numba()
+    from engine.accel import chamber
+    from engine.pipeline.combustion_physics import liquid_heatup_properties, saturation_state
+    from engine.pipeline.io import load_config
+    cfg = load_config(str(ROOT / "tests/fixtures/ethalox_6500N_doublet_cad_2026-09-28.yaml"))
+    rng = np.random.default_rng(20260929)
+    for side in ("oxidizer", "fuel"):
+        fl = cfg.fluids[side]
+        Tcrit = fl.critical_temperature or 0.0
+        T0 = 293.0 if fl.temperature is None else fl.temperature
+        tabs = chamber.heatup_tables(fl.name, T0, fl.boiling_point, fl.latent_heat,
+                                     fl.molecular_weight, Tcrit)
+        assert tabs is not None
+        answered = 0
+        for P in np.exp(rng.uniform(np.log(2.1e5), np.log(1.5e7), 400)):
+            Tc = float(rng.uniform(2800.0, 3500.0))
+            Ts = saturation_state(P, fl.boiling_point, fl.latent_heat, fl.molecular_weight,
+                                  Tcrit or None)[0]
+            if not Ts > T0:
+                continue
+            want = liquid_heatup_properties(fl.name, P, T0, Ts, Tc)
+            st, I, rho = chamber._heatup(np.zeros(1), 0, *tabs, P, T0, Ts, Tc)
+            if st < 0:
+                continue
+            assert (st == 1) == (want is not None), f"{fl.name} at {P:.4g} Pa: None-ness differs"
+            if want is not None:
+                answered += 1
+                assert abs(I / want["heatup_integral"] - 1.0) < 5e-6, f"{fl.name} I at {P:.4g}"
+                assert abs(rho / want["rho_l"] - 1.0) < 5e-7, f"{fl.name} rho at {P:.4g}"
+        assert answered > 300, f"{fl.name}: the table answered only {answered} of 400 points"

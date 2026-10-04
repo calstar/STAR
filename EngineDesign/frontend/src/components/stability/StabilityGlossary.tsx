@@ -98,13 +98,13 @@ const GROUPS: { title: string; entries: Entry[] }[] = [
       {
         sym: 'χ',
         name: 'sensitive fraction',
-        meaning: 'fraction of the vaporization lag that drives the acoustic response (τ_sens = χ·τ_vap).',
+        meaning: 'fraction of the combustion lag that drives the acoustic response (τ_sens = χ·τ_conv).',
       },
       {
         sym: 'L*',
         name: 'characteristic length [m]',
         meaning:
-          'chamber volume ÷ throat area; sets residence time. Too short hurts chug, too long adds mass.',
+          'chamber volume ÷ throat area; with c* and RT it sets the gas residence time θ_c = L*·c*/(R·T).',
       },
     ],
   },
@@ -113,28 +113,28 @@ const GROUPS: { title: string; entries: Entry[] }[] = [
     entries: [
       {
         sym: 'τ_conv',
-        name: 'vaporization lag [ms]',
-        meaning: 'time for a droplet to vaporize and convect. Shorter = more stable.',
+        name: 'combustion lag [ms]',
+        meaning: 'the chug model\'s lag from injection to burnt gas: atomize + vaporize + mix (Leonardi double time lag). Not a vaporization length.',
       },
       {
         sym: 'τ_sens',
         name: 'sensitive lag [ms]',
-        meaning: 'χ·τ_vap - the lag that sets the Rayleigh phase ωτ.',
+        meaning: 'χ·τ_conv - the lag that sets the Rayleigh phase ωτ.',
       },
       {
         sym: 'τ / θ_c',
         name: 'normalized lag',
-        meaning: 'combustion lag ÷ chamber residence time (the chug map y-axis). Lower = more stable.',
+        meaning: 'combustion lag ÷ gas residence time θ_c = ρV/ṁ (the chug map y-axis, flow-weighted). Usually lower = more stable; not always.',
       },
       {
         sym: 'ωτ',
         name: 'phase angle',
-        meaning: 'phase between heat release and pressure. Near π = worst case (Rayleigh driving).',
+        meaning: 'phase between heat release and pressure. Driving n(1 − cos ωτ): none at 0 or 2π, most at π.',
       },
       {
         sym: 'L_vap / L_ch',
         name: 'vaporization vs chamber length',
-        meaning: 'L_vap < L_ch means droplets finish burning before the nozzle (good).',
+        meaning: 'L_vap = where 95 % of the slowest stream is vapour (the droplet march that sets η_vap). L_vap < L_ch means it is done before the nozzle.',
       },
     ],
   },
