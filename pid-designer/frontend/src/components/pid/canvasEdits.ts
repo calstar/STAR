@@ -100,7 +100,9 @@ export function applyMoves(
       if (rigid) {
         next = next.map(n => (n.id === c.id ? { ...n, position: { x: from.x + rigid.x, y: from.y + rigid.y } } : n));
       } else if (moved && along) {
-        const slid = slideAlong(moved, along, c.position, edges, new Map(next.map(n => [n.id, n])), endOf, obstacles);
+        // Told where the tee stood before this move: an elbow is a corner
+        // of its pipe, and the pipe is drawn through where it stood.
+        const slid = slideAlong(moved, along, c.position, edges, new Map(next.map(n => [n.id, n])), endOf, obstacles, from);
         if (slid) {
           next = next.map(n => (n.id === c.id ? { ...n, position: slid.position, data: { ...n.data, along: slid.along } } : n));
         }
