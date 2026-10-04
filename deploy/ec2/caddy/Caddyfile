@@ -46,3 +46,25 @@
 	import protected
 	reverse_proxy starproject:3000
 }
+
+# ── Server analytics ─────────────────────────────────────────────────────────
+# The hub serves the panel and its API on one port. Everything is cookie-gated
+# except /api/ingest: the agents push there and have no browser session, so the
+# hub authenticates that path itself with a per-host bearer token. The panel
+# then admits only STARProject admins (server-analytics/internal/hub/admins.go).
+#
+# Same shape as the apps machine's parts.* site: the whole body sits in one
+# route {} so the order written is the order run. Without it the adapter sorts
+# handle ahead of the `import protected` route and nothing is gated.
+# deploy/caddy/tests/check_gate_order.py checks this file too.
+{$SCHEME:http}://analytics.{$BASE_DOMAIN:starberkeley.org} {
+	route {
+		handle /api/ingest {
+			request_header -X-Auth-Email
+			request_header -X-Auth-User
+			reverse_proxy analytics:8080
+		}
+		import protected
+		reverse_proxy analytics:8080
+	}
+}

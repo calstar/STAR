@@ -1,0 +1,57 @@
+@import "tailwindcss";
+@import "uplot/dist/uPlot.min.css";
+
+/* Same as starproject/src/app/globals.css: class-based dark mode and the
+   one-step-smaller type scale, so the two apps read as one family. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --text-xs: 0.71875rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-lg: 1.0625rem;
+  --text-xl: 1.1875rem;
+  --text-2xl: 1.375rem;
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+/* Chart series: the validated categorical slots 1-3 (blue, orange, aqua),
+   stepped separately for each surface. No chart draws more than three. */
+:root {
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --chart-grid: #e5e5e5;
+  --chart-axis: #737373;
+}
+.dark {
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --chart-grid: #262626;
+  --chart-axis: #a3a3a3;
+}
+
+/* uPlot's legend doubles as the hover readout; restyle it to the app's ink. */
+.uplot .u-legend {
+  font-size: var(--text-xs);
+  color: var(--chart-axis);
+  text-align: left;
+  padding-top: 0.25rem;
+}
+.uplot .u-legend th {
+  font-weight: 500;
+}
+.uplot .u-legend .u-value {
+  color: var(--color-neutral-900);
+  font-variant-numeric: tabular-nums;
+}
+.dark .uplot .u-legend th {
+  font-weight: 500;
+}
+.uplot .u-legend .u-value {
+  color: var(--color-neutral-100);
+}
