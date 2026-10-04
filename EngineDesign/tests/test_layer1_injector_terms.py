@@ -17,7 +17,9 @@ import engine.optimizer.layers.layer1_static_optimization as L1
 from engine.pipeline.io import load_config
 
 ROOT = Path(__file__).resolve().parents[1]
-Y6500 = ROOT / "output/user_configs/local/ethalox_6500N_doublet_2026-09-26.yaml"
+# The committed config: output/ is gitignored, so a path there exists only on
+# the machine that wrote it and the test failed everywhere else, CI included.
+Y6500 = ROOT / "configs/ethalox_6500N_doublet_2026-09-26.yaml"
 PSI = 6894.757
 IN = 0.0254
 
