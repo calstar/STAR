@@ -57,7 +57,6 @@ from backend.models import (
     Frame,
     ImportResult,
     LegOut,
-    Line,
     ModelView,
     ReportOut,
     RunOut,
@@ -69,7 +68,6 @@ from backend.models import (
     StateMachineOut,
     SourceOut,
     TankOut,
-    Symbol,
 )
 from backend.live import FireOptions, Stand, fire, solve_at
 from backend.run import PSI, Sample, psig
@@ -291,20 +289,6 @@ def _balance(balance: MixtureBalance) -> BalanceOut:
         fuel=_leg_out(balance.fuel, pc),
         notes=balance.notes(),
     )
-
-
-def _role(component_type: str) -> str:
-    if component_type == "TANK":
-        return "tank"
-    if component_type in SOURCE_TYPES:
-        return "source"
-    if component_type in INLINE_TYPES:
-        return "inline"
-    if component_type in INSTRUMENT_TYPES:
-        return "instrument"
-    if component_type in SINK_TYPES:
-        return "sink"
-    return "component"
 
 
 # ------------------------------------------------------------------- health
@@ -555,6 +539,34 @@ async def remove_artifact(artifact_id: str) -> dict[str, str]:
 # -------------------------------------------------------------------- model
 
 
+@app.get("/api/diagram")
+async def diagram_document(diagram: str) -> dict[str, list[Any]]:
+    """The drawing itself, as pid-designer saved it.
+
+    The schematic is pid-designer's own canvas, so it is handed the document
+    that canvas draws -- every symbol, rotation, port, tag offset, colour,
+    page and routed corner -- not a projection of it. `/api/model` is the
+    assembly's view of the same drawing: what it read and what it invented.
+    """
+    try:
+        artifact = library.get(diagram)
+        data = library.read(diagram)
+    except LibraryError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if artifact.kind != "diagram":
+        raise HTTPException(
+            status_code=422,
+            detail=f"{artifact.label} is an {artifact.kind}, not a drawing",
+        )
+    try:
+        document = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=422, detail=f"{artifact.label} is not readable JSON ({exc})"
+        ) from exc
+    return {"nodes": document.get("nodes") or [], "edges": document.get("edges") or []}
+
+
 @app.get("/api/model")
 async def model_view(
     diagram: str, engine: str = "", fluid_set: str = "hotfire"
@@ -566,37 +578,10 @@ async def model_view(
     before anybody waits on a solve.
     """
     model = _assemble(diagram, engine, fluid_set)
-    fluids = {p.id: p.fluid for p in model.built.placements}
-    symbols = [
-        Symbol(
-            id=n.id,
-            tag=n.label,
-            type=n.type,
-            x=n.x,
-            y=n.y,
-            fluid=fluids.get(n.id, ""),
-            role=_role(n.type),
-        )
-        for n in model.diagram.nodes
-        if n.type not in {"TEXT", "REGION"}
-    ]
-    drawn = {s.id for s in symbols}
     return ModelView(
         diagram_id=diagram,
         engine_id=model.report.engine,
         title=str(model.meta.get("diagram_name", "stand")),
-        symbols=symbols,
-        lines=[
-            Line(
-                id=e.id,
-                source=e.source,
-                target=e.target,
-                kind=e.line_type,
-                fluid=fluids.get(e.source, ""),
-            )
-            for e in model.diagram.edges
-            if e.source in drawn and e.target in drawn
-        ],
         actuators=[
             Actuator(id=d, tag=s.split(".")[0], signal=s)
             for d, s in model.built.actuators.items()

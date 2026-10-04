@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* The P&ID is pid-designer's own canvas (views/Pid.tsx), and Tailwind v4 only
+   scans files it can reach from this project's root. Without these its symbols
+   compile and type-check but render unstyled -- silently, with no build error. */
+@source "../../../pid-designer/frontend/src/components/pid";
+@source "../../../lib/stardesign-ui/src";
+
 /* ───────────────────────────────────────────────────────────────────────────
    The DAQ's design system, not a second one.
 
@@ -39,8 +45,7 @@
      disagreement is correct: the DAQ colours a *measurement channel* and a
      P&ID colours a *line by what is in it*. Forcing one onto the other would
      make a drawing unrecognisable next to the editor it was made in, which is
-     the more confusing of the two. src/lib/schematic.ts holds the same values
-     for the SVG. */
+     the more confusing of the two. */
   --fluid-oxidizer:   #60a5fa;
   --fluid-fuel:       #f97316;
   --fluid-pressurant: #ef4444;
@@ -148,3 +153,33 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ── The P&ID ──────────────────────────────────────────────────────────────
+   pid-designer's palette, scoped to the drawing, so a symbol is the colour it
+   is in the editor rather than whatever this app calls muted. Its dark theme,
+   value for value; pidPalette.test.ts holds the two together. */
+.pid-drawing {
+  --color-bg-primary: #0a0a0a;
+  --color-bg-secondary: #111111;
+  --color-bg-tertiary: #1c1c1c;
+  --color-accent: #616161;
+  --color-accent-hover: #757575;
+  --color-border: #2e2e2e;
+  --color-text-primary: #f2f2f2;
+  --color-text-secondary: #a3a3a3;
+  --color-text-muted: #7a7a7a;
+  --color-danger: #f87171;
+  --color-warning: #fbbf24;
+
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+/* As in the editor: a section box is scenery, and its wrapper, the size of the
+   section, must not take the click meant for a valve inside it. */
+.pid-drawing .react-flow__node-REGION {
+  pointer-events: none !important;
+}
+
+@keyframes pid-flow { to { stroke-dashoffset: -24; } }

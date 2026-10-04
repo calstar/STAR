@@ -5,6 +5,7 @@
  * specific drawing or engine config forever — which is what makes a result
  * reproducible a year later.
  */
+import type { Edge, Node } from '@xyflow/react';
 
 export interface Artifact {
   id: string;
@@ -21,24 +22,6 @@ export interface Artifact {
 export interface ImportResult {
   artifact: Artifact;
   already_present: boolean;
-}
-
-export interface Symbol {
-  id: string;
-  tag: string;
-  type: string;
-  x: number;
-  y: number;
-  fluid: string;
-  role: string;
-}
-
-export interface Line {
-  id: string;
-  source: string;
-  target: string;
-  kind: string;
-  fluid: string;
 }
 
 export interface Actuator {
@@ -86,8 +69,6 @@ export interface ModelView {
   diagram_id: string;
   engine_id: string;
   title: string;
-  symbols: Symbol[];
-  lines: Line[];
   actuators: Actuator[];
   controls: ControlSpec[];
   fluid_sets: string[];
@@ -420,6 +401,15 @@ export const getModel = (diagram: string, engine: string, fluidSet: string) =>
   json<ModelView>(
     `/api/model?diagram=${diagram}&engine=${engine}&fluid_set=${fluidSet}`,
   );
+
+/** The drawing as pid-designer saved it, for pid-designer's own canvas to draw. */
+export interface Drawing {
+  nodes: Node[];
+  edges: Edge[];
+}
+
+export const getDrawing = (diagram: string) =>
+  json<Drawing>(`/api/diagram?diagram=${diagram}`);
 
 export interface Where {
   diagram: string;

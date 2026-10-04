@@ -99,6 +99,6 @@ decision rather than an oversight:
 |---|---|---|
 | `lib/stardesign` wiring | Phase 09 | Scenarios become shared documents then; wiring the store in before there is anything to store is dead code. |
 | Caddy route, compose service | Phase 09 | Nothing worth deploying yet. |
-| `@xyflow/react`, the canvas | Phase 10 | Comes from `lib/feed-canvas`, so the DAQ GUI can import it too. |
+| `lib/feed-canvas` | Phase 10 | The P&ID page already draws with pid-designer's own canvas (`DrawingView`, through the `@pid` alias in `vite.config.ts`); moving it to a shared library, so the DAQ GUI can import it too, is what is left. |
 | `vitest` | Phase 10 | No UI logic to test; `tsc -b` is the real gate until there is. |
 | P&ID import | Phase 11 | Needs the component model (Phase 02) to import *into*. |

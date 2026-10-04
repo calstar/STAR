@@ -1,20 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { colorOf, dashPeriod, isFlowing, UNSET_COLOR } from './schematic';
-
-describe('colorOf', () => {
-  it('matches pid-designer for every species it knows', () => {
-    expect(colorOf('oxygen')).toBe('#60a5fa');
-    expect(colorOf('ethanol')).toBe('#f97316');
-    expect(colorOf('nitrogen')).toBe('#ef4444');
-  });
-
-  it('falls back rather than throwing on an unknown fluid', () => {
-    // A drawing can name a fluid the physics has no model for. It should still
-    // render — grey — rather than take the schematic down.
-    expect(colorOf('argon')).toBe(UNSET_COLOR);
-    expect(colorOf('')).toBe(UNSET_COLOR);
-  });
-});
+import { dashPeriod, isFlowing } from './schematic';
 
 describe('flow animation', () => {
   it('does not animate a line that is not really flowing', () => {

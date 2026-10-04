@@ -9,6 +9,7 @@ label.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -150,18 +151,29 @@ def test_the_model_reports_what_it_read_and_invented() -> None:
     assert any("dome of PR-DOME" in w for w in report["warnings"])
 
 
-def test_every_symbol_carries_what_the_schematic_needs() -> None:
+def test_the_schematic_is_handed_the_drawing_as_saved() -> None:
+    """Not a projection of it: pid-designer's canvas draws the document, and
+    every presentation field it needs -- ports, rotation, routed corners -- is
+    only there if nothing on the way dropped it."""
+    from backend.main import library
+
+    diagram = diagram_id()
+    served = client.get(f"/api/diagram?diagram={diagram}").json()
+    saved = json.loads(library.read(diagram))
+    assert served == {"nodes": saved["nodes"], "edges": saved["edges"]}
+
+
+def test_the_drawing_of_nothing_is_a_404() -> None:
+    assert client.get("/api/diagram?diagram=deadbeef1234").status_code == 404
+
+
+@needs_engine
+def test_an_engine_is_not_a_drawing() -> None:
+    assert client.get(f"/api/diagram?diagram={engine_id()}").status_code == 422
+
+
+def test_the_model_names_every_valve_the_console_drives() -> None:
     model = client.get(f"/api/model?diagram={diagram_id()}").json()
-    for symbol in model["symbols"]:
-        assert "x" in symbol and "y" in symbol
-        assert symbol["role"] in {
-            "tank",
-            "source",
-            "inline",
-            "instrument",
-            "sink",
-            "component",
-        }
     # Every solenoid and rotary on the drawing, not just the mains: the stand
     # carries press, vent and fill valves and the console has to be able to
     # drive all of them.
@@ -257,11 +269,11 @@ def test_a_held_valve_beats_the_state() -> None:
 
 def test_a_state_returns_frames_keyed_by_drawing_id() -> None:
     diagram = diagram_id()
-    model = client.get(f"/api/model?diagram={diagram}").json()
+    drawing = client.get(f"/api/diagram?diagram={diagram}").json()
     result = state(diagram, "Fire")
     assert result["converged"] is True
     assert len(result["frames"]) == 1
-    ids = {s["id"] for s in model["symbols"]} | {ln["id"] for ln in model["lines"]}
+    ids = {n["id"] for n in drawing["nodes"]} | {e["id"] for e in drawing["edges"]}
     last = result["frames"][-1]
     assert set(last["node_psi"]) <= ids
     assert set(last["flow_kg_s"]) <= ids
