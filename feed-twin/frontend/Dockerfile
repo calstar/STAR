@@ -1,14 +1,10 @@
-# Build context is the REPO ROOT, not this directory.
-#
-# This app does not yet compile anything from lib/ — it adopts lib/stardesign-ui
-# in Phase 09 and lib/feed-canvas in Phase 10. The root context is set now
-# anyway, because switching a Dockerfile's context later means changing the
-# publisher, the CI matrix and every COPY path at once, and the cost of the
-# larger context today is a .dockerignore line.
+# Build context is the REPO ROOT, not this directory: the P&ID is drawn by
+# pid-designer's own canvas, compiled from source by this app's Vite, and that
+# imports lib/stardesign-ui. A subproject context could see neither.
 FROM node:24-alpine AS builder
-# Mirrors the repo layout on purpose: once this app reaches shared source as
-# ../../lib/..., it has to sit two levels below whatever holds lib/ inside the
-# image exactly as it does in a checkout.
+# Mirrors the repo layout on purpose: the app reaches that source as
+# ../../pid-designer/... and ../../lib/..., so it has to sit two levels below
+# whatever holds them inside the image exactly as it does in a checkout.
 WORKDIR /build/app/frontend
 
 # Env vars, not flags -- npm spawns child processes for lifecycle scripts, and
@@ -33,6 +29,12 @@ RUN --mount=type=cache,target=/root/.npm \
       echo "npm ci hit a network error (attempt $n) -- retrying in 10s"; \
       sleep 10; \
     done
+# The drawing's source, copied before the app so a change to the app alone
+# reuses the install layer above. Only the canvas: none of pid-designer's
+# packages are installed here -- vite.config.ts pins what it imports to this
+# app's own.
+COPY lib/stardesign-ui/ /build/lib/stardesign-ui/
+COPY pid-designer/frontend/src/components/pid/ /build/pid-designer/frontend/src/components/pid/
 COPY feed-twin/frontend/ .
 RUN npm run build
 

@@ -29,24 +29,6 @@ class ImportResult(BaseModel):
     saving from pid-designer twice in a session is normal."""
 
 
-class Symbol(BaseModel):
-    id: str
-    tag: str
-    type: str
-    x: float
-    y: float
-    fluid: str = ""
-    role: str = "component"
-
-
-class Line(BaseModel):
-    id: str
-    source: str
-    target: str
-    kind: str = "pipe"
-    fluid: str = ""
-
-
 class Actuator(BaseModel):
     id: str
     tag: str
@@ -91,13 +73,12 @@ class ReportOut(BaseModel):
 
 
 class ModelView(BaseModel):
-    """Everything needed to draw the schematic, without solving anything."""
+    """The assembly, described without solving anything. The drawing itself is
+    `/api/diagram`."""
 
     diagram_id: str
     engine_id: str = ""
     title: str
-    symbols: list[Symbol]
-    lines: list[Line]
     actuators: list[Actuator]
     controls: list[ControlSpec]
     fluid_sets: list[str]

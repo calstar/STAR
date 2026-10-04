@@ -80,6 +80,32 @@ _STRICTLY_POSITIVE: dict[str, str] = {
 
 _UNIT_FRACTION: dict[str, str] = {"q": "vapour quality [-]"}
 
+#: Everything `Fluid._resolve` needs for one ordered pair of keywords, worked
+#: out once: the pair, whether the caller gave its two values in the pair's
+#: order, and for each keyword in the caller's order the open bounds inside
+#: which a value needs no closer look. The bounds sit strictly inside what
+#: `_validate` accepts, so every value on or past one -- NaN, an infinity, a
+#: zero pressure, a quality of exactly 0 or 1 -- still goes to `_validate`,
+#: which raises or lets it through exactly as before.
+_FAST_LOW: dict[str, float] = {name: 0.0 for name in (*_STRICTLY_POSITIVE, "q")}
+_FAST_HIGH: dict[str, float] = {"q": 1.0}
+_FAST_RESOLVE: dict[
+    tuple[str, ...],
+    tuple[StatePair, bool, str, float, float, str, float, float],
+] = {
+    order: (
+        pair,
+        order == names,
+        order[0],
+        _FAST_LOW.get(order[0], -math.inf),
+        _FAST_HIGH.get(order[0], math.inf),
+        order[1],
+        _FAST_LOW.get(order[1], -math.inf),
+        _FAST_HIGH.get(order[1], math.inf),
+    )
+    for order, (pair, names) in _PAIR_BY_ORDERED.items()
+}
+
 
 def _validate(name: str, value: float) -> None:
     if not math.isfinite(value):
@@ -355,9 +381,22 @@ class Fluid:
     # ---------------------------------------------------------------- internals
 
     def _resolve(self, state: dict[str, float]) -> tuple[StatePair, float, float]:
-        entry = _PAIR_BY_ORDERED.get(tuple(state))
-        if entry is None:
-            entry = _PAIR_BY_KWARGS.get(frozenset(state))
+        # The ordinary call: two keywords in a known order, each value passing
+        # one comparison. The general path below did two table reads and a
+        # call per value, which was a sixth of a console tick -- the solve asks
+        # ~440,000 times a stand-second.
+        fast = _FAST_RESOLVE.get(tuple(state))
+        if fast is not None:
+            pair, in_order, n0, low0, high0, n1, low1, high1 = fast
+            v0 = float(state[n0])
+            v1 = float(state[n1])
+            if not low0 < v0 < high0:
+                _validate(n0, v0)
+            if not low1 < v1 < high1:
+                _validate(n1, v1)
+            return (pair, v0, v1) if in_order else (pair, v1, v0)
+
+        entry = _PAIR_BY_KWARGS.get(frozenset(state))
         if entry is None:
             options = sorted("+".join(sorted(k)) for k in _PAIR_BY_KWARGS)
             raise TypeError(
