@@ -130,6 +130,23 @@ export interface StateUpdate {
   stateName: string;
   timestamp: number;
   debugMode?: boolean; // Debug mode status
+  /**
+   * Which states the sequencer will currently accept, bit N = state id N.
+   *
+   * The sequencer has always computed this and masked out anything it would refuse — states whose
+   * script failed to load, and states whose sensor gate is currently unsatisfied. The backend
+   * decoded it and then dropped it, so the GUI offered every state as pressable and an operator
+   * only discovered a refusal by pressing it. Optional because a client may connect before the
+   * first sequencer publish; treat undefined as "no opinion", never as "nothing allowed".
+   */
+  allowedBitmask?: number;
+  /**
+   * State id -> why it cannot be entered, from the sequencer's SCRIPTS report.
+   *
+   * The bitmask says which states are unavailable; this says why, so a greyed button can explain
+   * itself on hover instead of just being dead.
+   */
+  stateRefusalReasons?: Record<number, string>;
 }
 
 // Command payload
