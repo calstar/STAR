@@ -1,6 +1,6 @@
 // Input validation and the JSON shapes the hub and panel see.
 import { config } from './config.ts';
-import { EDITABLE_FIELDS, type CustomField, type Link, type Part, type PartEdit } from './db.ts';
+import { EDITABLE_FIELDS, WEIGHT_UNITS, type CustomField, type Link, type Part, type PartEdit } from './db.ts';
 import { isRendering } from './library.ts';
 
 export class BadRequest extends Error {}
@@ -65,6 +65,20 @@ export function cleanEdit(body: Record<string, unknown>): PartEdit {
       case 'unitCost':
         out.unitCost = cleanCost(v);
         break;
+      case 'weight': {
+        if (v === null || v === undefined || v === '') {
+          out.weight = null;
+          break;
+        }
+        const n = Number(String(v).replace(/[,\s]/g, ''));
+        if (!Number.isFinite(n) || n <= 0) throw new BadRequest('Weight must be a positive number');
+        out.weight = n;
+        break;
+      }
+      case 'weightUnit':
+        if (!(String(v) in WEIGHT_UNITS)) throw new BadRequest(`Weight unit must be one of ${Object.keys(WEIGHT_UNITS).join(', ')}`);
+        out.weightUnit = String(v);
+        break;
       case 'links':
         out.links = cleanLinks(v);
         break;
@@ -91,6 +105,8 @@ export function catalogJson(p: Part) {
     tags: p.tags,
     unitCost: p.unitCost,
     costNote: p.costNote,
+    weight: p.weight,
+    weightUnit: p.weightUnit,
     description: p.description,
     notes: p.notes,
     links: p.links,
