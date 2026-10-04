@@ -11,6 +11,7 @@ as every other app. **OpenProject is retired** to the `legacy` compose profile
 Cloudflare edge (TLS) ─▶ cloudflared ─▶ auth:5000                         (login)
                                       └▶ caddy:80 ─ forward_auth → auth:5000/verify
                                                   └ reverse_proxy → starproject:3000 → starproject-db
+                                                  └ reverse_proxy → analytics:8080   (server analytics)
 ```
 
 ## Switch to STARProject (retire OpenProject)
@@ -52,6 +53,14 @@ when signed out. Create a task and reload — it persists (Postgres).
 OpenProject vars in `.env` (`OPENPROJECT_SECRET_KEY_BASE`, SES creds), then
 `docker compose --profile legacy up -d openproject`. Its data is intact on the
 external `openproject_pgdata` / `openproject_assets` volumes (+ S3 backups).
+
+## Server analytics
+
+`analytics.starberkeley.org` (services `analytics` and `analytics-agent`) shows
+this box and the apps box: usage over time, containers, and logs. It is open to
+STARProject admins only. The one-time setup (two tokens, an internal secret and
+a tunnel hostname) is in [`server-analytics/README.md`](../../server-analytics/README.md#setting-it-up).
+Until that is done, both services start and idle, so they never block a deploy.
 
 ## Auto-deploy on merge to `main`
 

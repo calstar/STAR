@@ -17,8 +17,10 @@ import {
   listProfiles, switchProfile, createProfile, renameProfile, deleteProfile,
   getActiveProfileName, ensureSeeded, readActiveProfile, writeActiveProfile, deployActiveProfile,
   getActiveProfilePath, readStateCsv, writeStateCsv, isStateCsvName, STATE_CSVS,
+  readStateScript, writeStateScript, listStateScripts,
   undeployedChanges,
 } from './routes/config-profiles.js';
+import { checkStateScript } from './routes/script-check.js';
 import {
   listCalibrationProfiles,
   saveCalibrationProfile,
@@ -484,6 +486,18 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
               // Which state the characterization hold drives. A flag, not a name — the operator
               // may rename or move it and every client follows without a code change.
               isFlow: e.is_flow === true,
+              // A non-empty script_file is what makes a state dynamic — there is no separate flag
+              // that could disagree with it. The panel needs this because a dynamic state is not a
+              // latch: it runs, and it leaves on its own, so leaving it is a different gesture.
+              //
+              // The script TEXT is deliberately not here. The control page has no use for it, and
+              // the config editor reads it from /api/state-script.
+              isDynamic: typeof e.script_file === 'string' && e.script_file.trim() !== '',
+              scriptTimeoutMs: typeof e.script_timeout_ms === 'number' ? e.script_timeout_ms : null,
+              scriptReturnTarget:
+                typeof e.script_return_target === 'string' ? e.script_return_target : null,
+              scriptTimeoutTarget:
+                typeof e.script_timeout_target === 'string' ? e.script_timeout_target : null,
               // Absent coordinates mean "not on the control panel" — no separate hidden flag.
               panelRow: typeof e.panel_row === 'number' ? e.panel_row : null,
               panelCol: typeof e.panel_col === 'number' ? e.panel_col : null,
@@ -555,6 +569,75 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
           } catch (error: any) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: error.message || 'Invalid CSV' }));
+          }
+        });
+      } else if (url.pathname === '/api/state-script' && req.method === 'GET') {
+        // One dynamic-state script from the ACTIVE PROFILE, or the list of them. Read-only, so no
+        // operator gate — same posture as /api/state-csv and /api/config/export.
+        try {
+          const which = url.searchParams.get('name');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(which === null
+            ? JSON.stringify({ scripts: listStateScripts() })
+            : JSON.stringify({ name: which, source: readStateScript(String(which)) }));
+        } catch (error: any) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message || 'Failed to read script' }));
+        }
+      } else if (url.pathname === '/api/state-script' && req.method === 'POST') {
+        // Write a script into the active profile; deploy when idle. Same freeze rule as a config
+        // save — during a session it stays a draft, applied at the next session start.
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        let body = '';
+        req.on('data', (chunk) => { body += chunk.toString(); });
+        req.on('end', async () => {
+          try {
+            const which = String(url.searchParams.get('name') || '');
+            const stateName = String(url.searchParams.get('state') || '');
+            if (!stateName) throw new Error('state is required');
+
+            // Syntax-checked before it is written, by the sequencer's own parser. A check that
+            // could not run (no build yet) does not block the save — the sequencer re-checks at
+            // startup and is the authority either way.
+            const check = await checkStateScript(body, stateName);
+            if (!check.ok) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Script has errors', diagnostics: check.diagnostics }));
+              return;
+            }
+
+            const sessionActive = sessionManager.getStatus().active;
+            const deployed = writeStateScript(which, body, !sessionActive);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: true,
+              deployed,
+              checked: !check.unavailable,
+              message: deployed ? 'Saved and applied' : 'Saved as draft (applies at next session start)',
+            }));
+          } catch (error: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message || 'Invalid script' }));
+          }
+        });
+      } else if (url.pathname === '/api/state-script/check' && req.method === 'POST') {
+        // Debounced syntax check from the editor, without saving.
+        let body = '';
+        req.on('data', (chunk) => { body += chunk.toString(); });
+        req.on('end', async () => {
+          try {
+            const stateName = String(url.searchParams.get('state') || '');
+            if (!stateName) throw new Error('state is required');
+            const check = await checkStateScript(body, stateName);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(check));
+          } catch (error: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message || 'Check failed' }));
           }
         });
       } else if (url.pathname === '/api/config/validate' && req.method === 'GET') {
