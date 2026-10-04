@@ -2993,25 +2993,32 @@ class Session:
         # sweeps is plenty for a stand -- the longest path from a bottle to the
         # injector face is under a dozen branches -- and bounding it keeps a
         # recirculating drawing from spinning here.
+        # Which lines feed each node, in branch order. The flows are fixed for
+        # the whole walk, so this is worked out once rather than by asking
+        # every line on the stand about every node on every sweep.
+        feeding: dict[str, list[tuple[str, float, str]]] = {}
+        for branch_id, branch in net.branches.items():
+            mdot = flows.get(branch_id, 0.0)
+            if abs(mdot) < _TEMPERATURE_MIN_FLOW:
+                continue
+            source = branch.upstream if mdot > 0.0 else branch.downstream
+            sink = branch.downstream if mdot > 0.0 else branch.upstream
+            if source not in net.nodes:
+                continue
+            feeding.setdefault(sink, []).append((branch_id, mdot, source))
+
         for _ in range(_TEMPERATURE_SWEEPS):
             settled = True
             for node_id, node in net.nodes.items():
                 pinned = node_id in known
                 arriving: list[tuple[float, float]] = []
-                for branch_id, branch in net.branches.items():
-                    mdot = flows.get(branch_id, 0.0)
-                    if abs(mdot) < _TEMPERATURE_MIN_FLOW:
-                        continue
-                    source = branch.upstream if mdot > 0.0 else branch.downstream
-                    sink = branch.downstream if mdot > 0.0 else branch.upstream
-                    if sink != node_id or source not in net.nodes:
-                        continue
+                for branch_id, mdot, source in feeding.get(node_id, ()):
                     upstream = net.nodes[source]
                     p_up = pressures.get(source)
                     if p_up is None or p_up <= 0.0:
                         continue
                     try:
-                        fluid = Fluid(upstream.fluid)
+                        fluid = _fluid(upstream.fluid)
                         T_in = upstream.temperature
                         h = fluid.get("h", p=p_up, T=T_in)
                         # The line's own metal, if it has any and the run wants
@@ -3061,7 +3068,7 @@ class Session:
                     # h is conserved across the component; T falls out of the
                     # equation of state at this node's own pressure. That step
                     # is the Joule-Thomson effect.
-                    landed = Fluid(node.fluid).get("T", p=p_here, h=enthalpy)
+                    landed = _fluid(node.fluid).get("T", p=p_here, h=enthalpy)
                 except (ValueError, PropertyError):
                     continue
                 if landed > 0.0 and abs(landed - node.temperature) > _TEMPERATURE_TOL:
@@ -3301,3 +3308,18 @@ class Session:
                     f"{bottle.fraction * 100:.0f}% of what it was filled to."
                 )
         return out
+
+
+#: One `Fluid` per species, for the hot paths. A `Fluid` keeps its CoolProp
+#: states and its memo of answered state points, so building a fresh one per
+#: lookup threw both away: the temperature walk built ~16,000 a stand-second
+#: during a fill, two CoolProp states with each, and that was most of why a
+#: fill ran at a fifth of real time.
+_FLUIDS: dict[str, Fluid] = {}
+
+
+def _fluid(species: str) -> Fluid:
+    fluid = _FLUIDS.get(species)
+    if fluid is None:
+        fluid = _FLUIDS[species] = Fluid(species)
+    return fluid
