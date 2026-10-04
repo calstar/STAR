@@ -39,8 +39,12 @@ using namespace sense_board_pins;
 //-----------------------------------------------------------------------------
 // ADC config — LC Board ADC 1 only; differential (pin 1 vs pin 2) per connector
 //-----------------------------------------------------------------------------
-#define FILTER ADS126X_SINC5
-#define DATA_RATE ADS126X_RATE_38400
+// 38400 SPS + SINC5 is the part's fastest and noisiest setting (~1.5 uV RMS
+// input-referred at gain 32). Nothing on this board needs that bandwidth: the
+// load cell is a scale reading a fill over seconds. 400 SPS + SINC4 is ~16x
+// quieter for free, before any host-side filtering.
+#define FILTER ADS126X_SINC4
+#define DATA_RATE ADS126X_RATE_20
 ADS126X_ASSERT_FILTER_RATE(FILTER, DATA_RATE);
 #define GAIN ADS126X_GAIN_32
 #define NUM_CHANNELS 5
@@ -67,6 +71,8 @@ static void flush_cycles(int cycles) {
     }
 }
 
+static int last_mux_p = -1, last_mux_n = -1;
+
 static void collect_chunk_impl() {
     const uint8_t active_count = coreState.stored_config.num_sensors;
     if (active_count == 0)
@@ -80,11 +86,25 @@ static void collect_chunk_impl() {
         const int ch2 = getAdcChannel(connector_id, 2);
         if (ch1 < 0 || ch2 < 0)
             continue;
+        const bool mux_changed =
+            (ch1 != last_mux_p || ch2 != last_mux_n);
         ads126x.setInputMux(static_cast<uint8_t>(ch1),
                             static_cast<uint8_t>(ch2));
+        last_mux_p = ch1;
+        last_mux_n = ch2;
         delayMicroseconds(10);
+        // Only after an actual channel change does the digital filter still
+        // hold the previous input's samples. Flushing unconditionally throws
+        // away a perfectly good conversion every cycle, which halves the
+        // output rate when a single connector is active.
+        if (mux_changed)
+            flush_cycles(settlePulses(FILTER, DATA_RATE));
         while (digitalRead(Pins.ADC_DRDY_1) != LOW)
             delayMicroseconds(10);
+        // DRDY asserts as the conversion register is being updated; reading
+        // immediately catches it mid-update and yields corrupted samples.
+        // LC_Calibration/PT_BOARD_Multi both pause here before reading.
+        delayMicroseconds(25);
         const auto reading = ads126x.readADC1();
         const uint32_t value =
             reading.checksumValid ? static_cast<uint32_t>(reading.value) : 0u;

@@ -19,6 +19,23 @@
 #define ETHERNET_INIT_DELAY_MS 1000   // Delay after Ethernet.init()
 #define ETHERNET_BEGIN_DELAY_MS 1000  // Delay after Ethernet.begin()
 
+// DHCP (opt-in per board via -DSENSOR_ETH_USE_DHCP). The ground station
+// assigns the address from its MAC -> IP reservation table; these timeouts are
+// kept short so a stand network with no DHCP server does not stall boot.
+#ifndef SENSOR_ETH_DHCP_TIMEOUT_MS
+#define SENSOR_ETH_DHCP_TIMEOUT_MS 5000  // max total wait for a DHCP lease
+#endif
+#ifndef SENSOR_ETH_DHCP_RESPONSE_TIMEOUT_MS
+#define SENSOR_ETH_DHCP_RESPONSE_TIMEOUT_MS 2000  // per-request response wait
+#endif
+
+// Server discovery. While no server has been heard the board broadcasts
+// BOARD_HEARTBEAT, and it learns the server's address from the server's own
+// packets. The board never picks its own IP -- see common/board_net.h.
+// Server silence before discovery broadcasts resume (our address is
+// unaffected; it belongs to the server, not to us).
+#define SENSOR_ZEROCONF_SERVER_SILENCE_MS 10000
+
 // LED status blink (optional; actuator uses, sense boards may use)
 #define LED_CYCLE_MS 5000  // Cycle period for state-blink
 #define LED_BLINK_ON_MS 100

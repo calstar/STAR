@@ -8,14 +8,14 @@
 #include <Wire.h>
 #include <daq-protocol.h>
 #include <esp_mac.h>
+#include <STAR_EthernetOTA.h>
 
 #include "firmware_hash.h"
-#include "hotfire_ota.h"
 #include "pins.h"
 
 static Adafruit_BME280 bme;
 static EthernetUDP udp;
-static OTAEthernetServer ota_server(ENV_OTA_PORT);
+static StarOTA::Server ota_server(ENV_OTA_PORT);
 
 static byte mac[6];
 static IPAddress server_ip(192, 168, 2, ENV_SERVER_IP_OCTET_4);
@@ -77,9 +77,9 @@ void loop() {
     static unsigned long last_heartbeat = 0;
 
     // OTA — non-blocking poll; blocks only if a client actually connects
-    EthernetClient ota_client = ota_server.available();
-    if (ota_client)
-        hotfire_handleOTA(ota_client);
+    // Blocks only if a client connects; never returns on success.
+    ota_server.poll();
+    StarOTA::printTestMessage();
 
     // Receive UDP — log SERVER_HEARTBEAT, discard everything else
     int pkt_size = udp.parsePacket();

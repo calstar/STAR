@@ -37,8 +37,11 @@ using namespace sense_board_pins;
 //-----------------------------------------------------------------------------
 // ADC config (Stream_ADC_Data / multi-channel style)
 //-----------------------------------------------------------------------------
-#define FILTER ADS126X_SINC4
-#define DATA_RATE ADS126X_RATE_7200
+// FIR @ 20 SPS: the ADS1263's quietest mode, and its FIR has fixed 50/60 Hz
+// rejection nulls (datasheet Table 9-13 / p93 — FIR is available only at
+// 2.5/5/10/20 SPS). This sensor is slow enough that 20 SPS is ample.
+#define FILTER ADS126X_FIR
+#define DATA_RATE ADS126X_RATE_20
 ADS126X_ASSERT_FILTER_RATE(FILTER, DATA_RATE);
 #define TEST_PIN 1
 #define NUM_CHANNELS 10

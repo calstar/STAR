@@ -9,4 +9,5 @@ export const FIELD_LABEL: Record<string, string> = {
   due: "due date",
   title: "title",
   subteam: "subteam",
+  project: "project",
 };
