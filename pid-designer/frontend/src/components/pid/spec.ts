@@ -259,6 +259,10 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
     ...passiveSpec(),
     options: [
       COEFFICIENT('Cd'),
+      // Declared, or the dialog -- which writes back only the options named
+      // here -- dropped it on every save, and a hydraulic QD came back fluid.
+      { key: 'service', label: 'Service', default: 'fluid',
+        choices: [{ value: 'fluid', label: 'Fluid' }, { value: 'hydraulic', label: 'Hydraulic' }] },
       { key: 'pairedWith', label: 'Mates with', default: '', choices: PEER_CHOICES },
     ],
   },
