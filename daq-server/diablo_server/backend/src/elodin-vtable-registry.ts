@@ -71,7 +71,7 @@ const subscribedVTableStreamPairs = new Set<string>();
  *  and queues the remainder, so an id in flight names exactly one pair. */
 const pendingSubscriptionReqIds = new Map<number, string>();
 
-/** One wire byte, so this is the whole id space — see pendingSubscriptionReqIds. */
+/** Subscription IDs available after reserving one byte value for the response fence. */
 export const SUBSCRIPTION_REQ_ID_SPACE = 254; // Reserve 255 for the response fence.
 let subscriptionGeneration = 0;
 let runningPass: Promise<SubscriptionPassResult> | null = null;

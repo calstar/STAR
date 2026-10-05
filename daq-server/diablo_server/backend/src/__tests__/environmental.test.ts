@@ -5,7 +5,7 @@ import type { ElodinClient } from '../elodin-client.js';
 
 const { config } = vi.hoisted(() => ({ config: { boards: {} as Record<string, unknown> } }));
 vi.mock('../routes/config.js', () => ({ readDeployedConfig: () => config }));
-import { clearSubscriptionState, registerVTables, noteSubscriptionRejected } from '../elodin-vtable-registry.js';
+import { clearSubscriptionState, registerVTables, noteSubscriptionRejected, setClockForTests } from '../elodin-vtable-registry.js';
 
 function packet(): Buffer {
   const payload = Buffer.alloc(24);
@@ -52,7 +52,12 @@ describe('environmental stream', () => {
 });
 
 describe('environmental subscriptions', () => {
-  beforeEach(() => clearSubscriptionState());
+  let clock = 1_000_000;
+  beforeEach(() => {
+    clearSubscriptionState();
+    clock = 1_000_000;
+    setClockForTests(() => clock);
+  });
 
   it('subscribes enabled BME280 boards once using their full ID', async () => {
     config.boards = {
@@ -81,6 +86,9 @@ describe('environmental subscriptions', () => {
       quiet: { type: 'ENVIRONMENTAL', board_id: 35, active_connectors: [1] },
     };
     const sent: string[] = [];
+    for (let id = 100; id < 120; id++) {
+      config.boards[`extra${id}`] = { type: 'ENVIRONMENTAL', board_id: id, active_connectors: [1] };
+    }
     const batch = new Map<number, string>();
     let rejectEnvironmental = true;
     let fences = 0;
@@ -103,11 +111,12 @@ describe('environmental subscriptions', () => {
         fences++;
       },
     } as unknown as ElodinClient;
-    await registerVTables(client);
+    while ((await registerVTables(client)).remaining > 0) { /* drain capped passes */ }
     expect(sent.length).toBeGreaterThan(255);
     expect(fences).toBeGreaterThan(1);
     sent.length = 0;
     rejectEnvironmental = false;
+    clock += 5_000;
     await registerVTables(client);
     expect(sent).toEqual(['37,25']);
     sent.length = 0;
@@ -120,6 +129,7 @@ describe('environmental subscriptions', () => {
   });
 
   it('serializes concurrent passes and stops when a fence fails', async () => {
+    config.boards = {};
     let failFence!: (error: Error) => void;
     const fence = new Promise<void>((_resolve, reject) => { failFence = reject; });
     const sendRawMessage = vi.fn(() => true);
@@ -131,8 +141,30 @@ describe('environmental subscriptions', () => {
     expect(second).toBe(first);
     expect(sendRawMessage).toHaveBeenCalledTimes(254);
     failFence(new Error('Subscription fence timed out'));
-    expect(await first).toBe(false);
+    expect(await first).toMatchObject({ sent: 0, remaining: 0 });
     expect(disconnect).toHaveBeenCalledTimes(1);
     expect(sendRawMessage).toHaveBeenCalledTimes(254);
+  });
+
+  it('does not let an old failed pass clear a reconnected subscription pass', async () => {
+    config.boards = { env: { type: 'ENVIRONMENTAL', board_id: 25, active_connectors: [1] } };
+    let failOld!: (error: Error) => void;
+    let finishNew!: () => void;
+    const oldFence = new Promise<void>((_resolve, reject) => { failOld = reject; });
+    const newFence = new Promise<void>((resolve) => { finishNew = resolve; });
+    const disconnect = vi.fn();
+    const client = { isConnected: () => true, sendRawMessage: vi.fn(() => true), disconnect,
+      flushSubscriptionRequests: vi.fn().mockReturnValueOnce(oldFence).mockReturnValueOnce(newFence),
+    } as unknown as ElodinClient;
+    const oldPass = registerVTables(client);
+    clearSubscriptionState();
+    const newPass = registerVTables(client);
+    failOld(new Error('Old connection closed'));
+    await oldPass;
+    expect(disconnect).not.toHaveBeenCalled();
+    expect(registerVTables(client)).toBe(newPass);
+    finishNew();
+    await newPass;
+    expect((await registerVTables(client)).sent).toBe(0);
   });
 });

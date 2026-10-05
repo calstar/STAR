@@ -403,7 +403,7 @@ This means the backend ingests data at full rate (100+ Hz per sensor) but only s
 
 The backend and relay call `registerVTables()` when they connect to Elodin. It builds a deduplicated list from board configuration and fallback streams, then sends each two-byte stream ID in a `VTableStream` message.
 
-Elodin 0.16.1 rejects a subscription if the publisher has not registered its table. The registry matches the error to the requested stream and makes that stream eligible for the next five-second retry. Accepted subscriptions stay deduplicated even when no data arrives. Concurrent registration passes share one operation.
+Elodin 0.16.1 rejects a subscription if the publisher has not registered its table. The registry matches the error to the requested stream and retries after 5 seconds, then 10, 20, 40, and up to 60 seconds between attempts. After 12 refusals it stops retrying that stream until the connection resets. A publisher that starts after this limit needs a backend reconnect. Accepted subscriptions stay deduplicated even when no data arrives. Concurrent registration passes share one operation.
 
 The wire request ID is one byte. Each batch uses IDs 1 through 254 once, followed by a read-only `GetEarliestTimestamp` request on reserved ID 255. Elodin processes these requests in order and sends errors before the timestamp reply. That reply acts as a fence: the registry can reuse request IDs after receiving it without confusing delayed errors with a later batch. If the fence fails or times out, the client closes the connection so retries cannot duplicate subscriptions whose acceptance is unknown.
 

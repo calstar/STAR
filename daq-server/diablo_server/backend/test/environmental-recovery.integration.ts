@@ -99,7 +99,8 @@ active_connectors = [1]
     ELODIN_HOST: '127.0.0.1', GUI_PORT: '0', SESSION_SERVICE_MODE: 'off', USE_SIM: '1',
   });
   await until(() => logs.get(server)!.includes('WebSocket server listening'), 'backend readiness');
-  await until(() => logs.get(server)!.includes('subscription refused for [0x25, 0x19]'),
+  await until(() => logs.get(server)!.split('\n').some((line) =>
+    line.includes('subscription refusal(s)') && line.includes('[0x25, 0x19]')),
     'environmental subscription rejected before its schema exists');
   await startBridge();
   console.log('Confirmed environmental subscription rejection before bridge startup.');
