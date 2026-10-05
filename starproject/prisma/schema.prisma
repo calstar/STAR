@@ -63,6 +63,20 @@ model Project {
 
   tasks      Task[]
   digestSubs DigestSubscription[]
+
+  // Program tracking (the homepage's "LE3" card). A featured top-level project
+  // shows its phases as a segmented line, one per subteam, plus its deadlines.
+  // An empty `phases` means the default list in src/lib/program.ts.
+  featured      Boolean        @default(false)
+  // Featured projects sharing a group ("LE4") sit under one header, so a
+  // vehicle split across several projects (engine, avionics, solid demo)
+  // reads as one program. Null = the project is its own header.
+  trackGroup    String?
+  // Homepage card order, lowest first. A group's card sits at its lowest member.
+  trackOrder    Int            @default(0)
+  phases        String[]       @default([])
+  phaseStatuses SubteamPhase[]
+  milestones    Milestone[]
 }
 
 // A discipline/organizational group, a peer lens to Project. Purely a task tag
@@ -75,6 +89,39 @@ model Subteam {
 
   tasks      Task[]
   digestSubs DigestSubscription[]
+  phaseStatuses SubteamPhase[]
+  milestones    Milestone[]
+}
+
+// Where one subteam is in a featured project's phase list. `phase` indexes
+// Project.phases; phase == phases.length means every phase is done. A row's
+// existence is what puts the subteam on that project's homepage card.
+model SubteamPhase {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  subteamId String
+  subteam   Subteam  @relation(fields: [subteamId], references: [id], onDelete: Cascade)
+  phase     Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, subteamId])
+}
+
+// A dated deadline on a featured project ("CDR", "first cold flow"). With a
+// subteam it is that subteam's; without one it is the whole program's.
+model Milestone {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  subteamId String?
+  subteam   Subteam? @relation(fields: [subteamId], references: [id], onDelete: Cascade)
+  title     String
+  dueDate   DateTime
+  done      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([projectId, dueDate])
 }
 
 // Per-user preferences (1:1 with User).

@@ -15,6 +15,22 @@ export function shortName(
 }
 
 /**
+ * First name only, for the Home greeting ("Good afternoon, Ada") — a user's
+ * chosen `displayName` is already short-form ("Ada L."), so this takes just
+ * its first word rather than the full string. Falls back to the email's
+ * local part when no name is set at all.
+ */
+export function firstNameOf(u: {
+  displayName?: string | null;
+  name?: string | null;
+  email?: string | null;
+}): string {
+  const source = (u.displayName ?? "").trim() || (u.name ?? "").trim();
+  if (source) return source.split(/\s+/)[0];
+  return (u.email ?? "").split("@")[0] || "there";
+}
+
+/**
  * The single source of truth for how a person's name is shown anywhere in the
  * app. A user-chosen `displayName` wins verbatim; otherwise we fall back to the
  * uniform "First L." short form. Accepts any user-like row that carries these
