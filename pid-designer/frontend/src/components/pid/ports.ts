@@ -105,6 +105,9 @@ export const portKind = (data: PIDNodeData | undefined, id: string): PortKind =>
 export const portIsDrawn = (data: PIDNodeData | undefined, id: string) =>
   portKind(data, id) !== 'plug';
 
+/** The most stations a 5/2 solenoid manifold is drawn with. */
+export const VALVE_BANK_MAX = 10;
+
 /**
  * Every port a component has, by id.
  *
@@ -152,6 +155,8 @@ export function portsOf(node: Node): string[] {
       ];
     case 'MANIFOLD':
       return ['in', ...portIds('p', count('outlets', 4))];
+    case 'VALVE_BANK':
+      return ['in', ...portIds('p', Math.min(VALVE_BANK_MAX, count('outlets', 4)))];
     case 'ENGINE':
       return ['fuel', 'ox', 't'];
     case 'KBOTTLE':

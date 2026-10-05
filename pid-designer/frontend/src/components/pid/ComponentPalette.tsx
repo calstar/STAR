@@ -93,6 +93,21 @@ function PaletteSymbol({ type }: { type: ComponentType }) {
           {[9, 17, 25].map(x => <line key={x} x1={x} y1="16" x2={x} y2="19" stroke="var(--color-text-secondary)" strokeWidth="1.2" />)}
         </svg>
       );
+    case 'VALVE_BANK':
+      return (
+        <svg width="34" height="24" viewBox="0 0 34 24">
+          <rect x="1" y="16" width="32" height="7" rx="1.5" fill="var(--color-bg-tertiary)" stroke="var(--color-text-secondary)" strokeWidth="1.2" />
+          {[9, 25].map(x => (
+            <g key={x} stroke="var(--color-text-secondary)" strokeWidth="1.1" fill="none">
+              <line x1={x} y1="0" x2={x} y2="4" />
+              <rect x={x - 6} y="4" width="12" height="10" fill="var(--color-bg-tertiary)" />
+              <line x1={x} y1="4" x2={x} y2="14" />
+              <line x1={x + 1.5} y1="13" x2={x + 4.5} y2="5" />
+              <line x1={x + 1.5} y1="5" x2={x + 4.5} y2="13" />
+            </g>
+          ))}
+        </svg>
+      );
     case 'JUNCTION':
       return (
         <svg width="20" height="20" viewBox="0 0 20 20">

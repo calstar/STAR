@@ -12,6 +12,7 @@ import { EngineNode }      from './EngineNode';
 import { ManifoldNode }    from './ManifoldNode';
 import { RegionNode }      from './RegionNode';
 import { SupplyNode }      from './SupplyNode';
+import { ValveBankNode }   from './ValveBankNode';
 
 export const nodeTypes: NodeTypes = {
   RTD:      SensorNode,
@@ -29,6 +30,7 @@ export const nodeTypes: NodeTypes = {
   TANK:     TankNode,
   ENGINE:   EngineNode,
   MANIFOLD: ManifoldNode,
+  VALVE_BANK: ValveBankNode,
   KBOTTLE:  SupplyNode,
   DEWAR:    SupplyNode,
   REGION:   RegionNode,
