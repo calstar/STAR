@@ -14,6 +14,8 @@ import { VALVE_BANK_MAX, portIds, portKind } from '../ports';
  * through it, and the number of stations is what is bought. Each station is
  * drawn as the ISO 1219 symbol -- two envelopes, straight-through and
  * crossed, with the solenoid on its end -- and its outlet leaves from the top.
+ * What leaves an outlet is a dotted line to whatever it drives, not a flow
+ * line: see signals.ts.
  *
  * Everything is on the 10 px grid: stations every `PITCH`, each outlet in the
  * middle of its station, the supply level with the bore, so a line into any
@@ -51,8 +53,9 @@ function Station({ cx, stroke }: { cx: number; stroke: string }) {
   const l = cx - half, r = cx + half;
   return (
     <g stroke={stroke} fill="none" strokeWidth={1.2}>
-      {/* the outlet down to the valve, and the valve down to the bore */}
-      <line x1={cx} y1={0} x2={cx} y2={top} />
+      {/* the outlet down to the valve, dotted as its line is (signals.ts),
+          and the valve down to the bore */}
+      <line x1={cx} y1={0} x2={cx} y2={top} strokeDasharray="1.5 3" strokeLinecap="round" />
       <line x1={cx} y1={bottom} x2={cx} y2={42} />
       <rect x={l} y={top} width={2 * half} height={bottom - top} fill="var(--color-bg-tertiary)" />
       <line x1={cx} y1={top} x2={cx} y2={bottom} />
