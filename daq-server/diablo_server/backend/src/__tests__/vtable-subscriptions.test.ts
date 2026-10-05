@@ -36,6 +36,7 @@ interface Sent { high: number; low: number; reqId: number }
 function fakeClient(sent: Sent[], failPairs: Set<string> = new Set()) {
     return {
         isConnected: () => true,
+        flushSubscriptionRequests: async () => {},
         sendRawMessage: (_msgId: [number, number], _ty: number, payload: Buffer, reqId: number) => {
             const high = payload.readUInt8(0);
             const low = payload.readUInt8(1);

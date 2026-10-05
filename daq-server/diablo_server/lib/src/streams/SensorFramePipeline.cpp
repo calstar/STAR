@@ -1,12 +1,14 @@
 #include "streams/SensorFramePipeline.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 
 #include "DiabloEnums.h"
 #include "DiabloPacketUtils.h"
 #include "DiabloPackets.h"
+#include "daq-protocol.h"
 
 namespace fsw {
 namespace streams {
@@ -46,6 +48,22 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
 
     daq::PacketHeader peek{};
     std::memcpy(&peek, receive_buffer_.data(), sizeof(peek));
+
+    if (peek.packet_type == daq::PacketType::ENVIRONMENTAL_DATA) {
+        daq::PacketHeader header{};
+        daq::EnvironmentalDataPacket data{};
+        if (peek.version != DIABLO_COMMS_VERSION ||
+            received != static_cast<ssize_t>(sizeof(header) + sizeof(data)) ||
+            !daq::parse_environmental_data_packet(receive_buffer_.data(), received, header, data) ||
+            !std::isfinite(data.temperature_c) || !std::isfinite(data.humidity_rh) ||
+            data.humidity_rh < 0.0f || data.humidity_rh > 100.0f || data.pressure_pa == 0) {
+            return std::nullopt;
+        }
+        last_environmental_ =
+            EnvironmentalSample{data.temperature_c, data.pressure_pa, data.humidity_rh,
+                                header.timestamp, last_source_ip_};
+        return std::nullopt;
+    }
 
     if (peek.packet_type == daq::PacketType::SENSOR_DATA) {
         daq::PacketHeader sensor_header;
@@ -172,6 +190,11 @@ std::optional<SensorFramePipeline::LastLog> SensorFramePipeline::get_last_log() 
 
 bool SensorFramePipeline::is_ready() const {
     return socket_ && socket_->is_valid();
+}
+
+std::optional<SensorFramePipeline::EnvironmentalSample>
+SensorFramePipeline::get_last_environmental() {
+    return std::exchange(last_environmental_, std::nullopt);
 }
 
 std::string SensorFramePipeline::last_error() const {

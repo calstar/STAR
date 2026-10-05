@@ -49,6 +49,15 @@ public:
     };
     std::optional<LastLog> get_last_log();
 
+    struct EnvironmentalSample {
+        float temperature_c;
+        uint32_t pressure_pa;
+        float humidity_rh;
+        uint32_t sample_timestamp_ms;
+        std::string source_ip;
+    };
+    std::optional<EnvironmentalSample> get_last_environmental();
+
 private:
     std::unique_ptr<daq_comms::transport::UDPSocket> socket_;
     std::vector<uint8_t> receive_buffer_;
@@ -60,6 +69,7 @@ private:
 
     std::vector<uint8_t> last_log_buffer_;
     std::string last_log_source_ip_;
+    std::optional<EnvironmentalSample> last_environmental_;
 
     static constexpr size_t RECEIVE_BUFFER_SIZE = 8192;
 };

@@ -3,10 +3,10 @@
 // board_net.h: DHCP can be made to succeed or fail, and every address write is
 // recorded so a test can assert what the board pushed into the W5500.
 #pragma once
+#include <Arduino.h>  // IPAddress
+
 #include <cstdint>
 #include <cstring>
-
-#include <Arduino.h>  // IPAddress
 
 class EthernetClient {
 public:

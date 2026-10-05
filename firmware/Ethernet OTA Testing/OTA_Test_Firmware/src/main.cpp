@@ -13,7 +13,7 @@ StarOTA::Server otaServer(OTA_TCP_PORT);
  */
 static const char* currentMessage() {
     return StarOTA::testMessage()[0] != '\0' ? StarOTA::testMessage()
-                                              : OTA_MESSAGE;
+                                             : OTA_MESSAGE;
 }
 unsigned long lastPrintMillis = 0;
 unsigned long bootTime = 0;

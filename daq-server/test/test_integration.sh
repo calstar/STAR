@@ -230,7 +230,7 @@ mkdir -p "$REPO_ROOT/.tmp"
 # config IP, which equals its board_id here) so the DAQ bridge can route by source address. These
 # are the board_id octets from config_base.toml (enabled and not) plus the startup board (60).
 if [ "$(uname)" = "Darwin" ]; then
-  LOOPBACK_IPS=(11 12 13 14 21 22 31 32 41 42 51 52 60 61)
+  LOOPBACK_IPS=(11 12 13 14 21 22 25 31 32 41 42 51 52 60 61)
   NEED_ALIAS=false
   for i in "${LOOPBACK_IPS[@]}"; do
     if ! ifconfig lo0 2>/dev/null | grep -q "127.0.0.$i "; then

@@ -57,17 +57,20 @@ def _on_upload(source, target, env):
     flags = [str(f) for f in env.subst_list("$UPLOADERFLAGS")[0]]
 
     if not any(str(f).startswith("--ip") for f in flags):
-        print("[OTA] ERROR: no --ip in upload_flags. Add e.g.\n"
-              "        upload_flags =\n"
-              "            --ip=192.168.2.41\n"
-              "      to this environment in platformio.ini.")
+        print(
+            "[OTA] ERROR: no --ip in upload_flags. Add e.g.\n"
+            "        upload_flags =\n"
+            "            --ip=192.168.2.41\n"
+            "      to this environment in platformio.ini."
+        )
         env.Exit(1)
         return
 
     cmd = [sys.executable, _UPLOADER, "--bin", firmware] + [str(f) for f in flags]
     print("[OTA] " + " ".join(cmd))
-    rc = env.Execute(env.VerboseAction(" ".join(f'"{c}"' for c in cmd),
-                                       "Uploading over Ethernet"))
+    rc = env.Execute(
+        env.VerboseAction(" ".join(f'"{c}"' for c in cmd), "Uploading over Ethernet")
+    )
     if rc:
         env.Exit(rc)
 

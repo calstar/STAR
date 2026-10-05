@@ -8,9 +8,9 @@
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <STAR_EthernetOTA.h>
 #include <daq-protocol.h>
 #include <esp_mac.h>
-#include <STAR_EthernetOTA.h>
 
 #include <cstring>
 

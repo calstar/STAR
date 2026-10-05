@@ -66,6 +66,35 @@ describe('validateConfigForRun — the clean case', () => {
 });
 
 describe('boards', () => {
+  it.each([0, -1, 256, 4294967321, 25.5, NaN, Infinity, '25', undefined, null])(
+    'rejects invalid environmental ID %s', (id) => {
+      const issues = validateConfigForRun({ boards: {
+        env: { type: 'ENVIRONMENTAL', board_id: id },
+      } });
+      expect(issues).toEqual([expect.objectContaining({ page: 'boards', level: 'error',
+        message: expect.stringContaining('integer from 1 to 255') })]);
+    });
+
+  it('rejects duplicate environmental IDs, including the legacy id spelling', () => {
+    const issues = validateConfigForRun({ boards: {
+      first: { type: 'ENVIRONMENTAL', board_id: 25 },
+      second: { type: 'ENVIRONMENTAL', id: 25 },
+    } });
+    expect(issues).toHaveLength(2);
+    expect(issues.every((i) => i.level === 'error' && i.message.includes('also claimed'))).toBe(true);
+  });
+
+  it('accepts environmental boundaries and distinct full IDs, ignoring disabled boards', () => {
+    expect(validateConfigForRun({ boards: {
+      one: { type: 'ENVIRONMENTAL', board_id: 1 },
+      max: { type: 'ENVIRONMENTAL', board_id: 255 },
+      first: { type: 'ENVIRONMENTAL', board_id: 25 },
+      second: { type: 'ENVIRONMENTAL', board_id: 35 },
+      off: { type: 'ENVIRONMENTAL', board_id: 25, enabled: false },
+      invalidOff: { type: 'ENVIRONMENTAL', board_id: 256, enabled: false },
+    } })).toEqual([]);
+  });
+
   it('reports two same-type enabled boards colliding on one Elodin slot', () => {
     // board_id % 10 is the slot, so 12 and 22 are the same slot: the two boards merge into one
     // entity and half the channels silently vanish.
