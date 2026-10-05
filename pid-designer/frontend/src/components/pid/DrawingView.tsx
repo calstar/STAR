@@ -13,6 +13,7 @@ import { FluidProvider } from './FluidContext';
 import { ToolProvider } from './ToolContext';
 import { AttachmentLayer, DrawnRoutes } from './AttachmentLayer';
 import { VentLayer } from './VentLayer';
+import { SignalLayer } from './SignalLayer';
 import { PageBar } from './PageBar';
 import { migrate } from './migrate';
 import { applyPage, listPages, pageOf } from './pages';
@@ -121,6 +122,7 @@ function Sheet({ nodes: given, edges: givenEdges, colorMode = 'dark', onSymbolCl
                 <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-border)" />
                 <DrawnRoutes><AttachmentLayer nodes={shown.nodes} edges={shown.edges} /></DrawnRoutes>
                 <VentLayer nodes={shown.nodes} edges={shown.edges} />
+                <SignalLayer nodes={shown.nodes} edges={shown.edges} />
                 <Controls showInteractive={false} />
                 <FitOnChange sheet={sheetKey} />
                 {children}

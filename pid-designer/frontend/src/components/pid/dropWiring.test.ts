@@ -11,6 +11,7 @@
 // the drags are run through React Flow's own drag code, XYHandle from
 // @xyflow/system, over a stand-in page.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { isSignalPort, landsOnSignalPort, setSignal, signalTo } from './signals';
 import { ConnectionMode, Position, XYHandle } from '@xyflow/system';
 import { applyEdgeChanges } from '@xyflow/react';
 import type { Connection, Edge, EdgeChange, FinalConnectionState, Node } from '@xyflow/react';
@@ -22,7 +23,7 @@ import { pathPoints, pointsToPath, routeOrthogonal } from './route';
 import type { Pt } from './route';
 import {
   canJoin, clientOf, commitDrop, connectLine, drawnPoints, lineUnder, partOnLine, plainChanges, reconnectLine,
-  reconnectMoving, reconnectableEnds, resolveDrop,
+  reconnectMoving, reconnectableEnds, resolveDrop, minPull,
 } from './drop';
 import { clearOfHost, clipAt, isInstrument, nodeSize } from './attach';
 import { defFor } from './types';
@@ -48,7 +49,17 @@ const E = (s: string, sh: string, t: string, th: string, data: Record<string, un
 const PORT_AT: Record<string, (w: number, h: number) => [number, number, Position]> = {
   l: (_w, h) => [0, h / 2, Position.Left], r: (w, h) => [w, h / 2, Position.Right],
   t: w => [w / 2, 0, Position.Top], b: (w, h) => [w / 2, h, Position.Bottom],
+  // A 5/2 solenoid manifold's: the supply on its left end, outlets along its top.
+  in: (_w, h) => [0, h / 2, Position.Left], p: () => [20, 0, Position.Top], p2: () => [40, 0, Position.Top],
 };
+/** A 5/2 solenoid manifold, two outlets. */
+const bank = (id: string, x: number, y: number, signals?: Record<string, unknown>): Node => ({
+  ...sym(id, x, y, ['in', 'p', 'p2']),
+  type: 'VALVE_BANK',
+  data: { componentType: 'VALVE_BANK', label: id, options: { outlets: '2' }, ...(signals ? { signals } : {}) },
+});
+const signalsOf = (g: { nodes: Node[] }, id: string) =>
+  (g.nodes.find(n => n.id === id)!.data as { signals?: Record<string, unknown> }).signals;
 const endOf: EndLookup = (node, handle) => {
   if (isJunction(node)) return handle ? { ...junctionEnd(node.position, handle as Face), ...J_END } : null;
   if (!handle || !(PORTS[node.id] ?? []).includes(handle)) return null;
@@ -139,6 +150,7 @@ function canvas(start: { nodes: Node[]; edges: Edge[] }, readOnly = false, zoom 
     endOfClear: endOf, getInternalNode, getZoom: () => zoom, document: doc, drawnLines, drawnPoints, lineUnder,
     screenToFlowPosition: (p: Pt) => p, clientOf, resolveDrop, commitDrop, commitGraph, setEdges,
     reconnectLine, reconnectMoving, connectLine, canJoin, obstaclesRef: { current: undefined },
+    isSignalPort, landsOnSignalPort, setSignal, signalTo, minPull,
   };
   const code = [
     canvasStatement('const onConnect = useCallback('),
@@ -368,6 +380,77 @@ describe("a port drag through React Flow's own code", () => {
     const zoomed = canvas(g(), false, 2);
     drag(zoomed, { node: 'A', handle: 'r' }, P(85, 30));
     expect(zoomed.committed).toHaveLength(1);
+  });
+});
+
+describe("a 5/2 solenoid manifold's outlet, through React Flow's own code", () => {
+  // VB at (0, 200): outlets at (20, 200) and (40, 200), supply at (0, 230).
+  const stand = () => ({
+    nodes: [bank('VB', 0, 200), sym('A', 0, 0), sym('B', 400, 0), sym('V', 300, 300)],
+    edges: [E('A', 'r', 'B', 'l')],
+  });
+
+  it('let go on any spot of a symbol: a dotted line to that spot, and no line in the drawing', () => {
+    const cv = canvas(stand());
+    const seen = drag(cv, { node: 'VB', handle: 'p' }, P(312, 345));
+    expect(seen.connect).toEqual([]);
+    const g = cv.snapshot.current;
+    expect(g.edges).toEqual(stand().edges);
+    expect(g.nodes.filter(isJunction)).toEqual([]);
+    expect(signalsOf(g, 'VB')).toEqual({ p: { to: 'V', at: { x: 12, y: 45 } } });
+  });
+
+  it('let go right on a port that has a line: still only a dotted line, to that symbol', () => {
+    const cv = canvas(stand());
+    drag(cv, { node: 'VB', handle: 'p2' }, P(399, 31));
+    const g = cv.snapshot.current;
+    expect(g.edges).toEqual(stand().edges);
+    expect(signalsOf(g, 'VB')).toEqual({ p2: { to: 'B', at: { x: -1, y: 31 } } });
+  });
+
+  it('let go on a line: a dotted line to that point of it, and the line is not teed', () => {
+    const cv = canvas(stand());
+    drag(cv, { node: 'VB', handle: 'p' }, P(230, 31));
+    const g = cv.snapshot.current;
+    expect(g.edges).toEqual(stand().edges);
+    expect(g.nodes.filter(isJunction)).toEqual([]);
+    const s = signalsOf(g, 'VB') as { p: { to: string; along: number } };
+    expect(s.p.to).toBe('A-B');
+    expect(s.p.along).toBeCloseTo(0.5, 2);
+  });
+
+  it('let go on the empty canvas: a dotted line that ends there, and no open end', () => {
+    const cv = canvas(stand());
+    drag(cv, { node: 'VB', handle: 'p' }, P(150, 500));
+    const g = cv.snapshot.current;
+    expect(g.nodes.filter(isJunction)).toEqual([]);
+    expect(signalsOf(g, 'VB')).toEqual({ p: { at: { x: 150, y: 500 } } });
+  });
+
+  it('pulled again, goes where it is let go this time; let go back on its own manifold, stays', () => {
+    const cv = canvas({ ...stand(), nodes: [bank('VB', 0, 200, { p: { to: 'V', at: { x: 0, y: 0 } } }), ...stand().nodes.slice(1)] });
+    drag(cv, { node: 'VB', handle: 'p' }, P(150, 500));
+    expect(signalsOf(cv.snapshot.current, 'VB')).toEqual({ p: { at: { x: 150, y: 500 } } });
+    drag(cv, { node: 'VB', handle: 'p' }, P(50, 250));
+    expect(signalsOf(cv.snapshot.current, 'VB')).toEqual({ p: { at: { x: 150, y: 500 } } });
+  });
+
+  it('takes no flow line: refused by React Flow either way, a drop right on one makes nothing', () => {
+    const cv = canvas(stand());
+    expect(cv.isValidConnection({ source: 'V', sourceHandle: 'l', target: 'VB', targetHandle: 'p' })).toBe(false);
+    expect(cv.isValidConnection({ source: 'VB', sourceHandle: 'p2', target: 'V', targetHandle: 'l' })).toBe(false);
+    drag(cv, { node: 'V', handle: 'l' }, P(20, 201));
+    expect(cv.committed).toEqual([]);
+  });
+
+  it("a flow line let go on the manifold's body joins its supply, never an outlet", () => {
+    const cv = canvas(stand());
+    drag(cv, { node: 'V', handle: 'l' }, P(30, 240));
+    const g = cv.snapshot.current;
+    const made = g.edges.filter(e => !stand().edges.some(x => x.id === e.id));
+    expect(made).toHaveLength(1);
+    expect([made[0].sourceHandle, made[0].targetHandle]).toContain('in');
+    expect(signalsOf(g, 'VB')).toBeUndefined();
   });
 });
 

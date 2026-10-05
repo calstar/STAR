@@ -57,6 +57,8 @@ import type { Tool } from './ToolContext';
 import { AttachmentLayer, DrawnRoutes } from './AttachmentLayer';
 import { ChecksPanel } from './ChecksPanel';
 import { VentLayer } from './VentLayer';
+import { SignalLayer } from './SignalLayer';
+import { isSignalPort, landsOnSignalPort, setSignal, signalTo } from './signals';
 import { PageBar } from './PageBar';
 import {
   DEFAULT_PAGE, applyPage, clearSelection, listPages, moveToPage, pageOf, pageOfSubjects, selectOnPage,
@@ -74,7 +76,7 @@ import { GRID } from './route';
 import type { Pt } from './route';
 import {
   canJoin, clientOf, commitDrop, connectLine, drawnPoints, lineUnder, partOnLine, plainChanges, reconnectLine,
-  reconnectMoving, reconnectableEnds, resolveDrop,
+  minPull, reconnectMoving, reconnectableEnds, resolveDrop,
 } from './drop';
 import type { DropScene, Under } from './drop';
 import { snapOnDrop } from './snap';
@@ -784,6 +786,26 @@ function PIDCanvas({
   }, [setCenter, getZoom]);
 
   /**
+   * The dotted line picked by clicking it, for Delete or Backspace to take
+   * away. Not a React Flow selection: a dotted line is not an edge
+   * (signals.ts). Any other click puts it down.
+   */
+  const [signalPicked, setSignalPicked] = useState<{ bank: string; port: string } | null>(null);
+  useEffect(() => {
+    if (!signalPicked) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (readOnlyRef.current) return;
+      commitGraph(setSignal(snapshot.current.nodes, signalPicked.bank, signalPicked.port, null), snapshot.current.edges);
+      setSignalPicked(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [signalPicked, commitGraph]);
+
+  /**
    * Drawing a line by dragging, and letting go of it.
    *
    * The answer to "must I place a junction for every tap": no. Drag from the
@@ -806,6 +828,7 @@ function PIDCanvas({
    */
   const connectingFrom = useRef<{ nodeId: string; handleId: string | null; reconnect?: string } | null>(null);
 
+
   const onConnectStart = useCallback((
     _e: unknown, params: { nodeId: string | null; handleId: string | null },
   ) => {
@@ -824,7 +847,9 @@ function PIDCanvas({
     nodes: snapshot.current.nodes,
     edges: snapshot.current.edges,
     endOf: endOfClear,
-    portsOf: n => getInternalNode(n.id)?.internals.handleBounds?.source?.map(h => h.id ?? '') ?? null,
+    // A solenoid manifold's outlets carry dotted lines, never flow lines.
+    portsOf: n => getInternalNode(n.id)?.internals.handleBounds?.source
+      ?.map(h => h.id ?? '').filter(h => !isSignalPort(n, h)) ?? null,
     lines: drawnPoints(drawnLines()),
     obstacles: obstaclesRef.current,
     zoom: getZoom(),
@@ -879,8 +904,19 @@ function PIDCanvas({
     const client = clientOf(event);
     const at = screenToFlowPosition(client, { snapToGrid: false });
     const scene = dropScene();
-    const plan = resolveDrop(
-      { kind: 'port', nodeId: from.nodeId, handle: from.handleId }, at, underPointer(client, at, scene, state.toHandle), scene);
+    const under = underPointer(client, at, scene, state.toHandle);
+    const fromNode = scene.nodes.find(n => n.id === from.nodeId);
+    // Out of a solenoid manifold's outlet: a dotted line to wherever it was
+    // let go -- any symbol, any line, the canvas. Nothing else. See signals.ts.
+    if (isSignalPort(fromNode, from.handleId)) {
+      const start = fromNode ? scene.endOf(fromNode, from.handleId) : null;
+      if (start && Math.hypot(at.x - start.x, at.y - start.y) < minPull(scene.zoom)) return;
+      const signal = signalTo(from.nodeId, at, under, scene.nodes);
+      if (signal) commitGraph(setSignal(scene.nodes, from.nodeId, from.handleId, signal), scene.edges);
+      return;
+    }
+    if (landsOnSignalPort(under, scene.nodes)) return;
+    const plan = resolveDrop({ kind: 'port', nodeId: from.nodeId, handle: from.handleId }, at, under, scene);
     const made = commitDrop(plan, scene);
     if (made) commitGraph(made.nodes, made.edges);
   }, [screenToFlowPosition, commitGraph, dropScene, underPointer]);
@@ -896,7 +932,9 @@ function PIDCanvas({
   const onBranchDrop = useCallback((source: BranchSource, at: Pt, client: { x: number; y: number }) => {
     if (readOnlyRef.current) return;
     const scene = dropScene();
-    const made = commitDrop(resolveDrop(source, at, underPointer(client, at, scene), scene), scene);
+    const under = underPointer(client, at, scene);
+    if (landsOnSignalPort(under, scene.nodes)) return;
+    const made = commitDrop(resolveDrop(source, at, under, scene), scene);
     if (made) commitGraph(made.nodes, made.edges);
   }, [commitGraph, dropScene, underPointer]);
 
@@ -941,9 +979,10 @@ function PIDCanvas({
     const client = clientOf(event);
     const at = screenToFlowPosition(client, { snapToGrid: false });
     const scene = dropScene();
+    const under = underPointer(client, at, scene, state.toHandle);
+    if (landsOnSignalPort(under, scene.nodes)) return;
     const plan = resolveDrop(
-      { kind: 'reconnect', edgeId: edge.id, moving: reconnectMoving(edge, handleType, stays) },
-      at, underPointer(client, at, scene, state.toHandle), scene);
+      { kind: 'reconnect', edgeId: edge.id, moving: reconnectMoving(edge, handleType, stays) }, at, under, scene);
     const made = commitDrop(plan, scene);
     if (made) commitGraph(made.nodes, made.edges);
   }, [screenToFlowPosition, commitGraph, dropScene, underPointer]);
@@ -1258,7 +1297,7 @@ function PIDCanvas({
     <div
       className="relative flex h-full flex-1 flex-col"
       style={tool !== 'none' ? { cursor: 'crosshair' } : undefined}
-      onClick={() => setColorMenu(null)}
+      onClick={() => { setColorMenu(null); setSignalPicked(null); }}
     >
       <div className="relative min-h-0 flex-1">
       <ToolProvider tool={tool} onDone={disarm}>
@@ -1329,6 +1368,8 @@ function PIDCanvas({
             hidden with their probes, not drawn over this one. */}
         <DrawnRoutes><AttachmentLayer nodes={view.nodes} edges={view.edges} /></DrawnRoutes>
         <VentLayer nodes={view.nodes} edges={view.edges} />
+        <SignalLayer nodes={view.nodes} edges={view.edges} selected={signalPicked}
+          onSelect={readOnly ? undefined : setSignalPicked} />
         <BranchPreview />
         <Controls />
         <TitleBlock meta={{ ...sheet, page }} />

@@ -20,6 +20,7 @@ import type { Box, End, Pt } from './route';
 import { boxOfNode, perPage, routeAuto } from './routeGrid';
 import type { Obstacles } from './routeGrid';
 import { measuredAt } from './ports';
+import { isSignalPort } from './signals';
 
 /**
  * Where a drag is let go, and what it makes there.
@@ -1293,7 +1294,8 @@ export function canJoin(c: Connection | Edge, nodes: Node[], edges: Edge[]): boo
   if (c.source === c.target) return false;
   const free = (id: string, handle: string | null | undefined) => {
     const n = nodes.find(x => x.id === id);
-    if (!n || isJunction(n)) return false;
+    // A solenoid manifold's outlet carries a dotted line, never a flow line.
+    if (!n || isJunction(n) || isSignalPort(n, handle)) return false;
     return !edges.some(e => (e.source === id && e.sourceHandle === handle) || (e.target === id && e.targetHandle === handle));
   };
   return free(c.source, c.sourceHandle) && free(c.target, c.targetHandle);
