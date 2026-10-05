@@ -49,6 +49,7 @@ BRANCH_KINDS: dict[str, tuple[str, str]] = {
     "MAN": ("valve", "cv"),
     "ROT": ("valve", "cv"),
     "SOL": ("valve", "cv"),
+    "MOV": ("valve", "cv"),
     "PR": ("regulator", "droop"),
     "RV": ("valve", "cv"),
     "CV": ("check_valve", "cv"),
@@ -156,7 +157,7 @@ DEFAULT_TANK_LITRES = 0.0175
 #: or a blanked tee branch is a plug, and plugs are not drawn -- inferring an
 #: open boundary from one would model a tank venting through a fitting that
 #: holds pressure.
-VENTING_VALVE_TYPES = frozenset({"MAN", "ROT", "SOL", "RV"})
+VENTING_VALVE_TYPES = frozenset({"MAN", "ROT", "SOL", "MOV", "RV"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -503,7 +504,7 @@ def build_network(
         placements.append(
             Placement(node.id, node.label, node.type, node.x, node.y, fluid)
         )
-        if node.type in {"ROT", "SOL"}:
+        if node.type in {"ROT", "SOL", "MOV"}:
             actuators[node.id] = f"{node.label}.command"
 
     # 3. Instruments observe. They join the network at the place they clip to.

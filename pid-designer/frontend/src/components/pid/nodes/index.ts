@@ -23,6 +23,7 @@ export const nodeTypes: NodeTypes = {
   MAN:      ValveNode,
   ROT:      ValveNode,
   SOL:      ValveNode,
+  MOV:      ValveNode,
   PR:       PRNode,
   RV:       RVNode,
   CV:       CheckValveNode,
