@@ -40,11 +40,17 @@ from feedtwin.props import Fluid
 # fails for reasons unrelated to the code.
 
 #: Measured on the development host, nitrogen via the tabulated backend:
-#: accessor 0.63 us, get 0.96 us, state 5.0 us (twelve reads).
-#: Phase 01's design target is the sub-microsecond accessor; these ceilings are
-#: what CI can assert without becoming a coin flip.
-HOT_PATH_BUDGET_US = 3.0
-CONVENIENCE_BUDGET_US = 5.0
+#: accessor 0.63-0.9 us, get about 1 us, state 5.0 us (twelve reads). GitHub's
+#: runners take about 3.3x as long, every time and not just when loaded: the cp
+#: accessor read 3.006 and 3.028 us in two runs, the second the fastest of
+#: five batches. So the ceilings are set several times over the *runner's*
+#: numbers, as the note above asks -- 3 us was the runner's own speed, and
+#: failed on a coin toss. They still catch what they are for: PropsSI is
+#: 184 us a call, and a backend rebuilt per call is 10-1000x.
+#: Phase 01's design target is the sub-microsecond accessor; run with
+#: FEEDTWIN_STRICT_PERF=1 on a quiet machine to hold that.
+HOT_PATH_BUDGET_US = 10.0
+CONVENIENCE_BUDGET_US = 15.0
 
 #: Set FEEDTWIN_STRICT_PERF=1 to assert the design targets instead of the
 #: CI-safe ceilings. Worth running on a quiet machine after touching the hot
@@ -59,12 +65,11 @@ ITERATIONS = 20_000
 
 #: Timed in this many equal batches, and the fastest one counts.
 #:
-#: One mean over all twenty thousand calls took in whatever else the runner was
-#: doing meanwhile: a cp accessor measured at 0.9 us here read 3.006 us on a
-#: loaded runner and failed a 3 us ceiling, while the same commit passed in the
-#: run beside it. Another job stealing the core only ever adds time, so the
-#: quickest batch is the closest reading of the code itself -- and a regression
-#: of the 10-1000x kind these ceilings exist for is slow in every batch.
+#: One mean over all twenty thousand calls takes in whatever else a shared
+#: runner is doing meanwhile. Another job stealing the core only ever adds
+#: time, so the quickest batch is the closest reading of the code itself --
+#: and a regression of the 10-1000x kind these ceilings exist for is slow in
+#: every batch.
 BATCHES = 5
 
 
