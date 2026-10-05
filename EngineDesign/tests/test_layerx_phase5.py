@@ -18,12 +18,6 @@ from pathlib import Path
 
 import pytest
 
-#: The sweep fixture runs every factor of the uncertainty study on four spawned
-#: workers, each importing and JIT-compiling the engine cold: 32 s on a laptop with
-#: warm caches, past CI's 120 s per-test guard on its runners -- and the guard's thread
-#: method ends the whole run, not just this test. pytest-timeout honours this; without
-#: the plugin it is an unknown mark and only warns.
-pytestmark = pytest.mark.timeout(600)
 
 pytest.importorskip("feedtwin", reason="lib/feedtwin is not installed")
 
@@ -36,8 +30,16 @@ FIXTURE = Path(__file__).parent / "fixtures" / "ethalox_6500N_doublet_cad_2026-0
 GN2 = "copv_study_gn2"
 # The GN2 drawing is a nitrogen-over-LOX hot fire, refused since 2026-10-03 unless acknowledged
 # (engine/layerx/prepare.py gn2_on_lox); these tests study its burn, so their settings acknowledge it.
-pytestmark = pytest.mark.skipif(not (shipped_drawings_dir() / f"{GN2}.json").is_file(),
-                                reason="feed-twin's shipped drawings are not next to this checkout")
+pytestmark = [
+    pytest.mark.skipif(not (shipped_drawings_dir() / f"{GN2}.json").is_file(),
+                       reason="feed-twin's shipped drawings are not next to this checkout"),
+    # The sweep fixture runs every factor of the uncertainty study on four spawned
+    # workers, each importing and JIT-compiling the engine cold: 32 s on a laptop with
+    # warm caches, past CI's 120 s per-test guard on its runners -- and the guard's
+    # thread method ends the whole run, not just this test. pytest-timeout honours
+    # this; without the plugin it is an unknown mark and only warns.
+    pytest.mark.timeout(600),
+]
 
 
 @pytest.fixture(scope="module")

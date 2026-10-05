@@ -41,12 +41,14 @@ defaults:
     working-directory: EngineDesign
 
 jobs:
-  # Python regression gate. Fast (~seconds): no gfortran/rocketcea — the
-  # CEA-backed configs load a committed cache table (output/cache/*.npz).
+  # Python regression gate. No gfortran/rocketcea — the CEA-backed configs load
+  # a committed cache table (output/cache/*.npz). Minutes, not seconds, since
+  # the Layer X integration tests: the uncertainty sweep alone burns every
+  # factor on spawned workers, and the suite reached ~9 min before it on CI.
   python-tests:
     name: Python tests (regression gate)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
     - name: Checkout code
