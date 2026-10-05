@@ -76,6 +76,17 @@ from engine.core.chamber_geometry import (
 )
 
 
+#: How ``ChamberSolver.solve`` words a solve that ran but did not close: its own checks on
+#: the root it found. A validation replay that ends in one of these is an invalid design,
+#: not a crash (see ``_validation_evaluate_or_bundle`` in ``run_layer1_optimization``).
+_CHAMBER_SOLVER_REFUSALS = (
+    "Solution validation failed",
+    "Convergence validation failed",
+    "Chamber pressure solver failed",
+    "Solver returned non-finite pressure",
+)
+
+
 TOTAL_WALL_THICKNESS_M = 0.0254  # fallback only: 1.0 inch total (0.5 in/side). See _layer1_total_wall_thickness_m.
 
 
@@ -9062,10 +9073,20 @@ def run_layer1_optimization(
         pf: float,
     ) -> Tuple[Dict[str, Any], float]:
         """Replay validation evaluate; fall back to the last optimizer ``evaluate`` payload if the
-        solver diverges -- for the report only; the design is then invalid."""
+        solver diverges -- for the report only; the design is then invalid.
+
+        The chamber solver says it did not close in two ways: a ``ValueError`` from the root
+        find, and a ``RuntimeError`` from its own checks on what it found ("Solution
+        validation failed: Isp is non-positive"). Both mean the emitted design does not
+        close at its tank pressures; only the first used to be caught, so a design whose
+        replay landed on a non-physical root crashed the optimizer instead of being reported
+        invalid -- on CI's runners, where the smoke search's last candidate is one of them.
+        """
         try:
             return _validation_evaluate_boost(runner, po, pf)
-        except ValueError as exc:
+        except (ValueError, RuntimeError) as exc:
+            if isinstance(exc, RuntimeError) and not str(exc).startswith(_CHAMBER_SOLVER_REFUSALS):
+                raise
             b = opt_state.get("last_good_eval_bundle")
             if not isinstance(b, dict) or not isinstance(b.get("results"), dict):
                 raise
