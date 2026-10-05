@@ -1032,8 +1032,14 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False, 
         inertia=rocket_inertia,
         center_of_mass_without_motor=cm_wo_motor,
         coordinate_system_orientation="tail_to_nose",
-        power_off_drag=drag_curves.rocketpy(power_on=False),
-        power_on_drag=drag_curves.rocketpy(power_on=True),
+        # As Functions, linear between the points and flat past the ends -- what the
+        # tables say, and what DragCurves.at() reads. A bare list leaves the
+        # interpolation to rocketpy's default, which 1.13 made a spline: a user's
+        # 0.6 -> 0.8 table flew 0.728 at M 0.5.
+        power_off_drag=Function(drag_curves.rocketpy(power_on=False), "Mach Number",
+                                "Drag Coefficient with Power Off", "linear", "constant"),
+        power_on_drag=Function(drag_curves.rocketpy(power_on=True), "Mach Number",
+                               "Drag Coefficient with Power On", "linear", "constant"),
     )
     rocket_length_cfg = getattr(config.rocket, "rocket_length", None)
     if rocket_length_cfg is not None and abs(float(rocket_length_cfg) - stack["length"]) > 1e-3:
