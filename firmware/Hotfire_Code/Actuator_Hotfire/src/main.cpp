@@ -21,6 +21,7 @@
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <STAR_EthernetOTA.h>
 #include <daq-protocol.h>
 #include <esp_mac.h>
 
@@ -30,10 +31,8 @@
 
 #include "actuator_board_pins.h"
 #include "actuator_config.h"
-#include "firmware_hash.h"
 #include "board_net.h"
-
-#include <STAR_EthernetOTA.h>
+#include "firmware_hash.h"
 
 using namespace actuator_board_pins;
 
@@ -1176,7 +1175,8 @@ void setup() {
     last_server_heartbeat_ms = 0;
 #ifdef SENSOR_ETH_USE_DHCP
     Serial.println(
-        "[NET] address assigned by the server; broadcasting until one is heard");
+        "[NET] address assigned by the server; broadcasting until one is "
+        "heard");
 #endif
 
     Serial.println("Setup complete. State: WaitingForServer");

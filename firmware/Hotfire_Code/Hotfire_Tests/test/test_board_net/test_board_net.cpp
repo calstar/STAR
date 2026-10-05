@@ -131,8 +131,8 @@ void test_server_is_learned_from_its_packets(void) {
     IPAddress server = kDefaultServer;
 
     stub_set_millis(4000);
-    bool changed = BoardNet::onServerPacket(s, IPAddress(192, 168, 2, 77),
-                                            server);
+    bool changed =
+        BoardNet::onServerPacket(s, IPAddress(192, 168, 2, 77), server);
 
     TEST_ASSERT_TRUE(changed);
     TEST_ASSERT_TRUE(s.serverLearned);

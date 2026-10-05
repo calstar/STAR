@@ -1,5 +1,6 @@
 #include "elodin/DatabaseConfig.hpp"
 
+#include <algorithm>
 #include <iostream>
 #include <string>
 
@@ -20,6 +21,34 @@ static bool send_msg(ElodinClient& client, T msg) {
         return false;
     }
     return client.send_msg({0, 0}, buf);  // packet_id unused — already in buf
+}
+
+bool DatabaseConfig::register_environmental_tables(ElodinClient& client,
+                                                   const std::vector<BoardChannels>& boards) {
+    bool ok = true;
+    for (const auto& board : boards) {
+        if (board.board_id == 0 ||
+            std::find(board.channels.begin(), board.channels.end(), 1) == board.channels.end())
+            continue;
+        const std::string entity = "ENV" + std::to_string(board.board_id);
+        const std::string prefix = entity + ".";
+        auto vt = builder::vtable({
+            raw_field(0, 8, schema(PrimType::U64(), {}, component(prefix + "timestamp_ns"))),
+            raw_field(8, 4, schema(PrimType::F32(), {}, component(prefix + "temperature_c"))),
+            raw_field(12, 4, schema(PrimType::U32(), {}, component(prefix + "pressure_pa"))),
+            raw_field(16, 4, schema(PrimType::F32(), {}, component(prefix + "humidity_rh"))),
+            raw_field(20, 4, schema(PrimType::U32(), {}, component(prefix + "sample_ts_ms"))),
+        });
+        if (!send_msg(client, VTableMsg{.id = {0x25, board.board_id}, .vtable = vt})) {
+            ok = false;
+            continue;
+        }
+        for (const char* field :
+             {"timestamp_ns", "temperature_c", "pressure_pa", "humidity_rh", "sample_ts_ms"})
+            ok = send_msg(client, set_component_name(prefix + field)) && ok;
+        ok = send_msg(client, set_entity_name((0x25u << 8) | board.board_id, entity)) && ok;
+    }
+    return ok;
 }
 
 // ── Helper: register one raw-sensor VTable for a single channel ────────────

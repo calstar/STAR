@@ -109,6 +109,18 @@ describe('the gate lets a clean profile through', () => {
 });
 
 describe('the gate refuses a broken profile', () => {
+  it.each([
+    '[boards.env]\ntype = "ENVIRONMENTAL"\nboard_id = 256\n',
+    '[boards.env]\ntype = "ENVIRONMENTAL"\nboard_id = 25\n' +
+      '[boards.other_env]\ntype = "ENVIRONMENTAL"\nboard_id = 25\n',
+  ])('does not deploy invalid environmental identities', async (boards) => {
+    writeProfile(CLEAN_PROFILE + boards);
+    await expect(sessionManager.start(false, 60_000)).rejects.toThrow(ConfigIssuesError);
+    expect(validateActiveProfile().issues.some((i) => i.page === 'boards' && i.level === 'error')).toBe(true);
+    expect(sessionManager.getStatus().active).toBe(false);
+    expect(deployed()).toBe('# deployed-marker\n');
+  });
+
   // A duplicate state id: the later entry wins and the earlier state silently disappears.
   const BROKEN = CLEAN_PROFILE.replace('id = 3\nname = "Fire"', 'id = 1\nname = "Fire"');
 

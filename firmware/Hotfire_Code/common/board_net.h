@@ -56,7 +56,7 @@ inline const char* sourceName(AddressSource s) {
 struct State {
     // --- set once by configure(), at setup() ---
     byte mac[6] = {0, 0, 0, 0, 0, 0};
-    IPAddress staticIP;      // last-resort 192.168.2.<BOARD_ID>
+    IPAddress staticIP;  // last-resort 192.168.2.<BOARD_ID>
     IPAddress staticSubnet;
 
     // --- runtime ---

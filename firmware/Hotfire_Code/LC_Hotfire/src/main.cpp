@@ -86,8 +86,7 @@ static void collect_chunk_impl() {
         const int ch2 = getAdcChannel(connector_id, 2);
         if (ch1 < 0 || ch2 < 0)
             continue;
-        const bool mux_changed =
-            (ch1 != last_mux_p || ch2 != last_mux_n);
+        const bool mux_changed = (ch1 != last_mux_p || ch2 != last_mux_n);
         ads126x.setInputMux(static_cast<uint8_t>(ch1),
                             static_cast<uint8_t>(ch2));
         last_mux_p = ch1;

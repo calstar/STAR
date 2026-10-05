@@ -18,7 +18,7 @@
  * cal_stability, cal_lc_tare, raw_cal_presence, heartbeat, board_status (Boards pane: all enabled boards connected),
  * selftest, state_transition,
  * state_debug, actuator_ws, actuator_udp, elodin_sync, controller, timestamps,
- * conservation, config_validate — or numbers 1–6, 10–12, 14–15
+ * conservation, config_validate, environmental — or numbers 1–6, 10–12, 14–15
  * (same as printed test labels). Env INTEGRATION_ONLY is equivalent to --only.
  * Most IDs still need the full integration stack (Elodin, DAQ, calibration, backend);
  * state/actuator/elodin_sync need sequencer; controller needs controller_service; selftest
@@ -32,6 +32,7 @@ import * as fs from 'fs';
 import * as http from 'http';
 import { spawnSync } from 'child_process';
 import * as net from 'net';
+import { createSocket } from 'node:dgram';
 
 const WS_PORT = parseInt(process.argv[2] || '8081', 10);
 const API_PORT = parseInt(process.argv[3] || '8082', 10);
@@ -98,7 +99,7 @@ function parseOnlyTests(): Set<string> | null {
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
     'controller', 'timestamps', 'conservation', 'board_logs', 'board_log_mode',
-    'config_validate',
+    'config_validate', 'environmental',
   ]);
   for (const id of out) {
     if (!allowed.has(id)) {
@@ -110,6 +111,10 @@ function parseOnlyTests(): Set<string> | null {
 }
 
 const ONLY_TESTS = parseOnlyTests();
+if (ONLY_TESTS?.has('environmental') && !IS_THIN) {
+  console.error('Environmental checks require --backend=thin');
+  process.exit(1);
+}
 
 /**
  * Read a log file until it contains every needle, or the timeout expires; returns whatever it
@@ -3256,6 +3261,107 @@ async function testBoardLogMode(_ws: WebSocket): Promise<void> {
       : `Board 60 should receive enable_serial_printing=${TARGET_MODE} (saw ${seen === -1 ? 'no config' : seen}). Sim out: ${out.slice(0, 300)}`);
 }
 
+// Existing packet type 13: version, board milliseconds, Celsius, absolute Pa, %RH.
+function environmentalPacket(temperature = -12.5, pressure = 101325, humidity = 45.25): Buffer {
+  const packet = Buffer.alloc(18);
+  packet[0] = 13;
+  packet.writeUInt32LE(123456, 2);
+  packet.writeFloatLE(temperature, 6);
+  packet.writeUInt32LE(pressure, 10);
+  packet.writeFloatLE(humidity, 14);
+  return packet;
+}
+
+async function testEnvironmentalDataFlow(ws: WebSocket): Promise<void> {
+  console.log('\n🌡️ Environmental UDP → Elodin → WebSocket, including malformed packets');
+  // The standard integration config contains ENV25. The isolated recovery harness
+  // uses the same ID on 127.0.0.1 so it needs no macOS loopback alias.
+  const sourceIp = process.env.TEST_ENVIRONMENTAL_SOURCE_IP ?? '127.0.0.25';
+  if (!/^127\./.test(sourceIp)) throw new Error('Environmental test source must be loopback');
+  const udp = createSocket('udp4');
+  const updates: Array<{ entity: string; component: string; value: number; timestamp: number }> = [];
+  let connected = false;
+  const receive = (raw: WebSocket.RawData) => {
+    const message = JSON.parse(raw.toString());
+    if (message.type === MessageType.SENSOR_UPDATE) {
+      for (const row of Array.isArray(message.payload) ? message.payload : [message.payload]) {
+        if (row.entity === 'ENV25') updates.push(row);
+      }
+    }
+    if (message.type === MessageType.BOARD_STATUS_UPDATE) {
+      connected ||= message.payload.boards.some((b: any) =>
+        b.id === 25 && b.type === 'ENVIRONMENTAL' && b.connected);
+    }
+  };
+  const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
+  const send = (packet: Buffer) => new Promise<void>((resolve, reject) => {
+    udp.send(packet, TEST_DAQ_UDP_PORT, '127.0.0.1', error => error ? reject(error) : resolve());
+  });
+  const expected = { temperature_c: -12.5, pressure_pa: 101325, humidity_rh: 45.25 };
+  const hasValues = () => Object.entries(expected).every(([component, value]) =>
+    updates.some(row => row.component === component && row.value === value &&
+      Math.abs(row.timestamp - Date.now()) < 10000));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      udp.once('error', reject);
+      udp.bind(0, sourceIp, resolve);
+    });
+    ws.on('message', receive);
+    const heartbeat = Buffer.alloc(41);
+    heartbeat[0] = 1;
+    heartbeat[38] = 25;
+    heartbeat[40] = 2;
+    const deadline = Date.now() + 20000;
+    do {
+      await send(environmentalPacket());
+      await send(heartbeat);
+      await pause(200);
+    } while ((!hasValues() || !connected) && Date.now() < deadline);
+    assert(hasValues(), 'ENV25 delivers Celsius, absolute Pa, %RH and epoch timestamps');
+    assert(connected, 'ENV25 heartbeat reaches the board-status stream');
+    if (!hasValues()) return; // Do not pass rejection checks against a dead data path.
+
+    const badVersion = environmentalPacket(777, 222222, 88);
+    badVersion[1] = 99;
+    const cases: Array<[string, Buffer]> = [
+      ['version', badVersion],
+      ['truncated', environmentalPacket(777, 222222, 88).subarray(0, 17)],
+      ['oversized', Buffer.concat([environmentalPacket(777, 222222, 88), Buffer.from([0])])],
+      ['humidity above 100', environmentalPacket(777, 222222, 101)],
+      ['negative humidity', environmentalPacket(777, 222222, -1)],
+      ['zero pressure', environmentalPacket(777, 0, 88)],
+      ['NaN temperature', environmentalPacket(NaN, 222222, 88)],
+      ['infinite temperature', environmentalPacket(Infinity, 222222, 88)],
+      ['NaN humidity', environmentalPacket(777, 222222, NaN)],
+    ];
+    await pause(500); // Drain the valid packet before measuring rejection.
+    for (const [name, packet] of cases) {
+      const before = updates.length;
+      // Repetition spans backend flush windows. Sentinel extrema survive GUI
+      // downsampling even while the standard simulator publishes normal readings.
+      for (let i = 0; i < 6; i++) { await send(packet); await pause(200); }
+      await pause(500);
+      const received = updates.slice(before);
+      assert(!received.some(row => !Number.isFinite(row.value) || row.value === null ||
+        row.value === 777 || row.value === 222222 || row.value === 88 ||
+        (row.component === 'pressure_pa' && row.value === 0) ||
+        (row.component === 'humidity_rh' && (row.value < 0 || row.value > 100))),
+      `Environmental ${name} packet is rejected`);
+      if (process.env.TEST_ENVIRONMENTAL_EXCLUSIVE === '1') {
+        assert(received.length === 0, `Environmental ${name} produces no updates without a simulator`);
+      }
+    }
+    updates.length = 0;
+    const recoveryDeadline = Date.now() + 10000;
+    do { await send(environmentalPacket()); await pause(200); }
+    while (!hasValues() && Date.now() < recoveryDeadline);
+    assert(hasValues(), 'Valid environmental readings still arrive after malformed packets');
+  } finally {
+    ws.off('message', receive);
+    udp.close();
+  }
+}
+
 async function main(): Promise<void> {
   console.log('🧪 WebSocket Data Flow Integration Test');
   console.log(`   Backend: ${WS_URL} (${IS_THIN ? 'server.ts' : 'server-legacy.ts'})`);
@@ -3355,6 +3461,9 @@ async function main(): Promise<void> {
     if (IS_THIN && canRunCommandTests && runTest('cal_clear')) await testClearToNothing(ws);
     if (IS_THIN && canRunCommandTests && runTest('cal_lc_capture')) await testLcCapture(ws);
     if (IS_THIN && canRunCommandTests && runTest('cal_lc_tare')) await testLcTare(ws);
+    // Injected packets are not in the simulator's counters. Keep this after
+    // conservation and the other read-only checks against simulator ground truth.
+    if (IS_THIN && runTest('environmental')) await testEnvironmentalDataFlow(ws);
   } finally {
     ws.close();
   }
