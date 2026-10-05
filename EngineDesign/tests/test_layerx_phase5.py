@@ -18,6 +18,13 @@ from pathlib import Path
 
 import pytest
 
+#: The sweep fixture runs every factor of the uncertainty study on four spawned
+#: workers, each importing and JIT-compiling the engine cold: 32 s on a laptop with
+#: warm caches, past CI's 120 s per-test guard on its runners -- and the guard's thread
+#: method ends the whole run, not just this test. pytest-timeout honours this; without
+#: the plugin it is an unknown mark and only warns.
+pytestmark = pytest.mark.timeout(600)
+
 pytest.importorskip("feedtwin", reason="lib/feedtwin is not installed")
 
 from engine.layerx import DrawingStore, LayerXSettings, prepare  # noqa: E402
