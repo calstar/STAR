@@ -67,6 +67,7 @@ SYMBOL_KINDS = {
     "PR": "regulator",
     "SOL": "solenoid",
     "ROT": "valve",
+    "MOV": "valve",
     "MAN": "valve",
     "RV": "valve",  # "relief" when it was built as one; see _branch_kind
     "CV": "check",

@@ -4,7 +4,7 @@ import type { Sketch } from './sketch/model';
 
 export type ComponentType =
   | 'RTD' | 'PT' | 'PG' | 'LC' | 'TC'
-  | 'MAN' | 'ROT' | 'SOL'
+  | 'MAN' | 'ROT' | 'SOL' | 'MOV'
   | 'PR' | 'RV' | 'CV' | 'QD'
   | 'TANK' | 'ENGINE' | 'MANIFOLD' | 'VALVE_BANK'
   | 'KBOTTLE' | 'DEWAR'
@@ -135,6 +135,7 @@ export const COMPONENT_DEFS: ComponentDef[] = [
   { id: 'MAN',    type: 'MAN', label: 'MAN_#',   fullName: 'Ball valve, manual',             group: 'Valves' },
   { id: 'ROT',    type: 'ROT', label: 'ROT_#',   fullName: 'Ball valve, rotary',             group: 'Valves' },
   { id: 'SOL',    type: 'SOL', label: 'SOL_#',   fullName: 'Solenoid valve',                  group: 'Valves' },
+  { id: 'MOV',    type: 'MOV', label: 'MOV_#',   fullName: 'Motorized valve',                 group: 'Valves' },
   { id: 'VALVE_BANK', type: 'VALVE_BANK', label: 'VB-#', fullName: '5/2 solenoid manifold', group: 'Valves' },
 
   { id: 'PR',     type: 'PR',  label: 'PR_#',    fullName: 'Regulator',              group: 'Flow Control' },

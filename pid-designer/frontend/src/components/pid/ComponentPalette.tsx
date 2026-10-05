@@ -22,7 +22,7 @@ function PaletteSymbol({ type }: { type: ComponentType }) {
           <text x="14" y="18" textAnchor="middle" fontSize="6" fill="var(--color-text-primary)" fontFamily="monospace">{type}</text>
         </svg>
       );
-    case 'MAN': case 'ROT': case 'SOL':
+    case 'MAN': case 'ROT': case 'SOL': case 'MOV':
       return (
         <svg width="32" height="28" viewBox="0 0 32 28">
           <polygon points="2,4 30,22 30,4 2,22" fill="var(--color-bg-tertiary)" stroke="var(--color-text-secondary)" strokeWidth="1.2" />
@@ -30,7 +30,7 @@ function PaletteSymbol({ type }: { type: ComponentType }) {
             <>
               <rect x="11" y="0" width="10" height="6" rx="1" fill="var(--color-bg-tertiary)" stroke="var(--color-text-secondary)" strokeWidth="1" />
               <text x="16" y="5.5" textAnchor="middle" fontSize="4" fill="var(--color-text-secondary)" fontFamily="monospace">
-                {type === 'SOL' ? 'S' : 'P'}
+                {type === 'SOL' ? 'S' : type === 'MOV' ? 'M' : 'P'}
               </text>
             </>
           )}

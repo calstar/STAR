@@ -271,6 +271,7 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
   MAN: { catalogued: true, params: [CD, CV, P('bore', 'Bore', 'length')], options: [COEFFICIENT('Cd')] },
   ROT: actuatedValveSpec(),
   SOL: actuatedValveSpec(),
+  MOV: actuatedValveSpec(),
 
   // Drawn, not solved: feed-twin's engine is the Layer-1 config named here.
   // The two numbers are what the sheet shows in the chamber.

@@ -51,7 +51,8 @@ function ManualValve({ selected }: { selected: boolean }) {
 
 export function ValveNode({ id, data, selected }: NodeProps) {
   const { componentType, label, labelOffset, rotation, options } = data as unknown as PIDNodeData;
-  const actuator = componentType === 'SOL' ? 'S' : 'P';
+  // The actuator's letter: S a solenoid, M a motor, P the pneumatic rotary.
+  const actuator = componentType === 'SOL' ? 'S' : componentType === 'MOV' ? 'M' : 'P';
   // Drawn, not just stored. Which way a valve fails is the difference between
   // a safe abort and a spill, and it is the first thing anyone reading the
   // drawing during a procedure review looks for -- so it belongs on the

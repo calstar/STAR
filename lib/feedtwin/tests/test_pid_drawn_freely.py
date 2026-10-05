@@ -453,6 +453,18 @@ def test_each_commandable_valves_job_is_read_off_the_plumbing() -> None:
     }
 
 
+def test_a_motorized_main_valve_has_the_same_job_as_a_rotary_one() -> None:
+    """A motor where the rotary has a pneumatic actuator changes nothing about
+    what the valve does on the stand."""
+    payload = _le4_like()
+    for n in payload["nodes"]:
+        if n["id"] in ("FM", "OM"):
+            n["data"]["componentType"] = "MOV"
+    b = built(payload)
+    assert b.valve_roles["FM"] == frozenset({"fuel", "main"})
+    assert b.valve_roles["OM"] == frozenset({"lox", "main"})
+
+
 def test_valves_the_names_do_not_match_are_bound_by_what_they_do() -> None:
     """ "FU_SOL_R" shares no word with "Fuel Press", so LE4 bound nothing and
     Fire opened nothing. Bound by role, every press and main is commanded."""

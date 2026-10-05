@@ -49,6 +49,7 @@ BRANCH_KINDS: dict[str, tuple[str, str]] = {
     "MAN": ("valve", "cv"),
     "ROT": ("valve", "cv"),
     "SOL": ("valve", "cv"),
+    "MOV": ("valve", "cv"),
     "PR": ("regulator", "droop"),
     "RV": ("valve", "cv"),
     "CV": ("check_valve", "cv"),
@@ -157,7 +158,7 @@ DEFAULT_TANK_LITRES = 0.0175
 #: or a blanked tee branch is a plug, and plugs are not drawn -- inferring an
 #: open boundary from one would model a tank venting through a fitting that
 #: holds pressure.
-VENTING_VALVE_TYPES = frozenset({"MAN", "ROT", "SOL", "RV"})
+VENTING_VALVE_TYPES = frozenset({"MAN", "ROT", "SOL", "MOV", "RV"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -553,7 +554,7 @@ def build_network(
         placements.append(
             Placement(node.id, node.label, node.type, node.x, node.y, fluid)
         )
-        if node.type in {"ROT", "SOL"}:
+        if node.type in {"ROT", "SOL", "MOV"}:
             actuators[node.id] = f"{node.label}.command"
 
     # 3. Instruments observe. They join the network at the place they clip to.
@@ -928,7 +929,7 @@ def _valve_roles(
     """
     # Valves stop a walk; a dome-loaded regulator carries a `.dome` signal and
     # is an actuator too, but the press line runs through it.
-    valves = {n.id for n in diagram.nodes if n.type in {"ROT", "SOL"}} | gse
+    valves = {n.id for n in diagram.nodes if n.type in {"ROT", "SOL", "MOV"}} | gse
     stops = valves | {n.id for n in diagram.nodes if n.type == "RV"}
     reach = _reacher(net, diagram, tanks, engine_ports, stops)
 
@@ -1082,7 +1083,7 @@ def _gse_vents(
         for role in roles.values()
         if "vent" in role and len(role) == 2
     }
-    stops = {n.id for n in diagram.nodes if n.type in {"ROT", "SOL", "RV"}}
+    stops = {n.id for n in diagram.nodes if n.type in {"ROT", "SOL", "MOV", "RV"}}
     candidates: dict[str, list[tuple[PidNode, str]]] = {}
     for node in diagram.nodes:
         if node.type != "QD" or node.id not in net.branches:

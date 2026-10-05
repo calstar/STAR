@@ -136,7 +136,7 @@ def summarize(payload: Mapping[str, Any], name: str = "") -> Dict[str, Any]:
             })
         elif node.type in ("ENGINE", "INJECTOR"):
             engines.append({"id": node.id, "label": node.label})
-        elif node.is_inline and node.type in ("SOL", "MAN", "ROT", "BV", "AV"):
+        elif node.is_inline and node.type in ("SOL", "MAN", "ROT", "MOV", "BV", "AV"):
             valves.append({"id": node.id, "label": node.label, "type": node.type})
     return {
         "readable": True,

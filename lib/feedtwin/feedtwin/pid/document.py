@@ -27,7 +27,7 @@ from feedtwin.pid.segments import read_segments
 
 #: Component types that carry mass between two points. Everything else is
 #: either a place (a tank, a junction) or an observer (a transducer).
-INLINE_TYPES = frozenset({"MAN", "ROT", "SOL", "PR", "RV", "CV", "QD"})
+INLINE_TYPES = frozenset({"MAN", "ROT", "SOL", "MOV", "PR", "RV", "CV", "QD"})
 
 #: Types that declare a fluid and a pressure: where a solve starts.
 SOURCE_TYPES = frozenset({"TANK", "KBOTTLE", "DEWAR"})

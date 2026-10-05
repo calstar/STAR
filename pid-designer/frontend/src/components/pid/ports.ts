@@ -144,7 +144,7 @@ export function portsOf(node: Node): string[] {
     // the R key is for.
     case 'QD':
       return ['l', 'r'];
-    case 'MAN': case 'ROT': case 'SOL': case 'RV': case 'CV':
+    case 'MAN': case 'ROT': case 'SOL': case 'MOV': case 'RV': case 'CV':
       return ['l', 'r'];
     case 'PR':
       return d?.options?.domeLoaded === 'yes' ? ['l', 'r', 'dome'] : ['l', 'r'];

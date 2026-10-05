@@ -58,7 +58,7 @@ export const isTapped = (type?: string) => !!type && TAPPED.has(type);
  * deleting one from a line heals the line -- and feed-twin has to agree that
  * what it then reads is one run with a part in it.
  */
-export const INLINE = new Set(['MAN', 'ROT', 'SOL', 'PR', 'RV', 'CV', 'QD']);
+export const INLINE = new Set(['MAN', 'ROT', 'SOL', 'MOV', 'PR', 'RV', 'CV', 'QD']);
 
 export const isInline = (type?: string) => !!type && INLINE.has(type);
 
