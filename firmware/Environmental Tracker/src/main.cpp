@@ -5,10 +5,10 @@
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <STAR_EthernetOTA.h>
 #include <Wire.h>
 #include <daq-protocol.h>
 #include <esp_mac.h>
-#include <STAR_EthernetOTA.h>
 
 #include "firmware_hash.h"
 #include "pins.h"

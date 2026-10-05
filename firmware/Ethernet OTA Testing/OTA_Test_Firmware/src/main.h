@@ -3,7 +3,6 @@
 #include <Arduino.h>
 #include <Ethernet.h>
 #include <SPI.h>
-
 #include <STAR_EthernetOTA.h>
 
 // ── Board pin definitions (from shared common/) ───────────────

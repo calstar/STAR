@@ -89,10 +89,14 @@ def board_reported_sha256(data: bytes) -> Optional[str]:
     return data[-32:].hex()
 
 
-def upload(data: bytes, ip: str, port: int = DEFAULT_PORT,
-           on_progress: Optional[ProgressFn] = None,
-           connect_timeout: float = CONNECT_TIMEOUT,
-           transfer_timeout: float = TRANSFER_TIMEOUT) -> str:
+def upload(
+    data: bytes,
+    ip: str,
+    port: int = DEFAULT_PORT,
+    on_progress: Optional[ProgressFn] = None,
+    connect_timeout: float = CONNECT_TIMEOUT,
+    transfer_timeout: float = TRANSFER_TIMEOUT,
+) -> str:
     """Send `data` to the board and wait for its acknowledgement.
 
     Returns the board's reply text. Raises OtaError with something actionable
@@ -103,14 +107,16 @@ def upload(data: bytes, ip: str, port: int = DEFAULT_PORT,
     if len(data) > MAX_IMAGE_BYTES:
         raise OtaError(
             f"image is {len(data)} bytes; the board rejects anything over "
-            f"{MAX_IMAGE_BYTES}")
+            f"{MAX_IMAGE_BYTES}"
+        )
 
     try:
         sock = socket.create_connection((ip, port), timeout=connect_timeout)
     except OSError as exc:
         raise OtaError(
             f"could not connect to {ip}:{port} — {exc}. Is the board powered, "
-            f"on this subnet, and past its boot delay?") from exc
+            f"on this subnet, and past its boot delay?"
+        ) from exc
 
     try:
         sock.settimeout(transfer_timeout)
@@ -118,13 +124,13 @@ def upload(data: bytes, ip: str, port: int = DEFAULT_PORT,
 
         sent = 0
         while sent < len(data):
-            chunk = data[sent:sent + CHUNK_SIZE]
+            chunk = data[sent : sent + CHUNK_SIZE]
             try:
                 sock.sendall(chunk)
             except OSError as exc:
                 raise OtaError(
-                    f"transfer failed after {sent} of {len(data)} bytes — "
-                    f"{exc}") from exc
+                    f"transfer failed after {sent} of {len(data)} bytes — " f"{exc}"
+                ) from exc
             sent += len(chunk)
             if on_progress:
                 on_progress(sent, len(data))
@@ -136,12 +142,14 @@ def upload(data: bytes, ip: str, port: int = DEFAULT_PORT,
             raise OtaError(
                 "image sent, but the board never acknowledged it "
                 f"({exc}). It may have rejected the image — check its serial "
-                f"log for '[OTA] ERROR'.") from exc
+                f"log for '[OTA] ERROR'."
+            ) from exc
 
         if reply != "OK":
             raise OtaError(
                 f"board replied {reply!r} instead of 'OK' — check its serial "
-                f"log for '[OTA] ERROR'")
+                f"log for '[OTA] ERROR'"
+            )
         return reply
     finally:
         sock.close()
@@ -164,11 +172,13 @@ def find_pio() -> str:
             return str(c)
     raise OtaError(
         "PlatformIO CLI not found. Install it (pip install platformio) or "
-        "build the project yourself and pass --bin.")
+        "build the project yourself and pass --bin."
+    )
 
 
-def build(project: Path, env: Optional[str] = None,
-          message: Optional[str] = None) -> Path:
+def build(
+    project: Path, env: Optional[str] = None, message: Optional[str] = None
+) -> Path:
     """Build `project` and return the path to firmware.bin.
 
     `message` is injected as STAR_OTA_TEST_MESSAGE through
@@ -186,8 +196,10 @@ def build(project: Path, env: Optional[str] = None,
     build_env = os.environ.copy()
     if message is not None:
         if '"' in message or "'" in message:
-            raise OtaError("--message cannot contain quote characters; they "
-                           "do not survive the trip to the compiler.")
+            raise OtaError(
+                "--message cannot contain quote characters; they "
+                "do not survive the trip to the compiler."
+            )
         # Single-quote the whole value. PlatformIO splits PLATFORMIO_BUILD_FLAGS
         # with shlex, so a bare \"two words\" is torn in half at the space and
         # the string literal never terminates. This is the form the library's
@@ -198,14 +210,16 @@ def build(project: Path, env: Optional[str] = None,
         print(f"  baking in test message: {message!r}")
 
     print(f"  building {project.name}…")
-    result = subprocess.run(cmd, env=build_env, text=True,
-                            capture_output=True)
+    result = subprocess.run(cmd, env=build_env, text=True, capture_output=True)
     if result.returncode != 0:
         tail = "\n".join((result.stdout + result.stderr).splitlines()[-25:])
         raise OtaError(f"build failed:\n{tail}")
 
-    bins = sorted((project / ".pio" / "build").glob("*/firmware.bin"),
-                  key=lambda p: p.stat().st_mtime, reverse=True)
+    bins = sorted(
+        (project / ".pio" / "build").glob("*/firmware.bin"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
     if not bins:
         raise OtaError(f"build succeeded but no firmware.bin under {project}")
     return bins[0]
@@ -223,28 +237,39 @@ def _progress_printer() -> ProgressFn:
         elapsed = time.time() - state["start"]
         rate = (sent / elapsed / 1024) if elapsed > 0 else 0
         bar = "#" * (pct // 5) + "." * (20 - pct // 5)
-        print(f"\r  [{bar}] {pct:3d}%  {sent}/{total} bytes  {rate:.0f} KB/s",
-              end="", flush=True)
+        print(
+            f"\r  [{bar}] {pct:3d}%  {sent}/{total} bytes  {rate:.0f} KB/s",
+            end="",
+            flush=True,
+        )
 
     return report
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
-        description="Push firmware to a STAR board over Ethernet.")
+        description="Push firmware to a STAR board over Ethernet."
+    )
     p.add_argument("--ip", help="board IP address")
     p.add_argument("--port", type=int, default=DEFAULT_PORT)
-    p.add_argument("--bin", type=Path,
-                   help="firmware.bin to upload (skip to build with --project)")
-    p.add_argument("--project", type=Path,
-                   help="PlatformIO project to build, then upload")
+    p.add_argument(
+        "--bin", type=Path, help="firmware.bin to upload (skip to build with --project)"
+    )
+    p.add_argument(
+        "--project", type=Path, help="PlatformIO project to build, then upload"
+    )
     p.add_argument("--env", help="PlatformIO env within --project")
-    p.add_argument("--message",
-                   help="bake this into the build as STAR_OTA_TEST_MESSAGE, so "
-                        "the board visibly prints something new afterwards")
+    p.add_argument(
+        "--message",
+        help="bake this into the build as STAR_OTA_TEST_MESSAGE, so "
+        "the board visibly prints something new afterwards",
+    )
     p.add_argument("--timeout", type=float, default=TRANSFER_TIMEOUT)
-    p.add_argument("--self-test", action="store_true",
-                   help="run an offline round trip against a fake board")
+    p.add_argument(
+        "--self-test",
+        action="store_true",
+        help="run an offline round trip against a fake board",
+    )
     args = p.parse_args(argv)
 
     if args.self_test:
@@ -275,17 +300,22 @@ def main(argv=None) -> int:
         print(f"  sha256: {digest}   (of the .bin file)")
         print(f"  target: {args.ip}:{args.port}")
 
-        upload(data, args.ip, args.port, on_progress=_progress_printer(),
-               transfer_timeout=args.timeout)
+        upload(
+            data,
+            args.ip,
+            args.port,
+            on_progress=_progress_printer(),
+            transfer_timeout=args.timeout,
+        )
         print("\n  board acknowledged — rebooting into the new image.")
         if board_digest:
-            print("  The board will print this at boot (\"Firmware hash:\") and")
+            print('  The board will print this at boot ("Firmware hash:") and')
             print("  report it in BOARD_HEARTBEAT -- compare against this, not")
             print("  the file sha256 above:")
             print(f"    {board_digest.upper()}")
         else:
             print("  This image has no appended SHA-256, so the board's own")
-            print("  \"Firmware hash:\" line cannot be predicted from here.")
+            print('  "Firmware hash:" line cannot be predicted from here.')
         if args.message:
             print(f'  ...and with "[OTA-MSG] {args.message}" on its serial log.')
         return 0
@@ -301,8 +331,9 @@ def _self_test() -> None:
 
     received = {}
 
-    def fake_board(sock: socket.socket, reply: bytes = b"OK\r\n",
-                   truncate: bool = False) -> None:
+    def fake_board(
+        sock: socket.socket, reply: bytes = b"OK\r\n", truncate: bool = False
+    ) -> None:
         conn, _ = sock.accept()
         with conn:
             header = b""
@@ -325,8 +356,7 @@ def _self_test() -> None:
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind(("127.0.0.1", 0))
         srv.listen(1)
-        t = threading.Thread(target=fake_board, args=(srv,), kwargs=kwargs,
-                             daemon=True)
+        t = threading.Thread(target=fake_board, args=(srv,), kwargs=kwargs, daemon=True)
         t.start()
         return srv, t
 
@@ -335,8 +365,10 @@ def _self_test() -> None:
     srv, t = serve()
     port = srv.getsockname()[1]
     seen = []
-    assert upload(image, "127.0.0.1", port,
-                  on_progress=lambda s, tot: seen.append(s)) == "OK"
+    assert (
+        upload(image, "127.0.0.1", port, on_progress=lambda s, tot: seen.append(s))
+        == "OK"
+    )
     t.join(timeout=5)
     srv.close()
     assert received["size"] == len(image), received["size"]

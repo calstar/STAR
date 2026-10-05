@@ -17,15 +17,14 @@
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <STAR_EthernetOTA.h>
 #include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
 
-#include <STAR_EthernetOTA.h>
-
-#include "firmware_hash.h"
 #include "board_net.h"
+#include "firmware_hash.h"
 
 #ifndef SENSOR_HOTFIRE_MAX_PACKET_SIZE
 #define SENSOR_HOTFIRE_MAX_PACKET_SIZE 512
@@ -45,7 +44,6 @@
 namespace SensorHotfire {
 
 inline StarOTA::Server g_ota_server{HOTFIRE_OTA_PORT};
-
 
 enum class State : uint8_t {
     WaitingForServer = 1,  // SETUP
@@ -487,7 +485,8 @@ inline void setup(CoreState& s, const Config& cfg) {
     s.lastHeartbeatMillis = 0;
 #ifdef SENSOR_ETH_USE_DHCP
     HF_LOGLN(
-        "[NET] address assigned by the server; broadcasting until one is heard");
+        "[NET] address assigned by the server; broadcasting until one is "
+        "heard");
 #endif
     Serial.println("State -> WaitingForServer");
     Serial.flush();
@@ -641,8 +640,7 @@ inline void loop(CoreState& s, const Config& cfg) {
                                            ip_bytes[2], ip_bytes[3]);
                 }
                 cfg.send_chunks_to(cfg.user_data, s.serverIP, s.serverPort,
-                                   also_abort, actuatorIP,
-                                   s.serverPortDefault);
+                                   also_abort, actuatorIP, s.serverPortDefault);
             }
             break;
         case State::SelfTest:
