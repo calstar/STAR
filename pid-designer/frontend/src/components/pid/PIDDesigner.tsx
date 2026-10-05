@@ -43,7 +43,7 @@ import type { PIDNodeData } from './types';
 import { numberTag } from './tags';
 import { migrate } from './migrate';
 import { handleCentre, handleEnd } from './ports';
-import { copySelection, pasteClip } from './clipboard';
+import { copySelection, duplicatePage, pasteClip } from './clipboard';
 import type { Clip } from './clipboard';
 import { TitleBlock } from './TitleBlock';
 import type { SheetMeta } from './exportImage';
@@ -1456,6 +1456,17 @@ function PIDCanvas({
               ? { ...n, data: { ...n.data, page: to } } : n));
           setDeclaredPages(ps => ps.map(x => (x === from ? to : x)));
           setPage(cur => (cur === from ? to : cur));
+        }}
+        // Another version of a page -- hotfire and launch -- is its copy with
+        // a few changes: everything on it, the same tags, on a new page that
+        // opens. See `duplicatePage`.
+        onDuplicate={(from, name) => {
+          if (readOnlyRef.current || pages.includes(name)) return;
+          const { nodes: ns, edges: es } = snapshot.current;
+          const copy = duplicatePage(clearSelection(ns), clearSelection(es), from, name);
+          setDeclaredPages(ps => (ps.includes(name) ? ps : [...ps, name]));
+          commitGraph(copy.nodes, copy.edges);
+          setPage(name);
         }}
       />
 

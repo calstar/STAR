@@ -138,6 +138,7 @@ function Sheet({ nodes: given, edges: givenEdges, colorMode = 'dark', onSymbolCl
           onSelect={setPage}
           onAdd={noop}
           onRename={noop}
+          onDuplicate={noop}
           count={count}
           selectedCount={0}
           onMoveSelection={noop}

@@ -35,6 +35,8 @@ import { dissolveAfterDelete } from './splitEdge';
 import type { HealDrawn } from './splitEdge';
 import { numberTag, tagStem } from './tags';
 import type { PIDNodeData } from './types';
+import type { Signals } from './signals';
+
 
 export interface Clip {
   nodes: Node[];
@@ -227,6 +229,14 @@ export interface PasteOptions {
   edges?: Edge[];
   /** The page's lines as drawn and its ports, so a copy lands clear of the lines too: see `besideOffset`. */
   geometry?: PasteGeometry;
+  /**
+   * Keep every tag as it is rather than numbering a fresh one. A page
+   * duplicated as another version of the same stand (`duplicatePage`) draws
+   * the same hardware, and MAN-1 is MAN-1 on both.
+   */
+  keepTags?: boolean;
+  /** Hand the copy back selected, for a drag to move it. Default true. */
+  select?: boolean;
 }
 
 /**
@@ -241,7 +251,7 @@ export function pasteClip(
   clip: Clip,
   existing: Node[],
   page: string,
-  { offset, edges: existingEdges = [], geometry }: PasteOptions = {},
+  { offset, edges: existingEdges = [], geometry, keepTags = false, select = true }: PasteOptions = {},
 ): { nodes: Node[]; edges: Edge[] } {
   const delta = offset ?? pasteOffset(clip, existing, page, geometry);
   const idMap = new Map<string, string>();
@@ -275,8 +285,8 @@ export function pasteClip(
 
   const placed = clip.nodes.map(n => {
     const d = dataOf(n);
-    const next: PIDNodeData & { along?: { from?: string; to?: string } } = { ...d, page };
-    if (d?.label && d.componentType && d.componentType !== 'REGION' && d.componentType !== 'TEXT') {
+    const next: PIDNodeData & { along?: { from?: string; to?: string }; signals?: Signals } = { ...d, page };
+    if (!keepTags && d?.label && d.componentType && d.componentType !== 'REGION' && d.componentType !== 'TEXT') {
       const tag = numberTag(`${tagStem(d.label)}_#`, taken);
       taken.push(tag);
       next.label = tag;
@@ -297,10 +307,23 @@ export function pasteClip(
       const t = to !== undefined ? idMap.get(to) : undefined;
       next.along = { ...rest, ...(f ? { from: f } : {}), ...(t ? { to: t } : {}) };
     }
+    // A disconnect whose mate came along mates with the mate's copy, so a
+    // copied pair is a pair; a mate left behind is still its mate.
+    const mate = d?.options?.pairedWith;
+    if (mate && idMap.has(mate)) next.options = { ...d.options, pairedWith: idMap.get(mate)! };
+    // A solenoid manifold's dotted lines end on the copies of what they ended
+    // on, when those came along (signals.ts).
+    const signals = (d as { signals?: Signals } | undefined)?.signals;
+    if (signals) {
+      next.signals = Object.fromEntries(Object.entries(signals).map(([port, s]) => {
+        const to = s.to !== undefined ? idMap.get(s.to) ?? edgeMap.get(s.to) : undefined;
+        return [port, to ? { ...s, to } : s];
+      }));
+    }
     return {
       ...n,
       id: idMap.get(n.id)!,
-      selected: true,
+      selected: select,
       data: next as unknown as Record<string, unknown>,
     } as Node;
   });
@@ -317,4 +340,26 @@ export function pasteClip(
   // lines it carries (hand-drawn and pipe-given alike -- both are absolute),
   // and each tee's record of where its pipe's ends were.
   return translateSubgraph(placed, lines, new Set(idMap.values()), delta);
+}
+
+/**
+ * A copy of everything on `page`, as a new page called `name`: every symbol
+ * and every line on it, in the same places, under fresh ids.
+ *
+ * For drawing another version of the same stand -- the hotfire and the
+ * launch configuration, mostly the same with a few changes -- so the tags are
+ * kept: it is the same hardware. Lines that cross to another page are not
+ * drawn and are not copied. Nothing is selected, and the original is left
+ * exactly as it was.
+ */
+export function duplicatePage(
+  nodes: Node[], edges: Edge[], page: string, name: string,
+): { nodes: Node[]; edges: Edge[] } {
+  const on = new Set(nodes.filter(n => pageOf(dataOf(n)) === page).map(n => n.id));
+  const clip: Clip = {
+    nodes: nodes.filter(n => on.has(n.id)).map(n => structuredClone({ ...n, selected: false })),
+    edges: edges.filter(e => on.has(e.source) && on.has(e.target)).map(e => structuredClone({ ...e, selected: false })),
+  };
+  const copy = pasteClip(clip, nodes, name, { offset: { x: 0, y: 0 }, edges, keepTags: true, select: false });
+  return { nodes: [...nodes, ...copy.nodes], edges: [...edges, ...copy.edges] };
 }
