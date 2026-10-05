@@ -175,6 +175,8 @@ interface CanvasProps {
    */
   viewportsRef:       React.MutableRefObject<Map<string, Viewport>>;
   getRef:             React.MutableRefObject<() => Snapshot>;
+  /** Save now whatever the autosave has not saved yet, and wait for it. */
+  saveNowRef:         React.MutableRefObject<() => Promise<void>>;
   loadRef:            React.MutableRefObject<(d: Snapshot) => void>;
   clearRef:           React.MutableRefObject<() => void>;
   clearCountRef:      React.MutableRefObject<() => { page: string; nodes: number; edges: number }>;
@@ -198,7 +200,7 @@ interface CanvasProps {
 }
 
 function PIDCanvas({
-  diagramRef, fitRef, viewportsRef, page, setPage, declaredPages, setDeclaredPages, getRef, loadRef, clearRef, clearCountRef, undoRef, redoRef,
+  diagramRef, fitRef, viewportsRef, page, setPage, declaredPages, setDeclaredPages, getRef, saveNowRef, loadRef, clearRef, clearCountRef, undoRef, redoRef,
   releaseRef, getHistoryRef, getReleasesRef, restoreMicroRef, restoreReleaseRef, onForbidden, onLockLost,
   mode, sheet, theme,
 }: CanvasProps) {
@@ -308,6 +310,8 @@ function PIDCanvas({
   // the server snapshots a microversion only every few minutes, and what it
   // has not snapshotted is what the flush on hide is for.
   const lastSaved = useRef<string>(''), unsnapped = useRef(false);
+  // The autosave on the wire, if one is: what `saveNowRef` waits for.
+  const inFlight = useRef<Promise<unknown> | null>(null);
 
   // Load the selected diagram's working copy whenever the selection changes.
   useEffect(() => {
@@ -354,7 +358,9 @@ function PIDCanvas({
       if (serialized === lastSaved.current) return;
       lastSaved.current = serialized;
       unsnapped.current = true;
-      api.autosaveDiagram(diagramRef, { nodes, edges }).catch((e: unknown) => {
+      const sent = api.autosaveDiagram(diagramRef, { nodes, edges });
+      inFlight.current = sent.catch(() => {});
+      sent.catch((e: unknown) => {
         lastSaved.current = ''; // failed -- let the next change retry
         // 403 means this diagram was unshared from you while you had it open.
         // Retrying is silent and pointless -- tell the parent so it can stop
@@ -367,6 +373,24 @@ function PIDCanvas({
     }, 1000);
     return () => clearTimeout(t);
   }, [nodes, edges, diagramKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Giving the checkout back has to wait for this. The autosave writes a
+  // second after the drawing stops changing, so an edit made just before
+  // Release -- a section box let go of, then Release -- was sent after the
+  // hold had gone: refused with a 423, the canvas dropped to read-only, and
+  // the edit was gone from the drawing. The release awaits the
+  // save on the wire, then sends what is still unsent; the debounced write
+  // that follows finds it saved and sends nothing.
+  saveNowRef.current = useCallback(async () => {
+    await inFlight.current;
+    if (loadedId.current !== diagramKey || readOnlyRef.current) return;
+    const g = snapshot.current;
+    const serialized = JSON.stringify(api.toStored(g));
+    if (serialized === lastSaved.current) return;
+    await api.autosaveDiagram(diagramRef, g);
+    lastSaved.current = serialized;
+    unsnapped.current = true;
+  }, [diagramKey, diagramRef]);
 
   // Best-effort flush to S3 on tab close / hide, so the last few edits land even
   // between the periodic (server-throttled) microversions.
@@ -1534,6 +1558,7 @@ export function PIDDesigner() {
   const [unshared, setUnshared] = useState<string | null>(null);
 
   const getRef            = useRef<() => Snapshot>(() => ({ nodes: [], edges: [] }));
+  const saveNowRef        = useRef<() => Promise<void>>(() => Promise.resolve());
   const loadRef           = useRef<(d: Snapshot) => void>(() => {});
   const clearRef          = useRef<() => void>(() => {});
   const clearCountRef     = useRef<() => { page: string; nodes: number; edges: number }>(
@@ -1634,6 +1659,7 @@ export function PIDDesigner() {
     api: designApi,
     ref: activeRef,
     reload: useCallback(async () => { setReloadKey((n) => n + 1); }, []),
+    beforeRelease: useCallback(() => saveNowRef.current(), []),
     // On a developer's own machine the checkout has no colleague to protect,
     // so it stays out of the way: the diagram is taken on open, held while the
     // tab lives, and taken straight back if it lapses. Deployed, the ordinary
@@ -1753,6 +1779,7 @@ export function PIDDesigner() {
               declaredPages={declaredPages}
               setDeclaredPages={setDeclaredPages}
               getRef={getRef}
+              saveNowRef={saveNowRef}
               loadRef={loadRef}
               clearRef={clearRef}
               clearCountRef={clearCountRef}
