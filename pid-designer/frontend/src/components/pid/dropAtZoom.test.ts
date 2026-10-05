@@ -17,6 +17,7 @@
 // React Flow's own anchors, the pull started where a press on a line starts
 // one (`lineSourceAt`), and every place the drawing is left with read back.
 import { describe, expect, it } from 'vitest';
+import { isSignalPort, landsOnSignalPort, setSignal, signalTo } from './signals';
 import { Position } from '@xyflow/react';
 import type { Edge, FinalConnectionState, Node } from '@xyflow/react';
 import { J_END, isJunction, junctionData, junctionEnd, reseatJunctions } from './junctions';
@@ -26,7 +27,7 @@ import { pointsToPath } from './route';
 import type { Pt } from './route';
 import {
   canJoin, clientOf, commitDrop, connectLine, drawnPoints, lineUnder, partOnLine, reconnectLine, reconnectMoving,
-  resolveDrop,
+  resolveDrop, minPull,
 } from './drop';
 import { handleEnd } from './ports';
 import { lineSourceAt } from './BranchDrag';
@@ -101,6 +102,7 @@ function canvas(start: { nodes: Node[]; edges: Edge[] }, view: View) {
     endOfClear, getInternalNode, getZoom: () => view.zoom, document, drawnLines, drawnPoints, lineUnder,
     screenToFlowPosition, clientOf, resolveDrop, commitDrop, commitGraph, setEdges,
     reconnectLine, reconnectMoving, connectLine, canJoin, obstaclesRef: { current: undefined },
+    isSignalPort, landsOnSignalPort, setSignal, signalTo, minPull,
   };
   const handlers = compiled(
     canvasStatements('const connectingFrom = useRef', 'const carried = useCallback('),

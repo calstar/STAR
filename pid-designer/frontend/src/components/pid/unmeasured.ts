@@ -6,6 +6,7 @@ import { turnPlacement } from './route';
 import type { PIDNodeData } from './types';
 import { TANK_H, TANK_W, endPortOffsets } from './nodes/TankNode';
 import { manifoldLayout } from './nodes/ManifoldNode';
+import { BANK_H, bankOutlets, bankPort, bankWidth } from './nodes/ValveBankNode';
 import { ENGINE_H, ENGINE_INLET_ALONG, ENGINE_W } from './nodes/EngineNode';
 import { DW_H, DW_W, KB_H, KB_OUTLET_ALONG, KB_W } from './nodes/SupplyNode';
 import { PR_H, PR_W } from './nodes/PRNode';
@@ -56,14 +57,20 @@ function portLayout(node: Node, handle: string): { side: Position; along: number
       const port = layout.ports[handle];
       return port ? { side: SIDE_OF_LAYOUT[port.side], along: port.along, w: layout.width, h: layout.height } : null;
     }
+    case 'VALVE_BANK': {
+      const outlets = bankOutlets(data.options);
+      const port = bankPort(outlets, handle);
+      return port ? { ...port, w: bankWidth(outlets), h: BANK_H } : null;
+    }
     case 'ENGINE':
       if (handle === 'fuel') return { side: Position.Left, along: ENGINE_INLET_ALONG, w: ENGINE_W, h: ENGINE_H };
       if (handle === 'ox') return { side: Position.Right, along: ENGINE_INLET_ALONG, w: ENGINE_W, h: ENGINE_H };
       return handle === 't' ? centred(Position.Top, ENGINE_W, ENGINE_H) : null;
     case 'KBOTTLE':
-      if (handle === 'r') return { side: Position.Right, along: KB_OUTLET_ALONG, w: KB_W, h: KB_H };
+      if (handle === 'r') return { side: data.flipped ? Position.Left : Position.Right, along: KB_OUTLET_ALONG, w: KB_W, h: KB_H };
       return handle === 't' ? centred(Position.Top, KB_W, KB_H) : null;
     case 'DEWAR':
+      if (handle === 'r') return centred(data.flipped ? Position.Left : Position.Right, DW_W, DW_H);
       return handle in SIDE_OF_PORT ? centred(SIDE_OF_PORT[handle], DW_W, DW_H) : null;
     case 'PR':
       if (handle === 'dome') return centred(Position.Top, PR_W, PR_H);

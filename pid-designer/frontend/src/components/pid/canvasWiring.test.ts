@@ -17,7 +17,8 @@ import type { EndLookup, Face } from './junctions';
 import { splitEdgeAt } from './splitEdge';
 import { dragSegment, pathPoints, routeOrthogonal, routeThrough, waypointsOf } from './route';
 import type { Pt } from './route';
-import { translateSubgraph } from './graphOps';
+import { matePair, translateSubgraph } from './graphOps';
+import { manifoldShift } from './nodes/ManifoldNode';
 import { afterDelete, applyMoves, carriedWith, followCorners } from './canvasEdits';
 import { snapOnDrop } from './snap';
 import { handleCentre } from './ports';
@@ -390,4 +391,20 @@ describe('the canvas importing and restoring', () => {
       expect(set.out.seeded).toBe(migrated.nodes);
     });
   }
+});
+
+describe('a quick disconnect saved from its dialog with a mate', () => {
+  it('names it on the mate too, and unpairs the half it left', () => {
+    const qd = (id: string, pairedWith = '') =>
+      ({ id, type: 'QD', position: { x: 0, y: 0 }, data: { componentType: 'QD', label: id, options: { pairedWith } } }) as Node;
+    let nodes: Node[] = [qd('A', 'C'), qd('B'), qd('C', 'A')];
+    const setNodes = (f: (n: Node[]) => Node[]) => { nodes = f(nodes); };
+    const saveConfig = canvasCode('const saveConfig = useCallback(', null,
+      ['useCallback', 'readOnlyRef', 'setNodes', 'setEdges', 'matePair', 'manifoldShift'], 'saveConfig')(
+      useCallback, { current: false }, setNodes, () => {}, matePair, manifoldShift,
+    ) as (s: { kind: 'node'; id: string }, p: Record<string, unknown>) => void;
+    saveConfig({ kind: 'node', id: 'A' }, { params: {}, options: { pairedWith: 'B' }, label: 'A' });
+    const mate = (id: string) => (nodes.find(n => n.id === id)!.data as { options: { pairedWith: string } }).options.pairedWith;
+    expect([mate('A'), mate('B'), mate('C')]).toEqual(['B', 'A', '']);
+  });
 });

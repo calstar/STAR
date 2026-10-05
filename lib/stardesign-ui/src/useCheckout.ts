@@ -84,6 +84,13 @@ export interface UseCheckoutOptions<T> {
    * so an app is never editable while showing a stale view.
    */
   reload?: () => Promise<void> | void;
+  /**
+   * Save whatever the app has not saved yet. Awaited inside `release()` before
+   * the hold is given back: an autosave still waiting on its debounce, or still
+   * on the wire, otherwise lands after the release, comes back 423, and the
+   * edit it carried is lost from the design. Throwing keeps the hold.
+   */
+  beforeRelease?: () => Promise<void> | void;
   /** How often to re-check while somebody else holds it. */
   pollMs?: number;
   /** How often to beat/re-check while we DO hold it. */
@@ -108,6 +115,7 @@ export function useCheckout<T>({
   api,
   ref,
   reload,
+  beforeRelease,
   pollMs = 10_000,
   heldPollMs = 15_000,
   local = false,
@@ -286,11 +294,19 @@ export function useCheckout<T>({
     }
   }, [api, reload, applyState]);
 
+  const beforeReleaseRef = useRef(beforeRelease);
+  beforeReleaseRef.current = beforeRelease;
   const release = useCallback(async () => {
     const r = refRef.current;
     if (!r) return;
     setBusy(true);
     try {
+      try {
+        await beforeReleaseRef.current?.();
+      } catch {
+        setError('Your last edit could not be saved, so you still have it checked out. Try again in a moment.');
+        return;
+      }
       applyState(await api.releaseCheckout(r));
     } catch {
       setState(FREE); // best effort; the timeout frees it regardless

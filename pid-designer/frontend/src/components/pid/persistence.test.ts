@@ -17,21 +17,37 @@ const loadEffect = compiled(canvasStatement("// Load the selected diagram's work
     'lastSaved', 'diagramKey']);
 const autosaveEffect = compiled(canvasStatement('// Debounced autosave of the working copy'),
   ['useEffect', 'loadedId', 'diagramKey', 'readOnlyRef', 'api', 'nodes', 'edges', 'lastSaved', 'unsnapped',
-    'diagramRef', 'onForbidden', 'onLockLost']);
+    'diagramRef', 'onForbidden', 'onLockLost', 'inFlight']);
 const flushEffect = compiled(canvasStatement('// Best-effort flush to S3 on tab close / hide'),
   ['useEffect', 'loadedId', 'diagramKey', 'readOnlyRef', 'api', 'snapshot', 'lastSaved', 'unsnapped', 'diagramRef',
     'window', 'document']);
+const saveNowStatement = compiled(canvasStatement('// Giving the checkout back has to wait for this.'),
+  ['useCallback', 'saveNowRef', 'inFlight', 'loadedId', 'diagramKey', 'readOnlyRef', 'snapshot', 'api', 'lastSaved',
+    'unsnapped', 'diagramRef']);
 
 /** The canvas's state and refs, and a server that records what it is sent. */
 async function open(stored: G) {
-  const refs = { loadedId: { current: null as string | null }, lastSaved: { current: '' }, unsnapped: { current: false } };
+  const refs = {
+    loadedId: { current: null as string | null }, lastSaved: { current: '' }, unsnapped: { current: false },
+    inFlight: { current: null as Promise<unknown> | null },
+  };
   let g: G = { nodes: [], edges: [] };
   const sent = { autosaves: [] as string[], beacons: [] as string[], stringified: 0 };
+  /** Set, and the next autosave is held on the wire until it is called. */
+  let hold: { release?: () => void } | null = null;
   const server = {
     ...api,
     loadDiagram: () => Promise.resolve(structuredClone(stored)),
     toStored: (x: G) => { sent.stringified++; return api.toStored(x); },
-    autosaveDiagram: (_: unknown, x: G) => { sent.autosaves.push(text(x)); return Promise.resolve({ ok: true, micro: false }); },
+    autosaveDiagram: (_: unknown, x: G) => {
+      const body = text(x);
+      if (hold) {
+        const h = hold; hold = null;
+        return new Promise<{ ok: boolean; micro: boolean }>(res => { h.release = () => { sent.autosaves.push(body); res({ ok: true, micro: false }); }; });
+      }
+      sent.autosaves.push(body);
+      return Promise.resolve({ ok: true, micro: false });
+    },
     flushDiagram: (_: unknown, x: G) => { sent.beacons.push(text(x)); },
   };
   const run = (f: () => void | (() => void)) => { f(); };
@@ -51,9 +67,17 @@ async function open(stored: G) {
     if (typeof cleanup === 'function') cleanup();
     cleanup = undefined;
     autosaveEffect((f: () => void | (() => void)) => { cleanup = f(); }, refs.loadedId, 'd', { current: false }, server,
-      g.nodes, g.edges, refs.lastSaved, refs.unsnapped, { id: 'd' }, () => {}, () => {});
+      g.nodes, g.edges, refs.lastSaved, refs.unsnapped, { id: 'd' }, () => {}, () => {}, refs.inFlight);
   };
-  return { get: () => g, render, hide: () => heard.visibilitychange(), close: () => heard.pagehide(), sent, refs };
+  // What the checkout's Release awaits before giving the hold back.
+  const saveNowRef = { current: (): Promise<void> => Promise.resolve() };
+  saveNowStatement(<T>(f: T) => f, saveNowRef, refs.inFlight, refs.loadedId, 'd', { current: false },
+    { get current() { return g; } }, server, refs.lastSaved, refs.unsnapped, { id: 'd' });
+  const holdNextSave = () => { const h: { release?: () => void } = {}; hold = h; return () => h.release!(); };
+  return {
+    get: () => g, render, hide: () => heard.visibilitychange(), close: () => heard.pagehide(), sent, refs,
+    saveNow: () => saveNowRef.current(), holdNextSave,
+  };
 }
 
 beforeEach(() => { vi.useFakeTimers(); });
@@ -114,5 +138,39 @@ describe('the flush on hide', () => {
       c.hide(); c.close();
       expect(c.sent.beacons).toHaveLength(2);
     });
+  });
+});
+
+describe('giving the checkout back', () => {
+  it('saves an edit made just before it first, and the autosave after sends nothing more', async () => {
+    // A section box let go of, then Release, inside the autosave's second:
+    // the save went out after the hold had gone, came back 423, and the edit
+    // was only kept as an "(unsaved changes)" copy.
+    const c = await open({ nodes: [valve('A', 0)], edges: [] });
+    c.render({ nodes: [valve('A', 30)], edges: [] });
+    await c.saveNow();
+    expect(c.sent.autosaves).toEqual([text({ nodes: [valve('A', 30)], edges: [] })]);
+    vi.advanceTimersByTime(1000);
+    expect(c.sent.autosaves).toHaveLength(1);
+  });
+
+  it('waits for an autosave still on the wire before the hold goes', async () => {
+    const c = await open({ nodes: [valve('A', 0)], edges: [] });
+    const land = c.holdNextSave();
+    c.render({ nodes: [valve('A', 40)], edges: [] });
+    vi.advanceTimersByTime(1000);
+    let done = false;
+    const saving = c.saveNow().then(() => { done = true; });
+    await Promise.resolve(); await Promise.resolve();
+    expect(done).toBe(false);
+    land();
+    await saving;
+    expect(c.sent.autosaves).toEqual([text({ nodes: [valve('A', 40)], edges: [] })]);
+  });
+
+  it('sends nothing for a drawing with nothing unsaved', async () => {
+    const c = await open({ nodes: [valve('A', 0)], edges: [] });
+    await c.saveNow();
+    expect(c.sent.autosaves).toEqual([]);
   });
 });

@@ -7,6 +7,7 @@ import type { DropScene, DropSource } from './drop';
 import { pathPoints, pointsToPath, routeOrthogonal } from './route';
 import type { Pt } from './route';
 import { previewer } from './preview';
+import { isSignalPort } from './signals';
 import type { PreviewShape } from './preview';
 
 /**
@@ -46,7 +47,7 @@ export function ConnectionLine(props: ConnectionLineComponentProps) {
     frame.current = nextFrame(() => {
       frame.current = 0;
       const p = latest.current;
-      if (!p.fromHandle?.id) return;
+      if (!p.fromHandle?.id || isSignalPort(p.fromNode, p.fromHandle.id)) return;
       const box = store.getState().domNode?.getBoundingClientRect();
       const client = { x: p.pointer.x + (box?.left ?? 0), y: p.pointer.y + (box?.top ?? 0) };
       const at = screenToFlowPosition(client, { snapToGrid: false });
@@ -69,6 +70,20 @@ export function ConnectionLine(props: ConnectionLineComponentProps) {
   // frame would read as "a frame is on its way" to the effect above, which
   // would then never ask for one again.
   useEffect(() => () => { cancelFrame(frame.current); frame.current = 0; }, []);
+
+  // A solenoid manifold's outlet draws a dotted line, which goes wherever it
+  // is let go: straight out of the outlet, then one corner to the pointer.
+  if (isSignalPort(props.fromNode, props.fromHandle?.id)) {
+    const up = fromPosition === 'top' ? -1 : fromPosition === 'bottom' ? 1 : 0;
+    const across = fromPosition === 'left' ? -1 : fromPosition === 'right' ? 1 : 0;
+    const sx = fromX + across * 10, sy = fromY + up * 10;
+    const corner = up !== 0 ? { x: toX, y: sy } : { x: sx, y: toY };
+    return (
+      <path d={`M ${fromX} ${fromY} L ${sx} ${sy} L ${corner.x} ${corner.y} L ${toX} ${toY}`} fill="none"
+        className="react-flow__connection-path"
+        style={{ stroke: 'var(--color-text-secondary)', strokeWidth: 1.5, strokeDasharray: '1.5 3', strokeLinecap: 'round' }} />
+    );
+  }
 
   // Before the first frame, and with no designer to ask: the plain route
   // from the port to the pointer, leaving the port the way it faces.

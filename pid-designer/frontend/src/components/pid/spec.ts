@@ -16,6 +16,7 @@ import type { ComponentType } from './types';
 import type { SpeciesId } from './fluids';
 import { INSULATIONS, TANK_MATERIALS, TEMPERATURES, DEFAULT_MATERIAL, LINE_MATERIALS, DEFAULT_LINE_MATERIAL } from './materials';
 import type { Preset } from './materials';
+import { VALVE_BANK_MAX } from './ports';
 
 export interface ParamSpec {
   key: string;
@@ -259,6 +260,10 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
     ...passiveSpec(),
     options: [
       COEFFICIENT('Cd'),
+      // Declared, or the dialog -- which writes back only the options named
+      // here -- dropped it on every save, and a hydraulic QD came back fluid.
+      { key: 'service', label: 'Service', default: 'fluid',
+        choices: [{ value: 'fluid', label: 'Fluid' }, { value: 'hydraulic', label: 'Hydraulic' }] },
       { key: 'pairedWith', label: 'Mates with', default: '', choices: PEER_CHOICES },
     ],
   },
@@ -266,6 +271,7 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
   MAN: { catalogued: true, params: [CD, CV, P('bore', 'Bore', 'length')], options: [COEFFICIENT('Cd')] },
   ROT: actuatedValveSpec(),
   SOL: actuatedValveSpec(),
+  MOV: actuatedValveSpec(),
 
   // Drawn, not solved: feed-twin's engine is the Layer-1 config named here.
   // The two numbers are what the sheet shows in the chamber.
@@ -298,6 +304,22 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
       { countOption: 'outlets', prefix: 'p', label: 'Outlets',
         fixed: [{ id: 'in', label: 'Feed in' }] },
     ],
+  },
+
+  // A 5/2 solenoid valve manifold: one supply in, a valve and an outlet per
+  // station. How many stations is what is bought, so it is the block's own
+  // option, as a manifold's outlet count is.
+  VALVE_BANK: {
+    params: [],
+    options: [
+      { key: 'outlets', label: 'Outlets', default: '4',
+        choices: Array.from({ length: VALVE_BANK_MAX }, (_, i) => String(i + 1)).map(n => ({ value: n, label: n })) },
+    ],
+    portGroups: [
+      { countOption: 'outlets', prefix: 'p', label: 'Outlets',
+        fixed: [{ id: 'in', label: 'Supply in' }] },
+    ],
+    catalogued: true,
   },
 
   // Instruments carry a tag and a size and nothing else. They are drawn, not

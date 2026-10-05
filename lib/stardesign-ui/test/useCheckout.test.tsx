@@ -325,6 +325,32 @@ describe('losing it', () => {
     expect(view.result.current.lostUnexpectedly).toBe(false);
   });
 
+  it('saves what the app has not saved before giving it back', async () => {
+    // An edit made a moment before Release was autosaved after the hold had
+    // gone, refused with a 423, and lost from the design.
+    const api = stubApi();
+    const order: string[] = [];
+    api.releaseCheckout.mockImplementation(async () => { order.push('release'); api.set(FREE); return FREE; });
+    const beforeRelease = vi.fn(async () => { order.push('save'); });
+    const view = await mountHeld(api, { beforeRelease });
+
+    await act(async () => { await view.result.current.release(); });
+
+    expect(order).toEqual(['save', 'release']);
+    expect(view.result.current.held).toBe(false);
+  });
+
+  it('keeps the hold when that save fails, and says why', async () => {
+    const api = stubApi();
+    const view = await mountHeld(api, { beforeRelease: async () => { throw new Error('offline'); } });
+
+    await act(async () => { await view.result.current.release(); });
+
+    expect(api.releaseCheckout).not.toHaveBeenCalled();
+    expect(view.result.current.held).toBe(true);
+    expect(view.result.current.error).toMatch(/could not be saved/);
+  });
+
   it('clears the notice once the design is taken back', async () => {
     const api = stubApi();
     const view = await mountHeld(api);

@@ -22,7 +22,7 @@ function PaletteSymbol({ type }: { type: ComponentType }) {
           <text x="14" y="18" textAnchor="middle" fontSize="6" fill="var(--color-text-primary)" fontFamily="monospace">{type}</text>
         </svg>
       );
-    case 'MAN': case 'ROT': case 'SOL':
+    case 'MAN': case 'ROT': case 'SOL': case 'MOV':
       return (
         <svg width="32" height="28" viewBox="0 0 32 28">
           <polygon points="2,4 30,22 30,4 2,22" fill="var(--color-bg-tertiary)" stroke="var(--color-text-secondary)" strokeWidth="1.2" />
@@ -30,7 +30,7 @@ function PaletteSymbol({ type }: { type: ComponentType }) {
             <>
               <rect x="11" y="0" width="10" height="6" rx="1" fill="var(--color-bg-tertiary)" stroke="var(--color-text-secondary)" strokeWidth="1" />
               <text x="16" y="5.5" textAnchor="middle" fontSize="4" fill="var(--color-text-secondary)" fontFamily="monospace">
-                {type === 'SOL' ? 'S' : 'P'}
+                {type === 'SOL' ? 'S' : type === 'MOV' ? 'M' : 'P'}
               </text>
             </>
           )}
@@ -91,6 +91,21 @@ function PaletteSymbol({ type }: { type: ComponentType }) {
           <rect x="1" y="4" width="32" height="12" rx="2" fill="var(--color-bg-tertiary)" stroke="var(--color-text-secondary)" strokeWidth="1.2" />
           <line x1="3" y1="10" x2="31" y2="10" stroke="var(--color-text-secondary)" strokeWidth="1" strokeDasharray="2 2" />
           {[9, 17, 25].map(x => <line key={x} x1={x} y1="16" x2={x} y2="19" stroke="var(--color-text-secondary)" strokeWidth="1.2" />)}
+        </svg>
+      );
+    case 'VALVE_BANK':
+      return (
+        <svg width="34" height="24" viewBox="0 0 34 24">
+          <rect x="1" y="16" width="32" height="7" rx="1.5" fill="var(--color-bg-tertiary)" stroke="var(--color-text-secondary)" strokeWidth="1.2" />
+          {[9, 25].map(x => (
+            <g key={x} stroke="var(--color-text-secondary)" strokeWidth="1.1" fill="none">
+              <line x1={x} y1="0" x2={x} y2="4" />
+              <rect x={x - 6} y="4" width="12" height="10" fill="var(--color-bg-tertiary)" />
+              <line x1={x} y1="4" x2={x} y2="14" />
+              <line x1={x + 1.5} y1="13" x2={x + 4.5} y2="5" />
+              <line x1={x + 1.5} y1="5" x2={x + 4.5} y2="13" />
+            </g>
+          ))}
         </svg>
       );
     case 'JUNCTION':

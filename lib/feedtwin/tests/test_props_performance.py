@@ -40,11 +40,17 @@ from feedtwin.props import Fluid
 # fails for reasons unrelated to the code.
 
 #: Measured on the development host, nitrogen via the tabulated backend:
-#: accessor 0.63 us, get 0.96 us, state 5.0 us (twelve reads).
-#: Phase 01's design target is the sub-microsecond accessor; these ceilings are
-#: what CI can assert without becoming a coin flip.
-HOT_PATH_BUDGET_US = 3.0
-CONVENIENCE_BUDGET_US = 5.0
+#: accessor 0.63-0.9 us, get about 1 us, state 5.0 us (twelve reads). GitHub's
+#: runners take about 3.3x as long, every time and not just when loaded: the cp
+#: accessor read 3.006 and 3.028 us in two runs, the second the fastest of
+#: five batches. So the ceilings are set several times over the *runner's*
+#: numbers, as the note above asks -- 3 us was the runner's own speed, and
+#: failed on a coin toss. They still catch what they are for: PropsSI is
+#: 184 us a call, and a backend rebuilt per call is 10-1000x.
+#: Phase 01's design target is the sub-microsecond accessor; run with
+#: FEEDTWIN_STRICT_PERF=1 on a quiet machine to hold that.
+HOT_PATH_BUDGET_US = 10.0
+CONVENIENCE_BUDGET_US = 15.0
 
 #: Set FEEDTWIN_STRICT_PERF=1 to assert the design targets instead of the
 #: CI-safe ceilings. Worth running on a quiet machine after touching the hot
@@ -56,6 +62,15 @@ if os.environ.get("FEEDTWIN_STRICT_PERF") == "1":  # pragma: no cover - opt-in
 
 #: Enough to swamp timer noise; small enough to stay quick in CI.
 ITERATIONS = 20_000
+
+#: Timed in this many equal batches, and the fastest one counts.
+#:
+#: One mean over all twenty thousand calls takes in whatever else a shared
+#: runner is doing meanwhile. Another job stealing the core only ever adds
+#: time, so the quickest batch is the closest reading of the code itself --
+#: and a regression of the 10-1000x kind these ceilings exist for is slow in
+#: every batch.
+BATCHES = 5
 
 
 #: Temperature step between successive timed calls [K].
@@ -75,17 +90,23 @@ _STEP_K = 1.0e-6
 
 
 def _time_us(call: object, n: int = ITERATIONS) -> float:
-    """Mean microseconds per call, after a warm-up that excludes table build.
+    """Microseconds per call in the fastest of :data:`BATCHES` batches, after a
+    warm-up that excludes table build.
 
     ``call`` takes the iteration index and is expected to use it to move the
-    state point -- see :data:`_STEP_K`.
+    state point -- see :data:`_STEP_K`. The index runs on across batches, so no
+    batch repeats another's state points.
     """
     fn = call  # type: ignore[assignment]
     fn(0)  # type: ignore[operator]
-    started = time.perf_counter()
-    for i in range(n):
-        fn(i)  # type: ignore[operator]
-    return (time.perf_counter() - started) / n * 1e6
+    per = max(1, n // BATCHES)
+    best = float("inf")
+    for b in range(BATCHES):
+        started = time.perf_counter()
+        for i in range(b * per, (b + 1) * per):
+            fn(i)  # type: ignore[operator]
+        best = min(best, (time.perf_counter() - started) / per)
+    return best * 1e6
 
 
 @pytest.mark.parametrize("prop", ["rho", "mu", "cp", "Z"])
