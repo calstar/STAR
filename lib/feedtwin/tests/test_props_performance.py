@@ -57,6 +57,16 @@ if os.environ.get("FEEDTWIN_STRICT_PERF") == "1":  # pragma: no cover - opt-in
 #: Enough to swamp timer noise; small enough to stay quick in CI.
 ITERATIONS = 20_000
 
+#: Timed in this many equal batches, and the fastest one counts.
+#:
+#: One mean over all twenty thousand calls took in whatever else the runner was
+#: doing meanwhile: a cp accessor measured at 0.9 us here read 3.006 us on a
+#: loaded runner and failed a 3 us ceiling, while the same commit passed in the
+#: run beside it. Another job stealing the core only ever adds time, so the
+#: quickest batch is the closest reading of the code itself -- and a regression
+#: of the 10-1000x kind these ceilings exist for is slow in every batch.
+BATCHES = 5
+
 
 #: Temperature step between successive timed calls [K].
 #:
@@ -75,17 +85,23 @@ _STEP_K = 1.0e-6
 
 
 def _time_us(call: object, n: int = ITERATIONS) -> float:
-    """Mean microseconds per call, after a warm-up that excludes table build.
+    """Microseconds per call in the fastest of :data:`BATCHES` batches, after a
+    warm-up that excludes table build.
 
     ``call`` takes the iteration index and is expected to use it to move the
-    state point -- see :data:`_STEP_K`.
+    state point -- see :data:`_STEP_K`. The index runs on across batches, so no
+    batch repeats another's state points.
     """
     fn = call  # type: ignore[assignment]
     fn(0)  # type: ignore[operator]
-    started = time.perf_counter()
-    for i in range(n):
-        fn(i)  # type: ignore[operator]
-    return (time.perf_counter() - started) / n * 1e6
+    per = max(1, n // BATCHES)
+    best = float("inf")
+    for b in range(BATCHES):
+        started = time.perf_counter()
+        for i in range(b * per, (b + 1) * per):
+            fn(i)  # type: ignore[operator]
+        best = min(best, (time.perf_counter() - started) / per)
+    return best * 1e6
 
 
 @pytest.mark.parametrize("prop", ["rho", "mu", "cp", "Z"])
