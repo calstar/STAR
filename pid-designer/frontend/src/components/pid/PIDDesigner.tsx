@@ -64,7 +64,7 @@ import {
   DEFAULT_PAGE, applyPage, clearSelection, listPages, moveToPage, pageOf, pageOfSubjects, selectOnPage,
 } from './pages';
 import { useHistory } from './history';
-import { translateSubgraph, turnSelected } from './graphOps';
+import { matePair, translateSubgraph, turnSelected } from './graphOps';
 import { clearOfHost, clipAt, isInstrument } from './attach';
 import { drawnLines } from './lineHit';
 import { J_END, dragging, isJunction, junctionEnd } from './junctions';
@@ -1266,6 +1266,12 @@ function PIDCanvas({
       ...(patch.geometry ? { geometry: patch.geometry } : {}),
     };
     if (subject.kind === 'node') {
+      // A disconnect given a mate: the mate is told too (`matePair`).
+      setNodes(nds => {
+        const was = nds.find(n => n.id === subject.id)?.data as unknown as PIDNodeData | undefined;
+        if (was?.componentType !== 'QD') return nds;
+        return matePair(nds, subject.id, was.options?.pairedWith ?? '', patch.options?.pairedWith ?? '');
+      });
       setNodes(nds => nds.map(n => {
         if (n.id !== subject.id) return n;
         const data = { ...n.data, ...common, label: patch.label, fluid: patch.fluid };

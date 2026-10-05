@@ -100,8 +100,47 @@ export function turnSelected(nodes: Node[], page: string): Node[] {
   const next = nodes.map(n => {
     if (!n.selected || pageOf(n.data as unknown as PIDNodeData) !== page) return n;
     changed = true;
-    const rotation = ((n.data as { rotation?: number }).rotation ?? 0) as number;
+    const d = n.data as unknown as PIDNodeData;
+    // A K-bottle or a dewar stands upright: R moves its side outlet to the
+    // other side, mirrored about the vertical. A turn left over from before
+    // this goes with the first flip.
+    if (d.componentType === 'KBOTTLE' || d.componentType === 'DEWAR') {
+      const { rotation: _turned, ...rest } = n.data as Record<string, unknown>;
+      return { ...n, data: { ...rest, flipped: !d.flipped } };
+    }
+    const rotation = d.rotation ?? 0;
     return { ...n, data: { ...n.data, rotation: (rotation + 90) % 360 } };
   });
   return changed ? next : nodes;
+}
+
+/** A disconnect's mate as stored: a node id, or '' / 'none' for none. */
+const mateOf = (n: Node | undefined) => ((n?.data as unknown as PIDNodeData | undefined)?.options?.pairedWith ?? '');
+const realMate = (v: string) => v !== '' && v !== 'none';
+const withMate = (n: Node, mate: string): Node => {
+  const d = n.data as unknown as PIDNodeData;
+  return { ...n, data: { ...n.data, options: { ...(d.options ?? {}), pairedWith: mate } } };
+};
+
+/**
+ * Quick disconnect `id` now mates with `after` (it mated with `before`):
+ * the other half says so too.
+ *
+ * A pair is two halves, so naming one's mate names the other's. The half it
+ * leaves stops naming it, and a half the new mate was paired with before
+ * stops naming the new mate -- so no disconnect is ever left pointing at a
+ * half that has moved on, which the checks flag as two halves disagreeing.
+ */
+export function matePair(nodes: Node[], id: string, before: string, after: string): Node[] {
+  if (before === after) return nodes;
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const set = new Map<string, string>();
+  if (realMate(before) && mateOf(byId.get(before)) === id) set.set(before, '');
+  if (realMate(after) && byId.has(after)) {
+    const theirs = mateOf(byId.get(after));
+    if (realMate(theirs) && theirs !== id && mateOf(byId.get(theirs)) === after) set.set(theirs, '');
+    set.set(after, id);
+  }
+  if (set.size === 0) return nodes;
+  return nodes.map(n => (set.has(n.id) ? withMate(n, set.get(n.id)!) : n));
 }
