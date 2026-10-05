@@ -52,6 +52,12 @@ export interface PIDNodeData {
   labelOffset?: { x: number; y: number };
   rotation?: number;
   /**
+   * A supply (a K-bottle or a dewar) drawn mirrored, its side outlet on the
+   * left. R flips a supply rather than turning it: the bottle stands upright
+   * either way, and which side the outlet leaves from is the only choice.
+   */
+  flipped?: boolean;
+  /**
    * Hardware numbers, keyed by the names in `spec.ts`. Each carries its unit
    * and its provenance -- see `params.ts` -- so a value can cross into
    * feed-twin without being re-typed or re-guessed.

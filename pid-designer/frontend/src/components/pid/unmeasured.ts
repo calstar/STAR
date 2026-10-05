@@ -67,9 +67,10 @@ function portLayout(node: Node, handle: string): { side: Position; along: number
       if (handle === 'ox') return { side: Position.Right, along: ENGINE_INLET_ALONG, w: ENGINE_W, h: ENGINE_H };
       return handle === 't' ? centred(Position.Top, ENGINE_W, ENGINE_H) : null;
     case 'KBOTTLE':
-      if (handle === 'r') return { side: Position.Right, along: KB_OUTLET_ALONG, w: KB_W, h: KB_H };
+      if (handle === 'r') return { side: data.flipped ? Position.Left : Position.Right, along: KB_OUTLET_ALONG, w: KB_W, h: KB_H };
       return handle === 't' ? centred(Position.Top, KB_W, KB_H) : null;
     case 'DEWAR':
+      if (handle === 'r') return centred(data.flipped ? Position.Left : Position.Right, DW_W, DW_H);
       return handle in SIDE_OF_PORT ? centred(SIDE_OF_PORT[handle], DW_W, DW_H) : null;
     case 'PR':
       if (handle === 'dome') return centred(Position.Top, PR_W, PR_H);
