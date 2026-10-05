@@ -378,3 +378,13 @@ def test_joule_thomson_falls_out_of_enthalpy_conservation() -> None:
     assert -34.0 < drop["gn2"] < -26.0, f"N2 should cool ~30 K, got {drop['gn2']:.1f}"
     assert 8.0 < drop["he"] < 22.0, f"He should warm, got {drop['he']:.1f}"
     assert drop["he"] > 0.0 > drop["gn2"], "the two gases must move opposite ways"
+
+
+def test_each_tank_says_which_leg_it_is_on() -> None:
+    """The pad guide finds the LOX tank by this. It used to match "ox" in the
+    label, and on a drawing tagged TK-2 / TK-3 it watched the empty fuel tank
+    for the LOX load forever."""
+    state = open_session()
+    sides = {t["label"]: t["side"] for t in state["tanks"]}
+    assert sorted(sides.values()) == ["fuel", "lox"], sides
+    assert all(b["side"] == "" for b in state["bottles"])

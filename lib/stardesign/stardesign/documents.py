@@ -47,6 +47,13 @@ it lapses on its own after ``lock_ttl`` without a save, and on tab close.
 Hiding the tab -- switching away, minimising, closing a lid -- does not release
 it; only a real close does.
 
+A lapse frees the design for whoever acts first. If that is the holder -- they
+came back and saved or touched the canvas, and nobody took it in the meantime --
+the hold is simply theirs again (``DesignStore.claim_for_write``); refusing
+them was how edits were lost with nobody else anywhere near the design. If
+someone else got there first, the holder's saves are refused, and ``/rescue``
+keeps what they carried as a new design of the holder's own.
+
 The compare-and-set runs inside ``_index_lock``, the same ``flock`` that already
 serialises index writes, so two simultaneous takes cannot both succeed. That
 holds across the several workers each API runs.
@@ -194,6 +201,72 @@ class DesignStore:
             )
             raise HTTPException(status_code=423, detail=detail)
 
+    def save_index(self, user: str, index: list[dict]) -> None:
+        """Write one user's index atomically (temp file + rename)."""
+        p = self.index_path(user, create=True)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".tmp-", suffix=".json")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(index, fh, indent=2)
+            os.replace(tmp, p)
+        except BaseException:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
+
+    @contextmanager
+    def index_lock(self, user: str) -> Iterator[None]:
+        """Serialize read-modify-write of one user's ``index.json``.
+
+        ``save_index`` is atomic per write, but read-modify-write is not, and the
+        index is edited by co-editors as well as its owner while the API runs
+        several workers. Without this, two overlapping updates drop a record. The
+        lock file lives beside the index and is never removed.
+        """
+        lock = self.ud.user_dir(user, create=True) / ".index.lock"
+        fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+    def claim_for_write(self, owner: str, doc_id: str, viewer: str) -> None:
+        """Let ``viewer`` write the design's content, or 423.
+
+        Passes when ``viewer`` holds the checkout. Also passes -- and takes the
+        hold back -- when the hold lapsed *on* ``viewer`` and nobody has taken
+        the design since: a lapsed record keeps ``lockedBy``, any take by
+        someone else overwrites it, and a release clears it, so ``lockedBy ==
+        viewer`` on a free design means nobody else can have written it.
+
+        Refusing that case was how work was lost. Step away past ``lock_ttl``,
+        come back and keep editing, and every save came back 423 with nobody
+        else anywhere near the design; the edits stayed on screen and nowhere
+        else. A lapse still frees the design for anyone who acts first -- this
+        only stops the holder from being locked out of a design nobody wanted.
+
+        The check and the reclaim happen under the index lock, so a reclaim and
+        someone else's take serialise and exactly one of them wins.
+        """
+        record = self.find_record(owner, doc_id)
+        if record is not None and self.lock_holder(record) == viewer:
+            return  # the common case, without taking the index lock
+        with self.index_lock(owner):
+            index = self.load_index(owner)
+            for record in index:
+                if record.get("id") != doc_id:
+                    continue
+                if self.lock_holder(record) is None and record.get("lockedBy") == viewer:
+                    record["lockHeartbeat"] = datetime.now(timezone.utc).isoformat()
+                    self.save_index(owner, index)
+                    return
+                self.require_lock_on(record, doc_id, viewer)
+                return
+        raise HTTPException(status_code=404, detail=f"Unknown {self.noun}")
+
 
 # ── payloads that are the same in every app ──────────────────────────────────
 #
@@ -246,36 +319,11 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
 
 
     def _save_index(user: str, index: list[dict]) -> None:
-        p = _index_path(user, create=True)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".tmp-", suffix=".json")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(index, fh, indent=2)
-            os.replace(tmp, p)
-        except BaseException:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
-            raise
+        store.save_index(user, index)
 
 
-    @contextmanager
-    def _index_lock(user: str) -> Iterator[None]:
-        """Serialize read-modify-write of one user's ``index.json``.
-
-        ``_save_index`` is atomic per write, but read-modify-write is not, and the
-        index is now edited by co-editors as well as its owner while the API runs
-        several workers. Without this, two overlapping updates drop a record. The
-        lock file lives beside the index and is never removed.
-        """
-        lock = store.ud.user_dir(user, create=True) / ".index.lock"
-        fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            yield
-        finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
+    def _index_lock(user: str):
+        return store.index_lock(user)
 
 
     def _require_id(doc_id: str) -> str:
@@ -502,14 +550,16 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
                 return
 
     def _require_lock(ref: "DocRef") -> None:
-        """Refuse a content write unless the caller holds the checkout.
+        """Refuse a content write unless the caller holds the checkout -- or
+        held it, let it lapse, and nobody has taken it since (see
+        ``DesignStore.claim_for_write``).
 
         Applied to the endpoints that mutate the design itself. Renaming,
         sharing and copying are deliberately exempt: they are not concurrent
         editing of content, and blocking them would mean a checkout could stop
         someone tidying up a design they can see.
         """
-        store.require_lock_on(ref.record, ref.doc_id, ref.viewer)
+        store.claim_for_write(ref.owner, ref.doc_id, ref.viewer)
 
     def _beat_lock(owner: str, doc_id: str, viewer: str) -> None:
         """Refresh the holder's checkout after a successful save.
@@ -672,6 +722,31 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         source = ref.record.get("name", ref.doc_id)
         name = (payload.name or "").strip() or f"{source} (copy of {who})"
         return _decorate(_create(viewer, name, data), viewer, viewer, names)
+
+    @router.post(f"{sub}/{{doc_id}}/rescue")
+    async def rescue_document(
+        request: Request, doc_id: str, payload: store.body_model, owner: str | None = None
+    ):
+        """Keep edits the design refused, as a new design of the caller's own.
+
+        A save comes back 423 when the checkout has gone to someone else. The
+        edits that save carried exist nowhere but the caller's screen, and the
+        two things they do next -- "Take it back", which reloads the shared
+        copy, or closing the tab -- both throw them away. The client posts them
+        here first. Nothing is merged into the shared design (that would be the
+        overwrite checkouts prevent); the caller gets a design with exactly what
+        they had, named after the one it came from, checked out to them.
+
+        Read access is enough: someone unshared mid-edit lost write access too,
+        and their work is still theirs.
+        """
+        viewer = store.ud.current_user(request)
+        ref = _resolve_doc(request, owner, doc_id, need="read")
+        source = ref.record.get("name", ref.doc_id)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        name = f"{source} (unsaved changes, {stamp})"
+        names = directory.display_names(request, store.ud)
+        return _decorate(_create(viewer, name, store.to_data(payload)), viewer, viewer, names)
 
 
     @router.patch(f"{sub}/{{doc_id}}")

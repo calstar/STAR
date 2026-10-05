@@ -187,7 +187,7 @@ export function CheckoutLostDialog({
   /** The design's name, for the notification and the title. */
   name?: string | null;
 }) {
-  const { lostUnexpectedly, acknowledgeLost, take, busy, holderName } = checkout;
+  const { lostUnexpectedly, acknowledgeLost, take, busy, holderName, savedAs } = checkout;
 
   // Tab title, restored on the way out. Captured per-activation rather than at
   // module scope so it survives the app renaming its own title.
@@ -236,13 +236,19 @@ export function CheckoutLostDialog({
         <p className="mt-2 text-xs leading-relaxed text-[var(--color-text-muted)]">
           {holderName ? (
             <>
-              <b>{holderName}</b> has this {noun} now, so it is read only. Anything you
-              changed since is still on screen but was not saved to the shared copy.
+              <b>{holderName}</b> has this {noun} now, so it is read only.
+            </>
+          ) : (
+            <>This {noun} is read only again. It is free, so you can take it straight back.</>
+          )}{' '}
+          {savedAs ? (
+            <>
+              What you changed that it could not take was saved as a separate {noun} in
+              your list: <b>{savedAs}</b>.
             </>
           ) : (
             <>
-              This {noun} is read only again. It is free, so you can take it straight back —
-              anything you changed since is still on screen but was not saved to the shared
+              Anything you changed since is still on screen but was not saved to the shared
               copy.
             </>
           )}

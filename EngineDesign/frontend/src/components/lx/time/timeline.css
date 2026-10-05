@@ -1,0 +1,154 @@
+/* The docked timeline (Timeline.tsx): 64 px, full width, under every Burn page. */
+
+.lx-tl {
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+  height: 64px;
+  padding: 0 16px;
+  background: var(--lx-surface);
+  border-top: 1px solid var(--lx-line);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.lx-tl-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.lx-tl-play svg { display: block; }
+
+/* The track: labels on top, the lane with the ticks and the cursor, the time axis under it. */
+.lx-tl-track {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  cursor: pointer;
+  touch-action: none;
+}
+.lx-tl-labels {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 7px;
+  height: 14px;
+}
+.lx-tl-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: hidden;
+  color: var(--lx-text-2);
+  font-size: 11px;
+  line-height: 14px;
+  text-align: center;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.lx-tl-label:hover { color: var(--lx-text); }
+.lx-tl-label.lx-tl-k-warn { color: var(--lx-warn); }
+.lx-tl-label.lx-tl-k-trip { color: var(--lx-bad); font-weight: 600; }
+
+.lx-tl-lane {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 23px;
+  height: 18px;
+}
+.lx-tl-rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--lx-line-strong);
+}
+.lx-tl-firing {
+  position: absolute;
+  left: 0;
+  top: 4px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--lx-firing);
+  box-shadow: inset 0 0 0 1px var(--lx-firing-edge);
+}
+.lx-tl-tick {
+  position: absolute;
+  left: -0.5px;
+  top: 2px;
+  width: 1px;
+  height: 14px;
+  background: var(--lx-text-3);
+}
+/* A wider, invisible hit area so a 1 px tick can be clicked. */
+.lx-tl-tick::after {
+  content: '';
+  position: absolute;
+  left: -4px;
+  right: -4px;
+  top: -4px;
+  bottom: -4px;
+}
+.lx-tl-tick-strong { background: var(--lx-text-2); }
+.lx-tl-tick.lx-tl-k-warn { background: var(--lx-warn); }
+.lx-tl-tick.lx-tl-k-trip { background: var(--lx-bad); width: 2px; }
+
+.lx-tl-handle {
+  position: absolute;
+  left: -8px;
+  top: -4px;
+  width: 16px;
+  height: 26px;
+  will-change: transform;
+  cursor: ew-resize;
+  border-radius: 4px;
+}
+.lx-tl-handle-line {
+  position: absolute;
+  left: 7px;
+  top: 0;
+  width: 2px;
+  height: 26px;
+  border-radius: 1px;
+  background: var(--lx-cursor);
+}
+.lx-tl-handle-knob {
+  position: absolute;
+  left: 3px;
+  top: 7px;
+  width: 10px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--lx-cursor);
+  box-shadow: 0 0 0 2px var(--lx-surface);
+}
+.lx-tl-handle:focus-visible { outline: 2px solid var(--lx-accent); outline-offset: 1px; }
+
+.lx-tl-axis {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 45px;
+  height: 12px;
+}
+.lx-tl-axis-tick {
+  position: absolute;
+  top: 0;
+  color: var(--lx-text-3);
+  font-size: 10px;
+  line-height: 12px;
+  white-space: nowrap;
+}
+
+.lx-tl-readout {
+  flex: none;
+  align-self: center;
+  min-width: 10ch;
+  color: var(--lx-text);
+  font-size: 13px;
+  text-align: right;
+}

@@ -651,10 +651,13 @@ Until 2026-09-11 the console ran with vapour off, chilldown off and no ambient h
 leak, so a loaded LOX tank with its vent shut sat at whatever it had been pressed to
 forever. The operator knows a shut LOX tank climbs. Defaults are now: collapse on,
 **vapour on, wall-to-liquid 100 W/(m²·K), an 8 W/(m²·K) air film on the tank skin in
-series with the insulation the drawing declares, wall boiling on** (library defaults
-unchanged: all off). The shipped LOX tank declares **an inch of fiberglass** (operator;
-`insulation_thickness` 25.4 mm, `insulation_conductivity` 0.04 W/(m·K)), so its skin
-passes `1/(1/8 + 0.0254/0.04)` = **1.3 W/(m²·K)**, ~75 W on 0.47 m² of skin at 200 K —
+series with the insulation the drawing declares, wall boiling on** (the library's
+`Setup` carries these same on-values; only the vessel-level `Tank` constructor defaults
+them off, collapse aside, and the Study and Layer X turn them off through `burn_setup`
+and their own collapse/vapour/chilldown arguments). The shipped LOX tank declares **an
+inch of fiberglass** (operator; `insulation_thickness` 25.4 mm, `insulation_conductivity`
+0.04 W/(m·K)), so its skin passes `1/(1/8 + 0.0254/0.04)` = **1.3 W/(m²·K)**, ~75 W on
+0.47 m² of skin at 200 K —
 a bare tank sees 450 W. A chilled, insulated LOX tank shut at atmosphere climbs to
 ~15 psig in ten seconds and then creeps (the leak barely holds the wall above saturation
 once the pressure has lifted it); a bare one runs on at a few psi a second. The tank
@@ -811,6 +814,22 @@ phase of the chilldown is ~2 min at h = 100, so a vent shut straight after a 120
 finds the wetted wall at ~230 K and it boils hard (that is regime 1 working as it should).
 The pad guide's Load LOX phase waits for the wall; the wall mass, material and film
 coefficient are Configuration rows because they are the unknowns.
+
+**A load chills the tank before it holds any liquid** (2026-10-04, operator: "the lox
+tank never fills with any kg of lox until chilled"). LOX poured into a 293 K tank flashes
+on the wall and vents; on the stand that is about ten minutes of pouring before anything
+collects. The cockpit compresses it to `Setup.load_chill_s` (30 s, a Configuration row):
+while a cryogen load runs into a tank holding no liquid, the wall falls at
+`(293 K - T_liquid) / load_chill_s` to saturation at the tank's pressure plus the boiling
+onset, the heat it gives up is LOX flashed (`Q / h_fg`, booked in `TankSim.chill_boiled`),
+and only then does the load collect. The flashed oxygen leaves with the vent rather than
+pressing the ullage -- compressed twentyfold it would be twenty times the real vent flow.
+Before this, a load filled from the first second onto a warm wall: on LE4 a three-minute
+load left the 3.6 kg wall at 190 K, and shutting the vent ran the tank to the oxygen
+critical pin in ten seconds. With it the same load ends at 90.5 K and the shut tank climbs
+~17 psi in its first minute and a psi or two a minute after. `load_chill_s = 0` is the old
+model exactly (`test_with_no_load_chill_the_liquid_collects_from_the_first_second`); the
+Study and Layer X never fill a tank, so neither sees it.
 
 Also in this round, at the operator's direction: **Fire ends in Vent** when a tank runs dry
 (`Setup.auto_vent`, `Session._burnout_check`; the table's `Fire` row gained `Vent`), the

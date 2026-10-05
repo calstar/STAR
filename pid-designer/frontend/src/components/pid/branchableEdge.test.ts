@@ -86,7 +86,7 @@ import { handToLine } from './lineHit';
 import { J_END, J_HALF, isJunction, junctionEnd, reseatJunctions, splitSpot } from './junctions';
 import type { EndLookup, Face } from './junctions';
 import { splitEdgeAt } from './splitEdge';
-import { pathPoints, pointAtArc, pointsToPath, polylineLength, routeOrthogonal, segmentEntersBox, simplifyPoints } from './route';
+import { pathPoints, pointAtArc, pointsToPath, polylineLength, routeOrthogonal, routeThrough, segmentEntersBox, simplifyPoints } from './route';
 import type { Pt } from './route';
 import { obstaclesByPage } from './routeGrid';
 import { lineView, publishEdge, unpublishEdge } from './edgeGeometry';
@@ -473,17 +473,24 @@ describe('segment grips', () => {
   });
 });
 
-/** A short vertical piece of a pipe between two tees, where the pipe keeps a tee somewhere else than the piece alone would. */
+/**
+ * A short piece of a pipe between two tees, either side of a bend and each
+ * just over a tee's reach from it, where the pipe keeps a tee somewhere else
+ * than the piece alone would. (The tees were put in at fractions of the
+ * pipe, which a tee may now take onto the bends they fell near: the piece
+ * between two elbows is a straight line with room of its own.)
+ */
 function crowded() {
-  let nodes = [part('A', 0, 0), part('B', 140, 60)];
+  let nodes = [part('A', 0, 0), part('B', 300, 200)];
   const run: Edge = { id: 'A-B', source: 'A', sourceHandle: 'r', target: 'B', targetHandle: 'l', data: {} };
   const drawnOf = (e: Edge, ns: Node[]) => pathPoints(routeOrthogonal(endOf(ns.find(n => n.id === e.source)!, e.sourceHandle)!, endOf(ns.find(n => n.id === e.target)!, e.targetHandle)!).d);
   const pts = drawnOf(run, nodes);
-  const one = splitEdgeAt(nodes, [run], 'A-B', pointAtArc(pts, 0.3 * polylineLength(pts))!.point, undefined, { points: pts, endOf, obstacles: obstaclesByPage(nodes) })!;
+  const bend = pts[1];
+  const one = splitEdgeAt(nodes, [run], 'A-B', P(bend.x - 16, bend.y), undefined, { points: pts, endOf, obstacles: obstaclesByPage(nodes) })!;
   let g = reseatJunctions(one.nodes, one.edges, endOf, obstaclesByPage(one.nodes));
   const second = g.edges.find(e => e.source === one.junctionId)!;
-  const p1 = (() => { const s = g.nodes.find(n => n.id === second.source)!, t = g.nodes.find(n => n.id === second.target)!; return pathPoints(routeOrthogonal(endOf(s, second.sourceHandle)!, endOf(t, second.targetHandle)!).d); })();
-  const two = splitEdgeAt(g.nodes, g.edges, second.id, pointAtArc(p1, 0.5 * polylineLength(p1))!.point, undefined, { points: p1, endOf, obstacles: obstaclesByPage(g.nodes) })!;
+  const p1 = (() => { const s = g.nodes.find(n => n.id === second.source)!, t = g.nodes.find(n => n.id === second.target)!; return pathPoints(routeThrough(endOf(s, second.sourceHandle)!, endOf(t, second.targetHandle)!, (second.data as { waypoints?: Pt[] }).waypoints ?? []).d); })();
+  const two = splitEdgeAt(g.nodes, g.edges, second.id, P(bend.x, bend.y + 16), undefined, { points: p1, endOf, obstacles: obstaclesByPage(g.nodes) })!;
   g = reseatJunctions(two.nodes, two.edges, endOf, obstaclesByPage(two.nodes));
   nodes = g.nodes;
   const piece = g.edges.find(e => e.source === one.junctionId && e.target === two.junctionId)!;

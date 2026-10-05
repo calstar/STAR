@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { ConfigUpload } from './components/ConfigUpload';
 import { ConfigEditor } from './components/ConfigEditor';
+import { ParametersWorkspace } from './components/ParametersWorkspace';
 import { ForwardMode } from './components/ForwardMode';
 import { TimeSeriesMode } from './components/TimeSeriesMode';
 import { CustomPlotter } from './components/CustomPlotter';
@@ -9,6 +10,7 @@ import { ChamberGeometry } from './components/ChamberGeometry';
 import { Optimizer } from './components/Optimizer';
 import { ControllerMode } from './components/ControllerMode';
 import { OptimizerDemo } from './components/OptimizerDemo';
+import { wantsGallery, wantsLayerXTab, wantsV2 } from './components/lx/url';
 import ConfigurationSelector from './components/ConfigurationSelector';
 import { emitConfigChanged } from './lib/configBus';
 import { useViewState } from './lib/viewState';
@@ -23,6 +25,17 @@ import type { EngineConfig } from './api/client';
 declare const __API_PORT__: string
 const API_PORT = typeof __API_PORT__ === 'undefined' ? '8000' : __API_PORT__
 
+// Layer X is the rebuilt GUI (components/lx) since the cut-over of 2026-10-03. `?lx=1` opens the old
+// one (components/layerx) for one release -- TODO(next release): remove it and this switch. Each is
+// fetched only when its tab is opened, and the dev gallery (?lx-gallery=1) only when asked for.
+// Read once, at load: switching is a reload, never a remount mid-session.
+const LayerXV2 = lazy(() => import('./components/lx/LayerX'));
+const LayerXOld = lazy(() => import('./components/layerx/LayerX').then((m) => ({ default: m.LayerX })));
+const LxGallery = lazy(() => import('./components/lx/dev/Gallery'));
+const LX_SEARCH = typeof window === 'undefined' ? '' : window.location.search;
+const LX_V2 = wantsV2(LX_SEARCH);
+const LX_GALLERY = wantsGallery(LX_SEARCH);
+
 type Tab =
   | 'forward'
   | 'timeseries'
@@ -30,6 +43,7 @@ type Tab =
   | 'flight'
   | 'geometry'
   | 'optimizer'
+  | 'layerx'
   | 'controller'
   | 'demo' | 'config';
 
@@ -37,6 +51,13 @@ function App() {
   // Which tab you were on is yours, not the design's -- remembered locally so
   // a reload puts you back without it counting as an edit to a shared design.
   const [activeTab, setActiveTab] = useViewState<Tab>('activeTab', 'forward');
+  // A Layer X link (?lx=1 or ?lx=2&run=...) opens on Layer X, whatever tab was last open.
+  useEffect(() => { if (wantsLayerXTab(LX_SEARCH)) setActiveTab('layerx'); }, [setActiveTab]);
+  const lxFull = activeTab === 'layerx' && LX_V2;
+  // Layer X's code is fetched the first time its tab opens, then kept mounted like every other tab.
+  const [lxSeen, setLxSeen] = useState(false);
+  useEffect(() => { if (activeTab === 'layerx') setLxSeen(true); }, [activeTab]);
+  const [configView, setConfigView] = useViewState<'parameters' | 'sections'>('configView', 'parameters');
   const [config, setConfig] = useState<EngineConfig | null>(null);
   // A design is editable only while it is checked out to you. The editor reads
   // this through ReadOnlyProvider, so a new input cannot accidentally stay live
@@ -108,6 +129,8 @@ function App() {
     emitConfigChanged(c);
   }, []);
 
+  if (LX_GALLERY) return <Suspense fallback={null}><LxGallery /></Suspense>;
+
   return (
     // The whole app, not just <main>: the injector / propellant selectors sit up
     // in the header, and switching either rewrites the config wholesale -- as
@@ -119,22 +142,19 @@ function App() {
       {/* Header */}
       <header className="border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
+          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1.5 py-1.5">
             {/* Logo and title */}
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="w-7 h-7 rounded-md bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                 </svg>
               </div>
-              <div>
-                <h1 className="text-lg font-bold text-[var(--color-text-primary)]">Liquid Engine Designer</h1>
-                <p className="text-xs text-[var(--color-text-secondary)]">Bipropellant rocket engine simulation</p>
-              </div>
+              <h1 className="text-base font-bold text-[var(--color-text-primary)]" title="Bipropellant rocket engine simulation">Liquid Engine Designer</h1>
             </div>
 
             {/* First-class config selectors + connection status */}
-            <div className="flex items-center gap-6">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 min-w-0">
               <ConfigurationSelector onConfigChange={setConfig} />
               <div className="flex items-center gap-2">
                 <div className={`w-2 h-2 rounded-full ${isConnected === null ? 'bg-yellow-500 animate-pulse' :
@@ -159,10 +179,10 @@ function App() {
           </div>
 
           {/* Navigation tabs */}
-          <nav className="flex gap-1 -mb-px">
+          <nav className="flex gap-1 -mb-px overflow-x-auto" aria-label="Views">
             <button
               onClick={() => setActiveTab('forward')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'forward'
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${activeTab === 'forward'
                 ? 'border-blue-500 text-blue-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -171,7 +191,7 @@ function App() {
             </button>
             <button
               onClick={() => setActiveTab('timeseries')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'timeseries'
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${activeTab === 'timeseries'
                 ? 'border-purple-500 text-purple-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -180,7 +200,7 @@ function App() {
             </button>
             <button
               onClick={() => setActiveTab('plotter')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'plotter'
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${activeTab === 'plotter'
                 ? 'border-emerald-500 text-emerald-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -189,7 +209,7 @@ function App() {
             </button>
             <button
               onClick={() => setActiveTab('flight')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'flight'
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${activeTab === 'flight'
                 ? 'border-orange-500 text-orange-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -198,7 +218,7 @@ function App() {
             </button>
             <button
               onClick={() => setActiveTab('geometry')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'geometry'
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${activeTab === 'geometry'
                 ? 'border-rose-500 text-rose-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -207,7 +227,7 @@ function App() {
             </button>
             <button
               onClick={() => setActiveTab('optimizer')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'optimizer'
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${activeTab === 'optimizer'
                 ? 'border-yellow-500 text-yellow-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -215,8 +235,17 @@ function App() {
               Optimizer
             </button>
             <button
+              onClick={() => setActiveTab('layerx')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${activeTab === 'layerx'
+                ? 'border-violet-400 text-violet-300'
+                : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
+                }`}
+            >
+              Layer X
+            </button>
+            <button
               onClick={() => setActiveTab('controller')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'controller'
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${activeTab === 'controller'
                 ? 'border-teal-500 text-teal-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -225,7 +254,7 @@ function App() {
             </button>
             <button
               onClick={() => setActiveTab('demo')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'demo'
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${activeTab === 'demo'
                 ? 'border-cyan-500 text-cyan-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -234,7 +263,7 @@ function App() {
             </button>
             <button
               onClick={() => setActiveTab('config')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'config'
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${activeTab === 'config'
                 ? 'border-blue-500 text-blue-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -246,7 +275,8 @@ function App() {
       </header>
 
       {/* Main content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      {/* The rebuilt Layer X is full width, and fills the window below the header (its tab only). */}
+      <main className={lxFull ? '' : 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6'}>
         {/* Inputs go grey without the checkout. Reading the design stays live:
             Forward mode, the plotter and the charts never write it back. The
             optimizer layers DO write their result into the config (see
@@ -276,7 +306,7 @@ function App() {
                   <ConfigUpload onConfigLoaded={handleConfigLoaded} />
                 </div>
               )}
-              <ForwardMode config={config} />
+              <ForwardMode config={config} onConfigUpdated={handleConfigLoaded} />
             </div>
           </ErrorBoundary>
         </div>
@@ -324,7 +354,7 @@ function App() {
                   <ConfigUpload onConfigLoaded={handleConfigLoaded} />
                 </div>
               )}
-              <ChamberGeometry config={config} />
+              <ChamberGeometry config={config} onConfigUpdated={handleConfigLoaded} />
             </div>
           </ErrorBoundary>
         </div>
@@ -339,6 +369,22 @@ function App() {
                 </div>
               )}
               <Optimizer config={config} />
+            </div>
+          </ErrorBoundary>
+        </div>
+
+        <div className={tabPanelClass('layerx')}>
+          <ErrorBoundary label="Layer X">
+            <div className="space-y-6">
+              {!config && (
+                <div className="p-5 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
+                  <h3 className="text-lg font-semibold mb-4 text-[var(--color-text-primary)]">Load Configuration</h3>
+                  <ConfigUpload onConfigLoaded={handleConfigLoaded} />
+                </div>
+              )}
+              {!lxSeen ? null : LX_V2
+                ? <Suspense fallback={null}><LayerXV2 config={config} isVisible={activeTab === 'layerx'} onConfigUpdated={handleConfigLoaded} /></Suspense>
+                : <Suspense fallback={null}><LayerXOld config={config} isVisible={activeTab === 'layerx'} onConfigUpdated={handleConfigLoaded} /></Suspense>}
             </div>
           </ErrorBoundary>
         </div>
@@ -391,9 +437,20 @@ function App() {
                 </div>
               </div>
 
-              {/* Editor section - full width */}
+              {/* Parameters: every field the design carries, searchable, with defaults and units.
+                  The section editor is kept as the second view. */}
+              <div className="flex gap-1 text-[12px]">
+                {(['parameters', 'sections'] as const).map((v) => (
+                  <button key={v} type="button" onClick={() => setConfigView(v)}
+                          className={`px-3 py-1 rounded border ${configView === v ? 'border-blue-500 text-blue-400' : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}>
+                    {v === 'parameters' ? 'Parameters' : 'Section editor'}
+                  </button>
+                ))}
+              </div>
               <div className="rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] overflow-hidden" style={{ height: 'calc(100vh - 280px)', minHeight: '500px' }}>
-                <ConfigEditor config={config} onConfigUpdated={handleConfigLoaded} />
+                {configView === 'parameters'
+                  ? <ParametersWorkspace config={config} onConfigUpdated={handleConfigLoaded} />
+                  : <ConfigEditor config={config} onConfigUpdated={handleConfigLoaded} />}
               </div>
             </div>
           </ErrorBoundary>
@@ -401,13 +458,15 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-[var(--color-border)] mt-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <p className="text-sm text-[var(--color-text-secondary)] text-center">
-            Pintle Engine Design Pipeline - FastAPI + React
-          </p>
-        </div>
-      </footer>
+{!lxFull && (
+        <footer className="border-t border-[var(--color-border)] mt-auto">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <p className="text-sm text-[var(--color-text-secondary)] text-center">
+              Pintle Engine Design Pipeline - FastAPI + React
+            </p>
+          </div>
+        </footer>
+      )}
     </div>
     </ReadOnlyProvider>
   );

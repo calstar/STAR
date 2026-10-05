@@ -29,7 +29,11 @@ export function AcousticDampingBars({ data }: { data: StabilityRichPayload }) {
   return (
     <VizCard
       title="Acoustic damping budget"
-      subtitle="Red = driving; stacked colors = damping mechanisms; modes ordered by frequency (hover for values)"
+      subtitle="Red: combustion driving. Colours: damping. Report only."
+      info={<>
+        <span className="block">α is the net growth rate, driving minus damping: below zero a mode decays, above it grows. Modes are ordered by frequency; hover a bar for its terms.</span>
+        <span className="block">The injector-face and two-phase damping are fixed fractions of π·f ({data.assumptions.damping_injector_frac ?? '?'} and {data.assumptions.damping_twophase_frac ?? '?'}), uncalibrated. Rate high-frequency stability by test: ≥ 25 kHz Pc, pulse or bomb.</span>
+      </>}
     >
       <ResponsiveContainer width="100%" height={Math.max(180, rows.length * 40)}>
         <BarChart data={rows} layout="vertical" margin={{ ...CHART_MARGIN, left: 36, right: 24 }}>
@@ -82,13 +86,20 @@ export function AcousticDampingBars({ data }: { data: StabilityRichPayload }) {
           })}
         </tbody>
       </table>
-      <p className="text-[10px] text-[var(--color-text-secondary)] mt-2 leading-snug">
-        <span className="font-mono">α</span> = net growth rate:{' '}
-        <span style={{ color: STABLE }}>α&lt;0 decays (stable)</span>,{' '}
-        <span style={{ color: UNSTABLE }}>α&gt;0 grows (driven)</span>. In each bar, the part right
-        of zero is combustion driving the mode; the stacked colors left of zero are the damping
-        mechanisms - driving minus damping is α.
-      </p>
+      {(() => {
+        // How much of each verdict rests on the two assumed damping terms (injector face, two-phase:
+        // fixed fractions of π·f with no closed form, uncalibrated).
+        const shares = data.acoustic.modes.map((m) => {
+          const tot = m.damping.noz + m.damping.visc + m.damping.inj + m.damping.twophase;
+          return tot > 0 ? (m.damping.inj + m.damping.twophase) / tot : NaN;
+        }).filter(Number.isFinite);
+        if (!shares.length) return null;
+        return (
+          <p className="text-[11px] mt-2" style={{ color: MARGINAL }}>
+            ◇ {Math.round(100 * Math.min(...shares))}–{Math.round(100 * Math.max(...shares))} % of the damping is assumed.
+          </p>
+        );
+      })()}
     </VizCard>
   );
 }

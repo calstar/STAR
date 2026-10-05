@@ -358,6 +358,84 @@ default = { value = 1e-6, unit = "Cv", source = "default", reference = "numerica
 
 # ---------------------------------------------------------------------------
 
+[relief_valve]
+description = "A spring-loaded pressure relief valve. Shut until the pressure across it reaches set_pressure; open, its lift is proportional between the reseating pressure (set less blowdown) and full lift at set plus overpressure, and it shuts again only below reseat. Gas flows through Cv x lift per IEC 60534-2-1, expansion and choke included. Terms per ISO 4126-1."
+models = ["spring"]
+
+[relief_valve.ports.inlet]
+description = "The protected side: the vessel or line the valve relieves."
+
+[relief_valve.ports.outlet]
+description = "Discharge, usually atmosphere."
+
+[relief_valve.ports.lift]
+kind = "signal"
+description = "Lift, 0 shut to 1 full. Decided by the session from the pressure across the valve each coupling step; absent, the valve is shut."
+
+[relief_valve.params.set_pressure]
+dimension = "pressure"
+description = "Pressure ACROSS the valve, inlet over outlet, at which it begins to open (ISO 4126-1 set pressure). Discharging to atmosphere this is the gauge pressure stamped on the valve. A drawn RV without one is not a relief model."
+minimum = 0.0
+required = true
+models = ["spring"]
+
+[relief_valve.params.overpressure]
+dimension = "dimensionless"
+description = "Rise above set pressure, as a fraction of set, at which the valve reaches its rated lift (ISO 4126-1 overpressure). Take it from the datasheet's certified capacity."
+minimum = 0.0
+maximum = 1.0
+required = false
+models = ["spring"]
+default = { value = 0.10, unit = "-", source = "default", reference = "assumed: 10 % of set, the accumulation ASME BPVC Section VIII Div. 1 and API 520 Part I allow above MAWP for a single relief device; the valve's certified overpressure is on its datasheet" }
+
+[relief_valve.params.blowdown]
+dimension = "dimensionless"
+description = "Set pressure less reseating pressure, as a fraction of set (ISO 4126-1 blowdown): how far the pressure must fall before an open valve shuts. The width of the hysteresis loop."
+minimum = 0.0
+maximum = 0.99
+required = false
+models = ["spring"]
+default = { value = 0.07, unit = "-", source = "default", reference = "assumed: within the few-to-fifteen percent typical of spring-loaded gas relief valves; manufacturer-specific" }
+
+[relief_valve.params.Cv]
+dimension = "flow_coefficient"
+description = "Flow coefficient at full lift. Sets the rated capacity: choked gas flow at the relieving pressure through this Cv (IEC 60534-2-1)."
+minimum = 0.0
+models = ["spring"]
+
+[relief_valve.params.bore]
+dimension = "length"
+description = "Inlet bore the Cv's loss coefficient is referenced to."
+minimum = 0.0
+models = ["spring"]
+
+[relief_valve.params.xT]
+dimension = "dimensionless"
+description = "Pressure-differential ratio factor at choked flow, IEC 60534-2-1: a gas chokes at x = (gamma/1.40) * xT."
+minimum = 0.1
+maximum = 1.0
+required = false
+models = ["spring"]
+default = { value = 0.70, unit = "-", source = "default", reference = "IEC 60534 typical, assumed" }
+
+[relief_valve.params.FL]
+dimension = "dimensionless"
+description = "Liquid pressure recovery factor, IEC 60534, for a relief on a liquid line."
+minimum = 0.0
+maximum = 1.0
+required = false
+models = ["spring"]
+default = { value = 0.9, unit = "-", source = "default", reference = "typical globe/ball valve, IEC 60534-2-1 table 2. Manufacturer-specific." }
+
+[relief_valve.params.leak_closed]
+dimension = "flow_coefficient"
+description = "Flow coefficient at a sliver of lift; the shut valve itself is an open circuit."
+required = false
+models = ["spring"]
+default = { value = 1e-6, unit = "Cv", source = "default", reference = "numerically small rather than measured" }
+
+# ---------------------------------------------------------------------------
+
 [bend]
 description = "A discrete bend in hardline — an elbow, or a tube bent on a former. Geometry-aware: the resistance depends on how tight the bend is, and a bend tighter than the tube allows is a fabrication problem, not a modelling detail."
 models = ["rounded", "measured"]
@@ -605,6 +683,14 @@ models = ["droop", "curve"]
 dimension = "length"
 description = "Flow diameter through the seat, for the dynamic head the Cv is referenced to."
 minimum = 0.0
+models = ["droop", "curve"]
+
+[regulator.params.xT]
+dimension = "dimensionless"
+description = "Pressure-differential ratio factor of the seat at choked flow, IEC 60534-2-1. Read only by the opt-in compressible seat (Setup.regulator_compressible_seat); absent, the session's regulator_xT (0.70, IEC 60534 typical, assumed) is used."
+minimum = 0.1
+maximum = 1.0
+required = false
 models = ["droop", "curve"]
 
 [regulator.params.min_inlet_differential]

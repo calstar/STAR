@@ -385,3 +385,73 @@ async def get_chamber_geometry(session: UserSession = Depends(get_session)):
             detail=f"Failed to calculate geometry: {str(e)}"
         )
 
+
+
+# ---------------------------------------------------------------------------------------------
+# Injector layout. The drawing, Layer 1 and scripts/design_audit.py all read this one
+# derivation (engine/core/injectors/layout.py); the frontend used to carry its own copy.
+# ---------------------------------------------------------------------------------------------
+
+from engine.core.injectors.layout import layout_from_config as _layout_from_config
+
+
+def _injector_layout_or_404(cfg) -> dict:
+    # TODO(flows): no solve is at hand here (the session keeps no evaluation result, and POST
+    # takes a partial config), so the layout runs without ``flows``: the manifold velocity-head
+    # and orifice cavitation checks do not run, and the plate is checked at
+    # target_chamber_pressure_psi. Pass ``flows=flows_from_result(result, cfg)`` once a cached
+    # evaluation is available (scripts/design_audit.py and scripts/injector_layout.py do).
+    out = _layout_from_config(cfg)
+    if out is None:
+        raise HTTPException(status_code=404, detail="No impinging injector in this config.")
+    return out
+
+
+@router.get("/injector")
+async def get_injector_layout(session: UserSession = Depends(get_session)):
+    """Face, passage and back-face geometry of the session's impinging injector."""
+    if not session.app_state.has_config():
+        raise HTTPException(status_code=404, detail="No config loaded.")
+    return _injector_layout_or_404(session.app_state.config)
+
+
+@router.post("/injector")
+async def post_injector_layout(body: dict):
+    """The same, for a config the caller holds (e.g. a Forward-mode result's config).
+
+    Takes ``{"config": {...}}`` as a plain dict and needs only the injector, chamber
+    diameter, discharge and design-requirements sections -- no full validation, so a
+    partial config still draws.
+    """
+    cfg = body.get("config") if isinstance(body, dict) else None
+    if not isinstance(cfg, dict):
+        raise HTTPException(status_code=422, detail="Expected {\"config\": {...}}.")
+    return _injector_layout_or_404(cfg)
+
+
+@router.get("/injector/spray")
+def get_injector_spray(sensitivity: bool = True, session: UserSession = Depends(get_session)):
+    """Spray and mixing report of the session's impinging injector at its own tank pressures
+    (engine/core/injectors/spray_report.py). Solves the engine, and with ``sensitivity`` once more
+    per open input (~20 s): a plain ``def`` so FastAPI runs it off the event loop."""
+    if not session.app_state.has_config():
+        raise HTTPException(status_code=404, detail="No config loaded.")
+    cfg = session.app_state.config
+    if str(getattr(cfg.injector, "type", "")).lower() != "impinging":
+        raise HTTPException(status_code=404, detail="No impinging injector in this config.")
+    from engine.core.injectors.spray_report import spray_mixing_report
+    return _jsonable(spray_mixing_report(cfg, with_sensitivity=sensitivity))
+
+
+def _jsonable(v):
+    """NaN and inf are not JSON: they go out as null."""
+    import math as _m
+    if isinstance(v, dict):
+        return {k: _jsonable(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_jsonable(x) for x in v]
+    if isinstance(v, float) and not _m.isfinite(v):
+        return None
+    if isinstance(v, (np.floating, np.integer)):
+        return _jsonable(v.item())
+    return v

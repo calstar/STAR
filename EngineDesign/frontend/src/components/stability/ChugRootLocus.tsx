@@ -124,8 +124,12 @@ export function ChugRootLocus({ data }: Props) {
 
   return (
     <VizCard
-      title="Chug root locus (s-plane)"
-      subtitle="Closed-loop eigenvalues s = σ + jω as injector stiffness η_inj sweeps. Left of the axis = stable."
+      title="Chug root locus"
+      subtitle="Left of the axis is stable."
+      info={<>
+        <span className="block">Each point is a root of the chug loop's characteristic equation at one injector stiffness; the arrow points toward stiffer injectors. The ✕ is this design. σ is the growth rate (negative dies out), ω how fast it oscillates.</span>
+        <span className="block">η_inj is the flow-weighted ΔP/Pc: every stream's own drop is scaled by one factor, so the ✕ lies on its branch. Pole and branch are at the nominal mixing lag; the gate takes the worst lag in its band.</span>
+      </>}
     >
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minHeight: H }}>
         <defs>
@@ -327,24 +331,6 @@ export function ChugRootLocus({ data }: Props) {
         </table>
       )}
 
-      <p className="text-[10px] text-[var(--color-text-secondary)] leading-snug">
-        Every point on the blue branch is a <span className="text-[var(--color-text-primary)]">root of
-        the chug characteristic equation</span> 1 + L(s) = 0 at one injector stiffness; the arrow points
-        toward stiffer injectors. The ✕ is this design. σ is the growth rate — negative means a chug
-        oscillation dies out, positive means it builds. ω is how fast it oscillates while it does.
-        {critical && Number.isFinite(critical.eta) ? (
-          <>
-            {' '}The branch crosses into the left half-plane at{' '}
-            <span className="text-[var(--color-text-primary)]">η_inj = {fmt(critical.eta, 3)}</span>,
-            so that is the injector ΔP/Pc this engine has to beat.
-          </>
-        ) : null}
-      </p>
-      <p className="text-[9.5px] text-[var(--color-text-secondary)] mt-1 leading-snug opacity-80">
-        The sweep moves both propellant streams to the same η_inj, while the ✕ is solved at each
-        stream&apos;s own η — so the ✕ sits near the branch rather than exactly on it whenever the two
-        injector stiffnesses differ.
-      </p>
     </VizCard>
   );
 }

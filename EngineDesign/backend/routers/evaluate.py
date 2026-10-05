@@ -108,6 +108,15 @@ async def evaluate(request: EvaluateRequest, session: UserSession = Depends(get_
         from engine.pipeline.config_switch import design_staleness
         design_warning = design_staleness(session.app_state.config)
 
+        # Forward mode's view: every quantity once, with its basis and what it rests on.
+        from engine.pipeline.forward_report import forward_report
+        try:
+            from engine.pipeline.handcheck import handcheck
+            hc = handcheck(session.app_state.config, results, P_tank_O, P_tank_F)
+        except Exception as e:   # the check is optional; a missing CEA must not fail the solve
+            hc = {"rows": [], "flags": [], "error": f"{type(e).__name__}: {e}"}
+        report = forward_report(session.app_state.config, results, handcheck_rows=hc)
+
         # Convert numpy types to JSON-serializable and return directly
         # Frontend uses the same field names as runner.py outputs
         # P_ambient and elevation are now included in results from runner
@@ -121,6 +130,7 @@ async def evaluate(request: EvaluateRequest, session: UserSession = Depends(get_
             },
             "design_warning": design_warning,
             "results": convert_numpy(results),
+            "report": convert_numpy(report),
         }
         
     except Exception as e:

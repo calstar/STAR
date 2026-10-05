@@ -130,9 +130,23 @@ def test_unknown_design_is_allowed(client):
     assert r.status_code == 200, r.text
 
 
-def test_a_lapsed_checkout_is_refused(client, monkeypatch):
+def test_a_lapsed_checkout_nobody_took_is_reclaimed_by_a_config_write(client, monkeypatch):
+    """The config edit that arrives after a lapse is kept, not refused, when
+    nobody has taken the design since -- the same rule as the design's own
+    autosave (`DesignStore.claim_for_write`)."""
     doc_id = _create(client, A)
     _take(client, doc_id, A)
     monkeypatch.setattr(documents.store, "lock_ttl", 0)  # every checkout reads as expired
+    r = client.post("/probe/header", headers={**A, "X-Design-Id": doc_id})
+    assert r.status_code == 200, r.text
+
+
+def test_a_lapsed_checkout_someone_else_took_is_refused(client, monkeypatch):
+    doc_id = _create(client, A)
+    _take(client, doc_id, A)
+    client.put(f"{BASE}/{doc_id}/share", headers=A, json={"sharedWith": [B["X-Auth-Email"]]})
+    monkeypatch.setattr(documents.store, "lock_ttl", 0)
+    _take(client, doc_id, B, params={"owner": A["X-Auth-Email"]})
+    monkeypatch.setattr(documents.store, "lock_ttl", 900)
     r = client.post("/probe/header", headers={**A, "X-Design-Id": doc_id})
     assert r.status_code == 423, r.text

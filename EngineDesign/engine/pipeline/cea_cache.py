@@ -984,11 +984,15 @@ class CEACache:
         --------
         dict with keys:
             cstar_ideal : float [m/s]
-            Cf_ideal : float
+            Cf_ideal : float, ambient thrust coefficient at THIS Pa: Cf_vac - Pa*eps/Pc
+            Cf_sl : float, the stored table (CEA get_PambCf at its default 14.7 psia)
+            Cf_vac : float
             Tc : float [K]
             gamma : float
             R : float [J/(kg*K)]
             M : float [kg/kmol] (molecular weight)
+            extrapolated : bool, True when Pc, MR or eps lay outside the table and were clamped
+            clamped : tuple of the clamped axis names ("Pc", "MR", "eps")
         """
         if eps is None:
             eps = self.config.expansion_ratio
@@ -1040,14 +1044,21 @@ class CEACache:
             Cf_vac = (float(self._bilinear_interpolate(Pc_clamped, MR_clamped, self.Cf_vac_table))
                       if self.Cf_vac_table is not None else _isentropic_cf_vac(gamma, eps_clamped))
 
+        # The ambient coefficient belongs to the Pa asked about, not to the table's 14.7 psia.
+        Cf_amb = (Cf_vac - float(Pa) * eps_in / Pc_in) if (Pc_in > 0 and np.isfinite(Cf_vac)) else Cf
+        clamped = tuple(name for name, a, b in (("Pc", Pc_in, Pc_clamped), ("MR", MR_in, MR_clamped),
+                                                ("eps", eps_in, eps_clamped)) if a != b)
         out = {
             "cstar_ideal": cstar,
-            "Cf_ideal": Cf,
+            "Cf_ideal": float(Cf_amb),
+            "Cf_sl": Cf,
             "Cf_vac": Cf_vac,   # vacuum thrust coefficient (RPA delivered-thrust basis)
             "Tc": Tc,
             "gamma": gamma,
             "R": R,
             "M": M,
+            "extrapolated": bool(clamped),
+            "clamped": clamped,
         }
 
         # print(
@@ -1088,3 +1099,209 @@ class CEACache:
             return float(self._bilinear_interpolate(Pc_c, MR_c, self.Cf_vac_table))
         g = float(self._bilinear_interpolate(Pc_c, MR_c, self.gamma_table))
         return _isentropic_cf_vac(g, float(eps))
+
+    @property
+    def aux(self) -> "CEAAuxTables":
+        """Transport, composition and exit-state tables for this propellant pair."""
+        return get_aux_tables(self.config.ox_name, self.config.fuel_name)
+
+
+# ── Auxiliary CEA tables ──────────────────────────────────────────────────────
+# What the performance cache above does not carry, and the thermal and nozzle models need:
+#   * frozen transport (mu, cp, Pr) at the chamber and throat stations -- the Bartz inputs;
+#   * equilibrium mole fractions of the radiating and carbon-oxidising species, chamber and
+#     throat, and the throat molecular weight -- gas emissivity and graphite B';
+#   * the shifting-equilibrium exit state Pc/Pe, Te, Me over an area-ratio grid.
+# About 50k rocketcea calls, ~40 s: built on demand, written next to the performance cache,
+# and meant to be committed with it (CI has no rocketcea). The grid is fixed per propellant
+# pair and wide enough for every preset, so one file serves every config of that pair.
+CEA_AUX_SCHEMA_VERSION = 1
+AUX_SPECIES = ("H2O", "CO2", "CO", "H2", "OH", "O2", "O", "H")
+_AUX_MR = np.round(np.linspace(0.8, 4.0, 65), 6)
+_AUX_PC = np.geomspace(1.0e5, 1.2e7, 16)        # Pa
+_AUX_EPS = np.geomspace(1.1, 60.0, 48)
+_PSI = 6894.757293168361
+_BTU_LBM_R = 4186.8                              # J/(kg K)
+_MILLIPOISE = 1.0e-4                             # Pa s
+_MCAL_CM_S_K = 0.4184                            # W/(m K)
+_AUX_MEMO: Dict[Tuple[str, str], "CEAAuxTables"] = {}
+
+
+def _aux_axis(grid: np.ndarray, x: float, log: bool) -> Tuple[int, float, bool]:
+    """Cell index, weight and clamp flag on a uniform (or log-uniform) grid."""
+    lo, hi = float(grid[0]), float(grid[-1])
+    xc = min(max(x, lo), hi)
+    if log:
+        f = (np.log(xc) - np.log(lo)) / (np.log(hi) - np.log(lo)) * (len(grid) - 1)
+    else:
+        f = (xc - lo) / (hi - lo) * (len(grid) - 1)
+    i = min(int(f), len(grid) - 2)
+    return i, f - i, xc != x
+
+
+def _fill_nan_nearest(a: np.ndarray) -> np.ndarray:
+    """Fill failed CEA points from the nearest good one along the first axis (MR), then Pc."""
+    a = np.array(a, dtype=float)
+    for axis in range(min(a.ndim, 2)):
+        moved = np.moveaxis(a, axis, 0)
+        for idx in np.ndindex(moved.shape[1:]):
+            col = moved[(slice(None),) + idx]
+            bad = ~np.isfinite(col)
+            if bad.any() and (~bad).any():
+                good = np.flatnonzero(~bad)
+                for j in np.flatnonzero(bad):
+                    col[j] = col[good[np.argmin(np.abs(good - j))]]
+    return a
+
+
+class CEAAuxTables:
+    """Chamber/throat transport and composition on (MR, Pc); exit state on (MR, Pc, eps)."""
+
+    def __init__(self, ox_name: str, fuel_name: str, path: Optional[str] = None):
+        self.ox_name, self.fuel_name = ox_name, fuel_name
+        if path is None:
+            root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            path = os.path.join(root, "output", "cache", f"cea_aux_{ox_name}_{fuel_name}.npz")
+        self.path = path
+        self.MR, self.Pc, self.eps = _AUX_MR, _AUX_PC, _AUX_EPS
+        self.t: Dict[str, np.ndarray] = {}
+        if not self._load():
+            self._build()
+
+    def _load(self) -> bool:
+        if not os.path.exists(self.path):
+            return False
+        data = _load_npz_tables(self.path)
+        try:
+            meta = json.loads(data["meta"].tolist())
+        except Exception:
+            return False
+        if (meta.get("schema") != CEA_AUX_SCHEMA_VERSION or meta.get("ox_name") != self.ox_name
+                or meta.get("fuel_name") != self.fuel_name):
+            return False
+        if not (np.array_equal(data["MR"], self.MR) and np.allclose(data["Pc"], self.Pc)
+                and np.allclose(data["eps"], self.eps)):
+            return False
+        self.t = {k: v for k, v in data.items() if k not in ("meta", "MR", "Pc", "eps")}
+        return True
+
+    def _build(self) -> None:
+        C = _get_CEA_Obj()(oxName=self.ox_name, fuelName=self.fuel_name)
+        nM, nP, nE = len(self.MR), len(self.Pc), len(self.eps)
+        t = {k: np.full((nM, nP), np.nan) for k in
+             ("mu_c", "cp_c", "Pr_c", "mu_t", "cp_t", "Pr_t", "MW_t")}
+        for stn in ("c", "t"):
+            for sp in AUX_SPECIES:
+                t[f"x_{sp}_{stn}"] = np.zeros((nM, nP))
+        for k in ("lnPcPe", "Te", "Me"):
+            t[k] = np.full((nM, nP, nE), np.nan)
+        for i, MR in enumerate(self.MR):
+            for j, Pc in enumerate(self.Pc):
+                pc = float(Pc) / _PSI
+                try:
+                    for stn, fn in (("c", C.get_Chamber_Transport), ("t", C.get_Throat_Transport)):
+                        cp, mu, _k, pr = fn(Pc=pc, MR=float(MR), eps=2.0, frozen=1)
+                        t[f"cp_{stn}"][i, j] = cp * _BTU_LBM_R
+                        t[f"mu_{stn}"][i, j] = mu * _MILLIPOISE
+                        t[f"Pr_{stn}"][i, j] = pr
+                    t["MW_t"][i, j] = C.get_Throat_MolWt_gamma(Pc=pc, MR=float(MR), eps=2.0)[0]
+                    _, xs = C.get_SpeciesMoleFractions(Pc=pc, MR=float(MR), eps=2.0, frozen=0,
+                                                       frozenAtThroat=0, min_fraction=1e-8)
+                    for key, vals in xs.items():
+                        sp = key.lstrip("*")
+                        if sp in AUX_SPECIES:
+                            t[f"x_{sp}_c"][i, j] = vals[1]
+                            t[f"x_{sp}_t"][i, j] = vals[2]
+                except Exception:
+                    pass
+                for k, e in enumerate(self.eps):
+                    try:
+                        pcpe = C.get_PcOvPe(Pc=pc, MR=float(MR), eps=float(e), frozen=0)
+                        te = C.get_Temperatures(Pc=pc, MR=float(MR), eps=float(e), frozen=0)[2] / 1.8
+                        me = C.get_MachNumber(Pc=pc, MR=float(MR), eps=float(e), frozen=0)
+                        if pcpe > 1.0 and te > 0 and me > 1.0:
+                            t["lnPcPe"][i, j, k] = np.log(pcpe)
+                            t["Te"][i, j, k] = te
+                            t["Me"][i, j, k] = me
+                    except Exception:
+                        pass
+        self.t = {k: _fill_nan_nearest(v) for k, v in t.items()}
+        meta = json.dumps({"schema": CEA_AUX_SCHEMA_VERSION, "ox_name": self.ox_name,
+                           "fuel_name": self.fuel_name,
+                           "note": "frozen transport, equilibrium composition (index 1 chamber, "
+                                   "2 throat), shifting-equilibrium exit state"})
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        tmp = self.path + f".tmp{os.getpid()}.npz"
+        np.savez_compressed(tmp, meta=np.array(meta), MR=self.MR, Pc=self.Pc, eps=self.eps, **self.t)
+        os.replace(tmp, self.path)
+
+    def _bilinear(self, name: str, MR: float, Pc: float) -> Tuple[float, bool]:
+        i, wi, ci = _aux_axis(self.MR, float(MR), False)
+        j, wj, cj = _aux_axis(self.Pc, float(Pc), True)
+        a = self.t[name]
+        v = ((1 - wi) * (1 - wj) * a[i, j] + wi * (1 - wj) * a[i + 1, j]
+             + (1 - wi) * wj * a[i, j + 1] + wi * wj * a[i + 1, j + 1])
+        return float(v), (ci or cj)
+
+    def transport(self, MR: float, Pc: float, station: str = "chamber") -> Dict[str, float]:
+        """Frozen-composition mu [Pa s], cp [J/(kg K)], Pr, k = mu cp / Pr [W/(m K)]."""
+        s = "c" if station == "chamber" else "t"
+        mu, e1 = self._bilinear(f"mu_{s}", MR, Pc)
+        cp, e2 = self._bilinear(f"cp_{s}", MR, Pc)
+        pr, e3 = self._bilinear(f"Pr_{s}", MR, Pc)
+        return {"mu": mu, "cp": cp, "Pr": pr, "k": mu * cp / pr, "extrapolated": e1 or e2 or e3}
+
+    def composition(self, MR: float, Pc: float, station: str = "chamber") -> Dict[str, float]:
+        """Equilibrium mole fractions of AUX_SPECIES; 'MW' is the throat molecular weight."""
+        s = "c" if station == "chamber" else "t"
+        out: Dict[str, float] = {}
+        ext = False
+        for sp in AUX_SPECIES:
+            out[sp], e = self._bilinear(f"x_{sp}_{s}", MR, Pc)
+            out[sp] = max(out[sp], 0.0)
+            ext = ext or e
+        out["MW"], _ = self._bilinear("MW_t", MR, Pc)
+        out["extrapolated"] = ext
+        return out
+
+    def _exit(self, name: str, MR: float, Pc: float, eps: float) -> Tuple[float, bool]:
+        i, wi, ci = _aux_axis(self.MR, float(MR), False)
+        j, wj, cj = _aux_axis(self.Pc, float(Pc), True)
+        k, wk, ck = _aux_axis(self.eps, float(eps), True)
+        a = self.t[name]
+        v = 0.0
+        for di, fi in ((0, 1 - wi), (1, wi)):
+            for dj, fj in ((0, 1 - wj), (1, wj)):
+                for dk, fk in ((0, 1 - wk), (1, wk)):
+                    v += fi * fj * fk * a[i + di, j + dj, k + dk]
+        return float(v), (ci or cj or ck)
+
+    def exit_state(self, MR: float, Pc: float, eps: float) -> Dict[str, float]:
+        """Shifting-equilibrium exit pressure [Pa], temperature [K] and Mach number."""
+        ln_r, e1 = self._exit("lnPcPe", MR, Pc, eps)
+        Te, _ = self._exit("Te", MR, Pc, eps)
+        Me, _ = self._exit("Me", MR, Pc, eps)
+        return {"P_exit": float(Pc) / np.exp(ln_r), "T_exit": Te, "M_exit": Me,
+                "PcOvPe": float(np.exp(ln_r)), "extrapolated": e1}
+
+    def eps_for_exit_pressure(self, MR: float, Pc: float, Pe: float) -> float:
+        """Area ratio whose shifting-equilibrium exit pressure is Pe (Sutton: optimum at Pe = Pa)."""
+        target = np.log(float(Pc) / float(Pe))
+        f = lambda e: self._exit("lnPcPe", MR, Pc, e)[0] - target
+        lo, hi = float(self.eps[0]), float(self.eps[-1])
+        flo, fhi = f(lo), f(hi)
+        if flo >= 0:
+            return lo
+        if fhi <= 0:
+            return hi
+        from scipy.optimize import brentq
+        return float(brentq(f, lo, hi, xtol=1e-10, rtol=1e-12))
+
+
+def get_aux_tables(ox_name: str, fuel_name: str) -> CEAAuxTables:
+    key = (ox_name, fuel_name)
+    tab = _AUX_MEMO.get(key)
+    if tab is None:
+        tab = CEAAuxTables(ox_name, fuel_name)
+        _AUX_MEMO[key] = tab
+    return tab

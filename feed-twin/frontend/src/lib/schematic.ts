@@ -1,25 +1,7 @@
 /**
- * The bits of the schematic that can be *wrong* rather than merely ugly.
- *
- * Colour by fluid, and the flow animation's direction and speed. Everything
- * else in the drawing is layout.
+ * The flow animation's speed and when it runs: the one part of the schematic
+ * feed-twin decides. Everything else is pid-designer's drawing.
  */
-
-/** Fluid colours, matching pid-designer's `ROLE_COLORS` so a line is the same
- *  colour in the editor and here. */
-export const FLUID_COLOR: Record<string, string> = {
-  oxygen: '#60a5fa',
-  ethanol: '#f97316',
-  methane: '#f97316',
-  water: '#38bdf8',
-  nitrogen: '#ef4444',
-  helium: '#ef4444',
-};
-
-export const UNSET_COLOR = '#64748b';
-
-export const colorOf = (fluid: string): string =>
-  FLUID_COLOR[fluid] ?? UNSET_COLOR;
 
 /** Below this a line is drawn as static: a dash creeping along a line that is
  *  not really flowing reads as flow, and on a schematic that is a lie. */

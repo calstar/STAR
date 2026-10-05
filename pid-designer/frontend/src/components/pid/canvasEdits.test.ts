@@ -171,13 +171,14 @@ describe('applyMoves', () => {
     expect(seen).toEqual([P(150, 90), P(160, 90), P(170, 90)]);
   });
 
-  it('slides a tee stopped short of a bend or a port onto the nearest grid line it may sit on', () => {
+  it('slides a tee stopped short of a port onto the nearest grid line it may sit on, and onto a bend it reaches', () => {
     // M1.r -> M2.l, a Z bending at x = 450, a tee on its first leg at 390.
-    // Dragged past the bend, the tee is held a tee's reach down the riser, at
-    // y = 314, and dragged on at M2 it is held a port's clearance short of
-    // it, at x = 556: both on no grid line, and the branch from each jogged
-    // by the difference. On the grid line beyond the stop that is still as
-    // far off: 320, and 550.
+    // Dragged on at M2 it is held a port's clearance short of it, at
+    // x = 556: on no grid line, and the branch from it jogged by the
+    // difference. On the grid line beyond the stop that is still as far off:
+    // 550. Dragged just past the bend, it rests on the bend, an elbow. (It
+    // used to be held a tee's reach down the riser and then on the grid
+    // line at y = 320: no tee sat on a bend.)
     const M1 = part('M1', 270, 270), M2 = part('M2', 570, 420);
     const split = splitEdgeAt([M1, M2], [E('M1', 'r', 'M2', 'l')], 'M1-M2', P(390, 300), undefined, { a: endOf(M1, 'r')!, b: endOf(M2, 'l')! })!;
     const bay = settle(split.nodes, split.edges);
@@ -186,7 +187,7 @@ describe('applyMoves', () => {
     // React Flow's snapped corners: the pointer just past the bend, and on
     // past M2's port.
     const past = applyMoves(bay.nodes, [move(tee, P(460, 300))], bay.edges, endOf).nodes;
-    expect(centreOfJunction(past.find(n => n.id === tee)!)).toEqual(P(450, 320));
+    expect(centreOfJunction(past.find(n => n.id === tee)!)).toEqual(P(450, 300));
     const on = applyMoves(bay.nodes, [move(tee, P(590, 450))], bay.edges, endOf).nodes;
     expect(centreOfJunction(on.find(n => n.id === tee)!)).toEqual(P(550, 450));
   });

@@ -279,3 +279,54 @@ describe('a line an old tee saved with no port on a turned symbol', () => {
     expect(old(270).edges[0].sourceHandle).toBe('l');
   });
 });
+
+describe('a drawing written by hand, not saved here', () => {
+  // The stands feed-twin ships name a symbol's component and not its node
+  // type, and no port on any line.
+  const bare = (id: string, componentType: string, x: number, y: number): Node =>
+    ({ id, position: { x, y }, data: { componentType, label: id } }) as unknown as Node;
+
+  it('draws each symbol as its component, not as a plain box', () => {
+    const out = migrate({ nodes: [bare('V', 'SOL', 0, 0), bare('T', 'TANK', 200, 0)], edges: [] });
+    expect(out.nodes.map(n => n.type)).toEqual(['SOL', 'TANK']);
+  });
+
+  it('leaves a component it has no symbol for as the plain box', () => {
+    const out = migrate({ nodes: [bare('X', 'VENT', 0, 0)], edges: [] });
+    expect(out.nodes[0].type).toBeUndefined();
+  });
+
+  it('runs a line between the ports that face each other', () => {
+    const across = migrate({
+      nodes: [bare('A', 'MAN', 0, 0), bare('B', 'MAN', 300, 0)],
+      edges: [{ id: 'A-B', source: 'A', target: 'B', data: {} }],
+    }).edges[0];
+    expect([across.sourceHandle, across.targetHandle]).toEqual(['r', 'l']);
+    // Right to left too: the order of the line is not the side of the symbol.
+    const back = migrate({
+      nodes: [bare('A', 'MAN', 300, 0), bare('B', 'MAN', 0, 0)],
+      edges: [{ id: 'A-B', source: 'A', target: 'B', data: {} }],
+    }).edges[0];
+    expect([back.sourceHandle, back.targetHandle]).toEqual(['l', 'r']);
+  });
+
+  it('puts a second line on a valve on its other port, not on top of the first', () => {
+    // A valve between two others, both to its left: the second line cannot
+    // also take the inlet facing them, so it takes the outlet.
+    const out = migrate({
+      nodes: [bare('U', 'MAN', 0, 0), bare('D', 'MAN', 0, 200), bare('V', 'MAN', 300, 100)],
+      edges: [
+        { id: 'U-V', source: 'U', target: 'V', data: {} },
+        { id: 'V-D', source: 'V', target: 'D', data: {} },
+      ],
+    }).edges;
+    expect(out[0].targetHandle).toBe('l');
+    expect(out[1].sourceHandle).toBe('r');
+  });
+
+  it('leaves a line that names its ports alone', () => {
+    const e: Edge = { id: 'A-B', source: 'A', sourceHandle: 'l', target: 'B', targetHandle: 'r', data: {} };
+    const out = migrate({ nodes: [valve('A', 0, 0), valve('B', 300, 0)], edges: [e] });
+    expect(out.edges[0]).toBe(e);
+  });
+});

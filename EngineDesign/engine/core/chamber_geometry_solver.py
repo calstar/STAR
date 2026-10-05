@@ -20,6 +20,7 @@ try:
         l_star_default,
         chamber_diameter_default,
         diameter_exit_default,
+        area_chamber_calc,
     )
 except ImportError:
     # Fallback for when running as script
@@ -31,8 +32,10 @@ except ImportError:
         l_star_default,
         chamber_diameter_default,
         diameter_exit_default,
+        area_chamber_calc,
     )
 from engine.pipeline.cea_cache import CEACache
+from engine.core.nozzle import nozzle_stagnation_loss
 from engine.pipeline.config_schemas import CEAConfig
 
 # Default CEA cache file path (relative to project root)
@@ -213,9 +216,10 @@ def solve_chamber_geometry_with_cea(
             
             Cf_ideal = cea_props.get("Cf_ideal", Cf_ideal_initial_guess)
             
-            # Apply nozzle efficiency correction to get corrected Cf
-            # This matches what the pipeline uses: Cf = nozzle_efficiency * Cf_ideal
-            Cf = nozzle_efficiency * Cf_ideal
+            # Delivered coefficient on the runner's basis (engine.core.nozzle.calculate_thrust):
+            # F = zeta_n Cf_vac P0 At - Pa Ae, P0 = Pc/kappa, so per (Pc At):
+            kappa = nozzle_stagnation_loss(area_chamber_calc(diameter_inner) / A_throat, cea_props["gamma"])
+            Cf = nozzle_efficiency * cea_props["Cf_vac"] / kappa - Pa * eps / pc_design
             
             # Validate Cf_ideal is finite and positive
             if not np.isfinite(Cf_ideal) or Cf_ideal <= 0:
@@ -324,8 +328,8 @@ def solve_chamber_geometry_with_cea(
         cea_props_final = cea_cache.eval(MR, pc_design, Pa, None)
     
     Cf_ideal_final = cea_props_final.get("Cf_ideal", Cf / nozzle_efficiency if nozzle_efficiency > 0 else Cf)
-    # Apply nozzle efficiency correction to get corrected Cf
-    Cf_final = nozzle_efficiency * Cf_ideal_final
+    kappa_final = nozzle_stagnation_loss(area_chamber_calc(diameter_inner) / A_throat, cea_props_final["gamma"])
+    Cf_final = nozzle_efficiency * cea_props_final["Cf_vac"] / kappa_final - Pa * eps_final / pc_design
     
     # Final validation: Verify the converged solution is self-consistent
     # Check that F = Cf_final * Pc * A_throat (within tolerance)
@@ -567,7 +571,7 @@ def solved_chamber_plot(
     volume_chamber: float,
     lstar: float,
     chamber_diameter: float,
-    length: float,
+    length: Optional[float],
     do_plot: bool = False,
     color_segments: bool = False,
     steps: int = 200,
@@ -593,9 +597,10 @@ def solved_chamber_plot(
         Characteristic length [m]
     chamber_diameter : float
         Chamber inner diameter [m]
-    length : float
-        Total chamber length (cylindrical + contraction) [m]
-        Note: This does NOT include the small arc to the throat
+    length : float or None
+        Stored barrel + cone length [m], checked against the volume only: the barrel is
+        drawn from ``volume_chamber``. Face to throat adds the 1.5 Rt entrance arc
+        (lengths['face_to_throat']).
     do_plot : bool, optional
         Whether to generate plot (default: False)
     color_segments : bool, optional
@@ -642,8 +647,17 @@ def solved_chamber_plot(
         theta=theta_contraction,
     )
     
-    # Calculate cylindrical length from total length
-    cylindrical_length = length - contraction_length_horizontal
+    # Barrel length from the declared volume, the same construction the generator uses: a
+    # stored `length` goes stale (it did after the 6.5 kN k-scaling, drawing L* 1.0035).
+    from engine.core.chamber_geometry import chamber_length_calc
+    cylindrical_length = chamber_length_calc(volume_chamber, area_throat, contraction_ratio, theta_contraction)
+    if length is not None and abs((cylindrical_length + contraction_length_horizontal) - length) > 1e-4:
+        import warnings
+        warnings.warn(
+            f"stored chamber length {length*1000:.2f} mm disagrees with the declared volume "
+            f"({(cylindrical_length + contraction_length_horizontal)*1000:.2f} mm barrel + cone); "
+            f"drawing from the volume"
+        )
     
     # Validate lengths
     if cylindrical_length <= 0:
@@ -679,7 +693,7 @@ def solved_chamber_plot(
     # Combine all sections: cylindrical -> contraction -> nozzle
     chamber_pts = np.vstack([
         np.column_stack((x_cyl, y_cyl)),
-        np.column_stack((x_contraction[1:], y_contraction[1:])),  # Skip first point to avoid duplicate
+        np.column_stack((x_contraction[1:-1], y_contraction[1:-1])),  # both ends are shared vertices
         nozzle_pts  # Nozzle already starts at the connection point
     ])
     
@@ -812,8 +826,10 @@ def solved_chamber_plot(
     lengths = {
         'cylindrical': cylindrical_length,
         'contraction': contraction_length_horizontal,
-        'total': total_chamber_length
+        'total': total_chamber_length,            # barrel + cone
+        'entrance_arc': 1.5 * np.sqrt(area_throat / np.pi) * np.sin(theta_contraction),
     }
+    lengths['face_to_throat'] = total_chamber_length + lengths['entrance_arc']
     
     return chamber_pts, table_data, lengths
 

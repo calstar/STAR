@@ -33,6 +33,82 @@ import {
   TIMESERIES_UPDATED_EVENT,
 } from '../utils/timeseriesSession';
 
+// What the flight router returns beyond client.ts's FlightSimResponse: the flight report
+// (launch, stability, drag and its inputs, requirement checks) and the apogee-ceiling check.
+interface FlightCheck {
+  name: string;
+  value: number;
+  limit: number;
+  kind: 'min' | 'max';
+  passed: boolean;
+  note?: string | null;
+}
+interface FlightCeiling {
+  max_apogee_m?: number;
+  datum?: string;
+  ceiling_agl_m?: number;
+  nominal_apogee_agl_m?: number;
+  nominal_margin_m?: number;
+  corner_apogee_agl_m?: number;
+  corner_margin_m?: number;
+  corner?: string;
+  violated?: boolean;
+  error?: string;
+}
+interface FlightReport {
+  launch?: {
+    rail_length_m: number;
+    effective_rail_length_m: number;
+    rail_buttons_declared: boolean;
+    inclination_deg: number;
+    heading_deg: number;
+    rail_exit_velocity_m_s: number;
+    rail_exit_time_s: number;
+  };
+  stability?: {
+    static_margin_liftoff_cal: number;
+    static_margin_rail_exit_cal: number;
+    static_margin_burnout_cal: number;
+    min_stability_margin_cal: number;
+    max_stability_margin_cal: number;
+  };
+  drag?: {
+    model: string;
+    source: string;
+    mach: number[];
+    cd_power_off: number[];
+    cd_power_on: number[];
+    inputs: Record<string, unknown>;
+  };
+  checks?: FlightCheck[];
+  wet_mass_kg?: number;
+  stack_length_m?: number;
+  reference_pressure_pa?: number;
+}
+type FlightResult = FlightSimResponse & {
+  apogee_msl_m?: number | null;
+  max_mach?: number | null;
+  rail_exit_velocity_m_s?: number | null;
+  static_margin_rail_exit_cal?: number | null;
+  static_margin_burnout_cal?: number | null;
+  ceiling?: FlightCeiling | null;
+  report?: FlightReport | null;
+};
+type LaunchEnvironment = FlightEnvironmentConfig & {
+  rail_length_m?: number;
+  launch_inclination_deg?: number;
+  launch_heading_deg?: number;
+};
+
+function cdAt(mach: number[], cd: number[], m: number): number {
+  if (!mach.length) return NaN;
+  if (m <= mach[0]) return cd[0];
+  for (let i = 1; i < mach.length; i++) {
+    if (m <= mach[i]) return cd[i - 1] + ((cd[i] - cd[i - 1]) * (m - mach[i - 1])) / (mach[i] - mach[i - 1]);
+  }
+  return cd[cd.length - 1];
+}
+
 interface FlightSimulationProps {
   config: EngineConfig | null;
   isVisible?: boolean;
@@ -189,12 +265,16 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
   const [launchDay, setLaunchDay] = useState(String(tomorrow.getDate()));
   const [launchHour, setLaunchHour] = useState('12');
   const [atmosphereModel, setAtmosphereModel] = useState<'standard_atmosphere' | 'forecast'>('standard_atmosphere');
+  const [railLength, setRailLength] = useState('3.35');
+  const [launchInclination, setLaunchInclination] = useState('90');
+  const [launchHeading, setLaunchHeading] = useState('0');
 
   // Rocket configuration
   const [airframeMass, setAirframeMass] = useState('78.72');
   const [engineMass, setEngineMass] = useState('8.0');
   const [loxTankMass, setLoxTankMass] = useState('5.0');
   const [fuelTankMass, setFuelTankMass] = useState('3.0');
+  const [copvMass, setCopvMass] = useState('0');
   const [rocketRadius, setRocketRadius] = useState('0.1015');
   const [rocketLength, setRocketLength] = useState('3.5');
   const [motorPosition, setMotorPosition] = useState('0.0');
@@ -213,7 +293,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
   const [finPosition, setFinPosition] = useState('0.1');
 
   // Results
-  const [results, setResults] = useState<FlightSimResponse | null>(null);
+  const [results, setResults] = useState<FlightResult | null>(null);
   const [optimizeResults, setOptimizeResults] = useState<FlightOptimizeResponse | null>(null);
   const [flightMode, setFlightMode] = useState<'manual' | 'optimize'>('manual');
   const [targetApogeeM, setTargetApogeeM] = useState('3048');
@@ -290,6 +370,9 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
       if (typeof env.latitude === 'number') setLatitude(String(env.latitude));
       if (typeof env.longitude === 'number') setLongitude(String(env.longitude));
       if (typeof env.elevation === 'number') setElevation(String(env.elevation));
+      if (typeof env.rail_length_m === 'number') setRailLength(String(env.rail_length_m));
+      if (typeof env.launch_inclination_deg === 'number') setLaunchInclination(String(env.launch_inclination_deg));
+      if (typeof env.launch_heading_deg === 'number') setLaunchHeading(String(env.launch_heading_deg));
       // Date always defaults to tomorrow (set in initial state), don't load from config
     }
 
@@ -315,6 +398,9 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
       if (typeof rocket.engine_mass === 'number') setEngineMass(String(rocket.engine_mass));
       if (typeof rocket.lox_tank_structure_mass === 'number') setLoxTankMass(String(rocket.lox_tank_structure_mass));
       if (typeof rocket.fuel_tank_structure_mass === 'number') setFuelTankMass(String(rocket.fuel_tank_structure_mass));
+      const pressTank = config.press_tank as Record<string, unknown> | undefined;
+      if (typeof rocket.copv_dry_mass === 'number') setCopvMass(String(rocket.copv_dry_mass));
+      else if (pressTank && typeof pressTank.dry_mass === 'number') setCopvMass(String(pressTank.dry_mass));
       if (typeof rocket.radius === 'number') setRocketRadius(String(rocket.radius));
       if (typeof rocket.rocket_length === 'number') setRocketLength(String(rocket.rocket_length));
       if (typeof rocket.motor_position === 'number') setMotorPosition(String(rocket.motor_position));
@@ -340,7 +426,9 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
   // Auto-estimate inertia when enabled
   useEffect(() => {
     if (autoInertia) {
-      const mDry = parseFloat(airframeMass) + parseFloat(engineMass) + parseFloat(loxTankMass) + parseFloat(fuelTankMass);
+      const mDry =
+        parseFloat(airframeMass) + parseFloat(engineMass) + parseFloat(loxTankMass) + parseFloat(fuelTankMass) +
+        (parseFloat(copvMass) || 0);
       const r = parseFloat(rocketRadius);
       const L = parseFloat(rocketLength);
 
@@ -355,15 +443,16 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
         setInertiaZ(izz.toFixed(4));
       }
     }
-  }, [autoInertia, airframeMass, engineMass, loxTankMass, fuelTankMass, rocketRadius, rocketLength]);
+  }, [autoInertia, airframeMass, engineMass, loxTankMass, fuelTankMass, copvMass, rocketRadius, rocketLength]);
 
   // Calculate propulsion dry mass
   const propulsionDryMass = useMemo(() => {
     const engine = parseFloat(engineMass) || 0;
     const loxTank = parseFloat(loxTankMass) || 0;
     const fuelTank = parseFloat(fuelTankMass) || 0;
-    return engine + loxTank + fuelTank;
-  }, [engineMass, loxTankMass, fuelTankMass]);
+    const copv = parseFloat(copvMass) || 0;
+    return engine + loxTank + fuelTank + copv;
+  }, [engineMass, loxTankMass, fuelTankMass, copvMass]);
 
   // Calculate total dry mass
   const totalDryMass = useMemo(() => {
@@ -374,12 +463,15 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
   // Build shared flight request from current UI state + time-series data
   const buildFlightRequest = useCallback(
     (activeTimeSeries: TimeSeriesData, lox: number, fuel: number): FlightSimRequest => {
-      const environment: FlightEnvironmentConfig = {
+      const environment: LaunchEnvironment = {
         latitude: parseFloat(latitude),
         longitude: parseFloat(longitude),
         elevation: parseFloat(elevation),
         date: [parseInt(launchYear), parseInt(launchMonth), parseInt(launchDay), parseInt(launchHour)],
         atmosphere_model: atmosphereModel,
+        rail_length_m: parseFloat(railLength),
+        launch_inclination_deg: parseFloat(launchInclination),
+        launch_heading_deg: parseFloat(launchHeading),
       };
 
       const fins: FlightFinsConfig = {
@@ -390,7 +482,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
         fin_position: parseFloat(finPosition),
       };
 
-      const rocket: FlightRocketConfig = {
+      const rocket: FlightRocketConfig & { copv_dry_mass?: number } = {
         airframe_mass: parseFloat(airframeMass),
         engine_mass: parseFloat(engineMass),
         lox_tank_structure_mass: parseFloat(loxTankMass),
@@ -403,6 +495,8 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
         nose_fineness_ratio: parseFloat(noseFineness),
         avionics_payload_length_m: parseFloat(avionicsLength),
       };
+      const copv = parseFloat(copvMass);
+      if (copv > 0) rocket.copv_dry_mass = copv;
 
       const thrustN = activeTimeSeries.thrust_kN.map((t) => t * 1000);
 
@@ -426,6 +520,9 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
       launchDay,
       launchHour,
       atmosphereModel,
+      railLength,
+      launchInclination,
+      launchHeading,
       finCount,
       rootChord,
       tipChord,
@@ -435,6 +532,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
       engineMass,
       loxTankMass,
       fuelTankMass,
+      copvMass,
       rocketRadius,
       rocketLength,
       motorPosition,
@@ -556,6 +654,9 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
           longitude: parseFloat(longitude),
           elevation: parseFloat(elevation),
           date: [parseInt(launchYear), parseInt(launchMonth), parseInt(launchDay), parseInt(launchHour)],
+          rail_length_m: parseFloat(railLength),
+          launch_inclination_deg: parseFloat(launchInclination),
+          launch_heading_deg: parseFloat(launchHeading),
         },
         rocket: {
           ...(config?.rocket as Record<string, unknown> || {}),
@@ -563,6 +664,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
           engine_mass: parseFloat(engineMass),
           lox_tank_structure_mass: parseFloat(loxTankMass),
           fuel_tank_structure_mass: parseFloat(fuelTankMass),
+          ...(parseFloat(copvMass) > 0 ? { copv_dry_mass: parseFloat(copvMass) } : {}),
           radius: parseFloat(rocketRadius),
           rocket_length: parseFloat(rocketLength),
           motor_position: parseFloat(motorPosition),
@@ -592,7 +694,8 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
     config, onConfigUpdated,
     loxMass, fuelMass,
     latitude, longitude, elevation, launchYear, launchMonth, launchDay, launchHour,
-    airframeMass, engineMass, loxTankMass, fuelTankMass,
+    railLength, launchInclination, launchHeading,
+    airframeMass, engineMass, loxTankMass, fuelTankMass, copvMass,
     rocketRadius, rocketLength, motorPosition,
     inertiaX, inertiaY, inertiaZ,
     finCount, rootChord, tipChord, finSpan, finPosition
@@ -1003,6 +1106,35 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
               max={10000}
               step={1}
             />
+            <InputField
+              label="Rail length"
+              value={railLength}
+              onChange={setRailLength}
+              unit="m"
+              min={0.1}
+              step={0.01}
+              help="environment.rail_length_m"
+            />
+            <InputField
+              label="Launch angle"
+              value={launchInclination}
+              onChange={setLaunchInclination}
+              unit="°"
+              min={1}
+              max={90}
+              step={0.5}
+              help="Rail elevation from horizontal; 90 is vertical"
+            />
+            <InputField
+              label="Heading"
+              value={launchHeading}
+              onChange={setLaunchHeading}
+              unit="°"
+              min={0}
+              max={359.9}
+              step={1}
+              help="Rail azimuth from north"
+            />
             <div>
               <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Launch Date</label>
               <div className="flex gap-1">
@@ -1125,6 +1257,15 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
                   min={0.1}
                   step={0.1}
                   help="Empty tank structure"
+                />
+                <InputField
+                  label="COPV"
+                  value={copvMass}
+                  onChange={setCopvMass}
+                  unit="kg"
+                  min={0}
+                  step={0.1}
+                  help="Empty COPV (rocket.copv_dry_mass)"
                 />
               </div>
               <p className="text-xs text-[var(--color-text-muted)] mt-2">
@@ -1409,7 +1550,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
               label="Max Velocity"
               value={results.max_velocity_m_s.toFixed(1)}
               unit="m/s"
-              subValue={`Mach ${(results.max_velocity_m_s / 343).toFixed(2)}`}
+              subValue={results.max_mach != null ? `Mach ${results.max_mach.toFixed(3)} (max)` : undefined}
               color="green"
             />
             <MetricCard
@@ -1426,6 +1567,82 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
               color="orange"
             />
           </div>
+
+          {/* Launch, stability, ceiling, drag */}
+          {results.report && (
+            <div className="p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] space-y-3">
+              <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">Vehicle</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                <div>
+                  <p className="text-[var(--color-text-muted)]">Apogee MSL</p>
+                  <p className="font-mono text-[var(--color-text-primary)]">
+                    {results.apogee_msl_m != null
+                      ? `${results.apogee_msl_m.toFixed(0)} m (${(results.apogee_msl_m / 0.3048).toFixed(0)} ft)`
+                      : '—'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[var(--color-text-muted)]">Rail exit</p>
+                  <p className="font-mono text-[var(--color-text-primary)]">
+                    {results.rail_exit_velocity_m_s != null
+                      ? `${results.rail_exit_velocity_m_s.toFixed(1)} m/s (${(results.rail_exit_velocity_m_s / 0.3048).toFixed(0)} ft/s)`
+                      : '—'}
+                  </p>
+                  {results.report.launch && (
+                    <p className="text-xs text-[var(--color-text-muted)]">
+                      {results.report.launch.effective_rail_length_m.toFixed(2)} m of rail at{' '}
+                      {results.report.launch.inclination_deg.toFixed(1)}°
+                      {!results.report.launch.rail_buttons_declared && ', no rail buttons declared'}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-[var(--color-text-muted)]">Static margin, rail exit / burnout</p>
+                  <p className="font-mono text-[var(--color-text-primary)]">
+                    {results.static_margin_rail_exit_cal != null && results.static_margin_burnout_cal != null
+                      ? `${results.static_margin_rail_exit_cal.toFixed(2)} / ${results.static_margin_burnout_cal.toFixed(2)} cal`
+                      : '—'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[var(--color-text-muted)]">Wet mass / stack length</p>
+                  <p className="font-mono text-[var(--color-text-primary)]">
+                    {results.report.wet_mass_kg != null ? `${results.report.wet_mass_kg.toFixed(2)} kg` : '—'} /{' '}
+                    {results.report.stack_length_m != null ? `${results.report.stack_length_m.toFixed(3)} m` : '—'}
+                  </p>
+                </div>
+              </div>
+              {results.ceiling && !results.ceiling.error && (
+                <p className={`text-xs ${results.ceiling.violated ? 'text-red-400' : 'text-[var(--color-text-muted)]'}`}>
+                  Ceiling {results.ceiling.max_apogee_m?.toFixed(0)} m {results.ceiling.datum} ={' '}
+                  {results.ceiling.ceiling_agl_m?.toFixed(0)} m AGL. Margin {results.ceiling.nominal_margin_m?.toFixed(0)} m
+                  nominal, {results.ceiling.corner_margin_m?.toFixed(0)} m at the high-apogee corner ({results.ceiling.corner}).
+                </p>
+              )}
+              {results.report.checks && results.report.checks.length > 0 && (
+                <ul className="text-xs space-y-1">
+                  {results.report.checks.map((c) => (
+                    <li key={`${c.name}-${c.kind}`} className={c.passed ? 'text-green-400' : 'text-red-400'}>
+                      {c.name.replace(/_/g, ' ')}: {c.value.toFixed(2)} ({c.kind} {c.limit.toFixed(2)}){' '}
+                      {c.passed ? 'pass' : 'FAIL'}
+                      {c.note ? ` - ${c.note}` : ''}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {results.report.drag && (
+                <p className="text-xs text-[var(--color-text-muted)]">
+                  Drag: {results.report.drag.model === 'table' ? `table (${results.report.drag.source})` : results.report.drag.source}.
+                  Cd off/on at M 0.3: {cdAt(results.report.drag.mach, results.report.drag.cd_power_off, 0.3).toFixed(3)} /{' '}
+                  {cdAt(results.report.drag.mach, results.report.drag.cd_power_on, 0.3).toFixed(3)}, at M 0.8:{' '}
+                  {cdAt(results.report.drag.mach, results.report.drag.cd_power_off, 0.8).toFixed(3)} /{' '}
+                  {cdAt(results.report.drag.mach, results.report.drag.cd_power_on, 0.8).toFixed(3)}.
+                  {results.report.drag.model !== 'table' &&
+                    ` Finish ${(Number(results.report.drag.inputs.surface_roughness_m) * 1e6).toFixed(0)} um, fins ${String(results.report.drag.inputs.fin_profile)} ${(Number(results.report.drag.inputs.fin_thickness_m) * 1e3).toFixed(1)} mm (rocket.surface_roughness_m, fin_profile, fin_thickness_m; defaults are OpenRocket's, not the drawing).`}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Propellant diagnostics */}
           {results.propellant && (

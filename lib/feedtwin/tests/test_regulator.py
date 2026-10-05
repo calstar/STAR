@@ -18,7 +18,7 @@ import pytest
 from fluids.fittings import Cv_to_K
 
 from feedtwin.comps import FlowConditions, build_component
-from feedtwin.comps.regulator import IdealRegulator, Regulator
+from feedtwin.comps.regulator import LOCKUP_SUPPLY_SIGNAL, IdealRegulator, Regulator
 from feedtwin.model import ComponentInstance, Param, Provenance
 from feedtwin.model.spec import SpecError
 from feedtwin.model.units import get_unit
@@ -354,6 +354,73 @@ def test_lockup_follows_the_dome() -> None:
         signals={"PR-01.dome": 400.0 * PSI},
     )
     assert reg.lockup_pressure(flow) / PSI == pytest.approx(475.0, rel=1e-9)
+
+
+# ------------------------------------------------- the outlet across zero flow
+
+
+def outlet_either_side(
+    reg: Regulator, p_in: float, follow: bool | None
+) -> tuple[float, float, float]:
+    """Outlet just backwards, at, and just forwards of zero flow [psi]."""
+    signals = {} if follow is None else {LOCKUP_SUPPLY_SIGNAL: float(follow)}
+    flow = FlowConditions(
+        rho=39.0, mu=1.78e-5, p_upstream=p_in, temperature=293.15, signals=signals
+    )
+    return tuple(  # type: ignore[return-value]
+        (p_in - reg.total_dp(m, flow)) / PSI for m in (-1.0e-12, 0.0, 1.0e-12)
+    )
+
+
+def test_by_default_lockup_leaves_out_the_supply_effect() -> None:
+    """The previous behaviour, pinned: forward of zero flow the outlet carries the
+    supply effect, and at or behind it, it does not. The step is ``S (p_ref - p_in)``.
+    """
+    reg = make()
+    for p_in, rise in ((2000.0, 42.5), (4600.0, -1.7)):
+        for follow in (None, False):
+            back, zero, ahead = outlet_either_side(reg, p_in * PSI, follow)
+            # 1e-12 kg/s backwards costs REVERSE_STIFFNESS * 1e-12 = 0.01 Pa.
+            assert back == pytest.approx(500.0, abs=1e-4)
+            assert zero == pytest.approx(500.0, abs=1e-6)
+            assert ahead == pytest.approx(500.0 + rise, abs=1e-6)
+
+
+def test_lockup_that_follows_supply_makes_the_outlet_continuous_at_zero_flow() -> None:
+    """The supply effect is the inlet pushing on the poppet; it does not stop when the
+    flow does. Leaving it out of lockup puts a step in the branch the network solves.
+    On the GN2 stand that step was 1.7 kPa with the bottle 100 kPa over its reference,
+    the press manifold sat between the two tanks, inside the step, and the solve could
+    not get below 2.5e-5 of scaled residual. Late in a blowdown the step is 51 psi.
+    """
+    reg = make()
+    for p_in, expected in ((2000.0, 542.5), (4600.0, 498.3)):
+        back, zero, ahead = outlet_either_side(reg, p_in * PSI, True)
+        assert zero == pytest.approx(expected, abs=1e-6)
+        assert back == pytest.approx(zero, abs=1e-3)
+        assert ahead == pytest.approx(zero, abs=1e-3)
+
+
+def test_lockup_that_follows_supply_still_adds_the_seat_creep() -> None:
+    reg = make(lockup_rise=Param(25.0, "psi", M, "seat creep"))
+    _, zero, _ = outlet_either_side(reg, 2000.0 * PSI, True)
+    assert zero == pytest.approx(542.5 + 25.0, abs=1e-6)
+
+
+def test_lockup_that_follows_supply_changes_nothing_without_a_supply_effect() -> None:
+    """On, against a regulator that declares no supply effect, it must be inert:
+    no inlet reference, a zero coefficient, or the ideal model."""
+    zero = Param(0.0, "psi/psi", M, "none")
+    regulators = [
+        make(inlet_reference=Param(0.0, "psi", M, "none")),
+        make(supply_coefficient=zero),
+        make("ideal"),
+    ]
+    for reg in regulators:
+        for p_in in (900.0, 2000.0, 4500.0, 4600.0):
+            off = outlet_either_side(reg, p_in * PSI, None)
+            on = outlet_either_side(reg, p_in * PSI, True)
+            assert on == off
 
 
 def test_a_bias_with_no_dome_is_flagged() -> None:

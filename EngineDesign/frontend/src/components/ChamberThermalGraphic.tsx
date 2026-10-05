@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ComposedChart,
   Area,
@@ -7,12 +7,12 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
-  ResponsiveContainer,
   ReferenceLine,
 } from 'recharts';
 import type { ChamberGeometryResponse } from '../api/client';
 import { useViewState } from '../lib/viewState';
+import { CONTOUR_FRAME } from '../lib/contourScale';
+import { useTrueScale } from '../lib/useTrueScale';
 
 interface ChamberThermalGraphicProps {
   geometry: ChamberGeometryResponse | null;
@@ -24,68 +24,6 @@ interface ChamberThermalGraphicProps {
 
 const M_TO_MM = 1000;
 const MM_TO_INCH = 1 / 25.4;
-
-// Helper functions copied (and simplified for mm-only) from ChamberContourPlot to keep
-// axis/scaling behavior identical across plots.
-function getNiceStep(range: number): number {
-  const magnitude = Math.floor(Math.log10(range));
-  const normalized = range / Math.pow(10, magnitude);
-
-  let step: number;
-  if (normalized <= 1) step = 1;
-  else if (normalized <= 2) step = 2;
-  else if (normalized <= 5) step = 5;
-  else step = 10;
-
-  return step * Math.pow(10, magnitude);
-}
-
-function makeNiceDomain(min: number, max: number, includeZero: boolean = true): [number, number] {
-  let range = max - min;
-
-  if (includeZero) {
-    if (min > 0) {
-      range = max;
-      min = 0;
-    } else if (max < 0) {
-      range = Math.abs(min);
-      max = 0;
-    } else {
-      range = Math.max(Math.abs(min), Math.abs(max)) * 2;
-      min = -range / 2;
-      max = range / 2;
-    }
-  }
-
-  const step = getNiceStep(range / 8);
-  const domainMin = Math.floor(min / step) * step;
-  const domainMax = Math.ceil(max / step) * step;
-
-  let finalMin = domainMin;
-  let finalMax = domainMax;
-  if (includeZero) {
-    if (finalMin > 0) finalMin = 0;
-    if (finalMax < 0) finalMax = 0;
-  }
-
-  if (finalMin >= finalMax) {
-    const absMax = Math.max(Math.abs(finalMin), Math.abs(finalMax));
-    finalMin = -absMax;
-    finalMax = absMax;
-  }
-
-  return [finalMin, finalMax];
-}
-
-function generateTicks(min: number, max: number, interval: number): number[] {
-  const ticks: number[] = [];
-  const start = Math.ceil(min / interval) * interval;
-  const end = Math.floor(max / interval) * interval;
-  for (let value = start; value <= end; value += interval) {
-    ticks.push(value);
-  }
-  return ticks;
-}
 
 function formatTick(value: number, unit: 'mm' | 'inch'): string {
   if (Math.abs(value) < 1e-10) return '0';
@@ -105,14 +43,106 @@ function formatTick(value: number, unit: 'mm' | 'inch'): string {
   return value.toFixed(0);
 }
 
+export interface ThermalSectionPoint {
+  x: number;
+  rGas_upper: number;
+  rAblative_upper: number;
+  rGraphite_upper: number;
+  rStainless_upper: number;
+  rGas_lower: number;
+  rAblative_lower: number;
+  rGraphite_lower: number;
+  rStainless_lower: number;
+  tAbl: string;
+  tGra: string;
+  tTotal: string;
+  isGraphiteRegion: boolean;
+}
+
+/**
+ * The to-scale section, drawn on the solved gas contour (throat at x = 0).
+ *
+ * The layer arrays (positions, R_*) and throat_position / graphite_start / graphite_end come
+ * in a different frame -- face at 0, throat at throat_position -- on a cylinder-to-throat
+ * profile, so they give only thicknesses and the insert's extent about the throat, never
+ * positions. The case is the barrel's outer radius, constant; the liner stops at the insert
+ * (or the throat) and continues down the nozzle only when the nozzle is declared ablative.
+ */
+export function buildThermalSection(
+  geometry: ChamberGeometryResponse & { nozzle_ablative?: boolean },
+  unitMultiplier: number,
+  showLowerHalf: boolean,
+): ThermalSectionPoint[] {
+  const point = (x_m: number, rGas_m: number, tAbl_m: number, tGra_m: number, rCase_m: number): ThermalSectionPoint => {
+    const rGas = rGas_m * unitMultiplier;
+    const rAbl = Math.min(rGas_m + tAbl_m, rCase_m) * unitMultiplier;
+    const rGra = Math.min(rGas_m + tGra_m, rCase_m) * unitMultiplier;
+    const rCase = rCase_m * unitMultiplier;
+    const isGraphiteRegion = tGra_m > 0;
+    return {
+      x: x_m * unitMultiplier,
+      rGas_upper: rGas,
+      rAblative_upper: rAbl,
+      rGraphite_upper: isGraphiteRegion ? rGra : rGas,
+      rStainless_upper: rCase,
+      rGas_lower: showLowerHalf ? -rGas : 0,
+      rAblative_lower: showLowerHalf ? -rAbl : 0,
+      rGraphite_lower: showLowerHalf ? (isGraphiteRegion ? -rGra : -rGas) : 0,
+      rStainless_lower: showLowerHalf ? -rCase : 0,
+      tAbl: (rAbl - rGas).toFixed(2),
+      tGra: isGraphiteRegion ? (rGra - rGas).toFixed(2) : '0.00',
+      tTotal: (rCase - rGas).toFixed(2),
+      isGraphiteRegion,
+    };
+  };
+
+  // Thicknesses from the layer arrays, at the barrel (first station) and in the insert.
+  const n = geometry.positions?.length ?? 0;
+  const tAbl_m = n > 0 && geometry.ablative_enabled ? Math.max(0, geometry.R_ablative_outer[0] - geometry.R_gas[0]) : 0;
+  let tGra_m = 0;
+  for (let i = 0; i < n; i++) {
+    const p = geometry.positions[i];
+    if (p >= geometry.graphite_start && p <= geometry.graphite_end) {
+      tGra_m = Math.max(tGra_m, geometry.R_graphite_outer[i] - geometry.R_gas[i]);
+    }
+  }
+  if (!geometry.graphite_enabled) tGra_m = 0;
+  const rCase_m = n > 0 ? geometry.R_stainless[0] : 0;
+  const upstreamHalf = geometry.throat_position - geometry.graphite_start;
+  const downstreamHalf = geometry.graphite_end - geometry.throat_position;
+  const nozzleAblative = geometry.nozzle_ablative === true;
+
+  const cx = geometry.chamber_contour_x ?? [];
+  const cy = geometry.chamber_contour_y ?? [];
+  if (cx.length > 1 && cy.length === cx.length) {
+    let iT = 0;
+    for (let i = 1; i < cy.length; i++) if (cy[i] < cy[iT]) iT = i;
+    const xT = cx[iT];
+    const g0 = xT - upstreamHalf;
+    const g1 = xT + downstreamHalf;
+    const linerEnd = tGra_m > 0 ? g0 : xT;
+    return cx.map((x_m, i) => {
+      const inInsert = tGra_m > 0 && x_m >= g0 && x_m <= g1;
+      const lined = !inInsert && (x_m <= linerEnd || nozzleAblative);
+      return point(x_m, cy[i], lined ? tAbl_m : 0, inInsert ? tGra_m : 0, rCase_m);
+    });
+  }
+  // No solved contour: the layer arrays, in their own (face) frame.
+  return geometry.positions.map((p, i) => {
+    const inInsert = tGra_m > 0 && p >= geometry.graphite_start && p <= geometry.graphite_end;
+    const lined = !inInsert && (p <= geometry.throat_position || nozzleAblative);
+    return point(p, geometry.R_gas[i], lined ? tAbl_m : 0, inInsert ? tGra_m : 0, rCase_m);
+  });
+}
+
 export function ChamberThermalGraphic({
   geometry,
   showLowerHalf: showLowerHalfProp,
   onShowLowerHalfChange,
   className = "",
-  title = "Chamber Thermal Structure"
+  title = "Chamber Cross-Section"
 }: ChamberThermalGraphicProps) {
-  const [showLowerHalfUncontrolled, setShowLowerHalfUncontrolled] = useViewState('chamberThermal.lowerHalf', true);
+  const [showLowerHalfUncontrolled, setShowLowerHalfUncontrolled] = useViewState('chamberThermal.fullSection', false);
   const [unit, setUnit] = useState<'mm' | 'inch'>('mm');
 
   const showLowerHalf = showLowerHalfProp ?? showLowerHalfUncontrolled;
@@ -122,262 +152,30 @@ export function ChamberThermalGraphic({
       setShowLowerHalfUncontrolled(next);
     }
   };
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [containerSize, setContainerSize] = useState({ width: 1000, height: 400 });
-
-  // Measure container for aspect ratio
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const updateSize = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        setContainerSize({ width: rect.width, height: rect.height });
-      }
-    };
-    updateSize();
-    const observer = new ResizeObserver(updateSize);
-    observer.observe(containerRef.current);
-    window.addEventListener('resize', updateSize);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('resize', updateSize);
-    };
-  }, []);
-
   const chartData = useMemo(() => {
     if (!geometry) return [];
-
     const unitMultiplier = unit === 'mm' ? M_TO_MM : M_TO_MM * MM_TO_INCH;
-
-    const hasChamberContour =
-      Array.isArray(geometry.chamber_contour_x) &&
-      Array.isArray(geometry.chamber_contour_y) &&
-      geometry.chamber_contour_x.length > 1 &&
-      geometry.chamber_contour_y.length === geometry.chamber_contour_x.length;
-
-    // Helper: linear interpolation y(x) for monotonic-ish x arrays
-    const lerpAt = (xs: number[], ys: number[], x: number): number => {
-      if (xs.length === 0) return 0;
-      if (x <= xs[0]) return ys[0];
-      if (x >= xs[xs.length - 1]) return ys[ys.length - 1];
-
-      // Binary search for upper index
-      let lo = 0;
-      let hi = xs.length - 1;
-      while (hi - lo > 1) {
-        const mid = Math.floor((lo + hi) / 2);
-        if (xs[mid] <= x) lo = mid;
-        else hi = mid;
-      }
-
-      const x0 = xs[lo];
-      const x1 = xs[hi];
-      const y0 = ys[lo];
-      const y1 = ys[hi];
-      const t = x1 === x0 ? 0 : (x - x0) / (x1 - x0);
-      return y0 + (y1 - y0) * t;
-    };
-
-    // Thickness profiles defined on geometry.positions grid (meters)
-    const pos_m = geometry.positions;
-    const tAbl_m = geometry.R_ablative_outer.map((r, i) => Math.max(0, r - geometry.R_gas[i]));
-    const tGra_m = geometry.R_graphite_outer.map((r, i) => Math.max(0, r - geometry.R_gas[i]));
-    const tTotal_m = geometry.R_stainless.map((r, i) => Math.max(0, r - geometry.R_gas[i]));
-
-    const data: Array<{
-      x: number;
-      rGas_upper: number;
-      rAblative_upper: number;
-      rGraphite_upper: number;
-      rStainless_upper: number;
-      rGas_lower: number;
-      rAblative_lower: number;
-      rGraphite_lower: number;
-      rStainless_lower: number;
-      tAbl: string;
-      tGra: string;
-      tTotal: string;
-      isGraphiteRegion: boolean;
-    }> = [];
-
-    if (hasChamberContour) {
-      // Use chamber contour as the gas boundary curve (identical to ChamberContourPlot).
-      for (let i = 0; i < geometry.chamber_contour_x.length; i++) {
-        const x_m = geometry.chamber_contour_x[i];
-        const rGas_m = geometry.chamber_contour_y[i];
-
-        const x = x_m * unitMultiplier;
-        const rGas = rGas_m * unitMultiplier;
-
-        // Interpolate thickness profiles onto the contour x-grid
-        const inChamberRegion = x_m <= geometry.throat_position;
-        const tAblHere_m = inChamberRegion ? lerpAt(pos_m, tAbl_m, x_m) : 0.0;
-        const tGraHere_m = lerpAt(pos_m, tGra_m, x_m);
-        const tTotalHere_m = lerpAt(pos_m, tTotal_m, x_m);
-
-        const isGraphiteRegion = x_m >= geometry.graphite_start && x_m <= geometry.graphite_end;
-
-        const rAblative = rGas + tAblHere_m * unitMultiplier;
-        const rGraphite = rGas + (isGraphiteRegion ? tGraHere_m * unitMultiplier : 0);
-        const rStainless = rGas + tTotalHere_m * unitMultiplier;
-
-        data.push({
-          x,
-          // Upper
-          rGas_upper: rGas,
-          rAblative_upper: rAblative,
-          rGraphite_upper: isGraphiteRegion ? rGraphite : rGas,
-          rStainless_upper: rStainless,
-          // Lower
-          rGas_lower: showLowerHalf ? -rGas : 0,
-          rAblative_lower: showLowerHalf ? -rAblative : 0,
-          rGraphite_lower: showLowerHalf ? (isGraphiteRegion ? -rGraphite : -rGas) : 0,
-          rStainless_lower: showLowerHalf ? -rStainless : 0,
-          // Thicknesses for tooltip
-          tAbl: (rAblative - rGas).toFixed(2),
-          tGra: isGraphiteRegion ? (rGraphite - rGas).toFixed(2) : "0.00",
-          tTotal: (rStainless - rGas).toFixed(2),
-          isGraphiteRegion,
-        });
-      }
-    } else {
-      // Fallback: derive gas boundary from layer geometry arrays
-      const n = geometry.positions.length;
-      for (let i = 0; i < n; i++) {
-        const pos = geometry.positions[i];
-        const x = pos * unitMultiplier;
-        const rGas = geometry.R_gas[i] * unitMultiplier;
-
-        const inChamberRegion = pos <= geometry.throat_position;
-        const rAblative = inChamberRegion ? geometry.R_ablative_outer[i] * unitMultiplier : rGas;
-        const rGraphite = geometry.R_graphite_outer[i] * unitMultiplier;
-        const rStainless = geometry.R_stainless[i] * unitMultiplier;
-
-        const isGraphiteRegion = pos >= geometry.graphite_start && pos <= geometry.graphite_end;
-
-        data.push({
-          x,
-          // Upper
-          rGas_upper: rGas,
-          rAblative_upper: rAblative,
-          rGraphite_upper: isGraphiteRegion ? rGraphite : rGas,
-          rStainless_upper: rStainless,
-          // Lower
-          rGas_lower: showLowerHalf ? -rGas : 0,
-          rAblative_lower: showLowerHalf ? -rAblative : 0,
-          rGraphite_lower: showLowerHalf ? (isGraphiteRegion ? -rGraphite : -rGas) : 0,
-          rStainless_lower: showLowerHalf ? -rStainless : 0,
-          // Thicknesses for tooltip
-          tAbl: (rAblative - rGas).toFixed(2),
-          tGra: isGraphiteRegion ? (rGraphite - rGas).toFixed(2) : "0.00",
-          tTotal: (rStainless - rGas).toFixed(2),
-          isGraphiteRegion,
-        });
-      }
-    }
-
-    return data;
+    return buildThermalSection(geometry, unitMultiplier, showLowerHalf);
   }, [geometry, showLowerHalf, unit]);
 
-  // Scale logic similar to ChamberContourPlot for 1:1 aspect ratio
-  const domains = useMemo(() => {
-    if (!geometry) {
-      return {
-        xDomain: ['dataMin', 'dataMax'] as [string, string],
-        yDomain: ['auto', 'auto'] as [string, string],
-        xTicks: [] as number[],
-        yTicks: [] as number[],
-      };
-    }
-
-    // Prefer chamber contour for scale (to match ChamberContourPlot), fall back to stainless radius.
-    const hasChamberContour =
-      Array.isArray(geometry.chamber_contour_x) &&
-      Array.isArray(geometry.chamber_contour_y) &&
-      geometry.chamber_contour_x.length > 1 &&
-      geometry.chamber_contour_y.length === geometry.chamber_contour_x.length;
-
-    const xValues_m = hasChamberContour ? geometry.chamber_contour_x : geometry.positions;
-    const yValues_m = hasChamberContour ? geometry.chamber_contour_y : geometry.R_stainless;
-
-    const xMin_m = Math.min(...xValues_m);
-    const xMax_m = Math.max(...xValues_m);
-    const yMax_m = Math.max(...yValues_m);
-    const yMin_m = -yMax_m; // symmetric around centerline
-
-    const xRange_m = xMax_m - xMin_m;
-    const yRange_m = yMax_m - yMin_m;
-
-    const unitMultiplier = unit === 'mm' ? M_TO_MM : M_TO_MM * MM_TO_INCH;
-
-    const xMin = xMin_m * unitMultiplier;
-    const xMax = xMax_m * unitMultiplier;
-    const yMin = yMin_m * unitMultiplier;
-    const yMax = yMax_m * unitMultiplier;
-
-    const effectiveWidth = containerSize.width > 0 ? containerSize.width : 1000;
-    const effectiveHeight = containerSize.height > 0 ? containerSize.height : 400;
-    const plotWidth = effectiveWidth - 20 - 30;
-    const plotHeight = effectiveHeight - 10 - 20;
-
-    if (plotWidth <= 0 || plotHeight <= 0) {
-      const tickInterval = unit === 'mm' ? 10 : 1;
-      return {
-        xDomain: [xMin, xMax] as [number, number],
-        yDomain: [yMin, yMax] as [number, number],
-        xTicks: generateTicks(xMin, xMax, tickInterval),
-        yTicks: generateTicks(yMin, yMax, tickInterval),
-      };
-    }
-
-    const plotAspectRatio = plotWidth / plotHeight;
-    const dataAspectRatio_m = xRange_m / yRange_m;
-
-    let xDomain_m: [number, number] = [xMin_m, xMax_m];
-    let yDomain_m: [number, number] = [yMin_m, yMax_m];
-
-    if (dataAspectRatio_m > plotAspectRatio) {
-      const targetYRange_m = xRange_m / plotAspectRatio;
-      const yCenter_m = (yMin_m + yMax_m) / 2;
-      yDomain_m = [yCenter_m - targetYRange_m / 2, yCenter_m + targetYRange_m / 2];
-    } else {
-      const targetXRange_m = yRange_m * plotAspectRatio;
-      const xCenter_m = (xMin_m + xMax_m) / 2;
-      xDomain_m = [xCenter_m - targetXRange_m / 2, xCenter_m + targetXRange_m / 2];
-    }
-
-    // Padding (5% in metric units)
-    const padding_m = Math.max(xDomain_m[1] - xDomain_m[0], yDomain_m[1] - yDomain_m[0]) * 0.05;
-    xDomain_m = [xDomain_m[0] - padding_m, xDomain_m[1] + padding_m];
-    yDomain_m = [yDomain_m[0] - padding_m, yDomain_m[1] + padding_m];
-
-    // Nice rounding (same approach as ChamberContourPlot)
-    const xIncludesZero_m = xDomain_m[0] <= 0 && xDomain_m[1] >= 0;
-    xDomain_m = makeNiceDomain(xDomain_m[0], xDomain_m[1], xIncludesZero_m);
-    yDomain_m = makeNiceDomain(yDomain_m[0], yDomain_m[1], true);
-
-    // Convert final domains to display units
-    const xDomain: [number, number] = [xDomain_m[0] * unitMultiplier, xDomain_m[1] * unitMultiplier];
-    const yDomain: [number, number] = [yDomain_m[0] * unitMultiplier, yDomain_m[1] * unitMultiplier];
-
-    const tickInterval = unit === 'mm' ? 10 : 1;
-    const xTicks = generateTicks(xDomain[0], xDomain[1], tickInterval);
-    const yTicks = generateTicks(yDomain[0], yDomain[1], tickInterval);
-
-    return { xDomain, yDomain, xTicks, yTicks };
-    // Note: showLowerHalf is intentionally NOT in the dependency array here;
-    // we always keep the same scale when toggling full view, just like ChamberContourPlot.
-  }, [geometry, containerSize, unit]);
+  // True scale over everything drawn: the chart's height follows from its width
+  // (lib/contourScale), so 1 mm is the same on both axes.
+  const xsAll = chartData.map((d) => d.x);
+  // The solved contour is drawn with the throat at 0; the fallback layer arrays are not.
+  const throatX = geometry && geometry.chamber_contour_x?.length > 1
+    ? 0 : (geometry?.throat_position ?? 0) * (unit === 'mm' ? M_TO_MM : M_TO_MM * MM_TO_INCH);
+  const { ref: chartRef, width: chartWidth, layout } = useTrueScale(
+    Math.min(...xsAll), Math.max(...xsAll), Math.max(0, ...chartData.map((d) => d.rStainless_upper)), showLowerHalf);
 
   if (!geometry) return null;
 
   return (
-    <div ref={containerRef} className={`p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] ${className}`}>
+    <div className={`p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] ${className}`}>
       <div className="flex items-center justify-between mb-4">
         <div>
           <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">{title}</h4>
           <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-            Physical contour with optimized thermal protection layers
+            Solved gas-side contour, face to exit, with liner, graphite insert and case. To scale.
           </p>
         </div>
         <div className="flex items-center gap-4">
@@ -429,29 +227,42 @@ export function ChamberThermalGraphic({
         </div>
       </div>
 
-      <ResponsiveContainer width="100%" height={350}>
-        <ComposedChart data={chartData} margin={{ top: 10, right: 30, left: 20, bottom: 20 }}>
+      <div className="flex flex-wrap gap-4 mb-2 text-[11px] text-[var(--color-text-secondary)]">
+        {([['#6b7280', 'Stainless case'], ['#1a1a1a', 'Graphite insert'], ['#8b4513', 'Ablative liner'], ['#f97316', 'Gas boundary']] as const).map(([c, l]) => (
+          <span key={l} className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: c }} />{l}</span>
+        ))}
+      </div>
+      <div ref={chartRef} className="w-full">
+        {chartWidth > 0 && layout && (
+        <ComposedChart width={layout.width} height={layout.height} data={chartData}
+          margin={{ top: CONTOUR_FRAME.top, right: CONTOUR_FRAME.right, left: CONTOUR_FRAME.left, bottom: CONTOUR_FRAME.bottom }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.2} />
           <XAxis
             dataKey="x"
             type="number"
-            domain={domains.xDomain}
-            ticks={domains.xTicks}
+            domain={layout.xDomain}
+            ticks={layout.xTicks}
+                interval={0}
+            allowDataOverflow
+            height={CONTOUR_FRAME.xAxis}
             stroke="var(--color-text-secondary)"
             tick={{ fontSize: 10 }}
             tickFormatter={(value) => formatTick(value, unit)}
             label={{
               value: `Axial Position (${unit})`,
               position: 'insideBottom',
-              offset: -10,
+              offset: 0,
               fontSize: 11,
               fill: 'var(--color-text-secondary)',
             }}
           />
           <YAxis
             type="number"
-            domain={domains.yDomain}
-            ticks={domains.yTicks}
+            domain={layout.yDomain}
+            ticks={layout.yTicks}
+                interval={0}
+            allowDataOverflow
+            width={CONTOUR_FRAME.yAxis}
             stroke="var(--color-text-secondary)"
             tick={{ fontSize: 10 }}
             tickFormatter={(value) => formatTick(value, unit)}
@@ -494,29 +305,38 @@ export function ChamberThermalGraphic({
           />
           
           {/* Structural Layers - Upper */}
-          <Area type="monotone" dataKey="rStainless_upper" stroke="none" fill="#6b7280" fillOpacity={0.2} name="Stainless Case" />
-          <Area type="monotone" dataKey="rGraphite_upper" stroke="none" fill="#1a1a1a" fillOpacity={0.6} name="Graphite Insert" />
-          <Area type="monotone" dataKey="rAblative_upper" stroke="none" fill="#8b4513" fillOpacity={0.4} name="Ablative Liner" />
-          <Area type="monotone" dataKey="rGas_upper" stroke="none" fill="var(--color-bg-secondary)" fillOpacity={1} />
+          <Area isAnimationActive={false} type="monotone" dataKey="rStainless_upper" stroke="none" fill="#6b7280" fillOpacity={0.2} name="Stainless Case" />
+          <Area isAnimationActive={false} type="monotone" dataKey="rGraphite_upper" stroke="none" fill="#1a1a1a" fillOpacity={0.6} name="Graphite Insert" />
+          <Area isAnimationActive={false} type="monotone" dataKey="rAblative_upper" stroke="none" fill="#8b4513" fillOpacity={0.4} name="Ablative Liner" />
+          <Area isAnimationActive={false} type="monotone" dataKey="rGas_upper" stroke="none" fill="var(--color-bg-secondary)" fillOpacity={1} />
           
           {/* Inner Contour Line */}
-          <Line type="monotone" dataKey="rGas_upper" stroke="#f97316" strokeWidth={2} dot={false} name="Gas Boundary" />
+          <Line isAnimationActive={false} type="monotone" dataKey="rGas_upper" stroke="#f97316" strokeWidth={2} dot={false} name="Gas Boundary" />
 
           {/* Lower Half */}
+          {/* Lower half: one conditional per series -- recharts ignores series inside a fragment. */}
           {showLowerHalf && (
-            <>
-              <Area type="monotone" dataKey="rStainless_lower" stroke="none" fill="#6b7280" fillOpacity={0.2} />
-              <Area type="monotone" dataKey="rGraphite_lower" stroke="none" fill="#1a1a1a" fillOpacity={0.6} />
-              <Area type="monotone" dataKey="rAblative_lower" stroke="none" fill="#8b4513" fillOpacity={0.4} />
-              <Area type="monotone" dataKey="rGas_lower" stroke="none" fill="var(--color-bg-secondary)" fillOpacity={1} />
-              <Line type="monotone" dataKey="rGas_lower" stroke="#f97316" strokeWidth={2} dot={false} />
-            </>
+            <Area isAnimationActive={false} type="monotone" dataKey="rStainless_lower" stroke="none" fill="#6b7280" fillOpacity={0.2} />
+          )}
+          {showLowerHalf && (
+            <Area isAnimationActive={false} type="monotone" dataKey="rGraphite_lower" stroke="none" fill="#1a1a1a" fillOpacity={0.6} />
+          )}
+          {showLowerHalf && (
+            <Area isAnimationActive={false} type="monotone" dataKey="rAblative_lower" stroke="none" fill="#8b4513" fillOpacity={0.4} />
+          )}
+          {showLowerHalf && (
+            <Area isAnimationActive={false} type="monotone" dataKey="rGas_lower" stroke="none" fill="var(--color-bg-secondary)" fillOpacity={1} />
+          )}
+          {showLowerHalf && (
+            <Line isAnimationActive={false} type="monotone" dataKey="rGas_lower" stroke="#f97316" strokeWidth={2} dot={false} />
           )}
 
           <ReferenceLine y={0} stroke="var(--color-text-secondary)" strokeDasharray="3 3" opacity={0.5} />
-          <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '11px' }} />
+          <ReferenceLine x={throatX} stroke="#ef4444" strokeDasharray="5 5" opacity={0.8}
+            label={{ value: 'Throat', position: 'top', fill: '#ef4444', fontSize: 11 }} />
         </ComposedChart>
-      </ResponsiveContainer>
+        )}
+      </div>
     </div>
   );
 }

@@ -78,7 +78,7 @@ class TestFilmEstimate:
             estimate=lambda: self._film(21.5),
         )
         assert hA == pytest.approx(21.5)
-        assert any("estimated from its gas" in n for n in notes)
+        assert any("natural convection in the ullage" in n for n in notes)
 
     def test_a_value_on_the_drawing_wins(self) -> None:
         node = _Node(
@@ -108,4 +108,4 @@ class TestFilmEstimate:
             _Node("TK", "TK-1"), 17.5e-3, TANK_WALL, notes, estimate=boom
         )
         assert hA > 0.0
-        assert any("could not be estimated" in n for n in notes)
+        assert any("wall film: not estimable" in n for n in notes)

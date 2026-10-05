@@ -48,16 +48,24 @@ def _unwrap(p):
 
 @njit(cache=True)
 def chug_margin_kernel(omega, tau, inert, res, invG, Zhf, wc, K_c, theta_c):
-    """Returns (gain_margin, f_chug_hz, phase_margin_deg, stable).
+    """Returns (gain_margin, f_chug_hz, phase_margin_deg, stable, crossings_omega).
 
     Per-stream inputs are the s-independent primitives already resolved by the
     Python wrapper: transport lag, feed inertance, linearised resistance, 1/G_inj
     (inf when G<=0), and the regulator high-frequency impedance and corner.
+
+    Mirrors chug.chug_margin_fast: the gain margin is 1/max|L| over EVERY crossing of
+    the negative real axis (Im L changes sign with interpolated Re L < 0 -- phases
+    -pi, -3pi, ...), not only the unwrapped -pi one; the chug frequency is the worst
+    crossing's; the phase margin is the wrapped distance to the negative axis at the
+    gain crossover nearest to it.
     """
     n = omega.shape[0]
     ns = tau.shape[0]
     mag = np.empty(n)
     ang = np.empty(n)
+    Lre = np.empty(n)
+    Lim = np.empty(n)
 
     for i in range(n):
         s = complex(0.0, omega[i])
@@ -71,30 +79,39 @@ def chug_margin_kernel(omega, tau, inert, res, invG, Zhf, wc, K_c, theta_c):
                 continue          # scalar path skips a zero-impedance stream
             acc += np.exp(-s * tau[k]) / Zf
         L = K_c / (theta_c * s + 1.0) * acc
+        Lre[i] = L.real
+        Lim[i] = L.imag
         mag[i] = abs(L)
         ang[i] = np.arctan2(L.imag, L.real)
 
     phase = _unwrap(ang)
 
-    # --- phase crossover (angle through -pi): worst-case gain margin ---
-    target = -np.pi
+    # --- negative-real-axis crossings (chug._negative_axis_crossings) ---
+    w_all = np.empty(max(n - 1, 0))
+    nc = 0
     gm_best = np.inf
     f_pc = np.nan
+    mag_worst = -1.0
     for i in range(n - 1):
-        g0 = phase[i] - target
-        g1 = phase[i + 1] - target
-        if g0 == 0.0 or g0 * g1 < 0.0:
-            dg = g0 - g1
-            frac = g0 / dg if dg != 0.0 else 0.0
-            w_c = omega[i] + frac * (omega[i + 1] - omega[i])
-            mag_c = mag[i] + frac * (mag[i + 1] - mag[i])
-            gm = 1.0 / mag_c if mag_c > 0 else np.inf
-            if gm < gm_best:
-                gm_best = gm
-                f_pc = w_c / _TWO_PI
+        i0 = Lim[i]
+        i1 = Lim[i + 1]
+        if i0 == 0.0 or i0 * i1 < 0.0:
+            di = i0 - i1
+            frac = i0 / di if di != 0.0 else 0.0
+            re_c = Lre[i] + frac * (Lre[i + 1] - Lre[i])
+            if re_c < 0.0:
+                w_c = omega[i] + frac * (omega[i + 1] - omega[i])
+                w_all[nc] = w_c
+                nc += 1
+                mag_c = -re_c
+                if mag_c > mag_worst:          # argmax: first on a tie
+                    mag_worst = mag_c
+                    gm_best = 1.0 / mag_c if mag_c > 0 else np.inf
+                    f_pc = w_c / _TWO_PI
 
-    # --- gain crossover (|L| = 1): phase margin at the FIRST crossing ---
+    # --- gain crossovers (|L| = 1): wrapped distance to the negative axis, smallest wins ---
     pm_deg = np.nan
+    best_abs = np.inf
     for i in range(n - 1):
         h0 = mag[i] - 1.0
         h1 = mag[i + 1] - 1.0
@@ -102,17 +119,21 @@ def chug_margin_kernel(omega, tau, inert, res, invG, Zhf, wc, K_c, theta_c):
             dh = h0 - h1
             frac = h0 / dh if dh != 0.0 else 0.0
             ph_c = phase[i] + frac * (phase[i + 1] - phase[i])
-            pm_deg = np.degrees(ph_c - target)
-            break
+            dist = (ph_c + np.pi) % _TWO_PI
+            if dist > np.pi:
+                dist = dist - _TWO_PI
+            if abs(dist) < best_abs:           # argmin: first on a tie
+                best_abs = abs(dist)
+                pm_deg = np.degrees(dist)
 
     if not np.isfinite(gm_best):
-        # No phase crossover in band: stable if |L|<1 throughout (no encirclement).
+        # No negative-axis crossing in band: 1/max|L|, floored at 1 when |L| < 1 throughout.
         mmax = mag.max()
-        gm_best = 1.0 / mmax if mmax > 1e-12 else 1.0 / 1e-12
+        gm_best = 1.0 / (mmax if mmax > 1e-12 else 1e-12)
         if mmax < 1.0 and gm_best < 1.0:
             gm_best = 1.0
 
-    return gm_best, f_pc, pm_deg, gm_best > 1.0
+    return gm_best, f_pc, pm_deg, gm_best > 1.0, w_all[:nc].copy()
 
 
 def chug_margin_fast(streams, chamber, *, with_regulator: bool = True,
@@ -138,13 +159,14 @@ def chug_margin_fast(streams, chamber, *, with_regulator: bool = True,
             Zhf[k] = float(st.regulator.Z_hf)
             wc[k] = 2.0 * np.pi * max(st.regulator.corner_hz, 1e-6)
 
-    gm, f_pc, pm, stable = chug_margin_kernel(
+    gm, f_pc, pm, stable, w_c = chug_margin_kernel(
         omega, tau, inert, res, invG, Zhf, wc,
         float(chamber.K_c()), float(chamber.theta_c()))
     return {
         "gain_margin": float(gm),
         "stable": bool(stable),
         "f_chug_hz": float(f_pc),
+        "crossings_hz": [float(w / (2.0 * np.pi)) for w in w_c],
         "phase_margin_deg": float(pm),
         "margin": float(gm),
     }

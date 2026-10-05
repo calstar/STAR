@@ -9,8 +9,8 @@ This module provides:
 """
 
 import numpy as np
-from typing import Dict, Optional, Any, Tuple, List
-from engine.pipeline.numerical_robustness import NumericalStability, PhysicalConstraints
+from typing import Dict, Optional, Any
+from engine.pipeline.numerical_robustness import NumericalStability
 from engine.pipeline.config_schemas import AblativeCoolingConfig, GraphiteInsertConfig, StainlessSteelCaseConfig
 
 
@@ -23,149 +23,54 @@ def calculate_chamber_pressure_profile(
     Tc: float,
     A_throat: float,
     n_points: int = 20,
+    chamber_diameter: Optional[float] = None,
+    volume: Optional[float] = None,
 ) -> Dict[str, Any]:
+    """Static pressure from the injector face to the throat, quasi-one-dimensional.
+
+    Pc is the injector-end pressure (u ~ 0 there). Constant-area heat addition carries the
+    flow to the chamber-end Mach number M_c with p + rho u^2 conserved, so the combustor-end
+    static pressure is Pc / (1 + gamma M_c^2); the nozzle stagnation pressure is Pc / kappa
+    (Rayleigh, engine.core.nozzle.nozzle_stagnation_loss) and the convergent is isentropic
+    from it. How the heat is released along the barrel is not modelled, so the barrel is
+    given at its two ends only. Without ``chamber_diameter`` the chamber is infinite-area
+    (kappa = 1) and only the face and throat are returned.
+
+    positions are distances from the injector face [m].
     """
-    Calculate pressure profile along chamber length.
-    
-    Pressure drops from injection to throat due to:
-    1. Momentum addition from combustion
-    2. Friction losses (minor)
-    3. Area contraction to throat
-    
-    For quasi-1D flow with heat addition:
-        dP/dx = -rho * u * du/dx - (gamma - 1) * rho * dq/dx
-    where dq/dx is heat release rate from reaction.
-    
-    Simplified model: P decreases linearly with heat addition.
-    
-    Parameters:
-    -----------
-    Pc : float
-        Chamber pressure at throat [Pa] (reference pressure)
-    Lstar : float
-        Characteristic length [m]
-    mdot_total : float
-        Total mass flow [kg/s]
-    gamma : float
-        Specific heat ratio
-    R : float
-        Gas constant [J/(kg·K)]
-    Tc : float
-        Chamber temperature [K]
-    A_throat : float
-        Throat area [m²]
-    n_points : int
-        Number of points along chamber (default: 20)
-    
-    Returns:
-    --------
-    profile : dict
-        - positions: Array of positions along chamber [m] (0 = injection, Lstar = throat)
-        - pressures: Array of pressures [Pa]
-        - P_injection: Pressure at injection plane [Pa]
-        - P_mid: Pressure at mid-chamber [Pa]
-        - P_throat: Pressure at throat [Pa] (= Pc)
-    """
-    # Create position array
-    positions = np.linspace(0.0, Lstar, n_points)
-    
-    # Chamber gas properties
-    rho_chamber = Pc / (R * Tc)
-    
-    # Estimate cross-sectional area (assume cylindrical chamber)
-    # Approximate: A_chamber = V / L* ≈ A_throat * expansion_ratio
-    # Use average area for velocity calculation
-    A_chamber_avg = A_throat * 3.0  # Rough estimate (typical expansion from throat)
-    u_chamber = mdot_total / (rho_chamber * A_chamber_avg) if rho_chamber > 0 else 0.0
-    
-    # Pressure profile: drops from injection to throat
-    # Physics: For quasi-1D flow with heat addition (combustion):
-    #   dP/dx = -rho * u * du/dx - (gamma - 1) * rho * dq/dx
-    # where dq/dx is heat release rate from reaction.
-    # 
-    # The pressure drop is due to:
-    # 1. Momentum addition from combustion (u increases, P decreases)
-    # 2. Friction losses (minor, typically < 5%)
-    # 3. Area contraction to throat (Bernoulli effect)
-    #
-    # Simplified model for visualization:
-    #   P(x) = P_injection - (P_injection - Pc) * (x/L*)^alpha
-    # where alpha accounts for the rate of pressure drop.
-    #
-    # At injection: higher pressure due to momentum of incoming propellants
-    # Typical pressure ratio: P_injection / P_throat ≈ 1.05-1.15 for well-designed engines
-    # This is based on experimental data and CFD studies.
-    P_injection_ratio = 1.10  # 10% higher at injection (typical for pintle injectors)
-    
-    # Alpha factor: controls how pressure drops (typically 0.1-0.3)
-    # Lower alpha = more gradual drop (more momentum addition, slower reaction)
-    # Higher alpha = steeper drop (faster reaction, less momentum addition)
-    # Value of 0.15 is typical for pintle injectors with good mixing
-    alpha = 0.15  # Empirical value based on typical pintle engine behavior
-    
-    # Normalized positions (0 = injection, 1 = throat)
-    x_norm = positions / Lstar if Lstar > 0 else np.zeros_like(positions)
-    
-    # Pressure profile
-    # P(x) = P_injection - (P_injection - Pc) * x_norm^alpha
-    # At injection (x_norm=0): P = P_injection
-    # At throat (x_norm=1): P = Pc
-    P_injection = Pc * P_injection_ratio
-    pressures = P_injection - (P_injection - Pc) * (x_norm ** alpha)
-    
-    # Validate all pressures are finite
-    if not np.all(np.isfinite(pressures)):
-        raise ValueError(
-            f"Non-finite pressures in chamber profile. "
-            f"Pc={Pc:.3e} Pa, Lstar={Lstar:.4f} m, alpha={alpha:.4f}, "
-            f"P_injection_ratio={P_injection_ratio:.4f}"
-        )
-    
-    # Validate monotonicity (pressure must decrease toward throat)
-    for i in range(1, len(pressures)):
-        if pressures[i] > pressures[i-1]:
-            raise ValueError(
-                f"Non-monotonic pressure profile at position {i}. "
-                f"P[{i-1}]={pressures[i-1]:.3e} Pa, P[{i}]={pressures[i]:.3e} Pa. "
-                f"Pressure must decrease monotonically from injection to throat. "
-                f"Check alpha={alpha:.4f}, Lstar={Lstar:.4f} m."
-            )
-    
-    # Validate throat pressure matches Pc (within tolerance)
-    P_throat_val = float(pressures[-1])
-    relative_error = abs(P_throat_val - Pc) / Pc
-    if relative_error > 0.05:  # 5% tolerance
-        raise ValueError(
-            f"Throat pressure mismatch: P_throat={P_throat_val:.3e} Pa, Pc={Pc:.3e} Pa. "
-            f"Relative error: {relative_error*100:.2f}%. Should be < 5%. "
-            f"Check pressure profile model and alpha parameter."
-        )
-    
-    # Validate injection pressure is reasonable (should be slightly higher than Pc)
-    P_injection_val = float(pressures[0])
-    if P_injection_val < Pc:
-        raise ValueError(
-            f"Invalid injection pressure: P_injection={P_injection_val:.3e} Pa < Pc={Pc:.3e} Pa. "
-            f"Injection pressure must be higher than chamber pressure. "
-            f"Check P_injection_ratio={P_injection_ratio:.4f}."
-        )
-    
-    if P_injection_val > Pc * 1.5:
-        raise ValueError(
-            f"Unrealistic injection pressure: P_injection={P_injection_val:.3e} Pa = {P_injection_val/Pc:.2f}×Pc. "
-            f"Should be < 1.5×Pc for typical rocket engines. "
-            f"Check P_injection_ratio={P_injection_ratio:.4f}."
-        )
-    
-    # Key points
-    P_mid = float(pressures[len(pressures) // 2])
-    
+    from engine.core.nozzle import nozzle_stagnation_loss
+    from engine.pipeline.thermal.gas_side import mach_from_area_ratio, wall_contour
+
+    g = float(gamma)
+    crit = (2.0 / (g + 1.0)) ** (g / (g - 1.0))
+    if not chamber_diameter or chamber_diameter <= 0:
+        P_throat = Pc * crit
+        return {"positions": [0.0, float("nan")], "pressures": [float(Pc), float(P_throat)],
+                "P_injection": float(Pc), "P_mid": float("nan"), "P_throat": float(P_throat),
+                "infinite_area": True}
+    V = volume if volume else Lstar * A_throat
+    c = wall_contour(A_throat, chamber_diameter, V, n_chamber=max(int(n_points), 24))
+    CR = (0.5 * chamber_diameter) ** 2 * np.pi / A_throat
+    kappa = nozzle_stagnation_loss(CR, g)
+    M_c = mach_from_area_ratio(CR, g, False)
+    P0 = Pc / kappa
+    conv = (c.x >= c.x_cone_start - 1e-12) & (c.x < -1e-9)
+    x_conv = np.append(c.x[conv], 0.0)
+    r_conv = np.append(c.r[conv], c.R_t)
+    M = mach_from_area_ratio(np.maximum((r_conv / c.R_t) ** 2, 1.0), g, np.zeros_like(r_conv, dtype=bool))
+    p_conv = P0 * (1.0 + 0.5 * (g - 1.0) * M * M) ** (-g / (g - 1.0))
+    positions = np.concatenate([[0.0], x_conv - c.x_face])
+    pressures = np.concatenate([[Pc], p_conv])
     return {
         "positions": positions.tolist(),
         "pressures": pressures.tolist(),
-        "P_injection": P_injection_val,
-        "P_mid": P_mid,
-        "P_throat": P_throat_val,
+        "P_injection": float(Pc),
+        "P_combustor_end": float(Pc / (1.0 + g * M_c * M_c)),
+        "P_mid": float(Pc / (1.0 + g * M_c * M_c)),
+        "P_throat": float(p_conv[-1]),
+        "P0_nozzle": float(P0),
+        "stagnation_loss_kappa": float(kappa),
+        "infinite_area": False,
     }
 
 

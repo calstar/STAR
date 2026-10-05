@@ -1,0 +1,38 @@
+{
+  "schema": "layerx.catalog/1",
+  "kind": "bottles",
+  "about": "Pressurant bottles Hardware mode may offer in place of the drawn one. Seeded only with the bottle the shipped drawings carry; no vendor data sheet is in this repo. Add a row per bottle you can buy (volume, service pressure, mass) with its data sheet in 'provenance'. The flight's mass comes from the config's press_tank block, which a bottle row does not change: a heavier bottle needs that block updated too. A user's own rows live in <userdata>/layerx/catalog/bottles.json.",
+  "rows": [
+    {
+      "id": "scba-45scf",
+      "label": "45 scf SCBA cylinder (as drawn)",
+      "applies_to": [
+        "KBOTTLE"
+      ],
+      "params": {
+        "volume": {
+          "value": 4.6871,
+          "unit": "L",
+          "source": "measured"
+        },
+        "pressure": {
+          "value": 4500,
+          "unit": "psi",
+          "source": "manufacturer"
+        },
+        "wall_mass": {
+          "value": 3.5,
+          "unit": "kg",
+          "source": "estimated"
+        },
+        "MAWP": {
+          "value": 6750,
+          "unit": "psi",
+          "source": "estimated"
+        }
+      },
+      "source": "estimated",
+      "provenance": "Drawings copv_study_he / copv_study_gn2 / ethalox_stand: KB1. Volume 4.6871 L 'measured' (45 scf SCBA: 52.8 mol std air, Z 1.115 at 4500 psi, plus fittings); service pressure 4500 psi 'manufacturer' (He/GN2 drawings); wall mass 3.5 kg and MAWP 6750 psi 'estimated'."
+    }
+  ]
+}

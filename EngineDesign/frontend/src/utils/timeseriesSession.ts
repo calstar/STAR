@@ -7,15 +7,18 @@ export interface StoredTimeSeriesResults {
   data: TimeSeriesData;
   summary: TimeSeriesSummary;
   timestamp: number;
+  /** lib/engineIdentity.configFingerprint of the design the run was made on. */
+  configFingerprint?: string;
 }
 
 export function saveTimeSeriesResults(results: {
   data: TimeSeriesData;
   summary: TimeSeriesSummary;
-}): void {
+}, configFingerprint?: string): void {
   const stored: StoredTimeSeriesResults = {
     ...results,
     timestamp: Date.now(),
+    configFingerprint,
   };
   sessionStorage.setItem(TIMESERIES_RESULTS_KEY, JSON.stringify(stored));
   window.dispatchEvent(new CustomEvent(TIMESERIES_UPDATED_EVENT, { detail: stored }));

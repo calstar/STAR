@@ -134,9 +134,7 @@ class ManifoldBranch(HydraulicComponent):
         return self.port.total_K * 0.5 * flow.rho * v * v
 
     def static_head(self, flow: FlowConditions) -> float:
-        from feedtwin.vessels.volume import GRAVITY
-
-        return -flow.rho * GRAVITY * self.port.elevation
+        return -flow.rho * flow.gravity * self.port.elevation
 
     def diagnostics(self, mdot: float, flow: FlowConditions) -> dict[str, float]:
         return {

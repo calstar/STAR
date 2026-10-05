@@ -43,7 +43,7 @@ import type { PIDNodeData } from './types';
 import { numberTag } from './tags';
 import { migrate } from './migrate';
 import { handleCentre, handleEnd } from './ports';
-import { copySelection, pasteClip } from './clipboard';
+import { copySelection, duplicatePage, pasteClip } from './clipboard';
 import type { Clip } from './clipboard';
 import { TitleBlock } from './TitleBlock';
 import type { SheetMeta } from './exportImage';
@@ -192,8 +192,9 @@ interface CanvasProps {
   sheet:              Omit<SheetMeta, 'page'>;
   /** Autosave hit a 403: this diagram was unshared while it was open. */
   onForbidden:        () => void;
-  /** Autosave hit a 423: the checkout lapsed or was taken. */
-  onLockLost:         () => void;
+  /** Autosave hit a 423: the checkout went to someone else. Given the name of
+   *  the diagram the refused edits were kept as, when keeping them worked. */
+  onLockLost:         (savedAs?: string) => void;
   /** React Flow themes its own chrome (handles, selection, controls) off
    *  this -- it does not read the CSS variables above on its own. */
   theme:              Theme;
@@ -358,7 +359,8 @@ function PIDCanvas({
       if (serialized === lastSaved.current) return;
       lastSaved.current = serialized;
       unsnapped.current = true;
-      const sent = api.autosaveDiagram(diagramRef, { nodes, edges });
+      const payload = { nodes, edges };
+      const sent = api.autosaveDiagram(diagramRef, payload);
       inFlight.current = sent.catch(() => {});
       sent.catch((e: unknown) => {
         lastSaved.current = ''; // failed -- let the next change retry
@@ -366,9 +368,16 @@ function PIDCanvas({
         // Retrying is silent and pointless -- tell the parent so it can stop
         // and fall back to one of your own.
         if (e instanceof api.ApiError && e.status === 403) onForbidden();
-        // 423: the checkout lapsed and someone else took it. Drop to read-only
-        // rather than retry into a void.
-        else if (e instanceof api.ApiError && e.status === 423) onLockLost();
+        // 423: someone else has the checkout. (A lapse nobody took is not a
+        // 423 any more -- the server hands the hold back on this save.) Keep
+        // what this save carried as a diagram of the user's own *first*: going
+        // read only leaves it on screen only, and "Take it back" reloads over
+        // it. Then drop to read-only rather than retry into a void.
+        else if (e instanceof api.ApiError && e.status === 423) {
+          api.rescueDiagram(diagramRef, payload)
+            .then(kept => onLockLost(kept.name))
+            .catch(() => onLockLost());
+        }
       });
     }, 1000);
     return () => clearTimeout(t);
@@ -377,8 +386,8 @@ function PIDCanvas({
   // Giving the checkout back has to wait for this. The autosave writes a
   // second after the drawing stops changing, so an edit made just before
   // Release -- a section box let go of, then Release -- was sent after the
-  // hold had gone: refused with a 423, the canvas dropped to read-only, and
-  // the edit was gone from the drawing. The release awaits the
+  // hold had gone: refused with a 423, kept only as an "(unsaved changes)"
+  // copy, and gone from the drawing when it reloaded. The release awaits the
   // save on the wire, then sends what is still unsent; the debounced write
   // that follows finds it saved and sends nothing.
   saveNowRef.current = useCallback(async () => {
@@ -1447,6 +1456,17 @@ function PIDCanvas({
               ? { ...n, data: { ...n.data, page: to } } : n));
           setDeclaredPages(ps => ps.map(x => (x === from ? to : x)));
           setPage(cur => (cur === from ? to : cur));
+        }}
+        // Another version of a page -- hotfire and launch -- is its copy with
+        // a few changes: everything on it, the same tags, on a new page that
+        // opens. See `duplicatePage`.
+        onDuplicate={(from, name) => {
+          if (readOnlyRef.current || pages.includes(name)) return;
+          const { nodes: ns, edges: es } = snapshot.current;
+          const copy = duplicatePage(clearSelection(ns), clearSelection(es), from, name);
+          setDeclaredPages(ps => (ps.includes(name) ? ps : [...ps, name]));
+          commitGraph(copy.nodes, copy.edges);
+          setPage(name);
         }}
       />
 

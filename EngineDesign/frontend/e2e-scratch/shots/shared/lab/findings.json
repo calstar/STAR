@@ -1,0 +1,117 @@
+{
+ "errors": [],
+ "findings": [
+  {
+   "tag": "lab-1920-dark-stand",
+   "k": "overlap",
+   "a": "LOX tank peak against its MAWP and the d",
+   "b": "612 psia",
+   "at": [
+    398,
+    765
+   ],
+   "w": 62,
+   "h": 16,
+   "pa": "div.grid.min-w-0 > button[LOX tank peak against its MAWP] > span.flex.min-w-0 > span.min-w-0.truncate",
+   "pb": "div.-mx-2 > div.grid.min-w-0 > button[LOX tank peak against its MAWP] > span.lx-num.whitespace-nowrap"
+  },
+  {
+   "tag": "lab-1920-dark-si",
+   "k": "overlap",
+   "a": "LOX tank peak against its MAWP and the d",
+   "b": "612 psia",
+   "at": [
+    398,
+    765
+   ],
+   "w": 62,
+   "h": 16,
+   "pa": "div.grid.min-w-0 > button[LOX tank peak against its MAWP] > span.flex.min-w-0 > span.min-w-0.truncate",
+   "pb": "div.-mx-2 > div.grid.min-w-0 > button[LOX tank peak against its MAWP] > span.lx-num.whitespace-nowrap"
+  },
+  {
+   "tag": "lab-1920-light-stand",
+   "k": "overlap",
+   "a": "LOX tank peak against its MAWP and the d",
+   "b": "612 psia",
+   "at": [
+    398,
+    765
+   ],
+   "w": 62,
+   "h": 16,
+   "pa": "div.grid.min-w-0 > button[LOX tank peak against its MAWP] > span.flex.min-w-0 > span.min-w-0.truncate",
+   "pb": "div.-mx-2 > div.grid.min-w-0 > button[LOX tank peak against its MAWP] > span.lx-num.whitespace-nowrap"
+  },
+  {
+   "tag": "lab-1920-light-si",
+   "k": "overlap",
+   "a": "LOX tank peak against its MAWP and the d",
+   "b": "612 psia",
+   "at": [
+    398,
+    765
+   ],
+   "w": 62,
+   "h": 16,
+   "pa": "div.grid.min-w-0 > button[LOX tank peak against its MAWP] > span.flex.min-w-0 > span.min-w-0.truncate",
+   "pb": "div.-mx-2 > div.grid.min-w-0 > button[LOX tank peak against its MAWP] > span.lx-num.whitespace-nowrap"
+  },
+  {
+   "tag": "lab-1440-dark-stand",
+   "k": "overlap",
+   "a": "LOX tank peak against its MAWP and the d",
+   "b": "612 psia",
+   "at": [
+    361,
+    585
+   ],
+   "w": 62,
+   "h": 16,
+   "pa": "div.grid.min-w-0 > button[LOX tank peak against its MAWP] > span.flex.min-w-0 > span.min-w-0.truncate",
+   "pb": "div.-mx-2 > div.grid.min-w-0 > button[LOX tank peak against its MAWP] > span.lx-num.whitespace-nowrap"
+  },
+  {
+   "tag": "lab-1440-dark-si",
+   "k": "overlap",
+   "a": "LOX tank peak against its MAWP and the d",
+   "b": "612 psia",
+   "at": [
+    361,
+    585
+   ],
+   "w": 62,
+   "h": 16,
+   "pa": "div.grid.min-w-0 > button[LOX tank peak against its MAWP] > span.flex.min-w-0 > span.min-w-0.truncate",
+   "pb": "div.-mx-2 > div.grid.min-w-0 > button[LOX tank peak against its MAWP] > span.lx-num.whitespace-nowrap"
+  },
+  {
+   "tag": "lab-1440-light-stand",
+   "k": "overlap",
+   "a": "LOX tank peak against its MAWP and the d",
+   "b": "612 psia",
+   "at": [
+    361,
+    585
+   ],
+   "w": 62,
+   "h": 16,
+   "pa": "div.grid.min-w-0 > button[LOX tank peak against its MAWP] > span.flex.min-w-0 > span.min-w-0.truncate",
+   "pb": "div.-mx-2 > div.grid.min-w-0 > button[LOX tank peak against its MAWP] > span.lx-num.whitespace-nowrap"
+  },
+  {
+   "tag": "lab-1440-light-si",
+   "k": "overlap",
+   "a": "LOX tank peak against its MAWP and the d",
+   "b": "612 psia",
+   "at": [
+    361,
+    585
+   ],
+   "w": 62,
+   "h": 16,
+   "pa": "div.grid.min-w-0 > button[LOX tank peak against its MAWP] > span.flex.min-w-0 > span.min-w-0.truncate",
+   "pb": "div.-mx-2 > div.grid.min-w-0 > button[LOX tank peak against its MAWP] > span.lx-num.whitespace-nowrap"
+  }
+ ]
+}

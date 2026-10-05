@@ -79,11 +79,16 @@ very bugs they were written for.
 - **The cockpit's thermal defaults are on** (vapour, wall-to-liquid 100 film / 3000
   nucleate below a 40 K Leidenfrost superheat, a 2 K boiling-onset superheat, a 1 cm
   stratified surface layer, an 8 W/(m²·K) air film in series with the drawing's
-  `insulation_thickness`/`insulation_conductivity`, wall boiling); the library's are
-  off. A shut LOX tank climbs at tens of psi a minute because its *surface* warms, not
-  because the leak boils; a warm one runs away; the pad guide waits for chilldown. The
-  shipped LOX tank wears an inch of fiberglass (operator). See `docs/PHYSICS-BENCHMARK.md`
-  3.8 and 3.11.
+  `insulation_thickness`/`insulation_conductivity`, wall boiling). The library's
+  `Setup` carries those same on-values; only the vessel-level `Tank` constructor
+  defaults them off (collapse aside, which defaults to `ConductionCollapse`), and the
+  Study and Layer X turn them off themselves -- `burn_setup` drops stratification,
+  boiling onset and nucleate boiling, and each caller passes collapse, vapour and
+  chilldown off unless a case asks for one (the Study's collapse case;
+  `backend/study.py`, `engine/layerx/prepare.py`). A shut LOX tank
+  climbs at tens of psi a minute because its *surface* warms, not because the leak
+  boils; a warm one runs away; the pad guide waits for chilldown. The shipped LOX tank
+  wears an inch of fiberglass (operator). See `docs/PHYSICS-BENCHMARK.md` 3.8 and 3.11.
 - **Every assumed number is a `Setup` field with a row in `backend/tunables.py`.** Do
   not add a module constant that describes physics or the stand; add a field, a
   `Tunable` with what it accounts for, and the Configuration tab shows it. The
@@ -96,7 +101,11 @@ very bugs they were written for.
   stand above the MAWP their drawing declares (`Session._check_limits`). See 3.10.
 - **Adiabatic is an assumption, not a fact.** Line walls (`feedtwin.comps.wall`) model
   the heat a tube and its fittings give the gas during a flow, which is worth ~50 psi
-  of tank pressure late in a nitrogen burn. What is *not* modelled, on purpose, is
+  of tank pressure late in a nitrogen burn. **On by default** in the library `Setup`,
+  the cockpit and Layer X since 2026-10-03 (the team: fitting heat is on), as is
+  `regulator_lockup_supply` (the regulator's supply-pressure effect at lockup);
+  `burn_setup` pins both off so the Study is the scheme the benchmark was stated at.
+  What is *not* modelled, on purpose, is
   soak: no heat transfer without flow, and no clock on how long a stand has sat. A
   wall starts at the temperature of the fluid its line holds at rest, which is where a
   soak model would land anyway.

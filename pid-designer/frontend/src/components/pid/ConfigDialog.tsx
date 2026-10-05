@@ -83,6 +83,10 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   const [partNumber, setPartNumber] = useState(data.partNumber ?? '');
   const [segments, setSegments] = useState<LineSegment[]>([]);
   const [geometry, setGeometry] = useState<ManifoldGeometry | undefined>(undefined);
+  // The Geometry editor's layout, when somebody has moved something in it.
+  // Kept apart from `geometry`, which is what the editor opens on: fed back
+  // into it, every drag would become the editor's new starting point.
+  const [geometryEdit, setGeometryEdit] = useState<ManifoldGeometry | undefined>(undefined);
   const [sketch, setSketch] = useState<Sketch | null>(null);
   // How many times the fields above have been filled from `data`. Zero means
   // not yet: they start empty and an effect fills them after the first render,
@@ -100,6 +104,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
     setPorts({ ...(data.ports ?? {}) });
     setSegments(data.segments ? structuredClone(data.segments) : []);
     setGeometry(data.geometry ? structuredClone(data.geometry) : undefined);
+    setGeometryEdit(undefined);
     setSketch(data.sketch ? structuredClone(data.sketch) : null);
     setLoaded(n => n + 1);
   }, [open, data]);
@@ -238,7 +243,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
       partNumber: partNumber.trim() || undefined,
       ...(kind === 'edge' ? { lineType, segments: savedSegments.length ? savedSegments : undefined,
         sketch: sketch && sketch.legs.length ? sketch : undefined } : {}),
-      ...(geometry ? { geometry } : {}),
+      ...((geometryEdit ?? geometry) ? { geometry: geometryEdit ?? geometry } : {}),
     });
     onClose();
   };
@@ -414,7 +419,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
             editor starts its draft from what it is given on mount; mounted on
             the dialog's first render it was given nothing, started from a
             default block that was not the one drawn, and so opened with
-            "Save layout" lit and a save that moved every port. */}
+            an edit before anything was moved, and a save that moved every port. */}
         {type === 'MANIFOLD' && loaded > 0 && (
           <ManifoldEditor
             key={loaded}
@@ -422,7 +427,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
             orientation={options.orientation}
             geometry={geometry}
             ports={ports}
-            onSave={setGeometry}
+            onChange={(draft, edited) => setGeometryEdit(edited ? draft : undefined)}
           />
         )}
 

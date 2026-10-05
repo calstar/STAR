@@ -29,22 +29,24 @@ type Props = Parameters<typeof ManifoldEditor>[0];
 type El = ReactElement<Record<string, unknown>>;
 
 /** One editor, mounted and then handed new props the way the dialog hands them. */
-function editor(first: Omit<Props, 'onSave' | 'ports'>) {
-  let saved: ManifoldGeometry | null = null;
-  let props: Props = { ...first, ports: {}, onSave: g => { saved = g; } };
+function editor(first: Omit<Props, 'onChange' | 'ports'>) {
+  // What the editor last told the dialog: the layout, and whether it is edited.
+  let last: { draft: ManifoldGeometry; edited: boolean } | null = null;
+  let props: Props = { ...first, ports: {}, onChange: (draft, edited) => { last = { draft, edited }; } };
   let tree = rt.settle(() => ManifoldEditor(props)) as El;
   const redraw = () => { tree = rt.settle(() => ManifoldEditor(props)) as El; };
-  const button = () => find(tree, e => e.type === 'button')[0];
   return {
     /** The dialog changed something the editor is handed. */
     set(patch: Partial<Props>) { props = { ...props, ...patch }; redraw(); },
-    /** What the Save button reads, and whether it can be pressed. */
-    get label() { return textOf(button()); },
-    get lit() { return !button().props.disabled; },
-    /** The draft, as a press of Save would hand it over. */
-    draft(): ManifoldGeometry {
-      (button().props.onClick as () => void)();
-      return saved!;
+    /** Whether the dialog would save a layout: something has been moved. */
+    get lit() { return last!.edited; },
+    /** The layout as the dialog last heard it. */
+    draft(): ManifoldGeometry { return last!.draft; },
+    /** Press "Undo moves". */
+    undo() {
+      const button = find(tree, e => e.type === 'button')[0];
+      (button.props.onClick as () => void)();
+      redraw();
     },
     /** Type a size into the width or height box. */
     size(key: 'width' | 'height', v: number) {
@@ -86,7 +88,7 @@ const drawn = (outlets: number, orientation: string, g?: ManifoldGeometry) => {
 describe('the Geometry editor follows the dialog round it', () => {
   it('opens on the manifold as drawn, with nothing to save', () => {
     const ed = editor({ outlets: 4, orientation: 'horizontal', geometry: undefined });
-    expect(ed.label).toBe('Saved');
+    expect(ed.lit).toBe(false);
     expect(ed.lit).toBe(false);
     expect(ed.draft()).toEqual(drawnGeometry(4, 'horizontal'));
   });
@@ -95,7 +97,7 @@ describe('the Geometry editor follows the dialog round it', () => {
     const ed = editor({ outlets: 4, orientation: 'horizontal', geometry: undefined });
     ed.set({ outlets: 6 });
     // Nothing has been moved, so there is still nothing to save.
-    expect(ed.label).toBe('Saved');
+    expect(ed.lit).toBe(false);
     expect(ed.lit).toBe(false);
     expect(drawn(6, 'horizontal', ed.draft())).toEqual(drawn(6, 'horizontal'));
   });
@@ -103,7 +105,7 @@ describe('the Geometry editor follows the dialog round it', () => {
   it('turns with the direction', () => {
     const ed = editor({ outlets: 4, orientation: 'horizontal', geometry: undefined });
     ed.set({ orientation: 'vertical' });
-    expect(ed.label).toBe('Saved');
+    expect(ed.lit).toBe(false);
     expect(drawn(4, 'vertical', ed.draft())).toEqual(drawn(4, 'vertical'));
   });
 
@@ -111,7 +113,7 @@ describe('the Geometry editor follows the dialog round it', () => {
     const ed = editor({ outlets: 4, orientation: 'horizontal', geometry: undefined });
     ed.drag('p2', 'bottom', 30);
     expect(drawn(4, 'horizontal', ed.draft()).ports.p2).toBe('bottom 30');
-    expect(ed.label).toBe('Save layout');
+    expect(ed.lit).toBe(true);
 
     ed.set({ outlets: 6 });
     const after = drawn(6, 'horizontal', ed.draft());
@@ -121,7 +123,7 @@ describe('the Geometry editor follows the dialog round it', () => {
     // than squeezed in among them.
     expect(after.size).toEqual(expected.size);
     expect(after.ports).toEqual({ ...expected.ports, p2: 'bottom 30' });
-    expect(ed.label).toBe('Save layout');
+    expect(ed.lit).toBe(true);
   });
 
   it('keeps a size typed into it, with the ports where the drawing puts them along it', () => {
@@ -141,7 +143,7 @@ describe('the Geometry editor follows the dialog round it', () => {
     // The dialog holds the saved layout and hands it back.
     ed.set({ geometry: layout });
     expect(ed.draft()).toEqual(layout);
-    expect(ed.label).toBe('Saved');
+    expect(ed.lit).toBe(false);
   });
 });
 
@@ -203,4 +205,64 @@ describe('the dialog', () => {
     expect(refilled[0].key).not.toBe(first[0].key);
     expect(refilled[0].props.geometry).toEqual(data.geometry);
   });
+
+  // The dialog's own Save was the only save anyone pressed: the editor's
+  // "Save layout" sat below the fold, and a port moved and saved with the
+  // dialog's button went straight back where it was.
+  const run = (data: PIDNodeData) => {
+    let saved: Record<string, unknown> | null = null;
+    const dialog = () => rt.settle(() => ConfigDialog({
+      open: true, kind: 'node', data, readOnly: false, onClose: () => {},
+      onSave: (patch: unknown) => { saved = patch as Record<string, unknown>; },
+    }));
+    const tree = () => dialog();
+    return {
+      edit(draft: ManifoldGeometry, edited: boolean) {
+        const ed = find(tree(), e => e.type === ManifoldEditor)[0];
+        (ed.props.onChange as (d: ManifoldGeometry, e: boolean) => void)(draft, edited);
+      },
+      save() {
+        // The Save button lives in the modal's footer, which is a prop.
+        const footer = find(tree(), e => e.props?.footer !== undefined)[0].props.footer;
+        const button = find(footer, e => e.type === 'button' && textOf(e) === 'Save')[0];
+        (button.props.onClick as () => void)();
+        return saved!;
+      },
+    };
+  };
+
+  it('saves a port moved in the editor with its own Save button', () => {
+    const d = run(manifold());
+    const base = drawnGeometry(4, 'horizontal');
+    const moved = { ...base, positions: { ...base.positions, p2: fractionOf({ side: 'top', along: 60 }, base.width, base.height) } };
+    d.edit(moved, true);
+    expect(d.save().geometry).toEqual(moved);
+  });
+
+  it('saves no layout when nothing was moved, so an untouched save changes nothing', () => {
+    const d = run(manifold());
+    d.edit(drawnGeometry(4, 'horizontal'), false);
+    expect(d.save().geometry).toBeUndefined();
+  });
+
+  it('keeps a saved layout when it is saved again untouched', () => {
+    const geometry = { width: 120, height: 20, positions: { in: 0.9, p: 0.55, p2: 0.6, p3: 0.65, p4: 0.7 } };
+    const d = run(manifold({ geometry }));
+    d.edit(drawnGeometry(4, 'horizontal', geometry), false);
+    expect(d.save().geometry).toEqual(geometry);
+  });
 });
+
+describe('the editor tells the dialog what has moved', () => {
+  it('reports a dragged port as an edit, and Undo moves takes it back', () => {
+    const ed = editor({ outlets: 4, orientation: 'horizontal', geometry: undefined });
+    expect(ed.lit).toBe(false);
+    ed.drag('p2', 'top', 60);
+    expect(ed.lit).toBe(true);
+    expect(drawn(4, 'horizontal', ed.draft()).ports.p2).toBe('top 60');
+    ed.undo();
+    expect(ed.lit).toBe(false);
+    expect(ed.draft()).toEqual(drawnGeometry(4, 'horizontal'));
+  });
+});
+

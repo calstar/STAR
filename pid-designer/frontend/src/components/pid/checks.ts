@@ -116,20 +116,25 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
   // all use for one piece of hardware. Two components answering to it is two
   // things a reader cannot tell apart, and the drawing is where that is cheap
   // to notice.
-  const byTag = new Map<string, Node[]>();
+  //
+  // Within a page. A page duplicated as another version of the same stand --
+  // hotfire and launch -- draws the same hardware under the same tags, and
+  // MAN-1 on both is one valve, not two.
+  const byTag = new Map<string, { tag: string; nodes: Node[] }>();
   for (const n of nodes) {
     const t = dataOf(n)?.componentType;
     if (!t || t === 'TEXT' || t === 'REGION' || t === 'JUNCTION') continue;
     const tag = (dataOf(n)?.label ?? '').trim();
     if (!tag) continue;
-    const list = byTag.get(tag);
-    if (list) list.push(n);
-    else byTag.set(tag, [n]);
+    const key = `${pageOf(dataOf(n))}\u0000${tag}`;
+    const entry = byTag.get(key);
+    if (entry) entry.nodes.push(n);
+    else byTag.set(key, { tag, nodes: [n] });
   }
-  for (const [tag, sharing] of byTag) {
+  for (const { tag, nodes: sharing } of byTag.values()) {
     if (sharing.length < 2) continue;
     push({
-      id: `tag-duplicate-${tag}`,
+      id: `tag-duplicate-${pageOf(dataOf(sharing[0]))}-${tag}`,
       severity: 'warning',
       title: `${sharing.length} components are all tagged ${tag}`,
       detail: 'Rename one. A solve, a report and a procedure all key on the tag.',

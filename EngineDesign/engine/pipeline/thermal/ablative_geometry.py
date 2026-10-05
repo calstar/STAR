@@ -304,14 +304,12 @@ def update_chamber_geometry_from_ablation(
             throat_recession_multiplier = 1.5  # Physics-based default (matches calculate_throat_heuristic_multiplier default)
         effective_recession_throat = effective_recession_chamber * throat_recession_multiplier
     
-    # Update chamber diameter and volume
-    # For cylindrical chamber: V = π × r² × L
-    # This gives quadratic growth: V = π × (R_initial + ΔR)² × L
-    # = π × (R_initial² + 2×R_initial×ΔR + ΔR²) × L
-    # The ΔR² term ensures quadratic (not linear) volume growth with recession
+    # Volume grows by the receded shell over the lined length, from the declared volume:
+    # zero recession returns V_chamber_initial exactly (a full-bore cylinder of L_chamber
+    # would not -- it ignores the convergent and put L* 8 % high at t = 0).
     D_chamber_new = D_chamber_initial + 2.0 * effective_recession_chamber
-    R_chamber_new = D_chamber_new / 2.0
-    V_chamber_new = np.pi * (R_chamber_new ** 2) * L_chamber
+    R0 = D_chamber_initial / 2.0
+    V_chamber_new = V_chamber_initial + np.pi * ((R0 + effective_recession_chamber) ** 2 - R0 ** 2) * L_chamber
     
     # Update throat diameter and area
     # For circular throat: A = π × r²

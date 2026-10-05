@@ -1,0 +1,1699 @@
+{
+  "nodes": [
+    {
+      "id": "node_1",
+      "type": "TANK",
+      "position": {
+        "x": 340,
+        "y": 190
+      },
+      "data": {
+        "componentType": "TANK",
+        "label": "TK-1",
+        "fluidType": "default",
+        "options": {
+          "material": "copv",
+          "insulation": "none",
+          "portsTop": "1",
+          "portsBottom": "1"
+        },
+        "page": "Main",
+        "params": {
+          "pressure": {
+            "value": 4000,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "temperature": {
+            "value": 293,
+            "unit": "K",
+            "source": "default",
+            "reference": "room temperature, 20 °C"
+          },
+          "volume": {
+            "value": 4.69,
+            "unit": "L",
+            "source": "estimated"
+          },
+          "burst_pressure": {
+            "value": 15000,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "wall_capacity": {
+            "value": 870,
+            "unit": "J/(kg.K)",
+            "source": "default",
+            "reference": "rule of mixtures: carbon fibre 740, epoxy 1160 J/(kg.K) (PMC12430415), 60 % fibre by volume; liner excluded — UNVERIFIED"
+          }
+        },
+        "ports": {
+          "t": {
+            "kind": "plug"
+          }
+        },
+        "fluid": "nitrogen",
+        "labelOffset": {
+          "x": -54.66623349247294,
+          "y": 38.54370193711244
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 100
+      }
+    },
+    {
+      "id": "node_2",
+      "type": "PR",
+      "position": {
+        "x": 340,
+        "y": 480
+      },
+      "data": {
+        "componentType": "PR",
+        "label": "DPR_HP",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cv",
+          "domeLoaded": "yes"
+        },
+        "page": "Main",
+        "rotation": 90,
+        "params": {
+          "dome_pressure": {
+            "value": 535,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "dome_bias": {
+            "value": 50,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "Cv": {
+            "value": 0.8,
+            "unit": "Cv",
+            "source": "estimated"
+          },
+          "supply_coefficient": {
+            "value": 14.7,
+            "unit": "psi/1000psi",
+            "source": "estimated",
+            "reference": "14.7 psi outlet rise per 1000 psi inlet drop"
+          }
+        },
+        "ports": {},
+        "labelOffset": {
+          "x": -87.0461241960366,
+          "y": 24.533243346640898
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_3",
+      "type": "MANIFOLD",
+      "position": {
+        "x": 360,
+        "y": 330
+      },
+      "data": {
+        "componentType": "MANIFOLD",
+        "label": "MF-1",
+        "fluidType": "default",
+        "options": {
+          "outlets": "4",
+          "orientation": "horizontal"
+        },
+        "page": "Main",
+        "rotation": 90,
+        "params": {},
+        "ports": {},
+        "labelOffset": {
+          "x": 22.760024695955778,
+          "y": 101.53420011036523
+        }
+      },
+      "measured": {
+        "width": 20,
+        "height": 120
+      }
+    },
+    {
+      "id": "node_6",
+      "type": "RTD",
+      "position": {
+        "x": 410,
+        "y": 210
+      },
+      "data": {
+        "componentType": "RTD",
+        "label": "RTD_P",
+        "fluidType": "default",
+        "options": {
+          "size": "normal"
+        },
+        "attachedTo": "node_1",
+        "page": "Main",
+        "params": {},
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_7",
+      "type": "QD",
+      "position": {
+        "x": 160,
+        "y": 290
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "QD_PF",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "pairedWith": ""
+        },
+        "page": "Main",
+        "params": {},
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_8",
+      "type": "RV",
+      "position": {
+        "x": 170,
+        "y": 400
+      },
+      "data": {
+        "componentType": "RV",
+        "label": "RV-HPF",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "Main",
+        "params": {
+          "set_pressure": {
+            "value": 5000,
+            "unit": "psi",
+            "source": "estimated"
+          }
+        },
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_10",
+      "type": "PT",
+      "position": {
+        "x": 240,
+        "y": 340
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "PT-HP-1",
+        "fluidType": "default",
+        "options": {},
+        "params": {
+          "range_max": {
+            "value": 5000,
+            "unit": "psi",
+            "source": "default",
+            "reference": "palette: high-pressure transducer"
+          }
+        },
+        "page": "Main",
+        "rotation": 270
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_11",
+      "type": "PT",
+      "position": {
+        "x": 570,
+        "y": 480
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "DP-PT-R",
+        "fluidType": "default",
+        "options": {},
+        "params": {
+          "range_max": {
+            "value": 5000,
+            "unit": "psi",
+            "source": "default",
+            "reference": "palette: high-pressure transducer"
+          }
+        },
+        "page": "Main",
+        "labelOffset": {
+          "x": 51.03391824683417,
+          "y": 28.132973386563584
+        },
+        "ports": {},
+        "rotation": 90
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_12",
+      "type": "JUNCTION",
+      "position": {
+        "x": 495,
+        "y": 505
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_12",
+        "page": "Main",
+        "along": {
+          "t": 0.38188976377952755,
+          "in": "l",
+          "out": "r",
+          "from": "node_2",
+          "to": "node_11",
+          "ends": {
+            "a": {
+              "x": 403,
+              "y": 510
+            },
+            "b": {
+              "x": 657,
+              "y": 510
+            }
+          },
+          "home": {
+            "a": {
+              "x": 403,
+              "y": 510
+            },
+            "b": {
+              "x": 657,
+              "y": 510
+            },
+            "at": {
+              "x": 500,
+              "y": 510
+            }
+          }
+        }
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_12",
+      "type": "SOL",
+      "position": {
+        "x": 470,
+        "y": 420
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "DP-SOL-F",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "failState": "closed"
+        },
+        "page": "Main",
+        "params": {},
+        "ports": {},
+        "rotation": 270,
+        "labelOffset": {
+          "x": 43.48403657340427,
+          "y": 21.240928268210258
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_13",
+      "type": "QD",
+      "position": {
+        "x": 470,
+        "y": 330
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "QD_DPRF",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "pairedWith": ""
+        },
+        "page": "Main",
+        "params": {},
+        "ports": {},
+        "rotation": 270,
+        "labelOffset": {
+          "x": 57.5478902797872,
+          "y": 19.76125176877349
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_15",
+      "type": "TANK",
+      "position": {
+        "x": 380,
+        "y": 720
+      },
+      "data": {
+        "componentType": "TANK",
+        "label": "TK-2",
+        "fluidType": "default",
+        "options": {
+          "material": "al6061",
+          "insulation": "none",
+          "portsTop": "2",
+          "portsBottom": "2"
+        },
+        "page": "Main",
+        "params": {
+          "pressure": {
+            "value": 580,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "temperature": {
+            "value": 293,
+            "unit": "K",
+            "source": "default",
+            "reference": "room temperature, 20 °C"
+          },
+          "volume": {
+            "value": 8.19,
+            "unit": "L",
+            "source": "estimated"
+          },
+          "burst_pressure": {
+            "value": 1500,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "wall_mass": {
+            "value": 8,
+            "unit": "lbm",
+            "source": "estimated"
+          },
+          "wall_capacity": {
+            "value": 897,
+            "unit": "J/(kg.K)",
+            "source": "default",
+            "reference": "NIST cryogenic materials data, Al 6061-T6 specific heat at 300 K"
+          }
+        },
+        "ports": {},
+        "fluid": "ethanol",
+        "labelOffset": {
+          "x": -50.97623768350972,
+          "y": 26.871547673222405
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 100
+      }
+    },
+    {
+      "id": "node_16",
+      "type": "SOL",
+      "position": {
+        "x": 390,
+        "y": 630
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "FU_SOL_R",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cv",
+          "failState": "closed"
+        },
+        "page": "Main",
+        "rotation": 90,
+        "params": {
+          "Cv": {
+            "value": 4,
+            "unit": "Cv",
+            "source": "estimated"
+          }
+        },
+        "ports": {},
+        "labelOffset": {
+          "x": -71.06276815759767,
+          "y": 14
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_18",
+      "type": "MANIFOLD",
+      "position": {
+        "x": 270,
+        "y": 710
+      },
+      "data": {
+        "componentType": "MANIFOLD",
+        "label": "MF-2",
+        "fluidType": "default",
+        "options": {
+          "outlets": "4",
+          "orientation": "horizontal"
+        },
+        "page": "Main",
+        "rotation": 90,
+        "labelOffset": {
+          "x": -25.843964187441063,
+          "y": 127.95744477839301
+        }
+      },
+      "measured": {
+        "width": 20,
+        "height": 120
+      }
+    },
+    {
+      "id": "node_19",
+      "type": "RV",
+      "position": {
+        "x": 130,
+        "y": 780
+      },
+      "data": {
+        "componentType": "RV",
+        "label": "RV-F",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "Main",
+        "labelOffset": {
+          "x": -4,
+          "y": 57.29782694186673
+        },
+        "params": {},
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_20",
+      "type": "QD",
+      "position": {
+        "x": 130,
+        "y": 720
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "QD_FVA",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "pairedWith": ""
+        },
+        "page": "Main",
+        "params": {},
+        "ports": {},
+        "labelOffset": {
+          "x": -11.496012659112818,
+          "y": -22.954810136611925
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_21",
+      "type": "PT",
+      "position": {
+        "x": 170,
+        "y": 630
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "PT-HP-2",
+        "fluidType": "default",
+        "options": {},
+        "params": {
+          "range_max": {
+            "value": 5000,
+            "unit": "psi",
+            "source": "default",
+            "reference": "palette: high-pressure transducer"
+          }
+        },
+        "page": "Main",
+        "labelOffset": {
+          "x": 56.153554138632465,
+          "y": 19.538667666847672
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_49",
+      "type": "JUNCTION",
+      "position": {
+        "x": 415,
+        "y": 589
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_49",
+        "page": "Main",
+        "along": {
+          "t": 0.8145154958952827,
+          "in": "t",
+          "out": "b",
+          "from": "node_2",
+          "to": "node_16",
+          "ends": {
+            "a": {
+              "x": 370,
+              "y": 543
+            },
+            "b": {
+              "x": 420,
+              "y": 617
+            }
+          },
+          "home": {
+            "a": {
+              "x": 370,
+              "y": 543
+            },
+            "b": {
+              "x": 420,
+              "y": 617
+            },
+            "at": {
+              "x": 420,
+              "y": 594
+            }
+          }
+        }
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_22",
+      "type": "TANK",
+      "position": {
+        "x": 380,
+        "y": 1080
+      },
+      "data": {
+        "componentType": "TANK",
+        "label": "LOX-Tank",
+        "fluidType": "default",
+        "options": {
+          "material": "al6061",
+          "insulation": "fiberglass_r13",
+          "portsTop": "2",
+          "portsBottom": "2"
+        },
+        "page": "Main",
+        "params": {
+          "pressure": {
+            "value": 585,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "temperature": {
+            "value": 90.19,
+            "unit": "K",
+            "source": "default",
+            "reference": "NIST WebBook: oxygen normal boiling point"
+          },
+          "volume": {
+            "value": 8.19,
+            "unit": "L",
+            "source": "estimated"
+          },
+          "burst_pressure": {
+            "value": 1500,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "wall_mass": {
+            "value": 8,
+            "unit": "lbm",
+            "source": "estimated"
+          },
+          "insulation_thickness": {
+            "value": 0.5,
+            "unit": "in",
+            "source": "estimated"
+          },
+          "wall_capacity": {
+            "value": 897,
+            "unit": "J/(kg.K)",
+            "source": "default",
+            "reference": "NIST cryogenic materials data, Al 6061-T6 specific heat at 300 K"
+          },
+          "insulation_conductivity": {
+            "value": 0.039,
+            "unit": "W/(m.K)",
+            "source": "default",
+            "reference": "Owens Corning R-13 unfaced batt, 3.5 in: k = 0.0889 m / (13 × 0.1761 m²·K/W)"
+          }
+        },
+        "ports": {},
+        "fluid": "oxygen",
+        "labelOffset": {
+          "x": -81.79800771719134,
+          "y": 53.22453166860028
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 100
+      },
+      "selected": true
+    },
+    {
+      "id": "node_23",
+      "type": "SOL",
+      "position": {
+        "x": 420,
+        "y": 970
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "OU_SOL_R",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cv",
+          "failState": "closed"
+        },
+        "page": "Main",
+        "rotation": 90,
+        "params": {
+          "Cv": {
+            "value": 4,
+            "unit": "Cv",
+            "source": "estimated"
+          }
+        },
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_24",
+      "type": "MANIFOLD",
+      "position": {
+        "x": 270,
+        "y": 1050
+      },
+      "data": {
+        "componentType": "MANIFOLD",
+        "label": "MF-3",
+        "fluidType": "default",
+        "options": {
+          "outlets": "4",
+          "orientation": "horizontal"
+        },
+        "page": "Main",
+        "rotation": 90,
+        "labelOffset": {
+          "x": -27.151714680584345,
+          "y": 131.74809039182497
+        }
+      },
+      "measured": {
+        "width": 20,
+        "height": 120
+      }
+    },
+    {
+      "id": "node_25",
+      "type": "QD",
+      "position": {
+        "x": 150,
+        "y": 1090
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "QD_OVA",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "pairedWith": ""
+        },
+        "page": "Main",
+        "params": {},
+        "ports": {},
+        "labelOffset": {
+          "x": -8.301125881684793,
+          "y": 64.15056294084239
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_26",
+      "type": "PT",
+      "position": {
+        "x": 140,
+        "y": 1180
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "QD_PT_R",
+        "fluidType": "default",
+        "options": {},
+        "params": {
+          "range_max": {
+            "value": 5000,
+            "unit": "psi",
+            "source": "default",
+            "reference": "palette: high-pressure transducer"
+          }
+        },
+        "page": "Main",
+        "rotation": 270,
+        "ports": {},
+        "labelOffset": {
+          "x": -8.325044101768102,
+          "y": 62
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_27",
+      "type": "RV",
+      "position": {
+        "x": 150,
+        "y": 1030
+      },
+      "data": {
+        "componentType": "RV",
+        "label": "RV_O",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "Main",
+        "params": {},
+        "ports": {},
+        "labelOffset": {
+          "x": -1.8374779491159492,
+          "y": -20.175837933593925
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_29",
+      "type": "RTD",
+      "position": {
+        "x": 460,
+        "y": 1140
+      },
+      "data": {
+        "componentType": "RTD",
+        "label": "RTD-1",
+        "fluidType": "default",
+        "options": {
+          "size": "normal"
+        },
+        "attachedTo": "node_22",
+        "page": "Main"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_30",
+      "type": "RTD",
+      "position": {
+        "x": 460,
+        "y": 1040
+      },
+      "data": {
+        "componentType": "RTD",
+        "label": "RTD-2",
+        "fluidType": "default",
+        "options": {
+          "size": "normal"
+        },
+        "attachedTo": "node_22",
+        "page": "Main"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_31",
+      "type": "RTD",
+      "position": {
+        "x": 530,
+        "y": 1090
+      },
+      "data": {
+        "componentType": "RTD",
+        "label": "RTD-3",
+        "fluidType": "default",
+        "options": {
+          "size": "normal"
+        },
+        "attachedTo": "node_22",
+        "page": "Main"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_32",
+      "type": "QD",
+      "position": {
+        "x": 570,
+        "y": 1200
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "QD_OFA",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "pairedWith": ""
+        },
+        "page": "Main",
+        "rotation": 180,
+        "params": {},
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_34",
+      "type": "QD",
+      "position": {
+        "x": 440,
+        "y": 800
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "QD_FFA",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "pairedWith": ""
+        },
+        "page": "Main",
+        "rotation": 0,
+        "params": {},
+        "ports": {},
+        "labelOffset": {
+          "x": -4,
+          "y": -18.18079733192126
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_36",
+      "type": "ENGINE",
+      "position": {
+        "x": 364,
+        "y": 1380
+      },
+      "data": {
+        "componentType": "ENGINE",
+        "label": "ENG-1",
+        "fluidType": "default",
+        "options": {
+          "engineConfig": ""
+        },
+        "page": "Main",
+        "params": {
+          "chamber_pressure": {
+            "value": 385,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "chamber_temperature": {
+            "value": 3000,
+            "unit": "K",
+            "source": "estimated"
+          }
+        },
+        "ports": {}
+      },
+      "measured": {
+        "width": 72,
+        "height": 120
+      }
+    },
+    {
+      "id": "node_37",
+      "type": "ROT",
+      "position": {
+        "x": 370,
+        "y": 1250
+      },
+      "data": {
+        "componentType": "ROT",
+        "label": "OM-R",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cv",
+          "failState": "closed"
+        },
+        "page": "Main",
+        "rotation": 90,
+        "params": {
+          "Cv": {
+            "value": 20,
+            "unit": "Cv",
+            "source": "estimated"
+          }
+        },
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_38",
+      "type": "ROT",
+      "position": {
+        "x": 370,
+        "y": 890
+      },
+      "data": {
+        "componentType": "ROT",
+        "label": "FM-R",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cv",
+          "failState": "closed"
+        },
+        "page": "Main",
+        "rotation": 90,
+        "params": {
+          "Cv": {
+            "value": 20,
+            "unit": "Cv",
+            "source": "estimated"
+          }
+        },
+        "ports": {},
+        "labelOffset": {
+          "x": -50.97623768350972,
+          "y": 23.077071396066557
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "smoothstep",
+      "source": "node_1",
+      "sourceHandle": "b",
+      "target": "node_3",
+      "targetHandle": "in",
+      "id": "node_1-node_3",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_3",
+      "sourceHandle": "p4",
+      "target": "node_2",
+      "targetHandle": "l",
+      "id": "node_3-node_2",
+      "data": {}
+    },
+    {
+      "id": "node_3-junc_5",
+      "source": "node_3",
+      "sourceHandle": "p",
+      "target": "node_7",
+      "targetHandle": "r",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "id": "node_2-junc_12",
+      "source": "node_2",
+      "sourceHandle": "dome",
+      "target": "junc_12",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "id": "junc_12-node_11",
+      "source": "junc_12",
+      "sourceHandle": "r",
+      "target": "node_11",
+      "targetHandle": "b",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "id": "junc_12-junc_11",
+      "source": "junc_12",
+      "sourceHandle": "t",
+      "target": "node_12",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_15",
+      "sourceHandle": "t2",
+      "target": "node_16",
+      "targetHandle": "r",
+      "id": "node_15-node_16",
+      "data": {}
+    },
+    {
+      "id": "node_15-junc_38",
+      "source": "node_15",
+      "sourceHandle": "t",
+      "target": "node_18",
+      "targetHandle": "in",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "id": "node_3-junc_40",
+      "source": "node_3",
+      "sourceHandle": "p3",
+      "target": "node_8",
+      "targetHandle": "r",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "id": "node_12-node_13",
+      "source": "node_12",
+      "sourceHandle": "r",
+      "target": "node_13",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "id": "node_18-junc_41",
+      "source": "node_18",
+      "sourceHandle": "p4",
+      "target": "node_19",
+      "targetHandle": "r",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_20",
+      "sourceHandle": "r",
+      "target": "node_18",
+      "targetHandle": "p2",
+      "id": "node_20-node_18",
+      "data": {}
+    },
+    {
+      "id": "node_18-junc_43",
+      "source": "node_18",
+      "sourceHandle": "p",
+      "target": "node_21",
+      "targetHandle": "b",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "id": "node_2-junc_49",
+      "source": "node_2",
+      "sourceHandle": "r",
+      "target": "junc_49",
+      "targetHandle": "t",
+      "type": "smoothstep",
+      "data": {
+        "params": {
+          "length": {
+            "value": 0.055,
+            "unit": "m",
+            "source": "measured",
+            "reference": "from the centerline sketch"
+          },
+          "bore": {
+            "value": 10.2108,
+            "unit": "mm",
+            "source": "estimated",
+            "reference": "from the centerline sketch"
+          },
+          "roughness": {
+            "value": 0.03,
+            "unit": "mm",
+            "source": "default",
+            "reference": "Farshad (2001) electropolished stainless, 0.030 mm, via fluids.roughness_Farshad — measured on Cr13, not 316 — UNVERIFIED"
+          },
+          "elevation_change": {
+            "value": -0.051561358569496805,
+            "unit": "m",
+            "source": "measured",
+            "reference": "from the centerline sketch"
+          },
+          "fitting_count": {
+            "value": 1,
+            "unit": "-",
+            "source": "default",
+            "reference": "counted from the fittings on this run"
+          }
+        },
+        "options": {
+          "material": "ss316_polished",
+          "hose": "no"
+        },
+        "ports": {},
+        "lineType": "pipe",
+        "segments": [
+          {
+            "id": "seg_1",
+            "method": "itemised",
+            "standard": "tube",
+            "bore": {
+              "value": 10.2108,
+              "unit": "mm",
+              "source": "estimated",
+              "reference": "from the centerline sketch"
+            },
+            "length": {
+              "value": 25.21,
+              "unit": "mm",
+              "source": "measured",
+              "reference": "from the centerline sketch"
+            },
+            "lengthBasis": "tube",
+            "fittings": [
+              {
+                "id": "fit_1",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 10.2108,
+                "lengthMm": 29.92367002544278,
+                "bendDiameters": 3.7313432835820888,
+                "angleDeg": 45.00000000000001
+              }
+            ]
+          }
+        ],
+        "sketch": {
+          "boreMm": 10.2108,
+          "legs": [
+            {
+              "id": "leg_1",
+              "to": {
+                "x": 1.2862342866764734e-15,
+                "y": 21.005799999999997
+              }
+            },
+            {
+              "id": "leg_2",
+              "to": {
+                "x": 12.572358569496815,
+                "y": 33.57815856949681
+              }
+            },
+            {
+              "id": "leg_3",
+              "to": {
+                "x": 12.572358569496817,
+                "y": 51.561358569496804
+              }
+            }
+          ],
+          "bends": [
+            {
+              "atLeg": 0,
+              "radiusMm": 38.099999999999994
+            }
+          ],
+          "sections": [],
+          "unit": "in"
+        },
+        "waypoints": [
+          {
+            "x": 370,
+            "y": 559
+          },
+          {
+            "x": 420,
+            "y": 559
+          }
+        ],
+        "offset": 0,
+        "viaRun": true
+      }
+    },
+    {
+      "id": "junc_49-node_16",
+      "source": "junc_49",
+      "sourceHandle": "b",
+      "target": "node_16",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "id": "junc_49-junc_48",
+      "source": "junc_49",
+      "sourceHandle": "r",
+      "target": "node_23",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {
+        "params": {
+          "length": {
+            "value": 0.817,
+            "unit": "m",
+            "source": "measured",
+            "reference": "from the centerline sketch"
+          },
+          "bore": {
+            "value": 10.921999999999999,
+            "unit": "mm",
+            "source": "estimated",
+            "reference": "from the centerline sketch"
+          },
+          "roughness": {
+            "value": 0.03,
+            "unit": "mm",
+            "source": "default",
+            "reference": "Farshad (2001) electropolished stainless, 0.030 mm, via fluids.roughness_Farshad — measured on Cr13, not 316 — UNVERIFIED"
+          },
+          "elevation_change": {
+            "value": -0.8029517354603677,
+            "unit": "m",
+            "source": "measured",
+            "reference": "from the centerline sketch"
+          },
+          "fitting_count": {
+            "value": 3,
+            "unit": "-",
+            "source": "default",
+            "reference": "counted from the fittings on this run"
+          }
+        },
+        "options": {
+          "material": "ss316_polished",
+          "hose": "no"
+        },
+        "ports": {},
+        "lineType": "pipe",
+        "segments": [
+          {
+            "id": "seg_1",
+            "method": "itemised",
+            "standard": "tube",
+            "bore": {
+              "value": 10.921999999999999,
+              "unit": "mm",
+              "source": "estimated",
+              "reference": "from the centerline sketch"
+            },
+            "length": {
+              "value": 727.08,
+              "unit": "mm",
+              "source": "measured",
+              "reference": "from the centerline sketch"
+            },
+            "lengthBasis": "tube",
+            "fittings": [
+              {
+                "id": "fit_1",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 10.921999999999999,
+                "lengthMm": 29.923670025442775,
+                "bendDiameters": 3.488372093023256,
+                "angleDeg": 45
+              },
+              {
+                "id": "fit_2",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 10.921999999999999,
+                "lengthMm": 29.923670025442878,
+                "bendDiameters": 3.488372093023256,
+                "angleDeg": 45.000000000000156
+              },
+              {
+                "id": "fit_3",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 10.921999999999999,
+                "lengthMm": 29.923670025442878,
+                "bendDiameters": 3.488372093023256,
+                "angleDeg": 45.000000000000156
+              }
+            ]
+          }
+        ],
+        "sketch": {
+          "boreMm": 10.921999999999999,
+          "legs": [
+            {
+              "id": "leg_1",
+              "to": {
+                "x": -25.665571994015636,
+                "y": 25.66557199401564
+              }
+            },
+            {
+              "id": "leg_2",
+              "to": {
+                "x": -25.665571994015597,
+                "y": 730.4393719940156
+              }
+            },
+            {
+              "id": "leg_3",
+              "to": {
+                "x": -5.909008527663417,
+                "y": 750.1959354603677
+              }
+            },
+            {
+              "id": "leg_4",
+              "to": {
+                "x": -5.9090085276634134,
+                "y": 802.9517354603677
+              }
+            }
+          ],
+          "bends": [
+            {
+              "atLeg": 0,
+              "radiusMm": 38.099999999999994
+            },
+            {
+              "atLeg": 1,
+              "radiusMm": 38.099999999999994
+            },
+            {
+              "atLeg": 2,
+              "radiusMm": 38.099999999999994
+            }
+          ],
+          "sections": [],
+          "unit": "in"
+        },
+        "offset": 0
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_22",
+      "sourceHandle": "t2",
+      "target": "node_23",
+      "targetHandle": "r",
+      "id": "node_22-node_23",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_22",
+      "sourceHandle": "t",
+      "target": "node_24",
+      "targetHandle": "in",
+      "id": "node_22-node_24",
+      "data": {}
+    },
+    {
+      "id": "node_24-junc_52",
+      "source": "node_24",
+      "sourceHandle": "p4",
+      "target": "node_26",
+      "targetHandle": "b",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "id": "node_24-junc_53",
+      "source": "node_24",
+      "sourceHandle": "p3",
+      "target": "node_25",
+      "targetHandle": "r",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_24",
+      "sourceHandle": "p",
+      "target": "node_27",
+      "targetHandle": "r",
+      "id": "node_24-node_27",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_22",
+      "sourceHandle": "b2",
+      "target": "node_32",
+      "targetHandle": "r",
+      "id": "node_22-node_32",
+      "data": {}
+    },
+    {
+      "id": "node_15-node_34",
+      "source": "node_15",
+      "sourceHandle": "b2",
+      "target": "node_34",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_10",
+      "sourceHandle": "b",
+      "target": "node_3",
+      "targetHandle": "p2",
+      "id": "node_10-node_3",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_22",
+      "sourceHandle": "b",
+      "target": "node_37",
+      "targetHandle": "l",
+      "id": "node_22-node_37",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_37",
+      "sourceHandle": "r",
+      "target": "node_36",
+      "targetHandle": "t",
+      "id": "node_37-node_36",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_38",
+      "sourceHandle": "r",
+      "target": "node_36",
+      "targetHandle": "fuel",
+      "id": "node_38-node_36",
+      "data": {
+        "offset": 0,
+        "params": {
+          "length": {
+            "value": 3,
+            "unit": "ft",
+            "source": "estimated"
+          },
+          "bore": {
+            "value": 0.43,
+            "unit": "in",
+            "source": "estimated",
+            "reference": "from the centerline sketch"
+          },
+          "roughness": {
+            "value": 0.03,
+            "unit": "mm",
+            "source": "default",
+            "reference": "Farshad (2001) electropolished stainless, 0.030 mm, via fluids.roughness_Farshad — measured on Cr13, not 316 — UNVERIFIED"
+          },
+          "elevation_change": {
+            "value": 0,
+            "unit": "m",
+            "source": "measured",
+            "reference": "from the centerline sketch"
+          }
+        },
+        "options": {
+          "material": "ss316_polished",
+          "hose": "no"
+        },
+        "ports": {},
+        "lineType": "pipe"
+      }
+    },
+    {
+      "id": "node_15-node_38",
+      "source": "node_15",
+      "sourceHandle": "b",
+      "target": "node_38",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {
+        "segments": [
+          {
+            "id": "seg_1",
+            "method": "itemised",
+            "standard": "tube",
+            "bore": {
+              "value": 0,
+              "unit": "mm",
+              "source": "estimated",
+              "reference": "from the centerline sketch"
+            },
+            "length": {
+              "value": 429.54,
+              "unit": "mm",
+              "source": "measured",
+              "reference": "from the centerline sketch"
+            },
+            "lengthBasis": "tube",
+            "fittings": [
+              {
+                "id": "fit_1",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 0,
+                "lengthMm": 29.923670025442778,
+                "angleDeg": 45.00000000000001
+              },
+              {
+                "id": "fit_2",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 0,
+                "lengthMm": 29.923670025442778,
+                "angleDeg": 45.00000000000001
+              },
+              {
+                "id": "fit_3",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 0,
+                "lengthMm": 29.923670025442775,
+                "angleDeg": 45
+              }
+            ]
+          }
+        ],
+        "params": {
+          "length": {
+            "value": 0.519,
+            "unit": "m",
+            "source": "measured",
+            "reference": "from the centerline sketch"
+          }
+        }
+      }
+    }
+  ]
+}

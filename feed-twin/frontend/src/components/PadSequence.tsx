@@ -59,7 +59,11 @@ const CHARGED = 0.97;
 const WARM_WALL_K = 30;
 const CRYOGENIC_K = 150;
 
-const isOx = (t: TankState) => /lox|ox/i.test(t.id) || /lox|ox/i.test(t.label);
+/** By what the tank holds; the label only when the backend did not say. LE4's
+ *  tanks are TK-2 and TK-3, and matching "ox" in a label watched the empty fuel
+ *  tank for the LOX load forever. */
+const isOx = (t: TankState) =>
+  t.side ? t.side === 'lox' : /lox|ox/i.test(t.id) || /lox|ox/i.test(t.label);
 const chilled = (t: TankState | undefined) =>
   t === undefined ||
   t.liquid_temperature_K >= CRYOGENIC_K ||

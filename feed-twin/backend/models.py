@@ -29,24 +29,6 @@ class ImportResult(BaseModel):
     saving from pid-designer twice in a session is normal."""
 
 
-class Symbol(BaseModel):
-    id: str
-    tag: str
-    type: str
-    x: float
-    y: float
-    fluid: str = ""
-    role: str = "component"
-
-
-class Line(BaseModel):
-    id: str
-    source: str
-    target: str
-    kind: str = "pipe"
-    fluid: str = ""
-
-
 class Actuator(BaseModel):
     id: str
     tag: str
@@ -91,13 +73,12 @@ class ReportOut(BaseModel):
 
 
 class ModelView(BaseModel):
-    """Everything needed to draw the schematic, without solving anything."""
+    """The assembly, described without solving anything. The drawing itself is
+    `/api/diagram`."""
 
     diagram_id: str
     engine_id: str = ""
     title: str
-    symbols: list[Symbol]
-    lines: list[Line]
     actuators: list[Actuator]
     controls: list[ControlSpec]
     fluid_sets: list[str]
@@ -247,6 +228,13 @@ class TankOut(BaseModel):
     #: What the drawing says the vessel holds [L], so the panel shows what it
     #: is simulating -- a 44 L K-bottle does not blow down like a 4.7 L COPV.
     volume_L: float = 0.0
+    #: ``lox`` or ``fuel`` -- which leg the tank is on, from what it holds. The
+    #: pad guide used to find the LOX tank by "ox" in its label, and LE4's are
+    #: TK-2 and TK-3: it watched the empty fuel tank for the LOX load forever.
+    side: str = ""
+    #: A cryogen load is still chilling the wall: what is poured flashes off
+    #: and nothing collects yet. The card shows the wall temperature meanwhile.
+    chilling: bool = False
 
 
 class StudyTraceOut(BaseModel):

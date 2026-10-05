@@ -1,0 +1,96 @@
+{
+ "_comment": "Standoff-band resolution cases for engine.core.injectors.layout.impingement_ld_band.",
+ "cases": [
+  {
+   "req": null,
+   "band": [
+    4.0,
+    4.0,
+    4.0
+   ]
+  },
+  {
+   "req": {},
+   "band": [
+    4.0,
+    4.0,
+    4.0
+   ]
+  },
+  {
+   "req": {
+    "layer1_impingement_Ld_target": 5.0
+   },
+   "band": [
+    5.0,
+    5.0,
+    5.0
+   ]
+  },
+  {
+   "req": {
+    "layer1_derive_impingement_spacing": false
+   },
+   "band": [
+    4.0,
+    3.0,
+    5.0
+   ]
+  },
+  {
+   "req": {
+    "layer1_derive_impingement_spacing": "false",
+    "layer1_impingement_Ld_target": 6.0
+   },
+   "band": [
+    6.0,
+    5.0,
+    7.0
+   ]
+  },
+  {
+   "req": {
+    "layer1_impingement_Ld_tol": 1.5
+   },
+   "band": [
+    4.0,
+    2.5,
+    5.5
+   ]
+  },
+  {
+   "req": {
+    "layer1_impingement_Ld_min": 3.0,
+    "layer1_impingement_Ld_max": 5.0
+   },
+   "band": [
+    4.0,
+    3.0,
+    5.0
+   ]
+  },
+  {
+   "req": {
+    "layer1_impingement_Ld_min": null,
+    "layer1_impingement_Ld_max": 7.0,
+    "layer1_impingement_Ld_target": 6.0
+   },
+   "band": [
+    6.0,
+    6.0,
+    7.0
+   ]
+  },
+  {
+   "req": {
+    "layer1_impingement_Ld_target": 0.5,
+    "layer1_impingement_Ld_tol": 1.0
+   },
+   "band": [
+    0.5,
+    0.0,
+    1.5
+   ]
+  }
+ ]
+}

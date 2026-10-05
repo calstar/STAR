@@ -10,6 +10,11 @@ name: Engine Design CI
       # editing another's designs, so a change to it has to run these tests.
       - 'lib/stardesign/**'
       - 'lib/stardesign-ui/**'
+      # Layer X burns through the feed twin and its shipped drawings and DAQ
+      # tables, so a change to any of them has to run tests/test_layerx.py.
+      - 'lib/feedtwin/**'
+      - 'feed-twin/backend/diagrams/**'
+      - 'feed-twin/backend/statemachines/**'
       - '.github/workflows/engine-design-ci.yml'
   pull_request:
     paths:
@@ -18,6 +23,11 @@ name: Engine Design CI
       # editing another's designs, so a change to it has to run these tests.
       - 'lib/stardesign/**'
       - 'lib/stardesign-ui/**'
+      # Layer X burns through the feed twin and its shipped drawings and DAQ
+      # tables, so a change to any of them has to run tests/test_layerx.py.
+      - 'lib/feedtwin/**'
+      - 'feed-twin/backend/diagrams/**'
+      - 'feed-twin/backend/statemachines/**'
       - '.github/workflows/engine-design-ci.yml'
   workflow_dispatch:
 
@@ -31,12 +41,14 @@ defaults:
     working-directory: EngineDesign
 
 jobs:
-  # Python regression gate. Fast (~seconds): no gfortran/rocketcea — the
-  # CEA-backed configs load a committed cache table (output/cache/*.npz).
+  # Python regression gate. No gfortran/rocketcea — the CEA-backed configs load
+  # a committed cache table (output/cache/*.npz). Minutes, not seconds, since
+  # the Layer X integration tests: the uncertainty sweep alone burns every
+  # factor on spawned workers, and the suite reached ~9 min before it on CI.
   python-tests:
     name: Python tests (regression gate)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
     - name: Checkout code
@@ -59,6 +71,8 @@ jobs:
       run: |
         pip install -r requirements-ci.txt
         pip install -e ../lib/stardesign
+        # The feed-system physics Layer X runs in-process (ADR-0001).
+        pip install -e ../lib/feedtwin
 
     # EVERY propellant preset the UI exposes must ship a committed CEA cache, so
     # PintleEngineRunner loads (np.load) instead of falling through to a live
@@ -105,6 +119,8 @@ jobs:
       run: |
         pip install -r requirements-ci.txt
         pip install -e ../lib/stardesign
+        # The feed-system physics Layer X runs in-process (ADR-0001).
+        pip install -e ../lib/feedtwin
 
     - name: Import backend app
       run: python -c "import backend.main; print('backend.main imports OK')"
@@ -177,6 +193,8 @@ jobs:
       run: |
         pip install -r requirements-ci.txt
         pip install -e ../lib/stardesign
+        # The feed-system physics Layer X runs in-process (ADR-0001).
+        pip install -e ../lib/feedtwin
 
     # The default config (methalox) loads its committed cache on backend boot;
     # a missing cache would fall through to a live build and hang the webServer.
@@ -263,6 +281,8 @@ jobs:
       run: |
         pip install -r requirements-ci.txt
         pip install -e ../lib/stardesign
+        # The feed-system physics Layer X runs in-process (ADR-0001).
+        pip install -e ../lib/feedtwin
 
     - name: Verify committed CEA cache is present
       run: test -f output/cache/cea_cache_LOX_CH4_3D.npz

@@ -114,6 +114,9 @@ fi
 pip install --quiet -r "$REQ_FILE"
 # The design core shared with pid-designer and recovery-calculator.
 pip install --quiet -e ../lib/stardesign
+# The feed-system physics Layer X runs in-process (ADR-0001). Editable, so a
+# change to lib/feedtwin is live without reinstalling.
+pip install --quiet -e ../lib/feedtwin
 ok "Python requirements installed ($REQ_FILE)"
 deactivate
 

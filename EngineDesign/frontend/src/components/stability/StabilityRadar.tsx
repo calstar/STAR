@@ -14,10 +14,10 @@ import { SideTooltip } from './SideTooltip';
 const THRESHOLD = 1.05;
 
 const AXIS_INFO: Record<string, { label: string; desc: string; card: string }> = {
-  chug: { label: 'Chug', desc: 'low-frequency feed-coupled loop', card: 'Injector stiffness map' },
-  '1L': { label: '1L acoustic', desc: 'first longitudinal chamber mode', card: 'Acoustic damping budget' },
-  '1T': { label: '1T acoustic', desc: 'first tangential chamber mode', card: 'Acoustic damping budget' },
-  vaporization: { label: 'Vaporization', desc: 'droplets fully burned within L_ch', card: 'Vaporization length' },
+  chug: { label: 'Chug', desc: 'low-frequency feed-coupled loop', card: 'Chug stability boundary' },
+  '1L': { label: '1L acoustic', desc: 'first longitudinal mode, worst phase', card: 'Acoustic damping budget' },
+  '1T': { label: '1T acoustic', desc: 'first tangential mode, worst phase', card: 'Acoustic damping budget' },
+  vaporization: { label: 'Vaporization', desc: 'L_ch / L_vap(95 %), droplet march', card: 'Vaporization length' },
 };
 
 export function StabilityRadar({ data }: { data: StabilityRichPayload }) {
@@ -25,10 +25,15 @@ export function StabilityRadar({ data }: { data: StabilityRichPayload }) {
     axis,
     value: data.radar.values[i],
     threshold: data.radar.threshold[i],
+    // Old payloads carry no flags: then only chug gates (the backend has gated nothing else since
+    // the acoustic verdict became report-only).
+    gated: data.radar.gated ? data.radar.gated[i] : axis === 'chug',
+    basis: data.radar.basis?.[i],
   }));
 
-  // weakest axis → tells the user where to look next
-  const weakest = rows.reduce((min, r) => (r.value < min.value ? r : min), rows[0]);
+  // weakest GATED axis → tells the user where to look next
+  const gatedRows = rows.filter((r) => r.gated);
+  const weakest = (gatedRows.length ? gatedRows : rows).reduce((min, r) => (r.value < min.value ? r : min), (gatedRows.length ? gatedRows : rows)[0]);
   const weakInfo = weakest ? AXIS_INFO[weakest.axis] : undefined;
 
   return (
@@ -72,15 +77,16 @@ export function StabilityRadar({ data }: { data: StabilityRichPayload }) {
             {rows.map((r) => {
               const info = AXIS_INFO[r.axis];
               const ok = r.value >= THRESHOLD;
+              const color = r.gated ? (ok ? STABLE : '#f59e0b') : 'var(--color-text-secondary)';
               return (
-                <tr key={r.axis}>
+                <tr key={r.axis} title={r.basis}>
                   <td className="py-0.5 text-[var(--color-text-primary)]">{info?.label ?? r.axis}</td>
                   <td className="py-0.5 text-[var(--color-text-secondary)]">{info?.desc ?? '—'}</td>
-                  <td className="py-0.5 text-right font-mono" style={{ color: ok ? STABLE : '#f59e0b' }}>
+                  <td className="py-0.5 text-right font-mono" style={{ color }}>
                     {r.value.toFixed(2)}
                   </td>
-                  <td className="py-0.5 text-right" style={{ color: ok ? STABLE : '#f59e0b' }}>
-                    {ok ? 'pass' : 'tight'}
+                  <td className="py-0.5 text-right" style={{ color }}>
+                    {r.gated ? (ok ? 'pass' : 'tight') : 'report only'}
                   </td>
                 </tr>
               );
@@ -98,8 +104,9 @@ export function StabilityRadar({ data }: { data: StabilityRichPayload }) {
           </p>
         )}
         <p className="text-[10px] opacity-80 leading-snug text-[var(--color-text-secondary)]">
-          Each axis is a margin: the growth rate remapped so ≥ {THRESHOLD} clears the gate. The blue
-          shape should stay outside the dashed green ring on every axis.
+          Each axis is 1 at the edge. Only chug gates the design: the acoustic axes are damping over
+          the most driving any lag could give, with a damping budget nobody has calibrated, and
+          vaporization is performance, not stability. Hover a row for its basis.
         </p>
       </div>
     </VizCard>

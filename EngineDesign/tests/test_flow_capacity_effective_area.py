@@ -65,7 +65,12 @@ class TestFlowCapacityEffectiveArea(unittest.TestCase):
         out = r.evaluate_arrays(Po, Pf, P_ambient=101325.0)
         md = out["mdot_total"]
         self.assertEqual(len(md), n)
-        self.assertGreater(float(md[-1]), float(md[0]))
+        # The fuel tank drives the fuel flow up and the O/F down. The TOTAL need not rise: on this
+        # methalox doublet the mixing term climbs steeply as Rupe's M falls toward 1 (0.77 -> 0.94),
+        # Pc climbs with c*, and the oxidizer flow it throttles falls faster than the fuel rises.
+        self.assertGreater(float(out["mdot_F"][-1]), float(out["mdot_F"][0]))
+        self.assertLess(float(out["MR"][-1]), float(out["MR"][0]))
+        self.assertNotAlmostEqual(float(md[-1]), float(md[0]), places=3)
 
 
 if __name__ == "__main__":

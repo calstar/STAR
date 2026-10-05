@@ -44,18 +44,9 @@ function generateCurvePoints(
     // For first segment, use its start_pressure_psi
     // For subsequent segments, use previous segment's end to ensure smooth connection
     const startP = i === 0 ? seg.start_pressure_psi : prevEndPressure;
-    // Use the segment's end pressure, but ensure it's <= start for physical validity
-    let endP = seg.end_pressure_psi;
-    if (endP > startP) {
-      endP = startP * 0.95; // Force decrease
-    }
-    // Ensure endP is at least as low as the next segment's start (if exists)
-    if (i < segments.length - 1) {
-      const nextStart = segments[i + 1].start_pressure_psi;
-      if (endP > nextStart) {
-        endP = nextStart;
-      }
-    }
+    // The segment's end pressure as typed: it may rise or fall, whatever the feed system does.
+    // The backend draws the same curve.
+    const endP = seg.end_pressure_psi;
     
     for (let j = 0; j < nSegPoints; j++) {
       const tNorm = nSegPoints > 1 ? j / (nSegPoints - 1) : 0;
@@ -213,50 +204,11 @@ export function SegmentCurveBuilder({
       
       onChange(newSegments);
     } else if (dragging.type === 'endpoint') {
-      // Drag pressure endpoint with pushing behavior
+      // Drag a pressure endpoint; segments may rise or fall, so nothing else is pushed.
       const pressure = yScaleInverse(my);
-      
-      // Get this segment's start pressure (max allowed for endpoint)
-      const segmentStartPressure = newSegments[dragging.segmentIdx].start_pressure_psi;
-      
-      // Get minimum allowed: either next segment's end pressure or absolute min
-      const nextSegEndPressure = dragging.segmentIdx < segments.length - 1
-        ? newSegments[dragging.segmentIdx + 1].end_pressure_psi
-        : minPressure;
       
       // Clamp to absolute bounds
       const clampedPressure = Math.max(minPressure, Math.min(maxPressure, pressure));
-      
-      // If dragging above start pressure, push the start pressure up (and cascade backward)
-      if (clampedPressure > segmentStartPressure) {
-        newSegments[dragging.segmentIdx].start_pressure_psi = clampedPressure;
-        // Cascade backward through all previous segments
-        let currentPressure = clampedPressure;
-        for (let i = dragging.segmentIdx - 1; i >= 0; i--) {
-          // Always update this segment's end pressure to match the next segment's start
-          newSegments[i].end_pressure_psi = currentPressure;
-          // If this segment's start pressure is now below its end, push it up
-          if (newSegments[i].start_pressure_psi < currentPressure) {
-            newSegments[i].start_pressure_psi = Math.min(maxPressure, currentPressure);
-          }
-          // Continue cascading with this segment's start pressure (whether we pushed it or not)
-          currentPressure = newSegments[i].start_pressure_psi;
-        }
-      }
-      
-      // If dragging below next segment's end, push it down (and cascade)
-      if (dragging.segmentIdx < segments.length - 1 && clampedPressure < nextSegEndPressure) {
-        // Push all subsequent segments down
-        let currentPressure = clampedPressure;
-        for (let i = dragging.segmentIdx + 1; i < segments.length; i++) {
-          newSegments[i].start_pressure_psi = currentPressure;
-          // Ensure end pressure is still below start
-          if (newSegments[i].end_pressure_psi > currentPressure) {
-            newSegments[i].end_pressure_psi = Math.max(minPressure, currentPressure * 0.95);
-          }
-          currentPressure = newSegments[i].end_pressure_psi;
-        }
-      }
       
       // Set the endpoint pressure
       newSegments[dragging.segmentIdx].end_pressure_psi = clampedPressure;
@@ -268,29 +220,13 @@ export function SegmentCurveBuilder({
       
       onChange(newSegments);
     } else if (dragging.type === 'startpoint') {
-      // Drag the initial start pressure with pushing behavior
+      // Drag the initial start pressure
       const pressure = yScaleInverse(my);
       const clampedPressure = Math.max(minPressure, Math.min(maxPressure, pressure));
       
       newSegments[0].start_pressure_psi = clampedPressure;
       
-      // If dragging below the first segment's end pressure, push it down (and cascade)
-      if (newSegments[0].end_pressure_psi > clampedPressure) {
-        // Push all segments down
-        let currentPressure = Math.max(minPressure, clampedPressure * 0.95);
-        newSegments[0].end_pressure_psi = currentPressure;
-        
-        // Cascade to subsequent segments
-        for (let i = 1; i < segments.length; i++) {
-          newSegments[i].start_pressure_psi = currentPressure;
-          // Ensure end pressure is still below start
-          if (newSegments[i].end_pressure_psi > currentPressure) {
-            newSegments[i].end_pressure_psi = Math.max(minPressure, currentPressure * 0.95);
-          }
-          currentPressure = newSegments[i].end_pressure_psi;
-        }
-      }
-      
+      // Segments may rise, so moving the start moves nothing else.
       onChange(newSegments);
     }
   }, [dragging, segments, boundaries, xScaleInverse, yScaleInverse, onChange, minPressure, maxPressure]);
@@ -395,12 +331,6 @@ export function SegmentCurveBuilder({
     if (idx > 0) {
       newSegments[idx - 1].end_pressure_psi = pressure;
       setEndPressureInputs(prev => ({ ...prev, [idx - 1]: pressure.toFixed(0) }));
-    }
-    
-    // Ensure this segment's end pressure is still valid
-    if (newSegments[idx].end_pressure_psi > pressure) {
-      newSegments[idx].end_pressure_psi = pressure * 0.95;
-      setEndPressureInputs(prev => ({ ...prev, [idx]: newSegments[idx].end_pressure_psi.toFixed(0) }));
     }
     
     onChange(newSegments);

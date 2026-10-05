@@ -378,7 +378,7 @@ graphite_insert:
   friction_coefficient_override: null
   heat_of_ablation: 15000000.0
   initial_thickness: 0.006
-  material_density: 2260.0
+  material_density: 1810.0
   mixture_mw: 0.024
   oxidation_enthalpy: 32800000.0
   oxidation_pre_exponential: null
@@ -387,7 +387,7 @@ graphite_insert:
   oxidation_reference_pressure: 21000.0
   oxidation_reference_temperature: 973.0
   oxidation_stoichiometry_ratio: 1.0
-  oxidation_temperature: 800.0
+  oxidation_temperature: 700.15
   oxygen_mass_fraction: 0.05
   oxygen_mole_fraction: null
   recession_multiplier: null
@@ -399,8 +399,10 @@ graphite_insert:
   sizing_only_mode: false
   sizing_recession_rate: 1.0e-08
   specific_heat: 710.0
-  surface_temperature_limit: 2500.0
-  thermal_conductivity: 100.0
+  specific_heat_model: butland_maddison_1973
+  material_source: 'Graphtek LLC GR001CC, isostatically pressed (datasheet): bulk density 1.81 g/cm3, thermal conductivity 92.67 W/(m K) at room temperature, porosity 12 vol%, ash 100 ppm, particle size 0.001 in (25.4 um; the metric column of the sheet says 0.0254 um, a unit slip), max 2760 C inert / 427 C in air. Specific heat: Butland & Maddison 1973 (grade-independent).'
+  surface_temperature_limit: 3033.15
+  thermal_conductivity: 92.67
 injector:
   geometry:
     fuel:

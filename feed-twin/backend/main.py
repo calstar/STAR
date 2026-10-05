@@ -28,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import feedtwin
 from feedtwin.pid import INLINE_TYPES, INSTRUMENT_TYPES, SOURCE_TYPES
-from feedtwin.pid.network import SINK_TYPES
+from feedtwin.pid.network import SINK_TYPES, propellant_side
 
 from backend.assembly import (
     AssemblyError,
@@ -57,7 +57,6 @@ from backend.models import (
     Frame,
     ImportResult,
     LegOut,
-    Line,
     ModelView,
     ReportOut,
     RunOut,
@@ -69,7 +68,6 @@ from backend.models import (
     StateMachineOut,
     SourceOut,
     TankOut,
-    Symbol,
 )
 from backend.live import FireOptions, Stand, fire, solve_at
 from backend.run import PSI, Sample, psig
@@ -291,20 +289,6 @@ def _balance(balance: MixtureBalance) -> BalanceOut:
         fuel=_leg_out(balance.fuel, pc),
         notes=balance.notes(),
     )
-
-
-def _role(component_type: str) -> str:
-    if component_type == "TANK":
-        return "tank"
-    if component_type in SOURCE_TYPES:
-        return "source"
-    if component_type in INLINE_TYPES:
-        return "inline"
-    if component_type in INSTRUMENT_TYPES:
-        return "instrument"
-    if component_type in SINK_TYPES:
-        return "sink"
-    return "component"
 
 
 # ------------------------------------------------------------------- health
@@ -555,6 +539,34 @@ async def remove_artifact(artifact_id: str) -> dict[str, str]:
 # -------------------------------------------------------------------- model
 
 
+@app.get("/api/diagram")
+async def diagram_document(diagram: str) -> dict[str, list[Any]]:
+    """The drawing itself, as pid-designer saved it.
+
+    The schematic is pid-designer's own canvas, so it is handed the document
+    that canvas draws -- every symbol, rotation, port, tag offset, colour,
+    page and routed corner -- not a projection of it. `/api/model` is the
+    assembly's view of the same drawing: what it read and what it invented.
+    """
+    try:
+        artifact = library.get(diagram)
+        data = library.read(diagram)
+    except LibraryError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if artifact.kind != "diagram":
+        raise HTTPException(
+            status_code=422,
+            detail=f"{artifact.label} is an {artifact.kind}, not a drawing",
+        )
+    try:
+        document = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=422, detail=f"{artifact.label} is not readable JSON ({exc})"
+        ) from exc
+    return {"nodes": document.get("nodes") or [], "edges": document.get("edges") or []}
+
+
 @app.get("/api/model")
 async def model_view(
     diagram: str, engine: str = "", fluid_set: str = "hotfire"
@@ -566,37 +578,10 @@ async def model_view(
     before anybody waits on a solve.
     """
     model = _assemble(diagram, engine, fluid_set)
-    fluids = {p.id: p.fluid for p in model.built.placements}
-    symbols = [
-        Symbol(
-            id=n.id,
-            tag=n.label,
-            type=n.type,
-            x=n.x,
-            y=n.y,
-            fluid=fluids.get(n.id, ""),
-            role=_role(n.type),
-        )
-        for n in model.diagram.nodes
-        if n.type not in {"TEXT", "REGION"}
-    ]
-    drawn = {s.id for s in symbols}
     return ModelView(
         diagram_id=diagram,
         engine_id=model.report.engine,
         title=str(model.meta.get("diagram_name", "stand")),
-        symbols=symbols,
-        lines=[
-            Line(
-                id=e.id,
-                source=e.source,
-                target=e.target,
-                kind=e.line_type,
-                fluid=fluids.get(e.source, ""),
-            )
-            for e in model.diagram.edges
-            if e.source in drawn and e.target in drawn
-        ],
         actuators=[
             Actuator(id=d, tag=s.split(".")[0], signal=s)
             for d, s in model.built.actuators.items()
@@ -631,7 +616,11 @@ def _stand(
         for node in model.diagram.nodes
         if node.id in model.built.actuators
     }
-    return Stand(model=model, machine=loaded, binding=bind(loaded, labels))
+    return Stand(
+        model=model,
+        machine=loaded,
+        binding=bind(loaded, labels, roles=model.built.valve_roles),
+    )
 
 
 #: Instrument types that read a temperature rather than a pressure.
@@ -775,6 +764,8 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
                     values.get("surface_temperature_K", 0.0), 1
                 ),
                 volume_L=round(values.get("volume_L", 0.0), 2),
+                side=propellant_side(built.network.nodes[sim.outlet_node].fluid),
+                chilling=bool(values.get("chilling", 0.0)),
             )
             for sim in session.tanks.values()
             for values in [sample.tanks[sim.id]]
@@ -816,13 +807,18 @@ async def open_session(
     """
     settings = dict(body or {})
     stand = _stand(diagram, engine, fluid_set, machine, multiphase)
-    session = Session(
-        stand.model,
-        stand.machine,
-        stand.binding,
-        state=str(settings.get("state") or "Idle"),
-        setup=_setup(settings),
-    )
+    try:
+        session = Session(
+            stand.model,
+            stand.machine,
+            stand.binding,
+            state=str(settings.get("state") or "Idle"),
+            setup=_setup(settings),
+        )
+    except AssemblyError as exc:
+        # A drawing that assembles can still fail to *start* -- a COPV drawn
+        # as a tank has no liquid to begin from. Said, not a bare 500.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if len(_SESSIONS) >= _SESSION_LIMIT:
         _SESSIONS.pop(next(iter(_SESSIONS)))
     _SESSIONS[session.id] = session

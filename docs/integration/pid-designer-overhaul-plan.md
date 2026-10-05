@@ -320,11 +320,10 @@ pipe). It no longer keeps a fraction, which slid tees off their straight drops
 whenever an end moved. Where a tee may sit is one rule, `legalSpot`: at least a
 tee's reach (14 px of arc) from every bend and from a port or open end at the
 pipe's end, 20 px from a tee the pipe ends on, and 20 px from its neighbour
-tees, which it cannot pass. A spot inside that is moved to the nearest legal
-spot, onto the leg a pull heads for when there is one. There are no elbow tees:
-a tee is always straight, and branches take the two faces across the run. The
-same rule serves the hover dot (`splitSpot`), every split, a slide and the
-reseat, and it is a projection. Told the drawing's ports (`Drawn.endOf`), the
+tees, which it cannot pass -- or right on a bend, as an elbow tee (below). A
+spot inside that is moved to the nearest legal spot, onto the leg a pull heads
+for when there is one. The same rule serves the hover dot (`splitSpot`), every
+split, a slide and the reseat, and it is a projection. Told the drawing's ports (`Drawn.endOf`), the
 dot and the split place the new tee on its whole pipe exactly as the reseat
 will, so on a short bent line with no legal spot of its own the dot shows the
 next leg the tee really lands on; a pipe with no legal spot anywhere shows no
@@ -373,12 +372,40 @@ without doubling back, so a valve dropped on a bent line keeps the bend until
 an end moves off it. Ports anchor where React Flow anchors them — the handle's
 outer edge, not its centre.
 
+**A tee may sit where its pipe turns** (`legalSpot`'s `elbows`, `runFacesAt`).
+A drafter draws three lines meeting at a corner as readily as on a straight,
+and kept a tee's reach off every bend, a line let go at a corner landed 14 px
+down one leg and jogged over to reach it. A bend is now a legal spot for a tee
+when it is itself clear of the pipe's ends, its neighbour tees and every other
+bend by the usual gaps, and a spot within a tee's reach of such a bend is put
+on it -- a projection still, so the reseat stays idempotent; spots elsewhere
+keep their reach from the bends exactly as before, and a tier is still chosen
+by its straight stretches first, so a tee a drawing already has is left where
+it was. A tee on a bend is an elbow: its run faces are at right angles (`in`
+the face opposite the travel arriving, `out` the travel leaving), and its
+branches take the two faces left (`freeFaces`), each carrying a leg straight
+on past the corner -- everything that said "across the run" (the face
+choice, the drop targets, the hover dot, healing, an open end set beside a
+tee) now says "a face the run leaves free". The bend belongs to neither half:
+each line draws straight into its face, and the pipe takes its corner from
+the tee (`cornersOfPipe`), as a healed line does when the tee is taken out.
+Slid off its corner, an elbow leaves the corner with it, relative to its
+centre (`Along.corner`), until the next seat hands it to the line on its
+side; a slide stops on a bend it reaches and goes on past it once the
+pointer is a reach beyond. A pipe routed afresh is drawn with a crossbar that
+keeps every tee as it was -- straight still straight, an elbow still on its
+corner (as the drag found it, during one) -- where it has one, so a bend is
+not brought under a tee to turn its branch off the face it was on; with no
+such crossbar a bend brought within a tee's reach takes the tee onto it.
+Nothing is stored for any of it but faces, positions and corners, so
+feed-twin sees the same graph.
+
 **A line's faces are chosen by the route they make** (`pointLines`). A
 branch's face used to be picked by which side of the tee the other end's
 centre was on, and for two tees on runs at nearly the same height that put
 `t` on one and `b` on the other -- which the router can only join with a
 five-segment S over one run and under the other. That was the knot. The
-lines on one tee now choose together (the two faces across the run; all four
+lines on one tee now choose together (the two faces its run leaves free; all four
 for an open end; a symbol's port is fixed): at most one line to a face while
 there are faces to go round, each priced as length plus 12 a corner, plus
 heavily for crossing the tee's own pipe, more for lying on it, a little for
@@ -486,7 +513,7 @@ is, and a tee's faces are never targets -- they are the tee; (c) otherwise
 the nearer of the drawn line (within 14 screen px) and the node under the
 pointer wins; (d) a symbol's body means its best *free* port, by the
 route a line to it would draw round the symbols, and a riding tee the face
-across its run on the side the line comes from -- or, that face taken, a new
+its run leaves free on the side the line comes from -- or, that face taken, a new
 tee 20 px along its run toward the other end, so two branches never share a
 face; (e) a port that already has a line is teed 30 px out along it (the
 port's stub, the tee's anchor and its stub), and a drag out of such a port is
@@ -717,6 +744,8 @@ on the line as `waypoints`; `offset` is read for old drawings and no longer
 written.
 
 What is deliberately not done: a tee still needs a run of exactly two run
-lines to ride (a cross with four legs keeps its position); a tee is never an
-elbow; the old `SegmentPanel` fittings path is untouched; an open end is a tee
+lines to ride (a cross with four legs keeps its position); a junction whose
+two lines meet at a corner is not adopted into a run (`adoptTee`, `migrate`):
+it was put there, and only a split or a slide makes an elbow; the old
+`SegmentPanel` fittings path is untouched; an open end is a tee
 with one line and feed-twin reads it as the dead end it already handled.

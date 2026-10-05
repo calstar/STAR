@@ -64,11 +64,30 @@ class InjectorLeg(HydraulicComponent):
         return self.instance.id
 
     def effective_area(self, mdot: float, flow: FlowConditions) -> float:
-        """``Cd . A`` at this operating point [m^2]."""
+        """``Cd . A`` at this operating point [m^2].
+
+        With an engine card it is recovered from the card's pressure drop at the
+        density this leg sees, so the diagnostics and the mixture balance read
+        the same injector the solve used."""
+        card = self.side.card
+        if card is not None:
+            phi = card.capacity(abs(mdot), flow.p_upstream)
+            return phi / math.sqrt(2.0 * flow.rho) if flow.rho > 0.0 else 0.0
         cd = self.side.cd_at(mdot, flow.rho, flow.mu, pressure=flow.p_upstream)
         return cd * self.side.area
 
     def pressure_drop(self, mdot: float, flow: FlowConditions) -> float:
+        card = self.side.card
+        if card is not None:
+            # The card is the injector, inlet node to chamber, including the
+            # discharge into the manifold the drawing's line does not model.
+            #
+            # A magnitude, like every other pressure_drop: total_dp puts the
+            # sign on. The card's own relation is signed, and passing that
+            # through signed it twice, so a leg run backwards gained pressure
+            # and the network had no root whenever the chamber closure tried a
+            # chamber above that leg's tank.
+            return card.pressure_drop(abs(mdot), flow.p_upstream)
         magnitude = abs(mdot)
         if magnitude == 0.0:
             return 0.0
