@@ -155,7 +155,15 @@ test('the requirements form is editable only while checked out', async ({ page }
   // The 33-field requirements form is gated by a disabled <fieldset>, so the
   // browser reports every descendant control as disabled. Asserting on the
   // control rather than the wrapper is what makes this a test of the *effect*.
-  const thrust = page.locator('fieldset').first().locator('input[type="number"]').first();
+  // By its heading, not as the page's first <fieldset>: other views stay
+  // mounted while hidden (the injector hardware panel among them), so "first"
+  // stopped meaning this form once one of them held a fieldset.
+  const thrust = page
+    .locator('fieldset')
+    .filter({ hasText: 'Design Requirements' })
+    .first()
+    .locator('input[type="number"]')
+    .first();
   await expect(thrust).toBeDisabled();
 
   // The injector / propellant selectors live in the header, outside <main> --
