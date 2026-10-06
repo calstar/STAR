@@ -3,7 +3,7 @@
 #include <Arduino.h>
 #include <Ethernet.h>
 #include <SPI.h>
-#include <Update.h>
+#include <STAR_EthernetOTA.h>
 
 // ── Board pin definitions (from shared common/) ───────────────
 // Select board type by defining PINS_ACTIVE_LAYOUT before including.
@@ -20,7 +20,10 @@ using sense_board_pins::Pins;  // Access pins as Pins.ETH_MOSI, etc.
 #define OTA_DNS IPAddress(192, 168, 2, 1)
 #define OTA_TCP_PORT 3232
 
-// ── Serial message (overridden at compile time by Python script) ─
+// ── Serial message (overridden at compile time by the uploader) ─
+// STAR_OTA_TEST_MESSAGE is the library-wide name for this and is what
+// ota_upload.py --message and the Test-GUI's OTA tab set, so prefer it; the
+// older OTA_MESSAGE spelling still works for this project.
 #ifndef OTA_MESSAGE
 #define OTA_MESSAGE "Default OTA firmware -- not yet updated"
 #endif
@@ -35,5 +38,5 @@ using sense_board_pins::Pins;  // Access pins as Pins.ETH_MOSI, etc.
 // Uses Pins.LED from sense_board_pins.h (pin 16 for PT board)
 
 // ── OTA transfer settings ─────────────────────────────────────
-#define OTA_CHUNK_SIZE 4096   // Read firmware in 4 KB chunks
-#define OTA_TIMEOUT_MS 10000  // Timeout waiting for data during transfer
+// Owned by the library now; override STAR_OTA_CHUNK_SIZE / STAR_OTA_TIMEOUT_MS
+// in build_flags if this board ever needs different values.

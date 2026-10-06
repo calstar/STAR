@@ -94,6 +94,10 @@ class EnvironmentConfig(BaseModel):
     atmosphere_model: Literal["standard_atmosphere", "forecast"] = Field(
         default="standard_atmosphere",
         description="'standard_atmosphere' (ISA, offline, deterministic) or 'forecast' (live GFS weather)")
+    # Unset: the config's environment values.
+    rail_length_m: Optional[float] = Field(default=None, gt=0, description="Launch rail length [m]")
+    launch_inclination_deg: Optional[float] = Field(default=None, gt=0, le=90, description="Rail elevation from horizontal [deg]")
+    launch_heading_deg: Optional[float] = Field(default=None, ge=0, lt=360, description="Rail azimuth [deg from north]")
 
 
 class FinsConfig(BaseModel):
@@ -121,6 +125,10 @@ class RocketConfig(BaseModel):
     nose_fineness_ratio: float = Field(default=4.5, gt=0, description="Nose length / body diameter (von Kármán ~4.5:1)")
     nose_length: Optional[float] = Field(default=None, gt=0, description="Explicit nose length [m] (overrides fineness ratio)")
     avionics_payload_length_m: float = Field(default=4.0, ge=0, description="Avionics/payload/recovery length above propulsion, before the nose [m]")
+    copv_dry_mass: Optional[float] = Field(default=None, gt=0, description="Empty COPV mass [kg]")
+    surface_roughness_m: Optional[float] = Field(default=None, ge=0, description="Skin roughness for the drag build-up [m]")
+    fin_thickness_m: Optional[float] = Field(default=None, gt=0, description="Fin thickness for the drag build-up [m]")
+    fin_profile: Optional[Literal["square", "rounded", "airfoil"]] = Field(default=None, description="Fin edge profile for the drag build-up")
 
 
 class TankConfig(BaseModel):
@@ -153,6 +161,11 @@ class FlightSimRequest(BaseModel):
     
     # Rocket configuration
     rocket: Optional[RocketConfig] = Field(default=None, description="Rocket configuration")
+
+    reference_pressure_pa: Optional[float] = Field(
+        default=None, gt=0,
+        description="Ambient pressure the thrust curve was computed at [Pa]. Unset: the engine solver's "
+                    "reference at the SESSION config's elevation, which is what the time series ran at.")
 
 
 class FlightTrajectory(BaseModel):
@@ -214,6 +227,13 @@ class FlightSimResponse(BaseModel):
     thrust_curve: Optional[dict] = Field(default=None, description="Thrust curve used (time, thrust arrays)")
     rocket_diagram: Optional[str] = Field(default=None, description="Base64-encoded rocket diagram PNG")
     error: Optional[str] = Field(default=None, description="Error message if failed")
+    apogee_msl_m: Optional[float] = Field(default=None, description="Apogee above sea level [m]")
+    max_mach: Optional[float] = Field(default=None, description="Maximum Mach number")
+    rail_exit_velocity_m_s: Optional[float] = Field(default=None, description="Velocity leaving the rail [m/s]")
+    static_margin_rail_exit_cal: Optional[float] = Field(default=None, description="Static margin at rail exit [cal]")
+    static_margin_burnout_cal: Optional[float] = Field(default=None, description="Static margin at burnout [cal]")
+    ceiling: Optional[dict] = Field(default=None, description="Apogee ceiling check (design_requirements.max_apogee_m); None when unset")
+    report: Optional[dict] = Field(default=None, description="Flight report: launch, stability, drag Cd(M) and its inputs, ullage, checks, warnings")
 
 
 class FlightOptimizeRequest(FlightSimRequest):
@@ -352,6 +372,9 @@ def build_flight_config(base_config, request: FlightSimRequest):
         config_dict["environment"]["elevation"] = request.environment.elevation
         config_dict["environment"]["date"] = request.environment.date
         config_dict["environment"]["atmosphere_model"] = request.environment.atmosphere_model
+        for k in ("rail_length_m", "launch_inclination_deg", "launch_heading_deg"):
+            if getattr(request.environment, k) is not None:
+                config_dict["environment"][k] = getattr(request.environment, k)
     elif config_dict.get("environment") is None:
         # No launch site anywhere: the request model's defaults, stated once, up in EnvironmentConfig.
         config_dict["environment"] = EnvironmentConfig().model_dump()
@@ -360,20 +383,22 @@ def build_flight_config(base_config, request: FlightSimRequest):
     if request.rocket:
         if config_dict.get("rocket") is None:
             config_dict["rocket"] = {}
-        config_dict["rocket"]["airframe_mass"] = request.rocket.airframe_mass
-        config_dict["rocket"]["propulsion_dry_mass"] = (
-            request.rocket.engine_mass + 
-            request.rocket.lox_tank_structure_mass + 
-            request.rocket.fuel_tank_structure_mass
-        )
-        config_dict["rocket"]["radius"] = request.rocket.radius
-        config_dict["rocket"]["motor_position"] = request.rocket.motor_position
-        config_dict["rocket"]["inertia"] = request.rocket.inertia
-        config_dict["rocket"]["nose_kind"] = request.rocket.nose_kind
-        config_dict["rocket"]["nose_fineness_ratio"] = request.rocket.nose_fineness_ratio
-        if request.rocket.nose_length is not None:
-            config_dict["rocket"]["nose_length"] = request.rocket.nose_length
-        config_dict["rocket"]["avionics_payload_length_m"] = request.rocket.avionics_payload_length_m
+        r = config_dict["rocket"]
+        # Only what the request actually sends. setup_flight flies the component masses whenever
+        # engine_mass is set, so writing just their sum into propulsion_dry_mass (as this did) left
+        # every engine or tank mass edit on the Flight tab without effect; and a field the request
+        # omits must not replace the config's value with this model's default.
+        sent = request.rocket.model_fields_set
+        for k in ("airframe_mass", "engine_mass", "lox_tank_structure_mass", "fuel_tank_structure_mass",
+                  "copv_dry_mass", "radius", "motor_position", "inertia", "nose_kind", "nose_fineness_ratio",
+                  "nose_length", "avionics_payload_length_m", "surface_roughness_m", "fin_thickness_m",
+                  "fin_profile"):
+            v = getattr(request.rocket, k)
+            if k in sent and v is not None:
+                r[k] = v
+        parts = [r.get(k) for k in ("engine_mass", "lox_tank_structure_mass", "fuel_tank_structure_mass", "copv_dry_mass")]
+        if any(p is not None for p in parts):
+            r["propulsion_dry_mass"] = sum(p or 0.0 for p in parts)
 
         if request.rocket.fins:
             config_dict["rocket"]["fins"] = {
@@ -519,13 +544,16 @@ def _compute_propellant_diagnostics(
     truncated = bool(truncation and truncation.truncated)
     if truncated and truncation.cutoff_time is not None:
         effective_burn = float(truncation.cutoff_time)
-        # Required propellant only up to effective burn
-        mask = times <= effective_burn + 1e-9
-        if np.any(mask):
-            t_eff = times[mask]
-            lox_required = _integrate_series(t_eff, mdot_O_array[mask])
-            fuel_required = _integrate_series(t_eff, mdot_F_array[mask])
-            total_impulse = _integrate_series(t_eff, thrust_array[mask])
+        # What was burned: to the cutoff itself, the last partial interval included
+        keep = times < effective_burn
+        t_eff = np.concatenate([times[keep], [effective_burn]])
+
+        def upto(values: np.ndarray) -> np.ndarray:
+            return np.concatenate([values[keep], [np.interp(effective_burn, times, values)]])
+
+        lox_required = _integrate_series(t_eff, upto(mdot_O_array))
+        fuel_required = _integrate_series(t_eff, upto(mdot_F_array))
+        total_impulse = _integrate_series(t_eff, upto(thrust_array))
 
     warnings: List[str] = []
     for branch, cap in mass_caps.items():
@@ -608,6 +636,84 @@ def _compute_propellant_diagnostics(
     )
 
 
+def _thrust_reference_pressure(base_config, request: FlightSimRequest) -> float:
+    """The ambient pressure the thrust curve was computed at [Pa].
+
+    The time series ran on the SESSION config, so its elevation (not an elevation the Flight tab
+    overrides afterwards) sets the reference; the request can state it outright.
+    """
+    if request.reference_pressure_pa is not None:
+        return float(request.reference_pressure_pa)
+    thrust = getattr(base_config, "thrust", None)
+    if thrust is not None and getattr(thrust, "reference_pressure_pa", None) is not None:
+        return float(thrust.reference_pressure_pa)
+    from engine.core.runner import compute_ambient_pressure_from_elevation
+
+    env = getattr(base_config, "environment", None)
+    elevation = float(env.elevation) if env is not None else EnvironmentConfig().elevation
+    return float(compute_ambient_pressure_from_elevation(elevation))
+
+
+def ceiling_agl_m(design_requirements, elevation_m: float) -> Optional[float]:
+    """design_requirements.max_apogee_m as metres above the pad, or None when no ceiling is set."""
+    if design_requirements is None:
+        return None
+    ceiling = design_requirements.get("max_apogee_m") if isinstance(design_requirements, dict) else getattr(design_requirements, "max_apogee_m", None)
+    if ceiling is None:
+        return None
+    datum = design_requirements.get("max_apogee_datum") if isinstance(design_requirements, dict) else getattr(design_requirements, "max_apogee_datum", None)
+    if datum not in ("AGL", "MSL"):
+        raise ValueError("design_requirements.max_apogee_m needs max_apogee_datum 'AGL' or 'MSL'")
+    return float(ceiling) - (float(elevation_m) if datum == "MSL" else 0.0)
+
+
+def _ceiling_check(flight_config, pressure_curves, burn_time: float, nominal_apogee_agl: float) -> Optional[dict]:
+    """Apogee against the ceiling at its high-apogee corner.
+
+    The corner is the most vertical, lowest-drag flight the config admits: the rail at 90 deg, the
+    windless ISA, and -- when drag is the build-up -- a hydraulically smooth skin (roughness 0), the
+    floor of turbulent friction. A user's drag table has no band and is flown as given.
+    """
+    from engine.optimizer.copv_flight_helpers import run_flight_simulation
+
+    dr = flight_config.design_requirements
+    elevation = float(flight_config.environment.elevation)
+    ceiling = ceiling_agl_m(dr, elevation)
+    if ceiling is None:
+        return None
+    buildup = getattr(flight_config.rocket, "drag_curve_power_off", None) is None
+    corner = []
+    if float(flight_config.environment.launch_inclination_deg) < 90.0:
+        corner.append("inclination 90 deg")
+    if buildup and float(flight_config.rocket.surface_roughness_m) > 0.0:
+        corner.append("surface_roughness_m 0")
+    if str(getattr(flight_config.environment, "atmosphere_model", "standard_atmosphere")) != "standard_atmosphere":
+        corner.append("standard atmosphere")
+    corner_apogee = nominal_apogee_agl
+    if corner:
+        cfg = copy.deepcopy(flight_config)
+        cfg.environment.launch_inclination_deg = 90.0
+        cfg.environment.atmosphere_model = "standard_atmosphere"
+        if buildup:
+            cfg.rocket.surface_roughness_m = 0.0
+        res = run_flight_simulation(cfg, pressure_curves, burn_time)
+        if not res.get("success", False):
+            raise ValueError(f"Ceiling corner flight failed: {res.get('error')}")
+        corner_apogee = float(res["apogee"])
+    out = {
+        "max_apogee_m": float(dr.max_apogee_m),
+        "datum": dr.max_apogee_datum,
+        "ceiling_agl_m": ceiling,
+        "nominal_apogee_agl_m": float(nominal_apogee_agl),
+        "nominal_margin_m": ceiling - float(nominal_apogee_agl),
+        "corner_apogee_agl_m": corner_apogee,
+        "corner_margin_m": ceiling - corner_apogee,
+        "corner": ", ".join(corner) if corner else "the nominal flight",
+        "violated": corner_apogee > ceiling,
+    }
+    return out
+
+
 def _execute_flight_simulation(
     base_config,
     request: FlightSimRequest,
@@ -618,6 +724,7 @@ def _execute_flight_simulation(
     mdot_F_array: Optional[np.ndarray] = None,
     lox_mass_kg: Optional[float] = None,
     fuel_mass_kg: Optional[float] = None,
+    check_ceiling: bool = True,
 ) -> FlightSimResponse:
     """Run one flight simulation (shared by /simulate and /optimize-altitude)."""
     from engine.optimizer.copv_flight_helpers import run_flight_simulation
@@ -656,6 +763,7 @@ def _execute_flight_simulation(
     if config_dict.get("thrust") is None:
         config_dict["thrust"] = {}
     config_dict["thrust"]["burn_time"] = burn_time
+    config_dict["thrust"]["reference_pressure_pa"] = _thrust_reference_pressure(base_config, sim_request)
 
     pressure_curves = {
         "time": times,
@@ -716,6 +824,13 @@ def _execute_flight_simulation(
         )
 
     rocket_diagram = generate_rocket_diagram(flight_obj) if flight_obj is not None else None
+    report = getattr(flight_obj, "flight_report", None) if flight_obj is not None else None
+    ceiling = None
+    if check_ceiling:
+        try:
+            ceiling = _ceiling_check(flight_config, pressure_curves, burn_time, float(apogee))
+        except ValueError as e:
+            ceiling = {"error": str(e)}
 
     lox_requested = float(sim_request.lox_mass_kg)
     fuel_requested = float(sim_request.fuel_mass_kg)
@@ -743,7 +858,18 @@ def _execute_flight_simulation(
         target_apogee_m=target_apogee_m,
         propellant_tank_fill_factor=fill_factor,
     )
+    if report:
+        propellant_diag.warnings.extend(report.get("warnings", []))
+    if ceiling and ceiling.get("violated"):
+        propellant_diag.warnings.append(
+            f"Apogee ceiling exceeded: {ceiling['corner_apogee_agl_m']:.0f} m AGL at the high-apogee corner "
+            f"({ceiling['corner']}) against {ceiling['ceiling_agl_m']:.0f} m AGL "
+            f"({ceiling['max_apogee_m']:.0f} m {ceiling['datum']})"
+        )
+    elif ceiling and ceiling.get("error"):
+        propellant_diag.warnings.append(ceiling["error"])
 
+    stab = (report or {}).get("stability", {})
     return FlightSimResponse(
         status="success",
         apogee_m=apogee,
@@ -758,6 +884,13 @@ def _execute_flight_simulation(
             "thrust_N": thrust_array.tolist(),
         },
         rocket_diagram=rocket_diagram,
+        apogee_msl_m=(report or {}).get("apogee_msl_m"),
+        max_mach=(report or {}).get("max_mach"),
+        rail_exit_velocity_m_s=(report or {}).get("launch", {}).get("rail_exit_velocity_m_s"),
+        static_margin_rail_exit_cal=stab.get("static_margin_rail_exit_cal"),
+        static_margin_burnout_cal=stab.get("static_margin_burnout_cal"),
+        ceiling=ceiling,
+        report=convert_numpy(report) if report else None,
     )
 
 
@@ -844,6 +977,7 @@ async def optimize_flight_altitude(request: FlightOptimizeRequest, session: User
                 mdot_F_array=mdot_F_out,
                 lox_mass_kg=lox_req,
                 fuel_mass_kg=fuel_req,
+                check_ceiling=False,
             )
             if flight_result.status != "success":
                 return BurnTimeEval(
@@ -860,6 +994,29 @@ async def optimize_flight_altitude(request: FlightOptimizeRequest, session: User
                 fuel_required_kg=fuel_req,
                 apogee_m=flight_result.apogee_m,
                 success=True,
+            )
+
+        # A target above the ceiling has no admissible answer; say so before searching.
+        base_cfg = session.app_state.config
+        pad = float(request.environment.elevation) if request.environment else float(base_cfg.environment.elevation)
+        ceiling = ceiling_agl_m(getattr(base_cfg, "design_requirements", None), pad)
+        if ceiling is not None and float(request.target_apogee_m) - float(request.apogee_tolerance_m) > ceiling:
+            return FlightOptimizeResponse(
+                status="infeasible",
+                success=False,
+                target_apogee_m=float(request.target_apogee_m),
+                apogee_tolerance_m=float(request.apogee_tolerance_m),
+                optimal_burn_time_s=0.0,
+                optimal_lox_kg=0.0,
+                optimal_fuel_kg=0.0,
+                achieved_apogee_m=0.0,
+                apogee_error_m=0.0,
+                total_impulse_Ns=0.0,
+                simulations_run=0,
+                infeasible_reason=(
+                    f"Target {float(request.target_apogee_m):.0f} m AGL (less {float(request.apogee_tolerance_m):.0f} m tolerance) "
+                    f"is above the apogee ceiling, {ceiling:.0f} m AGL"
+                ),
             )
 
         opt = optimize_minimum_fuel_burn_time(
@@ -893,9 +1050,19 @@ async def optimize_flight_altitude(request: FlightOptimizeRequest, session: User
                 fuel_mass_kg=fuel_req,
             )
 
+        success, reason = opt.success, opt.infeasible_reason
+        if success and flight_at_optimum is not None and (flight_at_optimum.ceiling or {}).get("violated"):
+            # The search returns the lowest apogee that reaches the target, so nothing admissible is lower.
+            c = flight_at_optimum.ceiling
+            success = False
+            reason = (
+                f"The shortest burn reaching the target flies {c['corner_apogee_agl_m']:.0f} m AGL at the "
+                f"high-apogee corner ({c['corner']}), above the {c['ceiling_agl_m']:.0f} m AGL ceiling"
+            )
+
         return FlightOptimizeResponse(
-            status="success" if opt.success else "infeasible",
-            success=opt.success,
+            status="success" if success else "infeasible",
+            success=success,
             target_apogee_m=opt.target_apogee_m,
             apogee_tolerance_m=opt.apogee_tolerance_m,
             optimal_burn_time_s=opt.optimal_burn_time_s,
@@ -905,7 +1072,7 @@ async def optimize_flight_altitude(request: FlightOptimizeRequest, session: User
             apogee_error_m=opt.apogee_error_m,
             total_impulse_Ns=opt.total_impulse_Ns,
             simulations_run=opt.simulations_run,
-            infeasible_reason=opt.infeasible_reason,
+            infeasible_reason=reason,
             flight=flight_at_optimum,
         )
 

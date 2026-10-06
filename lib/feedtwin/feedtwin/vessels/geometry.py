@@ -72,9 +72,29 @@ def level_of_volume(geometry: TankGeometry, volume: float) -> float:
         return 0.0
     if volume >= total:
         return geometry.height
-    return float(
+    # The last answer for this shape, kept. A tank asks where its surface is
+    # several times at one fill -- its level, its interface area, its ullage
+    # -- before the fill moves, and each was a root find: ~43,000 of them in
+    # two seconds of burn, a fifth of the console's time. Exact: the same
+    # shape and the same volume, compared by identity and by value.
+    last = _LAST_LEVEL.get(id(geometry))
+    if last is not None and last[0] is geometry and last[1] == volume:
+        return last[2]
+    level = float(
         brentq(lambda h: geometry.volume_below(h) - volume, 0.0, geometry.height)
     )
+    if len(_LAST_LEVEL) >= _LAST_LEVEL_SHAPES:
+        _LAST_LEVEL.clear()
+    # The shape is held as well as its id, so an id reused by a later shape
+    # can never be mistaken for this one.
+    _LAST_LEVEL[id(geometry)] = (geometry, volume, level)
+    return level
+
+
+#: The last level worked out for each shape: (shape, volume, level).
+_LAST_LEVEL: dict[int, tuple[TankGeometry, float, float]] = {}
+#: More shapes than any stand has tanks; past it the memo starts again.
+_LAST_LEVEL_SHAPES = 64
 
 
 # ------------------------------------------------------------------- the heads

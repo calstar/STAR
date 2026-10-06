@@ -12,7 +12,7 @@
 import * as net from 'net';
 import { WebSocketServer } from 'ws';
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
-import { registerVTables, clearSubscriptionState } from './elodin-vtable-registry.js';
+import { registerVTables, clearSubscriptionState, noteSubscriptionRejected, notePairDelivered } from './elodin-vtable-registry.js';
 import { loadActuatorChannelToEntityMap } from './sensor-config.js';
 
 const ELODIN_HOST = process.env.ELODIN_HOST || '127.0.0.1';
@@ -106,6 +106,7 @@ function main(): void {
   }
 
   elodin.on('packet', (header, payload) => {
+    notePairDelivered(header.packetId[0], header.packetId[1]);
     if (header.ty === ElodinPacketType.TABLE) {
       tablePacketCount++;
       if (firstPacketLogged < 5 && header.packetId[0] !== 0x10) {
@@ -164,6 +165,12 @@ function main(): void {
       console.error('[Relay] Initial subscription failed:', e);
       scheduleResubscribe(1);
     });
+  });
+
+  // The relay never listened for dbError at all, so every refusal here was silent and
+  // permanent — the same failure the thin backend already had a handler for.
+  elodin.on('dbError', (requestId: number, description: string) => {
+    noteSubscriptionRejected(requestId, description);
   });
 
   elodin.on('disconnected', () => {

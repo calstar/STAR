@@ -22,6 +22,7 @@ Operates on plain dicts so it composes with the config router's merge/validate f
 
 from __future__ import annotations
 
+import copy
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -74,9 +75,15 @@ def available_propellants() -> list:
     return sorted(p.stem for p in d.glob("*.yaml")) if d.is_dir() else []
 
 
-def apply_injector_type(config: Dict[str, Any], injector_type: str) -> Dict[str, Any]:
+def apply_injector_type(config: Dict[str, Any], injector_type: str, *,
+                        keep_declared_cd: bool = False) -> Dict[str, Any]:
     """Switch injector type IN PLACE-ish (returns new dict): replace geometry with the type template
-    (preserve existing geometry only if the type is unchanged), then set the physics bindings."""
+    (preserve existing geometry only if the type is unchanged), then set the physics bindings.
+
+    ``keep_declared_cd``: on a SAME-type call, fill only the discharge keys the config leaves out
+    and never overwrite one it declares. The live switch path uses it (DEF-04). The load path
+    (io.load_config) still re-stamps, because three shipped methalox configs carry hand-written
+    Cd values that have only ever been evaluated after that overwrite."""
     b = bindings_for(injector_type)            # validates the type
     cfg = dict(config)
     inj = dict(cfg.get("injector") or {})
@@ -97,13 +104,25 @@ def apply_injector_type(config: Dict[str, Any], injector_type: str) -> Dict[str,
     # Discharge-Cd baseline: stamp the per-injector Cd model (the "different Cd models we originally
     # had for each" — pintle 0.40/0.65 fixed vs impinging 0.60 geometry-Cd). Overwrites the Cd-defining
     # fields; preserves user-tunable correction settings (P_ref/T_ref/a_P/a_T/use_*_correction).
+    #
+    # With keep_declared_cd, a same-type call fills the keys the config leaves out and touches
+    # nothing it declares: the orifice's Cd belongs to the hardware, so a measured cold-flow value
+    # must survive a propellant switch (DEF-04; it used to come back as the 0.60 baseline).
     discharge = dict(cfg.get("discharge") or {})
     baseline = default_discharge_for(injector_type)
+    same_type = keep_declared_cd and current_type == injector_type
     for side in ("oxidizer", "fuel"):
         if side not in discharge or not isinstance(discharge[side], dict):
             continue
         d = dict(discharge[side])
-        if baseline.get(side):
+        if baseline.get(side) and same_type:
+            for k, v in baseline[side].items():
+                if d.get(k) is None:
+                    d[k] = v
+                elif k != "use_geometry_cd" and d[k] != v:
+                    _log.info("discharge.%s.%s = %r kept (the %s baseline is %r)",
+                              side, k, d[k], injector_type, v)
+        elif baseline.get(side):
             # Preserve an explicitly-set use_geometry_cd: a user override of the type default wins,
             # and validate_config_bindings() warns about the mismatch rather than us silently
             # clobbering it. (The derive-default only fills the unset case.)
@@ -129,7 +148,9 @@ def apply_propellant(config: Dict[str, Any], preset_name: str) -> Dict[str, Any]
     fluid names / CEA names from the previous propellant). Design-owned CEA fields (expansion_ratio,
     ranges, n_points, cache_file) and everything else are preserved from the current config."""
     name = str(preset_name).strip().lower()
-    old_preset = (config or {}).get("propellant_preset")
+    # A config with no preset named (configs/default.yaml, a pasted YAML) still HAS a propellant:
+    # read it off the fluids, or the staleness stamp below never fires (DEF-06).
+    old_preset = (config or {}).get("propellant_preset") or infer_preset_from_fluids(config)
     inj_type = ((config or {}).get("injector") or {}).get("type")
     if name == "custom":
         cfg = dict(config)
@@ -176,8 +197,122 @@ def apply_propellant(config: Dict[str, Any], preset_name: str) -> Dict[str, Any]
         spray["smd"] = smd
         cfg["spray"] = spray
 
+    # The O/F target belongs to the propellant: methalox's 2.8 is past ethanol's stoichiometric
+    # 2.08. On a real change, take the preset's design O/F (its source is in the preset file) and
+    # move the chamber's design_MR with it. Re-selecting the live propellant changes nothing.
+    if old_preset != name:
+        rec_of = ((preset.get("design_requirements") or {}).get("optimal_of_ratio"))
+        if rec_of is not None:
+            req = dict(cfg.get("design_requirements") or {})
+            prev = req.get("optimal_of_ratio")
+            req["optimal_of_ratio"] = float(rec_of)
+            cfg["design_requirements"] = req
+            cg = cfg.get("chamber_geometry")
+            if isinstance(cg, dict):
+                cfg["chamber_geometry"] = {**cg, "design_MR": float(rec_of)}
+            _log.warning("propellant %s -> %s: O/F target %s -> %s (the %s preset's design point)",
+                         old_preset, name, prev, rec_of, name)
+        cfg = derive_chamber_gas(cfg)
+
     _stamp_propellant_change(cfg, old_preset, name, inj_type)
     _log.info("switched propellant -> %s (fluids+CEA identity+chamber gas overlaid)", name)
+    return cfg
+
+
+def _preset_fluid_names() -> Dict[str, tuple]:
+    """{preset: (canonical oxidizer name, canonical fuel name)} for every shipped preset."""
+    from engine.pipeline.io import _canon_fluid
+    out = {}
+    for name in available_propellants():
+        try:
+            p = yaml.safe_load((_PROJECT_ROOT / "configs" / "propellants" / f"{name}.yaml").read_text())
+        except Exception:
+            continue
+        fl = (p or {}).get("fluids") or {}
+        out[name] = (_canon_fluid((fl.get("oxidizer") or {}).get("name")),
+                     _canon_fluid((fl.get("fuel") or {}).get("name")))
+    return out
+
+
+def infer_preset_from_fluids(config: Optional[Dict[str, Any]]) -> Optional[str]:
+    """The preset whose oxidizer and fuel a preset-less config carries; "custom" when its fluids
+    match no preset; None when it has no fluids at all."""
+    fl = (config or {}).get("fluids") or {}
+    if not fl:
+        return None
+    from engine.pipeline.io import _canon_fluid
+    pair = (_canon_fluid((fl.get("oxidizer") or {}).get("name")),
+            _canon_fluid((fl.get("fuel") or {}).get("name")))
+    if not all(pair):
+        return None
+    for name, names in _preset_fluid_names().items():
+        if names == pair:
+            return name
+    return "custom"
+
+
+# Chamber pressure at which the chamber gas is read when the design names no target Pc. It is the
+# 6500 N ethalox design point; R*T moves 0.15 % between 300 and 600 psia at O/F 1.5 (CEA), so the
+# choice barely matters -- Tc is what the evaporation model feels, and it moves 1 % over that span.
+CHAMBER_GAS_REFERENCE_PC_PSI = 430.0
+
+
+def derive_chamber_gas(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Set spray.smd.chamber_gas_R/T from the CEA table at the design's O/F and target Pc.
+
+    The Ingebo Weber number and the evaporation model read one representative chamber gas; a
+    preset stamps it at the preset's own O/F, which is wrong as soon as the target moves (DEF-11:
+    3094 K at O/F 1.35 against 3225 K at 1.5). Leaves the config unchanged -- and says so -- when
+    the table is not on disk (never triggers a multi-minute CEA build from a UI toggle) or the
+    point lies outside it."""
+    import os
+    cfg = dict(config)
+    cea = dict(((cfg.get("combustion") or {}).get("cea")) or {})
+    req = cfg.get("design_requirements") or {}
+    of = req.get("optimal_of_ratio")
+    pc_psi = req.get("target_chamber_pressure_psi") or CHAMBER_GAS_REFERENCE_PC_PSI
+    cache_file = cea.get("cache_file")
+    if of is None or not cache_file or not cea.get("MR_range"):
+        return cfg
+    path = cache_file if os.path.isabs(cache_file) else str(_PROJECT_ROOT / cache_file)
+    if not os.path.exists(path):
+        _log.warning("chamber gas not derived: no CEA table at %s (keeping the preset's R/T)", path)
+        return cfg
+    lo, hi = cea["MR_range"]
+    if not float(lo) <= float(of) <= float(hi):
+        _log.warning("chamber gas not derived: O/F %s outside the CEA table [%s, %s]", of, lo, hi)
+        return cfg
+    try:
+        import json
+        from engine.pipeline.config_schemas import CEAConfig
+        from engine.pipeline.cea_cache import CEA_TABLE_SCHEMA_VERSION, CEACache, _load_npz_tables
+        # CEACache DELETES and rebuilds a table whose identity or grid differs from the request.
+        # A UI toggle must never do that: read the table only when it is the one asked for.
+        meta = json.loads(_load_npz_tables(path)["meta"].tolist())
+        wanted = {"table_schema": CEA_TABLE_SCHEMA_VERSION, "ox_name": cea.get("ox_name"),
+                  "fuel_name": cea.get("fuel_name"), "n_points": cea.get("n_points"),
+                  "dimensions": 3 if cea.get("eps_range") is not None else 2}
+        if any(meta.get(k, 1 if k == "table_schema" else None) != v for k, v in wanted.items()):
+            _log.warning("chamber gas not derived: %s is not the table this config asks for", path)
+            return cfg
+        if cea.get("expansion_ratio") is None:
+            cea["expansion_ratio"] = float((cea.get("eps_range") or [5.0])[0])
+        cea["cache_file"] = path
+        r = CEACache(CEAConfig(**cea)).eval(float(of), float(pc_psi) * 6894.757293168)
+        if r.get("extrapolated"):
+            _log.warning("chamber gas not derived: (O/F %s, %s psia) outside the CEA table", of, pc_psi)
+            return cfg
+        T, R = float(r["Tc"]), float(r["R"])
+    except Exception as e:  # a derivation failure must not break a propellant switch
+        _log.warning("chamber gas not derived (%s); keeping the preset's R/T", e)
+        return cfg
+    spray = dict(cfg.get("spray") or {})
+    smd = dict(spray.get("smd") or {})
+    smd["chamber_gas_T"] = round(T, 1)
+    smd["chamber_gas_R"] = round(R, 2)
+    spray["smd"] = smd
+    cfg["spray"] = spray
+    _log.info("chamber gas from CEA at O/F %s, %s psia: T %.1f K, R %.2f J/(kg K)", of, pc_psi, T, R)
     return cfg
 
 
@@ -193,28 +328,107 @@ def _stamp_propellant_change(cfg: Dict[str, Any], old_preset: Optional[str],
         cfg["design_valid_for"] = {"injector": inj_type, "propellant": old_preset}
 
 
+# Requirements that state what the USER asked for, not how the canonical seed was tuned. An
+# injector swap reloads the canonical wholesale; these follow the user across it.
+_DESIGN_INTENT_KEYS = (
+    "target_thrust", "target_burn_time", "target_apogee", "target_chamber_pressure_psi",
+    "max_chamber_outer_diameter", "max_nozzle_exit_diameter", "max_engine_length",
+    "max_chamber_length_m", "max_lox_tank_pressure_psi", "max_fuel_tank_pressure_psi",
+)
+
+
+def _carry_design_intent(old: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Copy the user's own requirements (thrust, burn time, envelope, tank caps) from the pre-swap
+    config onto the freshly loaded canonical, and keep its burn-time slots in step."""
+    old_req = old.get("design_requirements") or {}
+    req = dict(cfg.get("design_requirements") or {})
+    for k in _DESIGN_INTENT_KEYS:
+        if old_req.get(k) is not None:
+            req[k] = old_req[k]
+    cfg = dict(cfg)
+    cfg["design_requirements"] = req
+    bt = req.get("target_burn_time")
+    if bt is not None:
+        if isinstance(cfg.get("thrust"), dict):
+            cfg["thrust"] = {**cfg["thrust"], "burn_time": bt}
+        if isinstance(cfg.get("pressure_curves"), dict):
+            cfg["pressure_curves"] = {**cfg["pressure_curves"], "target_burn_time_s": bt}
+    return cfg
+
+
+def _carry_custom_propellant(old: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """A "custom" propellant has no preset to re-apply: carry its fluids, CEA identity and chamber
+    gas verbatim, and stamp the canonical's own propellant so the seed reads as stale."""
+    cfg = dict(cfg)
+    seeded_for = cfg.get("propellant_preset")
+    if old.get("fluids"):
+        cfg["fluids"] = copy.deepcopy(old["fluids"])
+    old_cea = ((old.get("combustion") or {}).get("cea")) or {}
+    comb = dict(cfg.get("combustion") or {})
+    cea = dict(comb.get("cea") or {})
+    for k in ("ox_name", "fuel_name", "Pc_range", "MR_range", "eps_range", "n_points", "cache_file"):
+        if k in old_cea:
+            cea[k] = old_cea[k]
+    comb["cea"] = cea
+    cfg["combustion"] = comb
+    old_smd = ((old.get("spray") or {}).get("smd")) or {}
+    spray = dict(cfg.get("spray") or {})
+    smd = dict(spray.get("smd") or {})
+    for k in ("chamber_gas_R", "chamber_gas_T"):
+        if old_smd.get(k) is not None:
+            smd[k] = old_smd[k]
+    spray["smd"] = smd
+    cfg["spray"] = spray
+    cfg["propellant_preset"] = "custom"
+    cfg["design_valid_for"] = {"injector": (cfg.get("injector") or {}).get("type"),
+                               "propellant": seeded_for}
+    return cfg
+
+
 def switch_config(config: Dict[str, Any], *, injector_type: Optional[str] = None,
                   propellant_preset: Optional[str] = None) -> Dict[str, Any]:
     """Apply an injector and/or propellant switch to a config dict and return the reconciled dict.
     Caller validates (PintleEngineConfig(**result)) and stores.
 
     Injector change => LOAD THE CANONICAL config for the new type wholesale (the two configs are
-    intentionally independent — see module docstring). A same-type request falls back to the legacy
-    in-place reconcile. Propellant change => overlay the preset onto whatever geometry is now live.
+    intentionally independent -- see module docstring), then put back what the user chose: the
+    propellant (named, or read off the fluids -- DEF-02: picking Doublet used to turn an ethalox
+    design into methalox), the O/F target when it lies inside the new CEA table, and the design
+    intent in _DESIGN_INTENT_KEYS. A same-type request re-stamps the bindings without touching a
+    declared Cd. Propellant change => overlay the preset onto whatever geometry is now live.
     """
+    old = config or {}
     cfg = config
-    current_type = ((config or {}).get("injector") or {}).get("type")
+    current_type = (old.get("injector") or {}).get("type")
+    keep = propellant_preset or old.get("propellant_preset") or infer_preset_from_fluids(old)
+    keep = str(keep).strip().lower() if keep else None
     if injector_type is not None and injector_type != current_type:
         cfg = load_canonical_config(injector_type)   # whole new config, different values for everything
+        cfg = _carry_design_intent(old, cfg)
+        if keep == "custom":
+            cfg = _carry_custom_propellant(old, cfg)
+        elif keep and keep != cfg.get("propellant_preset"):
+            cfg = apply_propellant(cfg, keep)          # stamps the canonical's propellant -> stale
+        # The user's O/F survives the swap when it is still a valid target for this propellant.
+        of = (old.get("design_requirements") or {}).get("optimal_of_ratio")
+        mr = ((cfg.get("combustion") or {}).get("cea") or {}).get("MR_range")
+        same_prop = keep == (old.get("propellant_preset") or infer_preset_from_fluids(old))
+        if of is not None and mr and same_prop and float(mr[0]) <= float(of) <= float(mr[1]):
+            cfg["design_requirements"] = {**cfg["design_requirements"], "optimal_of_ratio": of}
+            if isinstance(cfg.get("chamber_geometry"), dict):
+                cfg["chamber_geometry"] = {**cfg["chamber_geometry"], "design_MR": of}
+        if keep != "custom":
+            cfg = derive_chamber_gas(cfg)
+        propellant_preset = None                       # carried above; do not overlay twice
     elif injector_type is not None:
-        cfg = apply_injector_type(cfg, injector_type)  # same type: just reconcile bindings
+        cfg = apply_injector_type(cfg, injector_type, keep_declared_cd=True)  # same type: bindings only
     if propellant_preset is not None:
         cfg = apply_propellant(cfg, propellant_preset)
-    # Propellant-only overlays leave spray/discharge from the previous injector binding; re-stamp
-    # so impinging keeps ingebo + geometry-Cd (not pintle lefebvre + fixed Cd_inf).
+    # Re-stamp the injector BINDINGS (SMD model, missing discharge keys) for the live type -- an
+    # uploaded impinging config can carry pintle's lefebvre. Never a declared Cd (DEF-04).
     live_type = ((cfg or {}).get("injector") or {}).get("type")
     if live_type:
-        cfg = apply_injector_type(cfg, live_type)
+        cfg = apply_injector_type(cfg, live_type, keep_declared_cd=True)
     return cfg
 
 

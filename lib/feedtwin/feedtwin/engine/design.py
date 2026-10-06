@@ -43,7 +43,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Callable, Mapping
+from typing import TYPE_CHECKING, Callable, Mapping
+
+if TYPE_CHECKING:  # card.py imports this module; the annotation is all that is needed
+    from feedtwin.engine.card import InjectorCard
 
 #: EngineDesign propellant names to feed-twin species. Kept explicit rather than
 #: lower-cased and hoped for: "LOX" and "oxygen" are the same fluid under two
@@ -199,6 +202,10 @@ class InjectorSide:
     engine states its own is checking against the wrong thing -- and it has an
     upper bound too, which the rule of thumb does not: an injector that is too
     stiff is throwing away tank pressure it paid structural mass for."""
+    card: InjectorCard | None = None
+    """Another tool's injector characteristic, inlet node to chamber
+    (:mod:`feedtwin.engine.card`). When set it replaces the orifice relation and
+    the Cd model above; ``None`` (the default) leaves them exactly as they were."""
 
     def cd_at(
         self, mdot: float, rho: float, mu: float, pressure: float | None = None

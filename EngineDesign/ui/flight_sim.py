@@ -282,28 +282,145 @@ def truncate_mdot_function(mdot_func, cutoff_time, burn_time):
         source = np.column_stack((times_all, values))
         return Function(source)
 
-def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
+def _sample(source, times):
+    """Values of a thrust / mdot source (float, callable, RocketPy Function, (t, v) list) at times."""
+    if isinstance(source, (list, tuple)) and source and isinstance(source[0], (list, tuple)):
+        arr = np.asarray(source, dtype=float)
+        return np.interp(times, arr[:, 0], arr[:, 1], left=0.0, right=0.0)
+    if isinstance(source, Function) or callable(source):
+        return np.array([float(source(t)) for t in times])
+    return np.full_like(np.asarray(times, dtype=float), float(source))
+
+
+def _cumulative(times, rates):
+    return np.concatenate([[0.0], np.cumsum(0.5 * (rates[1:] + rates[:-1]) * np.diff(times))])
+
+
+def _depletion_time(times, cumulative, m0):
+    """First time the integral of mdot reaches m0, linear between samples; None if it never does."""
+    idx = np.nonzero(cumulative >= m0)[0]
+    if len(idx) == 0:
+        return None
+    i = int(idx[0])
+    if i == 0:
+        return float(times[0])
+    c0, c1 = cumulative[i - 1], cumulative[i]
+    return float(times[i - 1] + (m0 - c0) / (c1 - c0) * (times[i] - times[i - 1]))
+
+
+def _on_grid(times, values, t_end):
+    """(t, v) samples on [0, t_end], t_end included, for a RocketPy Function."""
+    keep = times < t_end
+    t = np.concatenate([times[keep], [t_end]])
+    v = np.concatenate([values[keep], [np.interp(t_end, times, values)]])
+    return np.column_stack((t, v))
+
+
+#: How a pressurant is written in tank names and printouts (display only; the physics uses the
+#: CoolProp name). A gas not listed here is written as its CoolProp name.
+_GAS_LABEL = {"nitrogen": "N₂", "n2": "N₂", "helium": "He", "he": "He"}
+
+
+def ullage_gas_density(tank_section):
+    """Pressurant density in a tank's ullage at T-0 [kg/m3], CoolProp at the tank's
+    initial_pressure_psi (absolute, as the engine solver reads it) and ullage_gas_temperature_K."""
+    import CoolProp.CoolProp as CP
+
+    P_psi = getattr(tank_section, "initial_pressure_psi", None)
+    if P_psi is None:
+        raise ValueError("Tank initial_pressure_psi is required to size the ullage gas")
+    P = float(P_psi) * 6894.757293168
+    T = float(tank_section.ullage_gas_temperature_K)
+    return float(CP.PropsSI("D", "P", P, "T", T, str(tank_section.ullage_gas))), P, T
+
+
+def flight_report(flight, config, drag_curves=None, extra=None):
+    """What a flight says about the vehicle beyond apogee: Mach, rail exit, static margin, the
+    ceiling datum, and the requirement checks the config declares. Pure: reads the flight."""
+    rocket = flight.rocket
+    elevation = float(config.environment.elevation)
+    apogee_msl = float(flight.apogee)
+    burnout = float(rocket.motor.burn_out_time)
+    t_rail = float(flight.out_of_rail_time)
+    buttons = getattr(config.rocket, "rail_button_upper_pos_m", None) is not None and getattr(config.rocket, "rail_button_lower_pos_m", None) is not None
+    report = {
+        "apogee_agl_m": apogee_msl - elevation,
+        "apogee_msl_m": apogee_msl,
+        "elevation_m": elevation,
+        "max_mach": float(flight.max_mach_number),
+        "max_speed_m_s": float(flight.max_speed),
+        "burnout_time_s": burnout,
+        "total_impulse_Ns": float(rocket.motor.total_impulse),
+        "launch": {
+            "rail_length_m": float(flight.rail_length),
+            "effective_rail_length_m": float(flight.effective_1rl),
+            "rail_buttons_declared": bool(buttons),
+            "inclination_deg": float(flight.inclination),
+            "heading_deg": float(flight.heading),
+            "rail_exit_velocity_m_s": float(flight.out_of_rail_velocity),
+            "rail_exit_time_s": t_rail,
+        },
+        "stability": {
+            # Mach-0 Barrowman CP against the moving CG, in body diameters
+            "static_margin_liftoff_cal": float(rocket.static_margin(0.0)),
+            "static_margin_rail_exit_cal": float(rocket.static_margin(t_rail)),
+            "static_margin_burnout_cal": float(rocket.static_margin(burnout)),
+            # CP at the flight Mach, to apogee
+            "min_stability_margin_cal": float(flight.min_stability_margin),
+            "min_stability_margin_time_s": float(flight.min_stability_margin_time),
+            "max_stability_margin_cal": float(flight.max_stability_margin),
+            "max_stability_margin_time_s": float(flight.max_stability_margin_time),
+        },
+        "checks": [],
+        "warnings": [],
+    }
+    if drag_curves is not None:
+        report["drag"] = drag_curves.to_dict()
+    dr = getattr(config, "design_requirements", None)
+    checks = report["checks"]
+    v_min = getattr(dr, "min_rail_exit_velocity_m_s", None) if dr is not None else None
+    if v_min is not None:
+        v = report["launch"]["rail_exit_velocity_m_s"]
+        checks.append({"name": "rail_exit_velocity", "value": v, "limit": float(v_min), "kind": "min", "passed": v >= v_min,
+                       "note": None if buttons else "no rail buttons declared: full rail length flown, an upper bound"})
+    for key, kind in (("min_static_margin_cal", "min"), ("max_static_margin_cal", "max")):
+        lim = getattr(dr, key, None) if dr is not None else None
+        if lim is None:
+            continue
+        for where in ("rail_exit", "burnout"):
+            sm = report["stability"][f"static_margin_{where}_cal"]
+            checks.append({"name": f"static_margin_{where}", "value": sm, "limit": float(lim), "kind": kind,
+                           "passed": sm >= lim if kind == "min" else sm <= lim})
+    for c in checks:
+        if not c["passed"]:
+            report["warnings"].append(
+                f"{c['name']} {c['value']:.2f} {'below' if c['kind'] == 'min' else 'above'} the required {c['limit']:.2f}"
+            )
+    if extra:
+        for k, v in extra.items():
+            if k == "warnings":
+                report["warnings"].extend(v)
+            else:
+                report[k] = v
+    return report
+
+
+def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False, liftoff_mass=None,
+                 ullage_gas_kg=None):
     """
-    Build and simulate a RocketPy flight with configuration from config_minimal.yaml.
+    Build and fly the vehicle in RocketPy from a thrust curve and the two propellant flows.
 
-    Args:
-        config: Configuration object with attributes matching config_minimal.yaml structure.
-        plot_results (bool): whether to show diagnostic plots.
+    ``liftoff_mass`` [kg]: the vehicle as weighed on the rail, loaded and pressed. When given, the
+    airframe's mass is set so the vehicle lifts off at exactly this mass.
 
-    Returns:
-        dict: {
-            "apogee": float,
-            "max_velocity": float,
-            "thrust_curve": list of (t, F),
-            "flight": RocketPy Flight object,
-            "params": configuration data
-        }
+    ``ullage_gas_kg`` [kg]: the gas in the tanks' ullages at T-0 when the caller knows it better
+    than this config's tanks do (Layer X burns the drawing's tanks). The difference from the
+    config-sized ullage is carried as a lumped mass with the airframe: it stays aboard all flight.
+
+    Returns a dict: apogee (AGL), apogee_asl, max_velocity (vertical), flight (RocketPy Flight),
+    truncation_info, mass_caps, mass_budget, flight_report (see flight_report), params (the config).
     """
-
-
-
-    # Extract parameters from config directly
-    burn_time = config.thrust.burn_time
+    burn_time = float(config.thrust.burn_time)
 
     # Densities from config
     rho_lox = config.fluids['oxidizer'].density
@@ -312,19 +429,8 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
     # Initial masses from config
     m_lox0 = config.lox_tank.mass
     m_rp10 = config.fuel_tank.mass
-    
-    # Tank geometry
-    lox_radius = config.lox_tank.lox_radius
-    lox_height = config.lox_tank.lox_h
-    rp1_radius = config.fuel_tank.rp1_radius
-    rp1_height = config.fuel_tank.rp1_h
-    
-    # Validate and cap propellant masses to prevent RocketPy tank overfill errors
-    # Tank volume = π * r² * h, max mass = volume * density * fill_factor
-    # RocketPy's internal tank calculations (liquid height, center of mass) can fail
-    # when liquid level gets too close to tank geometry bounds due to numerical precision
-    import math
-    # Validate and cap propellant masses to tank capacity (fill factor from config, default 90%)
+
+    # Cap propellant to what the tank holds (explicit capacity, else volume x fill factor)
     from engine.pipeline.tank_capacity import resolve_fuel_tank_limits, resolve_lox_tank_limits
 
     mass_caps = {}
@@ -361,96 +467,64 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
         "was_capped": fuel_requested > m_rp10 + 1e-6,
         "fill_factor": fuel_ff,
     }
-    
-    # Check for both LOX and fuel underfill and truncate at whichever happens first
-    lox_cutoff_time = detect_lox_underfill_time(mdot_lox, m_lox0, burn_time)
-    fuel_cutoff_time = detect_fuel_underfill_time(mdot_fuel, m_rp10, burn_time)
-    
-    # Find the earliest cutoff time (or None if neither depletes)
-    cutoff_time = None
-    cutoff_reason = None
-    if lox_cutoff_time is not None and fuel_cutoff_time is not None:
-        if lox_cutoff_time <= fuel_cutoff_time:
-            cutoff_time = lox_cutoff_time
-            cutoff_reason = "LOX"
-        else:
-            cutoff_time = fuel_cutoff_time
-            cutoff_reason = "fuel"
-    elif lox_cutoff_time is not None:
-        cutoff_time = lox_cutoff_time
-        cutoff_reason = "LOX"
-    elif fuel_cutoff_time is not None:
-        cutoff_time = fuel_cutoff_time
-        cutoff_reason = "fuel"
-    
-    truncation_info = None
-    if cutoff_time is not None and cutoff_time < burn_time:
-        truncation_msg = f"{cutoff_reason.capitalize()} tank underfill detected at t={cutoff_time:.3f} s. Truncating thrust and mass flows."
-        print(truncation_msg)  # Also print for console/logging
-        truncation_info = {
-            "truncated": True,
-            "cutoff_time": cutoff_time,
-            "reason": cutoff_reason,
-            "message": truncation_msg
-        }
-        # Nudge cutoff earlier to avoid zero/negative mass at the edge.
-        margin = max(0.05, 0.01 * burn_time)
-        cutoff_time = max(0.0, cutoff_time - margin)
-        # If margin wipes out the burn, abort gracefully
-        if cutoff_time <= 0:
+
+    # DEPLETION. Thrust and both flows stop at the instant the first tank runs dry, with no margin.
+    #
+    # This used to chop 50 ms (or 1 % of the burn) off every truncated burn, because
+    # MassFlowRateBasedTank re-integrates mdot on 100 points and goes a hair negative at an exact
+    # depletion; and when that did not fire, a fuel-only loop shrank the burn to 98 % of the fuel
+    # whenever the load came within 1 mg of the integral. Which one fired was floating-point noise:
+    # loads of the exact integral x (1, 1+1e-9, 1+1e-6) flew 3941 / 3890 / 4033 m on the 6.5 kN
+    # vehicle. The tanks below are MassBasedTank on the liquid mass itself, clipped at 1e-9 kg
+    # (0.0 still trips RocketPy's inverse_volume domain), so an exact depletion is legal and the
+    # result is continuous in the load.
+    n_grid = max(5001, int(burn_time * 2000) + 1)
+    t_grid = np.linspace(0.0, burn_time, n_grid)
+    mdot_O_grid = _sample(mdot_lox, t_grid)
+    mdot_F_grid = _sample(mdot_fuel, t_grid)
+    cum_O = _cumulative(t_grid, mdot_O_grid)
+    cum_F = _cumulative(t_grid, mdot_F_grid)
+    t_dep = {"LOX": _depletion_time(t_grid, cum_O, m_lox0), "fuel": _depletion_time(t_grid, cum_F, m_rp10)}
+    t_dep = {k: v for k, v in t_dep.items() if v is not None and v < burn_time}
+    if t_dep:
+        cutoff_reason = min(t_dep, key=t_dep.get)
+        effective_burn_time = t_dep[cutoff_reason]
+        if effective_burn_time <= 0.0:
             return {
                 "success": False,
-                "error": "Burn truncated to <= 0s due to tank underfill.",
+                "error": f"{cutoff_reason} tank is empty at ignition.",
                 "flight": None,
                 "flight_time": 0.0,
                 "apogee": 0.0,
                 "max_velocity": 0.0,
-                "truncation_info": {"truncated": True, "cutoff_time": 0.0, "reason": cutoff_reason, "message": truncation_msg},
+                "truncation_info": {"truncated": True, "cutoff_time": 0.0, "reason": cutoff_reason},
             }
-        # Truncate thrust curve
-        thrust_curve = truncate_thrust_curve(thrust_curve, cutoff_time)
-        # Truncate mdot functions
-        mdot_lox = truncate_mdot_function(mdot_lox, cutoff_time, cutoff_time)
-        mdot_fuel = truncate_mdot_function(mdot_fuel, cutoff_time, cutoff_time)
-        # Update burn_time to cutoff_time (but keep original for tank discretization)
-        effective_burn_time = cutoff_time
+        truncation_msg = (
+            f"{cutoff_reason} tank runs dry at t={effective_burn_time:.4f} s of a {burn_time:.4f} s curve; "
+            "thrust and both flows stop there."
+        )
+        print(f"[flight_sim] {truncation_msg}")
+        thrust_curve = truncate_thrust_curve(thrust_curve, effective_burn_time)
+        truncation_info = {
+            "truncated": True,
+            "cutoff_time": effective_burn_time,
+            "reason": cutoff_reason,
+            "message": truncation_msg,
+        }
     else:
         effective_burn_time = burn_time
         truncation_info = {"truncated": False}
+        # The same 500-per-second sampling the truncated branch gets. Handed a callable, RocketPy's
+        # Motor re-samples it at 50 points over the whole burn (72 ms apart on a 3.6 s curve), so
+        # an untruncated curve flew a coarser copy of itself: its tail aliased, and on the 6.8 kN
+        # vehicle the apogee held still for 200 N·s of impulse and then dropped 116 m.
+        if callable(thrust_curve) and not isinstance(thrust_curve, list):
+            thrust_curve = truncate_thrust_curve(thrust_curve, burn_time)
 
-    # Additional safety: if integrated mdot would exceed available mass, shorten burn further
-    def _consumed_mass(mdot_func, t_end, n_samples=1500):
-        times = np.linspace(0, t_end, n_samples)
-        vals = np.array([float(mdot_func(t)) for t in times])
-        return float(np.trapezoid(vals, times) if hasattr(np, "trapezoid") else np.trapz(vals, times))
-
-    # Only if we have Function/callable mdot after truncation
-    try:
-        fuel_consumed = _consumed_mass(mdot_fuel, effective_burn_time)
-        if fuel_consumed >= m_rp10 - 1e-6 and fuel_consumed > 0:
-            # shrink burn until consumption fits with small margin
-            for _ in range(5):
-                scale = (m_rp10 * 0.98) / max(fuel_consumed, 1e-9)
-                if scale >= 1.0:
-                    break
-                effective_burn_time = max(0.05, effective_burn_time * scale)
-                # Re-truncate curves to new effective time
-                thrust_curve = truncate_thrust_curve(thrust_curve, effective_burn_time)
-                mdot_lox = truncate_mdot_function(mdot_lox, effective_burn_time, effective_burn_time)
-                mdot_fuel = truncate_mdot_function(mdot_fuel, effective_burn_time, effective_burn_time)
-                fuel_consumed = _consumed_mass(mdot_fuel, effective_burn_time)
-            truncation_info["truncated"] = True
-            truncation_info["cutoff_time"] = effective_burn_time
-    except Exception:
-        pass
-
-    # Nozzle exit area (only used for visualization, not trajectory)
-    # Note: When providing a thrust curve, RocketPy doesn't use nozzle params for simulation.
-    # A_exit is only used to calculate nozzle_radius for the rocket drawing.
     from engine.pipeline.config_schemas import ensure_chamber_geometry
     cg = ensure_chamber_geometry(config)
     A_e = cg.A_exit
-    
+
     # Check for required flight simulation config fields
     if not config.environment:
         raise ValueError("Flight simulation requires 'environment' configuration")
@@ -641,6 +715,7 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
         print(f"  Motor dry mass: {motor_dry_mass:.2f} kg")
         print(f"  Total dry mass: {rocket_mass + motor_dry_mass:.2f} kg")
 
+
     # Environment
     env = Environment(
         date=config.environment.date,
@@ -662,14 +737,24 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
     # GFS may override elevation with its terrain model - restore configured elevation
     env.set_elevation(config.environment.elevation)
 
-    print(m_lox0)
-    print(m_rp10)
-    print(mdot_lox)
-    print(mdot_fuel)
+    report_warnings = []
 
-    # Tank geometries from config
-    lox_geom = CylindricalTank(radius=config.lox_tank.lox_radius, height=config.lox_tank.lox_h, spherical_caps=False)
-    rp1_geom = CylindricalTank(radius=config.fuel_tank.rp1_radius, height=config.fuel_tank.rp1_h, spherical_caps=False)
+    # One stack for the tanks, the nose and the drag: engine/pipeline/vehicle_drag.built_stack.
+    # The tank cylinders take their height from the same volume the mass caps use, so RocketPy's
+    # tank, the cap and the ullage below cannot disagree about how big the tank is.
+    from engine.pipeline.vehicle_drag import built_stack, resolve_drag_curves
+
+    stack = built_stack(config)
+    lox_geom = CylindricalTank(radius=config.lox_tank.lox_radius, height=stack["lox_h"], spherical_caps=False)
+    rp1_geom = CylindricalTank(radius=config.fuel_tank.rp1_radius, height=stack["fuel_h"], spherical_caps=False)
+    for name, section, h_attr in (("LOX", config.lox_tank, "lox_h"), ("fuel", config.fuel_tank, "rp1_h")):
+        h_cfg = float(getattr(section, h_attr))
+        h_used = stack["lox_h" if name == "LOX" else "fuel_h"]
+        if abs(h_used - h_cfg) > 1e-6 * h_cfg:
+            report_warnings.append(
+                f"{name} tank: tank_volume_m3 and pi r^2 {h_attr} disagree; flown at the volume "
+                f"(height {h_used:.4f} m, config {h_attr} {h_cfg:.4f} m)"
+            )
 
     # Fluids and tanks — names/densities come from the loaded config so this follows the propellant
     # switch (LOX/CH4, LOX/Ethanol, LOX/RP-1, …); nothing here is hardcoded to a specific propellant.
@@ -677,13 +762,51 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
     fuel_name = getattr(config.fluids['fuel'], 'name', None) or "Fuel"
     lox = Fluid(name=ox_name, density=rho_lox)
     rp1 = Fluid(name=fuel_name, density=rho_rp1)
-    # GN2 (gaseous nitrogen) for ullage and pressurant - density varies with pressure
-    # Use average density during blowdown (higher at start, lower at end)
-    gn2_ullage = Fluid(name="GN2", density=50)  # kg/m³ approximate for ullage
-    
+
+    # THE T-0 ULLAGE IS THE TANK'S OWN, AT TANK PRESSURE.
+    #
+    # This was Fluid("GN2", density=50) with initial_gas_mass=0.05 in both tanks: 1.000 L of gas
+    # whatever the tank. The 6.5 kN tanks, loaded to 90 %, have 0.644 L (LOX) and 0.620 L (fuel)
+    # of ullage, so RocketPy refused both tanks and the shipped vehicle could not be flown at all;
+    # copv_flight_helpers then blamed the propellant load. The gas that is really there fills
+    # V_tank - m/rho_liquid at the tank's pressure: 47.8 kg/m3 of N2 at 584.27 psia / 293.15 K,
+    # 30.8 g and 29.6 g. The 0.999 keeps the fluid just inside RocketPy's inverse_volume domain,
+    # which fails on float equality at a completely full tank.
+    ullage = {}
+    for name, section, m_liq, rho_liq, V in (
+        ("LOX", config.lox_tank, m_lox0, rho_lox, lox_geom.total_volume),
+        ("fuel", config.fuel_tank, m_rp10, rho_rp1, rp1_geom.total_volume),
+    ):
+        V_liq = m_liq / rho_liq
+        V_ull = V - V_liq
+        if V_ull <= 0.0:
+            raise ValueError(
+                f"{name} tank: {V_liq * 1e3:.4f} L of liquid in a {V * 1e3:.4f} L tank leaves no ullage"
+            )
+        rho_g, P_abs, T_g = ullage_gas_density(section)
+        ullage[name] = {
+            "tank_volume_L": V * 1e3,
+            "liquid_volume_L": V_liq * 1e3,
+            "ullage_volume_L": V_ull * 1e3,
+            "gas": str(section.ullage_gas),
+            "pressure_pa": P_abs,
+            "temperature_K": T_g,
+            "gas_density_kg_m3": rho_g,
+            "initial_gas_kg": 0.999 * V_ull * rho_g,
+            "fluid": Fluid(name=f"{section.ullage_gas} ullage", density=rho_g),
+        }
+    m_ullage_gas = ullage["LOX"]["initial_gas_kg"] + ullage["fuel"]["initial_gas_kg"]
+    # THE PRESSURANT IS THE ULLAGE GAS. The regulator fills the ullages from the COPV, so the bottle
+    # holds what the tanks' ullage_gas names: one species, priced as that species everywhere below
+    # (the refill, the isothermal lockup reserve, the labels). These read "N2" whatever the gas was,
+    # and Layer X's helium bottle was priced as nitrogen (docs/layerx/AUDIT.md 5.2).
+    gases = sorted({ullage["LOX"]["gas"], ullage["fuel"]["gas"]})
+    pressurant_gas = gases[0] if len(gases) == 1 else " / ".join(gases)
+    # The names RocketPy prints and the tank is looked up by: "Pressurant (N₂) Tank" stays what it was.
+    gas_label = " / ".join(_GAS_LABEL.get(g.strip().lower(), g) for g in gases)
+
     # Pressurant (COPV) tank setup
     m_pressurant = 0.0
-    press_tank_obj = None
     if config.press_tank:
         m_pressurant = getattr(config.press_tank, 'initial_gas_mass', None) or 0.0
         if m_pressurant > 0:
@@ -710,21 +833,20 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
             # geometry.inverse_volume, whose domain is exactly [0, V_copv], so a tank filled
             # to precisely its own volume fails on float equality. Mass is conserved exactly;
             # only the density carries the 0.1 %.
-            gn2_pressurant = Fluid(name="GN2_COPV", density=m_pressurant/(V_copv*0.999))
+            copv_gas = Fluid(name=f"{gas_label} COPV", density=m_pressurant/(V_copv*0.999))
             press_geom = CylindricalTank(
                 radius=config.press_tank.press_radius,
                 height=press_h_eff,
                 spherical_caps=False
             )
-            
+
             # PRESSURANT DOES NOT LEAVE THE VEHICLE.
             #
             # This used to drain the whole COPV over the burn
             # (mdot = m_pressurant / burn_time), which RocketPy subtracts from vehicle mass --
             # i.e. the gas was being flown as propellant. It is not: it moves from the COPV
             # into the ullage the departing propellant leaves behind, and every gram of it is
-            # still on board at burnout. The comment on the old line even said "flows out to
-            # propellant tanks", which is exactly the reason it must not be expelled.
+            # still on board at burnout.
             #
             # What it cost: on the 180 lb / 11 L point, 1.551 kg of N2 out of 81.647 kg wet.
             # Burnout mass 69.36 kg instead of 70.90, so ln(m0/mf) went 0.1412 -> 0.1631 and
@@ -732,124 +854,83 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
             # exactly -0.000 kg at burnout, which RocketPy raises on, so the sim would
             # intermittently fail outright rather than just answer wrongly.
             #
-            # Only configs that actually declare press_tank.initial_gas_mass were affected;
-            # leaving it unset (the shipped configs) modelled no pressurant at all.
-            #
-            # The COPV -> tank transfer does shift the CG, which is not modelled here either
-            # way. That is a stability question, not a trajectory one.
+            # Nothing goes overboard. What the regulator moves into the ullages (below) leaves
+            # the COPV and arrives in the tanks, so the mass is conserved and the CG follows it.
             mdot_pressurant_avg = 0.0
 
-            print(f"  Pressurant (N₂): {m_pressurant:.3f} kg in {V_copv*1000:.2f} L "
+            print(f"  Pressurant ({gas_label}): {m_pressurant:.3f} kg in {V_copv*1000:.2f} L "
                   f"({m_pressurant/V_copv:.0f} kg/m3), carried as dead mass (not expelled)")
 
-    # Convert mdot_lox and mdot_fuel to RocketPy Functions if they're not already
-    # (MassFlowRateBasedTank expects Functions)
-    # Handle: RocketPy Function, callable (interp1d), or constant float
-    # Use high resolution (500 points/sec) with explicit cutoff points
-    # IMPORTANT: Extend domain slightly beyond effective_burn_time to avoid RocketPy warnings
-    # about evaluating functions outside their domain during numerical integration
-    domain_buffer = max(0.01, effective_burn_time * 0.02)  # 2% buffer or 10ms minimum
-    extended_time = effective_burn_time + domain_buffer
-    
-    if not isinstance(mdot_lox, Function):
-        n_samples = max(int(burn_time * 500) + 1, 1000)
-        times_base = np.linspace(0, extended_time, n_samples)
-        # Add explicit cutoff points for sharp transition
-        eps = 1e-6
-        critical_times = [effective_burn_time, effective_burn_time + eps, extended_time]
-        times_mdot = np.unique(np.concatenate([times_base, critical_times]))
-        times_mdot = times_mdot[times_mdot <= extended_time]
-        
-        # Check if mdot_lox is callable (e.g., interp1d) or a constant
-        if callable(mdot_lox):
-            # It's callable (interp1d or similar) - evaluate at each time point
-            # Return 0 for times beyond effective_burn_time (extended domain is just for RocketPy compatibility)
-            mdot_lox_vals = np.array([float(mdot_lox(t)) if t <= effective_burn_time else 0.0 for t in times_mdot])
-        else:
-            # It's a constant value
-            mdot_lox_vals = np.array([float(mdot_lox) if t <= effective_burn_time else 0.0 for t in times_mdot])
-        
-        # RocketPy Function expects 2D array: [[x1, y1], [x2, y2], ...]
-        source = np.column_stack((times_mdot, mdot_lox_vals))
-        mdot_lox = Function(source)
-    
-    if not isinstance(mdot_fuel, Function):
-        n_samples = max(int(burn_time * 500) + 1, 1000)
-        times_base = np.linspace(0, extended_time, n_samples)
-        # Add explicit cutoff points for sharp transition
-        eps = 1e-6
-        critical_times = [effective_burn_time, effective_burn_time + eps, extended_time]
-        times_mdot = np.unique(np.concatenate([times_base, critical_times]))
-        times_mdot = times_mdot[times_mdot <= extended_time]
-        
-        # Check if mdot_fuel is callable (e.g., interp1d) or a constant
-        if callable(mdot_fuel):
-            # It's callable (interp1d or similar) - evaluate at each time point
-            # Return 0 for times beyond effective_burn_time (extended domain is just for RocketPy compatibility)
-            mdot_fuel_vals = np.array([float(mdot_fuel(t)) if t <= effective_burn_time else 0.0 for t in times_mdot])
-        else:
-            # It's a constant value
-            mdot_fuel_vals = np.array([float(mdot_fuel) if t <= effective_burn_time else 0.0 for t in times_mdot])
-        
-        # RocketPy Function expects 2D array: [[x1, y1], [x2, y2], ...]
-        source = np.column_stack((times_mdot, mdot_fuel_vals))
-        mdot_fuel = Function(source)
+    # REFILL. With a COPV on board the regulator holds tank pressure, so the ullage gas grows by
+    # rho_gas/rho_liquid per kg of liquid drained and the COPV loses the same. Without one it is a
+    # blowdown: the T-0 gas expands and its mass is fixed.
+    refilled = m_pressurant > 0
+    t_flux = np.concatenate([t_grid[t_grid < effective_burn_time], [effective_burn_time]])
 
-    oxidizer_tank = MassFlowRateBasedTank(
+    def _tank_masses(name, m0, cum):
+        cum_f = np.interp(t_flux, t_grid, cum)
+        liquid = np.clip(m0 - cum_f, 1.0e-9, None)
+        gas = ullage[name]["initial_gas_kg"] + (
+            ullage[name]["gas_density_kg_m3"] / (rho_lox if name == "LOX" else rho_rp1) * (m0 - liquid) if refilled else 0.0
+        )
+        return Function(np.column_stack((t_flux, liquid))), Function(np.column_stack((t_flux, np.broadcast_to(gas, t_flux.shape)))), liquid
+
+    lox_liquid, lox_gas, lox_liq_arr = _tank_masses("LOX", m_lox0, cum_O)
+    fuel_liquid, fuel_gas, fuel_liq_arr = _tank_masses("fuel", m_rp10, cum_F)
+    oxidizer_tank = MassBasedTank(
         name="LOX Tank",
         geometry=lox_geom,
         flux_time=effective_burn_time,
         liquid=lox,
-        gas=gn2_ullage,
-        initial_liquid_mass=m_lox0,
-        initial_gas_mass=0.05,  # Small ullage
-        liquid_mass_flow_rate_in=0.0,
-        liquid_mass_flow_rate_out=mdot_lox,
-        gas_mass_flow_rate_in=0.0,
-        gas_mass_flow_rate_out=0.0,
+        gas=ullage["LOX"]["fluid"],
+        liquid_mass=lox_liquid,
+        gas_mass=lox_gas,
         discretize=100,
     )
-
-    fuel_tank = MassFlowRateBasedTank(
-        name="RP-1 Tank",
+    fuel_tank = MassBasedTank(
+        name="Fuel Tank",
         geometry=rp1_geom,
         flux_time=effective_burn_time,
         liquid=rp1,
-        gas=gn2_ullage,
-        initial_liquid_mass=m_rp10,
-        initial_gas_mass=0.05,  # Small ullage
-        liquid_mass_flow_rate_in=0.0,
-        liquid_mass_flow_rate_out=mdot_fuel,
-        gas_mass_flow_rate_in=0.0,
-        gas_mass_flow_rate_out=0.0,
+        gas=ullage["fuel"]["fluid"],
+        liquid_mass=fuel_liquid,
+        gas_mass=fuel_gas,
         discretize=100,
     )
+    refill_kg = 0.0
+    if refilled:
+        refill_kg = sum(
+            ullage[n]["gas_density_kg_m3"] / rho * (m0 - liq[-1])
+            for n, rho, m0, liq in (("LOX", rho_lox, m_lox0, lox_liq_arr), ("fuel", rho_rp1, m_rp10, fuel_liq_arr))
+        )
+        if refill_kg > m_pressurant - 1.0e-4:
+            raise ValueError(
+                f"COPV holds {m_pressurant:.3f} kg; holding tank pressure over this burn needs "
+                f"{refill_kg:.3f} kg into the ullages. The regulated curve cannot be flown with this COPV."
+            )
+        lockup_kg = max(u["gas_density_kg_m3"] for u in ullage.values()) * V_copv
+        if refill_kg > m_pressurant - lockup_kg:
+            report_warnings.append(
+                f"COPV refill {refill_kg:.3f} kg exceeds the {m_pressurant - lockup_kg:.3f} kg above tank "
+                "pressure (isothermal): the regulator would lose lockup before burnout"
+            )
 
     # Create pressurant tank if configured
     pressurant_tank = None
     if config.press_tank and m_pressurant > 0:
-        # Create pressurant mass flow function (linear depletion approximation)
-        # Use extended_time domain to avoid RocketPy warnings
-        n_samples = max(int(burn_time * 500) + 1, 1000)
-        times_base = np.linspace(0, extended_time, n_samples)
-        eps = 1e-6
-        critical_times = [effective_burn_time, effective_burn_time + eps, extended_time]
-        times_mdot = np.unique(np.concatenate([times_base, critical_times]))
-        times_mdot = times_mdot[times_mdot <= extended_time]
-        
-        # Pressurant flow rate proportional to propellant consumption
-        # This is a simplification - actual flow depends on blowdown ratio
-        # Return 0 for times beyond effective_burn_time
-        mdot_press_vals = np.array([mdot_pressurant_avg if t <= effective_burn_time else 0.0 for t in times_mdot])
-        source = np.column_stack((times_mdot, mdot_press_vals))
-        mdot_pressurant = Function(source)
-        
+        # What leaves the COPV is what arrives in the ullages, plus nothing overboard.
+        refill_rate = mdot_pressurant_avg + (
+            ullage["LOX"]["gas_density_kg_m3"] / rho_lox * np.interp(t_flux, t_grid, mdot_O_grid)
+            + ullage["fuel"]["gas_density_kg_m3"] / rho_rp1 * np.interp(t_flux, t_grid, mdot_F_grid)
+        )
+        mdot_pressurant = Function(np.column_stack((t_flux, refill_rate)))
+
         pressurant_tank = MassFlowRateBasedTank(
-            name="Pressurant (N₂) Tank",
+            name=f"Pressurant ({gas_label}) Tank",
             geometry=press_geom,
             flux_time=effective_burn_time,
-            liquid=gn2_pressurant,  # Using "liquid" field for gas (RocketPy limitation)
-            gas=gn2_pressurant,
+            liquid=copv_gas,  # Using "liquid" field for gas (RocketPy limitation)
+            gas=copv_gas,
             # The stub comes OUT OF the pressurant mass, not on top of it. It used to be a
             # flat 0.01 kg added alongside initial_liquid_mass, so the tank held
             # m_pressurant + 0.01 kg: with the density derived from m_pressurant/V that is
@@ -857,13 +938,21 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
             initial_liquid_mass=max(0.0, m_pressurant - 1.0e-4),
             initial_gas_mass=1.0e-4,
             liquid_mass_flow_rate_in=0.0,
-            liquid_mass_flow_rate_out=mdot_pressurant,  # zero: see the note at mdot_pressurant_avg
+            liquid_mass_flow_rate_out=mdot_pressurant,  # into the ullages, still on board
             gas_mass_flow_rate_in=0.0,
             gas_mass_flow_rate_out=0.0,
             discretize=100,
         )
 
-    # thrust_curve is already set above (may have been truncated)
+    # PRESSURE THRUST. The curve was computed at one ambient pressure; in flight the same engine
+    # gives F + (p_ref - p(z)) * A_exit (Sutton & Biblarz eq. 3-21). Without reference_pressure
+    # RocketPy's pressure_thrust is zero and the curve flew unchanged to apogee: ~55 N short at
+    # 1.2 km MSL on the 6.5 kN engine.
+    p_ref = getattr(config.thrust, "reference_pressure_pa", None)
+    if p_ref is None:
+        from engine.core.runner import compute_ambient_pressure_from_elevation
+
+        p_ref = float(compute_ambient_pressure_from_elevation(float(config.environment.elevation)))
 
     # Liquid motor - use effective_burn_time for burn_time
     # engine_cm_offset: how far above nozzle the engine dry mass CM is
@@ -877,78 +966,121 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
         nozzle_radius=math.sqrt(A_e / math.pi),
         nozzle_position=0.0,  # Nozzle at origin of motor coordinate system
         coordinate_system_orientation="nozzle_to_combustion_chamber",
+        reference_pressure=float(p_ref),
     )
 
     # Rocket assembly - stack from bottom (tail) to top (nose)
     # In "tail_to_nose" system: lower position = tail, higher position = nose
     # motor_position: where the nozzle exit is, measured from rocket tail
-    
+
     # Add tanks relative to motor (nozzle) position
     # Each tank tracks its own mass, CM, and inertia as propellant/gas depletes
     liquid_motor.add_tank(fuel_tank, position=config.fuel_tank.fuel_tank_pos)
     liquid_motor.add_tank(oxidizer_tank, position=config.lox_tank.ox_tank_pos)
-    
+
     # Add pressurant tank if configured
     if pressurant_tank is not None:
         liquid_motor.add_tank(pressurant_tank, position=config.press_tank.pres_tank_pos)
         print(f"  Added pressurant tank at position {config.press_tank.pres_tank_pos:.2f}m")
 
+    # DRAG. Cd(M) from the user's tables, or the Barrowman / OpenRocket component build-up of the
+    # vehicle assembled here (engine/pipeline/vehicle_drag.py). This was Cd 0.45 at every Mach,
+    # motor on and off, whatever the length, fins or finish: the build-up for this 7.76 m, 49:1
+    # vehicle is 0.64-0.91 depending on the finish, and friction alone is above 0.45.
+    drag_curves = resolve_drag_curves(config, A_e, stack)
+
+    # THE VEHICLE AS WEIGHED. Given the liftoff mass (on the rail, loaded and pressed), the
+    # airframe is what is left of it once the motor's dry mass, the propellants and the gases are
+    # booked, so the vehicle flies at exactly that mass whatever the config's airframe_mass says.
+    # The airframe keeps its shape: its inertia scales with its mass and its CM stays put.
+    # Gas the caller says is in the ullages beyond what these tanks hold: lumped with the airframe.
+    extra_gas = (float(ullage_gas_kg) - m_ullage_gas) if ullage_gas_kg is not None else 0.0
+    carried = motor_dry_mass + m_lox0 + m_rp10 + m_pressurant + m_ullage_gas + extra_gas
+    airframe_source = "config"
+    if liftoff_mass is not None:
+        airframe = float(liftoff_mass) - carried
+        if airframe <= 0.0:
+            raise ValueError(
+                f"A liftoff mass of {float(liftoff_mass):.2f} kg leaves nothing for the airframe: the motor "
+                f"dry mass, propellants and gases alone are {carried:.2f} kg"
+            )
+        if float(rocket_mass) > 0.0:
+            rocket_inertia = [float(i) * airframe / float(rocket_mass) for i in rocket_inertia]
+        print(f"  Liftoff mass {float(liftoff_mass):.2f} kg given: airframe {airframe:.2f} kg "
+              f"(config {float(rocket_mass):.2f} kg), inertia scaled with it")
+        rocket_mass = airframe
+        airframe_source = "liftoff mass"
+    airframe_only = float(rocket_mass)
+    if extra_gas:
+        print(f"  Ullage gas at T-0 {float(ullage_gas_kg):.3f} kg given ({m_ullage_gas:.3f} kg in these tanks): "
+              f"{extra_gas:+.3f} kg carried with the airframe")
+        rocket_mass = rocket_mass + extra_gas
+    mass_budget = {
+        "airframe_kg": airframe_only,
+        "airframe_source": airframe_source,
+        "motor_dry_kg": float(motor_dry_mass),
+        "oxidizer_kg": float(m_lox0),
+        "fuel_kg": float(m_rp10),
+        "pressurant_kg": float(m_pressurant),
+        "pressurant_gas": pressurant_gas,
+        "ullage_gas_kg": float(m_ullage_gas + extra_gas),
+        "liftoff_kg": float(airframe_only + carried),
+    }
     rocket = Rocket(
         radius=rocket_radius,
         mass=rocket_mass,
         inertia=rocket_inertia,
         center_of_mass_without_motor=cm_wo_motor,
         coordinate_system_orientation="tail_to_nose",
-        power_off_drag=0.45,
-        power_on_drag=0.45,
+        # As Functions, linear between the points and flat past the ends -- what the
+        # tables say, and what DragCurves.at() reads. A bare list leaves the
+        # interpolation to rocketpy's default, which 1.13 made a spline: a user's
+        # 0.6 -> 0.8 table flew 0.728 at M 0.5.
+        power_off_drag=Function(drag_curves.rocketpy(power_on=False), "Mach Number",
+                                "Drag Coefficient with Power Off", "linear", "constant"),
+        power_on_drag=Function(drag_curves.rocketpy(power_on=True), "Mach Number",
+                               "Drag Coefficient with Power On", "linear", "constant"),
     )
-    
-    # Fins at bottom (tail) - position 0.0
-    rocket.add_trapezoidal_fins(
-        n=config.rocket.fins.no_fins,
-        root_chord=config.rocket.fins.root_chord,
-        tip_chord=config.rocket.fins.tip_chord,
-        span=config.rocket.fins.fin_span,
-        position=config.rocket.fins.fin_position,  # User-specified position from rocket tail
-    )
+    rocket_length_cfg = getattr(config.rocket, "rocket_length", None)
+    if rocket_length_cfg is not None and abs(float(rocket_length_cfg) - stack["length"]) > 1e-3:
+        report_warnings.append(
+            f"rocket.rocket_length {float(rocket_length_cfg):.3f} m, but the stack flown is {stack['length']:.3f} m "
+            "tail to nose tip (tank positions + avionics_payload_length_m); drag and inertia use the stack"
+        )
+
+    # Fins at bottom (tail) - position 0.0. Optional in the schema: a finless vehicle flies without.
+    fins = getattr(config.rocket, "fins", None)
+    if fins is not None:
+        rocket.add_trapezoidal_fins(
+            n=fins.no_fins,
+            root_chord=fins.root_chord,
+            tip_chord=fins.tip_chord,
+            span=fins.fin_span,
+            position=fins.fin_position,  # User-specified position from rocket tail
+        )
+    else:
+        report_warnings.append("rocket.fins is not set: flown without fins, so the vehicle has no aerodynamic stability")
 
     # Motor above fins
     rocket.add_motor(liquid_motor, position=motor_position)
-    
+
     # NOTE: Tank structure masses are now included in LiquidMotor.dry_mass
     # with proper CM and inertia calculations using parallel axis theorem.
     # This is the correct RocketPy approach - no need for separate point masses.
-    
-    # Calculate top of highest tank to place nose above it
-    # Motor center is at motor_position
-    # LOX tank extends from motor_position + ox_tank_pos - lox_h/2 to motor_position + ox_tank_pos + lox_h/2
-    lox_top = motor_position + config.lox_tank.ox_tank_pos + config.lox_tank.lox_h/2
-    fuel_top = motor_position + config.fuel_tank.fuel_tank_pos + config.fuel_tank.rp1_h/2 if config.fuel_tank.fuel_tank_pos > 0 else 0
-    
-    # If pressurant tank is configured, include it
-    press_top = 0
-    if config.press_tank:
-        press_top = motor_position + config.press_tank.pres_tank_pos + config.press_tank.press_h/2
-    
-    # Nose sits above the propulsion stack, with the avionics/payload/recovery section in between.
-    # That section length is configurable (default 4 m) rather than a magic constant.
-    avionics_payload_len = float(getattr(config.rocket, 'avionics_payload_length_m', 4.0) or 0.0)
-    max_height = max(lox_top, fuel_top, press_top, motor_position)
-    nose_position = max_height + avionics_payload_len
 
-    # Nosecone length from fineness ratio (nose length / body DIAMETER). von Kármán (LD-Haack) is the
-    # minimum-drag transonic ogive; ~4.5:1 fineness is near-optimal. Explicit nose_length overrides.
+    # Nose tip avionics_payload_length_m above the highest tank top (built_stack). Length from the
+    # fineness ratio (nose length / body DIAMETER) unless nose_length is set.
     body_diameter = 2.0 * rocket_radius
     nose_kind = getattr(config.rocket, 'nose_kind', None) or "vonKarman"
-    nose_len_override = getattr(config.rocket, 'nose_length', None)
-    if nose_len_override and float(nose_len_override) > 0:
-        nose_length = float(nose_len_override)
-    else:
-        fineness = float(getattr(config.rocket, 'nose_fineness_ratio', 4.5) or 4.5)
-        nose_length = fineness * body_diameter
+    nose_length = stack["nose_length"]
     print(f"  Nosecone: {nose_kind}, length {nose_length:.3f} m "
           f"(fineness {nose_length / body_diameter:.2f}:1 on Ø{body_diameter:.3f} m)")
-    rocket.add_nose(length=nose_length, kind=nose_kind, position=nose_position)
+    rocket.add_nose(length=nose_length, kind=nose_kind, position=stack["nose_tip"])
+
+    upper = getattr(config.rocket, "rail_button_upper_pos_m", None)
+    lower = getattr(config.rocket, "rail_button_lower_pos_m", None)
+    if upper is not None and lower is not None:
+        rocket.set_rail_buttons(upper_button_position=float(upper), lower_button_position=float(lower))
 
     # Compute initial thrust-to-weight ratio for validation
     # Sample thrust at t=0 from thrust curve
@@ -958,22 +1090,24 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
         initial_thrust = float(thrust_curve(0.0))
     else:
         initial_thrust = float(thrust_curve)
-    
+
     # Total initial mass = airframe + motor dry (includes engine + tank structures) + propellants + pressurant gas
-    total_initial_mass = rocket_mass + motor_dry_mass + m_lox0 + m_rp10 + m_pressurant
+    # + the T-0 ullage gas, which ground pre-pressurisation puts there on top of the COPV charge
+    total_initial_mass = rocket_mass + motor_dry_mass + m_lox0 + m_rp10 + m_pressurant + m_ullage_gas
     initial_twr = initial_thrust / (total_initial_mass * g0)
-    
+
     print(f"\nMass Summary:")
     print(f"  Airframe: {rocket_mass:.2f} kg")
     print(f"  Motor dry (engine + tank structures): {motor_dry_mass:.2f} kg")
     print(f"  LOX propellant: {m_lox0:.2f} kg")
     print(f"  Fuel propellant: {m_rp10:.2f} kg")
     if m_pressurant > 0:
-        print(f"  Pressurant gas: {m_pressurant:.3f} kg")
+        print(f"  Pressurant gas ({gas_label}): {m_pressurant:.3f} kg")
+    print(f"  Ullage gas at T-0: {m_ullage_gas:.3f} kg")
     print(f"  TOTAL: {total_initial_mass:.2f} kg")
     print(f"\nInitial thrust: {initial_thrust:.1f} N")
     print(f"Initial T/W ratio: {initial_twr:.3f}")
-    
+
     if initial_twr < 1.0:
         raise ValueError(
             f"Thrust-to-weight ratio ({initial_twr:.3f}) is less than 1.0! "
@@ -981,14 +1115,11 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
             f"Current: thrust={initial_thrust:.1f} N, mass={total_initial_mass:.2f} kg, "
             f"requires thrust > {total_initial_mass * g0:.1f} N"
         )
-    
-    if initial_twr < 1.3:
-        print(f"WARNING: Low T/W ratio ({initial_twr:.3f}). Recommended > 1.3 for reliable liftoff.")
-    
+
     # Flight simulation with timeout to prevent infinite loops
     # max_time limits simulation to prevent hangs if something goes wrong
     max_flight_time = max(300.0, effective_burn_time * 30)  # At least 5 min, or 30x burn time
-    
+
     # Suppress RocketPy's internal Function domain warnings during flight simulation
     # These are numerical precision issues in tank level calculations, not real failures
     with warnings.catch_warnings():
@@ -997,40 +1128,49 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
             message=".*must be within the domain of the Function.*",
             category=UserWarning,
         )
-        # Also suppress ValueErrors that get raised for this issue
-        try:
-            flight = Flight(
-                rocket=rocket,
-                environment=env,
-                rail_length=3.35,
-                inclination=90,
-                heading=0,
-                max_time_step=0.02,
-                max_time=max_flight_time,
-                terminate_on_apogee=True,
-            )
-        except ValueError as e:
-            if "must be within the domain of the Function" in str(e):
-                # RocketPy internal numerical precision issue in tank calculations
-                # Usually caused by liquid level exceeding tank geometry bounds
-                raise ValueError(
-                    f"Tank simulation error: liquid level exceeded tank geometry bounds. "
-                    f"This usually means the propellant mass is too close to tank capacity. "
-                    f"Try reducing LOX or fuel mass by 5-10%."
-                )
-            raise
+        flight = Flight(
+            rocket=rocket,
+            environment=env,
+            rail_length=float(config.environment.rail_length_m),
+            inclination=float(config.environment.launch_inclination_deg),
+            heading=float(config.environment.launch_heading_deg),
+            max_time_step=0.02,
+            max_time=max_flight_time,
+            terminate_on_apogee=True,
+        )
 
     # RocketPy reports apogee as ASL (Above Sea Level) - convert to AGL for display
     elevation = float(config.environment.elevation)
     apogee_asl = float(flight.apogee)
     apogee_agl = apogee_asl - elevation
-    
+
     try:
         # flight.vz.get_source() returns (N, 2): column 0 = time, column 1 = velocity
         vz_source = flight.vz.get_source()
         max_v = float(np.max(vz_source[:, 1]))  # Extract only the velocity column
     except Exception:
         max_v = None
+
+    if truncation_info.get("truncated"):
+        truncation_info["cutoff_time"] = float(liquid_motor.burn_out_time)
+
+    report = flight_report(
+        flight,
+        config,
+        drag_curves,
+        extra={
+            "reference_pressure_pa": float(p_ref),
+            "nozzle_exit_area_m2": float(A_e),
+            "wet_mass_kg": float(total_initial_mass),
+            "stack_length_m": float(stack["length"]),
+            "ullage": {k: {kk: vv for kk, vv in v.items() if kk != "fluid"} for k, v in ullage.items()},
+            "copv_refill_kg": float(refill_kg),
+            "warnings": report_warnings,
+        },
+    )
+
+    # Carried on the Flight too: copv_flight_helpers.run_flight_simulation keeps only the Flight.
+    flight.flight_report = report
 
     print(f"Apogee AGL [m]: {apogee_agl:.2f} (ASL: {apogee_asl:.2f}, elevation: {elevation:.2f})")
     if max_v is not None:
@@ -1046,4 +1186,6 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
         "params": config,
         "truncation_info": truncation_info,
         "mass_caps": mass_caps,
+        "mass_budget": mass_budget,
+        "flight_report": report,
     }

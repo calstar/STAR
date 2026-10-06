@@ -43,7 +43,7 @@ import type { PIDNodeData } from './types';
 import { numberTag } from './tags';
 import { migrate } from './migrate';
 import { handleCentre, handleEnd } from './ports';
-import { copySelection, pasteClip } from './clipboard';
+import { copySelection, duplicatePage, pasteClip } from './clipboard';
 import type { Clip } from './clipboard';
 import { TitleBlock } from './TitleBlock';
 import type { SheetMeta } from './exportImage';
@@ -57,12 +57,14 @@ import type { Tool } from './ToolContext';
 import { AttachmentLayer, DrawnRoutes } from './AttachmentLayer';
 import { ChecksPanel } from './ChecksPanel';
 import { VentLayer } from './VentLayer';
+import { SignalLayer } from './SignalLayer';
+import { isSignalPort, landsOnSignalPort, setSignal, signalTo } from './signals';
 import { PageBar } from './PageBar';
 import {
   DEFAULT_PAGE, applyPage, clearSelection, listPages, moveToPage, pageOf, pageOfSubjects, selectOnPage,
 } from './pages';
 import { useHistory } from './history';
-import { translateSubgraph, turnSelected } from './graphOps';
+import { matePair, translateSubgraph, turnSelected } from './graphOps';
 import { clearOfHost, clipAt, isInstrument } from './attach';
 import { drawnLines } from './lineHit';
 import { J_END, dragging, isJunction, junctionEnd } from './junctions';
@@ -74,7 +76,7 @@ import { GRID } from './route';
 import type { Pt } from './route';
 import {
   canJoin, clientOf, commitDrop, connectLine, drawnPoints, lineUnder, partOnLine, plainChanges, reconnectLine,
-  reconnectMoving, reconnectableEnds, resolveDrop,
+  minPull, reconnectMoving, reconnectableEnds, resolveDrop,
 } from './drop';
 import type { DropScene, Under } from './drop';
 import { snapOnDrop } from './snap';
@@ -173,6 +175,8 @@ interface CanvasProps {
    */
   viewportsRef:       React.MutableRefObject<Map<string, Viewport>>;
   getRef:             React.MutableRefObject<() => Snapshot>;
+  /** Save now whatever the autosave has not saved yet, and wait for it. */
+  saveNowRef:         React.MutableRefObject<() => Promise<void>>;
   loadRef:            React.MutableRefObject<(d: Snapshot) => void>;
   clearRef:           React.MutableRefObject<() => void>;
   clearCountRef:      React.MutableRefObject<() => { page: string; nodes: number; edges: number }>;
@@ -188,15 +192,16 @@ interface CanvasProps {
   sheet:              Omit<SheetMeta, 'page'>;
   /** Autosave hit a 403: this diagram was unshared while it was open. */
   onForbidden:        () => void;
-  /** Autosave hit a 423: the checkout lapsed or was taken. */
-  onLockLost:         () => void;
+  /** Autosave hit a 423: the checkout went to someone else. Given the name of
+   *  the diagram the refused edits were kept as, when keeping them worked. */
+  onLockLost:         (savedAs?: string) => void;
   /** React Flow themes its own chrome (handles, selection, controls) off
    *  this -- it does not read the CSS variables above on its own. */
   theme:              Theme;
 }
 
 function PIDCanvas({
-  diagramRef, fitRef, viewportsRef, page, setPage, declaredPages, setDeclaredPages, getRef, loadRef, clearRef, clearCountRef, undoRef, redoRef,
+  diagramRef, fitRef, viewportsRef, page, setPage, declaredPages, setDeclaredPages, getRef, saveNowRef, loadRef, clearRef, clearCountRef, undoRef, redoRef,
   releaseRef, getHistoryRef, getReleasesRef, restoreMicroRef, restoreReleaseRef, onForbidden, onLockLost,
   mode, sheet, theme,
 }: CanvasProps) {
@@ -306,6 +311,8 @@ function PIDCanvas({
   // the server snapshots a microversion only every few minutes, and what it
   // has not snapshotted is what the flush on hide is for.
   const lastSaved = useRef<string>(''), unsnapped = useRef(false);
+  // The autosave on the wire, if one is: what `saveNowRef` waits for.
+  const inFlight = useRef<Promise<unknown> | null>(null);
 
   // Load the selected diagram's working copy whenever the selection changes.
   useEffect(() => {
@@ -352,19 +359,47 @@ function PIDCanvas({
       if (serialized === lastSaved.current) return;
       lastSaved.current = serialized;
       unsnapped.current = true;
-      api.autosaveDiagram(diagramRef, { nodes, edges }).catch((e: unknown) => {
+      const payload = { nodes, edges };
+      const sent = api.autosaveDiagram(diagramRef, payload);
+      inFlight.current = sent.catch(() => {});
+      sent.catch((e: unknown) => {
         lastSaved.current = ''; // failed -- let the next change retry
         // 403 means this diagram was unshared from you while you had it open.
         // Retrying is silent and pointless -- tell the parent so it can stop
         // and fall back to one of your own.
         if (e instanceof api.ApiError && e.status === 403) onForbidden();
-        // 423: the checkout lapsed and someone else took it. Drop to read-only
-        // rather than retry into a void.
-        else if (e instanceof api.ApiError && e.status === 423) onLockLost();
+        // 423: someone else has the checkout. (A lapse nobody took is not a
+        // 423 any more -- the server hands the hold back on this save.) Keep
+        // what this save carried as a diagram of the user's own *first*: going
+        // read only leaves it on screen only, and "Take it back" reloads over
+        // it. Then drop to read-only rather than retry into a void.
+        else if (e instanceof api.ApiError && e.status === 423) {
+          api.rescueDiagram(diagramRef, payload)
+            .then(kept => onLockLost(kept.name))
+            .catch(() => onLockLost());
+        }
       });
     }, 1000);
     return () => clearTimeout(t);
   }, [nodes, edges, diagramKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Giving the checkout back has to wait for this. The autosave writes a
+  // second after the drawing stops changing, so an edit made just before
+  // Release -- a section box let go of, then Release -- was sent after the
+  // hold had gone: refused with a 423, kept only as an "(unsaved changes)"
+  // copy, and gone from the drawing when it reloaded. The release awaits the
+  // save on the wire, then sends what is still unsent; the debounced write
+  // that follows finds it saved and sends nothing.
+  saveNowRef.current = useCallback(async () => {
+    await inFlight.current;
+    if (loadedId.current !== diagramKey || readOnlyRef.current) return;
+    const g = snapshot.current;
+    const serialized = JSON.stringify(api.toStored(g));
+    if (serialized === lastSaved.current) return;
+    await api.autosaveDiagram(diagramRef, g);
+    lastSaved.current = serialized;
+    unsnapped.current = true;
+  }, [diagramKey, diagramRef]);
 
   // Best-effort flush to S3 on tab close / hide, so the last few edits land even
   // between the periodic (server-throttled) microversions.
@@ -775,6 +810,26 @@ function PIDCanvas({
   }, [setCenter, getZoom]);
 
   /**
+   * The dotted line picked by clicking it, for Delete or Backspace to take
+   * away. Not a React Flow selection: a dotted line is not an edge
+   * (signals.ts). Any other click puts it down.
+   */
+  const [signalPicked, setSignalPicked] = useState<{ bank: string; port: string } | null>(null);
+  useEffect(() => {
+    if (!signalPicked) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (readOnlyRef.current) return;
+      commitGraph(setSignal(snapshot.current.nodes, signalPicked.bank, signalPicked.port, null), snapshot.current.edges);
+      setSignalPicked(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [signalPicked, commitGraph]);
+
+  /**
    * Drawing a line by dragging, and letting go of it.
    *
    * The answer to "must I place a junction for every tap": no. Drag from the
@@ -797,6 +852,7 @@ function PIDCanvas({
    */
   const connectingFrom = useRef<{ nodeId: string; handleId: string | null; reconnect?: string } | null>(null);
 
+
   const onConnectStart = useCallback((
     _e: unknown, params: { nodeId: string | null; handleId: string | null },
   ) => {
@@ -815,7 +871,9 @@ function PIDCanvas({
     nodes: snapshot.current.nodes,
     edges: snapshot.current.edges,
     endOf: endOfClear,
-    portsOf: n => getInternalNode(n.id)?.internals.handleBounds?.source?.map(h => h.id ?? '') ?? null,
+    // A solenoid manifold's outlets carry dotted lines, never flow lines.
+    portsOf: n => getInternalNode(n.id)?.internals.handleBounds?.source
+      ?.map(h => h.id ?? '').filter(h => !isSignalPort(n, h)) ?? null,
     lines: drawnPoints(drawnLines()),
     obstacles: obstaclesRef.current,
     zoom: getZoom(),
@@ -870,8 +928,19 @@ function PIDCanvas({
     const client = clientOf(event);
     const at = screenToFlowPosition(client, { snapToGrid: false });
     const scene = dropScene();
-    const plan = resolveDrop(
-      { kind: 'port', nodeId: from.nodeId, handle: from.handleId }, at, underPointer(client, at, scene, state.toHandle), scene);
+    const under = underPointer(client, at, scene, state.toHandle);
+    const fromNode = scene.nodes.find(n => n.id === from.nodeId);
+    // Out of a solenoid manifold's outlet: a dotted line to wherever it was
+    // let go -- any symbol, any line, the canvas. Nothing else. See signals.ts.
+    if (isSignalPort(fromNode, from.handleId)) {
+      const start = fromNode ? scene.endOf(fromNode, from.handleId) : null;
+      if (start && Math.hypot(at.x - start.x, at.y - start.y) < minPull(scene.zoom)) return;
+      const signal = signalTo(from.nodeId, at, under, scene.nodes);
+      if (signal) commitGraph(setSignal(scene.nodes, from.nodeId, from.handleId, signal), scene.edges);
+      return;
+    }
+    if (landsOnSignalPort(under, scene.nodes)) return;
+    const plan = resolveDrop({ kind: 'port', nodeId: from.nodeId, handle: from.handleId }, at, under, scene);
     const made = commitDrop(plan, scene);
     if (made) commitGraph(made.nodes, made.edges);
   }, [screenToFlowPosition, commitGraph, dropScene, underPointer]);
@@ -887,7 +956,9 @@ function PIDCanvas({
   const onBranchDrop = useCallback((source: BranchSource, at: Pt, client: { x: number; y: number }) => {
     if (readOnlyRef.current) return;
     const scene = dropScene();
-    const made = commitDrop(resolveDrop(source, at, underPointer(client, at, scene), scene), scene);
+    const under = underPointer(client, at, scene);
+    if (landsOnSignalPort(under, scene.nodes)) return;
+    const made = commitDrop(resolveDrop(source, at, under, scene), scene);
     if (made) commitGraph(made.nodes, made.edges);
   }, [commitGraph, dropScene, underPointer]);
 
@@ -932,9 +1003,10 @@ function PIDCanvas({
     const client = clientOf(event);
     const at = screenToFlowPosition(client, { snapToGrid: false });
     const scene = dropScene();
+    const under = underPointer(client, at, scene, state.toHandle);
+    if (landsOnSignalPort(under, scene.nodes)) return;
     const plan = resolveDrop(
-      { kind: 'reconnect', edgeId: edge.id, moving: reconnectMoving(edge, handleType, stays) },
-      at, underPointer(client, at, scene, state.toHandle), scene);
+      { kind: 'reconnect', edgeId: edge.id, moving: reconnectMoving(edge, handleType, stays) }, at, under, scene);
     const made = commitDrop(plan, scene);
     if (made) commitGraph(made.nodes, made.edges);
   }, [screenToFlowPosition, commitGraph, dropScene, underPointer]);
@@ -1194,6 +1266,12 @@ function PIDCanvas({
       ...(patch.geometry ? { geometry: patch.geometry } : {}),
     };
     if (subject.kind === 'node') {
+      // A disconnect given a mate: the mate is told too (`matePair`).
+      setNodes(nds => {
+        const was = nds.find(n => n.id === subject.id)?.data as unknown as PIDNodeData | undefined;
+        if (was?.componentType !== 'QD') return nds;
+        return matePair(nds, subject.id, was.options?.pairedWith ?? '', patch.options?.pairedWith ?? '');
+      });
       setNodes(nds => nds.map(n => {
         if (n.id !== subject.id) return n;
         const data = { ...n.data, ...common, label: patch.label, fluid: patch.fluid };
@@ -1249,7 +1327,7 @@ function PIDCanvas({
     <div
       className="relative flex h-full flex-1 flex-col"
       style={tool !== 'none' ? { cursor: 'crosshair' } : undefined}
-      onClick={() => setColorMenu(null)}
+      onClick={() => { setColorMenu(null); setSignalPicked(null); }}
     >
       <div className="relative min-h-0 flex-1">
       <ToolProvider tool={tool} onDone={disarm}>
@@ -1320,6 +1398,8 @@ function PIDCanvas({
             hidden with their probes, not drawn over this one. */}
         <DrawnRoutes><AttachmentLayer nodes={view.nodes} edges={view.edges} /></DrawnRoutes>
         <VentLayer nodes={view.nodes} edges={view.edges} />
+        <SignalLayer nodes={view.nodes} edges={view.edges} selected={signalPicked}
+          onSelect={readOnly ? undefined : setSignalPicked} />
         <BranchPreview />
         <Controls />
         <TitleBlock meta={{ ...sheet, page }} />
@@ -1376,6 +1456,17 @@ function PIDCanvas({
               ? { ...n, data: { ...n.data, page: to } } : n));
           setDeclaredPages(ps => ps.map(x => (x === from ? to : x)));
           setPage(cur => (cur === from ? to : cur));
+        }}
+        // Another version of a page -- hotfire and launch -- is its copy with
+        // a few changes: everything on it, the same tags, on a new page that
+        // opens. See `duplicatePage`.
+        onDuplicate={(from, name) => {
+          if (readOnlyRef.current || pages.includes(name)) return;
+          const { nodes: ns, edges: es } = snapshot.current;
+          const copy = duplicatePage(clearSelection(ns), clearSelection(es), from, name);
+          setDeclaredPages(ps => (ps.includes(name) ? ps : [...ps, name]));
+          commitGraph(copy.nodes, copy.edges);
+          setPage(name);
         }}
       />
 
@@ -1493,6 +1584,7 @@ export function PIDDesigner() {
   const [unshared, setUnshared] = useState<string | null>(null);
 
   const getRef            = useRef<() => Snapshot>(() => ({ nodes: [], edges: [] }));
+  const saveNowRef        = useRef<() => Promise<void>>(() => Promise.resolve());
   const loadRef           = useRef<(d: Snapshot) => void>(() => {});
   const clearRef          = useRef<() => void>(() => {});
   const clearCountRef     = useRef<() => { page: string; nodes: number; edges: number }>(
@@ -1593,6 +1685,7 @@ export function PIDDesigner() {
     api: designApi,
     ref: activeRef,
     reload: useCallback(async () => { setReloadKey((n) => n + 1); }, []),
+    beforeRelease: useCallback(() => saveNowRef.current(), []),
     // On a developer's own machine the checkout has no colleague to protect,
     // so it stays out of the way: the diagram is taken on open, held while the
     // tab lives, and taken straight back if it lapses. Deployed, the ordinary
@@ -1712,6 +1805,7 @@ export function PIDDesigner() {
               declaredPages={declaredPages}
               setDeclaredPages={setDeclaredPages}
               getRef={getRef}
+              saveNowRef={saveNowRef}
               loadRef={loadRef}
               clearRef={clearRef}
               clearCountRef={clearCountRef}

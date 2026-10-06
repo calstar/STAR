@@ -17,6 +17,9 @@
 #include "control/AbortBroadcaster.hpp"
 #include "control/ActuatorCommander.hpp"
 #include "control/HoldTimer.hpp"
+#include "control/PressureFeed.hpp"
+#include "control/ScriptRunner.hpp"
+#include "control/ScriptStates.hpp"
 #include "control/StateMachine.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
@@ -113,13 +116,36 @@ public:
     /**
      * Debug mode only: manual OPEN/CLOSE for one role. Overrides persist until a state
      * transition (which clears overrides and applies the new state's CSV).
+     *
+     * Allowed in a dynamic state too, where it outranks the running script's position for that
+     * valve. The script cannot notice, and the two will fight over it — but the operator with
+     * their hand on the panel is the last line, and taking that away from them to protect a script
+     * is the wrong trade.
+     *
+     * @param refusal_reason optional; on a false return, set to a short phrase for a protocol
+     *        reply. One validation, one wording — the TCP layer does not get its own copy of these
+     *        rules to drift out of step with.
      */
-    bool manualActuator(const std::string& name, int pos);
+    bool manualActuator(const std::string& name, int pos, std::string* refusal_reason = nullptr);
 
     /**
      * Extend the FIRE window (only valid while in FIRE state).
      */
     bool extendFire();
+
+    /**
+     * What this process made of its dynamic states at startup, as newline-terminated text.
+     *
+     * One line per state that declares a script:
+     *   SCRIPT:<id>:<name>:OK:<statements>:<timeout_ms>
+     *   SCRIPT:<id>:<name>:REFUSED:<reason>
+     * terminated by "END\n".
+     *
+     * Read-only and answerable from any thread — the answer was decided once, at config load, and
+     * is fixed for the life of the run. It exists so the panel can show a refused state as dead
+     * with a reason on hover rather than as a button that errors when pressed.
+     */
+    std::string scriptStatusReport() const;
 
     State currentState() const {
         return current_state_.load();
@@ -161,7 +187,7 @@ private:
     bool doTransitionTo(State to, uint32_t requested_hold_ms = 0,
                         std::string* refusal_reason = nullptr);
     bool doSetDebugMode(bool enabled);
-    bool doManualActuator(const std::string& name, int pos);
+    bool doManualActuator(const std::string& name, int pos, std::string* refusal_reason = nullptr);
     bool doExtendFire();
 
     /**
@@ -198,7 +224,13 @@ private:
     ActuatorCommander actuator_commander_;
     AbortBroadcaster abort_broadcaster_;
     HoldTimer hold_timer_;
+    ScriptRunner script_runner_;
+    /** Live calibrated pressures for pressure(), on its own Elodin connection. */
+    PressureFeed pressure_feed_;
     fsw::elodin::ElodinClient elodin_;
+
+    /** Build the callbacks a script is allowed to reach the world through. */
+    ScriptEnv makeScriptEnv(const DynamicState& ds);
 
     std::atomic<State> current_state_{State::IDLE};
     std::atomic<bool> debug_mode_{false};
@@ -207,10 +239,26 @@ private:
      *  RELOAD_CONFIG runs on a TCP handler thread while a transition may be running on another,
      *  hence the mutex. */
     std::map<State, HoldRule> hold_rules_;
+
+    /** Dynamic states whose scripts loaded and validated. Guarded by config_mutex_. */
+    std::map<State, DynamicState> dynamic_states_;
+
+    /**
+     * States that declare a script which did NOT hold up, with the reason.
+     *
+     * These are not enterable. doTransitionTo refuses them in its validation block, before the
+     * abort broadcast and before any valve moves, and allowedBitmask() omits them so nothing ever
+     * advertises one as reachable in the first place. Guarded by config_mutex_.
+     */
+    std::map<State, std::string> refused_states_;
+
     mutable std::mutex config_mutex_;
 
     std::string config_path_;
     std::string config_content_;
+
+    /** Directory containing config_path_, or "." — where scripts/ is resolved against. */
+    std::string configDir() const;
 
     /** Local address board-facing UDP leaves from, resolved once in init(). "0.0.0.0" means the
      *  host has no NIC on the board subnet (a dev box) and traffic stays unpinned. */

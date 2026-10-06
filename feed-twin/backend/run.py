@@ -24,7 +24,6 @@ from dataclasses import dataclass, field
 from typing import Mapping
 
 from feedtwin.engine import ChamberResult
-from feedtwin.model.units import get_unit
 from feedtwin.solve.network import Network
 from feedtwin.solve.steady import SteadyResult, solve_steady
 from feedtwin.transient import Command, Scenario
@@ -34,36 +33,13 @@ from feedtwin.engine.balance import MixtureBalance
 from backend.analysis import mixture_balance
 from backend.assembly import Model
 
-# Annotated, rather than left to inference, because the annotation is doing
-# real work here. feedtwin is installed editable, which mypy cannot follow
-# (a PEP 660 .pth finder shim, not a directory it can import), so despite the
-# package shipping py.typed the app's `--ignore-missing-imports` run resolves
-# `get_unit` to Any. Without this line that Any spread to every pressure the
-# module returns, and `psig()` -- the one place absolute and gauge meet --
-# was unchecked.
-PSI: float = get_unit("psi").factor
-
-#: Standard atmosphere [Pa]. The zero of every gauge on the stand.
-ATMOSPHERE = 101325.0
-
-
-def psig(pascal: float) -> float:
-    """Absolute pressure [Pa] as the stand's transducers would read it [psig].
-
-    Every pressure inside the model is absolute -- the equation of state, the
-    choking ratios and the regulator all need it that way. Every pressure a
-    person reads or types is gauge, because that is what a PT with atmosphere
-    cancelled out reports and what the dial on a regulator is marked in. This
-    and :func:`from_psig` are the only two places the two meet; a vented vessel
-    reads 0.0, not 14.7.
-    """
-    return (pascal - ATMOSPHERE) / PSI
-
-
-def from_psig(gauge: float) -> float:
-    """A gauge reading or dial setting [psig] as the absolute pressure the model
-    integrates [Pa]."""
-    return gauge * PSI + ATMOSPHERE
+# Gauge and absolute meet in exactly two functions, and they live in the
+# library now so EngineDesign's Layer X converts through the same ones. Every
+# app module keeps importing them from here.
+from feedtwin.session.gauge import ATMOSPHERE as ATMOSPHERE
+from feedtwin.session.gauge import PSI as PSI
+from feedtwin.session.gauge import from_psig as from_psig
+from feedtwin.session.gauge import psig as psig
 
 
 @dataclass(frozen=True, slots=True)

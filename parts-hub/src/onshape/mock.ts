@@ -20,6 +20,9 @@ export function createMockClient(): OnshapeClient {
   /** What nameParts last named each Part Studio's parts (for tests). */
   const partNamesByElement = new Map<string, string>();
   (globalThis as { __mockPartNames?: Map<string, string> }).__mockPartNames = partNamesByElement;
+  /** What setPartProperties last set as each Part Studio's mass, in kg (for tests). */
+  const massByElement = new Map<string, number>();
+  (globalThis as { __mockMasses?: Map<string, number> }).__mockMasses = massByElement;
 
   return {
     async libraryWorkspaceId() {
@@ -46,8 +49,12 @@ export function createMockClient(): OnshapeClient {
       }
       return out;
     },
-    async nameParts(studios) {
-      for (const s of studios) partNamesByElement.set(s.elementId, s.name);
+    async setPartProperties(studios) {
+      for (const s of studios) {
+        if (s.name) partNamesByElement.set(s.elementId, s.name);
+        if (s.massKg === null) massByElement.delete(s.elementId);
+        else if (s.massKg !== undefined) massByElement.set(s.elementId, s.massKg);
+      }
     },
     async listPartStudios() {
       return [...elements].map(([id, name]) => ({ id, name }));

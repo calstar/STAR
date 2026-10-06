@@ -1,0 +1,109 @@
+{
+  "schema": "layerx.catalog/1",
+  "kind": "tubes",
+  "about": "Tube sizes Hardware mode may offer in place of a drawn line. Seeded only with the bore and wall pairs the shipped drawings carry: no size list from a standard or a vendor is in this repo, so none is invented here (ASTM A269 covers stainless tubing's material and tolerances, not which sizes exist). A drawing may state a nominal size as its bore (12.7 mm is 1/2 in), so the outside diameter is given only where bore + 2 x wall lands on the size the reference names. Add a row per tube you can buy, with the vendor's data sheet in 'provenance'. A user's own rows live in <userdata>/layerx/catalog/tubes.json.",
+  "rows": [
+    {
+      "id": "tube-10.92-bore",
+      "label": "1/2 in OD x 0.035 in wall (10.92 mm bore)",
+      "applies_to": [
+        "line"
+      ],
+      "params": {
+        "bore": {
+          "value": 10.92,
+          "unit": "mm"
+        },
+        "wall_thickness": {
+          "value": 0.889,
+          "unit": "mm"
+        }
+      },
+      "od_mm": 12.698,
+      "source": "manufacturer",
+      "provenance": "Drawings copv_study_he / copv_study_gn2 / ethalox_stand: l_ox1, l_ox2, l_fu1, l_fu2, bore 10.92 mm and wall 0.889 mm, both 'manufacturer'; the He/GN2 press lines (l_oxpress, l_fupress, l_reg_out, l_oxpress_in, l_fupress_in) carry the same bore as 0.43 in 'measured'. Bore + 2 x wall = 12.70 mm = 1/2 in, 0.889 mm = 0.035 in."
+    },
+    {
+      "id": "tube-6.35-bore",
+      "label": "6.35 mm bore, 0.889 mm wall (as drawn)",
+      "applies_to": [
+        "line"
+      ],
+      "params": {
+        "bore": {
+          "value": 6.35,
+          "unit": "mm"
+        },
+        "wall_thickness": {
+          "value": 0.889,
+          "unit": "mm"
+        }
+      },
+      "od_mm": null,
+      "source": "manufacturer",
+      "provenance": "Drawings copv_study_he / copv_study_gn2 / ethalox_stand: l_ctrl, l_dome, l_reg, l_gn2vent, l_gn2vent2, bore 6.35 mm and wall 0.889 mm 'manufacturer'. 6.35 mm is 1/4 in, likely a nominal size stated as the bore: check the tube before relying on the bore."
+    },
+    {
+      "id": "tube-7.75-bore",
+      "label": "7.75 mm bore, 0.889 mm wall (ethalox_stand)",
+      "applies_to": [
+        "line"
+      ],
+      "params": {
+        "bore": {
+          "value": 7.75,
+          "unit": "mm"
+        },
+        "wall_thickness": {
+          "value": 0.889,
+          "unit": "mm"
+        }
+      },
+      "od_mm": null,
+      "source": "manufacturer",
+      "provenance": "Drawing ethalox_stand: l_oxpress, l_fupress, l_reg_out, l_oxpress_in, l_fupress_in, bore 7.75 mm and wall 0.889 mm 'manufacturer'. Bore + 2 x wall = 9.53 mm = 3/8 in."
+    },
+    {
+      "id": "tube-9.525-bore",
+      "label": "9.525 mm bore, 0.889 mm wall (as drawn, estimated)",
+      "applies_to": [
+        "line"
+      ],
+      "params": {
+        "bore": {
+          "value": 9.525,
+          "unit": "mm",
+          "source": "estimated"
+        },
+        "wall_thickness": {
+          "value": 0.889,
+          "unit": "mm",
+          "source": "manufacturer"
+        }
+      },
+      "od_mm": null,
+      "source": "estimated",
+      "provenance": "Drawings copv_study_he / copv_study_gn2 / ethalox_stand: l_oxvent, l_oxvent2, l_fuvent, l_fuvent2, bore 9.525 mm 'estimated' (calibrated with the vent Cv), wall 0.889 mm 'manufacturer'."
+    },
+    {
+      "id": "tube-12.7-bore",
+      "label": "12.7 mm bore, 0.889 mm wall (as drawn)",
+      "applies_to": [
+        "line"
+      ],
+      "params": {
+        "bore": {
+          "value": 12.7,
+          "unit": "mm"
+        },
+        "wall_thickness": {
+          "value": 0.889,
+          "unit": "mm"
+        }
+      },
+      "od_mm": null,
+      "source": "manufacturer",
+      "provenance": "Drawings copv_study_he / copv_study_gn2 / ethalox_stand: l_kb, l_oxfill, bore 12.7 mm and wall 0.889 mm 'manufacturer'. 12.7 mm is 1/2 in, likely a nominal size stated as the bore: check the tube before relying on the bore."
+    }
+  ]
+}

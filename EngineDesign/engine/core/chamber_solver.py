@@ -18,14 +18,8 @@ from engine.pipeline.config_schemas import PintleEngineConfig, ensure_chamber_ge
 from engine.pipeline.combustion_eff import eta_cstar, calculate_Lstar
 from engine.pipeline.cea_cache import CEACache
 from engine.pipeline.thermal.film_cooling import compute_film_cooling
-from engine.pipeline.thermal.regen_cooling import (
-    compute_regen_heat_transfer,
-    estimate_hot_wall_heat_flux,
-)
-from engine.pipeline.thermal.ablative_cooling import (
-    compute_ablative_response,
-    compute_ablative_heat_flux_profile,
-)
+from engine.pipeline.thermal.regen_cooling import compute_regen_heat_transfer
+from engine.pipeline.thermal.ablative_cooling import liner_response
 from engine.pipeline.numerical_robustness import (
     PhysicalConstraints,
     NumericalStability,
@@ -40,6 +34,7 @@ from engine.pipeline.constants import (
     DEFAULT_TURBULENCE_INTENSITY_ND,
 )
 from engine.core.closure import flows
+from engine.core.nozzle import contraction_ratio_of, nozzle_stagnation_loss
 
 
 # Chamber-pressure search window. Mirrored VERBATIM in engine/accel/kernels.evaluate_core -- the
@@ -198,6 +193,8 @@ class ChamberSolver:
             "momentum_ratio_R": diagnostics.get("momentum_ratio_R"),
             "R_opt": self._rupe_R_opt(),
             "fuel_props": self._get_fuel_props(),
+            "ox_props": self._get_ox_props(),
+            "cea_cache": self.cea_cache,  # c*(O/F) for the mixing / vaporized-gas c* ratios
         }
 
         # Add injection velocities to advanced_params if available in diagnostics
@@ -218,19 +215,22 @@ class ChamberSolver:
             debug=self._debug if hasattr(self, '_debug') else False,
         )
         
-        # Validate efficiency
-        if not np.isfinite(eta) or eta <= 0 or eta > 1.0:
+        # Validate efficiency. No upper bound: eta_c* is against c*_ideal at the BULK O/F, and off
+        # the c* peak a spread of stream tubes, or a vaporized gas nearer the peak, can beat it
+        # (combustion_physics.stream_tube_mixing_efficiency / calculate_vaporization_efficiency).
+        if not np.isfinite(eta) or eta <= 0:
             return np.nan
 
         
         # Actual c* accounting for finite chamber volume
         cstar_actual = eta * cstar_ideal
         
-        # Demand: mdot = Pc * At / c*_actual
-        # This uses the chamber-driven c*, not the ideal CEA value
+        # Demand: mdot = P0 * At / c*_actual, P0 = Pc / kappa the nozzle stagnation pressure
+        # (Pc is the injector-end pressure; kappa the finite-area combustor's Rayleigh loss).
         cg = ensure_chamber_geometry(self.config)
+        kappa = nozzle_stagnation_loss(contraction_ratio_of(cg), float(cea_props.get("gamma", DEFAULT_GAMMA_ND)))
         mdot_demand, demand_valid = NumericalStability.safe_divide(
-            Pc_val * cg.A_throat,
+            Pc_val / kappa * cg.A_throat,
             cstar_actual,
             0.0,
             "mdot_demand"
@@ -316,6 +316,8 @@ class ChamberSolver:
                 "spray_diagnostics": diag_test,
                 "turbulence_intensity": diag_test.get("turbulence_intensity_mix", DEFAULT_TURBULENCE_INTENSITY_ND),
                 "fuel_props": self._get_fuel_props(),
+            "ox_props": self._get_ox_props(),
+            "cea_cache": self.cea_cache,  # c*(O/F) for the mixing / vaporized-gas c* ratios
             }
             eta_test = eta_cstar(
                 calculate_Lstar(cg.volume, cg.A_throat, Lstar_override=cg.Lstar),
@@ -325,9 +327,10 @@ class ChamberSolver:
                 debug=debug,
             )
             cstar_actual_test = eta_test * cstar_ideal_test
-            mdot_demand_test = (Pc_max * cg.A_throat) / cstar_actual_test if cstar_actual_test > 0 else np.inf
+            kappa_test = nozzle_stagnation_loss(contraction_ratio_of(cg), float(cea_props_test.get("gamma", DEFAULT_GAMMA_ND)))
+            mdot_demand_test = (Pc_max / kappa_test * cg.A_throat) / cstar_actual_test if cstar_actual_test > 0 else np.inf
             if mdot_demand_test > 0 and mdot_supply_test > mdot_demand_test:
-                Pc_estimate = mdot_supply_test * cstar_actual_test / cg.A_throat
+                Pc_estimate = mdot_supply_test * cstar_actual_test / cg.A_throat * kappa_test
                 raise ValueError(
                     f"No solution: Supply > Demand at all Pc. "
                     f"Residual at Pc_min: {residual_min:.4f} kg/s, at Pc_max: {residual_max:.4f} kg/s. "
@@ -579,6 +582,8 @@ class ChamberSolver:
             "momentum_ratio_R": closure_diag.get("momentum_ratio_R"),
             "R_opt": self._rupe_R_opt(),
             "fuel_props": self._get_fuel_props(),
+            "ox_props": self._get_ox_props(),
+            "cea_cache": self.cea_cache,  # c*(O/F) for the mixing / vaporized-gas c* ratios
         }
         
         eta = eta_cstar(
@@ -605,12 +610,13 @@ class ChamberSolver:
         # Isp = F / (mdot * g0) = (Cf * Pc * At) / (mdot * g0)
         # OR equivalently: Isp = cstar * Cf / g0
         # The previous formula with gamma * sqrt(...) was incorrect
+        # Sanity-check Isp on the delivered basis at sea level (this solver has no site Pa).
         g0 = 9.80665
-        Cf_ideal = cea_props.get("Cf_ideal", 1.5)  # Get from CEA, default to typical value
         cg = ensure_chamber_geometry(self.config)
-        Cf_actual = cg.nozzle_efficiency * Cf_ideal  # Account for nozzle efficiency
-        # Use correct formula: Isp = Cf * Pc * At / (mdot * g0)
-        Isp = (Cf_actual * Pc_val * cg.A_throat) / (mdot_total * g0) if mdot_total > 0 else 0.0
+        kappa = nozzle_stagnation_loss(contraction_ratio_of(cg), float(cea_props["gamma"]))
+        F_check = (cg.nozzle_efficiency * cea_props["Cf_vac"] * Pc_val / kappa * cg.A_throat
+                   - 101325.0 * (cg.A_exit or cg.A_throat * cg.expansion_ratio))
+        Isp = F_check / (mdot_total * g0) if mdot_total > 0 else 0.0
         
         # Validate engine state (use effective temperature after cooling)
         validation_results = validate_engine_state(
@@ -632,6 +638,10 @@ class ChamberSolver:
             "cstar_ideal": cea_props["cstar_ideal"],
             "Tc_ideal": cea_props["Tc"],  # Store original ideal temperature
             "cstar_actual": cstar_actual,
+            "Pc_ns": Pc_val / kappa,  # nozzle stagnation pressure
+            "stagnation_loss_kappa": kappa,
+            "cea_extrapolated": bool(cea_props.get("extrapolated", False)),  # converged point off the table
+            "cea_clamped": tuple(cea_props.get("clamped", ())),
             "eta_cstar": eta,
             "cooling_efficiency": cooling_eff,
             "Tc": effective_Tc,  # Use effective temperature after cooling (accounts for energy removal)
@@ -886,43 +896,30 @@ class ChamberSolver:
         velocity_g = mdot_total / (rho_g * area_cross)
 
         regen_cfg = config.regen_cooling
-        from engine.pipeline.constants import DEFAULT_HOT_GAS_VISC_PA_S
-        mu_g_config = regen_cfg.hot_gas_viscosity if regen_cfg is not None else DEFAULT_HOT_GAS_VISC_PA_S
-        
-        # Calculate viscosity using Huzel's formula if molecular weight is available
+        # A disabled regen block describes hardware that is not there: none of its gas-side
+        # numbers (bore, k, Pr, emissivity, turbulence, recovery) may reach the other models.
+        regen_active = regen_cfg is not None and regen_cfg.enabled
+        MR = mdot_O / mdot_F if mdot_F > 0 else float(cea_props.get("MR", 0.0) or 0.0)
+        tr = self.cea_cache.aux.transport(MR, Pc_val, "chamber")
+        mu_g_config = regen_cfg.hot_gas_viscosity if regen_active else tr["mu"]
         M = cea_props.get("M")  # Molecular weight [kg/kmol]
-        if M is not None and M > 0 and Tc > 0:
+        if regen_active and M is not None and M > 0 and Tc > 0:
             from engine.pipeline.thermal.regen_cooling import calculate_gas_viscosity_huzel
             mu_g_calculated = calculate_gas_viscosity_huzel(Tc, M)
         else:
-            mu_g_calculated = mu_g_config  # Fallback to config if M not available
-        
-        # Use calculated viscosity for calculations (more accurate)
+            mu_g_calculated = tr["mu"]
         mu_g = mu_g_calculated
-        
-        k_g = regen_cfg.hot_gas_thermal_conductivity if regen_cfg is not None else 0.1
-        Pr_g = (
-            regen_cfg.hot_gas_prandtl
-            if (regen_cfg is not None and regen_cfg.hot_gas_prandtl > 0)
-            else mu_g * gamma * R / max(k_g * (gamma - 1.0), 1e-6)
-        )
+        k_g = regen_cfg.hot_gas_thermal_conductivity if regen_active else tr["k"]
+        Pr_g = regen_cfg.hot_gas_prandtl if (regen_active and regen_cfg.hot_gas_prandtl > 0) else tr["Pr"]
 
         Re_g = rho_g * velocity_g * geometry["diameter"] / max(mu_g, 1e-8)
-        if Re_g < 2000:
-            Nu_g = 4.36
-        else:
-            Nu_g = 0.023 * (Re_g ** 0.8) * (Pr_g ** 0.4)
+        Nu_g = 0.023 * (Re_g ** 0.8) * (Pr_g ** 0.4)
 
-        turbulence_intensity_calc = 0.05
-        if Re_g > 0:
-            turbulence_intensity_calc = float(np.clip(0.16 * Re_g ** -0.125, 0.02, 0.25))
-
+        # Core turbulence of fully developed pipe flow; the film model's erosion input.
+        turbulence_intensity_calc = float(np.clip(0.16 * Re_g ** -0.125, 0.02, 0.25)) if Re_g > 0 else 0.05
         turbulence_boost = 1.0
-        if regen_cfg is not None:
-            # CRITICAL FIX: Remove arbitrary 0.8 exponent - turbulence effect on heat transfer
-            # Turbulence increases Nu, but the relationship is complex
-            # For now, use linear scaling: Nu_turbulent ≈ Nu_laminar × (1 + turbulence_intensity)
-            turbulence_boost = 1.0 + max(regen_cfg.gas_turbulence_intensity, 0.0)  # Remove arbitrary 0.8 exponent
+        if regen_active:
+            turbulence_boost = 1.0 + max(regen_cfg.gas_turbulence_intensity, 0.0)
             turbulence_intensity_calc = max(
                 turbulence_intensity_calc,
                 float(np.clip(regen_cfg.gas_turbulence_intensity, 0.0, 0.5)),
@@ -964,6 +961,7 @@ class ChamberSolver:
             cooling_results["film"] = film_results
 
         effective_Tc = float(film_results.get("effective_gas_temperature", Tc))
+        comp = self.cea_cache.aux.composition(MR, Pc_val, "chamber")
         gas_props_regen = {
             "Pc": Pc_val,
             "Tc": effective_Tc,
@@ -974,6 +972,8 @@ class ChamberSolver:
             "A_throat": ensure_chamber_geometry(config).A_throat,
             "chamber_length": geometry["length"],
             "turbulence_intensity": turbulence_intensity_calc,
+            "x_H2O": comp["H2O"],
+            "x_CO2": comp["CO2"],
         }
 
         coolant_props = {
@@ -986,7 +986,7 @@ class ChamberSolver:
 
         mdot_coolant = float(film_results.get("mdot_available_for_regen", mdot_F))
 
-        if regen_cfg is not None and regen_cfg.enabled:
+        if regen_active:
             regen_results = compute_regen_heat_transfer(
                 mdot_coolant,
                 coolant_props,
@@ -999,99 +999,27 @@ class ChamberSolver:
 
         abl_cfg = config.ablative_cooling
         if abl_cfg is not None and abl_cfg.enabled:
-            hot_flux = estimate_hot_wall_heat_flux(
-                gas_props_regen,
-                regen_cfg,
-                abl_cfg.surface_temperature_limit,
-                mdot_total,
-            )
-            abl_area = geometry["area"] * np.clip(abl_cfg.coverage_fraction, 0.0, 1.0)
-            ablative_results = compute_ablative_response(
-                hot_flux["heat_flux_total"],
-                abl_cfg.surface_temperature_limit,
-                abl_cfg,
-                abl_area,
-                turbulence_intensity_calc,
-                heat_flux_conv=hot_flux.get("heat_flux_conv"),
-                heat_flux_rad=hot_flux.get("heat_flux_rad"),
-                gas_mass_flow_rate=mdot_total,
-            )
-            ablative_results["incident_heat_flux"] = hot_flux["heat_flux_total"]
-            
-            # Calculate effective gas temperature after ablative cooling
-            # Energy removed from gas: Q = mdot_total × cp × ΔT
-            # Therefore: ΔT = Q / (mdot_total × cp)
+            from engine.pipeline.thermal.gas_side import HotGasState
+            cg_now = ensure_chamber_geometry(config)
+            contour = self._wall_contour()
+            gas = HotGasState(T0=effective_Tc, P0=Pc_val, gamma=gamma,
+                              mass_flux_throat=mdot_total / cg_now.A_throat, mu=tr["mu"],
+                              cp=tr["cp"], Pr=tr["Pr"], x_H2O=comp["H2O"], x_CO2=comp["CO2"])
+            ablative_results = liner_response(gas, contour, abl_cfg, self._liner_end(contour),
+                                              mdot_total, with_profile=with_profile)
+            ablative_results["incident_heat_flux"] = (ablative_results["heat_flux_from_gas_convective"]
+                                                      + ablative_results["heat_flux_from_gas_radiative"])
+
+            # Energy the liner takes out of the gas: dT = Q / (mdot cp).
             abl_heat_removed = ablative_results.get("heat_removed", 0.0)
             if abl_heat_removed > 0 and mdot_total > 0:
-                cp = gamma * R / max(gamma - 1.0, 1e-6)  # Specific heat [J/(kg·K)]
+                cp = gamma * R / max(gamma - 1.0, 1e-6)
                 delta_T_abl = abl_heat_removed / max(mdot_total * cp, 1e-6)
-                effective_Tc = max(effective_Tc - delta_T_abl, 1.0)  # Update effective temperature
+                effective_Tc = max(effective_Tc - delta_T_abl, 1.0)
                 ablative_results["temperature_reduction"] = float(delta_T_abl)
             else:
                 ablative_results["temperature_reduction"] = 0.0
-            
             ablative_results["effective_gas_temperature"] = float(effective_Tc)
-            
-            # Compute ablative heat flux profile along chamber AND nozzle
-            # Get chamber and throat dimensions
-            chamber_geom = ensure_chamber_geometry(config)
-            D_chamber = geometry.get("diameter", 0.1)
-            D_throat = np.sqrt(4.0 * chamber_geom.A_throat / np.pi) if chamber_geom.A_throat > 0 else 0.05
-            L_chamber = geometry.get("length", 0.15)
-            
-            # Get nozzle dimensions
-            D_exit = np.sqrt(4.0 * chamber_geom.A_exit / np.pi) if chamber_geom.A_exit and chamber_geom.A_exit > 0 else None
-            # Estimate nozzle length from geometry (typically 0.8-1.2 × throat diameter × sqrt(expansion_ratio))
-            if D_exit and D_throat > 0 and chamber_geom.expansion_ratio:
-                # Rao bell nozzle length approximation: L_nozzle ≈ 0.8 × D_throat × sqrt(eps - 1)
-                eps = chamber_geom.expansion_ratio
-                L_nozzle = 0.8 * D_throat * np.sqrt(max(eps - 1.0, 0.1)) if eps > 1 else None
-            else:
-                L_nozzle = None
-            
-            # Per-segment heat-flux PROFILE is display-only: it does not affect
-            # cooling_eff/effective_Tc (computed above) or the residual. Skip it on
-            # the optimizer/native hot path (with_profile=False) — this is the bulk
-            # of the chamber post-processing cost. Results are bit-identical.
-            if with_profile:
-                # Add molecular weight to gas props for profile computation
-                gas_props_profile = {
-                    "Tc": effective_Tc,
-                    "Pc": Pc_val,
-                    "gamma": gamma,
-                    "R": R,
-                    "M": cea_props.get("M", 24.0),  # Molecular weight [kg/kmol]
-                }
-
-                ablative_profile = compute_ablative_heat_flux_profile(
-                    gas_props_profile,
-                    abl_cfg,
-                    mdot_total,
-                    L_chamber,
-                    D_chamber,
-                    D_throat,
-                    n_segments=20,
-                    L_nozzle=L_nozzle,
-                    D_exit=D_exit,
-                    include_nozzle=True,
-                )
-
-                # Debug logging for heat flux profile
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.info(f"[ABLATIVE PROFILE] L_chamber={L_chamber:.4f}m, D_chamber={D_chamber:.4f}m, D_throat={D_throat:.4f}m")
-                logger.info(f"[ABLATIVE PROFILE] segment_x length={len(ablative_profile.get('segment_x', []))}, segment_q_incident length={len(ablative_profile.get('segment_q_incident', []))}")
-                if ablative_profile.get('segment_q_incident'):
-                    logger.info(f"[ABLATIVE PROFILE] q_incident range: {min(ablative_profile['segment_q_incident']):.2e} to {max(ablative_profile['segment_q_incident']):.2e} W/m²")
-
-                # Add profile data to ablative results
-                ablative_results["segment_x"] = ablative_profile["segment_x"]
-                ablative_results["segment_q_incident"] = ablative_profile["segment_q_incident"]
-                ablative_results["segment_q_conv"] = ablative_profile["segment_q_conv"]
-                ablative_results["segment_q_rad"] = ablative_profile["segment_q_rad"]
-                ablative_results["segment_q_net"] = ablative_profile["segment_q_net"]
-                ablative_results["throat_index"] = ablative_profile["throat_index"]
-
             cooling_results["ablative"] = ablative_results
 
         cooling_eff = self._compute_cooling_efficiency(
@@ -1114,6 +1042,26 @@ class ChamberSolver:
 
         return cooling_results, cooling_eff, effective_Tc
     
+    def _wall_contour(self):
+        """The drawn gas-side contour for this geometry (cached per geometry)."""
+        from engine.pipeline.thermal.gas_side import contour_for
+        cg = ensure_chamber_geometry(self.config)
+        key = (cg.A_throat, cg.chamber_diameter, cg.volume, cg.A_exit)
+        cached = getattr(self, "_wall_contour_cache", None)
+        if cached is None or cached[0] != key:
+            cached = (key, contour_for(cg))
+            self._wall_contour_cache = cached
+        return cached[1]
+
+    def _liner_end(self, contour) -> float:
+        """Throat-frame x where the ablative liner stops: the graphite insert's upstream edge,
+        or the throat when there is no insert."""
+        gr = getattr(self.config, "graphite_insert", None)
+        if gr is None or not gr.enabled:
+            return 0.0
+        half = gr.axial_half_length or gr.axial_half_length_ratio * 2.0 * contour.R_t
+        return -float(half)
+
     def _infer_injector_diameter(self) -> float:
         """Estimate a characteristic injector diameter for mixing models."""
         injector_cfg = getattr(self.config, "injector", None)
@@ -1219,39 +1167,33 @@ class ChamberSolver:
         except (AttributeError, TypeError):
             return 1.0
 
-    def _get_fuel_props(self) -> Optional[Dict[str, float]]:
-        """
-        Extract fuel properties from configuration for evaporation model.
-        
-        Returns a dictionary with:
-        - boiling_point: Fuel boiling point [K]
-        - latent_heat: Latent heat of vaporization [J/kg]
-        - molecular_weight: Molecular weight [g/mol]
-        - Pc_ref: Reference pressure for stable Bm calculation [Pa]
-        
-        Returns None if fuel config is not available.
-        """
-        try:
-            fuel_cfg = self.config.fluids.get("fuel")
-            if fuel_cfg is None:
-                return None
-            
-            # Extract as dict with fallbacks to RP-1 defaults
-            props = {
-                "boiling_point": getattr(fuel_cfg, "boiling_point", 489.0),
-                "latent_heat": getattr(fuel_cfg, "latent_heat", 300e3),
-                "molecular_weight": getattr(fuel_cfg, "molecular_weight", 170.0),
-                "Pc_ref": getattr(fuel_cfg, "Pc_ref", 2.5e6),
-            }
-            
-            # Add T_star fuel interface cap from combustion efficiency config
-            T_star_fuel_cap_K = getattr(
-                self.config.combustion.efficiency,
-                "T_star_fuel_cap_K",
-                1000.0  # Default for RP-1
-            )
-            props["T_star_fuel_cap_K"] = T_star_fuel_cap_K
-            
-            return props
-        except Exception:
+    def _fluid_props(self, which: str) -> Optional[Dict[str, float]]:
+        """Liquid properties of ``fluids.<which>`` for the c* vaporization march: exactly what the
+        config declares (no substituted RP-1 values). Missing keys are left out, and the march
+        records each one it has to assume."""
+        fl = (getattr(self.config, "fluids", None) or {}).get(which)
+        if fl is None:
             return None
+        props: Dict[str, float] = {}
+        for key in ("density", "boiling_point", "latent_heat", "molecular_weight", "specific_heat",
+                    "temperature", "critical_temperature", "viscosity", "surface_tension"):
+            v = getattr(fl, key, None)
+            if v is not None:
+                props[key] = float(v)
+        props["Pc_ref"] = float(getattr(fl, "Pc_ref", 2.5e6) or 2.5e6)
+        if getattr(fl, "name", None):
+            props["name"] = str(fl.name)   # CoolProp liquid cp(T) / density in the heat-up
+        return props
+
+    def _get_fuel_props(self) -> Optional[Dict[str, float]]:
+        """Fuel liquid properties for the c* model (see ``_fluid_props``), plus the fuel-interface
+        temperature cap the legacy gasification helper reads."""
+        props = self._fluid_props("fuel")
+        if props is None:
+            return None
+        props["T_star_fuel_cap_K"] = float(getattr(self.config.combustion.efficiency, "T_star_fuel_cap_K", 1000.0))
+        return props
+
+    def _get_ox_props(self) -> Optional[Dict[str, float]]:
+        """Oxidizer liquid properties for the c* model (see ``_fluid_props``)."""
+        return self._fluid_props("oxidizer")

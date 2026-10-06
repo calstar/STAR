@@ -498,3 +498,74 @@ def test_a_sketched_bend_is_priced_at_its_own_radius_and_angle() -> None:
 
     assert run({"bendDiameters": 1.5, "angleDeg": 90.0}) == (1.5, 90.0)
     assert run({}) == (0.0, 0.0)
+
+
+def test_an_itemised_run_at_zero_flow_drops_nothing_and_does_not_raise() -> None:
+    """A capped run -- a fill line behind a shut QD, a vent leg -- is back-filled
+    by the solver at exactly zero flow, and opening a stand prices every run at
+    rest. Bends and bore changes are K times a dynamic head that is zero there,
+    but the bend correlation (Rennels, via fluids) refuses a Reynolds number of
+    zero, and the ValueError escaped: a drawing with an itemised run on a capped
+    branch could not open as a stand at all (a 500 on POST /api/session)."""
+    from feedtwin.pid.segments import read_segments
+
+    def seg(sid: str, bore_mm: float) -> dict[str, object]:
+        return {
+            "id": sid,
+            "method": "itemised",
+            "bore": {"value": bore_mm, "unit": "mm", "source": "measured"},
+            "length": {"value": 0.4, "unit": "m", "source": "measured"},
+            "fittings": [
+                {"kind": "bend", "count": 2, "angleDeg": 45.0, "bendDiameters": 3.5}
+            ],
+        }
+
+    loss = read_segments([seg("s1", 10.9), seg("s2", 7.7)], "L1")
+    line = pipe(loss.segments, roughness=Param(0.03, "mm", Provenance.DEFAULT, ""))
+    assert line.pressure_drop(0.0, FLOW) == 0.0
+    assert line.total_dp(0.0, FLOW) == pytest.approx(line.static_head(FLOW))
+    # And it still prices a real flow: both bends and the contraction count.
+    assert line.pressure_drop(0.2, FLOW) > 0.0
+
+
+def test_a_trickle_through_an_itemised_run_is_priced_not_raised() -> None:
+    """Below Re ~ 5 fluids' Rennels bend computes its own friction factor with
+    Clamond's turbulent formula, which takes a log of a negative number and
+    raises. A solve reporting its result at a near-zero flow (a press line
+    settling, a tank topping up) hit that and the error escaped the solve. The
+    adapter now hands Rennels the friction factor the run already has --
+    laminar-correct -- whenever its own refuses, and only then."""
+    from feedtwin.pid.segments import read_segments
+
+    loss = read_segments(
+        [
+            {
+                "id": "s1",
+                "method": "itemised",
+                "bore": {"value": 10.9, "unit": "mm", "source": "measured"},
+                "length": {"value": 0.7, "unit": "m", "source": "measured"},
+                "fittings": [
+                    {"kind": "bend", "count": 3, "angleDeg": 45.0, "bendDiameters": 3.5}
+                ],
+            }
+        ],
+        "L1",
+    )
+    line = pipe(loss.segments, roughness=Param(0.03, "mm", Provenance.DEFAULT, ""))
+    trickle = 1.0e-9  # kg/s: Re ~ 1e-4 in ethanol
+    dp = line.pressure_drop(trickle, FLOW)
+    assert dp > 0.0 and dp < 1.0
+    # Where Rennels already worked, nothing changes.
+    import fluids.fittings as ft
+    from feedtwin.comps.correlations import FittingContext, fitting_K
+
+    ctx = FittingContext(
+        bore=0.0109,
+        Re=5.0e4,
+        roughness=3e-5,
+        fd=0.02,
+        params={"angle": 45.0, "bend_diameters": 3.5},
+    )
+    assert fitting_K("bend", ctx) == ft.bend_rounded(
+        Di=0.0109, angle=45.0, Re=5.0e4, roughness=3e-5, bend_diameters=3.5
+    )

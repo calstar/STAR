@@ -116,6 +116,16 @@ injector:
       d_jet: 0.0014213970733035063
       impingement_angle: 46.0
       spacing: 0.012046846972657375
+  # How the plug is machined (operator, 2026-09-25): the face turned with an annular groove so
+  # each orifice leaves square to its flank; the back flat with one channel per ring that the
+  # passages break into. Seals, the manifold cover and retention are designed separately.
+  plate:
+    face: contoured
+    back: channels
+    channel_floor: flat
+  # Centre spark igniter, 1/2 NPT at most (operator, 2026-09-25).
+  igniter:
+    thread: 1/2 NPT
 feed_system:
   fuel:
     line_size: 1/2_TUBE_035
@@ -211,13 +221,15 @@ ablative_cooling:
   nozzle_ablative: false
 graphite_insert:
   enabled: true
-  material_density: 2260.0
+  material_density: 1810.0
   heat_of_ablation: 15000000.0
-  thermal_conductivity: 100.0
+  thermal_conductivity: 92.67
   specific_heat: 710.0
+  specific_heat_model: butland_maddison_1973
+  material_source: 'Graphtek LLC GR001CC, isostatically pressed (datasheet): bulk density 1.81 g/cm3, thermal conductivity 92.67 W/(m K) at room temperature, porosity 12 vol%, ash 100 ppm, particle size 0.001 in (25.4 um; the metric column of the sheet says 0.0254 um, a unit slip), max 2760 C inert / 427 C in air. Specific heat: Butland & Maddison 1973 (grade-independent).'
   initial_thickness: 0.006
-  surface_temperature_limit: 2500.0
-  oxidation_temperature: 800.0
+  surface_temperature_limit: 3033.15
+  oxidation_temperature: 700.15
   oxidation_rate: 1.0e-06
   activation_energy: 190000.0
   oxidation_reference_temperature: 973.0
@@ -626,7 +638,7 @@ design_requirements:
   layer1_injector_plate_thickness_m: 0.0127
   layer1_injector_min_face_incidence_deg: 40.0
   layer1_injector_counterbore_dia_m: 0.004
-  layer1_injector_center_clear_dia_m: 0.0381
+  layer1_injector_center_clear_dia_m: null   # set by injector.igniter (was a bare 0.0381)
   layer1_injector_min_web_m: 0.002
   layer1_injector_wall_clearance_m: 0.008
   layer1_resultant_tilt_from_reach: true

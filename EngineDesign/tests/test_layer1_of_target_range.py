@@ -26,11 +26,14 @@ def test_out_of_range_target_is_refused_with_the_fix_in_the_message():
 
 
 def test_stale_target_after_propellant_switch_is_caught():
-    """The ethalox canonical carries optimal_of_ratio 1.4; overlay methalox (table 2.4-4.2) and the
-    untouched target must be refused, not silently pinned at the table edge."""
+    """The ethalox canonical carries optimal_of_ratio 1.4. A methalox overlay (table 2.4-4.2) now
+    moves the target to the preset's design O/F (DEF-06), which the check accepts; an ethalox
+    target put back on the methalox design must still be refused, not pinned at the table edge."""
     switched = PintleEngineConfig(**apply_propellant(load_canonical_config("pintle"), "methalox"))
+    assert switched.design_requirements.optimal_of_ratio == pytest.approx(2.8)
+    _layer1_check_of_target_in_cea_range(switched, switched.design_requirements.optimal_of_ratio)
     with pytest.raises(ValueError, match="outside the CEA table for methalox"):
-        _layer1_check_of_target_in_cea_range(switched, switched.design_requirements.optimal_of_ratio)
+        _layer1_check_of_target_in_cea_range(switched, 1.4)
 
 
 def test_missing_table_range_does_not_block():

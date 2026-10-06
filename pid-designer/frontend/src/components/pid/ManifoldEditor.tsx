@@ -23,9 +23,13 @@ export type { ManifoldGeometry } from './manifoldGeometry';
  * off the end. It also makes the value meaningful on its own: 0.25 is a quarter
  * of the way round, whatever size the block is.
  *
- * Nothing is applied until Save. Dragging a port is a fiddly gesture and the
- * canvas behind is live; committing on release would mean every twitch became
- * a version in somebody's history.
+ * Nothing is applied until the dialog's Save. Dragging a port is a fiddly
+ * gesture and the canvas behind is live; committing on release would mean
+ * every twitch became a version in somebody's history. But the dialog's Save
+ * is the only save: the editor used to have a "Save layout" button of its
+ * own, below the fold of the dialog, and a port moved and then saved with the
+ * dialog's button went straight back where it was. So the editor hands its
+ * draft up as it changes, and the dialog saves it with everything else.
  */
 
 const W = 260, H = 190, PAD = 34;
@@ -115,13 +119,18 @@ export function rebaseDraft(
 const geometryKey = (g: ManifoldGeometry) =>
   `${g.width}x${g.height}:` + Object.keys(g.positions).sort().map(id => `${id}=${g.positions[id]}`).join(',');
 
-export function ManifoldEditor({ outlets, orientation, geometry, ports, onSave }: {
+export function ManifoldEditor({ outlets, orientation, geometry, ports, onChange }: {
   outlets: number;
   /** The block's direction, which decides its default shape. */
   orientation?: string;
   geometry: ManifoldGeometry | undefined;
   ports: Record<string, PortInfo>;
-  onSave: (g: ManifoldGeometry) => void;
+  /**
+   * The layout as it now stands, and whether it differs from what is drawn.
+   * Called on mount and after every change; the dialog saves the draft only
+   * when it is edited, so opening the editor and saving changes nothing.
+   */
+  onChange: (draft: ManifoldGeometry, edited: boolean) => void;
 }) {
   const readOnly = useReadOnly();
   const svgRef = useRef<SVGSVGElement>(null);
@@ -130,8 +139,8 @@ export function ManifoldEditor({ outlets, orientation, geometry, ports, onSave }
   const ids = manifoldPortIds(outlets);
 
   // What the drawing shows now. The draft starts as it, and `dirty` is
-  // measured against it: opening the editor is not an edit, so "Save layout"
-  // stays off until a port has actually been moved.
+  // measured against it: opening the editor is not an edit, so the dialog
+  // is told of no layout to save until a port has actually been moved.
   const seed = useMemo(
     () => drawnGeometry(outlets, orientation, geometry),
     [outlets, orientation, geometry],
@@ -152,6 +161,13 @@ export function ManifoldEditor({ outlets, orientation, geometry, ports, onSave }
   }, [seedKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dirty = !sameGeometry(draft, seed, ids);
+
+  // Tell the dialog, keyed by content so a re-render that changes nothing
+  // does not call it again.
+  const draftKey = geometryKey(draft);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  useEffect(() => { onChangeRef.current(draft, dirty); }, [draftKey, dirty]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Block drawn centred in the panel, scaled to fit.
   const k = Math.min((W - PAD * 2) / Math.max(1, draft.width), (H - PAD * 2) / Math.max(1, draft.height), 2.2);
@@ -236,18 +252,18 @@ export function ManifoldEditor({ outlets, orientation, geometry, ports, onSave }
 
       <div className="flex items-center gap-2">
         <span className="text-[10px] text-[var(--color-text-muted)]">
-          Drag a port round the block.
+          {dirty ? 'Moved: Save applies it.' : 'Drag a port round the block.'}
         </span>
         <button
           disabled={readOnly || !dirty}
-          onClick={() => onSave(draft)}
+          onClick={() => setDraft(seed)}
           className={`ml-auto rounded px-2 py-0.5 text-[11px] transition-colors ${
             dirty && !readOnly
-              ? 'bg-[var(--color-accent)] text-white'
+              ? 'text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]'
               : 'text-[var(--color-text-muted)]'
           }`}
         >
-          {dirty ? 'Save layout' : 'Saved'}
+          Undo moves
         </button>
       </div>
     </div>

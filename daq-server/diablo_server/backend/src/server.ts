@@ -28,7 +28,9 @@ import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { expandWithTare, resetTareState, setRunDir } from './lc-tare.js';
 import { loadSensorRoleMap, hpBoardNumbers } from './sensor-config.js';
-import { registerVTables, clearSubscriptionState, noteSubscriptionRejected } from './elodin-vtable-registry.js';
+import { registerVTables, clearSubscriptionState, noteSubscriptionRejected, notePairDelivered } from './elodin-vtable-registry.js';
+import { refusalText } from './refusal-text.js';
+import { parseScriptStatus } from './script-status.js';
 import { createAPIHandler } from './api-server.js';
 import { startBoardLogReceiver } from './board-logs.js';
 import { readConfig, readDeployedConfig } from './routes/config.js';
@@ -506,6 +508,7 @@ function updateBoard(low: number, payload: Buffer): void {
   else if (boardType === 4) typeStr = 'LC';
   else if (boardType === 5) typeStr = 'ACTUATOR';
   else if (boardType === 6 || boardId === 61) typeStr = 'ENCODER';
+  else if (boardType === 7) typeStr = 'ENVIRONMENTAL';
 
   let status = boardsStatus.get(boardId);
   const wasDisconnected = !status || status.lastHeartbeatMs == null || now - (status.lastHeartbeatMs ?? 0) > BOARD_HEARTBEAT_STALE_MS;
@@ -1166,10 +1169,31 @@ function handleMessage(ws: WebSocket, message: any): void {
   }
 }
 
+/** Latest advertised-allowed set from the sequencer; undefined until it first publishes. */
+let allowedBitmask: number | undefined;
+/** State id -> why it cannot be entered, from the sequencer's SCRIPTS report. */
+let stateRefusalReasons: Record<number, string> = {};
+
+/**
+ * Refresh the per-state refusal reasons.
+ *
+ * Load refusals are fixed for the run, but the sensor gate is live — a state blocks and unblocks
+ * as a feed comes and goes — so this is polled rather than read once. Slow on purpose: the reasons
+ * only decorate a button that is already greyed by the bitmask, and nothing here may ever raise a
+ * notification, or a poll would spam the panel once a second.
+ */
+function refreshScriptStatus(): void {
+  sendToActuatorService('SCRIPTS\n')
+    .then(({ reply }) => {
+      stateRefusalReasons = parseScriptStatus(reply).reasons;
+    })
+    .catch(() => { /* sequencer down — the bitmask already says nothing is enterable */ });
+}
+
 function broadcastStateUpdate(): void {
   broadcast({
     type: MessageType.STATE_UPDATE, timestamp: Date.now(),
-    payload: { currentState, stateName: configStateName(currentState) ?? SystemState[currentState] ?? 'UNKNOWN', timestamp: Date.now(), debugMode },
+    payload: { currentState, stateName: configStateName(currentState) ?? SystemState[currentState] ?? 'UNKNOWN', timestamp: Date.now(), debugMode, allowedBitmask, stateRefusalReasons },
   });
 }
 
@@ -1231,7 +1255,7 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       sendToActuatorService(`TRANSITION:${csvName}${holdSuffix}\n`).then(({ ok, reply }) => {
         console.log(`[ThinServer] State transition ${stateName} → ${csvName}${holdSuffix}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
         if (!ok) {
-          send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition failed: ${reply}` } });
+          send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition failed: ${refusalText(reply)}` } });
         }
       });
       break;
@@ -1242,7 +1266,7 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       // No optimistic update — real commanded state arrives via [0x32] packets from Elodin.
       sendToActuatorService(`ACTUATOR:${actuatorName}:${open ? 1 : 0}\n`).then(({ ok, reply }) => {
         if (!ok) {
-          send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Actuator command failed: ${reply}` } });
+          send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Actuator command failed: ${refusalText(reply)}` } });
         }
       });
       break;
@@ -1262,7 +1286,7 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       sendToActuatorService('EXTEND_FIRE\n').then(({ ok, reply }) => {
         console.log(`[ThinServer] Extend fire: ${ok ? 'OK' : 'FAIL'} (${reply})`);
         if (!ok) {
-          send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Extend fire failed: ${reply}` } });
+          send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Extend fire failed: ${refusalText(reply)}` } });
         }
       });
       break;
@@ -1393,26 +1417,41 @@ const STATE_TO_CSV_NAME: Record<string, string> = {
 };
 
 // VTable resubscription — Elodin DB rejects subscriptions for VTables not yet
-// registered by other services (e.g., daq_bridge). Retry every 5s until all
-// expected packet groups flow.
+// registered by other services (e.g., daq_bridge). A pass runs every 5s for the life of
+// the connection; once everything is subscribed it sends nothing.
 let resubscribeTimer: NodeJS.Timeout | null = null;
-const MAX_RESUBSCRIBE_ATTEMPTS = 24;
-let shouldResubscribe = true;
+const RESUBSCRIBE_MIN_MS = 5000;
 
-function scheduleResubscribe(attempt: number): void {
-  if (!shouldResubscribe) return;
-  if (attempt > MAX_RESUBSCRIBE_ATTEMPTS) return;
+// No attempt ceiling any more. The old one (24 passes, ~2 min) was dead code anyway: the
+// dbError handler called scheduleResubscribe(1) on every refusal, resetting the ladder
+// forever. Worse, a real ceiling is wrong here — a service started more than two minutes
+// after the backend connects would never be picked up. Termination is now per PAIR
+// (MAX_PAIR_ATTEMPTS in elodin-vtable-registry), which is where it belongs: one table that
+// nobody publishes gets parked, without stopping retries for every other table.
+//
+// Nor does the first data packet stop it. It used to: harmless when one pass sent
+// everything, fatal once a pass was capped at the request-id space — the first pass got
+// sensor data flowing, the remainder (board heartbeat/self-test tables) was never sent, and a
+// board's self-test never reached the GUI. A pass with nothing due sends nothing.
+function scheduleResubscribe(delayMs: number = RESUBSCRIBE_MIN_MS): void {
   if (resubscribeTimer) return;
   resubscribeTimer = setTimeout(() => {
     resubscribeTimer = null;
     if (!elodin.isConnected()) return;
-    if (!shouldResubscribe) return;
-    registerVTables(elodin).then(() => {
-      scheduleResubscribe(attempt + 1);
+    registerVTables(elodin).then((res) => {
+      // Sleep until the earliest pair is actually due, instead of spinning every 5 s.
+      // A remainder means the pass hit the request-id cap, not that anything is wrong —
+      // come straight back for it rather than idling 5 s per 255 tables on first connect.
+      const wait = res.remaining > 0
+        ? 0
+        : res.nextAttemptMs === null
+          ? RESUBSCRIBE_MIN_MS
+          : Math.max(RESUBSCRIBE_MIN_MS, res.nextAttemptMs - Date.now());
+      scheduleResubscribe(wait);
     }).catch(() => {
-      scheduleResubscribe(attempt + 1);
+      scheduleResubscribe(RESUBSCRIBE_MIN_MS);
     });
-  }, 5000);
+  }, Math.max(0, delayMs));
 }
 
 // True when incoming data is synthetic. In a session-enabled deployment this is
@@ -1479,11 +1518,10 @@ elodin.on('connected', () => {
   broadcastConnectionStatus();
 
   if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
-  shouldResubscribe = true;
 
   calibrationHost.elodin = elodin;
   registerVTables(elodin).then(() => {
-    scheduleResubscribe(1);
+    scheduleResubscribe();
   });
   // No VTable REGISTRATION from here. The C++ services own it (sequencer:
   // "Registered Sequencer/Controller VTables"), and every message this backend sent was
@@ -1493,15 +1531,25 @@ elodin.on('connected', () => {
   // the "✅ Registered" it logged only ever meant socket.write() returned true. It has
   // been deleted (see elodin-vtable-registry.ts); this backend only subscribes.
   console.log('[ThinServer] Connected to Elodin, subscriptions sent.');
+  refreshScriptStatus();
 });
+
+// Slow on purpose. The sensor gate can block and unblock while the rig runs, so the reasons
+// cannot be read once — but they only annotate a button the bitmask has already greyed, so
+// there is nothing to gain from reading them often and a poll that notified would flood the
+// notification panel.
+setInterval(refreshScriptStatus, 15000);
 
 // The DB refuses a subscription for a VTable that does not exist YET — the publisher
 // registers it when that service starts, which on a session start is a few seconds after
 // this backend reconnects. Un-mark the pair and make sure a retry is queued; without this
 // the refusal was silent and permanent, and the GUI sat on a stale state all session.
 elodin.on('dbError', (requestId: number, description: string) => {
+  // Record only. This used to also call scheduleResubscribe(1), which reset the retry
+  // ladder on every single refusal — with thousands of refusals per pass that made the
+  // loop permanent and the attempt ceiling meaningless. The pass scheduled above already
+  // comes back around, now timed off the pairs' own backoff.
   noteSubscriptionRejected(requestId, description);
-  scheduleResubscribe(1);
 });
 
 elodin.on('disconnected', () => {
@@ -1522,6 +1570,9 @@ elodin.on('error', (err: Error) => {
 elodin.on('packet', (header: any, payload: Buffer) => {
   try {
     const [high, low] = header.packetId as [number, number];
+    // Proof this table is live. A rejection naming a delivering pair is a misattribution,
+    // and acting on it would re-subscribe a live table and double its rate.
+    notePairDelivered(high, low);
 
     // ── Board heartbeat [0x10, board_id] ────────────────────────────────────
     if (high === 0x10) {
@@ -1577,6 +1628,9 @@ elodin.on('packet', (header: any, payload: Buffer) => {
       const prevState = currentState;
       const stateVal = parsedList.find(p => p.component === 'state')?.value ?? 0;
       const bitmask = parsedList.find(p => p.component === 'allowedBitmask')?.value ?? 0;
+      // Kept, not discarded. This is the sequencer's own statement of what it will accept, and
+      // the publish happens on every refusal too, so a greyed button corrects itself.
+      allowedBitmask = bitmask;
       const debugModeVal = parsedList.find(p => p.component === 'debugMode')?.value ?? 0;
       if (THIN_VERBOSE_CONNECTION_LOG) {
         console.log(`[ThinServer] SequencerState from Elodin: state=${stateVal} bitmask=0x${bitmask.toString(16)} debug=${debugModeVal}`);
@@ -1622,8 +1676,6 @@ elodin.on('packet', (header: any, payload: Buffer) => {
           console.log(`[ThinServer] Mission T+0: ${new Date(firstPacketTimeMs).toISOString()}`);
         }
         broadcast({ type: MessageType.MISSION_START_TIME, timestamp: Date.now(), payload: { missionStartTime: firstPacketTimeMs } });
-        shouldResubscribe = false;
-        if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
       }
 
       const key = `${parsed.entity}.${parsed.component}`;

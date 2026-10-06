@@ -1,0 +1,361 @@
+{
+ "design": {
+  "F": 6500.455123853541,
+  "Pc_psia": 377.5219505848218,
+  "OF": 1.5233327241051795,
+  "Isp": 223.13856477589172,
+  "P_tank_O_psi": 548.7,
+  "P_tank_F_psi": 548.7
+ },
+ "sections": [
+  {
+   "title": "Jets",
+   "rows": [
+    {
+     "label": "LOX jet velocity",
+     "value": 31.340613638980486,
+     "unit": "m/s",
+     "band": "10\u201360",
+     "status": "ok",
+     "source": "bulk mdot / (rho A)",
+     "note": "Re 3.24e+05, liquid We 1.41e+05"
+    },
+    {
+     "label": "LOX free jet to impingement",
+     "value": 4.302294556636062,
+     "unit": "d",
+     "band": "\u2264 7",
+     "status": "ok",
+     "source": "NASA SP-8089 3.1.1.1.4 (along the jet)",
+     "note": "7.02 mm"
+    },
+    {
+     "label": "LOX intact core (low bound)",
+     "value": 160.71441606683177,
+     "unit": "d",
+     "band": "> free jet 4.3 d",
+     "status": "ok",
+     "source": "Chehroudi et al. SAE 850126: L = C d \u221a(\u03c1l/\u03c1g), C 7\u201316",
+     "note": "at \u03c1g 2.16 kg/m\u00b3: the jets meet before they come apart"
+    },
+    {
+     "label": "LOX orifice Cd",
+     "value": 0.7842412562600494,
+     "unit": "",
+     "band": "",
+     "status": "info",
+     "source": "lichtarowicz",
+     "note": "L/d 5.00; 0.7817 through the manifold"
+    },
+    {
+     "label": "fuel jet velocity",
+     "value": 36.5558708368608,
+     "unit": "m/s",
+     "band": "10\u201360",
+     "status": "ok",
+     "source": "bulk mdot / (rho A)",
+     "note": "Re 3.54e+04, liquid We 6.96e+04"
+    },
+    {
+     "label": "fuel free jet to impingement",
+     "value": 5.840661624580718,
+     "unit": "d",
+     "band": "\u2264 7",
+     "status": "ok",
+     "source": "NASA SP-8089 3.1.1.1.4 (along the jet)",
+     "note": "8.59 mm"
+    },
+    {
+     "label": "fuel intact core (low bound)",
+     "value": 133.7029256936694,
+     "unit": "d",
+     "band": "> free jet 5.8 d",
+     "status": "ok",
+     "source": "Chehroudi et al. SAE 850126: L = C d \u221a(\u03c1l/\u03c1g), C 7\u201316",
+     "note": "at \u03c1g 2.16 kg/m\u00b3: the jets meet before they come apart"
+    },
+    {
+     "label": "fuel orifice Cd",
+     "value": 0.7762735909093295,
+     "unit": "",
+     "band": "",
+     "status": "info",
+     "source": "lichtarowicz",
+     "note": "L/d 5.55; 0.7748 through the manifold"
+    }
+   ]
+  },
+  {
+   "title": "Impingement",
+   "rows": [
+    {
+     "label": "included angle",
+     "value": 83.0,
+     "unit": "\u00b0",
+     "band": "60\u2013100",
+     "status": "ok",
+     "source": "Sutton 8.3; Huzel & Huang 4.2 practice",
+     "note": ""
+    },
+    {
+     "label": "Rupe M",
+     "value": 1.1777059033375363,
+     "unit": "",
+     "band": "0.8\u20131.25",
+     "status": "ok",
+     "source": "\u03c1O vO\u00b2 dO / (\u03c1F vF\u00b2 dF); Rupe 1953, Elverum & Morey 1959",
+     "note": "best mixing near 1"
+    },
+    {
+     "label": "momentum ratio R",
+     "value": 1.0305386523143403,
+     "unit": "",
+     "band": "",
+     "status": "info",
+     "source": "\u1e41O vO / \u1e41F vF per element",
+     "note": ""
+    },
+    {
+     "label": "spray lean",
+     "value": 0.1960223742403577,
+     "unit": "\u00b0 (+ outward)",
+     "band": "\u2248 0, inward allowed",
+     "status": "ok",
+     "source": "Sutton eq. 8-7 (momentum resultant)",
+     "note": "toward the wall"
+    },
+    {
+     "label": "impingement ring / bore radius",
+     "value": 0.5634154874051007,
+     "unit": "",
+     "band": "0.7071 \u00b1 0.1",
+     "status": "warn",
+     "source": "layer1_injector_spray_radius_frac (0.707 = equal area)",
+     "note": "\u230071.6 mm, 5.02 mm off the face"
+    }
+   ]
+  },
+  {
+   "title": "Atomization",
+   "rows": [
+    {
+     "label": "LOX D32",
+     "value": 88.74531917243732,
+     "unit": "\u00b5m",
+     "band": "",
+     "status": "info",
+     "source": "NACA TN 4222 (Ingebo 1958), carried to the propellants by tn4087",
+     "note": "uncalibrated: measure it"
+    },
+    {
+     "label": "LOX gas Weber",
+     "value": 553.6184580103087,
+     "unit": "",
+     "band": "",
+     "status": "info",
+     "source": "\u03c1g Vrel\u00b2 d / \u03c3 at the breakup gas density",
+     "note": ""
+    },
+    {
+     "label": "fuel D32",
+     "value": 155.3917794710489,
+     "unit": "\u00b5m",
+     "band": "",
+     "status": "info",
+     "source": "NACA TN 4222 (Ingebo 1958), carried to the propellants by tn4087",
+     "note": "uncalibrated: measure it"
+    },
+    {
+     "label": "fuel gas Weber",
+     "value": 291.032017235894,
+     "unit": "",
+     "band": "",
+     "status": "info",
+     "source": "\u03c1g Vrel\u00b2 d / \u03c3 at the breakup gas density",
+     "note": ""
+    },
+    {
+     "label": "sheet breakup length",
+     "value": 2.210347667731539,
+     "unit": "mm",
+     "band": "",
+     "status": "info",
+     "source": "h ~ d\u00b2/(4 L_imp), t_b ~ (h/u) \u221a(\u03c1l/\u03c1g)",
+     "note": ""
+    }
+   ]
+  },
+  {
+   "title": "Vaporization",
+   "rows": [
+    {
+     "label": "LOX 95 % vaporized, from the face",
+     "value": 54.69727486869748,
+     "unit": "mm",
+     "band": "< chamber 192 mm",
+     "status": "ok",
+     "source": "droplet march (blowing: abramzon_sirignano; liquid: CoolProp LOX: cp(T) at Pc, rho at 114.2 K)",
+     "note": "100.0 % vaporized at the throat; +72 % margin"
+    },
+    {
+     "label": "fuel 95 % vaporized, from the face",
+     "value": 157.24509851632567,
+     "unit": "mm",
+     "band": "< chamber 192 mm",
+     "status": "ok",
+     "source": "droplet march (blowing: abramzon_sirignano; liquid: CoolProp Ethanol: cp(T) at Pc, rho at 379.4 K)",
+     "note": "97.3 % vaporized at the throat; +18 % margin"
+    },
+    {
+     "label": "vaporized at the throat",
+     "value": 98.94287434158578,
+     "unit": "%",
+     "band": "",
+     "status": "info",
+     "source": "the droplet march",
+     "note": "O/F of the vapour 1.565"
+    },
+    {
+     "label": "x* (d\u00b2-law, Vrel \u03c4_evap)",
+     "value": 182.65400608213497,
+     "unit": "mm",
+     "band": "config limit 50 mm",
+     "status": "info",
+     "source": "spray.evaporation.x_star_limit",
+     "note": "a fixed number, not this chamber: the march above is what \u03b7_vap uses"
+    }
+   ]
+  },
+  {
+   "title": "Mixing and c*",
+   "rows": [
+    {
+     "label": "Rupe E_m",
+     "value": 0.7919160440142315,
+     "unit": "",
+     "band": "optimum 0.8",
+     "status": "info",
+     "source": "Rupe E_m at the element's M (JPL TR 32-1546 Fig. 1)",
+     "note": "cold-flow mixture-ratio uniformity"
+    },
+    {
+     "label": "\u03b7 mixing",
+     "value": 0.9215360833411855,
+     "unit": "",
+     "band": "",
+     "status": "info",
+     "source": "stream-tube c* integral over the E_m spread",
+     "note": "gaussian; two-tube shape 0.9357"
+    },
+    {
+     "label": "\u03b7 vaporization",
+     "value": 0.9893271526778447,
+     "unit": "",
+     "band": "",
+     "status": "info",
+     "source": "droplet march",
+     "note": ""
+    },
+    {
+     "label": "\u03b7 heat loss",
+     "value": 0.9965465098994981,
+     "unit": "",
+     "band": "",
+     "status": "info",
+     "source": "wall heat to the liner",
+     "note": ""
+    },
+    {
+     "label": "\u03b7 c*",
+     "value": 0.9085521201853588,
+     "unit": "",
+     "band": "",
+     "status": "info",
+     "source": "\u03b7_vap \u00d7 \u03b7_mix \u00d7 \u03b7_HL",
+     "note": ""
+    },
+    {
+     "label": "element O/F spread",
+     "value": 0.151130578778574,
+     "unit": "%",
+     "band": "",
+     "status": "info",
+     "source": "ring-manifold solve",
+     "note": "1.5220\u20131.5243"
+    }
+   ]
+  }
+ ],
+ "sensitivity": [
+  {
+   "case": "as configured",
+   "why": "",
+   "F": 6500.455123853541,
+   "Isp": 223.13856477589172,
+   "Pc_psia": 377.5219505848218,
+   "OF": 1.5233327241051795,
+   "eta_cstar": 0.9085521201853588,
+   "eta_vap": 0.9893271526778447,
+   "eta_mix": 0.9215360833411855,
+   "vap_F": 0.9733252023263212,
+   "vap_O": 1.0,
+   "applied": true
+  },
+  {
+   "case": "SMD transfer: Dombrowski & Johns",
+   "why": "the three published transfers of TN 4222 to the propellants",
+   "F": 6528.817214390822,
+   "Isp": 225.08039418089044,
+   "Pc_psia": 378.98919229000825,
+   "OF": 1.523353261213267,
+   "eta_cstar": 0.9159962152749053,
+   "eta_vap": 0.997448155192395,
+   "eta_mix": 0.9215312036888559,
+   "vap_F": 0.9935861827732367,
+   "vap_O": 0.9999983187366097,
+   "applied": true
+  },
+  {
+   "case": "SMD transfer: none (heptane in air)",
+   "why": "the three published transfers of TN 4222 to the propellants",
+   "F": 6514.131000225056,
+   "Isp": 224.07228190748899,
+   "Pc_psia": 378.2294349392707,
+   "OF": 1.5233425947904728,
+   "eta_cstar": 0.9121314656359969,
+   "eta_vap": 0.9932319539241007,
+   "eta_mix": 0.9215337301421476,
+   "vap_F": 0.9881193203740894,
+   "vap_O": 0.9966088265680814,
+   "applied": true
+  },
+  {
+   "case": "Rupe E_m opt 0.70",
+   "why": "short or cavitating orifices (Nurick & McHale, JPL TR 32-1546)",
+   "F": 6242.436767459083,
+   "Isp": 206.37443654654027,
+   "Pc_psia": 364.1750884986891,
+   "OF": 1.5231569549274362,
+   "eta_cstar": 0.8443209733797916,
+   "eta_vap": 0.988742529810857,
+   "eta_mix": 0.8568202578611246,
+   "vap_F": 0.972023563649284,
+   "vap_O": 1.0,
+   "applied": true
+  },
+  {
+   "case": "Rupe E_m opt 0.85",
+   "why": "top of the circular 1-on-1 doublet band (JPL TR 32-1546 p. 1)",
+   "F": 6601.166008431633,
+   "Isp": 230.13056959391773,
+   "Pc_psia": 382.73207855411954,
+   "OF": 1.5234068383401886,
+   "eta_cstar": 0.9353601638120643,
+   "eta_vap": 0.989519573784876,
+   "eta_mix": 0.9485762811687021,
+   "vap_F": 0.9737521286216149,
+   "vap_O": 1.0,
+   "applied": true
+  }
+ ]
+}

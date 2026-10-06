@@ -25,6 +25,12 @@ export interface StateDef {
   /** True for the state carrying [[states]].is_flow — the one the characterization hold drives.
    *  A flag rather than a name, so renaming or moving it needs no code change. */
   isFlow?: boolean;
+  /** True when the state runs a script on entry. A dynamic state is not a latch: it does something
+   *  over time and then leaves on its own, so the panel presents it differently.
+   *  Derived from a non-empty script_file — there is no separate flag to disagree with it. */
+  isDynamic?: boolean;
+  /** Ceiling on the script, in ms. null when the state is not dynamic. */
+  scriptTimeoutMs?: number | null;
   /** Position on the State Machine control panel. null = not shown there. */
   panelRow: number | null;
   panelCol: number | null;

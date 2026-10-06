@@ -31,6 +31,7 @@ from feedtwin.comps.base import (
     Violation,
     register_builder,
 )
+from feedtwin.comps.iec_gas import GAMMA_IDEAL_PRESSURE
 from feedtwin.comps.correlations import (
     DEFAULT_FRICTION_METHOD,
     FittingContext,
@@ -159,7 +160,7 @@ class Pipe(HydraulicComponent):
         return K * _dynamic_head(mdot, bore, flow.rho), Re
 
     def _elevation(self, flow: FlowConditions) -> float:
-        return flow.rho * GRAVITY * self.p.get("elevation_change", 0.0)
+        return flow.rho * flow.gravity * self.p.get("elevation_change", 0.0)
 
     def diagnostics(self, mdot: float, flow: FlowConditions) -> dict[str, float]:
         bore = self.p["bore"]
@@ -209,6 +210,12 @@ class Fitting(HydraulicComponent):
         return fitting_K(self.opt["kind"], ctx)
 
     def pressure_drop(self, mdot: float, flow: FlowConditions) -> float:
+        if mdot == 0.0:
+            # K times a dynamic head of zero, whatever K is -- and at Re = 0 a
+            # bend's correlation (Rennels) refuses to give one. The solver
+            # back-fills every capped stub at exactly zero flow, so a capped
+            # fill QD raised out of every solve of its drawing.
+            return 0.0
         return self._K(mdot, flow) * _dynamic_head(mdot, self.p["bore"], flow.rho)
 
     def diagnostics(self, mdot: float, flow: FlowConditions) -> dict[str, float]:
@@ -255,6 +262,12 @@ class Bend(HydraulicComponent):
         )
 
     def pressure_drop(self, mdot: float, flow: FlowConditions) -> float:
+        if mdot == 0.0:
+            # K times a dynamic head of zero, whatever K is -- and at Re = 0 a
+            # bend's correlation (Rennels) refuses to give one. The solver
+            # back-fills every capped stub at exactly zero flow, so a capped
+            # fill QD raised out of every solve of its drawing.
+            return 0.0
         return self._K(mdot, flow) * _dynamic_head(mdot, self.p["bore"], flow.rho)
 
     def diagnostics(self, mdot: float, flow: FlowConditions) -> dict[str, float]:
@@ -845,7 +858,7 @@ class SegmentedPipe(HydraulicComponent):
         return total
 
     def static_head(self, flow: FlowConditions) -> float:
-        return flow.rho * GRAVITY * self._elevation_m
+        return flow.rho * flow.gravity * self._elevation_m
 
     def _segment_dp(
         self, segment: LineSegment, mdot: float, flow: FlowConditions
@@ -858,6 +871,11 @@ class SegmentedPipe(HydraulicComponent):
             # No bore anywhere on the line: nothing can be sized. The reader
             # has already warned; contributing zero is the only honest answer,
             # and it is visible in `segments_sized`.
+            return 0.0
+        if mdot == 0.0:
+            # Every K below multiplies a dynamic head of zero. Asked anyway, a
+            # bend's correlation (Rennels) refuses Re = 0, and a capped run is
+            # priced at exactly zero flow -- it stopped a stand opening at all.
             return 0.0
         head = _dynamic_head(mdot, bore, flow.rho)
 
@@ -933,6 +951,8 @@ class SegmentedPipe(HydraulicComponent):
         there = self.segments[index + 1].bore_si or self._bore
         if here <= 0.0 or there <= 0.0 or abs(here - there) < 1e-9:
             return 0.0
+        if mdot == 0.0:
+            return 0.0  # K times a zero head; see `_segment_dp`
         # Both fluids' correlations refer K to the *smaller* bore, which is also
         # where the velocity is highest and the loss actually happens.
         small = min(here, there)
@@ -1040,6 +1060,7 @@ def conditions_from_fluid(
     *,
     multiphase: bool = False,
     phase: str | None = None,
+    gravity: float = GRAVITY,
 ) -> FlowConditions:
     """Build :class:`FlowConditions` from a :class:`~feedtwin.props.Fluid`.
 
@@ -1093,6 +1114,7 @@ def conditions_from_fluid(
             gamma=gamma,
             r_specific=R_UNIVERSAL / molar_mass if molar_mass > 0.0 else 0.0,
             signals=dict(signals or {}),
+            gravity=gravity,
         )
 
     try:
@@ -1117,7 +1139,40 @@ def conditions_from_fluid(
         gamma=float(fluid.get("gamma", p=p, T=T)),
         r_specific=R_UNIVERSAL / molar_mass if molar_mass > 0.0 else 0.0,
         signals=dict(signals or {}),
+        gravity=gravity,
+        gamma_ideal=_ideal_gamma(fluid, T),
     )
+
+
+#: Ideal-gas ratio of specific heats by (species, temperature). See _ideal_gamma.
+_IDEAL_GAMMA_CACHE: dict[tuple[str, float], float] = {}
+
+#: Temperature resolution of that cache [K]. An ideal gas's cp moves by parts
+#: per thousand over a kelvin; nitrogen's cp/cv is 1.400 from 90 K to 400 K.
+_IDEAL_GAMMA_RESOLUTION = 1.0
+
+
+def _ideal_gamma(fluid: Fluid, T: float) -> float:
+    """cp/cv at 1 kPa and ``T``: the ideal-gas limit, or 0 when unpriceable.
+
+    For :mod:`feedtwin.comps.iec_gas` only (``FlowConditions.gamma_ideal``);
+    nothing else reads it. Cached by species and whole kelvin, because a solve
+    asks for the same few gas temperatures thousands of times.
+    """
+    if T <= 0.0:
+        return 0.0
+    key = (fluid.name, round(T / _IDEAL_GAMMA_RESOLUTION) * _IDEAL_GAMMA_RESOLUTION)
+    cached = _IDEAL_GAMMA_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        value = float(fluid.get("gamma", p=GAMMA_IDEAL_PRESSURE, T=key[1]))
+    except (PropertyError, ValueError):
+        value = 0.0
+    if not math.isfinite(value) or value <= 1.0:
+        value = 0.0
+    _IDEAL_GAMMA_CACHE[key] = value
+    return value
 
 
 #: Saturated-liquid properties by (species, temperature). See _liquid_state.

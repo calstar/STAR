@@ -2,7 +2,7 @@
 
 Audited reality (2026-06-11), which these bindings encode rather than invent:
   * SMD: ``PintleInjector.solve`` hard-binds ``smd_pintle`` (``spray.smd.model`` is IGNORED on the
-    pintle path); ``ImpingingInjector.solve`` hard-binds ``smd_impinging_ingebo`` (``spray.smd.model``
+    pintle path); ``ImpingingInjector.solve`` hard-binds ``smd_impinging_tn4222`` (``spray.smd.model``
     is IGNORED — legacy lefebvre on doublets yielded bogus ~1 µm D32).
   * Geometry-Cd (``cd_inf_from_orifice_diameter``): called only on the impinging path; pintle keeps
     fixed ``Cd_inf`` semantics (this is WHY anchor A stayed bit-compatible with main).

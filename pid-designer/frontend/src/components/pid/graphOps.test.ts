@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Edge, Node } from '@xyflow/react';
-import { translateSubgraph, turnSelected } from './graphOps';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { Position, ReactFlowProvider } from '@xyflow/react';
+import type { NodeProps } from '@xyflow/react';
+import { matePair, translateSubgraph, turnSelected } from './graphOps';
+import { SupplyNode } from './nodes/SupplyNode';
+import { unmeasuredEnd } from './unmeasured';
 
 const node = (id: string, x: number, y: number, data: Record<string, unknown> = {}, extra: Partial<Node> = {}): Node =>
   ({ id, type: 'MAN', position: { x, y }, data: { componentType: 'MAN', label: id, ...data }, ...extra }) as Node;
@@ -80,5 +86,75 @@ describe('R', () => {
   it('hands back the same array when nothing on the page is selected', () => {
     const nodes = [node('main', 0, 0, { page: 'Main' }, { selected: true })];
     expect(turnSelected(nodes, 'GSE')).toBe(nodes);
+  });
+});
+
+describe('R on a K-bottle or a dewar', () => {
+  const supply = (id: string, type: string, data: Record<string, unknown> = {}) =>
+    ({ id, type, position: { x: 0, y: 0 }, selected: true, data: { componentType: type, label: id, page: 'Main', ...data } }) as Node;
+  const flip = (n: Node) => turnSelected([n], 'Main')[0].data as { flipped?: boolean; rotation?: number };
+
+  it('mirrors it about the vertical, and back, rather than turning it', () => {
+    for (const type of ['KBOTTLE', 'DEWAR']) {
+      const once = turnSelected([supply('S', type)], 'Main')[0];
+      expect(once.data).toMatchObject({ flipped: true });
+      expect((once.data as { rotation?: number }).rotation).toBeUndefined();
+      expect(flip(once)).toMatchObject({ flipped: false });
+    }
+  });
+
+  it('takes a turn left over from before with the first flip', () => {
+    expect(flip(supply('S', 'KBOTTLE', { rotation: 90 }))).toEqual(expect.objectContaining({ flipped: true }));
+    expect('rotation' in flip(supply('S', 'KBOTTLE', { rotation: 90 }))).toBe(false);
+  });
+
+  it('still turns everything else a quarter', () => {
+    const out = turnSelected([supply('V', 'MAN')], 'Main')[0].data as { rotation?: number; flipped?: boolean };
+    expect(out.rotation).toBe(90);
+    expect(out.flipped).toBeUndefined();
+  });
+
+  it('puts the side outlet on the left, drawn and placed alike, and keeps its name', () => {
+    for (const type of ['KBOTTLE', 'DEWAR']) {
+      const n = supply('S', type, { flipped: true });
+      expect(unmeasuredEnd(n, 'r')!.side).toBe(Position.Left);
+      expect(unmeasuredEnd({ ...n, data: { ...n.data, flipped: false } }, 'r')!.side).toBe(Position.Right);
+      const html = renderToStaticMarkup(createElement(ReactFlowProvider, null, createElement(SupplyNode, {
+        id: 'S', type, data: n.data, selected: false, dragging: false, zIndex: 0, isConnectable: true,
+        positionAbsoluteX: 0, positionAbsoluteY: 0,
+      } as unknown as NodeProps)));
+      expect(html).toMatch(/data-handleid="r" data-handlepos="left"/);
+    }
+  });
+});
+
+describe('a quick disconnect given a mate', () => {
+  const qd = (id: string, pairedWith = '') =>
+    ({ id, type: 'QD', position: { x: 0, y: 0 }, data: { componentType: 'QD', label: id, options: { pairedWith } } }) as Node;
+  const mates = (nodes: Node[]) =>
+    Object.fromEntries(nodes.map(n => [n.id, (n.data as { options?: { pairedWith?: string } }).options?.pairedWith ?? '']));
+
+  it('is named by its mate in return', () => {
+    // A is being saved as mating with B: A's own options are the dialog's.
+    expect(mates(matePair([qd('A'), qd('B')], 'A', '', 'B'))).toEqual({ A: '', B: 'A' });
+  });
+
+  it('leaves its old mate unpaired', () => {
+    expect(mates(matePair([qd('A', 'B'), qd('B', 'A'), qd('C')], 'A', 'B', 'C'))).toEqual({ A: 'B', B: '', C: 'A' });
+  });
+
+  it("takes its new mate from the half it was paired with, which is left unpaired", () => {
+    expect(mates(matePair([qd('A'), qd('B', 'C'), qd('C', 'B')], 'A', '', 'B'))).toEqual({ A: '', B: 'A', C: '' });
+  });
+
+  it('unpaired, or marked as needing none, leaves its old mate unpaired', () => {
+    expect(mates(matePair([qd('A', 'B'), qd('B', 'A')], 'A', 'B', ''))).toEqual({ A: 'B', B: '' });
+    expect(mates(matePair([qd('A', 'B'), qd('B', 'A')], 'A', 'B', 'none'))).toEqual({ A: 'B', B: '' });
+  });
+
+  it('leaves alone a half that named someone else, and changes nothing when the mate did not change', () => {
+    expect(mates(matePair([qd('A', 'B'), qd('B', 'C'), qd('C', 'B')], 'A', 'B', ''))).toEqual({ A: 'B', B: 'C', C: 'B' });
+    const nodes = [qd('A', 'B'), qd('B', 'A')];
+    expect(matePair(nodes, 'A', 'B', 'B')).toBe(nodes);
   });
 });

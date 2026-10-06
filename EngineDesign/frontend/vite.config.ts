@@ -23,6 +23,11 @@ export default defineConfig({
       // The shared source sits outside this project, so Node resolution from it
       // walks up past any node_modules and cannot find React. Pin both to this
       // app's copies -- which also guarantees one React instance, not two.
+      // pid-designer's own drawing code, so Layer X draws a P&ID exactly as the editor
+      // does instead of a second, worse renderer. Read-only use; see lx/hero/PidView.
+      '@pid': fileURLToPath(new URL('../../pid-designer/frontend/src/components/pid', import.meta.url)),
+      // ...and its React Flow pinned to ours, for the same reason as React: one copy.
+      '@xyflow/react': fileURLToPath(new URL('./node_modules/@xyflow/react', import.meta.url)),
       react: fileURLToPath(new URL('./node_modules/react', import.meta.url)),
       'react-dom': fileURLToPath(new URL('./node_modules/react-dom', import.meta.url)),
     },

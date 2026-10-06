@@ -57,8 +57,10 @@ export interface Checkout {
   error: string | null;
   take: () => Promise<void>;
   release: () => Promise<void>;
-  /** Call when a write comes back 423 -- the token is gone. */
-  lost: () => void;
+  /** Call when a write comes back 423 -- the token is gone. Pass the name of
+   *  the design the refused edits were kept as (the app's `rescue`), so the
+   *  notice can say where they went instead of that they are only on screen. */
+  lost: (savedAs?: string) => void;
   /** Refresh the hold now. The "Keep editing" button; also safe to call on
    *  any deliberate user action an app wants to count. */
   keepAlive: () => Promise<void>;
@@ -72,6 +74,10 @@ export interface Checkout {
    * being told. Cleared by `acknowledgeLost`.
    */
   lostUnexpectedly: boolean;
+  /** Where the edits a refused save carried were kept, if they were -- the
+   *  name `lost` was given. Cleared with the notice. Optional so a hand-built
+   *  `Checkout` (a test, an app that has no rescue) need not mention it. */
+  savedAs?: string | null;
   acknowledgeLost: () => void;
 }
 
@@ -84,6 +90,13 @@ export interface UseCheckoutOptions<T> {
    * so an app is never editable while showing a stale view.
    */
   reload?: () => Promise<void> | void;
+  /**
+   * Save whatever the app has not saved yet. Awaited inside `release()` before
+   * the hold is given back: an autosave still waiting on its debounce, or still
+   * on the wire, otherwise lands after the release, comes back 423, and the
+   * edit it carried is lost from the design. Throwing keeps the hold.
+   */
+  beforeRelease?: () => Promise<void> | void;
   /** How often to re-check while somebody else holds it. */
   pollMs?: number;
   /** How often to beat/re-check while we DO hold it. */
@@ -108,6 +121,7 @@ export function useCheckout<T>({
   api,
   ref,
   reload,
+  beforeRelease,
   pollMs = 10_000,
   heldPollMs = 15_000,
   local = false,
@@ -116,6 +130,7 @@ export function useCheckout<T>({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lostUnexpectedly, setLostUnexpectedly] = useState(false);
+  const [savedAs, setSavedAs] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   // When the current `state` reached us, by OUR clock. The countdown subtracts
   // locally-measured elapsed time from the server's own "seconds remaining",
@@ -144,6 +159,7 @@ export function useCheckout<T>({
     setState(FREE);
     setError(null);
     setLostUnexpectedly(false);
+    setSavedAs(null);
   }, [key]);
 
   // Last interaction of any kind. A ref, not state: these fire continuously
@@ -267,6 +283,7 @@ export function useCheckout<T>({
     setBusy(true);
     setError(null);
     setLostUnexpectedly(false);
+    setSavedAs(null);
     lastActivityRef.current = Date.now();
     try {
       const s = await api.takeCheckout(r);
@@ -286,11 +303,19 @@ export function useCheckout<T>({
     }
   }, [api, reload, applyState]);
 
+  const beforeReleaseRef = useRef(beforeRelease);
+  beforeReleaseRef.current = beforeRelease;
   const release = useCallback(async () => {
     const r = refRef.current;
     if (!r) return;
     setBusy(true);
     try {
+      try {
+        await beforeReleaseRef.current?.();
+      } catch {
+        setError('Your last edit could not be saved, so you still have it checked out. Try again in a moment.');
+        return;
+      }
       applyState(await api.releaseCheckout(r));
     } catch {
       setState(FREE); // best effort; the timeout frees it regardless
@@ -306,8 +331,9 @@ export function useCheckout<T>({
     else setLostUnexpectedly(true);
   }, [local, take]);
 
-  const lost = useCallback(() => {
+  const lost = useCallback((kept?: string) => {
     setState((s) => ({ ...s, lockedByMe: false }));
+    if (kept) setSavedAs(kept);
     gone();
   }, [gone]);
 
@@ -318,7 +344,10 @@ export function useCheckout<T>({
     void take();
   }, [local, key]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const acknowledgeLost = useCallback(() => setLostUnexpectedly(false), []);
+  const acknowledgeLost = useCallback(() => {
+    setLostUnexpectedly(false);
+    setSavedAs(null);
+  }, []);
 
   const keepAlive = useCallback(async () => {
     const r = refRef.current;
@@ -351,6 +380,7 @@ export function useCheckout<T>({
     expiresAt: state.lockExpiresAt,
     secondsLeft,
     lostUnexpectedly,
+    savedAs,
     acknowledgeLost,
   };
 }

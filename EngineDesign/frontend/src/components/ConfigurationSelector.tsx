@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { getSwitchOptions, switchConfig, type SwitchOptions, type EngineConfig } from '../api/client';
-import { emitConfigChanged } from '../lib/configBus';
+import { emitConfigChanged, useConfigChanged } from '../lib/configBus';
 import { useReadOnly } from '@stardesign-ui';
 
 declare const __API_PORT__: string
@@ -38,8 +38,7 @@ export default function ConfigurationSelector({ onConfigChange }: Props) {
   const [designWarning, setDesignWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const loadOptions = async () => {
-    const res = await getSwitchOptions();
+  const applyOptions = (res: Awaited<ReturnType<typeof getSwitchOptions>>) => {
     if (res.data) {
       setOpts(res.data);
       setError(null);
@@ -47,8 +46,18 @@ export default function ConfigurationSelector({ onConfigChange }: Props) {
       setError(res.error ?? 'backend unavailable');
     }
   };
+  const loadOptions = async () => applyOptions(await getSwitchOptions());
 
-  useEffect(() => { loadOptions(); }, []);
+  useEffect(() => {
+    let alive = true;
+    void getSwitchOptions().then((res) => { if (alive) applyOptions(res); });
+    return () => { alive = false; };
+  }, []);
+  // A design opened, restored or uploaded replaces the config too; the dropdowns follow it.
+  const followConfig = useCallback(() => {
+    void getSwitchOptions().then((res) => { if (res.data) setOpts(res.data); });
+  }, []);
+  useConfigChanged(followConfig);
 
   const doSwitch = async (body: { injector_type?: string; propellant_preset?: string }) => {
     setBusy(true);
@@ -103,7 +112,7 @@ export default function ConfigurationSelector({ onConfigChange }: Props) {
     'focus:ring-blue-500 disabled:opacity-50';
 
   return (
-    <div className="flex items-center gap-4">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
       <label className="flex items-center gap-1.5">
         <span className="text-xs text-[var(--color-text-secondary)]">Propellant</span>
         <select

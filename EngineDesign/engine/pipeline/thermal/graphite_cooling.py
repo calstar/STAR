@@ -1,4 +1,8 @@
-"""Graphite throat insert cooling and recession model - Physics-based with oxidation heat feedback"""
+"""Graphite throat insert: surface chemistry and recession.
+
+The throat oxidisers of a LOX/hydrocarbon engine are H2O, CO2 and OH; their reactions with
+carbon are endothermic. See carbon_oxidation.
+"""
 
 from __future__ import annotations
 
@@ -6,10 +10,82 @@ from typing import Dict, Optional
 import numpy as np
 from engine.pipeline.config_schemas import GraphiteInsertConfig
 
-SIGMA = 5.670374419e-8  # Stefan-Boltzmann constant
-R_GAS = 8.314  # J/(mol·K) - universal gas constant
-MW_C = 0.012  # kg/mol - molar mass of carbon
-MW_O2 = 0.032  # kg/mol - molar mass of oxygen
+R_GAS = 8.314462618  # J/(mol K)
+MW_C = 12.0107       # kg/kmol
+ATM = 101325.0
+
+# Carbon consumed per mole of oxidiser (products CO, H2, H) and the reaction enthalpy per kg
+# of carbon at 298 K from JANAF heats of formation; positive is absorbed at the surface.
+#   C + H2O -> CO + H2   +131.3 kJ/mol     C + CO2 -> 2 CO   +172.5 kJ/mol
+#   C + OH  -> CO + H     +68.1 kJ/mol     2C + O2 -> 2 CO   -221.1 kJ/mol
+#   C + O   -> CO        -359.7 kJ/mol
+CARBON_OXIDISERS = {
+    "H2O": (1.0, +10.93e6),
+    "CO2": (1.0, +14.36e6),
+    "OH": (1.0, +5.67e6),
+    "O2": (2.0, -9.20e6),
+    "O": (1.0, -29.95e6),
+}
+
+
+def carbon_oxidation(T_s: float, P_static: float, composition: Dict[str, float], MW_mix: float,
+                     g0: float, cfg: GraphiteInsertConfig) -> Dict[str, object]:
+    """Carbon mass flux [kg/(m^2 s)] off a graphite surface at T_s and the heat it absorbs.
+
+    Each oxidiser attacks at 1/(1/m_kin + 1/m_diff). Diffusion limit (unit Lewis number,
+    film theory): m_diff = g * MW_C nu X / MW_mix with g the mass-transfer conductance h/cp,
+    reduced by blowing g = g0 ln(1+B)/B, B = m_C/g0. Kinetics (Bradley et al. 1984, via
+    Thakre & Yang, J. Propulsion Power 24(4), 2008): A T^b exp(-E/RT) p^n, p in atm;
+    O2 and O are diffusion-limited.
+    """
+    rates = {"H2O": cfg.oxidation_H2O, "CO2": cfg.oxidation_CO2, "OH": cfg.oxidation_OH}
+    m_kin = {}
+    for sp in CARBON_OXIDISERS:
+        x = max(float(composition.get(sp, 0.0)), 0.0)
+        if sp in rates and x > 0:
+            r = rates[sp]
+            p_atm = x * P_static / ATM
+            m_kin[sp] = r.A * T_s ** r.T_exponent * np.exp(-r.E / (R_GAS * T_s)) * p_atm ** r.n
+        else:
+            m_kin[sp] = np.inf
+    m_C = 0.0
+    species: Dict[str, float] = {}
+    for _ in range(100):
+        B = m_C / g0 if g0 > 0 else 0.0
+        g = g0 * (np.log1p(B) / B if B > 1e-12 else 1.0)
+        species = {}
+        for sp, (nu, _dH) in CARBON_OXIDISERS.items():
+            x = max(float(composition.get(sp, 0.0)), 0.0)
+            m_diff = g * MW_C * nu * x / MW_mix
+            mk = m_kin[sp]
+            species[sp] = 0.0 if m_diff <= 0 or mk <= 0 else 1.0 / (1.0 / mk + 1.0 / m_diff)
+        m_new = sum(species.values())
+        if abs(m_new - m_C) <= 1e-12 + 1e-10 * m_new:
+            m_C = m_new
+            break
+        m_C = m_new
+    B = m_C / g0 if g0 > 0 else 0.0
+    q_chem = sum(species[sp] * CARBON_OXIDISERS[sp][1] for sp in species)
+    return {"mass_flux": float(m_C), "species": species, "q_chem": float(q_chem), "B": float(B),
+            "blowing_factor": float(np.log1p(B) / B) if B > 1e-12 else 1.0}
+
+
+def graphite_surface_state(T_s: float, gas, contour, composition: Dict[str, float],
+                           cfg: GraphiteInsertConfig) -> Dict[str, object]:
+    """Gas-side balance at the throat for a graphite surface at T_s: Bartz convection (blown),
+    gas radiation, and the heat the surface chemistry absorbs. q_net goes into the insert."""
+    from engine.pipeline.thermal.gas_side import station_flux
+
+    eps_w = cfg.emissivity if cfg.emissivity is not None else 0.8
+    st = station_flux(gas, contour, 0.0, T_s, eps_w)
+    g0 = st["h"] / gas.cp
+    ox = carbon_oxidation(T_s, st["P_static"], composition, composition["MW"], g0, cfg)
+    q_conv = ox["blowing_factor"] * st["q_conv"]
+    q_net = q_conv + st["q_rad"] - ox["q_chem"]
+    return {"q_conv": q_conv, "q_conv_unblown": st["q_conv"], "q_rad": st["q_rad"],
+            "q_chem": ox["q_chem"], "q_net": q_net, "mass_flux": ox["mass_flux"],
+            "species": ox["species"], "B": ox["B"], "h": st["h"], "Taw": st["Taw"],
+            "P_static": st["P_static"]}
 
 
 def calculate_throat_heuristic_multiplier(
@@ -96,56 +172,20 @@ def compute_graphite_recession(
     heat_transfer_coefficient: Optional[float] = None,
     backside_temperature: Optional[float] = None,
     effective_thickness: Optional[float] = None,
+    gas_state=None,
+    contour=None,
+    throat_composition: Optional[Dict[str, float]] = None,
 ) -> Dict[str, float]:
-    """
-    Calculate graphite throat insert recession rate using physics-based models with oxidation heat feedback.
-    
-    Implements the theory from graphite_oxidation_feedback.tex:
-    - Energy balance: q''_in + q''_fb - q''_rad = q''_cond + m''_th H*_th
-    - Oxidation kinetics: kinetic-limited and diffusion-limited rates
-    - Feedback fraction: f_fb based on Damköhler number and blowing parameter
-    - Iterative solution for surface temperature
-    
-    Graphite recession is driven by:
-    1. Chemical oxidation (C + O2 -> CO/CO2) - dominant mechanism
-    2. Thermal ablation (sublimation) - only at very high temperatures (>2800 K)
-    
-    Parameters:
-    -----------
-    net_heat_flux : float
-        Reference convective heat flux [W/m²] at initial T_s (used to estimate h_g if not provided)
-    throat_temperature : float
-        Initial guess for throat surface temperature [K]
-    gas_temperature : float
-        Free-stream gas temperature [K]
-    graphite_config : GraphiteInsertConfig
-        Graphite insert configuration
-    throat_area : float
-        Throat area [m²]
-    pressure : float
-        Chamber/throat pressure [Pa]
-    gas_density : float, optional
-        Gas density [kg/m³]. If None, estimated from ideal gas law.
-    gas_viscosity : float, optional
-        Gas dynamic viscosity [Pa·s]. If None, estimated (~4e-5 Pa·s for combustion products).
-    oxygen_mass_fraction : float, optional
-        Oxygen mass fraction in free stream. If None, estimated (~0.3 for LOX/RP-1).
-    characteristic_length : float, optional
-        Characteristic length for Sherwood number [m]. If None, uses throat diameter.
-    gas_velocity : float, optional
-        Gas velocity [m/s]. If None, estimated from sonic conditions.
-    heat_transfer_coefficient : float, optional
-        Convective heat transfer coefficient h_g [W/(m²·K)]. If None, estimated from net_heat_flux.
-    backside_temperature : float, optional
-        Backside temperature for conduction [K]. If None, uses default 300 K.
-    effective_thickness : float, optional
-        Effective thickness for conduction [m]. If None, uses char_layer_thickness + 0.001 m.
-    
-    Returns:
-    --------
-    dict
-        Recession metrics including recession rate [m/s], mass flux [kg/(m²·s)],
-        surface temperature [K], and detailed heat transfer breakdown.
+    """Carbon recession of the graphite throat at the surface temperature ``throat_temperature``.
+
+    The surface temperature is an INPUT: it comes from the insert's transient conduction
+    (engine.pipeline.thermal.wall_conduction), not from a guess. Chemistry is
+    graphite_surface_state: H2O, CO2, OH, O2 and O from the CEA throat composition, each at
+    the lesser of its kinetic and diffusion-limited rate. ``gas_state`` is a
+    gas_side.HotGasState, ``contour`` a gas_side.WallContour and ``throat_composition`` the
+    CEA throat mole fractions with the throat 'MW'. The older arguments (net_heat_flux,
+    gas_density, oxygen_mass_fraction, ...) are accepted and unused. With
+    ``simplified_graphite_oxidation`` the configured constant rate is returned instead.
     """
     if not graphite_config.enabled or throat_area <= 0:
         return {
@@ -208,560 +248,32 @@ def compute_graphite_recession(
             "simplified_mode": True,
         }
     
-    # -------------------------------------------------------------------------
-    # STRICT INPUT VALIDATION: no hidden defaults
-    # -------------------------------------------------------------------------
-    missing: list[str] = []
-    # Required gas/transport inputs (caller must provide)
-    if gas_density is None:
-        missing.append("gas_density")
-    if gas_viscosity is None:
-        missing.append("gas_viscosity")
-    if oxygen_mass_fraction is None:
-        missing.append("oxygen_mass_fraction")
-    if characteristic_length is None:
-        missing.append("characteristic_length")
-    if gas_velocity is None:
-        missing.append("gas_velocity")
-    if heat_transfer_coefficient is None:
-        missing.append("heat_transfer_coefficient")
-    if backside_temperature is None:
-        missing.append("backside_temperature")
-    if effective_thickness is None:
-        missing.append("effective_thickness")
-
-    # Required config fields that were previously defaulted
-    emissivity = getattr(graphite_config, "emissivity", None)
-    if emissivity is None:
-        missing.append("graphite_config.emissivity")
-    T_env = getattr(graphite_config, "ambient_temperature", None)
-    if T_env is None:
-        missing.append("graphite_config.ambient_temperature")
-    f_fb_min = getattr(graphite_config, "feedback_fraction_min", None)
-    if f_fb_min is None:
-        missing.append("graphite_config.feedback_fraction_min")
-    f_fb_max = getattr(graphite_config, "feedback_fraction_max", None)
-    if f_fb_max is None:
-        missing.append("graphite_config.feedback_fraction_max")
-    pressure_exponent = getattr(graphite_config, "oxidation_pressure_exponent", None)
-    if pressure_exponent is None:
-        missing.append("graphite_config.oxidation_pressure_exponent")
-    mixture_mw = getattr(graphite_config, "mixture_mw", None)
-    if mixture_mw is None:
-        missing.append("graphite_config.mixture_mw")
-    stoichiometry_ratio = getattr(graphite_config, "oxidation_stoichiometry_ratio", None)
-    if stoichiometry_ratio is None:
-        missing.append("graphite_config.oxidation_stoichiometry_ratio")
-    oxidation_enthalpy = getattr(graphite_config, "oxidation_enthalpy", None)
-    if oxidation_enthalpy is None:
-        missing.append("graphite_config.oxidation_enthalpy")
-    T_abl = getattr(graphite_config, "ablation_surface_temperature", None)
-    if T_abl is None:
-        missing.append("graphite_config.ablation_surface_temperature")
-
-    if missing:
+    if gas_state is None or contour is None or throat_composition is None:
         raise ValueError(
-            "compute_graphite_recession: missing required inputs/config (strict mode, no defaults): "
-            + ", ".join(missing)
-        )
-
-    # Now that inputs are validated, cast/clamp only for numerical safety (not physics defaults)
-    gas_density = float(gas_density)
-    gas_viscosity = float(gas_viscosity)
-    oxygen_mass_fraction = float(oxygen_mass_fraction)
-    characteristic_length = float(characteristic_length)
-    gas_velocity = float(gas_velocity)
-    heat_transfer_coefficient = float(heat_transfer_coefficient)
-    emissivity = float(emissivity)
-    T_env = float(T_env)
-    f_fb_min = float(f_fb_min)
-    f_fb_max = float(f_fb_max)
-    pressure_exponent = float(pressure_exponent)
-    mixture_mw = float(mixture_mw)
-    stoichiometry_ratio = float(stoichiometry_ratio)
-    oxidation_enthalpy = float(oxidation_enthalpy)
-    T_abl = float(T_abl)
-    T_back = float(backside_temperature)
-    effective_thickness = float(effective_thickness)
-
-    # minimal numeric safety guards (do not invent values)
-    gas_density = max(gas_density, 1e-6)
-    gas_viscosity = max(gas_viscosity, 1e-12)
-    characteristic_length = max(characteristic_length, 1e-9)
-    gas_velocity = max(gas_velocity, 1e-6)
-    heat_transfer_coefficient = max(heat_transfer_coefficient, 1e-6)
-    effective_thickness = max(effective_thickness, 1e-6)
-    
-    # Material properties
-    rho_s = graphite_config.material_density  # kg/m³
-    k_s = graphite_config.thermal_conductivity  # W/(m·K)
-    cp_s = graphite_config.specific_heat  # J/(kg·K)
-    # Backside temperature and conduction thickness are provided by caller in strict mode.
-    
-    # Oxidation kinetics parameters
-    Ea = graphite_config.activation_energy  # J/mol
-    T_ref = graphite_config.oxidation_reference_temperature  # K
-    P_ref = graphite_config.oxidation_reference_pressure  # Pa
-    
-    # Diffusivity parameters
-    D_ref = getattr(graphite_config, "reference_diffusivity", None) or 1e-4
-    T_D_ref = getattr(graphite_config, "reference_diffusivity_temperature", 1500.0)
-    P_D_ref = getattr(graphite_config, "reference_diffusivity_pressure", 1.0e6)
-    
-    # Reference mass flux at (T_ref, P_ref)
-    # Convert recession rate to mass flux
-    j_ref = graphite_config.oxidation_rate * rho_s  # kg/(m²·s) at reference conditions
-    
-    # Calculate Reynolds number once (flow property, independent of oxidation)
-    Re = gas_density * gas_velocity * characteristic_length / gas_viscosity
-    
-    # Skin friction coefficient (used only for blowing parameter B_m)
-    # WARNING: This is a rough heuristic. Throat Cf is complex due to pressure gradients.
-    Cf_override = getattr(graphite_config, "friction_coefficient_override", None)
-    if Cf_override is not None:
-        Cf = Cf_override
-    else:
-        Cf = 0.026 * (Re ** -0.25)  # Turbulent pipe correlation fallback
-        Cf = max(Cf, 0.001)  # Minimum
-    
-    # Initialize variables for return values
-    Da = 0.0
-    B_m = 0.0
-    
-    # Iterative solution for surface temperature
-    T_s = throat_temperature  # Initial guess
-    max_iter = 50
-    tol = 1.0  # K - convergence tolerance
-    damp = 0.5  # Damping factor for Newton step
-    feedback_max_iter = 10  # Max iterations for feedback loop convergence
-    feedback_tol = 1e-6  # Relative tolerance for feedback loop convergence
-    
-    for iter in range(max_iter):
-        T_s_old = T_s
-        
-        # 1. CONVECTIVE HEAT FLUX: q''_in = h_g * (T_g - T_s)
-        # Note: q_in can be negative if T_s > T_g (physically valid - wall cooling gas)
-        q_in = heat_transfer_coefficient * (gas_temperature - T_s)
-        
-        # 2. RADIATIVE COOLING
-        q_rad = emissivity * SIGMA * (T_s**4 - T_env**4)
-        q_rad = max(q_rad, 0.0)
-        
-        # 3. OXIDATION KINETICS
-        m_dot_ox = 0.0
-        k_m_molar = 0.0
-        X_O2 = 0.0
-        p_O2 = 0.0
-        
-        if T_s > graphite_config.oxidation_temperature:
-            # Convert oxygen mass fraction to mole fraction (with validation)
-            # Preference: 1. Direct mole fraction config, 2. mass fraction conversion
-            X_O2_cfg = getattr(graphite_config, "oxygen_mole_fraction", None)
-            if X_O2_cfg is not None:
-                X_O2 = float(X_O2_cfg)
-            else:
-                # Physics check: this conversion is only valid if mixture_mw and O2 fraction are consistent
-                X_O2 = oxygen_mass_fraction * (mixture_mw / MW_O2)
-            
-            if X_O2 > 1.001:
-                import warnings
-                warnings.warn(f"Calculated O2 mole fraction {X_O2:.3f} > 1.0. Inputs (Y_O2={oxygen_mass_fraction:.3f}, MW_mix={mixture_mw:.4f}) may be inconsistent.")
-            X_O2 = np.clip(X_O2, 0.0, 1.0)
-            
-            # Oxygen partial pressure
-            p_O2 = X_O2 * pressure
-            p_O2 = max(p_O2, 1.0)  # Minimum to avoid numerical issues
-            
-            # Kinetic-limited rate using reference mass flux
-            # m''_ox,kin = j_ref * exp(-Ea/R * (1/T_s - 1/T_ref)) * (p_O2/P_ref)^n
-            theta = np.exp(-Ea / R_GAS * (1.0 / T_s - 1.0 / T_ref))
-            m_dot_ox_kin = j_ref * theta * (p_O2 / P_ref) ** pressure_exponent
-            m_dot_ox_kin = max(m_dot_ox_kin, 0.0)
-            
-            # Diffusion-limited rate (molar basis)
-            # Use film temperature for transport properties to keep Re, Sc, Sh, k_m, C_tot consistent
-            T_film = 0.5 * (gas_temperature + T_s)
-            
-            # Estimate oxygen diffusivity: D_O2 ~ D_ref at (T_D_ref, P_D_ref), scales with T^1.5/P
-            # WARNING: Binary diffusion in rocket exhaust is an approximation (OH/H2O also oxidize)
-            D_O2 = D_ref * (T_film / T_D_ref) ** 1.5 * (P_D_ref / pressure)
-            
-            # Schmidt number: Sc = mu / (rho * D)
-            Sc = gas_viscosity / (gas_density * D_O2)
-            Sc = max(Sc, 0.1)  # Reasonable bounds
-            
-            # Sherwood number (combined laminar/turbulent)
-            Sh_lam = 0.664 * (Re ** 0.5) * (Sc ** (1.0/3.0))
-            Sh_turb = 0.023 * (Re ** 0.8) * (Sc ** (1.0/3.0))
-            Sh = (Sh_lam**3 + Sh_turb**3) ** (1.0/3.0)
-            Sh = max(Sh, 2.0)  # Low-Re floor (stagnant diffusion)
-            
-            # Molar mass transfer coefficient [m/s]
-            k_m_molar = Sh * D_O2 / characteristic_length
-            
-            # Total molar concentration [mol/m³] - use film temperature
-            C_tot = pressure / (R_GAS * T_film)
-            C_tot = max(C_tot, 1.0)  # Minimum
-            
-            # Surface oxygen mole fraction (assume zero at surface due to reaction)
-            X_O2_s = 0.0
-            
-            # Molar flux of O2 [mol/(m²·s)] - use driving force (X_O2 - X_O2_s)
-            N_O2 = k_m_molar * (X_O2 - X_O2_s) * C_tot
-            N_O2 = max(N_O2, 0.0)
-            
-            # Convert to carbon mass flux: m''_ox,diff = nu_C_per_O2 * MW_C * N_O2
-            m_dot_ox_diff = stoichiometry_ratio * MW_C * N_O2  # kg/(m²·s)
-            m_dot_ox_diff = max(m_dot_ox_diff, 0.0)
-            
-            # Oxidation rate is minimum of kinetic and diffusion limits
-            m_dot_ox = min(m_dot_ox_kin, m_dot_ox_diff)
-            m_dot_ox = max(m_dot_ox, 0.0)
-        else:
-            m_dot_ox = 0.0
-        
-        # 4. INITIALIZE FEEDBACK LOOP VARIABLES
-        # The feedback loop couples: f_fb ↔ q_fb ↔ m_dot_th ↔ B_m ↔ f_fb
-        # We need to iterate this until convergence within each T_s iteration
-        f_fb = f_fb_min
-        q_fb = 0.0
-        m_dot_th = 0.0
-        Da = 0.0
-        B_m = 0.0
-        
-        # Calculate Damköhler number (practical definition: ratio of kinetic to diffusion limits)
-        if m_dot_ox > 0 and T_s > graphite_config.oxidation_temperature:
-            # Da = mass_flux_kinetic / mass_flux_diffusion
-            # High Da (>1): Diffusion-limited (kinetics are fast)
-            # Low Da (<1): Kinetic-limited (diffusion is fast)
-            if m_dot_ox_diff > 1e-12:
-                Da = m_dot_ox_kin / m_dot_ox_diff
-            else:
-                Da = 1e6  # Effectively diffusion-limited
-            Da = max(Da, 1e-6)
-        else:
-            Da = 0.0
-        
-        # 5. CONDUCTION INTO SOLID (depends only on T_s)
-        q_cond = k_s * (T_s - T_back) / max(effective_thickness, 0.001)
-        
-        # 6. ITERATE FEEDBACK LOOP: f_fb ↔ q_fb ↔ m_dot_th ↔ B_m ↔ Sh_corrected
-        # This inner loop converges the coupling between feedback, blowing, and thermal ablation
-        is_ablating = False
-        H_star_th = graphite_config.heat_of_ablation
-        T_trans_width = getattr(graphite_config, "ablation_transition_width", 200.0)
-        
-        # Save base Sherwood number (uncorrected)
-        Sh_0 = Sh
-        
-        for fb_iter in range(feedback_max_iter):
-            f_fb_old = f_fb
-            m_dot_th_old = m_dot_th
-            m_dot_ox_old = m_dot_ox
-            
-            # 6a. Calculate blowing parameter and blowing correction for mass transfer
-            m_dot_tot = m_dot_ox + m_dot_th
-            v_tau = gas_velocity * np.sqrt(Cf / 2.0)
-            v_tau = max(v_tau, 1.0)
-            B_m = m_dot_tot / (gas_density * v_tau)
-            B_m = max(B_m, 0.0)
-            
-            # Blowing correction to mass transfer coefficient (thickens boundary layer)
-            if B_m > 0.01:
-                blowing_correction = np.log(1.0 + B_m) / B_m
-            else:
-                # Taylor expansion: ln(1+B)/B ≈ 1 - B/2 + B²/3...
-                blowing_correction = 1.0 - 0.5 * B_m
-            
-            Sh = Sh_0 * blowing_correction
-            k_m_molar = Sh * D_O2 / characteristic_length
-            
-            # 6b. Recalculate diffusion-limited oxidation with blowing correction
-            N_O2 = k_m_molar * (X_O2 - 0.0) * C_tot
-            m_dot_ox_diff = stoichiometry_ratio * MW_C * max(N_O2, 0.0)
-            m_dot_ox = min(m_dot_ox_kin, m_dot_ox_diff)
-            
-            # 6c. Update feedback fraction and Damköhler
-            if m_dot_ox > 0 and Da > 0:
-                # Update Da with blowing-corrected diffusion limit
-                if m_dot_ox_diff > 1e-12:
-                    Da = m_dot_ox_kin / m_dot_ox_diff
-                else:
-                    Da = 1e6
-                
-                # f_fb is reduced by blowing and kinetic limitations
-                f_fb = f_fb_min + (f_fb_max - f_fb_min) * (Da / (1.0 + Da)) * (1.0 / (1.0 + B_m))
-                f_fb = float(np.clip(f_fb, f_fb_min, f_fb_max))
-            else:
-                f_fb = 0.0
-            
-            # Calculate feedback heat flux
-            q_fb = f_fb * m_dot_ox * oxidation_enthalpy
-            
-            # ENERGY BALANCE: q''_in + q''_fb - q''_rad = q''_cond + m''_th * H*_th
-            q_net_available = q_in + q_fb - q_rad - q_cond
-            
-            # 6d. THERMAL ABLATION LOGIC (with smooth transition)
-            # ablation_onset_factor: 0.0 at low T, 1.0 at T_s >> T_abl
-            if T_trans_width > 0:
-                ablation_onset_factor = 1.0 / (1.0 + np.exp(-(T_s - T_abl) / (T_trans_width / 4.0)))
-            else:
-                ablation_onset_factor = 1.0 if T_s >= T_abl else 0.0
-            
-            if q_net_available > 0:
-                # Pin surface temperature at ablation temperature if heavily ablating
-                if ablation_onset_factor > 0.9 and not is_ablating:
-                    is_ablating = True
-                    T_s = T_abl
-                    # Recalculate heat fluxes at pinned temperature
-                    q_in = heat_transfer_coefficient * (gas_temperature - T_s)
-                    q_rad = emissivity * SIGMA * (T_s**4 - T_env**4)
-                    q_rad = max(q_rad, 0.0)
-                    q_cond = k_s * (T_s - T_back) / max(effective_thickness, 0.001)
-                    # Note: m_dot_ox and f_fb will be updated in next fb_iter
-                    continue 
-
-                # Calculate thermal ablation mass flux
-                delta_T = max(T_s - 300.0, 0.0)
-                H_star_th = graphite_config.heat_of_ablation + cp_s * delta_T
-                H_star_th = max(H_star_th, 1e6)
-                
-                # Apply smooth onset factor
-                m_dot_th = (q_net_available / H_star_th) * ablation_onset_factor
-                m_dot_th = max(m_dot_th, 0.0)
-            else:
-                m_dot_th = 0.0
-            
-            # Check convergence of feedback loop
-            if fb_iter > 0:
-                f_fb_change = abs(f_fb - f_fb_old) / max(abs(f_fb_old), f_fb_min, 1e-10)
-                m_dot_th_change = abs(m_dot_th - m_dot_th_old) / max(abs(m_dot_th_old), 1e-10)
-                m_dot_ox_change = abs(m_dot_ox - m_dot_ox_old) / max(abs(m_dot_ox_old), 1e-10)
-                if f_fb_change < feedback_tol and m_dot_th_change < feedback_tol and m_dot_ox_change < feedback_tol:
-                    break
-        
-        # 9. ENERGY BALANCE RESIDUAL
-        # If ablating, residual should be zero (T_s is pinned, m_dot_th balances energy)
-        if is_ablating:
-            residual = 0.0
-        else:
-            residual = q_in + q_fb - q_rad - q_cond - m_dot_th * H_star_th
-        
-        # 10. NEWTON-RAPHSON UPDATE FOR T_s
-        # Skip Newton update if ablating (T_s is pinned)
-        if iter > 0 and not is_ablating:
-            # Derivatives for Newton step
-            dq_in_dT = -heat_transfer_coefficient  # d/dT_s [h_g * (T_g - T_s)]
-            dq_rad_dT = 4.0 * emissivity * SIGMA * T_s**3
-            dq_cond_dT = k_s / max(effective_thickness, 0.001)
-            
-            # Derivative of oxidation feedback (simplified - assume f_fb and m_dot_ox change slowly)
-            dq_fb_dT = 0.0
-            if m_dot_ox > 0:
-                # Simplified: d(m_dot_ox)/dT_s ~ m_dot_ox * (Ea / (R_GAS * T_s^2))
-                dm_dot_ox_dT = m_dot_ox * (Ea / (R_GAS * T_s**2)) * 0.1  # Small factor for stability
-                dq_fb_dT = f_fb * oxidation_enthalpy * dm_dot_ox_dT
-            
-            # Derivative of thermal ablation term
-            dm_dot_th_dT = 0.0
-            if m_dot_th > 0:
-                # d(m_dot_th * H_star_th)/dT_s = m_dot_th * cp_s + (dm_dot_th/dT_s) * H_star_th
-                # For stability, approximate dm_dot_th/dT_s as small
-                dm_dot_th_dT = m_dot_th * cp_s * 0.1  # Small factor for stability
-            
-            # Total derivative
-            dresidual_dT = dq_in_dT + dq_fb_dT - dq_rad_dT - dq_cond_dT - dm_dot_th_dT
-            
-            # Newton step with damping for stability
-            if abs(dresidual_dT) > 1e-6:
-                T_s = T_s - damp * residual / dresidual_dT
-            else:
-                # Fallback: simple bisection
-                if residual > 0:
-                    T_s = T_s + 10.0
-                else:
-                    T_s = T_s - 10.0
-        
-        # Bound surface temperature
-        T_s = np.clip(T_s, 300.0, graphite_config.surface_temperature_limit)
-        
-        # Check convergence
-        if abs(T_s - T_s_old) < tol:
-            break
-    
-    # Final calculations with converged T_s
-    # Recalculate with final T_s for consistency
-    q_in = heat_transfer_coefficient * (gas_temperature - T_s)
-    q_rad = emissivity * SIGMA * (T_s**4 - T_env**4)
-    q_rad = max(q_rad, 0.0)
-    
-    # Recalculate oxidation with final T_s
-    m_dot_ox = 0.0
-    m_dot_ox_kin = 0.0
-    m_dot_ox_diff = 0.0
-    X_O2 = 0.0
-    p_O2 = 0.0
-    k_m_molar = 0.0
-    C_tot = 0.0
-    
-    if T_s > graphite_config.oxidation_temperature:
-        X_O2_cfg = getattr(graphite_config, "oxygen_mole_fraction", None)
-        if X_O2_cfg is not None:
-            X_O2 = float(X_O2_cfg)
-        else:
-            X_O2 = oxygen_mass_fraction * (mixture_mw / MW_O2)
-        X_O2 = np.clip(X_O2, 0.0, 1.0)
-        p_O2 = X_O2 * pressure
-        p_O2 = max(p_O2, 1.0)
-        
-        theta = np.exp(-Ea / R_GAS * (1.0 / T_s - 1.0 / T_ref))
-        m_dot_ox_kin = j_ref * theta * (p_O2 / P_ref) ** pressure_exponent
-        m_dot_ox_kin = max(m_dot_ox_kin, 0.0)
-        
-        # Use film temperature for transport properties
-        T_film = 0.5 * (gas_temperature + T_s)
-        D_O2 = D_ref * (T_film / T_D_ref) ** 1.5 * (P_D_ref / pressure)
-        Sc = gas_viscosity / (gas_density * D_O2)
-        Sc = max(Sc, 0.1)
-        
-        # Sherwood number (combined laminar/turbulent)
-        Sh_lam = 0.664 * (Re ** 0.5) * (Sc ** (1.0/3.0))
-        Sh_turb = 0.023 * (Re ** 0.8) * (Sc ** (1.0/3.0))
-        Sh_0 = (Sh_lam**3 + Sh_turb**3) ** (1.0/3.0)
-        Sh_0 = max(Sh_0, 2.0)
-        
-        k_m_molar_0 = Sh_0 * D_O2 / characteristic_length
-        C_tot = pressure / (R_GAS * T_film)
-        C_tot = max(C_tot, 1.0)
-        
-        # Surface oxygen mole fraction (assume zero at surface due to reaction)
-        X_O2_s = 0.0
-        
-        # Initial estimate for m_dot_ox_diff
-        N_O2 = k_m_molar_0 * (X_O2 - X_O2_s) * C_tot
-        m_dot_ox_diff = stoichiometry_ratio * MW_C * max(N_O2, 0.0)
-        m_dot_ox = min(m_dot_ox_kin, m_dot_ox_diff)
-    
-    # Recalculate feedback fraction and thermal ablation with converged T_s
-    # Use same feedback loop logic for consistency
-    f_fb = f_fb_min
-    q_fb = 0.0
-    m_dot_th = 0.0
-    Da = 0.0
-    B_m = 0.0
-    q_cond = k_s * (T_s - T_back) / max(effective_thickness, 0.001)
-    
-    # Final feedback loop iteration (should converge quickly since T_s is converged)
-    H_star_th = graphite_config.heat_of_ablation
-    T_trans_width = getattr(graphite_config, "ablation_transition_width", 200.0)
-    
-    for fb_iter in range(feedback_max_iter):
-        f_fb_old = f_fb
-        m_dot_th_old = m_dot_th
-        m_dot_ox_old = m_dot_ox
-        
-        # Calculate blowing parameter and blowing correction for mass transfer
-        m_dot_tot = m_dot_ox + m_dot_th
-        v_tau = gas_velocity * np.sqrt(Cf / 2.0)
-        v_tau = max(v_tau, 1.0)
-        B_m = m_dot_tot / (gas_density * v_tau)
-        B_m = max(B_m, 0.0)
-        
-        # Blowing correction
-        if B_m > 0.01:
-            blowing_correction = np.log(1.0 + B_m) / B_m
-        else:
-            blowing_correction = 1.0 - 0.5 * B_m
-            
-        Sh = Sh_0 * blowing_correction
-        k_m_molar = Sh * D_O2 / characteristic_length
-        
-        # Recalculate diffusion-limited oxidation
-        N_O2 = k_m_molar * (X_O2 - 0.0) * C_tot
-        m_dot_ox_diff = stoichiometry_ratio * MW_C * max(N_O2, 0.0)
-        m_dot_ox = min(m_dot_ox_kin, m_dot_ox_diff)
-        
-        # Update Da with blowing-corrected diffusion limit
-        if m_dot_ox_diff > 1e-12:
-            Da = m_dot_ox_kin / m_dot_ox_diff
-        else:
-            Da = 1e6
-        
-        if m_dot_ox > 0 and Da > 0:
-            f_fb = f_fb_min + (f_fb_max - f_fb_min) * (Da / (1.0 + Da)) * (1.0 / (1.0 + B_m))
-            f_fb = float(np.clip(f_fb, f_fb_min, f_fb_max))
-        else:
-            f_fb = 0.0
-            B_m = 0.0
-        
-        q_fb = f_fb * m_dot_ox * oxidation_enthalpy
-        q_net_available = q_in + q_fb - q_rad - q_cond
-        
-        # Thermal ablation with smooth transition
-        if T_trans_width > 0:
-            ablation_onset_factor = 1.0 / (1.0 + np.exp(-(T_s - T_abl) / (T_trans_width / 4.0)))
-        else:
-            ablation_onset_factor = 1.0 if T_s >= T_abl else 0.0
-            
-        if q_net_available > 0:
-            delta_T = max(T_s - 300.0, 0.0)
-            H_star_th = graphite_config.heat_of_ablation + cp_s * delta_T
-            H_star_th = max(H_star_th, 1e6)
-            m_dot_th = (q_net_available / H_star_th) * ablation_onset_factor
-            m_dot_th = max(m_dot_th, 0.0)
-        else:
-            m_dot_th = 0.0
-        
-        # Check convergence
-        if fb_iter > 0:
-            f_fb_change = abs(f_fb - f_fb_old) / max(abs(f_fb_old), f_fb_min, 1e-10)
-            m_dot_th_change = abs(m_dot_th - m_dot_th_old) / max(abs(m_dot_th_old), 1e-10)
-            m_dot_ox_change = abs(m_dot_ox - m_dot_ox_old) / max(abs(m_dot_ox_old), 1e-10)
-            if f_fb_change < feedback_tol and m_dot_th_change < feedback_tol and m_dot_ox_change < feedback_tol:
-                break
-    
-    # TOTAL RECESSION RATE
-    recession_rate_ox = m_dot_ox / rho_s
-    recession_rate_th = m_dot_th / rho_s
-    recession_rate_total_phys = recession_rate_ox + recession_rate_th
-    
-    # If sizing_only_mode is enabled, suppress the reported recession rate
-    recession_rate_report = 0.0 if sizing_only_mode else recession_rate_total_phys
-    
-    # Total mass flux
-    mass_flux_phys = m_dot_ox + m_dot_th
-    mass_flux_report = 0.0 if sizing_only_mode else mass_flux_phys
-    
-    # Heat removed - ONLY count feedback fraction and thermal ablation
-    # Do NOT count full oxidation enthalpy as "heat removed from solid"
-    heat_removed_ablation = (q_fb + m_dot_th * graphite_config.heat_of_ablation) * throat_area * graphite_config.coverage_fraction
-    heat_removed_conduction = q_cond * throat_area * graphite_config.coverage_fraction
-    heat_removed_total = heat_removed_ablation + heat_removed_conduction
-    
+            "compute_graphite_recession needs gas_state, contour and throat_composition (the CEA "
+            "throat mole fractions); set 'simplified_graphite_oxidation: true' for a constant rate")
+    st = graphite_surface_state(float(throat_temperature), gas_state, contour, throat_composition,
+                                graphite_config)
+    rate = st["mass_flux"] / graphite_config.material_density
     return {
         "enabled": True,
-        "recession_rate": float(recession_rate_report),
-        "recession_rate_calculated": float(recession_rate_total_phys),
-        "mass_flux": float(mass_flux_report),
-        "mass_flux_calculated": float(mass_flux_phys),
-        "surface_temperature": float(T_s),
-        "effective_heat_flux": float(q_net_available),
-        "radiative_relief": float(q_rad),
-        "conduction_loss": float(q_cond),
-        "heat_removed": float(heat_removed_total),
-        "oxidation_rate": float(recession_rate_ox),
-        "oxidation_mass_flux": float(m_dot_ox),
-        "thermal_mass_flux": float(m_dot_th),
-        "recession_rate_thermal": float(recession_rate_th),
-        "mass_flux_thermal": float(m_dot_th),
+        "recession_rate": 0.0 if sizing_only_mode else float(rate),
+        "recession_rate_calculated": float(rate),
+        "mass_flux": 0.0 if sizing_only_mode else float(st["mass_flux"]),
+        "surface_temperature": float(throat_temperature),
+        "oxidation_rate": float(rate),
+        "oxidation_mass_flux": float(st["mass_flux"]),
+        "recession_rate_thermal": 0.0,
+        "thermal_mass_flux": 0.0,
+        "q_convective": float(st["q_conv"]),
+        "q_radiation": float(st["q_rad"]),
+        "q_chemical": float(st["q_chem"]),
+        "q_net": float(st["q_net"]),
+        "blowing_parameter": float(st["B"]),
+        "species_mass_flux": st["species"],
+        "heat_transfer_coefficient": float(st["h"]),
         "coverage_area": float(throat_area * graphite_config.coverage_fraction),
-        "feedback_fraction": float(f_fb),
-        "q_feedback": float(q_fb),
-        "q_radiation": float(q_rad),
-        "q_conduction": float(q_cond),
-        "q_convective": float(q_in),
-        "damkohler_number": float(Da),
-        "blowing_parameter": float(B_m),
         "sizing_only_mode": sizing_only_mode,
+        "simplified_mode": False,
     }
 

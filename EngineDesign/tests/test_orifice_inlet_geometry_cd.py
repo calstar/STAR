@@ -55,8 +55,9 @@ def test_thin_plate_and_drilled_hole_are_not_the_same_number():
 
 def test_length_factor_peaks_in_the_lichtarowicz_band():
     """Cd rises to a maximum near L/d ~ 2 and falls slowly after; it does not rise forever."""
-    assert cd_length_factor(2.0) == pytest.approx(1.0)
-    assert cd_length_factor(4.0) == pytest.approx(1.0)
+    assert cd_length_factor(2.0, "piecewise") == pytest.approx(1.0)
+    assert cd_length_factor(4.0, "piecewise") == pytest.approx(1.0)
+    assert cd_length_factor(2.0) > cd_length_factor(4.0)       # Lichtarowicz: no plateau
     assert cd_length_factor(0.5) < cd_length_factor(2.0)
     assert cd_length_factor(12.0) < cd_length_factor(4.0)
 

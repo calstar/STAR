@@ -7,10 +7,13 @@ export function UserMenu({
   name,
   email,
   isAdmin = false,
+  compact = false,
 }: {
   name: string;
   email: string;
   isAdmin?: boolean;
+  /** Avatar only, no name/chevron — for the collapsed sidebar rail. */
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -45,24 +48,32 @@ export function UserMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={name}
-        className="flex min-h-11 items-center gap-2 rounded-full border border-neutral-300 py-1 pl-1 pr-2.5 text-sm text-neutral-700 hover:bg-neutral-100 sm:min-h-0 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        className={
+          compact
+            ? "flex h-9 w-9 items-center justify-center rounded-full border border-neutral-300 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+            : "flex min-h-11 items-center gap-2 rounded-full border border-neutral-300 py-1 pl-1 pr-2.5 text-sm text-neutral-700 hover:bg-neutral-100 sm:min-h-0 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        }
       >
         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-neutral-900 text-xs font-semibold text-white dark:bg-neutral-100 dark:text-neutral-900">
           {name.charAt(0).toUpperCase()}
         </span>
-        <span className="hidden max-w-[10rem] truncate sm:inline">{name}</span>
-        <svg
-          viewBox="0 0 20 20"
-          fill="currentColor"
-          className={`h-4 w-4 text-neutral-400 transition-transform ${open ? "rotate-180" : ""}`}
-          aria-hidden="true"
-        >
-          <path
-            fillRule="evenodd"
-            d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.17l3.71-3.94a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z"
-            clipRule="evenodd"
-          />
-        </svg>
+        {!compact && (
+          <>
+            <span className="hidden max-w-[10rem] truncate sm:inline">{name}</span>
+            <svg
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              className={`h-4 w-4 text-neutral-400 transition-transform ${open ? "rotate-180" : ""}`}
+              aria-hidden="true"
+            >
+              <path
+                fillRule="evenodd"
+                d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.17l3.71-3.94a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </>
+        )}
       </button>
       {open && (
         <div className="absolute right-0 z-50 mt-2 w-56 max-w-[calc(100vw-3rem)] rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-1 shadow-lg">

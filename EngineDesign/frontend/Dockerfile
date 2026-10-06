@@ -32,6 +32,8 @@ RUN --mount=type=cache,target=/root/.npm \
 # The shared design-tool UI, compiled from source by this app's Vite. Copied
 # before the app so a change to the app alone reuses the install layer above.
 COPY lib/stardesign-ui/ /build/lib/stardesign-ui/
+# pid-designer's drawing code, which Layer X renders a P&ID with (vite.config.ts '@pid').
+COPY pid-designer/frontend/src/components/pid/ /build/pid-designer/frontend/src/components/pid/
 COPY EngineDesign/frontend/ .
 RUN npm run build
 

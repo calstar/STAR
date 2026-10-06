@@ -435,7 +435,11 @@ def test_face_terms_compete_rather_than_cancel():
         **kw, spray_radius_frac=EQUAL_AREA, spray_radius_tol=0.08)
     with_wall = _impinging_face_infeasibility_terms(
         **kw, spray_radius_frac=EQUAL_AREA, spray_radius_tol=0.08, wall_clearance_m=0.008)
-    assert spray_only == pytest.approx(0.0, abs=1e-12), "on the spray target"
+    # On the spray target, but the fuel trace reaches r 70.13 mm in a 63.50 mm bore. That is
+    # infeasible with no wall land declared at all -- the orifice is drilled into the liner --
+    # so the bore itself is checked at a clearance of 0: (70.13 - 63.50)/127 = 0.0522, squared.
+    assert spray_only == pytest.approx(0.002730, rel=1e-3), (
+        "a trace across the bore must count even when no wall land is declared")
     # fuel ring at 136.43 mm + a 1.92 mm elliptical half-trace = 70.13 mm of radius, 8 mm of
     # land wanted, against a 63.50 mm bore radius: (70.13 + 8 - 63.50)/127 = 0.1152, squared.
     assert with_wall == pytest.approx(0.01328, rel=1e-3), (
@@ -446,11 +450,13 @@ def test_face_terms_compete_rather_than_cancel():
 
 def test_face_infeasibility_zero_for_the_shipped_design():
     from engine.optimizer.layers.layer1_static_optimization import (
-        _impinging_face_infeasibility_terms,
+        _impinging_face_infeasibility_terms, _layer1_centre_clear_m,
     )
+    from engine.pipeline.io import load_config
     import yaml as _yaml
     c = _yaml.safe_load(open("configs/ethalox_8kN_SHIP.yaml"))
     g = c["injector"]["geometry"]
+    rq = c["design_requirements"]
     assert _impinging_face_infeasibility_terms(
         n_elements=float(g["oxidizer"]["n_elements"]),
         spacing_O_m=g["oxidizer"]["spacing"], spacing_F_m=g["fuel"]["spacing"],
@@ -458,6 +464,12 @@ def test_face_infeasibility_zero_for_the_shipped_design():
         D_chamber_inner_m=c["chamber_geometry"]["chamber_diameter"],
         angle_O_deg=g["oxidizer"]["impingement_angle"],
         angle_F_deg=g["fuel"]["impingement_angle"],
-        center_clear_dia_m=0.0381, min_web_m=0.002, wall_clearance_m=0.008,
-        spray_radius_frac=0.7071, spray_radius_tol=0.08,
+        # The limits the YAML declares, not a copy of them: a copy stays green when someone
+        # tightens the config and the design no longer meets it.
+        center_clear_dia_m=_layer1_centre_clear_m(load_config("configs/ethalox_8kN_SHIP.yaml"), rq),
+        min_web_m=rq["layer1_injector_min_web_m"],
+        wall_clearance_m=rq["layer1_injector_wall_clearance_m"],
+        spray_radius_frac=rq["layer1_injector_spray_radius_frac"],
+        spray_radius_tol=rq["layer1_injector_spray_radius_tol"],
+        min_face_incidence_deg=rq["layer1_injector_min_face_incidence_deg"],
     ) == 0.0, "the shipped design must violate none of its own declared face limits"

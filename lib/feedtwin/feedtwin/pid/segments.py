@@ -136,7 +136,9 @@ def _check(segment: LineSegment, basis: str, place: str) -> list[str]:
                 f"{place}: itemised but states no length, so it contributes "
                 "its fittings and no pipe friction"
             )
-        if segment.bore is None:
+        if segment.bore is None or segment.bore.si <= 0.0:
+            # A stated 0 mm is no bore too; it used to pass here and the run
+            # then contributed nothing, silently (LE4's fuel tank-to-main run).
             out.append(
                 f"{place}: itemised but states no bore, so neither its friction "
                 "nor its fittings can be sized; it contributes nothing"

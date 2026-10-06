@@ -1,4 +1,5 @@
-import { Position, type NodeProps } from '@xyflow/react';
+import { Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
+import { useEffect } from 'react';
 import type { PIDNodeData } from '../types';
 import { speciesById, colorForSpecies, UNSET_COLOR } from '../fluids';
 import { useNodeFluid } from '../FluidContext';
@@ -41,7 +42,13 @@ export const KB_W = 40, KB_H = 90, KB_OUTLET_ALONG = 20;
 export const DW_W = 80, DW_H = 80;
 
 export function SupplyNode({ id, data, selected }: NodeProps) {
-  const { componentType, label, labelOffset, rotation, color, params } = data as unknown as PIDNodeData;
+  const { componentType, label, labelOffset, rotation, color, params, flipped } = data as unknown as PIDNodeData;
+  // R mirrors a supply: its side outlet leaves from the left (graphOps `turnSelected`).
+  const outletSide = flipped ? Position.Left : Position.Right;
+  // Frame re-measures its ports on a turn; a flip moves one without turning,
+  // and unmeasured the line on it stayed on the side it had left.
+  const updateNodeInternals = useUpdateNodeInternals();
+  useEffect(() => { updateNodeInternals(id); }, [id, flipped, updateNodeInternals]);
   const stroke = selected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)';
   const assigned = useNodeFluid(id);
   const species = speciesById(assigned?.species ?? undefined);
@@ -61,7 +68,7 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
         extra={<>
           <TurnedPort nodeId={id} id="t" side={Position.Top}    w={DW_W} h={DW_H} rotation={rotation} />
           <TurnedPort nodeId={id} id="b" side={Position.Bottom} w={DW_W} h={DW_H} rotation={rotation} />
-          <TurnedPort nodeId={id} id="r" side={Position.Right}  w={DW_W} h={DW_H} rotation={rotation} />
+          <TurnedPort nodeId={id} id="r" side={outletSide}     w={DW_W} h={DW_H} rotation={rotation} />
           <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: dewarBoxH + 2 }} />
         </>}
       >
@@ -91,7 +98,7 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
       nodeId={id} w={KB_W} h={KB_H} rotation={rotation}
       extra={<>
         <TurnedPort nodeId={id} id="t" side={Position.Top}   w={KB_W} h={KB_H} rotation={rotation} />
-        <TurnedPort nodeId={id} id="r" side={Position.Right} along={KB_OUTLET_ALONG} w={KB_W} h={KB_H} rotation={rotation} />
+        <TurnedPort nodeId={id} id="r" side={outletSide} along={KB_OUTLET_ALONG} w={KB_W} h={KB_H} rotation={rotation} />
         {p && (
           <span
             style={{

@@ -61,3 +61,21 @@ describe('engineIdentity', () => {
     expect(engineIdentity(undefined)).toBe('');
   });
 });
+
+import { configFingerprint } from './engineIdentity';
+
+describe('configFingerprint', () => {
+  const base = { lox_tank: { initial_pressure_psi: 548.7, volume: 0.015 }, injector: { type: 'impinging', geometry: { oxidizer: { d_jet: 0.0016 } } } };
+  const fp = (c: unknown) => configFingerprint(c as Parameters<typeof configFingerprint>[0]);
+
+  it('ignores key order and the tank setpoint, which a Time-Series curve sets itself', () => {
+    const reordered = { injector: base.injector, lox_tank: { volume: 0.015, initial_pressure_psi: 600 } };
+    expect(fp(reordered)).toBe(fp(base));
+  });
+
+  it('changes with the design', () => {
+    const other = JSON.parse(JSON.stringify(base));
+    other.injector.geometry.oxidizer.d_jet = 0.0017;
+    expect(fp(other)).not.toBe(fp(base));
+  });
+});

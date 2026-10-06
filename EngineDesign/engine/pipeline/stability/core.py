@@ -8,12 +8,12 @@ Equation numbers in the docstrings refer to ``docs/stability/combustion_stabilit
 
 Sections
 --------
-1. Acoustic mode frequencies        — longitudinal quarter-wave; transverse via J'_m (hard-wall) roots
+1. Acoustic mode frequencies        — longitudinal half-wave (closed-closed); transverse via J'_m roots
 2. Combustion response (n-tau)       — Crocco linearized burning-rate gain                 [Phys §2]
 3. Gas dynamics                      — choked-flow function, chamber residence time         [Phys §3.1]
 4. Vaporization / time lag           — Spalding B, d^2-law K_v, tau_vap, sensitive lag       [Phys §5]
 5. Feed / injector primitives        — injector conductance, feed inertance, chamber gain    [Phys §3.2]
-6. Acoustic damping (first-cut)      — nozzle / viscous / radiation damping rates            [Phys §4.2]
+6. Acoustic damping                 — compact choked-nozzle admittance, Kirchhoff wall layer [Phys §4.2]
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ __all__ = [
     "n_tau_gain",
     "choked_flow_function",
     "chamber_residence_time",
+    "chamber_residence_time_from_state",
     "area_ratio_from_mach",
     "mach_from_area_ratio_subsonic",
     "spalding_transfer_number_heat",
@@ -40,6 +41,7 @@ __all__ = [
     "feed_inertance",
     "chamber_gain",
     "viscous_damping_rate",
+    "nozzle_admittance_compact",
     "nozzle_damping_rate",
 ]
 
@@ -55,17 +57,22 @@ def sound_speed(gamma: float, R_g: float, T: float) -> float:
 
 
 def longitudinal_mode_frequencies(a: float, L_ch: float, n_modes: int = 5) -> List[float]:
-    """Longitudinal (axial) acoustic mode frequencies [Hz], open-closed quarter-wave set.
+    """Longitudinal (axial) acoustic mode frequencies [Hz], closed-closed half-wave set.
 
-    ``f_nL = (2n - 1) * a / (4 * L_ch)`` for n = 1..n_modes (1L, 2L, ...).  [Phys §4.1]
+    ``f_nL = n * a / (2 * L_ch)`` for n = 1..n_modes (1L, 2L, ...).  [Phys §4.1]
 
-    The injector face is ~closed and a choked throat is ~closed (finite admittance); the quarter-wave
-    set is the standard first estimate. The true eigenvalue lies between this and the half-wave set and
-    depends on nozzle admittance — handled (later) in the rich acoustic model, not here.
+    Both ends are acoustically closed. The injector face is a rigid wall. A choked compact nozzle
+    has normalised admittance ``(gamma-1)*M_ne/2`` (Crocco; Marble & Candel 1977), ~0.005 at
+    M_ne 0.07: a near-rigid end, not a pressure-release one. ``tan(kL) = i*Y`` then gives
+    ``Re(kL) = n*pi`` exactly -- the admittance damps the mode (``nozzle_damping_rate``) and
+    does not move it. This is the q-branch of Harrje & Reardon SP-194 ch. 1's closed-cylinder
+    ``f = (a/2) sqrt((q/L)^2 + (alpha_mn/(pi R))^2)``, and the passive spectrum the hi-fi V3
+    case checks (engine/stability_hifi/validation/v3_ntau_duct.py). The old quarter-wave set
+    ``(2n-1) a/(4L)`` is the open-end answer and put 1L a factor 2 low.
     """
     if a <= 0 or L_ch <= 0 or n_modes < 1:
         return []
-    return [float((2 * n - 1) * a / (4.0 * L_ch)) for n in range(1, n_modes + 1)]
+    return [float(n * a / (2.0 * L_ch)) for n in range(1, n_modes + 1)]
 
 
 # Transverse acoustic eigenvalues for a hard-wall cylinder: roots of J'_m (dp/dr = 0 at the wall).
@@ -100,8 +107,10 @@ def n_tau_gain(omega: float, n: float, tau: float) -> complex:
     """Linearized burning-rate response gain ``n * (1 - exp(-i*omega*tau))``.  [Phys §2, eq 2.1]
 
     This is ``(dm_b'/m_b) / (p'/Pc)`` for a single sinusoid at angular frequency ``omega``. The
-    ``sin(omega*tau)`` (imaginary) part is the Rayleigh-driving phase that feeds the acoustic growth
-    rate (§4); the magnitude scales with the interaction index ``n``.
+    REAL part ``n*(1 - cos(omega*tau))`` is the component of q' in phase with p' -- the Rayleigh
+    driving (cycle average <p'q'>/<p'^2>); it is >= 0 and peaks at omega*tau = pi (Crocco's
+    stability bucket, Harrje & Reardon SP-194 ch. 4). The imaginary part ``n*sin(omega*tau)``
+    is in quadrature with p' and shifts the frequency, not the growth rate.
 
     Note: ``tau`` here is the **sensitive** lag tau_sens (= chi * tau_vap) for acoustic driving — NOT
     the chug transport lag tau_conv. See the two-lags box in [Phys §5].
@@ -130,11 +139,26 @@ def chamber_residence_time(Lstar: float, cstar: float, gamma: float) -> float:
 
     This is the gas residence (stay) time m_gas/mdot_out, the first-order chamber relaxation constant
     used in the chug loop. NOTE the prefactor is ``1/Gamma**2`` (~2.4 at gamma~1.2), *not* ``1/gamma``.
+    It uses ``R*T = (Gamma*c*)**2``, which holds for the ideal c* only; when the chamber state
+    (R, T) is known use ``chamber_residence_time_from_state``.
     """
     G = choked_flow_function(gamma)
     if not np.isfinite(G) or G <= 0 or cstar <= 0 or Lstar <= 0:
         return float("nan")
     return float(Lstar / (G * G * cstar))
+
+
+def chamber_residence_time_from_state(Lstar: float, cstar: float, R_g: float, T: float) -> float:
+    """``theta_c = m_gas / mdot = (Pc V / (R T)) / (Pc A_t / c*) = L* c* / (R T)`` [s].  [Phys §3.1]
+
+    The mass balance itself, with the throat flow set by the c* the engine actually delivers and
+    the gas mass by the chamber state the rest of the stability model uses (rho_g = Pc/(R T)).
+    Equal to ``chamber_residence_time`` when c* is ideal; with c*_actual it is shorter by
+    eta_c*^2 (~9 % on the 6500 N), which the Gamma form hides by assuming RT = (Gamma c*_act)^2.
+    """
+    if Lstar <= 0 or cstar <= 0 or R_g <= 0 or T <= 0:
+        return float("nan")
+    return float(Lstar * cstar / (R_g * T))
 
 
 def area_ratio_from_mach(M: float, gamma: float) -> float:
@@ -278,35 +302,60 @@ def chamber_gain(cstar: float, A_t: float) -> float:
 
 
 # ---------------------------------------------------------------------------
-# 6. Acoustic damping (first-cut; flagged uncertain — see [Phys §4.2])
+# 6. Acoustic damping
 # ---------------------------------------------------------------------------
-# These are documented first-cut approximations. The quantitative coefficients (especially two-phase
-# and injector-face admittance) are the weakest part of a-priori acoustic prediction; the rich acoustic
-# model (A3) reports them as an explicit budget with sensitivity bands, not false precision.
+# Nozzle and wall losses have closed forms and are computed here. The injector-face and two-phase
+# terms have none and live in acoustic.DampingCoeffs as stated, uncalibrated fractions; they
+# dominate the budget, which is why the acoustic verdict is report-only by default (acoustic.py).
 
-def viscous_damping_rate(freq: float, D_ch: float, nu_g: float) -> float:
-    """First-cut acoustic boundary-layer (viscous/thermal) damping rate [1/s].  [Phys §4.2 — APPROX]
+def viscous_damping_rate(freq: float, D_ch: float, nu_g: float,
+                         gamma: float | None = None, prandtl: float | None = None) -> float:
+    """Kirchhoff acoustic boundary-layer damping on the side wall [1/s].  [Phys §4.2]
 
-    Uses the Stokes acoustic boundary-layer thickness ``delta = sqrt(nu_g / (pi*f))`` and a
-    surface/volume scaling ``alpha ~ (a_BL) * (4/D) * sqrt(...)``. Returns a *positive* damping rate
-    (subtracted from the driving term). This is order-of-magnitude only; calibrate against the cold
-    ring-down test (T7) before trusting magnitudes.
+    ``alpha = (omega * delta_nu / D) * [1 + (gamma-1)/sqrt(Pr)]`` with the Stokes thickness
+    ``delta_nu = sqrt(2 nu / omega)``: ``c`` times Kirchhoff's tube-wall attenuation
+    ``beta = sqrt(omega nu / 2) [1 + (gamma-1)/sqrt(Pr)] / (r c)`` (Kinsler & Frey, Fundamentals
+    of Acoustics, wall losses in pipes). Without ``gamma`` and ``Pr`` only the viscous half is
+    counted -- a lower bound. Exact for a longitudinal wave along the barrel; for transverse modes
+    it is an O(1) estimate (their wall velocity is partly normal to the wall). The previous form
+    carried an unsourced factor 4 (3.4x this).
     """
     if freq <= 0 or D_ch <= 0 or nu_g <= 0:
         return 0.0
-    delta = np.sqrt(nu_g / (np.pi * freq))   # Stokes layer thickness [m]
-    # surface-to-volume ~ 4/D for a cylinder; damping ~ (omega) * (delta/D) is a standard scaling
-    return float(2.0 * np.pi * freq * (delta / D_ch) * (4.0))
+    omega = 2.0 * np.pi * freq
+    delta = np.sqrt(2.0 * nu_g / omega)           # Stokes layer thickness [m]
+    thermal = 0.0
+    if gamma is not None and prandtl is not None and gamma > 1.0 and prandtl > 0.0:
+        thermal = (gamma - 1.0) / np.sqrt(prandtl)
+    return float(omega * delta / D_ch * (1.0 + thermal))
 
 
-def nozzle_damping_rate(freq: float, L_ch: float, mach_nozzle_entrance: float, gamma: float) -> float:
-    """First-cut nozzle (convective) damping rate for a longitudinal mode [1/s].  [Phys §4.2 — APPROX]
+def nozzle_admittance_compact(mach_nozzle_entrance: float, gamma: float) -> float:
+    """Normalised acoustic admittance ``Y = rho a u'/p' = (gamma-1) M_ne / 2`` of a choked compact nozzle.
 
-    Short-nozzle quasi-steady estimate: acoustic energy convected/radiated through the throat scales
-    with the mean Mach number at the nozzle entrance. ``alpha_noz ~ (a/2L) * (gamma-1) * M_ne`` form,
-    rendered here via the modal frequency. Positive (damping). Placeholder for the Bell–Zinn nozzle
-    admittance used in the rich model.
+    From mdot ~ p/sqrt(T) at the throat with isentropic perturbations (Crocco; Marble & Candel,
+    J. Sound Vib. 55, 1977). Real and positive: the nozzle absorbs acoustic energy.
     """
-    if freq <= 0 or L_ch <= 0 or mach_nozzle_entrance <= 0:
+    if mach_nozzle_entrance <= 0 or gamma <= 1.0:
         return 0.0
-    return float(np.pi * freq * (gamma - 1.0) * mach_nozzle_entrance)
+    return float(0.5 * (gamma - 1.0) * mach_nozzle_entrance)
+
+
+def nozzle_damping_rate(a: float, L_ch: float, mach_nozzle_entrance: float, gamma: float,
+                        *, end_weight: float = 1.0) -> float:
+    """Nozzle (convective) damping rate [1/s] through a compact choked nozzle.  [Phys §4.2]
+
+    Energy flux out of the nozzle plane over twice the modal energy: ``alpha = end_weight *
+    a * Y / L`` with ``Y = nozzle_admittance_compact``. ``end_weight`` is the nozzle-plane share of
+    <p'^2> relative to the volume mean: 1 for a longitudinal mode (antinode at the end), 1/2 for a
+    transverse mode (uniform in x). The longitudinal case is the passive root of ``tanh(sL) = -Y``
+    (hi-fi V3: sigma ~ -Y c / L). For transverse modes the compact admittance is a lower bound
+    (Bell & Zinn give larger real parts), so this errs toward less damping.
+
+    The previous form, ``pi f (gamma-1) M``, was pi times this for the half-wave 1L and grew with
+    mode number, which the end loss does not.
+    """
+    if a <= 0 or L_ch <= 0:
+        return 0.0
+    Y = nozzle_admittance_compact(mach_nozzle_entrance, gamma)
+    return float(end_weight * a * Y / L_ch)

@@ -86,7 +86,7 @@ export default function BoardsPage() {
     }).catch(() => {});
   }, []);
 
-  const TYPE_ORDER = ['ACTUATOR', 'PT', 'LC', 'TC', 'RTD', 'ENCODER'];
+  const TYPE_ORDER = ['ACTUATOR', 'PT', 'LC', 'TC', 'RTD', 'ENCODER', 'ENVIRONMENTAL'];
 
   const boardsByType = useMemo(() => {
     const map = boardsMap ?? {};
@@ -167,8 +167,9 @@ export default function BoardsPage() {
                   {boards.map((b, index) => {
                     const stale = isBoardLiveTelemetryStale(b);
                     const testKeys = Object.keys(sensorData).filter((k) => k.startsWith(`SELF_TEST.BOARD_${b.id}.`));
-                    let testStatus: 'Untested' | 'Passed' | 'Failed' | 'Pending' = 'Untested';
-                    if (testKeys.length > 0) {
+                    let testStatus: 'Untested' | 'Passed' | 'Failed' | 'Pending' | 'N/A' =
+                      b.type === 'ENVIRONMENTAL' ? 'N/A' : 'Untested';
+                    if (testStatus !== 'N/A' && testKeys.length > 0) {
                       const anyFail = testKeys.some(k => sensorData[k] === 0);
                       const expected = expectedCountById[b.id] ?? 0;
                       if (anyFail) testStatus = 'Failed';
@@ -197,6 +198,7 @@ export default function BoardsPage() {
                         key={b.id}
                         data-testid="boards-heartbeat-card"
                         data-board-id={b.id}
+                        data-board-type={b.type}
                         className={`rounded-xl border-l-4 p-6 border border-gray-700 transition-colors min-h-[200px] flex flex-col bg-card hover:border-gray-600 ${accent}`}
                       >
                         <div className="flex items-center justify-between mb-4">
@@ -248,11 +250,11 @@ export default function BoardsPage() {
                                 testStatus === 'Failed' ? 'text-red-400' :
                                 testStatus === 'Pending' ? 'text-amber-400' : 'text-gray-500'
                               }`}>
-                                {testStatus === 'Passed' ? 'ALL PASSED' :
+                                {testStatus === 'N/A' ? 'N/A' : testStatus === 'Passed' ? 'ALL PASSED' :
                                  testStatus === 'Failed' ? 'FAILED' :
                                  testStatus === 'Pending' ? 'PENDING' : 'UNTESTED'}
                               </span>
-                              {testStatus !== 'Untested' && selfTestTs[b.id] != null && (
+                              {testStatus !== 'N/A' && testStatus !== 'Untested' && selfTestTs[b.id] != null && (
                                 <span className="text-xs text-gray-500 font-mono" title="When this board last self-tested (persists across reconnects)">
                                   at {formatConfigSentAt(selfTestTs[b.id])}
                                 </span>

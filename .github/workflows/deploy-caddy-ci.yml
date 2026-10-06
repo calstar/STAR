@@ -11,10 +11,12 @@ name: Deploy (Caddy) CI
   push:
     paths:
       - 'deploy/caddy/**'
+      - 'deploy/ec2/caddy/**'
       - '.github/workflows/deploy-caddy-ci.yml'
   pull_request:
     paths:
       - 'deploy/caddy/**'
+      - 'deploy/ec2/caddy/**'
       - '.github/workflows/deploy-caddy-ci.yml'
   workflow_dispatch:
 
@@ -42,6 +44,18 @@ jobs:
     - name: Every gated site runs forward_auth first
       run: |
         docker run --rm -v "$PWD/deploy/caddy/Caddyfile":/etc/caddy/Caddyfile:ro \
+          --entrypoint caddy caddy:2-alpine \
+          adapt --config /etc/caddy/Caddyfile --adapter caddyfile \
+          | python3 deploy/caddy/tests/check_gate_order.py
+
+    # The EC2 box's Caddy fronts STARProject and server analytics with the same
+    # gate, so it gets the same two static checks.
+    - name: EC2 Caddyfile is valid and gates first
+      run: |
+        docker run --rm -v "$PWD/deploy/ec2/caddy/Caddyfile":/etc/caddy/Caddyfile:ro \
+          --entrypoint caddy caddy:2-alpine \
+          validate --config /etc/caddy/Caddyfile --adapter caddyfile
+        docker run --rm -v "$PWD/deploy/ec2/caddy/Caddyfile":/etc/caddy/Caddyfile:ro \
           --entrypoint caddy caddy:2-alpine \
           adapt --config /etc/caddy/Caddyfile --adapter caddyfile \
           | python3 deploy/caddy/tests/check_gate_order.py

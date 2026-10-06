@@ -2,7 +2,15 @@
 
 **For:** whoever is working on `feed-twin`
 **From:** the `pid-designer` side
-**Status:** proposal, with a sequence at the end
+**Status:** steps 2-4 done (2026-10-04), by a shorter road than step 1.
+feed-twin's P&ID page is pid-designer's own canvas: `DrawingView.tsx` in
+`pid-designer/frontend/src/components/pid` is the editor's canvas read-only,
+feed-twin compiles it from source through a `@pid` alias (pinned to its own
+React and React Flow, as `@stardesign-ui` is), `GET /api/diagram` serves the
+document as saved, and `LiveLayer.tsx` is the overlay of Part 5. `Schematic.tsx`
+and the symbols/lines projection on `/api/model` are gone. Step 1, moving the
+canvas to `lib/feed-canvas` for the DAQ GUI, is still to do, and is now a move
+of files both apps already share rather than a rewrite.
 
 ---
 

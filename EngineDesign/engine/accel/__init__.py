@@ -15,6 +15,7 @@ import enum
 import os
 
 __all__ = ["available", "enabled", "can_handle", "can_handle_chamber",
+           "chamber_physics_not_mirrored",
            "evaluate", "solve", "chamber_solve", "warmup", "require",
            "chug_margin_fast", "Outcome",
            "evaluate_ex", "solve_ex", "chamber_solve_ex"]
@@ -81,6 +82,19 @@ def can_handle(config) -> bool:
     regen = getattr(config, "regen_cooling", None)
     if regen is not None and getattr(regen, "enabled", False):
         return False          # regen-coupled feed loss not ported
+    if inj.type == "impinging":
+        # kernels._tn4222 mirrors the 'tn4087' and 'none' TN 4222 property transfers only.
+        from engine.core.spray import tn4222_transfer_model
+        spray = getattr(config, "spray", None)
+        if spray is not None and tn4222_transfer_model(spray.smd) not in ("tn4087", "none"):
+            return False
+    fs = getattr(config, "feed_system", None) or {}
+    for side in ("oxidizer", "fuel"):
+        if getattr(fs.get(side), "roughness_m", None) is not None:
+            # Colebrook friction at the per-call Re needs the liquid viscosity inside
+            # kernels._dpf, which it is not passed; feed_loss.delta_p_feed runs it in Python.
+            # (Fittings ARE ported: params._feed folds them into K0.)
+            return False
     if inj.type == "pintle":
         # PintleInjector.solve calls cd_from_re WITHOUT an orifice diameter, so a
         # config with geometry-based Cd enabled resolves Cd_inf differently there
@@ -91,13 +105,20 @@ def can_handle(config) -> bool:
     return True
 
 
-def can_handle_chamber(config) -> bool:
-    """Adds the chamber-solve gates on top of can_handle().
 
-    No ablative gate: ablative IS ported (kernels._cooling_evaluate). No graphite
-    gate either -- graphite never enters the chamber residual; it lives in the
-    burn/recession path and chamber_solver.py references it zero times.
-    """
+def chamber_physics_not_mirrored(config=None) -> tuple:
+    """Python chamber physics engine.accel.chamber does not reproduce (empty: none).
+
+    Kept as the seam the parity suite and Layer 1 read: an entry here would send every chamber
+    call to the Python solve, which is slower but never different physics."""
+    return ()
+
+
+def can_handle_chamber(config) -> bool:
+    """Adds the chamber gates on top of can_handle(): film and regen cooling are not mirrored
+    (their heat returns to the propellant and feeds the injector), nor the legacy efficiency
+    switch. The per-config pieces (the wide c* table, the mixing and blowing models) are checked
+    by chamber.chamber_inputs, which returns None for anything it does not mirror."""
     if not can_handle(config):
         return False
     fc = getattr(config, "film_cooling", None)
@@ -109,6 +130,49 @@ def can_handle_chamber(config) -> bool:
     return True
 
 
+def _chamber_run(config, cache, P_tank_O, P_tank_F, P_ambient):
+    """(P vector, result vector, Outcome) of one accelerated chamber solve."""
+    from engine.accel import chamber as _ch
+    from engine.accel import kernels as _k
+    from engine.accel import params as _p
+
+    if not can_handle_chamber(config):
+        return None, None, Outcome.NOT_HANDLED
+    if not getattr(cache, "use_3d", False):
+        return None, None, Outcome.NOT_HANDLED
+    try:
+        P = _p.extract_params(config)
+    except AssertionError:
+        return None, None, Outcome.NOT_HANDLED  # config outside the ported subset
+    CH = _ch.chamber_inputs(config, cache)
+    if CH is None:
+        return None, None, Outcome.NOT_HANDLED
+    arr = _k._cea_arrays_cached(cache)
+    ok, res = _ch.evaluate_core(P, CH, arr, float(P_tank_O), float(P_tank_F), float(P_ambient))
+    if not ok:
+        return P, None, Outcome.NO_SOLUTION
+    return P, res, Outcome.OK
+
+
+def chamber_point(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
+    """Chamber and nozzle at one point, without diagnostics or stability: (dict | None, Outcome).
+
+    For callers that sample the engine hundreds of times and need only the operating point --
+    Layer X's engine card (engine/layerx/card.py). Same root as evaluate(); nothing here is a
+    second solve that could drift from it.
+    """
+    P, res, oc = _chamber_run(config, cache, P_tank_O, P_tank_F, P_ambient)
+    if oc is not Outcome.OK:
+        return None, oc
+    from engine.accel import chamber as _ch
+
+    R = _ch._R
+    g = lambda k: float(res[R[k]])  # noqa: E731
+    return {"Pc": g("PC"), "mdot_O": g("MDOT_O"), "mdot_F": g("MDOT_F"), "MR": g("MR"),
+            "F": g("F"), "Isp": g("ISP"), "P_exit": g("P_EXIT"), "cstar_actual": g("CSTAR"),
+            "cstar_ideal": g("CSTAR_IDEAL"), "eta_cstar": g("ETA")}, Outcome.OK
+
+
 def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
     """Single-call chamber + nozzle + thrust + stability. None => caller falls back."""
     return evaluate_ex(config, cache, P_tank_O, P_tank_F, P_ambient)[0]
@@ -116,51 +180,51 @@ def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
 
 def evaluate_ex(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
     """As evaluate(), but returns (result_or_None, Outcome)."""
+    from engine.accel import chamber as _ch
     from engine.accel import diagnostics as _diag
     from engine.accel import kernels as _k
-    from engine.accel import params as _p
     from engine.pipeline.stability.analysis import comprehensive_stability_analysis
 
-    if not can_handle_chamber(config):
-        return None, Outcome.NOT_HANDLED
-    if not getattr(cache, "use_3d", False):
-        return None, Outcome.NOT_HANDLED
-    try:
-        P = _p.extract_params(config)
-    except AssertionError:
-        return None, Outcome.NOT_HANDLED  # config outside the ported subset
-    arr = _k._cea_arrays_cached(cache)
-
-    r = _k.evaluate_core(P, *arr, float(P_tank_O), float(P_tank_F), float(P_ambient))
-    if not r[0]:
-        return None, Outcome.NO_SOLUTION
-    (_, Pc, F, Isp, MR, csa, gm, tc, mdt, vex, cfa,
-     mO, mF, cs_id, eta, Rg, Pex, Pth, Tex, Tth, cf_id, tc_eff) = r
-    if F != F:
-        return None, Outcome.NO_SOLUTION
-
-    sol = _k._solve_injector(P, float(P_tank_O), float(P_tank_F), float(Pc))
+    P, res, oc = _chamber_run(config, cache, P_tank_O, P_tank_F, P_ambient)
+    if oc is not Outcome.OK:
+        return None, oc
+    R = _ch._R
+    Pc = float(res[R["PC"]])
+    sol = _k._solve_injector(P, float(P_tank_O), float(P_tank_F), Pc)
     if not sol[0]:
         return None, Outcome.NO_SOLUTION
-    diag = _diag.build_diag(P, sol)
+    diag = _diag.build_diag(P, sol, config, Pc)
+    g = lambda k: float(res[R[k]])  # noqa: E731
+    mO, mF, mdt = g("MDOT_O"), g("MDOT_F"), g("MDOT")
     diag.update({
-        "mdot_O": mO, "mdot_F": mF, "mdot_total": mdt, "Pc": Pc, "MR": MR,
-        "cstar_ideal": cs_id, "cstar_actual": csa, "eta_cstar": eta,
-        "gamma": gm, "R": Rg, "Tc": tc_eff, "SMD": max(sol[5], sol[6]),
+        "mdot_O": mO, "mdot_F": mF, "mdot_total": mdt, "Pc": Pc, "MR": g("MR"),
+        "cstar_ideal": g("CSTAR_IDEAL"), "cstar_actual": g("CSTAR"), "eta_cstar": g("ETA"),
+        "gamma": g("GAMMA"), "R": g("R"), "Tc": g("TC_EFF"), "Tc_ideal": g("TC_IDEAL"),
+        "M": g("M_MOL"), "Pc_ns": Pc / g("KAPPA"), "stagnation_loss_kappa": g("KAPPA"),
+        "SMD": max(sol[5], sol[6]),
+        "cstar_efficiency": {
+            "eta_cstar": g("ETA"), "eta_vaporization": g("ETA_VAP"), "eta_mixing": g("ETA_MIX"),
+            "eta_heat_loss": g("ETA_HL"), "heat_lost_W": g("Q_ABL"),
+            "fraction_vaporized": g("F_VAP"), "rupe_Em": g("EM"),
+        },
     })
     try:
         stab = comprehensive_stability_analysis(
-            config=config, Pc=Pc, MR=MR, mdot_total=mdt,
-            cstar=csa, gamma=gm, R=Rg, Tc=tc_eff, diagnostics=diag)
+            config=config, Pc=Pc, MR=g("MR"), mdot_total=mdt,
+            cstar=g("CSTAR"), gamma=g("GAMMA"), R=g("R"), Tc=g("TC_EFF"), diagnostics=diag)
     except Exception:
         return None, Outcome.NO_SOLUTION
     return {
-        "Pc": Pc, "mdot_O": mO, "mdot_F": mF, "mdot_total": mdt, "MR": MR,
-        "F": F, "Isp": Isp, "v_exit": vex, "P_exit": Pex, "P_throat": Pth,
-        "T_exit": Tex, "T_throat": Tth, "Tc": tc_eff,
-        "eps": float(P[_k.G_EPS]), "A_throat": float(P[_k.G_AT]), "A_exit": float(P[_k.G_AE]),
-        "cstar_actual": csa, "cstar_ideal": cs_id, "eta_cstar": eta, "gamma": gm, "R": Rg,
-        "Cf": cfa, "Cf_actual": cfa, "Cf_ideal": cf_id,
+        "Pc": Pc, "mdot_O": mO, "mdot_F": mF, "mdot_total": mdt, "MR": g("MR"),
+        "F": g("F"), "Isp": g("ISP"), "v_exit": g("V_EXIT"), "P_exit": g("P_EXIT"),
+        "P_throat": g("P_THROAT"), "T_exit": g("T_EXIT"), "T_throat": g("T_THROAT"),
+        "M_exit": g("M_EXIT"), "Tc": g("TC_EFF"),
+        "eps": float(config.chamber_geometry.expansion_ratio),
+        "A_throat": float(config.chamber_geometry.A_throat),
+        "A_exit": float(config.chamber_geometry.A_exit),
+        "cstar_actual": g("CSTAR"), "cstar_ideal": g("CSTAR_IDEAL"), "eta_cstar": g("ETA"),
+        "gamma": g("GAMMA"), "R": g("R"),
+        "Cf": g("CF"), "Cf_actual": g("CF"), "Cf_ideal": g("CF_IDEAL"),
         "Cd_O": sol[8], "Cd_F": sol[9], "A_geom_O": sol[14], "A_geom_F": sol[15],
         "stability": stab, "stability_results": stab,
         "diagnostics": diag, "P_ambient": float(P_ambient),
@@ -199,7 +263,7 @@ def solve_ex(config, P_tank_O, P_tank_F, Pc):
     sol = _k._solve_injector(P, float(P_tank_O), float(P_tank_F), float(Pc))
     if not sol[0]:
         return None, Outcome.NO_SOLUTION
-    return (float(sol[1]), float(sol[2]), _diag.build_diag(P, sol)), Outcome.OK
+    return (float(sol[1]), float(sol[2]), _diag.build_diag(P, sol, config, Pc)), Outcome.OK
 
 
 def chamber_solve(config, cache, P_tank_O, P_tank_F):
@@ -210,34 +274,23 @@ def chamber_solve(config, cache, P_tank_O, P_tank_F):
 def chamber_solve_ex(config, cache, P_tank_O, P_tank_F):
     """As chamber_solve(), but returns (result_or_None, Outcome).
 
-    The only consumer (chamber_solver._native_chamber_pc) reads element 0.
+    The only consumer (chamber_solver._accel_chamber_pc) reads element 0. Shares
+    chamber.evaluate_core's root with evaluate(): a second, subtly different root-find is how
+    the two paths would drift apart."""
+    from engine.accel import chamber as _ch
 
-    Shares evaluate_core's Brent solve instead of duplicating it. That computes a
-    little more than Pc (nozzle/thrust), which is deliberate: a second, subtly
-    different root-find is exactly how the two paths would drift apart.
-    """
-    from engine.accel import kernels as _k
-    from engine.accel import params as _p
-
-    if not can_handle_chamber(config):
-        return None, Outcome.NOT_HANDLED
-    if not getattr(cache, "use_3d", False):
-        return None, Outcome.NOT_HANDLED
-    try:
-        P = _p.extract_params(config)
-    except AssertionError:
-        return None, Outcome.NOT_HANDLED
-    arr = _k._cea_arrays_cached(cache)
-    r = _k.evaluate_core(P, *arr, float(P_tank_O), float(P_tank_F), 101325.0)
-    if not r[0]:
-        return None, Outcome.NO_SOLUTION
-    Pc = float(r[1])
+    P, res, oc = _chamber_run(config, cache, P_tank_O, P_tank_F, 101325.0)
+    if oc is not Outcome.OK:
+        return None, oc
+    R = _ch._R
+    Pc = float(res[R["PC"]])
     if not (Pc > 0.0) or Pc != Pc:
         return None, Outcome.NO_SOLUTION
-    return (Pc, {"Pc": Pc, "mdot_O": r[11], "mdot_F": r[12], "mdot_total": r[8],
-                "MR": r[4], "cstar_ideal": r[13], "cstar_actual": r[5],
-                "eta_cstar": r[14], "gamma": r[6], "R": r[15],
-                "Tc": r[21], "Tc_ideal": r[7], "converged": True}), Outcome.OK
+    g = lambda k: float(res[R[k]])  # noqa: E731
+    return (Pc, {"Pc": Pc, "mdot_O": g("MDOT_O"), "mdot_F": g("MDOT_F"), "mdot_total": g("MDOT"),
+                 "MR": g("MR"), "cstar_ideal": g("CSTAR_IDEAL"), "cstar_actual": g("CSTAR"),
+                 "eta_cstar": g("ETA"), "gamma": g("GAMMA"), "R": g("R"), "Tc": g("TC_EFF"),
+                 "Tc_ideal": g("TC_IDEAL"), "converged": True}), Outcome.OK
 
 
 def warmup():
@@ -252,14 +305,8 @@ def warmup():
     C prewarm didn't.
     """
     try:
-        import numpy as np
-        from engine.accel import kernels as _k
-        from engine.accel.params import NP
-        n = 2
-        grid = np.linspace(1.0, 2.0, n)
-        tab = np.ones((n, n, n), dtype=np.float64)
-        _k.evaluate_core(np.zeros(NP), grid, grid, grid,
-                         tab, tab, tab, tab, tab, tab, tab, 1.0, 1.0, 1.0)
+        from engine.accel import chamber as _ch
+        _ch.warmup()
         return True
     except Exception:
         return False

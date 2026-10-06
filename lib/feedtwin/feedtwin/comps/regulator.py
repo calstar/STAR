@@ -117,6 +117,7 @@ from feedtwin.comps.base import (
     Violation,
     register_builder,
 )
+from feedtwin.comps.iec_gas import XT_TYPICAL, GasCv, iec_gamma, is_gas
 from feedtwin.model.spec import SpecError
 
 #: Resistance a regulator shows to reverse flow [Pa/(kg/s)].
@@ -128,6 +129,25 @@ from feedtwin.model.spec import SpecError
 #: one-way constraint is a complementarity problem and this network solve is
 #: not one.
 REVERSE_STIFFNESS = 1.0e10
+
+#: Signal that makes :meth:`Regulator.lockup_pressure` the regulator's own
+#: zero-flow outlet -- supply-pressure effect included -- plus its seat creep.
+#: Opt-in (``Setup.regulator_lockup_supply``); off, lockup is the commanded
+#: setpoint plus creep, as it always was. See :meth:`Regulator.lockup_pressure`.
+LOCKUP_SUPPLY_SIGNAL = "lockup_follows_supply"
+
+#: Signal that turns on the compressible seat, its value the xT a regulator
+#: that declares none takes. Opt-in (``Setup.regulator_compressible_seat``);
+#: absent or zero, the seat is the incompressible Cv law, as it always was.
+SEAT_XT_SIGNAL = "regulator_seat_xT"
+
+SEAT_MODEL_NAME = "regulator seat, compressible (IEC 60534-2-1)"
+SEAT_MODEL_SOURCE = (
+    "IEC 60534-2-1:2011, Industrial-process control valves - Part 2-1: Flow "
+    "capacity - Sizing equations for fluid flow under installed conditions: "
+    "W = N6 C Y sqrt(x p1 rho1), Y = 1 - x/(3 F_gamma xT), F_gamma = gamma/1.40, "
+    "choked at x >= F_gamma xT"
+)
 
 
 def _dynamic_head(mdot: float, bore: float, rho: float) -> float:
@@ -195,9 +215,128 @@ class Regulator(HydraulicComponent):
         until the poppet seals. It matters because lockup, not setpoint, is what
         a downstream relief valve and a burst disc actually see between firings,
         and on a dome-loaded unit it moves with the dome.
+
+        With :data:`LOCKUP_SUPPLY_SIGNAL` on, the base is the outlet the
+        regulator holds at zero flow, ``outlet_setpoint(0)``, so it carries the
+        supply-pressure effect: the inlet pushing on the poppet does not stop
+        when the flow does. Off, the base is the commanded setpoint, and the
+        branch steps by ``S (p_ref - p_in)`` across zero flow even with no seat
+        creep -- 1.7 kPa with a full GN2 bottle, 51 psi late in a blowdown. A
+        tank sitting inside that step has no root, and the network solve stalls
+        at ``step / bottle pressure`` (2.5e-5 on the GN2 stand). Inert on a
+        regulator with no supply effect.
         """
-        base = self.commanded_setpoint(flow) if flow is not None else self.p["setpoint"]
+        if flow is None:
+            return self.p["setpoint"] + self.p.get("lockup_rise", 0.0)
+        if self.signal(flow, LOCKUP_SUPPLY_SIGNAL, 0.0) > 0.0:
+            base = self.outlet_setpoint(0.0, flow)
+        else:
+            base = self.commanded_setpoint(flow)
         return base + self.p.get("lockup_rise", 0.0)
+
+    # ------------------------------------------------------------- the seat
+
+    def _gas_seat(self, flow: FlowConditions) -> GasCv | None:
+        """The seat as IEC 60534-2-1 sees a gas, or None for the old law.
+
+        On only when the session sends :data:`SEAT_XT_SIGNAL` (the opt-in) and
+        the inlet is a gas. The drawing's own ``xT`` wins over the signal's.
+        """
+        xT_signal = self.signal(flow, SEAT_XT_SIGNAL, 0.0)
+        if xT_signal <= 0.0 or not is_gas(flow):
+            return None
+        xT = float(self.p.get("xT", xT_signal))
+        return GasCv(float(self.p["Cv"]), float(self.p["bore"]), xT)
+
+    def _seat_dp(self, magnitude: float, flow: FlowConditions) -> float:
+        """Drop the wide-open seat takes at ``magnitude`` [Pa]."""
+        seat = self._gas_seat(flow)
+        if seat is None:
+            # Incompressible: K rho v^2 / 2 at the inlet density. No expansion
+            # factor and no choke -- see AUDIT.md 5.3; 25 % high on GN2 near
+            # burnout. Off is this, exactly.
+            return Cv_to_K(self.p["Cv"], self.p["bore"]) * _dynamic_head(
+                magnitude, self.p["bore"], flow.rho
+            )
+        return seat.drop(magnitude, flow.p_upstream, flow.rho, iec_gamma(flow))
+
+    def seat_capacity(
+        self, flow: FlowConditions, xT: float = XT_TYPICAL
+    ) -> float | None:
+        """Choked gas flow through the wide-open seat [kg/s], IEC 60534-2-1.
+
+        What the regulator can pass at this inlet whatever is downstream: a
+        diagnostic (how close to wide open a burn runs), on whichever seat law
+        the solve uses. The drawing's ``xT`` wins over ``xT``. None for a liquid.
+        """
+        if not is_gas(flow):
+            return None
+        seat = GasCv(
+            float(self.p["Cv"]), float(self.p["bore"]), float(self.p.get("xT", xT))
+        )
+        return seat.capacity(flow.p_upstream, flow.rho, iec_gamma(flow))
+
+    def pinned_flow(self, dp_available: float, flow: FlowConditions) -> float | None:
+        """The choked flow, when the compressible seat is wide open and choked.
+
+        Wide open: the downstream is below what the regulator would hold even at
+        that flow, ``p_in - target(W_c)``. Choked: the drop ratio is past
+        ``F_gamma xT``. Both, and the flow is the seat's capacity whatever
+        downstream does. Never with the seat off (the old law has no choke).
+        """
+        seat = self._gas_seat(flow)
+        if seat is None:
+            return None
+        gamma = iec_gamma(flow)
+        p_in = flow.p_upstream
+        capacity = seat.capacity(p_in, flow.rho, gamma)
+        if capacity <= 0.0:
+            return None
+        wide_open = p_in - self.outlet_setpoint(capacity, flow)
+        if dp_available >= max(seat.x_critical(gamma) * p_in, wide_open):
+            return capacity
+        return None
+
+    def seat_model(self, xT: float = XT_TYPICAL) -> dict[str, object]:
+        """The run record's ``model`` block for the compressible seat."""
+        param = self.instance.params.get("xT")
+        cv = self.instance.params.get("Cv")
+        inputs: dict[str, object] = {
+            "xT": (
+                {
+                    "value": param.value,
+                    "unit": param.unit,
+                    "provenance": f"{param.source.value}: {param.reference}",
+                }
+                if param is not None
+                else {
+                    "value": xT,
+                    "unit": "-",
+                    "provenance": "assumed: IEC 60534 typical",
+                }
+            ),
+        }
+        if cv is not None:
+            inputs["Cv"] = {
+                "value": cv.value,
+                "unit": cv.unit,
+                "provenance": f"{cv.source.value}: {cv.reference}",
+            }
+        return {
+            "name": SEAT_MODEL_NAME,
+            "source": SEAT_MODEL_SOURCE,
+            "assumptions": [
+                "the wide-open seat is a control valve of the regulator's Cv",
+                "gamma is the ideal-gas ratio of specific heats (cp/cv at 1 kPa)",
+                "scale from the Cv definition (fluids Cv_to_K), so x -> 0 is the "
+                "incompressible law exactly",
+                "only the wide-open (saturated) regulator is affected; while it "
+                "regulates, its outlet is the droop law",
+            ],
+            "inputs": inputs,
+        }
+
+    # ---------------------------------------------------------- the branch
 
     def pressure_drop(self, mdot: float, flow: FlowConditions) -> float:
         p_in = flow.p_upstream
@@ -210,9 +349,7 @@ class Regulator(HydraulicComponent):
         # The most the seat can pass wide open sets the floor on the drop. Below
         # that the regulator is saturated: it is a hole, not a regulator, and
         # the outlet is whatever the line gives it.
-        seat_dp = Cv_to_K(self.p["Cv"], self.p["bore"]) * _dynamic_head(
-            magnitude, self.p["bore"], flow.rho
-        )
+        seat_dp = self._seat_dp(magnitude, flow)
 
         target = self.outlet_setpoint(mdot, flow)
         required = p_in - target
@@ -294,9 +431,7 @@ class Regulator(HydraulicComponent):
         """
         if mdot == 0.0:
             return False
-        seat_dp = Cv_to_K(self.p["Cv"], self.p["bore"]) * _dynamic_head(
-            abs(mdot), self.p["bore"], flow.rho
-        )
+        seat_dp = self._seat_dp(abs(mdot), flow)
         return seat_dp > (flow.p_upstream - self.outlet_setpoint(mdot, flow))
 
     def diagnostics(self, mdot: float, flow: FlowConditions) -> dict[str, float]:

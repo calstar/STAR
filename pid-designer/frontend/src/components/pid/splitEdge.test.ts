@@ -352,12 +352,28 @@ describe('a tee put into a line goes where it can sit', () => {
     return { x: j.position.x + 5, y: j.position.y + 5 };
   };
 
-  it('off a bend, by a tee\'s reach, on the leg it was pressed on', () => {
+  it('on a bend pressed within its reach of, as an elbow, the bend going to neither half', () => {
+    // This used to put the tee a reach off the bend, at x = 216, on the leg
+    // it was pressed on: no tee sat on a bend. One may now, turning there,
+    // and the bend under it is its own -- each half stops at its face.
     const s = splitEdgeAt(nodes(), [zEdge()], 'A-B', { x: 227, y: 30 }, undefined, { points: zPts })!;
-    expect(teeAt(s)).toEqual({ x: 216, y: 30 });
-    // The downstream half keeps both corners, the upstream half none.
-    expect(s.edges.find(e => e.target === s.junctionId)!.data!.waypoints).toBeUndefined();
-    expect(s.edges.find(e => e.source === s.junctionId)!.data).toMatchObject({ waypoints: [{ x: 230, y: 30 }, { x: 230, y: 330 }], viaRun: true });
+    expect(teeAt(s)).toEqual({ x: 230, y: 30 });
+    const j = s.nodes.find(n => n.id === s.junctionId)!;
+    expect(j.data.along).toMatchObject({ in: 'l', out: 'b' });
+    const up = s.edges.find(e => e.target === s.junctionId)!, down = s.edges.find(e => e.source === s.junctionId)!;
+    expect([up.targetHandle, down.sourceHandle]).toEqual(['l', 'b']);
+    // The upstream half has no corner, the downstream one the bend after.
+    expect(up.data!.waypoints).toBeUndefined();
+    expect(down.data).toMatchObject({ waypoints: [{ x: 230, y: 330 }], viaRun: true });
+  });
+
+  it('off a bend, by a tee\'s reach, when the bend is no spot for it', () => {
+    // A bend too near the end of the line to hold a tee: a press beside it
+    // is held a reach off it, on the leg it was pressed on, as before.
+    const short = [{ x: 60, y: 30 }, { x: 70, y: 30 }, { x: 70, y: 330 }, { x: 400, y: 330 }];
+    const s = splitEdgeAt(nodes(), [zEdge()], 'A-B', { x: 70, y: 40 }, undefined, { points: short })!;
+    expect(teeAt(s)).toEqual({ x: 70, y: 44 });
+    expect(s.edges.find(e => e.target === s.junctionId)!.data).toMatchObject({ waypoints: [{ x: 70, y: 30 }], viaRun: true });
   });
 
   it('clear of a port at the end of the line', () => {
@@ -440,14 +456,16 @@ describe('an instrument dropped on a line', () => {
   };
 
   it('stands straight off the tee, wherever along the line the tee has to go', () => {
-    // Dropped 5 px before the bend: the tee goes 14 px clear of it, and the
-    // transducer over the tee, not over where it was dropped.
+    // Dropped 5 px from A's port: the tee goes 14 px clear of it, and the
+    // transducer over the tee, not over where it was dropped. (This dropped
+    // it 5 px before the bend, which held it a reach off the bend; it goes
+    // on the bend now -- the next case.)
     const nodes = [node('A', 0, 0), node('B', 170, 200)];
     const e: Edge = { id: 'A-B', source: 'A', sourceHandle: 'r', target: 'B', targetHandle: 't', data: {} };
-    const r = tapLine(nodes, [e], 'A-B', { x: 195, y: 30 }, { x: 195, y: 0 }, pt('PT1'),
+    const r = tapLine(nodes, [e], 'A-B', { x: 65, y: 30 }, { x: 65, y: 0 }, pt('PT1'),
       { points: [{ x: 60, y: 30 }, { x: 200, y: 30 }, { x: 200, y: 200 }] })!;
     const c = tee(r);
-    expect(c).toEqual({ x: 186, y: 30 });
+    expect(c).toEqual({ x: 74, y: 30 });
     const placed = r.nodes.find(n => n.id === 'PT1')!;
     // Its port, the middle of its bottom side, straight above the tee.
     expect(placed.position).toEqual({ x: c.x - 30, y: c.y - 90 });
@@ -455,16 +473,33 @@ describe('an instrument dropped on a line', () => {
   });
 
   it('meets the tee across the run the tee is on, not the leg it was dropped on', () => {
-    // A 20 px leg holds no tee: it goes onto a leg that runs across the one
-    // dropped on, and the tapping still goes in across the tee's own run.
-    const nodes = [node('A', 0, 0), node('B', 300, 20)];
+    // A 10 px leg holds no tee, and neither of its bends does either, ten
+    // pixels apart: it goes onto a leg that runs across the one dropped on,
+    // and the tapping still goes in across the tee's own run. (The leg was
+    // 20 px; a bend 20 px from the next is a spot for a tee now.)
+    const nodes = [node('A', 0, 0), node('B', 300, 10)];
     const e: Edge = { id: 'A-B', source: 'A', sourceHandle: 'r', target: 'B', targetHandle: 'l', data: {} };
-    const r = tapLine(nodes, [e], 'A-B', { x: 150, y: 40 }, { x: 170, y: 40 }, pt('PT1'),
-      { points: [{ x: 60, y: 30 }, { x: 150, y: 30 }, { x: 150, y: 50 }, { x: 300, y: 50 }] })!;
+    const r = tapLine(nodes, [e], 'A-B', { x: 150, y: 35 }, { x: 170, y: 35 }, pt('PT1'),
+      { points: [{ x: 60, y: 30 }, { x: 150, y: 30 }, { x: 150, y: 40 }, { x: 300, y: 40 }] })!;
     const line = r.edges.find(x => x.source === 'PT1')!;
     expect(['t', 'b']).toContain(line.targetHandle);
     const placed = r.nodes.find(n => n.id === 'PT1')!;
     expect(placed.position.x).toBe(tee(r).x - 30);
+  });
+
+  it('on a bend, meets the elbow by a face its run leaves free, on the side it was dropped', () => {
+    // Dropped 5 px before the bend: the tee goes on the bend, in from the
+    // left and out down, and the transducer stands over it on the top face,
+    // carrying the incoming leg's line of sight straight on.
+    const nodes = [node('A', 0, 0), node('B', 170, 200)];
+    const e: Edge = { id: 'A-B', source: 'A', sourceHandle: 'r', target: 'B', targetHandle: 't', data: {} };
+    const r = tapLine(nodes, [e], 'A-B', { x: 195, y: 30 }, { x: 195, y: 0 }, pt('PT1'),
+      { points: [{ x: 60, y: 30 }, { x: 200, y: 30 }, { x: 200, y: 200 }] })!;
+    const c = tee(r);
+    expect(c).toEqual({ x: 200, y: 30 });
+    expect(r.nodes.find(n => n.id === r.junctionId)!.data.along).toMatchObject({ in: 'l', out: 'b' });
+    expect(r.edges.find(x => x.source === 'PT1')).toMatchObject({ target: r.junctionId, targetHandle: 't' });
+    expect(r.nodes.find(n => n.id === 'PT1')!.position).toEqual({ x: c.x - 30, y: c.y - 90 });
   });
 });
 

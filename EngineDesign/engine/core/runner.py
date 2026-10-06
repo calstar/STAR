@@ -72,7 +72,11 @@ class PintleEngineRunner:
         """
         # Store config reference - caller is responsible for ensuring isolation
         # (deep copy is done in Layer 3 before passing config to runner)
-        self.config = config
+        # Measured values replace the assumptions they were taken to settle (engine/pipeline/
+        # measurements.py); a config without measurements is used as given.
+        from engine.pipeline.measurements import apply_measurements
+        self.config = apply_measurements(config)
+        config = self.config
         cg = ensure_chamber_geometry(self.config)
         
         # Initialize CEA cache
@@ -466,6 +470,23 @@ class PintleEngineRunner:
         # Extract discharge coefficients
         Cd_O = diagnostics.get("Cd_O", np.nan)
         Cd_F = diagnostics.get("Cd_F", np.nan)
+
+        # Orifice cavitation margin (Nurick 1976). Reporting only: it flags an orifice whose
+        # vena contracta reaches vapour pressure, where Cd and the momentum ratio stop being
+        # what the solve assumed. Vapour pressure is the configured fluid's.
+        injector_cavitation: Dict[str, Any] = {}
+        try:
+            from engine.core.discharge import cavitation_margin, inlet_radius_ratio_of
+            for side, key, cd in (("oxidizer", "O", Cd_O), ("fuel", "F", Cd_F)):
+                p_in = diagnostics.get(f"P_injector_{key}")
+                pv = getattr(self.config.fluids[side], "vapor_pressure", None)
+                if p_in is None or pv is None:
+                    continue
+                injector_cavitation[key] = cavitation_margin(
+                    P_in=float(p_in), Pc=float(Pc), Pv=float(pv), Cd=float(cd),
+                    r_over_d=inlet_radius_ratio_of(self.config.discharge[side]))
+        except Exception as e:  # never let a report break an evaluation
+            injector_cavitation = {"error": str(e)}
         
         # Calculate stability analysis if enabled
         stability_results = {
@@ -501,6 +522,7 @@ class PintleEngineRunner:
         
         # Compile results
         results = {
+            "injector_cavitation": injector_cavitation,
             "Pc": Pc,
             "mdot_O": mdot_O,
             "mdot_F": mdot_F,
@@ -701,6 +723,8 @@ class PintleEngineRunner:
         track_ablative_geometry: Optional[bool] = None,
         use_coupled_solver: bool = True,  # NEW: Use fully-coupled solver
         P_ambient: Optional[float] = None,
+        strict_erosion: bool = False,
+        chug_eroded_geometry: bool = False,
     ) -> Dict[str, np.ndarray]:
         """
         Evaluate engine performance over time with ablative geometry evolution.
@@ -719,6 +743,14 @@ class PintleEngineRunner:
             Array of fuel tank pressures [Pa]
         track_ablative_geometry : bool, optional
             Override config setting for geometry tracking
+        strict_erosion : bool
+            With geometry tracking on, never take the legacy constant-geometry loop: a failure of
+            the coupled solver is raised instead of warned and fallen back from. Off by default
+            (the previous behaviour). Layer X's replay sets it, so an eroding engine can no longer
+            replay with zero erosion and report it as a converged burn (Layer X audit 5.3).
+        chug_eroded_geometry : bool
+            Passed to TimeVaryingCoupledSolver: the chug analysis sees each step's eroded geometry
+            instead of the design point. Off by default (the previous behaviour).
         P_ambient : float, optional
             Ambient pressure [Pa]. If None, defaults to sea level (101325 Pa).
             This is used for thrust calculation and should match the target exit pressure
@@ -744,6 +776,9 @@ class PintleEngineRunner:
         if len(times) < 2:
             raise ValueError("Need at least 2 time points for time-varying analysis")
         
+        # The coupled solver of the last call, for read-outs that need its wall state after the
+        # burn (soak-back); None when the call did not take the coupled path.
+        self.last_time_varying_solver = None
         # Check if ablative geometry tracking is enabled
         ablative_cfg = self.config.ablative_cooling
         if track_ablative_geometry is None:
@@ -767,16 +802,16 @@ class PintleEngineRunner:
                 solver = TimeVaryingCoupledSolver(
                     self.config, self.cea_cache,
                     P_ambient=self._get_ambient_pressure(P_ambient),
+                    chug_eroded_geometry=chug_eroded_geometry,
                 )
                 states = solver.solve_time_series(times, P_tank_O, P_tank_F)
                 results = solver.get_results_dict()
+                self.last_time_varying_solver = solver
                 
                 # Add additional metrics for compatibility
                 results["mdot_O"] = results["mdot_total"] * results["MR"] / (1.0 + results["MR"])
                 results["mdot_F"] = results["mdot_total"] / (1.0 + results["MR"])
-                results["cstar_actual"] = results["Pc"] * results["A_throat"] / results["mdot_total"]
-                results["cstar_ideal"] = results["cstar_actual"] / 0.85  # Approximate
-                results["eta_cstar"] = results["cstar_actual"] / results["cstar_ideal"]
+                # cstar_ideal / cstar_actual / eta_cstar come from the chamber solve at each step.
                 results["gamma"] = results["gamma_chamber"]
                 results["R"] = results["R_chamber"]
                 # diagnostics now comes from get_results_dict() - contains ablative heat flux profiles
@@ -787,13 +822,17 @@ class PintleEngineRunner:
                 # The legacy solver does not have enough information to run the strict
                 # graphite oxidation model without hidden defaults.
                 graphite_cfg = getattr(self.config, "graphite_insert", None)
-                if graphite_cfg is not None and getattr(graphite_cfg, "enabled", False):
+                if strict_erosion or (graphite_cfg is not None and getattr(graphite_cfg, "enabled", False)):
                     raise
 
                 import warnings
                 warnings.warn(f"Fully-coupled solver failed: {e}. Falling back to standard solver.")
                 # Fall through to standard solver
-        
+        elif strict_erosion and track_ablative_geometry:
+            raise ValueError("strict_erosion: geometry tracking was asked for without the coupled "
+                             "time-varying solver (use_coupled_solver=False); the legacy loop would "
+                             "replay this engine at constant or heuristic geometry")
+
         # Initialize result arrays
         n = len(times)
         results = {
@@ -940,9 +979,10 @@ class PintleEngineRunner:
                     from engine.pipeline.stability.analysis import comprehensive_stability_analysis
                     
                     # Build diagnostics dict for comprehensive analysis
+                    # The closure's drops and SMDs too, as forward mode passes them; without them
+                    # the chug margin rests on placeholder 0.30*Pc / 0.10*Pc and 80/60 um.
                     stability_diagnostics = {
-                        "mdot_O": diagnostics["mdot_O"],
-                        "mdot_F": diagnostics["mdot_F"],
+                        **diagnostics,
                         "P_tank_O": float(P_tank_O[i]),
                         "P_tank_F": float(P_tank_F[i]),
                     }

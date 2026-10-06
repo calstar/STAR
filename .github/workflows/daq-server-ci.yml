@@ -736,6 +736,13 @@ jobs:
       run: |
         bash test/test_integration.sh
 
+    - name: Environmental startup and database restart recovery
+      working-directory: daq-server/diablo_server/backend
+      run: |
+        ELODIN_DB="$(command -v elodin-db)" \
+        DAQ_BRIDGE="$GITHUB_WORKSPACE/daq-server/build/bin/daq_bridge" \
+        npx tsx test/environmental-recovery.integration.ts
+
   # Full guitest stack + Playwright (same as local: bash test/e2e_guitest_playwright.sh)
   playwright-guitest-e2e:
     name: Playwright E2E (guitest stack)

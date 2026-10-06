@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useReadOnly } from '@stardesign-ui';
 
 /**
@@ -8,14 +8,26 @@ import { useReadOnly } from '@stardesign-ui';
  * sheets of one document, and putting them next to the diagram picker at the
  * top would read as "which diagram", which is the thing they are not.
  */
+/**
+ * The name a copy of `page` takes: "<page> (copy)", or "(copy 2)" and on when
+ * that is taken.
+ */
+export function copyName(page: string, pages: readonly string[]): string {
+  let name = `${page} (copy)`;
+  for (let n = 2; pages.includes(name); n++) name = `${page} (copy ${n})`;
+  return name;
+}
+
 export function PageBar({
-  pages, current, onSelect, onAdd, onRename, count, selectedCount, onMoveSelection,
+  pages, current, onSelect, onAdd, onRename, onDuplicate, count, selectedCount, onMoveSelection,
 }: {
   pages: string[];
   current: string;
   onSelect: (page: string) => void;
   onAdd: (name: string) => void;
   onRename: (from: string, to: string) => void;
+  /** Copy everything on a page to a new page of the given name. */
+  onDuplicate: (page: string, name: string) => void;
   /** How many components sit on each page. */
   count: (page: string) => number;
   /** Selected on the current page, for the move affordance. */
@@ -25,6 +37,21 @@ export function PageBar({
   const readOnly = useReadOnly();
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  // A page tab's right-click menu: which page, and where it was opened.
+  const [menu, setMenu] = useState<{ page: string; x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', close);
+    };
+  }, [menu]);
 
   const commit = () => {
     if (editing && draft.trim() && draft.trim() !== editing) onRename(editing, draft.trim());
@@ -58,7 +85,11 @@ export function PageBar({
               key={p}
               onClick={() => onSelect(p)}
               onDoubleClick={() => { if (!readOnly) { setEditing(p); setDraft(p); } }}
-              title={`${count(p)} component${count(p) === 1 ? '' : 's'} — double-click to rename`}
+              onContextMenu={e => {
+                e.preventDefault();
+                if (!readOnly) setMenu({ page: p, x: e.clientX, y: e.clientY });
+              }}
+              title={`${count(p)} component${count(p) === 1 ? '' : 's'} — double-click to rename, right-click to duplicate`}
               className={`shrink-0 rounded px-2 py-0.5 text-xs transition-colors ${
                 p === current
                   ? 'bg-[var(--color-bg-secondary)] font-medium text-[var(--color-text-primary)] ring-1 ring-[var(--color-border)]'
@@ -104,6 +135,33 @@ export function PageBar({
       >
         + Page
       </button>
+
+      {/* Opens upward: the tabs are the bottom edge of the window. */}
+      {menu && (
+        <div
+          role="menu"
+          style={{ position: 'fixed', left: menu.x, bottom: window.innerHeight - menu.y + 4, zIndex: 9999 }}
+          className="min-w-[140px] rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-1 shadow-xl"
+          onMouseDown={e => e.stopPropagation()}
+        >
+          <button
+            role="menuitem"
+            disabled={readOnly}
+            onClick={() => { onDuplicate(menu.page, copyName(menu.page, pages)); setMenu(null); }}
+            className="block w-full rounded px-2 py-1 text-left text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]"
+          >
+            Duplicate
+          </button>
+          <button
+            role="menuitem"
+            disabled={readOnly}
+            onClick={() => { setEditing(menu.page); setDraft(menu.page); setMenu(null); }}
+            className="block w-full rounded px-2 py-1 text-left text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]"
+          >
+            Rename
+          </button>
+        </div>
+      )}
     </div>
   );
 }

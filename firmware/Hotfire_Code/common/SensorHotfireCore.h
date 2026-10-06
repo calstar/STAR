@@ -17,13 +17,14 @@
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <STAR_EthernetOTA.h>
 #include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
 
+#include "board_net.h"
 #include "firmware_hash.h"
-#include "hotfire_ota.h"
 
 #ifndef SENSOR_HOTFIRE_MAX_PACKET_SIZE
 #define SENSOR_HOTFIRE_MAX_PACKET_SIZE 512
@@ -42,7 +43,7 @@
 
 namespace SensorHotfire {
 
-inline OTAEthernetServer g_ota_server{HOTFIRE_OTA_PORT};
+inline StarOTA::Server g_ota_server{HOTFIRE_OTA_PORT};
 
 enum class State : uint8_t {
     WaitingForServer = 1,  // SETUP
@@ -107,6 +108,9 @@ struct CoreState {
     int serverPort;
     const int udpListenPort = 5005;
     const int serverPortDefault = 5006;
+    // Address (assigned by the ground station) and server-discovery state.
+    // Always present so this struct has one shape.
+    BoardNet::State net;
     EthernetUDP udp;
     State state;
     StoredSensorConfig stored_config;
@@ -116,6 +120,17 @@ struct CoreState {
     int led_blink_index;
     bool led_on;
 };
+
+/**
+ * Freeze the board's address before a single byte reaches flash. Our address
+ * comes from a DHCP lease, and a renewal that landed mid-flash would move us
+ * and drop the transfer, so this suspends renewals for the duration.
+ */
+inline void otaFreezeAddress(void* user_data, uint32_t image_bytes) {
+    (void)image_bytes;
+    if (user_data)
+        BoardNet::beginOtaHold(static_cast<CoreState*>(user_data)->net);
+}
 
 //-----------------------------------------------------------------------------
 // Packet header / parsing helpers
@@ -171,7 +186,11 @@ inline IncomingPacketKind processIncomingPacket(CoreState& s, const Config& cfg,
         daq::PacketHeader dummy;
         daq::ServerHeartbeatPacket data;
         if (daq::parse_server_heartbeat_packet(buffer, len, dummy, data)) {
+#ifdef SENSOR_ETH_USE_DHCP
+            BoardNet::onServerPacket(s.net, remote_ip, s.serverIP);
+#else
             // Server IP/port are hardcoded; do not update from packet
+#endif
             return IncomingPacketKind::ServerHeartbeat;
         }
         return IncomingPacketKind::None;
@@ -245,6 +264,9 @@ inline IncomingPacketKind processIncomingPacket(CoreState& s, const Config& cfg,
         HF_VERBOSE("  enable_serial_printing=");
         HF_VERBOSELN(g_verbose ? 1 : 0);
         Serial.flush();
+#ifdef SENSOR_ETH_USE_DHCP
+        BoardNet::onServerPacket(s.net, remote_ip, s.serverIP);
+#endif
         return IncomingPacketKind::SensorConfig;
     }
 
@@ -395,18 +417,27 @@ inline void setup(CoreState& s, const Config& cfg) {
         cfg.init_adc(cfg.user_data);
 
     ESP_ERROR_CHECK(esp_read_mac(s.mac, ESP_MAC_ETH));
+    BoardNet::configure(s.net, s.mac, s.staticIP, s.subnet);
+    BoardNet::printMac(s.net);
     SPI.begin(Pins.ETH_SCLK, Pins.ETH_MISO, Pins.ETH_MOSI, Pins.ETH_CS);
     delay(ETHERNET_SPI_DELAY_MS);
     Ethernet.init(Pins.ETH_CS);
     delay(ETHERNET_INIT_DELAY_MS);
+#ifdef SENSOR_ETH_USE_DHCP
+    // The ground station decides our address; we only ask for one. See
+    // board_net.h for what happens when nothing answers.
+    BoardNet::begin(s.net, s.dns, s.gateway);
+#else
+    // Boards that have not opted in keep their compiled-in static address.
     Ethernet.begin(s.mac, s.staticIP, s.dns, s.gateway, s.subnet);
+#endif
     delay(ETHERNET_BEGIN_DELAY_MS);
 
     // W5500 / Ethernet status (same pattern as Stream_ADC_Data and other DAQ
     // sketches)
     HF_LOGLN("[ETH] Ethernet initialized (SPI WIZnet)");
-    HF_LOG("Configured static IP: ");
-    HF_LOGLN(s.staticIP);
+    HF_LOG("Address source: ");
+    HF_LOGLN(BoardNet::sourceName(s.net.source));
     HF_LOG("Stack IP (Ethernet.localIP): ");
     HF_LOGLN(Ethernet.localIP());
     HF_LOG("Hardware: ");
@@ -445,15 +476,18 @@ inline void setup(CoreState& s, const Config& cfg) {
     Serial.println(SENSOR_UDP_LISTEN_PORT);
     Serial.println(
         "(Expect SENSOR_CONFIG packet type 5 to transition to Active)");
+    g_ota_server.onStart(otaFreezeAddress, &s);
     g_ota_server.begin();
-    Serial.print("OTA TCP server listening on port ");
-    Serial.println(HOTFIRE_OTA_PORT);
-    Serial.flush();
 
     s.state = State::WaitingForServer;
     s.serverIP = IPAddress(192, 168, 2, HOTFIRE_SERVER_IP_OCTET_4);
     s.serverPort = HOTFIRE_SERVER_PORT;
     s.lastHeartbeatMillis = 0;
+#ifdef SENSOR_ETH_USE_DHCP
+    HF_LOGLN(
+        "[NET] address assigned by the server; broadcasting until one is "
+        "heard");
+#endif
     Serial.println("State -> WaitingForServer");
     Serial.flush();
     Serial.print("Config target: send SENSOR_CONFIG to 192.168.2.");
@@ -474,10 +508,16 @@ inline void setup(CoreState& s, const Config& cfg) {
 }
 
 inline void loop(CoreState& s, const Config& cfg) {
-    // Non-blocking OTA check — blocks only if a client actually connects
-    EthernetClient ota_client = g_ota_server.available();
-    if (ota_client)
-        hotfire_handleOTA(ota_client);
+#ifdef SENSOR_ETH_USE_DHCP
+    // Renew the lease as it expires; no-op while an OTA is in flight.
+    BoardNet::maintainLease(s.net);
+#endif
+    // Non-blocking OTA check — blocks only if a client actually connects,
+    // and never returns on success (the board reboots into the new image).
+    g_ota_server.poll();
+    // Bench marker: prints only on builds made with -DSTAR_OTA_TEST_MESSAGE,
+    // so consecutive OTA uploads are visibly different on the serial monitor.
+    StarOTA::printTestMessage();
 
     const size_t maxPacket = SENSOR_HOTFIRE_MAX_PACKET_SIZE;
     static uint32_t s_udp_check_count = 0;
@@ -534,6 +574,18 @@ inline void loop(CoreState& s, const Config& cfg) {
             applyPacketTransition(s, cfg, kind);
         }
     }
+
+#ifdef SENSOR_ETH_USE_DHCP
+    // Server gone quiet: forget it and resume discovery broadcasts so a new
+    // (or restarted) server can find us. Our address is unaffected -- it is
+    // the server's to change, not ours.
+    if (BoardNet::serverWentSilent(s.net)) {
+        s.net.serverLearned = false;
+        s.serverIP = IPAddress(192, 168, 2, HOTFIRE_SERVER_IP_OCTET_4);
+        Serial.println("[NET] server silent -- resuming discovery");
+        Serial.flush();
+    }
+#endif
 
     if (s.state == State::Active || s.state == State::StandaloneAbort) {
         if (cfg.collect_chunk)
@@ -639,6 +691,21 @@ inline void loop(CoreState& s, const Config& cfg) {
                 }
                 break;
         }
+#ifdef SENSOR_ETH_USE_DHCP
+        // Discovery: announce to everyone on the wire until a server is
+        // learned. Reuses the normal heartbeat packet on the same 1 s tick.
+        if (!s.net.serverLearned) {
+            daq::BoardState bs = daq::BoardState::SETUP;
+            if (s.state == State::Active)
+                bs = daq::BoardState::ACTIVE;
+            else if (s.state == State::SelfTest)
+                bs = daq::BoardState::SELF_TEST;
+            else if (s.state == State::StandaloneAbort)
+                bs = daq::BoardState::STANDALONE_ABORT;
+            sendBoardHeartbeat(s, cfg, bs, IPAddress(255, 255, 255, 255),
+                               HOTFIRE_SERVER_PORT);
+        }
+#endif
     }
 
     // Flush buffered logs to the server ~1 Hz (or sooner if the buffer is

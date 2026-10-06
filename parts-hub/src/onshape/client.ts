@@ -14,6 +14,17 @@ const JSON_ACCEPT = 'application/json;charset=UTF-8; qs=0.09';
 // Isometric view: rows map model x/y/z to view x (right), y (up), z (towards viewer).
 // Onshape's standard "Name" property: the same id for every part in every document.
 const NAME_PROPERTY = '57f3fb8efa3416c06701d60d';
+// Onshape's standard "Mass" property; setting it overrides the computed mass (vendor STEP
+// files have no material, so Onshape can't compute one).
+const MASS_PROPERTY = '57f3fb8efa3416c06701d626';
+export const massValue = (kg: number) => `${Number(kg.toPrecision(6))} kg`;
+
+/** Split a fitting's total mass across its parts in proportion to their volumes (equal if unknown). */
+export function splitMass(totalKg: number, volumes: (number | null)[]): number[] {
+  const known = volumes.every((v) => v !== null && v > 0);
+  const sum = known ? volumes.reduce<number>((a, v) => a + (v as number), 0) : 0;
+  return volumes.map((v) => (known && sum > 0 ? (totalKg * (v as number)) / sum : totalKg / volumes.length));
+}
 // Names vendor CAD leaves on bodies that say nothing about the part ("Mirror 1", "Body2").
 const GENERIC_PART_NAME = /^(part|body|solid|mirror|extrude|revolve|sweep|loft|fillet|chamfer|pattern|boolean|split|shell|thicken|import(ed)?|surface|feature)[\s_-]*\d*$/i;
 
@@ -30,6 +41,8 @@ const ISOMETRIC = '0.707,0.707,0,0,-0.408,0.408,0.816,0,0.577,-0.577,0.577,0';
 export type Auth = { kind: 'keys' } | { kind: 'bearer'; token: string };
 export type TranslationState = { state: 'ACTIVE' | 'DONE' | 'FAILED'; resultElementIds: string[]; failureReason: string };
 export type ElementRef = { documentId: string; workspaceId: string; elementId: string };
+/** massKg: a number sets the parts' mass, null clears an earlier one, undefined leaves it alone. */
+export type StudioProps = { elementId: string; name?: string; massKg?: number | null };
 export type Image = { data: Buffer; ext: 'png' | 'jpg' | 'svg' };
 
 /** What the hub needs from Onshape. Implemented for real below and faked in mock.ts. */
@@ -39,8 +52,12 @@ export interface OnshapeClient {
   /** Status of several imports; batched into as few API calls as possible. */
   getTranslations(translationIds: string[]): Promise<Map<string, TranslationState>>;
   listPartStudios(wvm: 'w' | 'v', wvmId: string): Promise<{ id: string; name: string }[]>;
-  /** Rename the parts inside these Part Studios (workspace) after their hub names. 2 calls total. */
-  nameParts(studios: { elementId: string; name: string }[]): Promise<void>;
+  /**
+   * Set properties on the parts inside these Part Studios (workspace): their names after the
+   * hub name, and/or their mass from the hub weight. 2 calls total, plus 1 per multi-part
+   * studio that gets a mass (its weight is split across the parts by volume).
+   */
+  setPartProperties(studios: StudioProps[]): Promise<void>;
   createVersion(name: string, description: string): Promise<string>;
   renderThumbnail(versionId: string, elementId: string): Promise<Image>;
   /** Insert a whole Part Studio from the library (at a version) into the target assembly. */
@@ -146,6 +163,20 @@ function imageExt(buf: Buffer): Image['ext'] {
 
 export function createOnshapeClient(): OnshapeClient {
   const did = config.onshape.libraryDocumentId;
+
+  /** Volume of each part (m³), or null where Onshape can't say. 1 call. */
+  async function partVolumes(wid: string, elementId: string, partIds: string[]): Promise<(number | null)[]> {
+    try {
+      const res = await json<{ bodies?: Record<string, { volume?: number[] }> }>(
+        'GET',
+        `${API}/partstudios/d/${did}/w/${wid}/e/${elementId}/massproperties`,
+        { query: { massAsGroup: false } },
+      );
+      return partIds.map((id) => res.bodies?.[id]?.volume?.[0] ?? null);
+    } catch {
+      return partIds.map(() => null); // fall back to an equal split
+    }
+  }
   let workspaceId: string | undefined;
 
   const client: OnshapeClient = {
@@ -203,19 +234,26 @@ export function createOnshapeClient(): OnshapeClient {
       return elements.filter((e) => e.elementType === 'PARTSTUDIO').map((e) => ({ id: e.id, name: e.name }));
     },
 
-    async nameParts(studios) {
+    async setPartProperties(studios) {
       if (!studios.length) return;
       const wid = await client.libraryWorkspaceId();
-      // One call lists every part in the workspace; one more renames them all.
+      // One call lists every part in the workspace; one more updates them all.
       const parts = await json<{ elementId: string; partId: string; name: string }[]>('GET', `${API}/parts/d/${did}/w/${wid}`);
-      const items = studios.flatMap(({ elementId, name }) => {
+      const items: { href: string; properties: { propertyId: string; value: string }[] }[] = [];
+      for (const { elementId, name, massKg } of studios) {
         const own = parts.filter((p) => p.elementId === elementId);
-        const names = partNames(name, own.map((p) => p.name));
-        return own.map((p, i) => ({
-          href: `${config.onshape.baseUrl}/api/metadata/d/${did}/w/${wid}/e/${elementId}/p/${p.partId}`,
-          properties: [{ propertyId: NAME_PROPERTY, value: names[i] }],
-        }));
-      });
+        if (!own.length) continue;
+        const names = name ? partNames(name, own.map((p) => p.name)) : null;
+        let masses: (number | null)[] | null = null;
+        if (massKg === null) masses = own.map(() => null);
+        else if (massKg !== undefined) masses = own.length === 1 ? [massKg] : splitMass(massKg, await partVolumes(wid, elementId, own.map((p) => p.partId)));
+        own.forEach((p, i) => {
+          const properties: { propertyId: string; value: string }[] = [];
+          if (names) properties.push({ propertyId: NAME_PROPERTY, value: names[i] });
+          if (masses) properties.push({ propertyId: MASS_PROPERTY, value: masses[i] === null ? '' : massValue(masses[i]!) });
+          if (properties.length) items.push({ href: `${config.onshape.baseUrl}/api/metadata/d/${did}/w/${wid}/e/${elementId}/p/${p.partId}`, properties });
+        });
+      }
       if (items.length) await json('POST', `${API}/metadata/d/${did}/w/${wid}`, { json: { items } });
     },
 

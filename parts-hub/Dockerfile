@@ -10,6 +10,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY src ./src
 COPY public ./public
 COPY scripts ./scripts
+COPY config ./config
 
 RUN mkdir -p /data && chown node:node /data
 USER node

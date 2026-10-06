@@ -36,10 +36,17 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
   // Sweep window follows the design point (backend-supplied), so the dots stay on the chart.
   const [X_MIN, X_MAX] = data.chug.eta_window ?? [DEFAULT_X_MIN, DEFAULT_X_MAX];
 
+  // The design in the boundary's own frame (mass-weighted stiffness and lag, both scaled from the
+  // design): one point, nominal mixing lag, and a second at the mixing lag the gate is taken at.
+  const dp = data.chug.design_point;
+  const system = dp != null && Number.isFinite(dp.eta) && Number.isFinite(dp.tau_theta_c);
+  const gateY = dp?.gate_tau_theta_c;
   const yMax = Math.max(
-    ...boundary.map(([, t]) => t),
-    tauO,
-    tauF,
+    // The curve can run far above the design where the injector is stiff; cap the view at a few
+    // times the design so the design end of the chart stays readable.
+    ...(system
+      ? [Math.min(Math.max(...boundary.map(([, t]) => t), 1), 4 * Math.max(dp!.tau_theta_c, gateY ?? 0, 1)), dp!.tau_theta_c, gateY ?? 0]
+      : [...boundary.map(([, t]) => t), tauO, tauF]),
     1,
   ) * 1.12;
 
@@ -53,7 +60,7 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
   const toY = (tau: number) => pad.t + plotH - (tau / yMax) * plotH;
 
   const boundaryPts = boundary
-    .map(([eta, tau]) => `${toX(eta)},${toY(tau)}`)
+    .map(([eta, tau]) => `${toX(eta)},${toY(Math.min(tau, yMax))}`)
     .join(' ');
 
   const yTicks = [0, yMax * 0.33, yMax * 0.66, yMax].map((v) => Math.round(v * 10) / 10);
@@ -62,7 +69,11 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
   return (
     <VizCard
       title="Chug stability boundary — stiffness vs lag"
-      subtitle="Design plane, not the s-plane: each dot is one propellant stream. Below the red curve = stable. Eigenvalues are in the root-locus card."
+      subtitle="Below the red curve is stable."
+      info={<>
+        <span className="block">Chug is one loop through both streams, so the design is one point: x is the flow-weighted injector ΔP/Pc, y the flow-weighted combustion lag over the gas residence time θ_c. The curve is where the loop's gain margin reaches 1 when every drop (x) or every lag (y) is scaled from this design.</span>
+        <span className="block">Raise injector ΔP to move right; a finer spray shortens the lag and moves down. Lags in the table are in ms: {lagModel === 'd2_law' ? 'the quiescent d²-law droplet lifetime' : 'τ = τ_at + τ_vap + τ_mix (Leonardi et al., Acta Astronautica 139, 2017)'}.</span>
+      </>}
     >
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minHeight: H }}>
         {/* grid */}
@@ -124,15 +135,24 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
           />
         )}
 
-        {/* design dots */}
-        <circle cx={toX(etaO)} cy={toY(tauO)} r={7} fill={STREAM_COLORS.O} stroke="#fff" strokeWidth={1.5} />
-        <text x={toX(etaO) + 10} y={toY(tauO) + 4} fill={STREAM_COLORS.O} fontSize={9}>
-          O
-        </text>
-        <circle cx={toX(etaF)} cy={toY(tauF)} r={7} fill={STREAM_COLORS.F} stroke="#fff" strokeWidth={1.5} />
-        <text x={toX(etaF) + 10} y={toY(tauF) + 4} fill={STREAM_COLORS.F} fontSize={9}>
-          F
-        </text>
+        {system ? (
+          <>
+            {gateY != null && Number.isFinite(gateY) && (
+              <>
+                <line x1={toX(dp!.eta)} y1={toY(dp!.tau_theta_c)} x2={toX(dp!.eta)} y2={toY(gateY)} stroke="#e2e8f0" strokeDasharray="2 2" />
+                <circle cx={toX(dp!.eta)} cy={toY(gateY)} r={6} fill="none" stroke="#e2e8f0" strokeWidth={1.5} />
+                <text x={toX(dp!.eta) + 9} y={toY(gateY) + 4} fill="#e2e8f0" fontSize={9}>gate</text>
+              </>
+            )}
+            <circle cx={toX(dp!.eta)} cy={toY(dp!.tau_theta_c)} r={6} fill="#e2e8f0" stroke="#0f172a" strokeWidth={1.5} />
+            <text x={toX(dp!.eta) + 9} y={toY(dp!.tau_theta_c) + 4} fill="#e2e8f0" fontSize={9}>design</text>
+          </>
+        ) : (
+          <>
+            <circle cx={toX(etaO)} cy={toY(tauO)} r={7} fill={STREAM_COLORS.O} stroke="#fff" strokeWidth={1.5} />
+            <circle cx={toX(etaF)} cy={toY(tauF)} r={7} fill={STREAM_COLORS.F} stroke="#fff" strokeWidth={1.5} />
+          </>
+        )}
       </svg>
 
       {/* legend below plot — no overlap with axis title */}
@@ -140,22 +160,21 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-5 h-0.5 bg-red-500 rounded" /> marginal boundary
         </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: STREAM_COLORS.O }} /> O · {nameO}
-          {phaseO === 'gas' ? ' (gas)' : ''}
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: STREAM_COLORS.F }} /> F · {nameF}
-          {phaseF === 'gas' ? ' (gas)' : ''}
-        </span>
+        {system && (
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-200" /> design, nominal mixing lag
+            {gateY != null && <><span className="inline-block w-2.5 h-2.5 rounded-full border border-slate-200 ml-2" /> at the gate's mixing lag ({(dp!.gate_mixing_fraction ?? 0).toFixed(2)})</>}
+          </span>
+        )}
       </div>
 
       <p className="text-xs text-[var(--color-text-secondary)]">
-        O η={etaO.toFixed(2)} F η={etaF.toFixed(2)} · margin{' '}
+        {system ? <>mean η = {dp!.eta.toFixed(3)} (O {etaO.toFixed(2)}, F {etaF.toFixed(2)})</> : <>O η={etaO.toFixed(2)} F η={etaF.toFixed(2)}</>}
+        {' · gain margin '}
         <span style={{ color: data.chug.margin >= 1.05 ? STABLE : UNSTABLE }}>
           {data.chug.margin.toFixed(3)}
         </span>
-        <span className="opacity-70"> (below red = stable)</span>
+        <span className="opacity-70"> at the gate, {(data.chug.gain_margin_nominal ?? NaN).toFixed(3)} nominal</span>
       </p>
 
 
@@ -198,22 +217,6 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
           })}
         </tbody>
       </table>
-      <p className="text-[9.5px] text-[var(--color-text-secondary)] mt-1 opacity-80">
-        τ terms in ms.{' '}
-        {lagModel === 'leonardi_dtl'
-          ? 'Double time lag τ = τ_at + τ_vap + τ_mix (Leonardi et al., Acta Astronautica 139, 2017). A gas-phase propellant carries only τ_mix.'
-          : lagModel === 'd2_law'
-            ? 'Quiescent d²-law droplet lifetime — no atomization or mixing term.'
-            : ''}
-      </p>
-
-      <p className="text-[10px] text-[var(--color-text-secondary)] mt-2 leading-snug">
-        Each dot is a propellant stream at its injector stiffness (x) and combustion lag (y). Dots
-        below/right of the red marginal boundary are stable - the farther from the curve, the more
-        chug margin. To push a stream safer: <span className="text-[var(--color-text-primary)]">raise injector ΔP</span>{' '}
-        (η_inj → moves right) or <span className="text-[var(--color-text-primary)]">atomize finer</span>{' '}
-        (smaller SMD shortens the lag → moves down).
-      </p>
     </VizCard>
   );
 }

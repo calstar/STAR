@@ -148,12 +148,11 @@ describe('the Geometry editor opens on the manifold as drawn', () => {
     expect(manifoldLayout(2, 'horizontal', seeded)).toEqual(manifoldLayout(2, 'horizontal', g));
   });
 
-  it('shows "Saved", not a lit "Save layout", when nothing has been moved', () => {
+  it('opens with nothing moved: Undo moves is off, and the block is the one drawn', () => {
     const html = renderToStaticMarkup(createElement(ManifoldEditor, {
-      outlets: 4, orientation: 'vertical', geometry: undefined, ports: {}, onSave: () => {},
+      outlets: 4, orientation: 'vertical', geometry: undefined, ports: {}, onChange: () => {},
     }));
-    const button = /<button[^>]*>(Save layout|Saved)<\/button>/.exec(html)!;
-    expect(button[1]).toBe('Saved');
+    const button = /<button[^>]*>Undo moves<\/button>/.exec(html)!;
     expect(button[0]).toContain('disabled');
     // And the block it shows is the one drawn: 20 wide, 120 long.
     expect(html).toContain('value="20"');

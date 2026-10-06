@@ -415,6 +415,10 @@ class TestGoingRoundAgain:
         charged(session)
         for _ in range(2):
             pressed(session)
+            # The gas already past the shut press valve finishes into the tank in the first
+            # half second (26 mg on the fuel side, 37 mg with line walls warming it, then flat
+            # to the microgram): that is the press ending, not a leak. The leak test starts after.
+            run(session, 0.5)
             held = {key: tank(session, key).state.ullage.mass for key in ("OXT", "FUT")}
             run(session, 5.0)
             for key in ("OXT", "FUT"):

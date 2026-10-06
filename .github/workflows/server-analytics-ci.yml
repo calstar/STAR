@@ -1,0 +1,54 @@
+name: Server analytics CI
+
+'on':
+  push:
+    paths:
+      - 'server-analytics/**'
+      - '.github/workflows/server-analytics-ci.yml'
+  pull_request:
+    paths:
+      - 'server-analytics/**'
+      - '.github/workflows/server-analytics-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: server-analytics-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go (vet, test, gofmt)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: server-analytics
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server-analytics/go.mod
+          cache-dependency-path: server-analytics/go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l . | tee /dev/stderr)"
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test -count=1 ./...
+
+  web:
+    name: Panel (typecheck + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: server-analytics/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+          cache-dependency-path: server-analytics/web/package-lock.json
+      - run: npm ci
+      - run: npm run build

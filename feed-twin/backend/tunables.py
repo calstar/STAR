@@ -85,6 +85,36 @@ TUNABLES: tuple[Tunable, ...] = (
         step=5.0,
     ),
     Tunable(
+        "regulator_compressible_seat",
+        "regulator_compressible_seat",
+        "Regulator seat: compressible",
+        "",
+        GROUPS[0],
+        "On: a wide-open dome regulator passes gas the way IEC 60534-2-1 says a "
+        "valve of its Cv does -- with the expansion factor Y = 1 - x/(3 F_gamma xT) "
+        "and choking once the drop passes F_gamma xT of the inlet. Off (the "
+        "benchmarked setting): the seat is the incompressible Cv law at the inlet "
+        "density, which overstates a GN2 regulator's wide-open capacity by ~25 % "
+        "near burnout (0.398 vs 0.319 kg/s) and by up to 1.5x choked. Only a "
+        "saturated regulator is affected; on helium at the hot-fire flows it "
+        "regulates and nothing changes.",
+        kind="flag",
+    ),
+    Tunable(
+        "regulator_xT",
+        "regulator_xT",
+        "Regulator seat xT",
+        "",
+        GROUPS[0],
+        "Pressure-differential ratio factor of the regulator seat at choked flow "
+        "(IEC 60534-2-1): the gas chokes at x = (gamma/1.40) xT. 0.70 is the "
+        "standard's typical value, assumed -- the 1092's is not published. Read "
+        "only with the compressible seat on; an xT on the drawing wins.",
+        low=0.1,
+        high=1.0,
+        step=0.01,
+    ),
+    Tunable(
         "bottle_delivered",
         "bottle_delivered",
         "Bottle arrives full",
@@ -110,14 +140,29 @@ TUNABLES: tuple[Tunable, ...] = (
         step=5.0,
     ),
     Tunable(
+        "load_chill_s",
+        "load_chill_s",
+        "LOX chilldown time",
+        "s",
+        GROUPS[1],
+        "Seconds the LOX load spends chilling a room-temperature tank before any "
+        "liquid stays in it. What is poured flashes on the warm wall and vents; on "
+        "the stand that is about ten minutes of pouring (operator), compressed here "
+        "so it can be watched. 0: liquid collects from the start and the wall chills "
+        "as it goes.",
+        low=0.0,
+        high=3600.0,
+        step=5.0,
+    ),
+    Tunable(
         "tank_fill_s",
         "tank_fill_s",
         "LOX load time",
         "s",
         GROUPS[1],
-        "Seconds for the dewar transfer to reach the full fraction. The wall chills "
-        "as it goes and boils LOX doing it, which the vent has to carry; a wall still "
-        "warm when the vent shuts runs the tank away.",
+        "Seconds for the dewar transfer to reach the full fraction once the tank is "
+        "chilled. The wall is near saturation by then; what heat it still has boils "
+        "LOX, which the vent has to carry.",
         low=1.0,
         high=3600.0,
         step=10.0,
@@ -288,6 +333,27 @@ TUNABLES: tuple[Tunable, ...] = (
         "liquid it touches straight into the ullage rather than warming the bulk. "
         "Needs propellant vapour on.",
         kind="flag",
+    ),
+    Tunable(
+        "cryogen_ullage_wall_T0_K",
+        "cryogen_ullage_wall_T0_K",
+        "LOX tank upper wall at T-0",
+        "K",
+        GROUPS[2],
+        "Temperature of a cryogen tank's upper (ullage) wall for a stand primed "
+        "straight to T-0, the state EngineDesign's Layer X burns from. 0 (the "
+        "default) leaves it at the pressurant's 293 K, as freshly pressed. A LOX "
+        "tank that has held its load has a cold upper shell: at 150 K the wall "
+        "takes heat from the warm pressurant, the tank sags ~13 psi in the "
+        "lead-in and the helium burn draws ~225 psi more bottle (estimated, "
+        "EngineDesign/docs/layerx/AUDIT.md D1). Unmeasured: an RTD on the upper "
+        "shell would settle it. This console loads and presses through the "
+        "sequence, so its walls follow what it did and this changes nothing here; "
+        "the Study tab burns at its benchmark settings and does not read it.",
+        low=0.0,
+        high=330.0,
+        step=1.0,
+        applies="reset",
     ),
     Tunable(
         "line_walls",
@@ -531,6 +597,20 @@ TUNABLES: tuple[Tunable, ...] = (
         step=1.0,
         applies="reset",
     ),
+    Tunable(
+        "bottle_volume_L",
+        "bottle_volume_L",
+        "Bottle volume",
+        "L",
+        GROUPS[5],
+        "Water volume of a bottle the drawing gives none: the stand's 45 scf SCBA "
+        "COPV -- 52.8 mol of free air, Z 1.1145 at 4500 psi, 4.64 L plus 3 in^3 of "
+        "fittings. A volume on the drawing wins.",
+        low=0.5,
+        high=60.0,
+        step=0.01,
+        applies="reset",
+    ),
     # --- numerics ---------------------------------------------------------
     Tunable(
         "live_step",
@@ -580,6 +660,60 @@ TUNABLES: tuple[Tunable, ...] = (
         low=0.1,
         high=4.0,
         step=0.1,
+    ),
+    Tunable(
+        "body_acceleration",
+        "body_acceleration",
+        "Liquid-column acceleration",
+        "m/s²",
+        GROUPS[1],
+        "What every liquid column (tank heads, line climbs) is multiplied by: rho * a * dz. "
+        "Standard gravity on the stand. In flight it is thrust less drag over mass, which "
+        "EngineDesign's Layer X sets each step from its flight solve (~10 g at burnout on LE4).",
+        low=0.0,
+        high=200.0,
+        step=0.1,
+    ),
+    Tunable(
+        "chamber_tolerance_psi",
+        "chamber_tolerance_psi",
+        "Chamber closure tolerance",
+        "psi",
+        GROUPS[6],
+        "How closely the chamber pressure is solved against the flows each coupling "
+        "step. 0.5 psi is the benchmarked setting; EngineDesign's Layer X runs 0.02 so "
+        "the closure is finer than its engine card.",
+        low=0.001,
+        high=5.0,
+        step=0.01,
+    ),
+    Tunable(
+        "network_tolerance",
+        "network_tolerance",
+        "Network solve tolerance",
+        "",
+        GROUPS[6],
+        "Scaled residual the network solve must reach each step. Branches are judged "
+        "against the bottle pressure, so 1e-4 (the console's and the Study's) is ~3 kPa "
+        "on a full COPV and leaves an injector drop a few tenths of a percent off. "
+        "Below ~3e-5 turn on 'Lockup carries supply effect' too, or a regulator at "
+        "lockup has no solution and the step holds its last flows.",
+        low=1.0e-8,
+        high=1.0e-3,
+        step=1.0e-6,
+    ),
+    Tunable(
+        "regulator_lockup_supply",
+        "regulator_lockup_supply",
+        "Lockup carries supply effect",
+        "",
+        GROUPS[6],
+        "On (the default): a regulator's no-flow outlet includes its supply-pressure effect, so the "
+        "outlet is continuous across zero flow. Off (the Study's benchmark setting): lockup "
+        "is dome + bias, which steps by 17 psi per 1000 psi of bottle away from the "
+        "reference -- 1.7 kPa full, 51 psi late in a blowdown -- and a tank sitting in "
+        "that step caps how tightly the network can solve.",
+        kind="flag",
     ),
     Tunable(
         "max_mass_step",

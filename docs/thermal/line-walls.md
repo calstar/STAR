@@ -117,5 +117,5 @@ the model has quietly become "gas leaves at wall temperature".
 - `lib/feedtwin/feedtwin/comps/wall.py` — `stainless_capacity`, `LineWall`
 - `feed-twin/backend/session.py` — `_build_line_walls`, and the exchange inside
   `_propagate_temperatures`
-- `Setup.line_walls` / `StudyRequest.line_walls` — off by default
+- `Setup.line_walls` — on by default since 2026-10-03 (cockpit and Layer X); `StudyRequest.line_walls` and `burn_setup` — off, the benchmark's setting
 - Study tab → **Thermal** → *Line walls*

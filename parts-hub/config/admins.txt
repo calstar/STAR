@@ -1,0 +1,11 @@
+# STAR Parts Hub admins: who may replace a part's CAD file or delete a part.
+#
+# One email per line; `#` starts a comment; blank lines ignored; case-insensitive.
+# Everyone else with a STAR login can still upload, edit and archive parts.
+# Enforced server-side (src/admins.ts) on the X-Auth-Email the STAR gate sets.
+#
+# Same model as daq-server's operators.txt: committed on purpose, and the running
+# app re-reads this file when it changes (parts-hub/config/ is mounted into the
+# container), so a merged edit takes effect at the next auto-update, no rebuild.
+
+carlosbautista@berkeley.edu

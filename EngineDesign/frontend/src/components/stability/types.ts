@@ -37,6 +37,11 @@ export interface StabilityRichPayload {
     zeta?: number;
     margin: number;
     boundary_curve: [number, number][];
+    boundary_basis?: string;
+    /** The design in the boundary's frame: mean η, mean τ/θ_c (nominal), and at the gate's mixing lag. */
+    design_point?: { eta: number; tau_theta_c: number; gate_tau_theta_c?: number; gate_mixing_fraction?: number };
+    eta_mean?: number;
+    gain_margin_nominal?: number;
     pole?: { real: number; imag: number };
     design_streams?: Array<{
       stream: string;
@@ -76,15 +81,26 @@ export interface StabilityRichPayload {
       freq_hz: number;
       alpha: number;
       driving: number;
+      /** The most driving any lag could give (omega*tau = pi). */
+      driving_max?: number;
+      margin?: number;
+      /** damping / driving_max: independent of tau. */
+      margin_worst_phase?: number;
+      n_min?: number;
       damping: { noz: number; visc: number; inj: number; twophase: number };
     }>;
   };
-  phase: Array<{ mode: string; omega_tau: number }>;
+  /** omega_tau_mod = ωτ mod 2π; drive_share = driving / most any lag could give = (1 − cos ωτ)/2. */
+  phase: Array<{ mode: string; omega_tau: number; omega_tau_mod?: number; drive_share?: number }>;
   vaporization: {
     /** Headline figures describe the RATE-LIMITING stream, not the oxidizer. */
     d2_profile: [number, number][];
-    L_vap_m: number;
+    /** 95 % vaporized, from the face; null when the stream is not 95 % gone by the chamber end. */
+    L_vap_m: number | null;
     L_ch_m: number;
+    /** Fraction vaporized at L_ch (droplet march). */
+    frac_vaporized_end?: number;
+    basis?: string;
     smd_um: number;
     smd_band_um: [number, number];
     tau_conv_s?: number;
@@ -102,6 +118,10 @@ export interface StabilityRichPayload {
       L_ch_m: number;
       vaporized_in_chamber: boolean;
       d2_profile: [number, number][];
+      /** Liquid mass fraction left along the chamber, [x from face, fraction] (droplet march). */
+      remaining_profile?: [number, number][];
+      frac_vaporized_end?: number;
+      basis?: string;
       note?: string;
     }>;
   };
@@ -109,10 +129,16 @@ export interface StabilityRichPayload {
     axes: string[];
     values: number[];
     threshold: number[];
+    /** Which axes are stability gates; the others are reported only. */
+    gated?: boolean[];
+    basis?: string[];
   };
   assumptions: {
     n: number;
     chi_acoustic: number;
+    /** Assumed injector-face and two-phase damping, as fractions of pi*f (uncalibrated). */
+    damping_injector_frac?: number;
+    damping_twophase_frac?: number;
     eta_inj_O: number;
     eta_inj_F: number;
     smd_O_um: number;

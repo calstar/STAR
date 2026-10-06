@@ -25,7 +25,7 @@ import type { PIDNodeData } from './types';
  */
 
 /** Valve-like components. A relief valve vents by definition when unplumbed. */
-const VALVES = new Set(['MAN', 'ROT', 'SOL', 'RV']);
+const VALVES = new Set(['MAN', 'ROT', 'SOL', 'MOV', 'RV']);
 
 export interface Vent {
   nodeId: string;

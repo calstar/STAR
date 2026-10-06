@@ -146,9 +146,18 @@ describe('tags', () => {
     // feedtwin.solve.Node calls its id "the tags on the P&ID": a tag is the
     // name one piece of hardware has in a solve, a report and a procedure.
     const nodes = [node('a', 'SOL', { label: 'SOL-01' }), node('b', 'SOL', { label: 'SOL-01' })];
-    const f = runChecks(nodes, []).find(x => x.id === 'tag-duplicate-SOL-01')!;
+    const f = runChecks(nodes, []).find(x => x.id === 'tag-duplicate-Main-SOL-01')!;
     expect(f.severity).toBe('warning');
     expect(f.nodeIds).toEqual(['a', 'b']);
+  });
+
+  it('takes one tag on two pages as one piece of hardware drawn twice', () => {
+    // A page duplicated as another version of the stand -- hotfire and
+    // launch -- keeps its tags: MAN-1 on both is the same valve.
+    const nodes = [node('a', 'SOL', { label: 'SOL-01', page: 'Hotfire' }), node('b', 'SOL', { label: 'SOL-01', page: 'Launch' })];
+    expect(ids(nodes).some(i => i.startsWith('tag-duplicate'))).toBe(false);
+    const twice = [...nodes, node('c', 'SOL', { label: 'SOL-01', page: 'Launch' })];
+    expect(runChecks(twice, []).find(x => x.id === 'tag-duplicate-Launch-SOL-01')!.nodeIds).toEqual(['b', 'c']);
   });
 
   it('ignores annotation, which is not hardware', () => {

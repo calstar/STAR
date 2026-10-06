@@ -11,12 +11,18 @@ name: feed-twin CI
       # the physics core can be installed alongside it, so a change to what
       # EngineDesign pins has to re-run that proof.
       - 'EngineDesign/requirements-base.txt'
+      # The P&ID is pid-designer's canvas compiled into this app, so a change
+      # there has to prove this app still builds and draws it.
+      - 'pid-designer/frontend/src/components/pid/**'
+      - 'lib/stardesign-ui/**'
       - '.github/workflows/feed-twin-ci.yml'
   pull_request:
     paths:
       - 'feed-twin/**'
       - 'lib/feedtwin/**'
       - 'EngineDesign/requirements-base.txt'
+      - 'pid-designer/frontend/src/components/pid/**'
+      - 'lib/stardesign-ui/**'
       - '.github/workflows/feed-twin-ci.yml'
   workflow_dispatch:
 
@@ -227,7 +233,7 @@ jobs:
 
       # Only the pure logic is tested, and deliberately: `src/lib/series.ts` is
       # the one part of this frontend that can be *wrong* rather than merely
-      # ugly. Rendering assertions on a layout that is still moving would cost
+      # ugly -- that, and that the drawing keeps pid-designer's palette. Rendering assertions on a layout that is still moving would cost
       # more to maintain than they catch.
       - name: Unit tests
         working-directory: feed-twin/frontend

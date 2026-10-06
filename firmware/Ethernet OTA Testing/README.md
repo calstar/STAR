@@ -2,6 +2,26 @@
 
 Test environment for Over-The-Air (OTA) firmware updates on ESP32-S3 boards over Ethernet (W5500).
 
+> **The OTA implementation now lives in `firmware/libraries/STAR_EthernetOTA`**,
+> shared by every STAR board — this project is its demo and bench test, not a
+> separate implementation. The firmware here used to carry its own copy of the
+> transfer handler; it now calls `StarOTA::Server::poll()` like the rest.
+>
+> For uploading, prefer the standardized tools, which work against *any* board:
+>
+> ```bash
+> # build with a message baked in, then push it
+> python firmware/tools/ota_upload.py --ip 192.168.2.5 \
+>     --project "firmware/Ethernet OTA Testing/OTA_Test_Firmware" --message "hello"
+>
+> # or, from a project with an [env:ota] section
+> pio run -e ota -t upload
+> ```
+>
+> The local `ota_upload.py` in this folder still works and is still wired to
+> this project's `-DOTA_MESSAGE`, but it only knows about this one project.
+> New work should use `firmware/tools/ota_upload.py`.
+
 ## What This Does
 
 1. The ESP32 runs a firmware that prints a configurable message to Serial every 2 seconds
@@ -20,9 +40,12 @@ Ethernet OTA Testing/
 └── OTA_Test_Firmware/         # PlatformIO project (ESP32-S3 firmware)
     ├── platformio.ini
     └── src/
-        ├── main.h             # Config (pins from sense_board_pins.h, network, OTA params)
-        └── main.cpp           # Firmware (Ethernet init, TCP OTA listener, serial print loop)
+        ├── main.h             # Config (pins from sense_board_pins.h, network)
+        └── main.cpp           # Firmware (Ethernet init, StarOTA::Server, print loop)
 ```
+
+The transfer itself is `firmware/libraries/STAR_EthernetOTA` — see its README
+for the wire protocol, the callbacks, and how updates are verified.
 
 ## Prerequisites
 

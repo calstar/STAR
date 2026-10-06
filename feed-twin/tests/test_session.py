@@ -22,7 +22,7 @@ import pytest
 from backend.assembly import assemble
 from backend.library import Library
 from backend.run import PSI
-from backend.session import AMBIENT, Session, Setup
+from backend.session import AMBIENT, AMBIENT_T, Session, Setup
 from backend.statemachine import bind, load_machine
 
 CEA = (
@@ -93,7 +93,15 @@ def stand(*, engine: bool = False, **setup: float) -> Session:
     # steps it has no time for into one, which is right for a panel and
     # wrong for a test, whose answer must not depend on what else the machine
     # was doing.
-    setup = {"chilldown": 0.0, "ambient_leak": 0.0, "tick_budget": 1e9, **setup}
+    # The load chill too: a test about a fill wants the liquid in, not thirty
+    # seconds of a wall chilling first (tested on its own below).
+    setup = {
+        "chilldown": 0.0,
+        "ambient_leak": 0.0,
+        "tick_budget": 1e9,
+        "load_chill_s": 0.0,
+        **setup,
+    }
     seeded = _seed()
     library = Library()
     diagram = library.get(seeded["diagram"])
@@ -189,6 +197,57 @@ def test_a_tank_vents_while_it_fills() -> None:
     assert (
         session._last_flows.get("SV_LOX_VENT", 0.0) > 5.0e-3
     ), "the vent is carrying boil-off"
+
+
+def test_a_lox_load_chills_the_wall_before_any_liquid_collects() -> None:
+    """LOX poured into a room-temperature tank flashes on the wall and vents;
+    nothing collects until the metal is down at saturation. The wall falls at
+    the rate that takes it from the room to the liquid in `load_chill_s`, and
+    what it gives up is the LOX flashed: Q / h_fg, h_fg from CoolProp here
+    rather than from the model."""
+    import CoolProp.CoolProp as CP
+
+    session = stand(load_chill_s=10.0)
+    ox = session.tanks["OXT"]
+    start = ox.state.ullage.wall_temperature
+    assert start > 280.0
+    hold(session, "Ox Fill", 5.0)
+    assert ox.chilling
+    assert ox.state.liquid_mass == 0.0, "nothing collects while the wall is warm"
+    wall = ox.state.ullage.wall_temperature
+    rate = (AMBIENT_T - ox.state.liquid_temperature) / 10.0
+    assert start - wall == pytest.approx(rate * 5.0, rel=0.05)
+    T_liquid = ox.state.liquid_temperature
+    vapour = CP.PropsSI("H", "T", T_liquid, "Q", 1, "Oxygen")
+    h_fg = vapour - CP.PropsSI("H", "T", T_liquid, "Q", 0, "Oxygen")
+    capacity = ox.tank.wall_mass * ox.tank.wall_capacity
+    assert ox.chill_boiled == pytest.approx(capacity * (start - wall) / h_fg, rel=1e-3)
+    assert "chilling down" in "\n".join(session.history[-1].notes)
+
+    hold(session, "Ox Fill", 8.0)
+    assert not ox.chilling
+    saturation = CP.PropsSI("T", "P", ox.pressure, "Q", 0, "Oxygen")
+    assert ox.state.ullage.wall_temperature <= saturation + ox.tank.boiling_onset + 1.0
+    assert ox.state.liquid_mass > 0.5, "once chilled, the load collects"
+
+
+def test_with_no_load_chill_the_liquid_collects_from_the_first_second() -> None:
+    """Zero is the model before the chill existed: liquid from the start, and
+    the wall left to chill as the load goes."""
+    session = stand(load_chill_s=0.0)
+    hold(session, "Ox Fill", 1.0)
+    ox = session.tanks["OXT"]
+    assert not ox.chilling and ox.chill_boiled == 0.0
+    assert ox.state.liquid_mass > 0.5
+    assert ox.state.ullage.wall_temperature > 250.0
+
+
+def test_the_fuel_load_has_nothing_to_chill() -> None:
+    session = stand(load_chill_s=30.0)
+    hold(session, "Fuel Fill", 1.0)
+    fuel = session.tanks["FUT"]
+    assert not fuel.chilling
+    assert fuel.state.liquid_mass > 0.1
 
 
 # ---------------------------------------------------------------- pressing

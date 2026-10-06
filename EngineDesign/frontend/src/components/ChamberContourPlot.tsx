@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import {
   ComposedChart,
   Line,
@@ -6,12 +6,12 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
-  ResponsiveContainer,
   ReferenceLine,
 } from 'recharts';
 import type { ChamberGeometryResponse } from '../api/client';
 import { useViewState } from '../lib/viewState';
+import { CONTOUR_FRAME } from '../lib/contourScale';
+import { useTrueScale } from '../lib/useTrueScale';
 
 // Convert m to mm for display
 const M_TO_MM = 1000;
@@ -282,69 +282,6 @@ EOF
 }
 
 
-// Helper function to get nice step size for a given range
-function getNiceStep(range: number): number {
-  const magnitude = Math.floor(Math.log10(range));
-  const normalized = range / Math.pow(10, magnitude);
-
-  let step;
-  if (normalized <= 1) step = 1;
-  else if (normalized <= 2) step = 2;
-  else if (normalized <= 5) step = 5;
-  else step = 10;
-
-  return step * Math.pow(10, magnitude);
-}
-
-// Helper function to ensure domain includes 0 and has nice rounded bounds
-function makeNiceDomain(min: number, max: number, includeZero: boolean = true): [number, number] {
-  // Calculate the range
-  let range = max - min;
-
-  // If including zero, expand range to include it
-  if (includeZero) {
-    if (min > 0) {
-      range = max;
-      min = 0;
-    } else if (max < 0) {
-      range = Math.abs(min);
-      max = 0;
-    } else {
-      range = Math.max(Math.abs(min), Math.abs(max)) * 2;
-      min = -range / 2;
-      max = range / 2;
-    }
-  }
-
-  // Get a nice step size
-  const step = getNiceStep(range / 8); // Aim for about 8 ticks
-
-  // Round min down and max up to nice values
-  const domainMin = includeZero && min <= 0 && max >= 0
-    ? Math.floor(min / step) * step
-    : Math.floor(min / step) * step;
-  const domainMax = includeZero && min <= 0 && max >= 0
-    ? Math.ceil(max / step) * step
-    : Math.ceil(max / step) * step;
-
-  // Ensure 0 is included if requested
-  let finalMin = domainMin;
-  let finalMax = domainMax;
-  if (includeZero) {
-    if (finalMin > 0) finalMin = 0;
-    if (finalMax < 0) finalMax = 0;
-  }
-
-  // Ensure min < max
-  if (finalMin >= finalMax) {
-    const absMax = Math.max(Math.abs(finalMin), Math.abs(finalMax));
-    finalMin = -absMax;
-    finalMax = absMax;
-  }
-
-  return [finalMin, finalMax];
-}
-
 // Helper function to format tick values nicely
 function formatTick(value: number, unit: 'mm' | 'inch'): string {
   // Special case: always show "0" for zero, not "0.00"
@@ -387,10 +324,8 @@ export function ChamberContourPlot({
   showCfBadge = true,
   className = ""
 }: ChamberContourPlotProps) {
-  const [showLowerHalf, setShowLowerHalf] = useViewState('chamberContour.lowerHalf', true);
+  const [showLowerHalf, setShowLowerHalf] = useViewState('chamberContour.fullSection', false);
   const [ceaUnit, setCeaUnit] = useState<'mm' | 'inch'>('mm');
-  const ceaContourContainerRef = useRef<HTMLDivElement>(null);
-  const [containerSize, setContainerSize] = useState({ width: 1000, height: 350 });
 
   // Download DXF handler
   const handleDownloadDxf = useCallback(() => {
@@ -429,188 +364,12 @@ export function ChamberContourPlot({
     }));
   }, [geometry, showLowerHalf, ceaUnit]);
 
-  // Measure container size for equal-scale calculation
-  useEffect(() => {
-    if (!ceaContourContainerRef.current) return;
-
-    const updateSize = () => {
-      if (ceaContourContainerRef.current) {
-        const rect = ceaContourContainerRef.current.getBoundingClientRect();
-        setContainerSize({ width: rect.width, height: rect.height });
-      }
-    };
-
-    // Initial measurement
-    updateSize();
-
-    // Use ResizeObserver for accurate container size tracking
-    const resizeObserver = new ResizeObserver(() => {
-      updateSize();
-    });
-
-    resizeObserver.observe(ceaContourContainerRef.current);
-
-    // Also listen to window resize as fallback
-    window.addEventListener('resize', updateSize);
-
-    return () => {
-      resizeObserver.disconnect();
-      window.removeEventListener('resize', updateSize);
-    };
-  }, [geometry]);
-
-  // Calculate equal-scale domains for CEA contour plot (1:1 aspect ratio)
-  const ceaContourDomains = useMemo(() => {
-    if (!chamberContourData || chamberContourData.length === 0 || !geometry) {
-      return {
-        xDomain: ['dataMin', 'dataMax'] as [string, string],
-        yDomain: ['auto', 'auto'] as [string, string],
-        xLabel: `Axial Position (${ceaUnit})`,
-        yLabel: `Radius (${ceaUnit})`,
-        xTicks: [] as number[],
-        yTicks: [] as number[]
-      };
-    }
-
-    // Calculate data ranges in METRIC (meters) first for consistent scale calculation
-    // This ensures the 1:1 scale is maintained regardless of unit conversion
-    const xValues_m = geometry.chamber_contour_x;
-    const yValues_m = geometry.chamber_contour_y;
-
-    const xMin_m = Math.min(...xValues_m);
-    const xMax_m = Math.max(...xValues_m);
-    const yMax_m = Math.max(...yValues_m);
-    const yMin_m = -yMax_m; // Symmetric around centerline
-
-    const xRange_m = xMax_m - xMin_m;
-    const yRange_m = yMax_m - yMin_m;
-
-    // Now convert to display units for the actual domain values
-    const unitMultiplier = ceaUnit === 'mm' ? M_TO_MM : M_TO_MM * MM_TO_INCH;
-    const xMin = xMin_m * unitMultiplier;
-    const xMax = xMax_m * unitMultiplier;
-    const yMin = yMin_m * unitMultiplier;
-    const yMax = yMax_m * unitMultiplier;
-
-    // Container dimensions (accounting for margins: left: 20, right: 30, top: 20, bottom: 20)
-    // Use default if container not measured yet
-    const effectiveWidth = containerSize.width > 0 ? containerSize.width : 1000;
-    const effectiveHeight = containerSize.height > 0 ? containerSize.height : 350;
-    const plotWidth = effectiveWidth - 20 - 30;
-    const plotHeight = effectiveHeight - 20 - 20;
-
-    // Guard against invalid dimensions
-    if (plotWidth <= 0 || plotHeight <= 0) {
-      const tickInterval = ceaUnit === 'mm' ? 10 : 1;
-      const generateTicks = (min: number, max: number, interval: number): number[] => {
-        const ticks: number[] = [];
-        const start = Math.ceil(min / interval) * interval;
-        const end = Math.floor(max / interval) * interval;
-        for (let value = start; value <= end; value += interval) {
-          ticks.push(value);
-        }
-        return ticks;
-      };
-      return {
-        xDomain: [xMin, xMax] as [number, number],
-        yDomain: [yMin, yMax] as [number, number],
-        xLabel: `Axial Position (${ceaUnit})`,
-        yLabel: `Radius (${ceaUnit})`,
-        xTicks: generateTicks(xMin, xMax, tickInterval),
-        yTicks: generateTicks(yMin, yMax, tickInterval)
-      };
-    }
-
-    // Calculate aspect ratio of plot area
-    const plotAspectRatio = plotWidth / plotHeight;
-
-    // Calculate the data aspect ratio from METRIC values (before unit conversion)
-    // This ensures the aspect ratio is the same regardless of units
-    const dataAspectRatio_m = xRange_m / yRange_m;
-
-    // For equal scales (1:1), we want 1 unit on x-axis to equal 1 unit on y-axis visually
-    // This means: xRange / plotWidth should equal yRange / plotHeight
-    // Or: xRange / yRange should equal plotWidth / plotHeight
-
-    // First, calculate target domains in metric units to maintain aspect ratio
-    let xDomain_m: [number, number] = [xMin_m, xMax_m];
-    let yDomain_m: [number, number] = [yMin_m, yMax_m];
-
-    // To achieve 1:1 scale, adjust domains so that the visual representation
-    // shows equal physical scales on both axes
-    if (dataAspectRatio_m > plotAspectRatio) {
-      // Data is wider relative to its height than the plot - expand y range to match
-      const targetYRange_m = xRange_m / plotAspectRatio;
-      const yCenter_m = (yMin_m + yMax_m) / 2;
-      yDomain_m = [yCenter_m - targetYRange_m / 2, yCenter_m + targetYRange_m / 2];
-    } else {
-      // Data is taller relative to its width than the plot - expand x range to match
-      const targetXRange_m = yRange_m * plotAspectRatio;
-      const xCenter_m = (xMin_m + xMax_m) / 2;
-      xDomain_m = [xCenter_m - targetXRange_m / 2, xCenter_m + targetXRange_m / 2];
-    }
-
-    // Add padding in metric units (5% of the range)
-    const padding_m = Math.max(xDomain_m[1] - xDomain_m[0], yDomain_m[1] - yDomain_m[0]) * 0.05;
-    xDomain_m = [xDomain_m[0] - padding_m, xDomain_m[1] + padding_m];
-    yDomain_m = [yDomain_m[0] - padding_m, yDomain_m[1] + padding_m];
-
-    // Round to nice values in metric units first
-    const xIncludesZero_m = xDomain_m[0] <= 0 && xDomain_m[1] >= 0;
-    xDomain_m = makeNiceDomain(xDomain_m[0], xDomain_m[1], xIncludesZero_m);
-    yDomain_m = makeNiceDomain(yDomain_m[0], yDomain_m[1], true);
-
-    // After rounding, ensure aspect ratio is still maintained in metric
-    const finalXRange_m = xDomain_m[1] - xDomain_m[0];
-    const finalYRange_m = yDomain_m[1] - yDomain_m[0];
-    const finalDataAspectRatio_m = finalXRange_m / finalYRange_m;
-
-    // Re-adjust if rounding changed the aspect ratio significantly
-    if (Math.abs(finalDataAspectRatio_m - dataAspectRatio_m) / dataAspectRatio_m > 0.01) {
-      if (finalDataAspectRatio_m > dataAspectRatio_m) {
-        // Domain is wider than it should be - expand y
-        const targetYRange_m = finalXRange_m / dataAspectRatio_m;
-        const yCenter_m = (yDomain_m[0] + yDomain_m[1]) / 2;
-        yDomain_m = [yCenter_m - targetYRange_m / 2, yCenter_m + targetYRange_m / 2];
-      } else {
-        // Domain is taller than it should be - expand x
-        const targetXRange_m = finalYRange_m * dataAspectRatio_m;
-        const xCenter_m = (xDomain_m[0] + xDomain_m[1]) / 2;
-        xDomain_m = [xCenter_m - targetXRange_m / 2, xCenter_m + targetXRange_m / 2];
-      }
-    }
-
-    // Now convert the final domains to display units
-    const xDomain: [number, number] = [xDomain_m[0] * unitMultiplier, xDomain_m[1] * unitMultiplier];
-    const yDomain: [number, number] = [yDomain_m[0] * unitMultiplier, yDomain_m[1] * unitMultiplier];
-
-    // Generate tick values based on unit
-    const tickInterval = ceaUnit === 'mm' ? 10 : 1; // 10mm or 1 inch
-
-    const generateTicks = (min: number, max: number, interval: number): number[] => {
-      const ticks: number[] = [];
-      const start = Math.ceil(min / interval) * interval;
-      const end = Math.floor(max / interval) * interval;
-      for (let value = start; value <= end; value += interval) {
-        ticks.push(value);
-      }
-      return ticks;
-    };
-
-    const xTicks = generateTicks(xDomain[0], xDomain[1], tickInterval);
-    const yTicks = generateTicks(yDomain[0], yDomain[1], tickInterval);
-
-    return {
-      xDomain: xDomain as [number, number],
-      yDomain: yDomain as [number, number],
-      xLabel: `Axial Position (${ceaUnit})`,
-      yLabel: `Radius (${ceaUnit})`,
-      xTicks,
-      yTicks
-    };
-    // Note: showLowerHalf is not in the dependency array because we always want
-    // the same scale calculation regardless of what's displayed
-  }, [chamberContourData, containerSize, ceaUnit, geometry]);
+  // True scale: the chart's height follows from its width (lib/contourScale).
+  const k = ceaUnit === 'mm' ? M_TO_MM : M_TO_MM * MM_TO_INCH;
+  const xs = geometry?.chamber_contour_x ?? [];
+  const { ref: chartRef, width: chartWidth, layout } = useTrueScale(
+    Math.min(...xs) * k, Math.max(...xs) * k, Math.max(0, ...(geometry?.chamber_contour_y ?? [])) * k, showLowerHalf);
+  const axisLabel = (name: string) => `${name} (${ceaUnit})`;
 
   // Don't render if no geometry data
   if (!geometry || chamberContourData.length === 0) {
@@ -619,7 +378,6 @@ export function ChamberContourPlot({
 
   return (
     <div
-      ref={ceaContourContainerRef}
       className={`p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] ${className}`}
     >
       <div className="flex items-center justify-between mb-4">
@@ -676,36 +434,46 @@ export function ChamberContourPlot({
         </div>
       </div>
 
-      <ResponsiveContainer width="100%" height={350}>
-        <ComposedChart data={chamberContourData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+      {/* True scale: the chart height is derived from its width, so 1 mm is the same number of
+          pixels on both axes. No legend, since a legend's box would take height from the plot. */}
+      <div ref={chartRef} className="w-full">
+        {chartWidth > 0 && layout && (
+        <ComposedChart width={layout.width} height={layout.height} data={chamberContourData}
+          margin={{ top: CONTOUR_FRAME.top, right: CONTOUR_FRAME.right, left: CONTOUR_FRAME.left, bottom: CONTOUR_FRAME.bottom }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.3} />
 
           <XAxis
             dataKey="x"
             type="number"
-            domain={ceaContourDomains.xDomain}
-            ticks={ceaContourDomains.xTicks}
+            domain={layout.xDomain}
+            ticks={layout.xTicks}
+                interval={0}
+            allowDataOverflow
+            height={CONTOUR_FRAME.xAxis}
             stroke="var(--color-text-secondary)"
             tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
             tickFormatter={(value) => formatTick(value, ceaUnit)}
             allowDecimals={false}
             label={{
-              value: ceaContourDomains.xLabel,
+              value: axisLabel('Axial position'),
               position: 'insideBottom',
-              offset: -10,
+              offset: 0,
               fill: 'var(--color-text-secondary)'
             }}
           />
 
           <YAxis
-            domain={ceaContourDomains.yDomain}
-            ticks={ceaContourDomains.yTicks}
+            domain={layout.yDomain}
+            ticks={layout.yTicks}
+                interval={0}
+            allowDataOverflow
+            width={CONTOUR_FRAME.yAxis}
             stroke="var(--color-text-secondary)"
             tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
             tickFormatter={(value) => formatTick(value, ceaUnit)}
             allowDecimals={false}
             label={{
-              value: ceaContourDomains.yLabel,
+              value: axisLabel('Radius'),
               angle: -90,
               position: 'insideLeft',
               fill: 'var(--color-text-secondary)'
@@ -740,7 +508,7 @@ export function ChamberContourPlot({
           />
 
           {/* Chamber contour - Upper */}
-          <Line
+          <Line isAnimationActive={false}
             type="monotone"
             dataKey="R_chamber_upper"
             stroke="#10b981"
@@ -751,7 +519,7 @@ export function ChamberContourPlot({
 
           {/* Chamber contour - Lower (symmetric) */}
           {showLowerHalf && (
-            <Line
+            <Line isAnimationActive={false}
               type="monotone"
               dataKey="R_chamber_lower"
               stroke="#10b981"
@@ -769,13 +537,9 @@ export function ChamberContourPlot({
             strokeDasharray="3 3"
           />
 
-          <Legend
-            verticalAlign="top"
-            height={36}
-            wrapperStyle={{ paddingBottom: '10px' }}
-          />
         </ComposedChart>
-      </ResponsiveContainer>
+        )}
+      </div>
 
       <div className="mt-2 space-y-1">
         <p className="text-xs text-[var(--color-text-secondary)]">

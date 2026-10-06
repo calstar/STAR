@@ -1,3 +1,4 @@
+import { Position } from '@xyflow/react';
 import type { Edge, Node } from '@xyflow/react';
 import { freshEdgeId } from './ids';
 import { drawnPortsOf } from './ports';
@@ -6,6 +7,7 @@ import type { Face } from './junctions';
 import { faceTowards, pathPoints, routeCost, routeOrthogonal } from './route';
 import type { End, Pt } from './route';
 import { unmeasuredEnd as portEnd } from './unmeasured';
+import { COMPONENT_DEFS } from './types';
 
 /**
  * What an older drawing means in today's vocabulary.
@@ -23,8 +25,15 @@ import { unmeasuredEnd as portEnd } from './unmeasured';
 export function migrate(d: { nodes: Node[]; edges: Edge[] }): { nodes: Node[]; edges: Edge[] } {
   // The click-to-branch tees below, which are old whatever else is true.
   const clickBranched = new Set<string>();
-  let nodes = d.nodes.map(n => {
-    const data = (n.data ?? {}) as Record<string, unknown>;
+  let nodes = d.nodes.map(given => {
+    const data = (given.data ?? {}) as Record<string, unknown>;
+    // 2026-10: a drawing written by hand rather than saved here -- the stands
+    // feed-twin ships -- can name a symbol's component and not its node type,
+    // and React Flow drew every one of them as a plain box with its tag in.
+    // One this editor has no symbol for stays the plain box.
+    const n = !given.type && typeof data.componentType === 'string' && DRAWN.has(data.componentType)
+      ? { ...given, type: data.componentType } as Node
+      : given;
     // 2026-09: the standalone injector symbol is gone. It was the engine
     // without its chamber, and on a feed drawing that is the same boundary.
     if (n.type === 'INJECTOR' || data.componentType === 'INJECTOR') {
@@ -83,6 +92,27 @@ export function migrate(d: { nodes: Node[]; edges: Edge[] }): { nodes: Node[]; e
     return next;
   });
 
+  // 2026-10: the same hand-written drawings name no port on any line, and
+  // React Flow ran each to its symbol's first port: a tank's lines all left
+  // its top, a valve's both ends met at its inlet. Each end is given the port
+  // facing the other end best, of those no other line is on. (A tee's lines
+  // are the rule above's.)
+  edges = edges.map(e => {
+    const s = byId.get(e.source), t = byId.get(e.target);
+    if (!s || !t || isJunction(s) || isJunction(t) || (e.sourceHandle && e.targetHandle)) return e;
+    let next = e;
+    if (!next.sourceHandle) {
+      const port = facingPort(s, middleOf(t), onPort);
+      if (port) { next = { ...next, sourceHandle: port }; onPort.add(`${s.id}\u0000${port}`); }
+    }
+    if (!next.targetHandle) {
+      const from = (next.sourceHandle && portEnd(s, next.sourceHandle)) || middleOf(s);
+      const port = facingPort(t, from, onPort);
+      if (port) { next = { ...next, targetHandle: port }; onPort.add(`${t.id}\u0000${port}`); }
+    }
+    return next;
+  });
+
   // 2026-09: tees made before they rode their pipes (September 2026) have
   // no `along`, so nothing kept them on the pipe and every face on them was
   // up for grabs. One on the single straight run its lines make through it
@@ -131,6 +161,43 @@ export function migrate(d: { nodes: Node[]; edges: Edge[] }): { nodes: Node[]; e
   // by identity sees only what changed.
   const unchanged = <T,>(xs: T[], was: T[]) => xs.length === was.length && xs.every((x, i) => x === was[i]);
   return { nodes: unchanged(nodes, d.nodes) ? d.nodes : nodes, edges: unchanged(edges, d.edges) ? d.edges : edges };
+}
+
+/** Every component type there is a symbol for. */
+const DRAWN = new Set<string>([...COMPONENT_DEFS.map(d => d.type), 'JUNCTION', 'REGION', 'TEXT']);
+
+/** The middle of a symbol nothing has measured: the middle of its ports. */
+function middleOf(symbol: Node): Pt {
+  const at = drawnPortsOf(symbol).map(id => portEnd(symbol, id)).filter((p): p is End => !!p);
+  if (!at.length) return symbol.position;
+  return { x: at.reduce((a, p) => a + p.x, 0) / at.length, y: at.reduce((a, p) => a + p.y, 0) / at.length };
+}
+
+const OUT: Record<string, Pt> = {
+  [Position.Left]: { x: -1, y: 0 }, [Position.Right]: { x: 1, y: 0 },
+  [Position.Top]: { x: 0, y: -1 }, [Position.Bottom]: { x: 0, y: 1 },
+};
+
+/**
+ * The port of `symbol` a line to `to` leaves from: of the ports no other line
+ * is on (`taken`) when there are any, the one facing `to` -- a line that has
+ * to double back round its own symbol is the one nobody drew -- and of those
+ * the nearest.
+ */
+function facingPort(symbol: Node, to: Pt, taken: ReadonlySet<string>): string | null {
+  let best: { id: string; free: boolean; away: boolean; d: number } | null = null;
+  for (const id of drawnPortsOf(symbol)) {
+    const a = portEnd(symbol, id);
+    if (!a) continue;
+    const out = OUT[a.side];
+    const away = !out || out.x * (to.x - a.x) + out.y * (to.y - a.y) <= 0;
+    const free = !taken.has(`${symbol.id}\u0000${id}`);
+    const d = Math.abs(to.x - a.x) + Math.abs(to.y - a.y);
+    const better = !best
+      || (free !== best.free ? free : away !== best.away ? !away : d < best.d - 1e-9);
+    if (better) best = { id, free, away, d };
+  }
+  return best?.id ?? null;
 }
 
 /**
