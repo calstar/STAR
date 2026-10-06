@@ -44,6 +44,46 @@ export interface Finding {
   /** What to select when somebody clicks the finding. */
   nodeIds?: string[];
   edgeIds?: string[];
+  /**
+   * What to show when somebody clicks it, without selecting it: the symbol a
+   * line that cannot be drawn was attached to. Selected, a Delete meant for
+   * the line took the symbol with it.
+   */
+  focusIds?: string[];
+}
+
+/** A line saved on a port its symbol no longer has: which line, which symbol, which port. */
+export interface OrphanedLine {
+  edge: Edge;
+  /** The symbol whose port is gone, and the port. */
+  nodeId: string;
+  handle: string;
+  /** The ports that symbol has now. */
+  available: string[];
+}
+
+/**
+ * Every line attached to a port that no longer exists -- the count was
+ * reduced, or the port plugged, after the line was drawn. React Flow cannot
+ * place such a line, so it is saved and never drawn; this is what finds it
+ * (the check below) and what draws where it is (OrphanLayer).
+ */
+export function orphanedLines(nodes: Node[], edges: Edge[]): OrphanedLine[] {
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const out: OrphanedLine[] = [];
+  for (const e of edges) {
+    for (const [nodeId, handle] of [[e.source, e.sourceHandle], [e.target, e.targetHandle]] as const) {
+      const n = nodeId ? byId.get(nodeId) : undefined;
+      if (!n || !handle) continue;
+      const available = portsOf(n);
+      if (available.length === 0) continue;      // nothing declared; nothing to check
+      if (!available.includes(handle) || !portIsDrawn(dataOf(n), handle)) {
+        out.push({ edge: e, nodeId: n.id, handle, available: available.filter(h => portIsDrawn(dataOf(n), h)) });
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 const dataOf = (n: Node) => n.data as unknown as PIDNodeData;
@@ -328,26 +368,23 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
   // failure again: React Flow cannot place it, so it is saved and never drawn.
   // It happens by reducing a port count, or by plugging a port that had a line
   // on it -- both of which look harmless at the time.
-  const orphaned: Edge[] = [];
-  for (const e of edges) {
-    for (const [nodeId, handle] of [[e.source, e.sourceHandle], [e.target, e.targetHandle]] as const) {
-      const n = nodeId ? byId.get(nodeId) : undefined;
-      if (!n || !handle) continue;
-      const available = portsOf(n);
-      if (available.length === 0) continue;      // nothing declared; nothing to check
-      if (!available.includes(handle) || !portIsDrawn(dataOf(n), handle)) {
-        orphaned.push(e);
-        break;
-      }
-    }
-  }
-  if (orphaned.length) {
+  //
+  // One finding a line, naming it, so a click on it goes to the symbol whose
+  // port is gone -- the line itself has nothing on screen to go to (it is
+  // drawn red there, OrphanLayer) -- and selects only the line, for Delete.
+  for (const o of orphanedLines(nodes, edges)) {
+    const n = byId.get(o.nodeId)!;
+    const otherId = o.edge.source === o.nodeId ? o.edge.target : o.edge.source;
+    const other = byId.get(otherId);
     push({
-      id: 'lines-orphaned-port',
+      id: `line-orphaned-port-${o.edge.id}`,
       severity: 'error',
-      title: `${orphaned.length} line${orphaned.length === 1 ? '' : 's'} attached to a port that is gone`,
-      detail: 'Saved but not drawable: the port went away after the line did. Re-attach it, or put the port back.',
-      edgeIds: orphaned.map(e => e.id),
+      title: `Line from ${other ? nameOf(other) : otherId} to ${nameOf(n)} is on a port that is gone`,
+      detail: `It ends on port ${o.handle} of ${nameOf(n)}, which ${nameOf(n)} no longer has`
+        + (o.available.length ? ` (its ports are ${o.available.join(', ')})` : '')
+        + '. Drawn as a red dashed line: press Delete to remove it, or give the port back.',
+      edgeIds: [o.edge.id],
+      focusIds: [o.nodeId],
     });
   }
 
