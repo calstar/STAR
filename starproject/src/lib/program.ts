@@ -101,3 +101,27 @@ export function relativeDays(date: Date, today: string): string {
   if (diff === -1) return "yesterday";
   return diff > 0 ? `in ${diff} days` : `${-diff} days ago`;
 }
+
+/** A milestone's optional link (slides, a doc), cleaned for storage. Blank
+ * means none; a bare "docs.google.com/…" gets https://. Only http(s) is
+ * accepted, so a pasted `javascript:` URL can never become a clickable link.
+ * Throws with a message fit to show the person typing it. */
+export function cleanLink(raw: string | null | undefined): string | null {
+  const s = (raw ?? "").trim();
+  if (!s) return null;
+  if (s.length > 2000) throw new Error("That link is too long");
+  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(s) ? s : `https://${s}`;
+  let url: URL;
+  try {
+    url = new URL(withScheme);
+  } catch {
+    throw new Error("That doesn't look like a link");
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("Links must start with http:// or https://");
+  }
+  if (!url.hostname.includes(".") && url.hostname !== "localhost") {
+    throw new Error("That doesn't look like a link");
+  }
+  return url.toString();
+}

@@ -4,12 +4,12 @@ import { revalidatePath } from "next/cache";
 
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
-import { clampPhase, phasesOf } from "@/lib/program";
+import { clampPhase, cleanLink, phasesOf } from "@/lib/program";
 import { seedSubteamPhases } from "@/lib/program-seed";
 import { getCurrentDbUser } from "@/lib/user";
 import { isValidDateInput } from "@/lib/validation";
 
-// Like task edits, moving a subteam's phase or adding a deadline is open to
+// Like task edits, moving a subteam's phase or adding a milestone is open to
 // everyone. Choosing which project the homepage tracks, and its phase list,
 // changes what the whole team sees, so those are admin-only.
 async function requireAdmin() {
@@ -77,11 +77,11 @@ export async function untrackSubteam(projectId: string, subteamId: string) {
 
 export async function addMilestone(
   projectId: string,
-  input: { title: string; dueDate: string; subteamId: string | null },
+  input: { title: string; dueDate: string; subteamId: string | null; url?: string | null },
 ) {
   await getCurrentDbUser();
   const title = input.title.trim();
-  if (!title) throw new Error("Give the deadline a name");
+  if (!title) throw new Error("Give the milestone a name");
   if (title.length > 120) throw new Error("Keep the name under 120 characters");
   if (!input.dueDate || !isValidDateInput(input.dueDate)) throw new Error("Pick a valid date");
   await prisma.milestone.create({
@@ -90,6 +90,7 @@ export async function addMilestone(
       subteamId: input.subteamId || null,
       title,
       dueDate: new Date(input.dueDate),
+      url: cleanLink(input.url),
     },
   });
   revalidatePath("/");
@@ -98,6 +99,13 @@ export async function addMilestone(
 export async function setMilestoneDone(id: string, done: boolean) {
   await getCurrentDbUser();
   await prisma.milestone.update({ where: { id }, data: { done } });
+  revalidatePath("/");
+}
+
+/** Set or clear (blank) the link a milestone opens. */
+export async function setMilestoneLink(id: string, url: string | null) {
+  await getCurrentDbUser();
+  await prisma.milestone.update({ where: { id }, data: { url: cleanLink(url) } });
   revalidatePath("/");
 }
 

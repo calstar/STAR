@@ -4,6 +4,7 @@ import {
   DEFAULT_PHASES,
   biggestTask,
   clampPhase,
+  cleanLink,
   phasesOf,
   programPhase,
   relativeDays,
@@ -87,5 +88,25 @@ describe("relativeDays", () => {
     expect(relativeDays(d, "2026-10-07")).toBe("tomorrow");
     expect(relativeDays(d, "2026-10-05")).toBe("in 3 days");
     expect(relativeDays(d, "2026-10-10")).toBe("2 days ago");
+  });
+});
+
+describe("cleanLink", () => {
+  it("treats blank as no link", () => {
+    expect(cleanLink("")).toBeNull();
+    expect(cleanLink("   ")).toBeNull();
+    expect(cleanLink(null)).toBeNull();
+  });
+  it("keeps http(s) links and adds https:// to bare ones", () => {
+    expect(cleanLink("https://docs.google.com/presentation/d/abc")).toBe(
+      "https://docs.google.com/presentation/d/abc",
+    );
+    expect(cleanLink("  docs.google.com/x  ")).toBe("https://docs.google.com/x");
+  });
+  it("refuses anything that could run script or isn't a link", () => {
+    expect(() => cleanLink("javascript:alert(1)")).toThrow();
+    expect(() => cleanLink("JavaScript:alert(1)")).toThrow();
+    expect(() => cleanLink("data:text/html,hi")).toThrow();
+    expect(() => cleanLink("not a link")).toThrow();
   });
 });

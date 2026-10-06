@@ -16,6 +16,7 @@ export type ProgramMilestone = {
   title: string;
   dueDate: string; // YYYY-MM-DD
   done: boolean;
+  url: string | null;
   subteam: { id: string; name: string; color: string | null } | null;
 };
 
@@ -37,7 +38,7 @@ export type ProgramSubteam = {
   } | null;
 };
 
-/** One project's status: its phases, deadlines and where each subteam is. */
+/** One project's status: its phases, milestones and where each subteam is. */
 export type Program = {
   id: string;
   name: string;
@@ -99,6 +100,7 @@ async function buildProgram(p: ProjectWithStatus): Promise<Program> {
     title: m.title,
     dueDate: day(m.dueDate),
     done: m.done,
+    url: m.url,
     subteam: m.subteam,
   }));
 

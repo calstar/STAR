@@ -22,6 +22,7 @@ CREATE TABLE "Milestone" (
     "title" TEXT NOT NULL,
     "dueDate" TIMESTAMP(3) NOT NULL,
     "done" BOOLEAN NOT NULL DEFAULT false,
+    "url" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "Milestone_pkey" PRIMARY KEY ("id")

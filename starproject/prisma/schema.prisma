@@ -116,6 +116,8 @@ model Milestone {
   title     String
   dueDate   DateTime
   done      Boolean  @default(false)
+  // Optional http(s) link the milestone opens (review slides, a test plan).
+  url       String?
   createdAt DateTime @default(now())
 
   @@index([projectId, dueDate])

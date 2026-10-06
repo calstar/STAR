@@ -9,6 +9,7 @@ import {
   deleteMilestone,
   setFeatured,
   setMilestoneDone,
+  setMilestoneLink,
   setCardOrder,
   setPhases,
   setSubteamPhase,
@@ -138,7 +139,7 @@ function Dot({ color }: { color: string | null }) {
   );
 }
 
-function DeadlineDate({ m, today }: { m: ProgramMilestone; today: string }) {
+function MilestoneDate({ m, today }: { m: ProgramMilestone; today: string }) {
   const overdue = !m.done && m.dueDate < today;
   return (
     <span
@@ -150,6 +151,24 @@ function DeadlineDate({ m, today }: { m: ProgramMilestone; today: string }) {
       {" · "}
       {relativeDays(utcDate(m.dueDate), today)}
     </span>
+  );
+}
+
+/** A milestone's name — opens its link (slides, a doc) in a new tab when it
+ * has one. The URL was checked to be http(s) when it was saved. */
+function MilestoneName({ m, className = "" }: { m: ProgramMilestone; className?: string }) {
+  if (!m.url) return <span className={className}>{m.title}</span>;
+  return (
+    <a
+      href={m.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={m.url}
+      className={`underline decoration-neutral-300 underline-offset-2 hover:decoration-current dark:decoration-neutral-600 ${className}`}
+    >
+      {m.title}
+      <span aria-hidden className="ml-0.5 text-[0.85em] text-neutral-400">↗</span>
+    </a>
   );
 }
 
@@ -278,9 +297,57 @@ function SystemRows({
   );
 }
 
-// ── 2. Upcoming deadlines ───────────────────────────────────────────────────
+// ── 2. Milestones ───────────────────────────────────────────────────────────
 
-function Deadlines({
+/** Edit-mode control to set, change or clear one milestone's link. */
+function LinkEditor({ m, onDone }: { m: ProgramMilestone; onDone: () => void }) {
+  const { run, pending, error } = useAction();
+  const [url, setUrl] = useState(m.url ?? "");
+  return (
+    <form
+      className="flex basis-full flex-wrap items-center gap-2 pb-1 pl-6"
+      onSubmit={(e) => {
+        e.preventDefault();
+        run(async () => {
+          await setMilestoneLink(m.id, url);
+          onDone();
+        });
+      }}
+    >
+      <input
+        className={`${input} min-w-0 flex-1 py-0.5 text-xs`}
+        placeholder="Paste a link — slides, a doc, a test plan"
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        autoFocus
+      />
+      <button type="submit" className={ghostBtn} disabled={pending}>
+        Save
+      </button>
+      {m.url && (
+        <button
+          type="button"
+          className={ghostBtn}
+          disabled={pending}
+          onClick={() =>
+            run(async () => {
+              await setMilestoneLink(m.id, null);
+              onDone();
+            })
+          }
+        >
+          Remove link
+        </button>
+      )}
+      <button type="button" className={ghostBtn} onClick={onDone}>
+        Cancel
+      </button>
+      {error && <span className="basis-full text-xs text-red-600">{error}</span>}
+    </form>
+  );
+}
+
+function Milestones({
   root,
   systems,
   group,
@@ -298,7 +365,9 @@ function Deadlines({
   const [date, setDate] = useState("");
   const [projectId, setProjectId] = useState(root.id);
   const [subteamId, setSubteamId] = useState("");
-  // The parent's own deadlines are the whole program's (CDR, launch), so it is
+  const [link, setLink] = useState("");
+  const [linking, setLinking] = useState<string | null>(null);
+  // The parent's own milestones are the whole program's (CDR, launch), so it is
   // always a place to add one even when it isn't a system row itself.
   const targets = systems.some((s) => s.id === root.id) ? systems : [root, ...systems];
   const multi = targets.length > 1;
@@ -306,7 +375,7 @@ function Deadlines({
   const targetLabel = (p: Program) => (p.id === root.id ? `All of ${root.name}` : shortName(p.name, group));
   const systemTag = (p: Program) => (multi && p.id !== root.id ? shortName(p.name, group) : null);
 
-  // Every project's deadlines on one list, soonest first; outside edit mode
+  // Every project's milestones on one list, soonest first; outside edit mode
   // only what's still open.
   const all = targets
     .flatMap((p) => p.milestones.map((m) => ({ m, p })))
@@ -316,11 +385,11 @@ function Deadlines({
 
   return (
     <div>
-      <h3 className={sectionTitle}>Upcoming deadlines</h3>
+      <h3 className={sectionTitle}>Milestones</h3>
       <ul className="mt-2 grid gap-x-10 gap-y-1 md:grid-cols-2 xl:grid-cols-3">
         {shown.length === 0 && (
           <li className="text-sm text-neutral-500 dark:text-neutral-400">
-            {editing ? "No deadlines yet — add the next one below." : "Nothing scheduled."}
+            {editing ? "No milestones yet — add the next one below." : "Nothing scheduled."}
           </li>
         )}
         {shown.map(({ m, p }) => {
@@ -330,7 +399,7 @@ function Deadlines({
           return (
             <li
               key={m.id}
-              className="flex min-h-7 items-center gap-2"
+              className="flex min-h-7 flex-wrap items-center gap-x-2"
               title={[m.title, systemTag(p), m.subteam?.name].filter(Boolean).join(" · ")}
             >
               {editing && (
@@ -348,10 +417,21 @@ function Deadlines({
                 <span className="h-2.5 w-2.5 shrink-0 rounded-full border border-neutral-400" />
               )}
               <span className={`min-w-0 flex-1 truncate text-sm ${m.done ? "text-neutral-400 line-through" : ""}`}>
-                {m.title}
+                <MilestoneName m={m} />
                 {tag && <span className="text-neutral-500 dark:text-neutral-400"> · {tag}</span>}
               </span>
-              <DeadlineDate m={m} today={today} />
+              <MilestoneDate m={m} today={today} />
+              {editing && (
+                <button
+                  type="button"
+                  className={ghostBtn}
+                  onClick={() => setLinking(linking === m.id ? null : m.id)}
+                  aria-label={`${m.url ? "Change" : "Add"} link for ${m.title}`}
+                  title={m.url ? "Change link" : "Add a link"}
+                >
+                  {m.url ? "Link ✓" : "Link"}
+                </button>
+              )}
               {editing && (
                 <button
                   type="button"
@@ -363,6 +443,7 @@ function Deadlines({
                   ✕
                 </button>
               )}
+              {editing && linking === m.id && <LinkEditor m={m} onDone={() => setLinking(null)} />}
             </li>
           );
         })}
@@ -373,9 +454,15 @@ function Deadlines({
           onSubmit={(e) => {
             e.preventDefault();
             run(async () => {
-              await addMilestone(target.id, { title, dueDate: date, subteamId: subteamId || null });
+              await addMilestone(target.id, {
+                title,
+                dueDate: date,
+                subteamId: subteamId || null,
+                url: link,
+              });
               setTitle("");
               setDate("");
+              setLink("");
             });
           }}
         >
@@ -392,6 +479,12 @@ function Deadlines({
             max="9999-12-31"
             value={date}
             onChange={(e) => setDate(e.target.value)}
+          />
+          <input
+            className={`${input} min-w-0 basis-full sm:basis-56`}
+            placeholder="Link (optional) — slides, a doc"
+            value={link}
+            onChange={(e) => setLink(e.target.value)}
           />
           {multi && (
             <select
@@ -575,12 +668,12 @@ function SubteamCard({
 
       <dl className="mt-4 space-y-2.5 text-xs">
         <div className="flex gap-2">
-          <dt className="w-16 shrink-0 text-neutral-500 dark:text-neutral-400">Next due</dt>
+          <dt className="w-16 shrink-0 text-neutral-500 dark:text-neutral-400">Milestone</dt>
           <dd className="flex min-w-0 flex-1 items-center justify-between gap-2">
             {next ? (
               <>
-                <span className="truncate">{next.title}</span>
-                <DeadlineDate m={next} today={today} />
+                <MilestoneName m={next} className="truncate" />
+                <MilestoneDate m={next} today={today} />
               </>
             ) : (
               <span className="text-neutral-400 dark:text-neutral-500">—</span>
@@ -642,7 +735,7 @@ function SubteamCard({
 
 /** A tracked project — on its own, or with its subprojects as systems
  * ("LE4": Engine, Avionics, Solid Demo). Status of each system first, then
- * the deadlines, then the subteams. */
+ * the milestones, then the subteams. */
 function ProgramCard({
   card,
   isAdmin,
@@ -740,7 +833,7 @@ function ProgramCard({
       </div>
 
       <div className="mt-8">
-        <Deadlines root={root} systems={systems} group={group} editing={editing} today={today} />
+        <Milestones root={root} systems={systems} group={group} editing={editing} today={today} />
       </div>
 
       <div className="mt-8 border-t border-neutral-200 pt-6 dark:border-neutral-800">
@@ -801,7 +894,7 @@ function TrackProject({
       }}
     >
       <span className="text-neutral-600 dark:text-neutral-300">
-        Track a project&apos;s phases and deadlines here (its subprojects come with it):
+        Track a project&apos;s phases and milestones here (its subprojects come with it):
       </span>
       <select className={input} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
         <option value="">Choose a project…</option>
