@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 
 // An "Edit" button that opens a small dialog to change an entity's name, color,
-// and (for projects) description. Submits to a server action. Used in Workspace
-// setup for projects and subteams.
+// and (for projects) description and parent. Submits to a server action. Used in
+// Workspace setup for projects and subteams.
 export function EditEntityButton({
   action,
   id,
@@ -13,6 +13,7 @@ export function EditEntityButton({
   description,
   showDescription = false,
   title = "Edit",
+  parent,
 }: {
   action: (formData: FormData) => void | Promise<void>;
   id: string;
@@ -21,6 +22,9 @@ export function EditEntityButton({
   description?: string | null;
   showDescription?: boolean;
   title?: string;
+  /** Projects only: where it sits. `options` are the projects it may move
+   * under; `locked` explains why it can't move (it has subprojects). */
+  parent?: { id: string | null; options: { id: string; name: string }[]; locked?: string };
 }) {
   const [open, setOpen] = useState(false);
 
@@ -85,6 +89,27 @@ export function EditEntityButton({
                     placeholder="Optional"
                     className={input}
                   />
+                </div>
+              )}
+              {parent && (
+                <div>
+                  <label className={label}>Parent project</label>
+                  <select
+                    name="parentId"
+                    defaultValue={parent.id ?? ""}
+                    disabled={!!parent.locked}
+                    className={input}
+                  >
+                    <option value="">None — top-level project</option>
+                    {parent.options.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.name}
+                      </option>
+                    ))}
+                  </select>
+                  {parent.locked && (
+                    <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">{parent.locked}</p>
+                  )}
                 </div>
               )}
               <div>

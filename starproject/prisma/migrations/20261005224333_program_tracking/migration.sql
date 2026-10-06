@@ -1,7 +1,6 @@
 -- AlterTable
 ALTER TABLE "Project" ADD COLUMN     "featured" BOOLEAN NOT NULL DEFAULT false,
 ADD COLUMN     "phases" TEXT[] DEFAULT ARRAY[]::TEXT[],
-ADD COLUMN     "trackGroup" TEXT,
 ADD COLUMN     "trackOrder" INTEGER NOT NULL DEFAULT 0;
 
 -- CreateTable

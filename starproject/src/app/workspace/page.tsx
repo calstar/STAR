@@ -23,7 +23,7 @@ export default async function WorkspacePage() {
       where: { archived: false },
       orderBy: [{ createdAt: "desc" }],
       include: {
-        _count: { select: { tasks: true } },
+        _count: { select: { tasks: true, children: { where: { archived: false } } } },
         parent: { select: { name: true } },
       },
     }),
@@ -92,6 +92,14 @@ export default async function WorkspacePage() {
                 description={p.description}
                 showDescription
                 title="Edit project"
+                parent={{
+                  id: p.parentId,
+                  options: parents.filter((o) => o.id !== p.id),
+                  locked:
+                    p._count.children > 0
+                      ? `Has ${p._count.children} subproject${p._count.children === 1 ? "" : "s"}, so it stays top-level.`
+                      : undefined,
+                }}
               />
             }
           />

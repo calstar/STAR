@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
 import { clampPhase, phasesOf } from "@/lib/program";
+import { seedSubteamPhases } from "@/lib/program-seed";
 import { getCurrentDbUser } from "@/lib/user";
 import { isValidDateInput } from "@/lib/validation";
 
@@ -16,30 +17,14 @@ async function requireAdmin() {
   if (!(await isAdmin(user.email))) throw new Error("Forbidden: admins only");
 }
 
-/** Trim a group label to at most 40 characters; blank means "no group". */
-function cleanGroup(group: string | null | undefined): string | null {
-  const g = (group ?? "").trim();
-  if (g.length > 40) throw new Error("Group names are at most 40 characters");
-  return g || null;
-}
-
-export async function setTrackGroup(projectId: string, group: string | null) {
-  await requireAdmin();
-  await prisma.project.update({
-    where: { id: projectId },
-    data: { trackGroup: cleanGroup(group) },
-  });
-  revalidatePath("/");
-}
-
-export async function setFeatured(projectId: string, featured: boolean, group?: string | null) {
+export async function setFeatured(projectId: string, featured: boolean) {
   await requireAdmin();
   const project = await prisma.project.findUnique({
     where: { id: projectId },
-    select: { parentId: true },
+    select: { parentId: true, children: { select: { id: true } } },
   });
   if (!project) throw new Error("Project not found");
-  if (project.parentId) throw new Error("Only a top-level project can be tracked");
+  if (project.parentId) throw new Error("Track the parent project; its subprojects come with it");
   // A newly tracked project goes to the bottom, so it never pushes the main
   // program off the top of the page.
   const last = await prisma.project.aggregate({
@@ -49,28 +34,13 @@ export async function setFeatured(projectId: string, featured: boolean, group?: 
   await prisma.project.update({
     where: { id: projectId },
     data: featured
-      ? {
-          featured,
-          trackGroup: cleanGroup(group),
-          trackOrder: (last._max.trackOrder ?? 0) + 1,
-        }
+      ? { featured, trackOrder: (last._max.trackOrder ?? 0) + 1 }
       : { featured },
   });
   if (featured) {
-    // First time on the homepage: start every subteam already working in the
-    // project (or a subproject) at the first phase, so the card isn't empty.
-    const working = await prisma.task.findMany({
-      where: {
-        subteamId: { not: null },
-        OR: [{ projectId }, { project: { parentId: projectId } }],
-      },
-      distinct: ["subteamId"],
-      select: { subteamId: true },
-    });
-    await prisma.subteamPhase.createMany({
-      data: working.map((t) => ({ projectId, subteamId: t.subteamId! })),
-      skipDuplicates: true,
-    });
+    for (const id of [projectId, ...project.children.map((c) => c.id)]) {
+      await seedSubteamPhases(id);
+    }
   }
   revalidatePath("/");
 }
@@ -137,14 +107,12 @@ export async function deleteMilestone(id: string) {
   revalidatePath("/");
 }
 
-/** Re-number the homepage cards. `cards` is every card top to bottom, each the
- * ids of the projects on it (several for a group). */
-export async function setCardOrder(cards: string[][]) {
+/** Re-number the homepage cards: `projectIds` are the tracked top-level
+ * projects, top to bottom. Subprojects ride on their parent's card. */
+export async function setCardOrder(projectIds: string[]) {
   await requireAdmin();
   await prisma.$transaction(
-    cards.flatMap((ids, i) =>
-      ids.map((id) => prisma.project.update({ where: { id }, data: { trackOrder: i } })),
-    ),
+    projectIds.map((id, i) => prisma.project.update({ where: { id }, data: { trackOrder: i } })),
   );
   revalidatePath("/");
 }
