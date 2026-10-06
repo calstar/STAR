@@ -160,6 +160,7 @@ int main(int argc, char* argv[]) {
     int interval_ms = 1000; // keepalive resend interval
     std::string target_ip = "192.168.2.70";   // PLACEHOLDER — update once team assigns a real IP
     uint16_t target_port = 5006;              // PLACEHOLDER — update once team confirms
+    int force_state = -1; // -1 = read from Elodin(normal). 0-255 = test override
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -175,6 +176,8 @@ int main(int argc, char* argv[]) {
             target_ip = argv[++i];
         } else if (arg == "--target-port" && i + 1 < argc) {
             target_port = static_cast<uint16_t>(std::atoi(argv[++i]));
+        } else if (arg == "--force-state" && i + 1 < argc) {
+            force_state = std::atoi(argv[++i]);
         } else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: " << argv[0]
                       << " [--config PATH] [--elodin-host HOST] [--elodin-port PORT]\n"
@@ -242,9 +245,16 @@ int main(int argc, char* argv[]) {
     std::cout << "[StacklightService] State from Elodin at " << elodin_host << ":" << elodin_port
               << " [0x5000]" << std::endl;
 
-    std::thread elodin_thread(elodinThread, elodin_host, elodin_port);
+    std::thread elodin_thread;
+    if (force_state >= 0 && force_state <= 255) {
+        g_seq_state.store(static_cast<uint8_t>(force_state));
+        std::cout << "[StacklightService] --force-state " << force_state
+                  << ": skipping Elodin" << std::endl;
+    } else {
+        elodin_thread = std::thread(elodinThread, elodin_host, elodin_port);
+    }
 
-        uint8_t last_sent_state = 0xFF; // sentinel value, forces the very first send
+    uint8_t last_sent_state = 0xFF; // sentinel value, forces the very first send
     unsigned long count = 0;
     auto last_log = std::chrono::steady_clock::now();
     auto last_send = std::chrono::steady_clock::now() - std::chrono::milliseconds(interval_ms);
@@ -288,7 +298,7 @@ int main(int argc, char* argv[]) {
     }
 
     close(sock);
-    elodin_thread.join();
+    if (elodin_thread.joinable()) elodin_thread.join();
     std::cout << "[StacklightService] Stopped." << std::endl;
     return 0;
 }
