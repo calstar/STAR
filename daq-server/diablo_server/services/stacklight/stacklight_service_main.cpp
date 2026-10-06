@@ -22,8 +22,11 @@
 #include <string>
 #include <thread>
 
+#include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
-#include "DAQv2-Comms.h"
+#include "daq-protocol.h"
+#include "DiabloPacketUtils.h"
+#include "DiabloPackets.h"
 #include "control/StateMachine.hpp"
 
 namespace {
@@ -38,9 +41,9 @@ void signalHandler(int /*sig*/) {
 // ── sequencer::State → StacklightCommandPacket ──────────────────────────────
 // Standard industrial convention: red = danger, yellow = caution,
 // green = safe, buzzer = most urgent states (fire, abort).
-Diablo::StacklightCommandPacket stateToStacklight(uint8_t s) {
+daq::StacklightCommandPacket stateToStacklight(uint8_t s) {
     using sequencer::State;
-    Diablo::StacklightCommandPacket cmd{0, 0, 0, 0};
+    daq::StacklightCommandPacket cmd{0, 0, 0, 0};
 
     switch (static_cast<State>(s)) {
         case State::IDLE:
@@ -91,6 +94,8 @@ Diablo::StacklightCommandPacket stateToStacklight(uint8_t s) {
 }
 
 // ── Elodin subscriber thread ────────────────────────────────────────────────
+constexpr int kStacklightRecvTimeoutMs = 500;
+
 void elodinThread(std::string host, uint16_t port) {
     fsw::elodin::ElodinClient client;
 
@@ -100,18 +105,29 @@ void elodinThread(std::string host, uint16_t port) {
                 std::this_thread::sleep_for(std::chrono::seconds(2));
                 continue;
             }
-            client.subscribe_stream();
-            std::cout << "[StacklightService] Elodin connected, subscribed" << std::endl;
+            if (!client.subscribe_tables({fsw::elodin::kTableSequencerState})) {
+                std::cerr << "[StacklightService] Failed to subscribe to SequencerState [0x50,0x00]"
+                          << std::endl;
+                client.disconnect();
+                continue;
+            }
+            // Without a receive timeout read_packet() blocks forever and shutdown would hang.
+            client.set_recv_timeout_ms(kStacklightRecvTimeoutMs);
+            std::cout << "[StacklightService] Elodin connected, subscribed to SequencerState"
+                      << std::endl;
         }
 
-        uint8_t buf[256];
+        uint8_t buf[4096];
         ssize_t n = client.read_packet(buf, sizeof(buf));
-        if (n < 0) continue; // reconnect next loop
-
-        if (n < 8) continue;
+        if (n < 0) {
+            client.disconnect(); // read error: drop the socket and reconnect next loop
+            continue;
+        }
+        if (n < 8) continue; // 0 = receive timeout, nothing to do this round
 
         // SequencerState VTable: [0x50, 0x00]
-        if (buf[5] == 0x50 && buf[6] == 0x00 && n >= 8 + 9) {
+        if (buf[5] == fsw::elodin::kTableSequencerState.first &&
+            buf[6] == fsw::elodin::kTableSequencerState.second && n >= 8 + 9) {
             const uint8_t seq_state = buf[8 + 8];
             g_seq_state.store(seq_state);
         }
@@ -269,12 +285,12 @@ int main(int argc, char* argv[]) {
             std::chrono::duration_cast<std::chrono::milliseconds>(now - last_send).count() >= interval_ms;
 
         if (state_changed || keepalive_due) {
-            Diablo::StacklightCommandPacket cmd = stateToStacklight(seq_state);
+            daq::StacklightCommandPacket cmd = stateToStacklight(seq_state);
             auto ts = std::chrono::duration_cast<std::chrono::milliseconds>(
                           std::chrono::system_clock::now().time_since_epoch())
                           .count() & 0xFFFFFFFFu;
 
-            size_t len = Diablo::create_stacklight_command_packet(cmd, static_cast<uint32_t>(ts),
+            size_t len = daq::create_stacklight_command_packet(cmd, static_cast<uint32_t>(ts),
                                                                     buf, sizeof(buf));
             if (len > 0) {
                 ssize_t sent = sendto(sock, buf, len, 0,
