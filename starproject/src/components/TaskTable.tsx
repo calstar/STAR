@@ -15,7 +15,7 @@ import { BlockedBadge } from "@/components/BlockedBadge";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { SubprojectBadge } from "@/components/SubprojectBadge";
 import { AssigneeSelect } from "@/components/fields/AssigneeSelect";
-import { DueDateInput } from "@/components/fields/DueDateInput";
+import { DateInput } from "@/components/fields/DateInput";
 import { PrioritySelect } from "@/components/fields/PrioritySelect";
 import { StatusSelect } from "@/components/fields/StatusSelect";
 import { useTaskModal } from "@/components/TaskModalProvider";
@@ -140,7 +140,7 @@ export function TaskTable({
         header: "Due",
         cell: (info) => (
           <div onClick={stop} className={info.row.original.overdue ? "text-red-600" : ""}>
-            <DueDateInput taskId={info.row.original.id} value={info.getValue()} />
+            <DateInput taskId={info.row.original.id} field="dueDate" value={info.getValue()} />
           </div>
         ),
       }),

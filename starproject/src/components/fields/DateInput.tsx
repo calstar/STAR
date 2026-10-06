@@ -2,17 +2,19 @@
 
 import { updateField } from "@/lib/fieldUpdate";
 
-export function DueDateInput({
+export function DateInput({
   taskId,
+  field,
   value,
 }: {
   taskId: string;
+  field: "startDate" | "dueDate";
   value: string;
 }) {
   return (
     <input
       type="date"
-      name="dueDate"
+      name={field}
       min="1900-01-01"
       max="9999-12-31"
       defaultValue={value}
@@ -20,7 +22,7 @@ export function DueDateInput({
         // A 5–6 digit year exceeds `max` below → the field is invalid; don't save
         // it, since it would feed an Invalid Date to the update and crash the request.
         if (e.currentTarget.validity.valid) {
-          updateField(taskId, "dueDate", e.currentTarget.value);
+          updateField(taskId, field, e.currentTarget.value);
         }
       }}
       className="rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"

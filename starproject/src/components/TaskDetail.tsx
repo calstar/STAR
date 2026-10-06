@@ -12,7 +12,7 @@ import { useTaskModal } from "@/components/TaskModalProvider";
 import { AssigneeSelect } from "@/components/fields/AssigneeSelect";
 import { BlockedNoteInput } from "@/components/fields/BlockedNoteInput";
 import { DescriptionInput } from "@/components/fields/DescriptionInput";
-import { DueDateInput } from "@/components/fields/DueDateInput";
+import { DateInput } from "@/components/fields/DateInput";
 import { PrioritySelect } from "@/components/fields/PrioritySelect";
 import { ProjectSelect } from "@/components/fields/ProjectSelect";
 import { EditableTitle } from "@/components/fields/EditableTitle";
@@ -43,9 +43,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
       setBusy(false);
     }
   };
-  const due = task.dueDate
-    ? new Date(task.dueDate).toISOString().slice(0, 10)
-    : "";
+  const ymd = (d: Date | null) => (d ? new Date(d).toISOString().slice(0, 10) : "");
 
   const label = "text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400";
   const section = "rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 shadow-sm";
@@ -107,7 +105,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
                 <PrioritySelect taskId={task.id} value={task.priority ?? ""} />
               </div>
             </div>
-            <div>
+            <div className="sm:col-span-2">
               <p className={label}>Assignees</p>
               <div className="mt-1">
                 <AssigneeSelect
@@ -117,12 +115,14 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
                 />
               </div>
             </div>
-            <div>
-              <p className={label}>Due</p>
-              <div className="mt-1 [&_input]:min-h-11 [&_input]:w-full sm:[&_input]:min-h-0 sm:[&_input]:w-auto">
-                <DueDateInput taskId={task.id} value={due} />
+            {(["startDate", "dueDate"] as const).map((field) => (
+              <div key={field}>
+                <p className={label}>{field === "startDate" ? "Start" : "Due"}</p>
+                <div className="mt-1 [&_input]:min-h-11 [&_input]:w-full sm:[&_input]:min-h-0 sm:[&_input]:w-auto">
+                  <DateInput taskId={task.id} field={field} value={ymd(task[field])} />
+                </div>
               </div>
-            </div>
+            ))}
           </div>
           <div className="mt-3">
             <p className={label}>Project</p>
