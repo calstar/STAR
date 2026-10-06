@@ -1,0 +1,51 @@
+// ==============================================================================
+// STMicroelectronics Unico-GUI MLC Decision Tree Export
+// Tree 1: Flight Phase
+// Description: Classifies rocket flight state (Pad, Boost, Coast, Apogee, Descent, Touchdown)
+// Target Column: flight_phase
+// Exported: 2026-10-05 19:50:09
+// Leaf Nodes: 19 | Total Nodes: 37
+// Max Depth: 7
+// Target Classes: ['Apogee', 'Boost', 'Coast', 'Descent', 'Pad', 'Touchdown']
+// Target Hardware: ST LSM6DSOX / LSM6DSRX / ISM330DHCX Machine Learning Core
+// ==============================================================================
+
+mag_z_mean <= -0.427991
+|   accel_norm_var <= 0.000437 : Apogee (2.0)
+|   accel_norm_var > 0.000437 : Descent (8799.0)
+mag_z_mean > -0.427991
+|   accel_z_min <= -0.072275
+|   |   mag_y_min <= 0.032815
+|   |   |   accel_z_mean <= 1.968650
+|   |   |   |   gyro_norm_mean <= 11.413857
+|   |   |   |   |   mag_y_max <= 0.054715 : Coast (5.0)
+|   |   |   |   |   mag_y_max > 0.054715 : Apogee (11.0)
+|   |   |   |   gyro_norm_mean > 11.413857
+|   |   |   |   |   gyro_norm_mean <= 11.625820
+|   |   |   |   |   |   gyro_y_var <= 12.161640 : Coast (6.0)
+|   |   |   |   |   |   gyro_y_var > 12.161640 : Apogee (2.0)
+|   |   |   |   |   gyro_norm_mean > 11.625820 : Coast (2485.0)
+|   |   |   accel_z_mean > 1.968650 : Boost (23.0)
+|   |   mag_y_min > 0.032815 : Apogee (51.0)
+|   accel_z_min > -0.072275
+|   |   mag_x_max <= 0.252280
+|   |   |   gyro_norm_mean <= 0.925469
+|   |   |   |   mag_z_max <= 0.419645 : Touchdown (2.0)
+|   |   |   |   mag_z_max > 0.419645 : Pad (1556.0)
+|   |   |   gyro_norm_mean > 0.925469
+|   |   |   |   accel_norm_max <= 1.912014
+|   |   |   |   |   mag_y_max <= 0.053420 : Coast (91.0)
+|   |   |   |   |   mag_y_max > 0.053420
+|   |   |   |   |   |   accel_z_min <= 0.233805 : Apogee (1136.0)
+|   |   |   |   |   |   accel_z_min > 0.233805 : Touchdown (4.0)
+|   |   |   |   accel_norm_max > 1.912014
+|   |   |   |   |   mag_z_mean <= 0.101627 : Touchdown (2.0)
+|   |   |   |   |   mag_z_mean > 0.101627 : Boost (1377.0)
+|   |   mag_x_max > 0.252280
+|   |   |   mag_z_mean <= 0.383162 : Touchdown (1992.0)
+|   |   |   mag_z_mean > 0.383162
+|   |   |   |   accel_x_max <= 0.368145 : Coast (12.0)
+|   |   |   |   accel_x_max > 0.368145 : Pad (44.0)
+
+Number of Leaves  : 19
+Size of the tree : 37

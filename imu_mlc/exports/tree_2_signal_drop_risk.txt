@@ -1,0 +1,21 @@
+// ==============================================================================
+// STMicroelectronics Unico-GUI MLC Decision Tree Export
+// Tree 2: Signal Drop Risk
+// Description: Detects high probability of RF telemetry loss from tumbling/misalignment
+// Target Column: signal_drop_risk
+// Exported: 2026-10-05 19:50:09
+// Leaf Nodes: 4 | Total Nodes: 7
+// Max Depth: 3
+// Target Classes: ['0', '1']
+// Target Hardware: ST LSM6DSOX / LSM6DSRX / ISM330DHCX Machine Learning Core
+// ==============================================================================
+
+mag_norm_ptp <= 0.068272 : 0 (16913.0)
+mag_norm_ptp > 0.068272
+|   gyro_norm_diff <= -488.748123
+|   |   accel_norm_diff <= -0.024899 : 0 (2.0)
+|   |   accel_norm_diff > -0.024899 : 0 (7.0)
+|   gyro_norm_diff > -488.748123 : 1 (678.0)
+
+Number of Leaves  : 4
+Size of the tree : 7
