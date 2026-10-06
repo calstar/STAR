@@ -64,9 +64,36 @@ services:
       # means the route refuses everyone, and so analytics admits nobody.
       INTERNAL_API_SECRET: ${STARPROJECT_INTERNAL_SECRET:-}
       AWS_REGION: ${AWS_REGION:-us-east-2}
+      # callink-worker's key to /api/worker/*. Unset or short, that API refuses
+      # everything (fails closed), so leaving it blank just leaves Finance unfiled.
+      WORKER_TOKEN: ${STARPROJECT_WORKER_TOKEN:-}
     depends_on:
       starproject-db:
         condition: service_healthy
+
+  # Files approved Finance-tab reimbursements on CalLink and keeps STARProject's
+  # copy of CalLink current (nightly scrape). Talks to starproject over this
+  # network, not through Caddy. Signed in with a CalNet account that needs a Duo
+  # approval about once a day:
+  #   docker compose exec callink-worker node session.mjs login   # then tap Duo
+  # Dry by default (checks each form, files nothing); set CALLINK_WORKER_FLAGS=--live
+  # in .env to file for real. /data holds the session, the scrape (payee PII) and
+  # the filing journal; it is rebuilt by a login and a scrape, so it isn't backed up.
+  callink-worker:
+    image: ghcr.io/calstar/star-callink-worker:latest
+    pull_policy: always
+    restart: unless-stopped
+    init: true
+    environment:
+      STARPROJECT_URL: http://starproject:3000
+      WORKER_TOKEN: ${STARPROJECT_WORKER_TOKEN:-}
+      CALNET_USERNAME: ${CALLINK_CALNET_USERNAME:-}
+      CALNET_PASSWORD: ${CALLINK_CALNET_PASSWORD:-}
+      CALLINK_WORKER_FLAGS: ${CALLINK_WORKER_FLAGS:-}
+    volumes:
+      - callink_data:/data
+    depends_on:
+      - starproject
 
   starproject-db:
     image: postgres:16
@@ -238,6 +265,8 @@ volumes:
   # STARProject's Postgres data — the live task-tracker DB. Back this up (see
   # starproject-backup.sh + the systemd timer).
   starproject_pg:
+  # callink-worker's CalLink session, scrape and filing journal (see the service).
+  callink_data:
   # Server analytics: 48 h of raw samples, 90 days of 5-minute rollups, 3 days
   # of logs (capped at 200 MB). Losing it loses history, nothing else.
   analytics_data:

@@ -76,7 +76,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
           {task.project.name}
         </Link>
         <span className="ml-auto">
-          <CopyLinkButton taskId={task.id} />
+          <CopyLinkButton value={task.id} />
         </span>
       </div>
 
