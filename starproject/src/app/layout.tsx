@@ -9,7 +9,13 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "STAR Project",
   description: "STAR team task tracker",
-  icons: { icon: "/star-icon.svg" },
+  // The white icon vanishes on a light tab strip; follow the browser's theme.
+  icons: {
+    icon: [
+      { url: "/star-icon-blue.png", media: "(prefers-color-scheme: light)" },
+      { url: "/star-icon.svg", media: "(prefers-color-scheme: dark)" },
+    ],
+  },
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1 };

@@ -68,15 +68,12 @@ model Project {
   tasks      Task[]
   digestSubs DigestSubscription[]
 
-  // Program tracking (the homepage's "LE3" card). A featured top-level project
-  // shows its phases as a segmented line, one per subteam, plus its deadlines.
+  // Program tracking (the homepage's "LE4" card). A featured top-level project
+  // shows a segmented phase line for itself and each subproject, by subteam,
+  // plus its deadlines.
   // An empty `phases` means the default list in src/lib/program.ts.
   featured      Boolean        @default(false)
-  // Featured projects sharing a group ("LE4") sit under one header, so a
-  // vehicle split across several projects (engine, avionics, solid demo)
-  // reads as one program. Null = the project is its own header.
-  trackGroup    String?
-  // Homepage card order, lowest first. A group's card sits at its lowest member.
+  // Homepage card order, lowest first. Subprojects ride on their parent's card.
   trackOrder    Int            @default(0)
   phases        String[]       @default([])
   phaseStatuses SubteamPhase[]
@@ -123,6 +120,8 @@ model Milestone {
   title     String
   dueDate   DateTime
   done      Boolean  @default(false)
+  // Optional http(s) link the milestone opens (review slides, a test plan).
+  url       String?
   createdAt DateTime @default(now())
 
   @@index([projectId, dueDate])

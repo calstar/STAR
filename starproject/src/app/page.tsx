@@ -7,7 +7,7 @@ import { TaskLink } from "@/components/TaskLink";
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
 import { firstNameOf } from "@/lib/names";
-import { getFeaturedPrograms } from "@/lib/program-data";
+import { getProgramCards } from "@/lib/program-data";
 import { STATUS_BADGE, STATUS_LABEL, isBlocked } from "@/lib/tasks";
 import { getCurrentDbUser } from "@/lib/user";
 
@@ -41,7 +41,7 @@ export default async function Home() {
 
   // Projects and subteams are only needed here as pickers for the program
   // board; the sidebar already lists both.
-  const [projects, subteams, myTasks, programs, admin] = await Promise.all([
+  const [projects, subteams, myTasks, cards, admin] = await Promise.all([
     prisma.project.findMany({
       where: { archived: false, parentId: null },
       select: { id: true, name: true },
@@ -56,7 +56,7 @@ export default async function Home() {
       },
       orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
     }),
-    getFeaturedPrograms(),
+    getProgramCards(),
     isAdmin(user.email),
   ]);
   // Deadlines count down in Berkeley days, not the server's.
@@ -128,7 +128,7 @@ export default async function Home() {
 
       <div className="mt-6">
         <ProgramBoard
-          programs={programs}
+          cards={cards}
           isAdmin={admin}
           today={today}
           candidates={projects}

@@ -9,13 +9,18 @@ import {
   deleteMilestone,
   setFeatured,
   setMilestoneDone,
+  setMilestoneLink,
   setCardOrder,
   setPhases,
   setSubteamPhase,
-  setTrackGroup,
   untrackSubteam,
 } from "@/lib/actions/program";
-import type { Program, ProgramMilestone, ProgramSubteam } from "@/lib/program-data";
+import type {
+  Program,
+  ProgramCardData,
+  ProgramMilestone,
+  ProgramSubteam,
+} from "@/lib/program-data";
 import { compareBig, relativeDays } from "@/lib/program";
 
 const FALLBACK = "#a3a3a3";
@@ -48,11 +53,11 @@ function useAction() {
   return { run, pending, error };
 }
 
-/** "LE4 Engine" under the LE4 header reads as just "Engine". */
-function shortName(name: string, group: string | null): string {
-  if (!group) return name;
-  const rest = name.slice(group.length).trim();
-  return name.toLowerCase().startsWith(group.toLowerCase()) && rest ? rest : name;
+/** "LE4 Engine" on the LE4 card reads as just "Engine". */
+function shortName(name: string, parent: string | null): string {
+  if (!parent) return name;
+  const rest = name.slice(parent.length).trim();
+  return name.toLowerCase().startsWith(parent.toLowerCase()) && rest ? rest : name;
 }
 
 const utcDate = (iso: string) => new Date(`${iso}T00:00:00Z`);
@@ -134,7 +139,7 @@ function Dot({ color }: { color: string | null }) {
   );
 }
 
-function DeadlineDate({ m, today }: { m: ProgramMilestone; today: string }) {
+function MilestoneDate({ m, today }: { m: ProgramMilestone; today: string }) {
   const overdue = !m.done && m.dueDate < today;
   return (
     <span
@@ -146,6 +151,24 @@ function DeadlineDate({ m, today }: { m: ProgramMilestone; today: string }) {
       {" · "}
       {relativeDays(utcDate(m.dueDate), today)}
     </span>
+  );
+}
+
+/** A milestone's name — opens its link (slides, a doc) in a new tab when it
+ * has one. The URL was checked to be http(s) when it was saved. */
+function MilestoneName({ m, className = "" }: { m: ProgramMilestone; className?: string }) {
+  if (!m.url) return <span className={className}>{m.title}</span>;
+  return (
+    <a
+      href={m.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={m.url}
+      className={`underline decoration-neutral-300 underline-offset-2 hover:decoration-current dark:decoration-neutral-600 ${className}`}
+    >
+      {m.title}
+      <span aria-hidden className="ml-0.5 text-[0.85em] text-neutral-400">↗</span>
+    </a>
   );
 }
 
@@ -173,20 +196,10 @@ function statusText(p: Program) {
 
 // ── Admin settings for one project ──────────────────────────────────────────
 
-function ProjectSettings({
-  program,
-  allSubteams,
-  groups,
-}: {
-  program: Program;
-  allSubteams: Subteams;
-  groups: string[];
-}) {
+function ProjectSettings({ program, allSubteams }: { program: Program; allSubteams: Subteams }) {
   const { run, pending, error } = useAction();
   const [phases, setPhaseText] = useState(program.phases.join(", "));
-  const [group, setGroup] = useState(program.group ?? "");
   const untracked = allSubteams.filter((s) => !program.subteams.some((t) => t.id === s.id));
-  const listId = `groups-${program.id}`;
 
   return (
     <div className="space-y-3 rounded-lg bg-neutral-50 p-3 text-sm dark:bg-neutral-800/40">
@@ -206,58 +219,21 @@ function ProjectSettings({
           </button>
         </div>
       </label>
-      <label className="block">
-        <span className="text-xs font-medium text-neutral-600 dark:text-neutral-300">
-          Show under (projects with the same name share one card; blank = its own)
-        </span>
-        <div className="mt-1 flex gap-2">
-          <input
-            className={`${input} min-w-0 flex-1`}
-            list={listId}
-            placeholder="e.g. LE4"
-            value={group}
-            onChange={(e) => setGroup(e.target.value)}
-          />
-          <datalist id={listId}>
-            {groups.map((g) => (
-              <option key={g} value={g} />
-            ))}
-          </datalist>
-          <button
-            type="button"
-            className={ghostBtn}
-            disabled={pending}
-            onClick={() => run(() => setTrackGroup(program.id, group))}
-          >
-            Save
-          </button>
-        </div>
-      </label>
-      <div className="flex flex-wrap items-center gap-2">
-        {untracked.length > 0 && (
-          <select
-            className={input}
-            value=""
-            disabled={pending}
-            onChange={(e) => e.target.value && run(() => setSubteamPhase(program.id, e.target.value, 0))}
-          >
-            <option value="">+ Add a subteam…</option>
-            {untracked.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        )}
-        <button
-          type="button"
-          className={`${ghostBtn} ml-auto`}
+      {untracked.length > 0 && (
+        <select
+          className={input}
+          value=""
           disabled={pending}
-          onClick={() => run(() => setFeatured(program.id, false))}
+          onChange={(e) => e.target.value && run(() => setSubteamPhase(program.id, e.target.value, 0))}
         >
-          Take {program.name} off homepage
-        </button>
-      </div>
+          <option value="">+ Add a subteam to {program.name}…</option>
+          {untracked.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+      )}
       {error && <p className="text-xs text-red-600">{error}</p>}
     </div>
   );
@@ -272,14 +248,12 @@ function SystemRows({
   editing,
   isAdmin,
   allSubteams,
-  groups,
 }: {
   systems: Program[];
   group: string;
   editing: boolean;
   isAdmin: boolean;
   allSubteams: Subteams;
-  groups: string[];
 }) {
   const [open, setOpen] = useState<string | null>(null);
   return (
@@ -313,7 +287,7 @@ function SystemRows({
             </div>
             {editing && isAdmin && open === p.id && (
               <div className="mt-2">
-                <ProjectSettings program={p} allSubteams={allSubteams} groups={groups} />
+                <ProjectSettings program={p} allSubteams={allSubteams} />
               </div>
             )}
           </li>
@@ -323,14 +297,64 @@ function SystemRows({
   );
 }
 
-// ── 2. Upcoming deadlines ───────────────────────────────────────────────────
+// ── 2. Milestones ───────────────────────────────────────────────────────────
 
-function Deadlines({
+/** Edit-mode control to set, change or clear one milestone's link. */
+function LinkEditor({ m, onDone }: { m: ProgramMilestone; onDone: () => void }) {
+  const { run, pending, error } = useAction();
+  const [url, setUrl] = useState(m.url ?? "");
+  return (
+    <form
+      className="flex basis-full flex-wrap items-center gap-2 pb-1 pl-6"
+      onSubmit={(e) => {
+        e.preventDefault();
+        run(async () => {
+          await setMilestoneLink(m.id, url);
+          onDone();
+        });
+      }}
+    >
+      <input
+        className={`${input} min-w-0 flex-1 py-0.5 text-xs`}
+        placeholder="Paste a link — slides, a doc, a test plan"
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        autoFocus
+      />
+      <button type="submit" className={ghostBtn} disabled={pending}>
+        Save
+      </button>
+      {m.url && (
+        <button
+          type="button"
+          className={ghostBtn}
+          disabled={pending}
+          onClick={() =>
+            run(async () => {
+              await setMilestoneLink(m.id, null);
+              onDone();
+            })
+          }
+        >
+          Remove link
+        </button>
+      )}
+      <button type="button" className={ghostBtn} onClick={onDone}>
+        Cancel
+      </button>
+      {error && <span className="basis-full text-xs text-red-600">{error}</span>}
+    </form>
+  );
+}
+
+function Milestones({
+  root,
   systems,
   group,
   editing,
   today,
 }: {
+  root: Program;
   systems: Program[];
   group: string | null;
   editing: boolean;
@@ -339,14 +363,21 @@ function Deadlines({
   const { run, pending, error } = useAction();
   const [title, setTitle] = useState("");
   const [date, setDate] = useState("");
-  const [projectId, setProjectId] = useState(systems[0].id);
+  const [projectId, setProjectId] = useState(root.id);
   const [subteamId, setSubteamId] = useState("");
-  const multi = systems.length > 1;
-  const target = systems.find((s) => s.id === projectId) ?? systems[0];
+  const [link, setLink] = useState("");
+  const [linking, setLinking] = useState<string | null>(null);
+  // The parent's own milestones are the whole program's (CDR, launch), so it is
+  // always a place to add one even when it isn't a system row itself.
+  const targets = systems.some((s) => s.id === root.id) ? systems : [root, ...systems];
+  const multi = targets.length > 1;
+  const target = targets.find((s) => s.id === projectId) ?? root;
+  const targetLabel = (p: Program) => (p.id === root.id ? `All of ${root.name}` : shortName(p.name, group));
+  const systemTag = (p: Program) => (multi && p.id !== root.id ? shortName(p.name, group) : null);
 
-  // Every project's deadlines on one list, soonest first; outside edit mode
+  // Every project's milestones on one list, soonest first; outside edit mode
   // only what's still open.
-  const all = systems
+  const all = targets
     .flatMap((p) => p.milestones.map((m) => ({ m, p })))
     .filter(({ m }) => editing || !m.done)
     .sort((a, b) => a.m.dueDate.localeCompare(b.m.dueDate));
@@ -354,22 +385,22 @@ function Deadlines({
 
   return (
     <div>
-      <h3 className={sectionTitle}>Upcoming deadlines</h3>
+      <h3 className={sectionTitle}>Milestones</h3>
       <ul className="mt-2 grid gap-x-10 gap-y-1 md:grid-cols-2 xl:grid-cols-3">
         {shown.length === 0 && (
           <li className="text-sm text-neutral-500 dark:text-neutral-400">
-            {editing ? "No deadlines yet — add the next one below." : "Nothing scheduled."}
+            {editing ? "No milestones yet — add the next one below." : "Nothing scheduled."}
           </li>
         )}
         {shown.map(({ m, p }) => {
           // The dot already says which subteam; spell out the system when there
           // are several, and keep the subteam's name for the tooltip.
-          const tag = multi ? shortName(p.name, group) : m.subteam?.name;
+          const tag = multi ? systemTag(p) : m.subteam?.name;
           return (
             <li
               key={m.id}
-              className="flex min-h-7 items-center gap-2"
-              title={[m.title, multi && shortName(p.name, group), m.subteam?.name].filter(Boolean).join(" · ")}
+              className="flex min-h-7 flex-wrap items-center gap-x-2"
+              title={[m.title, systemTag(p), m.subteam?.name].filter(Boolean).join(" · ")}
             >
               {editing && (
                 <input
@@ -386,10 +417,21 @@ function Deadlines({
                 <span className="h-2.5 w-2.5 shrink-0 rounded-full border border-neutral-400" />
               )}
               <span className={`min-w-0 flex-1 truncate text-sm ${m.done ? "text-neutral-400 line-through" : ""}`}>
-                {m.title}
+                <MilestoneName m={m} />
                 {tag && <span className="text-neutral-500 dark:text-neutral-400"> · {tag}</span>}
               </span>
-              <DeadlineDate m={m} today={today} />
+              <MilestoneDate m={m} today={today} />
+              {editing && (
+                <button
+                  type="button"
+                  className={ghostBtn}
+                  onClick={() => setLinking(linking === m.id ? null : m.id)}
+                  aria-label={`${m.url ? "Change" : "Add"} link for ${m.title}`}
+                  title={m.url ? "Change link" : "Add a link"}
+                >
+                  {m.url ? "Link ✓" : "Link"}
+                </button>
+              )}
               {editing && (
                 <button
                   type="button"
@@ -401,6 +443,7 @@ function Deadlines({
                   ✕
                 </button>
               )}
+              {editing && linking === m.id && <LinkEditor m={m} onDone={() => setLinking(null)} />}
             </li>
           );
         })}
@@ -411,9 +454,15 @@ function Deadlines({
           onSubmit={(e) => {
             e.preventDefault();
             run(async () => {
-              await addMilestone(target.id, { title, dueDate: date, subteamId: subteamId || null });
+              await addMilestone(target.id, {
+                title,
+                dueDate: date,
+                subteamId: subteamId || null,
+                url: link,
+              });
               setTitle("");
               setDate("");
+              setLink("");
             });
           }}
         >
@@ -431,6 +480,12 @@ function Deadlines({
             value={date}
             onChange={(e) => setDate(e.target.value)}
           />
+          <input
+            className={`${input} min-w-0 basis-full sm:basis-56`}
+            placeholder="Link (optional) — slides, a doc"
+            value={link}
+            onChange={(e) => setLink(e.target.value)}
+          />
           {multi && (
             <select
               className={input}
@@ -440,15 +495,15 @@ function Deadlines({
                 setSubteamId("");
               }}
             >
-              {systems.map((p) => (
+              {targets.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {shortName(p.name, group)}
+                  {targetLabel(p)}
                 </option>
               ))}
             </select>
           )}
           <select className={input} value={subteamId} onChange={(e) => setSubteamId(e.target.value)}>
-            <option value="">{multi ? "Whole system" : "Whole project"}</option>
+            <option value="">{target.id === root.id ? "No specific subteam" : "Whole system"}</option>
             {target.subteams.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
@@ -582,8 +637,8 @@ function SubteamCard({
 
   return (
     <div className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
-      {/* Under a group, the subteam's name heads one row per system; on its
-          own project the single row carries the name itself. */}
+      {/* On a card with subprojects the subteam's name heads one row per
+          system; on a single project the one row carries the name itself. */}
       {named && (
         <div className="mb-3 flex items-center gap-2">
           <Dot color={subteam.color} />
@@ -613,12 +668,12 @@ function SubteamCard({
 
       <dl className="mt-4 space-y-2.5 text-xs">
         <div className="flex gap-2">
-          <dt className="w-16 shrink-0 text-neutral-500 dark:text-neutral-400">Next due</dt>
+          <dt className="w-16 shrink-0 text-neutral-500 dark:text-neutral-400">Milestone</dt>
           <dd className="flex min-w-0 flex-1 items-center justify-between gap-2">
             {next ? (
               <>
-                <span className="truncate">{next.title}</span>
-                <DeadlineDate m={next} today={today} />
+                <MilestoneName m={next} className="truncate" />
+                <MilestoneDate m={next} today={today} />
               </>
             ) : (
               <span className="text-neutral-400 dark:text-neutral-500">—</span>
@@ -678,30 +733,29 @@ function SubteamCard({
 
 // ── The card ────────────────────────────────────────────────────────────────
 
-/** A group ("LE4": engine, avionics, solid demo, Luna) or one ungrouped project.
- * Status of each system first, then the deadlines, then the subteams. */
+/** A tracked project — on its own, or with its subprojects as systems
+ * ("LE4": Engine, Avionics, Solid Demo). Status of each system first, then
+ * the milestones, then the subteams. */
 function ProgramCard({
-  title,
-  group,
-  systems,
+  card,
   isAdmin,
   allSubteams,
-  groups,
   today,
   onMove,
 }: {
-  title: string;
-  group: string | null;
-  systems: Program[];
+  card: ProgramCardData;
   isAdmin: boolean;
   allSubteams: Subteams;
-  groups: string[];
   today: string;
   /** Admin reordering; a direction is absent when the card is already at that end. */
   onMove: { up?: () => void; down?: () => void } | null;
 }) {
+  const { root, systems } = card;
+  const title = root.name;
+  const only = systems.length === 1 && systems[0].id === root.id ? root : null;
+  const group = only ? null : title;
+  const { run, pending } = useAction();
   const [editing, setEditing] = useState(false);
-  const only = group === null ? systems[0] : null;
   const subteams = rollupSubteams(systems);
 
   return (
@@ -715,6 +769,16 @@ function ProgramCard({
           {only && <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">In {statusText(only)}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {editing && isAdmin && (
+            <button
+              type="button"
+              className={ghostBtn}
+              disabled={pending}
+              onClick={() => run(() => setFeatured(root.id, false))}
+            >
+              Take off homepage
+            </button>
+          )}
           {editing && onMove && (
             <>
               <button
@@ -755,7 +819,7 @@ function ProgramCard({
             <div className="text-neutral-900 dark:text-neutral-100">
               <SegmentedLine segments={projectSegments(only)} current={only.phase} labels />
             </div>
-            {editing && isAdmin && <ProjectSettings program={only} allSubteams={allSubteams} groups={groups} />}
+            {editing && isAdmin && <ProjectSettings program={only} allSubteams={allSubteams} />}
           </div>
         ) : (
           <SystemRows
@@ -764,20 +828,23 @@ function ProgramCard({
             editing={editing}
             isAdmin={isAdmin}
             allSubteams={allSubteams}
-            groups={groups}
           />
         )}
       </div>
 
       <div className="mt-8">
-        <Deadlines systems={systems} group={group} editing={editing} today={today} />
+        <Milestones root={root} systems={systems} group={group} editing={editing} today={today} />
       </div>
 
       <div className="mt-8 border-t border-neutral-200 pt-6 dark:border-neutral-800">
         <h3 className={sectionTitle}>Subteams</h3>
         {subteams.length === 0 ? (
           <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
-            {isAdmin ? "Press Edit, then Settings, to add subteams." : "An admin can add subteams with Edit."}
+            {isAdmin
+              ? only
+                ? "Press Edit to add subteams."
+                : "Press Edit, then Settings on a system, to add subteams."
+              : "An admin can add subteams with Edit."}
           </p>
         ) : (
           <div className="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -791,20 +858,17 @@ function ProgramCard({
   );
 }
 
-/** Lets an admin put another project on the homepage, optionally under a group. */
+/** Lets an admin put another project on the homepage. */
 function TrackProject({
   candidates,
-  groups,
   prominent,
 }: {
   candidates: { id: string; name: string }[];
-  groups: string[];
   prominent: boolean;
 }) {
   const { run, pending, error } = useAction();
   const [open, setOpen] = useState(prominent);
   const [projectId, setProjectId] = useState("");
-  const [group, setGroup] = useState("");
 
   if (!open) {
     return (
@@ -823,15 +887,14 @@ function TrackProject({
       onSubmit={(e) => {
         e.preventDefault();
         run(async () => {
-          await setFeatured(projectId, true, group);
+          await setFeatured(projectId, true);
           setProjectId("");
-          setGroup("");
           setOpen(prominent);
         });
       }}
     >
       <span className="text-neutral-600 dark:text-neutral-300">
-        Track a project&apos;s phases and deadlines here, by subteam:
+        Track a project&apos;s phases and milestones here (its subprojects come with it):
       </span>
       <select className={input} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
         <option value="">Choose a project…</option>
@@ -841,18 +904,6 @@ function TrackProject({
           </option>
         ))}
       </select>
-      <input
-        className={`${input} w-48`}
-        list="track-groups"
-        placeholder="Under (optional), e.g. LE4"
-        value={group}
-        onChange={(e) => setGroup(e.target.value)}
-      />
-      <datalist id="track-groups">
-        {groups.map((g) => (
-          <option key={g} value={g} />
-        ))}
-      </datalist>
       <button
         type="submit"
         disabled={pending || !projectId}
@@ -871,60 +922,48 @@ function TrackProject({
 }
 
 export function ProgramBoard({
-  programs,
+  cards,
   isAdmin,
   candidates,
   allSubteams,
   today,
 }: {
-  programs: Program[];
+  cards: ProgramCardData[];
   isAdmin: boolean;
+  /** Top-level projects, for the "track" picker. */
   candidates: { id: string; name: string }[];
   allSubteams: Subteams;
   today: string;
 }) {
-  const untracked = candidates.filter((c) => !programs.some((p) => p.id === c.id));
-  const groups = [...new Set(programs.flatMap((p) => (p.group ? [p.group] : [])))];
-
-  // One card per group (in order of first appearance), one per ungrouped project.
-  const blocks: { key: string; group: string | null; systems: Program[] }[] = [];
-  for (const p of programs) {
-    const existing = p.group && blocks.find((b) => b.group === p.group);
-    if (existing) existing.systems.push(p);
-    else blocks.push({ key: p.group ?? p.id, group: p.group, systems: [p] });
-  }
-
+  const untracked = candidates.filter((c) => !cards.some((k) => k.root.id === c.id));
   const { run } = useAction();
   const move = (i: number, j: number) => () => {
-    const order = blocks.map((b) => b.systems.map((p) => p.id));
+    const order = cards.map((k) => k.root.id);
     [order[i], order[j]] = [order[j], order[i]];
     run(() => setCardOrder(order));
   };
 
   return (
     <div className="space-y-4">
-      {blocks.map((b, i) => (
+      {cards.map((card, i) => (
         <ProgramCard
-          key={b.key}
+          key={card.root.id}
+          card={card}
+          isAdmin={isAdmin}
+          allSubteams={allSubteams}
+          today={today}
           onMove={
-            isAdmin && blocks.length > 1
+            isAdmin && cards.length > 1
               ? {
                   up: i > 0 ? move(i, i - 1) : undefined,
-                  down: i < blocks.length - 1 ? move(i, i + 1) : undefined,
+                  down: i < cards.length - 1 ? move(i, i + 1) : undefined,
                 }
               : null
           }
-          title={b.group ?? b.systems[0].name}
-          group={b.group}
-          systems={b.systems}
-          isAdmin={isAdmin}
-          allSubteams={allSubteams}
-          groups={groups}
-          today={today}
         />
       ))}
       {isAdmin && untracked.length > 0 && (
-        <TrackProject candidates={untracked} groups={groups} prominent={programs.length === 0} />
+        <TrackProject candidates={untracked} prominent={cards.length === 0} />
       )}
     </div>
   );
