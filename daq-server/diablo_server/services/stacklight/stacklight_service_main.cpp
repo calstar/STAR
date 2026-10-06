@@ -22,12 +22,12 @@
 #include <string>
 #include <thread>
 
-#include "elodin/DatabaseConfig.hpp"
-#include "elodin/ElodinClient.hpp"
-#include "daq-protocol.h"
 #include "DiabloPacketUtils.h"
 #include "DiabloPackets.h"
 #include "control/StateMachine.hpp"
+#include "daq-protocol.h"
+#include "elodin/DatabaseConfig.hpp"
+#include "elodin/ElodinClient.hpp"
 
 namespace {
 std::atomic<bool> g_running{true};
@@ -120,10 +120,11 @@ void elodinThread(std::string host, uint16_t port) {
         uint8_t buf[4096];
         ssize_t n = client.read_packet(buf, sizeof(buf));
         if (n < 0) {
-            client.disconnect(); // read error: drop the socket and reconnect next loop
+            client.disconnect();  // read error: drop the socket and reconnect next loop
             continue;
         }
-        if (n < 8) continue; // 0 = receive timeout, nothing to do this round
+        if (n < 8)
+            continue;  // 0 = receive timeout, nothing to do this round
 
         // SequencerState VTable: [0x50, 0x00]
         if (buf[5] == fsw::elodin::kTableSequencerState.first &&
@@ -134,7 +135,7 @@ void elodinThread(std::string host, uint16_t port) {
     }
 }
 
-}
+}  // namespace
 
 // ── Minimal TOML reader (mirrors heartbeat_service_main.cpp) ────────────────
 std::string trim(const std::string& s) {
@@ -147,7 +148,8 @@ std::string getTomlValue(const std::string& content, const std::string& section,
                          const std::string& key, const std::string& fallback = "") {
     std::string sec_header = "[" + section + "]";
     auto sec_pos = content.find(sec_header);
-    if (sec_pos == std::string::npos) return fallback;
+    if (sec_pos == std::string::npos)
+        return fallback;
 
     auto search_start = sec_pos + sec_header.size();
     auto next_sec = content.find("\n[", search_start);
@@ -159,12 +161,15 @@ std::string getTomlValue(const std::string& content, const std::string& section,
     std::string line;
     while (std::getline(iss, line)) {
         auto c = line.find('#');
-        if (c != std::string::npos) line = line.substr(0, c);
+        if (c != std::string::npos)
+            line = line.substr(0, c);
         auto eq = line.find('=');
-        if (eq == std::string::npos) continue;
+        if (eq == std::string::npos)
+            continue;
         std::string k = trim(line.substr(0, eq));
         std::string v = trim(line.substr(eq + 1));
-        if (k == key) return v;
+        if (k == key)
+            return v;
     }
     return fallback;
 }
@@ -173,10 +178,10 @@ int main(int argc, char* argv[]) {
     std::string config_path = "config/config.toml";
     std::string elodin_host = "127.0.0.1";
     uint16_t elodin_port = 2240;
-    int interval_ms = 1000; // keepalive resend interval
-    std::string target_ip = "192.168.2.70";   // PLACEHOLDER — update once team assigns a real IP
-    uint16_t target_port = 5006;              // PLACEHOLDER — update once team confirms
-    int force_state = -1; // -1 = read from Elodin(normal). 0-255 = test override
+    int interval_ms = 1000;                  // keepalive resend interval
+    std::string target_ip = "192.168.2.70";  // PLACEHOLDER — update once team assigns a real IP
+    uint16_t target_port = 5006;             // PLACEHOLDER — update once team confirms
+    int force_state = -1;                    // -1 = read from Elodin(normal). 0-255 = test override
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -209,7 +214,10 @@ int main(int argc, char* argv[]) {
         if (!f.is_open()) {
             for (const auto& fp : {"config/config.toml", "../config/config.toml"}) {
                 f.open(fp);
-                if (f.is_open()) { config_path = fp; break; }
+                if (f.is_open()) {
+                    config_path = fp;
+                    break;
+                }
             }
         }
         if (f.is_open()) {
@@ -221,19 +229,36 @@ int main(int argc, char* argv[]) {
 
     if (!config_content.empty()) {
         auto val = getTomlValue(config_content, "stacklight_service", "interval_ms", "");
-        if (!val.empty()) { try { interval_ms = std::max(100, std::stoi(val)); } catch (...) {} }
+        if (!val.empty()) {
+            try {
+                interval_ms = std::max(100, std::stoi(val));
+            } catch (...) {
+            }
+        }
 
         val = getTomlValue(config_content, "stacklight_service", "target_ip", "");
-        if (!val.empty()) target_ip = val;
+        if (!val.empty())
+            target_ip = val;
 
         val = getTomlValue(config_content, "stacklight_service", "target_port", "");
-        if (!val.empty()) { try { target_port = static_cast<uint16_t>(std::stoi(val)); } catch (...) {} }
+        if (!val.empty()) {
+            try {
+                target_port = static_cast<uint16_t>(std::stoi(val));
+            } catch (...) {
+            }
+        }
 
         val = getTomlValue(config_content, "stacklight_service", "elodin_host", "");
-        if (!val.empty()) elodin_host = val;
+        if (!val.empty())
+            elodin_host = val;
 
         val = getTomlValue(config_content, "stacklight_service", "elodin_port", "");
-        if (!val.empty()) { try { elodin_port = static_cast<uint16_t>(std::stoi(val)); } catch (...) {} }
+        if (!val.empty()) {
+            try {
+                elodin_port = static_cast<uint16_t>(std::stoi(val));
+            } catch (...) {
+            }
+        }
     }
 
     signal(SIGINT, signalHandler);
@@ -264,13 +289,13 @@ int main(int argc, char* argv[]) {
     std::thread elodin_thread;
     if (force_state >= 0 && force_state <= 255) {
         g_seq_state.store(static_cast<uint8_t>(force_state));
-        std::cout << "[StacklightService] --force-state " << force_state
-                  << ": skipping Elodin" << std::endl;
+        std::cout << "[StacklightService] --force-state " << force_state << ": skipping Elodin"
+                  << std::endl;
     } else {
         elodin_thread = std::thread(elodinThread, elodin_host, elodin_port);
     }
 
-    uint8_t last_sent_state = 0xFF; // sentinel value, forces the very first send
+    uint8_t last_sent_state = 0xFF;  // sentinel value, forces the very first send
     unsigned long count = 0;
     auto last_log = std::chrono::steady_clock::now();
     auto last_send = std::chrono::steady_clock::now() - std::chrono::milliseconds(interval_ms);
@@ -282,19 +307,21 @@ int main(int argc, char* argv[]) {
         auto now = std::chrono::steady_clock::now();
         bool state_changed = (seq_state != last_sent_state);
         bool keepalive_due =
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_send).count() >= interval_ms;
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_send).count() >=
+            interval_ms;
 
         if (state_changed || keepalive_due) {
             daq::StacklightCommandPacket cmd = stateToStacklight(seq_state);
             auto ts = std::chrono::duration_cast<std::chrono::milliseconds>(
                           std::chrono::system_clock::now().time_since_epoch())
-                          .count() & 0xFFFFFFFFu;
+                          .count() &
+                      0xFFFFFFFFu;
 
-            size_t len = daq::create_stacklight_command_packet(cmd, static_cast<uint32_t>(ts),
-                                                                    buf, sizeof(buf));
+            size_t len = daq::create_stacklight_command_packet(cmd, static_cast<uint32_t>(ts), buf,
+                                                               sizeof(buf));
             if (len > 0) {
-                ssize_t sent = sendto(sock, buf, len, 0,
-                                      reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest));
+                ssize_t sent = sendto(sock, buf, len, 0, reinterpret_cast<struct sockaddr*>(&dest),
+                                      sizeof(dest));
                 if (sent == static_cast<ssize_t>(len)) {
                     count++;
                     last_sent_state = seq_state;
@@ -310,11 +337,12 @@ int main(int argc, char* argv[]) {
             last_log = now;
         }
 
-        usleep(100000); // check 10 times per second
+        usleep(100000);  // check 10 times per second
     }
 
     close(sock);
-    if (elodin_thread.joinable()) elodin_thread.join();
+    if (elodin_thread.joinable())
+        elodin_thread.join();
     std::cout << "[StacklightService] Stopped." << std::endl;
     return 0;
 }

@@ -324,14 +324,16 @@ designated_survivor = false
 voltage_reference = 1
 active_connectors = [ 1, 2 ]
 
-[boards.stacklight_board]
-type = "STACKLIGHT"
-ip = "192.168.2.70"
-mac = ""
-listen_port = 5005
-board_id = 70
-enabled = true
-enable_serial_printing = false
+# Stacklight board: add to the board registry once it has a real IP / MAC.
+# (Kept out for now: it has no simulator, so the GUI would list it as DISCONNECTED,
+# and the config tests need an active_connectors list on every registered board.)
+# [boards.stacklight_board]
+# type = "STACKLIGHT"
+# ip = "192.168.2.70"          # PLACEHOLDER
+# mac = ""
+# listen_port = 5005
+# board_id = 70                # PLACEHOLDER
+# enabled = true
 
 [sim_pt_targets]
 1 = 500
