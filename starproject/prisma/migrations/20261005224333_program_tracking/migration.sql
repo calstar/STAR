@@ -1,6 +1,7 @@
 -- AlterTable
 ALTER TABLE "Project" ADD COLUMN     "featured" BOOLEAN NOT NULL DEFAULT false,
 ADD COLUMN     "phases" TEXT[] DEFAULT ARRAY[]::TEXT[],
+ADD COLUMN     "trackGroup" TEXT,
 ADD COLUMN     "trackOrder" INTEGER NOT NULL DEFAULT 0;
 
 -- CreateTable
@@ -22,7 +23,6 @@ CREATE TABLE "Milestone" (
     "title" TEXT NOT NULL,
     "dueDate" TIMESTAMP(3) NOT NULL,
     "done" BOOLEAN NOT NULL DEFAULT false,
-    "url" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "Milestone_pkey" PRIMARY KEY ("id")
