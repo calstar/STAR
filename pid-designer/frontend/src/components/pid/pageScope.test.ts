@@ -198,11 +198,11 @@ describe('changing page', () => {
 
   /** The checks panel's onSelect, framing into `framed` and remembering views in `viewports`. */
   const checksPanel = (c: ReturnType<typeof canvas>, viewports: Map<string, unknown>, framed: string[]) =>
-    propHandler('onSelect={(nodeIds, edgeIds) => {', [
+    propHandler('onSelect={(nodeIds, edgeIds, focusIds = []) => {', [
       'nodes', 'edges', 'pageRef', 'setNodes', 'setEdges', 'setPage', 'pageOf', 'pageOfSubjects', 'selectOnPage',
       'viewportsRef', 'diagramKey', 'fitViewTo',
     ])(c.s.nodes, c.s.edges, c.pageRef, c.setNodes, c.setEdges, c.setPage, pageOf, pageOfSubjects, selectOnPage,
-      { current: viewports }, 'd', (n: Node) => { framed.push(n.id); }) as (nodeIds: string[], edgeIds: string[]) => void;
+      { current: viewports }, 'd', (n: Node) => { framed.push(n.id); }) as (nodeIds: string[], edgeIds: string[], focusIds?: string[]) => void;
 
   it('a tab leaves nothing selected behind', () => {
     const c = canvas(drawing(), 'Main');
@@ -224,6 +224,23 @@ describe('changing page', () => {
     expect(c.s.page).toBe('Vent');
     expect(c.s.declared).toEqual(['Vent']);
     expect(selectedIds(c.s.nodes)).toEqual([]);
+  });
+
+  it('picking a line nothing can draw shows the symbol it was on and selects only the line', () => {
+    // The line is on a port that is gone, so there is nothing of it to frame.
+    // The symbol is shown, not selected: a Delete meant for the line would
+    // have taken the symbol with it.
+    const c = canvas(drawing(), 'Main');
+    const framed: string[] = [];
+    checksPanel(c, new Map(), framed)([], ['G1-G2'], ['G2']);
+    expect(c.s.page).toBe('GSE');
+    expect(selectedIds(c.s.nodes)).toEqual([]);
+    expect(selectedIds(c.s.edges)).toEqual(['G1-G2']);
+    const here = canvas(drawing(), 'GSE');
+    const shown: string[] = [];
+    checksPanel(here, new Map(), shown)([], ['G1-G2'], ['G2']);
+    expect(shown).toEqual(['G2']);
+    expect(selectedIds(here.s.nodes)).toEqual([]);
   });
 
   it('picking a check goes to the page of what it names, and selects only that', () => {

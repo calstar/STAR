@@ -49,7 +49,7 @@ function useIdle<T>(value: T, ms = CHECKS_IDLE_MS): T {
 export function ChecksPanel({ nodes, edges, onSelect }: {
   nodes: Node[];
   edges: Edge[];
-  onSelect: (nodeIds: string[], edgeIds: string[]) => void;
+  onSelect: (nodeIds: string[], edgeIds: string[], focusIds?: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
   const drawing = useMemo(() => ({ nodes, edges }), [nodes, edges]);
@@ -110,15 +110,15 @@ export function ChecksPanel({ nodes, edges, onSelect }: {
 
 function Row({ finding, onSelect }: {
   finding: Finding;
-  onSelect: (nodeIds: string[], edgeIds: string[]) => void;
+  onSelect: (nodeIds: string[], edgeIds: string[], focusIds?: string[]) => void;
 }) {
   const tone = TONE[finding.severity];
-  const canSelect = !!(finding.nodeIds?.length || finding.edgeIds?.length);
+  const canSelect = !!(finding.nodeIds?.length || finding.edgeIds?.length || finding.focusIds?.length);
   return (
     <li>
       <button
         disabled={!canSelect}
-        onClick={() => onSelect(finding.nodeIds ?? [], finding.edgeIds ?? [])}
+        onClick={() => onSelect(finding.nodeIds ?? [], finding.edgeIds ?? [], finding.focusIds)}
         className={`w-full rounded px-2 py-1.5 text-left ${canSelect ? 'hover:bg-[var(--color-bg-primary)]' : 'cursor-default'}`}
       >
         <span className="flex items-center gap-1.5">

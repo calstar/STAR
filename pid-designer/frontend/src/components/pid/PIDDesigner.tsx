@@ -58,6 +58,7 @@ import { AttachmentLayer, DrawnRoutes } from './AttachmentLayer';
 import { ChecksPanel } from './ChecksPanel';
 import { VentLayer } from './VentLayer';
 import { SignalLayer } from './SignalLayer';
+import { OrphanLayer } from './OrphanLayer';
 import { isSignalPort, landsOnSignalPort, setSignal, signalTo } from './signals';
 import { PageBar } from './PageBar';
 import {
@@ -1398,6 +1399,11 @@ function PIDCanvas({
             hidden with their probes, not drawn over this one. */}
         <DrawnRoutes><AttachmentLayer nodes={view.nodes} edges={view.edges} /></DrawnRoutes>
         <VentLayer nodes={view.nodes} edges={view.edges} />
+        {/* Lines on ports that are gone, drawn so they can be found and deleted. */}
+        <OrphanLayer nodes={view.nodes} edges={view.edges} onSelect={readOnly ? undefined : (id) => {
+          setNodes(clearSelection);
+          setEdges(eds => eds.map(e => (e.id === id ? { ...e, selected: true } : e.selected ? { ...e, selected: false } : e)));
+        }} />
         <SignalLayer nodes={view.nodes} edges={view.edges} selected={signalPicked}
           onSelect={readOnly ? undefined : setSignalPicked} />
         <BranchPreview />
@@ -1515,18 +1521,21 @@ function PIDCanvas({
       <ChecksPanel
         nodes={nodes}
         edges={edges}
-        onSelect={(nodeIds, edgeIds) => {
+        onSelect={(nodeIds, edgeIds, focusIds = []) => {
           // The checks see every page, so what a check names can be on a
           // page other than this one. Picking it goes there, and selects only
           // what is on that page -- a line no page draws by the component it
           // leaves from there (see selectOnPage).
-          const there = pageOfSubjects(nodes, edges, nodeIds, edgeIds) ?? pageRef.current;
+          const there = pageOfSubjects(nodes, edges, [...nodeIds, ...focusIds], edgeIds) ?? pageRef.current;
           setNodes(nds => selectOnPage(nds, edges, there, nodeIds, edgeIds).nodes);
           setEdges(eds => selectOnPage(nodes, eds, there, nodeIds, edgeIds).edges);
           // What to frame is what was picked on that page, never a named
           // component on another: that one is hidden, and centring on it
           // shows empty canvas.
-          const first = selectOnPage(nodes, edges, there, nodeIds, edgeIds).nodes.find(n => n.selected);
+          // Or, for a line nothing can draw, the symbol it was on (`focusIds`):
+          // shown, not selected, so a Delete takes only the line.
+          const first = selectOnPage(nodes, edges, there, nodeIds, edgeIds).nodes.find(n => n.selected)
+            ?? nodes.find(n => focusIds.includes(n.id) && pageOf(n.data as unknown as PIDNodeData) === there);
           if (there !== pageRef.current) {
             // Arriving on a page puts back the view it was left at, which
             // need not show what was picked; forgetting it frames the whole
