@@ -1183,6 +1183,9 @@ let stateRefusalReasons: Record<number, string> = {};
  * notification, or a poll would spam the panel once a second.
  */
 function refreshScriptStatus(): void {
+  // Between runs the sequencer is stopped on purpose; asking it anyway logged a connect error
+  // every 15 s. Nothing is enterable then, and the bitmask already says so.
+  if (!sessionManager.pipelineExpected()) return;
   sendToActuatorService('SCRIPTS\n')
     .then(({ reply }) => {
       stateRefusalReasons = parseScriptStatus(reply).reasons;
@@ -1738,11 +1741,20 @@ process.on('unhandledRejection', (reason) => {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-elodin.connect().then((ok) => {
-  if (!ok) {
-    console.warn('[ThinServer] Initial Elodin DB connect failed — will retry automatically');
+// Connect to the DB only while it is meant to exist. In systemd mode sensor-elodin runs per
+// session, so between runs this used to retry a refused port every 5 s, forever. The session
+// manager decides after it has recovered any run that outlived a backend restart (see the
+// listen callback below), and session start/stop connect and disconnect from then on.
+function syncElodinToSession(): void {
+  if (sessionManager.pipelineExpected()) {
+    elodin.connect().then((ok) => {
+      if (!ok) console.warn('[ThinServer] Elodin DB connect failed — will retry automatically');
+    });
+  } else {
+    elodin.disconnect();
+    console.log('[ThinServer] No active session: not connecting to Elodin DB until one starts');
   }
-});
+}
 
 httpServer.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EADDRINUSE') {
@@ -1768,12 +1780,17 @@ httpServer.listen(WS_PORT, () => {
   sessionManager.init(broadcast, broadcastNotification, () => {
     loadBoardsFromConfig();
     broadcastBoardStatus();
+    // The pipeline is down again (systemd mode); stop dialling it until the next run.
+    if (!sessionManager.pipelineExpected()) elodin.disconnect();
   }, applyDeployedConfigChange, () => {
   // The run pipeline is up. Every session starts with every load cell reading absolute: the
   // controller already removed lc_tare.json, and this drops the copy a still-running service
   // holds in memory (mock mode, where nothing went down to reload it).
   publishClearAllTares(calibrationHost);
+  // sensor-elodin is confirmed active by now (ServiceController.start waits for it).
+  void elodin.connect();
 });
+  syncElodinToSession();
   // Board diagnostic logs (type-15 LOGS forwarded by daq_bridge over loopback UDP).
   startBoardLogReceiver(broadcast);
 });
