@@ -194,7 +194,10 @@ function Brand({ collapsed }: { collapsed?: boolean }) {
   if (collapsed) {
     return (
       <Link href="/" className="flex items-center justify-center" title="STAR Project">
-        <Image src="/star-icon.svg" alt="STAR" width={32} height={32} priority unoptimized className="h-7 w-7" />
+        {/* The navy icon disappears on the dark rail and the white one on the
+            light rail, so each theme gets its own. */}
+        <Image src="/star-icon-blue.png" alt="STAR" width={32} height={32} priority unoptimized className="h-7 w-7 dark:hidden" />
+        <Image src="/star-icon.svg" alt="STAR" width={32} height={32} priority unoptimized className="hidden h-7 w-7 dark:block" />
       </Link>
     );
   }
