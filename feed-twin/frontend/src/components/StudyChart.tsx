@@ -23,6 +23,8 @@ export interface Series {
   color: string;
   /** Dashed. Reserved for the fuel side of a gas already drawn solid. */
   dashed?: boolean;
+  /** Short text for the endpoint label; the legend keeps `label`. */
+  tag?: string;
   t: number[];
   v: number[];
 }
@@ -38,6 +40,8 @@ const W = 920;
 const H = 340;
 const L = 64;   // left gutter: y tick labels
 const R = 768;  // plot right edge; the rest is direct-label room
+/** At most this many series are labelled at their endpoints. */
+const DIRECT_LABELS = 4;
 const T = 22;
 const B = 296;
 
@@ -339,12 +343,14 @@ export function StudyChart({
             />
           ))}
 
-          {ends.map((e) => (
+          {/* Direct labels while they can be read; past four series the
+              legend and the hover read-out carry identity instead. */}
+          {(ends.length <= DIRECT_LABELS ? ends : []).map((e) => (
             <g key={`e${e.series.key}`}>
               {/* The ring is the surface colour, so crossing traces stay legible. */}
               <circle cx={e.x} cy={e.y} r={3.5} fill={e.series.color} stroke={SURFACE} strokeWidth={1.5} />
               <text x={e.x + 9} y={e.label} fill={e.series.color} fontSize={12} fontWeight={600}>
-                {e.series.label}
+                {e.series.tag ?? e.series.label}
               </text>
             </g>
           ))}

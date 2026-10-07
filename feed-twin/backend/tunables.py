@@ -799,6 +799,20 @@ TUNABLES: tuple[Tunable, ...] = (
         kind="flag",
     ),
     Tunable(
+        "regulator_supply_datum",
+        "regulator_supply_datum",
+        "Supply effect from the COPV charge",
+        "",
+        GROUPS[6],
+        "A regulator whose drawing gives a supply coefficient but no inlet reference "
+        "(the LE4 drawings: 14.7 psi per 1000 psi, no datum) is taken as set against a "
+        "charged bottle, so its outlet climbs from the COPV target as the bottle falls -- "
+        "~35-55 psi over a burn. Off, that regulator has no supply effect at all. Assumed "
+        "(the knob is set with the COPV full); put the inlet reference on the drawing and "
+        "the drawing's wins.",
+        kind="flag",
+    ),
+    Tunable(
         "max_mass_step",
         "max_mass_step",
         "Coupling: mass rule",

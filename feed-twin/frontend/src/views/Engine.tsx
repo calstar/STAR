@@ -18,6 +18,7 @@ import {
   getFreshness,
   hasCard,
   refreshArtifact,
+  tankColor,
   type Burn,
   type EngineCardInfo,
   type Freshness,
@@ -33,6 +34,7 @@ const SOFT = 0.2;
 /** Engine channels plotted per panel, never two units on one axis. */
 const PANELS: { unit: string; label: string; minSpan: number }[] = [
   { unit: 'N', label: 'Thrust (N)', minSpan: 100 },
+  { unit: 'psig', label: 'Chamber (psig)', minSpan: 20 },
   { unit: 'O/F', label: 'O/F', minSpan: 0.5 },
   { unit: 'kg/s', label: 'Mass flow (kg/s)', minSpan: 0.5 },
 ];
@@ -81,7 +83,7 @@ export function Engine() {
         </div>
       )}
 
-      {last && history && <BurnPlots burn={last} />}
+      {last && <BurnPlots burn={last} />}
 
       {list.length > 1 && <EarlierBurns burns={list} />}
 
@@ -249,6 +251,15 @@ function BurnPanel({ burn }: { burn: Burn }) {
         <span className="font-normal normal-case tracking-normal text-gray-600">
           T+{fixed(burn.start_s, 2)} to {fixed(burn.end_s, 2)} s on the stand clock
         </span>
+        {burn.run_id ? (
+          <Link
+            to={`/runs?run=${encodeURIComponent(burn.run_id)}`}
+            className="ml-auto font-normal normal-case tracking-normal text-blue-400 hover:underline"
+            title="Kept with everything it ran on. Compare it with another burn there."
+          >
+            Recorded · open in Runs
+          </Link>
+        ) : null}
       </h2>
       <div className="flex flex-wrap gap-4 px-4 py-3">
         <Tile label="Impulse" value={burn.impulse_Ns} unit="N·s" places={0} />
@@ -299,39 +310,76 @@ function BurnPanel({ burn }: { burn: Burn }) {
   );
 }
 
+interface Panel {
+  label: string;
+  minSpan: number;
+  channels: Channel[];
+}
+
+/** The recorded traces, from ignition: thrust; chamber and tanks on one psig
+ *  axis, so a tank that climbs or sags reads against the chamber it feeds;
+ *  O/F. */
+function seriesPanels(burn: Burn): { times: number[]; panels: Panel[] } | null {
+  const s = burn.series;
+  if (!s || s.t.length < 2) return null;
+  const tanks = Object.entries(s.tanks).map(([id, values]): Channel => ({
+    key: `tank.${id}`,
+    tag: s.labels[id] ?? id,
+    values,
+    color: tankColor(s.labels[id] ?? id),
+  }));
+  return {
+    times: s.t,
+    panels: [
+      { label: 'Thrust (N)', minSpan: 100, channels: [{ key: 'thrust', tag: 'Thrust', values: s.thrust_N, color: channelColor('Thrust') }] },
+      {
+        label: 'Pressure (psig)',
+        minSpan: 20,
+        channels: [{ key: 'pc', tag: 'PC', values: s.pc_psig, color: channelColor('PC') }, ...tanks],
+      },
+      { label: 'O/F', minSpan: 0.5, channels: [{ key: 'of', tag: 'O/F', values: s.of, color: channelColor('O/F') }] },
+    ],
+  };
+}
+
 function BurnPlots({ burn }: { burn: Burn }) {
   const { history } = useStand();
-  const window = useMemo(() => {
+  const live = useMemo(() => {
     if (!history) return null;
     const from = burn.start_s - 0.5;
     const to = burn.end_s + 0.5;
     const idx = history.times_s.map((t, i) => (t >= from && t <= to ? i : -1)).filter((i) => i >= 0);
     if (idx.length < 2) return null;
+    const channels = history.channels.filter((c) => c.id.startsWith('engine.'));
     return {
-      times: idx.map((i) => history.times_s[i]),
-      channels: history.channels.filter((c) => c.id.startsWith('engine.')),
-      idx,
-    };
-  }, [history, burn.start_s, burn.end_s]);
-  if (!window) return null;
-  return (
-    <div className="grid gap-3 lg:grid-cols-3">
-      {PANELS.map((panel) => {
-        const shown = window.channels
+      times: idx.map((i) => history.times_s[i] - burn.start_s),
+      panels: PANELS.map((panel): Panel => ({
+        label: panel.label,
+        minSpan: panel.minSpan,
+        channels: channels
           .filter((c) => c.unit === panel.unit)
           .map((c): Channel => ({
             key: c.id,
             tag: c.tag,
-            values: window.idx.map((i) => c.values[i]),
+            values: idx.map((i) => c.values[i]),
             color: channelColor(c.tag),
-          }));
-        if (!shown.length) return null;
-        return (
-          <div key={panel.unit} className="bg-card h-[240px] rounded-lg border border-gray-800 p-3">
-            <DaqPlot times={window.times} channels={shown} yLabel={panel.label} minSpan={panel.minSpan} fill />
+          })),
+      })),
+    };
+  }, [history, burn.start_s, burn.end_s]);
+  // Recorded: the run's own traces, which outlive the session's history.
+  // Burning: the history, live.
+  const shown = useMemo(() => seriesPanels(burn), [burn]) ?? live;
+  if (!shown) return null;
+  return (
+    <div className="grid gap-3 lg:grid-cols-3">
+      {shown.panels.map((panel) =>
+        panel.channels.length ? (
+          <div key={panel.label} className="bg-card h-[240px] rounded-lg border border-gray-800 p-3">
+            <DaqPlot times={shown.times} channels={panel.channels} yLabel={panel.label} minSpan={panel.minSpan} fill />
           </div>
-        );
-      })}
+        ) : null,
+      )}
     </div>
   );
 }
@@ -345,7 +393,7 @@ function EarlierBurns({ burns }: { burns: Burn[] }) {
       <table className="w-full text-[12.5px]">
         <thead className="text-text-muted">
           <tr>
-            {['Start (s)', 'Burn (s)', 'Impulse (N·s)', 'Thrust (N)', 'Chamber (psig)', 'O/F', 'Isp (s)'].map((h) => (
+            {['Start (s)', 'Burn (s)', 'Impulse (N·s)', 'Thrust (N)', 'Chamber (psig)', 'O/F', 'Isp (s)', ''].map((h) => (
               <th key={h} className="px-4 py-1.5 text-right font-semibold first:text-left">{h}</th>
             ))}
           </tr>
@@ -360,6 +408,13 @@ function EarlierBurns({ burns }: { burns: Burn[] }) {
               <td className="px-4 py-1 text-right">{fixed(b.pc_mean_psi, 0)}</td>
               <td className="px-4 py-1 text-right">{fixed(b.of_mean, 3)}</td>
               <td className="px-4 py-1 text-right">{fixed(b.isp_s, 1)}</td>
+              <td className="px-4 py-1 text-right font-sans">
+                {b.run_id ? (
+                  <Link to={`/runs?run=${encodeURIComponent(b.run_id)}`} className="text-blue-400 hover:underline">
+                    run
+                  </Link>
+                ) : null}
+              </td>
             </tr>
           ))}
         </tbody>

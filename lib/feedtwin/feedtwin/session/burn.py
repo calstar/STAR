@@ -57,6 +57,9 @@ def burn_setup(**changes: Any) -> Setup:
         # at. A study case asks for line walls itself.
         "line_walls": False,
         "regulator_lockup_supply": False,
+        # A drawing with no supply datum keeps its supply term at zero, as the
+        # benchmark was stated (the study drawings give theirs anyway).
+        "regulator_supply_datum": False,
         # The ullage against its dry wall only (2026-10-06): on in the library
         # and the cockpit, off here for the same reason as line walls.
         "ullage_wall_by_level": False,

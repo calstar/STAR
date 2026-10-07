@@ -87,7 +87,24 @@ export interface Burn {
   steps: number;
   tanks: BurnTank[];
   engine_model: string;
+  /** The run this burn was recorded as, once it ended. */
+  run_id?: string;
+  /** The recorded traces, from ignition: they outlive the session's history. */
+  series?: BurnSeries | null;
 }
+
+export interface BurnSeries {
+  t: number[];
+  thrust_N: number[];
+  pc_psig: number[];
+  of: number[];
+  tanks: Record<string, number[]>;
+  labels: Record<string, string>;
+}
+
+/** A tank's trace colour, by what it holds. */
+export const tankColor = (label: string) =>
+  /lox|ox/i.test(label) ? '#38BDF8' : /fu|eth|fuel/i.test(label) ? '#FF4500' : '#ADFF2F';
 
 export interface Burns {
   engine_id: string;
@@ -341,78 +358,82 @@ export interface SessionState {
   replaying: boolean;
 }
 
-/** One burn from the COPV study, as the backend samples it. */
-export interface StudyTrace {
-  key: string;
-  gas: string;
+/** One study case as the view writes it: the stand, with these changes.
+ *  Anything left out is the stand's own. */
+export interface StudyCaseIn {
   label: string;
-  litres: number;
-  collapse: boolean;
+  /** Bottle at T-0 [psig]; also the charge the regulators are set against. */
+  copv_psi?: number | null;
+  /** Knob id -> setting [psig]. */
+  knobs?: Record<string, number>;
+  bottle_litres?: number | null;
+  /** Liquid over tank volume at T-0, 0..1. */
+  fill_fraction?: number | null;
+  pressurant?: 'helium' | 'nitrogen' | null;
+  /** Configuration rows, by key. */
+  setup?: Record<string, number | boolean>;
+  /** The swept quantity's value for this case. */
+  x?: number | null;
+}
+
+/** One finished case. Pressures are gauge; `t` is from Fire. */
+export interface StudyCaseOut {
+  label: string;
+  x: number | null;
+  changes: string[];
+  t0: {
+    copv_psi?: number;
+    tank_psi?: number;
+    lockup_psi?: Record<string, number>;
+    fill_fraction?: number;
+    bottle_litres?: number | null;
+  };
   t: number[];
-  ox_psi: number[];
-  fuel_psi: number[];
-  copv_psi: number[];
+  tanks: Record<string, number[]>;
+  bottles: Record<string, number[]>;
   chamber_psi: number[];
   thrust_n: number[];
   converged: boolean[];
+  /** The burn totalled as the Engine tab totals one. */
+  outcome: Partial<Burn>;
   depleted_s: number | null;
+  tripped: string;
   failed_ticks: number;
-}
-
-export interface StudySweepPoint {
-  gas: string;
-  litres: number;
-  cubic_inches: number;
-  floor_psi: number;
-  burn_s: number | null;
-  failed_ticks: number;
+  notes: string[];
+  error: string;
 }
 
 export interface StudyState {
   running: boolean;
-  /** The engine the run fired: the cockpit's selection when it started. */
-  engine_id: string;
-  engine_name: string;
   progress: number;
   stage: string;
   error: string;
-  bottle_litres: number;
-  bottle_cubic_inches: number;
-  traces: StudyTrace[];
-  sweep: StudySweepPoint[];
+  /** What it ran on: the stand's name, or the drawing's. */
+  stand: string;
+  engine_name: string;
+  /** What the cases' x is, when they are a sweep. */
+  sweep: string;
+  horizon_s: number;
+  planned: number;
+  cases: StudyCaseOut[];
   notes: string[];
-  gases: string[];
-  bigger: boolean;
-  collapse: boolean;
-  vapour: boolean;
-  chilldown: number;
-  line_walls: boolean;
-  swept: boolean;
 }
 
-export interface StudyOptions {
-  gases: string[];
-  bigger?: boolean;
-  collapse?: boolean;
-  sweep?: boolean;
-  vapour?: boolean;
-  /** Liquid-to-wall conductance [W/(m^2.K)]. Zero disables chilldown. */
-  chilldown?: number;
-  /** Heat the tube and its fittings give the gas passing through them. Needs
-   * `wall_thickness` and `fitting_mass` on the drawing to do anything. */
-  line_walls?: boolean;
-  /** The engine to fire: the one selected in the cockpit. Required. */
-  engine: string;
+export interface StudyRequestIn {
+  /** The cockpit session whose stand every case starts from. */
+  session: string;
+  cases: StudyCaseIn[];
+  horizon_s: number;
+  sweep?: string;
 }
 
-/** Where the COPV study has got to, and its last result. */
+/** Where the study has got to, and the cases it has finished. */
 export const getStudy = () => json<StudyState>('/api/study');
 
-/** Start a run. Minutes, not seconds — poll `getStudy` for progress. */
-export const startStudy = (options: StudyOptions) =>
-  post<StudyState>('/api/study', options);
+/** Start a run on the open stand. Poll `getStudy` for progress. */
+export const startStudy = (request: StudyRequestIn) => post<StudyState>('/api/study', request);
 
-/** Stop at the next case boundary, keeping whatever finished. */
+/** Stop after the case running now, keeping the ones finished. */
 export const cancelStudy = () => post<StudyState>('/api/study/cancel', {});
 
 export interface RunResult {

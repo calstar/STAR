@@ -86,10 +86,12 @@ very bugs they were written for.
   `insulation_thickness`/`insulation_conductivity`, wall boiling). The library's
   `Setup` carries those same on-values; only the vessel-level `Tank` constructor
   defaults them off (collapse aside, which defaults to `ConductionCollapse`), and the
-  Study and Layer X turn them off themselves -- `burn_setup` drops stratification,
+  benchmark study and Layer X turn them off themselves -- `burn_setup` drops stratification,
   boiling onset and nucleate boiling, and each caller passes collapse, vapour and
-  chilldown off unless a case asks for one (the Study's collapse case;
-  `backend/study.py`, `engine/layerx/prepare.py`). A shut LOX tank
+  chilldown off unless a case asks for one (the benchmark's collapse case;
+  `backend/benchmark_study.py`, `engine/layerx/prepare.py`). The Study tab
+  (`backend/study.py`) is not the benchmark: it burns the open stand at the
+  cockpit's own settings, case by case. A shut LOX tank
   climbs at tens of psi a minute because its *surface* warms, not because the leak
   boils; a warm one runs away; the pad guide waits for chilldown. The shipped LOX tank
   wears an inch of fiberglass (operator). See `docs/PHYSICS-BENCHMARK.md` 3.8 and 3.11.
@@ -131,7 +133,7 @@ very bugs they were written for.
   of tank pressure late in a nitrogen burn. **On by default** in the library `Setup`,
   the cockpit and Layer X since 2026-10-03 (the team: fitting heat is on), as is
   `regulator_lockup_supply` (the regulator's supply-pressure effect at lockup);
-  `burn_setup` pins both off so the Study is the scheme the benchmark was stated at.
+  `burn_setup` pins both off so the benchmark study is the scheme it was stated at.
   What is *not* modelled, on purpose, is
   soak: no heat transfer without flow, and no clock on how long a stand has sat. A
   wall starts at the temperature of the fluid its line holds at rest, which is where a
