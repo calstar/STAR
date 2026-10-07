@@ -16,9 +16,11 @@ export const dynamic = "force-dynamic";
 export default async function TasksPage({
   searchParams,
 }: {
-  searchParams: Promise<{ subteam?: string; mine?: string }>;
+  searchParams: Promise<{ subteam?: string; mine?: string; project?: string }>;
 }) {
-  const { subteam, mine } = await searchParams;
+  // `project` may list several ids (comma-separated) — the homepage links a
+  // subteam's card to its tasks across every project on that card.
+  const { subteam, mine, project } = await searchParams;
 
   const [raw, tree, subteams, me, users] = await Promise.all([
     prisma.task.findMany({
@@ -76,6 +78,7 @@ export default async function TasksPage({
           admin={await isAdmin(me.email)}
           currentUserId={me.id}
           initialSubteam={subteam}
+          initialProjects={project?.split(",").filter(Boolean)}
           initialMine={mine === "1"}
         />
       </div>

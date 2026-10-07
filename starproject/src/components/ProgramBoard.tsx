@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
@@ -71,6 +72,10 @@ function cardLabel(p: Program, card: string | null): string {
 }
 
 const utcDate = (iso: string) => new Date(`${iso}T00:00:00Z`);
+
+/** The Tasks page, filtered to one subteam in the given projects. */
+const tasksHref = (subteamId: string, projectIds: string[]) =>
+  `/tasks?subteam=${subteamId}&project=${projectIds.join(",")}`;
 
 // ── Small pieces ────────────────────────────────────────────────────────────
 
@@ -283,9 +288,12 @@ function SystemRows({
               >
                 {p.depth > top && <span className="text-neutral-300 dark:text-neutral-600">↳</span>}
                 <Dot color={p.color} />
-                <span className={`truncate font-medium ${p.depth > top ? "text-xs" : "text-sm"}`}>
+                <Link
+                  href={`/projects/${p.id}`}
+                  className={`truncate font-medium ${p.depth > top ? "text-xs" : "text-sm"}`}
+                >
                   {shortName(p.name, group)}
-                </span>
+                </Link>
               </span>
               <div className="col-span-2 row-start-2 text-neutral-900 sm:col-span-1 sm:row-start-auto dark:text-neutral-100">
                 <SegmentedLine segments={projectSegments(p)} current={p.phase} labels={false} />
@@ -574,6 +582,19 @@ function PhaseRow({
   thin: boolean;
   editing: boolean;
 }) {
+  // Outside edit mode the row opens this subteam's tasks in this project; it
+  // sits above the card's own link (which covers all its projects).
+  const Wrap = ({ children }: { children: React.ReactNode }) =>
+    editing ? (
+      <>{children}</>
+    ) : (
+      <Link
+        href={tasksHref(entry.status.id, [entry.program.id])}
+        className="relative z-10 block"
+      >
+        {children}
+      </Link>
+    );
   const { run, pending, error } = useAction();
   const { program, status } = entry;
   const n = program.phases.length;
@@ -586,6 +607,7 @@ function PhaseRow({
 
   return (
     <div className={pending ? "opacity-60" : ""}>
+      <Wrap>
       <div className="flex items-center justify-between gap-2 text-xs">
         <span className="min-w-0 truncate text-neutral-500 dark:text-neutral-400">{label}</span>
         {editing ? (
@@ -620,6 +642,7 @@ function PhaseRow({
           onPick={editing ? set : undefined}
         />
       </div>
+      </Wrap>
       {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
     </div>
   );
@@ -631,12 +654,15 @@ function SubteamCard({
   editing,
   isAdmin,
   today,
+  projectIds,
 }: {
   subteam: SubteamRollup;
   group: string | null;
   editing: boolean;
   isAdmin: boolean;
   today: string;
+  /** Every project on the program card, for the "all of this subteam" link. */
+  projectIds: string[];
 }) {
   const { run, pending } = useAction();
   const multi = subteam.entries.length > 1;
@@ -656,7 +682,20 @@ function SubteamCard({
   const open = subteam.entries.reduce((n, e) => n + e.status.openTasks, 0);
 
   return (
-    <div className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
+    <div
+      className={`relative rounded-lg border border-neutral-200 p-4 dark:border-neutral-800 ${
+        editing ? "" : "transition-colors hover:bg-neutral-50 dark:hover:bg-neutral-800/50"
+      }`}
+    >
+      {/* Clicking anywhere else on the card opens this subteam's tasks across
+          the whole program; the rows, task and milestone link sit above it. */}
+      {!editing && (
+        <Link
+          href={tasksHref(subteam.id, projectIds)}
+          aria-label={`${subteam.name} tasks`}
+          className="absolute inset-0 rounded-lg"
+        />
+      )}
       {/* On a card with subprojects the subteam's name heads one row per
           system; on a single project the one row carries the name itself. */}
       {named && (
@@ -692,7 +731,7 @@ function SubteamCard({
           <dd className="flex min-w-0 flex-1 items-center justify-between gap-2">
             {next ? (
               <>
-                <MilestoneName m={next} className="truncate" />
+                <MilestoneName m={next} className="relative z-10 truncate" />
                 <MilestoneDate m={next} today={today} />
               </>
             ) : (
@@ -707,7 +746,7 @@ function SubteamCard({
               <TaskLink
                 projectId={big.projectId}
                 taskId={big.id}
-                className="-mx-1 block w-[calc(100%+0.5rem)] rounded px-1 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                className="relative z-10 -mx-1 block w-[calc(100%+0.5rem)] rounded px-1 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800"
               >
                 <span className="block truncate font-medium text-neutral-900 dark:text-neutral-100">
                   <span className="font-normal text-neutral-400">#{big.number}</span> {big.title}
@@ -739,7 +778,7 @@ function SubteamCard({
             <button
               key={e.program.id}
               type="button"
-              className={ghostBtn}
+              className={`${ghostBtn} relative z-10`}
               disabled={pending}
               onClick={() => run(() => untrackSubteam(e.program.id, subteam.id))}
             >
@@ -869,7 +908,15 @@ function ProgramCard({
         ) : (
           <div className="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {subteams.map((s) => (
-              <SubteamCard key={s.id} subteam={s} group={group} editing={editing} isAdmin={isAdmin} today={today} />
+              <SubteamCard
+                key={s.id}
+                subteam={s}
+                group={group}
+                editing={editing}
+                isAdmin={isAdmin}
+                today={today}
+                projectIds={[root.id, ...systems.filter((p) => p.id !== root.id).map((p) => p.id)]}
+              />
             ))}
           </div>
         )}

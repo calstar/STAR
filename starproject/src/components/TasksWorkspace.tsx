@@ -95,6 +95,7 @@ export function TasksWorkspace({
   admin,
   currentUserId,
   initialSubteam,
+  initialProjects,
   initialMine = false,
 }: {
   tasks: WorkspaceTask[];
@@ -104,6 +105,7 @@ export function TasksWorkspace({
   admin: boolean;
   currentUserId: string;
   initialSubteam?: string;
+  initialProjects?: string[];
   initialMine?: boolean;
 }) {
   const [view, setView] = useState<View>("table");
@@ -112,7 +114,7 @@ export function TasksWorkspace({
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [myOnly, setMyOnly] = useState(initialMine);
-  const [projSel, setProjSel] = useState<Set<string>>(new Set());
+  const [projSel, setProjSel] = useState<Set<string>>(new Set(initialProjects ?? []));
   const [subSel, setSubSel] = useState<Set<string>>(
     initialSubteam ? new Set([initialSubteam]) : new Set(),
   );
