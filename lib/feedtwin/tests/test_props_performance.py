@@ -24,6 +24,12 @@ import pytest
 
 from feedtwin.props import Fluid
 
+#: Microsecond budgets mean nothing with every core busy: a parallel run
+#: (``pytest -n``) skips this file, and CI and scripts/check.sh time it alone.
+pytestmark = pytest.mark.skipif(
+    "PYTEST_XDIST_WORKER" in os.environ, reason="timed on its own, not in parallel"
+)
+
 # Two kinds of assertion below, and the distinction matters more than either
 # number.
 #

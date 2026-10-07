@@ -191,6 +191,9 @@ export interface Scale {
 
 export type PressureKind = 'abs' | 'gauge';
 
+/** Layer X shows absolute pressure only (see scaleFor). One switch, so it is a decision, not a habit. */
+export const ABSOLUTE_ONLY = true;
+
 export interface ScaleOptions {
   /** Pressure only: absolute or gauge. Default absolute. */
   pressure?: PressureKind;
@@ -211,7 +214,10 @@ export function scaleFor(sys: UnitSystem, kind: QuantityKind, opts: ScaleOptions
   const imperialLen = sys.length === 'in';
   switch (kind) {
     case 'pressure': {
-      const gauge = opts.pressure === 'gauge';
+      // Every pressure Layer X shows is absolute (2026-10-07, the team: "everything should be psia").
+      // A call that still asks for gauge -- the bottle, a transducer's reading -- gets psia too, so
+      // tank, dome and bottle are on one scale and nothing on the page mixes the two.
+      const gauge = ABSOLUTE_ONLY ? false : opts.pressure === 'gauge';
       const zero = gauge ? (opts.gaugeZeroPsia ?? defaultGaugeZero) : 0;
       return sys.pressure === 'bar'
         ? linear(kind, gauge ? 'bar(g)' : 'bar(a)', 1 / PSI_PER_BAR, zero)

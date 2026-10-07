@@ -16,6 +16,10 @@ from pathlib import Path
 
 import pytest
 
+
+#: The study drawings' lockup these tests were written at [psia] (scripts/layerx_baseline.py).
+STUDY_LOCKUP_PSIA = 564.7
+
 pytest.importorskip("feedtwin", reason="lib/feedtwin is not installed")
 
 from engine.layerx import DrawingStore, LayerXSettings, prepare, run_prepared  # noqa: E402
@@ -46,7 +50,7 @@ def drawing():
 def burned(config, drawing):
     # No replay: the twin's engine is the card at the as-built throat, the same engine EngineDesign's
     # forward solve runs, so what is left between them is the feed.
-    prep = prepare(config, None, drawing, LayerXSettings(drawing_id=drawing.id, ack_gn2_condensation=True, replay=False))
+    prep = prepare(config, None, drawing, LayerXSettings(drawing_id=drawing.id, tank_pressure_psia=STUDY_LOCKUP_PSIA, ack_gn2_condensation=True, replay=False))
     return run_prepared(prep, replay=False, config=config)
 
 
@@ -107,6 +111,6 @@ def test_writing_the_fit_does_not_move_layer_x(burned, config, drawing):
     """Layer X burns through the drawing's lines and samples EngineDesign with its feed zeroed, so
     the design's K0 is not in its burn: written in, the burn is the same burn."""
     upd = design_update(burned["feed_fit"], run_id="t")
-    prep = prepare(_with(config, upd), None, drawing, LayerXSettings(drawing_id=drawing.id, ack_gn2_condensation=True, replay=False))
+    prep = prepare(_with(config, upd), None, drawing, LayerXSettings(drawing_id=drawing.id, tank_pressure_psia=STUDY_LOCKUP_PSIA, ack_gn2_condensation=True, replay=False))
     again = run_prepared(prep, replay=False)
     assert again["summary"]["total_impulse_Ns"] == pytest.approx(burned["summary"]["total_impulse_Ns"], rel=1e-9)

@@ -80,7 +80,8 @@ function viewOf(tool: Tool): MainView {
 
 /** The rail's own words for each setting, so the banner reads like the rail. */
 export const SETTING_LABEL: Partial<Record<keyof LayerXSettings, string>> = {
-  drawing_id: 'Drawing', tank_pressure_psia: 'Tank pressure', copv_pressure_psig: 'Bottle fill', load: 'Propellant load',
+  drawing_id: 'Drawing', tank_pressure_psia: 'Tank pressure', copv_pressure_psig: 'Bottle fill', copv_pressure_psia: 'Bottle fill',
+  dome_psia: 'Dome', dome_regulator: 'Dome regulator', load: 'Propellant load',
   fill_fraction: 'Fill fraction', dry_kg: 'Unusable propellant', engine_model: 'Engine', ullage_collapse: 'Ullage collapse',
   ullage_vapour: 'Propellant vapour', chilldown: 'Tank wall heat transfer', line_walls: 'Line-wall heat',
   hold_s: 'Loaded before T−0', dt: 'Time step', horizon_s: 'Max burn', settle: 'Settle', replay: 'Nozzle erosion',
@@ -91,7 +92,8 @@ export const SETTING_LABEL: Partial<Record<keyof LayerXSettings, string>> = {
 
 /** Each setting's value as the rail shows it, with its unit. */
 const SETTING_SHOW: Partial<Record<keyof LayerXSettings, (v: number) => string>> = {
-  tank_pressure_psia: (v) => `${fmt(v, 1)} psia`, copv_pressure_psig: (v) => `${fmt(v, 0)} psig`,
+  tank_pressure_psia: (v) => `${fmt(v, 1)} psia`, copv_pressure_psig: (v) => `${fmt(v + 101325 / 6894.757293168361, 0)} psia`,
+  copv_pressure_psia: (v) => `${fmt(v, 0)} psia`, dome_psia: (v) => `${fmt(v, 1)} psia`,
   fill_fraction: (v) => `${fmt(v * 100, 0)} %`, dry_kg: (v) => `${fmt(v, 3)} kg`, chilldown: (v) => `${fmt(v, 0)} W/m²·K`,
   hold_s: (v) => `${fmt(v, 0)} s`, dt: (v) => `${fmt(v * 1000, 0)} ms`, horizon_s: (v) => `${fmt(v, 0)} s`,
   liftoff_mass_kg: (v) => `${fmt(v / LB, 1)} lb`,
@@ -99,7 +101,8 @@ const SETTING_SHOW: Partial<Record<keyof LayerXSettings, (v: number) => string>>
 };
 /** "Not set" says where the value comes from. */
 const UNSET: Partial<Record<keyof LayerXSettings, string>> = {
-  tank_pressure_psia: 'the design', copv_pressure_psig: 'the drawing', liftoff_mass_kg: 'the design', pressurant: 'as drawn',
+  tank_pressure_psia: 'the dome', copv_pressure_psig: 'the drawing', copv_pressure_psia: 'the drawing', dome_psia: 'the drawing',
+  dome_regulator: 'the feed twin', liftoff_mass_kg: 'the design', pressurant: 'as drawn',
   ullage_collapse: 'the feed twin', ullage_vapour: 'the feed twin', line_walls: 'the feed twin', chilldown: 'the feed twin',
   fuel_lead_s: '0 s',
   ack_gn2_condensation: 'off',
@@ -145,7 +148,8 @@ export function sectionsChanged(s: Stored, restated: number): Record<RailSection
   const differs = (k: keyof typeof d) => JSON.stringify(s[k] ?? null) !== JSON.stringify(d[k] ?? null);
   return {
     drawing: restated > 0,
-    before: differs('tank_pressure_psia') || differs('copv_pressure_psig') || differs('pressurant'),
+    before: differs('tank_pressure_psia') || differs('copv_pressure_psig') || differs('copv_pressure_psia')
+      || differs('dome_psia') || differs('dome_regulator') || differs('pressurant'),
     simulate: differs('replay') || differs('flight') || (!!s.flight && differs('liftoff_mass_kg')),
     advanced: (['load', 'fill_fraction', 'dry_kg', 'ullage_collapse', 'ullage_vapour', 'line_walls', 'chilldown', 'dt', 'horizon_s', 'hold_s'] as const)
       .some((k) => k === 'fill_fraction' ? s.load === 'fill' && differs(k) : differs(k))
@@ -578,4 +582,12 @@ export function useLayerXJob({ config, isVisible }: { config: EngineConfig | nul
       w.document.close();
     },
   };
+}
+
+/** The bottle's fill at T-0 [psia] the rail shows: the rail's psia, else an older psig setting, else the drawing's. */
+export function bottleFillPsia(s: Partial<LayerXSettings>, derived?: Record<string, unknown> | null): number | null {
+  if (typeof s.copv_pressure_psia === 'number') return s.copv_pressure_psia;
+  if (typeof s.copv_pressure_psig === 'number') return s.copv_pressure_psig + 101325 / 6894.757293168361;
+  const drawn = derived?.copv_drawn_psia;
+  return typeof drawn === 'number' ? drawn : null;
 }

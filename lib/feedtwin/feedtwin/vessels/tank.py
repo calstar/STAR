@@ -268,6 +268,12 @@ class Tank:
         # root solve on the geometry; an exact key keeps it bit-identical.
         self._level_memo: tuple[float, float] = (-1.0, 0.0)
         self._critical: tuple[float, float] | None = None
+        # Same idea for the properties a step reads over and over: the liquid
+        # density by the exact temperature it was asked at, and the ullage's
+        # properties by the state they were read off. A TankState is frozen, so
+        # holding it as the key is exact; this only skips asking again.
+        self._density_memo: tuple[float, float] = (-1.0, 0.0)
+        self._ullage_memo: tuple[TankState | None, dict[str, float]] = (None, {})
 
     # --------------------------------------------------------------- geometry
 
@@ -328,9 +334,19 @@ class Tank:
         spuriously. Either way, continuing would report a pressure from a state
         this model does not represent.
         """
+        known, values = self._ullage_memo
+        if known is state:
+            cached = values.get(prop)
+            if cached is not None:
+                return cached
+        else:
+            values = {}
+            self._ullage_memo = (state, values)
         rho = state.ullage.mass / self.ullage_volume(state)
         try:
-            return self.gas.get(prop, rho=rho, u=state.ullage.specific_energy())
+            value = self.gas.get(prop, rho=rho, u=state.ullage.specific_energy())
+            values[prop] = value
+            return value
         except (ValueError, PropertyError) as exc:
             raise UllageCondensed(
                 f"{self.gas.name} ullage at {rho:.4g} kg/m^3 and "
@@ -427,7 +443,13 @@ class Tank:
         pressure the liquid is not actually at risks landing outside a tabular
         backend's envelope for no gain.
         """
-        return self.liquid.get("rho", T=state.liquid_temperature, q=0.0)
+        T = state.liquid_temperature
+        memo = self._density_memo
+        if memo[0] == T:
+            return memo[1]
+        rho = self.liquid.get("rho", T=T, q=0.0)
+        self._density_memo = (T, rho)
+        return rho
 
     def liquid_thermal(self, state: TankState) -> LiquidThermal:
         T = state.liquid_temperature

@@ -33,7 +33,9 @@ from feedtwin.session.core import PAD_HOLD_S, Sample, Session, Setup
 from feedtwin.session.gauge import PSI, from_psig, psig
 from feedtwin.session.model import Model
 from feedtwin.session.network_trace import NetworkTrace
-from feedtwin.session.statemachine import StateMachine, bind
+from feedtwin.session.hookup import Hookup
+from feedtwin.session.hookup import binding as hookup_binding
+from feedtwin.session.statemachine import StateMachine
 
 #: Called after every step of a burn with ``(clock, sample, firing)``. The
 #: session itself is live at that moment, so a recorder may read it directly.
@@ -56,10 +58,6 @@ def burn_setup(**changes: Any) -> Setup:
         # benchmark (docs/PHYSICS-BENCHMARK.md 2.x) is the scheme it was stated
         # at. A study case asks for line walls itself.
         "line_walls": False,
-        "regulator_lockup_supply": False,
-        # A drawing with no supply datum keeps its supply term at zero, as the
-        # benchmark was stated (the study drawings give theirs anyway).
-        "regulator_supply_datum": False,
         # The ullage against its dry wall only (2026-10-06): on in the library
         # and the cockpit, off here for the same reason as line walls.
         "ullage_wall_by_level": False,
@@ -78,7 +76,11 @@ OPENED = "session_opened"
 
 
 def open_session(
-    model: Model, machine: StateMachine, *, setup: Setup | None = None
+    model: Model,
+    machine: StateMachine,
+    *,
+    setup: Setup | None = None,
+    hookup: Hookup | None = None,
 ) -> Session:
     """A session on ``model``, its valves bound to ``machine`` by label.
 
@@ -97,14 +99,14 @@ def open_session(
         )
     if isinstance(model.meta, dict):
         model.meta[OPENED] = True
-    labels = {
-        n.id: n.label for n in model.diagram.nodes if n.id in model.built.actuators
-    }
+    # The cockpit's own binding (names, the plumbing, the hookup's pins): one
+    # rule for both, so a stand binds the same wherever it is run.
     return Session(
         model,
         machine,
-        bind(machine, labels, roles=model.built.valve_roles),
+        hookup_binding(model, machine, hookup),
         setup=setup,
+        hookup=hookup,
     )
 
 
@@ -118,8 +120,10 @@ class BurnPlan:
     """
 
     tank_psi: float = 550.0
-    """Tank pressure at prime [psig]. The settle then takes it to lockup, which
-    the regulator decides -- this is where it starts, not where it ends."""
+    """Tank pressure at prime [psig] when no regulator feeds the tanks. Where one
+    does, the tanks are primed and settled at the lockup it gives off the
+    charged bottle (:func:`regulator_lockup`): dome + bias - S x bottle, which
+    a fixed number here would miss by the supply effect."""
     copv_psi: float = 4500.0
     """Bottle at T-0 [psig]."""
     fill_fraction: float = 0.95
@@ -194,18 +198,36 @@ def prime_at_t0(session: Session, plan: BurnPlan) -> bool:
     if plan.bottle_litres is not None:
         for bottle in session.bottles.values():
             bottle.volume.volume = plan.bottle_litres / 1e3
-    session.prime(
-        fill_fraction=plan.fill_fraction,
-        tank_psi=plan.tank_psi,
-        copv_psi=plan.copv_psi,
-        state=plan.ready_state,
-        hold_s=plan.hold_s,
-        loads=plan.loads,
-    )
+
+    def prime(tank_psi: float) -> None:
+        session.prime(
+            fill_fraction=plan.fill_fraction,
+            tank_psi=tank_psi,
+            copv_psi=plan.copv_psi,
+            state=plan.ready_state,
+            hold_s=plan.hold_s,
+            loads=plan.loads,
+        )
+
+    # Charge the bottle first: the regulator's lockup reads it. Then put the
+    # tanks at that lockup, unless the plan names one. A caller that already
+    # solved its dome for ``tank_psi`` (Layer X) lands within a hair of it and
+    # keeps its own number.
+    prime(plan.tank_psi)
+    tank_psi = plan.tank_psi
+    if plan.lockup_psi is None:
+        lockups = [
+            lockup
+            for tank_id in session.vehicle_tanks
+            if (lockup := regulator_lockup(session, tank_id)) is not None
+        ]
+        if lockups and abs(psig(min(lockups)) - plan.tank_psi) > 0.05:
+            tank_psi = psig(min(lockups))
+            prime(tank_psi)
     if not plan.settle:
         return True
 
-    lockup = plan.tank_psi if plan.lockup_psi is None else plan.lockup_psi
+    lockup = tank_psi if plan.lockup_psi is None else plan.lockup_psi
     for symbol in press_valves(session):
         session.set_valve(symbol, True)
     target = from_psig(lockup)
@@ -225,14 +247,16 @@ def prime_at_t0(session: Session, plan: BurnPlan) -> bool:
             return False
         within = all(
             abs(sim.pressure - target) < plan.settle_band_psi * PSI
-            for sim in session.tanks.values()
+            for sim in (session.tanks[t] for t in session.vehicle_tanks)
         )
         steady = steady + 1 if within else 0
         if steady >= plan.settle_steps and elapsed >= plan.settle_min_s:
             break
     session.release()
     if steady < plan.settle_steps:
-        worst = max(abs(psig(sim.pressure) - lockup) for sim in session.tanks.values())
+        worst = max(
+            abs(psig(session.tanks[t].pressure) - lockup) for t in session.vehicle_tanks
+        )
         session.assumptions.append(
             f"T-0 not settled: after {plan.settle_max_s:.0f} s a tank is "
             f"{worst:.1f} psi from lockup; the burn starts off its datum."
@@ -284,7 +308,11 @@ def regulator_lockup(session: Session, tank_id: str) -> float | None:
         frontier = nxt
     if regulator is None:
         return None
-    bottles = [b.pressure for b in session.bottles.values()]
+    # The vehicle's bottle: a cart's K-bottle bank sits at 6,000 psi behind a
+    # shut valve, and the supply effect reads the bottle that feeds the
+    # regulator, not the fullest one on the stand.
+    ground = session.ground
+    bottles = [b.pressure for k, b in session.bottles.items() if k not in ground]
     if not bottles:
         return None
     component = regulator.component
@@ -313,6 +341,7 @@ def jump_to_t0(
     hold_s: float = PAD_HOLD_S,
     ready_state: str = "Ready",
     fallback_psi: float = 550.0,
+    loads: Mapping[str, float] | None = None,
 ) -> T0:
     """The cockpit's shortcut past the pad: loaded, charged, pressed, in Ready.
 
@@ -329,8 +358,38 @@ def jump_to_t0(
     which is the point; fly it from Idle for the transients it carries.
     Tanks fed by regulators that lock up at different pressures are primed at
     the lowest of them and the note says so.
+
+    The tanks hold what a fire is loaded with: ``loads`` [kg] per tank, or the
+    engine's fire load (:meth:`Session.fire_loads`) -- never a fraction of the
+    tank drawn, which on LE4 (6) is a third more LOX than the vehicle carries.
+    ``fill_fraction`` is for a tank neither names.
     """
     notes: list[str] = []
+    if loads is None:
+        loads = session.fire_loads()
+    loads = dict(loads)
+    for tank_id, kg in list(loads.items()):
+        sim = session.tanks[tank_id]
+        full = (
+            sim.tank.geometry.total_volume
+            * fill_fraction
+            * sim.tank.liquid_density(sim.state)
+        )
+        if kg > full:
+            loads[tank_id] = full
+            notes.append(
+                f"{sim.label}: the {kg:.3f} kg fire load does not fit its "
+                f"{sim.tank.geometry.total_volume * 1e3:.2f} L; loaded to "
+                f"{fill_fraction:.0%}, {full:.3f} kg."
+            )
+    if loads:
+        notes.append(
+            "Loaded for a fire: "
+            + ", ".join(
+                f"{session.tanks[k].label} {v:.3f} kg" for k, v in sorted(loads.items())
+            )
+            + "."
+        )
     ready = ready_state if ready_state in session.machine.states else session.state
     # Charge the bottle first: the supply-pressure effect reads it.
     session.prime(
@@ -339,10 +398,11 @@ def jump_to_t0(
         copv_psi=copv_psi,
         state=ready,
         hold_s=hold_s,
+        loads=loads,
     )
     lockups = {
         tank_id: lockup
-        for tank_id in session.tanks
+        for tank_id in session.vehicle_tanks
         if (lockup := regulator_lockup(session, tank_id)) is not None
     }
     tank_psi = fallback_psi
@@ -360,14 +420,15 @@ def jump_to_t0(
             copv_psi=copv_psi,
             state=ready,
             hold_s=hold_s,
+            loads=loads,
         )
     else:
         notes.append(
             f"No regulator feeds the tanks; primed at {fallback_psi:.0f} psig."
         )
-    for tank_id, sim in session.tanks.items():
+    for tank_id in session.vehicle_tanks:
         if lockups and tank_id not in lockups:
-            notes.append(f"{sim.label}: no regulator upstream.")
+            notes.append(f"{session.tanks[tank_id].label}: no regulator upstream.")
     return T0(
         lockup_psi={k: round(psig(v), 1) for k, v in lockups.items()},
         tank_psi=round(tank_psi, 1),
@@ -433,9 +494,11 @@ def burn(
     instead of ~24,000 on the LE4 audit's restated fuel tank (AUDIT.md 5.2).
     """
     started = time.perf_counter()
+    # The vehicle's tanks: a cart's transfer tank running low is not a burn
+    # ending.
     watched = [
         session.tanks[tank_id]
-        for tank_id in (plan.tanks or tuple(session.tanks))
+        for tank_id in (plan.tanks or session.vehicle_tanks)
         if tank_id in session.tanks
     ]
     steps = 0

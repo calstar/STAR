@@ -211,20 +211,14 @@ def test_commandable_valves_are_found() -> None:
     assert built.actuators == {"V1": "MAN-01.command"}
 
 
-def test_a_motorized_valve_is_a_commandable_valve_like_the_others() -> None:
-    """MOV: a valve with a motor where ROT has a pneumatic actuator."""
-    payload = minimal()
-    payload["nodes"][1]["data"]["componentType"] = "MOV"  # type: ignore[index]
-    built = build_network(read_diagram(payload, name="minimal"))
-    assert "V1" in built.network.branches
-    assert built.network.branches["e1"].downstream == "V1.in"
-    assert built.actuators == {"V1": "MAN-01.command"}
-
-
-def test_a_manual_valve_is_not_an_actuator() -> None:
-    """A hand valve is not something a scenario can command."""
+def test_a_manual_valve_is_turned_by_hand_never_by_the_table() -> None:
+    """A hand valve is not something a state machine can command: it is turned
+    on the P&ID, and the binding never offers it to an actuator. Plumbed both
+    sides or not, it rests shut until a hand opens it."""
     built = build_network(read_diagram(minimal(), name="minimal"))
-    assert built.actuators == {}
+    assert built.hand_valves == frozenset({"V1"})
+    assert built.rest["V1"] == 0.0
+    assert built.valve_roles.get("V1") is None
 
 
 # --------------------------------------------------- the real drawing

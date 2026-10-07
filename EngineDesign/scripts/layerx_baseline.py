@@ -67,6 +67,12 @@ DEFAULT_CONFIG = ROOT / "configs" / "ethalox_6800N.yaml"
 #: name -> drawing, flown, what it is. ``supplementary`` cases are not the baseline's three; they are
 #: run by ``--all`` (or by name) and say what they change. ``config_patch`` is applied to the run's
 #: private copy of the config only ({section: {field: value}}), never to a file.
+#: Tank lockup every case burns at [psia]: the study drawings' as-drawn dome gave it until the
+#: supply effect was measured from zero inlet (2026-10-07), which takes 17 x 4.5 = 76.5 psi off
+#: it at a full bottle. Pinned, so Layer X solves the dome for it and the baseline keeps meaning
+#: the same burn.
+STUDY_LOCKUP_PSIA = 564.7
+
 CASES: Dict[str, Dict[str, Any]] = {
     "he_pad": {"drawing": "copv_study_he", "flight": False,
                "label": "Helium hot-fire drawing, on the pad, erosion replay on"},
@@ -344,7 +350,8 @@ def run_case(name: str, *, config: Any = None, config_source: Any = None, dt: Op
     if config is None:
         config, info = load_engine_config(config_source)
     drawing = find_drawing(spec["drawing"])
-    kwargs: Dict[str, Any] = {"drawing_id": drawing.id, "flight": bool(spec["flight"]), **(spec.get("settings") or {})}
+    kwargs: Dict[str, Any] = {"drawing_id": drawing.id, "flight": bool(spec["flight"]),
+                              "tank_pressure_psia": STUDY_LOCKUP_PSIA, **(spec.get("settings") or {})}
     if dt is not None:
         kwargs["dt"] = float(dt)
     settings = LayerXSettings(**kwargs)

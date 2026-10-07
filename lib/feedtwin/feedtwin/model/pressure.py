@@ -41,7 +41,7 @@ ABSOLUTE = frozenset(
         "chamber_pressure",
         "setpoint",  # a regulator's outlet
         "dome_pressure",
-        "inlet_reference",  # the supply pressure a regulator's setpoint holds at
+        "inlet_reference",  # retired: the supply effect is measured from zero inlet
         "MAWP",
         "burst_pressure",
         "range_max",  # an instrument's full scale

@@ -133,6 +133,12 @@ SYMBOL_OF = {
 }
 
 
+#: Catalogued so an old drawing that carries them still loads, but read by
+#: nothing: the dialog must not offer them. ``inlet_reference`` -- the supply-
+#: pressure effect is measured from zero inlet (the team, 2026-10-07).
+RETIRED = {"inlet_reference"}
+
+
 @pytest.mark.parametrize("component", sorted(SYMBOL_OF))
 def test_every_catalogued_inline_param_is_reachable_in_the_ui(component: str) -> None:
     """The regulator is why this exists.
@@ -149,7 +155,7 @@ def test_every_catalogued_inline_param_is_reachable_in_the_ui(component: str) ->
     if not params:
         pytest.skip(f"no {component} in the catalogue")
     text = spec_text()
-    missing = sorted(p for p in params if f"'{p}'" not in text)
+    missing = sorted(p for p in params if f"'{p}'" not in text and p not in RETIRED)
     assert not missing, (
         f"{component} ({SYMBOL_OF[component]}): catalogued but unreachable from "
         f"the drawing tool: {', '.join(missing)}. Add them to COMPONENT_SPECS."

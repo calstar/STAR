@@ -377,3 +377,49 @@ def test_a_shut_valve_is_reported_as_regularised_not_hidden() -> None:
     assert result.converged
     # Nothing is shut here, so nothing should be sitting on the floor.
     assert result.regularised_branches == []
+
+
+# ------------------------------------------------------------- the live path
+
+
+def _teed_network() -> Network:
+    """The series network with a tee: a second line to a second injector, and
+    a capped stub off the middle node."""
+    net = _series_network()
+    net.add_node("inj2", "LOX", 90.0, pressure=22.0e5)
+    net.add_node("cap", "LOX", 90.0)
+    net.add_branch("FL-03", _pipe("FL-03", 0.6), "n2", "inj2")  # type: ignore[arg-type]
+    net.add_branch("FL-04", _pipe("FL-04", 0.3), "n1", "cap")  # type: ignore[arg-type]
+    return net
+
+
+def test_a_solve_without_its_report_is_the_same_solve() -> None:
+    """A live session asks for no per-branch report (``report=False``): the
+    pressures, flows and mass residuals are the same numbers, and the residuals
+    are each node's net inflow."""
+    net = _teed_network()
+    full = solve_steady(net)
+    bare = solve_steady(net, report=False)
+    assert full.converged and bare.converged
+    assert bare.pressures == full.pressures
+    assert bare.flows == full.flows
+    assert bare.mass_residuals == full.mass_residuals
+    assert bare.iterations == full.iterations
+    assert full.diagnostics and not bare.diagnostics
+    for node_id, residual in bare.mass_residuals.items():
+        total = -net.nodes[node_id].demand
+        for branch, sign in net.branches_at(node_id):
+            total += sign * bare.flows[branch.id]
+        assert residual == total, node_id
+
+
+def test_the_stub_memo_follows_the_wiring() -> None:
+    """Dead ends are remembered per shut set, but a branch moved to another node
+    is a different network."""
+    net = _teed_network()
+    assert {d.branch for d in net.dead_ends()} == {"FL-04"}
+    net.branches["FL-04"].downstream = "inj2"
+    assert net.dead_ends() == []
+    assert {d.branch for d in net.dead_ends(exclude={"FL-03"})} == set()
+    net.branches["FL-04"].downstream = "cap"
+    assert {d.branch for d in net.dead_ends()} == {"FL-04"}

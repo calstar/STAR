@@ -134,6 +134,9 @@ class Network:
     head uses it, through :class:`~feedtwin.comps.base.FlowConditions`."""
 
     _fluids: dict[str, Fluid] = field(default_factory=dict, repr=False)
+    _stubs: dict[tuple[object, ...], tuple[DeadEnd, ...]] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
     # ------------------------------------------------------------ construction
 
@@ -218,8 +221,30 @@ class Network:
 
         The returned order is safe to back-fill in reverse -- each entry's live
         end is either solved or an earlier entry.
+
+        Remembered per shut set, wiring and which nodes are boundaries: a live
+        session asks the same question every solve, and peeling a two-page
+        stand costs a millisecond each time.
         """
-        removed = set(exclude or ())
+        key = (
+            frozenset(exclude or ()),
+            tuple((b.id, b.upstream, b.downstream) for b in self.branches.values()),
+            tuple(
+                (node_id, node.is_fixed or node.demand != 0.0)
+                for node_id, node in self.nodes.items()
+            ),
+        )
+        known = self._stubs.get(key)
+        if known is not None:
+            return list(known)
+        found = self._peel(set(key[0]))
+        if len(self._stubs) >= 64:
+            self._stubs.clear()
+        self._stubs[key] = tuple(found)
+        return found
+
+    def _peel(self, removed: set[str]) -> list[DeadEnd]:
+        """:meth:`dead_ends`, worked out."""
         remaining = {b: v for b, v in self.branches.items() if b not in removed}
         found: list[DeadEnd] = []
 
@@ -388,6 +413,11 @@ class Network:
             b.downstream for b in self.branches.values()
         }
         for node_id in sorted(set(self.nodes) - touched):
+            if self.nodes[node_id].pressure is not None:
+                # A vessel's port with nothing drawn on it -- a dewar's top whose
+                # only line is a relief with no set pressure -- is a boundary
+                # nobody reads: harmless, and not a reason to refuse the stand.
+                continue
             problems.append(
                 f"  node {node_id!r} has no branches attached; it cannot take part"
             )

@@ -268,6 +268,12 @@ class EngineDesign:
     model that feed-twin does not have and should not reimplement, so it is 1
     unless somebody states one. See :attr:`warnings`, which says so."""
 
+    fire_load: Mapping[str, float] = field(default_factory=dict)
+    """Propellant a fire is loaded with [kg], by side (``lox``, ``fuel``): the
+    config's ``lox_tank.mass`` and ``fuel_tank.mass``, what the vehicle carries
+    (fixed by the competition, not by the tank's size). The cockpit's T-0 and
+    pad fills load this, not a fraction of the drawn tank. Empty when the
+    config does not say."""
     provenance: Mapping[str, str] = field(default_factory=dict)
     warnings: tuple[str, ...] = ()
     """Things the config says about itself that do not agree. Reported rather

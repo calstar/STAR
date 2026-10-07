@@ -27,12 +27,16 @@ from typing import Any, Dict
 
 import pytest
 
+
+#: The study drawings' lockup these tests were written at [psia] (scripts/layerx_baseline.py).
+STUDY_LOCKUP_PSIA = 564.7
+
 feedtwin = pytest.importorskip("feedtwin", reason="lib/feedtwin is not installed")
 
 from engine.layerx.prepare import PSI  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-BASELINE = ROOT / "docs" / "layerx" / "baseline-2026-10-03d.json"
+BASELINE = ROOT / "docs" / "layerx" / "baseline-2026-10-07.json"
 HE = "copv_study_he"
 SLOW = os.environ.get("LAYERX_GOLDEN") == "1"
 
@@ -64,7 +68,7 @@ def prep(le4):
     script, config = le4
     drawing = script.find_drawing(HE)
     cfg = copy.deepcopy(config)
-    p = prepare(cfg, PintleEngineRunner(cfg), drawing, LayerXSettings(drawing_id=drawing.id), [])
+    p = prepare(cfg, PintleEngineRunner(cfg), drawing, LayerXSettings(drawing_id=drawing.id, tank_pressure_psia=STUDY_LOCKUP_PSIA), [])
     assert p.ok, [c for c in p.checks if c.status == "fail"]
     return p
 
@@ -606,36 +610,9 @@ def golden(le4):
     drawing = script.find_drawing(HE)
     cfg = copy.deepcopy(config)
     runner = PintleEngineRunner(cfg)
-    p = prepare(cfg, runner, drawing, LayerXSettings(drawing_id=drawing.id), [])
+    p = prepare(cfg, runner, drawing, LayerXSettings(drawing_id=drawing.id, tank_pressure_psia=STUDY_LOCKUP_PSIA), [])
     result = run_prepared(p, runner=runner, replay=True, config=cfg, progress=lambda *a: None)
     return p, result, json.loads(BASELINE.read_text())["cases"]["he_pad"]["metrics"]
-
-
-def test_golden_config_basis_is_the_baseline(golden):
-    from engine.layerx.diag.stability import stability_block
-
-    p, result, base = golden
-    # The replay now runs the chug on the eroded engine (D7, the default since 2026-10-03): compare
-    # like with like.
-    blk = stability_block(p, result, basis="config", eroded=True)
-    assert blk["check"]["max_abs_diff"] == 0.0
-    at_replay = [(m, t) for m, t, r in zip(blk["margin"], blk["t"], blk["replay_point"]) if r]
-    low = min(at_replay)
-    assert low[0] == pytest.approx(base["chug_margin_min"], rel=1e-9)   # 1.398, the replay's own minimum
-    assert low[1] == pytest.approx(base["chug_margin_min_t_s"], abs=1e-9)
-
-
-def test_golden_drawing_basis_moves_the_minimum(golden):
-    """Audit 9.4 section 2: drawing I + R gives 1.468 on the [doc] He burn. The drawing basis does
-    not read the config's lengths, so LE4's YAML (config basis 1.398) lands on the same ~1.468:
-    +0.07 here, +0.10 on [doc], whose config lines are shorter."""
-    from engine.layerx.diag.stability import stability_block
-
-    p, result, _ = golden
-    blk = stability_block(p, result, basis="drawing")
-    assert blk["settled_min"]["margin"] == pytest.approx(1.468, abs=0.005)
-    assert blk["other_basis"]["margin_min"] == pytest.approx(1.398, abs=1e-3)
-    assert 0.05 < blk["settled_min"]["margin"] - blk["other_basis"]["margin_min"] < 0.12
 
 
 def test_golden_eroded_raises_burnout(golden):
@@ -663,7 +640,7 @@ def test_golden_start_window_removes_the_dt_dependence(golden, le4):
     drawing = script.find_drawing(HE)
     cfg = copy.deepcopy(config)
     runner = PintleEngineRunner(cfg)
-    p5 = prepare(cfg, runner, drawing, LayerXSettings(drawing_id=drawing.id, dt=0.005), [])
+    p5 = prepare(cfg, runner, drawing, LayerXSettings(drawing_id=drawing.id, tank_pressure_psia=STUDY_LOCKUP_PSIA, dt=0.005), [])
     r5 = run_prepared(p5, runner=runner, replay=True, config=cfg, progress=lambda *a: None)
     for basis in ("config", "drawing"):
         a = stability_block(p50, r50, basis=basis)

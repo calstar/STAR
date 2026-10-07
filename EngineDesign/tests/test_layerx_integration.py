@@ -34,7 +34,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 ROOT = Path(__file__).resolve().parents[1]
-BASELINE = ROOT / "docs" / "layerx" / "baseline-2026-10-03d.json"
+BASELINE = ROOT / "docs" / "layerx" / "baseline-2026-10-07.json"
 PSI = 6894.757293168361
 
 NEW_SETTINGS = ("chug_basis", "chug_eroded", "card_eroded_nozzle", "flight_coupling", "fuel_lead_s",

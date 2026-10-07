@@ -88,8 +88,8 @@ describe('MarginList', () => {
 describe('Field', () => {
   it('shows the value at its unit\'s digits with the unit inside the box', () => {
     const h = html(<Field label="Tank pressure" value={578.4} scale={u.scale('pressure', { pressure: 'gauge', gaugeZeroPsia: 14.7 })} onCommit={noop} />);
-    expect(h).toContain('value="564"');
-    expect(h).toContain('>psig<');
+    expect(h).toContain('value="578"');
+    expect(h).toContain('>psia<');
     expect(h).toMatch(/<label for="([^"]+)"[^>]*>Tank pressure<\/label>/);
     const forId = /<label for="([^"]+)"/.exec(h)?.[1];
     expect(h).toContain(`id="${forId}"`);

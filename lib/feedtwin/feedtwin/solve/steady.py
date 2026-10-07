@@ -148,6 +148,7 @@ def solve_steady(
     guess: Mapping[str, float] | None = None,
     isolate: Iterable[str] | None = None,
     storage: Mapping[str, tuple[float, float]] | None = None,
+    report: bool = True,
 ) -> SteadyResult:
     """Solve a network for its steady operating point.
 
@@ -187,6 +188,12 @@ def solve_steady(
             with no flow and ``admittance`` is ``C / dt``. Its solved pressure
             is the vessel's end-of-step pressure. Nodes not fixed, or with no
             branch left carrying flow, are ignored; omitted, nothing changes.
+        report: Fill the result's per-branch report -- ``diagnostics``,
+            ``regularised_branches``, ``violations``, ``stack`` -- which takes
+            one more evaluation of every branch at the answer. A live session
+            reads none of it and solves a few hundred times a second of stand,
+            so it asks for none; pressures, flows and the mass residuals are
+            the same either way.
 
     Returns:
         A :class:`SteadyResult`, including mass-conservation residuals whether
@@ -233,6 +240,7 @@ def solve_steady(
             started,
             stubs,
             isolated,
+            report=report,
         )
 
     x = _initial_guess(network, free, branch_ids, initial_flow)
@@ -316,6 +324,7 @@ def solve_steady(
                     stubs,
                     isolated,
                     stores,
+                    report=report,
                 ),
                 "the residual converged on a state with a non-physical "
                 f"pressure ({min(x[: len(free)]) / 1e5:.3g} bar absolute). A "
@@ -351,6 +360,7 @@ def solve_steady(
                     stubs,
                     isolated,
                     stores,
+                    report=report,
                 ),
                 f"the Jacobian could not be factorised ({exc}). This usually "
                 "means a node with no path to a fixed pressure.",
@@ -379,7 +389,16 @@ def solve_steady(
 
     norm = _scaled_norm(residual, scale, unresolvable)
     result = _result(
-        network, x, converged, iterations, norm, started, stubs, isolated, stores
+        network,
+        x,
+        converged,
+        iterations,
+        norm,
+        started,
+        stubs,
+        isolated,
+        stores,
+        report=report,
     )
 
     if not converged and raise_on_failure:
@@ -850,6 +869,8 @@ def _result(
     stubs: list[DeadEnd],
     isolated: set[str],
     stores: Mapping[str, tuple[float, float]] | None = None,
+    *,
+    report: bool = True,
 ) -> SteadyResult:
     """Package a solution vector as a result.
 
@@ -954,11 +975,19 @@ def _result(
             break
         pending = deferred
 
+    # One pass over the branches, in their order, so each node's sum is taken
+    # in the order `branches_at` gives -- the same number, without walking
+    # every branch once per node.
+    totals = {node_id: -network.nodes[node_id].demand for node_id in free}
+    for branch in network.branches.values():
+        flow = flows.get(branch.id, 0.0)
+        if branch.downstream in totals:
+            totals[branch.downstream] += flow
+        if branch.upstream in totals:
+            totals[branch.upstream] -= flow
     mass_residuals: dict[str, float] = {}
     for node_id in free:
-        total = -network.nodes[node_id].demand
-        for branch, sign in network.branches_at(node_id):
-            total += sign * flows.get(branch.id, 0.0)
+        total = totals[node_id]
         if stores and node_id in stores:
             admittance, reference = stores[node_id]
             total -= admittance * (pressures[node_id] - reference)
@@ -967,6 +996,19 @@ def _result(
     diagnostics: dict[str, dict[str, float]] = {}
     regularised: list[str] = []
     choked: list[str] = []
+    if not report:
+        return SteadyResult(
+            pressures=pressures,
+            flows=flows,
+            converged=converged,
+            iterations=iterations,
+            residual_norm=norm,
+            mass_residuals=mass_residuals,
+            dead_ends=sorted(stub_branches),
+            indeterminate_dead_ends=sorted(indeterminate),
+            indeterminate_nodes=sorted(indeterminate_nodes),
+            elapsed=time.perf_counter() - started,
+        )
     try:
         branch_rows = _branch_rows(network, x, node_index, branch_index)
     except Exception:  # noqa: BLE001 - the report must not fail the solve

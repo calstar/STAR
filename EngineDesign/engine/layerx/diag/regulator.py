@@ -39,6 +39,7 @@ import math
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
+from feedtwin.comps.regulator import SUPPLY_ZERO
 
 from engine.layerx.diag.ladder import (
     PSI, SIDES, arr, inp, model_block, network_of, node_p, node_T, out, scalar, series_t, unavailable,
@@ -160,7 +161,7 @@ def regulator_params(prep: Any, reg_id: str) -> Dict[str, Tuple[float, str]]:
         raise ValueError("the prepared model is needed for the regulator's drawing parameters")
     comp = built.network.branches[reg_id].component
     params: Dict[str, Tuple[float, str]] = {}
-    for name in ("Cv", "bore", "supply_coefficient", "inlet_reference", "flow_droop", "rated_flow",
+    for name in ("Cv", "bore", "supply_coefficient", "flow_droop", "rated_flow",
                  "dome_bias", "dome_pressure", "setpoint", "min_inlet_differential", "xT"):
         if name in comp.p:
             params[name] = (float(comp.p[name]), _provenance(comp, name))
@@ -180,8 +181,6 @@ def regulator_params(prep: Any, reg_id: str) -> Dict[str, Tuple[float, str]]:
         params["loader_bias"] = (float(lc.p.get("dome_bias", 0.0)), _provenance(lc, "dome_bias"))
         params["loader_supply_coefficient"] = (float(lc.p.get("supply_coefficient", 0.0)),
                                                _provenance(lc, "supply_coefficient"))
-        params["loader_inlet_reference"] = (float(lc.p.get("inlet_reference", 0.0)),
-                                            _provenance(lc, "inlet_reference"))
         params["_loader_supply_node"] = (math.nan, str(loader.supply_node))
         params["_loader_id"] = (math.nan, str(loader.id))
     return params
@@ -240,10 +239,10 @@ def build_regulator(result: Mapping[str, Any], prep: Any = None, config: Any = N
         # Dome: the control regulator's zero-flow outlet at its supply, as the session loads it.
         if "dial" in prm:
             dome = np.full(n, val("dial")) + val("loader_bias")
-            s_l, ref_l = val("loader_supply_coefficient"), val("loader_inlet_reference")
+            s_l = val("loader_supply_coefficient")
             supply_node = prm.get("_loader_supply_node", (0, ""))[1]
-            if s_l and ref_l > 0 and supply_node:
-                dome = dome + s_l * (ref_l - node_p(net, supply_node, n) * PSI)
+            if s_l and supply_node:
+                dome = dome + s_l * (SUPPLY_ZERO - node_p(net, supply_node, n) * PSI)
             dome_basis = prm["dial"][1]
         elif "dome_pressure" in prm and val("dome_pressure") > 0:
             dome = np.full(n, val("dome_pressure"))
@@ -253,8 +252,8 @@ def build_regulator(result: Mapping[str, Any], prep: Any = None, config: Any = N
             dome_basis = "no dome: a hand-loaded setpoint"
         bias = val("dome_bias")
         p_set = np.where(np.isfinite(dome), dome + bias, val("setpoint", math.nan))
-        S, ref = val("supply_coefficient"), val("inlet_reference")
-        spe = S * (ref - p_in) if ref > 0 else np.zeros(n)
+        S = val("supply_coefficient")
+        spe = S * (SUPPLY_ZERO - p_in)
         D, rated = val("flow_droop"), val("rated_flow")
         droop = D * np.abs(mdot) / rated if rated > 0 else np.zeros(n)
         target = p_set + spe - droop
@@ -307,14 +306,13 @@ def build_regulator(result: Mapping[str, Any], prep: Any = None, config: Any = N
                 "(no reducer data on the drawing)",
                 "inlet density and gamma = cp/cv from CoolProp (real gas) at the inlet node's pressure and "
                 "temperature",
-                "inlet_reference taken in the unit the drawing gives it (absolute); AUDIT 9.6 notes the "
-                "service pressure is gauge (a 0.25 psi effect at 17 psi/1000 psi)",
+                "supply effect measured from zero inlet (gauge): outlet = dome + bias - S x inlet, as "
+                "feedtwin.comps.regulator.Regulator.supply_effect has it (the team, 2026-10-07)",
             ],
             {
                 "Cv": pv("Cv", "US gpm/psi^0.5"),
                 "xT": inp(x_t, "-", x_t_prov),
                 "supply_coefficient": pv("supply_coefficient", "psi/psi"),
-                "inlet_reference": pv("inlet_reference", "psia", PSI),
                 "flow_droop": pv("flow_droop", "psi", PSI),
                 "rated_flow": pv("rated_flow", "kg/s"),
                 "dome_bias": pv("dome_bias", "psi", PSI),

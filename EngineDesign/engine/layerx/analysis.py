@@ -93,7 +93,17 @@ def _burn_once(prep: Prepared, schedule: Optional[tuple], say: Progress, cancell
     chamber = model.chamber
     a0 = float(prep.link.design.throat_area) if prep.link is not None else float(chamber.throat_area)
     chamber.throat_area = a0
-    session = open_session(model, prep.machine, setup=prep.setup)
+    hookup = None
+    if prep.settings.dome_regulator:
+        # The rail named the regulator the dome dial sets (2026-10-07): the session's dome knob drives
+        # that one alone, as the feed twin's Hookup page would have it. Unnamed, the session drives
+        # what its own dome knob always drove, exactly as before.
+        from feedtwin.session.hookup import DOME, Hookup, Knob
+
+        hookup = Hookup(knobs=(Knob(id=DOME, label="Layer X dome",
+                                    regulators=(prep.settings.dome_regulator,),
+                                    psig=float(prep.setup.dome_psi)),))
+    session = open_session(model, prep.machine, setup=prep.setup, hookup=hookup)
     say("Settling to tank pressure", lo)
     settled = prime_at_t0(session, prep.plan)
     # The drawing's own transducers are read too, so a burn says what each DAQ channel should show.

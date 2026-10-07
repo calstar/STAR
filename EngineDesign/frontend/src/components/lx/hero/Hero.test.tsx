@@ -110,10 +110,10 @@ describe('readout rows', () => {
     expect(rows[1].note).toBe('of 6.60\u00a0kg');
   });
 
-  it('the bottle reads as its gauge does', () => {
+  it('the bottle reads absolute, like every vessel', () => {
     const rows = symbolRows(d.byId.get('KB1')!, v.symbols.get('KB1'), i, u);
-    expect(rows[0]).toMatchObject({ label: 'Pressure', unit: 'psig' });
-    expect(vesselFigure(d.byId.get('KB1')!, v.symbols.get('KB1'), i, u)?.unit).toBe('psig');
+    expect(rows[0]).toMatchObject({ label: 'Pressure', unit: 'psia' });
+    expect(vesselFigure(d.byId.get('KB1')!, v.symbols.get('KB1'), i, u)?.unit).toBe('psia');
     expect(vesselFigure(d.byId.get('OXT')!, v.symbols.get('OXT'), i, u)?.unit).toBe('psia');
   });
 

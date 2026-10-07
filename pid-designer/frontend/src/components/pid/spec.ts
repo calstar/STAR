@@ -232,9 +232,10 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
       { key: 'dome_bias', label: 'Dome bias (outlet above dome)', dimension: 'pressure', when: { option: 'domeLoaded', is: 'yes' } },
       CV, CD,
       P('bore', 'Orifice', 'length'),
-      // Supply-pressure effect the way the datasheet prints it, in one row.
+      // Supply-pressure effect the way the datasheet prints it, in one row. It is
+      // measured from zero inlet (outlet = dome + bias - S x inlet), so there is
+      // no reference inlet to give.
       { key: 'supply_coefficient', label: 'Supply effect', dimension: 'pressure_ratio', ratio: true },
-      P('inlet_reference', '  measured at inlet', 'pressure'),
     ],
     options: [
       COEFFICIENT('Cv'),

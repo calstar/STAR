@@ -19,9 +19,19 @@ from backend.main import app
 client = TestClient(app)
 
 
+#: The drawing these tests are written against: the shipped GN2 study stand.
+#: Picked by name, never "the first drawing in the library": other tests upload
+#: theirs, and under ``pytest -n`` one landed first and a walkthrough pressed a
+#: different stand.
+DRAWING_SOURCE = "shipped:copv_study_gn2.json"
+
+
 def ids() -> tuple[str, str]:
     library = client.get("/api/library").json()
-    diagram = next(a for a in library if a["kind"] == "diagram")["id"]
+    drawings = [a for a in library if a["kind"] == "diagram"]
+    diagram = next(
+        (a for a in drawings if a.get("source") == DRAWING_SOURCE), drawings[0]
+    )["id"]
     engine = next((a for a in library if a["kind"] == "engine"), {"id": ""})["id"]
     return diagram, engine
 
@@ -293,16 +303,17 @@ def test_the_gauges_stay_at_atmosphere_while_idle() -> None:
 
 
 def an_engine() -> str:
-    """An engine in the test library, imported if the seed did not bring one.
+    """The 7000N doublet in the test library, imported here.
 
     The suite runs against a temp store (see conftest) which the shipped
     *drawings* seed into but no engine does, so a test needing one has to supply
     it rather than skip -- a skipped test is not a test.
+
+    Always this engine, never "whichever engine is in the library": other tests
+    upload theirs, and under ``pytest -n`` which one a worker met first decided
+    the fire load a walkthrough pressed. The store keys an artifact by its
+    bytes, so importing it again returns the same one.
     """
-    library = client.get("/api/library").json()
-    existing = next((a for a in library if a["kind"] == "engine"), None)
-    if existing:
-        return existing["id"]
     config = (
         Path(__file__).resolve().parents[2]
         / "EngineDesign"

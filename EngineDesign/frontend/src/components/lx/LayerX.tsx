@@ -25,7 +25,7 @@ import { ShortcutSheet, TopBar } from './TopBar';
 import { Badge, Button, Panel, STATUS_GLYPH, STATUS_VAR, Tabs, tabPanelProps, type TabSpec } from './ui';
 import { UnitsProvider, useUnits } from './units';
 import { LX_PAGES, readLxUrl, replaceLxUrl, type LxPage } from './url';
-import { stageOf, useLayerXJob, type LayerXJob, type RailSection } from './useLayerXJob';
+import { bottleFillPsia, stageOf, useLayerXJob, type LayerXJob, type RailSection } from './useLayerXJob';
 import { useRunData, type RunData } from './useRunData';
 import { withContract } from './dev/contractFixture';
 
@@ -134,13 +134,12 @@ function Failed({ run }: { run: RunView }) {
 function GuidedStart({ job, onShow }: { job: LayerXJob; onShow: (step: RailStep) => void }) {
   const u = useUnits();
   const last = [...job.burns].filter((r) => r.status === 'done').sort(byPinThenNewest)[0];
-  const tank = job.settings.tank_pressure_psia ?? job.configTankPsia;
-  const drawn = typeof job.derived?.copv_drawn_psig === 'number' ? (job.derived.copv_drawn_psig as number) : null;
-  const fill = job.settings.copv_pressure_psig ?? drawn;
+  const tank = job.settings.tank_pressure_psia ?? job.derived?.target_lockup_psia ?? job.configTankPsia;
+  const fill = bottleFillPsia(job.settings, job.derived);
   const steps: { step: RailStep; n: string; title: string; now: ReactNode; done: boolean }[] = [
     { step: 'drawing', n: '1', title: 'Pick the drawing', now: job.drawing?.name ?? 'none yet', done: !!job.drawing },
-    { step: 'before', n: '2', title: 'Set tank pressure and bottle fill', done: tank !== null && fill !== null,
-      now: <span className="lx-num">{u.fmt(u.p(tank))} · {fill === null ? '—' : `${Math.round(fill).toLocaleString('en-US')}\u00a0psig`}</span> },
+    { step: 'before', n: '2', title: 'Set the dome (or tank pressure) and bottle fill', done: tank !== null && fill !== null,
+      now: <span className="lx-num">{u.fmt(u.p(tank))} · {u.fmt(u.p(fill))}</span> },
     { step: 'run', n: '3', title: 'Run', done: false,
       now: job.pf?.ok ? 'ready' : job.pfLoading ? 'checking…' : job.pf ? 'blocked: see the rail' : '—' },
   ];

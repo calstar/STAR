@@ -287,6 +287,13 @@ def engine_from_config(
         "here is an upper bound"
     )
 
+    fire_load: dict[str, float] = {}
+    for side, key in (("lox", "lox_tank.mass"), ("fuel", "fuel_tank.mass")):
+        mass = _optional(config, key)
+        if mass > 0.0:
+            fire_load[side] = mass
+            provenance[f"fire_load.{side}"] = f"config {key}"
+
     return EngineDesign(
         name=name,
         nozzle_efficiency=nozzle_efficiency,
@@ -299,6 +306,7 @@ def engine_from_config(
         design_chamber_pressure=chamber_pressure,
         design_mixture_ratio=mixture_ratio,
         design_thrust=thrust,
+        fire_load=fire_load,
         provenance=provenance,
         warnings=tuple(warnings),
     )

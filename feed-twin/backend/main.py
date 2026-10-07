@@ -86,9 +86,16 @@ from backend.models import (
 from backend.live import FireOptions, Stand, fire, solve_at
 from backend.run import PSI, Sample, psig
 from backend.session import Sample as SessionSample, Session, Setup
-from feedtwin.session.burn import BurnPlan, find_probes, jump_to_t0, run_burn
+from feedtwin.session.burn import (
+    BurnPlan,
+    find_probes,
+    jump_to_t0,
+    regulator_lockup,
+    run_burn,
+)
 from stardesign.userdata import slug_user
 from feedtwin.session.hookup import (
+    CHARGE,
     DOME,
     Hookup,
     binding as hookup_binding,
@@ -846,7 +853,7 @@ def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool]:
     try:
         lineage = _lineage(library.get(diagram_id))
     except LibraryError:
-        return suggest_hookup(model, Setup().dome_psi), False
+        return suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi), False
     stored = library.record(HOOKUPS, lineage)
     if stored is not None:
         try:
@@ -854,7 +861,7 @@ def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool]:
             return Hookup.from_dict(raw if isinstance(raw, Mapping) else {}), True
         except (ValueError, KeyError, TypeError):
             pass
-    return suggest_hookup(model, Setup().dome_psi), False
+    return suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi), False
 
 
 #: Instrument types that read a temperature rather than a pressure.
@@ -980,7 +987,11 @@ def _live_knobs(session: Session) -> list[LiveKnobOut]:
             psig=(
                 session.setup.dome_psi
                 if k.id == DOME
-                else session.knobs.get(k.id, k.psig)
+                else (
+                    session.setup.copv_target_psi
+                    if k.id == CHARGE
+                    else session.knobs.get(k.id, k.psig)
+                )
             ),
             low=k.low,
             high=k.high,
@@ -988,6 +999,14 @@ def _live_knobs(session: Session) -> list[LiveKnobOut]:
         )
         for k in session.hookup.knobs
     ]
+
+
+def _lockup_psig(session: Session, tank_id: str) -> float | None:
+    """The regulator lockup feeding a vehicle tank right now [psig], or None."""
+    if tank_id in session.ground:
+        return None
+    lockup = regulator_lockup(session, tank_id)
+    return None if lockup is None else round(psig(lockup), 1)
 
 
 def _session_out(session: Session, sample: SessionSample) -> SessionOut:
@@ -1050,6 +1069,7 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
                 side=propellant_side(built.network.nodes[sim.outlet_node].fluid),
                 chilling=bool(values.get("chilling", 0.0)),
                 fill_flow_g_s=round(values.get("fill_flow_g_s", 0.0), 2),
+                lockup_psi=_lockup_psig(session, sim.id),
             )
             for sim in session.tanks.values()
             for values in [sample.tanks[sim.id]]
@@ -1243,7 +1263,7 @@ async def start_study(body: dict[str, Any] | None = Body(None)) -> StudyOut:
         cases = tuple(StudyCase.parse(c, i) for i, c in enumerate(raw_cases))
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    known = set(session.knobs) | {DOME}
+    known = set(session.knobs) | {DOME, CHARGE}
     stray = sorted({k for c in cases for k in c.knobs} - known)
     if stray:
         raise HTTPException(
@@ -1366,6 +1386,8 @@ async def command_session(
             ) from exc
         if found.id == DOME:
             session.setup = _setup({"dome": value}, session.setup)
+        elif found.id == CHARGE:
+            session.setup = _setup({"copv_target": value}, session.setup)
         else:
             session.knobs[found.id] = value
     if "valve" in settings:
@@ -1483,7 +1505,9 @@ def _hookup_out(diagram: str, engine: str, fluid_set: str, machine: str) -> Hook
         lineage=_lineage(library.get(diagram)),
         saved=saved,
         hookup=_hookup_body(hookup),
-        suggested=_hookup_body(suggest_hookup(model, Setup().dome_psi)),
+        suggested=_hookup_body(
+            suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi)
+        ),
         actuators=list(stand.machine.actuators),
         valves=[
             HookupValveOut(id=v.id, label=v.label, page=v.page, role=list(v.role))

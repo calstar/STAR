@@ -48,7 +48,7 @@ CHAMBER_TOLERANCE_PSI = 0.02
 #: branch against a full COPV and left the card's injector drop 0.47 % off its own relation. It
 #: used to be a floor: below it the solve failed (41 of 51 steps held at 3e-5), because a carded
 #: injector leg signed its reverse-flow drop twice and a regulator at lockup stepped by its supply
-#: effect at zero flow. With both fixed and ``regulator_lockup_supply`` on, 1e-6 converges at every
+#: effect at zero flow. With both fixed (lockup now always carries the supply effect), 1e-6 converges at every
 #: step and the injector drop sits 0.007 % off. Measured on the 6.8 kN burn: +6.7 N·s (0.03 %) of
 #: impulse, +5 s of wall time.
 NETWORK_TOLERANCE = 1e-6
@@ -60,9 +60,21 @@ class LayerXSettings:
 
     drawing_id: str
     tank_pressure_psia: Optional[float] = None
-    """Tank lockup at T-0 [psia]. ``None``: the config's ``lox_tank.initial_pressure_psi``."""
+    """Tank lockup at T-0 [psia]; the dome is solved for it. Ignored when ``dome_psia`` is set.
+    ``None`` (and no ``dome_psia``): the dial the drawing states on the dome regulator, else the
+    config's ``lox_tank.initial_pressure_psi``."""
     copv_pressure_psig: Optional[float] = None
-    """Bottle at T-0 [psig]. ``None``: the drawing's bottle pressure."""
+    """Bottle at T-0 [psig], as the optimiser and settings saved before 2026-10-07 write it. The
+    rail writes ``copv_pressure_psia``, which wins. ``None`` (both): the drawing's bottle pressure."""
+    copv_pressure_psia: Optional[float] = None
+    """Bottle at T-0 [psia] (2026-10-07: every pressure on the rail absolute)."""
+    dome_psia: Optional[float] = None
+    """The dome dial [psia] on the regulator ``dome_regulator`` names; the tank lockup follows from
+    it. ``None``: ``tank_pressure_psia`` if set (the dome solved for it), else the drawing's dial."""
+    dome_regulator: Optional[str] = None
+    """Drawing id of the regulator the dome dial sets: a dome loader, a dome-loaded regulator with no
+    loader drawn, or a plain regulator. ``None``: the feed twin's own choice
+    (``feedtwin.session.hookup.suggest``), the one its cockpit's dome knob drives."""
     load: str = "config"
     """``config``: the config's propellant masses. ``fill``: ``fill_fraction`` of each tank."""
     fill_fraction: float = 0.95
@@ -225,6 +237,10 @@ def _option_problems(settings: LayerXSettings) -> List[str]:
                 bad.append(f"outlet_d_mm {v!r} must be a bore in mm, 0.5-500")
     except (TypeError, ValueError) as exc:
         bad.append(str(exc))
+    for name in ("dome_psia", "copv_pressure_psia", "tank_pressure_psia"):
+        v = getattr(settings, name)
+        if v is not None and not (isinstance(v, (int, float)) and 0.0 < float(v) < 20000.0):
+            bad.append(f"{name} {v!r} must be an absolute pressure in psia")
     return bad
 
 
@@ -373,7 +389,7 @@ def _burnout_tank_check(model: Any, dome: float, bottle: Any, copv_psig: float, 
                              bottle_m3=float(v_param.si), lockup_pa=lockup_pa, ullage_m3=ullage, expelled_m3=expelled)
     if est["end_pa"] is None:
         if est["bottle_end_pa"] is None:
-            return {"status": "warn", "detail": f"The bottle ({copv_psig:.0f} psig, {v_param.si * 1e3:.2f} L of {gas}) holds "
+            return {"status": "warn", "detail": f"The bottle ({from_psig(copv_psig) / PSI:.0f} psia, {v_param.si * 1e3:.2f} L of {gas}) holds "
                                                 f"less than the ~{est['gas_kg']:.3f} kg the tanks need to stay at lockup "
                                                 "through the burn: it will fall below lockup."}
         return {"status": "info", "detail": "No estimate of the tanks' rise: the drawing has no dome-loaded regulator."}
@@ -390,7 +406,7 @@ def _burnout_tank_check(model: Any, dome: float, bottle: Any, copv_psig: float, 
         if cap is not None and end / PSI > cap:
             over.append(f"the design's {name} tank cap ({cap:g} psi, design_requirements.{key}, read as psia until "
                         "AUDIT D11 is decided)")
-    detail = (f"Locked up at {lockup_pa / PSI:.1f} psia from a {copv_psig:.0f} psig bottle, the bottle should end near "
+    detail = (f"Locked up at {lockup_pa / PSI:.1f} psia from a {from_psig(copv_psig) / PSI:.0f} psia bottle, the bottle should end near "
               f"{est['bottle_end_pa'] / PSI:.0f} psia after giving the tanks ~{est['gas_kg']:.3f} kg of {gas}; the "
               f"regulator's supply-pressure effect then lifts the tanks to ~{end / PSI:.0f} psia (+{rise / PSI:.0f} psi). "
               "Estimated from the drawing's regulator law at zero flow, the bottle on its isentrope and the gas at the "
@@ -478,13 +494,21 @@ def swap_pressurant(payload: Dict[str, Any], gas: str) -> Tuple[Dict[str, Any], 
     # The bottle as feedtwin reads it, not only as drawn: a COPV drawn with the tank symbol (a gas
     # above its critical temperature) is the pressurant bottle too. Looking for KBOTTLE alone found
     # nothing on such a drawing and swapped nothing, silently.
+    # Only the vehicle's gas is swapped (engine.layerx.vehicle): GSE K-bottles on the drawing's
+    # other page keep theirs; they fill the bottle on the pad and are not the burn's pressurant.
+    vehicle = None
     try:
         from feedtwin.pid import read_diagram
 
-        read_as_bottle = {n.id for n in read_diagram(payload, name="swap").nodes if n.type == "KBOTTLE"}
+        from engine.layerx.vehicle import vehicle_ids
+
+        read = read_diagram(payload, name="swap")
+        read_as_bottle = {n.id for n in read.nodes if n.type == "KBOTTLE"}
+        vehicle = vehicle_ids(read)
     except Exception:  # noqa: BLE001 - a drawing feedtwin cannot read is the preflight's to report
         read_as_bottle = set()
     bottle = next((n for n in nodes if isinstance(n, dict)
+                   and (vehicle is None or str(n.get("id", "")) in vehicle)
                    and (str((n.get("data") or {}).get("componentType") or n.get("type")).upper() == "KBOTTLE"
                         or str(n.get("id", "")) in read_as_bottle)), None)
     was = str(((bottle or {}).get("data") or {}).get("fluid") or "").lower()
@@ -494,12 +518,15 @@ def swap_pressurant(payload: Dict[str, Any], gas: str) -> Tuple[Dict[str, Any], 
     n = 0
     for node in out.get("nodes") or []:
         data = node.get("data") if isinstance(node, dict) else None
+        if vehicle is not None and str(node.get("id", "")) not in vehicle:
+            continue
         if isinstance(data, dict) and str(data.get("fluid") or "").lower() == was:
             data["fluid"] = gas
             n += 1
     return out, n, was
 
 
+from engine.layerx.vehicle import on_vehicle, vehicle_ids, vehicle_payload  # noqa: E402
 from engine.layerx.fingerprint import config_fingerprint  # noqa: E402,F401 - one definition
 
 
@@ -532,13 +559,62 @@ def _dome_regulators(model: Any) -> List[Tuple[str, Any, str]]:
     return out
 
 
-def lockup_for_dome(model: Any, dome_psig: float, supply_pa: float) -> Optional[float]:
+def dome_knobs(model: Any) -> List[Dict[str, Any]]:
+    """Every regulator a dome dial could set, as the feed twin's hookup lists them: ``{id, label,
+    kind, page, drawn_psia}`` with ``kind`` loader / dome / plain (feedtwin.session.hookup)."""
+    from feedtwin.session.hookup import regulators
+
+    from feedtwin.session.gauge import ATMOSPHERE
+
+    return [{"id": r.id, "label": r.label, "kind": r.kind, "page": r.page,
+             "drawn_psia": None if r.drawn_psig is None else r.drawn_psig + ATMOSPHERE / PSI}
+            for r in regulators(model)]
+
+
+def default_dome_regulator(model: Any) -> Optional[str]:
+    """The regulator the feed twin's own dome knob drives on this drawing (``hookup.suggest``)."""
+    from feedtwin.session.hookup import DOME, suggest
+
+    knob = next((k for k in suggest(model).knobs if k.id == DOME), None)
+    return knob.regulators[0] if knob is not None and knob.regulators else None
+
+
+def _knob_lockup(model: Any, regulator: str, dome_psig: float, supply_pa: float) -> Optional[float]:
+    """Tank lockup [Pa abs] with the dial on ``regulator`` alone: a loader through its own outlet into
+    the dome it loads, any other regulator through its own dome signal (a plain one reads it as its
+    setpoint). The regulator that sets the tanks is evaluated at zero flow, plus its lockup rise."""
+    from feedtwin.comps.regulator import Regulator
+    from feedtwin.session.gauge import from_psig
+
+    built = model.built
+    labels = {n.id: n.label or n.id for n in model.diagram.nodes}
+    signals: Dict[str, float] = {}
+    loader = built.dome_loaders.get(regulator)
+    if loader is not None:
+        cond = built.network.conditions(loader.supply_node, supply_pa,
+                                        {f"{loader.component.id}.dome": from_psig(dome_psig)})
+        signals[loader.signal] = float(loader.component.outlet_setpoint(0.0, cond))
+        target = next((nid for nid, lab in labels.items() if f"{lab}.dome" == loader.signal), None)
+    else:
+        signals[f"{labels.get(regulator, regulator)}.dome"] = from_psig(dome_psig)
+        target = regulator
+    for branch_id in built.branches_of.get(target or "", ()):
+        branch = built.network.branches.get(branch_id)
+        if branch is not None and isinstance(branch.component, Regulator):
+            cond = built.network.conditions(branch.upstream, supply_pa, signals)
+            return float(branch.component.outlet_setpoint(0.0, cond)) + float(branch.component.p.get("lockup_rise", 0.0))
+    return None
+
+
+def lockup_for_dome(model: Any, dome_psig: float, supply_pa: float, regulator: Optional[str] = None) -> Optional[float]:
     """Tank lockup [Pa abs] the drawing's regulators deliver for a dome dial
     setting and a bottle pressure: the loader evaluated against the bottle the
     way the session does each tick, then the dome-loaded unit at zero flow plus
     its seat's lockup rise. ``None`` when the drawing has no dome-loaded unit."""
     from feedtwin.session.gauge import from_psig
 
+    if regulator is not None:
+        return _knob_lockup(model, regulator, dome_psig, supply_pa)
     built = model.built
     regulators = _dome_regulators(model)
     if not regulators:
@@ -558,16 +634,16 @@ def lockup_for_dome(model: Any, dome_psig: float, supply_pa: float) -> Optional[
     return float(component.outlet_setpoint(0.0, cond)) + float(component.p.get("lockup_rise", 0.0))
 
 
-def dome_for_lockup(model: Any, target_pa: float, supply_pa: float) -> Optional[float]:
+def dome_for_lockup(model: Any, target_pa: float, supply_pa: float, regulator: Optional[str] = None) -> Optional[float]:
     """The dome dial [psig] that locks the tanks up at ``target_pa``. The map is
     affine in the dial (loader outlet plus bias plus supply effect), so two
     evaluations solve it exactly; a third confirms."""
     a, b = 400.0, 600.0
-    la, lb = lockup_for_dome(model, a, supply_pa), lockup_for_dome(model, b, supply_pa)
+    la, lb = lockup_for_dome(model, a, supply_pa, regulator), lockup_for_dome(model, b, supply_pa, regulator)
     if la is None or lb is None or abs(lb - la) < 1e-9:
         return None
     dome = a + (target_pa - la) * (b - a) / (lb - la)
-    check = lockup_for_dome(model, dome, supply_pa)
+    check = lockup_for_dome(model, dome, supply_pa, regulator)
     if check is None or abs(check - target_pa) > 0.01 * PSI:
         return None
     return dome
@@ -607,6 +683,17 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
     if missing:
         add("overrides_missing", "Restated parameters the drawing no longer has", "warn",
             "The drawing has changed since these were entered: " + ", ".join(missing) + ".")
+    # The burn is the vehicle's (engine.layerx.vehicle): a GSE page joined only by paired
+    # disconnects is left out, its disconnect halves capped; Layer X primes what the GSE would.
+    try:
+        payload, ground = vehicle_payload(payload)
+    except Exception:  # noqa: BLE001 - a drawing feedtwin cannot read is reported just below
+        ground = []
+    if ground:
+        add("ground_support", "Ground support on the drawing", "info",
+            f"{', '.join(ground)} {'is' if len(ground) == 1 else 'are'} joined to the vehicle only through "
+            "paired disconnects: ground support. The burn runs the vehicle alone, primed by Layer X "
+            "(loads, bottle fill, regulator dome), with those disconnects capped.")
     if settings.pressurant:
         payload, swapped, was = swap_pressurant(payload, settings.pressurant)
         if swapped:
@@ -627,7 +714,10 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
         return prep
     species = {"oxidiser": native.oxidiser.propellant, "fuel": native.fuel.propellant}
 
-    tanks = [n for n in diagram.nodes if n.type == "TANK"]
+    # The vehicle's vessels only (engine.layerx.vehicle): a GSE transfer tank or cart bottle on the
+    # drawing's other page, joined by paired disconnects, is not a propellant tank or the pressurant.
+    vehicle = vehicle_ids(diagram)
+    tanks = on_vehicle([n for n in diagram.nodes if n.type == "TANK"], vehicle)
     roles: Dict[str, str] = {}
     for side, sp in species.items():
         found = [t.id for t in tanks if (t.fluid or "").lower() == sp.lower()]
@@ -639,7 +729,7 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
                 f"(tanks: {', '.join(f'{t.id} [{t.fluid}]' for t in tanks) or 'none'}).")
         else:
             add(f"tank_{side}", f"{side.capitalize()} tank on the drawing", "fail",
-                f"{len(found)} tanks hold {sp} ({', '.join(found)}); Layer X needs exactly one.")
+                f"{len(found)} tanks on the vehicle hold {sp} ({', '.join(found)}); Layer X needs exactly one.")
     if len(roles) == 2:
         add("tanks", "Tanks match the engine's propellants", "ok",
             f"{roles['oxidiser']} holds {species['oxidiser']}, {roles['fuel']} holds {species['fuel']}.")
@@ -732,46 +822,85 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
         return float(cond.rho), float(cond.mu)
 
     # ---- pressures: target lockup, bottle, dome ------------------------------
+    atm_psia = ATMOSPHERE / PSI
     lox_psia = float(getattr(config.lox_tank, "initial_pressure_psi", 0.0) or 0.0)
     fuel_psia = float(getattr(config.fuel_tank, "initial_pressure_psi", 0.0) or 0.0)
-    target_psia = settings.tank_pressure_psia or lox_psia
-    if not target_psia:
-        add("tank_pressure", "Tank pressure", "fail",
-            "Neither the rail nor the config (lox_tank.initial_pressure_psi) states a tank pressure.")
-        return prep
-    if settings.tank_pressure_psia is None and fuel_psia and abs(fuel_psia - lox_psia) > 0.5:
-        add("tank_pressures", "One tank pressure for both tanks", "warn",
-            f"The config sets LOX {lox_psia:.1f} and fuel {fuel_psia:.1f} psia; the drawing feeds both "
-            f"from one regulator, so both start at {target_psia:.1f} psia.")
-    target_pa = target_psia * PSI
 
-    bottles = [n for n in diagram.nodes if n.type == "KBOTTLE"]
+    # ---- the bottle at T-0 ---------------------------------------------------
+    bottles = on_vehicle([n for n in diagram.nodes if n.type == "KBOTTLE"], vehicle)
     drawn_copv = None
     if bottles and "pressure" in bottles[0].params:
         # Absolute in SI whatever the drawing wrote (bare psi reads as psig:
         # feedtwin.model.pressure); the plan wants gauge.
         drawn_copv = psig_from_psia(bottles[0].params["pressure"].si / PSI)
     if not bottles:
-        add("bottle", "Pressurant bottle", "fail", "The drawing has no KBOTTLE to press from.")
+        add("bottle", "Pressurant bottle", "fail", "The vehicle has no bottle to press from.")
         return prep
-    copv_psig = settings.copv_pressure_psig if settings.copv_pressure_psig is not None else drawn_copv
+    if settings.copv_pressure_psia is not None:
+        copv_psig = settings.copv_pressure_psia - atm_psia
+    else:
+        copv_psig = settings.copv_pressure_psig if settings.copv_pressure_psig is not None else drawn_copv
     if copv_psig is None:
         add("bottle_pressure", "Bottle pressure at T-0", "fail",
             "Neither the rail nor the drawing's bottle states a fill pressure.")
         return prep
+    supply_pa = from_psig(copv_psig)
 
-    dome = dome_for_lockup(probe_model, target_pa, from_psig(copv_psig))
-    regs = _dome_regulators(probe_model)
+    # ---- the dome dial, and the tank lockup it gives (2026-10-07) -------------
+    # The dial is an input: the rail's, else the one the drawing states on the regulator it sets
+    # (the feed twin's dome knob unless the rail names another). A tank pressure on the rail is the
+    # other way in: the dial is solved for it. With neither, the design's tank pressure, as before.
+    knobs = dome_knobs(probe_model)
+    reg_id = settings.dome_regulator or default_dome_regulator(probe_model)
+    knob = next((k for k in knobs if k["id"] == reg_id), None)
+    if settings.dome_regulator and knob is None:
+        add("dome_regulator", "Dome regulator", "fail",
+            f"{settings.dome_regulator!r} is not a regulator a dial can set on the vehicle "
+            f"({', '.join(k['label'] for k in knobs) or 'none'}).")
+        return prep
+    named = reg_id if settings.dome_regulator else None   # the session is told only when the rail chose
+    drawn_dome = None if knob is None or knob["drawn_psia"] is None else knob["drawn_psia"] - atm_psia
+    if settings.dome_psia is not None:
+        dome, source = settings.dome_psia - atm_psia, "set on the rail"
+    elif settings.tank_pressure_psia is not None:
+        dome, source = None, "solved for the rail's tank pressure"
+    elif drawn_dome is not None:
+        dome, source = drawn_dome, "as drawn"
+    else:
+        dome, source = None, "solved for the design's tank pressure"
+    target_psia = None
+    if dome is not None:
+        lock = lockup_for_dome(probe_model, dome, supply_pa, named)
+        if lock is None:
+            add("dome", "Regulator dome", "fail",
+                "No regulator on the vehicle takes a dome dial, so the dial cannot set the tanks.")
+            return prep
+        target_psia = lock / PSI
+    else:
+        target_psia = settings.tank_pressure_psia or lox_psia
+        if not target_psia:
+            add("tank_pressure", "Tank pressure", "fail",
+                "Neither the rail, the drawing's dome nor the config (lox_tank.initial_pressure_psi) "
+                "states a tank pressure.")
+            return prep
+        if settings.tank_pressure_psia is None and fuel_psia and abs(fuel_psia - lox_psia) > 0.5:
+            add("tank_pressures", "One tank pressure for both tanks", "warn",
+                f"The config sets LOX {lox_psia:.1f} and fuel {fuel_psia:.1f} psia; the drawing feeds both "
+                f"from one regulator, so both start at {target_psia:.1f} psia.")
+        dome = dome_for_lockup(probe_model, target_psia * PSI, supply_pa, named)
+    target_pa = target_psia * PSI
+    regs = _dome_regulators(probe_model) if named is None else knobs
+    where = f"on {knob['label']}" if knob is not None else "on the control regulator"
     if dome is None:
-        add("dome", "Regulator dome setting", "warn" if not regs else "fail",
+        add("dome", "Regulator dome", "warn" if not regs else "fail",
             "No dome-loaded regulator on the drawing: tank pressure is whatever its regulator's "
             "setpoint gives, and the target cannot be dialled." if not regs else
             "Could not solve the dome setting for that lockup.")
-        dome = 500.0
+        dome = 500.0   # feedtwin's Setup.dome_psi default; nothing on this drawing reads it
     else:
-        add("dome", "Regulator dome setting", "ok",
-            f"{dome:.1f} psig on the control regulator gives {target_psia:.1f} psia tank lockup "
-            f"with the bottle at {copv_psig:.0f} psig.")
+        add("dome", "Regulator dome", "ok",
+            f"{dome + atm_psia:.1f} psia {where} ({source}) gives {target_psia:.1f} psia tank lockup "
+            f"with the bottle at {copv_psig + atm_psia:.0f} psia.")
 
     # MAWP of the tanks and the bottle against what they will hold. MAWP is a difference across the
     # wall, so it is held against the site's atmosphere, not the DAQ's 101.325 kPa gauge zero
@@ -786,7 +915,7 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
         mawp = b.params.get("MAWP")
         if mawp is not None and from_psig(copv_psig) - ambient > mawp.si:
             add(f"mawp_{b.id}", f"{b.label or b.id} MAWP", "fail",
-                f"Bottle fill {copv_psig:.0f} psig is {(from_psig(copv_psig) - ambient) / PSI:.0f} psi above the site's "
+                f"Bottle fill {from_psig(copv_psig) / PSI:.0f} psia is {(from_psig(copv_psig) - ambient) / PSI:.0f} psi above the site's "
                 f"atmosphere; its MAWP is {mawp.si / PSI:.0f} psi.")
 
     # The ratings themselves: a pass against a rating nobody measured is only as good as the guess,
@@ -1025,8 +1154,7 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
         # them): the rail shows them, read-only, so the setup on screen is the twin's.
         "feed_twin_thermal": {
             k: getattr(prep.setup, k) for k in ("ullage_collapse", "ullage_vapour", "chilldown", "line_walls",
-                                                "stratification", "wall_boiling", "chilldown_nucleate", "boiling_onset_K",
-                                                "regulator_lockup_supply")
+                                                "stratification", "wall_boiling", "chilldown_nucleate", "boiling_onset_K")
             if hasattr(prep.setup, k)},
         "stiffness_band": {"oxidiser": band("O"), "fuel": band("F")},
         "roles": roles,
@@ -1043,6 +1171,15 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
                           else getattr(prep.setup, "bottle_volume_L", None)),
         "copv_mawp_psi": (bottles[0].params["MAWP"].si / PSI if bottles and "MAWP" in bottles[0].params else None),
         "copv_drawn_psig": drawn_copv,
+        # The rail's absolute pressures (2026-10-07): the dial, where it came from, which regulator it
+        # sets, what the drawing says it is, every regulator it could be on, and the drawn bottle.
+        "dome_psia": dome + atm_psia,
+        "dome_source": source,
+        "dome_regulator": knob["id"] if knob is not None else None,
+        "dome_regulator_label": knob["label"] if knob is not None else None,
+        "dome_drawn_psia": None if drawn_dome is None else drawn_dome + atm_psia,
+        "dome_candidates": knobs,
+        "copv_drawn_psia": None if drawn_copv is None else drawn_copv + atm_psia,
         "tank_mawp_psi": {t.id: t.params["MAWP"].si / PSI for t in tanks if "MAWP" in t.params},
         "loads_kg": loads,
         "fill_fraction": None if loads else settings.fill_fraction,

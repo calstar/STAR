@@ -33,7 +33,7 @@ port* before concluding the endpoint is missing.
 ## Testing
 
 ```bash
-scripts/check.sh          # every feed-system gate CI runs, fast tier (~3 min)
+scripts/check.sh          # every feed-system gate CI runs, fast tier (~3 min; -n auto with pytest-xdist)
 scripts/check.sh full     # plus tests marked slow and the Layer X parity test
 cd lib/feedtwin   && python3 -m pytest -q && python3 -m mypy feedtwin && python3 -m black --check feedtwin tests
 cd feed-twin      && python3 -m pytest -q -m "not slow"     # drop -m for all 200+
@@ -105,6 +105,11 @@ very bugs they were written for.
   reintroduce a budget that folds coupling steps -- it made the console integrate a
   different scheme from the one `docs/PHYSICS-BENCHMARK.md` checks. Vessels trip the
   stand above the MAWP their drawing declares (`Session._check_limits`). See 3.10.
+  When it falls behind, time `Session.step` against the tick before blaming physics: the
+  panel's pacing (period from tick *start*) once cost more than the solve. The cart is
+  cheap on purpose (`Setup.ground_rests`, "Simplified GSE"): a cart vessel nothing flows
+  through is not integrated, and while the engine burns the cart cut off from the vehicle
+  leaves the solve -- the burn is bit-identical. See 3.10b.
 - **One engine: EngineDesign's, as a card.** An engine in feed-twin's library carries
   EngineDesign's engine card (`POST /api/layerx/engine-card`, stored as the artifact's
   `card` attachment), and a card goes on an engine only through `EngineCard.install`, as
@@ -113,6 +118,15 @@ very bugs they were written for.
   says when EngineDesign has moved on. Compare the cockpit and Layer X only at the same T-0;
   `EngineDesign/tests/test_layerx_cockpit_parity.py` holds them together. Burns are totalled
   by `feedtwin.session.report`. See `docs/adr/0003-one-engine-one-burn.md`.
+- **A fire is loaded with the engine's fire load**, the config's `lox_tank.mass` /
+  `fuel_tank.mass` (fixed by the competition), not a fraction of the drawn tank:
+  T-0 (`jump_to_t0`) and pad fills use `Session.fire_loads()`. A burn that runs long
+  is first a question of what was loaded.
+- **The supply-pressure effect is measured from zero inlet**: outlet = dome + bias
+  - S x inlet (gauge), no datum, no setting (the team, 2026-10-07). A full 4,500 psig
+  bottle holds a 1092-50 at dome 500 to 473.5 psig, not 550; never assume lockup =
+  dome + bias. A drawn `inlet_reference` is ignored and warned. T-0 primes at the
+  regulator's lockup off the vehicle's bottle. See `docs/PHYSICS-BENCHMARK.md` 4.11.
 - **Pressures: absolute inside, gauge on the drawing, never ambiguous** (ADR 0004).
   A drawing's bare `psi` on an absolute pressure (tank, bottle, setpoint, dome, MAWP)
   reads as psig; `psia` says absolute; a chamber pressure on the ENGINE symbol is
@@ -128,12 +142,21 @@ very bugs they were written for.
   drawing's **hookup** (`feedtwin.session.hookup`, the Hookup tab), kept per drawing
   lineage. With none saved it is `suggest()`, which is the old behaviour bit for bit.
   Never hard-code a valve or regulator tag; see `docs/integration/gse-pages-and-hookup.md`.
+- **The drawing wires the twin** (ADR 0006). Vehicle vs ground support is
+  `feedtwin.pid.roles` (the ENGINE's drawn-line component; a paired QD is the boundary).
+  A cart TANK is a supply (pre-loaded, never tanker-loaded, its fed flight tank's load
+  stands aside); a cart K-bottle arrives full; built-in charges and loads stand in only
+  for what is *not* drawn. Every hand valve rests shut (unless drawn `normalPosition: open`)
+  and is never bound to the table; MOVs are actuated. A liquid DEWAR is a supply tank;
+  dome-line valves gate the dome (open to the loader: live; open vent: drained; else held). Lines on a regulator's
+  `dome` handle are loading, not feed. Every hand-loaded regulator gets a knob (`DOME`,
+  `CHARGE` = `copv_target_psi`, or its own). Before adding a Hookup-tab workaround, ask
+  what the drawing should say instead.
 - **Adiabatic is an assumption, not a fact.** Line walls (`feedtwin.comps.wall`) model
   the heat a tube and its fittings give the gas during a flow, which is worth ~50 psi
   of tank pressure late in a nitrogen burn. **On by default** in the library `Setup`,
-  the cockpit and Layer X since 2026-10-03 (the team: fitting heat is on), as is
-  `regulator_lockup_supply` (the regulator's supply-pressure effect at lockup);
-  `burn_setup` pins both off so the benchmark study is the scheme it was stated at.
+  the cockpit and Layer X since 2026-10-03 (the team: fitting heat is on);
+  `burn_setup` pins it off so the benchmark study is the scheme it was stated at.
   What is *not* modelled, on purpose, is
   soak: no heat transfer without flow, and no clock on how long a stand has sat. A
   wall starts at the temperature of the fluid its line holds at rest, which is where a

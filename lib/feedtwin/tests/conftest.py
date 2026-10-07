@@ -18,6 +18,11 @@ SLOW_TESTS = {
     "test_expulsion_matches_closed_form",
     "test_the_ox_lead_shows_up_in_the_trace",
     "test_expulsion_deviation_is_the_compressibility",
+    # LE4 with its cart drawn (2026-10-07): a LOX load from a drawn dewar is a
+    # minute of cryogen numerics, the fuel pad and the dome pad seconds each.
+    "test_ox_fill_loads_the_flight_lox_tank_from_the_dewar",
+    "test_the_pad_charges_the_copv_and_loads_fuel_through_the_drawing",
+    "test_the_dome_loads_on_the_pad_and_holds_when_its_valve_shuts",
 }
 
 

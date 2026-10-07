@@ -56,10 +56,16 @@ gate "lib: black"   $BLACK --check lib/feedtwin
 gate "lib: mypy"    bash -c "cd lib/feedtwin && $PY -m mypy"
 # ${MARK[@]+...}: an empty array is "unbound" to macOS's bash 3.2 under set -u,
 # which killed the full tier on its first gate.
-gate "lib: pytest"  $PY -m pytest lib/feedtwin/tests -q -p no:cacheprovider ${MARK[@]+"${MARK[@]}"}
+# Across cores when pytest-xdist is installed (it is in lib/feedtwin's dev extra).
+PAR=""
+if $PY -c "import xdist" 2>/dev/null; then PAR="-n auto"; fi
+gate "lib: pytest"  $PY -m pytest lib/feedtwin/tests -q -p no:cacheprovider $PAR ${MARK[@]+"${MARK[@]}"}
+if [ -n "$PAR" ]; then
+  gate "lib: timing" $PY -m pytest lib/feedtwin/tests/test_props_performance.py -q -p no:cacheprovider
+fi
 gate "app: black"   bash -c "cd feed-twin && $BLACK --check backend tests"
 gate "app: mypy"    bash -c "cd feed-twin && $PY -m mypy backend --strict --ignore-missing-imports"
-gate "app: pytest"  bash -c "cd feed-twin && $PY -m pytest tests -q -p no:cacheprovider ${MARK[@]+-m 'not slow'}"
+gate "app: pytest"  bash -c "cd feed-twin && $PY -m pytest tests -q -p no:cacheprovider $PAR ${MARK[@]+-m 'not slow'}"
 gate "physics benchmark" $PY scripts/physics_benchmark.py
 if command -v npm >/dev/null && [ -d feed-twin/frontend/node_modules ]; then
   gate "frontend: build" bash -c "cd feed-twin/frontend && npm run build --silent"

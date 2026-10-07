@@ -242,7 +242,8 @@ def factors(prep: Any, config: Any) -> Tuple[List[Factor], List[str]]:
                           "measure them, or restate them, to drop this", cases, unit=""))
 
     # ---- the bottle's wall, which sets how much the expanding gas is warmed ----
-    for b in [n for n in diagram.nodes if n.type == "KBOTTLE"][:1]:
+    copv_id = (getattr(prep, "derived", None) or {}).get("copv_id")
+    for b in [n for n in diagram.nodes if n.type == "KBOTTLE" and (copv_id is None or n.id == copv_id)][:1]:
         p = b.params.get("wall_conductance")
         if p is not None and guessed(p, f"node:{b.id}.wall_conductance"):
             v = float(p.value)

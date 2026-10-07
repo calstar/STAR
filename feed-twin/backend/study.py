@@ -26,7 +26,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from feedtwin.session.burn import BurnPlan, jump_to_t0, run_burn
 from feedtwin.session.gauge import psig
-from feedtwin.session.hookup import DOME
+from feedtwin.session.hookup import CHARGE, DOME
 
 from backend.session import LIVE_STEP, Session
 
@@ -43,9 +43,8 @@ class StudyCase:
 
     label: str
     copv_psi: float | None = None
-    """Bottle at T-0 [psig]; ``None`` is the stand's COPV fill target. Also the
-    charge the regulators are taken as set against
-    (``Setup.regulator_supply_datum``)."""
+    """Bottle at T-0 [psig]; ``None`` is the stand's COPV fill target. A fuller
+    bottle locks the tanks up lower: the supply effect is ``-S x inlet``."""
     knobs: Mapping[str, float] = field(default_factory=dict)
     """Knob id -> setting [psig], over the stand's."""
     bottle_litres: float | None = None
@@ -168,6 +167,9 @@ def case_inputs(base: Mapping[str, Any], case: StudyCase) -> dict[str, Any]:
         if knob == DOME:
             # The dome knob is the Configuration's dome setting, as on GSE.
             setup["dome"] = value
+        elif knob == CHARGE:
+            # The COPV fill knob is the Configuration's COPV target.
+            setup["copv_target"] = value
         else:
             knobs[knob] = value
     return {**dict(base), "setup": setup, "knobs": knobs}
@@ -180,6 +182,7 @@ def describe(base: Mapping[str, Any], case: StudyCase) -> list[str]:
         out.append(f"COPV {case.copv_psi:.0f} psig")
     stand_knobs = dict(base.get("knobs") or {})
     stand_knobs[DOME] = dict(base.get("setup") or {}).get("dome")
+    stand_knobs[CHARGE] = dict(base.get("setup") or {}).get("copv_target")
     for knob, value in case.knobs.items():
         if (
             stand_knobs.get(knob) is None

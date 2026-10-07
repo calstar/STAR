@@ -288,6 +288,9 @@ export interface TankState {
   chilling?: boolean;
   /** What the load is delivering into the tank [g/s]. */
   fill_flow_g_s?: number;
+  /** Where the regulator feeding this tank locks up now [psig]: dome + bias
+   *  less the supply effect of the bottle behind it. Absent: no regulator. */
+  lockup_psi?: number | null;
   /** What the drawing says the vessel holds [L]. */
   volume_L?: number;
   /** Which leg the tank is on, from what it holds. Empty on a bottle. */
@@ -613,6 +616,9 @@ export interface Hookup {
 
 /** The id of the knob the session's dome setting drives. */
 export const DOME_KNOB = 'dome';
+/** The knob that sets the COPV charge (Setup copv_target): the drawn fill
+ *  regulator when the cart is on the drawing, the built-in charge when not. */
+export const CHARGE_KNOB = 'charge';
 
 export interface LiveKnob {
   id: string;

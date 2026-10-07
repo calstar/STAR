@@ -60,9 +60,7 @@ from feedtwin.comps.correlations import (
 )
 from feedtwin.comps.iec_gas import XT_TYPICAL
 from feedtwin.comps.regulator import (
-    LOCKUP_SUPPLY_SIGNAL,
     SEAT_XT_SIGNAL,
-    SUPPLY_DATUM_SIGNAL,
     Regulator,
 )
 from feedtwin.engine.balance import MixtureBalance
@@ -80,12 +78,12 @@ from feedtwin.vessels.vapour import NoVapour, SaturatedVapour, latent_heat
 from feedtwin.vessels.tank import Tank, TankRates, TankState
 from feedtwin.vessels.volume import GRAVITY, GasVolume, VesselState
 
-from feedtwin.pid.network import DomeLoader
+from feedtwin.pid.network import DomeLine, DomeLoader, propellant_side
 from feedtwin.session.gauge import ATMOSPHERE, PSI, from_psig, psig
 from feedtwin.session.diagnostics import SolverRecord, boundary_nodes, crossing
-from feedtwin.session.hookup import DOME, Hookup
+from feedtwin.session.hookup import CHARGE, DOME, Hookup
 from feedtwin.session.model import AssemblyError, Model
-from feedtwin.session.statemachine import Binding, StateMachine
+from feedtwin.session.statemachine import Binding, StateMachine, _words
 
 #: Standard atmosphere [Pa]. What a vented vessel sits at, and the zero of every
 #: gauge on the stand -- see `feedtwin.session.gauge.psig`.
@@ -379,6 +377,12 @@ class Setup:
     """Bottle fill target [psig], as its gauge would read it."""
     """What GN2 High Press fills the bottle to."""
 
+    supply_press_s: float = 3.0
+    """Seconds the cart's press line takes to bring a ground supply tank (a fuel
+    transfer tank) to its drawn pressure, when that line is not on the drawing
+    and its actuator ("Fuel Fill Press") is open. **Assumed**: a first-order
+    rate standing in for a regulator and a line nobody has drawn. Draw the
+    press line and this is not used."""
     copv_fill_s: float = 9.7
     """Seconds to take the bottle from empty to target while the fill valve is
     open. Fitted 2026-10-05 to the 12 Sep pulse fill (DAQ run
@@ -678,28 +682,7 @@ class Setup:
     1 g/s) and each branch against the highest boundary pressure -- the
     bottle -- so 1e-4 on a full COPV is ~3 kPa on every branch, and an
     injector drop comes out a few tenths of a percent off its own relation. A
-    caller quoting the engine finer than that sets this lower, and turns on
-    :attr:`regulator_lockup_supply` with it: without it a regulator sitting
-    at lockup has no root below ~3e-5 and the solve holds its last flows."""
-    regulator_lockup_supply: bool = True
-    """Regulator lockup carries the supply-pressure effect, so the outlet is
-    continuous across zero flow (:data:`feedtwin.comps.regulator.LOCKUP_SUPPLY_SIGNAL`).
-    On by default since 2026-10-03 (the team: the supply effect is always on).
-    Off is the earlier behaviour, bit for bit, which the Study keeps for its
-    benchmark (:func:`~feedtwin.session.burn.burn_setup`); on, against a
-    regulator with no supply effect, it changes nothing."""
-    regulator_supply_datum: bool = True
-    """A regulator whose drawing gives a supply coefficient but no
-    ``inlet_reference`` is taken as set against a charged bottle: its supply
-    term is measured from :attr:`copv_target_psi`, so the tanks climb as the
-    bottle falls. **Assumed** -- the knob is set with the COPV full -- and the
-    session's assumptions say so for each regulator it applies to. Without it
-    the term has no datum and is zero, which reads as a regulator with no
-    supply effect (the LE4 drawings declare 14.7 psi per 1000 psi and no
-    datum: ~35 psi of tank rise over a burn, missing). A drawn
-    ``inlet_reference`` always wins; against a drawing with no supply
-    coefficient, or one that gives its datum, it changes nothing. Off is the
-    earlier behaviour, bit for bit, which the Study's benchmark keeps."""
+    caller quoting the engine finer than that sets this lower."""
     regulator_compressible_seat: bool = False
     """The regulator's wide-open seat seen as a gas sees it: IEC 60534-2-1's
     expansion factor ``Y = 1 - x / (3 F_gamma xT)`` and its choke at
@@ -733,6 +716,20 @@ class Setup:
     :attr:`ullage_wall_T0_K` does not name [K]. Zero -- the default -- leaves
     the upper wall at the pressurant's temperature, exactly as before. A dial
     for the cockpit's Configuration tab, where a per-tank map has no row."""
+    ground_rests: bool = True
+    """The ground support is integrated only while it is doing something. A
+    cart vessel with nothing flowing in or out of it, and no built-in press
+    acting on it, holds where it is: its wall, vapour and ambient leak stand
+    still until a valve puts it to work. And while the engine burns, the
+    ground with no open path to the vehicle leaves the solve as well -- its
+    lines carry nothing and read what they last read -- so the burn is
+    solved on the vehicle alone. Nothing it holds can reach the vehicle until
+    a valve joins them, so the burn is a vehicle-only drawing's, number for
+    number; on LE4 (6) the cart is two-thirds of the network and was most of
+    a Fire tick. **Simplification** (the team, 2026-10-07: the cart's
+    physics is not what the twin is for). Only a drawing with its ground
+    support drawn has anything to rest. Off integrates every cart vessel
+    every step, as before."""
 
 
 def _not_a_liquid_tank(
@@ -975,6 +972,9 @@ class TankSim:
     mawp: float = 0.0
     #: Dials the session copies in each tick (see feed-twin backend/tunables.py).
     full_fraction: float = FULL_FRACTION
+    #: What a load stops at [kg]: the engine's fire load for this tank
+    #: (:meth:`Session.fire_loads`), 0 for "fill to :attr:`full_fraction`".
+    load_kg: float = 0.0
     charge_gamma: float = CHARGE_GAMMA
     supply_band: float = SUPPLY_BAND
     stir_band: float = STIR_BAND
@@ -1097,9 +1097,11 @@ class TankSim:
         return True
 
     def _wanted(self) -> float:
-        """Liquid mass a load stops at [kg]: the full fraction of the tank."""
+        """Liquid mass a load stops at [kg]: the fire load when there is one,
+        never more than the full fraction of the tank."""
         capacity = self.tank.geometry.total_volume * self.full_fraction
-        return capacity * self.tank.liquid_density(self.state)
+        full = capacity * self.tank.liquid_density(self.state)
+        return min(self.load_kg, full) if self.load_kg > 0.0 else full
 
     def _collect(self, added: float) -> None:
         """Put ``added`` kg of the load into the liquid."""
@@ -1222,8 +1224,16 @@ class TankSim:
         supply_pressure: float = 0.0,
         stirring: float = 1.0,
         vent_fraction: float = 1.0,
+        mdot_liquid_in: float = 0.0,
+        liquid_in_temperature: float | None = None,
     ) -> float:
         """One vessel step, with the flows the network just produced.
+
+        ``mdot_liquid_in`` is propellant the network delivers to this tank's
+        outlet from another tank -- a cart's transfer tank loading it -- arriving
+        at ``liquid_in_temperature`` and mixed into the liquid. It squeezes the
+        ullage as it comes in, which ``Tank.rates`` prices as the p dV work the
+        drain does in reverse.
 
         Returns the gas inflow it **refused** [kg/s]. The caller owes that back
         to whatever was debited for it: the network solved a flow leaving the
@@ -1332,10 +1342,23 @@ class TankSim:
         # refused the rest of the step without a word: 17-25 g of propellant
         # the engine burned and no vessel gave.
         self.empty = self.state.liquid_mass <= DRY_MASS
+        mdot_liquid_in = max(mdot_liquid_in, 0.0)
         holds = max(self.state.liquid_mass, 0.0) / dt if dt > 0.0 else 0.0
+        holds += mdot_liquid_in
         if mdot_liquid_out > holds:
             self.fixed_kg += (mdot_liquid_out - holds) * dt
             mdot_liquid_out = holds
+        if mdot_liquid_in > 0.0 and dt > 0.0:
+            if liquid_in_temperature is not None:
+                arriving = mdot_liquid_in * dt
+                held_liquid = max(self.state.liquid_mass, 0.0)
+                mixed = (
+                    held_liquid * self.state.liquid_temperature
+                    + arriving * liquid_in_temperature
+                ) / (held_liquid + arriving)
+                self.state = replace(self.state, liquid_temperature=mixed)
+            # Net through the outlet: negative is a tank being loaded.
+            mdot_liquid_out -= mdot_liquid_in
 
         # What leaves through a vent is the ullage as it is: pressurant and
         # propellant vapour in proportion. The network solved one gas flow out
@@ -1764,6 +1787,14 @@ class Session:
         self.forced: dict[str, float] = {}
         #: Where each actuator actually is, as opposed to where it is told to be.
         self._positions: dict[str, float] = {}
+        #: The pressure shut in each gated dome (DomeLine), by the loaded
+        #: regulator's id [Pa abs]; atmosphere until something loads it.
+        self._dome_held: dict[str, float] = {}
+        #: Network node -> pressure for the dome lines, written over the solve's
+        #: own (it never sees a dome line: loading gas, not feed).
+        self._dome_readings: dict[str, float] = {}
+        #: Prime asks for the dome as loaded on the pad, not as it was.
+        self._dome_primed = False
         self._travel: dict[str, float] = {}
         #: The run computed ahead of the display. Each entry is the sample the
         #: operator will see and the stand's state at that instant, so a command
@@ -1814,6 +1845,17 @@ class Session:
         #: a different circuit, and a warm start taken from the old one is not a
         #: starting point -- it is a guess about a system that no longer exists.
         self._last_isolated: frozenset[str] = frozenset()
+        #: The ground support resting this step while the engine burns
+        #: (Setup.ground_rests, _rest_ground):
+        #: its branches, out of the solve, and its vessels' ids, not integrated.
+        self._resting: tuple[frozenset[str], frozenset[str]] = (
+            frozenset(),
+            frozenset(),
+        )
+        self._fire_loads: dict[str, float] | None = None
+        self._resting_memo: tuple[
+            frozenset[str] | None, tuple[frozenset[str], frozenset[str]]
+        ] = (None, self._resting)
         self._chamber_guess = AMBIENT
         self._last_chamber: ChamberResult | None = None
         # A cold chamber is open to atmosphere through its own nozzle, so pin
@@ -1872,6 +1914,30 @@ class Session:
         #: fills them, or they would be filled twice. Empty on a drawing with
         #: no GSE drawn, and then nothing changes.
         self._drawn_fill: frozenset[str] = self._find_drawn_fills()
+        # Vehicle tanks a cart tank loads through the drawing: the only tanks
+        # that take liquid in at their outlet.
+        # Both ends of a transfer line: liquid that sloshes back into the cart's
+        # tank is propellant too, and dropping it lost mass every step.
+        self._liquid_fed: frozenset[str] = frozenset(
+            t for fed in self.model.built.supplies.values() for t in fed
+        ) | frozenset(self.model.built.supplies)
+        # The valve the crew shuts when a drawn load is in: the first one on the
+        # transfer line from the cart's tank. Shut once, when the tank reaches
+        # its load, as the built-in load stops at its full fraction.
+        # ...and the branches of that line, which stay open to a dry tank:
+        # it is filled through them (`_dry_branches`).
+        self._fill_lines: dict[str, frozenset[str]] = {}
+        self._fill_stops: dict[str, str] = self._find_fill_stops()
+        self._fill_stopped: set[str] = set()
+        #: What the crew last did with each transfer valve (open or shut), so a
+        #: hand on the P&ID between changes is left alone.
+        self._fill_crew: dict[str, bool] = {}
+        # Shut from the start, not from the first tick: a valve that slews shut
+        # over its travel lets a primed flight tank drain back into the cart.
+        for valve in self._fill_stops.values():
+            self._fill_crew[valve] = False
+            self.forced[valve] = 0.0
+            self._positions[valve] = 0.0
         #: Pressure relief valves (comps.relief) and where each one is: open or
         #: shut (its hysteresis), and its lift as the signal the solve reads.
         #: Empty on a drawing with no relief, and then nothing below runs.
@@ -1885,6 +1951,41 @@ class Session:
 
     # ------------------------------------------------------------ building
 
+    @property
+    def ground(self) -> frozenset[str]:
+        """Drawing ids of the ground support: everything off the vehicle
+        (:func:`feedtwin.pid.roles.vehicle_ids`). Empty for a drawing that is
+        one piece."""
+        vehicle = self.model.built.vehicle
+        if vehicle is None:
+            return frozenset()
+        return frozenset(n.id for n in self.model.diagram.nodes if n.id not in vehicle)
+
+    def fire_loads(self) -> dict[str, float]:
+        """Propellant a fire is loaded with, per vehicle tank [kg].
+
+        The engine's ``fire_load`` (its config's ``lox_tank.mass`` and
+        ``fuel_tank.mass``) on the tank of that side. What the vehicle carries
+        is fixed by the competition, not by the size of the tank drawn, so the
+        pad loads this and T-0 starts with it. Empty without an engine that
+        states one: then loads fill the tank to its full fraction.
+        """
+        if self._fire_loads is None:
+            load = getattr(self.model.engine, "fire_load", None) or {}
+            self._fire_loads = {
+                tank_id: float(load[side])
+                for tank_id in self.vehicle_tanks
+                if (side := propellant_side(self.tanks[tank_id].tank.liquid.name))
+                in load
+            }
+        return self._fire_loads
+
+    @property
+    def vehicle_tanks(self) -> tuple[str, ...]:
+        """The tanks the engine burns from: every tank, less the ground's."""
+        ground = self.ground
+        return tuple(t for t in self.tanks if t not in ground)
+
     def _find_drawn_fills(self) -> frozenset[str]:
         """Tanks a drawn dewar reaches, and bottles another drawn bottle or
         dewar reaches, through the drawing's lines and valves (open or shut --
@@ -1896,7 +1997,14 @@ class Session:
         net = built.network
         types = {n.id: n.type for n in self.model.diagram.nodes}
         pages = {n.id: n.page or "Main" for n in self.model.diagram.nodes}
-        place = {built.node_of.get(sid, sid): sid for sid in types}
+        # A vessel joined to its manifold by an unsized line shares a node with
+        # the junction: the vessel is what that place is. (Keyed last-wins, a
+        # cart's K-bottle read as its junction and was never found.)
+        place: dict[str, str] = {}
+        for sid, kind in types.items():
+            where = built.node_of.get(sid, sid)
+            if where not in place or kind in {"TANK", "KBOTTLE", "DEWAR"}:
+                place[where] = sid
         neighbours: dict[str, set[str]] = {}
         for branch in net.branches.values():
             neighbours.setdefault(branch.upstream, set()).add(branch.downstream)
@@ -1925,15 +2033,27 @@ class Session:
 
         found: set[str] = set()
         labels = {n.id: n.label or n.id for n in self.model.diagram.nodes}
+        fed_by = {
+            vehicle_tank: supply_tank
+            for supply_tank, fed in built.supplies.items()
+            for vehicle_tank in fed
+        }
         for tank_id, ports in built.tanks.items():
-            supply = reaches({ports.ullage, ports.outlet}, {"DEWAR"}, tank_id)
+            if tank_id in built.supplies:
+                continue  # the cart's own tank: pre-loaded, never loaded here
+            supply = fed_by.get(tank_id) or reaches(
+                {ports.ullage, ports.outlet}, {"DEWAR"}, tank_id
+            )
             if supply:
                 found.add(tank_id)
                 self.assumptions.append(
                     f"{labels.get(tank_id, tank_id)} is loaded through the drawing "
                     f"(from {labels.get(supply, supply)}): the built-in tanker load is off."
                 )
+        ground = self.ground
         for bottle_id in self.bottles:
+            if bottle_id in ground:
+                continue  # a cart bottle is the supply, delivered full
             start = built.node_of.get(bottle_id, bottle_id)
             supply = reaches({start}, {"KBOTTLE", "DEWAR"}, bottle_id)
             if supply:
@@ -2001,8 +2121,15 @@ class Session:
                 ),
                 surface_mixing=self.setup.surface_mixing,
                 wall_by_level=self.setup.ullage_wall_by_level,
-                ambient_conductance=_skin_conductance(
-                    node, self.setup.ambient_leak, self.assumptions
+                # A dewar is vacuum-jacketed: its inner vessel takes no skin
+                # leak worth the name (and the drawing gives it no insulation
+                # to read one from).
+                ambient_conductance=(
+                    0.0
+                    if getattr(node, "drawn_as", "") == "DEWAR"
+                    else _skin_conductance(
+                        node, self.setup.ambient_leak, self.assumptions
+                    )
                 ),
                 ambient_temperature=self.setup.ambient_T,
                 # Boiling at a superheated wall is what makes a shut LOX tank
@@ -2037,21 +2164,46 @@ class Session:
                 state=start,
                 ullage_node=ports.ullage,
                 outlet_node=ports.outlet,
+                full_fraction=self.setup.full_fraction,
             )
-
-        if self.setup.regulator_supply_datum and self.setup.copv_target_psi > 0.0:
-            for branch_id, branch in net.branches.items():
-                reg = branch.component
-                if (
-                    isinstance(reg, Regulator)
-                    and reg.p.get("supply_coefficient", 0.0) > 0.0
-                    and reg.p.get("inlet_reference", 0.0) <= 0.0
-                ):
-                    self.assumptions.append(
-                        f"{branch_id} supply effect measured from the COPV charge, "
-                        f"{self.setup.copv_target_psi:.0f} psig (Setup; the drawing "
-                        "gives no inlet reference): set against a full bottle."
+            if drawing_id in self.ground:
+                # A cart tank arrives filled -- a fuel transfer tank is loaded
+                # in the shop and pressed on the pad -- and it is where the
+                # vehicle's load comes from, not another load.
+                sim = self.tanks[drawing_id]
+                loaded = sim._wanted()
+                # A dewar sits at its own pressure, built by its own circuit,
+                # with its liquid at saturation under it; a transfer tank is
+                # filled in the shop and pressed on the pad.
+                dewar = getattr(node, "drawn_as", "") == "DEWAR"
+                drawn = node.params.get("pressure")
+                held = drawn.si if (dewar and drawn is not None) else AMBIENT
+                sim.state = tank.initial_state(
+                    pressure=held,
+                    liquid_mass=loaded,
+                    liquid_temperature=temperature,
+                    # The ullage is the model's pressurant, not the dewar's own
+                    # vapour; started cold it sits on nitrogen's saturation
+                    # line, where the property layer cannot price it.
+                    gas_temperature=293.15,
+                    contact_time=PAD_HOLD_S if dewar else 0.0,
+                    split_wall=dewar,
+                )
+                if dewar:
+                    # Its inner vessel has held its liquid for days: all of
+                    # the metal is at the liquid's temperature. Started warm,
+                    # the wall boiled the LOX and the dewar climbed 650 psi in
+                    # a minute.
+                    sim.state = replace(
+                        sim.state,
+                        ullage=replace(sim.state.ullage, wall_temperature=temperature),
                     )
+                self.assumptions.append(
+                    f"{label} is ground support: it starts loaded, "
+                    f"{loaded:.2f} kg ({self.setup.full_fraction:.0%} of its "
+                    f"{litres * 1e3:.1f} L, Setup), at "
+                    + (f"its drawn {psig(held):.0f} psig." if dewar else "atmosphere.")
+                )
 
         for node in self.model.diagram.nodes:
             if node.type not in {"KBOTTLE", "DEWAR"} or node.id not in net.nodes:
@@ -2090,7 +2242,14 @@ class Session:
             # drawing's pressure seeds the fill target instead.
             rated = pressure.si if pressure else 4500.0 * PSI
             ambient_T = temp_param.si if temp_param is not None else 293.15
-            delivered = bool(self.setup.bottle_delivered)
+            # A cart's K-bottle is delivered full; only the vehicle's own
+            # bottle is charged on the pad (`Setup.bottle_delivered`).
+            # (A dewar holds liquid, which a gas volume cannot start with; it
+            # keeps the old start until it is modelled as the liquid supply it
+            # is.)
+            delivered = bool(self.setup.bottle_delivered) or (
+                node.id in self.ground and node.type == "KBOTTLE"
+            )
             self.bottles[node.id] = BottleSim(
                 id=node.id,
                 label=node.label or node.id,
@@ -2163,7 +2322,10 @@ class Session:
                 f"loads names {', '.join(unknown)}, which this drawing has no "
                 f"tank for (tanks: {', '.join(sorted(self.tanks)) or 'none'})"
             )
+        ground = self.ground
         for tank_id, sim in self.tanks.items():
+            if tank_id in ground and tank_id not in loads:
+                continue  # the cart's tank: T-0 is the vehicle's, not its
             capacity = sim.tank.geometry.total_volume * fill_fraction
             rho = sim.tank.liquid.get("rho", T=sim.state.liquid_temperature, q=0.0)
             if tank_id in loads:
@@ -2205,12 +2367,17 @@ class Session:
                     self.assumptions.append(note)
             sim.empty = False
         for bottle in self.bottles.values():
+            if bottle.id in ground:
+                continue  # a cart bottle keeps what it holds
             if copv_psi > 0.0:
                 bottle.state = bottle.volume.initial_state(
                     pressure=from_psig(copv_psi), temperature=293.15
                 )
             bottle.charged = True
         self.state = state if state in self.machine.states else self.state
+        # T-0 has the dome loaded on the pad, whatever the line's valves are
+        # doing when the session is put there.
+        self._dome_primed = True
         self._guess = {}
         self._last_flows = {}
         self._last_isolated = frozenset()
@@ -2236,7 +2403,8 @@ class Session:
         stale node pressure from the previous tick would put the dome one step
         behind the supply it is supposed to track.
         """
-        for bottle in self.bottles.values():
+        ground = self.ground
+        for bottle in sorted(self.bottles.values(), key=lambda b: b.id in ground):
             if bottle.charged:
                 return float(bottle.pressure)
         return 0.0
@@ -2371,6 +2539,9 @@ class Session:
         """
         built = self.model.built
         out: dict[str, float] = {}
+        commanded = self.binding.positions_for(self.machine, self.state)
+        lines = {line.loader: line for line in built.dome_lines.values()}
+        self._dome_readings = {}
 
         # The dome, through the regulator that actually loads it. `dome_psi` is
         # the knob on the *control* regulator, not the dome pressure itself:
@@ -2389,17 +2560,29 @@ class Session:
                 psig_set = (
                     self.setup.dome_psi
                     if knob.id == DOME
-                    else self.knobs.get(knob.id, knob.psig)
+                    else (
+                        self.setup.copv_target_psi
+                        if knob.id == CHARGE
+                        else self.knobs.get(knob.id, knob.psig)
+                    )
                 )
                 for regulator in knob.regulators:
                     loader = built.dome_loaders.get(regulator)
                     if loader is not None:
-                        out[loader.signal] = self._through_loader(loader, psig_set)
+                        out[loader.signal] = self._gated_dome(
+                            lines.get(regulator),
+                            self._through_loader(loader, psig_set),
+                            commanded,
+                        )
                     elif regulator in labels:
                         out[f"{labels[regulator]}.dome"] = from_psig(psig_set)
         else:
             for loader in built.dome_loaders.values():
-                out[loader.signal] = self._through_loader(loader, self.setup.dome_psi)
+                out[loader.signal] = self._gated_dome(
+                    lines.get(loader.id),
+                    self._through_loader(loader, self.setup.dome_psi),
+                    commanded,
+                )
             if not built.dome_loaders:
                 dome_signal = next(
                     (s for s in built.actuators.values() if s.endswith(".dome")), ""
@@ -2407,17 +2590,87 @@ class Session:
                 if dome_signal:
                     out[dome_signal] = from_psig(self.setup.dome_psi)
 
-        commanded = self.binding.positions_for(self.machine, self.state)
+        self._dome_primed = False
         for drawing_id, signal in built.actuators.items():
             if signal.endswith(".dome"):
                 continue
+            # Uncommanded, a valve rests where the drawing puts it: an actuated
+            # valve at its unpowered position, a hand valve where the build
+            # read it (`BuiltNetwork.rest`). Shut when the drawing says nothing.
             target = (
                 self.forced[drawing_id]
                 if drawing_id in self.forced
-                else commanded.get(drawing_id, 0.0)
+                else commanded.get(drawing_id, built.rest.get(drawing_id, 0.0))
             )
             out[signal] = self._slew(drawing_id, target, dt)
         return out
+
+    def _gated_dome(
+        self, line: DomeLine | None, live: float, commanded: Mapping[str, float]
+    ) -> float:
+        """The dome a gated dome line gives: its loader's outlet while the line
+        is open between them, atmosphere once an open vent reaches the port
+        side, and otherwise what was shut in [Pa abs].
+
+        Walked from the dome port each tick, through what is open. A valve no
+        actuator drives passes (nothing on the stand shuts it); a vent valve
+        no actuator drives, and a hand valve nobody has opened, rest shut.
+        """
+        if line is None:
+            return live
+        built = self.model.built
+
+        def is_open(valve: str) -> bool:
+            if valve in self.forced:
+                return self.forced[valve] >= 0.5
+            if valve in commanded:
+                return commanded[valve] >= 0.5
+            if valve in built.hand_valves or valve in line.vents:
+                return built.rest.get(valve, 0.0) >= 0.5
+            return True
+
+        def region(starts: frozenset[str] | set[str]) -> set[str]:
+            reached: set[str] = set()
+            frontier = list(starts)
+            while frontier:
+                here = frontier.pop()
+                if here in reached:
+                    continue
+                reached.add(here)
+                if here in line.valves and not is_open(here):
+                    continue  # shut: its body is reached, nothing past it
+                frontier.extend(line.adjacent.get(here, ()))
+            return reached
+
+        port_side = region(line.ports)
+        if line.loader in port_side or self._dome_primed:
+            held = live
+        elif any(v in port_side and is_open(v) for v in line.vents):
+            held = AMBIENT
+        else:
+            held = self._dome_held.get(line.loaded, AMBIENT)
+        self._dome_held[line.loaded] = held
+        # What the line's transducers read: the dome on its side, the loader's
+        # outlet on the loader's side of a shut valve.
+        loader_side = region({line.loader}) - port_side
+        for symbols, value in ((port_side, held), (loader_side, live)):
+            for symbol in symbols:
+                for node in (
+                    built.node_of.get(symbol),
+                    f"{symbol}.in",
+                    f"{symbol}.out",
+                ):
+                    if node and node in built.network.nodes:
+                        self._dome_readings[node] = value
+        for instrument in built.instruments:
+            for symbols, value in ((port_side, held), (loader_side, live)):
+                if any(
+                    built.node_of.get(sym) == instrument.node
+                    or instrument.node in (f"{sym}.in", f"{sym}.out")
+                    for sym in symbols
+                ):
+                    self._dome_readings[instrument.node] = value
+        return held
 
     def _through_loader(self, loader: DomeLoader, psig_set: float) -> float:
         """The dome a control regulator set to ``psig_set`` gives, from its
@@ -2474,10 +2727,106 @@ class Session:
         for sim in self.tanks.values():
             if sim.state.liquid_mass > DRY_MASS:
                 continue
+            filling = self._fill_lines.get(sim.id, frozenset())
             for branch_id, branch in net.branches.items():
+                if branch_id in filling:
+                    continue  # the line it is loaded through: open to a dry tank
                 if sim.outlet_node in (branch.upstream, branch.downstream):
                     out.add(branch_id)
         return frozenset(out)
+
+    def _firing(self) -> bool:
+        """Propellant reached the engine on the last solve."""
+        ports = self.model.built.engine_ports
+        return any(
+            self._last_flows.get(ports.get(side, ""), 0.0) > 0.0
+            for side in ("oxidiser", "fuel")
+        )
+
+    def _rest_ground(self, signals: Mapping[str, float]) -> None:
+        """Decide which ground support rests this step (``self._resting``).
+
+        Nothing rests here unless the engine is burning, the drawing has
+        ground support, and :attr:`Setup.ground_rests` is on. (A cart vessel
+        with nothing flowing rests at any time: :meth:`_move_vessels`.)
+        """
+        nothing: tuple[frozenset[str], frozenset[str]] = (frozenset(), frozenset())
+        if not self.setup.ground_rests or not self.ground or not self._firing():
+            self._resting = nothing
+            return
+        net = self.model.built.network
+        shut = frozenset(net.isolated(signals)) | self._dry_branches()
+        key, value = self._resting_memo
+        if key != shut:
+            value = self._unreachable_ground(shut)
+            self._resting_memo = (shut, value)
+        self._resting = value
+
+    def _unreachable_ground(
+        self, shut: frozenset[str]
+    ) -> tuple[frozenset[str], frozenset[str]]:
+        """Ground branches and vessels with no open path to the vehicle.
+
+        Walked from the vehicle's vessels and the engine across every branch
+        not ``shut``. A tank is one place, so arriving at either of its nodes
+        reaches both; any other fixed node -- atmosphere -- ends the walk, or
+        every vent would join the cart to the vehicle through the sky.
+        """
+        net = self.model.built.network
+        ground = self.ground
+        sibling: dict[str, str] = {}
+        for sim in self.tanks.values():
+            sibling[sim.ullage_node] = sim.outlet_node
+            sibling[sim.outlet_node] = sim.ullage_node
+        vessels = set(sibling) | {b.node for b in self.bottles.values()}
+        seeds = {
+            node
+            for sim in self.tanks.values()
+            if sim.id not in ground
+            for node in (sim.ullage_node, sim.outlet_node)
+        }
+        seeds |= {b.node for b in self.bottles.values() if b.id not in ground}
+        chamber = self.model.built.engine_ports.get("chamber")
+        if chamber:
+            seeds.add(chamber)
+        adjacent: dict[str, list[str]] = {}
+        for branch_id, branch in net.branches.items():
+            if branch_id in shut:
+                continue
+            adjacent.setdefault(branch.upstream, []).append(branch.downstream)
+            adjacent.setdefault(branch.downstream, []).append(branch.upstream)
+        reached = set(seeds)
+        stack = list(seeds)
+        while stack:
+            here = stack.pop()
+            if here in sibling and sibling[here] not in reached:
+                reached.add(sibling[here])
+                stack.append(sibling[here])
+            for there in adjacent.get(here, ()):
+                if there in reached:
+                    continue
+                if net.nodes[there].is_fixed and there not in vessels:
+                    continue  # atmosphere: a sink, not a path
+                reached.add(there)
+                stack.append(there)
+        branches = frozenset(
+            branch_id
+            for branch_id, branch in net.branches.items()
+            if branch_id not in shut
+            and branch.upstream not in reached
+            and branch.downstream not in reached
+        )
+        resting = {
+            sim.id
+            for sim in self.tanks.values()
+            if sim.id in ground and sim.ullage_node not in reached
+        }
+        resting |= {
+            b.id
+            for b in self.bottles.values()
+            if b.id in ground and b.node not in reached
+        }
+        return branches, frozenset(resting)
 
     def _coupling_timescale(
         self,
@@ -2505,10 +2854,13 @@ class Session:
         into it, and every LE4 helium burn plotted a 0.5-0.8 s sawtooth that
         cost 170 N of mean thrust (2026-10-05).
         """
+        resting_branches, resting = self._resting
         slopes = []
         for branch in self.model.built.network.branches.values():
             comp = getattr(branch, "component", None)
             if comp is None or "Regulator" not in type(comp).__name__:
+                continue
+            if branch.id in resting_branches:
                 continue
             droop = comp.p.get("flow_droop", 0.0)
             rated = comp.p.get("rated_flow", 0.0)
@@ -2517,6 +2869,8 @@ class Session:
         resistance = min(slopes) if slopes else 0.0
         tau = float("inf")
         for sim in self.tanks.values():
+            if sim.id in resting:
+                continue
             p = sim.pressure
             if p <= 0.0:
                 continue
@@ -2580,10 +2934,17 @@ class Session:
         # the network -- a press line, a manifold. A vent ends at atmosphere,
         # a fixed pressure; counted, a venting tank read as riding its supply
         # and its vent valve's slope at drain flow asked an Engine Abort for
-        # 0.3 ms steps.
+        # 0.3 ms steps. Nor a branch that can carry nothing -- shut, or a stub
+        # ending at a capped port: priced at the drain flow, the wide fitting
+        # under LE4 (6)'s fuel-tank top QD asked the ignition step for 0.07 ms
+        # steps, three hundred solves on the first tick of Fire.
+        shut = frozenset(net.isolated(signals)) | self._dry_branches()
+        dead = shut | {d.branch for d in net.dead_ends(exclude=shut)}
         paths = []
         for branch_id, branch in net.branches.items():
             if sim.ullage_node not in (branch.upstream, branch.downstream):
+                continue
+            if branch_id in dead:
                 continue
             if sim.outlet_node in (branch.upstream, branch.downstream):
                 continue  # the liquid column, not a gas path
@@ -2675,24 +3036,33 @@ class Session:
         if dt <= 0.0:
             return out
         net = self.model.built.network
+        # A stub carries nothing either, and the solve drops a store whose
+        # every branch is one (``_stores``), so its trial steps would be
+        # thrown away: on a stand at rest, most of them.
+        cut = set(isolated) | {d.branch for d in net.dead_ends(exclude=isolated)}
         for sim in self.tanks.values():
             node = sim.ullage_node
-            live = any(
-                branch_id not in isolated
+            touching = [
+                (branch_id, sim.outlet_node in (branch.upstream, branch.downstream))
                 for branch_id, branch in net.branches.items()
                 if node in (branch.upstream, branch.downstream)
-                and sim.outlet_node not in (branch.upstream, branch.downstream)
-            )
+            ]
+            live = any(
+                branch_id not in isolated for branch_id, inner in touching if not inner
+            ) and any(branch_id not in cut for branch_id, _ in touching)
             held = sim.state.ullage.mass + sim.state.vapour_mass
             if not live or held <= 0.0:
                 continue
-            _, liquid_out = self._split_at(sim.outlet_node, self._last_flows)
+            liquid_in, liquid_out = self._split_at(sim.outlet_node, self._last_flows)
+            if sim.id not in self._liquid_fed:
+                liquid_in = 0.0
             enthalpy = self._pressurant_enthalpy(sim)
 
             def land(gas_in: float = 0.0, gas_out: float = 0.0) -> float:
                 trial = copy.copy(sim)  # state is frozen; the copy owns its own
                 trial.advance(
                     dt,
+                    mdot_liquid_in=liquid_in,
                     mdot_liquid_out=liquid_out,
                     mdot_gas_in=gas_in,
                     mdot_gas_out=gas_out,
@@ -2722,14 +3092,6 @@ class Session:
         """One coupling step: solve the network, then move the vessels."""
         given = signals
         self._apply_vessel_pressures()
-        if self.setup.regulator_lockup_supply:
-            # Here and not in signals(), which is the panel's valve state.
-            signals = {**signals, LOCKUP_SUPPLY_SIGNAL: 1.0}
-        if self.setup.regulator_supply_datum and self.setup.copv_target_psi > 0.0:
-            signals = {
-                **signals,
-                SUPPLY_DATUM_SIGNAL: from_psig(self.setup.copv_target_psi),
-            }
         if self.setup.regulator_compressible_seat:
             signals = {**signals, SEAT_XT_SIGNAL: float(self.setup.regulator_xT)}
         if self._reliefs:
@@ -2759,7 +3121,10 @@ class Session:
             self._last_flows = {}
             self._last_isolated = isolated
 
-        storage = self._ullage_storage(dt, isolated)
+        # The ground at rest (_rest_ground) leaves the solve as a shut valve
+        # would, but is no change of circuit: it carried nothing a step ago.
+        resting = self._resting[0]
+        storage = self._ullage_storage(dt, isolated | resting)
         result = solve_steady(
             net,
             signals=signals,
@@ -2767,8 +3132,9 @@ class Session:
             max_iterations=self.setup.max_iterations,
             raise_on_failure=False,
             guess=self._guess or None,
-            isolate=dry,
+            isolate=dry | resting,
             storage=storage,
+            report=False,
         )
         self._note_solve(result)
         self._accept(result)
@@ -2785,7 +3151,7 @@ class Session:
                 if isolated != self._last_isolated:
                     self._last_flows = {}
                     self._last_isolated = isolated
-                    storage = self._ullage_storage(dt, isolated)
+                    storage = self._ullage_storage(dt, isolated | resting)
                 result = solve_steady(
                     net,
                     signals=signals,
@@ -2793,12 +3159,13 @@ class Session:
                     max_iterations=self.setup.max_iterations,
                     raise_on_failure=False,
                     guess=self._guess or None,
-                    isolate=dry,
+                    isolate=dry | resting,
                     storage=storage,
+                    report=False,
                 )
                 self._note_solve(result)
                 self._accept(result)
-        result = self._close_chamber(net, signals, dry, result, storage)
+        result = self._close_chamber(net, signals, dry | resting, result, storage)
         flows = self._last_flows or dict(result.flows)
         # A tank that runs dry part-way through this step can give only what it
         # holds, but the solve sees a fixed-pressure boundary and delivers the
@@ -2833,8 +3200,10 @@ class Session:
             held = sim.state.liquid_mass
             if held <= DRY_MASS:
                 continue
-            _, leaving = self._split_at(sim.outlet_node, flows)
-            if leaving * span > held:
+            arriving, leaving = self._split_at(sim.outlet_node, flows)
+            if sim.id in self._liquid_fed:
+                leaving -= arriving
+            if leaving > 0.0 and leaving * span > held:
                 span = held / leaving
         return span
 
@@ -3032,6 +3401,7 @@ class Session:
                 guess=self._guess or None,
                 isolate=dry,
                 storage=storage,
+                report=False,
             )
             self._note_solve(res)
             self._accept(res)
@@ -3078,30 +3448,73 @@ class Session:
         dt: float,
         substeps: int = SUBSTEPS,
     ) -> None:
-        """Integrate every vessel over ``dt`` with the flows it is given."""
+        """Integrate every vessel over ``dt`` with the flows it is given.
+
+        The ground at rest is left where it is (:attr:`Setup.ground_rests`):
+        what :meth:`_rest_ground` took out of the solve, and any cart vessel
+        these flows do not touch and no built-in press is acting on."""
         inner = dt / substeps
-        vented = {
-            sim.id: self._vent_fraction(sim.ullage_node, flows)
-            for sim in self.tanks.values()
-        }
+        resting = set(self._resting[1])
+        if self.setup.ground_rests:
+            ground = self.ground
+            for sim in self.tanks.values():
+                if (
+                    sim.id in ground
+                    and self._split_at(sim.ullage_node, flows) == (0.0, 0.0)
+                    and self._split_at(sim.outlet_node, flows) == (0.0, 0.0)
+                    and self._supply_press(sim, inner)[0] <= 0.0
+                ):
+                    resting.add(sim.id)
+            for b_id, bottle in self.bottles.items():
+                if (
+                    b_id in ground
+                    and not (bottle.filling or bottle.venting)
+                    and self._split_at(bottle.node, flows) == (0.0, 0.0)
+                ):
+                    resting.add(b_id)
+        tanks = [sim for sim in self.tanks.values() if sim.id not in resting]
+        bottles = {k: b for k, b in self.bottles.items() if k not in resting}
+        vented = {sim.id: self._vent_fraction(sim.ullage_node, flows) for sim in tanks}
         for _ in range(substeps):
             refused = 0.0
             sent: dict[str, float] = {}
-            for sim in self.tanks.values():
+            for sim in tanks:
                 gas_in, gas_out = self._split_at(sim.ullage_node, flows)
-                _, liquid_out = self._split_at(sim.outlet_node, flows)
+                liquid_in, liquid_out = self._split_at(sim.outlet_node, flows)
+                if sim.id not in self._liquid_fed:
+                    # Only a tank a cart tank loads takes liquid in; anywhere
+                    # else an arrival at an outlet is not propellant (the
+                    # chamber pushing back at an abort) and is not credited.
+                    liquid_in = 0.0
                 # Pressurant leaving for another vessel, not a vent.
                 sent[sim.id] = gas_out * (1.0 - vented.get(sim.id, 0.0))
-                refused += sim.advance(
+                pressed, target, h_cart = self._supply_press(sim, inner)
+                taken = sim.advance(
                     inner,
                     mdot_liquid_out=liquid_out,
-                    mdot_gas_in=gas_in,
+                    mdot_gas_in=gas_in + pressed,
                     mdot_gas_out=gas_out,
-                    enthalpy_gas_in=self._pressurant_enthalpy(sim),
-                    supply_pressure=self._supply_to(sim, pressures),
+                    enthalpy_gas_in=(
+                        self._pressurant_enthalpy(sim)
+                        if pressed <= 0.0
+                        else (
+                            gas_in * self._pressurant_enthalpy(sim) + pressed * h_cart
+                        )
+                        / (gas_in + pressed)
+                    ),
+                    supply_pressure=(
+                        target if pressed > 0.0 else self._supply_to(sim, pressures)
+                    ),
                     stirring=self.setup.fill_stirring,
                     vent_fraction=vented.get(sim.id, 0.0),
+                    mdot_liquid_in=liquid_in,
+                    liquid_in_temperature=self._arriving_liquid_T(sim, flows),
                 )
+                # The stand-in press is refused first: nothing was debited for
+                # it. What it did put in came from the cart, off the drawing.
+                stand_in_refused = min(taken, pressed)
+                sim.added_kg += (pressed - stand_in_refused) * inner
+                refused += taken - stand_in_refused
             # Give back what no tank would take. A tank that has caught up with
             # its supply stops taking gas mid-tick, but the solve that debited
             # the bottle happened before that -- so without this the pressurant
@@ -3112,7 +3525,7 @@ class Session:
             # its bottle this way.
             draws = {
                 b_id: -self._net_into(bottle.node, flows)
-                for b_id, bottle in self.bottles.items()
+                for b_id, bottle in bottles.items()
             }
             total = sum(d for d in draws.values() if d > 0.0)
             # The bottles take back at most what they gave. The rest of what
@@ -3128,7 +3541,7 @@ class Session:
             # dropped by the clamp on its draw. It goes back to the tanks that
             # sent it, like gas a tank refuses.
             bounced = 0.0
-            for b_id, bottle in self.bottles.items():
+            for b_id, bottle in bottles.items():
                 draw = draws[b_id]
                 if draw < 0.0 and b_id not in self._drawn_fill:
                     bounced -= draw
@@ -3150,8 +3563,178 @@ class Session:
             excess = refused - to_bottles + bounced
             senders = sum(sent.values())
             if excess > 0.0 and senders > 0.0:
-                for sim in self.tanks.values():
+                for sim in tanks:
                     sim.take_back(excess * sent[sim.id] / senders * inner)
+
+    def _find_fill_stops(self) -> dict[str, str]:
+        """For each tank a cart tank loads: the first valve on the transfer line,
+        from the cart's side. Hand or actuated; none if the line has no valve."""
+        built = self.model.built
+        net = built.network
+        owner = {
+            branch: sid
+            for sid, branches in built.branches_of.items()
+            if sid in built.actuators
+            for branch in branches
+        }
+        adjacent: dict[str, list[tuple[str, str]]] = {}
+        for branch in net.branches.values():
+            adjacent.setdefault(branch.upstream, []).append(
+                (branch.downstream, branch.id)
+            )
+            adjacent.setdefault(branch.downstream, []).append(
+                (branch.upstream, branch.id)
+            )
+        out: dict[str, str] = {}
+        for supply, fed in built.supplies.items():
+            start = built.tanks[supply].outlet
+            parent: dict[str, tuple[str, str]] = {}
+            seen = {start}
+            frontier = [start]
+            targets = {built.tanks[t].outlet: t for t in fed} | {
+                built.tanks[t].ullage: t for t in fed
+            }
+            while frontier:
+                here = frontier.pop(0)
+                for there, branch_id in adjacent.get(here, ()):
+                    if there in seen:
+                        continue
+                    seen.add(there)
+                    parent[there] = (here, branch_id)
+                    if there in targets:
+                        path: list[str] = []
+                        step = there
+                        while step != start:
+                            step, via = parent[step]
+                            path.append(via)
+                        valve = next(
+                            (owner[b] for b in reversed(path) if b in owner), ""
+                        )
+                        if valve:
+                            out.setdefault(targets[there], valve)
+                        self._fill_lines[targets[there]] = self._fill_lines.get(
+                            targets[there], frozenset()
+                        ) | frozenset(path)
+                        continue
+                    if net.nodes[there].pressure is not None:
+                        continue
+                    frontier.append(there)
+        return out
+
+    def _stop_full_loads(self) -> None:
+        """The crew's hand on a drawn load's transfer valve.
+
+        Shut until the tank's fill state ("Fuel Fill") is selected, opened for
+        the load, shut again once the tank holds it -- as the built-in load
+        stops at its full fraction. A transfer valve left at rest is open (it is
+        plumbed both sides), and a cart tank above the flight tank then siphons
+        into it before anyone has started the fill. Acts only when what the
+        crew would do changes, so a hand on the P&ID in between is kept.
+        """
+        labels = {n.id: n.label or n.id for n in self.model.diagram.nodes}
+        name = self.state.lower()
+        for tank_id, valve in self._fill_stops.items():
+            sim = self.tanks[tank_id]
+            sim.full_fraction = self.setup.full_fraction
+            sim.load_kg = self.fire_loads().get(tank_id, 0.0)
+            full = sim.state.liquid_mass >= sim._wanted()
+            side = propellant_side(sim.tank.liquid.name)
+            words = ("ox", "lox") if side == "lox" else ("fuel", "eth")
+            loading = "fill" in name and any(w in name for w in words)
+            wanted = loading and not full
+            if self._fill_crew.get(valve) == wanted:
+                continue
+            self._fill_crew[valve] = wanted
+            self.forced[valve] = 1.0 if wanted else 0.0
+            if full and tank_id not in self._fill_stopped:
+                self._fill_stopped.add(tank_id)
+                self.assumptions.append(
+                    f"{sim.label} holds its load ({sim.state.liquid_mass:.2f} kg): "
+                    f"{labels.get(valve, valve)} "
+                    "shut, as the crew shuts the fill."
+                )
+            note = (
+                f"{labels.get(valve, valve)} is the crew's: shut until "
+                f"{sim.label}'s fill state, opened for the load, shut at it."
+            )
+            if note not in self.assumptions:
+                self.assumptions.append(note)
+
+    def _supply_press(
+        self, sim: TankSim, dt: float = 0.0
+    ) -> tuple[float, float, float]:
+        """The cart's press on a ground supply tank whose press line is not
+        drawn: ``(rate [kg/s], target [Pa], arriving enthalpy [J/kg])``.
+
+        A fuel transfer tank is pressed to the pressure its drawing gives while
+        the table holds its press actuator ("Fuel Fill Press") open. When a
+        valve on the drawing is bound to that actuator, the network presses it
+        and this is zero; so is it for every tank that is not the cart's.
+        """
+        if sim.id not in self.model.built.supplies:
+            return 0.0, 0.0, 0.0
+        node = sim.node
+        drawn = getattr(node, "params", {}).get("pressure") if node else None
+        if drawn is None:
+            return 0.0, 0.0, 0.0
+        side = propellant_side(sim.tank.liquid.name)
+        if getattr(node, "drawn_as", "") == "DEWAR":
+            # A dewar's pressure-building circuit holds it whatever the table
+            # says: it is the dewar's own, not a valve on the stand.
+            pressing = ["its pressure-building circuit"]
+        else:
+            opened = self.machine.open_actuators(self.state)
+            pressing = [
+                a
+                for a in opened
+                if {"fill", "press"} <= _words(a)
+                and side in _words(a)
+                and a not in self.binding.to_symbol
+            ]
+        if not pressing:
+            return 0.0, 0.0, 0.0
+        target = float(drawn.si)
+        now = sim.pressure
+        held = sim.state.ullage.mass + sim.state.vapour_mass
+        if now >= target or held <= 0.0:
+            return 0.0, target, 0.0
+        wanted = held * (target / max(now, 1.0) - 1.0)
+        # A dewar's circuit is a regulator: it makes up the deficit as it opens
+        # (the vessel refuses what would carry it past). The cart's press line
+        # on a transfer tank takes its time.
+        span = dt if getattr(node, "drawn_as", "") == "DEWAR" and dt > 0.0 else 0.0
+        rate = wanted / max(span or self.setup.supply_press_s, 1e-3)
+        h_cart = float(sim.tank.gas.get("h", p=target, T=self.setup.fill_supply_T))
+        note = (
+            f"{sim.label} is held at its drawn {psig(target):.0f} psig by "
+            f"{pressing[0]} (not on the drawing; Setup supply_press_s "
+            f"{self.setup.supply_press_s:g} s)."
+            if pressing[0].startswith("its ")
+            else f"{sim.label} is pressed to its drawn {psig(target):.0f} psig while "
+            f"{pressing[0]} is open, by the cart's press line (not on the "
+            f"drawing; Setup supply_press_s {self.setup.supply_press_s:g} s)."
+        )
+        if note not in self.assumptions:
+            self.assumptions.append(note)
+        return rate, target, h_cart
+
+    def _arriving_liquid_T(
+        self, sim: TankSim, flows: Mapping[str, float]
+    ) -> float | None:
+        """Mass-weighted temperature of what arrives at a tank's outlet [K]."""
+        net = self.model.built.network
+        total = weighted = 0.0
+        for branch_id, branch in net.branches.items():
+            flow = flows.get(branch_id, 0.0)
+            if branch.downstream == sim.outlet_node and flow > 0.0:
+                source = branch.upstream
+            elif branch.upstream == sim.outlet_node and flow < 0.0:
+                source = branch.downstream
+            else:
+                continue
+            total += abs(flow)
+            weighted += abs(flow) * net.nodes[source].temperature
+        return weighted / total if total > 0.0 else None
 
     def _vent_fraction(self, node: str, flows: Mapping[str, float]) -> float:
         """Share of the gas leaving ``node`` that ends at a vent, 0..1.
@@ -3486,13 +4069,16 @@ class Session:
         """Advance the stand by ``dt`` seconds and return where it is."""
         dt = max(min(dt, MAX_STEP), 1e-4)
         self._tick = {}
+        self._stop_full_loads()
         signals = self.signals(dt)
         net = self.model.built.network
         net.gravity = self.setup.body_acceleration
 
+        loads = self.fire_loads()
         for sim in self.tanks.values():
             sim.filling = self._fills(sim) and sim.id not in self._drawn_fill
             sim.full_fraction = self.setup.full_fraction
+            sim.load_kg = loads.get(sim.id, 0.0)
             sim.charge_gamma = self.setup.charge_gamma
             sim.supply_band = self.setup.supply_band
             sim.stir_band = self.setup.stir_band
@@ -3521,15 +4107,22 @@ class Session:
         # to match on the state's name and drain the bottle in GN2 High Vent
         # through a valve the table never opens there.
         opened = self.machine.open_actuators(self.state)
+        ground = self.ground
         for bottle in self.bottles.values():
             # A bottle the drawing charges (the cart drawn on its GSE page) is
             # filled and dumped by the network, through the valves drawn there.
-            off_drawing = bottle.id not in self._drawn_fill
+            # A cart's own vessel (its K-bottles, its dewar) is the supply, and
+            # the built-in charge stands in for the vehicle's alone: it once
+            # "charged" a LOX dewar to the COPV target as if it were gas.
+            off_drawing = bottle.id not in self._drawn_fill and bottle.id not in ground
             bottle.filling = off_drawing and "GSE High Press Control" in opened
             bottle.fill_supply_T = self.setup.fill_supply_T
             bottle.venting = off_drawing and "GSE High Press Vent" in opened
             bottle.target = from_psig(self.setup.copv_target_psi)
             bottle.fill_seconds = self.setup.copv_fill_s
+
+        self._rest_ground(signals)
+        resting = self._resting[1]
 
         # How many times to re-solve inside this tick. Chosen from how fast the
         # vessels moved last time: quiet states cost one solve, a press
@@ -3560,6 +4153,8 @@ class Session:
         # crossed it. Sized from the flows the last solve produced, so it
         # sees the press coming rather than reacting to it.
         for sim in self.tanks.values():
+            if sim.id in resting:
+                continue
             gas_in, gas_out = self._split_at(sim.ullage_node, self._last_flows)
             rate = max(gas_in, gas_out)
             inventory = sim.state.ullage.mass
@@ -3626,6 +4221,7 @@ class Session:
         pressures = dict(result.pressures)
         for node in held:
             pressures[node] = self._trapped.get(node, AMBIENT)
+        pressures.update(self._dome_readings)
         for node, value in result.pressures.items():
             if node not in held:
                 self._trapped[node] = value
@@ -3746,19 +4342,24 @@ class Session:
         walk would have to cross the regulator's dome branch to find it.
         """
         wanted = sim.tank.gas.name
-        for bottle in self.bottles.values():
+        # The vehicle's own bottle first: the cart's K-bottles hold the same
+        # gas and are not what presses a flight tank.
+        ground = self.ground
+        ordered = sorted(self.bottles.values(), key=lambda b: b.id in ground)
+        for bottle in ordered:
             if bottle.volume.fluid.name == wanted:
                 return bottle
-        return next(iter(self.bottles.values()), None)
+        return next(iter(ordered), None)
 
     def _fills(self, sim: TankSim) -> bool:
-        """Whether the current state is filling this tank.
+        """Whether the current state is filling this tank. Never a cart's tank:
+        that is where a load comes from, pre-loaded.
 
         Matched on the state's name against the tank's fluid, because fill comes
         from a tanker that is not on the drawing -- see FILL_RATE.
         """
         name = self.state.lower()
-        if "fill" not in name:
+        if "fill" not in name or sim.id in self.ground:
             return False
         net = self.model.built.network
         species = net.nodes[sim.outlet_node].fluid

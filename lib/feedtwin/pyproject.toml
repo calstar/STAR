@@ -59,6 +59,8 @@ engine = [
 ]
 dev = [
     "pytest>=8",
+    # Runs the suite across cores (`-n auto`): CI and scripts/check.sh use it.
+    "pytest-xdist>=3.6",
     # Pinned, not floating. A formatter resolved by `>=` is a moving gate: black
     # 26 reformats `textwrap.dedent("""...""")` arguments differently from 25, so
     # `black>=24` here and `black==25.11.0` in daq-server-ci.yml made the SAME

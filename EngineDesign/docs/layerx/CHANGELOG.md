@@ -2,6 +2,60 @@
 
 Changes to Layer X physics, defaults and results, newest first. Each entry gives the baseline it was measured against. Any figure that moves more than 1 % gets reported here with its before and after values. That rule applies to the full figure list in `AUDIT.md` section 8, not to impulse alone.
 
+## 2026-10-07 (later) The feed-diagnostics LE4 test re-baselined; no physics changed
+
+`tests/test_layerx_feeddiag.py::test_feed_diagnostics_on_the_le4_helium_burn` (`LAYERX_GOLDEN=1`,
+added in #87 from the AUDIT's 2026-10-02 figures) failed on SV-LOX-PRESS: 1.609 psi against 1.72 at
+0.5 s. Bisected with `lib/feedtwin` and EngineDesign swapped independently: the step is
+EngineDesign's half of b67edc93, the drawn-dome default below (lockup 578.0 → 564.7 psia). The
+library's half of that commit, and the supply datum (35b98bf2), change nothing in this burn.
+
+Both numbers are right for their lockup. The twin reproduces the AUDIT 9.6 D hand calculation
+(Cv law, CoolProp helium density at the valve inlet) to 0.05 % at each operating point:
+
+| operating point | He to LOX tank at 0.5 s | inlet | ρ [kg/m³] | hand [psi] | twin [psi] |
+|---|---|---|---|---|---|
+| AUDIT 9.6, 578 psia, adiabatic | 0.01121 kg/s | 581.6 psia, 298 K | 6.357 | 1.720 | 1.720 |
+| 578 psia, today | 0.01105 kg/s | 581.7 psia, 304 K | 6.233 | 1.7045 | 1.7040 |
+| 564.7 psia (default since b67edc93) | 0.01061 kg/s | 568.3 psia, 304 K | 6.085 | 1.6098 | 1.6093 |
+
+At the lower lockup the ullage gas is 2.3 % thinner and the propellant flow 1.7 % lower, so 4.0 % less
+helium reaches the tank; Δp ∝ ṁ²/ρ falls 5.6 %.
+
+The test never passed in full: at #87 itself three later assertions already failed, carrying AUDIT
+figures from before line walls went on (2026-10-03 night, below). It now states the AUDIT's 578 psia
+lockup, so the hand checks stay at the point they were made, and its stale figures are restated:
+
+| figure | was (AUDIT, 2026-10-02) | now | moved by |
+|---|---|---|---|
+| SV-LOX / SV-FUEL-PRESS Δp at 0.5 s | 1.72 / 1.42 psi | 1.704 / 1.393 psi | line walls: 304 K gas, 1.4 % less of it |
+| regulator outlet rise | +47.1 psi | +43.86 psi (SPE 44.66, droop −0.80) | line walls: bottle ends ~220 psi fuller |
+| regulator peak use | 0.15–0.25 | 0.143 | line walls |
+| He used | 0.0906 kg | 0.0818 kg | line walls (−9.8 %, logged below) |
+| momentum ratio range | 1.0279–1.0311 | 1.0285–1.0315 | ullage storage closure (a35563ce): stubbing `Session._ullage_storage` restores 1.0283–1.0312 |
+
+At the 564.7 psia default the same test fails ten assertions, among them thrust never coming within
+2 % of 7.2 kN (`t_first_at_target` None) and the LOX tank ending at 602.5 psia, not 616.3.
+
+## 2026-10-07 Two-page drawings, the dome as an input, every pressure in psia
+
+New reference: `baseline-2026-10-07.json` (golden, integration, stability and LE4 integration tests
+point at it). It differs from `baseline-2026-10-03d.json` in two inputs, both deliberate: the LE4
+config's 1.65 / 1.50 mm drilled holes (2026-10-05) and the drawn-dome default below. The feed twin's
+own changes since 03d (regulator supply datum and the rest) left 03d's golden green.
+
+| change | why | effect |
+|---|---|---|
+| **Layer X burns the vehicle only** (`engine/layerx/vehicle.py`): the symbols joined to the ENGINE by drawn lines. A GSE page joined only by paired quick-disconnects is cut before assembly and the vehicle's disconnect halves capped; tank roles, the bottle, the helium swap and the drawing summary come from the vehicle | LE4 (6) drew the GSE on a second page: two ethanol tanks blocked the run, the 49 L K-bottles were listed and swapped as pressurant, and the mated GSE dome regulator tripped the LOX tank at 802 psig before T-0 | none on one-piece drawings (returned unchanged); LE4 (6) now runs |
+| **The dome dial is an input**, `dome_psia`; default the dial the drawing states on the regulator it sets (`feedtwin.session.hookup`: a loader's setpoint, else a dome-loaded regulator's `dome_pressure`). A rail tank pressure still solves the dial; the last one typed wins. `dome_regulator` names another regulator (list or click on the drawing) | "why is the dome pressure hardcoded, that should be a variable … autopulled from the dome reg in the drawing" | default lockup on the study drawings 578.0 → **564.7 psia (−2.3 %)**, PR-CTRL's 500 psig. Isolated on he_pad (old holes): mean thrust **−1.96 %**, Pc −1.78 %, burn time +1.68 %, bottle at burnout +2.96 %, pressurant used −2.61 %. LE4 (6): DPR_HP's 535 psig dome, **599.7 psia** lockup |
+| Every pressure on the rail and the pages is **absolute** (`units.ts` `ABSOLUTE_ONLY`; `copv_pressure_psia` on the rail, `copv_pressure_psig` still read from older settings and written by the optimiser) | "everything should be psia" | display only |
+
+he_pad, 03d → 07 (holes and dome together): impulse +0.03 %, mean thrust −1.01 %, O/F 1.521 → 1.505,
+burn time +1.06 %, chug margin min 1.398 → **1.337 (−4.4 %)**, throat growth 3.44 → 3.30 %.
+
+Server: `engine-design-api` had no `PID_DESIGNER_URL`, so "From pid-designer" asked 127.0.0.1:8001
+inside its own container. `docker-compose.yml` now points it at `http://pid-designer-api:8001`.
+
 ## 2026-10-03 (night) Fitting heat and the supply effect on, in the feed twin
 
 Measured against `baseline-2026-10-03c.json`; the new reference is `baseline-2026-10-03d.json`

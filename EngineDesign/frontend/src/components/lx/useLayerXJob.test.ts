@@ -49,7 +49,7 @@ describe('settingsDiff', () => {
     const d = settingsDiff({ ...base, drawing_id: 'gn2', tank_pressure_psia: 578 }, { ...base, tank_pressure_psia: null }, name);
     expect(d.map((c) => `${c.label} ${c.from} → ${c.to}`)).toEqual([
       'Drawing copv_study_gn2 → copv_study_he',
-      'Tank pressure 578.0 psia → the design',
+      'Tank pressure 578.0 psia → the dome',
     ]);
   });
 

@@ -55,8 +55,20 @@ inlet, written
 
     supply_coefficient = { value = 17, unit = "psi/1000psi" }
 
-Over a COPV decay from 4500 to 1500 psi that moves a 500 psi setpoint to 551 psi
--- about 6% on chamber pressure, and the wrong sign to guess at.
+It is measured from **zero inlet**, not from a full bottle: the outlet is
+
+.. code-block:: text
+
+    p_out = p_dome + bias - S . p_in            (p_in gauge)
+
+so a 1092-50 loaded to 500 psi with 4000 psi behind it holds
+``500 + 50 - 4 x 17 = 482`` psi, and it climbs from there as the bottle falls
+-- from the first gram, not from some charge pressure onwards. (The team,
+2026-10-07. An earlier version measured the term from an ``inlet_reference``
+or the COPV charge, which zeroed it at a full bottle and put the whole effect
+on the far side of that pressure.) Over a COPV decay from 4500 to 1500 psi it
+moves the outlet up 51 psi -- about 6% on chamber pressure, and the wrong sign
+to guess at.
 
 The unit matters more than it looks. Outlet-pressure-per-inlet-pressure is
 dimensionless by arithmetic, and an earlier version of this module took it as a
@@ -130,19 +142,9 @@ from feedtwin.model.spec import SpecError
 #: not one.
 REVERSE_STIFFNESS = 1.0e10
 
-#: Signal that makes :meth:`Regulator.lockup_pressure` the regulator's own
-#: zero-flow outlet -- supply-pressure effect included -- plus its seat creep.
-#: Opt-in (``Setup.regulator_lockup_supply``); off, lockup is the commanded
-#: setpoint plus creep, as it always was. See :meth:`Regulator.lockup_pressure`.
-LOCKUP_SUPPLY_SIGNAL = "lockup_follows_supply"
-
-#: Signal carrying the inlet pressure a regulator's set point was adjusted at
-#: [Pa abs], for a regulator whose drawing gives a supply coefficient but no
-#: ``inlet_reference``. Without a datum the supply term is silently zero
-#: (:meth:`Regulator.validate` says so); the session sends the bottle's charge
-#: pressure when ``Setup.regulator_supply_datum`` is on. A drawn
-#: ``inlet_reference`` always wins.
-SUPPLY_DATUM_SIGNAL = "regulator_supply_datum"
+#: Where the supply-pressure effect is measured from [Pa abs]: zero gauge
+#: inlet. ``p_out = p_dome + bias - S (p_in - this)``.
+SUPPLY_ZERO = 101325.0
 
 #: Signal that turns on the compressible seat, its value the xT a regulator
 #: that declares none takes. Opt-in (``Setup.regulator_compressible_seat``);
@@ -175,7 +177,7 @@ class Regulator(HydraulicComponent):
 
     .. code-block:: text
 
-        p_set  +  S . (p_in_ref - p_in)        supply-pressure effect
+        p_set  -  S . p_in                     supply-pressure effect, p_in gauge
                -  D . (|mdot| / mdot_rated)    flow droop
 
     clamped by two physical limits: it can never raise pressure, and it can
@@ -201,29 +203,22 @@ class Regulator(HydraulicComponent):
             return dome + bias
         return self.p["setpoint"]
 
-    def supply_reference(self, flow: FlowConditions) -> float:
-        """The inlet pressure the supply term is measured from [Pa abs].
+    def supply_effect(self, flow: FlowConditions) -> float:
+        """The supply-pressure term [Pa]: ``-S p_in``, the inlet in gauge.
 
-        The drawing's ``inlet_reference`` when it gives one; otherwise the
-        datum the session sends (:data:`SUPPLY_DATUM_SIGNAL`), and zero -- no
-        supply term -- when it sends none.
+        Measured from zero inlet, never from a charge pressure: at 4000 psi a
+        1092-50 sits ``4 x 17`` psi under dome plus bias, and comes up as the
+        bottle falls.
         """
-        drawn = self.p.get("inlet_reference", 0.0)
-        if drawn > 0.0:
-            return drawn
-        return self.signal(flow, SUPPLY_DATUM_SIGNAL, 0.0)
+        supply = self.p.get("supply_coefficient", 0.0)
+        return supply * (SUPPLY_ZERO - flow.p_upstream)
 
     def outlet_setpoint(self, mdot: float, flow: FlowConditions) -> float:
         """The pressure this regulator is trying to hold right now [Pa]."""
-        p_set = self.commanded_setpoint(flow)
-        supply = self.p.get("supply_coefficient", 0.0)
-        reference = self.supply_reference(flow)
         droop = self.p.get("flow_droop", 0.0)
         rated = self.p.get("rated_flow", 0.0)
 
-        target = p_set
-        if reference > 0.0:
-            target += supply * (reference - flow.p_upstream)
+        target = self.commanded_setpoint(flow) + self.supply_effect(flow)
         if rated > 0.0:
             target -= droop * (abs(mdot) / rated)
         return target
@@ -236,23 +231,16 @@ class Regulator(HydraulicComponent):
         a downstream relief valve and a burst disc actually see between firings,
         and on a dome-loaded unit it moves with the dome.
 
-        With :data:`LOCKUP_SUPPLY_SIGNAL` on, the base is the outlet the
-        regulator holds at zero flow, ``outlet_setpoint(0)``, so it carries the
-        supply-pressure effect: the inlet pushing on the poppet does not stop
-        when the flow does. Off, the base is the commanded setpoint, and the
-        branch steps by ``S (p_ref - p_in)`` across zero flow even with no seat
-        creep -- 1.7 kPa with a full GN2 bottle, 51 psi late in a blowdown. A
-        tank sitting inside that step has no root, and the network solve stalls
-        at ``step / bottle pressure`` (2.5e-5 on the GN2 stand). Inert on a
-        regulator with no supply effect.
+        The base is the outlet the regulator holds at zero flow,
+        ``outlet_setpoint(0)``, so it carries the supply-pressure effect: the
+        inlet pushing on the poppet does not stop when the flow does, and the
+        branch is continuous across zero flow. (Leaving it out stepped the
+        branch by the whole supply term at zero flow, and a tank inside that
+        step had no root.)
         """
         if flow is None:
             return self.p["setpoint"] + self.p.get("lockup_rise", 0.0)
-        if self.signal(flow, LOCKUP_SUPPLY_SIGNAL, 0.0) > 0.0:
-            base = self.outlet_setpoint(0.0, flow)
-        else:
-            base = self.commanded_setpoint(flow)
-        return base + self.p.get("lockup_rise", 0.0)
+        return self.outlet_setpoint(0.0, flow) + self.p.get("lockup_rise", 0.0)
 
     # ------------------------------------------------------------- the seat
 
@@ -521,14 +509,17 @@ class Regulator(HydraulicComponent):
                     "term has no scale and is silently doing nothing.",
                 )
             )
-        reference = self.p.get("inlet_reference", 0.0)
-        if self.p.get("supply_coefficient", 0.0) > 0.0 and reference <= 0.0:
+        if self.instance.params.get("inlet_reference") is not None and (
+            self.p.get("inlet_reference", 0.0) > 0.0
+        ):
             out.append(
                 Violation(
                     self.id,
                     "inlet_reference",
-                    "supply_coefficient is set but inlet_reference is zero, so "
-                    "the supply term has no datum and is silently doing nothing.",
+                    "inlet_reference is not used: the supply-pressure effect is "
+                    "measured from zero inlet (dome + bias - S x inlet), not from "
+                    "a charge pressure. Drop it from the drawing.",
+                    severity="warning",
                 )
             )
         if (
@@ -618,14 +609,8 @@ class CurveRegulator(Regulator):
         # A dome-loaded unit's curve is measured at one dome setting; moving the
         # dome shifts the whole curve by the same amount.
         target += self.commanded_setpoint(flow) - self.p["setpoint"]
-        # The supply term still applies: a datasheet droop curve is measured at
-        # one inlet pressure, and the correction to another is exactly what the
-        # supply coefficient is for.
-        supply = self.p.get("supply_coefficient", 0.0)
-        reference = self.supply_reference(flow)
-        if reference > 0.0:
-            target += supply * (reference - flow.p_upstream)
-        return target
+        # The supply term still applies, from zero inlet like the droop form's.
+        return target + self.supply_effect(flow)
 
 
 def _measured_regulator(instance: object) -> HydraulicComponent:
