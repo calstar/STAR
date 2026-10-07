@@ -739,6 +739,20 @@ class Setup:
     :attr:`ullage_wall_T0_K` does not name [K]. Zero -- the default -- leaves
     the upper wall at the pressurant's temperature, exactly as before. A dial
     for the cockpit's Configuration tab, where a per-tank map has no row."""
+    ground_rests: bool = True
+    """The ground support is integrated only while it is doing something. A
+    cart vessel with nothing flowing in or out of it, and no built-in press
+    acting on it, holds where it is: its wall, vapour and ambient leak stand
+    still until a valve puts it to work. And while the engine burns, the
+    ground with no open path to the vehicle leaves the solve as well -- its
+    lines carry nothing and read what they last read -- so the burn is
+    solved on the vehicle alone. Nothing it holds can reach the vehicle until
+    a valve joins them, so the burn is a vehicle-only drawing's, number for
+    number; on LE4 (6) the cart is two-thirds of the network and was most of
+    a Fire tick. **Simplification** (the team, 2026-10-07: the cart's
+    physics is not what the twin is for). Only a drawing with its ground
+    support drawn has anything to rest. Off integrates every cart vessel
+    every step, as before."""
 
 
 def _not_a_liquid_tank(
@@ -1849,6 +1863,16 @@ class Session:
         #: a different circuit, and a warm start taken from the old one is not a
         #: starting point -- it is a guess about a system that no longer exists.
         self._last_isolated: frozenset[str] = frozenset()
+        #: The ground support resting this step while the engine burns
+        #: (Setup.ground_rests, _rest_ground):
+        #: its branches, out of the solve, and its vessels' ids, not integrated.
+        self._resting: tuple[frozenset[str], frozenset[str]] = (
+            frozenset(),
+            frozenset(),
+        )
+        self._resting_memo: tuple[
+            frozenset[str] | None, tuple[frozenset[str], frozenset[str]]
+        ] = (None, self._resting)
         self._chamber_guess = AMBIENT
         self._last_chamber: ChamberResult | None = None
         # A cold chamber is open to atmosphere through its own nozzle, so pin
@@ -2723,6 +2747,99 @@ class Session:
                     out.add(branch_id)
         return frozenset(out)
 
+    def _firing(self) -> bool:
+        """Propellant reached the engine on the last solve."""
+        ports = self.model.built.engine_ports
+        return any(
+            self._last_flows.get(ports.get(side, ""), 0.0) > 0.0
+            for side in ("oxidiser", "fuel")
+        )
+
+    def _rest_ground(self, signals: Mapping[str, float]) -> None:
+        """Decide which ground support rests this step (``self._resting``).
+
+        Nothing rests here unless the engine is burning, the drawing has
+        ground support, and :attr:`Setup.ground_rests` is on. (A cart vessel
+        with nothing flowing rests at any time: :meth:`_move_vessels`.)
+        """
+        nothing: tuple[frozenset[str], frozenset[str]] = (frozenset(), frozenset())
+        if not self.setup.ground_rests or not self.ground or not self._firing():
+            self._resting = nothing
+            return
+        net = self.model.built.network
+        shut = frozenset(net.isolated(signals)) | self._dry_branches()
+        key, value = self._resting_memo
+        if key != shut:
+            value = self._unreachable_ground(shut)
+            self._resting_memo = (shut, value)
+        self._resting = value
+
+    def _unreachable_ground(
+        self, shut: frozenset[str]
+    ) -> tuple[frozenset[str], frozenset[str]]:
+        """Ground branches and vessels with no open path to the vehicle.
+
+        Walked from the vehicle's vessels and the engine across every branch
+        not ``shut``. A tank is one place, so arriving at either of its nodes
+        reaches both; any other fixed node -- atmosphere -- ends the walk, or
+        every vent would join the cart to the vehicle through the sky.
+        """
+        net = self.model.built.network
+        ground = self.ground
+        sibling: dict[str, str] = {}
+        for sim in self.tanks.values():
+            sibling[sim.ullage_node] = sim.outlet_node
+            sibling[sim.outlet_node] = sim.ullage_node
+        vessels = set(sibling) | {b.node for b in self.bottles.values()}
+        seeds = {
+            node
+            for sim in self.tanks.values()
+            if sim.id not in ground
+            for node in (sim.ullage_node, sim.outlet_node)
+        }
+        seeds |= {b.node for b in self.bottles.values() if b.id not in ground}
+        chamber = self.model.built.engine_ports.get("chamber")
+        if chamber:
+            seeds.add(chamber)
+        adjacent: dict[str, list[str]] = {}
+        for branch_id, branch in net.branches.items():
+            if branch_id in shut:
+                continue
+            adjacent.setdefault(branch.upstream, []).append(branch.downstream)
+            adjacent.setdefault(branch.downstream, []).append(branch.upstream)
+        reached = set(seeds)
+        stack = list(seeds)
+        while stack:
+            here = stack.pop()
+            if here in sibling and sibling[here] not in reached:
+                reached.add(sibling[here])
+                stack.append(sibling[here])
+            for there in adjacent.get(here, ()):
+                if there in reached:
+                    continue
+                if net.nodes[there].is_fixed and there not in vessels:
+                    continue  # atmosphere: a sink, not a path
+                reached.add(there)
+                stack.append(there)
+        branches = frozenset(
+            branch_id
+            for branch_id, branch in net.branches.items()
+            if branch_id not in shut
+            and branch.upstream not in reached
+            and branch.downstream not in reached
+        )
+        resting = {
+            sim.id
+            for sim in self.tanks.values()
+            if sim.id in ground and sim.ullage_node not in reached
+        }
+        resting |= {
+            b.id
+            for b in self.bottles.values()
+            if b.id in ground and b.node not in reached
+        }
+        return branches, frozenset(resting)
+
     def _coupling_timescale(
         self,
         signals: Mapping[str, float] | None = None,
@@ -2749,10 +2866,13 @@ class Session:
         into it, and every LE4 helium burn plotted a 0.5-0.8 s sawtooth that
         cost 170 N of mean thrust (2026-10-05).
         """
+        resting_branches, resting = self._resting
         slopes = []
         for branch in self.model.built.network.branches.values():
             comp = getattr(branch, "component", None)
             if comp is None or "Regulator" not in type(comp).__name__:
+                continue
+            if branch.id in resting_branches:
                 continue
             droop = comp.p.get("flow_droop", 0.0)
             rated = comp.p.get("rated_flow", 0.0)
@@ -2761,6 +2881,8 @@ class Session:
         resistance = min(slopes) if slopes else 0.0
         tau = float("inf")
         for sim in self.tanks.values():
+            if sim.id in resting:
+                continue
             p = sim.pressure
             if p <= 0.0:
                 continue
@@ -2824,10 +2946,17 @@ class Session:
         # the network -- a press line, a manifold. A vent ends at atmosphere,
         # a fixed pressure; counted, a venting tank read as riding its supply
         # and its vent valve's slope at drain flow asked an Engine Abort for
-        # 0.3 ms steps.
+        # 0.3 ms steps. Nor a branch that can carry nothing -- shut, or a stub
+        # ending at a capped port: priced at the drain flow, the wide fitting
+        # under LE4 (6)'s fuel-tank top QD asked the ignition step for 0.07 ms
+        # steps, three hundred solves on the first tick of Fire.
+        shut = frozenset(net.isolated(signals)) | self._dry_branches()
+        dead = shut | {d.branch for d in net.dead_ends(exclude=shut)}
         paths = []
         for branch_id, branch in net.branches.items():
             if sim.ullage_node not in (branch.upstream, branch.downstream):
+                continue
+            if branch_id in dead:
                 continue
             if sim.outlet_node in (branch.upstream, branch.downstream):
                 continue  # the liquid column, not a gas path
@@ -2919,14 +3048,20 @@ class Session:
         if dt <= 0.0:
             return out
         net = self.model.built.network
+        # A stub carries nothing either, and the solve drops a store whose
+        # every branch is one (``_stores``), so its trial steps would be
+        # thrown away: on a stand at rest, most of them.
+        cut = set(isolated) | {d.branch for d in net.dead_ends(exclude=isolated)}
         for sim in self.tanks.values():
             node = sim.ullage_node
-            live = any(
-                branch_id not in isolated
+            touching = [
+                (branch_id, sim.outlet_node in (branch.upstream, branch.downstream))
                 for branch_id, branch in net.branches.items()
                 if node in (branch.upstream, branch.downstream)
-                and sim.outlet_node not in (branch.upstream, branch.downstream)
-            )
+            ]
+            live = any(
+                branch_id not in isolated for branch_id, inner in touching if not inner
+            ) and any(branch_id not in cut for branch_id, _ in touching)
             held = sim.state.ullage.mass + sim.state.vapour_mass
             if not live or held <= 0.0:
                 continue
@@ -3006,7 +3141,10 @@ class Session:
             self._last_flows = {}
             self._last_isolated = isolated
 
-        storage = self._ullage_storage(dt, isolated)
+        # The ground at rest (_rest_ground) leaves the solve as a shut valve
+        # would, but is no change of circuit: it carried nothing a step ago.
+        resting = self._resting[0]
+        storage = self._ullage_storage(dt, isolated | resting)
         result = solve_steady(
             net,
             signals=signals,
@@ -3014,8 +3152,9 @@ class Session:
             max_iterations=self.setup.max_iterations,
             raise_on_failure=False,
             guess=self._guess or None,
-            isolate=dry,
+            isolate=dry | resting,
             storage=storage,
+            report=False,
         )
         self._note_solve(result)
         self._accept(result)
@@ -3032,7 +3171,7 @@ class Session:
                 if isolated != self._last_isolated:
                     self._last_flows = {}
                     self._last_isolated = isolated
-                    storage = self._ullage_storage(dt, isolated)
+                    storage = self._ullage_storage(dt, isolated | resting)
                 result = solve_steady(
                     net,
                     signals=signals,
@@ -3040,12 +3179,13 @@ class Session:
                     max_iterations=self.setup.max_iterations,
                     raise_on_failure=False,
                     guess=self._guess or None,
-                    isolate=dry,
+                    isolate=dry | resting,
                     storage=storage,
+                    report=False,
                 )
                 self._note_solve(result)
                 self._accept(result)
-        result = self._close_chamber(net, signals, dry, result, storage)
+        result = self._close_chamber(net, signals, dry | resting, result, storage)
         flows = self._last_flows or dict(result.flows)
         # A tank that runs dry part-way through this step can give only what it
         # holds, but the solve sees a fixed-pressure boundary and delivers the
@@ -3281,6 +3421,7 @@ class Session:
                 guess=self._guess or None,
                 isolate=dry,
                 storage=storage,
+                report=False,
             )
             self._note_solve(res)
             self._accept(res)
@@ -3327,16 +3468,37 @@ class Session:
         dt: float,
         substeps: int = SUBSTEPS,
     ) -> None:
-        """Integrate every vessel over ``dt`` with the flows it is given."""
+        """Integrate every vessel over ``dt`` with the flows it is given.
+
+        The ground at rest is left where it is (:attr:`Setup.ground_rests`):
+        what :meth:`_rest_ground` took out of the solve, and any cart vessel
+        these flows do not touch and no built-in press is acting on."""
         inner = dt / substeps
-        vented = {
-            sim.id: self._vent_fraction(sim.ullage_node, flows)
-            for sim in self.tanks.values()
-        }
+        resting = set(self._resting[1])
+        if self.setup.ground_rests:
+            ground = self.ground
+            for sim in self.tanks.values():
+                if (
+                    sim.id in ground
+                    and self._split_at(sim.ullage_node, flows) == (0.0, 0.0)
+                    and self._split_at(sim.outlet_node, flows) == (0.0, 0.0)
+                    and self._supply_press(sim, inner)[0] <= 0.0
+                ):
+                    resting.add(sim.id)
+            for b_id, bottle in self.bottles.items():
+                if (
+                    b_id in ground
+                    and not (bottle.filling or bottle.venting)
+                    and self._split_at(bottle.node, flows) == (0.0, 0.0)
+                ):
+                    resting.add(b_id)
+        tanks = [sim for sim in self.tanks.values() if sim.id not in resting]
+        bottles = {k: b for k, b in self.bottles.items() if k not in resting}
+        vented = {sim.id: self._vent_fraction(sim.ullage_node, flows) for sim in tanks}
         for _ in range(substeps):
             refused = 0.0
             sent: dict[str, float] = {}
-            for sim in self.tanks.values():
+            for sim in tanks:
                 gas_in, gas_out = self._split_at(sim.ullage_node, flows)
                 liquid_in, liquid_out = self._split_at(sim.outlet_node, flows)
                 if sim.id not in self._liquid_fed:
@@ -3383,7 +3545,7 @@ class Session:
             # its bottle this way.
             draws = {
                 b_id: -self._net_into(bottle.node, flows)
-                for b_id, bottle in self.bottles.items()
+                for b_id, bottle in bottles.items()
             }
             total = sum(d for d in draws.values() if d > 0.0)
             # The bottles take back at most what they gave. The rest of what
@@ -3399,7 +3561,7 @@ class Session:
             # dropped by the clamp on its draw. It goes back to the tanks that
             # sent it, like gas a tank refuses.
             bounced = 0.0
-            for b_id, bottle in self.bottles.items():
+            for b_id, bottle in bottles.items():
                 draw = draws[b_id]
                 if draw < 0.0 and b_id not in self._drawn_fill:
                     bounced -= draw
@@ -3421,7 +3583,7 @@ class Session:
             excess = refused - to_bottles + bounced
             senders = sum(sent.values())
             if excess > 0.0 and senders > 0.0:
-                for sim in self.tanks.values():
+                for sim in tanks:
                     sim.take_back(excess * sent[sim.id] / senders * inner)
 
     def _find_fill_stops(self) -> dict[str, str]:
@@ -3976,6 +4138,9 @@ class Session:
             bottle.target = from_psig(self.setup.copv_target_psi)
             bottle.fill_seconds = self.setup.copv_fill_s
 
+        self._rest_ground(signals)
+        resting = self._resting[1]
+
         # How many times to re-solve inside this tick. Chosen from how fast the
         # vessels moved last time: quiet states cost one solve, a press
         # transient costs a handful, and nothing else has to know.
@@ -4005,6 +4170,8 @@ class Session:
         # crossed it. Sized from the flows the last solve produced, so it
         # sees the press coming rather than reacting to it.
         for sim in self.tanks.values():
+            if sim.id in resting:
+                continue
             gas_in, gas_out = self._split_at(sim.ullage_node, self._last_flows)
             rate = max(gas_in, gas_out)
             inventory = sim.state.ullage.mass

@@ -307,3 +307,80 @@ def test_ox_fill_loads_the_flight_lox_tank_from_the_dewar() -> None:
     assert psig(dewar.pressure) == pytest.approx(50.0, abs=5.0), "its own circuit"
     last = session.solver_log[-1]
     assert abs(last.mass_error_kg - last.guard_kg) < 1e-3
+
+
+# ------------------------------------------------------------ the cart rests
+
+
+def _fired(rests: bool) -> Any:
+    """LE4 (6) at T-0 with the engine on, then 0.3 s into Fire."""
+    import yaml
+
+    from feedtwin.engine.importer import engine_from_config
+    from feedtwin.session import assemble_model, load_machine
+    from feedtwin.session.burn import jump_to_t0, open_session
+    from feedtwin.session.hookup import suggest
+
+    design = engine_from_config(yaml.safe_load(ENGINE.read_text()), name="6800N")
+    model = assemble_model(
+        read_diagram(_payload(), name="LE4 (6)"),
+        diagram_id="le4",
+        engine=design,
+        cea_cache=str(CEA),
+    )
+    session = open_session(
+        model, load_machine(tables=TABLES), hookup=suggest(model, 500.0, 4500.0)
+    )
+    session.setup = replace(session.setup, ground_rests=rests)
+    jump_to_t0(session, copv_psi=4500.0, fill_fraction=0.95)
+    session.command_state("Fire")
+    most = 0.0
+    for _ in range(15):  # the first 0.3 s, a study step at a time
+        session.step(0.02)
+        most = max(most, session.solver_log[-1].couplings)
+    return session, most
+
+
+@pytest.mark.skipif(
+    not (ENGINE.exists() and CEA.exists() and TABLES.is_dir()),
+    reason="engine, CEA table or state machine tables absent",
+)
+def test_while_the_engine_burns_the_cart_rests_and_the_burn_is_the_same() -> None:
+    """Fire on LE4 (6) with the cart drawn: every cart vessel is cut off from the
+    vehicle by shut valves, so none is integrated and its lines leave the solve,
+    and the burn is the one the whole stand integrated every step gives."""
+    ids = _ids()
+    rested, _ = _fired(True)
+    worked, _ = _fired(False)
+    cart = {
+        ids[label]
+        for label in ("Fuel Transfer Tank", "LOX-DW-350 PSI", "6K-GN2")
+        if ids[label] in rested.tanks or ids[label] in rested.bottles
+    }
+    branches, vessels = rested._resting
+    assert cart and cart <= vessels
+    assert branches, "the cart's lines are out of the solve"
+    assert not vessels & set(rested.vehicle_tanks)
+    held = {k: rested.tanks[k].state for k in vessels if k in rested.tanks}
+    rested.step(0.1)
+    for k, state in held.items():
+        assert rested.tanks[k].state is state, "a resting vessel is not integrated"
+    worked.step(0.1)
+    for a, b in zip(rested.history, worked.history):
+        assert a.chamber is not None and b.chamber is not None
+        assert a.chamber.thrust == pytest.approx(b.chamber.thrust, rel=1e-9, abs=1e-6)
+
+
+@pytest.mark.skipif(
+    not (ENGINE.exists() and CEA.exists() and TABLES.is_dir()),
+    reason="engine, CEA table or state machine tables absent",
+)
+def test_ignition_is_not_stepped_on_a_capped_port() -> None:
+    """The fuel tank's top QD hangs a wide fitting off its ullage that ends at a
+    cap. It carries nothing, so it is no press path: priced as one at the drain
+    flow, it asked the first steps of Fire for 0.07 ms couplings -- 64 in a 20 ms
+    step here, ~300 on the cockpit's first tick, most of a second before the
+    first frame of the burn."""
+    session, most = _fired(True)
+    assert session.history[-1].chamber.thrust > 5000.0
+    assert most < 20, f"{most} coupling steps in one 20 ms step"

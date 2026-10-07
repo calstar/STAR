@@ -820,6 +820,49 @@ operator would read. The console itself is the DAQ's dashboard (pressure cards, 
 with the DAQ's window buttons, the actuator grid, the state diagram driven by the
 backend's reachable set); nothing on it is set by typing.
 
+### 3.10b Keeping up: the tick, the cart, the capped port (2026-10-07)
+
+The operator: "during fire it was like 0.4x or worse". LE4 (6), the two-page drawing
+with the cart drawn (69 nodes, 57 branches; the vehicle alone is 24 and 21), measured
+in-process per 4 s of stand. Three causes, none of them the physics of the burn:
+
+* **The panel waited 200 ms after every reply.** The pump in `feed-twin/frontend/src/stand.tsx`
+  scheduled the next tick 200 ms after the last one *landed*, and a tick carries at most
+  0.25 s, so a server needing 100 ms per tick ran 0.25 / 0.30 = 0.8x however fast it was;
+  at 250 ms, 0.55x. The period is now measured from the start of the tick.
+* **The cart was integrated through the burn.** Three cart tanks and bottles stepped every
+  sub-step, two-thirds of the network solved, with every cart valve shut. `Setup.ground_rests`
+  (on; "Simplified GSE" in Configuration): a cart vessel nothing flows through is not
+  integrated, and while the engine burns the cart with no open path to the vehicle leaves
+  the solve (`Session._rest_ground`). The burn is unchanged to the bit: full LE4 (6) burn
+  impulse 32,025.99 N·s on and off (`test_while_the_engine_burns_the_cart_rests_and_the_burn_is_the_same`).
+  The cart's passive thermal drift while it sits idle is the one thing given up.
+* **A capped port was priced as a press path.** `_press_path_timescale` counted every gas
+  branch on an ullage whose far end is free, including the wide fitting under the fuel
+  tank's top QD that ends at a cap. Priced at the drain flow its slope is near zero, so
+  the first steps of Fire asked for 0.07 ms couplings: 281 in one 20 ms step, 0.85 s before
+  the first frame of the burn. Shut and stub branches are no longer paths
+  (`test_ignition_is_not_stepped_on_a_capped_port`, red-checked: 64 couplings in one step).
+  LE4 (6) burn impulse 32,026.58 → 32,025.99 N·s. Tier 2.1 on the benchmark library,
+  dt 10 ms: every trace within 0.31 psi of the code before (COPV 1.3 psi, thrust 11 N at
+  one instant), helium recovery 0.35 → 0.36 s, GN2 and helium t = 4 s 548.4 / 595.6 →
+  548.4 / 595.5. Inside tolerance; the table stands.
+
+Plus exact-key caches that change no number: dead-end peeling per shut set and wiring
+(`Network.dead_ends`), the tank's liquid density and ullage properties per state, and
+`solve_steady(report=False)` for the session, which reads no per-branch diagnostics.
+
+| LE4 (6) | before | after |
+|---|---|---|
+| Fuel Fill, compute | 4.1x | 10.5x |
+| Ready, compute | 1.9x | 4.6x |
+| Fire, compute | 2.3x | 4.1x |
+| ignition tick (0.2 s) | 854 ms | 137 ms |
+| panel in Ready / Fire, pump simulated in-process | 0.73x / 0.77x | 0.97x / 0.97x |
+
+If the console falls behind again, time `Session.step` against the tick endpoint before
+touching the physics: the panel's own pacing has cost more than the solve once already.
+
 ### 3.11 A shut LOX tank climbs at tens of psi a minute, and why
 
 The operator: "lox boiloff pressure goes up wayyy too fast, it's usually only like 20

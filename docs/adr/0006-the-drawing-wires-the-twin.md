@@ -131,6 +131,11 @@ for what the drawing does not settle.
   both suites pass unchanged.
 * `lib/feedtwin/tests/test_rocket_and_gse.py` holds it, against the team's drawing as a
   fixture, with each check red-checked.
+* **The cart is simplified on purpose** (the team, 2026-10-07: "we only care about the
+  rocket"). A cart vessel nothing flows through is not integrated, and while the engine
+  burns the cart with no open path to the vehicle is out of the solve
+  (`Setup.ground_rests`). Fire on LE4 (6) went from 2.3x to 4.1x real time with the burn
+  unchanged to the bit (PHYSICS-BENCHMARK 3.10b).
 
 ## Not yet
 

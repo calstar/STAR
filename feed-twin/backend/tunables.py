@@ -813,6 +813,19 @@ TUNABLES: tuple[Tunable, ...] = (
         kind="flag",
     ),
     Tunable(
+        "ground_rests",
+        "ground_rests",
+        "Simplified GSE",
+        "",
+        GROUPS[6],
+        "On (the default): a cart vessel is integrated only while something flows in or "
+        "out of it, and while the engine burns, the cart the vehicle has no open path to "
+        "is left out of the solve -- the burn is the vehicle-only drawing's, number for "
+        "number, at a fraction of the cost. Off integrates every cart vessel's wall, "
+        "vapour and leak every step. Only a drawing with its GSE drawn has a cart.",
+        kind="flag",
+    ),
+    Tunable(
         "max_mass_step",
         "max_mass_step",
         "Coupling: mass rule",

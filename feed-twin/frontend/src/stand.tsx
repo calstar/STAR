@@ -44,8 +44,11 @@ import {
   type Where,
 } from './api';
 
-/** Target wall-clock gap between ticks [ms]. The solve usually beats it; when
- *  it does not, the next tick simply carries a larger dt. */
+/** Target wall-clock period of the tick [ms], from the start of one tick to the
+ *  start of the next. A tick that takes longer is followed at once and the next
+ *  carries the time it took as its dt. (Waiting this long *after* each reply put
+ *  the round trip on top of it: a stand whose solve took 100 ms per 250 ms tick
+ *  ran at 0.6x on a machine that could run it at twice real time.) */
 const TICK_MS = 200;
 
 /** Longest dt a single tick may carry [s]. A backgrounded tab must not
@@ -348,6 +351,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
     const pump = async () => {
       if (!alive.current || !session.current) return;
       const now = performance.now();
+      const started = now;
       const dt = Math.min((now - last.current) / 1000, MAX_DT);
       last.current = now;
       try {
@@ -385,7 +389,10 @@ export function StandProvider({ children }: { children: ReactNode }) {
           return;
         }
       }
-      if (alive.current) timer = window.setTimeout(pump, TICK_MS);
+      if (alive.current) {
+        const wait = Math.max(TICK_MS - (performance.now() - started), 0);
+        timer = window.setTimeout(pump, wait);
+      }
     };
     timer = window.setTimeout(pump, TICK_MS);
     return () => {

@@ -105,6 +105,11 @@ very bugs they were written for.
   reintroduce a budget that folds coupling steps -- it made the console integrate a
   different scheme from the one `docs/PHYSICS-BENCHMARK.md` checks. Vessels trip the
   stand above the MAWP their drawing declares (`Session._check_limits`). See 3.10.
+  When it falls behind, time `Session.step` against the tick before blaming physics: the
+  panel's pacing (period from tick *start*) once cost more than the solve. The cart is
+  cheap on purpose (`Setup.ground_rests`, "Simplified GSE"): a cart vessel nothing flows
+  through is not integrated, and while the engine burns the cart cut off from the vehicle
+  leaves the solve -- the burn is bit-identical. See 3.10b.
 - **One engine: EngineDesign's, as a card.** An engine in feed-twin's library carries
   EngineDesign's engine card (`POST /api/layerx/engine-card`, stored as the artifact's
   `card` attachment), and a card goes on an engine only through `EngineCard.install`, as
