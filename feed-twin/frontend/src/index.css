@@ -170,6 +170,10 @@ body {
   --color-text-muted: #7a7a7a;
   --color-danger: #f87171;
   --color-warning: #fbbf24;
+  --color-success: #4ade80;
+  --color-danger-solid: #dc2626;
+  --color-warning-solid: #b45309;
+  --color-success-solid: #15803d;
 
   background-color: var(--color-bg-primary);
   color: var(--color-text-primary);

@@ -16,6 +16,7 @@ export { keyOf, refOf, ApiError } from '@stardesign-ui';
 export type {
   BrowseGroup,
   DocRef,
+  FeaturedState,
   MicroVersion,
   ReleaseVersion,
   TeamUser,
@@ -78,6 +79,9 @@ export const copyDiagram = (ref: DocRef, name?: string) => api.copy(ref, name);
 export const renameDiagram = api.rename;
 export const shareDiagram = api.share;
 export const leaveDiagram = api.leave;
+export const getFeatured = api.getFeatured;
+export const setFeatured = api.setFeatured;
+export const clearFeatured = api.clearFeatured;
 export const loadDiagram = api.load;
 export const autosaveDiagram = api.autosave;
 export const flushDiagram = api.flush;

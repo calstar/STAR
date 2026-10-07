@@ -218,6 +218,13 @@ services:
       # pid-designer/backend/directory.py. Unset is fine: the roster then
       # falls back to whoever already has data on the shared volume.
       AUTH_USERS_URL: ${AUTH_USERS_URL:-${AUTH_PUBLIC_URL:-https://auth.starberkeley.org}}
+      # Who may choose and edit the main diagram is a fixed list in
+      # lib/stardesign/stardesign/admins.py. STAR_ADMINS (comma-separated
+      # emails) adds to it without a commit.
+      STAR_ADMINS: ${STAR_ADMINS:-}
+      # Other people's diagrams quieter than this move from the dropdown to
+      # Change -> Older. They still open there.
+      PID_RECENT_DAYS: ${PID_RECENT_DAYS:-10}
       # Diagram version history (microversions + releases) in S3. Empty bucket ->
       # history falls back to the local volume (dev/no-AWS). The apps machine is
       # not on EC2, so these are IAM access keys, not an instance role.

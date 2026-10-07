@@ -1,9 +1,9 @@
+import { useState } from 'react';
 import type { DiagramMeta, DocRef } from '../../api/diagrams';
 import { keyOf, refOf } from '../../api/diagrams';
 import { btn } from '../../lib/ui';
-import { CheckoutControl, CheckoutLostDialog } from '@stardesign-ui';
-import type { Checkout } from '@stardesign-ui';
-import type { Theme } from '../../lib/theme';
+import { CheckoutControl, CheckoutLostDialog, ThemeToggle } from '@stardesign-ui';
+import type { Checkout, Theme } from '@stardesign-ui';
 
 interface DiagramBarProps {
   diagrams: DiagramMeta[];
@@ -11,41 +11,35 @@ interface DiagramBarProps {
   onSelect: (ref: DocRef) => void;
   onOpenChange: () => void;
   checkout: Checkout;
+  /** False for a diagram we may only look at -- the main one, for a non-admin.
+   *  The checkout chip then gives way to a copy button. */
+  editable: boolean;
+  onCopyActive: () => Promise<void> | void;
   theme: Theme;
   onToggleTheme: () => void;
-}
-
-/** Sun for "switch to light," moon for "switch to dark" -- the icon shown is
- *  always the theme a click would go *to*, matching how this pairs of icons
- *  is read everywhere else. */
-function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
-  return (
-    <button
-      onClick={onToggle}
-      className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]"
-      title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-    >
-      {theme === 'dark' ? (
-        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <circle cx="12" cy="12" r="4" strokeWidth={2} />
-          <path strokeLinecap="round" strokeWidth={2} d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-        </svg>
-      ) : (
-        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-        </svg>
-      )}
-    </button>
-  );
 }
 
 /** A thin strip above the toolbar: pick a diagram, or open the Change dialog to
  *  create, rename, share, or take a copy of someone else's.
  *
- *  The list is the caller's own diagrams plus any shared with them; the Change
- *  dialog's second tab is everyone else's. Diagrams are never deleted -- see
- *  backend/routers/pid.py. */
-export function DiagramBar({ diagrams, activeKey, onSelect, onOpenChange, checkout, theme, onToggleTheme }: DiagramBarProps) {
+ *  The list is the team's main diagram, your own, and everyone else's from the
+ *  last few days; the Change dialog's Older tab has the rest. Diagrams are never
+ *  deleted -- see backend/routers/pid.py. */
+export function DiagramBar({
+  diagrams, activeKey, onSelect, onOpenChange, checkout, editable, onCopyActive, theme, onToggleTheme,
+}: DiagramBarProps) {
+  const [copying, setCopying] = useState(false);
+  const option = (d: DiagramMeta) => (
+    <option key={keyOf(refOf(d))} value={keyOf(refOf(d))}>
+      {d.mine ? d.name : `${d.name} - ${d.ownerName || d.owner}`}
+    </option>
+  );
+  const main = diagrams.filter((d) => d.featured);
+  const mine = diagrams.filter((d) => !d.featured && d.mine);
+  const team = diagrams.filter((d) => !d.featured && !d.mine);
+  // Groups only once there is a main diagram to set apart; until then the
+  // list reads exactly as it always has.
+  const grouped = main.length > 0;
   return (
     <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-primary)] px-4 py-1.5">
       <span className="mr-2 shrink-0 text-sm font-semibold text-[var(--color-text-primary)]">P&amp;ID Designer</span>
@@ -60,11 +54,15 @@ export function DiagramBar({ diagrams, activeKey, onSelect, onOpenChange, checko
         className="min-w-[180px] max-w-[320px] rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-accent)]"
       >
         {diagrams.length === 0 && <option value="">No diagrams</option>}
-        {diagrams.map((d) => (
-          <option key={keyOf(refOf(d))} value={keyOf(refOf(d))}>
-            {d.mine ? d.name : `${d.name} - ${d.ownerName || d.owner}`}
-          </option>
-        ))}
+        {grouped ? (
+          <>
+            <optgroup label="Main">{main.map(option)}</optgroup>
+            {mine.length > 0 && <optgroup label="Mine">{mine.map(option)}</optgroup>}
+            {team.length > 0 && <optgroup label="Team">{team.map(option)}</optgroup>}
+          </>
+        ) : (
+          diagrams.map(option)
+        )}
       </select>
       <button
         onClick={onOpenChange}
@@ -77,7 +75,29 @@ export function DiagramBar({ diagrams, activeKey, onSelect, onOpenChange, checko
         Change
       </button>
 
-      <CheckoutControl checkout={checkout} noun="diagram" disabled={!activeKey} />
+      {editable ? (
+        <CheckoutControl checkout={checkout} noun="diagram" disabled={!activeKey} />
+      ) : (
+        <>
+          <span
+            className="shrink-0 text-[11px] text-[var(--color-text-muted)]"
+            title="Only an admin can change the main diagram. Copy it to work on your own version."
+          >
+            Main diagram · read-only
+          </span>
+          <button
+            className={btn}
+            disabled={copying}
+            onClick={async () => {
+              setCopying(true);
+              try { await onCopyActive(); } finally { setCopying(false); }
+            }}
+            title="Take your own copy of the main diagram and open it"
+          >
+            {copying ? 'Copying…' : 'Make a copy'}
+          </button>
+        </>
+      )}
       {/* Renders nothing until the hold is lost without the user releasing it.
           Lives here, beside the control, so every app that shows the chip also
           tells the user when it goes. */}

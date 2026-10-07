@@ -2,7 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
-import { applyTheme, getInitialTheme } from './lib/theme'
+import { applyTheme, getInitialTheme } from '@stardesign-ui'
 
 // Before React mounts, so a stored light-mode preference never flashes dark
 // first -- index.css's bare `:root` is dark, and this only touches the DOM
