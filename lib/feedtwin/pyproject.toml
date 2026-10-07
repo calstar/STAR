@@ -113,3 +113,10 @@ strict = true
 [[tool.mypy.overrides]]
 module = ["CoolProp.*", "fluids.*", "ht.*", "scipy.*", "yaml"]
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+# Tests that integrate a whole burn or minutes of stand time. The fast tier
+# (`scripts/check.sh`, `pytest -m "not slow"`) skips them; CI runs everything.
+markers = [
+    "slow: integrates a whole burn or minutes of stand time; skipped by the fast tier",
+]

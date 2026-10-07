@@ -70,9 +70,10 @@ export function SourcePanel({ onImported, busy }: Props) {
         name: doc.name,
       });
       setNote(
-        result.already_present
+        (result.already_present
           ? `${doc.name} was already imported — identical bytes.`
-          : `Imported ${doc.name}${release ? ` at ${release}` : ''}.`,
+          : `Imported ${doc.name}${release ? ` at ${release}` : ''}.`) +
+          (result.card_error ? ` No EngineDesign card: ${result.card_error}` : ''),
       );
       onImported(source.kind, result.artifact.id);
     } catch (e) {

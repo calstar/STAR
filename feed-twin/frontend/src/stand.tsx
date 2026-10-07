@@ -21,15 +21,21 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { keyOf, type DocRef } from '@stardesign-ui';
+import { standApi, type StandPayload } from './stands';
 import {
   commandSession,
+  getHookup,
   getModel,
   getStateMachine,
   listArtifacts,
   openSession,
+  sessionBurns,
+  sessionT0,
   sessionHistory,
   tickSession,
   type Artifact,
+  type Burns,
   type ModelView,
   type RunResult,
   type SessionState,
@@ -52,6 +58,8 @@ interface StandValue {
   machine: StateMachine | null;
   live: SessionState | null;
   history: RunResult | null;
+  /** Every burn still in the history: what the engine did. */
+  burns: Burns | null;
   running: boolean;
   busy: boolean;
   error: string;
@@ -66,10 +74,38 @@ interface StandValue {
   pick: (kind: 'diagram' | 'engine', id: string) => void;
   go: (state: string) => void;
   toggleValve: (id: string) => void;
+  /** Turn one of the hookup's knobs [psig]. The dome knob is `setSetup({dome})`. */
+  turnKnob: (id: string, value: number) => void;
   release: () => void;
   restart: () => void;
+  /** Skip the pad: loaded, charged, at lockup, in Ready. */
+  jumpToT0: () => void;
   refresh: () => Promise<Artifact[]>;
+  /** The stand document this cockpit is on, if any (stands.ts). */
+  standDoc: OpenStand | null;
+  /** Open a stand document: its drawing, engine, settings, hookup and knobs,
+   *  on a fresh session. */
+  openStand: (ref: DocRef, name: string) => Promise<void>;
+  /** Leave the stand document; the cockpit keeps what it has. */
+  closeStand: () => void;
+  /** The cockpit's configuration as a stand document's payload. */
+  snapshot: () => Promise<StandPayload>;
 }
+
+/** A stand document, open. */
+export interface OpenStand {
+  ref: DocRef;
+  name: string;
+}
+
+const readStand = (): OpenStand | null => {
+  try {
+    const raw = window.localStorage.getItem('feedtwin.stand');
+    return raw ? (JSON.parse(raw) as OpenStand) : null;
+  } catch {
+    return null;
+  }
+};
 
 const Ctx = createContext<StandValue | null>(null);
 
@@ -87,15 +123,18 @@ export function StandProvider({ children }: { children: ReactNode }) {
   const [machine, setMachine] = useState<StateMachine | null>(null);
   const [live, setLive] = useState<SessionState | null>(null);
   const [history, setHistory] = useState<RunResult | null>(null);
+  const [burns, setBurns] = useState<Burns | null>(null);
   const [running, setRunning] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [setup, setSetupState] = useState<StandSetup>({
     dome: 500,
     copv_target: 4500,
-    copv_fill_s: 25,
+    copv_fill_s: 9.7,
     tank_fill_s: 120,
     fuel_fill_s: 15,
+    dewar_psi: 100,
+    dewar_fill_cv: 0.013,
     bottle_delivered: false,
     fill_stirring: 20,
     ullage_collapse: true,
@@ -106,6 +145,9 @@ export function StandProvider({ children }: { children: ReactNode }) {
   });
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
   const [generation, setGeneration] = useState(0);
+  const [standDoc, setStandDoc] = useState<OpenStand | null>(readStand);
+  /** The open stand's hookup and knobs, applied to every fresh session on it. */
+  const standPayload = useRef<StandPayload | null>(null);
 
   const where: Where = { diagram, engine, fluidSet: 'hotfire', machine: 'diablo' };
   const session = useRef('');
@@ -185,8 +227,13 @@ export function StandProvider({ children }: { children: ReactNode }) {
       if (fresh) return '';
       try {
         const raw = window.localStorage.getItem('feedtwin.session');
-        const saved = raw ? (JSON.parse(raw) as { id?: string; diagram?: string; engine?: string }) : null;
-        return saved && saved.diagram === diagram && saved.engine === engine && saved.id ? saved.id : '';
+        const saved = raw
+          ? (JSON.parse(raw) as { id?: string; diagram?: string; engine?: string; stand?: string })
+          : null;
+        const stand = standDoc ? keyOf(standDoc.ref) : '';
+        return saved && saved.diagram === diagram && saved.engine === engine && (saved.stand ?? '') === stand && saved.id
+          ? saved.id
+          : '';
       } catch {
         return '';
       }
@@ -200,7 +247,44 @@ export function StandProvider({ children }: { children: ReactNode }) {
           // The backend forgot it (restart, deploy); a fresh stand is honest.
         }
       }
-      return openSession(where, { state: 'Idle', ...setup });
+      // A stand document: the run records name it, and its own hookup is used
+      // for this session without touching the drawing's saved one.
+      let onStand = standDoc;
+      if (onStand && !standPayload.current) {
+        try {
+          standPayload.current = await standApi.load(onStand.ref);
+        } catch (e) {
+          // Unshared or deleted: say so, and open the cockpit off the stand
+          // rather than leave it hanging on a session the server refuses.
+          setError(`Stand "${onStand.name}" could not be opened (${e instanceof Error ? e.message : String(e)}); running without it.`);
+          onStand = null;
+          setStandDoc(null);
+          try {
+            window.localStorage.removeItem('feedtwin.stand');
+          } catch {
+            // Nothing to forget.
+          }
+        }
+      }
+      // The stand's hookup and knob positions belong to the drawing it was
+      // saved with. On another drawing they name valves and regulators that
+      // are not there: the drawing's own hookup is used, and saving the stand
+      // records the drawing it is now on.
+      const doc = onStand && standPayload.current?.diagram === diagram ? standPayload.current : null;
+      const opened = await openSession(where, {
+        state: 'Idle',
+        ...setup,
+        ...(onStand ? { stand: { id: onStand.ref.id, owner: onStand.ref.owner ?? '' } } : {}),
+        ...(doc && Object.keys(doc.hookup).length ? { hookup: doc.hookup } : {}),
+      });
+      const knobs = (doc?.operating_point?.knobs ?? {}) as Record<string, number>;
+      let state = opened;
+      for (const [id, value] of Object.entries(knobs)) {
+        if (opened.knobs?.some((k) => k.id === id)) {
+          state = await commandSession(opened.id, { knob: { id, value } });
+        }
+      }
+      return state;
     };
     (async () => {
       try {
@@ -214,7 +298,10 @@ export function StandProvider({ children }: { children: ReactNode }) {
         setMachine(sm);
         session.current = first.id;
         try {
-          window.localStorage.setItem('feedtwin.session', JSON.stringify({ id: first.id, diagram, engine }));
+          window.localStorage.setItem(
+            'feedtwin.session',
+            JSON.stringify({ id: first.id, diagram, engine, stand: standDoc ? keyOf(standDoc.ref) : '' }),
+          );
         } catch {
           // Storage can be unavailable; the stand still works for this tab.
         }
@@ -223,6 +310,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
         if (first.setup) setSetupState((s) => ({ ...s, ...first.setup }) as StandSetup);
         setLive(first);
         setHistory(null);
+        setBurns(null);
         last.current = performance.now();
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -298,6 +386,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
     const pull = () => {
       if (!session.current) return;
       sessionHistory(session.current).then(setHistory).catch(() => undefined);
+      sessionBurns(session.current).then(setBurns).catch(() => undefined);
     };
     pull();
     const id = window.setInterval(pull, 1500);
@@ -327,6 +416,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
     machine,
     live,
     history,
+    burns,
     running,
     busy,
     error,
@@ -345,12 +435,70 @@ export function StandProvider({ children }: { children: ReactNode }) {
     go: (state) => void command({ state }),
     toggleValve: (id) =>
       void command({ valve: id, open: !(live?.open[id] ?? false) }),
+    turnKnob: (id, value) => void command({ knob: { id, value } }),
     release: () => void command({ release: '*' }),
     restart: () => {
       wantFresh.current = true;
       setGeneration((g) => g + 1);
     },
+    jumpToT0: () => {
+      if (!session.current) return;
+      setBusy(true);
+      sessionT0(session.current)
+        .then((next) => {
+          setLive(next);
+          last.current = performance.now();
+          setError('');
+        })
+        .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+        .finally(() => setBusy(false));
+    },
     refresh,
+    standDoc,
+    openStand: async (ref, name) => {
+      const doc = await standApi.load(ref);
+      standPayload.current = doc;
+      const opened = { ref, name };
+      setStandDoc(opened);
+      try {
+        window.localStorage.setItem('feedtwin.stand', JSON.stringify(opened));
+      } catch {
+        // Storage can be unavailable; the stand is still open in this tab.
+      }
+      if (Object.keys(doc.setup).length) setSetupState((s) => ({ ...s, ...doc.setup }) as StandSetup);
+      if (doc.diagram) setDiagram(doc.diagram);
+      if (doc.engine !== undefined) setEngine(doc.engine);
+      wantFresh.current = true;
+      setGeneration((g) => g + 1);
+    },
+    closeStand: () => {
+      standPayload.current = null;
+      setStandDoc(null);
+      try {
+        window.localStorage.removeItem('feedtwin.stand');
+      } catch {
+        // Nothing to forget.
+      }
+    },
+    snapshot: async () => {
+      const hookup = await getHookup(where).catch(() => null);
+      return {
+        diagram,
+        engine,
+        fluid_set: where.fluidSet,
+        machine: where.machine,
+        setup: { ...(live?.setup ?? setup) },
+        hookup: standPayload.current?.diagram === diagram &&
+          standPayload.current?.hookup &&
+          Object.keys(standPayload.current.hookup).length
+          ? standPayload.current.hookup
+          : ((hookup?.hookup ?? {}) as unknown as Record<string, unknown>),
+        operating_point: {
+          knobs: Object.fromEntries((live?.knobs ?? []).map((k) => [k.id, k.psig])),
+        },
+        notes: standPayload.current?.notes ?? '',
+      };
+    },
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

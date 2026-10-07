@@ -1,5 +1,20 @@
 @import "tailwindcss";
 
+/* The nine tokens the shared design-tool UI paints with (lib/stardesign-ui
+   theme.ts), mapped onto the DAQ palette below. --color-text-muted comes from
+   @theme. */
+:root {
+  --color-bg-primary: #141414;
+  --color-bg-secondary: #1e1e1e;
+  --color-bg-tertiary: #2a2a2a;
+  --color-surface: #1a1a1a;
+  --color-accent: #3d6e9e;
+  --color-accent-hover: #4a82b8;
+  --color-border: #333333;
+  --color-text-primary: #e2e2e2;
+  --color-text-secondary: #b4b4b4;
+}
+
 /* The P&ID is pid-designer's own canvas (views/Pid.tsx), and Tailwind v4 only
    scans files it can reach from this project's root. Without these its symbols
    compile and type-check but render unstyled -- silently, with no build error. */

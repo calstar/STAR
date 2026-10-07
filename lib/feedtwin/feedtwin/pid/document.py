@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from feedtwin.model.param import Param, Provenance
+from feedtwin.model.pressure import PressureReferenceError, drawn_unit
 from feedtwin.model.segments import LineLoss
 from feedtwin.pid.errors import DiagramError as DiagramError
 from feedtwin.pid.segments import read_segments
@@ -129,12 +130,12 @@ class Diagram:
 
     @property
     def pages(self) -> list[str]:
-        seen = {n.page for n in self.nodes if n.page}
-        return sorted(seen)
+        """Page names; a node with none is on "Main", as pid-designer reads it."""
+        return sorted({n.page or "Main" for n in self.nodes})
 
     def on_page(self, page: str) -> Diagram:
         """The drawing restricted to one page, with dangling edges dropped."""
-        nodes = tuple(n for n in self.nodes if not n.page or n.page == page)
+        nodes = tuple(n for n in self.nodes if (n.page or "Main") == page)
         keep = {n.id for n in nodes}
         edges = tuple(e for e in self.edges if e.source in keep and e.target in keep)
         return Diagram(nodes=nodes, edges=edges, name=f"{self.name}#{page}")
@@ -143,7 +144,7 @@ class Diagram:
 _PROVENANCE = {p.value: p for p in Provenance}
 
 
-def _params(raw: Any, where: str) -> dict[str, Param]:
+def _params(raw: Any, where: str, symbol: str = "") -> dict[str, Param]:
     """Read a ``{name: {value, unit, source, reference}}`` block.
 
     A parameter with no ``source`` is refused rather than defaulted. The drawing
@@ -166,10 +167,14 @@ def _params(raw: Any, where: str) -> dict[str, Param]:
         try:
             out[str(name)] = Param(
                 value=float(entry["value"]),
-                unit=str(entry.get("unit", "-")),
+                # A bare "psi" on an absolute pressure is gauge, as on the dial;
+                # a difference may not carry a reference (feedtwin.model.pressure).
+                unit=drawn_unit(str(name), str(entry.get("unit", "-")), symbol),
                 source=_PROVENANCE[source],
                 reference=str(entry.get("reference", "")),
             )
+        except PressureReferenceError as exc:
+            raise DiagramError(f"{where}: {exc}") from exc
         except (KeyError, TypeError, ValueError) as exc:
             raise DiagramError(f"{where}: parameter {name!r} is malformed ({exc})")
     return out
@@ -230,7 +235,11 @@ def read_diagram(payload: Mapping[str, Any], *, name: str = "diagram") -> Diagra
                 role=str(data.get("fluidType", "") or "").strip().lower(),
                 page=str(data.get("page", "") or ""),
                 attached_to=str(data.get("attachedTo", "") or ""),
-                params=_params(data.get("params"), f"{name}:{node_id}"),
+                params=_params(
+                    data.get("params"),
+                    f"{name}:{node_id}",
+                    str(data.get("componentType", raw.get("type", ""))),
+                ),
                 options=_options(data.get("options")),
                 ports=_ports(data.get("ports")),
                 rotation=_rotation(data.get("rotation", raw.get("rotation"))),

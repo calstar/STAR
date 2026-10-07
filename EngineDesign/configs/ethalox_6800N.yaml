@@ -52,12 +52,12 @@ injector:
   geometry:
     oxidizer:
       n_elements: 24
-      d_jet: 0.0016318401623160582
+      d_jet: 0.00165   # 1.65 mm drill (ASME B94.11M), 2026-10-05
       impingement_angle: 35.0
       spacing: 0.008312130562622994   # exits on r 31.750 mm (drawing)
     fuel:
       n_elements: 24
-      d_jet: 0.0014715307322406754
+      d_jet: 0.0015    # 1.50 mm drill (ASME B94.11M), 2026-10-05
       impingement_angle: 48.0
       spacing: 0.011038509387163336   # exits on r 42.164 mm (drawing)
   igniter:

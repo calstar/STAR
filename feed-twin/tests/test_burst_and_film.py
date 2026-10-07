@@ -25,7 +25,8 @@ class _Node:
 
 
 def _psi(value: float) -> Param:
-    return Param(value * PSI, "Pa", Provenance.MANUFACTURER, "test")
+    """A rating as a drawing reads one: bare "psi" is gauge (feedtwin.model.pressure)."""
+    return Param(value * PSI + ATMOSPHERE, "Pa", Provenance.MANUFACTURER, "test")
 
 
 class TestTripLimit:

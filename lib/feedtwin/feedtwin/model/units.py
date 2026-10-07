@@ -48,6 +48,10 @@ _LBM = 0.45359237
 _GAL_US = 3.785411784e-3
 _MIN = 60.0
 
+#: What a gauge reads zero at [Pa]: one standard atmosphere, as the DAQ and every
+#: psig on the panel use (feedtwin.session.gauge.ATMOSPHERE is the same number).
+GAUGE_ZERO = 101325.0
+
 
 @dataclass(frozen=True, slots=True)
 class Unit:
@@ -127,15 +131,29 @@ _UNITS: dict[str, Unit] = {
         _u("kg", "mass", 1.0),
         _u("g", "mass", 1e-3),
         _u("lbm", "mass", _LBM),
-        # pressure -- absolute. Gauge pressure is a *reference*, not a unit, and
-        # is deliberately absent: "psig" in a config would silently become an
-        # absolute pressure one atmosphere too low. Convert before authoring.
+        # pressure. The canonical value is absolute Pa. The bare spellings have
+        # no offset, so they convert a *difference* (a droop, a bias, a relief
+        # set pressure) exactly, and an absolute pressure only if it was written
+        # absolute. The qualified spellings say which: "-a" absolute, "-g" gauge,
+        # one standard atmosphere (GAUGE_ZERO) above. A drawing's absolute
+        # pressures written bare are read as gauge, the way a dial reads them,
+        # and a difference may never carry a reference: both rules live in
+        # feedtwin.model.pressure, which every reader of a drawing goes through.
         _u("Pa", "pressure", 1.0),
         _u("kPa", "pressure", 1e3),
         _u("MPa", "pressure", 1e6),
         _u("bar", "pressure", 1e5),
         _u("psi", "pressure", _PSI),
         _u("atm", "pressure", 101325.0),
+        _u("psia", "pressure", _PSI),
+        _u("bara", "pressure", 1e5),
+        _u("kPaa", "pressure", 1e3),
+        _u("MPaa", "pressure", 1e6),
+        _u("psig", "pressure", _PSI, GAUGE_ZERO),
+        _u("barg", "pressure", 1e5, GAUGE_ZERO),
+        _u("kPag", "pressure", 1e3, GAUGE_ZERO),
+        _u("MPag", "pressure", 1e6, GAUGE_ZERO),
+        _u("Pag", "pressure", 1.0, GAUGE_ZERO),
         # temperature
         _u("K", "temperature", 1.0),
         _u("degC", "temperature", 1.0, 273.15),

@@ -269,6 +269,16 @@ services:
       # drop what people have imported -- and so a result from last month can
       # still name the exact artifact it ran on.
       FEEDTWIN_LIBRARY: /data/feed-twin/library
+      # Stands (and the runs made on them): per-user documents on the same
+      # volume, under <user>/stand -- shared, checked out and versioned like
+      # pid-designer's diagrams. See feed-twin/backend/routers/stands.py.
+      USERDATA_DIR: /data
+      AUTH_USERS_URL: ${AUTH_USERS_URL:-${AUTH_PUBLIC_URL:-https://auth.starberkeley.org}}
+      FEEDTWIN_S3_BUCKET: ${FEEDTWIN_S3_BUCKET:-}
+      FEEDTWIN_S3_PREFIX: ${FEEDTWIN_S3_PREFIX:-stand}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       # Where the siblings live inside the compose network. This is the whole
       # integration: with these set, importing a P&ID is picking one out of a
       # list rather than exporting a file and uploading it. The caller's

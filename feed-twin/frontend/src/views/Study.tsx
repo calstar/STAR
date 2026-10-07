@@ -21,6 +21,7 @@ import {
   type StudyTrace,
 } from '../api';
 import { StudyChart, type Series } from '../components/StudyChart';
+import { useStand } from '../stand';
 
 /** Gas colours, carried everywhere: the pills, the plots, the table.
  *
@@ -106,6 +107,10 @@ function Check({
 }
 
 export function Study() {
+  // The study fires the engine selected in the cockpit -- never "the newest
+  // in the library", which was whatever somebody imported last.
+  const { where, artifacts } = useStand();
+  const selectedEngine = artifacts.find((a) => a.kind === 'engine' && a.id === where.engine) ?? null;
   const [gases, setGases] = useState<Record<GasKey, boolean>>({ gn2: true, he: true });
   const [bigger, setBigger] = useState(false);
   const [collapse, setCollapse] = useState(false);
@@ -155,6 +160,7 @@ export function Study() {
           // tick box that silently means something.
           chilldown: chilldown ? 50 : 0,
           line_walls: lineWalls,
+          engine: where.engine,
         }),
       );
     } catch (e) {
@@ -288,10 +294,31 @@ export function Study() {
               Bottle: {study.bottle_litres} L / {study.bottle_cubic_inches} in³.
             </span>
           )}
+          {study?.engine_name && (
+            <span className="text-gray-300">
+              {' '}
+              {study.running ? 'Firing' : 'Fired'}: <span className="font-mono">{study.engine_name}</span>
+              {selectedEngine && study.engine_id !== selectedEngine.id && !study.running && (
+                <span className="text-amber-300"> (not the engine selected now — run again to update)</span>
+              )}
+              .
+            </span>
+          )}
         </p>
       </header>
 
       <section className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-lg border border-gray-800 bg-card px-4 py-3">
+        <div
+          className="flex items-center gap-2"
+          title="The engine selected in the cockpit (Library). Change it there; the study fires whichever is selected when you press Run."
+        >
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Engine</span>
+          {selectedEngine ? (
+            <span className="font-mono text-[13px] text-gray-200">{selectedEngine.name}</span>
+          ) : (
+            <span className="text-[13px] text-amber-300">none selected — pick one in Library</span>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Gas</span>
           <Check on={gases.gn2} onChange={(v) => setGases((g) => ({ ...g, gn2: v }))} label="GN2" accent={GAS.gn2.hue} />
@@ -377,7 +404,7 @@ export function Study() {
             <button
               type="button"
               onClick={() => void run()}
-              disabled={!chosen.length}
+              disabled={!chosen.length || !selectedEngine}
               className="rounded-md bg-blue-600 px-5 py-2 text-[13px] font-bold uppercase tracking-wide text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Run study

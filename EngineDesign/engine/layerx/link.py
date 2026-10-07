@@ -150,8 +150,7 @@ def link_engine(
     if mode == "card":
         center = card_center_pa if card_center_pa is not None else 0.5 * (tank_pa_O + tank_pa_F)
         card = card_for(config, center_pa=center, ambient_pa=ambient_pa)
-        design = card.attach(design)
-        chamber = card.chamber_model(ambient_pressure=ambient_pa, volume=design.chamber_volume)
+        design, chamber = card.install(design, ambient_pressure=ambient_pa)
         fit = dict(card.fit)
         calibration = {
             "mode": "card",

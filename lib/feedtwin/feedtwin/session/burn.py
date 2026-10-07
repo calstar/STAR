@@ -57,6 +57,9 @@ def burn_setup(**changes: Any) -> Setup:
         # at. A study case asks for line walls itself.
         "line_walls": False,
         "regulator_lockup_supply": False,
+        # The ullage against its dry wall only (2026-10-06): on in the library
+        # and the cockpit, off here for the same reason as line walls.
+        "ullage_wall_by_level": False,
         # A burn reads the trace past depletion; the cockpit's automatic Vent
         # at burnout would open the vents on it.
         "auto_vent": False,
@@ -233,6 +236,140 @@ def prime_at_t0(session: Session, plan: BurnPlan) -> bool:
         )
         return False
     return True
+
+
+def regulator_lockup(session: Session, tank_id: str) -> float | None:
+    """Where the regulator feeding ``tank_id`` locks up, right now [Pa abs].
+
+    Walks upstream from the tank's ullage to the first regulator in the
+    network (dome loaders are lifted out of it, so this is the unit that
+    presses the tank), then evaluates its own law at zero flow: the session's
+    knob and dome signals, and the bottle behind it at its present pressure,
+    which is what the supply-pressure effect reads. ``None`` when no regulator
+    feeds the tank -- a stand pressed straight off a bottle has no lockup.
+    """
+    from feedtwin.comps.regulator import Regulator
+
+    net = session.model.built.network
+    sim = session.tanks[tank_id]
+    # Undirected: a drawing's edge direction is how it was drawn, not which
+    # way gas flows. The walk stops at boundaries -- other vessels, the
+    # chamber, this tank's own liquid outlet -- so it searches the press side.
+    boundaries = set(net.fixed_nodes) | {sim.outlet_node}
+    regulator = None
+    seen = {sim.ullage_node}
+    frontier = [sim.ullage_node]
+    while frontier and regulator is None:
+        nxt: list[str] = []
+        for node in frontier:
+            for branch in net.branches.values():
+                if node not in (branch.upstream, branch.downstream):
+                    continue
+                other = (
+                    branch.upstream if branch.downstream == node else branch.downstream
+                )
+                if other in seen:
+                    continue
+                if isinstance(branch.component, Regulator):
+                    regulator = branch
+                    break
+                seen.add(other)
+                if other not in boundaries:
+                    nxt.append(other)
+            if regulator is not None:
+                break
+        frontier = nxt
+    if regulator is None:
+        return None
+    bottles = [b.pressure for b in session.bottles.values()]
+    if not bottles:
+        return None
+    component = regulator.component
+    assert isinstance(component, Regulator)
+    flow = net.conditions(regulator.upstream, max(bottles), session.signals())
+    return float(component.lockup_pressure(flow))
+
+
+@dataclass(frozen=True, slots=True)
+class T0:
+    """Where :func:`jump_to_t0` left the stand."""
+
+    lockup_psi: dict[str, float]
+    """Each tank's regulator lockup [psig] at the knobs as set; a tank with no
+    regulator upstream is absent."""
+    tank_psi: float
+    """What the tanks were primed at [psig]."""
+    notes: list[str] = field(default_factory=list)
+
+
+def jump_to_t0(
+    session: Session,
+    *,
+    copv_psi: float,
+    fill_fraction: float,
+    hold_s: float = PAD_HOLD_S,
+    ready_state: str = "Ready",
+    fallback_psi: float = 550.0,
+) -> T0:
+    """The cockpit's shortcut past the pad: loaded, charged, pressed, in Ready.
+
+    The initial condition the study and Layer X burn from
+    (:meth:`Session.prime`: tanks loaded to ``fill_fraction``, a LOX wall
+    chilled by ``hold_s`` on the pad, the bottle at ``copv_psi``), with the
+    tanks at the lockup *this stand's regulators* give at the knobs as they
+    are set (:func:`regulator_lockup`), not at a number chosen here. Ready
+    shuts the press valves, as the table has it; what the tanks then do while
+    the stand waits for Fire is the stand's own physics.
+
+    Nothing about the stand changes: the knobs, the settings and the drawing
+    stay as they are. The pad itself (fills, chilldown, presses) is skipped,
+    which is the point; fly it from Idle for the transients it carries.
+    Tanks fed by regulators that lock up at different pressures are primed at
+    the lowest of them and the note says so.
+    """
+    notes: list[str] = []
+    ready = ready_state if ready_state in session.machine.states else session.state
+    # Charge the bottle first: the supply-pressure effect reads it.
+    session.prime(
+        fill_fraction=fill_fraction,
+        tank_psi=fallback_psi,
+        copv_psi=copv_psi,
+        state=ready,
+        hold_s=hold_s,
+    )
+    lockups = {
+        tank_id: lockup
+        for tank_id in session.tanks
+        if (lockup := regulator_lockup(session, tank_id)) is not None
+    }
+    tank_psi = fallback_psi
+    if lockups:
+        tank_psi = psig(min(lockups.values()))
+        if max(lockups.values()) - min(lockups.values()) > PSI:
+            notes.append(
+                f"The regulators lock up at {psig(min(lockups.values())):.0f}-"
+                f"{psig(max(lockups.values())):.0f} psig; every tank was primed at "
+                f"{tank_psi:.0f}."
+            )
+        session.prime(
+            fill_fraction=fill_fraction,
+            tank_psi=tank_psi,
+            copv_psi=copv_psi,
+            state=ready,
+            hold_s=hold_s,
+        )
+    else:
+        notes.append(
+            f"No regulator feeds the tanks; primed at {fallback_psi:.0f} psig."
+        )
+    for tank_id, sim in session.tanks.items():
+        if lockups and tank_id not in lockups:
+            notes.append(f"{sim.label}: no regulator upstream.")
+    return T0(
+        lockup_psi={k: round(psig(v), 1) for k, v in lockups.items()},
+        tank_psi=round(tank_psi, 1),
+        notes=notes,
+    )
 
 
 @dataclass(frozen=True, slots=True)

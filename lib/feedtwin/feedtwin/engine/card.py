@@ -64,7 +64,14 @@ import math
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
-from feedtwin.engine.chamber import GRAVITY, Chamber, ChamberResult, CombustionState
+from feedtwin.engine.chamber import (
+    GRAVITY,
+    MIN_CHAMBER_FLOW,
+    Chamber,
+    ChamberResult,
+    CombustionState,
+    unlit,
+)
 from feedtwin.engine.design import EngineDesign
 
 #: Bumped whenever the serialised form changes meaning.
@@ -315,6 +322,29 @@ class EngineCard:
             fuel=replace(design.fuel, card=self.fuel),
         )
 
+    @property
+    def ambient_pressure(self) -> float:
+        """The ambient the tool sampled the card at [Pa]; sea level if unsaid."""
+        return float(self.provenance.get("ambient_pa_sampled", 101325.0))
+
+    def install(
+        self, design: EngineDesign, *, ambient_pressure: float | None = None
+    ) -> tuple[EngineDesign, "CardChamber"]:
+        """``design`` running this card: its injector on the two sides, and its
+        chamber at ``ambient_pressure`` (the card's own site by default).
+
+        The one way an engine card goes onto an engine. The feed-twin cockpit
+        and EngineDesign's Layer X both install through here, so the same card
+        is the same engine in both.
+        """
+        attached = self.attach(design)
+        ambient = (
+            self.ambient_pressure if ambient_pressure is None else ambient_pressure
+        )
+        return attached, self.chamber_model(
+            ambient_pressure=ambient, volume=attached.chamber_volume
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema": CARD_SCHEMA,
@@ -408,6 +438,8 @@ class CardChamber(Chamber):
                 thrust=0.0,
                 specific_impulse=0.0,
             )
+        if min(mdot_oxidiser, mdot_fuel) <= MIN_CHAMBER_FLOW:
+            return unlit(self.ambient_pressure, mdot_oxidiser, mdot_fuel)
         chamber = self.card.chamber
         cstar = chamber.cstar(mixture_ratio, total)
         pressure = max(total * cstar / self.throat_area, self.ambient_pressure)

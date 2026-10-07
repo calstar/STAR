@@ -109,7 +109,10 @@ function PressureBar({
       {/* Label — viewport-relative so it scales with screen */}
       <div
         className={`${compact ? 'leading-none' : 'text-2xl'} font-bold uppercase tracking-wider text-gray-300 text-center flex-shrink-0 whitespace-nowrap`}
-        style={compact ? { fontSize: 'clamp(8px, 1.1vh, 22px)' } : { fontSize: 'clamp(12px, 1.8vh, 28px)' }}
+        // Compact (the top bar): sized by the smaller of the window's height
+        // and width -- by height alone a tall, narrow window put 15 px tags in
+        // 46 px bars. Layout only; the scale and thresholds are the DAQ's.
+        style={compact ? { fontSize: 'clamp(8px, min(1.1vh, 0.95vw), 22px)' } : { fontSize: 'clamp(12px, 1.8vh, 28px)' }}
       >
         {label}
       </div>
@@ -165,7 +168,7 @@ function PressureBar({
       <div className="flex-shrink-0 text-center leading-none mt-1">
         <div
           className={`${compact ? 'leading-none' : 'text-2xl'} font-bold font-mono tabular-nums`}
-          style={compact ? { color: barColor, fontSize: 'clamp(10px, 1.3vh, 28px)' } : { color: barColor, fontSize: 'clamp(14px, 1.8vh, 28px)' }}
+          style={compact ? { color: barColor, fontSize: 'clamp(9px, min(1.3vh, 1.25vw), 28px)' } : { color: barColor, fontSize: 'clamp(14px, 1.8vh, 28px)' }}
         >
           {value !== null ? fmtPressure(value) : '---'}
         </div>

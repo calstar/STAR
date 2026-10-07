@@ -66,6 +66,7 @@ def test_an_operator_can_take_the_stand_from_cold_to_fire() -> None:
         tank_fill_s=6.0,
         fuel_fill_s=2.0,
         load_chill_s=2.0,
+        dewar_psi=0.0,
         dome=500.0,
     )
     sid = state["id"]

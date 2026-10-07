@@ -121,7 +121,10 @@ def test_a_drawing_reads_into_typed_records() -> None:
     assert len(drawing.edges) == 2
     bottle = drawing.node("KB")
     assert bottle is not None and bottle.is_source
-    assert bottle.params["pressure"].si == pytest.approx(4500 * PSI)
+    # Drawn "4500 psi" is what the bottle's gauge reads: 4500 psig
+    # (feedtwin.model.pressure), one atmosphere more in absolute pascals.
+    assert bottle.params["pressure"].unit == "psig"
+    assert bottle.params["pressure"].si == pytest.approx(4500 * PSI + 101325.0)
 
 
 def test_a_parameter_with_no_provenance_is_refused() -> None:
@@ -240,9 +243,13 @@ def test_the_stand_drawing_builds_and_solves() -> None:
     assert result.converged
     assert result.max_mass_residual < 1e-9
 
-    readings = {i.tag: result.pressures[i.node] / PSI for i in built.instruments}
+    # The gauges read what the drawing says: its pressures are gauge.
+    readings = {
+        i.tag: (result.pressures[i.node] - 101325.0) / PSI for i in built.instruments
+    }
     assert readings["PT-GN2-HI"] == pytest.approx(4500.0, abs=1.0)
-    # The dome regulator holds its dome plus the 1092-50's 50 psi bias.
+    # The dome regulator holds its dome (450 psig on the control regulator)
+    # plus the 1092-50's 50 psi bias.
     assert readings["PT-GN2-REG"] == pytest.approx(500.0, abs=5.0)
     # And the feed lines cost something on the way to the injector.
     assert readings["PT-OX-DN"] < readings["PT-OX-UP"] - 10.0

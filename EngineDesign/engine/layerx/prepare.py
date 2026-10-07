@@ -748,7 +748,9 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
     bottles = [n for n in diagram.nodes if n.type == "KBOTTLE"]
     drawn_copv = None
     if bottles and "pressure" in bottles[0].params:
-        drawn_copv = bottles[0].params["pressure"].si / PSI  # the drawing's unit, whatever it is
+        # Absolute in SI whatever the drawing wrote (bare psi reads as psig:
+        # feedtwin.model.pressure); the plan wants gauge.
+        drawn_copv = psig_from_psia(bottles[0].params["pressure"].si / PSI)
     if not bottles:
         add("bottle", "Pressurant bottle", "fail", "The drawing has no KBOTTLE to press from.")
         return prep
