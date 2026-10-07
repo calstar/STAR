@@ -972,6 +972,9 @@ class TankSim:
     mawp: float = 0.0
     #: Dials the session copies in each tick (see feed-twin backend/tunables.py).
     full_fraction: float = FULL_FRACTION
+    #: What a load stops at [kg]: the engine's fire load for this tank
+    #: (:meth:`Session.fire_loads`), 0 for "fill to :attr:`full_fraction`".
+    load_kg: float = 0.0
     charge_gamma: float = CHARGE_GAMMA
     supply_band: float = SUPPLY_BAND
     stir_band: float = STIR_BAND
@@ -1094,9 +1097,11 @@ class TankSim:
         return True
 
     def _wanted(self) -> float:
-        """Liquid mass a load stops at [kg]: the full fraction of the tank."""
+        """Liquid mass a load stops at [kg]: the fire load when there is one,
+        never more than the full fraction of the tank."""
         capacity = self.tank.geometry.total_volume * self.full_fraction
-        return capacity * self.tank.liquid_density(self.state)
+        full = capacity * self.tank.liquid_density(self.state)
+        return min(self.load_kg, full) if self.load_kg > 0.0 else full
 
     def _collect(self, added: float) -> None:
         """Put ``added`` kg of the load into the liquid."""
@@ -1847,6 +1852,7 @@ class Session:
             frozenset(),
             frozenset(),
         )
+        self._fire_loads: dict[str, float] | None = None
         self._resting_memo: tuple[
             frozenset[str] | None, tuple[frozenset[str], frozenset[str]]
         ] = (None, self._resting)
@@ -1954,6 +1960,25 @@ class Session:
         if vehicle is None:
             return frozenset()
         return frozenset(n.id for n in self.model.diagram.nodes if n.id not in vehicle)
+
+    def fire_loads(self) -> dict[str, float]:
+        """Propellant a fire is loaded with, per vehicle tank [kg].
+
+        The engine's ``fire_load`` (its config's ``lox_tank.mass`` and
+        ``fuel_tank.mass``) on the tank of that side. What the vehicle carries
+        is fixed by the competition, not by the size of the tank drawn, so the
+        pad loads this and T-0 starts with it. Empty without an engine that
+        states one: then loads fill the tank to its full fraction.
+        """
+        if self._fire_loads is None:
+            load = getattr(self.model.engine, "fire_load", None) or {}
+            self._fire_loads = {
+                tank_id: float(load[side])
+                for tank_id in self.vehicle_tanks
+                if (side := propellant_side(self.tanks[tank_id].tank.liquid.name))
+                in load
+            }
+        return self._fire_loads
 
     @property
     def vehicle_tanks(self) -> tuple[str, ...]:
@@ -3611,6 +3636,7 @@ class Session:
         for tank_id, valve in self._fill_stops.items():
             sim = self.tanks[tank_id]
             sim.full_fraction = self.setup.full_fraction
+            sim.load_kg = self.fire_loads().get(tank_id, 0.0)
             full = sim.state.liquid_mass >= sim._wanted()
             side = propellant_side(sim.tank.liquid.name)
             words = ("ox", "lox") if side == "lox" else ("fuel", "eth")
@@ -3623,8 +3649,8 @@ class Session:
             if full and tank_id not in self._fill_stopped:
                 self._fill_stopped.add(tank_id)
                 self.assumptions.append(
-                    f"{sim.label} holds its load ({self.setup.full_fraction:.0%}, "
-                    f"{sim.state.liquid_mass:.2f} kg): {labels.get(valve, valve)} "
+                    f"{sim.label} holds its load ({sim.state.liquid_mass:.2f} kg): "
+                    f"{labels.get(valve, valve)} "
                     "shut, as the crew shuts the fill."
                 )
             note = (
@@ -4048,9 +4074,11 @@ class Session:
         net = self.model.built.network
         net.gravity = self.setup.body_acceleration
 
+        loads = self.fire_loads()
         for sim in self.tanks.values():
             sim.filling = self._fills(sim) and sim.id not in self._drawn_fill
             sim.full_fraction = self.setup.full_fraction
+            sim.load_kg = loads.get(sim.id, 0.0)
             sim.charge_gamma = self.setup.charge_gamma
             sim.supply_band = self.setup.supply_band
             sim.stir_band = self.setup.stir_band

@@ -18,6 +18,10 @@ from pathlib import Path
 
 import pytest
 
+
+#: The study drawings' lockup these tests were written at [psia] (scripts/layerx_baseline.py).
+STUDY_LOCKUP_PSIA = 564.7
+
 from engine.core.runner import PintleEngineRunner
 from engine.layerx import reconcile as R
 from engine.pipeline.io import load_config
@@ -119,7 +123,7 @@ GN2 = "copv_study_gn2"
                     reason="feed-twin's shipped drawings are not next to this checkout")
 def test_reconciling_closes_the_gap_on_the_stand(config):
     drawing = {d.name: d for d in DrawingStore(None).list()}[GN2]
-    settings = LayerXSettings(drawing_id=drawing.id, ack_gn2_condensation=True, replay=False)
+    settings = LayerXSettings(drawing_id=drawing.id, tank_pressure_psia=STUDY_LOCKUP_PSIA, ack_gn2_condensation=True, replay=False)
     res = R.run_reconcile(config, drawing, settings, [], R.ReconcileRequest(max_passes=4))
     assert res["converged"]
     target = res["design"]["thrust_N"]

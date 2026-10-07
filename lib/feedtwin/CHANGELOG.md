@@ -19,6 +19,13 @@ be able to find why they differ.
   regulators' lockup off the vehicle's bottle (`tank_psi` is the fallback with no
   regulator); `regulator_lockup` reads the vehicle's bottle, not a cart bank.
 
+- **T-0 and pad fills load the fire load**: `EngineDesign.fire_load` (the config's
+  `lox_tank.mass` / `fuel_tank.mass`), placed on the vehicle tank of that side
+  (`Session.fire_loads`). `jump_to_t0` loads it by default and a pad load stops at it
+  (`TankSim.load_kg`); a fraction of the drawn tank is only the fallback with no
+  engine. LE4 (6) with the 6800N: 6.611 / 4.404 kg, not 8.88 / 6.14 (95 % of 8.19 L),
+  a 3.9 s burn at dome 500 instead of 5.3.
+
 ### Removed
 - `Setup.regulator_supply_datum`, `Setup.regulator_lockup_supply` and their signals
   (`SUPPLY_DATUM_SIGNAL`, `LOCKUP_SUPPLY_SIGNAL`). `inlet_reference` still loads, is

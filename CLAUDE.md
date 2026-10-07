@@ -33,7 +33,7 @@ port* before concluding the endpoint is missing.
 ## Testing
 
 ```bash
-scripts/check.sh          # every feed-system gate CI runs, fast tier (~3 min)
+scripts/check.sh          # every feed-system gate CI runs, fast tier (~3 min; -n auto with pytest-xdist)
 scripts/check.sh full     # plus tests marked slow and the Layer X parity test
 cd lib/feedtwin   && python3 -m pytest -q && python3 -m mypy feedtwin && python3 -m black --check feedtwin tests
 cd feed-twin      && python3 -m pytest -q -m "not slow"     # drop -m for all 200+
@@ -118,6 +118,10 @@ very bugs they were written for.
   says when EngineDesign has moved on. Compare the cockpit and Layer X only at the same T-0;
   `EngineDesign/tests/test_layerx_cockpit_parity.py` holds them together. Burns are totalled
   by `feedtwin.session.report`. See `docs/adr/0003-one-engine-one-burn.md`.
+- **A fire is loaded with the engine's fire load**, the config's `lox_tank.mass` /
+  `fuel_tank.mass` (fixed by the competition), not a fraction of the drawn tank:
+  T-0 (`jump_to_t0`) and pad fills use `Session.fire_loads()`. A burn that runs long
+  is first a question of what was loaded.
 - **The supply-pressure effect is measured from zero inlet**: outlet = dome + bias
   - S x inlet (gauge), no datum, no setting (the team, 2026-10-07). A full 4,500 psig
   bottle holds a 1092-50 at dome 500 to 473.5 psig, not 550; never assume lockup =

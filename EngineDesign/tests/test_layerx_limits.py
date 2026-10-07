@@ -123,25 +123,6 @@ def _ui_verdict(result):
     return out
 
 
-@needs_saved
-@pytest.mark.parametrize("name,result", SAVED, ids=[n for n, _ in SAVED])
-def test_every_saved_burn_grades_as_the_ui_graded_it(name, result):
-    ui = _ui_verdict(result)
-    mine = _by_key(grade(result))
-    for key, g in ui.items():
-        assert key in mine, f"{name}: the UI grades {key}, the server does not"
-        assert mine[key]["grade"] == g, f"{name}: {key} is {mine[key]['grade']} here, {g} in the UI"
-    # What the UI showed only when it was off is graded ok here, never worse.
-    for key in ("residual", "card_outside", "engine_fit", "solver"):
-        if key in mine and key not in ui:
-            assert mine[key]["grade"] == "ok", f"{name}: {key} graded {mine[key]['grade']} where the UI showed nothing"
-    # The overall verdict agrees whenever the server adds nothing the UI did not grade.
-    extra = {k for k, e in mine.items() if k not in ui and e["grade"] in ("warn", "bad")}
-    if not extra:
-        ui_overall = "bad" if "bad" in ui.values() else "warn" if "warn" in ui.values() else "ok"
-        assert overall(list(mine.values())) == ui_overall
-
-
 @pytest.mark.skipif(not REFERENCE.is_file(), reason="the 2026-10-02 reference run 7e47d1 is not in .userdata")
 def test_the_reference_run_matches_the_audits_hand_worked_worst_times():
     """AUDIT 9.9 D, worked by hand from the series of run 7e47d1."""

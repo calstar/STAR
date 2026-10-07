@@ -341,6 +341,7 @@ def jump_to_t0(
     hold_s: float = PAD_HOLD_S,
     ready_state: str = "Ready",
     fallback_psi: float = 550.0,
+    loads: Mapping[str, float] | None = None,
 ) -> T0:
     """The cockpit's shortcut past the pad: loaded, charged, pressed, in Ready.
 
@@ -357,8 +358,38 @@ def jump_to_t0(
     which is the point; fly it from Idle for the transients it carries.
     Tanks fed by regulators that lock up at different pressures are primed at
     the lowest of them and the note says so.
+
+    The tanks hold what a fire is loaded with: ``loads`` [kg] per tank, or the
+    engine's fire load (:meth:`Session.fire_loads`) -- never a fraction of the
+    tank drawn, which on LE4 (6) is a third more LOX than the vehicle carries.
+    ``fill_fraction`` is for a tank neither names.
     """
     notes: list[str] = []
+    if loads is None:
+        loads = session.fire_loads()
+    loads = dict(loads)
+    for tank_id, kg in list(loads.items()):
+        sim = session.tanks[tank_id]
+        full = (
+            sim.tank.geometry.total_volume
+            * fill_fraction
+            * sim.tank.liquid_density(sim.state)
+        )
+        if kg > full:
+            loads[tank_id] = full
+            notes.append(
+                f"{sim.label}: the {kg:.3f} kg fire load does not fit its "
+                f"{sim.tank.geometry.total_volume * 1e3:.2f} L; loaded to "
+                f"{fill_fraction:.0%}, {full:.3f} kg."
+            )
+    if loads:
+        notes.append(
+            "Loaded for a fire: "
+            + ", ".join(
+                f"{session.tanks[k].label} {v:.3f} kg" for k, v in sorted(loads.items())
+            )
+            + "."
+        )
     ready = ready_state if ready_state in session.machine.states else session.state
     # Charge the bottle first: the supply-pressure effect reads it.
     session.prime(
@@ -367,6 +398,7 @@ def jump_to_t0(
         copv_psi=copv_psi,
         state=ready,
         hold_s=hold_s,
+        loads=loads,
     )
     lockups = {
         tank_id: lockup
@@ -388,6 +420,7 @@ def jump_to_t0(
             copv_psi=copv_psi,
             state=ready,
             hold_s=hold_s,
+            loads=loads,
         )
     else:
         notes.append(

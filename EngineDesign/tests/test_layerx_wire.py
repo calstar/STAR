@@ -28,6 +28,10 @@ import sys
 
 import pytest
 
+
+#: The study drawings' lockup these tests were written at [psia] (scripts/layerx_baseline.py).
+STUDY_LOCKUP_PSIA = 564.7
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 feedtwin = pytest.importorskip("feedtwin", reason="lib/feedtwin is not installed")
@@ -77,7 +81,7 @@ def gn2_pair(cfg):
     import feedtwin.session.burn as fb
 
     drawing = _drawing("copv_study_gn2")
-    settings = LayerXSettings(drawing_id=drawing.id, ack_gn2_condensation=True, replay=False)
+    settings = LayerXSettings(drawing_id=drawing.id, tank_pressure_psia=STUDY_LOCKUP_PSIA, ack_gn2_condensation=True, replay=False)
     prep = prepare(cfg, None, drawing, settings, [])
     assert prep.ok
     on = run_prepared(prep, replay=False)
@@ -101,7 +105,7 @@ def tripped(cfg, he):
     from engine.layerx import flight as flt
 
     runner = PintleEngineRunner(cfg)
-    prep = prepare(cfg, runner, he, LayerXSettings(drawing_id=he.id, flight=True), [_low_mawp()])
+    prep = prepare(cfg, runner, he, LayerXSettings(drawing_id=he.id, tank_pressure_psia=STUDY_LOCKUP_PSIA, flight=True), [_low_mawp()])
     assert prep.ok, [c.detail for c in prep.checks if c.status == "fail"]
     calls = []
     with pytest.MonkeyPatch.context() as mp:
@@ -113,7 +117,7 @@ def tripped(cfg, he):
 @pytest.fixture(scope="module")
 def tripped_bare(cfg, he):
     """The same trip as the sweep burns it: no replay, no flight, so no passes decide ``converged``."""
-    prep = prepare(cfg, None, he, LayerXSettings(drawing_id=he.id, replay=False), [_low_mawp()])
+    prep = prepare(cfg, None, he, LayerXSettings(drawing_id=he.id, tank_pressure_psia=STUDY_LOCKUP_PSIA, replay=False), [_low_mawp()])
     return run_prepared(prep, replay=False)
 
 
@@ -265,7 +269,7 @@ def test_the_set_point_and_hardware_tools_do_not_use_a_tripped_burn(tripped, cfg
     from engine.layerx import setpoint as sp
 
     monkeypatch.setattr(A, "run_prepared", lambda prep, **kw: tripped["result"])
-    p = sp.burn_point({"config": cfg, "drawing": he, "settings": LayerXSettings(drawing_id=he.id),
+    p = sp.burn_point({"config": cfg, "drawing": he, "settings": LayerXSettings(drawing_id=he.id, tank_pressure_psia=STUDY_LOCKUP_PSIA),
                        "overrides": [_low_mawp()], "replay": False})
     assert p["ok"] and p["tripped"]["vessel"] == "FUT"
     assert not sp.usable(p) and not sp.feasible(p)
@@ -277,7 +281,7 @@ def test_the_sweep_leaves_a_tripped_case_out_of_the_swings_and_lists_it(tripped,
     from engine.layerx import uncertainty as U
 
     monkeypatch.setattr(A, "run_prepared", lambda prep, **kw: tripped["result"])
-    case = U._burn_case((cfg, he, LayerXSettings(drawing_id=he.id), [], {"id": "x|high"}))
+    case = U._burn_case((cfg, he, LayerXSettings(drawing_id=he.id, tank_pressure_psia=STUDY_LOCKUP_PSIA), [], {"id": "x|high"}))
     assert case["ok"] is False and case["tripped"]["vessel"] == "FUT"
     assert case["error"].startswith("vessel trip: TK-FUEL")
 
@@ -295,7 +299,7 @@ def test_the_sweep_leaves_a_tripped_case_out_of_the_swings_and_lists_it(tripped,
         return {**nominal, "case": cid}
 
     monkeypatch.setattr(U, "_burn_case", fake_case)
-    out = U.run_sweep(cfg, he, LayerXSettings(drawing_id=he.id), [], workers=1)
+    out = U.run_sweep(cfg, he, LayerXSettings(drawing_id=he.id, tank_pressure_psia=STUDY_LOCKUP_PSIA), [], workers=1)
     trips = [c for c in out["crossings"] if c.get("tripped")]
     assert trips and all(c["side"] == "high" for c in trips)
     assert all(c["breaks"][0].startswith("vessel trip") for c in trips)
@@ -311,7 +315,7 @@ def test_the_sweep_leaves_a_tripped_case_out_of_the_swings_and_lists_it(tripped,
                                                          "tripped": tripped["result"]["tripped"],
                                                          "error": U._trip_words(tripped["result"]["tripped"])})
     with pytest.raises(RuntimeError, match="vessel trip"):
-        U.run_sweep(cfg, he, LayerXSettings(drawing_id=he.id), [], workers=1)
+        U.run_sweep(cfg, he, LayerXSettings(drawing_id=he.id, tank_pressure_psia=STUDY_LOCKUP_PSIA), [], workers=1)
 
 
 def test_the_legacy_optimiser_and_reconcile_refuse_a_tripped_burn(tripped, cfg, he, monkeypatch):
@@ -329,7 +333,7 @@ def test_the_legacy_optimiser_and_reconcile_refuse_a_tripped_burn(tripped, cfg, 
 
     monkeypatch.setattr(A, "run_prepared", lambda prep, **kw: tripped["result"])
     with pytest.raises(ValueError, match="tripped"):
-        R.run_reconcile(cfg, he, LayerXSettings(drawing_id=he.id, replay=False), [], R.ReconcileRequest(max_passes=1))
+        R.run_reconcile(cfg, he, LayerXSettings(drawing_id=he.id, tank_pressure_psia=STUDY_LOCKUP_PSIA, replay=False), [], R.ReconcileRequest(max_passes=1))
 
 
 # ---------------------------------------------------------------- trips before Fire
@@ -356,14 +360,14 @@ def test_a_trip_in_the_settle_raises_with_its_record(cfg, he, monkeypatch):
         return settled
 
     monkeypatch.setattr(fb, "prime_at_t0", prime)
-    prep = prepare(cfg, None, he, LayerXSettings(drawing_id=he.id, replay=False), [])
+    prep = prepare(cfg, None, he, LayerXSettings(drawing_id=he.id, tank_pressure_psia=STUDY_LOCKUP_PSIA, replay=False), [])
     with pytest.raises(StandTripped) as caught:
         run_prepared(prep, replay=False)
     assert caught.value.record["vessel"] == "FUT" and "settle" in str(caught.value)
-    p = sp.burn_point({"config": cfg, "drawing": he, "settings": LayerXSettings(drawing_id=he.id), "overrides": [],
+    p = sp.burn_point({"config": cfg, "drawing": he, "settings": LayerXSettings(drawing_id=he.id, tank_pressure_psia=STUDY_LOCKUP_PSIA), "overrides": [],
                        "replay": False})
     assert p["ok"] is False and p["tripped"]["vessel"] == "FUT" and not sp.usable(p)
-    case = U._burn_case((cfg, he, LayerXSettings(drawing_id=he.id), [], {"id": "nominal"}))
+    case = U._burn_case((cfg, he, LayerXSettings(drawing_id=he.id, tank_pressure_psia=STUDY_LOCKUP_PSIA), [], {"id": "nominal"}))
     assert case["ok"] is False and case["tripped"]["vessel"] == "FUT"
 
 
@@ -390,7 +394,7 @@ def test_a_trip_in_the_lead_in_fires_nothing_and_is_not_replayed(cfg, he, monkey
 
     monkeypatch.setattr(fb, "prime_at_t0", prime)
     runner = PintleEngineRunner(cfg)
-    prep = prepare(cfg, runner, he, LayerXSettings(drawing_id=he.id), [])
+    prep = prepare(cfg, runner, he, LayerXSettings(drawing_id=he.id, tank_pressure_psia=STUDY_LOCKUP_PSIA), [])
     assert prep.link is not None and prep.link.sampler is not None      # the replay loop is armed
     r = run_prepared(prep, runner=runner, config=cfg)
     trip = r["tripped"]

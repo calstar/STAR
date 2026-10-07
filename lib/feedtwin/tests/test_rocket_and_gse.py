@@ -392,3 +392,43 @@ def test_ignition_is_not_stepped_on_a_capped_port() -> None:
     session, most = _fired(True)
     assert session.history[-1].chamber.thrust > 5000.0
     assert most < 20, f"{most} coupling steps in one 20 ms step"
+
+
+@pytest.mark.skipif(
+    not (ENGINE.exists() and CEA.exists() and TABLES.is_dir()),
+    reason="engine, CEA table or state machine tables absent",
+)
+def test_t0_loads_the_fire_load_not_the_tank() -> None:
+    """The vehicle carries what the competition allows (the engine config's
+    lox_tank.mass and fuel_tank.mass), not 95 % of the tanks drawn: LE4 (6)
+    draws both at 8.19 L, a third more LOX than a fire is loaded with."""
+    import yaml
+
+    from feedtwin.engine.importer import engine_from_config
+    from feedtwin.session import assemble_model, load_machine
+    from feedtwin.session.burn import jump_to_t0, open_session
+    from feedtwin.session.hookup import suggest
+
+    config = yaml.safe_load(ENGINE.read_text())
+    design = engine_from_config(config, name="6800N")
+    assert design.fire_load == {
+        "lox": pytest.approx(config["lox_tank"]["mass"]),
+        "fuel": pytest.approx(config["fuel_tank"]["mass"]),
+    }
+    model = assemble_model(
+        read_diagram(_payload(), name="LE4 (6)"),
+        diagram_id="le4",
+        engine=design,
+        cea_cache=str(CEA),
+    )
+    session = open_session(
+        model, load_machine(tables=TABLES), hookup=suggest(model, 500.0, 4500.0)
+    )
+    jump_to_t0(session, copv_psi=4500.0, fill_fraction=0.95)
+    ids = _ids()
+    lox, fuel = session.tanks[ids["LOX-Tank"]], session.tanks[ids["Eth-Tank"]]
+    assert lox.state.liquid_mass == pytest.approx(config["lox_tank"]["mass"])
+    assert fuel.state.liquid_mass == pytest.approx(config["fuel_tank"]["mass"])
+    # A pad load stops there too (the session hands it over each tick).
+    session.step(0.02)
+    assert lox._wanted() == pytest.approx(config["lox_tank"]["mass"])

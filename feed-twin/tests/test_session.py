@@ -332,7 +332,8 @@ def test_firing_burns_propellant_at_a_sensible_mixture_ratio() -> None:
 
     ox_before = session.tanks["OXT"].state.liquid_mass
     fuel_before = session.tanks["FUT"].state.liquid_mass
-    hold(session, "Fire", 4.0)
+    # Mid-burn: a fire load runs dry in under four seconds.
+    hold(session, "Fire", 1.5)
     chamber = session.history[-1].chamber
     assert chamber is not None
 

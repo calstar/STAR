@@ -17,6 +17,10 @@ from types import SimpleNamespace
 
 import pytest
 
+
+#: The study drawings' lockup these tests were written at [psia] (scripts/layerx_baseline.py).
+STUDY_LOCKUP_PSIA = 564.7
+
 pytest.importorskip("feedtwin", reason="lib/feedtwin is not installed")
 
 from engine.layerx import DrawingStore, LayerXSettings, prepare  # noqa: E402
@@ -116,7 +120,7 @@ def drawing():
 
 @needs_drawing
 def test_bounds_carry_their_reasons(config, drawing):
-    prep = prepare(config, None, drawing, LayerXSettings(drawing_id=drawing.id, ack_gn2_condensation=True))
+    prep = prepare(config, None, drawing, LayerXSettings(drawing_id=drawing.id, tank_pressure_psia=STUDY_LOCKUP_PSIA, ack_gn2_condensation=True))
     v = {x.key: x for x in opt.default_variables(prep, config)}
     lock = v["lockup_psia"]
     # The floor is 85 % of the lockup the run starts from (the drawing's dome since 2026-10-07);
@@ -135,7 +139,7 @@ def test_the_search_climbs_to_the_lockup_cap(config, drawing):
     req = opt.OptimizeRequest(objective="impulse", max_evaluations=6, verify=False,
                               variables={"lockup_psia": {"lo": 550.0, "hi": 600.0},
                                          "copv_psig": {"enabled": False}})
-    res = opt.run_optimize(config, drawing, LayerXSettings(drawing_id=drawing.id, ack_gn2_condensation=True), [], req, workers=2)
+    res = opt.run_optimize(config, drawing, LayerXSettings(drawing_id=drawing.id, tank_pressure_psia=STUDY_LOCKUP_PSIA, ack_gn2_condensation=True), [], req, workers=2)
     pts = sorted((e["x"]["lockup_psia"], e["objective"]) for e in res["history"] if e["objective"] is not None)
     assert len(pts) >= 3
     assert all(b[1] > a[1] for a, b in zip(pts, pts[1:])), pts
