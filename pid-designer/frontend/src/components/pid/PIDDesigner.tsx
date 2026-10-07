@@ -1350,6 +1350,58 @@ export function PIDDesigner() {
     selectDiagram(ref);
   }, [selectDiagram]);
 
+  /** Swap one row for the server's fresh copy of it. */
+  const replaceRow = useCallback((meta: DiagramMeta) => {
+    setDiagrams(ds => ds.map(d => (keyOf(refOf(d)) === keyOf(refOf(meta)) ? { ...d, ...meta } : d)));
+  }, []);
+
+  /** Add a diagram to STAR or take it out. Admins only. Re-lists, and re-reads
+   *  the main pointer: taking main out of STAR also stops it being main. */
+  const starDiagram = useCallback(async (ref: DocRef, on: boolean) => {
+    await api.setStar(ref, on);
+    setDiagrams(await api.listDiagrams());
+    setFeatured(await api.getFeatured());
+  }, []);
+
+  /** Ask to edit a diagram we can only look at, or withdraw the request. */
+  const requestAccess = useCallback(async (ref: DocRef, on: boolean) => {
+    replaceRow(await api.requestAccess(ref, on));
+  }, [replaceRow]);
+
+  /** Approve or deny someone's request. Creator or admin. */
+  const answerAccess = useCallback(async (ref: DocRef, email: string, approve: boolean) => {
+    replaceRow(await api.answerAccess(ref, email, approve));
+  }, [replaceRow]);
+
+  // Requests and approvals happen in other people's tabs, so re-list now and
+  // then, and when the tab comes back into focus: that is how an approval turns
+  // the open diagram editable, and how a new request reaches the badge. The
+  // open diagram is kept even if it has left the list -- losing access to it
+  // is the 403 path's business, not a poll's.
+  const activeKeyRef = useRef(activeKey);
+  activeKeyRef.current = activeKey;
+  const curated = !!featured?.curated;
+  useEffect(() => {
+    if (!curated) return;
+    const refresh = () => {
+      api.listDiagrams().then(list => setDiagrams(ds => {
+        const active = activeKeyRef.current;
+        if (!active || list.some(d => keyOf(refOf(d)) === active)) return list;
+        const kept = ds.find(d => keyOf(refOf(d)) === active);
+        return kept ? [...list, kept] : list;
+      })).catch(() => { /* offline: try again next time */ });
+    };
+    const timer = window.setInterval(refresh, 60_000);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [curated]);
+  const requestCount = curated
+    ? diagrams.reduce((n, d) => n + (d.accessRequests?.length ?? 0), 0)
+    : 0;
+
   /** Choose (or, with null, clear) the main diagram. Admins only -- the
    *  server refuses anyone else. Re-lists, because which row is main and
    *  which rows we may edit both change. */
@@ -1370,7 +1422,7 @@ export function PIDDesigner() {
   const checkout = useCheckout({
     api: designApi,
     ref: activeRef,
-    // The main diagram, for a non-admin: nothing to take, even locally.
+    // A diagram we may only look at: nothing to take, even locally.
     editable,
     reload: useCallback(async () => { setReloadKey((n) => n + 1); }, []),
     // On a developer's own machine the checkout has no colleague to protect,
@@ -1420,6 +1472,9 @@ export function PIDDesigner() {
         checkout={checkout}
         editable={editable}
         onCopyActive={async () => { if (activeRef) await copyDiagram(activeRef); }}
+        requested={!!activeMeta?.requestedByMe}
+        onRequestActive={async (on) => { if (activeRef) await requestAccess(activeRef, on); }}
+        requestCount={requestCount}
         theme={theme}
         onToggleTheme={toggleTheme}
       />
@@ -1442,6 +1497,9 @@ export function PIDDesigner() {
           onOpen={openOlder}
           featured={featured}
           onFeature={featureDiagram}
+          curated={curated
+            ? { onStar: starDiagram, onRequest: requestAccess, onAnswer: answerAccess }
+            : undefined}
         />
       )}
 
@@ -1454,10 +1512,10 @@ export function PIDDesigner() {
         footer={<button onClick={() => setUnshared(null)} className={primaryBtn}>OK</button>}
       >
         <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
-          You can no longer edit "{unshared}" - it was unshared from you, or an admin
-          made it the team's main diagram - so it has stopped saving and you have been
-          moved to one of your own diagrams. Nothing was deleted, and you can still open
-          or copy it from <b>Change</b>.
+          You can no longer edit "{unshared}" - its creator or an admin removed your
+          access - so it has stopped saving and you have been moved to one of your own
+          diagrams. Nothing was deleted. If it is a STAR diagram you can still open it,
+          copy it, or ask to edit it again from <b>Change</b>.
         </p>
       </Modal>
       <PIDToolbar

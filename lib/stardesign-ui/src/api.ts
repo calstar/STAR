@@ -37,6 +37,22 @@ export interface DesignMeta {
   featured?: boolean;
   /** Set on a copy of the main design: what it was taken from, and when. */
   copiedFrom?: { owner: string; id: string; name: string; at: string };
+  /** Curated apps only: one of the team's STAR designs, which everyone sees. */
+  star?: boolean;
+  /** Curated apps only: may I share it and answer requests to edit it?
+   *  Its creator or an admin. */
+  canManage?: boolean;
+  /** Curated apps only: pending requests to edit. Empty unless `canManage`. */
+  accessRequests?: AccessRequest[];
+  /** Curated apps only: have I asked to edit it? */
+  requestedByMe?: boolean;
+}
+
+/** Someone asking to edit a design. */
+export interface AccessRequest {
+  email: string;
+  name?: string;
+  at: string | null;
 }
 
 /** The main design, and whether the caller may choose it. */
@@ -45,6 +61,9 @@ export interface FeaturedState {
   isAdmin: boolean;
   /** Others' designs older than this leave the list for browse; null = no cutoff. */
   recentDays?: number | null;
+  /** The app runs the STAR collection: admins choose what everyone sees, and
+   *  editing is by request. */
+  curated?: boolean;
 }
 
 /** One user's designs in the view-only tree. */
@@ -191,6 +210,22 @@ export function createDesignApi<T>({ base, usersPath, codec }: DesignApiConfig<T
     /** No main design. Admins only. */
     clearFeatured: () =>
       fetch(`${base}/featured`, { method: 'DELETE' }).then((r) => json<FeaturedState>(r)),
+
+    /** Add a design to the STAR set everyone sees, or take it out. Admins only. */
+    setStar: (ref: DocRef, on: boolean) =>
+      fetch(url(ref, '/star'), { method: on ? 'PUT' : 'DELETE' }).then((r) => json<DesignMeta>(r)),
+
+    /** Ask to edit a design you can see, or withdraw the request. */
+    requestAccess: (ref: DocRef, on: boolean) =>
+      fetch(url(ref, '/access'), on ? post({}) : { method: 'DELETE' }).then((r) =>
+        json<DesignMeta>(r),
+      ),
+
+    /** Approve (they join the share list) or deny a request. Creator or admin. */
+    answerAccess: (ref: DocRef, email: string, approve: boolean) =>
+      fetch(url(ref, approve ? '/access/approve' : '/access/deny'), post({ email })).then((r) =>
+        json<DesignMeta>(r),
+      ),
 
     /** Who a design can be shared with. Never 4xx-es on an auth outage. */
     listUsers: () => fetch(usersPath).then((r) => json<TeamUser[]>(r)),

@@ -31,6 +31,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from backend.main import app  # noqa: E402
 from backend.routers import pid as documents  # noqa: E402
+from test_star_and_access import CURATED_ROUTES  # noqa: E402
 
 A = {"X-Auth-Email": "alice@berkeley.edu"}
 B = {"X-Auth-Email": "bob@berkeley.edu"}
@@ -44,11 +45,12 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(documents.store, "micro_interval", 0)
     documents.store.last_micro.clear()
     # This file checks the shared router's *closed* model -- creator plus share
-    # list -- which pid-designer itself no longer runs (it is open to all, with an
-    # admin-only main diagram; see test_open_and_main.py). The model is still the
+    # list -- which pid-designer itself no longer runs (it is curated: a STAR set
+    # and approved editors; see test_star_and_access.py). The model is still the
     # one EngineDesign ships, and these tests remain the guard on _resolve_doc.
     monkeypatch.setattr(documents.store, "open_to_all", False)
     monkeypatch.setattr(documents.store, "featured", False)
+    monkeypatch.setattr(documents.store, "curated", False)
 
 
 @pytest.fixture
@@ -132,6 +134,10 @@ def test_delete_is_gone(client):
         "/api/pid/diagrams/{doc_id}/checkout",
         # Un-choosing the main diagram: drops a pointer, not a diagram.
         "/api/pid/diagrams/featured",
+        # Taking a diagram out of STAR, and withdrawing a request to edit:
+        # both drop an entry about a diagram, never the diagram.
+        "/api/pid/diagrams/{doc_id}/star",
+        "/api/pid/diagrams/{doc_id}/access",
     }
 
 
@@ -360,7 +366,10 @@ _DOC_SCOPED = {
 #: Not diagram-scoped: no doc id, or exists precisely to reach diagrams you cannot edit.
 _UNSCOPED = {"list_documents", "browse_documents", "create_document", "copy_document",
              # The main-diagram pointer: admin-gated, covered in test_open_and_main.py.
-             "get_featured", "set_featured", "clear_featured"}
+             "get_featured", "set_featured", "clear_featured",
+             # Curated mode's STAR set and access requests: their own matrix in
+             # test_star_and_access.py, since who may use them is not "an editor".
+             *CURATED_ROUTES}
 
 
 def _call(client, name, doc_id, headers, params):

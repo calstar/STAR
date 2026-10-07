@@ -11,35 +11,45 @@ interface DiagramBarProps {
   onSelect: (ref: DocRef) => void;
   onOpenChange: () => void;
   checkout: Checkout;
-  /** False for a diagram we may only look at -- the main one, for a non-admin.
-   *  The checkout chip then gives way to a copy button. */
+  /** False for a diagram we may only look at -- a STAR one we have not been
+   *  given edit access to. The checkout chip then gives way to Request edit
+   *  and a copy button. */
   editable: boolean;
   onCopyActive: () => Promise<void> | void;
+  /** Whether we have asked to edit the open diagram. */
+  requested: boolean;
+  /** Ask to edit the open diagram, or withdraw the request. */
+  onRequestActive: (on: boolean) => Promise<void> | void;
+  /** Pending requests we can answer, shown as a badge on Change. */
+  requestCount: number;
   theme: Theme;
   onToggleTheme: () => void;
 }
 
 /** A thin strip above the toolbar: pick a diagram, or open the Change dialog to
- *  create, rename, share, or take a copy of someone else's.
+ *  create, rename, share, answer requests, or take a copy.
  *
- *  The list is the team's main diagram, your own, and everyone else's from the
- *  last few days; the Change dialog's Older tab has the rest. Diagrams are never
+ *  The list is the team's main diagram, the other STAR ones, your own, and
+ *  those shared with you (for an admin, everyone's). Diagrams are never
  *  deleted -- see backend/routers/pid.py. */
 export function DiagramBar({
-  diagrams, activeKey, onSelect, onOpenChange, checkout, editable, onCopyActive, theme, onToggleTheme,
+  diagrams, activeKey, onSelect, onOpenChange, checkout, editable, onCopyActive,
+  requested, onRequestActive, requestCount, theme, onToggleTheme,
 }: DiagramBarProps) {
   const [copying, setCopying] = useState(false);
+  const [asking, setAsking] = useState(false);
   const option = (d: DiagramMeta) => (
     <option key={keyOf(refOf(d))} value={keyOf(refOf(d))}>
       {d.mine ? d.name : `${d.name} - ${d.ownerName || d.owner}`}
     </option>
   );
   const main = diagrams.filter((d) => d.featured);
-  const mine = diagrams.filter((d) => !d.featured && d.mine);
-  const team = diagrams.filter((d) => !d.featured && !d.mine);
-  // Groups only once there is a main diagram to set apart; until then the
-  // list reads exactly as it always has.
-  const grouped = main.length > 0;
+  const star = diagrams.filter((d) => !d.featured && d.star);
+  const mine = diagrams.filter((d) => !d.featured && !d.star && d.mine);
+  const team = diagrams.filter((d) => !d.featured && !d.star && !d.mine);
+  // Groups only once there is a main or STAR diagram to set apart; until then
+  // the list reads exactly as it always has.
+  const grouped = main.length + star.length > 0;
   return (
     <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-primary)] px-4 py-1.5">
       <span className="mr-2 shrink-0 text-sm font-semibold text-[var(--color-text-primary)]">P&amp;ID Designer</span>
@@ -56,9 +66,10 @@ export function DiagramBar({
         {diagrams.length === 0 && <option value="">No diagrams</option>}
         {grouped ? (
           <>
-            <optgroup label="Main">{main.map(option)}</optgroup>
+            {main.length > 0 && <optgroup label="Main">{main.map(option)}</optgroup>}
+            {star.length > 0 && <optgroup label="STAR">{star.map(option)}</optgroup>}
             {mine.length > 0 && <optgroup label="Mine">{mine.map(option)}</optgroup>}
-            {team.length > 0 && <optgroup label="Team">{team.map(option)}</optgroup>}
+            {team.length > 0 && <optgroup label="Others">{team.map(option)}</optgroup>}
           </>
         ) : (
           diagrams.map(option)
@@ -67,12 +78,19 @@ export function DiagramBar({
       <button
         onClick={onOpenChange}
         className={btn}
-        title="Create, rename, share, or take a copy of someone else's diagram"
+        title={requestCount > 0
+          ? `${requestCount} ${requestCount === 1 ? 'person is' : 'people are'} asking to edit your diagrams`
+          : "Create, rename, share, or take a copy of someone else's diagram"}
       >
         <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
         </svg>
         Change
+        {requestCount > 0 && (
+          <span className="ml-0.5 rounded-full bg-[var(--color-accent)] px-1.5 text-[10px] font-semibold leading-4 text-[var(--color-bg-primary)]">
+            {requestCount}
+          </span>
+        )}
       </button>
 
       {editable ? (
@@ -81,10 +99,23 @@ export function DiagramBar({
         <>
           <span
             className="shrink-0 text-[11px] text-[var(--color-text-muted)]"
-            title="Only an admin can change the main diagram. Copy it to work on your own version."
+            title="Its creator or an admin decides who edits it. Ask them, or copy it to work on your own version."
           >
-            Main diagram · read-only
+            Read-only
           </span>
+          <button
+            className={btn}
+            disabled={asking}
+            onClick={async () => {
+              setAsking(true);
+              try { await onRequestActive(!requested); } finally { setAsking(false); }
+            }}
+            title={requested
+              ? 'Waiting for its creator or an admin. Click to withdraw the request.'
+              : 'Ask its creator or an admin to let you edit this diagram'}
+          >
+            {requested ? 'Edit requested' : 'Request edit'}
+          </button>
           <button
             className={btn}
             disabled={copying}
@@ -92,7 +123,7 @@ export function DiagramBar({
               setCopying(true);
               try { await onCopyActive(); } finally { setCopying(false); }
             }}
-            title="Take your own copy of the main diagram and open it"
+            title="Take your own copy of this diagram and open it"
           >
             {copying ? 'Copying…' : 'Make a copy'}
           </button>

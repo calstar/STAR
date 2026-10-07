@@ -95,8 +95,8 @@ run, in every app, the moment the lock goes.
 
 ## Open to all, and the main design
 
-Two `DesignStore` switches, both off by default, so an app that does not set
-them behaves exactly as before. pid-designer sets both.
+`DesignStore` switches, all off by default, so an app that does not set them
+behaves exactly as before.
 
 - `open_to_all` (+ `recent_days`): every design is editable by everyone;
   checkouts stop two people saving at once. The list holds your own designs and
@@ -107,6 +107,15 @@ them behaves exactly as before. pid-designer sets both.
   may change it, its creator included. A copy records `copiedFrom` and writes the
   source's contents to `base.json`, which a later merge back into main needs as
   the common ancestor.
+
+- `curated` (+ `main_admin_only=False`, what pid-designer runs): admins choose a
+  **STAR set** (`PUT/DELETE …/{id}/star`, in the app's `star.json`; the main
+  design is always in it). Everyone sees STAR designs plus their own and those
+  shared with them; admins see and edit everything. Only the creator or an admin
+  may share. Anyone who can see a design may ask to edit it
+  (`POST …/{id}/access`); the creator or an admin approves (they join
+  `sharedWith`) or denies. "Read" narrows to "see", so nobody copies what they
+  cannot open, and `/browse` is empty.
 
 Admins are the fixed list in `admins.py`, compared against `X-Auth-Email`.
 `STAR_ADMINS` adds emails on top — `STAR_ADMINS=local` in dev, where every
