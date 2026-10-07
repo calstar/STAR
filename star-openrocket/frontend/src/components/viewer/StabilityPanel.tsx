@@ -108,6 +108,9 @@ export interface StabilityPanelProps {
   onSetRailLength: (m: number) => void
   /** Open the motor-curves popup (thrust / weight / CG over time) for the selected motor. */
   onViewMotorCurves: () => void
+  /** Download the selected motor's curve file (.eng/.rse). The .ork export is in the header. */
+  onDownloadMotorFile: () => void
+  motorFileError: string | null
 }
 
 function formatMargin(margin: number | null): string {
@@ -152,6 +155,8 @@ export function StabilityPanel({
   railLength,
   onSetRailLength,
   onViewMotorCurves,
+  onDownloadMotorFile,
+  motorFileError,
 }: StabilityPanelProps) {
   const { q, lab, num } = useUnits()
   // Face sets, the motor and its placement, and the rail length are all part of
@@ -300,6 +305,14 @@ export function StabilityPanel({
               </button>
               <button
                 type="button"
+                onClick={onDownloadMotorFile}
+                className={`${btn} px-2 py-0.5`}
+                title="The thrust curve as an .eng/.rse file, for an OpenRocket that does not have this motor"
+              >
+                .eng
+              </button>
+              <button
+                type="button"
                 onClick={() => setPickerOpen((v) => !v)}
                 disabled={readOnly}
                 className={`${btn} px-2 py-0.5 disabled:cursor-not-allowed`}
@@ -341,6 +354,8 @@ export function StabilityPanel({
             />
           </div>
         )}
+
+        {motorFileError && <p className="mb-1 text-xs text-rose-400">{motorFileError}</p>}
 
         {motorSel && (
           <>

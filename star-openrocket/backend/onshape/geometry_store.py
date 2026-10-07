@@ -138,6 +138,11 @@ class GeometryStore:
                     d = rotation @ axis
                     n = np.linalg.norm(d)
                     axis_dir = d / n if n > 0 else None
+                # A sphere has a centre but no axis; it still needs the centre, which is
+                # how outer-surface detection tells a rounded nose tip from a stray dome.
+                # Gating this on the axis dropped every sphere centre, and with it BART's
+                # 2.5 mm tip cap -- leaving the nose blunt at the cone/cap seam.
+                if np.isfinite(origin).all():
                     axis_org = transform_points(origin.reshape(1, 3), occ.transform)[0]
                 radius = mesh.face_radii[face_index]
                 out.append(

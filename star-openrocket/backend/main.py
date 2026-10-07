@@ -39,13 +39,13 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from .deadline import ComputeBudgetMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 # The shared environment models: the flight-dynamics ascent now flies through the
 # same site atmosphere and wind the recovery descent integrates (physics/ library).
 from physics.atmosphere import Atmosphere  # noqa: E402
-from physics.schema import Site, WindInput  # noqa: E402
+from physics.schema import Device, Site, WindInput  # noqa: E402
 from physics.site import FAR_ELEV_M  # noqa: E402
 
 from .onshape.aero.axis import Axis
@@ -59,6 +59,8 @@ from .onshape.aero.outer_surface import detect_outer_surface
 from .onshape.aero.profile import build_profile
 from .onshape.aero.flight import simulate_flight
 from .onshape.aero.rocketpy_flight import simulate_flight_dynamics
+from .onshape.aero.ork_export import LaunchConditions, export_from_cad
+from .motors.write import write_motor_file
 from .onshape.aero.stability import MotorPlacement, compute_stability
 from .onshape.browse import BrowseCache
 from .onshape.build import build as run_build
@@ -284,6 +286,13 @@ class FlightDynamicsRequest(StabilityRequest):
     site: Site | None = None
 
 
+class OrkExportRequest(FlightDynamicsRequest):
+    """Everything the .ork carries: the stability selection, the launch conditions,
+    and the recovery devices (the same objects /api/simulate takes)."""
+
+    devices: list[Device] = Field(default_factory=list, max_length=8)
+
+
 def _model_dir(model_id: str) -> Path:
     if "/" in model_id or "\\" in model_id or model_id.startswith("."):
         raise HTTPException(status_code=400, detail="invalid model id")
@@ -452,6 +461,78 @@ def stability(model_id: str, request: StabilityRequest):
         },
         "motor": motor_block,
     }
+
+
+@app.post("/api/models/{model_id}/export.ork")
+# Sync `def` for the same reason as /stability above: a mesh walk and a Barrowman
+# sweep, run in a worker thread so the event loop stays free.
+def export_ork(model_id: str, request: OrkExportRequest):
+    """The same selection /stability computes, as an OpenRocket .ork download.
+
+    Shape, CP and CG are the point (see aero/ork_export.py); the recovery devices,
+    site, rail and wind ride along as parachutes and a simulation. The file's comment
+    records the CP and CG OpenRocket should show, so a mismatch is visible there.
+    """
+    model_dir = _model_dir(model_id)
+    store = _load_store(model_dir)
+    manifest = json.loads((model_dir / "manifest.json").read_text())
+
+    faces = [(f.key, f.faceId) for f in request.outerFaces]
+    if not faces:
+        faces = detect_outer_surface(store).faces
+    axis = None
+    if request.axis is not None:
+        import numpy as np
+
+        axis = Axis(
+            origin=np.asarray(request.axis.origin, dtype=float),
+            direction=np.asarray(request.axis.direction, dtype=float)
+            / (np.linalg.norm(request.axis.direction) or 1.0),
+        )
+    fin_faces = (
+        [(f.key, f.faceId) for f in request.finFaces] if request.finFaces is not None else None
+    )
+
+    motor_placement, _ = _resolve_motor(request.motor)
+    motor_record = (
+        _motor_db.get_motor(request.motor.motorId, request.motor.simfileId)
+        if request.motor is not None
+        else None
+    )
+
+    source = manifest.get("source", {})
+    name = source.get("documentName") or source.get("assemblyName") or model_id
+    try:
+        data, _ = export_from_cad(
+            store,
+            manifest_parts=manifest.get("parts", []),
+            outer_faces=faces,
+            axis=axis,
+            overrides=request.overrides,
+            fin_faces=fin_faces,
+            n_fins=request.nFins,
+            motor_placement=motor_placement,
+            motor_record=motor_record,
+            name=name,
+            source=f"{name} / {source.get('assemblyName', '')} @ {source.get('microversionId', '')}",
+            launch=LaunchConditions(
+                devices=request.devices,
+                site=request.site,
+                wind=request.wind,
+                rail_length=request.railLength,
+                inclination=request.inclination,
+                heading=request.heading,
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    filename = "".join(c if c.isalnum() or c in "-_ " else "_" for c in name).strip() or "rocket"
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.ork"'},
+    )
 
 
 @app.post("/api/models/{model_id}/flight")
@@ -789,6 +870,27 @@ async def get_motor(motor_id: str):
             for s in simfiles
         ],
     }
+
+
+@app.get("/api/motors/{motor_id}/file")
+def motor_file(motor_id: str, simfileId: str | None = Query(None, max_length=64)):
+    """One motor datafile as an .eng/.rse OpenRocket can load (see motors/write.py).
+
+    The .ork references its motor by digest; this is the curve behind that digest,
+    for an OpenRocket whose database does not have it.
+    """
+    motor = _motor_db.get_motor(motor_id, simfileId)
+    if motor is None:
+        raise HTTPException(status_code=404, detail=f"unknown motor {motor_id}")
+    try:
+        filename, text = write_motor_file(motor)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return Response(
+        content=text,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # -- Onshape browsing ---------------------------------------------------------

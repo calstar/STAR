@@ -187,20 +187,8 @@ def _edges_over_strips(
     return resample(lead_v), resample(trail_v)
 
 
-def extract_fin_planform(
-    faces: list[FaceGeometry],
-    axis: Axis,
-    body_radius: float,
-    n_fins: int | None = None,
-) -> FinPlanform:
-    """Build one representative fin's planform from the selected fin faces."""
-    if not faces:
-        raise ValueError("no fin faces selected")
-
-    count = n_fins if n_fins else count_fins(faces, axis)
-
-    # Use a single fin's faces (the azimuthal cluster with the most area) so the
-    # planform is one fin, not N overlaid. Group by mean azimuth.
+def _fin_groups(faces: list[FaceGeometry], axis: Axis) -> tuple[list[list[FaceGeometry]], list[float]]:
+    """Faces clustered one group per fin by azimuth, and each group's mean azimuth."""
     u, v = _perp_basis(axis.direction)
 
     def azimuth(fg: FaceGeometry) -> float:
@@ -216,16 +204,31 @@ def extract_fin_planform(
         else:
             groups.append([fg])
 
-    def group_area(g: list[FaceGeometry]) -> float:
-        tot = 0.0
-        for fg in g:
-            t = fg.triangles
-            tot += float(0.5 * np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1).sum())
-        return tot
-
     azimuths = [float(np.mean([azimuth(fg) for fg in g])) for g in groups]
+    return groups, azimuths
 
-    fin = max(groups, key=group_area)
+
+def _largest_group(groups: list[list[FaceGeometry]]) -> int:
+    """Index of the fin group with the most face area (the one fin read for the planform)."""
+    return max(range(len(groups)), key=lambda i: sum(_face_area(fg) for fg in groups[i]))
+
+
+def extract_fin_planform(
+    faces: list[FaceGeometry],
+    axis: Axis,
+    body_radius: float,
+    n_fins: int | None = None,
+) -> FinPlanform:
+    """Build one representative fin's planform from the selected fin faces."""
+    if not faces:
+        raise ValueError("no fin faces selected")
+
+    count = n_fins if n_fins else count_fins(faces, axis)
+
+    # Use a single fin's faces (the azimuthal cluster with the most area) so the
+    # planform is one fin, not N overlaid.
+    groups, azimuths = _fin_groups(faces, axis)
+    fin = groups[_largest_group(groups)]
     verts = np.concatenate([fg.triangles.reshape(-1, 3) for fg in fin])
     s, rho = axis.axial_radial(verts)
 
@@ -303,3 +306,105 @@ def fin_set_aero_from_faces(
     pf = extract_fin_planform(faces, axis, body_radius, n_fins)
     aero = fin_set_aero(pf.chord_lead, pf.chord_trail, pf.span, pf.body_radius, pf.n_fins, r_ref, mach)
     return aero, pf
+
+
+@dataclass(frozen=True)
+class FinSection:
+    """A fin's cross-section, as OpenRocket describes one: a thickness and a shape.
+
+    Neither feeds CP (``FinSetCalc`` reads only the planform); OpenRocket uses them
+    for drag. ``shape`` is "airfoil" or "square" -- "rounded" is not detected, since a
+    round edge is its own (axial-facing) face and fin detection never selects it.
+    """
+
+    thickness: float
+    shape: str
+    #: Thickness near the leading / trailing edge as a fraction of the maximum, for the
+    #: record of why the shape was chosen.
+    lead_fraction: float
+    trail_fraction: float
+
+
+#: Chordwise bins the thickness distribution is read over.
+_SECTION_BINS = 20
+#: An edge thinner than this fraction of the maximum, at both ends, reads as an airfoil.
+#: A NACA 00xx section is ~0.6 of its maximum at 5% chord and ~0.2 at 95%; a flat
+#: plate with square or rounded edges keeps (nearly) its full thickness to its edges.
+_AIRFOIL_EDGE_FRACTION = 0.7
+
+
+def extract_fin_section(
+    faces: list[FaceGeometry], axis: Axis, pf: FinPlanform
+) -> FinSection | None:
+    """Thickness and cross-section of the fin ``pf`` was read from.
+
+    Measures each vertex's distance along the fin's plane normal over the middle of
+    the span, clear of the root fillet
+    and the tip. Thickness is the spread of that distance; the shape comes from how it
+    runs out toward the leading and trailing edges. ``None`` when only one side of the
+    fin is selected, so there is no thickness to read.
+    """
+    if not faces:
+        return None
+    groups, _ = _fin_groups(faces, axis)
+    fin = groups[_largest_group(groups)]
+    verts = np.concatenate([fg.triangles.reshape(-1, 3) for fg in fin])
+
+    # The fin's own plane normal: the faces' area-weighted normals, sign-aligned so
+    # the two opposite sides add instead of cancelling. Not the normal at the fin's
+    # mean azimuth -- a side offset by half the thickness sits at a slightly
+    # different azimuth, and that tilt alone reads as a millimetre of thickness.
+    normals = [np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]).sum(axis=0) for t in (fg.triangles for fg in fin)]
+    ref = max(normals, key=lambda n: float(np.linalg.norm(n)))
+    normal = sum((n if float(n @ ref) >= 0 else -n) for n in normals)
+    normal = normal - (normal @ axis.direction) * axis.direction
+    nn = float(np.linalg.norm(normal))
+    if nn < 1e-12:
+        return None
+    normal = normal / nn
+    s, rho = axis.axial_radial(verts)
+    w = (verts - axis.origin) @ normal
+
+    y = rho - pf.body_radius
+    # Thickness over the whole exposed fin clear of the root fillet. A flat plate's
+    # side is a planar face tessellated with vertices only at its outline corners,
+    # so this is often the only place there are vertices at all.
+    clear = y > 0.1 * pf.span
+    if clear.sum() < 2:
+        return None
+    thickness = float(w[clear].max() - w[clear].min())
+    if thickness <= 1e-6:
+        return None  # one side selected: nothing to measure across
+
+    # Shape from the chordwise run-out over mid-span. A planar side has no vertices
+    # there, which is itself the answer: it is a plate, not an airfoil.
+    band = (y > 0.15 * pf.span) & (y < 0.85 * pf.span)
+    if band.sum() < 4:
+        return FinSection(thickness=thickness, shape="square", lead_fraction=1.0, trail_fraction=1.0)
+    s, y, w = s[band], y[band], w[band]
+
+    # Chord fraction of each vertex at its own spanwise station.
+    stations = np.linspace(0.0, pf.span, len(pf.chord_lead))
+    lead = np.interp(y, stations, pf.chord_lead)
+    trail = np.interp(y, stations, pf.chord_trail)
+    chord = np.maximum(trail - lead, 1e-12)
+    frac = np.clip((s - lead) / chord, 0.0, 1.0 - 1e-9)
+
+    idx = (frac * _SECTION_BINS).astype(int)
+    hi = np.full(_SECTION_BINS, -np.inf)
+    lo = np.full(_SECTION_BINS, np.inf)
+    np.maximum.at(hi, idx, w)
+    np.minimum.at(lo, idx, w)
+    t = hi - lo
+    occupied = np.flatnonzero(np.isfinite(t))
+    band_max = float(t[occupied].max())
+    if len(occupied) < 3 or band_max <= 1e-9:
+        return FinSection(thickness=thickness, shape="square", lead_fraction=1.0, trail_fraction=1.0)
+    lead_f = float(t[occupied[0]] / band_max)
+    trail_f = float(t[occupied[-1]] / band_max)
+    shape = (
+        "airfoil"
+        if lead_f < _AIRFOIL_EDGE_FRACTION and trail_f < _AIRFOIL_EDGE_FRACTION
+        else "square"
+    )
+    return FinSection(thickness=thickness, shape=shape, lead_fraction=lead_f, trail_fraction=trail_f)
