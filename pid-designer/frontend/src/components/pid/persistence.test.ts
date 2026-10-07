@@ -14,7 +14,7 @@ const valve = (id: string, x: number): Node =>
 
 const loadEffect = compiled(canvasStatement("// Load the selected diagram's working copy"),
   ['useEffect', 'loadedId', 'api', 'diagramRef', 'migrate', 'seedIdsFrom', 'setNodes', 'setEdges', 'resetHistory',
-    'lastSaved', 'diagramKey']);
+    'lastSaved', 'diagramKey', 'landOnPage']);
 const autosaveEffect = compiled(canvasStatement('// Debounced autosave of the working copy'),
   ['useEffect', 'loadedId', 'diagramKey', 'readOnlyRef', 'api', 'nodes', 'edges', 'lastSaved', 'unsnapped',
     'diagramRef', 'onForbidden', 'onLockLost', 'inFlight']);
@@ -52,7 +52,7 @@ async function open(stored: G) {
   };
   const run = (f: () => void | (() => void)) => { f(); };
   loadEffect(run, refs.loadedId, server, { id: 'd' }, migrate, () => {}, (n: Node[]) => { g = { ...g, nodes: n }; },
-    (e: Edge[]) => { g = { ...g, edges: e }; }, () => {}, refs.lastSaved, 'd');
+    (e: Edge[]) => { g = { ...g, edges: e }; }, () => {}, refs.lastSaved, 'd', () => {});
   await Promise.resolve(); await Promise.resolve();
   // The flush effect, registered once, and its listeners.
   const heard: Record<string, () => void> = {};
