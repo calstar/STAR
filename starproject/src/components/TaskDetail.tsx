@@ -2,7 +2,7 @@
 
 import type { TaskStatus } from "@prisma/client";
 import Link from "next/link";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { ActivityItem, renderActivity, timeAgo } from "@/components/ActivityLine";
 import { BlockedBadge } from "@/components/BlockedBadge";
@@ -30,7 +30,7 @@ function pill(status: TaskStatus): string {
 
 export function TaskDetail({ data }: { data: TaskDetailData }) {
   const { openTask, refresh } = useTaskModal();
-  const { task, users, candidates, subteams, projects } = data;
+  const { task, users, candidates, subteams, projects, projectAncestors } = data;
   const [showHistory, setShowHistory] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -58,17 +58,17 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
           Projects
         </Link>
         <span>/</span>
-        {task.project.parent && (
-          <>
+        {projectAncestors.map((a) => (
+          <Fragment key={a.id}>
             <Link
-              href={`/projects/${task.project.parent.id}`}
+              href={`/projects/${a.id}`}
               className="min-w-0 max-w-full truncate hover:underline"
             >
-              {task.project.parent.name}
+              {a.name}
             </Link>
             <span>›</span>
-          </>
-        )}
+          </Fragment>
+        ))}
         <Link
           href={`/projects/${task.project.id}`}
           className="min-w-0 max-w-full truncate hover:underline"

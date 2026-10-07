@@ -59,8 +59,8 @@ model Project {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  // Optional parent for a subproject. Enforced to a single level (a subproject
-  // can't itself be a parent) in createProject.
+  // Optional parent for a subproject. Nests to any depth (LE4 › Engine › Spark
+  // igniter); updateProject refuses a move that would make a loop.
   parentId String?
   parent   Project?  @relation("ProjectHierarchy", fields: [parentId], references: [id])
   children Project[] @relation("ProjectHierarchy")

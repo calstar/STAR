@@ -5,6 +5,7 @@ import { ThemeToggle } from "@/components/settings/ThemeToggle";
 import { prisma } from "@/lib/db";
 import { DIGEST_KINDS } from "@/lib/digest";
 import { shortName } from "@/lib/names";
+import { getProjectOptions } from "@/lib/projects";
 import { getCurrentSettings } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
@@ -13,11 +14,7 @@ export default async function SettingsPage() {
   const { user, settings } = await getCurrentSettings();
 
   const [projects, subteams, subs] = await Promise.all([
-    prisma.project.findMany({
-      where: { archived: false },
-      select: { id: true, name: true, parent: { select: { name: true } } },
-      orderBy: { name: "asc" },
-    }),
+    getProjectOptions(),
     prisma.subteam.findMany({
       select: { id: true, name: true },
       orderBy: { name: "asc" },
@@ -28,10 +25,7 @@ export default async function SettingsPage() {
     }),
   ]);
 
-  const projectOptions = projects.map((p) => ({
-    id: p.id,
-    label: p.parent ? `${p.parent.name} › ${p.name}` : p.name,
-  }));
+  const projectOptions = projects;
   const followedProjects = subs
     .map((s) => s.projectId)
     .filter((x): x is string => !!x);

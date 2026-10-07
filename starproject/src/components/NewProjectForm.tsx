@@ -36,7 +36,7 @@ export function NewProjectForm({
         onChange={setParentId}
         options={[
           { value: "", label: "Top-level project" },
-          ...parents.map((p) => ({ value: p.id, label: `Subproject of ${p.name}` })),
+          ...parents.map((p) => ({ value: p.id, label: `Under ${p.name}` })),
         ]}
       />
       <input

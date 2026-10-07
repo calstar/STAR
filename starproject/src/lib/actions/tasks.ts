@@ -8,13 +8,14 @@ import { z } from "zod";
 import {
   dateLabel,
   priorityLabel,
-  projectLabel,
   recordActivity,
   subteamLabel,
   userLabel,
 } from "@/lib/activity";
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
+import { pathOf } from "@/lib/project-tree";
+import { getProjectTree } from "@/lib/projects";
 import { notifyAssignment } from "@/lib/notifications";
 import { STATUS_LABEL, archivedForStatusChange } from "@/lib/tasks";
 import { getCurrentDbUser } from "@/lib/user";
@@ -28,7 +29,7 @@ import {
 
 // What updateTask / moveTask re-read so activities can render human values.
 const withNames = {
-  project: { select: { name: true, parent: { select: { name: true } } } },
+  project: { select: { name: true } },
   assignees: { select: { id: true, name: true, email: true, displayName: true } },
   subteam: { select: { name: true } },
 } as const;
@@ -220,8 +221,15 @@ export async function updateTask(formData: FormData) {
     for (const a of removedAssignees)
       await logAssignee("unassigned", userLabel(a));
   }
-  if (formData.has("projectId") && old.projectId !== task.projectId)
-    await log("project", projectLabel(old.project), projectLabel(task.project));
+  if (formData.has("projectId") && old.projectId !== task.projectId) {
+    // Full paths, so "Engine › Spark igniter → Avionics" reads unambiguously.
+    const tree = await getProjectTree();
+    await log(
+      "project",
+      pathOf(tree, old.projectId) || old.project.name,
+      pathOf(tree, task.projectId) || task.project.name,
+    );
+  }
   if (formData.has("subteamId") && old.subteamId !== task.subteamId)
     await log(
       "subteam",

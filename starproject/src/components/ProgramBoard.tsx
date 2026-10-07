@@ -22,6 +22,7 @@ import type {
   ProgramSubteam,
 } from "@/lib/program-data";
 import { compareBig, relativeDays } from "@/lib/program";
+import { PATH_SEPARATOR } from "@/lib/project-tree";
 
 const FALLBACK = "#a3a3a3";
 const CARD =
@@ -58,6 +59,15 @@ function shortName(name: string, parent: string | null): string {
   if (!parent) return name;
   const rest = name.slice(parent.length).trim();
   return name.toLowerCase().startsWith(parent.toLowerCase()) && rest ? rest : name;
+}
+
+/** A project's name on its card: its path below the tracked project, each
+ * step without the card's own prefix ("Engine › Spark igniter" on LE4). */
+function cardLabel(p: Program, card: string | null): string {
+  return p.path
+    .split(PATH_SEPARATOR)
+    .map((step) => shortName(step, card))
+    .join(PATH_SEPARATOR);
 }
 
 const utcDate = (iso: string) => new Date(`${iso}T00:00:00Z`);
@@ -256,16 +266,26 @@ function SystemRows({
   allSubteams: Subteams;
 }) {
   const [open, setOpen] = useState<string | null>(null);
+  // Deeper projects step in under their parent, so each row needs only its
+  // own name (the path is in the milestones and subteam cards).
+  const top = Math.min(...systems.map((s) => s.depth));
   return (
     <div>
       <h3 className={sectionTitle}>Status</h3>
       <ul className="mt-3 space-y-3">
         {systems.map((p) => (
           <li key={p.id}>
-            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1.5 sm:grid-cols-[9rem_minmax(0,1fr)_17rem_auto]">
-              <span className="flex min-w-0 items-center gap-2">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1.5 sm:grid-cols-[11rem_minmax(0,1fr)_17rem_auto]">
+              <span
+                className="flex min-w-0 items-center gap-2"
+                style={{ paddingLeft: `${(p.depth - top) * 0.9}rem` }}
+                title={cardLabel(p, group)}
+              >
+                {p.depth > top && <span className="text-neutral-300 dark:text-neutral-600">↳</span>}
                 <Dot color={p.color} />
-                <span className="truncate text-sm font-medium">{shortName(p.name, group)}</span>
+                <span className={`truncate font-medium ${p.depth > top ? "text-xs" : "text-sm"}`}>
+                  {shortName(p.name, group)}
+                </span>
               </span>
               <div className="col-span-2 row-start-2 text-neutral-900 sm:col-span-1 sm:row-start-auto dark:text-neutral-100">
                 <SegmentedLine segments={projectSegments(p)} current={p.phase} labels={false} />
@@ -372,8 +392,8 @@ function Milestones({
   const targets = systems.some((s) => s.id === root.id) ? systems : [root, ...systems];
   const multi = targets.length > 1;
   const target = targets.find((s) => s.id === projectId) ?? root;
-  const targetLabel = (p: Program) => (p.id === root.id ? `All of ${root.name}` : shortName(p.name, group));
-  const systemTag = (p: Program) => (multi && p.id !== root.id ? shortName(p.name, group) : null);
+  const targetLabel = (p: Program) => (p.id === root.id ? `All of ${root.name}` : cardLabel(p, group));
+  const systemTag = (p: Program) => (multi && p.id !== root.id ? cardLabel(p, group) : null);
 
   // Every project's milestones on one list, soonest first; outside edit mode
   // only what's still open.
@@ -653,7 +673,7 @@ function SubteamCard({
             thin={named}
             label={
               named ? (
-                shortName(e.program.name, group)
+                cardLabel(e.program, group)
               ) : (
                 <span className="flex items-center gap-2 text-sm font-medium text-neutral-900 dark:text-neutral-100">
                   <Dot color={subteam.color} />
@@ -723,7 +743,7 @@ function SubteamCard({
               disabled={pending}
               onClick={() => run(() => untrackSubteam(e.program.id, subteam.id))}
             >
-              Remove from {named ? shortName(e.program.name, group) : e.program.name}
+              Remove from {named ? cardLabel(e.program, group) : e.program.name}
             </button>
           ))}
       </div>

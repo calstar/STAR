@@ -22,9 +22,8 @@ export function EditEntityButton({
   description?: string | null;
   showDescription?: boolean;
   title?: string;
-  /** Projects only: where it sits. `options` are the projects it may move
-   * under; `locked` explains why it can't move (it has subprojects). */
-  parent?: { id: string | null; options: { id: string; name: string }[]; locked?: string };
+  /** Projects only: where it sits, and the projects it may move under. */
+  parent?: { id: string | null; options: { id: string; name: string }[] };
 }) {
   const [open, setOpen] = useState(false);
 
@@ -94,12 +93,7 @@ export function EditEntityButton({
               {parent && (
                 <div>
                   <label className={label}>Parent project</label>
-                  <select
-                    name="parentId"
-                    defaultValue={parent.id ?? ""}
-                    disabled={!!parent.locked}
-                    className={input}
-                  >
+                  <select name="parentId" defaultValue={parent.id ?? ""} className={input}>
                     <option value="">None — top-level project</option>
                     {parent.options.map((o) => (
                       <option key={o.id} value={o.id}>
@@ -107,9 +101,6 @@ export function EditEntityButton({
                       </option>
                     ))}
                   </select>
-                  {parent.locked && (
-                    <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">{parent.locked}</p>
-                  )}
                 </div>
               )}
               <div>
