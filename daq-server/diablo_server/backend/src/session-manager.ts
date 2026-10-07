@@ -144,6 +144,16 @@ class SessionManager {
     return this.enabled;
   }
 
+  /**
+   * Whether elodin-db and the C++ services (actuator_service among them) exist right now.
+   * Only systemd mode starts and stops them per run; with session control off (the launch-site
+   * laptop) or in mock mode they are up for the backend's whole life. Gate anything that dials
+   * the pipeline on this, or it spends every idle minute retrying a port nothing listens on.
+   */
+  pipelineExpected(): boolean {
+    return this.mode !== 'systemd' || this.active;
+  }
+
   /** True when an active run is fed by the board simulator (drives the "Simulated Data" badge). */
   isSimulated(): boolean {
     return this.active && this.simulated;
