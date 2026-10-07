@@ -30,13 +30,29 @@ export interface DesignMeta {
   /** Display name for `owner`, falling back to the email when auth has no name. */
   ownerName?: string;
   mine?: boolean;
+  /** May I change it? Absent from an older server, which only ever listed
+   *  designs you could edit -- so absent means yes. */
+  editable?: boolean;
+  /** The team's main design (only in apps that have one). */
+  featured?: boolean;
+  /** Set on a copy of the main design: what it was taken from, and when. */
+  copiedFrom?: { owner: string; id: string; name: string; at: string };
+}
+
+/** The main design, and whether the caller may choose it. */
+export interface FeaturedState {
+  featured: { owner: string; id: string; ownerName?: string; setBy: string; setAt: string } | null;
+  isAdmin: boolean;
+  /** Others' designs older than this leave the list for browse; null = no cutoff. */
+  recentDays?: number | null;
 }
 
 /** One user's designs in the view-only tree. */
 export interface BrowseGroup {
   owner: string;
   ownerName: string;
-  designs: { id: string; name: string; updatedAt: string | null }[];
+  /** `editable` -- these open in place rather than only copy. */
+  designs: { id: string; name: string; updatedAt: string | null; editable?: boolean }[];
 }
 
 export interface TeamUser {
@@ -160,6 +176,21 @@ export function createDesignApi<T>({ base, usersPath, codec }: DesignApiConfig<T
 
     /** Everyone else's designs, grouped by owner -- the view-only tree. */
     browse: () => fetch(`${base}/browse`).then((r) => json<BrowseGroup[]>(r)),
+
+    /** The main design, and whether you are an admin. Only apps that have one. */
+    getFeatured: () => fetch(`${base}/featured`).then((r) => json<FeaturedState>(r)),
+
+    /** Make a design the main one. Admins only: 403 for anyone else. */
+    setFeatured: (ref: DocRef, owner: string) =>
+      fetch(`${base}/featured`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ owner: ref.owner ?? owner, id: ref.id }),
+      }).then((r) => json<FeaturedState>(r)),
+
+    /** No main design. Admins only. */
+    clearFeatured: () =>
+      fetch(`${base}/featured`, { method: 'DELETE' }).then((r) => json<FeaturedState>(r)),
 
     /** Who a design can be shared with. Never 4xx-es on an auth outage. */
     listUsers: () => fetch(usersPath).then((r) => json<TeamUser[]>(r)),

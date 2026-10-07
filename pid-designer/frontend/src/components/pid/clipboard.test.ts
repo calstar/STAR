@@ -72,7 +72,7 @@ describe('pasting', () => {
   it('gives a junction a junction id', () => {
     const j = { id: 'junc_1', type: 'JUNCTION', position: { x: 0, y: 0 }, selected: true, data: { page: 'Main' } } as unknown as Node;
     const out = pasteClip(copySelection([j], [])!, [j], 'Main');
-    expect(out.nodes[0].id).toMatch(/^junc_\d+$/);
+    expect(out.nodes[0].id).toMatch(/^junc_[0-9a-z]+$/);
   });
 
   it('leaves annotation text and section names as they are', () => {

@@ -5,8 +5,13 @@ design tools -- to this app's payload shape and route prefix. Everything of
 substance, including ``_resolve_doc`` (the one place cross-user access is
 granted), lives there.
 
-Two things are particular to this app. The payload is a graph
-(``{"nodes": [...], "edges": [...]}``) rather than a config blob; and the router
+Three things are particular to this app. It runs open: every diagram is
+editable by everyone, the list shows other people's from the last
+``PID_RECENT_DAYS`` (default 10) with older ones a click away in browse, and an
+admin -- the fixed list in :mod:`stardesign.admins` -- may mark one
+diagram as the team's main one, which only admins may then change. The payload
+is a graph (``{"nodes": [...], "edges": [...]}``) rather than a config blob; and
+the router
 is mounted at ``/api/pid`` with the design routes nested under ``/diagrams``, so
 ``/api/pid/users`` can sit alongside them.
 """
@@ -17,9 +22,11 @@ import os
 
 from pydantic import BaseModel
 
+from stardesign import admins
 from stardesign.documents import (  # noqa: F401  (re-exported for callers)
     CopyPayload,
     DesignStore,
+    FeaturedPayload,
     NamePayload,
     SharePayload,
     make_router,
@@ -65,6 +72,12 @@ store = DesignStore(
     # is being actively autosaved. The on-close /flush ignores this.
     micro_interval=int(os.environ.get("PID_MICRO_INTERVAL", "300")),
     empty_payload=lambda: {"nodes": [], "edges": []},
+    open_to_all=True,
+    # Other people's diagrams quieter than this leave the dropdown for Change ->
+    # Older. Only the dropdown: they still open, and your own never age out.
+    recent_days=int(os.environ.get("PID_RECENT_DAYS", "10")),
+    featured=True,
+    is_admin=lambda request: admins.is_admin(request, userdata.store),
 )
 
 router = make_router(store, prefix="/api/pid", sub="/diagrams")

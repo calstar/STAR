@@ -43,6 +43,12 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("USERDATA_DIR", str(tmp_path))
     monkeypatch.setattr(documents.store, "micro_interval", 0)
     documents.store.last_micro.clear()
+    # This file checks the shared router's *closed* model -- creator plus share
+    # list -- which pid-designer itself no longer runs (it is open to all, with an
+    # admin-only main diagram; see test_open_and_main.py). The model is still the
+    # one EngineDesign ships, and these tests remain the guard on _resolve_doc.
+    monkeypatch.setattr(documents.store, "open_to_all", False)
+    monkeypatch.setattr(documents.store, "featured", False)
 
 
 @pytest.fixture
@@ -124,6 +130,8 @@ def test_delete_is_gone(client):
         # Releasing a checkout is the other DELETE, and it drops a write token,
         # not a diagram.
         "/api/pid/diagrams/{doc_id}/checkout",
+        # Un-choosing the main diagram: drops a pointer, not a diagram.
+        "/api/pid/diagrams/featured",
     }
 
 
@@ -350,7 +358,9 @@ _DOC_SCOPED = {
 }
 
 #: Not diagram-scoped: no doc id, or exists precisely to reach diagrams you cannot edit.
-_UNSCOPED = {"list_documents", "browse_documents", "create_document", "copy_document"}
+_UNSCOPED = {"list_documents", "browse_documents", "create_document", "copy_document",
+             # The main-diagram pointer: admin-gated, covered in test_open_and_main.py.
+             "get_featured", "set_featured", "clear_featured"}
 
 
 def _call(client, name, doc_id, headers, params):

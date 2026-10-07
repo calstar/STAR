@@ -102,6 +102,13 @@ export interface UseCheckoutOptions<T> {
    * keeps the decision where someone can see it.
    */
   local?: boolean;
+  /**
+   * Whether the caller may take this design at all. False for a design they
+   * can only look at (pid-designer's main diagram, for a non-admin): local mode
+   * then does not try to take it on open. Defaults to true -- the old
+   * behaviour.
+   */
+  editable?: boolean;
 }
 
 export function useCheckout<T>({
@@ -111,6 +118,7 @@ export function useCheckout<T>({
   pollMs = 10_000,
   heldPollMs = 15_000,
   local = false,
+  editable = true,
 }: UseCheckoutOptions<T>): Checkout {
   const [state, setState] = useState<CheckoutState>(FREE);
   const [busy, setBusy] = useState(false);
@@ -314,9 +322,9 @@ export function useCheckout<T>({
   // Locally, opening a design takes it. `busy` is left out of the deps on
   // purpose: this fires once per design, not again after every take settles.
   useEffect(() => {
-    if (!local || !ref || state.lockedByMe || busy) return;
+    if (!local || !editable || !ref || state.lockedByMe || busy) return;
     void take();
-  }, [local, key]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [local, key, editable]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const acknowledgeLost = useCallback(() => setLostUnexpectedly(false), []);
 

@@ -41,5 +41,30 @@ export function seedIdsFrom(nodes: Node[]): void {
   _junction = Math.max(_junction, highest(ids, JUNCTION_RE));
 }
 
-export const nextNodeId = () => `node_${++_node}`;
-export const nextJunctionId = () => `junc_${++_junction}`;
+/**
+ * A random suffix, not the counter, since copies of the main diagram.
+ *
+ * Two people who copy main and each draw a valve would both get the next
+ * counter value -- `node_13` in each copy, for two different valves. Fine
+ * while the copies stay apart, but a merge back into main keys on id, and would
+ * read those as one valve edited two ways. Eight base-36 characters is ~2.8e12
+ * values; a collision inside one diagram is not a practical concern.
+ *
+ * The counters above stay: they are still seeded from every loaded diagram,
+ * and keeping the `node_` / `junc_` prefixes means nothing that reads a tag's
+ * kind from its id has to change. Existing ids are never rewritten.
+ */
+function suffix(): string {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => (b % 36).toString(36)).join('');
+}
+
+export const nextNodeId = () => {
+  ++_node;
+  return `node_${suffix()}`;
+};
+export const nextJunctionId = () => {
+  ++_junction;
+  return `junc_${suffix()}`;
+};

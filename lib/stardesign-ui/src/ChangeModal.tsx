@@ -15,11 +15,17 @@
  * Sharing is symmetric on purpose: whoever is on the list is an editor, the
  * creator included, and any of them can change the list. See the backend for
  * why that is housekeeping rather than a permission boundary.
+ *
+ * An app that runs open to all (pid-designer) passes `openToAll`: every design
+ * is editable by everyone, so sharing has nothing to say and is hidden, and the
+ * tabs become **Recent** and **Older** -- the second holds designs that have
+ * gone quiet, which open in place rather than only copy. One that has a main
+ * design passes `featured`; admins then get Make main / Unset main.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { keyOf, refOf } from './api';
-import type { BrowseGroup, DesignApi, DesignMeta, DocRef, TeamUser } from './api';
+import type { BrowseGroup, DesignApi, DesignMeta, DocRef, FeaturedState, TeamUser } from './api';
 import { btn, ghostBtn, primaryBtn, relativeTime } from './theme';
 import { Modal } from './Modal';
 
@@ -41,12 +47,23 @@ interface Props<T> {
   onShare: (ref: DocRef, emails: string[]) => Promise<void>;
   onLeave: (ref: DocRef) => Promise<void>;
   onCopy: (ref: DocRef) => Promise<void>;
+  /** Every design is editable by everyone; others' go to Older after this many days. */
+  openToAll?: { recentDays: number };
+  /** Open a design from Older in place. It is not in `documents`, so the row's
+   *  metadata comes along for the app to add it. */
+  onOpen?: (ref: DocRef, meta: DesignMeta) => void;
+  /** The main design and whether the caller is an admin. */
+  featured?: FeaturedState | null;
+  /** Make a design the main one, or (null) unset it. Admins only. */
+  onFeature?: (ref: DocRef | null, owner: string) => Promise<void>;
 }
 
 export function ChangeModal<T>({
   open, onClose, api, noun, documents, activeKey,
   onSelect, onCreate, onRename, onShare, onLeave, onCopy,
+  openToAll, onOpen, featured, onFeature,
 }: Props<T>) {
+  const admin = !!(featured?.isAdmin && onFeature);
   // "design" -> "Design". The apps call the same thing three different names,
   // and the copy in here is the only place that shows.
   const Noun = noun[0].toUpperCase() + noun.slice(1);
@@ -131,10 +148,10 @@ export function ChangeModal<T>({
     <Modal open={open} onClose={onClose} title={`${Noun}s`} width="w-[560px]">
       <div className="-mt-2 mb-3 flex border-b border-[var(--color-border)]">
         <button className={tabBtn('editable')} onClick={() => { setTab('editable'); reset(); }}>
-          Editable
+          {openToAll ? 'Recent' : 'Editable'}
         </button>
         <button className={tabBtn('viewonly')} onClick={() => { setTab('viewonly'); reset(); }}>
-          View only
+          {openToAll ? 'Older' : 'View only'}
         </button>
       </div>
 
@@ -177,6 +194,8 @@ export function ChangeModal<T>({
           {documents.map((d) => {
             const ref = refOf(d);
             const key = keyOf(ref);
+            // Absent on an older server, which only listed what you could edit.
+            const editable = d.editable !== false;
             return (
               <div key={key} className={`mb-1 rounded ${key === activeKey ? 'bg-[var(--color-bg-tertiary)]' : ''}`}>
                 <div className="flex items-center gap-2 px-2 py-1.5">
@@ -207,15 +226,35 @@ export function ChangeModal<T>({
                       >
                         {d.name}
                       </button>
+                      {d.featured && (
+                        <span
+                          className="shrink-0 rounded bg-[var(--color-accent)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-bg-primary)]"
+                          title={editable
+                            ? `The team's main ${noun}. You are an admin, so you can change it.`
+                            : `The team's main ${noun}. Only an admin can change it - take a copy to work on it.`}
+                        >
+                          Main
+                        </span>
+                      )}
+                      {d.copiedFrom && (
+                        <span
+                          className="shrink-0 text-[10px] text-[var(--color-text-muted)]"
+                          title={`Copied from "${d.copiedFrom.name}" ${relativeTime(d.copiedFrom.at)}`}
+                        >
+                          {`from ${d.copiedFrom.name}`}
+                        </span>
+                      )}
                       {!d.mine && (
                         <span
                           className="shrink-0 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]"
-                          title={`Shared with you by ${d.ownerName || d.owner}`}
+                          title={openToAll
+                            ? `Made by ${d.ownerName || d.owner}`
+                            : `Shared with you by ${d.ownerName || d.owner}`}
                         >
                           {d.ownerName || d.owner}
                         </span>
                       )}
-                      {(d.sharedWith?.length ?? 0) > 0 && d.mine && (
+                      {!openToAll && (d.sharedWith?.length ?? 0) > 0 && d.mine && (
                         <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">
                           shared ×{d.sharedWith?.length}
                         </span>
@@ -223,14 +262,38 @@ export function ChangeModal<T>({
                       <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]" title={d.updatedAt}>
                         {relativeTime(d.updatedAt)}
                       </span>
-                      <button
-                        className={ghostBtn}
-                        onClick={() => { reset(); setRenaming(key); setRenameValue(d.name); }}
-                      >
-                        Rename
-                      </button>
-                      <button className={ghostBtn} onClick={() => startShare(d)}>Share</button>
-                      {!d.mine && (
+                      {editable ? (
+                        <button
+                          className={ghostBtn}
+                          onClick={() => { reset(); setRenaming(key); setRenameValue(d.name); }}
+                        >
+                          Rename
+                        </button>
+                      ) : (
+                        <button
+                          className={ghostBtn} disabled={busy === key}
+                          title={`Take your own copy of "${d.name}" to work on`}
+                          onClick={() => void run(key, async () => { await onCopy(ref); onClose(); })}
+                        >
+                          {busy === key ? 'Copying…' : 'Copy'}
+                        </button>
+                      )}
+                      {admin && (
+                        <button
+                          className={ghostBtn} disabled={busy === `main:${key}`}
+                          title={d.featured
+                            ? `Stop treating this as the main ${noun}. Nothing is deleted.`
+                            : `Make this the team's main ${noun}: it opens first for everyone, and only admins can change it.`}
+                          onClick={() => void run(`main:${key}`, () =>
+                            onFeature!(d.featured ? null : ref, d.owner ?? ''))}
+                        >
+                          {d.featured ? 'Unset main' : 'Make main'}
+                        </button>
+                      )}
+                      {!openToAll && editable && (
+                        <button className={ghostBtn} onClick={() => startShare(d)}>Share</button>
+                      )}
+                      {!openToAll && !d.mine && (
                         <button
                           className={ghostBtn} disabled={busy === key}
                           title={`Remove yourself from this ${noun}. It is not deleted - you can copy it from View only whenever you like.`}
@@ -296,11 +359,15 @@ export function ChangeModal<T>({
       ) : (
         <div className="max-h-[55vh] overflow-y-auto">
           <p className="mb-2 text-[10px] text-[var(--color-text-muted)]">
-            {`Everyone else's ${noun}s. Opening one takes your own copy of it; the original is untouched.`}
+            {openToAll
+              ? `${Noun}s nobody has touched in the last ${openToAll.recentDays} days. Open one to edit it in place, or take your own copy.`
+              : `Everyone else's ${noun}s. Opening one takes your own copy of it; the original is untouched.`}
           </p>
           {tree === null && <p className="py-3 text-xs text-[var(--color-text-muted)]">Loading…</p>}
           {tree?.length === 0 && (
-            <p className="py-3 text-xs text-[var(--color-text-muted)]">{`Nobody else has ${noun}s yet.`}</p>
+            <p className="py-3 text-xs text-[var(--color-text-muted)]">
+              {openToAll ? `Nothing older than ${openToAll.recentDays} days.` : `Nobody else has ${noun}s yet.`}
+            </p>
           )}
           {tree?.map((g) => (
             <div key={g.owner} className="mb-1">
@@ -320,6 +387,36 @@ export function ChangeModal<T>({
                 g.designs.map((x) => {
                   const ref: DocRef = { id: x.id, owner: g.owner };
                   const key = keyOf(ref);
+                  if (openToAll && onOpen && x.editable) {
+                    return (
+                      <div key={key} className="flex w-full items-center gap-2 rounded py-1 pl-7 pr-2 hover:bg-[var(--color-bg-tertiary)]">
+                        <button
+                          className="flex-1 truncate text-left text-xs text-[var(--color-text-primary)] hover:underline"
+                          title={`Open "${x.name}"`}
+                          onClick={() => {
+                            onOpen(ref, {
+                              id: x.id, name: x.name, owner: g.owner, ownerName: g.ownerName,
+                              mine: false, editable: true, featured: false,
+                              createdAt: x.updatedAt ?? '', updatedAt: x.updatedAt ?? '',
+                            });
+                            onClose();
+                          }}
+                        >
+                          {x.name}
+                        </button>
+                        <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">
+                          {relativeTime(x.updatedAt)}
+                        </span>
+                        <button
+                          className={ghostBtn} disabled={busy === key}
+                          title={`Take your own copy of "${x.name}"`}
+                          onClick={() => void run(key, async () => { await onCopy(ref); onClose(); })}
+                        >
+                          {busy === key ? 'Copying…' : 'Copy'}
+                        </button>
+                      </div>
+                    );
+                  }
                   return (
                     <button
                       key={key} disabled={busy === key}

@@ -19,6 +19,7 @@ in only two places.
 | `storage` | Version history — microversions and immutable releases — on the local volume or in a versioned S3 bucket. |
 | `directory` | The team roster the share picker offers: the auth service's login records unioned with whoever already has data on the volume. |
 | `documents` | The design CRUD, sharing and checkout router, as a factory. This is where `_resolve_doc` lives — the single place cross-user access is granted — and the checkout compare-and-set. |
+| `admins` | Whether the caller is an admin — a fixed list of emails, plus `STAR_ADMINS`. |
 
 ## Using it
 
@@ -91,3 +92,22 @@ contenders mostly serialise on their own; neither a barrier nor 48 contenders
 fixed it. `test_take_cannot_proceed_while_the_index_lock_is_held` is the real
 guard: it holds the same `flock` and asserts a take *blocks*. That fails every
 run, in every app, the moment the lock goes.
+
+## Open to all, and the main design
+
+Two `DesignStore` switches, both off by default, so an app that does not set
+them behaves exactly as before. pid-designer sets both.
+
+- `open_to_all` (+ `recent_days`): every design is editable by everyone;
+  checkouts stop two people saving at once. The list holds your own designs and
+  everyone else's from the last `recent_days`; `/browse` holds exactly the rest,
+  and they still open.
+- `featured` (+ `is_admin`): an admin may mark one design as the main one
+  (`GET/PUT/DELETE …/featured`). Everyone can open it and copy it; only an admin
+  may change it, its creator included. A copy records `copiedFrom` and writes the
+  source's contents to `base.json`, which a later merge back into main needs as
+  the common ancestor.
+
+Admins are the fixed list in `admins.py`, compared against `X-Auth-Email`.
+`STAR_ADMINS` adds emails on top — `STAR_ADMINS=local` in dev, where every
+request is the `local` user.
