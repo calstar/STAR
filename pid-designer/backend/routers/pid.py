@@ -5,11 +5,12 @@ design tools -- to this app's payload shape and route prefix. Everything of
 substance, including ``_resolve_doc`` (the one place cross-user access is
 granted), lives there.
 
-Three things are particular to this app. It runs open: every diagram is
-editable by everyone, the list shows other people's from the last
-``PID_RECENT_DAYS`` (default 10) with older ones a click away in browse, and an
-admin -- the fixed list in :mod:`stardesign.admins` -- may mark one
-diagram as the team's main one, which only admins may then change. The payload
+Three things are particular to this app. It runs curated: admins -- the fixed
+list in :mod:`stardesign.admins` -- choose the STAR diagrams everyone sees, one
+of which may be the main one a new tab opens on. Everyone else sees their own
+diagrams and those shared with them; admins see everything. A diagram is edited
+by its creator, whoever it is shared with, and admins; anyone who can see it may
+ask to edit, and its creator or an admin approves. The payload
 is a graph (``{"nodes": [...], "edges": [...]}``) rather than a config blob; and
 the router
 is mounted at ``/api/pid`` with the design routes nested under ``/diagrams``, so
@@ -72,11 +73,11 @@ store = DesignStore(
     # is being actively autosaved. The on-close /flush ignores this.
     micro_interval=int(os.environ.get("PID_MICRO_INTERVAL", "300")),
     empty_payload=lambda: {"nodes": [], "edges": []},
-    open_to_all=True,
-    # Other people's diagrams quieter than this leave the dropdown for Change ->
-    # Older. Only the dropdown: they still open, and your own never age out.
-    recent_days=int(os.environ.get("PID_RECENT_DAYS", "10")),
     featured=True,
+    # The main diagram is edited like any other STAR one: its creator, whoever
+    # was approved, and admins.
+    main_admin_only=False,
+    curated=True,
     is_admin=lambda request: admins.is_admin(request, userdata.store),
 )
 

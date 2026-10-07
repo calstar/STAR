@@ -65,7 +65,7 @@ break the guarantee silently, and needs a different primitive.
 
 Open to all, and the main design
 --------------------------------
-Two opt-in modes, both off by default so the apps that do not set them behave
+Opt-in modes, all off by default so the apps that do not set them behave
 exactly as before (pid-designer turns both on):
 
 * ``open_to_all`` -- every design is editable by everyone; checkouts are what
@@ -74,8 +74,26 @@ exactly as before (pid-designer turns both on):
   ``/browse``, where they can still be opened. Your own never age out.
 * ``featured`` -- an admin may mark one design as the team's main one. Everyone
   can open it, it heads every list and the window never hides it, and **only an
-  admin may change it**: everyone else takes a copy. Admins come from
-  ``is_admin`` (see :mod:`stardesign.admins`); the default is nobody.
+  admin may change it** (unless ``main_admin_only`` is off): everyone else takes
+  a copy. Admins come from ``is_admin`` (see :mod:`stardesign.admins`); the
+  default is nobody.
+
+The STAR collection
+-------------------
+``curated`` is the third mode, and the one pid-designer runs (with
+``open_to_all`` off and ``main_admin_only`` off):
+
+* Admins choose the **STAR set** (``PUT/DELETE /{id}/star``, kept in the
+  app's ``star.json``). Everyone sees those; the main design is always one.
+* Everyone else sees their own designs and those shared with them. **Admins see
+  everything**, and may edit everything.
+* Editing is the creator, the share list, and admins. Only the creator or an
+  admin may change the share list -- here it is a real boundary, not
+  housekeeping.
+* Anyone who can see a design may **ask to edit** it (``POST /{id}/access``);
+  the creator or an admin approves (they join the share list) or denies.
+  ``GET /requests`` lists what the caller may answer.
+* "Can read" narrows to "can see": nobody copies a design they cannot open.
 
 There is deliberately no delete endpoint: a design is editable by more than one
 person, so a delete button is one misclick away from destroying a group project
@@ -106,6 +124,19 @@ from pydantic import BaseModel
 
 from stardesign import directory
 from stardesign.userdata import UserData, slug_user, slugify
+
+
+def _write_json_atomic(p: Path, data: object) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".tmp-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+        os.replace(tmp, p)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
 
 
 @dataclass
@@ -153,6 +184,15 @@ class DesignStore:
     recent_days: int | None = None
     #: Offer an admin-chosen main design that only admins may change.
     featured: bool = False
+    #: With ``featured``: only admins may change the main design. Off, the main
+    #: design follows the same editor rules as any other.
+    main_admin_only: bool = True
+    #: The STAR collection and approved editors. Admins choose which designs are
+    #: the team's (the STAR set, which always includes the main one); everyone
+    #: sees those plus their own and any shared with them, admins see
+    #: everything. Editing is the creator, the share list and admins; anyone who
+    #: can see a design may ask to edit it, and its creator or an admin approves.
+    curated: bool = False
     #: Whether the caller is an admin. Nobody, unless the app says otherwise.
     is_admin: Callable[[Request], bool] = lambda request: False
     #: (owner, doc_id) -> monotonic time of the last microversion. In-process
@@ -220,16 +260,56 @@ class DesignStore:
             except FileNotFoundError:
                 pass
             return
-        p.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".tmp-", suffix=".json")
+        _write_json_atomic(p, data)
+
+    def star_path(self) -> Path:
+        return self.ud.site_dir() / "star.json"
+
+    @contextmanager
+    def star_lock(self) -> Iterator[None]:
+        """Serialise read-modify-write of the STAR set, as ``_index_lock`` does
+        for an index: two admins adding at once must not drop one."""
+        d = self.ud.site_dir(create=True)
+        fd = os.open(d / ".star.lock", os.O_CREAT | os.O_RDWR, 0o644)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(data, fh, indent=2)
-            os.replace(tmp, p)
-        except BaseException:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
-            raise
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+    def read_star_raw(self) -> list[dict]:
+        """The STAR set as stored, dangling entries included."""
+        if not self.curated:
+            return []
+        try:
+            data = json.loads(self.star_path().read_text("utf-8"))
+        except (OSError, ValueError, RuntimeError):
+            return []
+        if not isinstance(data, list):
+            return []
+        return [e for e in data if isinstance(e, dict) and e.get("owner") and e.get("id")]
+
+    def read_star(self) -> set[tuple[str, str]]:
+        """``(owner, id)`` of every STAR design, the main one included.
+
+        Entries naming a design that no longer exists are dropped, like a
+        dangling main pointer: they must not make anything visible.
+        """
+        if not self.curated:
+            return set()
+        out = {
+            (str(e["owner"]), str(e["id"]))
+            for e in self.read_star_raw()
+            if self.find_record(str(e["owner"]), str(e["id"])) is not None
+        }
+        main = self.read_featured()
+        if main is not None:
+            out.add((main["owner"], main["id"]))
+        return out
+
+    def write_star(self, entries: list[dict]) -> None:
+        _write_json_atomic(self.star_path(), entries)
 
     def lock_holder(self, record: dict) -> str | None:
         """Whoever currently holds the design, or None if it is free.
@@ -358,6 +438,9 @@ class FeaturedPayload(BaseModel):
     id: str
 
 
+class RequesterPayload(BaseModel):
+    email: str  # whose request to approve or deny, as the request recorded it
+
 
 def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
     """The design CRUD + sharing router for one app.
@@ -471,6 +554,20 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         raise HTTPException(status_code=404, detail=f"Unknown {store.noun}")
 
 
+    def _edit_record(user: str, doc_id: str, fn: Callable[[dict], None]) -> dict:
+        """``_mutate_record`` for a change that depends on what the record holds
+        now -- a list to filter, say -- so ``fn`` runs on the copy read inside
+        the lock rather than one fetched before it."""
+        with _index_lock(user):
+            index = _load_index(user)
+            for record in index:
+                if record["id"] == doc_id:
+                    fn(record)
+                    _save_index(user, index)
+                    return record
+        raise HTTPException(status_code=404, detail=f"Unknown {store.noun}")
+
+
     # ── sharing: who may edit which design ───────────────────────────────────────
 
     @dataclass(frozen=True)
@@ -505,6 +602,7 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
             self.viewer = store.ud.current_user(request)
             main = store.read_featured()
             self.main = (main["owner"], main["id"]) if main else None
+            self.star = store.read_star()
             self._admin: bool | None = None
 
         @property
@@ -516,24 +614,45 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         def is_main(self, owner: str, doc_id: str) -> bool:
             return self.main == (owner, doc_id)
 
+        def is_star(self, owner: str, doc_id: str) -> bool:
+            return (owner, doc_id) in self.star
+
+    def _is_shared(record: dict, viewer: str) -> bool:
+        return any(slug_user(e) == viewer for e in _shared_with(record))
+
     def _can_edit(record: dict, owner: str, access: "Access") -> bool:
         """Emails are stored as written, compared as path slugs -- the same
         normalization ``current_user`` applies, so the two always line up.
 
-        The main design is checked first and overrides everything else: not
-        even its creator may change it without being an admin.
+        An admin-only main design is checked first and overrides everything
+        else: not even its creator may change it without being an admin.
         """
-        if access.is_main(owner, record.get("id")):
+        if store.main_admin_only and access.is_main(owner, record.get("id")):
             return access.admin
         if store.open_to_all or access.viewer == owner:
             return True
-        return any(slug_user(e) == access.viewer for e in _shared_with(record))
+        if _is_shared(record, access.viewer):
+            return True
+        return store.curated and access.admin
+
+    def _can_manage(record: dict, owner: str, access: "Access") -> bool:
+        """Decide who else edits it: share, approve and deny. With ``curated``,
+        its creator or an admin. Otherwise any editor, which is the old rule."""
+        if store.curated:
+            return access.viewer == owner or access.admin
+        return _can_edit(record, owner, access)
 
     def _can_view(record: dict, owner: str, access: "Access") -> bool:
         """Open it in the editor, read-only if need be. The main design is
         viewable by everyone; anything else, only by those who can edit it --
-        which with ``featured`` off is exactly the old rule."""
-        return access.is_main(owner, record.get("id")) or _can_edit(record, owner, access)
+        which with ``featured`` off is exactly the old rule. With ``curated``,
+        the STAR set is viewable by everyone and admins see everything."""
+        doc_id = record.get("id")
+        if access.is_main(owner, doc_id):
+            return True
+        if store.curated and (access.is_star(owner, doc_id) or access.admin):
+            return True
+        return _can_edit(record, owner, access)
 
 
     def _find_record(owner: str, doc_id: str) -> dict | None:
@@ -555,7 +674,9 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         releases, who holds it) -- the main design is viewable by all; and
         everything else needs ``"edit"``, which means being the owner or on the
         share list (or anyone, with ``open_to_all``), and an admin for the main
-        design.
+        design. ``"exists"`` asks nothing (rescue only). ``"manage"`` -- deciding
+        who else edits it -- is any editor, or with ``curated`` its creator or
+        an admin.
 
         Returning the resolved record -- rather than just a folder name -- is what
         stops a handler that omits ``?owner=`` from silently writing an orphan
@@ -568,15 +689,27 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         record = _find_record(owner_slug, doc_id)
         if record is None:
             raise HTTPException(status_code=404, detail=f"Unknown {store.noun}")
-        if need == "view" and not _can_view(record, owner_slug, access):
+        # "exists" is rescue's alone: it keeps the caller's own edits and reads
+        # only the source's name, so it must survive losing sight of it.
+        # Curated, a design you cannot see is not yours to read or copy either:
+        # "read" is only wider than "view" in the apps where everything is public.
+        if need == "read" and store.curated:
+            need = "view"
+        if need in ("view", "manage") and not _can_view(record, owner_slug, access):
             raise HTTPException(status_code=403, detail="This design is not shared with you")
         if need == "edit" and not _can_edit(record, owner_slug, access):
-            detail = (
-                f"Only an admin can change the main {store.noun}. Take a copy to work on it."
-                if access.is_main(owner_slug, doc_id)
-                else "This design is not shared with you"
-            )
+            if store.main_admin_only and access.is_main(owner_slug, doc_id):
+                detail = f"Only an admin can change the main {store.noun}. Take a copy to work on it."
+            elif store.curated and _can_view(record, owner_slug, access):
+                detail = f"You need edit access to this {store.noun}. Ask for it, or take a copy."
+            else:
+                detail = "This design is not shared with you"
             raise HTTPException(status_code=403, detail=detail)
+        if need == "manage" and not _can_manage(record, owner_slug, access):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Only the {store.noun}'s creator or an admin can decide who edits it",
+            )
         return DocRef(owner=owner_slug, doc_id=doc_id, record=record, viewer=viewer)
 
 
@@ -724,6 +857,20 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         """An index record as the UI wants it: who owns it, is that me, and may
         I change it."""
         viewer = access.viewer
+        extra: dict = {}
+        if store.curated:
+            requests = _requests_of(record)
+            manage = _can_manage(record, owner, access)
+            extra = {
+                "star": access.is_star(owner, record.get("id")),
+                "canManage": manage,
+                # Who is asking is the business of whoever can answer; anyone
+                # else only learns whether they themselves have asked.
+                "accessRequests": [
+                    {**r, "name": names.get(r["email"]) or r["email"]} for r in requests
+                ] if manage else [],
+                "requestedByMe": any(r["email"] == viewer for r in requests),
+            }
         return {
             **record,
             "sharedWith": _shared_with(record),
@@ -732,10 +879,21 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
             "mine": owner == viewer,
             "editable": _can_edit(record, owner, access),
             "featured": access.is_main(owner, record.get("id")),
+            **extra,
             # Folded in here so the design bar knows the checkout state from the
             # list it already fetches, with no extra round trip on open.
             **_lock_state(record, viewer, names),
         }
+
+    def _requests_of(record: dict) -> list[dict]:
+        """Pending edit-access requests, ``[{email, at}]``. Absent means none."""
+        value = record.get("accessRequests")
+        if not isinstance(value, list):
+            return []
+        return [
+            {"email": slug_user(str(r["email"])), "at": r.get("at")}
+            for r in value if isinstance(r, dict) and r.get("email")
+        ]
 
 
     # ── document CRUD ─────────────────────────────────────────────────────────────
@@ -747,9 +905,14 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         with ``recent_days`` set, other people's drop out once they go quiet --
         which only moves them to browse, where they still open. Your own, and
         ones explicitly shared with you, are never aged out.
+
+        With ``curated`` it is simply everything you can see: the STAR set,
+        your own and shared ones, and for an admin, everything.
         """
         if access.is_main(owner, record.get("id")):
             return True
+        if store.curated:
+            return _can_view(record, owner, access)
         if not _can_edit(record, owner, access):
             return False
         if cutoff is None or owner == access.viewer:
@@ -766,7 +929,8 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
     @router.get(sub)
     async def list_documents(request: Request):
         """Designs the caller may edit -- their own plus any shared with them,
-        or with ``open_to_all`` everyone's recent ones -- and the main design."""
+        or with ``open_to_all`` everyone's recent ones -- and the main design.
+        With ``curated``, everything the caller may see, STAR designs first."""
         access = Access(request)
         names = directory.display_names(request, store.ud)
         cutoff = _cutoff()
@@ -776,6 +940,8 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
             if _listed(record, owner, access, cutoff)
         ]
         out.sort(key=lambda d: d.get("updatedAt") or "", reverse=True)
+        if store.curated:
+            out.sort(key=lambda d: not d["star"])
         # The main design heads the list, whatever its age.
         out.sort(key=lambda d: not d["featured"])
         return out
@@ -796,6 +962,9 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         groups: dict[str, list[dict]] = {}
         for owner, record in _scan_all():
             if _listed(record, owner, access, cutoff):
+                continue
+            # Curated, the list already holds all you may see; nothing is left.
+            if store.curated and not _can_view(record, owner, access):
                 continue
             groups.setdefault(owner, []).append({
                 "id": record["id"],
@@ -905,10 +1074,12 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         they had, named after the one it came from, checked out to them.
 
         Read access is enough: someone unshared mid-edit lost write access too,
-        and their work is still theirs.
+        and their work is still theirs. Curated, unshared can also mean they no
+        longer see it, so this asks only that the design exists: it reads
+        nothing from it but its name, which the caller had open a moment ago.
         """
         viewer = store.ud.current_user(request)
-        ref = _resolve_doc(request, owner, doc_id, need="read")
+        ref = _resolve_doc(request, owner, doc_id, need="exists")
         source = ref.record.get("name", ref.doc_id)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         name = f"{source} (unsaved changes, {stamp})"
@@ -949,8 +1120,12 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
         New -- and a removed editor can still read and copy the design anyway, so
         this is housekeeping, not a security boundary. ``sharedUpdatedBy`` records
         who last touched it.
+
+        With ``curated`` it is a boundary -- the list is who may edit -- so only
+        the creator or an admin may change it, and sharing with someone who had
+        asked answers their request.
         """
-        ref = _resolve_doc(request, owner, doc_id)
+        ref = _resolve_doc(request, owner, doc_id, need="manage")
         seen: set[str] = set()
         emails: list[str] = []
         for raw in payload.sharedWith:
@@ -962,17 +1137,16 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
                 continue
             seen.add(slug)
             emails.append(email)
-        return _decorated_for(
-            request,
-            ref,
-            _mutate_record(
-                ref.owner,
-                ref.doc_id,
-                sharedWith=emails,
-                sharedUpdatedBy=ref.viewer,
-                sharedUpdatedAt=_now_iso(),
-            ),
-        )
+
+        def apply(record: dict) -> None:
+            record.update(sharedWith=emails, sharedUpdatedBy=ref.viewer,
+                          sharedUpdatedAt=_now_iso())
+            if "accessRequests" in record:
+                record["accessRequests"] = [
+                    r for r in _requests_of(record) if r["email"] not in seen
+                ]
+
+        return _decorated_for(request, ref, _edit_record(ref.owner, ref.doc_id, apply))
 
 
     @router.delete(f"{sub}/{{doc_id}}/share/me")
@@ -1231,6 +1405,150 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
             raise HTTPException(status_code=404, detail="Release not found")
         return data
 
+    # ── the STAR set (curated) ───────────────────────────────────────────
+
+    def _add_star(owner: str, doc_id: str, viewer: str) -> None:
+        with store.star_lock():
+            entries = store.read_star_raw()
+            if not any((e["owner"], e["id"]) == (owner, doc_id) for e in entries):
+                entries.append({"owner": owner, "id": doc_id,
+                                "addedBy": viewer, "addedAt": _now_iso()})
+                store.write_star(entries)
+
+    def _remove_star(owner: str, doc_id: str) -> None:
+        with store.star_lock():
+            entries = store.read_star_raw()
+            kept = [e for e in entries if (e["owner"], e["id"]) != (owner, doc_id)]
+            if len(kept) != len(entries):
+                store.write_star(kept)
+
+    if store.curated:
+
+        def _require_star_admin(request: Request) -> str:
+            access = Access(request)
+            if not access.admin:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Only an admin can choose the STAR {store.noun}s",
+                )
+            return access.viewer
+
+        @router.put(f"{sub}/{{doc_id}}/star")
+        async def star_document(request: Request, doc_id: str, owner: str | None = None):
+            """Add a design to the STAR set, which everyone sees. Admins only."""
+            viewer = _require_star_admin(request)
+            ref = _resolve_doc(request, owner, doc_id, need="view")
+            _add_star(ref.owner, ref.doc_id, viewer)
+            return _decorated_for(request, ref, ref.record)
+
+        @router.delete(f"{sub}/{{doc_id}}/star")
+        async def unstar_document(request: Request, doc_id: str, owner: str | None = None):
+            """Take a design out of the STAR set. Admins only.
+
+            The main design is always a STAR one, so taking it out also stops it
+            being main -- otherwise the pointer would keep it in the set and the
+            button would appear to do nothing.
+            """
+            _require_star_admin(request)
+            ref = _resolve_doc(request, owner, doc_id, need="view")
+            _remove_star(ref.owner, ref.doc_id)
+            main = store.read_featured()
+            if main is not None and (main["owner"], main["id"]) == (ref.owner, ref.doc_id):
+                store.write_featured(None)
+            return _decorated_for(request, ref, ref.record)
+
+        # ── asking to edit, and answering ────────────────────────────────
+
+        @router.post(f"{sub}/{{doc_id}}/access")
+        async def request_access(request: Request, doc_id: str, owner: str | None = None):
+            """Ask to edit a design you can see. Its creator or an admin answers.
+
+            Idempotent: asking twice is one request, with the first time kept.
+            """
+            ref = _resolve_doc(request, owner, doc_id, need="view")
+            if _can_edit(ref.record, ref.owner, Access(request)):
+                raise HTTPException(status_code=400, detail=f"You can already edit this {store.noun}")
+
+            def apply(record: dict) -> None:
+                requests = _requests_of(record)
+                if not any(r["email"] == ref.viewer for r in requests):
+                    requests.append({"email": ref.viewer, "at": _now_iso()})
+                record["accessRequests"] = requests
+
+            return _decorated_for(request, ref, _edit_record(ref.owner, ref.doc_id, apply))
+
+        @router.delete(f"{sub}/{{doc_id}}/access")
+        async def withdraw_access_request(
+            request: Request, doc_id: str, owner: str | None = None
+        ):
+            """Take back your own request. Idempotent."""
+            ref = _resolve_doc(request, owner, doc_id, need="view")
+
+            def apply(record: dict) -> None:
+                record["accessRequests"] = [
+                    r for r in _requests_of(record) if r["email"] != ref.viewer
+                ]
+
+            return _decorated_for(request, ref, _edit_record(ref.owner, ref.doc_id, apply))
+
+        def _answer(request: Request, doc_id: str, owner: str | None, email: str,
+                    approve: bool) -> dict:
+            ref = _resolve_doc(request, owner, doc_id, need="manage")
+            who = slug_user(email.strip())
+
+            def apply(record: dict) -> None:
+                requests = _requests_of(record)
+                if not any(r["email"] == who for r in requests):
+                    raise HTTPException(status_code=404, detail=f"{who} has not asked to edit this")
+                record["accessRequests"] = [r for r in requests if r["email"] != who]
+                if approve:
+                    shared = _shared_with(record)
+                    if not _is_shared(record, who) and who != ref.owner:
+                        shared.append(who)
+                    record.update(sharedWith=shared, sharedUpdatedBy=ref.viewer,
+                                  sharedUpdatedAt=_now_iso())
+
+            return _decorated_for(request, ref, _edit_record(ref.owner, ref.doc_id, apply))
+
+        @router.post(f"{sub}/{{doc_id}}/access/approve")
+        async def approve_access(
+            request: Request, doc_id: str, payload: RequesterPayload, owner: str | None = None
+        ):
+            """Let someone who asked edit it: they join the share list."""
+            return _answer(request, doc_id, owner, payload.email, approve=True)
+
+        @router.post(f"{sub}/{{doc_id}}/access/deny")
+        async def deny_access(
+            request: Request, doc_id: str, payload: RequesterPayload, owner: str | None = None
+        ):
+            """Turn a request down. They keep what they had -- seeing it, and
+            copying it -- and may ask again."""
+            return _answer(request, doc_id, owner, payload.email, approve=False)
+
+        @router.get(f"{sub}/requests")
+        async def list_access_requests(request: Request):
+            """Every pending request the caller may answer: on their own designs,
+            and for an admin on everyone's. What the badge on Change counts."""
+            access = Access(request)
+            names = directory.display_names(request, store.ud)
+            out = []
+            for owner, record in _scan_all():
+                requests = _requests_of(record)
+                if not requests or not _can_manage(record, owner, access):
+                    continue
+                for r in requests:
+                    out.append({
+                        "owner": owner,
+                        "ownerName": names.get(owner) or owner,
+                        "id": record["id"],
+                        "name": record.get("name", record["id"]),
+                        "email": r["email"],
+                        "requesterName": names.get(r["email"]) or r["email"],
+                        "at": r["at"],
+                    })
+            out.sort(key=lambda r: r["at"] or "")
+            return out
+
     # ── the main design ──────────────────────────────────────────────────
 
     if store.featured:
@@ -1248,6 +1566,8 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
                 "isAdmin": access.admin,
                 # So the UI can say "older than N days" without hardcoding N.
                 "recentDays": store.recent_days if store.open_to_all else None,
+                # So the UI knows to offer the STAR set and access requests.
+                "curated": store.curated,
             }
 
         def _require_admin(request: Request) -> str:
@@ -1265,6 +1585,10 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
             ref = _resolve_doc(request, payload.owner, payload.id, need="read")
             data = {"owner": ref.owner, "id": ref.doc_id, "setBy": viewer, "setAt": _now_iso()}
             store.write_featured(data)
+            # The main design is a STAR one. Written into the set, not just
+            # implied by the pointer, so unsetting main leaves it there.
+            if store.curated:
+                _add_star(ref.owner, ref.doc_id, viewer)
             return {"featured": data, "isAdmin": True}
 
         @router.delete(f"{sub}/featured")

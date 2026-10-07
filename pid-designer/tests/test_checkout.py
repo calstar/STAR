@@ -196,16 +196,21 @@ def test_every_content_write_needs_the_checkout(client, path, method, body):
 def test_housekeeping_is_not_blocked_by_someone_elses_checkout(client, name, method, path, body):
     """A checkout guards the design's *content*. Renaming or re-sharing is not
     concurrent editing, and blocking it would let a stale checkout freeze a
-    design nobody can tidy."""
+    design nobody can tidy.
+
+    Bob holds it and Alice, its creator, tidies: re-sharing is the creator's
+    (or an admin's) to do in the curated mode pid-designer runs."""
     doc_id = _create(client)
     _share(client, doc_id, [B["X-Auth-Email"]])
-    assert client.post(f"{BASE}/{doc_id}/checkout", headers=A).status_code == 200
-    r = client.request(method, f"{BASE}/{doc_id}{path}", headers=B, params=OWNER_A, json=body)
+    client.delete(f"{BASE}/{doc_id}/checkout", headers=A)
+    assert client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A).status_code == 200
+    r = client.request(method, f"{BASE}/{doc_id}{path}", headers=A, json=body)
     assert r.status_code == 200, f"{name} was blocked by a checkout"
 
 
 def test_copying_is_not_blocked_by_a_checkout(client):
     doc_id = _create(client)
+    _share(client, doc_id, [B["X-Auth-Email"]])  # so Bob can see it to copy it
     assert client.post(f"{BASE}/{doc_id}/checkout", headers=A).status_code == 200
     r = client.post(f"{BASE}/copy", headers=B, json={"owner": A["X-Auth-Email"], "id": doc_id})
     assert r.status_code == 200
@@ -363,6 +368,7 @@ def test_creating_a_design_checks_it_out_to_you(client):
 def test_copying_a_design_checks_the_copy_out_to_you(client):
     """Same reasoning: you take a copy in order to work on it."""
     a_id = _create(client)
+    _share(client, a_id, [B["X-Auth-Email"]])  # so Bob can see it to copy it
     copy = client.post(f"{BASE}/copy", headers=B,
                        json={"owner": A["X-Auth-Email"], "id": a_id}).json()
     state = client.get(f"{BASE}/{copy['id']}/checkout", headers=B).json()
